@@ -41,7 +41,7 @@
 extern "C" {
 void ns_mac_rx_install();
 void ns_mac_rx_stats(uint32_t *out);  // [ring high-water, full-ring polls] (high-water resets)
-void ns_tcp_stats(uint32_t *out);     // [segs, ooo, dup, trunc, zero_wnd, rto, fast_rexmit]
+void ns_tcp_stats(uint32_t *out);     // [segs, ooo, dup, trunc, zero_wnd, rto, fast_rexmit, tlp]
 uint32_t ns_aes_selftest(uint8_t *out); // FIPS-197 AES-128: bit0=enc ok, bit1=dec ok; out=ciphertext
 uint32_t ns_mac_recv(uint8_t *out, uint32_t cap);
 uint32_t ns_mac_send(const uint8_t *frame, uint32_t len, uint32_t queue);
@@ -1452,16 +1452,17 @@ static uint32_t g_loop_gap_max_us = 0;
 static uint32_t g_loop_last_us = 0;
 
 int netstack_net_stats(char *buf, size_t cap) {
-  uint32_t r[2] = {0, 0}, t[7] = {0, 0, 0, 0, 0, 0, 0};
+  uint32_t r[2] = {0, 0}, t[8] = {0, 0, 0, 0, 0, 0, 0, 0};
   ns_mac_rx_stats(r);
   ns_tcp_stats(t);
   uint32_t gap = g_loop_gap_max_us;
   g_loop_gap_max_us = 0;
   return snprintf(buf, cap,
-                  "segs=%u ooo=%u dup=%u trunc=%u zwnd=%u rto=%u frx=%u ring_hwm=%u ring_full=%u "
-                  "loop_gap_max=%uus",
+                  "segs=%u ooo=%u dup=%u trunc=%u zwnd=%u rto=%u frx=%u tlp=%u ring_hwm=%u "
+                  "ring_full=%u loop_gap_max=%uus",
                   (unsigned)t[0], (unsigned)t[1], (unsigned)t[2], (unsigned)t[3], (unsigned)t[4],
-                  (unsigned)t[5], (unsigned)t[6], (unsigned)r[0], (unsigned)r[1], (unsigned)gap);
+                  (unsigned)t[5], (unsigned)t[6], (unsigned)t[7], (unsigned)r[0], (unsigned)r[1],
+                  (unsigned)gap);
 }
 
 // Bring up the heapless WiFi transport. Call from the app's setup() AFTER the shared player

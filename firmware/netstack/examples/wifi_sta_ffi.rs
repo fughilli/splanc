@@ -303,14 +303,14 @@ pub extern "C" fn ns_tcp_set_serving_live(live: u32) {
     }
 }
 
-/// Copy the connection's diagnostics counters into `out[0..7]`: rx data segments,
-/// out-of-order (discarded), duplicate, truncated, zero-window ACKs, RTOs, fast
-/// retransmits. Zeros when there is no connection.
+/// Copy the connection's diagnostics counters into `out[0..8]`: rx data segments,
+/// out-of-order, duplicate, truncated, zero-window ACKs, RTOs, fast retransmits,
+/// tail-loss probes. Zeros when there is no connection.
 #[no_mangle]
 pub extern "C" fn ns_tcp_stats(out: *mut u32) {
     unsafe {
         let s = TCP.as_ref().map(|c| c.stats).unwrap_or_default();
-        let v = [s.rx_segs, s.rx_ooo, s.rx_dup, s.rx_trunc, s.zero_wnd, s.rto, s.fast_rexmit];
+        let v = [s.rx_segs, s.rx_ooo, s.rx_dup, s.rx_trunc, s.zero_wnd, s.rto, s.fast_rexmit, s.tlp];
         core::ptr::copy_nonoverlapping(v.as_ptr(), out, v.len());
     }
 }

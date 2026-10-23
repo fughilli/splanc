@@ -81,6 +81,8 @@ pub struct TcpStats {
     /// Our retransmission timeouts (go-back-N) and dup-ACK fast retransmits.
     pub rto: u32,
     pub fast_rexmit: u32,
+    /// Tail-loss probes sent (see `TcpConn::tlp_done`).
+    pub tlp: u32,
 }
 
 pub struct TcpConn {
@@ -186,6 +188,14 @@ pub struct TcpConn {
     // it, but the cert + streaming phase (led_capture / video_stream / fx_bench) does.
     dup_ack: u32,     // consecutive duplicate ACKs carrying `dup_ack_seq`
     dup_ack_seq: u32, // the ack number those duplicates repeat
+    // Tail-loss probe (RFC 8985 §7, simplified): with ONE reply segment in flight (a
+    // pong, a texture ack, a small RPC reply) a lost segment produces no dup-ACKs, so
+    // only the RTO (>= 120 ms, doubling) recovered it — measured on the rig as 85 RTOs
+    // in 5 min of 30 fps video, each a 120-265 ms stall of whatever paces on replies.
+    // After PTO = 2*SRTT + the peer's delayed-ACK allowance with no ACK, resend the
+    // oldest unacked segment ONCE per flight (without go-back-N); the RTO stays the
+    // backstop. Cleared whenever an ACK advances snd_una.
+    tlp_done: bool,
 }
 
 const RTO_INITIAL_MS: u32 = 300;
@@ -199,6 +209,10 @@ const RTO_MAX_MS: u32 = 2000;
 /// without punishing a slow one. The RFC 6298 floor is 1 s for the internet; a controlled
 /// LAN can (and here must) be tighter.
 const RTO_MIN_MS: u32 = 120;
+/// Tail-loss probe timeout on top of 2*SRTT: a Linux peer delays a pure ACK up to
+/// ~40 ms when it has no data to send back, so probing earlier would only resend
+/// segments that were merely ACK-delayed.
+const TLP_ACK_DELAY_MS: u32 = 40;
 /// Duplicate ACKs before fast-retransmit (RFC 5681 §3.2). Three tolerates the one/two
 /// dup-ACKs that mere reordering produces without retransmitting.
 const DUP_ACK_THRESH: u32 = 3;
@@ -238,7 +252,7 @@ impl TcpConn {
             tx_at_ms: 0, rto_ms: RTO_INITIAL_MS, rto_count: 0,
             serving_live: false,
             srtt_8: 0, rttvar_4: 0, rtt_seq: iss, rtt_at_ms: 0, rtt_valid: false,
-            dup_ack: 0, dup_ack_seq: 0,
+            dup_ack: 0, dup_ack_seq: 0, tlp_done: false,
         }
     }
 
@@ -523,7 +537,23 @@ impl TcpConn {
             self.tx_at_ms = now_ms.max(1); // arm on the first tick after a segment went out
             return 0;
         }
-        if now_ms.wrapping_sub(self.tx_at_ms) < self.rto_ms {
+        let waited = now_ms.wrapping_sub(self.tx_at_ms);
+        if waited < self.rto_ms {
+            // Tail-loss probe: one early resend of the oldest unacked segment.
+            let pto = if self.rtt_valid {
+                (self.srtt_8 / 4).max(2) + TLP_ACK_DELAY_MS
+            } else {
+                RTO_INITIAL_MS
+            };
+            if !self.tlp_done && pto < self.rto_ms && waited >= pto {
+                self.tlp_done = true;
+                self.stats.tlp = self.stats.tlp.wrapping_add(1);
+                self.rtt_at_ms = 0; // Karn: the probe makes the in-flight sample ambiguous
+                let n = self.sent.min(SND_MSS);
+                let mut seg = [0u8; SND_MSS];
+                seg[..n].copy_from_slice(&self.snd_buf[..n]);
+                return self.build(PSH | ACK, self.snd_una, &seg[..n], out);
+            }
             return 0;
         }
         // RTO fired. If the peer has gone silent through too many of these, declare it
@@ -667,6 +697,7 @@ impl TcpConn {
                     self.snd_nxt = ack;
                 }
                 self.rto_count = 0; // peer is alive — reset the dead-peer counter
+                self.tlp_done = false; // a fresh flight may probe again
                 self.tx_at_ms = 0; // re-armed by pump_tx/tick if data is still in flight
                 self.dup_ack = 0; // forward progress clears the dup-ACK run
             } else if acked == 0
@@ -1687,6 +1718,44 @@ mod tests {
         srv.on_ip(2, &a[..40], &mut out);
         assert_eq!(srv.state, State::Established);
         assert_eq!(srv.peer_wnd, 501 << 7);
+    }
+
+    #[test]
+    fn tail_loss_probe_resends_a_lone_lost_reply_well_before_the_rto() {
+        // One small reply in flight and no ACK: there are no later segments to elicit
+        // dup-ACKs, so only a probe (or the >= 120 ms RTO) can recover it.
+        let (mut cli, mut srv) = established_pair();
+        let (mut a, mut b) = ([0u8; 1600], [0u8; 1600]);
+        let mut now = 1000u32;
+        for _ in 0..4 {
+            // warm the RTT estimator at ~4 ms
+            srv.enqueue(&[1u8; 60]);
+            let s = srv.pump_tx(now, &mut b);
+            now += 4;
+            let r = cli.on_ip(now, &b[..s], &mut a);
+            cli.take_rx();
+            srv.on_ip(now, &a[..r], &mut b);
+        }
+        assert!(srv.rto_ms >= RTO_MIN_MS);
+        srv.enqueue(b"pong");
+        let s = srv.pump_tx(now, &mut b);
+        assert!(s > 0); // lost on the air
+        let pto = (srv.srtt_8 / 4).max(2) + TLP_ACK_DELAY_MS;
+        assert!(pto < srv.rto_ms);
+        assert_eq!(srv.tick(now + pto - 1, &mut b), 0, "not before the PTO");
+        let p = srv.tick(now + pto, &mut b);
+        assert!(p > 0, "the probe goes out at the PTO");
+        assert_eq!(&b[IP_HDR + TCP_HDR..p], b"pong");
+        assert_eq!(srv.stats.tlp, 1);
+        assert_eq!(srv.sent, 4, "no go-back-N rewind");
+        assert_eq!(srv.tick(now + pto + 5, &mut b), 0, "one probe per flight");
+        // The probe arrives; its ACK clears the flight and re-arms probing.
+        let r = cli.on_ip(now + pto + 4, &b[..p], &mut a);
+        assert_eq!(cli.rx_data(), b"pong");
+        srv.on_ip(now + pto + 4, &a[..r], &mut b);
+        assert_eq!(srv.sent, 0);
+        assert!(!srv.tlp_done);
+        assert_eq!(srv.stats.rto, 0, "recovered without an RTO");
     }
 
     impl TcpConn {
