@@ -197,12 +197,6 @@
       "provided_level": "simulation"
     },
     {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:fpga_ws281x_led-mapper-pi",
-      "message": "//pi/hitl/harness:fpga_ws281x_led-mapper-pi pi/hitl/harness/fpga_ws281x_led-mapper-pi error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
       "kind": "high-risk-open",
       "entity": "RISK-2",
       "message": "high risk; mitigation is PARTIAL",

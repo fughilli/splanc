@@ -19,7 +19,7 @@
     "mitigations": 12,
     "mitigations_verified": 6,
     "test_cases": 2112,
-    "gaps": 30
+    "gaps": 29
   },
   "levels": [
     {
@@ -7225,12 +7225,6 @@
       "route": "human-gate",
       "demanded_level": "hitl",
       "provided_level": "simulation"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:fpga_ws281x_led-mapper-pi",
-      "message": "//pi/hitl/harness:fpga_ws281x_led-mapper-pi pi/hitl/harness/fpga_ws281x_led-mapper-pi error and traces to no requirement",
-      "route": "autonomous"
     },
     {
       "kind": "high-risk-open",
