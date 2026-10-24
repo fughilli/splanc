@@ -21,7 +21,8 @@ export const TOOLS = [
     description:
       "Replace the entire editor script with a new effect program and compile it. " +
       "Use this to author or revise the effect. The compile result (success, " +
-      "diagnostics, uniforms, and disassembly) is returned so you can iterate.",
+      "diagnostics, warnings, uniforms, and disassembly) is returned so you can iterate; " +
+      "fix warnings too.",
     input_schema: {
       type: "object",
       additionalProperties: false,
@@ -182,7 +183,7 @@ export const CHAT_SYSTEM = `${SYSTEM_PROMPT}
 
 You are now in an interactive chat with the user inside the effect editor. You can:
 - Answer questions about the current effect program.
-- Call set_script to author or revise the effect; you'll get the compile result back (fix any errors and iterate).
+- Call set_script to author or revise the effect; you'll get the compile result back (fix any errors and iterate). Fix its "Warnings" too — the usual one is a speed/rate uniform multiplying \`time\` in a phase, which makes the effect jump whenever the user moves that slider: integrate it in update() (\`ph = fract(ph + dt * speed);\`) and use the phase. When editing an existing effect that does \`time * speed\`, convert it.
 - Call capture_preview to SEE the live preview rendered to an image — but only when seeing the result actually matters (judging colours/motion/coverage). Skip it when it wouldn't help (e.g. after a compile error, or a purely mechanical edit); capturing every turn is slow and wasteful.
 - When performance matters (the user wants a target framerate, to fit the budget, or to optimize), call estimate_performance after set_script to check the change against the real device economics: it reports each device's frame time, % of the FX budget used (≤70% green / >70% yellow / >90% red), the binding device, and the hottest opcodes. Optimize for the binding device first, then re-estimate to confirm it fits.
 - OPTIMIZE requests ("make this faster", "fit 60fps", "reduce RAM", "optimize this program") are a MEASURED, MULTI-TURN loop — never a one-shot guess:
@@ -205,7 +206,7 @@ Keep prose brief. When you change the script, prefer minimal, targeted edits.`;
 export const CHAT_SYSTEM_COMPACT = `${SYSTEM_PROMPT_COMPACT}
 
 You are in an interactive chat inside the effect editor.
-- Call set_script to author or revise the effect; you get the compile result back — fix any errors and iterate.
+- Call set_script to author or revise the effect; you get the compile result back — fix any errors and warnings, and iterate.
 - If a performance/MIDI tool is offered, use it only when the user asks about speed or MIDI.
 - Answer questions about the current effect briefly.
 Keep prose short. Prefer minimal, targeted edits.`;

@@ -12,6 +12,7 @@ use std::fmt::Write as _;
 
 // Bytecode optimizer (FUG-125): decode → peephole/local/CFG passes → re-encode,
 // run over the emitted code just before it is serialized in `finish`.
+mod lint;
 mod memo;
 mod opt;
 
@@ -214,6 +215,9 @@ pub struct Compiled {
     /// What the variance pass hoisted into update() / bracketed with the per-LED
     /// cache (empty when the optimizer or the pass is off). See `memo.rs`.
     pub memo: MemoReport,
+    /// Non-fatal source lints (`lint.rs`), each `msg` prefixed "warning: " —
+    /// e.g. a rate uniform multiplying `time` inside a phase.
+    pub warnings: Vec<Diagnostic>,
 }
 
 /// Compiler knobs (see [`compile_with`]).
@@ -458,6 +462,8 @@ pub struct Compiler {
     optimize: bool,
     // The variance pass config (None = off); runs inside the optimizer.
     memo: Option<MemoConfig>,
+    // Source lints (lint.rs): expression taints + the warnings they raised.
+    lint: lint::Lint,
 }
 
 /// A just-emitted numeric literal, for the constant-cast fold (FUG-122).
@@ -588,6 +594,7 @@ impl Compiler {
             poll_entry: NO_ENTRY,
             optimize,
             memo,
+            lint: lint::Lint::default(),
         }
     }
 
@@ -1232,6 +1239,8 @@ impl Compiler {
         // Scope out this function's locals, but DON'T reuse the slots — disjoint
         // ranges so a callee can't clobber a caller's locals (no recursion).
         self.syms.retain(|_, s| !matches!(s.kind, SymKind::Local));
+        let syms = &self.syms;
+        self.lint.vars.retain(|n, _| syms.contains_key(n));
         match name.as_str() {
             "update" => self.update_entry = entry,
             "shade" => self.shade_entry = entry,
@@ -1327,6 +1336,7 @@ impl Compiler {
             let w = self.ty_width(ty);
             let slot = self.alloc_local(w)?;
             self.fill_local(slot, w);
+            self.lint.vars.insert(name.clone(), lint::Taint::default());
             self.syms.insert(name, Sym { kind: SymKind::Local, slot, ty });
             return Ok(());
         }
@@ -1336,12 +1346,15 @@ impl Compiler {
             let w = self.ty_width(base_ty);
             let slot = self.alloc_local(w)?;
             self.fill_local(slot, w);
+            self.lint.vars.insert(name.clone(), lint::Taint::default());
             self.syms.insert(name, Sym { kind: SymKind::Local, slot, ty: base_ty });
             return Ok(());
         }
         // Initialized: `T name = expr;`
         self.expect_sym('=')?;
         let et = self.expr()?;
+        let taint = std::mem::take(&mut self.lint.taint);
+        self.lint.vars.insert(name.clone(), taint);
         self.coerce(et, base_ty)?;
         self.expect_sym(';')?;
         let w = self.ty_width(base_ty);
@@ -1373,6 +1386,10 @@ impl Compiler {
             }
             self.expect_sym('=')?;
             let et = self.expr()?;
+            // One element/field of a composite: the variable now ALSO depends on it.
+            let taint = std::mem::take(&mut self.lint.taint);
+            let prev = self.lint.vars.remove(&name).unwrap_or_default();
+            self.lint.vars.insert(name.clone(), prev.union(taint));
             self.coerce(et, place.ty)?;
             self.expect_sym(';')?;
             return self.emit_store_place(&place);
@@ -1380,6 +1397,8 @@ impl Compiler {
         // Whole-variable assignment.
         self.expect_sym('=')?;
         let et = self.expr()?;
+        let taint = std::mem::take(&mut self.lint.taint);
+        self.lint.vars.insert(name.clone(), taint);
         self.coerce(et, sym.ty)?;
         self.expect_sym(';')?;
         let opc = match sym.kind {
@@ -1516,6 +1535,8 @@ impl Compiler {
             .ok_or_else(|| self.mkdiag(&format!("unknown identifier '{name}'")))?;
         self.expect_sym('=')?;
         let et = self.expr()?;
+        let taint = std::mem::take(&mut self.lint.taint);
+        self.lint.vars.insert(name.clone(), taint);
         self.coerce(et, sym.ty)?;
         let opc = match sym.kind {
             SymKind::State => fx_vm_op::STORE_STATE,
@@ -1697,6 +1718,7 @@ impl Compiler {
 
     fn expr_bp(&mut self, min_bp: u8) -> Result<Ty, Diagnostic> {
         let mut lty = self.unary()?;
+        let mut lt = std::mem::take(&mut self.lint.taint);
         loop {
             let (op, bp): (&str, u8) = match self.cur().clone() {
                 Tok::Sym2(['&', '&']) => ("&&", 1),
@@ -1717,10 +1739,14 @@ impl Compiler {
             if bp < min_bp {
                 break;
             }
+            let (_, op_line, op_col) = self.lx_toks[self.p];
             self.advance();
             let rty = self.expr_bp(bp + 1)?;
+            let rt = std::mem::take(&mut self.lint.taint);
+            lt = self.lint.binop(op, lt, rt, op_line, op_col);
             lty = self.emit_binop(op, lty, rty)?;
         }
+        self.lint.taint = lt;
         Ok(lty)
     }
 
@@ -1962,7 +1988,33 @@ impl Compiler {
         Ok(Ty::vec_of(comps.len() as u8))
     }
 
+    /// [`Self::primary_expr`] + the lint taint of the leaf it parsed (a call or a
+    /// parenthesized expression sets its own while parsing).
     fn primary(&mut self) -> Result<Ty, Diagnostic> {
+        let next_is_call = matches!(self.lx_toks.get(self.p + 1), Some((Tok::Sym('('), _, _)));
+        let leaf = match self.cur() {
+            Tok::Ident(id) if id == "led" || id == "imu" || id == "room" => Some(lint::Taint::default()),
+            Tok::Ident(id) if id == "time" => Some(lint::Taint::time()),
+            Tok::Ident(id) if !next_is_call => Some(match self.syms.get(id) {
+                Some(s) if matches!(s.kind, SymKind::Uniform) && s.ty != Ty::Bool => {
+                    lint::Taint::uniform(id).named(id)
+                }
+                Some(s) if matches!(s.kind, SymKind::State | SymKind::Local) => {
+                    self.lint.vars.get(id).cloned().unwrap_or_default().named(id)
+                }
+                _ => lint::Taint::default(),
+            }),
+            Tok::Num(..) => Some(lint::Taint::default()),
+            _ => None,
+        };
+        let ty = self.primary_expr()?;
+        if let Some(t) = leaf {
+            self.lint.taint = t;
+        }
+        Ok(ty)
+    }
+
+    fn primary_expr(&mut self) -> Result<Ty, Diagnostic> {
         match self.cur().clone() {
             Tok::Num(v, is_int) => {
                 self.advance();
@@ -2073,11 +2125,14 @@ impl Compiler {
         self.expect_sym('(')?;
         // Texture ops take a texture NAME (not a value) as their first argument.
         if name == "sample" || name == "paint" {
-            return self.texture_call(name);
+            let ty = self.texture_call(name)?;
+            self.lint.taint = lint::Taint::default();
+            return Ok(ty);
         }
         // Type constructor: scalar cast (float/int/fixed) or vecN.
         if let Some(cty) = Self::ty_from_ident(name) {
             if cty.is_scalar() {
+                // (the cast keeps its argument's lint taint)
                 let at = self.expr()?;
                 self.expect_sym(')')?;
                 if !at.is_scalar() {
@@ -2088,8 +2143,10 @@ impl Compiler {
             }
             let w = cty.width();
             let mut got = 0u8;
+            let mut taint = lint::Taint::default();
             loop {
                 let at = self.expr()?;
+                taint = taint.union(std::mem::take(&mut self.lint.taint));
                 if at.is_scalar() {
                     // vec components are float
                     if at != Ty::Float {
@@ -2111,18 +2168,22 @@ impl Compiler {
             } else if got != w {
                 return self.err(format!("{name}() needs {w} components, got {got}"));
             }
+            self.lint.taint = taint;
             return Ok(cty);
         }
         // user-defined function (define-before-use)
         if let Some(f) = self.funcs.get(name).cloned() {
+            let mut taint = lint::Taint::default();
             for (i, pty) in f.params.iter().enumerate() {
                 if i > 0 {
                     self.expect_sym(',')?;
                 }
                 let at = self.expr()?;
+                taint = taint.union(std::mem::take(&mut self.lint.taint));
                 self.coerce(at, *pty)?;
             }
             self.expect_sym(')')?;
+            self.lint.taint = taint;
             self.emit(fx_vm_op::CALL);
             self.emit_u16(f.entry);
             return Ok(f.ret);
@@ -2130,6 +2191,7 @@ impl Compiler {
         // built-in functions
         let args = self.call_args()?;
         self.expect_sym(')')?;
+        self.lint.taint = self.lint.builtin(name);
         self.emit_builtin(name, &args)
     }
 
@@ -2171,19 +2233,24 @@ impl Compiler {
         }
     }
 
+    /// Parse a builtin's arguments; their lint taints land in `lint.arg_taints`.
     fn call_args(&mut self) -> Result<Vec<Ty>, Diagnostic> {
         let mut args = Vec::new();
+        let mut taints = Vec::new();
         if *self.cur() == Tok::Sym(')') {
+            self.lint.arg_taints = taints;
             return Ok(args);
         }
         loop {
             args.push(self.expr()?);
+            taints.push(std::mem::take(&mut self.lint.taint));
             if *self.cur() == Tok::Sym(',') {
                 self.advance();
             } else {
                 break;
             }
         }
+        self.lint.arg_taints = taints;
         Ok(args)
     }
 
@@ -2922,7 +2989,7 @@ impl Compiler {
             b.push(report.led_cache_groups.len() as u8);
             b.extend_from_slice(&report.led_cache_groups);
         }
-        Compiled { fxb: b, uniforms: self.uniforms, exports: self.exports, memo: report }
+        Compiled { fxb: b, uniforms: self.uniforms, exports: self.exports, memo: report, warnings: self.lint.warnings }
     }
 }
 

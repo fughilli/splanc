@@ -460,6 +460,14 @@ describe("mcp", () => {
     const c = await client.callTool({ name: "compile_effect", arguments: { source: EFFECT } });
     const parsed = JSON.parse((c.content as { text: string }[])[0]!.text);
     assert.equal(parsed.ok, true);
+    assert.deepEqual(parsed.warnings, []);
+    // A rate uniform times `time` in a phase compiles, with a warning naming the line.
+    const cb = await client.callTool({ name: "compile_effect", arguments: { source: EFFECT_B } });
+    const pb = JSON.parse((cb.content as { text: string }[])[0]!.text);
+    assert.equal(pb.ok, true);
+    assert.equal(pb.warnings.length, 1, JSON.stringify(pb.warnings));
+    assert.equal(pb.warnings[0].line, 3);
+    assert.match(pb.warnings[0].msg, /^warning: `time` scaled by the uniform `speed`/);
     // The offline estimate: no device traffic, ms + budget at the player's LED count.
     const before = player.received.length;
     const e = await client.callTool({ name: "estimate_effect", arguments: { source: EFFECT } });

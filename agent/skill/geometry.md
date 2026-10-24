@@ -20,7 +20,9 @@ The map's topology splits the fixture into **segments** (runs of LEDs along a
 strip, wire or branch) joined at **branch points**:
 
 - `led.seg` — which segment; `led.s` — 0..1 along it. Pulses along strips:
-  `fract(led.s - time * speed)`.
+  `fract(led.s - ph)` with `ph = fract(ph + dt * speed);` in `update()` (a
+  speed knob is integrated, never `time * speed` — that jumps when the knob
+  moves; `effect-language.md` § Rate controls).
 - `led.dist` — geodesic distance 0..1 from the root, along the fixture (not
   straight-line). Waves that flow through the structure: `fract(led.dist - time)`.
 - `flood_from(node)` (in `update()`) re-roots `led.dist`; `term_count()` /

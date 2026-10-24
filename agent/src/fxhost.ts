@@ -105,6 +105,10 @@ async function withToolchain<T>(tc: Toolchain | undefined, fn: () => Promise<T>)
 export interface CompileOutcome {
   ok: boolean;
   diagnostics: { line: number; col: number; msg: string }[];
+  /** Non-fatal lints (1-based line; msg starts "warning: "), e.g. a rate uniform
+   * multiplying `time` inside a phase. Undefined when the toolchain (an older
+   * player's bundle) predates them — {@link lintWarnings} lints with this one. */
+  warnings: { line: number; col: number; msg: string }[] | undefined;
   uniforms: ManifestUniform[];
   bytecodeBytes: number;
   textures: FxbTexture[];
@@ -117,11 +121,18 @@ export async function compile(source: string, tc?: Toolchain): Promise<CompileOu
   return {
     ok: r.ok,
     diagnostics: r.diagnostics,
+    warnings: r.warnings,
     uniforms: r.uniforms as unknown as ManifestUniform[],
     bytecodeBytes: r.bytecode.length,
     textures: r.ok ? parseFxbTextures(r.bytecode) : [],
     fxb: r.bytecode,
   };
+}
+
+/** The source lints of `source` from this bundle's own compiler (the lints are
+ * source-level, so they apply whatever firmware compiles it). */
+export async function lintWarnings(source: string): Promise<{ line: number; col: number; msg: string }[]> {
+  return (await compile(source)).warnings ?? [];
 }
 
 export interface PreviewFrame {

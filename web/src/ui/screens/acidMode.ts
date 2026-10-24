@@ -14,7 +14,7 @@
  */
 
 import type { OutputMap, Topology } from "@ledmapper/protocol";
-import { FxPreview, deriveLedTopology, type FxUniform, type LedTopology } from "../../fx/preview";
+import { FxPreview, deriveLedTopology, formatWarnings, type FxUniform, type LedTopology } from "../../fx/preview";
 import { MapView } from "../mapview";
 import { generateFixture } from "../../effects/fixtures";
 import { extractTopology } from "../../topology/extract";
@@ -352,7 +352,7 @@ export function AcidModeScreen(router: Router): Screen {
     if (!r.ok) {
       const first = r.diagnostics[0];
       lastBytecode = null;
-      return `Compile failed${first ? ` — line ${first.line + 1}: ${first.msg}` : ""}. Fix and retry.`;
+      return `Compile failed${first ? ` — line ${first.line}: ${first.msg}` : ""}. Fix and retry.`;
     }
     lastBytecode = r.bytecode;
     lastUniforms = r.uniforms;
@@ -381,7 +381,9 @@ export function AcidModeScreen(router: Router): Screen {
     } else {
       appendMsg("think", "💡 Wrote it (no device connected)");
     }
-    return `Compiled OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes; ${deviceNote}.`;
+    const warnings = r.warnings ?? [];
+    const lint = warnings.length > 0 ? `\nWarnings (fix these):\n${formatWarnings(warnings)}` : "";
+    return `Compiled OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes; ${deviceNote}.${lint}`;
   }
 
   /** Save the acid effect to the library under a stable id (create if new).

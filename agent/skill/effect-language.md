@@ -22,6 +22,58 @@ vec3 shade(Led led) {                    // required: once per LED, linear RGB 0
 - Every invocation has an instruction budget (100k); a `shade` that blows it
   returns black.
 
+## Rate controls: integrate, never `time * speed`
+
+The most common authoring bug. A uniform that sets a RATE (speed, frequency,
+drift, spin, rate, period) must not multiply `time` inside a phase:
+
+```glsl
+float p = fract(led.s - time * speed);   // WRONG: jumps when `speed` moves
+```
+
+`time * speed` is the whole elapsed time rescaled, so moving the slider from
+`s0` to `s1` moves the phase by `(s1 - s0) * time` — after ten minutes of uptime
+that is dozens of cycles, and the effect stutters wildly while the knob turns.
+Integrate the rate once per frame instead; a knob change then only changes how
+fast the phase advances from where it is:
+
+```glsl
+uniform float speed : 0.0 .. 4.0 = 1.0;   // cycles per second
+uniform float spin  : 0.0 .. 2.0 = 0.3;
+state float ph;                          // one phase PER rate knob
+state float spin_ph;
+state float wobble;
+
+void update() {
+  ph      = fract(ph + dt * speed);        // fract keeps it in 0..1 (float precision)
+  spin_ph = fract(spin_ph + dt * spin * 0.5);   // constant factors go inside
+  wobble  = sin(spin_ph * 6.2832);         // oscillator: sin(phase * TAU), once per frame
+}
+
+vec3 shade(Led led) {
+  float band = fract(led.s - ph);          // scrolling along a strip
+  return hsv2rgb(fract(led.dist + ph), 0.9, 0.5 + 0.5 * wobble) * band;
+}
+```
+
+- `dt` is seconds since the last frame (the device measures it; the preview
+  steps it). `fract(phase + dt * rate)` wraps a periodic phase so it never loses
+  float precision; use `phase * 6.2832` for float `sin`/`cos` (radians).
+- Scrolling NOISE or any non-periodic offset: integrate without wrapping,
+  `drift = drift + dt * speed;` (see `examples/noise_field.fx`).
+- Epochs (`floor`/`hash` of a moving phase): wrap by hand and count the wraps,
+  `ph = ph + dt * rate; if (ph >= 1.0) { ph = ph - 1.0; epoch = epoch + 1.0; }`.
+- Fixed point: `state fixed ph;` with `ph = fract(ph + fixed(dt) * fixed(speed));`,
+  then `sin(fixed16(ph))` is the integer LUT in TURNS (no `* 6.2832`).
+- `time` alone is fine when nothing scales it: `fract(led.s - time)`,
+  `sin(time * 0.7)` — a literal rate can't jump. So is `time` plus a uniform
+  offset. Only rate × time is the bug.
+- Several fixtures that must stay in lockstep (`align_time`) share `time`, not
+  integrated phases; there, prefer a fixed rate on `time` over a rate knob.
+
+`compile_effect` reports this pattern as a `warning:` with the line; treat it
+like an error.
+
 ## Types
 
 `float vec2 vec3 vec4 int bool`, fixed-point `fixed` (Q16.16), `fixed16` (Q1.14),

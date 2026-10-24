@@ -129,7 +129,7 @@ export function askTurn(ask: string, currentScript?: string, perfContext?: strin
 /** Build the user turn for an auto-repair round from compiler diagnostics. */
 export function repairTurn(script: string, diagnostics: FxDiagnostic[]): Turn {
   const list = diagnostics
-    .map((d) => `- line ${d.line + 1}, col ${d.col + 1}: ${d.msg}`)
+    .map((d) => `- line ${d.line}, col ${d.col}: ${d.msg}`)
     .join("\n");
   return {
     role: "user",

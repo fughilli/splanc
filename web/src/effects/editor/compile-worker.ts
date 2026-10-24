@@ -31,6 +31,7 @@ interface CompilerResult {
   readonly bytecode: Uint8Array;
   readonly manifest: string;
   readonly diagnostics: string;
+  readonly warnings?: string;
 }
 interface CompilerModule {
   default(wasm: string): Promise<unknown>;
@@ -69,6 +70,8 @@ function toCompiled(r: CompilerResult): FxCompiled {
     bytecode: r.bytecode,
     uniforms: r.ok ? (JSON.parse(r.manifest) as FxUniform[]) : [],
     diagnostics: JSON.parse(r.diagnostics) as FxDiagnostic[],
+    // (absent in compiler bundles that predate warnings)
+    warnings: r.warnings ? (JSON.parse(r.warnings) as FxDiagnostic[]) : [],
   };
 }
 
@@ -101,6 +104,7 @@ self.onmessage = (ev: MessageEvent<CompileRequest>): void => {
         diagnostics: [
           { line: 0, col: 0, msg: `compiler error: ${e instanceof Error ? e.message : String(e)}` },
         ] satisfies FxDiagnostic[],
+        warnings: [],
       };
     }
     const resp: CompileResponse = { id: req.id, result };

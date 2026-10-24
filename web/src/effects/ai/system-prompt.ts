@@ -25,9 +25,10 @@ const EXAMPLES = `EXAMPLE 1 — a moving band along the trunk:
 uniform float speed : 0.0 .. 5.0 = 1.0;
 uniform float width : 0.02 .. 0.5 = 0.12;
 uniform vec3 tint : color = 0.2, 0.6, 1.0;
-void update() {}
+state float head;
+void update() { head = fract(head + dt * speed); }
 vec3 shade(Led led) {
-  float phase = fract(led.s - time * speed);
+  float phase = fract(led.s - head);
   float band = smoothstep(width, 0.0, abs(phase - 0.5));
   return tint * band;
 }
@@ -35,17 +36,22 @@ vec3 shade(Led led) {
 EXAMPLE 2 — a spatial hue gradient that drifts:
 uniform float scale : 0.2 .. 4.0 = 1.0;
 uniform float drift : 0.0 .. 2.0 = 0.3;
-void update() {}
+state float hue;
+void update() { hue = fract(hue + dt * drift); }
 vec3 shade(Led led) {
-  float h = fract(led.pos.y * scale + time * drift);
+  float h = fract(led.pos.y * scale + hue);
   return hsv2rgb(h, 0.9, 1.0);
 }
 
-EXAMPLE 3 — a breathing pulse driven by state:
-uniform float rate : 0.1 .. 3.0 = 0.6;
+EXAMPLE 3 — a breathing pulse driven by state (rate in breaths per second):
+uniform float rate : 0.02 .. 0.5 = 0.1;
 uniform vec3 base : color = 1.0, 0.3, 0.1;
+state float ph;
 state float glow;
-void update() { glow = 0.5 + 0.5 * sin(time * rate); }
+void update() {
+  ph = fract(ph + dt * rate);
+  glow = 0.5 + 0.5 * sin(ph * 6.2832);
+}
 vec3 shade(Led led) { return base * glow; }
 
 EXAMPLE 4 — agents simulated in update() with a struct array:
@@ -136,6 +142,11 @@ UNIFORM SYNTAX (expose the interesting parameters as uniforms with sensible rang
 
 STATE: \`state\` variables persist across frames — written by update(), read-only in shade(). Use them for phases/integrators.
 
+RATE CONTROLS — A COMMON BUG, NEVER DO IT: a uniform that sets a speed/rate/frequency must NOT multiply \`time\` inside a phase (\`fract(led.s - time * speed)\`, \`sin(time * rate)\`). \`time * speed\` rescales ALL the elapsed time, so moving the slider jumps the phase by Δspeed × time — after minutes of uptime the effect stutters wildly while the knob moves. Integrate each rate in update() as its OWN \`state\` phase, wrapped with fract so float precision stays bounded:
+  state float ph;                                  // one phase per rate uniform
+  void update() { ph = fract(ph + dt * speed); }   // dt = seconds since the last frame
+then use ph in shade(): \`fract(led.s - ph)\` (scrolling), \`sin(ph * 6.2832)\` (oscillator; float sin is radians), \`hsv2rgb(fract(led.dist + ph), 0.9, 1.0)\`. Constant factors go inside (\`dt * speed * 0.5\`). A non-periodic offset (scrolling noise) integrates without fract: \`drift = drift + dt * speed;\`. Fixed point: \`state fixed ph;\` + \`ph = fract(ph + fixed(dt) * fixed(speed));\`, then \`sin(fixed16(ph))\` (LUT, angle in turns). Plain \`time\` with no knob scaling it is fine (\`fract(led.s - time)\`, \`sin(time * 0.7)\`). The compiler reports rate × time as a "warning:" — fix it like an error.
+
 STRUCTS & ARRAYS: declare composite types with \`struct Name { float a; vec3 b; };\` (scalar/vec fields) and fixed-size arrays with \`Type name[N];\`. Arrays index with \`a[i]\` (a runtime int index is fine, one per access) and struct fields with \`.field\`. Put an array of structs in \`state\` to simulate agents/particles across frames (seed them once behind a \`state bool\` flag, then advance them in a \`for\` loop). Keep totals modest — state and locals are each capped near 128 slots.
 
 BUFFERS: \`buffer vec3 trail;\` declares a hidden per-LED buffer (one element per LED, numeric scalar/vec) that persists across frames — like \`state\`, but sized to the whole LED raster instead of a single slot. Read/write with \`trail[i]\`, i an int LED index (0..led.count-1). Ideal for feedback effects: in shade() do \`vec3 p = trail[led.idx]; vec3 v = p * 0.9 + spark; trail[led.idx] = v; return v;\` for decaying trails/persistence-of-vision. Unlike \`state\`, a buffer MAY be written from shade() (each LED owns its slot). Always index it — a bare \`trail\` is an error.
@@ -190,6 +201,7 @@ UNIFORMS (expose the interesting parameters so the user gets live controls — r
 
 STATE & DATA:
 - \`state T x;\` persists across frames — written in update(), read-only in shade(). Use for phases/integrators.
+- RATE KNOBS: never \`time * speed\` in a phase — moving the slider makes it jump. Integrate in update(): \`state float ph;\` + \`ph = fract(ph + dt * speed);\`, then use \`ph\` (\`fract(led.s - ph)\`, \`sin(ph * 6.2832)\`). Plain \`time\` with no knob is fine.
 - \`struct Name { float a; vec3 b; };\` + fixed arrays \`T name[N];\` (index \`a[i]\`, fields \`.field\`). An array of structs in \`state\` = agents/particles (seed once behind a \`state bool\`, advance in a \`for\` loop).
 - \`buffer vec3 trail;\` — a per-LED persistent buffer; index \`trail[led.idx]\`; MAY be written from shade() (feedback/trails). Always index it.
 - \`texture vec3 img(64,64);\` — read \`sample(img, led.uv)\` (bilinear, uv in 0..1), write \`paint(img, uv, color);\`.
@@ -200,25 +212,28 @@ PERFORMANCE (target is an MCU with NO float unit): keep hot per-LED math in \`in
 
 EXAMPLE 1 — rotating pinwheel (angle around the map center from led.uv):
 uniform float speed : 0.0 .. 5.0 = 0.5;
-void update() {}
+state float spin;
+void update() { spin = fract(spin + dt * speed); }
 vec3 shade(Led led) {
   float ang = atan2(led.uv.y - 0.5, led.uv.x - 0.5) / 6.2832;
-  float hue = fract(ang * 4.0 + time * speed);
+  float hue = fract(ang * 4.0 + spin);
   return hsv2rgb(hue, 1.0, 1.0);
 }
 
-EXAMPLE 2 — whole-map breathing glow (time oscillation via state):
+EXAMPLE 2 — whole-map breathing glow (an integrated phase in state):
 uniform float rate : 0.1 .. 3.0 = 0.6;
 uniform vec3 base : color = 1.0, 0.2, 0.1;
+state float ph;
 state float glow;
-void update() { glow = 0.5 + 0.5 * sin(time * rate * 6.2832); }
+void update() { ph = fract(ph + dt * rate); glow = 0.5 + 0.5 * sin(ph * 6.2832); }
 vec3 shade(Led led) { return base * glow; }
 
 EXAMPLE 3 — bright head moving along the strip with a fading tail (led.s):
 uniform float speed : 0.0 .. 3.0 = 0.7;
-void update() {}
+state float head;
+void update() { head = fract(head + dt * speed); }
 vec3 shade(Led led) {
-  float behind = fract(time * speed - led.s);
+  float behind = fract(head - led.s);
   return vec3(1.0, 0.8, 0.4) * exp(-8.0 * behind);
 }
 

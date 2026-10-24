@@ -27,7 +27,7 @@
  */
 
 import type { OutputMap, Topology } from "@ledmapper/protocol";
-import { FxPreview, deriveLedTopology, type FxUniform, type LedTopology } from "../../fx/preview";
+import { FxPreview, deriveLedTopology, formatWarnings, type FxUniform, type LedTopology } from "../../fx/preview";
 import { MapView } from "../mapview";
 import { generateFixture } from "../../effects/fixtures";
 import { extractTopology } from "../../topology/extract";
@@ -1173,10 +1173,11 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     const r = await worker.compile(src);
     if (seq !== compileSeq || disposed) return; // a newer compile supersedes us
 
-    renderDiagnostics(r.diagnostics);
+    const warnings = r.warnings ?? [];
+    renderDiagnostics([...r.diagnostics, ...warnings]);
     if (!r.ok) {
       const first = r.diagnostics[0];
-      const summary = first ? `line ${first.line + 1}: ${first.msg}` : "compile failed";
+      const summary = first ? `line ${first.line}: ${first.msg}` : "compile failed";
       setStatusErr(summary);
       lastCompileSummary = `ERROR — ${summary}`;
       lastDisassembly = "";
@@ -1191,6 +1192,9 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     void updateBudgetBar(r.bytecode);
     videoPanel.setBytecode(r.bytecode);
     lastCompileSummary = `OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes`;
+    // Lints (e.g. a rate uniform multiplying `time` in a phase) ride the AI's
+    // compile feedback so it fixes them, not just the errors.
+    if (warnings.length > 0) lastCompileSummary += `\nWarnings (fix these):\n${formatWarnings(warnings)}`;
     panel.setManifest(r.uniforms);
     if (initialScene && !sceneUniformsApplied) {
       panel.hydrate(sceneUniformValues(r.uniforms, initialScene.uniforms));
@@ -1246,7 +1250,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     diagsEl.replaceChildren();
     for (const d of diags) {
       const li = document.createElement("li");
-      li.textContent = `line ${d.line + 1}, col ${d.col + 1}: ${d.msg}`;
+      li.textContent = `line ${d.line}, col ${d.col}: ${d.msg}`;
       diagsEl.appendChild(li);
     }
   }

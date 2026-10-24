@@ -37,6 +37,9 @@ export interface FxCompiled {
   bytecode: Uint8Array;
   uniforms: FxUniform[];
   diagnostics: FxDiagnostic[];
+  /** Non-fatal lints (e.g. a rate uniform multiplying `time` in a phase); each
+   * msg starts "warning: ". Undefined from compiler bundles that predate them. */
+  warnings?: FxDiagnostic[] | undefined;
 }
 
 interface CompilerResult {
@@ -44,6 +47,8 @@ interface CompilerResult {
   readonly bytecode: Uint8Array;
   readonly manifest: string;
   readonly diagnostics: string;
+  /** JSON warnings (absent in compiler bundles that predate them). */
+  readonly warnings?: string;
 }
 interface CompilerModule {
   default(wasm: string): Promise<unknown>;
@@ -126,7 +131,15 @@ export async function compileScript(src: string, opts: CompileScriptOptions = {}
     bytecode: r.bytecode,
     uniforms: r.ok ? (JSON.parse(r.manifest) as FxUniform[]) : [],
     diagnostics: JSON.parse(r.diagnostics) as FxDiagnostic[],
+    // undefined (not []) from a compiler bundle that predates warnings, so a
+    // host can tell "no lints" from "this compiler can't lint" (agent/src/fxhost.ts).
+    warnings: r.warnings === undefined ? undefined : (JSON.parse(r.warnings) as FxDiagnostic[]),
   };
+}
+
+/** Warnings as text for an AI's compile feedback ("" when there are none). */
+export function formatWarnings(ws: readonly FxDiagnostic[]): string {
+  return ws.map((w) => `line ${w.line}: ${w.msg}`).join("\n");
 }
 
 /** Offline preview: the exact device VM run over a map in the browser. */
