@@ -120,6 +120,7 @@ py_library(
         "uniform_bench_core.py",
         "upgrade_keeps_wifi_core.py",
         "video_bench_core.py",
+        "video_latency_core.py",
     ],
     imports = ["."],
     # board_caps parses the BoardCapabilities textproto via the generated py proto.
@@ -806,6 +807,45 @@ py_test(
     },
     imports = ["."],
     main = "hitl_video_stream.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Long-run video latency / jitter / burst measurement over the netstack wss: paced
+# 30 fps frames for minutes, per-frame device-side apply timestamps (an in-order
+# TimeSyncPing after each frame), stalls attributed from the sender's TCP_INFO. The
+# probe (wss_video_latency.py) runs in the reservation container, network-local to the
+# DUT, under the AP lock. Gate thresholds start loose (stream must survive + apply
+# >= 90% of frames); see video_latency_core.Policy.
+py_test(
+    name = "video_latency_netstack",
+    timeout = "eternal",
+    # hitl_video_stream.py: the shared effect/map setup helpers (_setup_effect).
+    srcs = [
+        "hitl_video_latency.py",
+        "hitl_video_stream.py",
+    ],
+    data = [
+        "wss_video_latency.py",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//fx_compiler:fx_compile",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_video_latency.py",
     tags = [
         "hitl",
         "manual",
