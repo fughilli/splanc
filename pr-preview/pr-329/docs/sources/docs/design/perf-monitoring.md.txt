@@ -90,44 +90,50 @@ no f64).
   a quarter miss, drop one rung. A clean window whose *worst* frame would still
   fit the next rung's 95% budget steps up one rung (checking the worst frame,
   not the mean, keeps it from stepping up then immediately back down).
-- **Abort.** At the floor (25 fps) — or an app-pinned rate — a still-failing
-  window means the effect can't run within budget: the render loop **parks** the
-  effect (freeing the CPU) and the loop task pushes an `fps_state{aborted=true}`
-  so the app can tell the user.
+- **Lag, never park.** At the floor (25 fps up to 512 LEDs, lower past it) — or
+  an app-pinned rate — a still-failing window means the effect can't run within
+  budget. It keeps rendering as fast as it can (**lagging**): better a slower
+  effect than one cut off abruptly. `fps_state.lagging` turns true,
+  `current_fps` / `achieved_fps` report the rate it really runs at (the last
+  ~30-frame window), and the loop task pushes an unsolicited `fps_state`
+  whenever `lagging` changes (advisory only). (Before this, the player parked
+  the effect and pushed `fps_state{aborted=true}`; `aborted` is now always false.)
 - **Consistent FPS.** The render task sleeps `period − work` (not a fixed delay
   *after* the work), so successive frame starts land one period apart regardless
-  of how long a frame took — the whole point being a *consistent* rate. It never
-  sleeps less than `max(1 ms, work / 19)`: the render task outranks the network
-  task, so even a frame that overran its period cedes ≥ 5% of the wall clock to
-  WiFi/TLS while the window decides.
+  of how long a frame took — the whole point being a *consistent* rate. A frame
+  that overran its period still sleeps `≥ max(4 ms, 25% of its cost)`: the render
+  task outranks the network task, so a lagging effect is duty-cycle bounded
+  (≤ 80% CPU) and WiFi/TLS, the sensors and control stay responsive.
 - **Decks + crossfade.** The cost fed to the controller is the whole frame —
   `lm_fx_update` / `lm_fx_shade` drive *every* rendering deck and blend them by
   the crossfade — so a two-deck show is costed as one frame. The search restarts
   (default or pinned rung) whenever what renders changes: a load, clear or
-  (de)activation on either deck. An abort parks every rendering deck; they stay
-  loaded and `set_effect` resumes them. (Deck A's persisted selection is left as
-  is, so a reboot resumes the effect and the autoscaler parks it again within a
-  couple of seconds.)
+  (de)activation on either deck. A lagging two-deck show keeps both decks
+  rendering.
 - **App override.** `set_fps{target_fps}` pins an exact rate (snapped to the
   ladder) and stops autoscaling; `target_fps = 0` returns to auto. A pinned rate
-  the device can't hold aborts rather than silently dropping — the user asked
-  for a rate this effect can't achieve, so we say so instead of ignoring it.
-- **Hold (`no_abort`).** `set_fps{no_abort: true}` keeps the rung instead of
-  parking (benchmark/profiling clients: the HITL `fx_bench` pins 30 fps + hold so
-  its up-to-~130 ms/frame calibration programs are measured, at the golden's
-  historical cadence). Pin and hold are runtime-only and survive effect reloads.
+  the device can't hold lags like the floor does, and `fps_state` says so
+  (`lagging`, `achieved_fps`) instead of silently dropping. The pin is
+  runtime-only and survives effect reloads.
+- **`no_abort` (deprecated).** `set_fps{no_abort}` used to hold the rung instead
+  of parking (the HITL `fx_bench` still sends it with its 30-fps pin, harmless).
+  Nothing parks any more, so it is ignored, and `fps_state.no_abort` is always
+  false.
 
 The controller is measured **every** effect frame regardless of the perf tier
 (the cost is the same two CSR reads the profiler already deemed negligible); the
 perf *ring* is still only filled while a perf mode is active. Firmware with the
 autoscaler advertises the `fps` feature. `set_fps` replies
-`fps_state{target_fps, current_fps, min_fps, max_fps, auto, aborted, no_abort}`;
-the same message is pushed unsolicited on an abort over the open session (the
-same push path as the perf report), and the web app toasts it wherever the user
-is. The agent's `measure_effect` reports `current_fps` and calls an effect "over
-budget" only when the player parked it or its mean cost can't hold the 25-fps
-floor (an overrun above the floor is just the autoscaler stepping down), and its
-uniform ramps never stream faster than the player's reported framerate.
+`fps_state{target_fps, current_fps, min_fps, max_fps, auto, lagging,
+achieved_fps}` (plus the deprecated, always-false `aborted` / `no_abort`); the
+same message is pushed unsolicited when `lagging` changes over the open session
+(the same push path as the perf report), and the web app mentions it once, as a
+gentle notice, wherever the user is. The agent's `measure_effect` reports
+`current_fps` (and `lagging` / `achieved_fps`) and calls an effect "over budget"
+— an advisory: it lags, still playing — only when the player reports it lagging
+or its mean cost can't hold the 25-fps floor (an overrun above the floor is just
+the autoscaler stepping down), and its uniform ramps never stream faster than
+the player's reported framerate.
 
 ### Cheap sampling
 
