@@ -41,7 +41,12 @@ module spi_ws281x_tb;
       .sck(sck),
       .mosi(mosi),
       .ws(ws),
-      .frame_pulse(frame_pulse)
+      .frame_pulse(frame_pulse),
+      .underrun(),
+      .underruns(),
+      .min_fill(),
+      .port_underruns(),
+      .max_byte_gap()
   );
 
 `ifdef TRACE

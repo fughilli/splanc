@@ -50,7 +50,11 @@ module ws281x_stream_tb;
       .stream_valid(stream_valid),
       .stream_active(stream_active),
       .ws(ws),
-      .frame_pulse(frame_pulse)
+      .frame_pulse(frame_pulse),
+      .underrun(),
+      .underruns(),
+      .min_fill(),
+      .port_underruns()
   );
 
 `ifdef TRACE

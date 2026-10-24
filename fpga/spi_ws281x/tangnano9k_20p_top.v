@@ -40,7 +40,7 @@ module tangnano9k_20p_top #(
     input  wire       ss,     // SPI chip select (active low)
     input  wire       sck,    // SPI clock
     input  wire       mosi,   // SPI data in
-    output wire [5:0] led     // led[0] = XOR of all WS outputs; led[5:1] activity
+    output wire [5:0] led     // led[0] = XOR fold; led[1] = underrun flag; led[5:2] activity
 );
   localparam integer FBDIV = CLK_MHZ / 27 - 1;  // 54 -> 1 (x2), 81 -> 2 (x3)
   wire clk;
@@ -94,13 +94,17 @@ module tangnano9k_20p_top #(
 
   wire [NUM_WS-1:0] ws;
   wire              frame_pulse;
+  wire              underrun;
+  wire [15:0]       underruns, min_fill, max_byte_gap;
+  wire [8*NUM_WS-1:0] port_underruns;
 
   spi_ws281x #(
       .MAX_PORTS (NUM_WS),
       .CLK_MHZ   (CLK_MHZ),
       .RESET_NS  (80000),
       .MAX_LEDS  (MAX_LEDS),
-      .FIFO_DEPTH(FIFO_DEPTH)
+      .FIFO_DEPTH(FIFO_DEPTH),
+      .STATS     (1)
   ) u_core (
       .clk (clk),
       .rst (rst),
@@ -108,14 +112,31 @@ module tangnano9k_20p_top #(
       .sck (sck),
       .mosi(mosi),
       .ws  (ws),
-      .frame_pulse(frame_pulse)
+      .frame_pulse(frame_pulse),
+      .underrun(underrun),
+      .underruns(underruns),
+      .min_fill(min_fill),
+      .port_underruns(port_underruns),
+      .max_byte_gap(max_byte_gap)
   );
 
-  // Output termination: one registered XOR of every port -> a real pin.
+  // Output termination: one registered XOR of every port (and every STATS
+  // counter, so they're kept and their cost is real) -> a real pin.
   reg ws_fold = 1'b0;
-  always @(posedge clk) ws_fold <= ^ws;
+  always @(posedge clk) ws_fold <= ^ws ^ ^underruns ^ ^min_fill ^ ^max_byte_gap ^ ^port_underruns;
 
-  // Activity animation on led[5:1] (as in tangnano9k_top, 5 LEDs).
+  // Underrun health flag on led[1]: any FIFO underrun stretches to >= ~100 ms,
+  // visible to the logic analyzer at any sample rate (and to a human).
+  localparam integer STRETCH = CLK_MHZ * 100000;  // 100 ms of core clocks
+  reg [$clog2(STRETCH+1)-1:0] ur_cnt = '0;
+  always @(posedge clk) begin
+    if (rst) ur_cnt <= '0;
+    else if (underrun) ur_cnt <= $clog2(STRETCH+1)'(STRETCH);
+    else if (ur_cnt != 0) ur_cnt <= ur_cnt - 1'b1;
+  end
+  wire ur_flag = (ur_cnt != 0);
+
+  // Activity animation on led[5:2] (4 LEDs).
   reg [7:0] div_cnt = 8'd0;
   reg [2:0] pos = 3'd0;
   always @(posedge clk) begin
@@ -125,11 +146,11 @@ module tangnano9k_20p_top #(
     end else if (frame_pulse) begin
       if (div_cnt == 8'd3) begin
         div_cnt <= 8'd0;
-        pos     <= (pos == 3'd4) ? 3'd0 : pos + 3'd1;
+        pos     <= (pos == 3'd3) ? 3'd0 : pos + 3'd1;
       end else begin
         div_cnt <= div_cnt + 8'd1;
       end
     end
   end
-  assign led = {~(5'b00001 << pos), ~ws_fold};  // active low
+  assign led = {~(4'b0001 << pos[1:0]), ~ur_flag, ~ws_fold};  // active low
 endmodule

@@ -80,6 +80,16 @@ verilog_sim(
     deps = [":spi_ws281x_lib"],
 )
 
+# 120 fps cadence: 20 ports x 270 LEDs (80 us latch) and x 268 (300 us latch,
+# led_type 1), a sub-PREFILL frame, STATS, and the too-early-frame failure mode.
+verilog_sim(
+    name = "spi_ws281x_120fps_sim",
+    size = "medium",
+    tb = "spi_ws281x_120fps_tb.v",
+    top = "spi_ws281x_120fps_tb",
+    deps = [":spi_ws281x_lib"],
+)
+
 verilog_top(
     name = "tangnano9k_20p_top",
     srcs = ["tangnano9k_20p_top.v"],
