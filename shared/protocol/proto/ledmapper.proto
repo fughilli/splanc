@@ -103,6 +103,11 @@ message CodeParams {
   optional int32 stride_spacing = 10;
   optional int32 anchor_density = 11;
   optional int32 stride_phase = 12;
+  // Group capture (docs/design/multi-fixture-localization.md): this fixture's
+  // LED i transmits code-book id (i + code_offset); led_count above is then the
+  // SHARED code-book size (every fixture in the group derives the same bits /
+  // cycle_frames from it). Unset = 0 (single-fixture capture).
+  optional int32 code_offset = 13;
 }
 
 // One labeled observation of one LED in one frame (§7.4).
@@ -282,6 +287,25 @@ message StartMappingOptions {
   optional int32 stride_spacing = 5;
   optional int32 anchor_density = 6;
   optional int32 stride_phase = 7;
+  // Group capture (docs/design/multi-fixture-localization.md), on players
+  // advertising the "group_capture" feature. Several fixtures flash DISJOINT
+  // id ranges of one shared code book on one shared clock, so a single phone
+  // capture decodes them all at once:
+  //   - code_offset: this fixture's LED i transmits id (i + code_offset);
+  //   - code_space: the shared code-book size (>= code_offset + led_count),
+  //     from which bits / cycle_frames derive (identical across the group);
+  //   - epoch_ms: the pattern epoch in THIS player's clock (the millis() domain
+  //     time_sync_pong reports), so every fixture's frames line up; a past epoch
+  //     just phase-aligns the running pattern.
+  // The pattern keeps running after the client disconnects (stop_mapping, or
+  // stop_after_ms below, ends it).
+  optional int32 code_offset = 8;
+  optional int32 code_space = 9;
+  optional double epoch_ms = 10;
+  // Auto-stop (group capture): the pattern ends by itself this many ms after
+  // start_mapping, so a phone that dies (or loses its socket) mid-capture
+  // doesn't leave fixtures flashing. Unset/<=0 = run until stop_mapping.
+  optional int32 stop_after_ms = 11;
 }
 
 message StartMapping {

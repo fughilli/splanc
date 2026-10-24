@@ -31,7 +31,8 @@ import {
   type QueryMsg,
   type UniformInput,
 } from "../../../web/src/net/liveProtocol";
-import type { UniformValueFlat } from "../../../web/src/net/proto";
+import { profileForMap } from "../../../web/src/capture/captureProfile";
+import { encodeClient, type UniformValueFlat } from "../../../web/src/net/proto";
 import type { Hub, PlayerResult } from "../hub";
 import type { PlayerRecord } from "../registry";
 import { ToolError, type DeviceSession } from "../session";
@@ -664,10 +665,108 @@ export class LiveMux {
         };
       case "identify":
         return { results: await this.each(cs, m, (s, _p, key) => s.asLive(key, () => s.identify())) };
+      case "group_capture":
+        return this.groupCapture(cs, m);
       default:
         throw new Error(`unknown op ${JSON.stringify(m.op)}`);
     }
   }
+
+  /**
+   * Multi-fixture localization through the bridge (docs/design/
+   * multi-fixture-localization.md §4; app side web/src/net/groupCapture.ts).
+   * The bridge already holds every player's one socket, so the app arms the
+   * whole group in one query: the bridge picks a shared epoch on ITS clock (a
+   * little in the past), converts it with a fresh LAN clock sync per player and
+   * starts each player's group pattern on it; the reply carries the hub clock so
+   * the app can express the epoch on its own.
+   */
+  private async groupCapture(cs: ConnState, m: QueryMsg): Promise<{ results?: PerPlayer[]; data?: unknown }> {
+    const action = String(m["action"] ?? "");
+    switch (action) {
+      case "prepare":
+        return {
+          results: await this.each(
+            cs,
+            m,
+            async (s, p) => {
+              const w = s.client.welcome as (Record<string, unknown> & { features?: string[]; codeParams?: { ledCount?: number } }) | null;
+              const bundle = await s.mappingBundle().catch(() => null);
+              // The map's capture profile (#320) — only if it belongs to this map.
+              const profile =
+                (w?.features ?? []).includes("capture_profile") && bundle?.map
+                  ? await s
+                      .run(() => s.client.getCaptureProfile())
+                      .then((p) => profileForMap(p, bundle.map!.mapId), () => null)
+                  : null;
+              return {
+                name: p.name,
+                features: w?.features ?? [],
+                led_count: bundle?.map?.ledCount ?? w?.codeParams?.ledCount ?? 0,
+                map: bundle?.map ?? null,
+                pose: this.hub.pose(p.id) ?? (w?.["pose"] as unknown) ?? null,
+                profile,
+              };
+            },
+            false,
+          ),
+        };
+      case "start": {
+        const plans = (Array.isArray(m["members"]) ? m["members"] : []) as GroupMemberPlan[];
+        if (plans.length === 0) throw new Error("group_capture start needs members");
+        const lead = typeof m["epoch_lead_ms"] === "number" ? (m["epoch_lead_ms"] as number) : 1000;
+        const hubEpoch = Math.round(performance.now() - lead);
+        const results: PerPlayer[] = [];
+        for (const plan of plans) {
+          const [r] = await this.each(cs, { ...m, to: [plan.to] }, async (s) => {
+            const c = await s.syncClock(8);
+            const { ledCount, ...rest } = plan.options;
+            const n = Number(ledCount);
+            const config = { ...rest, epochMs: Math.round(hubEpoch + c.offsetMs) };
+            try {
+              encodeClient({ type: "start_mapping", options: { ledCount: n, ...config } } as never);
+            } catch (e) {
+              throw new ToolError(`this bridge can't encode the group capture (${(e as Error).message}): update it`);
+            }
+            const started = await s.groupCaptureScope(() => s.client.startMapping(n, config));
+            return { code_params: started.codeParams, skew_bound_ms: round1(Math.max(0, c.rttMs) / 2) };
+          });
+          if (r) results.push(r);
+        }
+        return { results, data: { hub_epoch_ms: hubEpoch, hub_now_ms: performance.now() } };
+      }
+      case "stop":
+        return {
+          results: await this.each(cs, m, (s) => s.groupCaptureScope(() => s.client.stopMappingNoSolve()).then(() => ({ stopped: true }))),
+        };
+      case "set_pose": {
+        const poses = (Array.isArray(m["poses"]) ? m["poses"] : []) as { to: string; pose: Record<string, unknown> | null }[];
+        const results: PerPlayer[] = [];
+        for (const e of poses) {
+          const [r] = await this.each(cs, { ...m, to: [e.to] }, async (s, p) => {
+            if (!e.pose) return { stored: false };
+            const pose = {
+              room: String(e.pose["room"] ?? ""),
+              translation: (e.pose["translation"] as [number, number, number]) ?? [0, 0, 0],
+              rotation: (e.pose["rotation"] as [number, number, number, number]) ?? [0, 0, 0, 1],
+              scale: Number(e.pose["scale"] ?? 1) || 1,
+            };
+            this.hub.setPose(p.id, pose);
+            return { stored: true, on_device: await s.setFixturePose(pose) };
+          });
+          if (r) results.push(r);
+        }
+        return { results };
+      }
+      default:
+        throw new Error(`unknown group_capture action ${JSON.stringify(action)}`);
+    }
+  }
+}
+
+export interface GroupMemberPlan {
+  to: string;
+  options: Record<string, number>;
 }
 
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));

@@ -48,6 +48,10 @@ export class FakePlayer {
   crossfadeDelayMs = 0;
   /** The last set_time_base epoch (device ms). */
   timeBase: number | null = null;
+  /** The running mapping pattern (start_mapping options + the epoch it used), or null. */
+  mapping: { options: Record<string, unknown>; epochMs: number } | null = null;
+  /** The last set_fixture_pose pose (null = none / cleared). */
+  pose: Record<string, unknown> | null = null;
   bundle: MappingBundle | null = null;
   manifest: unknown | null = null;
   fwVersion = "1.6.0";
@@ -308,6 +312,36 @@ export class FakePlayer {
       }
       case "set_time_base":
         this.timeBase = Number(m["epochMs"]);
+        return this.reply(ws, this.welcome());
+      case "start_mapping": {
+        // Group capture (firmware group_capture): code book of codeSpace ids, LED
+        // i transmits i + codeOffset, on the requested epoch (device clock).
+        const o = (m["options"] ?? {}) as Record<string, number>;
+        const space = o["codeSpace"] ?? (o["codeOffset"] ?? 0) + o["ledCount"]!;
+        const epochMs = o["epochMs"] ?? performance.now() + this.clockOffsetMs;
+        this.mapping = { options: o, epochMs };
+        const bits = Math.ceil(Math.log2(space + 1)) + 5;
+        return this.reply(ws, {
+          type: "mapping_started",
+          patternClockEpoch: epochMs,
+          codeParams: {
+            ledCount: space,
+            bits,
+            encoding: "hue",
+            bitPeriodMs: o["bitPeriodMs"] ?? 100,
+            syncPattern: "on_off",
+            cycleFrames: 2 + Math.ceil(bits / ((o["symbols"] ?? 2) === 4 ? 2 : 1)),
+            fec: "secded",
+            symbols: o["symbols"] ?? 2,
+            ...(o["codeOffset"] ? { codeOffset: o["codeOffset"] } : {}),
+          },
+        });
+      }
+      case "stop_mapping":
+        this.mapping = null;
+        return this.reply(ws, { type: "mapping_stopped", detections: 0, imuSamples: 0 });
+      case "set_fixture_pose":
+        this.pose = (m["pose"] as Record<string, unknown>) ?? null;
         return this.reply(ws, this.welcome());
       case "submit_effect":
         return this.reply(

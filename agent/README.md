@@ -197,7 +197,11 @@ pass `--host <ip>` (discovery is mDNS + a local /24 sweep).
 Deliberately absent: `set_playback` / `splanc://playback` (native pulse/flood
 was removed; every show is an FX effect), and anything that sends
 SetHardwareConfig, SetLedCount, SetColorCorrection, the mapping arms or SetJit —
-`session.ts` refuses those at the wire (`FORBIDDEN_TYPES`, pinned by a test).
+`session.ts` refuses those at the wire (`FORBIDDEN_TYPES`, pinned by a test). The one
+scoped exemption: the paired app's room localization through the bridge (live
+`group_capture` query) may send `start_mapping` / `stop_mapping` for a group
+capture, inside `DeviceSession.groupCaptureScope`; no MCP tool or CLI command
+enters that scope.
 
 ## Decisions on the spec's open questions
 
@@ -225,6 +229,11 @@ SetHardwareConfig, SetLedCount, SetColorCorrection, the mapping arms or SetJit �
   otherwise). Clock offsets come from TimeSyncPing/Pong; SetTimeBase likewise needs
   `time_base`, else the result says "time base unsupported" and the fan-out still
   happens.
+- **Poses from the app.** A pose the device itself reports (welcome.pose, e.g. from
+  the app's room localization — docs/design/multi-fixture-localization.md) is used
+  when the hub has none of its own, so `splanc://room/…` and `plot_fixture` see it.
+  The bridge's live `group_capture` query (prepare / start / stop / set_pose) is how
+  the app arms a group capture through the bridge.
 - **No LAN auth.** The player has none and the bridge doesn't invent one; anyone
   on the LAN can drive it. Documented in the skill too.
 - **Stream rate.** Ramps stream uncommitted at `--stream-hz` (default 20, capped

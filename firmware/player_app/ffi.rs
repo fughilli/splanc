@@ -2116,6 +2116,7 @@ pub const FEATURES: &[&str] =
         "imu_extrinsic",
         "capture_profile",
         "ota",
+        "group_capture",
     ];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
@@ -3367,6 +3368,14 @@ pub unsafe extern "C" fn lm_pattern_timing(
         }
         None => false,
     }
+}
+
+/// End the active mapping pattern if its auto-stop deadline (start_mapping's
+/// stop_after_ms) has passed; the frame loop calls this, under the player
+/// lock, before lm_pattern_timing. True when it just stopped.
+#[no_mangle]
+pub unsafe extern "C" fn lm_pattern_expire(now_ms: i64) -> bool {
+    player().expire_pattern(now_ms)
 }
 
 /// Record that the frame loop just pushed mapping-pattern frame `seq` (the

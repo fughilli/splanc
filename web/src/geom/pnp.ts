@@ -110,8 +110,9 @@ function expSO3(w: Vec3): Mat3 {
  * coords (a 180° rotation about X); its own inverse. */
 const M_FLIP: Mat3 = [1, 0, 0, 0, -1, 0, 0, 0, -1];
 
-/** pinhole.ts pose -> standard +Z-forward extrinsics (Rc', t'): X' = Rc' Xw + t'. */
-function poseToStd(pose: Pose): { R: Mat3; t: Vec3 } {
+/** pinhole.ts pose -> standard +Z-forward extrinsics (Rc', t'): X' = Rc' Xw + t'.
+ * Exported for the multi-fixture localizer (geom/multiFixture.ts). */
+export function poseToStd(pose: Pose): { R: Mat3; t: Vec3 } {
   const Rc2w = quatToRotMat(pose.q); // camera-to-world
   const Rc = matT(Rc2w); // world-to-camera (our convention)
   const t: Vec3 = [
@@ -123,7 +124,7 @@ function poseToStd(pose: Pose): { R: Mat3; t: Vec3 } {
 }
 
 /** Standard +Z extrinsics -> pinhole.ts pose. */
-function stdToPose(R: Mat3, t: Vec3): Pose {
+export function stdToPose(R: Mat3, t: Vec3): Pose {
   const Rc = matMul(M_FLIP, R); // undo the flip: world-to-camera (our convention)
   const tt = matVec(M_FLIP, t);
   const Rc2w = matT(Rc);

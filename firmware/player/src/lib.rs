@@ -30,6 +30,8 @@ use pv::client_message::Msg as CMsg;
 
 /// design doc §12 default: frame period >= ~3 camera frame intervals.
 pub const DEFAULT_BIT_PERIOD_MS: f64 = 100.0;
+/// A group capture's epoch must be within this of the player clock (ms).
+const MAX_EPOCH_SKEW_MS: f64 = 600_000.0;
 /// Robust fallback alphabet; the client negotiates 4 when its SNR allows.
 pub const DEFAULT_SYMBOLS: u8 = 2;
 /// Output channels a player may drive (the C6 has plenty of RMT channels).
@@ -136,6 +138,52 @@ struct ActiveCapture {
     stride_spacing: u32,
     anchor_density: u32,
     stride_phase: u32,
+    /// PHYSICAL LEDs driven (the strip). Equals `spec.led_count` except in a
+    /// group capture, where `spec` is derived from the group's shared code space.
+    led_count: u32,
+    /// Group capture: LED i transmits code-book id `i + code_offset` (0 = solo).
+    code_offset: u32,
+    /// Auto-stop deadline (player-clock ms; start_mapping + stop_after_ms), or
+    /// None = run until stop_mapping. Checked by the frame loop (expire_pattern).
+    stop_at_ms: Option<i64>,
+}
+
+/// Upper bound on a group capture's shared code space (ids): keeps the codeword
+/// well inside u32 and the cycle short (2^12 ids = 13 data bits + SEC-DED).
+pub const MAX_CODE_SPACE: u32 = 4096;
+
+/// Group-capture code layout from the wire (feature "group_capture"):
+/// `(code_offset, code_space)`, validated against the physical LED count.
+fn parse_code_layout(
+    led_count: u32,
+    offset: Option<i32>,
+    space: Option<i32>,
+) -> Result<(u32, u32), pb::ServerMessage> {
+    let offset = offset.unwrap_or(0);
+    if offset < 0 {
+        return Err(error("bad_message", "codeOffset must be >= 0"));
+    }
+    let offset = offset as u32;
+    let need = offset.saturating_add(led_count);
+    let space = match space {
+        None => need,
+        Some(v) if v < 1 => return Err(error("bad_message", "codeSpace must be >= 1")),
+        Some(v) => v as u32,
+    };
+    if space < need {
+        return Err(error("bad_message", "codeSpace must be >= codeOffset + ledCount"));
+    }
+    if space > MAX_CODE_SPACE {
+        return Err(error("bad_message", "codeSpace too large"));
+    }
+    Ok((offset, space))
+}
+
+/// Echo the group layout onto a CodeParams reply (only for a group capture).
+fn set_group_params(cp: &mut pb::CodeParams, active: &ActiveCapture) {
+    if active.code_offset > 0 {
+        cp.set_code_offset(active.code_offset as i32);
+    }
 }
 
 impl ActiveCapture {
@@ -673,23 +721,54 @@ impl Player {
             Ok(v) => v,
             Err(e) => return e,
         };
-        let spec = CodeSpec::derive(led_count as u32, symbols, true);
+        let (code_offset, code_space) =
+            match parse_code_layout(led_count as u32, options.code_offset(), options.code_space()) {
+                Ok(v) => v,
+                Err(e) => return e,
+            };
+        // Group capture: a shared epoch in this player's clock aligns every
+        // fixture's frames. A past epoch just phase-aligns the running pattern;
+        // one far from now is a client clock bug.
+        // (no_std: no f64::round / abs — integer arithmetic after a range check.)
+        let epoch_ms = match options.epoch_ms() {
+            None => now_ms,
+            Some(e) => {
+                let d = e - now_ms as f64;
+                if !e.is_finite() || !(-MAX_EPOCH_SKEW_MS..=MAX_EPOCH_SKEW_MS).contains(&d) {
+                    return error("bad_message", "epochMs too far from the player clock");
+                }
+                if e >= 0.0 {
+                    (e + 0.5) as i64
+                } else {
+                    (e - 0.5) as i64
+                }
+            }
+        };
+        let stop_at_ms = match options.stop_after_ms() {
+            Some(ms) if ms > 0 => Some(now_ms + ms as i64),
+            _ => None,
+        };
+        let spec = CodeSpec::derive(code_space, symbols, true);
         let active = ActiveCapture {
-            epoch_ms: now_ms,
+            epoch_ms,
             spec,
             bit_period_us: (bit_period_ms * 1000.0 + 0.5) as u32,
             brightness_q8: brightness_to_q8(brightness),
             stride_spacing,
             anchor_density,
             stride_phase,
+            led_count: led_count as u32,
+            code_offset,
+            stop_at_ms,
         };
         self.active = Some(active);
         let mut started = pb::MappingStarted {
-            r#pattern_clock_epoch: now_ms as f64,
+            r#pattern_clock_epoch: epoch_ms as f64,
             ..Default::default()
         };
         let mut cp = code_params_msg(&spec, active.bit_period_ms(), active.brightness());
         set_stride_params(&mut cp, &active);
+        set_group_params(&mut cp, &active);
         started.set_code_params(cp);
         reply(SMsg::MappingStarted(started))
     }
@@ -701,7 +780,7 @@ impl Player {
         let options = m.options();
         let led_count = options
             .and_then(|o| o.led_count())
-            .unwrap_or(active.spec.led_count as i32);
+            .unwrap_or(active.led_count as i32);
         if led_count < 1 {
             return error("bad_message", "ledCount must be >= 1");
         }
@@ -737,7 +816,13 @@ impl Player {
             Ok(v) => v,
             Err(e) => return e,
         };
-        let spec = CodeSpec::derive(led_count as u32, symbols, true);
+        // A group capture keeps its code layout (the shared space grows only if
+        // this fixture's strip outgrew it).
+        let code_space = (active.spec.led_count).max(active.code_offset + led_count as u32);
+        if code_space > MAX_CODE_SPACE {
+            return error("bad_message", "codeSpace too large");
+        }
+        let spec = CodeSpec::derive(code_space, symbols, true);
         self.active = Some(ActiveCapture {
             epoch_ms: now_ms,
             spec,
@@ -746,6 +831,10 @@ impl Player {
             stride_spacing,
             anchor_density,
             stride_phase,
+            led_count: led_count as u32,
+            code_offset: active.code_offset,
+            // A renegotiation keeps the original auto-stop deadline.
+            stop_at_ms: active.stop_at_ms,
         });
         self.pattern_state()
     }
@@ -777,6 +866,7 @@ impl Player {
                 state.set_pattern_clock_epoch(active.epoch_ms as f64);
                 let mut cp = code_params_msg(&active.spec, active.bit_period_ms(), active.brightness());
                 set_stride_params(&mut cp, &active);
+                set_group_params(&mut cp, &active);
                 state.set_code_params(cp);
             }
             None => {
@@ -1511,7 +1601,10 @@ impl Player {
         {
             return Some((0, 0, 0));
         }
-        let (r, g, b) = color_for_frame(led, frame_index, &active.spec);
+        if led >= active.led_count {
+            return Some((0, 0, 0));
+        }
+        let (r, g, b) = color_for_frame(led + active.code_offset, frame_index, &active.spec);
         // Integer Q8 scale (v * q8 / 256, rounded) — no f64 in the per-LED,
         // per-frame hot path. q8 == 256 is exact identity.
         let q8 = active.brightness_q8 as u32;
@@ -1571,6 +1664,18 @@ impl Player {
         self.frame_log.push(seq, t_us);
     }
 
+    /// End the active capture if its auto-stop deadline (stop_after_ms) has
+    /// passed. Called by the frame loop each pass; true when it just stopped.
+    pub fn expire_pattern(&mut self, now_ms: i64) -> bool {
+        match self.active {
+            Some(ActiveCapture { stop_at_ms: Some(t), .. }) if now_ms >= t => {
+                self.active = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Pattern clock epoch of the active capture, if any (integer ms).
     pub fn pattern_epoch_ms(&self) -> Option<i64> {
         self.active.as_ref().map(|a| a.epoch_ms)
@@ -1585,7 +1690,7 @@ impl Player {
     pub fn pattern_timing(&self) -> Option<(i64, u32, u32, u32)> {
         self.active
             .as_ref()
-            .map(|a| (a.epoch_ms, a.bit_period_us, a.spec.cycle_frames, a.spec.led_count))
+            .map(|a| (a.epoch_ms, a.bit_period_us, a.spec.cycle_frames, a.led_count))
     }
 
     /// The persisted strip length for `channel` (set_led_count).

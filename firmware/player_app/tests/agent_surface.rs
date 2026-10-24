@@ -169,6 +169,7 @@ fn the_agent_surface() {
     let mf: serde_json::Value = serde_json::from_slice(&buf[..n as usize]).unwrap();
     assert_eq!(mf["tls"], serde_json::json!({"cert_sha256": sha, "state": "ready", "persisted": true}));
     assert!(FEATURES.contains(&"tls_info"));
+    assert!(FEATURES.contains(&"group_capture"));
 
     // mDNS: the service carries the player's live identity.
     let ip = [192u8, 168, 4, 23];

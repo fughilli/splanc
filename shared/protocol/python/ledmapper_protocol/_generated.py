@@ -90,6 +90,8 @@ class CodeParams(_StrictModel):
     strideSpacing: Union[int, None] = Field(default=None, ge=0)
     anchorDensity: Union[int, None] = Field(default=None, ge=0)
     stridePhase: Union[int, None] = Field(default=None, ge=0)
+    # Group capture: LED i transmits id (i + codeOffset); None = 0.
+    codeOffset: Union[int, None] = Field(default=None, ge=0)
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +218,11 @@ class StartMappingOptions(_StrictModel):
     strideSpacing: Union[int, None] = Field(default=None, ge=0)
     anchorDensity: Union[int, None] = Field(default=None, ge=0)
     stridePhase: Union[int, None] = Field(default=None, ge=0)
+    # Group capture (feature group_capture; see CodeParams.codeOffset).
+    codeOffset: Union[int, None] = Field(default=None, ge=0)
+    codeSpace: Union[int, None] = Field(default=None, ge=1)
+    epochMs: Union[float, None] = None
+    stopAfterMs: Union[int, None] = None
 
 
 class StartMappingMessage(_StrictModel):
