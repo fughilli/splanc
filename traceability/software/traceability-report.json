@@ -18,7 +18,7 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 2105,
+    "test_cases": 2109,
     "gaps": 35
   },
   "levels": [
@@ -1912,6 +1912,30 @@
       "description": "The mapping workflow shall tolerate larger installations through batching, scale-aware upload behavior, and recovery-oriented handling of reconstruction interruptions.",
       "evidence": [
         {
+          "name": "pi.hitl.tests.test_map_upload::test_bulk_verdict_flags_a_silent_device",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_map_upload::test_bulk_verdict_flags_every_reply_needing_a_retransmit",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_map_upload::test_bulk_verdict_flags_short_and_corrupt_readbacks",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_map_upload::test_bulk_verdict_passes_a_healthy_run",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
           "name": "pi.hitl.tests.test_map_upload::test_needs_chunking_threshold",
           "status": "passed",
           "level": "simulation",
@@ -2138,7 +2162,7 @@
           ],
           "relation": "verifies",
           "path": "pi/hitl/tests/test_map_upload.py",
-          "line": 18
+          "line": 20
         },
         {
           "ids": [
@@ -5043,6 +5067,30 @@
       "category": "risk-control",
       "evidence": [
         {
+          "name": "pi.hitl.tests.test_map_upload::test_bulk_verdict_flags_a_silent_device",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_map_upload::test_bulk_verdict_flags_every_reply_needing_a_retransmit",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_map_upload::test_bulk_verdict_flags_short_and_corrupt_readbacks",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_map_upload::test_bulk_verdict_passes_a_healthy_run",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
           "name": "pi.hitl.tests.test_map_upload::test_needs_chunking_threshold",
           "status": "passed",
           "level": "simulation",
@@ -5343,7 +5391,7 @@
           ],
           "relation": "verifies",
           "path": "pi/hitl/tests/test_map_upload.py",
-          "line": 18
+          "line": 20
         },
         {
           "ids": [
