@@ -255,15 +255,15 @@ validated in sim (#370). On hardware, the logic analyzer covers 4 channels; the
 - VM: grows linearly at 0.33–5.3 µs/LED on one A53 core. At 20×1024 that is
   **6.8–108 ms**.
 
-| layout | wire ms | GPU pipelined ms | VM 1-core ms (solid … plasma; noise) | VM 4-core ms (*est.* ÷3.5) | bottleneck, GPU | bottleneck, VM 1-core |
+| layout | wire ms | GPU pipelined ms | VM 1-core ms (solid … plasma; noise) | VM 4-core ms (solid … plasma; noise) | bottleneck, GPU | bottleneck, VM 1-core |
 |---|---:|---:|---|---|---|---|
-| 1×500 | 15.0 | 0.29 | 0.16 … 1.25; 2.6 | ≤ 0.8 | wire | wire |
-| 1×2048 | 61.3 | 0.97 | 0.66 … 5.1; 10.8 | ≤ 3.1 | wire | wire |
-| 4×550 (today) | 16.5 | 0.62 | 0.70 … 5.6; 11.6 | ≤ 3.3 | wire | wire |
-| 4×1024 | 30.7 | 0.87 | 1.3 … 10.3; 21.7 | ≤ 6.2 | wire | wire |
-| 8×1024 | 30.7 | 1.5 | 2.7 … 20.7; 43.4 | ≤ 12.4 | wire | wire, except noise-class (**VM**) |
-| 16×1024 | 30.7 | 2.8 | 5.4 … 41.4; 86.3 | ≤ 24.7 | wire | **VM** for plasma and noise (cylinder at the limit) |
-| 20×1024 | 30.7 | 3.4 | 6.8 … 51.9; 108 | ≤ 30.9 | wire | **VM** for all but solid/sweep (gradient/imu at the limit) |
+| 1×500 | 15.0 | 0.29 | 0.16 … 1.25; 2.6 | *≤ 1 (est.)* | wire | wire |
+| 1×2048 | 61.3 | 0.97 | 0.66 … 5.1; 10.8 | *≤ 4 (est.)* | wire | wire |
+| 4×550 (today) | 16.5 | 0.62 | 0.70 … 5.6; 11.6 | *≤ 4 (est.)* | wire | wire |
+| 4×1024 | 30.7 | 0.87 | 1.3 … 10.3; 21.7 | **1.2 … 3.0; 7.5** (1.5–3.8×) | wire | wire |
+| 8×1024 | 30.7 | 1.5 | 2.7 … 20.7; 43.4 | *≤ 12 (est.)* | wire | wire, except noise-class (**VM**) |
+| 16×1024 | 30.7 | 2.8 | 5.4 … 41.4; 86.3 | *≤ 23 (est.)* | wire | **VM** for plasma and noise (cylinder at the limit) |
+| 20×1024 | 30.7 | 3.4 | 6.8 … 51.9; 108 | **2.2 … 13.3; 27.1** (3.1–3.97×) | wire | **VM** for all but solid/sweep (gradient/imu at the limit) |
 
 **Where the bottleneck sits.**
 - **GPU:** the wire, at every scale. Render + readback uses ≤ 11% of the
@@ -272,10 +272,11 @@ validated in sim (#370). On hardware, the logic analyzer covers 4 channels; the
 - **VM on one core:** fine through 4×1024. From 8×1024 the heavier effects become
   the bottleneck. At 20×1024 every non-trivial effect misses the 32.6 fps ceiling:
   cylinder 37.5 ms, pulses 33.3, plasma 51.9, noise 108.
-- **VM on four cores (*estimate*):** this would fit everything measured under the
-  wire except noise (~31 ms, borderline), at the cost of all four cores. The
-  per-thread VM bench is in the payload (`--vm-threads 1,4`); host scaling
-  measured 3.4–3.7× on 4 threads.
+- **VM on four cores (measured, `--vm-threads 1,4`):** at 20×1024 *every*
+  measured effect fits under the wire: plasma 13.3 ms, noise 27.1 ms. 4 threads
+  are 3.1–3.97× faster than 1. But it takes all four A53 cores. At 4×1024 the
+  gain is only 1.5–3.8×, because the fixed per-frame cost dominates small
+  frames. The 8×1024 and 16×1024 rows are interpolated.
 
 ### MAX image changes this needs (proposals)
 
@@ -363,14 +364,22 @@ cross-platform bit-exactness on real hardware.
   both far under the 16.5 ms wire. **At today's scale the GPU isn't needed; at
   MAX scale it is the only Pi 3 path that keeps non-trivial effects at the wire
   ceiling.**
-- **VM threading:** `fxvm_bench` (and today's player) runs the VM on **one** core.
-  A 4-thread split (now `fxvm_bench --threads`; LEDs are independent and
-  update/prepare are per-frame and tiny) measured 3.4–3.7× on the host. On the
-  Pi 3 I *estimate* ~3.5×, which needs confirming with `--vm-threads 1,4`: plasma
-  ≈ 15 ms and noise ≈ 31 ms at 20×1024. That uses all four cores, which the player,
-  networking and the Pi 3B+'s thermal throttle share. The GPU path leaves the CPU
-  free: render + readback mostly waits on the GPU, though CPU time on that path
-  was *not* measured.
+- **VM threading (measured, run 2).** `fxvm_bench` and today's player run the VM
+  on **one** core. With `--threads 4` (LEDs split across lockstepped workers,
+  golden-checked bit-exact) at 20×1024:
+
+  | | plasma | noise | cylinder | pulses | sweep | solid |
+  |---|---:|---:|---:|---:|---:|---:|
+  | 1 thread | 52.7 | 107.3 | 36.6 | 33.3 | 19.6 | 6.9 |
+  | 4 threads | **13.3** | **27.1** | 9.3 | 8.6 | 5.1 | 2.2 |
+  | GPU pipelined | 3.5 | — | 3.4 | — | 3.4 | 3.2 |
+
+  - So a **4-core VM keeps every measured effect, hash/noise included, under
+    the 30.7 ms wire at 20×1024.** Noise has the least margin, at 27 ms.
+  - It costs **all four cores** of a Pi 3 that also runs the player, networking
+    and SPI, under the 3B+'s thermal throttle.
+  - The GPU does the float effects in about 3.4 ms with the cores free. CPU time
+    on the GPU path was *not* measured; it is mostly a wait on the GPU.
 - **Pi 4/5 (V3D compute) is not measured here.** Expect the same flat per-LED
   cost at a fraction of vc4's, plus exact integer ops, so hash effects run there
   too.
@@ -624,8 +633,8 @@ of the GPU result) or `emit_glsl` (ES 1.00 / 3.10 → SPIR-V via glslang).
 The operator ran it on `pi-ledmapper-2` through an SSH tunnel over the
 reservation (`Reservation.forward(addr, 22)`; the rig container has no `tar`).
 The agent never handled the Pi key. **Results are in §5**: 100 JSON lines, all
-`ok`, VC4 renderer, GPU error ≤ 2/255, VM bit-exact. Open: the 4-thread VM run
-(`--vm-threads 1,4`) and the SPI-tap capture on `pi-ledmapper-1` (#369 image).
+`ok`, VC4 renderer, GPU error ≤ 2/255, VM bit-exact. Run 2 measured the 4-thread VM
+(`--vm-threads 1,4`; §5). Open: the SPI-tap capture on `pi-ledmapper-1` (#369 image).
 
 ## 11. Staged plan
 
@@ -634,8 +643,9 @@ The agent never handled the Pi key. **Results are in §5**: 100 JSON lines, all
 2. **Pi 3 GLES2 microbenchmark (HITL/Pi): done** (§5). 20×1024 in 3.2–3.5 ms
    for every lowered kernel, ≤ 2/255. Follow-ups: the 4-thread VM run and the
    SPI-tap capture.
-2b. **Multi-thread the VM in the player** (all effects, no Mesa): ~3.5× on a Pi 3
-   (*est.*). This is the cheapest MAX-scale win and comes before the GPU tier.
+2b. **Multi-thread the VM in the player** (all effects, no Mesa): measured
+   3.1–3.97× on a Pi 3 at 20×1024, which fits everything under the wire. This is
+   the cheapest MAX-scale win and comes before the GPU tier.
 3. **Pi 4/5 compute path:** `naga` SPIR-V, V3D compute over an SSBO, highp,
    class-1 exact; golden tolerance tests per tier.
 4. **Player integration:** glibc GPU helper process (musl player stays), a
@@ -658,28 +668,22 @@ The agent never handled the Pi key. **Results are in §5**: 100 JSON lines, all
    6/255 (Pi 3 mediump)** as the golden-test bound? And for class-3
    transcendental-heavy effects: **ship the VM's LUT sine in-shader** (makes the
    common case exact, ~1 KB) or **keep those effects on the VM**?
-2. **Pi 3 GLES2: recommendation: ship it, as the MAX-scale tier, after a
-   multi-threaded VM.** Data from §5:
-   - **It works on the stock image.** vc4 KMS is already on; it needs only the
-     lean Mesa (~40–60 MB) and a glibc GPU helper beside the static-musl player.
-   - **It is fast and flat:** 3.2–3.5 ms per frame at 20×1024 for every lowered
-     effect, against a single-core VM at 6.8–108 ms. That is 2.1–14.8× on the
-     float effects.
-   - **It is accurate:** ≤ 2/255, bit-exact for float-only effects.
-   - At today's 4×550 the VM already fits (≤ 5.6 ms for float effects, 11.6 for
-     noise, under a 16.5 ms wire), so **the GPU is not needed below ~8×1024.**
-   - At 20×1024 a single-core VM misses the 32.6 fps wire ceiling for every
-     non-trivial effect. A 4-core VM (*est.*) fits but pegs the CPU. The GPU fits
-     with ≥ 89% of the frame to spare and leaves the CPU free.
-   - It can't run the 32 hash effects; those stay on the (multi-threaded) VM, or
-     move to Pi 4/5.
+2. **Pi 3 tiering: recommendation. Multi-thread the VM first. Ship GLES2 as a
+   CPU-offload tier, not as a necessity.** Measured (§5):
+   - A **4-core VM** runs *every* effect, hash/noise included, at 20×1024 under
+     the 32.6 fps wire ceiling (worst: noise 27.1 ms, plasma 13.3 ms). It needs
+     no Mesa and has no conformance question, but it saturates all 4 cores.
+   - **GLES2 on vc4** does the 100/132 float-only effects in 3.2–3.5 ms at
+     20×1024, at ≤ 2/255 (bit-exact for float-only), with the CPU free. It works
+     on the stock image (vc4 KMS is on) with the lean Mesa (~40–60 MB) and a
+     glibc GPU helper.
+   - Today's 4×550 needs neither.
 
-   **Order:** (1) a multi-threaded VM, for all effects at all scales; (2) the Pi 3
-   GLES2 tier for float-only effects at ≥ 8×1024; (3) Pi 4/5 compute, which adds
-   the hash effects.
-
-   **Skip Pi 3 GLES2 only if** MAX on a Pi 3 will never exceed ~4×1024. In that
-   case the VM suffices and Pi 4/5 compute is the better investment.
+   **Order:** (1) **multi-threaded VM** in the player: required, covers
+   everything; (2) **Pi 3 GLES2** for float-only effects at ≥ 8×1024, to free the
+   CPU and leave frame headroom; (3) **Pi 4/5 compute**, which adds the hash
+   effects exactly. Skip (2) if a VM pegging all four cores at MAX scale is
+   acceptable; the 4-core VM is the fallback either way.
 3. **Readback vs direct DPI scan-out** (§4): start with readback (recommended)?
    DPI is a later optimisation that costs GPIO pins and a frame-sync redesign.
 4. **P4 priority** (§9): is the PIE SIMD tier (shortlist #1) the P4 track to fund
