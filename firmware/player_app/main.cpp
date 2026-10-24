@@ -279,8 +279,13 @@ static TaskHandle_t xmit_task_handle = nullptr;
 // Given when a transmit completes (and once at boot); the render task takes it
 // before staging the next frame, so a snapshot never races an in-flight push.
 static SemaphoreHandle_t xmit_done = nullptr;
-// Latest transmit span (cycles), written by the transmit task, read for perf.
-static volatile uint32_t g_show_c = 0;
+// Latest transmit span (wall µs), written by the transmit task: the autoscaler's wire
+// cost and (×160) the perf ring's show cycles. Wall time, not the CPU cycle counter:
+// the counter pauses while the core idles in WFI during the DMA transmit, so it read
+// ~3 ms for a 7.5 ms wire frame when idle but the full 7.5 ms when other work kept the
+// core busy — the pacing then shifted with background load (wifi_cadence: a 77 fps
+// effect ran at 125 fps while PBKDF2 kept the CPU busy).
+static volatile uint32_t g_show_us = 0;
 static volatile bool g_show_timed = false;
 // The staged frame carries, per channel, the ACTIVE strip length (not the whole
 // render buffer): channel 0 drives leds[0..len0), channel 1 leds[len0..len0+len1)
@@ -1480,6 +1485,34 @@ static const uint32_t kStaticPollMs = 100;
 // how long the render task should sleep before the next wake — for the mapping
 // pattern that's the time to the NEXT frame boundary, so frames land on the
 // pattern clock regardless of loop() load.
+// -- Frame cadence telemetry (the "[fx] … ft=" fields; HITL wifi_cadence gate) --
+// Per ~1 s window: the interval between consecutive effect-frame render starts and
+// between consecutive strip transmit (wire-out) starts, in µs, plus the largest
+// effect time step. Written by the render / transmit tasks (single core, plain
+// stores; a torn read of a stat costs one window's accuracy, nothing else), read +
+// cleared by the render task when it prints the [fx] line. Lets a test see a render
+// or wire stall from the device side; the logic analyzer sees the wire itself.
+struct CadenceWin {
+  uint32_t n, min_us, max_us;
+  uint64_t sum_us;
+  void add(uint32_t us) {
+    if (n == 0 || us < min_us) min_us = us;
+    if (us > max_us) max_us = us;
+    sum_us += us;
+    n++;
+  }
+  void clear() { n = min_us = max_us = 0, sum_us = 0; }
+  uint32_t mean() const { return n ? (uint32_t)(sum_us / n) : 0; }
+};
+static CadenceWin g_cad_render, g_cad_wire;
+static int64_t g_wire_last_us = 0;   // last effect-frame transmit start (xmit task)
+static uint32_t g_fx_dt_max_ms = 0;  // largest effect time step this window
+static uint32_t g_fx_delay_min = 0xffffffffu, g_fx_delay_max = 0;  // render sleeps this window
+// Last effect frame's render-start time, 0 when the previous frame wasn't an effect
+// frame (so the next one starts its time base fresh instead of seeing a "gap").
+static uint32_t s_fx_last_ms = 0;
+static int64_t s_fx_frame_start_us = 0;  // this effect frame's render start (pacing)
+
 static uint32_t render_once() {
   static uint32_t last_shown_frame = 0xffffffff;
   static bool was_active = false;
@@ -1620,12 +1653,21 @@ static uint32_t render_once() {
     // cancelled shade keeps that LED's previous colour (no black flash). The frame rate is
     // whatever the autoscaler picks, or as fast as the effect can go (never parked for speed).
     static uint32_t fx_frame = 0;
-    static uint32_t fx_last_ms = 0;
     static float fx_time_s = 0.0f;
+    static int64_t fx_last_us = 0;
     uint32_t now = millis();
-    uint32_t dt_ms = now - fx_last_ms;
-    if (fx_last_ms == 0 || dt_ms > 200) dt_ms = 33;  // fresh entry / long gap
-    fx_last_ms = now;
+    int64_t now_us = esp_timer_get_time();
+    // Effect time follows the wall clock frame to frame — whatever the interval
+    // (a lagging effect, a late frame) — so it never jumps or slips. It used to
+    // substitute 33 ms for any gap over 200 ms, which slowed a < 5 fps effect's
+    // animation and made a stalled frame lose time. Only a fresh entry (the
+    // previous frame wasn't an effect frame) starts with a nominal 33 ms step.
+    uint32_t dt_ms = s_fx_last_ms == 0 ? 33 : now - s_fx_last_ms;
+    if (s_fx_last_ms != 0 && fx_last_us != 0) g_cad_render.add((uint32_t)(now_us - fx_last_us));
+    s_fx_last_ms = now == 0 ? 1 : now;
+    fx_last_us = now_us;
+    s_fx_frame_start_us = now_us;
+    if (dt_ms > g_fx_dt_max_ms) g_fx_dt_max_ms = dt_ms;
     float dt_s = (float)dt_ms / 1000.0f;
     fx_time_s += dt_s;
     // A shared time base (set_time_base, multi-fixture) pins effect time to a
@@ -1645,6 +1687,7 @@ static uint32_t render_once() {
     if (n > g_led_cap) n = g_led_cap;
     if (n > 0) xmit_len = n;  // drive exactly the mapped LEDs
     uint32_t this_seq = fx_frame++;
+    bool ft_due = false;
     // Cycle-counter span around update() (perf-monitoring.md: two CSR reads,
     // negligible against the per-frame float ops).
     uint32_t c_frame_start = esp_cpu_get_cycle_count();
@@ -1685,6 +1728,7 @@ static uint32_t render_once() {
         uint32_t oc = lm_fx_last_update_outcome();
         Log().printf("[fx] t=%.2f frame=%u update=%s shade_cancelled=%u/%u\n",
                      fx_time_s, this_seq, kOc[oc <= 3 ? oc : 0], shade_bad, n);
+        ft_due = true;  // the cadence line goes out after the timed span (below)
       }
     } else {
       // Effect active but no deck loaded (shouldn't happen): hold the last frame.
@@ -1697,6 +1741,25 @@ static uint32_t render_once() {
       perf_update_c = c_update_end - c_update_start;
       perf_shade_c = c_frame_end - c_update_end;   // shade + buffer writeout
       perf_frame_c = c_frame_end - c_frame_start;  // update + shade (excl show)
+      if (ft_due) {
+        // Cadence telemetry (the HITL wifi_cadence gate), OUTSIDE the timed span so
+        // fx_bench's frame cycles are unchanged: render-start and wire-out-start
+        // interval count:min/mean/max (µs) over the window, the largest effect time
+        // step (ms), the live rate, and the render sleeps (ms) the window used.
+        Log().printf("[ft] r%u:%u/%u/%u w%u:%u/%u/%u dt%u fps=%u sl=%u-%u\n",
+                     (unsigned)g_cad_render.n, (unsigned)g_cad_render.min_us,
+                     (unsigned)g_cad_render.mean(), (unsigned)g_cad_render.max_us,
+                     (unsigned)g_cad_wire.n, (unsigned)g_cad_wire.min_us,
+                     (unsigned)g_cad_wire.mean(), (unsigned)g_cad_wire.max_us,
+                     (unsigned)g_fx_dt_max_ms, (unsigned)lm_fps_current_fps(),
+                     (unsigned)(g_fx_delay_min == 0xffffffffu ? 0 : g_fx_delay_min),
+                     (unsigned)g_fx_delay_max);
+        g_fx_delay_min = 0xffffffffu;
+        g_fx_delay_max = 0;
+        g_cad_render.clear();
+        g_cad_wire.clear();
+        g_fx_dt_max_ms = 0;
+      }
       perf_led_count = n;
       fx_frame_rendered = true;
     }
@@ -1725,6 +1788,7 @@ static uint32_t render_once() {
       }
     }
   }
+  if (!fx_frame_rendered) s_fx_last_ms = 0;  // the next effect frame starts fresh
   xSemaphoreGive(player_mutex);
 
   // Hand the frame to the async transmit task (see led_show_async): the render
@@ -1751,7 +1815,7 @@ static uint32_t render_once() {
     // longer channel is the wire time — see led_store_begin.)
     wire_leds = count0 > count1 ? count0 : count1;
     led_show_async(fx_frame_rendered, count0, count1, use_frame_order ? frame_order : nullptr);
-    if (fx_frame_rendered) show_c = g_show_c;
+    if (fx_frame_rendered) show_c = g_show_us * (160000000u / 1000000u);
   }
 
   // An effect frame: feed its cost to the framerate autoscaler (FUG-82) for the
@@ -1763,7 +1827,14 @@ static uint32_t render_once() {
     // update + shade and the crossfade blend (lm_fx_update / lm_fx_shade drive
     // every rendering deck), so a two-deck show is costed as one frame.
     uint32_t period_c = perf_frame_c > show_c ? perf_frame_c : show_c;
-    uint32_t cost_us = period_c / (160000000u / 1000000u);  // 160 cycles/us
+    // The pacing cost is WALL time since this frame started (update + shade + staging,
+    // incl. any wait for the previous transmit and any preemption) or the transmit
+    // span, whichever is longer: sleep = period − that lands the next frame start one
+    // period after this one, whatever else the core did meanwhile. (CPU-cycle spans
+    // miss the waits, so frame starts drifted with background load.)
+    int64_t fx_elapsed_us = esp_timer_get_time() - s_fx_frame_start_us;
+    uint32_t show_us = g_show_us;
+    uint32_t cost_us = fx_elapsed_us > (int64_t)show_us ? (uint32_t)fx_elapsed_us : show_us;
     xSemaphoreTake(player_mutex, portMAX_DELAY);
     // Sleep = target period − work (≥ the controller's minimum yield), so frame
     // starts land one period apart. An effect that can't hold the floor / pinned
@@ -1774,6 +1845,20 @@ static uint32_t render_once() {
     // the latch) caps the ladder at what the wire can carry, and its length
     // lowers the autoscaler floor past 512 LEDs (a steady slower rung).
     next_delay_ms = lm_fps_on_frame(cost_us, wire_leds, perf_led_count);
+    {
+      // The autoscaler picked the rung (and, for a frame that overran its period, the
+      // bounded-duty-cycle sleep). Within the period, sleep to the next frame START:
+      // period − the wall time this frame has already taken. The transmit overlaps the
+      // next frame's render (the next stage waits for it), so it shortens nothing here.
+      uint32_t period_us = lm_fps_budget_cycles() / (160000000u / 1000000u);
+      if (cost_us <= period_us && fx_elapsed_us >= 0 && (uint64_t)fx_elapsed_us < period_us) {
+        uint32_t want_us = period_us - (uint32_t)fx_elapsed_us;
+        next_delay_ms = (want_us + 500) / 1000;
+        if (next_delay_ms < 1) next_delay_ms = 1;
+      }
+    }
+    if (next_delay_ms < g_fx_delay_min) g_fx_delay_min = next_delay_ms;
+    if (next_delay_ms > g_fx_delay_max) g_fx_delay_max = next_delay_ms;
     if (perf_on) {
       // Overrun = missed the LIVE target's budget (cpu_hz / current_fps).
       bool overran = period_c > lm_fps_budget_cycles();
@@ -1864,9 +1949,16 @@ static void xmit_task(void *) {
         Log().printf("[hw] RMT reconfigure to gpio=%d/%d FAILED\n", ng0, ng1);
       }
     }
-    uint32_t c0 = g_show_timed ? esp_cpu_get_cycle_count() : 0;
+    int64_t t0 = g_show_timed ? esp_timer_get_time() : 0;
+    if (g_show_timed) {  // an effect frame: its wire-out start feeds the cadence stats
+      int64_t w = esp_timer_get_time();
+      if (g_wire_last_us != 0) g_cad_wire.add((uint32_t)(w - g_wire_last_us));
+      g_wire_last_us = w;
+    } else {
+      g_wire_last_us = 0;
+    }
     ws2812_send();
-    if (g_show_timed) g_show_c = esp_cpu_get_cycle_count() - c0;
+    if (g_show_timed) g_show_us = (uint32_t)(esp_timer_get_time() - t0);
     xSemaphoreGive(xmit_done);
   }
 }
@@ -2530,6 +2622,92 @@ static void led_store_begin() {
                (unsigned)led_buffer_bytes(cap, dma), (unsigned)heap, (unsigned)g_led_max_heap);
 }
 
+#if defined(LM_NETSTACK)
+// -- Wi-Fi rejoin policy glue (wifi_ffi.rs <-> netstack_transport) ------------------
+static NetstackWifiPolicy to_ns(const LmWifiPolicy &p) {
+  return NetstackWifiPolicy{p.mode, p.scan_cap_s, p.interval_s, p.decay_after_h,
+                            p.sparse_interval_s};
+}
+static uint32_t g_wifi_pol_gen = 0;
+static uint32_t g_wifi_unseen_saved = 0;
+
+static void wifi_policy_begin() {
+  uint8_t rec[18];
+  size_t n = prefs.getBytesLength("wifi_pol") == sizeof rec ? prefs.getBytes("wifi_pol", rec, sizeof rec) : 0;
+  LmWifiPolicy p;
+  lm_wifi_policy_seed(n ? rec : nullptr, n, &p);
+  g_wifi_pol_gen = lm_wifi_policy_gen();
+  NetstackWifiPolicy np = to_ns(p);
+  netstack_set_wifi_policy(&np);
+  g_wifi_unseen_saved = prefs.getUInt("wifi_unseen", 0);
+  netstack_set_unseen_base(g_wifi_unseen_saved);
+  static const char *kModes[] = {"auto", "fixed", "manual", "offline"};
+  Log().printf("[wifi] policy %s (cap %us, every %us, decay %uh -> %us)%s\n",
+               kModes[p.mode <= 3 ? p.mode : 0], (unsigned)p.scan_cap_s, (unsigned)p.interval_s,
+               (unsigned)p.decay_after_h, (unsigned)p.sparse_interval_s,
+               g_wifi_unseen_saved ? " network unseen across reboots" : "");
+}
+
+// Every loop: apply + persist a policy change (protocol, console, or a provision that
+// left offline), forward a rejoin request, publish the live link state + whether an
+// update awaits confirmation, and persist the unseen-network clock (hourly).
+static void poll_wifi_policy() {
+  NetstackWifiPolicy np;
+  if (netstack_take_policy_change(&np)) {
+    LmWifiPolicy p = {np.mode, np.scan_cap_s, np.interval_s, np.decay_after_h,
+                      np.sparse_interval_s};
+    lm_wifi_policy_adopt(&p);
+  }
+  uint32_t gen = lm_wifi_policy_gen();
+  if (gen != g_wifi_pol_gen) {
+    g_wifi_pol_gen = gen;
+    LmWifiPolicy p;
+    uint8_t rec[18];
+    lm_wifi_policy_get(&p, rec);
+    np = to_ns(p);
+    netstack_set_wifi_policy(&np);
+    prefs.putBytes("wifi_pol", rec, sizeof rec);
+    static const char *kModes[] = {"auto", "fixed", "manual", "offline"};
+    Log().printf("[wifi] policy -> %s (saved)\n", kModes[p.mode <= 3 ? p.mode : 0]);
+  }
+  if (lm_wifi_take_rejoin()) netstack_wifi_rejoin();
+  NetstackWifiStatus st;
+  netstack_wifi_status(&st);
+  LmWifiStatus ls;
+  ls.state = st.state;
+  ls.radio_on = st.radio_on;
+  ls.decayed = st.decayed;
+  ls.next_scan_s = st.next_scan_s;
+  ls.scans = st.scans;
+  ls.unseen_s = st.unseen_s;
+  memcpy(ls.ssid, st.ssid, sizeof ls.ssid);
+  lm_wifi_report(&ls);
+  lm_wifi_set_ota_pending(ota_app_pending());
+  // The decay clock: hourly while the network is missing, and back to 0 once seen.
+  uint32_t u = st.unseen_s;
+  if ((u == 0 && g_wifi_unseen_saved != 0) || u >= g_wifi_unseen_saved + 3600u) {
+    g_wifi_unseen_saved = u;
+    prefs.putUInt("wifi_unseen", u);
+  }
+}
+
+// Console lines "WIFI MODE …" / "WIFI REJOIN" / "WIFI STATUS" (the transport handles its
+// own link diagnostics first and passes the rest here).
+void netstack_console_hook(const char *line, size_t len) {
+  if (len < 5) return;
+  char reply[200];
+  int32_t n = lm_wifi_console(reinterpret_cast<const uint8_t *>(line) + 5, len - 5,
+                              reinterpret_cast<uint8_t *>(reply), sizeof reply);
+  if (n < 0) {
+    Serial.printf("[wifi] console: WIFI MODE <auto|fixed|manual|offline> [cap=S] [every=S] "
+                  "[decay=H] [sparse=S] [force] | WIFI REJOIN | WIFI STATUS | WIFI SCAN | "
+                  "WIFI DHCP | WIFI GIVEUP\n");
+    return;
+  }
+  Serial.printf("%s\n", reply);
+}
+#endif
+
 void setup() {
   Serial.begin(115200);
   // Logging is async (serial_log.h): Log() only appends to an in-RAM ring, and
@@ -2761,6 +2939,10 @@ void setup() {
   // network leased): rejoin on our own after a reboot or a firmware update. Before this the
   // netstack kept them in RAM only, so every update/power cut needed a re-provision.
   netstack_restore_credentials(ssid.c_str(), prefs.getString("pass", "").c_str());
+  // The Wi-Fi rejoin policy (wifi_ffi.rs): applied before the transport starts, so an
+  // offline-mode unit never starts its radio. Plus how long the network had already gone
+  // unseen before this boot (the auto policy's decay clock survives power cycles).
+  wifi_policy_begin();
   // Heapless transport: our own MAC/WPA2/CCMP/DHCP/TCP + the per-device TLS server on :443.
   netstack_setup();
 #endif
@@ -2786,14 +2968,16 @@ void setup() {
 #endif
 #if defined(LM_NETSTACK)
   // The heapless netstack is serviced on THIS (Arduino loop) task; the vendor build
-  // uses IDF net tasks. Left at the default priority 1 it's starved by the priority-10
-  // render task under a heavy FULL-perf sweep — the network can't service RX/ACK/
-  // retransmit and the control connection resets mid-measurement. Run it at render's
-  // priority so the two round-robin and the network keeps a fair share; observed as
-  // the most reliable (fewest mid-sweep drops) of the options tried. (The remaining
-  // unmeasurable effect, sweep256, fails on its ~4.6KB fixture-map record — the
-  // netstack's large-record limit — not on scheduling.)
-  vTaskPrioritySet(nullptr, kRenderTaskPrio);
+  // uses IDF net tasks. It runs ONE priority below render: whatever the netstack does
+  // (PBKDF2, the join, EAPOL, TLS, sweeps) can never delay a frame, and render always
+  // leaves it time — every frame sleeps to the next frame start, and a frame that
+  // overran its period sleeps >= max(4 ms, 25% of its cost) (firmware/fps). It used to
+  // run AT render's priority (when a FULL-perf sweep rendered back-to-back with a
+  // 1-tick yield and a priority-1 loop was starved); time-sliced 1:1 with render, its
+  // CPU work stretched frames whenever both were runnable (wifi_cadence on hitl-rig-2:
+  // a heavy effect's frames 184 -> 196 ms during PBKDF2, a light one's 12 -> 15 ms
+  // around 4-way retries). Sensors (5) stay below both.
+  vTaskPrioritySet(nullptr, kRenderTaskPrio - 1);
 #endif
   // Boot is done: from here on every heap allocation is attributed to its call site
   // (heap_census.cpp; read over JTAG, never reported by the DUT).
@@ -2947,6 +3131,7 @@ void loop() {
   }
 #else
   netstack_loop();  // RX drain + DHCP + BLE-Improv join + TLS/WS pump (dispatched shared)
+  poll_wifi_policy();
   mode_observe();
 #if defined(LM_SENSORS)
   // Driver VM (FUG-107): a submitted I2C driver's poll(), when due. Try-lock: a
@@ -2968,7 +3153,12 @@ void loop() {
     }
     bool render_alive = seen_at != 0 && now_ms - seen_at < 2000;
 #if defined(LM_NETSTACK)
-    ota_app_poll(render_alive, device_cert_ready(), netstack_leased());
+    // Offline / manual (outside a join window): the board isn't supposed to reach a
+    // network, so a fresh update's health is judged on rendering alone — it must never
+    // roll back merely because the AP is gone (wifi-rejoin-policy.md "OTA").
+    bool wants_net = netstack_wifi_wants_network();
+    ota_app_poll(render_alive, device_cert_ready() || !wants_net,
+                 netstack_leased() || !wants_net);
 #else
     ota_app_poll(render_alive, true, WiFi.status() == WL_CONNECTED);
 #endif

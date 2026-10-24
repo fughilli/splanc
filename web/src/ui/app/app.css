@@ -2875,6 +2875,28 @@ input.device-name-input {
   border-top: 1px solid var(--border);
   margin: var(--sp-1) 0;
 }
+/* Wi-Fi rejoin policy: the card's status line + the settings section. */
+.device-detail-wifi {
+  color: var(--text);
+}
+.device-detail-wifi[data-state="offline"],
+.device-detail-wifi[data-ota-pending="true"] {
+  color: var(--warn);
+}
+.wifi-policy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.wifi-policy-title {
+  font-weight: 600;
+}
+.wifi-policy-modes,
+.wifi-policy-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
 .device-info {
   flex: 1;
   min-width: 0;

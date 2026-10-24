@@ -179,6 +179,55 @@ static void test_probe_request_round_trips_through_the_parser_shape() {
   assert(lm_wifi_scan::build_probe_req(f, sizeof f, mac, "", 0) == 24 + 2 + 10);
 }
 
+static void test_policy_delays() {
+  using lm_wifi_scan::Policy;
+  using lm_wifi_scan::policy_delay_ms;
+  Policy p;  // auto, cap 60, decay 24 h -> 900 s
+  bool dec = true;
+  assert(policy_delay_ms(p, 0, 0, &dec) == 5000 && !dec);
+  assert(policy_delay_ms(p, 3, 0) == 40000);
+  assert(policy_delay_ms(p, 4, 0) == 60000 && policy_delay_ms(p, 400, 0) == 60000);
+  p.cap_s = 300;  // a configurable cap
+  assert(policy_delay_ms(p, 5, 0) == 160000 && policy_delay_ms(p, 6, 0) == 300000);
+  p.cap_s = 60;
+  // A day without ever seeing the network: sparse, and reported as decayed.
+  assert(policy_delay_ms(p, 9, 24 * 3600 - 1, &dec) == 60000 && !dec);
+  assert(policy_delay_ms(p, 9, 24 * 3600, &dec) == 900000 && dec);
+  assert(policy_delay_ms(p, 0, 48 * 3600) == 900000);
+  p.decay_h = 0;  // decay off
+  assert(policy_delay_ms(p, 9, 1000000, &dec) == 60000 && !dec);
+  // fixed: first after 5 s, then the period, no backoff and no decay.
+  Policy f;
+  f.mode = lm_wifi_scan::kModeFixed;
+  f.interval_s = 30;
+  assert(policy_delay_ms(f, 0, 0) == 5000);
+  assert(policy_delay_ms(f, 1, 0) == 30000 && policy_delay_ms(f, 50, 1u << 30) == 30000);
+  // manual (inside a join window): the auto backoff without decay; offline: never.
+  Policy m;
+  m.mode = lm_wifi_scan::kModeManual;
+  assert(policy_delay_ms(m, 2, 1u << 30, &dec) == 20000 && !dec);
+  Policy o;
+  o.mode = lm_wifi_scan::kModeOffline;
+  assert(policy_delay_ms(o, 0, 0) == 0xFFFFFFFFu);
+}
+
+static void test_kick_scans_now_and_restarts_the_backoff() {
+  ScanSchedule s;
+  uint32_t t = 1000;
+  assert(!s.due(true, t));
+  s.on_scan_done(t + 5000);
+  s.on_scan_done(t + 20000);
+  assert(s.attempt() == 2);
+  s.kick(t + 21000);
+  assert(s.due(true, t + 21000) && s.attempt() == 0);
+  // A custom gap from the policy.
+  s.on_scan_done(t + 22000, 30000);
+  assert(!s.due(true, t + 51999) && s.due(true, t + 52000));
+  // A custom first gap.
+  ScanSchedule f;
+  assert(!f.due(true, 0, 30000) && !f.due(true, 29999, 30000) && f.due(true, 30000, 30000));
+}
+
 int main(int argc, char **argv) {
   return rr::RunCases(
       argc, argv, "wifi_scan",
@@ -196,5 +245,7 @@ int main(int argc, char **argv) {
            test_bss_for_ssid_parses_beacons_and_probe_responses},
           {"probe_request_round_trips_through_the_parser_shape",
            test_probe_request_round_trips_through_the_parser_shape},
+          {"policy_delays", test_policy_delays},
+          {"kick_scans_now_and_restarts_the_backoff", test_kick_scans_now_and_restarts_the_backoff},
       });
 }

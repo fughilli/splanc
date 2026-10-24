@@ -17,6 +17,9 @@ void ota_app_boot();
 // `render_alive`: the render task advanced in the last couple of seconds.
 void ota_app_poll(bool render_alive, bool tls_ready, bool leased);
 
+// This boot is a freshly installed update still awaiting confirmation (pending verify).
+bool ota_app_pending();
+
 // An OTA arm? Then the reply (ServerMessage) is in `out` and its length returned
 // (>0); 0 = not an OTA arm (dispatch it normally); <0 = malformed.
 int ota_app_dispatch(const uint8_t *msg, size_t len, uint8_t *out, size_t cap);

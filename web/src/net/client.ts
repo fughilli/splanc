@@ -71,6 +71,7 @@ import type { ColorBlock } from "@ledmapper/protocol";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
 import { decodeServer, encodeClient } from "./proto";
 import type { CaptureProfileFlat } from "../capture/captureProfile";
+import { normalizeWifiPolicy, wifiPolicyMessage, type WifiPolicy, type WifiPolicyRequest } from "./wifiPolicy";
 
 /** The subset of the WebSocket API the client uses (fakeable in tests). */
 export interface SocketLike {
@@ -918,6 +919,23 @@ export class LedMapperClient {
   /** Restart into the app or (recovery) the loader. */
   otaReboot(target: "TARGET_APP" | "TARGET_LOADER"): Promise<OtaStatusMessage> {
     return this.ota({ type: "ota_reboot", target });
+  }
+
+  // -- Wi-Fi rejoin policy (docs/design/wifi-rejoin-policy.md; net/wifiPolicy.ts) --
+
+  /** The device's Wi-Fi rejoin policy + link state. Needs the "wifi_policy"
+   * feature; answers over BLE too (the only way to reach an offline unit). */
+  async getWifiPolicy(): Promise<WifiPolicy> {
+    const r = await this.request({ type: "get_wifi_policy" } as unknown as ClientMessage, "wifi_policy_state");
+    return normalizeWifiPolicy(r as unknown as Record<string, unknown>);
+  }
+
+  /** Change the rejoin policy (unset fields keep their value). Going to manual /
+   * offline while a fresh update is unconfirmed comes back `refused:
+   * "ota_pending"` (nothing applied) unless `force`. Reply: the resulting state. */
+  async setWifiPolicy(req: WifiPolicyRequest): Promise<WifiPolicy> {
+    const r = await this.request(wifiPolicyMessage(req) as unknown as ClientMessage, "wifi_policy_state");
+    return normalizeWifiPolicy(r as unknown as Record<string, unknown>);
   }
 
   /** The motion sensor's live state (docs/design/sensor-core.md). Needs the

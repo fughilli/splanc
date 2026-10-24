@@ -64,14 +64,48 @@ inline bool scan_wanted(bool creds_ready, bool authenticating, bool leased, bool
   return !ap_seen || auth_unanswered_ms >= kStaleJoinMs;
 }
 
+// --- Rejoin policy (docs/design/wifi-rejoin-policy.md; the config lives in wifi_ffi.rs) --
+enum : uint8_t { kModeAuto = 0, kModeFixed = 1, kModeManual = 2, kModeOffline = 3 };
+struct Policy {
+  uint8_t mode = kModeAuto;
+  uint32_t cap_s = 60;         // auto: the backoff cap
+  uint32_t interval_s = 300;   // fixed: the rescan period
+  uint32_t decay_h = 24;       // auto: hours unseen before the sparse period (0 = never)
+  uint32_t sparse_s = 900;     // the decayed period
+};
+// A commanded rejoin (manual mode) / a new provision opens a join window this long.
+constexpr uint32_t kJoinWindowMs = 120000;
+
+// Gap before background scan `n` (0-based) under `p`, with the network unseen for
+// `unseen_s` seconds. auto: 5 s doubling up to the cap — and, once the network has been
+// missing for decay_h hours, never more often than sparse_s (*decayed = true). fixed:
+// the first after kScanFirstMs, then every interval_s. manual (inside a join window):
+// the auto backoff, no decay. offline: never (0xFFFFFFFF).
+inline uint32_t policy_delay_ms(const Policy &p, uint32_t n, uint32_t unseen_s,
+                                bool *decayed = nullptr) {
+  if (decayed) *decayed = false;
+  if (p.mode == kModeOffline) return 0xFFFFFFFFu;
+  if (p.mode == kModeFixed) return n == 0 ? kScanFirstMs : p.interval_s * 1000u;
+  uint64_t cap = (uint64_t)p.cap_s * 1000u;
+  uint64_t d = n >= 16 ? cap : (uint64_t)kScanFirstMs << n;
+  if (d > cap) d = cap;
+  if (p.mode == kModeAuto && p.decay_h && (uint64_t)unseen_s >= (uint64_t)p.decay_h * 3600u) {
+    uint64_t sparse = (uint64_t)p.sparse_s * 1000u;
+    if (d < sparse) d = sparse;
+    if (decayed) *decayed = true;
+  }
+  return d > 0xFFFFFFFEu ? 0xFFFFFFFEu : (uint32_t)d;
+}
+
 // When to start the next background scan. due() is polled every loop pass with the
-// current need: a need that just appeared waits kScanFirstMs (the boot scan, or a
-// fresh provision's latch, has only just looked); each scan that didn't fix the link
-// backs off one step; the need going away (leased, joined, new creds that the cache
-// already knows) resets the backoff.
+// current need and the gap to wait before the first scan of it (policy_delay_ms(…, 0, …)):
+// a need that just appeared waits that long (the boot scan, or a fresh provision's latch,
+// has only just looked); each scan that didn't fix the link waits the gap the caller
+// passes to on_scan_done (the next backoff step); the need going away (leased, joined,
+// new creds that the cache already knows) resets the backoff.
 class ScanSchedule {
  public:
-  bool due(bool wanted, uint32_t now) {
+  bool due(bool wanted, uint32_t now, uint32_t first_ms = kScanFirstMs) {
     if (!wanted) {
       armed_ = false;
       attempt_ = 0;
@@ -79,15 +113,24 @@ class ScanSchedule {
     }
     if (!armed_) {
       armed_ = true;
-      next_ = now + scan_delay_ms(0);
+      next_ = now + first_ms;
     }
     return at_or_after(now, next_);
   }
-  // A scan finished at `now` (found or not): the next one waits one more step.
-  void on_scan_done(uint32_t now) {
+  // A scan finished at `now` (found or not): the next one waits `next_gap_ms` (default:
+  // the auto backoff's next step).
+  void on_scan_done(uint32_t now) { on_scan_done(now, scan_delay_ms(attempt_ + 1)); }
+  void on_scan_done(uint32_t now, uint32_t next_gap_ms) {
     attempt_++;
-    next_ = now + scan_delay_ms(attempt_);
+    next_ = now + next_gap_ms;
   }
+  // Scan now (a commanded rejoin): armed, due immediately, backoff restarted.
+  void kick(uint32_t now) {
+    armed_ = true;
+    attempt_ = 0;
+    next_ = now;
+  }
+  bool armed() const { return armed_; }
   // Scans run since the need appeared (for logs).
   uint32_t attempt() const { return attempt_; }
   // The next scan's start time (valid while armed).

@@ -242,6 +242,51 @@ test("set_fps / fps_state round-trip (FUG-82 autoscaler arms)", () => {
   assert.equal(old.aborted, true);
 });
 
+test("set/get_wifi_policy / wifi_policy_state round-trip (wifi_policy arms)", () => {
+  type CMsg = Parameters<typeof encodeClient>[0];
+  type SMsg = Parameters<typeof encodeServer>[0];
+  // Explicit-presence optionals: set ones round-trip (AUTO = 0 included), unset
+  // ones stay absent; the plain bools come back as false when not set.
+  const off = {
+    type: "set_wifi_policy",
+    mode: "WIFI_MODE_OFFLINE",
+    force: true,
+    rejoinNow: false,
+  } as const;
+  assert.deepEqual(decodeClient(encodeClient(off as unknown as CMsg)), off);
+  const auto = {
+    type: "set_wifi_policy",
+    mode: "WIFI_MODE_AUTO",
+    scanCapS: 120,
+    decayAfterH: 0,
+    sparseIntervalS: 900,
+    force: false,
+    rejoinNow: true,
+  } as const;
+  assert.deepEqual(decodeClient(encodeClient(auto as unknown as CMsg)), auto);
+  const get = decodeClient(encodeClient({ type: "get_wifi_policy" } as unknown as CMsg));
+  assert.deepEqual(get, { type: "get_wifi_policy" });
+
+  const state = {
+    type: "wifi_policy_state",
+    mode: "WIFI_MODE_FIXED",
+    scanCapS: 60,
+    intervalS: 300,
+    decayAfterH: 24,
+    sparseIntervalS: 900,
+    state: "WIFI_LINK_SEARCHING",
+    nextScanS: 40,
+    scans: 3,
+    ssid: "Venue1",
+    unseenS: 125,
+    decayed: false,
+    otaPending: true,
+    refused: "ota_pending",
+    radioOn: true,
+  } as const;
+  assert.deepEqual(decodeServer(encodeServer(state as unknown as SMsg)), state);
+});
+
 test("TS re-encode of every golden decodes back to the same object", () => {
   for (const f of frames) {
     if (f.direction === "client") {

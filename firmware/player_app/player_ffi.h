@@ -397,6 +397,42 @@ bool lm_fps_take_lag_notify(bool *lagging);
 // Encode the live FpsState into out. Returns the length, -1 bad args, -2
 // out_cap too small.
 int32_t lm_fps_build_state(uint8_t *out, size_t out_cap);
+// -- Wi-Fi rejoin policy (wifi_ffi.rs, docs/design/wifi-rejoin-policy.md) ------
+// The config + protocol side (set_wifi_policy / get_wifi_policy / console "WIFI ...");
+// main.cpp applies it to the transport and persists it. Loop task only.
+typedef struct {
+  uint8_t mode;  // 0 auto, 1 fixed, 2 manual, 3 offline
+  uint32_t scan_cap_s;
+  uint32_t interval_s;
+  uint32_t decay_after_h;
+  uint32_t sparse_interval_s;
+} LmWifiPolicy;
+typedef struct {
+  uint8_t state;  // WifiLinkState
+  bool radio_on;
+  bool decayed;
+  uint32_t next_scan_s;
+  uint32_t scans;
+  uint32_t unseen_s;
+  uint8_t ssid[33];
+} LmWifiStatus;
+// Boot: the persisted record (null/invalid = defaults); the applied policy into *out.
+void lm_wifi_policy_seed(const uint8_t *rec, size_t len, LmWifiPolicy *out);
+// Bumped by every applied change (re-apply + persist when it moves).
+uint32_t lm_wifi_policy_gen(void);
+// The live policy, and its 18-byte NVS record into rec (may be NULL). Returns 18.
+size_t lm_wifi_policy_get(LmWifiPolicy *out, uint8_t *rec);
+// The transport changed the mode itself (a provision while offline): adopt it.
+void lm_wifi_policy_adopt(const LmWifiPolicy *p);
+// Read + clear a rejoin request (rejoin_now / console WIFI REJOIN).
+bool lm_wifi_take_rejoin(void);
+// The transport's live link state.
+void lm_wifi_report(const LmWifiStatus *s);
+// A fresh firmware update awaits confirmation (manual/offline are refused until then).
+void lm_wifi_set_ota_pending(bool pending);
+// A console line after "WIFI " (MODE / REJOIN / STATUS): a one-line reply into out
+// (NUL-terminated); returns its length, or -1 when the line isn't one of these.
+int32_t lm_wifi_console(const uint8_t *line, size_t len, uint8_t *out, size_t cap);
 // -- Sensor core (sensor_ffi.rs, docs/design/sensor-core.md) -------------------
 // I2C callbacks the Rust driver calls: 0 = done, 1 = address NACK, 2 = other error.
 typedef struct {
