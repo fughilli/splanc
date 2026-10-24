@@ -93,6 +93,21 @@ export class CompileResult {
             wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
         }
     }
+    /**
+     * @returns {string}
+     */
+    get warnings() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.compileresult_warnings(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
 }
 if (Symbol.dispose) CompileResult.prototype[Symbol.dispose] = CompileResult.prototype.free;
 
@@ -104,6 +119,20 @@ export function fx_compile(src) {
     const ptr0 = passStringToWasm0(src, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.fx_compile(ptr0, len0);
+    return CompileResult.__wrap(ret);
+}
+
+/**
+ * Like [`fx_compile`] but with the variance pass (per-frame hoisting + per-LED
+ * memoization) off — for the calibration micro-benchmarks, which must measure
+ * raw opcodes rather than a cache hit.
+ * @param {string} src
+ * @returns {CompileResult}
+ */
+export function fx_compile_no_memo(src) {
+    const ptr0 = passStringToWasm0(src, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.fx_compile_no_memo(ptr0, len0);
     return CompileResult.__wrap(ret);
 }
 

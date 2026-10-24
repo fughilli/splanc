@@ -954,21 +954,10 @@ light probe when it carries the timing.</p></li>
 “Calibrate IMU” when the connected fixture’s sensor is running.</p></li>
 <li><p>It reuses the capture screen’s code playback, decode and <code class="docutils literal notranslate"><span class="pre">pnp.ts</span></code> lock (the
 new <code class="docutils literal notranslate"><span class="pre">ProjectionOverlay.lockedPose</span></code>), and the stored capture profile.</p></li>
-<li><p>It averages the phone’s DeviceMotion over ~1.2 s and checks that it is still
-(σ ≤ 3°).</p></li>
-<li><p>Its logic is DOM-free and unit-tested in <code class="docutils literal notranslate"><span class="pre">web/src/capture/imuCalSession.ts</span></code>.</p></li>
-<li><p><strong>Gating.</strong> A pose can be captured only when:</p>
-<ul>
-<li><p>the fixture is at rest for ≥ 50 samples;</p></li>
-<li><p>its up is ≥ 45° from every accepted pose;</p></li>
-<li><p>PnP is locked this frame;</p></li>
-<li><p>the phone is steady.</p></li>
-</ul>
-</li>
-<li><p><strong>Readout.</strong> It shows the pose count (needs 2, recommends 3), the live
-separation, the current blocker, and the fit (quality, residual, ± heading).</p></li>
-<li><p><strong>Save</strong> sends <code class="docutils literal notranslate"><span class="pre">set_sensor_mount</span></code> and stores the poses and the solution on the
-map. A non-“good” fit asks for confirmation first.</p></li>
+<li><p>It is hands-free (see §7.3): no Capture pose / Save buttons. Its logic is
+DOM-free and unit-tested in <code class="docutils literal notranslate"><span class="pre">web/src/capture/imuCalSession.ts</span></code> (<code class="docutils literal notranslate"><span class="pre">ImuCalFlow</span></code>,
+the gates) and <code class="docutils literal notranslate"><span class="pre">web/src/capture/imuCalWriteback.ts</span></code> (write, read-back,
+pending store).</p></li>
 </ul>
 </section>
 <section id="the-problem">
@@ -1067,27 +1056,39 @@ available any time later as <strong>“Calibrate IMU”</strong> on Map Detail (
 <ol class="arabic simple">
 <li><p><strong>Pose 1</strong> is recorded automatically at the end of mapping (g_f,1 = +Y, and
 g_i,1 from the settled IMU). The step opens with a tilt-only calibration
-already applied, so effects work for tilt immediately.</p></li>
-<li><p><em>“Turn or tip the fixture to a different resting position.”</em></p>
+already applied, so effects work for tilt immediately. The guided flow does
+NOT reuse it (nor a previous run’s poses): it always takes three fresh poses.</p></li>
+<li><p><strong>Hands-free capture.</strong> The registration lock that drives the “Registered”
+chip (<code class="docutils literal notranslate"><span class="pre">ProjectionOverlay.lockedPose</span></code>) is the trigger. Every frame feeds its
+lock and capture time, the phone IMU is flushed every 200 ms, and one
+<code class="docutils literal notranslate"><span class="pre">get_sensors</span></code> reader (never overlapping) stamps each reply on the same
+<code class="docutils literal notranslate"><span class="pre">performance.now()</span></code> clock. A 10 Hz step takes a pose when, over a 700 ms
+window:</p>
 <ul class="simple">
-<li><p>The app polls <code class="docutils literal notranslate"><span class="pre">get_sensors</span></code> at ~5 Hz and shows:</p>
-<ul>
-<li><p>a <strong>stillness</strong> indicator (<code class="docutils literal notranslate"><span class="pre">at_rest</span></code>);</p></li>
-<li><p>the live <strong>angle</strong> between the current IMU up and every accepted pose’s
-g_i;</p></li>
-<li><p>a target ring (≥ 45°, green at ≥ 70°).</p></li>
+<li><p>PnP locked on ≥ 6 frames with no gap &gt; 250 ms;</p></li>
+<li><p>the camera-derived fixture up (phone gravity at each locked frame, rotated
+camera→map) spreads ≤ 3°, and so does the phone’s gravity;</p></li>
+<li><p>the sensor reply arrived inside the window, its sample counter advanced,
+and the rest streak (<code class="docutils literal notranslate"><span class="pre">rest_samples</span></code>) covers the whole window;</p></li>
+<li><p>its IMU up is ≥ 30° from every pose already taken (else “too close to
+pose N — tilt further”);</p></li>
+<li><p>the angle to each earlier pose agrees between the IMU and the camera frame
+to 10° (else it is refused: a bad lock or a phone-axis mix-up).
+Then it prompts for the next pose: normal position, ~45° to the side, ~45°
+toward/away.</p></li>
 </ul>
 </li>
-<li><p>“Capture pose” enables when the fixture is still, the separation is
-≥ 45°, and PnP has a lock with RMS ≤ 4 px and at least 5 inliers.</p></li>
-</ul>
-</li>
-<li><p>Solve after pose 2. The flow <strong>recommends a third pose</strong> (another ~90° axis)
-for redundancy, and shows the residual, the predicted yaw error, and a 3D
-preview of the IMU axes on the map. The user accepts or redoes.</p></li>
-<li><p><strong>Accept</strong> sends <code class="docutils literal notranslate"><span class="pre">set_sensor_mount</span> <span class="pre">{</span> <span class="pre">R_fi,</span> <span class="pre">quality,</span> <span class="pre">timestamp</span> <span class="pre">}</span></code>. The firmware
-persists it, and the app also stores it on the map’s summary, so the map
-export carries it.</p></li>
+<li><p><strong>After the third pose</strong> it solves, stores the result on the map summary, and
+writes it with no accept step: <code class="docutils literal notranslate"><span class="pre">set_sensor_mount</span></code>, then <code class="docutils literal notranslate"><span class="pre">get_sensors</span></code> until
+the mount, poses, yaw flag and timestamp read back. A weak fit is still
+written and offers Retake.</p></li>
+<li><p><strong>Pending write-back.</strong> The solve is kept per device (welcome MAC, in
+localStorage) from before the write until the read-back matches. Every
+(re)connection to that device pushes it again (reading first, so a write
+whose reply was lost isn’t re-sent), unless the device now holds a
+different map. The firmware persists the record to NVS (<code class="docutils literal notranslate"><span class="pre">sens_cal</span></code>, an
+atomic <code class="docutils literal notranslate"><span class="pre">nvs_set_blob</span></code> + <code class="docutils literal notranslate"><span class="pre">nvs_commit</span></code>) in the sensor-task iteration that
+applies it, and reloads it at boot.</p></li>
 </ol>
 <p><strong>Agent path.</strong> An agent can’t see the camera. It can do the gravity-only step
 (“set the lamp upright, I’ll level it”: <code class="docutils literal notranslate"><span class="pre">calibrate_sensors</span> <span class="pre">level</span></code>), and it can
