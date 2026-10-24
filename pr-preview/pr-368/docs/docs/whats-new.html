@@ -322,6 +322,24 @@
 it in depth. The full history is in the git log and <a class="reference internal" href="#../WORKLOG.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code></span></a>.</p>
 <section id="october-2026">
 <h2>October 2026<a class="headerlink" href="#october-2026" title="Link to this heading">¶</a></h2>
+<section id="slow-effects-lag-instead-of-being-parked-and-wi-fi-rescans-without-a-reboot">
+<h3>Slow effects lag instead of being parked, and Wi-Fi rescans without a reboot<a class="headerlink" href="#slow-effects-lag-instead-of-being-parked-and-wi-fi-rescans-without-a-reboot" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Slow effects lag instead of being parked.</strong> An effect too heavy for the 25 fps
+floor (lower on long strips) or for a pinned framerate used to be stopped
+outright. Now it keeps playing as fast as the board can render it. The player
+reports it as <code class="docutils literal notranslate"><span class="pre">lagging</span></code>, with the rate it really achieves (<code class="docutils literal notranslate"><span class="pre">achieved_fps</span></code>). The
+app and the live screen mention it once, as a notice rather than an error. The
+render task’s duty cycle stays bounded, so Wi-Fi, sensors and control stay
+responsive. <code class="docutils literal notranslate"><span class="pre">set_fps.no_abort</span></code> and <code class="docutils literal notranslate"><span class="pre">fps_state.aborted</span></code> are deprecated and
+ignored. Details: <a class="reference internal" href="design/perf-monitoring.html"><span class="std std-doc">perf-monitoring.md</span></a>.</p></li>
+<li><p><strong>The board no longer reboots to rescan Wi-Fi.</strong> When the saved network isn’t
+visible (the router still starting after a power cut), the board rescans in
+the background while the effect keeps playing. This replaces the
+restart-on-backoff described under “Players stay on Wi-Fi across updates and
+power cuts” below.</p></li>
+</ul>
+</section>
 <section id="effects-stop-recomputing-what-doesn-t-change-and-the-cost-estimate-is-honest">
 <h3>Effects stop recomputing what doesn’t change (and the cost estimate is honest)<a class="headerlink" href="#effects-stop-recomputing-what-doesn-t-change-and-the-cost-estimate-is-honest" title="Link to this heading">¶</a></h3>
 <ul class="simple">
@@ -958,6 +976,7 @@ the way it is.</p></li>
             <ul>
 <li><a class="reference internal" href="#">What’s new</a><ul>
 <li><a class="reference internal" href="#october-2026">October 2026</a><ul>
+<li><a class="reference internal" href="#slow-effects-lag-instead-of-being-parked-and-wi-fi-rescans-without-a-reboot">Slow effects lag instead of being parked, and Wi-Fi rescans without a reboot</a></li>
 <li><a class="reference internal" href="#effects-stop-recomputing-what-doesn-t-change-and-the-cost-estimate-is-honest">Effects stop recomputing what doesn’t change (and the cost estimate is honest)</a></li>
 <li><a class="reference internal" href="#leds-on-each-channel">1024 LEDs on each channel</a></li>
 <li><a class="reference internal" href="#show-mode-browse-effects-with-a-knob-midi-fighter-twister-setup-from-splanc">Show Mode: browse effects with a knob; Midi Fighter Twister setup from Splanc</a></li>

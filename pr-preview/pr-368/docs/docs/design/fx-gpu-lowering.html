@@ -318,7 +318,9 @@
         <article role="main" id="furo-main-content">
           <section id="lowering-the-fx-engine-onto-gpus-and-accelerators">
 <h1>Lowering the FX engine onto GPUs and accelerators<a class="headerlink" href="#lowering-the-fx-engine-onto-gpus-and-accelerators" title="Link to this heading">¶</a></h1>
-<p>Status: <strong>design + host feasibility prototype (this PR).</strong> No device code ships.
+<p>Status: <strong>design + host feasibility prototype + Pi 3 measurements (this PR).</strong>
+No device code ships. <strong>Target (owner): Splanc MAX at up to 120 fps on short
+runs, with GPU lowering as the primary path</strong> (§0).
 The prototype (<code class="docutils literal notranslate"><span class="pre">//fx_gpu</span></code>) lowers a meaningful subset of the effects IR to GLSL
 ES 1.00 / 3.10 + SPIR-V and proves, against the real <code class="docutils literal notranslate"><span class="pre">fx_vm</span></code> over the test
 corpus, that the lowering is numerically faithful within tolerance. Pi and P4
@@ -341,6 +343,218 @@ float gets to the VM’s soft-float, and how the result gets back out to the
 FPGA/SPI LED path without the readback eating the win.</p>
 <p>This document answers those, with a working prototype and measured conformance
 numbers, and surveys the ESP32-P4 accelerators as a separate (non-GPU) track.</p>
+</section>
+<section id="target-splanc-max-at-up-to-120-fps-owner-direction">
+<h2>0. Target: Splanc MAX at up to 120 fps (owner direction)<a class="headerlink" href="#target-splanc-max-at-up-to-120-fps-owner-direction" title="Link to this heading">¶</a></h2>
+<p><strong>Direction:</strong> GPU lowering is the <strong>primary MAX path</strong>. The multi-threaded VM
+is the <strong>fallback</strong> for effects that can’t lower: hash on the Pi 3 (GLES2), and
+buffers, user functions and loops on every tier. The goal is 120 fps on runs
+short enough for the wire to allow it, not 30 fps.</p>
+<section id="fps-vs-strip-length-the-wire-sets-the-ceiling">
+<h3>Fps vs strip length (the wire sets the ceiling)<a class="headerlink" href="#fps-vs-strip-length-the-wire-sets-the-ceiling" title="Link to this heading">¶</a></h3>
+<p>Wire time per frame = <code class="docutils literal notranslate"><span class="pre">L</span></code> LEDs per channel × 30 µs (24 bits × 1.25 µs) + the latch
+(reset LOW). All channels drive in parallel, so the frame rate depends only on
+<code class="docutils literal notranslate"><span class="pre">L</span></code> and the latch, not on the channel count. The latch is a <strong>parameter</strong>
+(<code class="docutils literal notranslate"><span class="pre">led_type</span></code> CSR, #370): 0 = classic WS2812/WS2812B (spec &gt; 50 µs; the core
+uses 80 µs), 1 = WS2812B-V5 / SK6812-class (≥ 280 µs; the core uses 300 µs).</p>
+<p>Max LEDs per channel, <code class="docutils literal notranslate"><span class="pre">floor((1/fps</span> <span class="pre">−</span> <span class="pre">reset)</span> <span class="pre">/</span> <span class="pre">30</span> <span class="pre">µs)</span></code>, datasheet timing:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head text-right"><p>fps</p></th>
+<th class="head text-right"><p>period</p></th>
+<th class="head text-right"><p>reset 50 µs</p></th>
+<th class="head text-right"><p>reset 280 µs</p></th>
+<th class="head text-right"><p>× 20 channels (50 / 280 µs)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td class="text-right"><p>30</p></td>
+<td class="text-right"><p>33.33 ms</p></td>
+<td class="text-right"><p>1,109</p></td>
+<td class="text-right"><p>1,101</p></td>
+<td class="text-right"><p>22,180 / 22,020</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>60</p></td>
+<td class="text-right"><p>16.67 ms</p></td>
+<td class="text-right"><p>553</p></td>
+<td class="text-right"><p>546</p></td>
+<td class="text-right"><p>11,060 / 10,920</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>90</p></td>
+<td class="text-right"><p>11.11 ms</p></td>
+<td class="text-right"><p>368</p></td>
+<td class="text-right"><p>361</p></td>
+<td class="text-right"><p>7,360 / 7,220</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p><strong>120</strong></p></td>
+<td class="text-right"><p><strong>8.33 ms</strong></p></td>
+<td class="text-right"><p><strong>276</strong></p></td>
+<td class="text-right"><p><strong>268</strong></p></td>
+<td class="text-right"><p><strong>5,520 / 5,360</strong></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>In the spi_ws281x core the bit is 1.2407 µs, so a byte takes 9.963 µs and an LED
+29.89 µs. With the core’s 80/300 µs latches and ~40 µs of prefill latency, the
+120 fps limit is <strong>274 LEDs/channel at 80 µs</strong> and <strong>267 at 300 µs</strong>. The
+#370 sim runs 20 × 270 and 20 × 266 at a 120 fps cadence.</p>
+<p><strong>SPI demand is set by the port count, not the fps.</strong> While strips stream, the
+FPGA drains 0.8 Mbit/s per port, so 20 ports need ≥ 16.06 Mbit/s sustained
+(#370 sim: SCK 16.7–27 MHz works at a 54 MHz core). At 120 fps the strips stream
+~97% of each period, so the link runs at that rate almost continuously. One
+20 × 270 frame is 16,201 bytes, 5.8 ms at 22.2 MHz SCK, inside the period. Per
+frame the FPGA also needs the latch plus ~40 µs of prefill between frames. The
+host must start each CS no earlier than <em>previous start + emission + latch</em> (see
+pacing below).</p>
+</section>
+<section id="the-8-33-ms-budget-at-120-fps">
+<h3>The 8.33 ms budget at 120 fps<a class="headerlink" href="#the-8-33-ms-budget-at-120-fps" title="Link to this heading">¶</a></h3>
+<p>Render, readback and SPI handoff run as a <strong>pipeline</strong>, one stage per frame
+period, with double or triple buffering:</p>
+<ul class="simple">
+<li><p>frame n+2 renders on the GPU;</p></li>
+<li><p>frame n+1 is read back and encoded;</p></li>
+<li><p>frame n goes out over SPI and the wire.</p></li>
+</ul>
+<p>Each stage must fit one period. The stages run concurrently, so only the
+slowest one sets the rate.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>stage at 20 × 270 (5,400 LEDs)</p></th>
+<th class="head text-right"><p>Pi 3 GPU (GLES2)</p></th>
+<th class="head text-right"><p>Pi 3 VM, 4 threads</p></th>
+<th class="head"><p>notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>render + readback</p></td>
+<td class="text-right"><p><strong>~0.9–1.1 ms</strong> for every lowered effect</p></td>
+<td class="text-right"><p>solid 1.6, sweep 2.5, cylinder 2.6, imu 2.7, pulses 3.1, plasma 4.0, gradient 4.1, <strong>noise 7–10 ms</strong></p></td>
+<td><p>GPU interpolated between the measured 4×1024 (0.87 ms) and 8×1024 (1.5 ms); VM scaled from the measured 4×1024 and 20×1024 4-thread runs. <em>To measure at 20×270 (below).</em></p></td>
+</tr>
+<tr class="row-odd"><td><p>SPI (16,201 B)</p></td>
+<td class="text-right"><p>5.8 ms &#64; 22.2 MHz (DMA)</p></td>
+<td class="text-right"><p>same</p></td>
+<td><p>concurrent with the wire</p></td>
+</tr>
+<tr class="row-even"><td><p>wire + latch</p></td>
+<td class="text-right"><p>8.15 ms (270 &#64; 80 µs)</p></td>
+<td class="text-right"><p>same</p></td>
+<td><p>the ceiling</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p><strong>The GPU fits with ~7 ms to spare</strong> and leaves the CPU free for the player,
+networking and the output thread.</p></li>
+<li><p><strong>The 4-core VM fits most effects but not noise-class hash effects</strong>
+(~7–10 ms ≥ 8.33). Even the ones that fit take 20–50% of <em>all four</em> cores’
+frame time.</p></li>
+<li><p><strong>On a Pi 3, the effects that can’t make 120 fps without the GPU</strong> are the
+heaviest VM effects (noise, ~7–10 ms). Those are also the hash class that
+GLES2 can’t run, so on a Pi 3 they cap at ~80–100 fps on the VM. On Pi 4/5
+(V3D compute with real integers) they lower too.</p></li>
+<li><p>Effects that only fit on the VM by using the whole CPU are the reason the GPU
+is primary.</p></li>
+</ul>
+</section>
+<section id="frame-pacing-and-jitter-on-linux">
+<h3>Frame pacing and jitter on Linux<a class="headerlink" href="#frame-pacing-and-jitter-on-linux" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>The FPGA is the timing master; the host only has to stay ahead.</strong></p>
+<ul>
+<li><p>Since #370 the FIFO is latch-safe: a next-frame CS may land anywhere in the
+previous frame’s latch without losing bytes.</p></li>
+<li><p>It must not land during the previous frame’s <em>emission</em>, or the frames merge
+(asserted in <code class="docutils literal notranslate"><span class="pre">spi_ws281x_120fps_sim</span></code> phase D).</p></li>
+<li><p>Jitter slack is <code class="docutils literal notranslate"><span class="pre">period</span> <span class="pre">−</span> <span class="pre">(3L</span> <span class="pre">×</span> <span class="pre">9.963</span> <span class="pre">µs</span> <span class="pre">+</span> <span class="pre">40</span> <span class="pre">µs</span> <span class="pre">+</span> <span class="pre">latch)</span></code>: ~143 µs at
+270 LEDs / 80 µs, but only ~42 µs at 266 / 300 µs.</p></li>
+<li><p>For production, either keep <code class="docutils literal notranslate"><span class="pre">L</span></code> a few LEDs under the limit (e.g. ≤ 260 gives
+≥ 0.4 ms of slack), or better, let the FPGA pace the host with a “frame done”
+signal: a GPIO from the core’s latch end, or a CSR read once MISO exists.
+Then Pi-side jitter only has to stay under one period.</p></li>
+</ul>
+</li>
+<li><p><strong>Output thread:</strong></p>
+<ul>
+<li><p>SCHED_FIFO priority, pinned to an isolated core (<code class="docutils literal notranslate"><span class="pre">isolcpus</span></code>/<code class="docutils literal notranslate"><span class="pre">nohz_full</span></code> on the
+Pi 4/5; on the Pi 3, at least affinity away from the WiFi/USB IRQs).</p></li>
+<li><p>Absolute-deadline sleeps (<code class="docutils literal notranslate"><span class="pre">clock_nanosleep(CLOCK_MONOTONIC,</span> <span class="pre">TIMER_ABSTIME)</span></code>
+or <code class="docutils literal notranslate"><span class="pre">timerfd</span></code>), so periods don’t accumulate drift.</p></li>
+<li><p>The <code class="docutils literal notranslate"><span class="pre">performance</span></code> governor, to avoid DVFS latency spikes. On the Pi 3, also a
+pinned <code class="docutils literal notranslate"><span class="pre">core_freq</span></code>, because SPI SCK divides the core clock (§4).</p></li>
+</ul>
+</li>
+<li><p><strong>GPU sync stays off the output thread.</strong> <code class="docutils literal notranslate"><span class="pre">glReadPixels</span></code> blocks its caller
+(measured 1.4 ms at 20k LEDs, ~0.3–0.5 ms at 5k), and <code class="docutils literal notranslate"><span class="pre">glFinish</span></code> jitter lands on
+the render thread. With a triple-buffered handoff the output thread never
+waits on GL. Render jitter matters only if render + readback approaches a
+period; at ~1 ms of 8.33 it doesn’t.</p></li>
+<li><p><strong>SPI:</strong> one DMA write per frame (needs <code class="docutils literal notranslate"><span class="pre">spidev.bufsiz</span></code> ≥ frame bytes, set by
+#369). Whether the Pi pauses <em>inside</em> a transfer, especially in the first
+<code class="docutils literal notranslate"><span class="pre">PREFILL</span> <span class="pre">×</span> <span class="pre">10</span> <span class="pre">µs</span></code>, is what the logic-analyzer continuity capture and the FPGA
+<code class="docutils literal notranslate"><span class="pre">STATS</span></code> counters measure (#370). <code class="docutils literal notranslate"><span class="pre">PREFILL</span> <span class="pre">=</span> <span class="pre">64</span></code> would absorb 600 µs there.</p></li>
+</ul>
+</section>
+<section id="end-to-end-latency-input-to-photon-at-120-fps">
+<h3>End-to-end latency, input to photon, at 120 fps<a class="headerlink" href="#end-to-end-latency-input-to-photon-at-120-fps" title="Link to this heading">¶</a></h3>
+<p>WS2812s show new colours on the latch, so a frame’s photons appear at the <em>end</em>
+of its wire time:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>step</p></th>
+<th class="head"><p>time</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>input sampled at the next render start</p></td>
+<td><p>0–8.3 ms (avg 4.2)</p></td>
+</tr>
+<tr class="row-odd"><td><p>GPU render + readback</p></td>
+<td><p>~1 ms</p></td>
+</tr>
+<tr class="row-even"><td><p>wait for the SPI slot (double buffer)</p></td>
+<td><p>0–8.3 ms</p></td>
+</tr>
+<tr class="row-odd"><td><p>prefill + emission + latch (270 LEDs)</p></td>
+<td><p>~8.2 ms</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>total</strong></p></td>
+<td><p><strong>~10–26 ms, typically ~15–18 ms</strong></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>For comparison, 1024 LEDs/channel at 30 fps comes to ~50–100 ms. Latency gets
+shorter with a shallower pipeline (render just-in-time against the FPGA
+frame-done signal) and with shorter strips.</p>
+</section>
+<section id="fpga-support-370">
+<h3>FPGA support (#370)<a class="headerlink" href="#fpga-support-370" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Back-to-back frames at a 120 fps cadence are verified in Verilator: 20 × 270
+at 80 µs and 20 × 266 at 300 µs (<code class="docutils literal notranslate"><span class="pre">led_type</span></code> 1), with one frame deliberately
+started inside the previous latch.</p></li>
+<li><p>A frame shorter than PREFILL bytes per port now starts when CS ends, where
+before it never started. So PREFILL can be raised for gap tolerance without
+breaking short frames.</p></li>
+<li><p>Self-instrumentation (<code class="docutils literal notranslate"><span class="pre">STATS</span></code>): underrun counts (total and per port), the
+minimum FIFO level, and the longest byte-to-byte gap with CS low. A sticky
+underrun flag is shown on <code class="docutils literal notranslate"><span class="pre">led[1]</span></code>.</p></li>
+</ul>
+</section>
+<section id="next-measurement-pi-3-for-the-operator">
+<h3>Next measurement (Pi 3, for the operator)<a class="headerlink" href="#next-measurement-pi-3-for-the-operator" title="Link to this heading">¶</a></h3>
+<p>Run the rebuilt <code class="docutils literal notranslate"><span class="pre">pi3bench</span></code> payload (layouts 4×270, 20×270, 1×500, 4×550,
+20×1024; GPU + VM 1 and 4 threads) on <code class="docutils literal notranslate"><span class="pre">pi-ledmapper-2</span></code>, using the SSH-tunnel
+runbook in <code class="docutils literal notranslate"><span class="pre">fx_gpu/pi3bench/README.md</span></code>, with
+<code class="docutils literal notranslate"><span class="pre">run.sh</span> <span class="pre">…</span> <span class="pre">--points</span> <span class="pre">4x270,20x270</span> <span class="pre">--vm-threads</span> <span class="pre">1,4</span></code>.</p>
+</section>
 </section>
 <section id="partitioning-what-maps-to-the-gpu-what-stays-on-the-cpu">
 <h2>1. Partitioning: what maps to the GPU, what stays on the CPU<a class="headerlink" href="#partitioning-what-maps-to-the-gpu-what-stays-on-the-cpu" title="Link to this heading">¶</a></h2>
@@ -1384,56 +1598,49 @@ The agent never handled the Pi key. <strong>Results are in §5</strong>: 100 JSO
 <section id="staged-plan">
 <h2>11. Staged plan<a class="headerlink" href="#staged-plan" title="Link to this heading">¶</a></h2>
 <ol class="arabic simple">
-<li><p><strong>(this PR)</strong> Host IR + lowering + legalize + GLSL/SPIR-V emit + conformance
-harness. Design + numerics policy + P4 survey + prior art.</p></li>
-<li><p><strong>Pi 3 GLES2 microbenchmark (HITL/Pi): done</strong> (§5). 20×1024 in 3.2–3.5 ms
-for every lowered kernel, ≤ 2/255. Follow-ups: the 4-thread VM run and the
-SPI-tap capture.
-2b. <strong>Multi-thread the VM in the player</strong> (all effects, no Mesa): measured
-3.1–3.97× on a Pi 3 at 20×1024, which fits everything under the wire. This is
-the cheapest MAX-scale win and comes before the GPU tier.</p></li>
-<li><p><strong>Pi 4/5 compute path:</strong> <code class="docutils literal notranslate"><span class="pre">naga</span></code> SPIR-V, V3D compute over an SSBO, highp,
-class-1 exact; golden tolerance tests per tier.</p></li>
-<li><p><strong>Player integration:</strong> glibc GPU helper process (musl player stays), a
-load-time per-effect probe (lower → tolerance-check → cache the verdict),
-readback → <code class="docutils literal notranslate"><span class="pre">FpgaCodec</span></code> → SPI; keep the VM fallback.</p></li>
-<li><p><strong>Image:</strong> lean Mesa overlay (§8) into <code class="docutils literal notranslate"><span class="pre">pi/provisioning</span></code>, add Pi 4 / Zero 2 W
-board targets; measure closure growth. Also a pinned Pi 3 <code class="docutils literal notranslate"><span class="pre">core_freq</span></code> (§4).
-<code class="docutils literal notranslate"><span class="pre">spidev.bufsiz=65536</span></code> arrives with #369.
-5b. <strong>20-channel FPGA:</strong> #370’s internal-only variant → pin map → a flashable
-20-port target; <code class="docutils literal notranslate"><span class="pre">PREFILL</span></code> + “start on CS-end”; logic-analyzer validation on 4
-channels.</p></li>
-<li><p><strong>GPU-native textures/decks</strong> (<code class="docutils literal notranslate"><span class="pre">SampleTex</span></code>/blending) and <strong>shader-emulated
-LUT sine</strong> for class-3 exactness, if measured need.</p></li>
-<li><p><strong>(parallel track)</strong> P4: PIE SIMD tier (shortlist #1) via the AOT path;
-PARLIO+BitScrambler output; JPEG/PPA texture pipeline.</p></li>
+<li><p><strong>Done (this PR):</strong> IR, lowering, legalize, GLSL/SPIR-V emit, conformance
+harness; design, numerics, P4 survey, prior art.</p></li>
+<li><p><strong>Done:</strong> Pi 3 GLES2 bench (§5). 20×1024 in 3.2–3.5 ms for every lowered
+effect, ≤ 2/255. 4-thread VM measured.</p></li>
+<li><p><strong>Pi 3 at 120 fps:</strong> the 20 × 270 / 4 × 270 bench (payload ready, §0); the
+logic-analyzer continuity capture and FPGA <code class="docutils literal notranslate"><span class="pre">STATS</span></code> (#370).</p></li>
+<li><p><strong>GPU tier in the player (primary):</strong></p>
+<ul class="simple">
+<li><p>a glibc GPU helper next to the static-musl player;</p></li>
+<li><p>a load-time per-effect probe (lower → tolerance check → cache);</p></li>
+<li><p>a triple-buffered render → readback → <code class="docutils literal notranslate"><span class="pre">FpgaCodec</span></code> → SPI pipeline;</p></li>
+<li><p>a SCHED_FIFO output thread paced on absolute deadlines (or FPGA frame-done).</p></li>
+</ul>
+</li>
+<li><p><strong>Multi-threaded VM in the player (fallback):</strong> for effects that don’t lower.</p></li>
+<li><p><strong>Image:</strong> the lean Mesa overlay (§8), Pi 4 / Zero 2 W board targets, a pinned
+Pi 3 <code class="docutils literal notranslate"><span class="pre">core_freq</span></code>, and <code class="docutils literal notranslate"><span class="pre">spidev.bufsiz</span></code> via #369.</p></li>
+<li><p><strong>Pi 4/5 compute:</strong> <code class="docutils literal notranslate"><span class="pre">naga</span></code> SPIR-V, V3D compute, exact integers (adds hash
+effects); golden tolerance tests per tier.</p></li>
+<li><p><strong>FPGA (#370):</strong> a 20-port pin map; <code class="docutils literal notranslate"><span class="pre">PREFILL</span></code> + frame-done pacing; MISO CSR
+read-back for <code class="docutils literal notranslate"><span class="pre">STATS</span></code> (player-visible underruns); optional double-buffered
+FIFO banks, so frames can overlap emission.</p></li>
+<li><p><strong>GPU-native textures/decks</strong> and an in-shader LUT sine (class-3 exactness),
+if measurement shows a need.</p></li>
+<li><p><strong>(parallel track)</strong> P4: the PIE SIMD tier; PARLIO + BitScrambler; JPEG/PPA.</p></li>
 </ol>
 </section>
 <section id="decisions-the-user-needs-to-make">
 <h2>12. Decisions the user needs to make<a class="headerlink" href="#decisions-the-user-needs-to-make" title="Link to this heading">¶</a></h2>
-<ol class="arabic">
+<ol class="arabic simple">
 <li><p><strong>Numerics tolerance per tier</strong> (§3): accept <strong>≤ 2/255 (Pi 4/5 highp), ≤
 6/255 (Pi 3 mediump)</strong> as the golden-test bound? And for class-3
 transcendental-heavy effects: <strong>ship the VM’s LUT sine in-shader</strong> (makes the
 common case exact, ~1 KB) or <strong>keep those effects on the VM</strong>?</p></li>
-<li><p><strong>Pi 3 tiering: recommendation. Multi-thread the VM first. Ship GLES2 as a
-CPU-offload tier, not as a necessity.</strong> Measured (§5):</p>
-<ul class="simple">
-<li><p>A <strong>4-core VM</strong> runs <em>every</em> effect, hash/noise included, at 20×1024 under
-the 32.6 fps wire ceiling (worst: noise 27.1 ms, plasma 13.3 ms). It needs
-no Mesa and has no conformance question, but it saturates all 4 cores.</p></li>
-<li><p><strong>GLES2 on vc4</strong> does the 100/132 float-only effects in 3.2–3.5 ms at
-20×1024, at ≤ 2/255 (bit-exact for float-only), with the CPU free. It works
-on the stock image (vc4 KMS is on) with the lean Mesa (~40–60 MB) and a
-glibc GPU helper.</p></li>
-<li><p>Today’s 4×550 needs neither.</p></li>
-</ul>
-<p><strong>Order:</strong> (1) <strong>multi-threaded VM</strong> in the player: required, covers
-everything; (2) <strong>Pi 3 GLES2</strong> for float-only effects at ≥ 8×1024, to free the
-CPU and leave frame headroom; (3) <strong>Pi 4/5 compute</strong>, which adds the hash
-effects exactly. Skip (2) if a VM pegging all four cores at MAX scale is
-acceptable; the 4-core VM is the fallback either way.</p>
-</li>
+<li><p><strong>Pi 3 tiering at 120 fps: GPU-primary (owner direction).</strong> GLES2 on vc4
+renders every lowered effect at 20 × 270 in about 1 ms, with the CPU free.
+The <strong>4-core VM is the fallback</strong> for what can’t lower: hash, buffers,
+loops. Measured at 20×1024, a 4-thread VM is 3.1–3.97× faster than one
+thread. At 120 fps (20 × 270) it fits most effects but takes 20–50% of all four
+cores, and noise-class effects (~7–10 ms) miss the 8.33 ms period; Pi 4/5
+compute lowers those too. <strong>Open decision:</strong> the 120 fps strip-length policy:
+≤ 274 LEDs/channel (80 µs latch) or ≤ 267 (300 µs) at the limit, or ≤ ~260
+for jitter margin. And whether to add an FPGA “frame done” pacing signal.</p></li>
 <li><p><strong>Readback vs direct DPI scan-out</strong> (§4): start with readback (recommended)?
 DPI is a later optimisation that costs GPIO pins and a frame-sync redesign.</p></li>
 <li><p><strong>P4 priority</strong> (§9): is the PIE SIMD tier (shortlist #1) the P4 track to fund
@@ -1487,6 +1694,15 @@ should <code class="docutils literal notranslate"><span class="pre">PREFILL</spa
             <ul>
 <li><a class="reference internal" href="#">Lowering the FX engine onto GPUs and accelerators</a><ul>
 <li><a class="reference internal" href="#why">Why</a></li>
+<li><a class="reference internal" href="#target-splanc-max-at-up-to-120-fps-owner-direction">0. Target: Splanc MAX at up to 120 fps (owner direction)</a><ul>
+<li><a class="reference internal" href="#fps-vs-strip-length-the-wire-sets-the-ceiling">Fps vs strip length (the wire sets the ceiling)</a></li>
+<li><a class="reference internal" href="#the-8-33-ms-budget-at-120-fps">The 8.33 ms budget at 120 fps</a></li>
+<li><a class="reference internal" href="#frame-pacing-and-jitter-on-linux">Frame pacing and jitter on Linux</a></li>
+<li><a class="reference internal" href="#end-to-end-latency-input-to-photon-at-120-fps">End-to-end latency, input to photon, at 120 fps</a></li>
+<li><a class="reference internal" href="#fpga-support-370">FPGA support (#370)</a></li>
+<li><a class="reference internal" href="#next-measurement-pi-3-for-the-operator">Next measurement (Pi 3, for the operator)</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#partitioning-what-maps-to-the-gpu-what-stays-on-the-cpu">1. Partitioning: what maps to the GPU, what stays on the CPU</a></li>
 <li><a class="reference internal" href="#ir-spir-v-glsl-codegen">2. IR → SPIR-V / GLSL codegen</a></li>
 <li><a class="reference internal" href="#numerics-policy-owner-decision">3. Numerics policy (owner decision)</a></li>
