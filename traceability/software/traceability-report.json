@@ -18,7 +18,7 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 2130,
+    "test_cases": 2134,
     "gaps": 35
   },
   "levels": [
@@ -6368,6 +6368,18 @@
           "target": "//pi/hitl/tests:hitl_test"
         },
         {
+          "name": "pi.hitl.tests.test_reservation_readiness::test_await_active_requeue_is_bounded",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_readiness::test_await_active_requeues_when_the_daemon_forgets_a_queued_reservation",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
           "name": "pi.hitl.tests.test_reservation_readiness::test_await_active_returns_only_once_the_daemon_reports_active",
           "status": "passed",
           "level": "simulation",
@@ -6381,6 +6393,12 @@
         },
         {
           "name": "pi.hitl.tests.test_reservation_readiness::test_pick_errors_when_no_host_is_reachable",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_readiness::test_pick_falls_back_to_a_cordoned_host_when_it_is_the_only_match",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/hitl/tests:hitl_test"
@@ -6405,6 +6423,12 @@
         },
         {
           "name": "pi.hitl.tests.test_reservation_readiness::test_pick_rejects_c6_analyzer_request_when_only_pi_has_tap",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_readiness::test_pick_skips_a_cordoned_host_even_though_its_units_look_free",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/hitl/tests:hitl_test"
