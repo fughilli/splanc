@@ -7,7 +7,7 @@ render identically. Host-tested with hand-assembled bytecode.
 """
 
 load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_shared_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_shared_library", "rust_test")
 load("@rules_rust_wasm_bindgen//:defs.bzl", "rust_wasm_bindgen")
 load("//tools/transitions:opt.bzl", "opt_files")
 
@@ -47,6 +47,17 @@ rust_test(
     deps = [":fx_vm"],
 )
 
+# The FX debugger's host replay as a CLI (docs/design/fx-debugger.md): restore a
+# device snapshot on this VM, replay one frame, write the output / state / buffers
+# (+ one LED's locals) for a byte-exact diff. Used by the HITL gate
+# //pi/hitl/harness:fx_debug_netstack (no browser / node on the lane).
+rust_binary(
+    name = "fx_replay",
+    srcs = ["bin/fx_replay.rs"],
+    edition = "2021",
+    deps = [":fx_vm"],
+)
+
 # The exact firmware VM compiled to wasm so the browser preview can't drift.
 rust_shared_library(
     name = "fx_vm_wasm",
@@ -54,6 +65,8 @@ rust_shared_library(
     edition = "2021",
     deps = [
         ":fx_vm",
+        # fx_blend_rgb8: the FX debugger replays the device's crossfade blend.
+        "//firmware/keypoint",
         "@crates//:wasm-bindgen",
     ],
 )

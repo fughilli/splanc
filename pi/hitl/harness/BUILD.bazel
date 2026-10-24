@@ -95,6 +95,7 @@ py_library(
         "device_cert_core.py",
         "e2e_phases.py",
         "fx_bench_core.py",
+        "fx_debug_core.py",
         "hardware_config_pattern.py",
         "heap_census.py",
         "hitl_client.py",
@@ -517,6 +518,65 @@ py_test(
     },
     imports = ["."],
     main = "hitl_tls_churn.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# The FX debugger (docs/design/fx-debugger.md) on a real C6: pause, step one frame,
+# and replay it on the host VM (//firmware/fx_vm:fx_replay) from the device's own
+# snapshot — output, state and buffers must match BIT-EXACTLY (JIT on), one LED's
+# re-run locals must match the host's, and a paused engine must auto-resume on a
+# lapsed hold and on a disconnect. Pure verdict: fx_debug_core.
+genrule(
+    name = "fxdebug_fxbs",
+    srcs = [
+        "ab_demo/dbgFixed.fx",
+        "ab_demo/dbgHue.fx",
+        "ab_demo/dbgLoop.fx",
+        "ab_demo/dbgTrail.fx",
+    ],
+    outs = [
+        "dbgFixed.fxb",
+        "dbgHue.fxb",
+        "dbgLoop.fxb",
+        "dbgTrail.fxb",
+    ],
+    cmd = " && ".join([
+        "$(execpath //fx_compiler:fx_compile) $(location ab_demo/%s.fx) $(location %s.fxb)" % (n, n)
+        for n in [
+            "dbgFixed",
+            "dbgHue",
+            "dbgLoop",
+            "dbgTrail",
+        ]
+    ]),
+    tools = ["//fx_compiler:fx_compile"],
+)
+
+py_test(
+    name = "fx_debug_netstack",
+    timeout = "eternal",
+    srcs = ["hitl_fx_debug.py"],
+    data = [
+        ":fxdebug_fxbs",
+        "//firmware/fx_vm:fx_replay",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_fx_debug.py",
     tags = [
         "hitl",
         "manual",

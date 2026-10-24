@@ -28,6 +28,8 @@ type Msg = Record<string, unknown> & { type: string };
 export interface FakeEffect {
   id: string;
   manifest: string;
+  /** The uploaded .fxb. */
+  fxb?: Uint8Array;
   current: { slot: number; value: number[] }[];
   textures?: { index: number; width: number; height: number; elem: number }[];
 }
@@ -83,6 +85,10 @@ export class FakePlayer {
   driver: Record<string, unknown> | null = null;
   /** Every blend_keypoints applied (for assertions). */
   blends: Msg[] = [];
+
+  /** Extra request handlers by message type (checked before the built-in ones),
+   * e.g. the FX debugger emulation in fxdebug.test.ts. Return null for no reply. */
+  readonly handlers = new Map<string, (m: Msg) => Msg | null>();
 
   /** Which TLS identity this player serves (2 = cert2.pem: "after a factory reset"). */
   identity: 1 | 2 = 1;
@@ -215,7 +221,7 @@ export class FakePlayer {
     // it back out of the header (manifest length @8, manifest after the 18-B header).
     const mlen = fxb.readUInt16LE(8);
     const manifest = fxb.subarray(18, 18 + mlen).toString("utf8");
-    const e = { id: effectId, manifest, current: [] };
+    const e = { id: effectId, manifest, current: [], fxb: new Uint8Array(fxb) };
     if (deck === 1) {
       this.deckB = e;
       this.deckActive[1] = activate;
@@ -233,6 +239,12 @@ export class FakePlayer {
     const refusal = this.refuse.get(m.type);
     if (refusal) {
       this.reply(ws, { type: "error", ...refusal });
+      return;
+    }
+    const extra = this.handlers.get(m.type);
+    if (extra) {
+      const r = extra(m);
+      if (r) this.reply(ws, r);
       return;
     }
     switch (m.type) {

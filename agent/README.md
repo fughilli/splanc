@@ -154,6 +154,11 @@ time base), `set_effect`, `rollback_effect`, `estimate_effect` (offline cost
 model, touches nothing), `measure_effect` (windowed on-device perf stream;
 effects slower than 25 fps run at whatever rate they achieve — `lagging`,
 `achieved_fps` — the player never parks them),
+the FX debugger `pause_fx` / `resume_fx` / `step_fx` / `snapshot_fx` /
+`compare_with_preview` (feature `fx_debug`: pause the engine, read its state and
+one LED's VM locals, and replay the stepped frame on the host to classify a
+fixture-vs-preview difference as engine / inputs / output stage; design
+[fx-debugger.md](../docs/design/fx-debugger.md)),
 `list_textures`, `stream_texture`, `stop_texture`, the uniform keypoint tools
 `list_keypoints` / `save_keypoint` / `recall_keypoint` / `blend_keypoints` /
 `delete_keypoint` (feature `keypoints`; design

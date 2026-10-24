@@ -218,7 +218,38 @@ pub struct Compiled {
     /// Non-fatal source lints (`lint.rs`), each `msg` prefixed "warning: " —
     /// e.g. a rate uniform multiplying `time` inside a phase.
     pub warnings: Vec<Diagnostic>,
+    /// Where each named `state` variable and local / parameter lives in the VM's
+    /// state / locals slots — the FX debugger's symbol table (docs/design/
+    /// fx-debugger.md), to name the slots a device snapshot reports.
+    pub symbols: Vec<DebugSym>,
 }
+
+/// One named VM slot range (see [`Compiled::symbols`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DebugSym {
+    pub name: String,
+    /// "state", "local", "param" or "buffer" (slot = the buffer index).
+    pub kind: &'static str,
+    /// The function a local / param belongs to ("" for state).
+    pub func: String,
+    pub slot: u8,
+    pub width: u8,
+}
+
+/// The symbol table as JSON: [{name, kind, func, slot, width}].
+pub fn symbols_json(syms: &[DebugSym]) -> String {
+    let items: Vec<String> = syms
+        .iter()
+        .map(|d| {
+            format!(
+                "{{\"name\":\"{}\",\"kind\":\"{}\",\"func\":\"{}\",\"slot\":{},\"width\":{}}}",
+                d.name, d.kind, d.func, d.slot, d.width
+            )
+        })
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
 
 /// Compiler knobs (see [`compile_with`]).
 #[derive(Clone, Debug)]
@@ -430,6 +461,9 @@ pub struct Compiler {
     n_uniform_slots: u8,
     n_state: u8,
     n_locals: u8,
+    // FX debugger symbol table + the function being compiled.
+    dbg_syms: Vec<DebugSym>,
+    cur_fn: String,
     // const pool (raw 32-bit words: f32 bits, or i32/Q16.16 bit patterns)
     consts: Vec<u32>,
     // output code (per function)
@@ -581,6 +615,8 @@ impl Compiler {
             n_uniform_slots: 0,
             n_state: 0,
             n_locals: 0,
+            dbg_syms: Vec::new(),
+            cur_fn: String::new(),
             consts: Vec::new(),
             code: Vec::new(),
             update_entry: 0xFFFF,
@@ -739,6 +775,22 @@ impl Compiler {
         Ok(slot)
     }
 
+    /// Record a named slot range for the FX debugger's symbol table.
+    fn note_sym(&mut self, kind: &'static str, name: &str, slot: u8, width: u8) {
+        let func = if kind == "state" {
+            String::new()
+        } else {
+            self.cur_fn.clone()
+        };
+        self.dbg_syms.push(DebugSym {
+            name: name.to_string(),
+            kind,
+            func,
+            slot,
+            width,
+        });
+    }
+
     /// Emit a `FillLocal` to zero-initialize `w` local slots at `slot` (array /
     /// struct locals; the VM no longer blanket-clears the scratch). `w ≤
     /// MAX_LOCALS ≤ 255`, so one op always suffices.
@@ -803,6 +855,7 @@ impl Compiler {
         }
         self.expect_sym(';')?;
         let slot = self.alloc_state(ty.width())?;
+        self.note_sym("state", &name, slot, ty.width());
         self.syms.insert(name.clone(), Sym { kind: SymKind::State, slot, ty });
         self.exports.push(ExportInfo { name, ty, slot, unit });
         Ok(())
@@ -1044,6 +1097,7 @@ impl Compiler {
         self.expect_sym(';')?;
         let w = self.ty_width(ty);
         let slot = self.alloc_state(w)?;
+        self.note_sym("state", &name, slot, w);
         self.syms.insert(name, Sym { kind: SymKind::State, slot, ty });
         Ok(())
     }
@@ -1107,6 +1161,7 @@ impl Compiler {
         }
         let id = self.buffers.len() as u8;
         self.buffers.push(BufferInfo { kind: 0, elem, comp, w: 0, h: 0 });
+        self.note_sym("buffer", &name, id, 0);
         self.syms.insert(name, Sym { kind: SymKind::Buffer, slot: id, ty: elem_ty });
         Ok(())
     }
@@ -1136,6 +1191,7 @@ impl Compiler {
         }
         let id = self.buffers.len() as u8;
         self.buffers.push(BufferInfo { kind: 1, elem, comp, w: w as u16, h: h as u16 });
+        self.note_sym("buffer", &name, id, 0);
         self.syms.insert(name, Sym { kind: SymKind::Buffer, slot: id, ty: elem_ty });
         Ok(())
     }
@@ -1172,6 +1228,7 @@ impl Compiler {
     fn func_decl(&mut self) -> Result<(), Diagnostic> {
         let ret_ty = Self::ty_from_ident(&self.eat_ident()?).unwrap();
         let name = self.eat_ident()?;
+        self.cur_fn = name.clone();
         self.expect_sym('(')?;
         // params: `type name, ...`; the special `Led led` (shade) is the ctx
         // namespace, not a real local.
@@ -1188,6 +1245,7 @@ impl Compiler {
                     let pname = self.eat_ident()?;
                     let slot = self.n_locals;
                     self.n_locals += pty.width();
+                    self.note_sym("param", &pname, slot, pty.width());
                     param_tys.push(pty);
                     param_syms.push((pname, slot, pty));
                 }
@@ -1337,6 +1395,7 @@ impl Compiler {
             let slot = self.alloc_local(w)?;
             self.fill_local(slot, w);
             self.lint.vars.insert(name.clone(), lint::Taint::default());
+            self.note_sym("local", &name, slot, w);
             self.syms.insert(name, Sym { kind: SymKind::Local, slot, ty });
             return Ok(());
         }
@@ -1347,6 +1406,7 @@ impl Compiler {
             let slot = self.alloc_local(w)?;
             self.fill_local(slot, w);
             self.lint.vars.insert(name.clone(), lint::Taint::default());
+            self.note_sym("local", &name, slot, w);
             self.syms.insert(name, Sym { kind: SymKind::Local, slot, ty: base_ty });
             return Ok(());
         }
@@ -1359,6 +1419,7 @@ impl Compiler {
         self.expect_sym(';')?;
         let w = self.ty_width(base_ty);
         let slot = self.alloc_local(w)?;
+        self.note_sym("local", &name, slot, w);
         self.syms.insert(name, Sym { kind: SymKind::Local, slot, ty: base_ty });
         self.emit(fx_vm_op::STORE_LOCAL);
         self.emit(slot);
@@ -2989,7 +3050,14 @@ impl Compiler {
             b.push(report.led_cache_groups.len() as u8);
             b.extend_from_slice(&report.led_cache_groups);
         }
-        Compiled { fxb: b, uniforms: self.uniforms, exports: self.exports, memo: report, warnings: self.lint.warnings }
+        Compiled {
+            fxb: b,
+            uniforms: self.uniforms,
+            exports: self.exports,
+            memo: report,
+            warnings: self.lint.warnings,
+            symbols: self.dbg_syms,
+        }
     }
 }
 

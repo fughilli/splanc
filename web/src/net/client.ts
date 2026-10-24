@@ -66,6 +66,10 @@ import {
   type I2cScanResultMessage,
   type DriverStateMessage,
   type UniformValueFlat,
+  type DebugFxLedMessage,
+  type FxDebugControlMessage,
+  type FxDebugMessage,
+  type GetFxSnapshotMessage,
 } from "./proto";
 import type { ColorBlock } from "@ledmapper/protocol";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
@@ -1133,6 +1137,41 @@ export class LedMapperClient {
       { type: "get_perf_report" } as unknown as ClientMessage,
       "perf_report",
     )) as unknown as PerfReportMessage;
+  }
+
+  /** FX debugger (docs/design/fx-debugger.md): pause / resume / step the FX
+   * engine, or read its state (`action` = FX_DEBUG_ACTION.*). Reply: fx_debug
+   * with `state`. Needs the "fx_debug" feature. */
+  async fxDebugControl(
+    msg: Omit<FxDebugControlMessage, "type">,
+    timeoutMs = 10_000,
+  ): Promise<FxDebugMessage> {
+    return (await this.request(
+      { type: "fx_debug_control", ...msg } as unknown as ClientMessage,
+      "fx_debug",
+      timeoutMs,
+    )) as unknown as FxDebugMessage;
+  }
+
+  /** One window of an FX debugger snapshot section. Reply: fx_debug with `chunk`. */
+  async getFxSnapshot(
+    msg: Omit<GetFxSnapshotMessage, "type">,
+    timeoutMs = 10_000,
+  ): Promise<FxDebugMessage> {
+    return (await this.request(
+      { type: "get_fx_snapshot", ...msg } as unknown as ClientMessage,
+      "fx_debug",
+      timeoutMs,
+    )) as unknown as FxDebugMessage;
+  }
+
+  /** Re-run one LED of a paused frame with its VM locals. Reply: fx_debug with `led`. */
+  async debugFxLed(msg: Omit<DebugFxLedMessage, "type">, timeoutMs = 10_000): Promise<FxDebugMessage> {
+    return (await this.request(
+      { type: "debug_fx_led", ...msg } as unknown as ClientMessage,
+      "fx_debug",
+      timeoutMs,
+    )) as unknown as FxDebugMessage;
   }
 
   /** Subscribe to perf_report frames — both replies and unsolicited pushes.

@@ -296,6 +296,30 @@ fn main() -> std::io::Result<()> {
         g.configure(".ledmapper.v1.SubmitDriver.fxb", Config::new().max_bytes(1024));
         g.configure(".ledmapper.v1.CaptureProfile.map_id", Config::new().max_bytes(64));
     }
+    // FX debugger (docs/design/fx-debugger.md): the firmware writes all three
+    // replies ZERO-COPY (ffi.rs fxdbg_*), streaming sections straight from the
+    // live buffers, so its profile drops every variable-size field from the
+    // by-value ServerMessage; the host profile sizes them for a real reply.
+    for (field, host_len, bytes) in [
+        (".ledmapper.v1.FxDebugState.decks", 2, false),
+        (".ledmapper.v1.FxDebugState.color_order", 6, true),
+        (".ledmapper.v1.FxDebugState.frame_ctx", 256, true),
+        (".ledmapper.v1.FxDebugState.resume_reason", 16, true),
+        (".ledmapper.v1.FxSnapshotChunk.data", 1024, true),
+        (".ledmapper.v1.FxLedDebug.rgb", 3, true),
+        (".ledmapper.v1.FxLedDebug.rgb_jit", 3, true),
+        (".ledmapper.v1.FxLedDebug.output", 3, true),
+        (".ledmapper.v1.FxLedDebug.locals", 128, false),
+        (".ledmapper.v1.FxLedDebug.led_context", 64, true),
+    ] {
+        if firmware {
+            g.configure(field, Config::new().skip(true));
+        } else if bytes {
+            g.configure(field, Config::new().max_bytes(host_len));
+        } else {
+            g.configure(field, Config::new().max_len(host_len));
+        }
+    }
 
     g.compile_fdset_file(&args[1], &args[2])
 }

@@ -84,6 +84,9 @@ const CLIENT_ARMS: Record<string, string> = {
   ota_abort: "otaAbort",
   get_ota_status: "getOtaStatus",
   ota_reboot: "otaReboot",
+  fx_debug_control: "fxDebugControl",
+  get_fx_snapshot: "getFxSnapshot",
+  debug_fx_led: "debugFxLed",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -116,6 +119,7 @@ const SERVER_ARMS: Record<string, string> = {
   driver_state: "driverState",
   capture_profile: "captureProfile",
   ota_status: "otaStatus",
+  fx_debug: "fxDebug",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -159,7 +163,7 @@ function bytesToB64(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
-function b64ToBytes(b64: string): Uint8Array {
+export function b64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
@@ -895,6 +899,132 @@ export interface PerfReportMessage {
   heapMinFree: number;
   heapLargestFree: number;
   ticks: PerfFrameFlat[];
+}
+
+// -- FX debugger (docs/design/fx-debugger.md) --------------------------------
+// Pause / step the device's FX engine and read it back. `bytes` fields arrive as
+// base64 strings (like stored_map_chunk.data); web/src/fx/fxDebug.ts decodes them.
+
+/** FxDebugControl.Action. */
+export const FX_DEBUG_ACTION = { status: 0, pause: 1, resume: 2, step: 3 } as const;
+
+/** Pause / resume / step the FX engine, or read its debugger state. */
+export interface FxDebugControlMessage {
+  type: "fx_debug_control";
+  action: number;
+  frames?: number;
+  dt?: number;
+  toTime?: number;
+  holdMs?: number;
+}
+
+/** GetFxSnapshot.Section. */
+export const FX_SECTION = {
+  output: 0,
+  wire: 1,
+  uniforms: 2,
+  state: 3,
+  arena: 4,
+  program: 5,
+  ledContext: 6,
+  lut: 7,
+  raw: 8,
+  graph: 9,
+} as const;
+export type FxSectionName = keyof typeof FX_SECTION;
+
+/** Read bytes [offset, offset + maxLen) of one snapshot section. */
+export interface GetFxSnapshotMessage {
+  type: "get_fx_snapshot";
+  section: number;
+  deck?: number;
+  offset: number;
+  maxLen?: number;
+}
+
+/** Re-run one LED's shade() on the interpreter and return its VM locals. */
+export interface DebugFxLedMessage {
+  type: "debug_fx_led";
+  led: number;
+  deck?: number;
+  maxLocals?: number;
+}
+
+export interface FxDeckDebugFlat {
+  deck: number;
+  effectId: string;
+  fxbHash: number;
+  fxbBytes: number;
+  renders: boolean;
+  flags: number;
+  jitBlocks: number;
+  arenaBytes: number;
+  stateSlots: number;
+  uniformSlots: number;
+  morphRunning: boolean;
+}
+
+export interface FxDebugStateFlat {
+  paused: boolean;
+  stepsPending: number;
+  holdRemainingMs: number;
+  time: number;
+  dt: number;
+  frame: number;
+  ledCount: number;
+  decks: FxDeckDebugFlat[];
+  crossfade: number;
+  crossfadeMode: number;
+  currentFps: number;
+  targetFps: number;
+  brightness: number;
+  lut: boolean;
+  /** base64: 6 bytes, ch0 then ch1 source permutation. */
+  colorOrder: string;
+  channel0Leds: number;
+  channel1Leds: number;
+  /** base64: FX_FRAME_V1. */
+  frameCtx: string;
+  lastUpdateOutcome: number;
+  budget: number;
+  timeBase: boolean;
+  resumeReason: string;
+  layoutVersion: number;
+}
+
+export interface FxSnapshotChunkFlat {
+  section: string | number;
+  deck: number;
+  totalLen: number;
+  offset: number;
+  /** base64 */
+  data: string;
+  frame: number;
+  paused: boolean;
+}
+
+export interface FxLedDebugFlat {
+  led: number;
+  deck: number;
+  /** base64, 3 bytes each. */
+  rgb: string;
+  rgbJit: string;
+  output: string;
+  outcome: number;
+  /** f32 values (proto3 JSON: NaN / Infinity arrive as strings). */
+  locals: (number | string)[];
+  /** base64: one FX_LED_V1 record. */
+  ledContext: string;
+  instructions: number;
+  stackMax: number;
+}
+
+/** The single reply arm of all three debugger requests. */
+export interface FxDebugMessage {
+  type: "fx_debug";
+  state?: FxDebugStateFlat;
+  chunk?: FxSnapshotChunkFlat;
+  led?: FxLedDebugFlat;
 }
 
 // -- MappingBundle (.binpb file format) -------------------------------------

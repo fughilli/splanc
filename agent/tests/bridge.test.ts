@@ -395,6 +395,7 @@ describe("mcp", () => {
       "refresh_players",
       "scan_i2c",
       "search_effects",
+      "snapshot_fx",
     ]);
     const destructive = tools.filter((t) => t.annotations!.destructiveHint).map((t) => t.name);
     for (const d of ["forget_player", "delete_keypoint", "rollback_effect", "deploy_effect", "crossfade_to", "set_device_name", "trust_player", "delete_effect", "update_effect"]) {

@@ -95,6 +95,12 @@ above can't see the user's lights from there.
 `plot_fixture` shows a fixture, or a room with its poses, in 3D (one PNG) when you
 need to see the geometry.
 
+When a fixture doesn't look like the preview: `compare_with_preview` replays the
+device's exact frame on the host and says whether the engine, the inputs (map /
+topology / LED order) or the output stage differs, with VM locals; `pause_fx`,
+`step_fx`, `snapshot_fx` (with `led` for one LED's locals) test the hypothesis and
+`resume_fx` ends it (it also auto-resumes).
+
 ## Rules
 
 - You can't rewire, re-map or recalibrate fixtures — that's the Splanc app's job.
