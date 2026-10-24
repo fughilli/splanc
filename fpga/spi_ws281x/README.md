@@ -112,6 +112,26 @@ POP/LOAD), each port's FIFO peaks at about `frame_bytes × (1 − 1/r) + PREFILL
   read-back over MISO (needs a pin) is the production follow-up. With it, the
   player could report underruns.
 
+## Measured Pi 3 SPI continuity (rig-1, `pi-ledmapper-1`, #369 image)
+
+`//pi/hitl/harness:spi_continuity` ran 2026-10-24 with SCK 6.17–6.24 MHz (the
+4-port player; ≈ 3.9 samples per cycle at the FX2's 24 MS/s, the valid region),
+pauses counted when CLK is held ≥ 1 µs:
+
+- **391 STREAM transfers, 3.2 KB → 61 KB** (1,080 → 20,480 LEDs), each a single
+  CS-low spidev transfer.
+- **Zero pauses ≥ 1 µs inside any transfer**, so no stall and no latch, against
+  both the PREFILL = 2 threshold (20 µs) and PREFILL = 64 (640 µs).
+- The only gaps are the CS-high gap between the player's per-frame CSR write and
+  its STREAM: 5–100 µs, growing with frame size. Those are outside the frame.
+- Assumption, not tested here: intra-transfer pauses are a DMA/software
+  property, independent of SCK. The player's SCK is fixed by `--fpga-ports`, so
+  3.2 vs 6.4 MHz couldn't be compared. At 20 ports the SCK (~24 MHz) is beyond
+  the analyzer; there the core's `STATS` (underruns, `max_byte_gap`) is the
+  check.
+- Rig wiring: CS is **D1** and MOSI **D5** (the station doc had them swapped;
+  fixed).
+
 ## Internal-only 20-port variant (`tangnano9k_20p_top.v`, NOT for flashing)
 
 For sign-off of a 20-output MAX before the WS pin map is chosen.

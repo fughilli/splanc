@@ -6,7 +6,7 @@ check the spi_ws281x core's start-of-frame slack (#370: a pause longer than
 PREFILL x 10 us right after a frame starts latches the strip mid-frame).
 
 On a reserved led-mapper Pi wired to the rig FX2's SPI tap (rig-1 splanc-max-2 =
-pi-ledmapper-1: MOSI D1, CLK D3, CS D5), for each requested LED count N it:
+pi-ledmapper-1: CS D1, CLK D3, MOSI D5), for each requested LED count N it:
 
   1. drives the player over its WSS (tunnelled through the reservation, exactly
      like hitl_fpga_ws281x.py; no Pi credentials needed) with a dim counting
@@ -66,11 +66,11 @@ async def _set_counting(ws_url: str, n: int) -> None:
             pass
 
 
-def _timing(server: str, unit: str, args: argparse.Namespace) -> dict:
+def _timing(server: str, unit: str, args: argparse.Namespace, channels=None) -> dict:
     body = {
         "op": "timing",
         "unit": unit,
-        "channels": [args.clk, args.cs],
+        "channels": channels or [args.clk, args.cs],
         "samplerate": args.samplerate,
         "duration_ms": int(args.seconds * 1000),
         "reset_us": args.reset_us,
@@ -155,6 +155,33 @@ def _analyse(res: dict, n_leds: int, ports_arg: int, args: argparse.Namespace) -
     }
 
 
+def _probe_summary(raw: dict) -> list:
+    """Per-channel toggle statistics, to identify which tap is CLK / CS / MOSI."""
+    out = []
+    for c in raw.get("channels") or []:
+        e = c.get("edges") or {}
+        runs = sc.decode_uvarint_runs(e.get("data", ""))
+        rate = c["capture"]["sample_rate"]
+        hi = sorted(runs[(0 if e.get("start_level", 0) == 1 else 1) :: 2])
+        lo = sorted(runs[(1 if e.get("start_level", 0) == 1 else 0) :: 2])
+
+        def q(v, f, rate=rate):
+            return round(v[int(len(v) * f)] * 1e6 / rate, 3) if v else None
+
+        out.append(
+            {
+                "channel": c["channel"],
+                "edges": len(runs),
+                "edges_truncated": e.get("truncated"),
+                "frames": c["summary"].get("frames"),
+                "high_us_p50_p99_max": [q(hi, 0.5), q(hi, 0.99), q(hi, 0.9999)],
+                "low_us_p50_p99_max": [q(lo, 0.5), q(lo, 0.99), q(lo, 0.9999)],
+                "span_ms": round(sum(runs) * 1e3 / rate, 1),
+            }
+        )
+    return out
+
+
 def run(args: argparse.Namespace) -> int:
     leds = [int(x) for x in args.leds.split(",") if x]
     res = Reservation(server=args.server or None, owner=args.owner, device=args.device)
@@ -169,7 +196,17 @@ def run(args: argparse.Namespace) -> int:
                 for n in leds:
                     asyncio.run(_set_counting(url, n))
                     time.sleep(args.settle)
+                    if args.probe:
+                        raw = _timing(res.server, args.device, args, channels=args.probe.split(","))
+                        if args.dump_raw:
+                            with open(f"{args.dump_raw}/probe_{n}.json", "w") as f:
+                                json.dump(raw, f)
+                        print(json.dumps({"leds": n, "probe": _probe_summary(raw)}), flush=True)
+                        continue
                     raw = _timing(res.server, args.device, args)
+                    if args.dump_raw:
+                        with open(f"{args.dump_raw}/timing_{n}.json", "w") as f:
+                            json.dump(raw, f)
                     out = _analyse(raw, n, args.ports, args)
                     results.append(out)
                     print(json.dumps(out), flush=True)
@@ -196,11 +233,13 @@ def main(argv=None) -> int:
         "--ports", type=int, default=0, help="player --fpga-ports; 0 = infer from SPI clock"
     )
     ap.add_argument("--clk", default="D3")
-    ap.add_argument("--cs", default="D5")
+    ap.add_argument("--cs", default="D1")  # rig-1: CS = D1 (MOSI = D5)
     ap.add_argument("--samplerate", default="24m")
     ap.add_argument("--seconds", type=float, default=4.0)
     ap.add_argument("--settle", type=float, default=1.5)
-    ap.add_argument("--reset-us", type=float, default=300.0, help="CLK idle that ends a burst")
+    # Below the CSR-write -> STREAM CS-high gap (>= ~5 us), so each transaction is
+    # its own CLK burst; longer intra-transfer pauses still count via gap_before.
+    ap.add_argument("--reset-us", type=float, default=3.0, help="CLK idle that ends a burst")
     ap.add_argument(
         "--gap-threshold-us", type=float, default=1.0, help="smallest pause reported (CLK held)"
     )
@@ -209,6 +248,12 @@ def main(argv=None) -> int:
     )
     ap.add_argument("--max-edges", type=int, default=200000)
     ap.add_argument("--out", default="")
+    ap.add_argument("--dump-raw", default="", help="directory to save the raw timing results")
+    ap.add_argument(
+        "--probe",
+        default="",
+        help="e.g. D1,D3,D5: per-channel toggle stats instead of the analysis",
+    )
     return run(ap.parse_args(argv))
 
 
