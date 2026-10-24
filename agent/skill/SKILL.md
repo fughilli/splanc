@@ -13,6 +13,17 @@ effect**: a small shader-like program the player runs once per LED per frame. Th
 (mDNS, players remembered from earlier runs, a LAN sweep), opens one connection
 per player on first use, and fans each tool out to the players you pick.
 
+## Authoring rule: rate knobs are integrated, never multiplied by `time`
+
+`fract(led.s - time * speed)` looks fine in a preview, but moving the `speed`
+slider rescales all the elapsed time, so the effect jumps (by Δspeed × time:
+whole cycles after a few minutes of uptime). Keep a `state` phase per rate and
+advance it in `update()`: `ph = fract(ph + dt * speed);`, then use `ph` in
+`shade()`. Details and the oscillator / scroll / fixed-point forms:
+`effect-language.md` § Rate controls. `compile_effect` warns when it sees the
+pattern; fix the warning like an error. Plain `time` (`fract(led.s - time)`,
+`sin(time * 0.7)`) is fine when no knob scales it.
+
 ## Which players
 
 Every device tool takes `players`: a player name, its id (MAC), a room name,

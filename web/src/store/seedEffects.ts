@@ -37,11 +37,13 @@ const STARTERS: Starter[] = [
     tags: ["starter"],
     source: `uniform float scale : 0.2 .. 4.0 = 1.0;
 uniform float drift : 0.0 .. 2.0 = 0.3;
+state float hue;
 
-void update() {}
+// Rate knobs are integrated (never time * drift: that jumps when it moves).
+void update() { hue = fract(hue + dt * drift); }
 
 vec3 shade(Led led) {
-  float h = fract(led.pos.y * scale + time * drift);
+  float h = fract(led.pos.y * scale + hue);
   return hsv2rgb(h, 0.9, 1.0);
 }
 `,
@@ -52,9 +54,13 @@ vec3 shade(Led led) {
     tags: ["starter"],
     source: `uniform float rate : 0.1 .. 3.0 = 0.6;
 uniform vec3 base : color = 1.0, 0.3, 0.1;
+state float ph;
 state float glow;
 
-void update() { glow = 0.5 + 0.5 * sin(time * rate); }
+void update() {
+  ph = fract(ph + dt * rate * 0.159155);   // rate in rad/s -> turns
+  glow = 0.5 + 0.5 * sin(ph * 6.283185);
+}
 
 vec3 shade(Led led) { return base * glow; }
 `,
@@ -66,11 +72,12 @@ vec3 shade(Led led) { return base * glow; }
     source: `uniform float speed : 0.0 .. 5.0 = 1.0;
 uniform float width : 0.02 .. 0.5 = 0.12;
 uniform vec3 tint : color = 0.2, 0.6, 1.0;
+state float head;
 
-void update() {}
+void update() { head = fract(head + dt * speed); }
 
 vec3 shade(Led led) {
-  float phase = fract(led.s - time * speed);
+  float phase = fract(led.s - head);
   float band = smoothstep(width, 0.0, abs(phase - 0.5));
   return tint * band;
 }
@@ -202,7 +209,7 @@ uniform float rainbow : 0.0 .. 1.0 = 1.0;
 
 state float head;
 
-void update() { head = time * speed; }
+void update() { head = fract(head + dt * speed); }
 
 vec3 shade(Led led) {
   float v = 0.0;
@@ -239,7 +246,7 @@ buffer float trail;
 
 state float head;
 
-void update() { head = fract(time * speed * 0.2); }
+void update() { head = fract(head + dt * speed * 0.2); }
 
 vec3 shade(Led led) {
   float spark = smoothstep(width, 0.0, abs(led.dist - head));

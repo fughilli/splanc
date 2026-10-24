@@ -27,7 +27,7 @@ import { estimateAcrossDevices } from "../../web/src/effects/multiDevice";
 import { exportFileName, mapToCsv, mapToLxf } from "../../web/src/geom/mapExport";
 import { defaultCostTable } from "../../web/src/store/costTableStore";
 import type { Pose } from "./config";
-import { renderPng, preview, type CompileOutcome } from "./fxhost";
+import { lintWarnings, renderPng, preview, type CompileOutcome } from "./fxhost";
 import { Hub, shape, type PlayerResult, type Selector } from "./hub";
 import { localBugOptions, registerFileBug, type BugFilingOptions } from "./bugs";
 import { DEPLOY_LIBRARY_SHAPE, registerLibraryTools } from "./libraryLocal";
@@ -647,13 +647,23 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     ({ players: sel }) => guard(async () => ok(await fan(sel, (s) => s.removeDriver()))),
   );
 
+  /** The source's lints as a tool-result note ("" when clean): deploy_effect
+   * reports them too, for an agent that skipped compile_effect. */
+  async function lintNote(source: string): Promise<string> {
+    const ws = await lintWarnings(source).catch(() => []);
+    if (ws.length === 0) return "";
+    return `Warnings (fix them and deploy again):\n${ws.map((w) => `${w.line}:${w.col}: ${w.msg}`).join("\n")}`;
+  }
+
   // -- effect authoring -------------------------------------------------------------------
   server.registerTool(
     "compile_effect",
     {
       description:
         "Compile effect source with the compiler matching each selected player's firmware (one compile per distinct " +
-        "firmware). Returns diagnostics, the uniform manifest and the bytecode size. Touches nothing on the device.",
+        "firmware). Returns diagnostics, warnings, the uniform manifest and the bytecode size. Fix warnings too: " +
+        "e.g. a rate uniform multiplying `time` inside a phase makes the effect jump when the slider moves " +
+        "(integrate it in update()). Touches nothing on the device.",
       inputSchema: { source: z.string(), effect_id: z.string().optional(), players },
     },
     ({ source, effect_id, players: sel }) =>
@@ -663,6 +673,9 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
           return {
             ok: c.ok,
             diagnostics: c.diagnostics,
+            // Lints are source-level: a player whose (older) compiler can't lint
+            // gets this bundle's. Fix them like errors (see effect-language.md).
+            warnings: c.ok ? (c.warnings ?? (await lintWarnings(source))) : [],
             uniforms: c.uniforms,
             bytecode_bytes: c.bytecodeBytes,
             textures: c.textures,
@@ -784,7 +797,11 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
         if (!source) throw new ToolError("pass `source` (or `library_id`, a library entry from search_effects)");
         effect_id ??= slugEffectId(args.name ?? "", "effect");
         const out = await deploy(effect_id, source, args.activate, args.force, args.players);
-        if (!library || !deploySucceeded(out)) return out;
+        // Lints ride last (after the library note), for an agent that skipped compile_effect.
+        const lint = await lintNote(source);
+        const withLint = <T extends { content: unknown[] }>(r: T): T =>
+          lint ? { ...r, content: [...r.content, { type: "text" as const, text: lint }] } : r;
+        if (!library || !deploySucceeded(out)) return withLint(out);
         const note = await library.noteDeploy({
           source,
           library_id: args.library_id,
@@ -794,7 +811,7 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
           tags: args.tags,
           perf: deployPerf(out),
         });
-        return { ...out, content: [...out.content, { type: "text" as const, text: deployNoteText(note) }] };
+        return withLint({ ...out, content: [...out.content, { type: "text" as const, text: deployNoteText(note) }] });
       }),
   );
   const deploy = (

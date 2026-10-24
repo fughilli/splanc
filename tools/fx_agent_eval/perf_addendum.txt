@@ -11,6 +11,7 @@ RULES:
 4. No pow/exp per LED: pow(x,2.0) -> x*x; exp(-k*d) -> a clamp/mix ramp or a fixed polynomial. Compare dot(d,d) with r\*r instead of length(d) < r. Divide by a constant -> multiply by its reciprocal.
 5. Float literals promote fixed math to float: `fixed x; x * 0.6` is soft-float — write `x * fixed(0.6)`.
 6. No per-LED loops over many items; no multi-octave noise per LED (precompute into a buffer/texture in update or at frame 0).
+7. Rate uniforms are integrated, never multiplied by time: `ph = fract(ph + fixed(dt) * fixed(speed));` in update(), not `fract(time * speed)` — that jumps whenever the slider moves.
    FAST EXAMPLE (rotating rainbow wobble — atan2 once per LED ever, everything per-frame in update, per-LED path all integer):
    uniform float speed : 0.0 .. 4.0 = 1.0;
    uniform float waves : 0.5 .. 8.0 = 3.0;

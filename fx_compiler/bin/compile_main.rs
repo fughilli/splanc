@@ -46,6 +46,9 @@ fn main() {
     };
     match ledmapper_fx_compiler::compile_with(&src, &opts) {
         Ok(c) => {
+            for w in &c.warnings {
+                eprintln!("{}:{}: {}", w.line, w.col, w.msg);
+            }
             if args.len() > 2 {
                 std::fs::write(&args[2], &c.fxb).expect("write .fxb");
                 eprintln!("wrote {} bytes to {}", c.fxb.len(), args[2]);

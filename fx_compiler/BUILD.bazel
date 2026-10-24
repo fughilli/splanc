@@ -17,6 +17,7 @@ rust_library(
     name = "fx_compiler",
     srcs = [
         "src/lib.rs",
+        "src/lint.rs",
         "src/memo.rs",
         "src/opt.rs",
     ],
@@ -86,6 +87,19 @@ rust_test(
     name = "memo_test",
     srcs = ["tests/memo.rs"],
     compile_data = ["tests/testdata/rain.fx"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+    ],
+)
+
+# Rate controls: the `time * uniform` phase lint (src/lint.rs) and that the
+# integrator idiom it recommends stays continuous in the VM across a uniform
+# change (memo pass + LED cache on), where `fract(time * speed)` jumps.
+rust_test(
+    name = "integrator_test",
+    srcs = ["tests/integrator.rs"],
     edition = "2021",
     deps = [
         ":fx_compiler",

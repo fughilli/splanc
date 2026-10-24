@@ -9,7 +9,9 @@ uniform float contrast : 0.5 .. 3.0 = 1.5;
 state float z;
 
 void update() {
-  z = time * speed;
+  // Integrate the drift (never `z = time * speed`: moving the speed slider would
+  // jump the whole field). Noise isn't periodic, so z isn't wrapped.
+  z = z + dt * speed;
 }
 
 vec3 shade(Led led) {
