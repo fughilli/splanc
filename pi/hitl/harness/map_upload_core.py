@@ -124,3 +124,44 @@ def synth_topology(
             "associations": associations,
         },
     }
+
+
+# ---- bulk device->client readback (the #358 "DEVICE SILENT" regression) ----------------
+#
+# The device caps a get_stored_map chunk at 1024 B, so one reply is one TCP segment; with
+# BULK_DEPTH requests in flight the replies leave back to back (1400 + the rest), request
+# after request — the trace-dump pattern. The C6 TX path re-armed its queue with the next
+# frame while the previous one was still on air, so the first of two back-to-back frames
+# was lost nearly every time, and the go-back-N RTO re-sent the same back-to-back pair,
+# losing it again until the client gave up (5 s, ctrl_budget's "DEVICE SILENT"). The
+# one-request-at-a-time readback above never hit it.
+BULK_CHUNK_LEN = 1024
+BULK_DEPTH = 2
+# The trace-dump client's give-up: a chunk this late is a device that went silent.
+BULK_SILENT_S = 5.0
+# A healthy chunk is ~1 RTT — through the reservation's ssh tunnel that is ~150 ms, so
+# this is coarse: a run whose p90 is beyond it is recovering most replies through
+# backed-off RTOs, the pattern that precedes going silent.
+BULK_P90_MAX_S = 1.0
+
+
+def bulk_readback_verdict(
+    latencies_s: list[float], silent: int, mismatched: int, expected_chunks: int
+) -> tuple[bool, str]:
+    """PASS iff every bulk chunk came back (none past BULK_SILENT_S), byte-identical to
+    the reference readback, and the p90 chunk round trip is under BULK_P90_MAX_S."""
+    n = len(latencies_s)
+    if silent:
+        return False, f"DEVICE SILENT: {silent} chunk(s) unanswered within {BULK_SILENT_S:g}s"
+    if n < expected_chunks:
+        return False, f"only {n}/{expected_chunks} chunks read back"
+    if mismatched:
+        return False, f"{mismatched} chunk(s) differ from the reference readback"
+    lat = sorted(latencies_s)
+    p50 = lat[n // 2] if n else 0.0
+    p90 = lat[min(n - 1, (n * 9) // 10)] if n else 0.0
+    worst = lat[-1] if n else 0.0
+    summary = f"{n} chunks p50={p50 * 1e3:.0f}ms p90={p90 * 1e3:.0f}ms max={worst * 1e3:.0f}ms"
+    if p90 > BULK_P90_MAX_S:
+        return False, f"slow bulk TX ({summary}; p90 > {BULK_P90_MAX_S * 1e3:.0f}ms)"
+    return True, summary

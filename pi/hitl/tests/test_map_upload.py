@@ -6,7 +6,9 @@ one `last`, and the payloads reassemble to the original frame byte-for-byte."""
 
 import pytest
 from map_upload_core import (
+    BULK_P90_MAX_S,
     CHUNK_BYTES,
+    bulk_readback_verdict,
     needs_chunking,
     reassemble,
     synth_output_map,
@@ -89,3 +91,35 @@ def test_synth_topology_shape():
     seg = t["topology"]["segments"][0]
     assert len(seg["polyline"]) == 20
     assert len(seg["polyline"][0]) == 3  # flat [x,y,z]; proto_wire reshapes to Vec3
+
+
+# ---- bulk device->client readback verdict (#358 DEVICE SILENT) ---------------------------
+
+
+def test_bulk_verdict_passes_a_healthy_run():
+    ok, why = bulk_readback_verdict([0.01] * 30, silent=0, mismatched=0, expected_chunks=30)
+    assert ok, why
+    assert "30 chunks" in why
+
+
+def test_bulk_verdict_flags_a_silent_device():
+    ok, why = bulk_readback_verdict([0.01] * 4, silent=1, mismatched=0, expected_chunks=30)
+    assert not ok
+    assert "DEVICE SILENT" in why
+
+
+def test_bulk_verdict_flags_short_and_corrupt_readbacks():
+    assert not bulk_readback_verdict([0.01] * 10, 0, 0, expected_chunks=30)[0]
+    ok, why = bulk_readback_verdict([0.01] * 30, 0, mismatched=2, expected_chunks=30)
+    assert not ok and "differ" in why
+
+
+def test_bulk_verdict_flags_every_reply_needing_a_retransmit():
+    # Each reply recovered only by an RTO (~120-300 ms+ each, the pre-fix pattern) is a
+    # FAIL even when nothing timed out: it is one lost probe away from going silent.
+    slow = [BULK_P90_MAX_S + 0.2] * 30
+    ok, why = bulk_readback_verdict(slow, 0, 0, expected_chunks=30)
+    assert not ok and "slow bulk TX" in why
+    # ...but a couple of retransmits among many healthy chunks is just a lossy LAN.
+    mostly = [0.01] * 28 + [1.5, 2.0]
+    assert bulk_readback_verdict(mostly, 0, 0, expected_chunks=30)[0]

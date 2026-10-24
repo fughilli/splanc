@@ -10,6 +10,11 @@ const IP_HDR: usize = 20;
 const TCP_HDR: usize = 20;
 // Receive buffer / max advertised window. ~3 TLS records in flight (see the `rx` field note).
 const RX_BUF: usize = 4096;
+/// Out-of-order ranges we remember (each a [start, end) sequence span whose bytes already
+/// sit in `rx` past the in-order data). Holes beyond this many are simply not buffered.
+const OOO_MAX: usize = 4;
+/// SACK blocks per ACK (3 fits beside nothing else in the 40-byte option space; RFC 2018).
+const SACK_BLOCKS: usize = 3;
 
 /// TCP flags.
 const FIN: u8 = 0x01;
@@ -58,7 +63,31 @@ fn csum(data: &[u8], mut sum: u32) -> u16 {
     !sum as u16
 }
 
+/// Per-connection receive/retransmit counters (diagnostics only: no behaviour hangs off
+/// them). Surfaced on the player's periodic `[net]` status line so a HITL run can tell
+/// TCP loss/reordering from a device that stopped draining its window.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TcpStats {
+    /// Inbound data segments (any sequence).
+    pub rx_segs: u32,
+    /// Data segments beyond `rcv_nxt` (a gap before them): discarded, re-ACKed at rcv_nxt.
+    pub rx_ooo: u32,
+    /// Data segments wholly before `rcv_nxt` (a retransmit of bytes we already had).
+    pub rx_dup: u32,
+    /// In-order segments only partly accepted (the receive buffer was nearly full).
+    pub rx_trunc: u32,
+    /// ACKs we sent advertising a zero window.
+    pub zero_wnd: u32,
+    /// Our retransmission timeouts (go-back-N) and dup-ACK fast retransmits.
+    pub rto: u32,
+    pub fast_rexmit: u32,
+    /// Tail-loss probes sent (see `TcpConn::tlp_done`).
+    pub tlp: u32,
+}
+
 pub struct TcpConn {
+    /// Diagnostics counters (see [`TcpStats`]).
+    pub stats: TcpStats,
     src: [u8; 4],
     dst: [u8; 4],
     sport: u16,
@@ -96,7 +125,29 @@ pub struct TcpConn {
     snd_buf: [u8; SND_BUF],
     snd_len: usize,  // buffered unacked bytes
     sent: usize,     // how many of them have been transmitted (in flight)
-    peer_wnd: u32,   // peer's advertised receive window, from inbound ACKs (wscale 0)
+    // High-water of `sent` since the last ACK: a go-back-N rewind (RTO / fast retransmit)
+    // drops `sent` to 0, but bytes past it were still sent once, and a peer that buffered
+    // them out of order ACKs past the resent part. Bounds which ACKs are acceptable.
+    sent_max: usize,
+    peer_wnd: u32,   // peer's advertised receive window (bytes, already scaled)
+    // Window-scale shift the peer announced in its SYN (RFC 7323): its later window fields
+    // are in units of 2^shift bytes. 0 when it sent none (or we haven't seen its SYN).
+    peer_wscale: u8,
+    // The peer's SYN carried SACK-permitted, so our ACKs may carry SACK blocks.
+    peer_sack: bool,
+    // Out-of-order receive reassembly, with NO extra buffer: a segment that lands past a
+    // hole (seq > rcv_nxt) but inside our advertised window is copied straight into `rx`
+    // at its stream position (rx_len + seq - rcv_nxt), and its [start, end) span recorded
+    // here. When the hole fills, the spans now contiguous with rcv_nxt are absorbed into
+    // the in-order data. The old receiver DISCARDED such segments, so one lost frame cost
+    // the whole window behind it: the sender had to retransmit everything (go-back-N /
+    // RTO, 200 ms+ on Linux) — a visible stall then a catch-up burst in a video stream.
+    // With these spans (and SACK blocks advertising them), only the hole is resent, ~1 RTT.
+    ooo: [(u32, u32); OOO_MAX],
+    ooo_n: usize,
+    // The span holding the most recently received out-of-order segment: RFC 2018 wants it
+    // reported first in the SACK option.
+    ooo_recent: (u32, u32),
     // Retransmit timeout for the oldest in-flight data. The stack owns its own RTO; on
     // expiry it goes back-N (rewinds `sent` to 0) so the whole window is resent.
     tx_at_ms: u32,   // clock when the RTO was armed (0 = nothing in flight / disarmed)
@@ -137,6 +188,21 @@ pub struct TcpConn {
     // it, but the cert + streaming phase (led_capture / video_stream / fx_bench) does.
     dup_ack: u32,     // consecutive duplicate ACKs carrying `dup_ack_seq`
     dup_ack_seq: u32, // the ack number those duplicates repeat
+    // Tail-loss probe (RFC 8985 §7, simplified): with ONE reply segment in flight (a
+    // pong, a texture ack, a small RPC reply) a lost segment produces no dup-ACKs, so
+    // only the RTO (>= 120 ms, doubling) recovered it — measured on the rig as 85 RTOs
+    // in 5 min of 30 fps video, each a 120-265 ms stall of whatever paces on replies.
+    // After PTO = 2*SRTT + the peer's delayed-ACK allowance with no ACK, resend the
+    // oldest unacked segment ONCE per flight (without go-back-N); the RTO stays the
+    // backstop. Cleared whenever an ACK advances snd_una.
+    tlp_done: bool,
+    // Loss recovery (RFC 5681 §3.1 loss window / §3.2 fast retransmit): after an RTO or a
+    // fast retransmit only ONE segment (the oldest unacked) may be in flight until an ACK
+    // advances snd_una. The old go-back-N burst re-sent the whole window back to back —
+    // the exact transmit pattern that lost it — so a loss tied to that pattern (the first
+    // of two back-to-back frames, lost when the TX queue is re-armed mid-frame) repeated
+    // on every RTO until the peer gave up: the device went silent mid-reply, no stall logged.
+    in_recovery: bool,
 }
 
 const RTO_INITIAL_MS: u32 = 300;
@@ -150,6 +216,10 @@ const RTO_MAX_MS: u32 = 2000;
 /// without punishing a slow one. The RFC 6298 floor is 1 s for the internet; a controlled
 /// LAN can (and here must) be tighter.
 const RTO_MIN_MS: u32 = 120;
+/// Tail-loss probe timeout on top of 2*SRTT: a Linux peer delays a pure ACK up to
+/// ~40 ms when it has no data to send back, so probing earlier would only resend
+/// segments that were merely ACK-delayed.
+const TLP_ACK_DELAY_MS: u32 = 40;
 /// Duplicate ACKs before fast-retransmit (RFC 5681 §3.2). Three tolerates the one/two
 /// dup-ACKs that mere reordering produces without retransmitting.
 const DUP_ACK_THRESH: u32 = 3;
@@ -176,17 +246,20 @@ pub struct Seg<'a>(pub &'a [u8]);
 impl TcpConn {
     pub fn new(src: [u8; 4], dst: [u8; 4], sport: u16, dport: u16, iss: u32) -> Self {
         TcpConn {
+            stats: TcpStats::default(),
             src, dst, sport, dport,
             snd_nxt: iss, snd_una: iss, rcv_nxt: 0, ip_id: 1,
             state: State::Closed,
             rx: [0; RX_BUF], rx_len: 0,
             last_adv_wnd: 0,
             window_closed: false,
-            snd_buf: [0; SND_BUF], snd_len: 0, sent: 0, peer_wnd: 0,
+            snd_buf: [0; SND_BUF], snd_len: 0, sent: 0, sent_max: 0, peer_wnd: 0,
+            peer_wscale: 0, peer_sack: false,
+            ooo: [(0, 0); OOO_MAX], ooo_n: 0, ooo_recent: (0, 0),
             tx_at_ms: 0, rto_ms: RTO_INITIAL_MS, rto_count: 0,
             serving_live: false,
             srtt_8: 0, rttvar_4: 0, rtt_seq: iss, rtt_at_ms: 0, rtt_valid: false,
-            dup_ack: 0, dup_ack_seq: 0,
+            dup_ack: 0, dup_ack_seq: 0, tlp_done: false, in_recovery: false,
         }
     }
 
@@ -225,14 +298,116 @@ impl TcpConn {
         &self.rx[..self.rx_len]
     }
     pub fn take_rx(&mut self) {
-        self.rx_len = 0;
+        self.take_rx_n(self.rx_len);
     }
     /// Consume only the first `n` received bytes, keeping the rest (TLS/mbedtls reads the
     /// stream incrementally — record header, then body — so a full drain would lose data).
+    /// Buffered out-of-order bytes past the in-order data shift down with it.
     pub fn take_rx_n(&mut self, n: usize) {
         let n = n.min(self.rx_len);
-        self.rx.copy_within(n..self.rx_len, 0);
+        let end = (self.rx_len + self.ooo_extent()).min(RX_BUF);
+        self.rx.copy_within(n..end, 0);
         self.rx_len -= n;
+    }
+
+    /// Bytes of `rx` past the in-order data that out-of-order spans occupy (0 if none).
+    fn ooo_extent(&self) -> usize {
+        let mut ext = 0usize;
+        for &(_, e) in &self.ooo[..self.ooo_n] {
+            ext = ext.max(e.wrapping_sub(self.rcv_nxt) as usize);
+        }
+        ext
+    }
+
+    /// Record an out-of-order span [s, e) (its bytes are already in `rx`), merging it with
+    /// any span it overlaps or touches. With every slot taken and no merge possible, the
+    /// span is forgotten (its bytes stay unreferenced; the peer resends them).
+    fn ooo_insert(&mut self, mut s: u32, mut e: u32) {
+        let mut i = 0;
+        while i < self.ooo_n {
+            let (a, b) = self.ooo[i];
+            if !seq_gt(s, b) && !seq_gt(a, e) {
+                // Overlapping or adjacent: absorb it and keep scanning.
+                if seq_gt(s, a) {
+                    s = a;
+                }
+                if seq_gt(b, e) {
+                    e = b;
+                }
+                self.ooo[i] = self.ooo[self.ooo_n - 1];
+                self.ooo_n -= 1;
+            } else {
+                i += 1;
+            }
+        }
+        if self.ooo_n < OOO_MAX {
+            self.ooo[self.ooo_n] = (s, e);
+            self.ooo_n += 1;
+            self.ooo_recent = (s, e);
+        }
+    }
+
+    /// Absorb every out-of-order span that the in-order data now reaches (the hole before
+    /// it filled): rcv_nxt and rx_len jump over bytes already sitting in `rx`.
+    fn ooo_absorb(&mut self) {
+        loop {
+            let mut hit = false;
+            let mut i = 0;
+            while i < self.ooo_n {
+                let (a, b) = self.ooo[i];
+                if !seq_gt(a, self.rcv_nxt) {
+                    if seq_gt(b, self.rcv_nxt) {
+                        let grow = b.wrapping_sub(self.rcv_nxt) as usize;
+                        self.rx_len += grow;
+                        self.rcv_nxt = b;
+                    }
+                    self.ooo[i] = self.ooo[self.ooo_n - 1];
+                    self.ooo_n -= 1;
+                    hit = true;
+                } else {
+                    i += 1;
+                }
+            }
+            if !hit {
+                return;
+            }
+        }
+    }
+
+    /// Accept a data segment's bytes: trim what we already have, place in-order bytes at
+    /// the end of `rx` (absorbing any out-of-order spans that become contiguous), and
+    /// buffer out-of-order bytes that fit inside the advertised window at their stream
+    /// position. Bytes past the window are dropped (the peer resends them).
+    fn accept_data(&mut self, mut seq: u32, mut data: &[u8]) {
+        if seq_gt(self.rcv_nxt, seq) {
+            let skip = self.rcv_nxt.wrapping_sub(seq) as usize;
+            if skip >= data.len() {
+                return; // a pure duplicate
+            }
+            data = &data[skip..];
+            seq = self.rcv_nxt;
+        }
+        let free = RX_BUF - self.rx_len;
+        let off = seq.wrapping_sub(self.rcv_nxt) as usize;
+        if off >= free {
+            return; // beyond our advertised window
+        }
+        let n = data.len().min(free - off);
+        if n < data.len() {
+            self.stats.rx_trunc = self.stats.rx_trunc.wrapping_add(1);
+        }
+        let at = self.rx_len + off;
+        self.rx[at..at + n].copy_from_slice(&data[..n]);
+        if off == 0 {
+            self.rx_len += n;
+            self.rcv_nxt = self.rcv_nxt.wrapping_add(n as u32);
+            // The peer delivered data, so it has acted on our advertised window —
+            // it's no longer blocked/probing on a zero window.
+            self.window_closed = false;
+            self.ooo_absorb();
+        } else {
+            self.ooo_insert(seq, seq.wrapping_add(n as u32));
+        }
     }
 
     /// Queue application data into the send window. Copies what fits (bounded by the
@@ -280,7 +455,10 @@ impl TcpConn {
         }
         // Don't put more than the peer said it can hold in flight at once. Treat a
         // never-seen window (0 before the first ACK) as one segment to get started.
-        let wnd = if self.peer_wnd == 0 { SND_MSS as u32 } else { self.peer_wnd };
+        let mut wnd = if self.peer_wnd == 0 { SND_MSS as u32 } else { self.peer_wnd };
+        if self.in_recovery {
+            wnd = wnd.min(SND_MSS as u32); // loss window: the oldest segment alone
+        }
         if self.sent as u32 >= wnd {
             return 0; // in-flight bytes already fill the peer's window
         }
@@ -296,6 +474,7 @@ impl TcpConn {
         seg[..n].copy_from_slice(&self.snd_buf[start..start + n]);
         let len = self.build(PSH | ACK, seq, &seg[..n], out);
         self.sent += n;
+        self.sent_max = self.sent_max.max(self.sent);
         self.snd_nxt = self.snd_una.wrapping_add(self.sent as u32);
         let end_seq = self.snd_una.wrapping_add(self.sent as u32);
         if self.tx_at_ms == 0 {
@@ -368,13 +547,30 @@ impl TcpConn {
             self.tx_at_ms = now_ms.max(1); // arm on the first tick after a segment went out
             return 0;
         }
-        if now_ms.wrapping_sub(self.tx_at_ms) < self.rto_ms {
+        let waited = now_ms.wrapping_sub(self.tx_at_ms);
+        if waited < self.rto_ms {
+            // Tail-loss probe: one early resend of the oldest unacked segment.
+            let pto = if self.rtt_valid {
+                (self.srtt_8 / 4).max(2) + TLP_ACK_DELAY_MS
+            } else {
+                RTO_INITIAL_MS
+            };
+            if !self.tlp_done && pto < self.rto_ms && waited >= pto {
+                self.tlp_done = true;
+                self.stats.tlp = self.stats.tlp.wrapping_add(1);
+                self.rtt_at_ms = 0; // Karn: the probe makes the in-flight sample ambiguous
+                let n = self.sent.min(SND_MSS);
+                let mut seg = [0u8; SND_MSS];
+                seg[..n].copy_from_slice(&self.snd_buf[..n]);
+                return self.build(PSH | ACK, self.snd_una, &seg[..n], out);
+            }
             return 0;
         }
         // RTO fired. If the peer has gone silent through too many of these, declare it
         // dead and tear the connection down so the app can re-listen (a single-connection
         // server would otherwise be locked out to reconnects forever).
         self.rto_count += 1;
+        self.stats.rto = self.stats.rto.wrapping_add(1);
         if self.rto_count > MAX_RTO_RETRIES {
             self.state = State::Done;
             return 0;
@@ -392,6 +588,7 @@ impl TcpConn {
         self.sent = 0;
         self.snd_nxt = self.snd_una;
         self.tx_at_ms = 0;
+        self.in_recovery = true;
         self.pump_tx(now_ms, out)
     }
 
@@ -478,13 +675,14 @@ impl TcpConn {
         // aren't in snd_buf; snd_len is 0 then, so no data bytes are removed.
         if flags & ACK != 0 {
             let acked = ack.wrapping_sub(self.snd_una);
-            let unacked = self.snd_nxt.wrapping_sub(self.snd_una);
+            let unacked = self.snd_nxt.wrapping_sub(self.snd_una).max(self.sent_max as u32);
             if acked > 0 && acked <= unacked {
                 let data_acked = (acked as usize).min(self.snd_len);
                 if data_acked > 0 {
                     self.snd_buf.copy_within(data_acked..self.snd_len, 0);
                     self.snd_len -= data_acked;
                     self.sent = self.sent.saturating_sub(data_acked);
+                    self.sent_max = self.sent_max.saturating_sub(data_acked);
                 }
                 // RTT sample (Karn-clean): if this ACK covers the byte we were timing, feed
                 // the estimator and let it own the RTO. rtt_seq only advances past new data
@@ -505,7 +703,13 @@ impl TcpConn {
                     self.rto_ms = RTO_INITIAL_MS; // no estimate yet — the fixed default
                 }
                 self.snd_una = ack;
+                if seq_gt(ack, self.snd_nxt) {
+                    // The peer had bytes past a go-back-N rewind point: skip resending them.
+                    self.snd_nxt = ack;
+                }
                 self.rto_count = 0; // peer is alive — reset the dead-peer counter
+                self.tlp_done = false; // a fresh flight may probe again
+                self.in_recovery = false; // the resent segment got through: open up again
                 self.tx_at_ms = 0; // re-armed by pump_tx/tick if data is still in flight
                 self.dup_ack = 0; // forward progress clears the dup-ACK run
             } else if acked == 0
@@ -528,16 +732,18 @@ impl TcpConn {
                     self.dup_ack = 1;
                 }
                 if self.dup_ack == DUP_ACK_THRESH {
-                    self.peer_wnd = ((tcp[14] as u32) << 8) | tcp[15] as u32;
+                    self.stats.fast_rexmit = self.stats.fast_rexmit.wrapping_add(1);
+                    self.peer_wnd = self.scaled_wnd(tcp, flags);
                     self.rtt_at_ms = 0; // the resend is a retransmission — no RTT sample off it
                     self.sent = 0;
                     self.snd_nxt = self.snd_una;
                     self.tx_at_ms = 0;
+                    self.in_recovery = true;
                     return self.pump_tx(now_ms, out);
                 }
             }
-            // Peer's advertised receive window (we send window-scale 0, so it's unscaled).
-            self.peer_wnd = ((tcp[14] as u32) << 8) | tcp[15] as u32;
+            // Peer's advertised receive window, scaled by the shift it announced in its SYN.
+            self.peer_wnd = self.scaled_wnd(tcp, flags);
         }
 
         match self.state {
@@ -546,6 +752,7 @@ impl TcpConn {
                 if flags & SYN != 0 && flags & ACK == 0 {
                     self.dst.copy_from_slice(&ip[12..16]);
                     self.dport = sport;
+                    self.parse_syn_options(&tcp[TCP_HDR..data_off.min(tcp.len())]);
                     self.rcv_nxt = seq.wrapping_add(1);
                     let n = self.build(SYN | ACK, self.snd_nxt, &[], out);
                     self.snd_nxt = self.snd_nxt.wrapping_add(1); // SYN-ACK's SYN consumes a seq
@@ -593,6 +800,7 @@ impl TcpConn {
             }
             State::SynSent => {
                 if flags & SYN != 0 && flags & ACK != 0 {
+                    self.parse_syn_options(&tcp[TCP_HDR..data_off.min(tcp.len())]);
                     self.rcv_nxt = seq.wrapping_add(1); // SYN consumes a sequence
                     self.state = State::Established;
                     return self.build(ACK, self.snd_nxt, &[], out);
@@ -602,17 +810,15 @@ impl TcpConn {
             State::Established | State::FinWait => {
                 let mut reply = 0;
                 if !payload.is_empty() {
-                    // In-order data: buffer what fits (partial accept when the window is
-                    // tight) and advance rcv_nxt.
-                    if seq == self.rcv_nxt {
-                        let n = payload.len().min(self.rx.len() - self.rx_len);
-                        self.rx[self.rx_len..self.rx_len + n].copy_from_slice(&payload[..n]);
-                        self.rx_len += n;
-                        self.rcv_nxt = self.rcv_nxt.wrapping_add(n as u32);
-                        // The peer delivered data, so it has acted on our advertised window —
-                        // it's no longer blocked/probing on a zero window.
-                        self.window_closed = false;
+                    self.stats.rx_segs = self.stats.rx_segs.wrapping_add(1);
+                    if seq_gt(seq, self.rcv_nxt) {
+                        self.stats.rx_ooo = self.stats.rx_ooo.wrapping_add(1);
+                    } else if !seq_gt(seq.wrapping_add(payload.len() as u32), self.rcv_nxt) {
+                        self.stats.rx_dup = self.stats.rx_dup.wrapping_add(1);
                     }
+                    // In-order bytes extend rx; out-of-order ones inside the window are
+                    // buffered at their position (and SACKed) instead of discarded.
+                    self.accept_data(seq, payload);
                     // ALWAYS ACK a data segment — whether we accepted it, dropped it at a
                     // zero window, or it's a pure duplicate/retransmit of bytes we already
                     // took. A peer retransmits precisely because our earlier ACK was lost;
@@ -640,11 +846,72 @@ impl TcpConn {
         }
     }
 
+    /// Learn the peer's SYN options: its window-scale shift (RFC 7323; capped at 14) and
+    /// SACK-permitted (RFC 2018). Malformed option lists stop the scan, keeping defaults.
+    fn parse_syn_options(&mut self, opts: &[u8]) {
+        self.peer_wscale = 0;
+        self.peer_sack = false;
+        let mut i = 0;
+        while i < opts.len() {
+            match opts[i] {
+                0 => break, // end of options
+                1 => i += 1, // NOP
+                kind => {
+                    if i + 1 >= opts.len() || opts[i + 1] < 2 || i + opts[i + 1] as usize > opts.len() {
+                        break;
+                    }
+                    let len = opts[i + 1] as usize;
+                    if kind == 3 && len == 3 {
+                        self.peer_wscale = opts[i + 2].min(14);
+                    } else if kind == 4 && len == 2 {
+                        self.peer_sack = true;
+                    }
+                    i += len;
+                }
+            }
+        }
+    }
+
+    /// The peer's advertised window in bytes: the raw field, shifted by its window-scale
+    /// (a SYN's own window is never scaled). Reading the field raw (as this stack used to)
+    /// under-read a Linux peer's window ~128x once scaling was negotiated.
+    fn scaled_wnd(&self, tcp: &[u8], flags: u8) -> u32 {
+        let raw = ((tcp[14] as u32) << 8) | tcp[15] as u32;
+        if flags & SYN != 0 {
+            raw
+        } else {
+            raw << self.peer_wscale
+        }
+    }
+
     /// Build an IPv4 + TCP segment with `flags`, sequence `seq`, and `data`. SYN-bearing
     /// segments (SYN, SYN-ACK) carry a 4-byte MSS option — a bare optionless SYN-ACK is
     /// rejected/undeliverable by some peers and middleboxes, stalling the data phase.
+    /// A pure ACK carries SACK blocks for the buffered out-of-order spans (when the peer
+    /// permitted SACK), the span with the newest segment first.
     fn build(&mut self, flags: u8, seq: u32, data: &[u8], out: &mut [u8]) -> usize {
-        let opt_len = if flags & SYN != 0 { 12 } else { 0 };
+        let mut sack = [(0u32, 0u32); SACK_BLOCKS];
+        let mut nsack = 0;
+        if flags == ACK && data.is_empty() && self.peer_sack && self.ooo_n > 0 {
+            let recent = self.ooo_recent;
+            if self.ooo[..self.ooo_n].contains(&recent) {
+                sack[0] = recent;
+                nsack = 1;
+            }
+            for &r in &self.ooo[..self.ooo_n] {
+                if nsack < SACK_BLOCKS && r != recent {
+                    sack[nsack] = r;
+                    nsack += 1;
+                }
+            }
+        }
+        let opt_len = if flags & SYN != 0 {
+            12
+        } else if nsack > 0 {
+            4 + 8 * nsack // NOP NOP kind len + blocks
+        } else {
+            0
+        };
         let total = IP_HDR + TCP_HDR + opt_len + data.len();
         // IPv4 header.
         out[0] = 0x45;
@@ -668,19 +935,20 @@ impl TcpConn {
         t[2..4].copy_from_slice(&self.dport.to_be_bytes());
         t[4..8].copy_from_slice(&seq.to_be_bytes());
         t[8..12].copy_from_slice(&self.rcv_nxt.to_be_bytes());
-        t[12] = (((TCP_HDR + opt_len) / 4) as u8) << 4; // data offset (5 words, or 6 w/ MSS)
+        t[12] = (((TCP_HDR + opt_len) / 4) as u8) << 4; // data offset in 32-bit words
         t[13] = flags;
         // Advertise the free receive-buffer space (never more than we can hold).
         let win = (self.rx.len() - self.rx_len).min(0xffff) as u16;
         self.last_adv_wnd = win as u32;  // remember it so window_ack() can spot a re-open
         if win == 0 {
+            self.stats.zero_wnd = self.stats.zero_wnd.wrapping_add(1);
             self.window_closed = true; // peer will zero-window-probe until we re-advertise
         }
         t[14..16].copy_from_slice(&win.to_be_bytes());
         t[16] = 0;
         t[17] = 0;
         t[18..20].copy_from_slice(&0u16.to_be_bytes()); // urgent
-        if opt_len == 12 {
+        if flags & SYN != 0 {
             // A standard SYN/SYN-ACK option set so the rig's conntrack doesn't mark our
             // data INVALID: MSS(1400) + SACK-permitted + window-scale(0) + NOP padding.
             let o = &mut t[20..32];
@@ -688,6 +956,16 @@ impl TcpConn {
             o[4] = 4; o[5] = 2; // SACK-permitted
             o[6] = 3; o[7] = 3; o[8] = 0; // window scale, shift 0
             o[9] = 1; o[10] = 1; o[11] = 1; // NOP padding to 4-byte boundary
+        } else if nsack > 0 {
+            let o = &mut t[20..20 + opt_len];
+            o[0] = 1;
+            o[1] = 1;
+            o[2] = 5; // SACK
+            o[3] = (2 + 8 * nsack) as u8;
+            for (k, &(a, b)) in sack[..nsack].iter().enumerate() {
+                o[4 + 8 * k..8 + 8 * k].copy_from_slice(&a.to_be_bytes());
+                o[8 + 8 * k..12 + 8 * k].copy_from_slice(&b.to_be_bytes());
+            }
         }
         t[TCP_HDR + opt_len..TCP_HDR + opt_len + data.len()].copy_from_slice(data);
         // TCP checksum over the pseudo-header + segment.
@@ -1138,6 +1416,102 @@ mod tests {
         (cli, srv)
     }
 
+    /// Regression for the DEVICE SILENT trace-dump stall (#358 + #360 on the C6): the TX
+    /// path lost the FIRST of two back-to-back frames (the queue was re-armed with the next
+    /// frame while the first was still on air). A 1577-byte reply is 1400 + 177 back to back, so segment 1 was
+    /// lost; the tail-loss probe (once per flight) was lost too under background load, and
+    /// the go-back-N RTO then re-sent both segments back to back — losing segment 1 again,
+    /// every time, until the peer gave up after 5 s. Model that channel (rig serial trace:
+    /// srtt 17 ms, one TLP, then RTOs at 120..2000 ms each followed by a dup-ACK for
+    /// segment 2 only) and require the reply to get through: a retransmission must not
+    /// repeat the burst that lost it.
+    #[test]
+    fn rto_recovers_when_first_of_back_to_back_segments_is_always_lost() {
+        let (mut cli, mut srv) = established_pair();
+        // A measured LAN RTT (as on the rig), so the tail-loss probe is armed.
+        srv.rtt_update(17);
+        let reply: Vec<u8> = (0..1577u32).map(|i| (i * 7 + 3) as u8).collect();
+        assert_eq!(srv.enqueue(&reply), reply.len());
+        let mut got: Vec<u8> = Vec::new();
+        let mut to_srv: Vec<Vec<u8>> = Vec::new();
+        let mut buf = [0u8; 1600];
+        let mut dropped = 0;
+        let mut done_at = None;
+        for now in 2..6000u32 {
+            // One loopTask pass: the peer's ACKs, the RTO/TLP tick, then stream the window.
+            let mut burst: Vec<Vec<u8>> = Vec::new();
+            for seg in to_srv.drain(..) {
+                let n = srv.on_ip(now, &seg, &mut buf);
+                if n > 0 {
+                    burst.push(buf[..n].to_vec());
+                }
+            }
+            let tlp_before = srv.stats.tlp;
+            let n = srv.tick(now, &mut buf);
+            if n > 0 && !(tlp_before == 0 && srv.stats.tlp == 1) {
+                burst.push(buf[..n].to_vec()); // (the first probe is lost to background load)
+            } else if n > 0 {
+                dropped += 1;
+            }
+            loop {
+                let n = srv.pump_tx(now, &mut buf);
+                if n == 0 {
+                    break;
+                }
+                burst.push(buf[..n].to_vec());
+            }
+            // The re-armed TX queue: of frames sent back to back, only the last survives.
+            dropped += burst.len().saturating_sub(1);
+            if let Some(seg) = burst.pop() {
+                let mut ack = [0u8; 1600];
+                let r = cli.on_ip(now, &seg, &mut ack);
+                got.extend_from_slice(cli.rx_data());
+                cli.take_rx();
+                if r > 0 {
+                    to_srv.push(ack[..r].to_vec());
+                }
+            }
+            if got.len() == reply.len() && srv.snd_len == 0 {
+                done_at = Some(now);
+                break;
+            }
+        }
+        assert!(dropped > 1, "the channel never dropped anything: test is vacuous");
+        assert_eq!(srv.state, State::Established, "connection torn down by RTO give-up");
+        assert!(
+            got == reply,
+            "reply never got through the lossy back-to-back channel ({} of {} bytes)",
+            got.len(),
+            reply.len()
+        );
+        // The peer (ctrl_budget_probe) gives up on a trace page after 5 s; one RTO is enough.
+        assert!(done_at.unwrap() < 1000, "recovered only after {done_at:?} ms");
+    }
+
+    /// After the loss is repaired (the ACK advances), the window opens up again: the
+    /// one-segment loss window must not stick.
+    #[test]
+    fn recovery_window_reopens_after_ack() {
+        let (mut cli, mut srv) = established_pair();
+        let mut b = [0u8; 1600];
+        let mut a = [0u8; 1600];
+        srv.enqueue(&[1u8; 2000]);
+        while srv.pump_tx(10, &mut b) > 0 {}
+        assert_eq!(srv.sent, 2000);
+        // Nothing acked: RTO fires, rewinds, and resends only the oldest segment.
+        let n = srv.tick(10 + srv.rto_ms + 1, &mut b);
+        assert!(n > 0);
+        assert!(srv.in_recovery);
+        assert_eq!(srv.sent, SND_MSS);
+        assert_eq!(srv.pump_tx(400, &mut b), 0, "loss window holds a single segment");
+        // The client gets it and ACKs; the rest streams out again.
+        let r = cli.on_ip(400, &b[..n], &mut a);
+        let _ = srv.on_ip(401, &a[..r], &mut b);
+        assert!(!srv.in_recovery);
+        assert!(srv.pump_tx(402, &mut b) > 0);
+        assert_eq!(srv.sent, 2000 - SND_MSS);
+    }
+
     #[test]
     fn fast_retransmit_on_three_dup_acks() {
         // Prove a lost middle segment is fast-retransmitted on the 3rd duplicate ACK,
@@ -1179,9 +1553,9 @@ mod tests {
         assert!(r3 > 0, "3rd dup-ACK: fast-retransmit fires (emits a segment)");
         // The retransmit starts at the oldest unacked byte (snd_una unchanged, seg1).
         assert_eq!(srv.snd_una, una_before, "snd_una unmoved (nothing was truly acked)");
-        // Deliver the fast-retransmitted seg1 to the client: now in-order, it accepts it
-        // (plus the buffered later segs are gone since our rx is in-order-only, but seg1
-        // fills the gap) and cumulatively ACKs forward.
+        // Deliver the fast-retransmitted seg1 to the client: now in-order, it fills the
+        // hole (the out-of-order seg2..4 it buffered are absorbed behind it) and
+        // cumulatively ACKs forward.
         let r = cli.on_ip(1, &b[..r3], &mut a);
         assert!(r > 0);
         let _ = srv.on_ip(1, &a[..r], &mut b);
@@ -1271,6 +1645,226 @@ mod tests {
             let _ = srv.tick(now, &mut b);
         }
         assert_eq!(srv.state, State::Done, "silent peer still torn down");
+    }
+
+
+    /// Segments `k` of a client->server stream of `n` `size`-byte segments (byte value =
+    /// k + 1), built by the client's own send path.
+    fn client_segments(cli: &mut TcpConn, n: usize, size: usize) -> ([[u8; 1600]; 6], [usize; 6]) {
+        let mut segs = [[0u8; 1600]; 6];
+        let mut lens = [0usize; 6];
+        cli.peer_wnd = 16384;
+        for k in 0..n {
+            assert_eq!(cli.enqueue(&[k as u8 + 1; 1600][..size]), size);
+            lens[k] = cli.pump_tx(10, &mut segs[k]);
+            assert!(lens[k] > 0);
+        }
+        (segs, lens)
+    }
+
+    /// The SACK blocks (start, end) in an ACK we built, in order.
+    fn sack_blocks(ip: &[u8]) -> ([(u32, u32); 4], usize) {
+        let t = &ip[IP_HDR..];
+        let off = ((t[12] >> 4) as usize) * 4;
+        let mut out = [(0u32, 0u32); 4];
+        let mut n = 0;
+        let mut i = TCP_HDR;
+        while i < off {
+            match t[i] {
+                0 => break,
+                1 => i += 1,
+                5 => {
+                    let len = t[i + 1] as usize;
+                    let mut j = i + 2;
+                    while j + 8 <= i + len {
+                        let a = u32::from_be_bytes([t[j], t[j + 1], t[j + 2], t[j + 3]]);
+                        let b = u32::from_be_bytes([t[j + 4], t[j + 5], t[j + 6], t[j + 7]]);
+                        out[n] = (a, b);
+                        n += 1;
+                        j += 8;
+                    }
+                    i += len;
+                }
+                _ => i += t[i + 1] as usize,
+            }
+        }
+        (out, n)
+    }
+
+    #[test]
+    fn out_of_order_segments_are_buffered_and_sacked() {
+        // A lost segment must cost only itself: the later segments that arrive past the
+        // hole are kept (and SACKed) and delivered the moment the hole is filled — the old
+        // receiver discarded them, forcing the sender to resend the whole window.
+        let (mut cli, mut srv) = established_pair();
+        let mut ack = [0u8; 1600];
+        assert!(srv.peer_sack, "the client's SYN carried SACK-permitted");
+        let base = srv.rcv_nxt;
+        let (segs, lens) = client_segments(&mut cli, 4, 500);
+        // seg0 lost; seg1..3 arrive.
+        for k in 1..4 {
+            let r = srv.on_ip(20, &segs[k][..lens[k]], &mut ack);
+            assert!(r > 0, "every data segment is ACKed");
+            assert_eq!(srv.rcv_nxt, base, "nothing in order yet");
+            let (blocks, nb) = sack_blocks(&ack[..r]);
+            assert_eq!(nb, 1, "one merged span");
+            assert_eq!(blocks[0], (base + 500, base + 500 * (k as u32 + 1)));
+        }
+        assert_eq!(srv.rx_data().len(), 0);
+        assert_eq!(srv.stats.rx_ooo, 3);
+        // The retransmitted seg0 fills the hole: all 2000 bytes are delivered in order.
+        let r = srv.on_ip(30, &segs[0][..lens[0]], &mut ack);
+        assert!(r > 0);
+        assert_eq!(srv.rcv_nxt, base + 2000);
+        let d = srv.rx_data();
+        assert_eq!(d.len(), 2000);
+        for k in 0..4 {
+            assert!(d[k * 500..(k + 1) * 500].iter().all(|&b| b == k as u8 + 1), "seg{k} in place");
+        }
+        assert_eq!(sack_blocks(&ack[..r]).1, 0, "no SACK once nothing is out of order");
+    }
+
+    #[test]
+    fn two_holes_report_the_newest_span_first_and_drain_through_partial_reads() {
+        let (mut cli, mut srv) = established_pair();
+        let mut ack = [0u8; 1600];
+        let base = srv.rcv_nxt;
+        let (segs, lens) = client_segments(&mut cli, 6, 300);
+        // Deliver 0, then 2, then 4: holes at 1 and 3.
+        srv.on_ip(1, &segs[0][..lens[0]], &mut ack);
+        srv.on_ip(1, &segs[2][..lens[2]], &mut ack);
+        let r = srv.on_ip(1, &segs[4][..lens[4]], &mut ack);
+        let (blocks, nb) = sack_blocks(&ack[..r]);
+        assert_eq!(nb, 2);
+        assert_eq!(blocks[0], (base + 1200, base + 1500), "newest span first");
+        assert_eq!(blocks[1], (base + 600, base + 900));
+        // The app reads part of the in-order data: the buffered spans must move with it.
+        srv.take_rx_n(100);
+        assert_eq!(srv.rx_data().len(), 200);
+        srv.on_ip(1, &segs[1][..lens[1]], &mut ack); // fills hole 1 -> 0..900 contiguous
+        assert_eq!(srv.rcv_nxt, base + 900);
+        srv.on_ip(1, &segs[3][..lens[3]], &mut ack); // fills hole 3 -> through 1500
+        srv.on_ip(1, &segs[5][..lens[5]], &mut ack);
+        assert_eq!(srv.rcv_nxt, base + 1800);
+        let d = srv.rx_data();
+        assert_eq!(d.len(), 1700);
+        assert!(d[..200].iter().all(|&b| b == 1));
+        for k in 1..6 {
+            let o = 200 + (k - 1) * 300;
+            assert!(d[o..o + 300].iter().all(|&b| b == k as u8 + 1), "seg{k} in place");
+        }
+    }
+
+    #[test]
+    fn retransmit_overlapping_the_received_edge_is_trimmed() {
+        // A resent segment that starts before rcv_nxt but extends past it delivers its new
+        // tail (the old receiver dropped it whole, since seq != rcv_nxt).
+        let (mut cli, mut srv) = established_pair();
+        let mut ack = [0u8; 1600];
+        let base = srv.rcv_nxt;
+        let (segs, lens) = client_segments(&mut cli, 1, 500);
+        // Pretend the first 200 bytes were already delivered.
+        let t = &segs[0][IP_HDR + TCP_HDR..lens[0]];
+        srv.accept_data(base, &t[..200]);
+        assert_eq!(srv.rcv_nxt, base + 200);
+        srv.on_ip(1, &segs[0][..lens[0]], &mut ack);
+        assert_eq!(srv.rcv_nxt, base + 500);
+        assert_eq!(srv.rx_data().len(), 500);
+        assert_eq!(srv.stats.rx_dup, 0);
+    }
+
+    #[test]
+    fn out_of_order_data_beyond_the_window_is_dropped() {
+        let (_cli, mut srv) = established_pair();
+        let base = srv.rcv_nxt;
+        srv.accept_data(base.wrapping_add(RX_BUF as u32), &[7u8; 100]);
+        assert_eq!(srv.ooo_n, 0);
+        // Partly inside: only the in-window part is kept.
+        srv.accept_data(base.wrapping_add(RX_BUF as u32 - 50), &[7u8; 100]);
+        assert_eq!(srv.ooo_n, 1);
+        assert_eq!(srv.ooo[0], (base + RX_BUF as u32 - 50, base + RX_BUF as u32));
+    }
+
+    #[test]
+    fn peer_window_honours_its_window_scale() {
+        // A Linux client announces wscale 7 in its SYN; its later window fields are in
+        // 128-byte units, so a raw 501 is a ~64 KB window, not 501 bytes.
+        let srv_ip = [10, 0, 0, 2];
+        let mut srv = TcpConn::listen(srv_ip, 443, 9000);
+        let mut syn = [0u8; 64];
+        let mut out = [0u8; 128];
+        // IPv4 + TCP SYN with options MSS, SACK-permitted, wscale 7.
+        syn[0] = 0x45;
+        syn[9] = 6;
+        syn[12..16].copy_from_slice(&[10, 0, 0, 1]);
+        syn[16..20].copy_from_slice(&srv_ip);
+        let t = &mut syn[IP_HDR..];
+        t[0..2].copy_from_slice(&5000u16.to_be_bytes());
+        t[2..4].copy_from_slice(&443u16.to_be_bytes());
+        t[4..8].copy_from_slice(&77u32.to_be_bytes());
+        t[12] = (32 / 4) << 4;
+        t[13] = SYN;
+        t[14..16].copy_from_slice(&64240u16.to_be_bytes());
+        t[20..32].copy_from_slice(&[2, 4, 0x05, 0xb4, 4, 2, 3, 3, 7, 1, 1, 1]);
+        let r = srv.on_ip(1, &syn[..IP_HDR + 32], &mut out);
+        assert!(r > 0);
+        assert_eq!(srv.peer_wscale, 7);
+        assert!(srv.peer_sack);
+        // Final ACK with a raw window of 501.
+        let mut a = [0u8; 40];
+        a[0] = 0x45;
+        a[9] = 6;
+        a[12..16].copy_from_slice(&[10, 0, 0, 1]);
+        a[16..20].copy_from_slice(&srv_ip);
+        let t = &mut a[IP_HDR..];
+        t[0..2].copy_from_slice(&5000u16.to_be_bytes());
+        t[2..4].copy_from_slice(&443u16.to_be_bytes());
+        t[4..8].copy_from_slice(&78u32.to_be_bytes());
+        t[8..12].copy_from_slice(&srv.snd_nxt.to_be_bytes());
+        t[12] = 5 << 4;
+        t[13] = ACK;
+        t[14..16].copy_from_slice(&501u16.to_be_bytes());
+        srv.on_ip(2, &a[..40], &mut out);
+        assert_eq!(srv.state, State::Established);
+        assert_eq!(srv.peer_wnd, 501 << 7);
+    }
+
+    #[test]
+    fn tail_loss_probe_resends_a_lone_lost_reply_well_before_the_rto() {
+        // One small reply in flight and no ACK: there are no later segments to elicit
+        // dup-ACKs, so only a probe (or the >= 120 ms RTO) can recover it.
+        let (mut cli, mut srv) = established_pair();
+        let (mut a, mut b) = ([0u8; 1600], [0u8; 1600]);
+        let mut now = 1000u32;
+        for _ in 0..4 {
+            // warm the RTT estimator at ~4 ms
+            srv.enqueue(&[1u8; 60]);
+            let s = srv.pump_tx(now, &mut b);
+            now += 4;
+            let r = cli.on_ip(now, &b[..s], &mut a);
+            cli.take_rx();
+            srv.on_ip(now, &a[..r], &mut b);
+        }
+        assert!(srv.rto_ms >= RTO_MIN_MS);
+        srv.enqueue(b"pong");
+        let s = srv.pump_tx(now, &mut b);
+        assert!(s > 0); // lost on the air
+        let pto = (srv.srtt_8 / 4).max(2) + TLP_ACK_DELAY_MS;
+        assert!(pto < srv.rto_ms);
+        assert_eq!(srv.tick(now + pto - 1, &mut b), 0, "not before the PTO");
+        let p = srv.tick(now + pto, &mut b);
+        assert!(p > 0, "the probe goes out at the PTO");
+        assert_eq!(&b[IP_HDR + TCP_HDR..p], b"pong");
+        assert_eq!(srv.stats.tlp, 1);
+        assert_eq!(srv.sent, 4, "no go-back-N rewind");
+        assert_eq!(srv.tick(now + pto + 5, &mut b), 0, "one probe per flight");
+        // The probe arrives; its ACK clears the flight and re-arms probing.
+        let r = cli.on_ip(now + pto + 4, &b[..p], &mut a);
+        assert_eq!(cli.rx_data(), b"pong");
+        srv.on_ip(now + pto + 4, &a[..r], &mut b);
+        assert_eq!(srv.sent, 0);
+        assert!(!srv.tlp_done);
+        assert_eq!(srv.stats.rto, 0, "recovered without an RTO");
     }
 
     impl TcpConn {

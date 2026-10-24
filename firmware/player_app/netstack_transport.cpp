@@ -545,6 +545,28 @@ uint8_t *tx_ip_slot() { return g_txf + kTxIp; }
 // buffer is copied there first. With HW crypto active (g_hwkey) hand a plaintext QoS MPDU to
 // the vendor ppTxPkt bridge and let the MAC insert the CCMP header + encrypt; otherwise
 // software-encrypt. Returns the enc'd length or the plaintext length. `label` is logged.
+// TX pacing. The direct-submission MAC path gives no completion we can read (the
+// descriptor OWN bit never clears, PLCP0's enable bit never clears, and the queue status
+// block does not reliably change for a large frame), and arming queue 0 while its previous
+// frame is still on air loses that frame: a 1400 + 177 B TCP reply lost its first segment
+// nearly every time, and the RTO's resend of the same pair lost it again (the #358
+// "DEVICE SILENT" trace-dump stall). So never arm before the previous frame's worst-case
+// airtime has passed: 6 Mb/s legacy OFDM (4/3 us per byte) plus preamble, SIFS and the
+// AP's ACK. Bounded at 4 ms; a frame sent after an idle gap pays nothing.
+static uint32_t g_tx_busy_until_us = 0;
+static void tx_pace_before() {
+  const uint32_t now = (uint32_t)esp_timer_get_time();
+  int32_t left = (int32_t)(g_tx_busy_until_us - now);
+  if (left <= 0) return;
+  if (left > 4000) left = 4000;
+  const uint32_t end = now + (uint32_t)left;
+  while ((int32_t)(end - (uint32_t)esp_timer_get_time()) > 0) {
+  }
+}
+static void tx_pace_after(uint32_t frame_len) {
+  g_tx_busy_until_us = (uint32_t)esp_timer_get_time() + 150 + (frame_len * 4) / 3;
+}
+
 uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char *label) {
   if (plen < 0 || plen > (int)(sizeof g_txf - kTxL2)) return 0;
   if (payload != g_txf + kTxL2) memmove(g_txf + kTxL2, payload, plen);
@@ -575,7 +597,9 @@ uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char 
   static uint8_t enc[1700];  // static: off the deep TLS-write stack (encrypt can't run in place)
   uint32_t el = ns_sta_encrypt(qhdr, 26, payload, plen, enc, sizeof(enc));
   if (el > 0) {
+    tx_pace_before();
     ns_mac_send(enc, el, 0);
+    tx_pace_after(el);
     static int dbg = 0;
     if (dbg++ < 4) {
       auto rd = [](uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); };
