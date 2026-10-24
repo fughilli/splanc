@@ -139,6 +139,12 @@ class CcClient {
     this.uniforms.push(values.map((v) => ({ slot: v.slot, value: [...v.value] })));
     return true;
   }
+  // The live-control channel (a drag): recorded like a one-shot set.
+  readonly live = {
+    setUniform: (slot: number, value: number[]): void => {
+      this.uniforms.push([{ slot, value: [...value] }]);
+    },
+  };
   async submitEffect(id: string, fxb: Uint8Array, activate: boolean): Promise<unknown> {
     this.effects.push({ id, fxb, activate });
     return {};
