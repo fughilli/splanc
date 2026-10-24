@@ -205,6 +205,7 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
@@ -224,7 +225,7 @@
 <p class="caption" role="heading"><span class="caption-text">Guides</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
@@ -426,7 +427,10 @@ stream), upgrading the bridge’s SDK is enough; the relay doesn’t change.</p>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/live</span></code></p></td>
 <td><p>An app’s live (VJ) WebSocket, bearer token in the subprotocol list, passed through to the bridge (<a class="reference internal" href="live-vj-relay.html"><span class="std std-doc">live-vj-relay.md</span></a>).</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/healthz</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/bugs</span></code></p></td>
+<td><p>An agent files a bug on the Splanc repo with the Worker’s <code class="docutils literal notranslate"><span class="pre">GITHUB_ISSUES_TOKEN</span></code> secret; per-bridge / per-IP rate limits; <code class="docutils literal notranslate"><span class="pre">503</span> <span class="pre">not_configured</span></code> without the secret (<a class="reference internal" href="agent-bug-reports.html"><span class="std std-doc">agent-bug-reports.md</span></a>).</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/healthz</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:true}</span></code>.</p></td>
 </tr>
 </tbody>

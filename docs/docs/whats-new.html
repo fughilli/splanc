@@ -205,6 +205,7 @@
 <div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
   <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
 <ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="quickstart.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="manifesto.html">The manifesto</a></li>
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">What's new</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
@@ -224,7 +225,7 @@
 <p class="caption" role="heading"><span class="caption-text">Guides</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html">Quickstart</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
@@ -321,6 +322,60 @@
 it in depth. The full history is in the git log and <a class="reference internal" href="#../WORKLOG.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code></span></a>.</p>
 <section id="october-2026">
 <h2>October 2026<a class="headerlink" href="#october-2026" title="Link to this heading">¶</a></h2>
+<section id="calibrate-imu-is-hands-free">
+<h3>Calibrate IMU is hands-free<a class="headerlink" href="#calibrate-imu-is-hands-free" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>No Capture pose or Save buttons.</strong> When the map registers in the viewfinder
+and the fixture and phone hold still for a moment, the pose is taken
+automatically and the screen prompts for the next one. It always takes three
+poses (normal, tilted ~45° to the side, tilted ~45° toward/away), then solves,
+writes the calibration to the fixture and reads it back to confirm.</p></li>
+<li><p><strong>A pose that repeats an earlier one is refused with guidance</strong> (“tilt it
+further”). So is one where the camera and the sensor disagree on how far the
+fixture turned.</p></li>
+<li><p><strong>Never lost on a disconnect.</strong> The solve stays pending on the phone, per
+device, until the fixture confirms it; every reconnection pushes it again.</p></li>
+<li><p>Fixes: the save was silently dropped when a sensor poll was in flight; the
+stored mapping pose blocked the first capture; a re-run carried every earlier
+pose, so the third pose had nowhere left to go; and the fixture’s rest
+detector refused tilted poses on IMUs with a typical zero-g offset.</p></li>
+<li><p>Design: <a class="reference internal" href="design/sensor-core.html"><span class="std std-doc">sensor-core.md §7.3</span></a>.</p></li>
+</ul>
+</section>
+<section id="slow-effects-lag-instead-of-being-parked-and-wi-fi-rescans-without-a-reboot">
+<h3>Slow effects lag instead of being parked, and Wi-Fi rescans without a reboot<a class="headerlink" href="#slow-effects-lag-instead-of-being-parked-and-wi-fi-rescans-without-a-reboot" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Slow effects lag instead of being parked.</strong> An effect too heavy for the 25 fps
+floor (lower on long strips) or for a pinned framerate used to be stopped
+outright. Now it keeps playing as fast as the board can render it. The player
+reports it as <code class="docutils literal notranslate"><span class="pre">lagging</span></code>, with the rate it really achieves (<code class="docutils literal notranslate"><span class="pre">achieved_fps</span></code>). The
+app and the live screen mention it once, as a notice rather than an error. The
+render task’s duty cycle stays bounded, so Wi-Fi, sensors and control stay
+responsive. <code class="docutils literal notranslate"><span class="pre">set_fps.no_abort</span></code> and <code class="docutils literal notranslate"><span class="pre">fps_state.aborted</span></code> are deprecated and
+ignored. Details: <a class="reference internal" href="design/perf-monitoring.html"><span class="std std-doc">perf-monitoring.md</span></a>.</p></li>
+<li><p><strong>The board no longer reboots to rescan Wi-Fi.</strong> When the saved network isn’t
+visible (the router still starting after a power cut), the board rescans in
+the background while the effect keeps playing. This replaces the
+restart-on-backoff described under “Players stay on Wi-Fi across updates and
+power cuts” below.</p></li>
+</ul>
+</section>
+<section id="effects-stop-recomputing-what-doesn-t-change-and-the-cost-estimate-is-honest">
+<h3>Effects stop recomputing what doesn’t change (and the cost estimate is honest)<a class="headerlink" href="#effects-stop-recomputing-what-doesn-t-change-and-the-cost-estimate-is-honest" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Automatic memoization.</strong> <code class="docutils literal notranslate"><span class="pre">shade()</span></code> subexpressions that only depend on the LED’s map position
+(<code class="docutils literal notranslate"><span class="pre">atan2(led.pos.x,</span> <span class="pre">led.pos.z)</span></code> for cylindrical mappings, <code class="docutils literal notranslate"><span class="pre">length(led.pos.xz)</span></code>, <code class="docutils literal notranslate"><span class="pre">hash(led.idx)</span></code>)
+are computed once per LED and then read from a per-LED cache in spare arena RAM. Per-frame
+values (<code class="docutils literal notranslate"><span class="pre">sin(time</span> <span class="pre">*</span> <span class="pre">speed)</span></code>, uniform math) are computed once per frame instead of once per LED.
+Output is bit-identical; no source changes needed. Effects that don’t fit in the spare RAM just
+run as before.</p></li>
+<li><p><strong>The offline estimate now matches the device.</strong> It used to stop counting at the first
+fixed-point or optimized opcode and priced the interpreter’s per-op overhead at ~2 cycles
+(really ~69 on the C6). That’s why an effect estimated at 3 ms ran at 132 ms. The default
+cost table is now fitted to the HITL benchmark bundle (4.5% rms).</p></li>
+<li><p>Design, cost table and numbers: <a class="reference internal" href="design/fx-memoization.html"><span class="std std-doc">fx-memoization.md</span></a>.</p></li>
+</ul>
+</section>
 <section id="leds-on-each-channel">
 <h3>1024 LEDs on each channel<a class="headerlink" href="#leds-on-each-channel" title="Link to this heading">¶</a></h3>
 <ul class="simple">
@@ -393,6 +448,14 @@ maps. Maps that kept their capture data still get the joint re-solve. The
 debug <strong>Bundle</strong> tile is now greyed out with the reason, not hidden.</p></li>
 <li><p>Not yet through <strong>Live via bridge</strong>: the bridge doesn’t forward the stored
 map, so connect to the fixture directly to copy it.</p></li>
+</ul>
+</section>
+<section id="a-quickstart-guide">
+<h3>A quickstart guide<a class="headerlink" href="#a-quickstart-guide" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>New: <a class="reference internal" href="quickstart.html"><span class="std std-doc">the Splanc quickstart</span></a></strong>. Wiring, flashing, Wi-Fi,
+mapping, effects and AI agents, one short section each, from a bare ESP32-C6
+to animated lights.</p></li>
 </ul>
 </section>
 <section id="the-motion-sensor-knows-which-way-the-map-is">
@@ -933,9 +996,13 @@ the way it is.</p></li>
             <ul>
 <li><a class="reference internal" href="#">What’s new</a><ul>
 <li><a class="reference internal" href="#october-2026">October 2026</a><ul>
+<li><a class="reference internal" href="#calibrate-imu-is-hands-free">Calibrate IMU is hands-free</a></li>
+<li><a class="reference internal" href="#slow-effects-lag-instead-of-being-parked-and-wi-fi-rescans-without-a-reboot">Slow effects lag instead of being parked, and Wi-Fi rescans without a reboot</a></li>
+<li><a class="reference internal" href="#effects-stop-recomputing-what-doesn-t-change-and-the-cost-estimate-is-honest">Effects stop recomputing what doesn’t change (and the cost estimate is honest)</a></li>
 <li><a class="reference internal" href="#leds-on-each-channel">1024 LEDs on each channel</a></li>
 <li><a class="reference internal" href="#show-mode-browse-effects-with-a-knob-midi-fighter-twister-setup-from-splanc">Show Mode: browse effects with a knob; Midi Fighter Twister setup from Splanc</a></li>
 <li><a class="reference internal" href="#copy-a-fixture-s-map-onto-a-new-phone">Copy a fixture’s map onto a new phone</a></li>
+<li><a class="reference internal" href="#a-quickstart-guide">A quickstart guide</a></li>
 <li><a class="reference internal" href="#the-motion-sensor-knows-which-way-the-map-is">The motion sensor knows which way the map is</a></li>
 <li><a class="reference internal" href="#sensor-drivers-an-agent-can-write">Sensor drivers an agent can write</a></li>
 <li><a class="reference internal" href="#fixtures-that-feel-motion-the-sensor-core">Fixtures that feel motion: the sensor core</a></li>

@@ -43,23 +43,25 @@ camera path and the LED positions together.
   <em>▶ Watch the intro video</em>
 </p>
 
-## Getting started
+## Quickstart
 
-The app is a PWA — nothing to install:
+**→ [The Splanc quickstart](./docs/quickstart.md)**: from a bare ESP32-C6
+board to mapped, animated lights in a browser. The app is a PWA, nothing to
+install: **<https://splanc.io/app>**.
 
-**→ <https://splanc.io/app>**
-
-1. **Onboard your controller.** Starting from a brand-new ESP32-C6 dev board?
-   Flash the firmware onto it straight from the PWA over USB (desktop
-   Chrome/Edge via Web Serial, or Android Chrome via WebUSB) — no toolchain
-   needed. Then put it on your WiFi over Bluetooth and connect to it on your LAN
-   (you accept its self-signed certificate once).
-2. **Capture a map.** Start a mapping session and walk a slow arc around the lit
-   fixture until the live preview converges, then save the map.
-3. **Clean it up.** In the mapping workspace, tidy the recovered topology
-   (skeleton extraction, junction cleanup) and send the map to the device.
-4. **Design effects.** Open the effects editor, pick or write an effect, preview
-   it against your map, and send it to the controller to play for real.
+1. **Wire it.** Any ESP32-C6 board (the C6 SuperMini is the reference), a
+   WS2812/NeoPixel strip with its data on **GPIO20** (a second strip on
+   GPIO14), and a 5 V supply for the strip with a common ground.
+2. **Flash it.** Open the app in Chrome or Edge on a computer (or Chrome on
+   Android; the iPhone app can't set up new hardware), tap **Flash new device
+   (USB)**, then **Connect a board & flash**. No toolchain needed.
+3. **Put it on Wi-Fi.** **Add device (Bluetooth)**: enter your Wi-Fi, pick the
+   board, and accept its certificate once. From firmware 1.10.0 it remembers
+   the network across reboots and updates.
+4. **Map it.** **Maps ▸ + New**, then walk slowly around the lit fixture with
+   your phone until the live preview converges. You get a 3D map of every LED.
+5. **Play.** Pick or write an effect, perform in Show mode, bind MIDI knobs, or
+   hand the lights to your AI agent (below).
 
 ## Ask an AI agent
 
@@ -107,6 +109,8 @@ See [`agent/README.md`](./agent/README.md).
 
 ## Learn more
 
+- **Quickstart:** [`docs/quickstart.md`](./docs/quickstart.md) — wiring,
+  flashing, Wi-Fi, mapping, effects and agents, one short section each
 - **Using the app:** [`docs/user-guide.md`](./docs/user-guide.md) — a walkthrough of
   every feature (also an interactive tutorial in the app, from Settings ▸ Help)
 - **Why it's built this way:** [the Splanc manifesto](./docs/manifesto.md):
