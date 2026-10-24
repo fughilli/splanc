@@ -223,33 +223,37 @@ let
     #  * maxConcurrentPerClass — a cap per unit class (catalog type, e.g. esp32c6 /
     #    led-mapper-pi), layered under maxConcurrent. It's where the USB-bus protection
     #    now lives: the esp32c6 class cap bounds concurrent USB flash/monitor/JTAG work
-    #    (it also holds if discovery adds a third board), while network DUTs get their
-    #    own budget. A class at its cap never idles another class's free units, and
-    #    admission stays FIFO (strictly in order within a class; the oldest runnable
+    #    (rig-1/rig-2 each carry 4 C6s: 2 on the Pi 5's own ports + 2 on a self-powered
+    #    USB 2.0 hub, since the 3 A supply limits the Pi's USB to 600 mA), while network
+    #    DUTs get their own budget. A class at its cap never idles another class's free
+    #    units, and admission stays FIFO (strictly in order within a class; the oldest runnable
     #    waiter always takes a freed slot, so no class starves).
     #
     # The shared RADIO isn't a concurrency-cap concern anymore: airtime-critical phases
     # take the AP-exclusive flock (/run/hitl-ap-lock, #228) and BLE provisioning the
     # per-rig adapter lock (/run/hitl-provision), whatever the cap. So on the Pi 5 rigs
-    # the host ceiling rises to the unit count it was effectively serving (4 on rig-1)
-    # and the per-class caps do the shaping; every other host (the Pi 3 rig-3 with its
-    # single USB bus, one-off boxes) keeps the original host-wide 2 and no class caps.
+    # the host ceiling is the sum of the class caps (rig-1: 4 C6 + 2 Pi = 6; rig-2: 4)
+    # and the per-class caps do the shaping. If #170's symptoms ("ws never came up",
+    # USB resets) come back at 4 concurrent C6s, drop esp32c6 to 3. Every other host
+    # (the Pi 3 rig-3 with its single USB bus, one-off boxes) keeps the original host-wide 2 and no class caps.
     options.hitl.maxConcurrent = lib.mkOption {
       type = lib.types.ints.unsigned;
       default =
-        if lib.elem config.networking.hostName [ "hitl-rig-1" "hitl-rig-2" ] then 4 else 2;
+        if config.networking.hostName == "hitl-rig-1" then 6
+        else if config.networking.hostName == "hitl-rig-2" then 4
+        else 2;
       description = "Host-wide cap on concurrently-active reservations (0 = unlimited).";
     };
     options.hitl.maxConcurrentPerClass = lib.mkOption {
       type = lib.types.attrsOf lib.types.ints.positive;
       default =
         if config.networking.hostName == "hitl-rig-1" then {
-          # 2 USB ESP32-C6 boards on the bus (the original #170 bound) ...
-          esp32c6 = 2;
+          # All 4 USB ESP32-C6 boards (2 on-board ports + 2 on the powered hub) ...
+          esp32c6 = 4;
           # ... and the 2 network led-mapper Pis, the "current 2" they used to share.
           "led-mapper-pi" = 2;
         } else if config.networking.hostName == "hitl-rig-2" then {
-          esp32c6 = 2; # its two analyzer-tapped C6s; holds if a third is plugged in
+          esp32c6 = 4; # its 2 analyzer-tapped C6s + 2 more on the powered USB hub
         } else { };
       example = { esp32c6 = 2; "led-mapper-pi" = 2; };
       description = ''
