@@ -94,7 +94,7 @@ POP/LOAD), each port's FIFO peaks at about `frame_bytes × (1 − 1/r) + PREFILL
 - **Pacing is still the host's job.** A frame that starts while the previous one
   is still _emitting_ joins it and loses the latch between them (asserted in
   `spi_ws281x_120fps_sim` phase D). Frame period ≥ `3L × 9.963 µs` (+ ~40 µs
-  prefill latency) + latch. At 120 fps that is ≤ 275 LEDs/port at an 80 µs latch
+  prefill latency) + latch. At 120 fps that is ≤ 274 LEDs/port at an 80 µs latch
   and ≤ 267 at 300 µs. Double-buffered FIFO banks would remove the constraint:
   two 810 B banks fit one 2048 B BSRAM at 270 LEDs.
 - **`STATS = 1`** (on in the 20-port top) adds outputs, cumulative since reset:
