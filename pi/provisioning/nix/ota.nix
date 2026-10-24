@@ -188,6 +188,39 @@ in
     fi
     ${pkgs.nettools}/bin/hostname "$h" 2>/dev/null || true
   '';
+  # The unit's mDNS name is how the app, the agent and the HITL rig find it, so keep
+  # avahi up and on the right name. Seen on rig-1's splanc-max-2 (two interfaces on
+  # one LAN, wlan0 + USB ethernet): avahi killed by a SIGHUP (openresolv's hook)
+  # while still starting — systemd counts that as a clean exit and its stale PID
+  # file then blocks every restart — and, after an abrupt reset, a name conflict
+  # that left it advertising "splanc-max-3.local" for good.
+  systemd.services.avahi-daemon.serviceConfig = {
+    Restart = lib.mkForce "always";
+    RestartSec = "2";
+    ExecStartPre = [ "-${pkgs.coreutils}/bin/rm -f /run/avahi-daemon/pid" ];
+  };
+  systemd.services.splanc-mdns-name = {
+    description = "Splanc MAX: keep avahi advertising this unit's own hostname";
+    path = [ pkgs.avahi pkgs.dbus pkgs.nettools ];
+    serviceConfig.Type = "oneshot";
+    script = ''
+      h="$(hostname)"
+      a="$(dbus-send --system --print-reply=literal --dest=org.freedesktop.Avahi / \
+            org.freedesktop.Avahi.Server.GetHostName 2>/dev/null | tr -d ' ')" || exit 0
+      if [ -n "$h" ] && [ -n "$a" ] && [ "$a" != "$h" ]; then
+        echo "avahi advertises $a.local, not $h.local: renaming" >&2
+        avahi-set-host-name "$h"
+      fi
+    '';
+  };
+  systemd.timers.splanc-mdns-name = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "90s";
+      OnUnitActiveSec = "60s";
+    };
+  };
+
   services.openssh.authorizedKeysFiles = [ "/var/lib/sbc/authorized_keys.d/%u" ];
   system.activationScripts.splancDeployKeys = lib.stringAfter [ "var" ] ''
     if [ ! -e /var/lib/sbc/authorized_keys.d/root ]; then
