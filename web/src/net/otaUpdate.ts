@@ -159,8 +159,18 @@ const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeou
 /** What a user can do when the device doesn't come back — shown with every timeout. */
 export const RECOVERY_TEXT =
   "If it is in its updater (recovery mode), reload this page and reconnect to it, then press " +
-  "Update over Wi-Fi again — that works from the updater. An updater that isn't sent an " +
-  "update returns to the current firmware by itself within 5 minutes.";
+  "Update over Wi-Fi again — that works from the updater.";
+
+/** …and when the update never started (the handoff): the updater gives the device
+ * back by itself (loader idle timeout for reason "update", firmware/ota boot.rs). */
+const HANDOFF_RECOVERY_TEXT =
+  `${RECOVERY_TEXT} If you leave it, an updater that was never sent the update returns to ` +
+  "the current firmware by itself within 5 minutes.";
+
+/** …and mid-transfer: a started update keeps the device in its updater (the app slot
+ * is partly rewritten) until an update completes. */
+const TRANSFER_RECOVERY_TEXT =
+  `${RECOVERY_TEXT} It stays in its updater until an update completes; its settings are kept.`;
 
 /** Wait for the device's next handshake (`pred`), reporting the elapsed seconds once
  * a second so the UI never shows a silent spinner. A timeout becomes an OtaError
@@ -244,7 +254,7 @@ export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaO
         report("handoff", 0, `No answer to the update offer (${String(e)}); waiting for the device…`);
         if (timedOut(e)) dev.expectRestart?.();
         const w = await awaitDevice(dev, () => true, reconnectMs, waiting("Waiting for the device", 0),
-          "handoff_timeout", `The device didn't come back on Wi-Fi. ${RECOVERY_TEXT}`, back);
+          "handoff_timeout", `The device didn't come back on Wi-Fi. ${HANDOFF_RECOVERY_TEXT}`, back);
         if (inLoader(w)) return;
         continue;
       }
@@ -254,7 +264,7 @@ export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaO
       }
       await restarting();
       const w = await awaitDevice(dev, () => true, reconnectMs, waiting("Waiting for the updater", 0),
-        "handoff_timeout", `The device didn't come back in its updater. ${RECOVERY_TEXT}`, back);
+        "handoff_timeout", `The device didn't come back in its updater. ${HANDOFF_RECOVERY_TEXT}`, back);
       if (inLoader(w)) return;
       report("handoff", 0, "The device came back running its current firmware; asking it again…");
     }
@@ -297,10 +307,10 @@ export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaO
         const back = dev.waitForWelcome(() => true, reconnectMs);
         dev.expectRestart();
         w = await awaitDevice(dev, () => true, reconnectMs, waiting("Reconnecting to the updater", at),
-          "resume_timeout", `Lost the connection to the updater mid-transfer. ${RECOVERY_TEXT}`, back);
+          "resume_timeout", `Lost the connection to the updater mid-transfer. ${TRANSFER_RECOVERY_TEXT}`, back);
       } else if (!w) {
         w = await awaitDevice(dev, () => true, reconnectMs, waiting("Reconnecting to the updater", at),
-          "resume_timeout", `Lost the connection to the updater mid-transfer. ${RECOVERY_TEXT}`);
+          "resume_timeout", `Lost the connection to the updater mid-transfer. ${TRANSFER_RECOVERY_TEXT}`);
       }
       // The updater gave the device back to its app (nothing was left installed):
       // hand it over again and start the transfer over.
