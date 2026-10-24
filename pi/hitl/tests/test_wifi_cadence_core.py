@@ -6,7 +6,8 @@ stretched 184 -> 196 ms while PBKDF2 shared the CPU 1:1 with rendering."""
 import wifi_cadence_core as core
 
 
-def frames(periods_ms, start=0.0, flags=None):
+def frames(periods_ms, start=3000.0, flags=None):
+    """Synthetic analyzer frames, starting after the capture warm-up by default."""
     out, t = [], start
     out.append({"start_us": t * 1000, "leds": 250, "flags": []})
     for i, p in enumerate(periods_ms):
@@ -17,8 +18,8 @@ def frames(periods_ms, start=0.0, flags=None):
 
 def fx_line(rmax, wmax, dt=13, rn=77):
     return (
-        f"[fx] t=1.00 frame=10 update=ok shade_cancelled=0/250 "
-        f"ft=r{rn}:12000/13000/{rmax} w{rn}:12000/13000/{wmax} dt{dt}\n"
+        "[fx] t=1.00 frame=10 update=ok shade_cancelled=0/250\n"
+        f"[ft] r{rn}:12000/13000/{rmax} w{rn}:12000/13000/{wmax} dt{dt} fps=80 sl=9-9\n"
     )
 
 
@@ -50,6 +51,18 @@ def test_baseline_threshold_has_a_floor():
     assert b["median_us"] == 13000 and b["threshold_us"] == core.ABS_FLOOR_US
     b = core.baseline([13000.0] * 98 + [19000.0, 7000.0])
     assert b["threshold_us"] == 1.5 * 6000
+    # A slow effect: 2 % of its frame period.
+    assert core.baseline([183000.0] * 50)["threshold_us"] == 0.02 * 183000
+
+
+def test_capture_warmup_damage_is_reported_not_graded():
+    f = frames([13.0] * 300, start=0.0)  # ~3.9 s from the capture start
+    for i in range(1, 120):  # every frame of the first ~1.5 s
+        f[i]["flags"] = ["partial_bits", "bad_bit"]
+    f[200]["flags"] = ["runt"]  # and one at 2.6 s
+    base = core.baseline(core.wire_periods(frames([13.0] * 50)))
+    w = core.phase_wire(core.wire_periods(f), f, base)
+    assert w["damaged"] == 1 and w["damaged_warmup"] == 119
 
 
 def test_phase_flags_an_excursion():
@@ -69,7 +82,7 @@ def test_grade_pass_fail_skip():
     }
     r = {"light": {"baseline": base, "scan": good, "rejoin": good}}
     assert core.grade(r, ("scan", "rejoin"))["verdict"] == "PASS"
-    late = frames([13.0] * 20 + [16.5] * 5 + [13.0] * 20)
+    late = frames([13.0] * 20 + [16.5] * 5 + [13.0] * 20)  # 3.5 ms > the 3 ms floor
     r["light"]["rejoin"] = {
         "wire": core.phase_wire(core.wire_periods(late), late, base),
         "device": {},

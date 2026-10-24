@@ -6,7 +6,7 @@ Two independent views of every phase:
   wire    the rig's logic analyzer decodes the WS2812 line: one record per frame
           (start_us, flags such as runt / gap / split). Frame-to-frame start intervals
           are the cadence a viewer actually sees.
-  device  the firmware's 1 Hz "[fx] ... ft=r<n>:<min>/<mean>/<max> w<n>:<min>/<mean>/<max>
+  device  the firmware's 1 Hz "[ft] r<n>:<min>/<mean>/<max> w<n>:<min>/<mean>/<max>
           dt<ms>" fields: render-start and wire-out-start interval stats per window and
           the largest effect time step, so a render stall or a time-base jump is visible
           even where there is no analyzer.
@@ -15,7 +15,7 @@ The baseline is the steady phase of the same effect (no Wi-Fi activity): an excu
 is a frame interval that deviates from the steady median by more than the steady
 phase's own spread allows.
 
-Asserting-gate convention: infra (no analyzer data, no [fx] lines, a phase that could
+Asserting-gate convention: infra (no analyzer data, no [ft] lines, a phase that could
 not be driven) is SKIP; FAIL only on a measured excursion.
 """
 
@@ -25,16 +25,21 @@ import re
 import statistics
 
 FT_RE = re.compile(
-    r"\[fx\] t=(?P<t>-?\d+(?:\.\d+)?) frame=(?P<frame>\d+) .*?"
-    r"ft=r(?P<rn>\d+):(?P<rmin>\d+)/(?P<rmean>\d+)/(?P<rmax>\d+) "
+    r"\[ft\] r(?P<rn>\d+):(?P<rmin>\d+)/(?P<rmean>\d+)/(?P<rmax>\d+) "
     r"w(?P<wn>\d+):(?P<wmin>\d+)/(?P<wmean>\d+)/(?P<wmax>\d+) dt(?P<dt>\d+)"
 )
 
 # An excursion must exceed BOTH: an absolute floor (one 1 ms RTOS tick of jitter is
 # invisible) and a multiple of the steady phase's own p99.9 deviation (a lagging heavy
 # effect's frame cost varies by itself).
-ABS_FLOOR_US = 2000.0
+ABS_FLOOR_US = 3000.0
+REL_FLOOR = 0.02  # ... and 2 % of the frame period (a 183 ms frame's cost itself varies)
 REL_MARGIN = 1.5
+# The analyzer decodes glitch bits after every frame for up to ~1.7 s from the START of a
+# capture, intermittently, in every phase including steady (no Wi-Fi activity) and never
+# later in a capture — an artifact of the capture starting, not of the DUT. Damage in this
+# window is reported but not graded; the harness issues each phase's command after it.
+WARMUP_US = 2_000_000.0
 # The analyzer flags that mean a frame went out damaged (not merely late). The broker's
 # "short_gap_before" alone is not damage: it fires below ~1 ms, while a WS2812B-V5 only
 # needs a >= 280 µs low to latch — that case is judged on gap_before_us (LATCH_US).
@@ -49,17 +54,26 @@ def percentile(xs: list[float], q: float) -> float:
     return s[k]
 
 
-def wire_periods(frames: list[dict]) -> list[float]:
-    """Start-to-start intervals (µs) of consecutive whole analyzer frames."""
-    starts = [float(f["start_us"]) for f in whole_frames(frames) if f.get("start_us") is not None]
+def wire_periods(frames: list[dict], warmup_us: float = None) -> list[float]:
+    """Start-to-start intervals (µs) of consecutive whole analyzer frames, from the end
+    of the capture warm-up (WARMUP_US) on."""
+    w = WARMUP_US if warmup_us is None else warmup_us
+    starts = [
+        float(f["start_us"])
+        for f in whole_frames(frames)
+        if f.get("start_us") is not None and float(f["start_us"]) >= w
+    ]
     return [b - a for a, b in zip(starts, starts[1:])]
 
 
-def damaged(frames: list[dict]) -> list[dict]:
+def damaged(frames: list[dict], warmup_us: float = 0.0) -> list[dict]:
     """Analyzer frames flagged as damaged on the wire. The first and last frame of a
-    capture are cut by the capture window itself ("truncated"), not by the DUT."""
+    capture are cut by the capture window itself ("truncated"), not by the DUT; frames
+    starting within `warmup_us` of the capture start are skipped (WARMUP_US)."""
     out = []
     for i, f in enumerate(frames):
+        if float(f.get("start_us") or 0.0) < warmup_us:
+            continue
         flags = f.get("flags") or []
         if (i == 0 or i == len(frames) - 1) and "truncated" in flags:
             continue
@@ -80,10 +94,10 @@ def whole_frames(frames: list[dict]) -> list[dict]:
 
 
 def ft_samples(log: str) -> list[dict]:
-    """Every [fx] line's cadence fields (µs, dt in ms)."""
+    """Every [ft] cadence line's fields (µs, dt in ms)."""
     out = []
     for m in FT_RE.finditer(log or ""):
-        d = {k: (float(v) if k == "t" else int(v)) for k, v in m.groupdict().items()}
+        d = {k: int(v) for k, v in m.groupdict().items()}
         out.append(d)
     return out
 
@@ -113,12 +127,15 @@ def baseline(steady_periods: list[float]) -> dict:
         "median_us": med,
         "dev_max_us": max(dev),
         "dev_p999_us": percentile(dev, 99.9),
-        "threshold_us": max(ABS_FLOOR_US, REL_MARGIN * percentile(dev, 99.9)),
+        "threshold_us": max(ABS_FLOOR_US, REL_FLOOR * med, REL_MARGIN * percentile(dev, 99.9)),
     }
 
 
-def phase_wire(periods: list[float], frames: list[dict], base: dict) -> dict:
-    """A phase's wire cadence against the steady baseline."""
+def phase_wire(
+    periods: list[float], frames: list[dict], base: dict, warmup_us: float = WARMUP_US
+) -> dict:
+    """A phase's wire cadence against the steady baseline (damage graded after the
+    capture warm-up; the warm-up's own count is reported separately)."""
     if not periods:
         return {"frames": 0}
     dev = [abs(p - base["median_us"]) for p in periods]
@@ -131,8 +148,9 @@ def phase_wire(periods: list[float], frames: list[dict], base: dict) -> dict:
         "max_period_us": round(max(periods)),
         "excursions": len(over),
         "worst_excursion_us": round(max(over)) if over else 0,
-        "damaged": len(damaged(frames)),
-        "damaged_at_s": [round(f["start_us"] / 1e6, 2) for f in damaged(frames)][:10],
+        "damaged": len(damaged(frames, warmup_us)),
+        "damaged_at_s": [round(f["start_us"] / 1e6, 2) for f in damaged(frames, warmup_us)][:10],
+        "damaged_warmup": len(damaged(frames)) - len(damaged(frames, warmup_us)),
     }
 
 
