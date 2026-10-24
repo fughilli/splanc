@@ -121,7 +121,14 @@ class AppState {
           notify: (t) => toast(t),
         }).catch(() => undefined);
       },
-      onDisconnected: () => this.setStatus({ state: "connecting", text: "reconnecting…" }),
+      onDisconnected: () => {
+        this.setStatus({ state: "connecting", text: "reconnecting…" });
+        // The client reconnects by itself (e.g. the device restarting through a
+        // firmware update), but only the initial connect() ran the post-welcome
+        // chain — without this watch the pill sat at "syncing clock…" after the
+        // reconnect, and a device back in its updater wasn't called out.
+        if (this.client === client) this.watchReconnect(dev.id);
+      },
       onServerError: (code, msg) => this.setStatus({ state: "error", text: "error", error: `server ${code}: ${msg}` }),
       // The client gave up auto-retrying because the cert isn't trusted — show
       // the trust affordance and STOP hammering; the user's "Trust & connect"
@@ -236,9 +243,12 @@ class AppState {
    * network) so the pill flips to connected without a page reload. */
   private watchReconnect(devId?: string): void {
     if (this.connTimer !== null) return;
+    // Bound to the client that is current NOW: if the user switches devices, the
+    // next client's welcome must never be folded into this device's record.
+    const owner = this.client;
     this.connTimer = window.setInterval(() => {
       const c = this.client;
-      if (c === null) {
+      if (c === null || c !== owner) {
         this.clearReconnectWatch();
         return;
       }
@@ -254,10 +264,16 @@ class AppState {
             fwVersion: w.fwVersion,
           });
         }
-        this.setStatus({ state: "connected", text: "connected", certUrl: null, error: null });
+        this.setStatus({
+          state: "connected",
+          text: inLoader(w) ? "in updater" : "connected",
+          certUrl: null,
+          error: null,
+        });
         void (async () => {
           if (devId !== undefined) await this.checkCert(c, devId).catch(() => undefined);
-          await c.syncClock().catch(() => undefined);
+          // The updater answers only the update protocol (no clock sync).
+          if (!inLoader(c.welcome)) await c.syncClock().catch(() => undefined);
         })();
       }
     }, 600);
@@ -271,9 +287,12 @@ class AppState {
 
   disconnect(): void {
     this.clearReconnectWatch();
-    if (this.client) connectionRegistry.unregister(this.client);
-    this.client?.close();
+    const old = this.client;
+    // Detach first: closing fires onDisconnected, which must not treat this
+    // deliberate close as a drop to watch for a reconnect.
     this.client = null;
+    if (old) connectionRegistry.unregister(old);
+    old?.close();
     const wasActive = deviceStore.activeId();
     deviceStore.setActive(null);
     this.setStatus({ state: "offline", text: "offline", certUrl: null, error: null });
