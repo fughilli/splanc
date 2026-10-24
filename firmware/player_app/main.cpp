@@ -419,6 +419,16 @@ static size_t pending_fx_sel_len = 0;
 static bool fx_sel_dirty = false;
 static uint32_t fx_sel_dirty_at = 0;
 static const uint32_t kFxSelSaveQuietMs = 1500;
+// When the last live-control update (set_uniforms / set_crossfade / blend, committed
+// or not) arrived. The coalesced save is held off until the controls have ALSO been
+// quiet for kFxSelSaveQuietMs: a littlefs write blocks this (network) task for tens of
+// ms, so it must never land in the middle of a knob turn — only once the performer
+// lets go (docs/design/live-control.md).
+static uint32_t fx_live_at = 0;
+// Whether the reply dispatch_plain just produced is a best-effort live-control reply
+// (lm_ws_reply_droppable): the transport may drop it instead of blocking on a full
+// send window.
+static bool g_reply_droppable = false;
 
 // STA join in progress: reports success (Improv redirect) / failure.
 static bool sta_joining = false;
@@ -859,6 +869,7 @@ static void queue_fx_sel_save(const uint8_t *data, size_t len) {
 // Called from loop(); one flash write per settled edit, not per slider tick.
 static void flush_fx_sel_save() {
   if (!fx_sel_dirty || millis() - fx_sel_dirty_at < kFxSelSaveQuietMs) return;
+  if (millis() - fx_live_at < kFxSelSaveQuietMs) return;  // controls still moving
   fs_write_file(kEffectSelPath, pending_fx_sel, pending_fx_sel_len);
   fx_sel_dirty = false;
 }
@@ -1136,6 +1147,25 @@ static int dispatch_plain(const uint8_t *msg, size_t len) {
   if (t2 - t1 > g_handle_max_us) g_handle_max_us = t2 - t1;
   if (n > 0) persist_if_upload(msg, len, tx, (size_t)n);
   poll_after_message();
+  g_reply_droppable = false;
+  if (lm_last_was_live_control()) {
+    fx_live_at = millis();
+    // A seq'd live update (the live-control channel): answer with the tiny ControlAck
+    // instead of the legacy playback_state / welcome (persistence above already keyed
+    // on the legacy reply). The ack — and a legacy set_uniforms' playback_state, which
+    // no client awaits — may be dropped by the transport when its send window is full
+    // rather than stall the receive path behind a blocking write.
+    const bool legacy_uniforms = lm_envelope_arm(msg, len) == kArmSetUniforms;
+    if (n > 0) {
+      int32_t a = lm_take_control_ack(tx, sizeof tx);
+      if (a > 0) {
+        n = a;
+        g_reply_droppable = true;
+      } else {
+        g_reply_droppable = legacy_uniforms;
+      }
+    }
+  }
   return (int)n;
 }
 
@@ -1281,10 +1311,13 @@ int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
 // the transport's reassembly buffer (g_ws_rx / the BLE frame — never copied into rx),
 // compute the reply into the shared tx, and hand back a pointer to it.
 int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
+  g_reply_droppable = false;
   int n = ws_compute_reply(in, len);
   *reply = tx;
   return n;
 }
+
+bool lm_ws_reply_droppable() { return g_reply_droppable; }
 
 // Player-protocol BLE transport bridge (improv_ble_netstack.cpp's player_ble_poll
 // calls this): identical contract to lm_ws_dispatch — one received frame in, the
@@ -1474,6 +1507,10 @@ static void ws_poll() {
 // they don't chase a frame clock, so a slow tick keeps CPU/DMA use low.
 static const uint32_t kStaticPollMs = 100;
 
+#if defined(LM_NETSTACK)
+static void osc_drain_frame();  // native OSC on the netstack build (below)
+#endif
+
 // Compute + push (at most) one frame. Player reads happen under player_mutex
 // (the core is single-threaded); the long RMT strip transmit runs OUTSIDE the
 // lock so the loop-task message handler isn't blocked by the strip write. Returns
@@ -1649,6 +1686,9 @@ static uint32_t render_once() {
     // negligible against the per-frame float ops).
     uint32_t c_frame_start = esp_cpu_get_cycle_count();
     uint32_t c_update_start = c_frame_start;
+#if defined(LM_NETSTACK)
+    osc_drain_frame();  // OSC that arrived since the last frame, newest value per address
+#endif
     bool updated = lm_fx_update(fx_time_s, dt_s, this_seq, n);
     uint32_t c_update_end = esp_cpu_get_cycle_count();
     if (updated) {
@@ -1835,10 +1875,28 @@ static void osc_task(void *) {
   }
 }
 #else
-// TODO(netstack-osc): the heapless stack has no UDP receive path yet, so native OSC input
-// (uniform_bench / video_stream) is disabled on this build and setup() doesn't start the
-// task. Add a ns UDP listener + feed lm_osc_ingest to re-enable. Everything else (WS
-// player, effects, render) is unaffected.
+// Netstack build: no sockets or task — the heapless stack's UDP receive path hands every
+// datagram for udp/9000 to lm_netstack_osc_rx (netstack_transport.cpp), on the network
+// task. It is only STASHED (lm_osc_post: parse + latest value per address, no VM work);
+// the render task applies what's waiting at the next frame boundary (osc_drain_frame), so
+// a controller sending faster than the device renders never builds a queue
+// (docs/design/live-control.md). The two meet in a short critical section.
+static portMUX_TYPE g_osc_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t g_osc_datagrams = 0;
+
+void lm_netstack_osc_rx(const uint8_t *data, size_t len) {
+  if (len == 0 || len > kOscRxCap) return;
+  taskENTER_CRITICAL(&g_osc_mux);
+  lm_osc_post(data, len);
+  taskEXIT_CRITICAL(&g_osc_mux);
+  if (g_osc_datagrams++ == 0) Log().printf("[osc] first datagram on udp/%u\n", kOscPort);
+}
+
+static void osc_drain_frame() {
+  taskENTER_CRITICAL(&g_osc_mux);
+  lm_osc_drain();
+  taskEXIT_CRITICAL(&g_osc_mux);
+}
 #endif
 
 // The render task: forever, render one frame then sleep until the next is due.

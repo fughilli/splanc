@@ -646,6 +646,11 @@ int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
   return dispatch(in, len);
 }
 
+// The loader answers no live-control frames: every reply is a must-deliver.
+bool lm_ws_reply_droppable() { return false; }
+// ...and runs no effect, so native OSC datagrams are ignored.
+void lm_netstack_osc_rx(const uint8_t *, size_t) {}
+
 int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
   *reply = g_tx.data;
   return dispatch(in, len);

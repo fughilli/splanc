@@ -73,6 +73,12 @@ bool lm_time_base(int64_t *epoch_ms);
 // Whether the set_uniforms just handled asked to be persisted (SetUniforms.commit,
 // unset = true). A commit=false update is applied live but not saved.
 bool lm_set_uniforms_commit(void);
+// Live-control channel (docs/design/live-control.md). After lm_player_handle: whether
+// the frame was a live-control update (set_uniforms / set_crossfade / blend_keypoints),
+// and — for one carrying a non-zero seq — replace the reply with its tiny ControlAck
+// (written to out; returns its length, 0 = keep the legacy reply).
+bool lm_last_was_live_control(void);
+int32_t lm_take_control_ack(uint8_t *out, size_t out_cap);
 // FX decks (docs/design/uniform-keypoints.md): the deck the effect arm just
 // handled targeted (0 = A, 1 = B). Only deck A's frames are persisted.
 uint32_t lm_fx_last_deck(void);
@@ -307,6 +313,11 @@ void lm_fx_set_uniform(uint32_t slot, const float *vals, size_t n);
 // effect is active, the datagram isn't OSC, or nothing matched). Non-blocking,
 // no allocation. Call under the same lock as lm_fx_set_uniform.
 uint32_t lm_osc_ingest(const uint8_t *data, size_t len);
+// Netstack OSC: stash a datagram (latest value per address; network task) and apply
+// what's waiting at a frame boundary (render task, under player_mutex). The caller
+// serializes the two with a short critical section.
+uint32_t lm_osc_post(const uint8_t *data, size_t len);
+uint32_t lm_osc_drain(void);
 // Select OSC addressing: true (default) resolves uniform names via the active
 // effect's manifest (unknown names fall back to slot index); false treats every
 // address as a raw slot number.

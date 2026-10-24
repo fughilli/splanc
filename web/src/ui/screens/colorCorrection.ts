@@ -113,7 +113,7 @@ export function ColorCorrectionScreen(_router: Router): Screen {
   let testLoaded = false;
   const testPanel = new UniformPanel(testHost, (slot, value) => {
     const c = appState.client;
-    if (c?.isConnected) c.setUniforms([{ slot, value }]);
+    if (c?.isConnected) c.live.setUniform(slot, value);
   });
 
   async function loadColorTest(btn: HTMLButtonElement): Promise<void> {

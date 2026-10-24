@@ -385,6 +385,9 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
 static mut OSC_TABLE: PortTable = PortTable::empty();
 static mut OSC_SHADOW: Shadow = Shadow::new();
 static mut OSC_BY_NAME: bool = true;
+/// OSC received on the netstack build's UDP :9000, latest value per address,
+/// applied at the next frame boundary (lm_osc_post / lm_osc_drain).
+static mut OSC_MAILBOX: osc::Mailbox<12> = osc::Mailbox::new();
 /// Hidden-buffer/texture arena for the fx VM (LoadBuf/StoreBuf). 24 KB, now
 /// BYTE-addressed (FUG-10 packed storage) so narrow elements pack tightly — a
 /// fixed8 vec4 trail on 256 LEDs is 1 KB, an f32 one 4 KB; the VM clamps a
@@ -1575,6 +1578,7 @@ pub unsafe extern "C" fn lm_player_handle(
         return -1;
     }
     let frame = core::slice::from_raw_parts(data, len);
+    note_live_control(frame);
     let reply = match envelope_arm(frame) {
         Some(ARM_SUBMIT_MAP) => handle_map_upload(frame, frame.len()),
         Some(ARM_SUBMIT_TOPOLOGY) => handle_topology_upload(frame, |r: &mut &[u8]| *r = frame, frame.len()),
@@ -1643,6 +1647,83 @@ pub unsafe extern "C" fn lm_player_handle(
         },
     };
     encode_reply(&reply, out, out_cap)
+}
+
+// -- live-control acks (docs/design/live-control.md) ------------------------
+// A live update (set_uniforms / set_crossfade) carrying a non-zero `seq` is
+// answered with a tiny ControlAck{seq} instead of its legacy reply (playback_state
+// / welcome). The handler still computes the legacy reply — main.cpp's persist
+// logic keys on it — and the transport then swaps it for the ack via
+// lm_take_control_ack. Single firmware thread (the loop task), like UNIFORMS_COMMIT.
+
+/// The seq of the live update just handled (0: none, or a legacy update).
+static mut CONTROL_ACK_SEQ: u32 = 0;
+/// Whether the frame just handled was a live-control update (set_uniforms,
+/// set_crossfade, blend_keypoints), seq'd or not: main.cpp holds a pending
+/// flash save off while a control stream is moving.
+static mut LIVE_CONTROL: bool = false;
+
+/// ServerMessage.control_ack's field number.
+const SMSG_CONTROL_ACK: u32 = 41;
+
+unsafe fn note_live_control(frame: &[u8]) {
+    CONTROL_ACK_SEQ = 0;
+    LIVE_CONTROL = false;
+    match client_arm(frame) {
+        Some(CArm::SetUniforms(m)) => {
+            LIVE_CONTROL = true;
+            CONTROL_ACK_SEQ = m.seq();
+        }
+        Some(CArm::SetCrossfade(m)) => {
+            LIVE_CONTROL = true;
+            CONTROL_ACK_SEQ = m.seq();
+        }
+        Some(CArm::BlendKeypoints(_)) => LIVE_CONTROL = true,
+        _ => {}
+    }
+}
+
+/// Encode `ServerMessage{control_ack{seq}}` into `out`; its length (<= 8 bytes),
+/// or None when `out` is too small.
+pub fn encode_control_ack(seq: u32, out: &mut [u8]) -> Option<usize> {
+    let mut inner = PbOut { buf: None, n: 0, ok: true };
+    inner.uint(1, seq as u64);
+    let mut o = PbOut { buf: Some(out), n: 0, ok: true };
+    o.key(SMSG_CONTROL_ACK, 2);
+    o.varint(inner.n as u64);
+    o.uint(1, seq as u64);
+    if o.ok {
+        Some(o.n)
+    } else {
+        None
+    }
+}
+
+/// If the frame lm_player_handle just handled was a seq'd live update, replace
+/// the reply with its ControlAck: writes it to `out` and returns its length; 0
+/// leaves the reply as it is (a legacy client, or not a live update). Call after
+/// the reply's persistence has been decided.
+///
+/// # Safety
+/// `out` must point to `out_cap` writable bytes; loop task only.
+#[no_mangle]
+pub unsafe extern "C" fn lm_take_control_ack(out: *mut u8, out_cap: usize) -> i32 {
+    let seq = CONTROL_ACK_SEQ;
+    CONTROL_ACK_SEQ = 0;
+    if seq == 0 || out.is_null() {
+        return 0;
+    }
+    let out = core::slice::from_raw_parts_mut(out, out_cap);
+    encode_control_ack(seq, out).map_or(0, |n| n as i32)
+}
+
+/// Whether the frame lm_player_handle just handled was a live-control update.
+///
+/// # Safety
+/// Loop task only, after `lm_player_handle`.
+#[no_mangle]
+pub unsafe extern "C" fn lm_last_was_live_control() -> bool {
+    LIVE_CONTROL
 }
 
 /// Drop the resident topology (geometry + per-LED cache). The geometry
@@ -2116,6 +2197,7 @@ pub const FEATURES: &[&str] =
         "imu_extrinsic",
         "capture_profile",
         "ota",
+        "control_ack",
     ];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
@@ -4028,6 +4110,7 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
         // component leaks across a hot-reload. OSC drives deck A only.
         *addr_of_mut!(OSC_TABLE) = osc::parse_manifest(prog.manifest);
         (*addr_of_mut!(OSC_SHADOW)).reset();
+        (*addr_of_mut!(OSC_MAILBOX)).clear();
     }
     // Only build the per-LED fixed context mirrors / uv projection / room read
     // on the hot path when the program actually reads them (FUG-122).
@@ -4125,6 +4208,7 @@ unsafe fn fx_clear(d: usize) {
         (*addr_of_mut!(DECK_A)).morph.clear();
         *addr_of_mut!(OSC_TABLE) = PortTable::empty();
         (*addr_of_mut!(OSC_SHADOW)).reset();
+        (*addr_of_mut!(OSC_MAILBOX)).clear();
         // Drop the JIT table (the exec region is a fixed static, reused on next
         // load; the VM was just cleared above, so the installed table goes too).
         FX_JIT_N = 0;
@@ -4331,6 +4415,47 @@ pub unsafe extern "C" fn lm_osc_ingest(data: *const u8, len: usize) -> u32 {
     let table = &*addr_of!(OSC_TABLE);
     let shadow = &mut *addr_of_mut!(OSC_SHADOW);
     osc::ingest(bytes, &cfg, table, shadow, &mut |slot, vals| {
+        if let Some(vm) = (*addr_of_mut!(DECK_A.vm)).as_mut() {
+            vm.set_uniform(slot as usize, vals);
+        }
+    }) as u32
+}
+
+/// Stash one OSC datagram for the next frame (netstack build: the UDP receive
+/// path calls this from the network task). Latest value per address wins — a
+/// controller faster than the render rate never queues. Returns the messages
+/// kept. Never blocks, never allocates.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes; the caller serializes this with
+/// [`lm_osc_drain`] (a short critical section).
+#[no_mangle]
+pub unsafe extern "C" fn lm_osc_post(data: *const u8, len: usize) -> u32 {
+    if data.is_null() || len == 0 {
+        return 0;
+    }
+    (*addr_of_mut!(OSC_MAILBOX)).post(core::slice::from_raw_parts(data, len)) as u32
+}
+
+/// Apply the OSC waiting in the mailbox to deck A's uniforms (at a frame
+/// boundary, before update()). Returns the uniform writes.
+///
+/// # Safety
+/// Render task, under the player lock; serialized with [`lm_osc_post`].
+#[no_mangle]
+pub unsafe extern "C" fn lm_osc_drain() -> u32 {
+    let mb = &mut *addr_of_mut!(OSC_MAILBOX);
+    if mb.is_empty() {
+        return 0;
+    }
+    if !lm_fx_active() {
+        mb.clear();
+        return 0;
+    }
+    let cfg = OscConfig { prefix: "/", by_name: OSC_BY_NAME };
+    let table = &*addr_of!(OSC_TABLE);
+    let shadow = &mut *addr_of_mut!(OSC_SHADOW);
+    mb.drain(&cfg, table, shadow, &mut |slot, vals| {
         if let Some(vm) = (*addr_of_mut!(DECK_A.vm)).as_mut() {
             vm.set_uniform(slot as usize, vals);
         }

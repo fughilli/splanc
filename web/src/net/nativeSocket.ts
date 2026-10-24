@@ -89,6 +89,15 @@ class NativeSocket implements SocketLike {
 
   private id: string | null = null;
   private closed = false;
+  // Bytes handed to the native bridge whose send hasn't completed yet — the
+  // WebSocket.bufferedAmount equivalent. URLSessionWebSocketTask queues sends
+  // without bound, so the live-control channel reads this to stay off the queue
+  // while bulk traffic (an upload, a texture stream) is still leaving.
+  private inFlightBytes = 0;
+
+  get bufferedAmount(): number {
+    return this.inFlightBytes;
+  }
 
   constructor(url: string) {
     void (async () => {
@@ -138,8 +147,16 @@ class NativeSocket implements SocketLike {
     // The client only sends after onopen, so id is set.
     if (this.id == null) return;
     const b = wssBridge();
-    if (typeof data === "string") void b.send({ id: this.id, data, binary: false });
-    else void b.send({ id: this.id, data: bytesToB64(data), binary: true });
+    const n = typeof data === "string" ? data.length : data.byteLength;
+    this.inFlightBytes += n;
+    const sent =
+      typeof data === "string"
+        ? b.send({ id: this.id, data, binary: false })
+        : b.send({ id: this.id, data: bytesToB64(data), binary: true });
+    const settle = (): void => {
+      this.inFlightBytes = Math.max(0, this.inFlightBytes - n);
+    };
+    void sent.then(settle, settle);
   }
 
   close(): void {

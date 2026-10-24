@@ -70,6 +70,7 @@ import {
 import type { ColorBlock } from "@ledmapper/protocol";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
 import { decodeServer, encodeClient } from "./proto";
+import { LiveControl } from "./liveControl";
 import type { CaptureProfileFlat } from "../capture/captureProfile";
 
 /** The subset of the WebSocket API the client uses (fakeable in tests). */
@@ -82,6 +83,9 @@ export interface SocketLike {
   onclose: ((ev?: unknown) => void) | null;
   onerror: ((ev?: unknown) => void) | null;
   onmessage: ((ev: { data: unknown }) => void) | null;
+  /** Bytes queued but not yet handed to the network (WebSocket.bufferedAmount);
+   * absent when the transport can't tell. Paces the live-control channel. */
+  readonly bufferedAmount?: number;
 }
 
 export type SocketFactory = (url: string) => SocketLike;
@@ -287,6 +291,18 @@ export class LedMapperClient {
   readonly clock: ServerClock;
   events: ClientEvents = {};
 
+  /** The device's render rate as last reported (fps_state / perf_report; 0 = unknown). */
+  private renderFps_ = 0;
+
+  /**
+   * The real-time control channel (docs/design/live-control.md). EVERY live
+   * control — sliders, MIDI, faders, the agent's live mux — goes through it:
+   * latest value wins per uniform, at most one update in flight (paced on the
+   * device's ack) and never faster than the device renders, so a knob stream of
+   * any length never builds a backlog on the device.
+   */
+  readonly live: LiveControl;
+
   constructor(readonly url: string, opts: ClientOptions = {}) {
     this.factory = opts.socketFactory ?? ((u) => new WebSocket(u) as unknown as SocketLike);
     this.now = opts.now ?? (() => performance.now());
@@ -306,10 +322,26 @@ export class LedMapperClient {
     this.appVersion = opts.appVersion ?? "0.1.0";
     this.clientName = opts.clientName ?? "android-web";
     this.clock = new ServerClock({ offsetMs: 0, rttMs: Infinity }, this.now);
+    this.live = new LiveControl(
+      {
+        sendFlat: (m) => this.send(m as unknown as ClientMessage),
+        features: () => this.welcome_?.features ?? [],
+        renderFps: () => this.renderFps_,
+        bufferedAmount: () => this.bufferedAmount,
+      },
+      { now: this.now, schedule: this.schedule },
+    );
   }
 
   get welcome(): WelcomeMessage | null {
     return this.welcome_;
+  }
+
+  /** Bytes the socket hasn't put on the wire yet (0 when closed or unknown): the
+   * per-connection backpressure signal the live-control channel gates on — reuse
+   * it (with LatestWinsSender) for other paced streams. */
+  get bufferedAmount(): number {
+    return this.sock?.bufferedAmount ?? 0;
   }
 
   get isConnected(): boolean {
@@ -382,6 +414,7 @@ export class LedMapperClient {
       sock.onclose = () => {
         const hadWelcome = this.welcome_ !== null;
         this.welcome_ = null;
+        this.live.onDisconnect();
         this.failWaiters(new Error("socket closed"));
         if (hadWelcome) this.events.onDisconnected?.();
         if (!this.closed) {
@@ -597,6 +630,7 @@ export class LedMapperClient {
     // Sharded like submit_map: a compiled effect can exceed one window, and on
     // the BLE transport a whole-frame send would blow the small per-frame cap.
     // Small effects still take the single-window fast path inside sendChunked.
+    this.live.resetDeck(deck);
     return this.sendChunked("EFFECT", {
       type: "submit_effect",
       effectId,
@@ -609,6 +643,7 @@ export class LedMapperClient {
   /** Select the active effect by id ("" or "off" clears it). `deck` (FUG-110)
    * targets deck A (0, default) or B (1). Reply: playback_state. */
   async setEffect(effectId: string, deck = 0): Promise<PlaybackStateMessage> {
+    this.live.resetDeck(deck);
     return (await this.request(
       { type: "set_effect", effectId, deck } as unknown as ClientMessage,
       "playback_state",
@@ -631,6 +666,9 @@ export class LedMapperClient {
     // `commit: false` applies the values live without persisting them (honoured by
     // firmware advertising "uniform_commit"; omitted = persist, today's behaviour).
     // `deck` targets FX deck A (0, default) or B (1) on firmware advertising "decks".
+    // One-shot sets only (an effect's defaults after a submit): a STREAM of moves
+    // (drag, MIDI) goes through {@link live}, which paces itself on the device.
+    this.live.noteValues(values, deck);
     const msg: Record<string, unknown> = { type: "set_uniforms", values };
     if (commit !== undefined) msg.commit = commit;
     if (deck) msg.deck = deck;
@@ -649,11 +687,13 @@ export class LedMapperClient {
     )) as unknown as WelcomeMessage;
   }
 
-  /** Fire-and-forget crossfade (a fader drag at MIDI rate: no single-flight
-   * request, the last one wins — like setUniforms). */
+  /** Live crossfade (a fader drag at MIDI rate): through the {@link live}
+   * channel — the last position wins, paced on the device. False when not
+   * connected. */
   sendCrossfade(position: number, mode = 0): boolean {
-    const p = Math.min(1, Math.max(0, position));
-    return this.send({ type: "set_crossfade", position: p, mode } as unknown as ClientMessage);
+    if (!this.isConnected) return false;
+    this.live.setCrossfade(position, mode);
+    return true;
   }
 
   // -- Uniform keypoints (docs/design/uniform-keypoints.md) ------------------
@@ -709,14 +749,10 @@ export class LedMapperClient {
    * `seconds` > 0 morphs there; 0 applies at once. Fire-and-forget (the fader /
    * MIDI path: the last one wins); errors arrive as an `error` message. */
   blendKeypoints(weights: KeypointWeightFlat[], opts: BlendOptions = {}): boolean {
-    return this.send({
-      type: "blend_keypoints",
-      weights,
-      deck: opts.deck ?? 0,
-      seconds: opts.seconds ?? 0,
-      colorMode: opts.colorMode ?? 0,
-      ...(opts.commit ? { commit: true } : {}),
-    } as unknown as ClientMessage);
+    // Through the live channel: the last blend per deck wins, paced on the device.
+    if (!this.isConnected) return false;
+    this.live.blendKeypoints(weights, opts);
+    return true;
   }
 
   /** Rename the player: sets its display name, which becomes the Bluetooth-
@@ -1284,6 +1320,8 @@ export class LedMapperClient {
   }
 
   private dispatch(msg: ServerMessage): void {
+    // The live-control channel paces on acks + legacy replies (consumes only acks).
+    if (this.live.onServerMessage(msg as unknown as { type: string } & Record<string, unknown>)) return;
     if (msg.type === "time_sync_pong") {
       const w = this.pingWaiters.get(msg.t0);
       if (w) {
@@ -1296,6 +1334,7 @@ export class LedMapperClient {
       // Fan out to subscribers (live panel) first, then resolve any pending
       // set_perf/get_perf_report waiter — the same frame satisfies both.
       const report = msg as unknown as PerfReportMessage;
+      if ((report.currentFps ?? 0) > 0) this.renderFps_ = report.currentFps!;
       for (const fn of this.perfSubs) fn(report);
       const pw = this.waiters.get("perf_report");
       if (pw) {
@@ -1308,6 +1347,7 @@ export class LedMapperClient {
       // Subscribers (live readout + the abort notice) first, then any pending
       // set_fps waiter — one frame satisfies both (FUG-82).
       const state = flatFpsState(msg as unknown as Partial<FpsStateMessage>);
+      if (state.currentFps > 0) this.renderFps_ = state.currentFps;
       for (const fn of this.fpsSubs) fn(state);
       const fw = this.waiters.get("fps_state");
       if (fw) {
