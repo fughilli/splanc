@@ -3,7 +3,7 @@
 # docs/design/fx-gpu-lowering.md "Pi 3 measurement".
 #
 #   sh run.sh PAYLOAD.tar.gz [--points 1x500,4x550,...] [--kernels a,b]
-#             [--frames 60] [--vm-budget-ms 1500] [--no-gpu] [--no-vm]
+#             [--frames 60] [--vm-budget-ms 1500] [--vm-threads 1,4] [--no-gpu] [--no-vm]
 #
 # Unpacks the payload into a fresh temp dir (removed on exit, even on failure),
 # reports the environment (vc4 driver present? render node? image Mesa?), runs
@@ -19,6 +19,7 @@ POINTS=1x500,1x2048,4x550,4x1024,8x1024,16x1024,20x1024
 KERNELS=""
 FRAMES=60
 VM_BUDGET=1500
+VM_THREADS=1
 DO_GPU=1
 DO_VM=1
 while [ $# -gt 0 ]; do
@@ -27,6 +28,7 @@ while [ $# -gt 0 ]; do
     --kernels) KERNELS=$2; shift ;;
     --frames) FRAMES=$2; shift ;;
     --vm-budget-ms) VM_BUDGET=$2; shift ;;
+    --vm-threads) VM_THREADS=$2; shift ;;
     --no-gpu) DO_GPU=0 ;;
     --no-vm) DO_VM=0 ;;
   esac
@@ -111,10 +113,12 @@ fi
 
 # ---- fx_vm baseline (static binary, same kernels + layouts) -----------------------
 if [ "$DO_VM" = 1 ]; then
-  if [ -n "$KERNELS" ]; then
-    "$T/bin/fxvm_bench" --dir "$T/kernels" --points "$POINTS" --budget-ms "$VM_BUDGET" --kernels "$KERNELS"
-  else
-    "$T/bin/fxvm_bench" --dir "$T/kernels" --points "$POINTS" --budget-ms "$VM_BUDGET"
-  fi
+  for th in $(echo "$VM_THREADS" | tr ',' ' '); do
+    if [ -n "$KERNELS" ]; then
+      "$T/bin/fxvm_bench" --dir "$T/kernels" --points "$POINTS" --budget-ms "$VM_BUDGET" --threads "$th" --kernels "$KERNELS"
+    else
+      "$T/bin/fxvm_bench" --dir "$T/kernels" --points "$POINTS" --budget-ms "$VM_BUDGET" --threads "$th"
+    fi
+  done
 fi
 printf '{"bench":"done","ok":true}\n'

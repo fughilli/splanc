@@ -55,48 +55,47 @@ Layouts (channels × LEDs per channel): `1x500 1x2048 4x550 4x1024 8x1024 16x102
 The render target is LEDs-per-channel × channels, so 20×1024 renders to 1024×20,
 inside vc4's 2048 limit with no tiling.
 
-## Rig-side sequence (operator)
+## Rig-side sequence (operator): SSH tunnel through the reservation
 
-The scripts never place or print the key. The operator supplies it inside the
-container and passes its path as `PI_KEY_FILE`. `rig_run.sh` sets it to 0600
-and deletes it on exit, including on failure. It also removes the payload from
-the Pi and clears any leftover `/var/tmp/fxgpu-pi3bench-*` from an earlier
-preempted run before it starts.
+The hitl-rig-1 reservation container has **no `tar`**, so the payload can't be
+streamed into it. Instead, tunnel the Pi's SSH port through the reservation
+with `hitl_client.Reservation.forward(addr, 22)` and drive the Pi from the
+operator's host. The key stays on the operator's host and never enters the
+container. Nothing is installed on the Pi: the payload lands in
+`/var/tmp/fxgpu-pi3bench-*`, `run.sh` unpacks into its own temp dir, and both are
+removed.
 
-Use `pi-ledmapper-2` (splanc-max-1, no Tang, less contended). The GPU bench
-doesn't need the FPGA. `pi-ledmapper-1` works too.
+```python
+# python3, with pi/hitl/harness on sys.path; KEY = the operator's Pi key path
+import subprocess
+from hitl_client import Reservation
 
-```sh
-cd /workspace/.claude/fxgpu/pi3bench
-export HITL_OWNER=<your-owner-tag> HITL_ACTOR=agent
-# KEYNAME = the file name you add to the stream yourself (not done by these scripts).
-# One atomic reservation per batch; the container gets the files on stdin and
-# removes its own dir afterwards.
-batch() {   # $@ = run.sh options for this batch
-  tar cf - pi3bench-payload.tar.gz run.sh rig_run.sh KEYNAME |
-  hitl reserve --unit pi-ledmapper-2 --host http://hitl-rig-1:8087 -- \
-    "sh -c 'D=\$(mktemp -d) && cd \$D && tar xf - && PI_KEY_FILE=\$D/KEYNAME sh rig_run.sh $*; rc=\$?; cd /; rm -rf \$D; exit \$rc'" |
-  tee -a pi3bench-results.jsonl
-}
-batch --kernels solid_fill,plasma
-batch --kernels cylinder,imu_tilt
-batch --kernels gradient,sweep
-batch --no-gpu --kernels noise,pulses
-python3 summarize.py pi3bench-results.jsonl
+SSH = ["-i", KEY, "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=no",
+       "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"]
+with Reservation(server="http://hitl-rig-1:8087", owner=OWNER, device="pi-ledmapper-2") as r:
+    addr = r.ssh('printf %s "${HITL_ADDRESS:-$HITL_DUT_ADDR}"', capture=True).stdout.strip()
+    with r.forward(addr, 22) as port:
+        tgt, d = "root@127.0.0.1", "/var/tmp/fxgpu-pi3bench-op"
+        sh = lambda cmd, **kw: subprocess.run(["ssh", "-p", str(port), *SSH, tgt, cmd], **kw)
+        try:
+            sh(f"rm -rf /var/tmp/fxgpu-pi3bench-* && mkdir -p {d}", check=True)
+            subprocess.run(["scp", "-P", str(port), *SSH, "pi3bench-payload.tar.gz", "run.sh",
+                            f"{tgt}:{d}/"], check=True)
+            with open("pi3bench-results.jsonl", "a") as out:
+                sh(f"sh {d}/run.sh {d}/pi3bench-payload.tar.gz --vm-threads 1,4", stdout=out)
+        finally:
+            sh(f"rm -rf {d}")
 ```
 
-Notes:
+A full run takes about 4–6 minutes with `--vm-threads 1,4`. It fits one
+reservation when uncontended. Under contention, split it with `--kernels a,b`.
+Then run `python3 summarize.py pi3bench-results.jsonl`.
 
-- Each batch takes about 1–1.5 minutes on the Pi plus about 10–20 s to copy 37 MB,
-  so it should fit inside a reservation even if contention preempts it.
-- For a quick first look, run `batch --points 1x500,20x1024 --kernels solid_fill,plasma`
-  (about 30 s).
-- If the queue is short, a single `batch` with no options runs everything in about
-  4–5 minutes.
-- **Never kill a queued `hitl reserve`.** SIGTERM releases it; a stale entry is
-  released with `POST /reservation/<id>/release`.
-- The container needs `ssh`, `scp` and `tar`. If they're missing, `rig_run.sh`
-  prints `{"bench":"rig","ok":false,"error":"ssh not in container"}` and exits.
+`rig_run.sh` (stream the files into the container, then scp from there) is kept
+for rigs whose container has `tar`, `ssh` and `scp`. **hitl-rig-1's doesn't.**
+
+**Never kill a queued reservation.** SIGTERM releases it; a stale entry is
+released with `POST /reservation/<id>/release`.
 
 ## Expected runtime
 
