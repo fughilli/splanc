@@ -77,16 +77,19 @@ Notes:
   | D2          | FPGA LED output channel 1 |
   | D4          | FPGA LED output channel 2 |
   | D6          | FPGA LED output channel 3 |
-  | D1          | SPI MOSI (Pi → FPGA)      |
+  | D1          | SPI CS                    |
   | D3          | SPI CLK                   |
-  | D5          | SPI CS                    |
+  | D5          | SPI MOSI (Pi → FPGA)      |
   | D7          | (spare)                   |
 
   It's the only DUT that satisfies `fpga_ws281x` (needs `spi-fpga` + `led-strip` +
   `logic-analyzer-led-strip`). The persisted channel map only records `D0`
   (ws2812) — enough to grant the `logic-analyzer-led-strip` cap; the harness drives
   the full topology above via `--ws-channels D0,D2,D4,D6` / `--spi-channels`
-  (`clk=D3,mosi=D1,cs=D5`) at capture time, decoding the LED outputs as `ws2812`
+  (`clk=D3,mosi=D5,cs=D1`; verified 2026-10-24 from per-channel toggle stats with
+  `//pi/hitl/harness:spi_continuity --probe`: D1 idles high and goes low for each
+  transfer, D3 toggles at the ~6.2 MHz SCK, D5 carries data; an earlier revision had
+  MOSI and CS swapped) at capture time, decoding the LED outputs as `ws2812`
   and the SPI wire as `spi-raw`.
 
   **Why splanc-max-2 advertises no `logic-analyzer-spi` cap (and the SPI wire tap

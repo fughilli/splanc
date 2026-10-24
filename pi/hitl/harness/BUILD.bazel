@@ -113,6 +113,7 @@ py_library(
         "rig_isolation_core.py",
         "serial_capture.py",
         "serial_discovery.py",
+        "spi_continuity_core.py",
         "stable_identity_core.py",
         "sync.py",
         "time_base_skew_core.py",
@@ -236,6 +237,27 @@ hitl_test(
         ":harness",
         "//pi/led_driver",  # fpga_spi.encode_stream, for the raw-SPI cross-check
         "//pi/server",  # proto_wire: §7 flat-JSON <-> protobuf over the WS
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Pi -> spi_ws281x SPI continuity (the 20-port FIFO start-of-frame risk, #370):
+# drives counting frames of N LEDs over the player WSS and times CLK/CS gaps with
+# the rig FX2 (shared analyzer "timing" op). Manual; reserves pi-ledmapper-1.
+py_binary(
+    name = "spi_continuity",
+    srcs = [
+        "hitl_fpga_ws281x.py",
+        "hitl_spi_continuity.py",
+    ],
+    data = ["@hitl_reserve//cmd/hitl"],
+    main = "hitl_spi_continuity.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "//pi/led_driver",
+        "//pi/server",
         "@rules_python//python/runfiles",
         requirement("websockets"),
     ],
