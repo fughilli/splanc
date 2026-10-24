@@ -37,7 +37,10 @@ Each transaction begins on CS-low with a 1-byte opcode:
 | `0x01` WRITE_CSR | `addr` byte, then value byte(s) → `csr[addr]`, `csr[addr+1]`, …                               |
 | `0x02` STREAM    | remaining bytes = round-robin pixel data (byte `i` → port `i mod num_ports`); CS-high latches |
 
-CSR map: `0x00` = `num_ports` (1..MAX_PORTS), `0x01` = `led_type` (0 = WS2812).
+CSR map: `0x00` = `num_ports` (1..MAX_PORTS), `0x01` = `led_type`, which selects the
+latch (reset LOW) length: 0 = `RESET_NS` (classic WS2812/WS2812B, > 50 µs; the
+Tang Nano top uses 80 µs), 1 = `RESET_ALT_NS` (default 300 µs, for
+WS2812B-V5 / SK6812-class parts that need ≥ 280 µs).
 
 **Round-robin layout** is what makes streaming work with bounded per-port buffers: the host
 must deliver ≥ `num_ports` bytes per WS byte-time (one per port), i.e. SPI runs at
@@ -73,19 +76,49 @@ POP/LOAD), each port's FIFO peaks at about `frame_bytes × (1 − 1/r) + PREFILL
   the FIFO builds a lead of `(1 − 1/r)` per byte sent, so a mid-frame SPI pause of
   hundreds of µs is absorbed. Right after the start the only slack is `PREFILL`
   bytes ≈ `PREFILL × 10 µs`. Raising `PREFILL` buys start-of-frame gap tolerance at
-  zero resource cost (latency `+PREFILL × 10 µs`). Caveat: the FSM only starts a
-  frame once every active port has `PREFILL` bytes _while CS is low_, so a frame
-  shorter than `PREFILL` bytes per port never starts. Keep `PREFILL` ≤ the
-  smallest frame, or add a "start on CS-end with data" condition (one LUT) first.
+  zero resource cost (latency `+PREFILL × 10 µs`). A frame shorter than `PREFILL`
+  bytes per port still starts: once CS ends with data buffered, the FSM emits
+  it.
 - `FIFO_DEPTH` (bytes per port, `0` = full frame) decouples the FIFO from
   `MAX_LEDS`, so a 1024-LED port fits one BSRAM (2048 B) as long as `r ≲ 3`.
+
+## Back-to-back frames (120 fps) and self-instrumentation
+
+- **Latch-safe FIFO.** Bytes of the next frame that arrive during the current
+  frame's latch wait in the FIFO and emit right after it. The FIFOs are flushed
+  only at the end of a latch with no new STREAM in progress, and the round-robin
+  demux realigns at every STREAM start. Before this, the end-of-latch flush
+  silently dropped such bytes. A next CS landing a few µs early (pacing jitter at
+  a 120 fps cadence) lost the first bytes per port: found by
+  `spi_ws281x_120fps_sim` at 268 LEDs, 300 µs latch.
+- **Pacing is still the host's job.** A frame that starts while the previous one
+  is still _emitting_ joins it and loses the latch between them (asserted in
+  `spi_ws281x_120fps_sim` phase D). Frame period ≥ `3L × 9.963 µs` (+ ~40 µs
+  prefill latency) + latch. At 120 fps that is ≤ 275 LEDs/port at an 80 µs latch
+  and ≤ 267 at 300 µs. Double-buffered FIFO banks would remove the constraint:
+  two 810 B banks fit one 2048 B BSRAM at 270 LEDs.
+- **`STATS = 1`** (on in the 20-port top) adds outputs, cumulative since reset:
+
+  - `underrun`: a strobe whenever a FIFO runs dry mid-frame;
+  - `underruns`: a saturating total;
+  - `port_underruns`: per-port 8-bit counts;
+  - `min_fill`: the lowest active-FIFO level seen while streaming;
+  - `max_byte_gap`: the longest byte-to-byte interval with CS low, in core
+    clocks. Subtract one byte (`8 × f_clk / f_SCK`) to get the host's pause.
+
+  The SPI slave has no MISO, so there's no read-back yet. The 20-port top shows a
+  sticky underrun flag stretched to 100 ms on `led[1]`, which any analyzer rate
+  (or a human) can see, and folds the counters into the kept XOR. A CSR
+  read-back over MISO (needs a pin) is the production follow-up. With it, the
+  player could report underruns.
 
 ## Internal-only 20-port variant (`tangnano9k_20p_top.v`, NOT for flashing)
 
 For sign-off of a 20-output MAX before the WS pin map is chosen.
 `//fpga/spi_ws281x:spi_ws281x_tangnano9k_20p`: 20 ports × 1024 LEDs, 2048 B FIFO per
 port, 54 MHz core. It has **no WS output pins**: all 20 outputs are XOR-folded
-into a registered bit on onboard `led[0]`, so every port's logic reaches a real
+into a registered bit on onboard `led[0]` (with the STATS counters; `led[1]` =
+underrun flag), so every port's logic reaches a real
 pin and survives synthesis/P&R (`tangnano9k_20p.cst` = clock + SPI + LEDs only).
 **Do not flash it**: it has no pin map. The in-tree 8-pin `tangnano9k_top`
 target is unchanged.

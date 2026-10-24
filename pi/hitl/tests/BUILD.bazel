@@ -53,6 +53,7 @@ py_test(
         "test_rig_isolation_core.py",
         "test_serial_capture.py",
         "test_serial_discovery.py",
+        "test_spi_continuity_core.py",
         "test_stable_identity_core.py",
         "test_sync.py",
         "test_time_base_skew.py",

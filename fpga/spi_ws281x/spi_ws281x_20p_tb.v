@@ -73,6 +73,9 @@ module spi_ws281x_20p_tb;
   reg                  ss = 1, sck = 0, mosi = 0;
   wire [MAX_PORTS-1:0] ws;
   wire                 frame_pulse;
+  wire                 st_underrun;
+  wire [15:0]          st_underruns, st_min_fill, st_max_byte_gap;
+  wire [8*MAX_PORTS-1:0] st_port_underruns;
 
   spi_ws281x #(
       .MAX_PORTS (MAX_PORTS),
@@ -83,7 +86,8 @@ module spi_ws281x_20p_tb;
       .RESET_NS  (RESET_NS),
       .MAX_LEDS  (LEDS),
       .FIFO_DEPTH(`TB_FIFO_DEPTH),
-      .PREFILL   (`TB_PREFILL)
+      .PREFILL   (`TB_PREFILL),
+      .STATS     (1)
   ) dut (
       .clk(clk),
       .rst(rst),
@@ -91,7 +95,12 @@ module spi_ws281x_20p_tb;
       .sck(sck),
       .mosi(mosi),
       .ws(ws),
-      .frame_pulse(frame_pulse)
+      .frame_pulse(frame_pulse),
+      .underrun(st_underrun),
+      .underruns(st_underruns),
+      .min_fill(st_min_fill),
+      .port_underruns(st_port_underruns),
+      .max_byte_gap(st_max_byte_gap)
   );
 
 `ifdef TRACE
@@ -274,6 +283,17 @@ module spi_ws281x_20p_tb;
              LEDS, `TB_FIFO_DEPTH, data_err, width_err, period_err, latch_err, inactive_err,
              max_gap, max_gap * 1.0 / CLK_MHZ, dut.u_stream.ovf, dut.u_stream.max_fill,
              dut.u_stream.stalls);
+    $display("STATS: underruns=%0d min_fill=%0d max_byte_gap=%0d clk", st_underruns, st_min_fill,
+             st_max_byte_gap);
+    // self-instrumentation must agree with the decoder: stalls <=> underruns
+    if ((period_err > 0) != (st_underruns > 0) && `TB_GAP_NS == 0) begin
+      $error("STATS underruns=%0d disagrees with decoded stalls=%0d", st_underruns, period_err);
+      errors = errors + 1;
+    end
+    if (`TB_GAP_NS > 0 && dut.u_stream.stalls > 0 && st_underruns == 0) begin
+      $error("a stall happened but STATS saw no underrun");
+      errors = errors + 1;
+    end
     errors = errors + data_err + width_err + inactive_err + latch_err;
     if (`TB_GAP_NS == 0) errors = errors + period_err;  // no stall allowed w/o gap
     if (dut.u_stream.ovf) begin
