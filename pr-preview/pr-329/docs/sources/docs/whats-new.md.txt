@@ -21,6 +21,24 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 - Design, method and synthetic accuracy (median ~1.3 cm / 0.4° per fixture):
   [multi-fixture-localization.md](design/multi-fixture-localization.md).
 
+### Calibrate IMU is hands-free
+
+- **No Capture pose or Save buttons.** When the map registers in the viewfinder
+  and the fixture and phone hold still for a moment, the pose is taken
+  automatically and the screen prompts for the next one. It always takes three
+  poses (normal, tilted ~45° to the side, tilted ~45° toward/away), then solves,
+  writes the calibration to the fixture and reads it back to confirm.
+- **A pose that repeats an earlier one is refused with guidance** ("tilt it
+  further"). So is one where the camera and the sensor disagree on how far the
+  fixture turned.
+- **Never lost on a disconnect.** The solve stays pending on the phone, per
+  device, until the fixture confirms it; every reconnection pushes it again.
+- Fixes: the save was silently dropped when a sensor poll was in flight; the
+  stored mapping pose blocked the first capture; a re-run carried every earlier
+  pose, so the third pose had nowhere left to go; and the fixture's rest
+  detector refused tilted poses on IMUs with a typical zero-g offset.
+- Design: [sensor-core.md §7.3](design/sensor-core.md).
+
 ### Slow effects lag instead of being parked, and Wi-Fi rescans without a reboot
 
 - **Slow effects lag instead of being parked.** An effect too heavy for the 25 fps

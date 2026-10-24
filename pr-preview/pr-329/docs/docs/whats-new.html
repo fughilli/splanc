@@ -340,6 +340,26 @@ resource) see the room.</p></li>
 <a class="reference internal" href="design/multi-fixture-localization.html"><span class="std std-doc">multi-fixture-localization.md</span></a>.</p></li>
 </ul>
 </section>
+<section id="calibrate-imu-is-hands-free">
+<h3>Calibrate IMU is hands-free<a class="headerlink" href="#calibrate-imu-is-hands-free" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>No Capture pose or Save buttons.</strong> When the map registers in the viewfinder
+and the fixture and phone hold still for a moment, the pose is taken
+automatically and the screen prompts for the next one. It always takes three
+poses (normal, tilted ~45° to the side, tilted ~45° toward/away), then solves,
+writes the calibration to the fixture and reads it back to confirm.</p></li>
+<li><p><strong>A pose that repeats an earlier one is refused with guidance</strong> (“tilt it
+further”). So is one where the camera and the sensor disagree on how far the
+fixture turned.</p></li>
+<li><p><strong>Never lost on a disconnect.</strong> The solve stays pending on the phone, per
+device, until the fixture confirms it; every reconnection pushes it again.</p></li>
+<li><p>Fixes: the save was silently dropped when a sensor poll was in flight; the
+stored mapping pose blocked the first capture; a re-run carried every earlier
+pose, so the third pose had nowhere left to go; and the fixture’s rest
+detector refused tilted poses on IMUs with a typical zero-g offset.</p></li>
+<li><p>Design: <a class="reference internal" href="design/sensor-core.html"><span class="std std-doc">sensor-core.md §7.3</span></a>.</p></li>
+</ul>
+</section>
 <section id="slow-effects-lag-instead-of-being-parked-and-wi-fi-rescans-without-a-reboot">
 <h3>Slow effects lag instead of being parked, and Wi-Fi rescans without a reboot<a class="headerlink" href="#slow-effects-lag-instead-of-being-parked-and-wi-fi-rescans-without-a-reboot" title="Link to this heading">¶</a></h3>
 <ul class="simple">
@@ -995,6 +1015,7 @@ the way it is.</p></li>
 <li><a class="reference internal" href="#">What’s new</a><ul>
 <li><a class="reference internal" href="#october-2026">October 2026</a><ul>
 <li><a class="reference internal" href="#place-several-fixtures-in-one-room-from-one-phone-capture">Place several fixtures in one room from one phone capture</a></li>
+<li><a class="reference internal" href="#calibrate-imu-is-hands-free">Calibrate IMU is hands-free</a></li>
 <li><a class="reference internal" href="#slow-effects-lag-instead-of-being-parked-and-wi-fi-rescans-without-a-reboot">Slow effects lag instead of being parked, and Wi-Fi rescans without a reboot</a></li>
 <li><a class="reference internal" href="#effects-stop-recomputing-what-doesn-t-change-and-the-cost-estimate-is-honest">Effects stop recomputing what doesn’t change (and the cost estimate is honest)</a></li>
 <li><a class="reference internal" href="#leds-on-each-channel">1024 LEDs on each channel</a></li>
