@@ -1,6 +1,8 @@
 # Lowering the FX engine onto GPUs and accelerators
 
-Status: **design + host feasibility prototype (this PR).** No device code ships.
+Status: **design + host feasibility prototype + Pi 3 measurements (this PR).**
+No device code ships. **Target (owner): Splanc MAX at up to 120 fps on short
+runs, with GPU lowering as the primary path** (§0).
 The prototype (`//fx_gpu`) lowers a meaningful subset of the effects IR to GLSL
 ES 1.00 / 3.10 + SPIR-V and proves, against the real `fx_vm` over the test
 corpus, that the lowering is numerically faithful within tolerance. Pi and P4
@@ -26,6 +28,139 @@ FPGA/SPI LED path without the readback eating the win.
 
 This document answers those, with a working prototype and measured conformance
 numbers, and surveys the ESP32-P4 accelerators as a separate (non-GPU) track.
+
+## 0. Target: Splanc MAX at up to 120 fps (owner direction)
+
+**Direction:** GPU lowering is the **primary MAX path**. The multi-threaded VM
+is the **fallback** for effects that can't lower: hash on the Pi 3 (GLES2), and
+buffers, user functions and loops on every tier. The goal is 120 fps on runs
+short enough for the wire to allow it, not 30 fps.
+
+### Fps vs strip length (the wire sets the ceiling)
+
+Wire time per frame = `L` LEDs per channel × 30 µs (24 bits × 1.25 µs) + the latch
+(reset LOW). All channels drive in parallel, so the frame rate depends only on
+`L` and the latch, not on the channel count. The latch is a **parameter**
+(`led_type` CSR, #370): 0 = classic WS2812/WS2812B (spec > 50 µs; the core
+uses 80 µs), 1 = WS2812B-V5 / SK6812-class (≥ 280 µs; the core uses 300 µs).
+
+Max LEDs per channel, `floor((1/fps − reset) / 30 µs)`, datasheet timing:
+
+| fps | period | reset 50 µs | reset 280 µs | × 20 channels (50 / 280 µs) |
+|---:|---:|---:|---:|---:|
+| 30 | 33.33 ms | 1,109 | 1,101 | 22,180 / 22,020 |
+| 60 | 16.67 ms | 553 | 546 | 11,060 / 10,920 |
+| 90 | 11.11 ms | 368 | 361 | 7,360 / 7,220 |
+| **120** | **8.33 ms** | **276** | **268** | **5,520 / 5,360** |
+
+In the spi_ws281x core the bit is 1.2407 µs, so a byte takes 9.963 µs and an LED
+29.89 µs. With the core's 80/300 µs latches and ~40 µs of prefill latency, the
+120 fps limit is **274 LEDs/channel at 80 µs** and **267 at 300 µs**. The
+#370 sim runs 20 × 270 and 20 × 266 at a 120 fps cadence.
+
+**SPI demand is set by the port count, not the fps.** While strips stream, the
+FPGA drains 0.8 Mbit/s per port, so 20 ports need ≥ 16.06 Mbit/s sustained
+(#370 sim: SCK 16.7–27 MHz works at a 54 MHz core). At 120 fps the strips stream
+~97% of each period, so the link runs at that rate almost continuously. One
+20 × 270 frame is 16,201 bytes, 5.8 ms at 22.2 MHz SCK, inside the period. Per
+frame the FPGA also needs the latch plus ~40 µs of prefill between frames. The
+host must start each CS no earlier than *previous start + emission + latch* (see
+pacing below).
+
+### The 8.33 ms budget at 120 fps
+
+Render, readback and SPI handoff run as a **pipeline**, one stage per frame
+period, with double or triple buffering:
+- frame n+2 renders on the GPU;
+- frame n+1 is read back and encoded;
+- frame n goes out over SPI and the wire.
+
+Each stage must fit one period. The stages run concurrently, so only the
+slowest one sets the rate.
+
+| stage at 20 × 270 (5,400 LEDs) | Pi 3 GPU (GLES2) | Pi 3 VM, 4 threads | notes |
+|---|---:|---:|---|
+| render + readback | **~0.9–1.1 ms** for every lowered effect | solid 1.6, sweep 2.5, cylinder 2.6, imu 2.7, pulses 3.1, plasma 4.0, gradient 4.1, **noise 7–10 ms** | GPU interpolated between the measured 4×1024 (0.87 ms) and 8×1024 (1.5 ms); VM scaled from the measured 4×1024 and 20×1024 4-thread runs. *To measure at 20×270 (below).* |
+| SPI (16,201 B) | 5.8 ms @ 22.2 MHz (DMA) | same | concurrent with the wire |
+| wire + latch | 8.15 ms (270 @ 80 µs) | same | the ceiling |
+
+- **The GPU fits with ~7 ms to spare** and leaves the CPU free for the player,
+  networking and the output thread.
+- **The 4-core VM fits most effects but not noise-class hash effects**
+  (~7–10 ms ≥ 8.33). Even the ones that fit take 20–50% of *all four* cores'
+  frame time.
+- **On a Pi 3, the effects that can't make 120 fps without the GPU** are the
+  heaviest VM effects (noise, ~7–10 ms). Those are also the hash class that
+  GLES2 can't run, so on a Pi 3 they cap at ~80–100 fps on the VM. On Pi 4/5
+  (V3D compute with real integers) they lower too.
+- Effects that only fit on the VM by using the whole CPU are the reason the GPU
+  is primary.
+
+### Frame pacing and jitter on Linux
+
+- **The FPGA is the timing master; the host only has to stay ahead.**
+  - Since #370 the FIFO is latch-safe: a next-frame CS may land anywhere in the
+    previous frame's latch without losing bytes.
+  - It must not land during the previous frame's *emission*, or the frames merge
+    (asserted in `spi_ws281x_120fps_sim` phase D).
+  - Jitter slack is `period − (3L × 9.963 µs + 40 µs + latch)`: ~143 µs at
+    270 LEDs / 80 µs, but only ~42 µs at 266 / 300 µs.
+  - For production, either keep `L` a few LEDs under the limit (e.g. ≤ 260 gives
+    ≥ 0.4 ms of slack), or better, let the FPGA pace the host with a "frame done"
+    signal: a GPIO from the core's latch end, or a CSR read once MISO exists.
+    Then Pi-side jitter only has to stay under one period.
+- **Output thread:**
+  - SCHED_FIFO priority, pinned to an isolated core (`isolcpus`/`nohz_full` on the
+    Pi 4/5; on the Pi 3, at least affinity away from the WiFi/USB IRQs).
+  - Absolute-deadline sleeps (`clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME)`
+    or `timerfd`), so periods don't accumulate drift.
+  - The `performance` governor, to avoid DVFS latency spikes. On the Pi 3, also a
+    pinned `core_freq`, because SPI SCK divides the core clock (§4).
+- **GPU sync stays off the output thread.** `glReadPixels` blocks its caller
+  (measured 1.4 ms at 20k LEDs, ~0.3–0.5 ms at 5k), and `glFinish` jitter lands on
+  the render thread. With a triple-buffered handoff the output thread never
+  waits on GL. Render jitter matters only if render + readback approaches a
+  period; at ~1 ms of 8.33 it doesn't.
+- **SPI:** one DMA write per frame (needs `spidev.bufsiz` ≥ frame bytes, set by
+  #369). Whether the Pi pauses *inside* a transfer, especially in the first
+  `PREFILL × 10 µs`, is what the logic-analyzer continuity capture and the FPGA
+  `STATS` counters measure (#370). `PREFILL = 64` would absorb 600 µs there.
+
+### End-to-end latency, input to photon, at 120 fps
+
+WS2812s show new colours on the latch, so a frame's photons appear at the *end*
+of its wire time:
+
+| step | time |
+|---|---|
+| input sampled at the next render start | 0–8.3 ms (avg 4.2) |
+| GPU render + readback | ~1 ms |
+| wait for the SPI slot (double buffer) | 0–8.3 ms |
+| prefill + emission + latch (270 LEDs) | ~8.2 ms |
+| **total** | **~10–26 ms, typically ~15–18 ms** |
+
+For comparison, 1024 LEDs/channel at 30 fps comes to ~50–100 ms. Latency gets
+shorter with a shallower pipeline (render just-in-time against the FPGA
+frame-done signal) and with shorter strips.
+
+### FPGA support (#370)
+
+- Back-to-back frames at a 120 fps cadence are verified in Verilator: 20 × 270
+  at 80 µs and 20 × 266 at 300 µs (`led_type` 1), with one frame deliberately
+  started inside the previous latch.
+- A frame shorter than PREFILL bytes per port now starts when CS ends, where
+  before it never started. So PREFILL can be raised for gap tolerance without
+  breaking short frames.
+- Self-instrumentation (`STATS`): underrun counts (total and per port), the
+  minimum FIFO level, and the longest byte-to-byte gap with CS low. A sticky
+  underrun flag is shown on `led[1]`.
+
+### Next measurement (Pi 3, for the operator)
+
+Run the rebuilt `pi3bench` payload (layouts 4×270, 20×270, 1×500, 4×550,
+20×1024; GPU + VM 1 and 4 threads) on `pi-ledmapper-2`, using the SSH-tunnel
+runbook in `fx_gpu/pi3bench/README.md`, with
+`run.sh … --points 4x270,20x270 --vm-threads 1,4`.
 
 ## 1. Partitioning: what maps to the GPU, what stays on the CPU
 
@@ -638,29 +773,28 @@ The agent never handled the Pi key. **Results are in §5**: 100 JSON lines, all
 
 ## 11. Staged plan
 
-1. **(this PR)** Host IR + lowering + legalize + GLSL/SPIR-V emit + conformance
-   harness. Design + numerics policy + P4 survey + prior art.
-2. **Pi 3 GLES2 microbenchmark (HITL/Pi): done** (§5). 20×1024 in 3.2–3.5 ms
-   for every lowered kernel, ≤ 2/255. Follow-ups: the 4-thread VM run and the
-   SPI-tap capture.
-2b. **Multi-thread the VM in the player** (all effects, no Mesa): measured
-   3.1–3.97× on a Pi 3 at 20×1024, which fits everything under the wire. This is
-   the cheapest MAX-scale win and comes before the GPU tier.
-3. **Pi 4/5 compute path:** `naga` SPIR-V, V3D compute over an SSBO, highp,
-   class-1 exact; golden tolerance tests per tier.
-4. **Player integration:** glibc GPU helper process (musl player stays), a
-   load-time per-effect probe (lower → tolerance-check → cache the verdict),
-   readback → `FpgaCodec` → SPI; keep the VM fallback.
-5. **Image:** lean Mesa overlay (§8) into `pi/provisioning`, add Pi 4 / Zero 2 W
-   board targets; measure closure growth. Also a pinned Pi 3 `core_freq` (§4).
-   `spidev.bufsiz=65536` arrives with #369.
-5b. **20-channel FPGA:** #370's internal-only variant → pin map → a flashable
-   20-port target; `PREFILL` + "start on CS-end"; logic-analyzer validation on 4
-   channels.
-6. **GPU-native textures/decks** (`SampleTex`/blending) and **shader-emulated
-   LUT sine** for class-3 exactness, if measured need.
-7. **(parallel track)** P4: PIE SIMD tier (shortlist #1) via the AOT path;
-   PARLIO+BitScrambler output; JPEG/PPA texture pipeline.
+1. **Done (this PR):** IR, lowering, legalize, GLSL/SPIR-V emit, conformance
+   harness; design, numerics, P4 survey, prior art.
+2. **Done:** Pi 3 GLES2 bench (§5). 20×1024 in 3.2–3.5 ms for every lowered
+   effect, ≤ 2/255. 4-thread VM measured.
+3. **Pi 3 at 120 fps:** the 20 × 270 / 4 × 270 bench (payload ready, §0); the
+   logic-analyzer continuity capture and FPGA `STATS` (#370).
+4. **GPU tier in the player (primary):**
+   - a glibc GPU helper next to the static-musl player;
+   - a load-time per-effect probe (lower → tolerance check → cache);
+   - a triple-buffered render → readback → `FpgaCodec` → SPI pipeline;
+   - a SCHED_FIFO output thread paced on absolute deadlines (or FPGA frame-done).
+5. **Multi-threaded VM in the player (fallback):** for effects that don't lower.
+6. **Image:** the lean Mesa overlay (§8), Pi 4 / Zero 2 W board targets, a pinned
+   Pi 3 `core_freq`, and `spidev.bufsiz` via #369.
+7. **Pi 4/5 compute:** `naga` SPIR-V, V3D compute, exact integers (adds hash
+   effects); golden tolerance tests per tier.
+8. **FPGA (#370):** a 20-port pin map; `PREFILL` + frame-done pacing; MISO CSR
+   read-back for `STATS` (player-visible underruns); optional double-buffered
+   FIFO banks, so frames can overlap emission.
+9. **GPU-native textures/decks** and an in-shader LUT sine (class-3 exactness),
+   if measurement shows a need.
+10. **(parallel track)** P4: the PIE SIMD tier; PARLIO + BitScrambler; JPEG/PPA.
 
 ## 12. Decisions the user needs to make
 
@@ -668,22 +802,15 @@ The agent never handled the Pi key. **Results are in §5**: 100 JSON lines, all
    6/255 (Pi 3 mediump)** as the golden-test bound? And for class-3
    transcendental-heavy effects: **ship the VM's LUT sine in-shader** (makes the
    common case exact, ~1 KB) or **keep those effects on the VM**?
-2. **Pi 3 tiering: recommendation. Multi-thread the VM first. Ship GLES2 as a
-   CPU-offload tier, not as a necessity.** Measured (§5):
-   - A **4-core VM** runs *every* effect, hash/noise included, at 20×1024 under
-     the 32.6 fps wire ceiling (worst: noise 27.1 ms, plasma 13.3 ms). It needs
-     no Mesa and has no conformance question, but it saturates all 4 cores.
-   - **GLES2 on vc4** does the 100/132 float-only effects in 3.2–3.5 ms at
-     20×1024, at ≤ 2/255 (bit-exact for float-only), with the CPU free. It works
-     on the stock image (vc4 KMS is on) with the lean Mesa (~40–60 MB) and a
-     glibc GPU helper.
-   - Today's 4×550 needs neither.
-
-   **Order:** (1) **multi-threaded VM** in the player: required, covers
-   everything; (2) **Pi 3 GLES2** for float-only effects at ≥ 8×1024, to free the
-   CPU and leave frame headroom; (3) **Pi 4/5 compute**, which adds the hash
-   effects exactly. Skip (2) if a VM pegging all four cores at MAX scale is
-   acceptable; the 4-core VM is the fallback either way.
+2. **Pi 3 tiering at 120 fps: GPU-primary (owner direction).** GLES2 on vc4
+   renders every lowered effect at 20 × 270 in about 1 ms, with the CPU free.
+   The **4-core VM is the fallback** for what can't lower: hash, buffers,
+   loops. Measured at 20×1024, a 4-thread VM is 3.1–3.97× faster than one
+   thread. At 120 fps (20 × 270) it fits most effects but takes 20–50% of all four
+   cores, and noise-class effects (~7–10 ms) miss the 8.33 ms period; Pi 4/5
+   compute lowers those too. **Open decision:** the 120 fps strip-length policy:
+   ≤ 274 LEDs/channel (80 µs latch) or ≤ 267 (300 µs) at the limit, or ≤ ~260
+   for jitter margin. And whether to add an FPGA "frame done" pacing signal.
 3. **Readback vs direct DPI scan-out** (§4): start with readback (recommended)?
    DPI is a later optimisation that costs GPIO pins and a frame-sync redesign.
 4. **P4 priority** (§9): is the PIE SIMD tier (shortlist #1) the P4 track to fund

@@ -136,18 +136,19 @@ runs and gives the baseline.
 
 ## SPI continuity (separate capture, the 20-port FIFO risk)
 
-The question is whether the Pi has gaps between spidev transfers. The FPGA core
-buffers only about 2 bytes per port, so a gap longer than about one WS byte-time
-underruns it.
+The question is whether the Pi pauses inside a STREAM transfer. The FPGA core
+has a per-port BSRAM FIFO (1,659 B in-tree; 2,048 B in the #370 20-port variant).
+It starts emitting once every port holds `PREFILL` bytes (default 2), so the
+risky window is **right after a frame starts**. There the only slack is about
+`PREFILL × 10 µs`, and a longer pause latches the strip mid-frame. Mid-frame the
+FIFO has built a lead and absorbs pauses of hundreds of µs (#370 sim).
 
-To measure, capture rig-1's FX2 SPI tap (MOSI D1, CLK D3, CS D5) on
-`pi-ledmapper-1` while the player streams at its normal rate, for example:
+That measurement now lives with the FPGA work, in #370:
 
-```sh
-python3 pi/hitl/harness/hitl_fpga_ws281x.py --device pi-ledmapper-1 \
-  --num-ports 4 --leds-per-port 1024 --check-spi-stream --spi-channels D3,D1,D5
-```
+- `//pi/hitl/harness:spi_continuity` (`hitl_spi_continuity.py`): an FX2 CLK + CS
+  timing capture through the rig's shared analyzer, sweeping the transfer size.
+  It is valid only at SCK ≤ 6.4 MHz with pauses ≥ 1 µs: the 24 MS/s analyzer can't
+  decode SPI and aliases near 2 × SCK.
+- The core's own `STATS` counters (underruns, `max_byte_gap`, `min_fill`).
 
-Send the raw capture. 24 MS/s is too slow to decode bits at the player's 6.4–12.8 MHz
-SPI clock, but it is enough to time the idle gaps on CLK and CS, and the gap
-histogram is what's needed. This is analyzed by hand, not by `run.sh`.
+It needs no Pi credentials, and `run.sh` doesn't do it.
