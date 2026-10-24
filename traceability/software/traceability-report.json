@@ -18,7 +18,7 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 2113,
+    "test_cases": 2120,
     "gaps": 35
   },
   "levels": [
@@ -698,6 +698,48 @@
           "target": "//pi/hitl/tests:hitl_test"
         },
         {
+          "name": "pi.hitl.tests.test_video_latency::test_clock_fit_uses_min_rtt_samples_and_drift",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_video_latency::test_parse_ignores_garbage_and_counts_unmatched_pongs",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_video_latency::test_present_at_runs_report_shown_frame_latency_and_lateness",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_video_latency::test_stall_while_window_limited_is_attributed_to_device",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_video_latency::test_stall_with_catchup_is_attributed_to_tcp_retransmit",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_video_latency::test_steady_stream_has_tight_latency_and_no_stalls",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_video_latency::test_verdict_skip_without_calibration_and_fail_on_drop_or_loss",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
           "name": "//tools/touchdesigner/stream_bench:stream_bench_test",
           "status": "passed",
           "level": "simulation",
@@ -770,6 +812,14 @@
           "relation": "verifies",
           "path": "pi/hitl/tests/test_video_bench.py",
           "line": 12
+        },
+        {
+          "ids": [
+            "PR-10"
+          ],
+          "relation": "verifies",
+          "path": "pi/hitl/tests/test_video_latency.py",
+          "line": 19
         }
       ]
     },
