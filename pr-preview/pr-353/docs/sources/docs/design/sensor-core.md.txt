@@ -476,18 +476,10 @@ Implemented here:
   "Calibrate IMU" when the connected fixture's sensor is running.
 - It reuses the capture screen's code playback, decode and `pnp.ts` lock (the
   new `ProjectionOverlay.lockedPose`), and the stored capture profile.
-- It averages the phone's DeviceMotion over ~1.2 s and checks that it is still
-  (σ ≤ 3°).
-- Its logic is DOM-free and unit-tested in `web/src/capture/imuCalSession.ts`.
-- **Gating.** A pose can be captured only when:
-  - the fixture is at rest for ≥ 50 samples;
-  - its up is ≥ 45° from every accepted pose;
-  - PnP is locked this frame;
-  - the phone is steady.
-- **Readout.** It shows the pose count (needs 2, recommends 3), the live
-  separation, the current blocker, and the fit (quality, residual, ± heading).
-- **Save** sends `set_sensor_mount` and stores the poses and the solution on the
-  map. A non-"good" fit asks for confirmation first.
+- It is hands-free (see §7.3): no Capture pose / Save buttons. Its logic is
+  DOM-free and unit-tested in `web/src/capture/imuCalSession.ts` (`ImuCalFlow`,
+  the gates) and `web/src/capture/imuCalWriteback.ts` (write, read-back,
+  pending store).
 
 ### 7.1 The problem
 
@@ -577,21 +569,36 @@ available any time later as **"Calibrate IMU"** on Map Detail (next to
 
 1. **Pose 1** is recorded automatically at the end of mapping (g_f,1 = +Y, and
    g_i,1 from the settled IMU). The step opens with a tilt-only calibration
-   already applied, so effects work for tilt immediately.
-2. *"Turn or tip the fixture to a different resting position."*
-   - The app polls `get_sensors` at ~5 Hz and shows:
-     - a **stillness** indicator (`at_rest`);
-     - the live **angle** between the current IMU up and every accepted pose's
-       g_i;
-     - a target ring (≥ 45°, green at ≥ 70°).
-   - "Capture pose" enables when the fixture is still, the separation is
-     ≥ 45°, and PnP has a lock with RMS ≤ 4 px and at least 5 inliers.
-3. Solve after pose 2. The flow **recommends a third pose** (another ~90° axis)
-   for redundancy, and shows the residual, the predicted yaw error, and a 3D
-   preview of the IMU axes on the map. The user accepts or redoes.
-4. **Accept** sends `set_sensor_mount { R_fi, quality, timestamp }`. The firmware
-   persists it, and the app also stores it on the map's summary, so the map
-   export carries it.
+   already applied, so effects work for tilt immediately. The guided flow does
+   NOT reuse it (nor a previous run's poses): it always takes three fresh poses.
+2. **Hands-free capture.** The registration lock that drives the "Registered"
+   chip (`ProjectionOverlay.lockedPose`) is the trigger. Every frame feeds its
+   lock and capture time, the phone IMU is flushed every 200 ms, and one
+   `get_sensors` reader (never overlapping) stamps each reply on the same
+   `performance.now()` clock. A 10 Hz step takes a pose when, over a 700 ms
+   window:
+   - PnP locked on ≥ 6 frames with no gap > 250 ms;
+   - the camera-derived fixture up (phone gravity at each locked frame, rotated
+     camera→map) spreads ≤ 3°, and so does the phone's gravity;
+   - the sensor reply arrived inside the window, its sample counter advanced,
+     and the rest streak (`rest_samples`) covers the whole window;
+   - its IMU up is ≥ 30° from every pose already taken (else "too close to
+     pose N — tilt further");
+   - the angle to each earlier pose agrees between the IMU and the camera frame
+     to 10° (else it is refused: a bad lock or a phone-axis mix-up).
+   Then it prompts for the next pose: normal position, ~45° to the side, ~45°
+   toward/away.
+3. **After the third pose** it solves, stores the result on the map summary, and
+   writes it with no accept step: `set_sensor_mount`, then `get_sensors` until
+   the mount, poses, yaw flag and timestamp read back. A weak fit is still
+   written and offers Retake.
+4. **Pending write-back.** The solve is kept per device (welcome MAC, in
+   localStorage) from before the write until the read-back matches. Every
+   (re)connection to that device pushes it again (reading first, so a write
+   whose reply was lost isn't re-sent), unless the device now holds a
+   different map. The firmware persists the record to NVS (`sens_cal`, an
+   atomic `nvs_set_blob` + `nvs_commit`) in the sensor-task iteration that
+   applies it, and reloads it at boot.
 
 **Agent path.** An agent can't see the camera. It can do the gravity-only step
 ("set the lamp upright, I'll level it": `calibrate_sensors level`), and it can

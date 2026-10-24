@@ -5,6 +5,54 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 
 ## October 2026
 
+### Calibrate IMU is hands-free
+
+- **No Capture pose or Save buttons.** When the map registers in the viewfinder
+  and the fixture and phone hold still for a moment, the pose is taken
+  automatically and the screen prompts for the next one. It always takes three
+  poses (normal, tilted ~45° to the side, tilted ~45° toward/away), then solves,
+  writes the calibration to the fixture and reads it back to confirm.
+- **A pose that repeats an earlier one is refused with guidance** ("tilt it
+  further"). So is one where the camera and the sensor disagree on how far the
+  fixture turned.
+- **Never lost on a disconnect.** The solve stays pending on the phone, per
+  device, until the fixture confirms it; every reconnection pushes it again.
+- Fixes: the save was silently dropped when a sensor poll was in flight; the
+  stored mapping pose blocked the first capture; a re-run carried every earlier
+  pose, so the third pose had nowhere left to go; and the fixture's rest
+  detector refused tilted poses on IMUs with a typical zero-g offset.
+- Design: [sensor-core.md §7.3](design/sensor-core.md).
+
+### Slow effects lag instead of being parked, and Wi-Fi rescans without a reboot
+
+- **Slow effects lag instead of being parked.** An effect too heavy for the 25 fps
+  floor (lower on long strips) or for a pinned framerate used to be stopped
+  outright. Now it keeps playing as fast as the board can render it. The player
+  reports it as `lagging`, with the rate it really achieves (`achieved_fps`). The
+  app and the live screen mention it once, as a notice rather than an error. The
+  render task's duty cycle stays bounded, so Wi-Fi, sensors and control stay
+  responsive. `set_fps.no_abort` and `fps_state.aborted` are deprecated and
+  ignored. Details: [perf-monitoring.md](design/perf-monitoring.md).
+- **The board no longer reboots to rescan Wi-Fi.** When the saved network isn't
+  visible (the router still starting after a power cut), the board rescans in
+  the background while the effect keeps playing. This replaces the
+  restart-on-backoff described under "Players stay on Wi-Fi across updates and
+  power cuts" below.
+
+### Effects stop recomputing what doesn't change (and the cost estimate is honest)
+
+- **Automatic memoization.** `shade()` subexpressions that only depend on the LED's map position
+  (`atan2(led.pos.x, led.pos.z)` for cylindrical mappings, `length(led.pos.xz)`, `hash(led.idx)`)
+  are computed once per LED and then read from a per-LED cache in spare arena RAM. Per-frame
+  values (`sin(time * speed)`, uniform math) are computed once per frame instead of once per LED.
+  Output is bit-identical; no source changes needed. Effects that don't fit in the spare RAM just
+  run as before.
+- **The offline estimate now matches the device.** It used to stop counting at the first
+  fixed-point or optimized opcode and priced the interpreter's per-op overhead at ~2 cycles
+  (really ~69 on the C6). That's why an effect estimated at 3 ms ran at 132 ms. The default
+  cost table is now fitted to the HITL benchmark bundle (4.5% rms).
+- Design, cost table and numbers: [fx-memoization.md](design/fx-memoization.md).
+
 ### 1024 LEDs on each channel
 
 - **The C6 player now drives up to 1024 LEDs per channel, 2048 in all** (was
