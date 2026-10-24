@@ -72,8 +72,10 @@ vec3 shade(Led led) {
 - Several fixtures that must stay in lockstep (`align_time`) share `time`, not
   integrated phases; there, prefer a fixed rate on `time` over a rate knob.
 
-`compile_effect` reports this pattern as a `warning:` with the line; treat it
-like an error.
+`compile_effect` reports this pattern as a `warning:` with the line (`kind:
+"correctness"`); treat it like an error. Perf warnings (`kind: "perf"`, msg
+`warning: perf: …`) mean the effect runs, but slower than it should — fix those
+too (see Performance below).
 
 ## Types
 
@@ -138,7 +140,7 @@ effect cheap (the fixed-point examples show each technique —
   (the first one costs ~1,200 cycles per LED once, covering all of them) — and
   wrap every literal: `x * fixed(0.6)`. One float operand turns the expression
   back into soft-float plus two 320-cycle conversions; `compile_effect` warns
-  about it.
+  about it (a `warning: perf: …`).
 - **Phases in turns.** Keep `state fixed` phases advanced in `update()`
   (`ph = fract(ph + fixed(dt * speed))`); `sin`/`cos` of a fixed argument is an
   integer LUT with 1.0 = one full turn (not 2π). `atan2` of two fixed arguments

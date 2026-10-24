@@ -104,9 +104,9 @@ test("a float literal in fixed maths: compiler warning + a round-trip finding on
     "}",
   ].join("\n");
   const { c, f } = await findings(src);
-  assert.equal(c.warnings.length, 2, JSON.stringify(c.warnings));
-  assert.equal(c.warnings[0]!.line, 5);
-  assert.match(c.warnings[0]!.msg, /fixed\(0\.6\)/);
+  assert.equal(c.warnings!.length, 2, JSON.stringify(c.warnings));
+  assert.equal(c.warnings![0]!.line, 5);
+  assert.match(c.warnings![0]!.msg, /fixed\(0\.6\)/);
   const lit = f.find((x) => x.rule === "float_literal_in_fixed");
   assert.ok(lit, JSON.stringify(f));
   assert.deepEqual(lit.lines, [5]);

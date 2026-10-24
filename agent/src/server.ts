@@ -800,7 +800,7 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
             budget_used: Number.isFinite(d.budget.fraction) ? +d.budget.fraction.toFixed(2) : null,
             hot_opcodes: d.estimate.hotOpcodes.slice(0, 6).map((h) => `${h.op} ${Math.round(h.fraction * 100)}%`),
             ...(findings.length ? { findings } : {}),
-            ...(c.warnings.length ? { warnings: c.warnings.map((w) => `line ${w.line}: ${w.msg}`) } : {}),
+            ...(c.warnings?.length ? { warnings: c.warnings.map((w) => `line ${w.line}: ${w.msg}`) } : {}),
             model: "C6 default table, fitted on the HITL bench (±15%; reads low on branchy/buffer/texture effects)",
           };
         });
