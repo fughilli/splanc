@@ -431,9 +431,9 @@ slowest one sets the rate.</p>
 </thead>
 <tbody>
 <tr class="row-even"><td><p>render + readback</p></td>
-<td class="text-right"><p><strong>~0.9–1.1 ms</strong> for every lowered effect</p></td>
-<td class="text-right"><p>solid 1.6, sweep 2.5, cylinder 2.6, imu 2.7, pulses 3.1, plasma 4.0, gradient 4.1, <strong>noise 7–10 ms</strong></p></td>
-<td><p>GPU interpolated between the measured 4×1024 (0.87 ms) and 8×1024 (1.5 ms); VM scaled from the measured 4×1024 and 20×1024 4-thread runs. <em>To measure at 20×270 (below).</em></p></td>
+<td class="text-right"><p><strong>0.84–0.94 ms</strong> pipelined, for every lowered effect</p></td>
+<td class="text-right"><p>solid 1.36, sweep 1.83, gradient 2.28, imu 2.57, pulses 2.98, cylinder 3.05, plasma 4.69, <strong>noise 7.84 ms</strong></p></td>
+<td><p><strong>Measured</strong> on <code class="docutils literal notranslate"><span class="pre">pi-ledmapper-2</span></code> (run 3). VM 1 thread: 2.2–28.3 ms. GPU ≤ 2/255, VM bit-exact.</p></td>
 </tr>
 <tr class="row-odd"><td><p>SPI (16,201 B)</p></td>
 <td class="text-right"><p>5.8 ms &#64; 22.2 MHz (DMA)</p></td>
@@ -451,11 +451,12 @@ slowest one sets the rate.</p>
 <ul class="simple">
 <li><p><strong>The GPU fits with ~7 ms to spare</strong> and leaves the CPU free for the player,
 networking and the output thread.</p></li>
-<li><p><strong>The 4-core VM fits most effects but not noise-class hash effects</strong>
-(~7–10 ms ≥ 8.33). Even the ones that fit take 20–50% of <em>all four</em> cores’
-frame time.</p></li>
+<li><p><strong>The 4-core VM fits most effects but not noise-class hash effects.</strong> Noise
+takes 7.84 ms on all four cores, so it misses 8.33 ms as soon as anything else
+runs. The ones that fit still take 16–56% of all four cores’ frame time
+(plasma 4.69 ms).</p></li>
 <li><p><strong>On a Pi 3, the effects that can’t make 120 fps without the GPU</strong> are the
-heaviest VM effects (noise, ~7–10 ms). Those are also the hash class that
+heaviest VM effects (noise, 7.84 ms measured). Those are also the hash class that
 GLES2 can’t run, so on a Pi 3 they cap at ~80–100 fps on the VM. On Pi 4/5
 (V3D compute with real integers) they lower too.</p></li>
 <li><p>Effects that only fit on the VM by using the whole CPU are the reason the GPU
@@ -550,10 +551,9 @@ underrun flag is shown on <code class="docutils literal notranslate"><span class
 </section>
 <section id="next-measurement-pi-3-for-the-operator">
 <h3>Next measurement (Pi 3, for the operator)<a class="headerlink" href="#next-measurement-pi-3-for-the-operator" title="Link to this heading">¶</a></h3>
-<p>Run the rebuilt <code class="docutils literal notranslate"><span class="pre">pi3bench</span></code> payload (layouts 4×270, 20×270, 1×500, 4×550,
-20×1024; GPU + VM 1 and 4 threads) on <code class="docutils literal notranslate"><span class="pre">pi-ledmapper-2</span></code>, using the SSH-tunnel
-runbook in <code class="docutils literal notranslate"><span class="pre">fx_gpu/pi3bench/README.md</span></code>, with
-<code class="docutils literal notranslate"><span class="pre">run.sh</span> <span class="pre">…</span> <span class="pre">--points</span> <span class="pre">4x270,20x270</span> <span class="pre">--vm-threads</span> <span class="pre">1,4</span></code>.</p>
+<p><strong>Done (run 3, <code class="docutils literal notranslate"><span class="pre">pi-ledmapper-2</span></code>).</strong> At 4 × 270 the GPU is 0.34–0.36 ms per frame
+and the 4-thread VM 0.28–3.2 ms (noise 3.2). At 20 × 270 the numbers are in the
+table above. Raw data: <code class="docutils literal notranslate"><span class="pre">/workspace/.claude/fxgpu/pi3bench/pi3bench-120fps.jsonl</span></code>.</p>
 </section>
 </section>
 <section id="partitioning-what-maps-to-the-gpu-what-stays-on-the-cpu">
@@ -1602,8 +1602,10 @@ The agent never handled the Pi key. <strong>Results are in §5</strong>: 100 JSO
 harness; design, numerics, P4 survey, prior art.</p></li>
 <li><p><strong>Done:</strong> Pi 3 GLES2 bench (§5). 20×1024 in 3.2–3.5 ms for every lowered
 effect, ≤ 2/255. 4-thread VM measured.</p></li>
-<li><p><strong>Pi 3 at 120 fps:</strong> the 20 × 270 / 4 × 270 bench (payload ready, §0); the
-logic-analyzer continuity capture and FPGA <code class="docutils literal notranslate"><span class="pre">STATS</span></code> (#370).</p></li>
+<li><p><strong>Pi 3 at 120 fps:</strong> the 20 × 270 / 4 × 270 bench is <strong>done</strong> (§0: GPU
+0.84–0.94 ms; noise 7.84 ms on a 4-core VM). Still open: the logic-analyzer
+continuity capture (<code class="docutils literal notranslate"><span class="pre">pi-ledmapper-1</span></code> unreachable) and FPGA <code class="docutils literal notranslate"><span class="pre">STATS</span></code> on
+hardware (#370).</p></li>
 <li><p><strong>GPU tier in the player (primary):</strong></p>
 <ul class="simple">
 <li><p>a glibc GPU helper next to the static-musl player;</p></li>
@@ -1633,11 +1635,12 @@ if measurement shows a need.</p></li>
 transcendental-heavy effects: <strong>ship the VM’s LUT sine in-shader</strong> (makes the
 common case exact, ~1 KB) or <strong>keep those effects on the VM</strong>?</p></li>
 <li><p><strong>Pi 3 tiering at 120 fps: GPU-primary (owner direction).</strong> GLES2 on vc4
-renders every lowered effect at 20 × 270 in about 1 ms, with the CPU free.
+renders every lowered effect at 20 × 270 in 0.84–0.94 ms (measured), with the
+CPU free.
 The <strong>4-core VM is the fallback</strong> for what can’t lower: hash, buffers,
 loops. Measured at 20×1024, a 4-thread VM is 3.1–3.97× faster than one
 thread. At 120 fps (20 × 270) it fits most effects but takes 20–50% of all four
-cores, and noise-class effects (~7–10 ms) miss the 8.33 ms period; Pi 4/5
+cores, and noise-class effects (7.84 ms measured) miss the 8.33 ms period; Pi 4/5
 compute lowers those too. <strong>Open decision:</strong> the 120 fps strip-length policy:
 ≤ 274 LEDs/channel (80 µs latch) or ≤ 267 (300 µs) at the limit, or ≤ ~260
 for jitter margin. And whether to add an FPGA “frame done” pacing signal.</p></li>
