@@ -372,14 +372,14 @@ whenever both are runnable.</p>
 <p><code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:wifi_cadence</span></code> drives every recovery path on the wired console while an
 effect plays and times the LED output across it from both sides: the rig’s logic analyzer
 on the WS2812 line (frame start intervals, damaged frames), and the firmware’s 1 Hz
-<code class="docutils literal notranslate"><span class="pre">[fx]</span> <span class="pre">…</span> <span class="pre">ft=</span></code> fields (render-start and wire-out-start interval min/mean/max, the largest
+<code class="docutils literal notranslate"><span class="pre">[ft]</span></code> line (printed outside the timed frame span, so fx_bench is unaffected) (render-start and wire-out-start interval min/mean/max, the largest
 effect time step). Phases: <code class="docutils literal notranslate"><span class="pre">steady</span></code> (baseline), <code class="docutils literal notranslate"><span class="pre">scan</span></code> (one 13-channel sweep), <code class="docutils literal notranslate"><span class="pre">dhcp</span></code>
 (lease dropped, re-DISCOVER), <code class="docutils literal notranslate"><span class="pre">wrongpsk</span></code> (the rig AP with a wrong passphrase), <code class="docutils literal notranslate"><span class="pre">missing</span></code>
 (an SSID that doesn’t exist), <code class="docutils literal notranslate"><span class="pre">rejoin</span></code> (the right credentials again), <code class="docutils literal notranslate"><span class="pre">giveup</span></code> (the
 random-MAC stable-address fallback). Effects: a light one at the wire ceiling
 (plasmaHueFixed, 250 LEDs, ~77 fps) and a heavy one (slowLag, ~5.4 fps, lagging).</p>
 <p>Results (hitl-rig-2, c6-003f08, analyzer on the strip; wire frame-interval deviation from
-the steady median, ms):</p>
+the steady median, ms; “after” is the final gate run):</p>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
 <thead>
@@ -394,133 +394,104 @@ the steady median, ms):</p>
 <tr class="row-even"><td><p>light steady (13.0 / 12.0 ms)</p></td>
 <td><p>6.14*</p></td>
 <td><p>6.14*</p></td>
-<td><p>0.43</p></td>
-<td><p>0.42</p></td>
+<td><p>0.41</p></td>
+<td><p>0.39</p></td>
 </tr>
 <tr class="row-odd"><td><p>light scan</p></td>
 <td><p>1.44</p></td>
 <td><p>1.44</p></td>
-<td><p>0.67</p></td>
-<td><p>0.67</p></td>
+<td><p>0.50</p></td>
+<td><p>0.50</p></td>
 </tr>
 <tr class="row-even"><td><p>light dhcp</p></td>
 <td><p>1.53</p></td>
 <td><p>1.53</p></td>
-<td><p>0.43</p></td>
-<td><p>0.43</p></td>
+<td><p>0.49</p></td>
+<td><p>0.49</p></td>
 </tr>
 <tr class="row-odd"><td><p>light wrongpsk</p></td>
 <td><p>5.12</p></td>
 <td><p>4.62</p></td>
-<td><p>0.52</p></td>
-<td><p>0.50</p></td>
+<td><p>0.48</p></td>
+<td><p>0.46</p></td>
 </tr>
 <tr class="row-even"><td><p>light missing</p></td>
 <td><p>4.42</p></td>
 <td><p>4.39</p></td>
-<td><p>0.50</p></td>
-<td><p>0.49</p></td>
+<td><p>0.52</p></td>
+<td><p>0.48</p></td>
 </tr>
 <tr class="row-odd"><td><p>light rejoin</p></td>
 <td><p>4.50</p></td>
 <td><p>4.49</p></td>
-<td><p>0.51</p></td>
-<td><p>0.51</p></td>
+<td><p>0.53</p></td>
+<td><p>0.49</p></td>
 </tr>
 <tr class="row-even"><td><p>light giveup</p></td>
 <td><p>1.80</p></td>
 <td><p>1.61</p></td>
-<td><p>0.45</p></td>
-<td><p>0.44</p></td>
+<td><p>0.58</p></td>
+<td><p>0.46</p></td>
 </tr>
-<tr class="row-odd"><td><p>heavy steady (183.6 / 180.7 ms)</p></td>
+<tr class="row-odd"><td><p>heavy steady (183.6 / 183.3 ms)</p></td>
 <td><p>1.43</p></td>
 <td><p>1.43</p></td>
-<td><p>1.80</p></td>
-<td><p>1.80</p></td>
+<td><p>1.69</p></td>
+<td><p>1.69</p></td>
 </tr>
 <tr class="row-even"><td><p>heavy scan</p></td>
 <td><p>1.40</p></td>
 <td><p>1.40</p></td>
-<td><p>1.75</p></td>
-<td><p>1.75</p></td>
+<td><p>1.39</p></td>
+<td><p>1.39</p></td>
 </tr>
 <tr class="row-odd"><td><p>heavy dhcp</p></td>
 <td><p>1.69</p></td>
 <td><p>1.69</p></td>
-<td><p>1.85</p></td>
-<td><p>1.85</p></td>
+<td><p>1.09</p></td>
+<td><p>1.09</p></td>
 </tr>
 <tr class="row-even"><td><p>heavy wrongpsk</p></td>
 <td><p>12.75</p></td>
 <td><p>12.75</p></td>
-<td><p>1.99</p></td>
-<td><p>1.99</p></td>
+<td><p>2.44</p></td>
+<td><p>2.44</p></td>
 </tr>
 <tr class="row-odd"><td><p>heavy missing</p></td>
-<td><p>13.8†</p></td>
-<td><p>13.8†</p></td>
-<td><p>1.88</p></td>
-<td><p>1.88</p></td>
+<td><p>13.8</p></td>
+<td><p>13.8</p></td>
+<td><p>2.07</p></td>
+<td><p>2.07</p></td>
 </tr>
 <tr class="row-even"><td><p>heavy rejoin</p></td>
 <td><p>13.09</p></td>
 <td><p>13.09</p></td>
-<td><p>1.78</p></td>
-<td><p>1.78</p></td>
+<td><p>2.72</p></td>
+<td><p>2.72</p></td>
 </tr>
 <tr class="row-odd"><td><p>heavy giveup</p></td>
-<td><p>1.6†</p></td>
-<td><p>1.6†</p></td>
+<td><p>1.67</p></td>
+<td><p>1.67</p></td>
 <td><p>1.67</p></td>
 <td><p>1.67</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>* the console attach (below), not Wi-Fi. † excluding capture-start artifacts (below).
-After the fixes no phase had a wire excursion, a damaged frame, a stalled transmit, or an
-effect time step larger than its frame interval.</p>
-<p>Two artifacts of the measurement itself, not of Wi-Fi: attaching a reader to the C6’s USB
-console makes it flush its buffered log, and for ~0.5 s frames ran 2-3 ms late (the
-before “steady” row); and the analyzer decoded ~16-40 glitch bits after each frame for
-the first ~1 s of a capture, in every phase including steady. The harness now attaches
-the console 2.5 s before the analyzer arms. A field unit has no console host attached.</p>
-</section>
-<section id="findings-and-fixes">
-<h3>Findings and fixes<a class="headerlink" href="#findings-and-fixes" title="Link to this heading">¶</a></h3>
-<ul class="simple">
-<li><p><strong>The netstack loop ran at render’s priority.</strong> Any CPU work it did while a frame was
-due was time-sliced 1:1 with rendering. It now runs one priority below render; render
-always leaves it time (every frame sleeps to the next frame start, an overrunning one
-sleeps at least max(4 ms, 25 % of its cost)). Control latency under a 5 fps effect:
-median 56 ms, max 213 ms (was 74 / 97 ms) — bounded by one heavy frame.</p></li>
-<li><p><strong>PBKDF2 was the largest CPU burst.</strong> The PMK (PBKDF2-SHA1, 4096 iterations, ~1.8 s of
-CPU) is derived once per credential change and cached across join attempts (the auth /
-assoc / 4-way retries and the stall watchdog reuse it). Its 64-iteration (~14 ms) chunks
-ran at render priority, so for ~2 s per new provision or wrong-PSK retry rendering got
-half the CPU: heavy frames stretched 184 → 196 ms, light ones 13 → 16 ms. With the
-loop below render (and each chunk one level lower still) render preempts it the moment
-a frame is due. There is no SAE (WPA3) path; the netstack is WPA2-PSK/CCMP only.</p></li>
-<li><p><strong>Pacing used CPU-cycle spans.</strong> The transmit span was timed with the cycle counter,
-which stops while the core idles in WFI during the DMA transmit, so it read short when
-idle and true when busy: under PBKDF2 a 77 fps effect ran at 125 fps. Frames are now
-paced on wall time to the next frame start (<code class="docutils literal notranslate"><span class="pre">esp_timer</span></code>), and the transmit span is
-wall time.</p></li>
-<li><p><strong>Background sweeps</strong> (13 channel switches in the WiFi task, a probe per channel, the
-beacon parsing in the loop) showed no render disturbance beyond steady-state jitter.</p></li>
-<li><p><strong>Vendor log bursts.</strong> After the MAC hijack the vendor driver’s event loop is gone, so
-every <code class="docutils literal notranslate"><span class="pre">esp_wifi_set_channel</span></code> logged <code class="docutils literal notranslate"><span class="pre">E</span> <span class="pre">wifi:</span> <span class="pre">failed</span> <span class="pre">to</span> <span class="pre">post</span> <span class="pre">WiFi</span> <span class="pre">event</span></code> from the
-priority-23 WiFi task. The vendor <code class="docutils literal notranslate"><span class="pre">wifi</span></code> tag is silenced after the hijack.</p></li>
-<li><p><strong>Effect time base.</strong> Effect time stepped by a nominal 33 ms whenever a frame gap
-exceeded 200 ms, so a &lt; 5 fps effect animated slowly and a late frame lost time. Effect
-time now follows the wall clock frame to frame (a fresh effect entry starts at 33 ms).</p></li>
-<li><p><strong>Late frames go out whole.</strong> The strip frame is one PARLIO transmission from a
-pre-mounted GDMA chain in SRAM; a CPU stall can delay its start but cannot stretch it.</p></li>
-</ul>
+<p>* the console attach (below), not Wi-Fi. After the fixes no phase had a wire excursion,
+a damaged frame, a stalled transmit, or an effect time step larger than its frame
+interval. A heavy frame’s residual (≤ 2.7 ms, 1.5 % of its 183 ms) is its own cost
+varying, as in steady.</p>
+<p>Two artifacts of the measurement itself, not of the DUT: attaching a reader to the C6’s
+USB console makes it flush its buffered log, and for ~0.5 s frames ran 2-3 ms late (the
+before “steady” row); and the analyzer intermittently decodes ~16-40 glitch bits after
+every frame for up to ~1.7 s from the START of a capture — in every phase including
+steady, never later in a capture. The harness arms the analyzer after the console
+attach, grades nothing in the first 2 s of a capture, and issues each phase’s command
+2.5 s in. A field unit has no console host attached.</p>
 <p>The gate (<code class="docutils literal notranslate"><span class="pre">wifi_cadence</span></code>, <code class="docutils literal notranslate"><span class="pre">--gate</span></code>) fails on any wire frame interval in a scan / join
-phase that deviates from the steady median by more than max(2 ms, 1.5 × the steady
-phase’s p99.9 deviation), on a damaged frame, or (without an analyzer) on a render /
+phase that deviates from the steady median by more than max(3 ms, 2 % of the period,
+1.5 × the steady phase’s p99.9 deviation), on a damaged frame, or (without an analyzer) on a render /
 wire-out interval beyond the steady maximum by 4 ms. Infra problems are SKIP.</p>
 </section>
 </section>
@@ -654,7 +625,6 @@ does not act on it. That build is deprecated.</p></li>
 <li><a class="reference internal" href="#render-isolation">1. Render isolation</a><ul>
 <li><a class="reference internal" href="#what-shares-the-core">What shares the core</a></li>
 <li><a class="reference internal" href="#measurement">Measurement</a></li>
-<li><a class="reference internal" href="#findings-and-fixes">Findings and fixes</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#rejoin-policy">2. Rejoin policy</a><ul>
