@@ -196,6 +196,13 @@ pub struct TcpConn {
     // oldest unacked segment ONCE per flight (without go-back-N); the RTO stays the
     // backstop. Cleared whenever an ACK advances snd_una.
     tlp_done: bool,
+    // Loss recovery (RFC 5681 §3.1 loss window / §3.2 fast retransmit): after an RTO or a
+    // fast retransmit only ONE segment (the oldest unacked) may be in flight until an ACK
+    // advances snd_una. The old go-back-N burst re-sent the whole window back to back —
+    // the exact transmit pattern that lost it — so a loss tied to that pattern (the first
+    // of two back-to-back frames clobbered in the TX slot) repeated on every RTO until the
+    // peer gave up: the device went silent mid-reply with no stall logged.
+    in_recovery: bool,
 }
 
 const RTO_INITIAL_MS: u32 = 300;
@@ -252,7 +259,7 @@ impl TcpConn {
             tx_at_ms: 0, rto_ms: RTO_INITIAL_MS, rto_count: 0,
             serving_live: false,
             srtt_8: 0, rttvar_4: 0, rtt_seq: iss, rtt_at_ms: 0, rtt_valid: false,
-            dup_ack: 0, dup_ack_seq: 0, tlp_done: false,
+            dup_ack: 0, dup_ack_seq: 0, tlp_done: false, in_recovery: false,
         }
     }
 
@@ -448,7 +455,10 @@ impl TcpConn {
         }
         // Don't put more than the peer said it can hold in flight at once. Treat a
         // never-seen window (0 before the first ACK) as one segment to get started.
-        let wnd = if self.peer_wnd == 0 { SND_MSS as u32 } else { self.peer_wnd };
+        let mut wnd = if self.peer_wnd == 0 { SND_MSS as u32 } else { self.peer_wnd };
+        if self.in_recovery {
+            wnd = wnd.min(SND_MSS as u32); // loss window: the oldest segment alone
+        }
         if self.sent as u32 >= wnd {
             return 0; // in-flight bytes already fill the peer's window
         }
@@ -578,6 +588,7 @@ impl TcpConn {
         self.sent = 0;
         self.snd_nxt = self.snd_una;
         self.tx_at_ms = 0;
+        self.in_recovery = true;
         self.pump_tx(now_ms, out)
     }
 
@@ -698,6 +709,7 @@ impl TcpConn {
                 }
                 self.rto_count = 0; // peer is alive — reset the dead-peer counter
                 self.tlp_done = false; // a fresh flight may probe again
+                self.in_recovery = false; // the resent segment got through: open up again
                 self.tx_at_ms = 0; // re-armed by pump_tx/tick if data is still in flight
                 self.dup_ack = 0; // forward progress clears the dup-ACK run
             } else if acked == 0
@@ -726,6 +738,7 @@ impl TcpConn {
                     self.sent = 0;
                     self.snd_nxt = self.snd_una;
                     self.tx_at_ms = 0;
+                    self.in_recovery = true;
                     return self.pump_tx(now_ms, out);
                 }
             }
@@ -1401,6 +1414,102 @@ mod tests {
         assert_eq!(cli.state, State::Established);
         srv.peer_wnd = 16384;
         (cli, srv)
+    }
+
+    /// Regression for the DEVICE SILENT trace-dump stall (#358 + #360 on the C6): the TX
+    /// path lost the FIRST of two back-to-back frames (the next frame was copied over the
+    /// one still on air). A 1577-byte reply is 1400 + 177 back to back, so segment 1 was
+    /// lost; the tail-loss probe (once per flight) was lost too under background load, and
+    /// the go-back-N RTO then re-sent both segments back to back — losing segment 1 again,
+    /// every time, until the peer gave up after 5 s. Model that channel (rig serial trace:
+    /// srtt 17 ms, one TLP, then RTOs at 120..2000 ms each followed by a dup-ACK for
+    /// segment 2 only) and require the reply to get through: a retransmission must not
+    /// repeat the burst that lost it.
+    #[test]
+    fn rto_recovers_when_first_of_back_to_back_segments_is_always_lost() {
+        let (mut cli, mut srv) = established_pair();
+        // A measured LAN RTT (as on the rig), so the tail-loss probe is armed.
+        srv.rtt_update(17);
+        let reply: Vec<u8> = (0..1577u32).map(|i| (i * 7 + 3) as u8).collect();
+        assert_eq!(srv.enqueue(&reply), reply.len());
+        let mut got: Vec<u8> = Vec::new();
+        let mut to_srv: Vec<Vec<u8>> = Vec::new();
+        let mut buf = [0u8; 1600];
+        let mut dropped = 0;
+        let mut done_at = None;
+        for now in 2..6000u32 {
+            // One loopTask pass: the peer's ACKs, the RTO/TLP tick, then stream the window.
+            let mut burst: Vec<Vec<u8>> = Vec::new();
+            for seg in to_srv.drain(..) {
+                let n = srv.on_ip(now, &seg, &mut buf);
+                if n > 0 {
+                    burst.push(buf[..n].to_vec());
+                }
+            }
+            let tlp_before = srv.stats.tlp;
+            let n = srv.tick(now, &mut buf);
+            if n > 0 && !(tlp_before == 0 && srv.stats.tlp == 1) {
+                burst.push(buf[..n].to_vec()); // (the first probe is lost to background load)
+            } else if n > 0 {
+                dropped += 1;
+            }
+            loop {
+                let n = srv.pump_tx(now, &mut buf);
+                if n == 0 {
+                    break;
+                }
+                burst.push(buf[..n].to_vec());
+            }
+            // The clobbered TX slot: of frames sent back to back, only the last survives.
+            dropped += burst.len().saturating_sub(1);
+            if let Some(seg) = burst.pop() {
+                let mut ack = [0u8; 1600];
+                let r = cli.on_ip(now, &seg, &mut ack);
+                got.extend_from_slice(cli.rx_data());
+                cli.take_rx();
+                if r > 0 {
+                    to_srv.push(ack[..r].to_vec());
+                }
+            }
+            if got.len() == reply.len() && srv.snd_len == 0 {
+                done_at = Some(now);
+                break;
+            }
+        }
+        assert!(dropped > 1, "the channel never dropped anything: test is vacuous");
+        assert_eq!(srv.state, State::Established, "connection torn down by RTO give-up");
+        assert!(
+            got == reply,
+            "reply never got through the lossy back-to-back channel ({} of {} bytes)",
+            got.len(),
+            reply.len()
+        );
+        // The peer (ctrl_budget_probe) gives up on a trace page after 5 s; one RTO is enough.
+        assert!(done_at.unwrap() < 1000, "recovered only after {done_at:?} ms");
+    }
+
+    /// After the loss is repaired (the ACK advances), the window opens up again: the
+    /// one-segment loss window must not stick.
+    #[test]
+    fn recovery_window_reopens_after_ack() {
+        let (mut cli, mut srv) = established_pair();
+        let mut b = [0u8; 1600];
+        let mut a = [0u8; 1600];
+        srv.enqueue(&[1u8; 2000]);
+        while srv.pump_tx(10, &mut b) > 0 {}
+        assert_eq!(srv.sent, 2000);
+        // Nothing acked: RTO fires, rewinds, and resends only the oldest segment.
+        let n = srv.tick(10 + srv.rto_ms + 1, &mut b);
+        assert!(n > 0);
+        assert!(srv.in_recovery);
+        assert_eq!(srv.sent, SND_MSS);
+        assert_eq!(srv.pump_tx(400, &mut b), 0, "loss window holds a single segment");
+        // The client gets it and ACKs; the rest streams out again.
+        let r = cli.on_ip(400, &b[..n], &mut a);
+        let _ = srv.on_ip(401, &a[..r], &mut b);
+        assert!(!srv.in_recovery);
+        assert!(srv.pump_tx(402, &mut b) > 0);
+        assert_eq!(srv.sent, 2000 - SND_MSS);
     }
 
     #[test]

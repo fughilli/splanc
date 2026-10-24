@@ -108,6 +108,8 @@ const SRAM_BASE: u32 = 0x4080_0000;
 const PLCP0_MARKER: u32 = 0x0060_0000;
 /// PLCP0 arm bits: bit31 enable + bit30 valid (`hal_mac_txq_enable |= 0xC000_0000`).
 const PLCP0_ARM: u32 = 0xC000_0000;
+/// PLCP0 bit30: the armed descriptor has not been taken by the MAC yet.
+const PLCP0_VALID: u32 = 0x4000_0000;
 
 /// Encode a TX descriptor's CPU address into the PLCP0 register value that arms
 /// its queue (M1a): `(desc_addr - 0x4080_0000) | marker | arm-bits`. Split out so
@@ -121,6 +123,8 @@ pub fn plcp0_for_desc(desc_addr: u32) -> u32 {
 pub struct TxRing<const N: usize> {
     slots: [TxSlot; N],
     descs: [TxDesc; N],
+    // Next slot `load_frame_next` fills (round-robin).
+    cursor: usize,
 }
 
 impl<const N: usize> TxRing<N> {
@@ -128,6 +132,7 @@ impl<const N: usize> TxRing<N> {
         TxRing {
             slots: [const { TxSlot::new() }; N],
             descs: [const { TxDesc::zero() }; N],
+            cursor: 0,
         }
     }
 
@@ -168,20 +173,58 @@ impl<const N: usize> TxRing<N> {
         }
         for i in 0..N {
             if !self.slots[i].owned_by_hw {
-                let s = &mut self.slots[i];
-                s.buf[..TX_HDR_LEN].fill(0);
-                s.buf[0] = (frame.len() & 0xff) as u8;
-                s.buf[1] = ((frame.len() >> 8) & 0x0f) as u8;
-                s.buf[TX_HDR_LEN..TX_HDR_LEN + frame.len()].copy_from_slice(frame);
-                s.len = TX_HDR_LEN + frame.len();
-                s.frame_len_802 = frame.len();
-                s.queue = ac;
-                s.secure = false;
-                s.owned_by_hw = true;
+                self.fill(i, frame, ac);
                 return Ok(i);
             }
         }
         Err(Overflow)
+    }
+
+    /// Build slot `i` as `[8-byte TX header | frame]` (length checked by the caller).
+    fn fill(&mut self, i: usize, frame: &[u8], ac: usize) {
+        let s = &mut self.slots[i];
+        s.buf[..TX_HDR_LEN].fill(0);
+        s.buf[0] = (frame.len() & 0xff) as u8;
+        s.buf[1] = ((frame.len() >> 8) & 0x0f) as u8;
+        s.buf[TX_HDR_LEN..TX_HDR_LEN + frame.len()].copy_from_slice(frame);
+        s.len = TX_HDR_LEN + frame.len();
+        s.frame_len_802 = frame.len();
+        s.queue = ac;
+        s.secure = false;
+        s.owned_by_hw = true;
+    }
+
+    /// Load `frame` into the NEXT slot round-robin, never the slot armed last.
+    ///
+    /// The MAC has no completion we track on the direct-submission path (the descriptor's
+    /// OWN bit is never cleared), and it DMAs the frame buffer while the frame is on air,
+    /// so a frame can still be transmitting when the next one is loaded. `load_frame`
+    /// picks the first free slot, which (freed straight after `arm`) is always slot 0:
+    /// the next frame was copied over the one being sent, corrupting it (CCMP MIC fails
+    /// at the AP, silently dropped) whenever two frames went out back to back — e.g. a
+    /// 1400 + 177 byte TCP reply, the first segment of which was lost every time. Rotating
+    /// through the `N` slots leaves the previous `N - 1` buffers untouched; the caller
+    /// waits for the queue's previous arm to be taken ([`arm_pending`]) before arming,
+    /// so a slot is only rewritten `N - 1` transmissions after it was handed over.
+    pub fn load_frame_next(&mut self, frame: &[u8], ac: usize) -> Result<usize, Overflow> {
+        let i = self.cursor % N;
+        if frame.len() + TX_HDR_LEN > MAX_FRAME || ac >= HW_TXQ_COUNT {
+            return Err(Overflow);
+        }
+        self.cursor = (i + 1) % N;
+        self.fill(i, frame, ac);
+        Ok(i)
+    }
+
+    /// Whether hardware queue `queue` still holds an armed-but-not-yet-taken descriptor
+    /// (PLCP0's valid bit, bit 30, set by `arm` and cleared by the MAC when it picks the
+    /// descriptor up). Arming over it would replace that frame before it ever went out.
+    ///
+    /// # Safety
+    /// MMIO; the MAC must be initialized.
+    pub unsafe fn arm_pending(queue: usize) -> bool {
+        let plcp = mac::txq_reg(mac::TXQ_PLCP0_BASE, queue, mac::TXQ_STRIDE);
+        mmio::read32(plcp) & PLCP0_VALID != 0
     }
 
     /// Request hardware CCMP encryption for slot `idx` (sets the descriptor's secure
@@ -384,6 +427,39 @@ pub fn frame_bytes<const M: usize>(pdu: &Buf<M>) -> &[u8] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn load_frame_next_never_overwrites_the_frame_just_armed() {
+        // Regression (DEVICE SILENT): ns_mac_send freed its slot straight after arm, so
+        // the next frame was always copied into slot 0 — over the frame the MAC was still
+        // transmitting. Consecutive loads must rotate through distinct buffers.
+        let mut ring: TxRing<4> = TxRing::new();
+        let mut seen = [usize::MAX; 8];
+        for (k, s) in seen.iter_mut().enumerate() {
+            let f = [k as u8; 40];
+            let i = ring.load_frame_next(&f, 0).unwrap();
+            ring.on_complete(i); // the driver frees immediately (no completion tracking)
+            *s = i;
+        }
+        for w in seen.windows(2) {
+            assert_ne!(w[0], w[1], "back-to-back frames shared a TX buffer: {seen:?}");
+        }
+        // Each slot is reused only every N submissions, and still holds its frame until then.
+        assert_eq!(seen, [0, 1, 2, 3, 0, 1, 2, 3]);
+        assert_eq!(ring.slots[3].buf[TX_HDR_LEN], 7);
+        assert_eq!(ring.slots[2].buf[TX_HDR_LEN], 6);
+    }
+
+    #[test]
+    fn arm_pending_reads_plcp0_valid_bit() {
+        let plcp = mac::txq_reg(mac::TXQ_PLCP0_BASE, 0, mac::TXQ_STRIDE);
+        unsafe {
+            mmio::write32(plcp, PLCP0_MARKER | PLCP0_ARM | 0x1234);
+            assert!(TxRing::<4>::arm_pending(0));
+            mmio::write32(plcp, PLCP0_MARKER | 0x8000_0000 | 0x1234); // taken: valid cleared
+            assert!(!TxRing::<4>::arm_pending(0));
+        }
+    }
 
     #[test]
     fn enqueue_is_bounded_backpressure() {
