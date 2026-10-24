@@ -1,0 +1,687 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html">
+        <link rel="prefetch" href="../../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Wi-Fi rejoin policy and render isolation (netstack C6) - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
+<li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-demo.html">Effects demo</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../requirements-driven-development.html">Requirements-driven development</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/design/wifi-rejoin-policy.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/design/wifi-rejoin-policy.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="wi-fi-rejoin-policy-and-render-isolation-netstack-c6">
+<h1>Wi-Fi rejoin policy and render isolation (netstack C6)<a class="headerlink" href="#wi-fi-rejoin-policy-and-render-isolation-netstack-c6" title="Link to this heading">¶</a></h1>
+<p>Status: implemented (netstack build). Follows #363, which removed the reboot-to-rescan:
+the board now finds a missing network with an in-place background sweep while the effect
+keeps playing.</p>
+<p>Two questions drove this:</p>
+<ol class="arabic simple">
+<li><p>Do scanning, joining or failing to join disturb the LED output on the single-core C6?</p></li>
+<li><p>How should the board (re)join when it isn’t on its network, including a unit that is
+set up on an AP once and then deployed somewhere it will never see that AP again?</p></li>
+</ol>
+<section id="render-isolation">
+<h2>1. Render isolation<a class="headerlink" href="#render-isolation" title="Link to this heading">¶</a></h2>
+<section id="what-shares-the-core">
+<h3>What shares the core<a class="headerlink" href="#what-shares-the-core" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Task / context</p></th>
+<th class="head"><p>Priority</p></th>
+<th class="head"><p>Wi-Fi work</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>xmit (WS2812 transmit kick)</p></td>
+<td><p>11</p></td>
+<td><p>none; the frame goes out by PARLIO + GDMA from SRAM</p></td>
+</tr>
+<tr class="row-odd"><td><p>render</p></td>
+<td><p>10</p></td>
+<td><p>none</p></td>
+</tr>
+<tr class="row-even"><td><p>loopTask (netstack)</p></td>
+<td><p>10</p></td>
+<td><p>RX drain, join, PBKDF2, DHCP, TLS, background sweep hops</p></td>
+</tr>
+<tr class="row-odd"><td><p>vendor WiFi task</p></td>
+<td><p>23</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">esp_wifi_set_channel</span></code> (one per sweep hop)</p></td>
+</tr>
+<tr class="row-even"><td><p>esp_timer task</p></td>
+<td><p>22</p></td>
+<td><p>the 4 ms coex tick (BLE slices)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The netstack loop runs at the render task’s priority (#145: under a full-perf benchmark a
+lower-priority loop starved the network). Equal priorities are time-sliced per 1 ms tick
+whenever both are runnable.</p>
+</section>
+<section id="measurement">
+<h3>Measurement<a class="headerlink" href="#measurement" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:wifi_cadence</span></code> drives every recovery path on the wired console while an
+effect plays and times the LED output across it from both sides: the rig’s logic analyzer
+on the WS2812 line (frame start intervals, damaged frames), and the firmware’s 1 Hz
+<code class="docutils literal notranslate"><span class="pre">[fx]</span> <span class="pre">…</span> <span class="pre">ft=</span></code> fields (render-start and wire-out-start interval min/mean/max, the largest
+effect time step). Phases: <code class="docutils literal notranslate"><span class="pre">steady</span></code> (baseline), <code class="docutils literal notranslate"><span class="pre">scan</span></code> (one 13-channel sweep), <code class="docutils literal notranslate"><span class="pre">dhcp</span></code>
+(lease dropped, re-DISCOVER), <code class="docutils literal notranslate"><span class="pre">wrongpsk</span></code> (the rig AP with a wrong passphrase), <code class="docutils literal notranslate"><span class="pre">missing</span></code>
+(an SSID that doesn’t exist), <code class="docutils literal notranslate"><span class="pre">rejoin</span></code> (the right credentials again), <code class="docutils literal notranslate"><span class="pre">giveup</span></code> (the
+random-MAC stable-address fallback). Effects: a light one at the wire ceiling
+(plasmaHueFixed, 250 LEDs, ~77 fps) and a heavy one (slowLag, ~5.4 fps, lagging).</p>
+<p>Results (hitl-rig-2, c6-003f08, analyzer on the strip; wire frame-interval deviation from
+the steady median, ms):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Effect / phase</p></th>
+<th class="head"><p>before: max</p></th>
+<th class="head"><p>before: p99.9</p></th>
+<th class="head"><p>after: max</p></th>
+<th class="head"><p>after: p99.9</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>light steady (13.0 / 12.0 ms)</p></td>
+<td><p>6.14*</p></td>
+<td><p>6.14*</p></td>
+<td><p>0.43</p></td>
+<td><p>0.42</p></td>
+</tr>
+<tr class="row-odd"><td><p>light scan</p></td>
+<td><p>1.44</p></td>
+<td><p>1.44</p></td>
+<td><p>0.67</p></td>
+<td><p>0.67</p></td>
+</tr>
+<tr class="row-even"><td><p>light dhcp</p></td>
+<td><p>1.53</p></td>
+<td><p>1.53</p></td>
+<td><p>0.43</p></td>
+<td><p>0.43</p></td>
+</tr>
+<tr class="row-odd"><td><p>light wrongpsk</p></td>
+<td><p>5.12</p></td>
+<td><p>4.62</p></td>
+<td><p>0.52</p></td>
+<td><p>0.50</p></td>
+</tr>
+<tr class="row-even"><td><p>light missing</p></td>
+<td><p>4.42</p></td>
+<td><p>4.39</p></td>
+<td><p>0.50</p></td>
+<td><p>0.49</p></td>
+</tr>
+<tr class="row-odd"><td><p>light rejoin</p></td>
+<td><p>4.50</p></td>
+<td><p>4.49</p></td>
+<td><p>0.51</p></td>
+<td><p>0.51</p></td>
+</tr>
+<tr class="row-even"><td><p>light giveup</p></td>
+<td><p>1.80</p></td>
+<td><p>1.61</p></td>
+<td><p>0.45</p></td>
+<td><p>0.44</p></td>
+</tr>
+<tr class="row-odd"><td><p>heavy steady (183.6 / 180.7 ms)</p></td>
+<td><p>1.43</p></td>
+<td><p>1.43</p></td>
+<td><p>1.80</p></td>
+<td><p>1.80</p></td>
+</tr>
+<tr class="row-even"><td><p>heavy scan</p></td>
+<td><p>1.40</p></td>
+<td><p>1.40</p></td>
+<td><p>1.75</p></td>
+<td><p>1.75</p></td>
+</tr>
+<tr class="row-odd"><td><p>heavy dhcp</p></td>
+<td><p>1.69</p></td>
+<td><p>1.69</p></td>
+<td><p>1.85</p></td>
+<td><p>1.85</p></td>
+</tr>
+<tr class="row-even"><td><p>heavy wrongpsk</p></td>
+<td><p>12.75</p></td>
+<td><p>12.75</p></td>
+<td><p>1.99</p></td>
+<td><p>1.99</p></td>
+</tr>
+<tr class="row-odd"><td><p>heavy missing</p></td>
+<td><p>13.8†</p></td>
+<td><p>13.8†</p></td>
+<td><p>1.88</p></td>
+<td><p>1.88</p></td>
+</tr>
+<tr class="row-even"><td><p>heavy rejoin</p></td>
+<td><p>13.09</p></td>
+<td><p>13.09</p></td>
+<td><p>1.78</p></td>
+<td><p>1.78</p></td>
+</tr>
+<tr class="row-odd"><td><p>heavy giveup</p></td>
+<td><p>1.6†</p></td>
+<td><p>1.6†</p></td>
+<td><p>1.67</p></td>
+<td><p>1.67</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>* the console attach (below), not Wi-Fi. † excluding capture-start artifacts (below).
+After the fixes no phase had a wire excursion, a damaged frame, a stalled transmit, or an
+effect time step larger than its frame interval.</p>
+<p>Two artifacts of the measurement itself, not of Wi-Fi: attaching a reader to the C6’s USB
+console makes it flush its buffered log, and for ~0.5 s frames ran 2-3 ms late (the
+before “steady” row); and the analyzer decoded ~16-40 glitch bits after each frame for
+the first ~1 s of a capture, in every phase including steady. The harness now attaches
+the console 2.5 s before the analyzer arms. A field unit has no console host attached.</p>
+</section>
+<section id="findings-and-fixes">
+<h3>Findings and fixes<a class="headerlink" href="#findings-and-fixes" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>The netstack loop ran at render’s priority.</strong> Any CPU work it did while a frame was
+due was time-sliced 1:1 with rendering. It now runs one priority below render; render
+always leaves it time (every frame sleeps to the next frame start, an overrunning one
+sleeps at least max(4 ms, 25 % of its cost)). Control latency under a 5 fps effect:
+median 56 ms, max 213 ms (was 74 / 97 ms) — bounded by one heavy frame.</p></li>
+<li><p><strong>PBKDF2 was the largest CPU burst.</strong> The PMK (PBKDF2-SHA1, 4096 iterations, ~1.8 s of
+CPU) is derived once per credential change and cached across join attempts (the auth /
+assoc / 4-way retries and the stall watchdog reuse it). Its 64-iteration (~14 ms) chunks
+ran at render priority, so for ~2 s per new provision or wrong-PSK retry rendering got
+half the CPU: heavy frames stretched 184 → 196 ms, light ones 13 → 16 ms. With the
+loop below render (and each chunk one level lower still) render preempts it the moment
+a frame is due. There is no SAE (WPA3) path; the netstack is WPA2-PSK/CCMP only.</p></li>
+<li><p><strong>Pacing used CPU-cycle spans.</strong> The transmit span was timed with the cycle counter,
+which stops while the core idles in WFI during the DMA transmit, so it read short when
+idle and true when busy: under PBKDF2 a 77 fps effect ran at 125 fps. Frames are now
+paced on wall time to the next frame start (<code class="docutils literal notranslate"><span class="pre">esp_timer</span></code>), and the transmit span is
+wall time.</p></li>
+<li><p><strong>Background sweeps</strong> (13 channel switches in the WiFi task, a probe per channel, the
+beacon parsing in the loop) showed no render disturbance beyond steady-state jitter.</p></li>
+<li><p><strong>Vendor log bursts.</strong> After the MAC hijack the vendor driver’s event loop is gone, so
+every <code class="docutils literal notranslate"><span class="pre">esp_wifi_set_channel</span></code> logged <code class="docutils literal notranslate"><span class="pre">E</span> <span class="pre">wifi:</span> <span class="pre">failed</span> <span class="pre">to</span> <span class="pre">post</span> <span class="pre">WiFi</span> <span class="pre">event</span></code> from the
+priority-23 WiFi task. The vendor <code class="docutils literal notranslate"><span class="pre">wifi</span></code> tag is silenced after the hijack.</p></li>
+<li><p><strong>Effect time base.</strong> Effect time stepped by a nominal 33 ms whenever a frame gap
+exceeded 200 ms, so a &lt; 5 fps effect animated slowly and a late frame lost time. Effect
+time now follows the wall clock frame to frame (a fresh effect entry starts at 33 ms).</p></li>
+<li><p><strong>Late frames go out whole.</strong> The strip frame is one PARLIO transmission from a
+pre-mounted GDMA chain in SRAM; a CPU stall can delay its start but cannot stretch it.</p></li>
+</ul>
+<p>The gate (<code class="docutils literal notranslate"><span class="pre">wifi_cadence</span></code>, <code class="docutils literal notranslate"><span class="pre">--gate</span></code>) fails on any wire frame interval in a scan / join
+phase that deviates from the steady median by more than max(2 ms, 1.5 × the steady
+phase’s p99.9 deviation), on a damaged frame, or (without an analyzer) on a render /
+wire-out interval beyond the steady maximum by 4 ms. Infra problems are SKIP.</p>
+</section>
+</section>
+<section id="rejoin-policy">
+<h2>2. Rejoin policy<a class="headerlink" href="#rejoin-policy" title="Link to this heading">¶</a></h2>
+<p>Persisted in NVS (<code class="docutils literal notranslate"><span class="pre">wifi_pol</span></code>), applied without a reboot, and settable from the app’s
+device settings, the agent (<code class="docutils literal notranslate"><span class="pre">set_wifi_policy</span></code> / <code class="docutils literal notranslate"><span class="pre">get_wifi_policy</span></code>), the BLE player
+transport (the same protocol arms), and the wired console:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">WIFI</span> <span class="n">MODE</span> <span class="o">&lt;</span><span class="n">auto</span><span class="o">|</span><span class="n">fixed</span><span class="o">|</span><span class="n">manual</span><span class="o">|</span><span class="n">offline</span><span class="o">&gt;</span> <span class="p">[</span><span class="n">cap</span><span class="o">=</span><span class="n">S</span><span class="p">]</span> <span class="p">[</span><span class="n">every</span><span class="o">=</span><span class="n">S</span><span class="p">]</span> <span class="p">[</span><span class="n">decay</span><span class="o">=</span><span class="n">H</span><span class="p">]</span> <span class="p">[</span><span class="n">sparse</span><span class="o">=</span><span class="n">S</span><span class="p">]</span> <span class="p">[</span><span class="n">force</span><span class="p">]</span>
+<span class="n">WIFI</span> <span class="n">REJOIN</span>        <span class="n">WIFI</span> <span class="n">STATUS</span>
+<span class="n">WIFI</span> <span class="n">SCAN</span> <span class="o">|</span> <span class="n">DHCP</span> <span class="o">|</span> <span class="n">GIVEUP</span>   <span class="p">(</span><span class="n">link</span> <span class="n">diagnostics</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Mode</p></th>
+<th class="head"><p>Behaviour when the network is missing</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">auto</span></code> (default)</p></td>
+<td><p>Background sweeps 5 s, 10, 20, 40 … up to <code class="docutils literal notranslate"><span class="pre">scan_cap_s</span></code> (default 60). After <code class="docutils literal notranslate"><span class="pre">decay_after_h</span></code> hours (default 24; 0 = never) without ever seeing the network, at most one sweep per <code class="docutils literal notranslate"><span class="pre">sparse_interval_s</span></code> (default 900).</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">fixed</span></code></p></td>
+<td><p>One sweep every <code class="docutils literal notranslate"><span class="pre">interval_s</span></code> (default 300).</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">manual</span></code></p></td>
+<td><p>Never scans or joins on its own. A rejoin command or a new provision opens a 2 min join window (the auto backoff inside it). A dropped link stays down until told.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">offline</span></code></p></td>
+<td><p>The radio is off: never started at boot, no scans, no RF. Switching to offline at runtime goes silent at once (goodbye to the AP, no TX, MAC released to sleep); the radio is fully off from the next boot. The show plays; BLE and the console stay up. Credentials are kept.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<section id="decay-default">
+<h3>Decay default<a class="headerlink" href="#decay-default" title="Link to this heading">¶</a></h3>
+<p>The decay is on by default (24 h → 15 min). A unit whose AP is gone for good stops
+sweeping every minute (each sweep is ~1.6 s of channel hopping), yet a unit whose AP was
+only down for a weekend still rejoins on its own within 15 min of it coming back. Decaying
+to <code class="docutils literal notranslate"><span class="pre">offline</span></code> instead would strand such units, so offline is only ever an explicit choice.
+The unseen time is persisted hourly (<code class="docutils literal notranslate"><span class="pre">wifi_unseen</span></code>), so a nightly power cycle doesn’t
+reset the clock.</p>
+</section>
+<section id="forward-deployed-units">
+<h3>Forward-deployed units<a class="headerlink" href="#forward-deployed-units" title="Link to this heading">¶</a></h3>
+<p>The intended flow: set the unit up on an AP (map, effects, settings, maybe an OTA
+update), confirm any update, then switch it to <code class="docutils literal notranslate"><span class="pre">offline</span></code> from the app, the agent or the
+console while it is still connected. Credentials stay stored, so <code class="docutils literal notranslate"><span class="pre">auto</span></code> later rejoins
+without re-entering them. In the field it is reconfigurable over BLE (the player
+transport, or Improv) and the wired console. A new provision while offline switches the
+mode back to <code class="docutils literal notranslate"><span class="pre">auto</span></code> and brings the radio up in place.</p>
+<p>There is no SoftAP and no physical button on the netstack build. BLE and the console are
+the escape hatches.</p>
+</section>
+<section id="ota-interaction">
+<h3>OTA interaction<a class="headerlink" href="#ota-interaction" title="Link to this heading">¶</a></h3>
+<p>A freshly installed update boots pending verification and must prove itself before a
+deadline, or it rolls back to the loader. The rules:</p>
+<ul class="simple">
+<li><p><strong>Going offline / manual while an update is unconfirmed is refused</strong> (<code class="docutils literal notranslate"><span class="pre">refused:</span> <span class="pre">&quot;ota_pending&quot;</span></code>) unless forced. The app warns and asks twice before forcing; the agent
+never forces unless explicitly asked.</p></li>
+<li><p><strong>The health check requires a lease only when one is expected:</strong> the policy lets the
+board join on its own (not offline, not manual outside a window) <strong>and</strong> the network
+was seen this boot. An AP that is simply absent (a unit moved to the field right after
+an update) is no evidence against the image, so it is confirmed on rendering alone and
+never rolls back merely because the AP is gone. An AP that is present but can’t be
+joined still rolls a broken image back.</p></li>
+<li><p>In offline mode the TLS-ready requirement is waived too (there is no TLS server).</p></li>
+<li><p>The OTA loader (recovery) ignores the policy and always tries to get online.</p></li>
+</ul>
+</section>
+<section id="status">
+<h3>Status<a class="headerlink" href="#status" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">get_wifi_policy</span></code> reports the mode and fields, the link state (offline / unprovisioned /
+idle / searching / joining / joined), seconds to the next sweep, sweeps run, the SSID,
+how long the network has been unseen, whether the decay is in force, <code class="docutils literal notranslate"><span class="pre">ota_pending</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">radio_on</span></code>. The app’s device sheet shows it as one line (“Wi-Fi: offline mode”,
+“Wi-Fi: rejoining, next scan in 40 s”, …).</p>
+</section>
+<section id="scope-notes">
+<h3>Scope notes<a class="headerlink" href="#scope-notes" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">fixed</span></code> has no time-of-day schedule windows (the board has no reliable wall clock).</p></li>
+<li><p>The vendor-WiFi (lwIP) build advertises the feature through the shared player core but
+does not act on it. That build is deprecated.</p></li>
+</ul>
+</section>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Wi-Fi rejoin policy and render isolation (netstack C6)</a><ul>
+<li><a class="reference internal" href="#render-isolation">1. Render isolation</a><ul>
+<li><a class="reference internal" href="#what-shares-the-core">What shares the core</a></li>
+<li><a class="reference internal" href="#measurement">Measurement</a></li>
+<li><a class="reference internal" href="#findings-and-fixes">Findings and fixes</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#rejoin-policy">2. Rejoin policy</a><ul>
+<li><a class="reference internal" href="#decay-default">Decay default</a></li>
+<li><a class="reference internal" href="#forward-deployed-units">Forward-deployed units</a></li>
+<li><a class="reference internal" href="#ota-interaction">OTA interaction</a></li>
+<li><a class="reference internal" href="#status">Status</a></li>
+<li><a class="reference internal" href="#scope-notes">Scope notes</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../../static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>
