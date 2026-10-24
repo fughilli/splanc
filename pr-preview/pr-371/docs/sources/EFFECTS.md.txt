@@ -120,7 +120,7 @@ uniform float rainbow : 0.0 .. 1.0 = 0.6;
 buffer float trail;
 state  float head;
 
-void update() { head = fract(time * speed * 0.2); }
+void update() { head = fract(head + dt * speed * 0.2); }
 
 vec3 shade(Led led) {
   float spark = smoothstep(width, 0.0, abs(led.dist - head));
@@ -132,8 +132,25 @@ vec3 shade(Led led) {
 }
 ```
 
+### Rate controls: integrate, never `time * speed`
+
+The example advances `head` by `dt * speed` each frame instead of computing
+`fract(time * speed * 0.2)`. That is deliberate: `time * speed` rescales the
+whole elapsed time, so moving the `speed` slider jumps the phase by
+Δspeed × time (whole cycles after a few minutes) and the effect stutters while
+the knob moves. Keep one `state` phase per rate uniform, advance it in
+`update()` with `ph = fract(ph + dt * speed);` (the `fract` bounds float
+precision; integrate non-periodic offsets such as a noise scroll without it),
+and use `ph` in `shade()` — `fract(led.s - ph)`, `sin(ph * 6.2832)`. In fixed
+point: `ph = fract(ph + fixed(dt) * fixed(speed));` and `sin(fixed16(ph))`
+(turns). `time` alone, or times a literal, is fine. The compiler warns when a
+value it can trace to `time` × a uniform reaches a phase builtin (`fract`,
+`sin`/`cos`, `mod`/`%`, `floor`/`ceil`, `hash`, `hsv2rgb`, `palette*`):
+`Compiled::warnings` (`fx_compiler/src/lint.rs`), surfaced by the editor, its
+AI and the agent's `compile_effect` / `deploy_effect`.
+
 The compiler entry point is `compile(src) -> Result<Compiled, Vec<Diagnostic>>`
-where `Compiled { fxb: Vec<u8>, uniforms: Vec<UniformInfo> }`; `disassemble(fxb)`
+where `Compiled { fxb: Vec<u8>, uniforms: Vec<UniformInfo>, warnings, .. }`; `disassemble(fxb)`
 produces a readable op listing (exposed to the editor as `fx_disassemble`).
 
 ## Execution model
@@ -387,7 +404,7 @@ write `x * fixed(0.6)`.)
 The compiler now does the classic hoisting for you
 ([`docs/design/fx-memoization.md`](./docs/design/fx-memoization.md)):
 
-- **Per-frame values** in `shade()` (`sin(time * speed)`, uniform math, `state`
+- **Per-frame values** in `shade()` (`sin(time * 2.0)`, uniform math, `state`
   reads) are computed **once per frame** in a prepare entry the VM runs before
   the first LED.
 - **Per-LED-invariant values** (`atan2(led.pos.x, led.pos.z)`,
