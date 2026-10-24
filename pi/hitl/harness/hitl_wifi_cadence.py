@@ -7,7 +7,7 @@ times the LED output across each one from two sides at once:
 
   * the rig's logic analyzer decodes the WS2812 wire (frame start intervals + damage),
     where the DUT is tapped (hitl-rig-2: c6-003f08 / c6-fa0324);
-  * the firmware's 1 Hz "[fx] … ft=" cadence fields (render-start and wire-out-start
+  * the firmware's 1 Hz "[ft]" cadence line (render-start and wire-out-start
     interval stats, largest effect time step), from a console capture of the phase.
 
 Effects: a light one (plasmaHueFixed, runs at the wire ceiling) and a heavy one
@@ -66,11 +66,13 @@ def _runfile(rel: str | None) -> str | None:
 
 
 # The console attaches LEAD_S before the command; the analyzer arms ARM_S after the
-# attach. Attaching a reader makes the C6 flush its buffered log over USB in a burst,
-# and for ~1 s after that the analyzer decoded glitch bits after each frame on every
-# phase (steady included) — so the capture starts once that has settled.
+# attach. Attaching a reader makes the C6 flush its buffered log over USB (frames ran
+# 2-3 ms late for ~0.5 s, inside the ungraded warm-up); and the analyzer itself
+# decodes glitch bits for up to ~1.7 s from a capture's start (wifi_cadence_core
+# WARMUP_US = 2 s, not graded), so the command comes LEAD_S - ARM_S = 2.5 s into the
+# capture.
 LEAD_S = 3.0
-ARM_S = 2.5
+ARM_S = 0.5
 
 
 def _console_window(res, seconds: float, line: str | None) -> str:
@@ -125,7 +127,7 @@ def _phase(res, unit: str | None, seconds: float, line: str | None) -> tuple[str
     cth.start()
     th = None
     if unit:
-        time.sleep(ARM_S)  # past the console attach; the command comes 0.5 s into the capture
+        time.sleep(ARM_S)  # the command comes 2.5 s into the capture (after the warm-up)
         th = threading.Thread(target=capture, daemon=True)
         th.start()
     cth.join(timeout=seconds + LEAD_S + 120)

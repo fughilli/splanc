@@ -1687,6 +1687,7 @@ static uint32_t render_once() {
     if (n > g_led_cap) n = g_led_cap;
     if (n > 0) xmit_len = n;  // drive exactly the mapped LEDs
     uint32_t this_seq = fx_frame++;
+    bool ft_due = false;
     // Cycle-counter span around update() (perf-monitoring.md: two CSR reads,
     // negligible against the per-frame float ops).
     uint32_t c_frame_start = esp_cpu_get_cycle_count();
@@ -1725,11 +1726,27 @@ static uint32_t render_once() {
         fx_log_ms = now;
         static const char *kOc[] = {"ok", "budget", "timeout", "fault"};
         uint32_t oc = lm_fx_last_update_outcome();
-        // ft=: render-start and wire-start interval min/mean/max (µs) and frame
-        // counts over the window, and the largest effect time step (ms).
-        Log().printf("[fx] t=%.2f frame=%u update=%s shade_cancelled=%u/%u ft=r%u:%u/%u/%u "
-                     "w%u:%u/%u/%u dt%u fps=%u sl=%u-%u\n",
-                     fx_time_s, this_seq, kOc[oc <= 3 ? oc : 0], shade_bad, n,
+        Log().printf("[fx] t=%.2f frame=%u update=%s shade_cancelled=%u/%u\n",
+                     fx_time_s, this_seq, kOc[oc <= 3 ? oc : 0], shade_bad, n);
+        ft_due = true;  // the cadence line goes out after the timed span (below)
+      }
+    } else {
+      // Effect active but no deck loaded (shouldn't happen): hold the last frame.
+    }
+    {
+      uint32_t c_frame_end = esp_cpu_get_cycle_count();
+      // Wrap-safe deltas (the cycle counter is free-running 32-bit; unsigned
+      // subtraction handles the ~27 s wrap at 160 MHz for one frame's span).
+      perf_seq = this_seq;
+      perf_update_c = c_update_end - c_update_start;
+      perf_shade_c = c_frame_end - c_update_end;   // shade + buffer writeout
+      perf_frame_c = c_frame_end - c_frame_start;  // update + shade (excl show)
+      if (ft_due) {
+        // Cadence telemetry (the HITL wifi_cadence gate), OUTSIDE the timed span so
+        // fx_bench's frame cycles are unchanged: render-start and wire-out-start
+        // interval count:min/mean/max (µs) over the window, the largest effect time
+        // step (ms), the live rate, and the render sleeps (ms) the window used.
+        Log().printf("[ft] r%u:%u/%u/%u w%u:%u/%u/%u dt%u fps=%u sl=%u-%u\n",
                      (unsigned)g_cad_render.n, (unsigned)g_cad_render.min_us,
                      (unsigned)g_cad_render.mean(), (unsigned)g_cad_render.max_us,
                      (unsigned)g_cad_wire.n, (unsigned)g_cad_wire.min_us,
@@ -1743,17 +1760,6 @@ static uint32_t render_once() {
         g_cad_wire.clear();
         g_fx_dt_max_ms = 0;
       }
-    } else {
-      // Effect active but no deck loaded (shouldn't happen): hold the last frame.
-    }
-    {
-      uint32_t c_frame_end = esp_cpu_get_cycle_count();
-      // Wrap-safe deltas (the cycle counter is free-running 32-bit; unsigned
-      // subtraction handles the ~27 s wrap at 160 MHz for one frame's span).
-      perf_seq = this_seq;
-      perf_update_c = c_update_end - c_update_start;
-      perf_shade_c = c_frame_end - c_update_end;   // shade + buffer writeout
-      perf_frame_c = c_frame_end - c_frame_start;  // update + shade (excl show)
       perf_led_count = n;
       fx_frame_rendered = true;
     }
