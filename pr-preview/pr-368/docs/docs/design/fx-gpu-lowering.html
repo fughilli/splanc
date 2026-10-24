@@ -684,22 +684,98 @@ rounds to ~22.2 MHz (<code class="docutils literal notranslate"><span class="pre
 <p>The table is <em>computed</em> from the core and protocol constants. The wire timing is
 validated in sim (#370). On hardware, the logic analyzer covers 4 channels; the
 16- and 20-channel rows are <strong>extrapolation</strong> until a 20-pin bitstream exists.</p>
-<p><strong>Render + readback</strong> (the GPU vs VM question) are the Pi 3 measurement,
-pending. The payload is <code class="docutils literal notranslate"><span class="pre">fx_gpu/pi3bench</span></code> and the results go in §5. For the GPU,
-render + readback is at most a few ms at 20k LEDs if vc4 behaves like its
-llvmpipe self-test, so the <strong>wire ceiling (32.6 fps at 1024/channel) is the
-bottleneck at every MAX scale</strong>. The VM’s cost grows linearly with N on one A53
-core, so it is the bottleneck wherever <code class="docutils literal notranslate"><span class="pre">VM</span> <span class="pre">ms</span> <span class="pre">&gt;</span> <span class="pre">30.7</span></code>; the measurement locates
-that crossover per effect.</p>
-<p><strong>Where the bottleneck sits</strong> (render column pending the Pi 3 numbers):</p>
+<p><strong>Render + readback, measured on a Pi 3B+ (vc4; §5).</strong> At each layout:</p>
 <ul class="simple">
-<li><p>≤ 4×550: the wire (16.5 ms) or the VM for heavy effects.</p></li>
-<li><p>4×1024 – 20×1024: the <strong>wire, at 32.6 fps</strong>, if render + readback &lt; 30 ms.
-With the GPU that holds for every lowered effect. With the VM it holds only
-for cheap effects at the low end.</p></li>
-<li><p>SPI is never the limit once it runs at ≥ 16.7 MHz at 20 channels. It is a
-<em>hard failure</em> below the drain rate (underrun, see #370) or if a frame doesn’t
-fit spidev’s buffer.</p></li>
+<li><p>GPU (render + readback, pipelined): ≈ 0.3 ms at 1×500, 0.6 ms at 4×550, 0.9 ms
+at 4×1024, 1.5 ms at 8×1024, 2.8 ms at 16×1024, <strong>3.2–3.5 ms at 20×1024</strong>. It is
+the same for every lowered kernel.</p></li>
+<li><p>VM: grows linearly at 0.33–5.3 µs/LED on one A53 core. At 20×1024 that is
+<strong>6.8–108 ms</strong>.</p></li>
+</ul>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>layout</p></th>
+<th class="head text-right"><p>wire ms</p></th>
+<th class="head text-right"><p>GPU pipelined ms</p></th>
+<th class="head"><p>VM 1-core ms (solid … plasma; noise)</p></th>
+<th class="head"><p>VM 4-core ms (<em>est.</em> ÷3.5)</p></th>
+<th class="head"><p>bottleneck, GPU</p></th>
+<th class="head"><p>bottleneck, VM 1-core</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>1×500</p></td>
+<td class="text-right"><p>15.0</p></td>
+<td class="text-right"><p>0.29</p></td>
+<td><p>0.16 … 1.25; 2.6</p></td>
+<td><p>≤ 0.8</p></td>
+<td><p>wire</p></td>
+<td><p>wire</p></td>
+</tr>
+<tr class="row-odd"><td><p>1×2048</p></td>
+<td class="text-right"><p>61.3</p></td>
+<td class="text-right"><p>0.97</p></td>
+<td><p>0.66 … 5.1; 10.8</p></td>
+<td><p>≤ 3.1</p></td>
+<td><p>wire</p></td>
+<td><p>wire</p></td>
+</tr>
+<tr class="row-even"><td><p>4×550 (today)</p></td>
+<td class="text-right"><p>16.5</p></td>
+<td class="text-right"><p>0.62</p></td>
+<td><p>0.70 … 5.6; 11.6</p></td>
+<td><p>≤ 3.3</p></td>
+<td><p>wire</p></td>
+<td><p>wire</p></td>
+</tr>
+<tr class="row-odd"><td><p>4×1024</p></td>
+<td class="text-right"><p>30.7</p></td>
+<td class="text-right"><p>0.87</p></td>
+<td><p>1.3 … 10.3; 21.7</p></td>
+<td><p>≤ 6.2</p></td>
+<td><p>wire</p></td>
+<td><p>wire</p></td>
+</tr>
+<tr class="row-even"><td><p>8×1024</p></td>
+<td class="text-right"><p>30.7</p></td>
+<td class="text-right"><p>1.5</p></td>
+<td><p>2.7 … 20.7; 43.4</p></td>
+<td><p>≤ 12.4</p></td>
+<td><p>wire</p></td>
+<td><p>wire, except noise-class (<strong>VM</strong>)</p></td>
+</tr>
+<tr class="row-odd"><td><p>16×1024</p></td>
+<td class="text-right"><p>30.7</p></td>
+<td class="text-right"><p>2.8</p></td>
+<td><p>5.4 … 41.4; 86.3</p></td>
+<td><p>≤ 24.7</p></td>
+<td><p>wire</p></td>
+<td><p><strong>VM</strong> for plasma and noise (cylinder at the limit)</p></td>
+</tr>
+<tr class="row-even"><td><p>20×1024</p></td>
+<td class="text-right"><p>30.7</p></td>
+<td class="text-right"><p>3.4</p></td>
+<td><p>6.8 … 51.9; 108</p></td>
+<td><p>≤ 30.9</p></td>
+<td><p>wire</p></td>
+<td><p><strong>VM</strong> for all but solid/sweep (gradient/imu at the limit)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Where the bottleneck sits.</strong></p>
+<ul class="simple">
+<li><p><strong>GPU:</strong> the wire, at every scale. Render + readback uses ≤ 11% of the
+30.7 ms frame even at 20×1024. SPI (22.1 ms at 22.2 MHz) also fits under the
+wire, concurrently.</p></li>
+<li><p><strong>VM on one core:</strong> fine through 4×1024. From 8×1024 the heavier effects become
+the bottleneck. At 20×1024 every non-trivial effect misses the 32.6 fps ceiling:
+cylinder 37.5 ms, pulses 33.3, plasma 51.9, noise 108.</p></li>
+<li><p><strong>VM on four cores (<em>estimate</em>):</strong> this would fit everything measured under the
+wire except noise (~31 ms, borderline), at the cost of all four cores. The
+per-thread VM bench is in the payload (<code class="docutils literal notranslate"><span class="pre">--vm-threads</span> <span class="pre">1,4</span></code>); host scaling
+measured 3.4–3.7× on 4 threads.</p></li>
 </ul>
 </section>
 <section id="max-image-changes-this-needs-proposals">
@@ -742,27 +818,191 @@ pauses there.</p></li>
 </ol>
 </section>
 </section>
-<section id="expected-speedups">
-<h2>5. Expected speedups<a class="headerlink" href="#expected-speedups" title="Link to this heading">¶</a></h2>
-<p>From the study (<code class="docutils literal notranslate"><span class="pre">fx-perf-study.md</span></code> Q1), per-LED VM cost at 2048 LEDs runs
-29–456 ms/frame; the heaviest (noise, particles, plasma, rain) are 200–456 ms —
-unusable. A GPU evaluates all LEDs in parallel: the per-LED ALU work that costs
-the VM ~15–35 k cycles <em>serially</em> is one SIMD lane on the GPU, and Pi 4/5 V3D
-has dozens of lanes at ~500–900 MHz. Order-of-magnitude expectation:</p>
+<section id="measured-speedups-pi-3b-videocore-iv-gles2-vs-the-vm">
+<h2>5. Measured speedups: Pi 3B+ (VideoCore IV), GLES2 vs the VM<a class="headerlink" href="#measured-speedups-pi-3b-videocore-iv-gles2-vs-the-vm" title="Link to this heading">¶</a></h2>
+<p>Run 1 setup:</p>
 <ul class="simple">
-<li><p><strong>Pi 4/5 (V3D compute):</strong> the whole shade pass for 2048 LEDs in <strong>well under a
-frame</strong> regardless of effect complexity; the bottleneck moves to readback +
-SPI + WS2812 refresh (§4), i.e. <strong>30–60 fps for every effect</strong>, including the
-ones the VM can’t run at all.</p></li>
-<li><p><strong>Pi 3 (VideoCore IV, GLES2 fragment):</strong> float-only effects (92 of the 132
-that lower — §Prototype) at similar frame rates; the prior-art existence proof
-(§7) hit ~90 Hz WS2812 refresh driving 900 LEDs from GPU visuals on a Pi 3.</p></li>
-<li><p><strong>Measured device numbers are an open item.</strong> The reservable <code class="docutils literal notranslate"><span class="pre">pi-ledmapper-1/2</span></code>
-(Pi 3B+) units can host a GLES2 offscreen-render + readback microbenchmark;
-this was <strong>not run in this PR</strong> (see Prototype/HITL). The host prototype gives
-the correctness and lowering-coverage numbers; the ms/frame on real VC4 is the
-first thing the staged plan measures.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fx_gpu/pi3bench</span></code> on <code class="docutils literal notranslate"><span class="pre">pi-ledmapper-2</span></code> (Pi 3 Model B Plus Rev 1.4, kernel
+6.12.87, stock <code class="docutils literal notranslate"><span class="pre">pi-v1</span></code> MAX image), one reservation.</p></li>
+<li><p>The image has vc4 KMS on (<code class="docutils literal notranslate"><span class="pre">dtoverlay=vc4-kms-v3d</span></code>, render node present, CMA
+256 MB). It ships no Mesa of its own, so the payload’s lean Mesa was used.</p></li>
+<li><p>Renderer <strong>“VC4 V3D 2.1”, OpenGL ES 2.0 Mesa 26.2.4</strong>: max texture 2048,
+8 vertex attributes.</p></li>
+<li><p>The player was running, at load 1.0 and 1.3 GHz.</p></li>
+<li><p>60 GPU frames per point, and the VM until ≥ 3 frames and 1.5 s.</p></li>
+<li><p>Raw data: <code class="docutils literal notranslate"><span class="pre">/workspace/.claude/fxgpu/pi3bench/pi3bench-results-run1.jsonl</span></code>.</p></li>
 </ul>
+<p><strong>20×1024 (the MAX target, 20,480 LEDs), ms per frame:</strong></p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>kernel</p></th>
+<th class="head text-right"><p>VM, 1 A53 core</p></th>
+<th class="head text-right"><p>GPU render</p></th>
+<th class="head text-right"><p>GPU readback (RGBA8)</p></th>
+<th class="head text-right"><p>GPU pipelined</p></th>
+<th class="head text-right"><p>speedup vs VM</p></th>
+<th class="head"><p>GPU error vs VM</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>solid_fill</p></td>
+<td class="text-right"><p>6.76</p></td>
+<td class="text-right"><p>1.50</p></td>
+<td class="text-right"><p>1.41</p></td>
+<td class="text-right"><p>3.15</p></td>
+<td class="text-right"><p>2.1×</p></td>
+<td><p>0 (bit-exact)</p></td>
+</tr>
+<tr class="row-odd"><td><p>sweep</p></td>
+<td class="text-right"><p>19.5</p></td>
+<td class="text-right"><p>1.72</p></td>
+<td class="text-right"><p>1.41</p></td>
+<td class="text-right"><p>3.44</p></td>
+<td class="text-right"><p>5.7×</p></td>
+<td><p>0 (bit-exact)</p></td>
+</tr>
+<tr class="row-even"><td><p>gradient</p></td>
+<td class="text-right"><p>29.5</p></td>
+<td class="text-right"><p>1.73</p></td>
+<td class="text-right"><p>1.42</p></td>
+<td class="text-right"><p>3.42</p></td>
+<td class="text-right"><p>8.6×</p></td>
+<td><p>≤ 1/255 on 4.0% of LEDs</p></td>
+</tr>
+<tr class="row-odd"><td><p>imu_tilt</p></td>
+<td class="text-right"><p>29.8</p></td>
+<td class="text-right"><p>1.73</p></td>
+<td class="text-right"><p>1.38</p></td>
+<td class="text-right"><p>3.50</p></td>
+<td class="text-right"><p>8.5×</p></td>
+<td><p>0 (bit-exact)</p></td>
+</tr>
+<tr class="row-even"><td><p>cylinder</p></td>
+<td class="text-right"><p>37.5</p></td>
+<td class="text-right"><p>1.72</p></td>
+<td class="text-right"><p>1.39</p></td>
+<td class="text-right"><p>3.43</p></td>
+<td class="text-right"><p>10.9×</p></td>
+<td><p>≤ 1/255 on 4.8%</p></td>
+</tr>
+<tr class="row-odd"><td><p>plasma</p></td>
+<td class="text-right"><p>51.9</p></td>
+<td class="text-right"><p>1.72</p></td>
+<td class="text-right"><p>1.42</p></td>
+<td class="text-right"><p>3.50</p></td>
+<td class="text-right"><p>14.8×</p></td>
+<td><p>≤ 2/255 on 40.9%</p></td>
+</tr>
+<tr class="row-even"><td><p>pulses (hash: VM only)</p></td>
+<td class="text-right"><p>33.3</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>—</p></td>
+<td><p>—</p></td>
+</tr>
+<tr class="row-odd"><td><p>noise (hash: VM only)</p></td>
+<td class="text-right"><p>108.0</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>—</p></td>
+<td><p>—</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The VM reproduced the host goldens with 0 errors on every point, confirming
+cross-platform bit-exactness on real hardware.</p>
+<p><strong>What the numbers say:</strong></p>
+<ul class="simple">
+<li><p><strong>GPU time is set by LED count, not the effect.</strong> Render is 1.50–1.73 ms at
+20k LEDs, from <code class="docutils literal notranslate"><span class="pre">solid_fill</span></code> (3 IR nodes) to <code class="docutils literal notranslate"><span class="pre">plasma</span></code> (54). vc4’s per-vertex
+fixed cost dominates, and kernel ALU is noise at these sizes. So the GPU cost is
+flat: ~0.08 µs/LED render + ~0.07 µs/LED readback. The VM’s is 0.33–5.3 µs/LED.</p></li>
+<li><p><strong>Readback is cheap but not free:</strong> 1.4 ms for 80 KB at 20×1024 (~58 MB/s,
+a synchronous <code class="docutils literal notranslate"><span class="pre">glReadPixels</span></code> from the tiled framebuffer).</p>
+<ul>
+<li><p>The driver’s preferred read format <em>is</em> RGBA8, so no faster format exists.</p></li>
+<li><p>An RGB565 target halves readback to 0.65 ms but makes render slower
+(2.3–3.4 ms) and is lossy. Not worth it.</p></li>
+<li><p>Pipelined draw + read (no explicit <code class="docutils literal notranslate"><span class="pre">glFinish</span></code>) is 3.2–3.5 ms.</p></li>
+</ul>
+</li>
+<li><p><strong>Accuracy is well inside the Pi 3 tolerance proposed in §3</strong> (≤ 6/255): max
+2/255, and 100% of LEDs within 2. Effects built on float add/mul/compare are
+<strong>bit-exact</strong> on vc4. The 1–2/255 differences come only from native
+<code class="docutils literal notranslate"><span class="pre">sin</span></code>/divide (class 2).</p></li>
+<li><p><strong>Speedup at 20×1024: 2.1× (solid fill) to 14.8× (plasma)</strong> end to end. At
+today’s 4×550 the GPU is 0.62 ms against a VM 0.70–5.6 ms (11.6 for noise),
+both far under the 16.5 ms wire. <strong>At today’s scale the GPU isn’t needed; at
+MAX scale it is the only Pi 3 path that keeps non-trivial effects at the wire
+ceiling.</strong></p></li>
+<li><p><strong>VM threading:</strong> <code class="docutils literal notranslate"><span class="pre">fxvm_bench</span></code> (and today’s player) runs the VM on <strong>one</strong> core.
+A 4-thread split (now <code class="docutils literal notranslate"><span class="pre">fxvm_bench</span> <span class="pre">--threads</span></code>; LEDs are independent and
+update/prepare are per-frame and tiny) measured 3.4–3.7× on the host. On the
+Pi 3 I <em>estimate</em> ~3.5×, which needs confirming with <code class="docutils literal notranslate"><span class="pre">--vm-threads</span> <span class="pre">1,4</span></code>: plasma
+≈ 15 ms and noise ≈ 31 ms at 20×1024. That uses all four cores, which the player,
+networking and the Pi 3B+’s thermal throttle share. The GPU path leaves the CPU
+free: render + readback mostly waits on the GPU, though CPU time on that path
+was <em>not</em> measured.</p></li>
+<li><p><strong>Pi 4/5 (V3D compute) is not measured here.</strong> Expect the same flat per-LED
+cost at a fraction of vc4’s, plus exact integer ops, so hash effects run there
+too.</p></li>
+</ul>
+<section id="gles2-coverage-what-still-can-t-go-to-the-pi-3-gpu">
+<h3>GLES2 coverage: what still can’t go to the Pi 3 GPU<a class="headerlink" href="#gles2-coverage-what-still-can-t-go-to-the-pi-3-gpu" title="Link to this heading">¶</a></h3>
+<p>Of the 132 corpus effects that lower, <strong>100 run on GLES2 / vc4.</strong> The hsv fix
+moved cylinder-style effects across; it had been 92. <strong>All remaining 32 are
+blocked by <code class="docutils literal notranslate"><span class="pre">hash</span></code></strong>: <code class="docutils literal notranslate"><span class="pre">noise</span></code>, <code class="docutils literal notranslate"><span class="pre">noise_field</span></code>, <code class="docutils literal notranslate"><span class="pre">pulses</span></code>, <code class="docutils literal notranslate"><span class="pre">sparkle</span></code>,
+<code class="docutils literal notranslate"><span class="pre">segment_pulses</span></code>, <code class="docutils literal notranslate"><span class="pre">rain_naive</span></code> and others. The VM’s <code class="docutils literal notranslate"><span class="pre">hash</span></code> is an integer
+avalanche (<code class="docutils literal notranslate"><span class="pre">mix32</span></code>) over the operand’s <strong>f32 bit pattern</strong>. GLSL ES 1.00 has
+neither integers nor bit casts, so it can’t be expressed there. The other 65
+corpus effects don’t lower at all yet (buffers/textures, unimplemented fixed
+ops, loops, user functions; §1) and stay on the VM on every tier. Options for the
+hash class:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>option</p></th>
+<th class="head"><p>exact vs VM?</p></th>
+<th class="head"><p>cost on vc4</p></th>
+<th class="head"><p>cost elsewhere</p></th>
+<th class="head"><p>verdict</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>(a) Emulate <code class="docutils literal notranslate"><span class="pre">mix32</span></code> in float math.</strong> Rebuild the f32 bits via log2/exp2, do 32-bit mod-2³² multiply/xor in ≤ 24-bit limbs.</p></td>
+<td><p>yes</p></td>
+<td><p>~10³ ALU ops per hash; noise does 24 <code class="docutils literal notranslate"><span class="pre">mix32</span></code>/LED, so ~5×10⁸ ops per 20×1024 frame ≈ 25–30 ms (<em>estimate</em>). Kernels this big are ALU-bound, unlike the measured ones.</p></td>
+<td><p>none</p></td>
+<td><p><strong>No</strong>: no better than a 4-core VM</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>(b) A float-native hash builtin</strong> (e.g. a sine-free <code class="docutils literal notranslate"><span class="pre">fract(p·k)</span></code> chain, ~8–10 ops) that authors opt into</p></td>
+<td><p><strong>no</strong>: different values, a statistically similar look</p></td>
+<td><p>≈ plasma: ~3.5 ms at 20×1024</p></td>
+<td><p>VM on the C6: soft-float <code class="docutils literal notranslate"><span class="pre">fract</span></code>/mul cost more than the integer <code class="docutils literal notranslate"><span class="pre">mix32</span></code> it replaced (FUG-122)</p></td>
+<td><p>Only as an opt-in for Pi-targeted effects; never a silent replacement</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>(c) Hoist on the CPU.</strong> When the hash argument is LED-static (<code class="docutils literal notranslate"><span class="pre">hash(led.idx)</span></code>, <code class="docutils literal notranslate"><span class="pre">hash(led.pos)</span></code>), compute it once, exactly, and pass it as a vertex attribute.</p></td>
+<td><p>yes</p></td>
+<td><p>free (one attribute)</p></td>
+<td><p>none</p></td>
+<td><p><strong>Yes</strong>, automatic. It helps seeded sparkle/twinkle effects, not time-varying lattice noise like <code class="docutils literal notranslate"><span class="pre">noise</span></code>/<code class="docutils literal notranslate"><span class="pre">noise_field</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>(d) Pi 4/5 tier</strong> (GLES 3.1 / Vulkan, real integers)</p></td>
+<td><p>yes</p></td>
+<td><p>n/a on Pi 3</p></td>
+<td><p>—</p></td>
+<td><p><strong>Yes</strong>: the clean path for hash effects</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>So on a Pi 3, hash-heavy effects stay on the VM (4-core when that lands), with (c)
+picking off the static-seed cases. Exact GPU noise is a Pi 4/5 feature.</p>
+</section>
 </section>
 <section id="multi-generation-tiering-and-fallback">
 <h2>6. Multi-generation tiering and fallback<a class="headerlink" href="#multi-generation-tiering-and-fallback" title="Link to this heading">¶</a></h2>
@@ -789,7 +1029,7 @@ first thing the staged plan measures.</p></li>
 <tr class="row-even"><td><p><strong>Pi 3 / Zero 2 W</strong></p></td>
 <td><p>VideoCore IV (vc4)</p></td>
 <td><p><strong>GLES 2.0 only</strong>, no compute</p></td>
-<td><p><strong>fragment (GLSL ES 1.00)</strong>, float-only subset, mediump, tol ≤ 6/255</p></td>
+<td><p><strong>vertex-shader kernel (GLSL ES 1.00)</strong>, float-only subset (100/132 lowered), highp vertex stage; measured max error 2/255, so tol ≤ 2/255 is achievable (≤ 6/255 proposed)</p></td>
 </tr>
 <tr class="row-odd"><td><p>any / unsupported effect</p></td>
 <td><p>—</p></td>
@@ -1079,24 +1319,21 @@ renders under <code class="docutils literal notranslate"><span class="pre">env</
 <strong>exactly</strong>; <code class="docutils literal notranslate"><span class="pre">plasma</span></code>/<code class="docutils literal notranslate"><span class="pre">cylinder</span></code> (native <code class="docutils literal notranslate"><span class="pre">sin</span></code> vs the VM’s LUT sine) are within
 <strong>1/255 on 1–14% of LEDs</strong>. The VM bench reproduces its goldens with 0 errors.</p></li>
 </ul>
-<section id="pi-3-measurement-step-2-payload-ready-run-pending">
-<h3>Pi 3 measurement (step 2): payload ready, run pending<a class="headerlink" href="#pi-3-measurement-step-2-payload-ready-run-pending" title="Link to this heading">¶</a></h3>
-<p><code class="docutils literal notranslate"><span class="pre">fx_gpu/pi3bench/</span></code> builds a self-contained aarch64 payload, 37 MB; see its
-README. It contains:</p>
+<section id="pi-3-measurement-step-2-done-run-1">
+<h3>Pi 3 measurement (step 2): done, run 1<a class="headerlink" href="#pi-3-measurement-step-2-done-run-1" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">fx_gpu/pi3bench</span></code> builds a self-contained aarch64 payload, 37 MB. It contains:</p>
 <ul class="simple">
-<li><p>an LLVM-free lean Mesa (vc4+v3d), relocated with RUNPATHs stripped, plus the
-glibc loader;</p></li>
+<li><p>an LLVM-free lean Mesa (vc4+v3d), relocated, plus the glibc loader;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">gles2bench</span></code>: surfaceless EGL, render and readback timed separately, readback
-formats compared (RGBA8, the driver’s preferred format, RGB565), a pipelined
-loop, and a byte-exact check against VM goldens;</p></li>
-<li><p>a static <code class="docutils literal notranslate"><span class="pre">fxvm_bench</span></code> VM baseline;</p></li>
-<li><p>8 kernels × 7 layouts, from 1×500 to 20×1024.</p></li>
+formats compared, a pipelined loop, and a byte-exact check against VM goldens;</p></li>
+<li><p>a static <code class="docutils literal notranslate"><span class="pre">fxvm_bench</span></code> VM baseline, now with <code class="docutils literal notranslate"><span class="pre">--threads</span></code>;</p></li>
+<li><p>8 kernels × 7 layouts, 1×500 … 20×1024.</p></li>
 </ul>
-<p><code class="docutils literal notranslate"><span class="pre">run.sh</span></code> reports whether vc4 and a render node are present, and the live
-<code class="docutils literal notranslate"><span class="pre">spidev.bufsiz</span></code>. It unpacks into a temp dir that a trap removes. The operator
-runs it on <code class="docutils literal notranslate"><span class="pre">pi-ledmapper-2</span></code>/<code class="docutils literal notranslate"><span class="pre">-1</span></code> through an atomic HITL reservation (the agent
-does not handle the Pi key). <strong>Results: pending; they fill §5 and the
-render/readback column of the §4 scaling model.</strong></p>
+<p>The operator ran it on <code class="docutils literal notranslate"><span class="pre">pi-ledmapper-2</span></code> through an SSH tunnel over the
+reservation (<code class="docutils literal notranslate"><span class="pre">Reservation.forward(addr,</span> <span class="pre">22)</span></code>; the rig container has no <code class="docutils literal notranslate"><span class="pre">tar</span></code>).
+The agent never handled the Pi key. <strong>Results are in §5</strong>: 100 JSON lines, all
+<code class="docutils literal notranslate"><span class="pre">ok</span></code>, VC4 renderer, GPU error ≤ 2/255, VM bit-exact. Open: the 4-thread VM run
+(<code class="docutils literal notranslate"><span class="pre">--vm-threads</span> <span class="pre">1,4</span></code>) and the SPI-tap capture on <code class="docutils literal notranslate"><span class="pre">pi-ledmapper-1</span></code> (#369 image).</p>
 </section>
 </section>
 <section id="staged-plan">
@@ -1104,9 +1341,11 @@ render/readback column of the §4 scaling model.</strong></p>
 <ol class="arabic simple">
 <li><p><strong>(this PR)</strong> Host IR + lowering + legalize + GLSL/SPIR-V emit + conformance
 harness. Design + numerics policy + P4 survey + prior art.</p></li>
-<li><p><strong>Pi 3 GLES2 microbenchmark (HITL/Pi):</strong> payload built and host-validated
-(<code class="docutils literal notranslate"><span class="pre">fx_gpu/pi3bench</span></code>; vertex-shader kernel, 1×500 … 20×1024, VM goldens). Run on
-<code class="docutils literal notranslate"><span class="pre">pi-ledmapper-1/2</span></code> pending. <strong>Decides whether Pi 3 GLES2 is worth shipping.</strong></p></li>
+<li><p><strong>Pi 3 GLES2 microbenchmark (HITL/Pi): done</strong> (§5). 20×1024 in 3.2–3.5 ms
+for every lowered kernel, ≤ 2/255. Follow-ups: the 4-thread VM run and the
+SPI-tap capture.
+2b. <strong>Multi-thread the VM in the player</strong> (all effects, no Mesa): ~3.5× on a Pi 3
+(<em>est.</em>). This is the cheapest MAX-scale win and comes before the GPU tier.</p></li>
 <li><p><strong>Pi 4/5 compute path:</strong> <code class="docutils literal notranslate"><span class="pre">naga</span></code> SPIR-V, V3D compute over an SSBO, highp,
 class-1 exact; golden tolerance tests per tier.</p></li>
 <li><p><strong>Player integration:</strong> glibc GPU helper process (musl player stays), a
@@ -1126,18 +1365,34 @@ PARLIO+BitScrambler output; JPEG/PPA texture pipeline.</p></li>
 </section>
 <section id="decisions-the-user-needs-to-make">
 <h2>12. Decisions the user needs to make<a class="headerlink" href="#decisions-the-user-needs-to-make" title="Link to this heading">¶</a></h2>
-<ol class="arabic simple">
+<ol class="arabic">
 <li><p><strong>Numerics tolerance per tier</strong> (§3): accept <strong>≤ 2/255 (Pi 4/5 highp), ≤
 6/255 (Pi 3 mediump)</strong> as the golden-test bound? And for class-3
 transcendental-heavy effects: <strong>ship the VM’s LUT sine in-shader</strong> (makes the
 common case exact, ~1 KB) or <strong>keep those effects on the VM</strong>?</p></li>
-<li><p><strong>Pi 3 GLES2: ship or skip?</strong> 92/132 lowered effects are GLES2-capable, but
-only at mediump and with no integer effects (hash/fixed stay on VM), and the
-static-musl player needs a glibc GPU helper. Option A: Pi 4/5 only (compute,
-clean, exact ints) and Pi 3 stays on the VM/NEON. Option B: also do Pi 3
-GLES2 for the float-only effects. Recommendation: <strong>gate on step 2’s measured
-readback cost</strong> — if VC4 readback is a few ms, Pi 3 GLES2 is worth it; if it’s
-≫ a frame, skip it.</p></li>
+<li><p><strong>Pi 3 GLES2: recommendation: ship it, as the MAX-scale tier, after a
+multi-threaded VM.</strong> Data from §5:</p>
+<ul class="simple">
+<li><p><strong>It works on the stock image.</strong> vc4 KMS is already on; it needs only the
+lean Mesa (~40–60 MB) and a glibc GPU helper beside the static-musl player.</p></li>
+<li><p><strong>It is fast and flat:</strong> 3.2–3.5 ms per frame at 20×1024 for every lowered
+effect, against a single-core VM at 6.8–108 ms. That is 2.1–14.8× on the
+float effects.</p></li>
+<li><p><strong>It is accurate:</strong> ≤ 2/255, bit-exact for float-only effects.</p></li>
+<li><p>At today’s 4×550 the VM already fits (≤ 5.6 ms for float effects, 11.6 for
+noise, under a 16.5 ms wire), so <strong>the GPU is not needed below ~8×1024.</strong></p></li>
+<li><p>At 20×1024 a single-core VM misses the 32.6 fps wire ceiling for every
+non-trivial effect. A 4-core VM (<em>est.</em>) fits but pegs the CPU. The GPU fits
+with ≥ 89% of the frame to spare and leaves the CPU free.</p></li>
+<li><p>It can’t run the 32 hash effects; those stay on the (multi-threaded) VM, or
+move to Pi 4/5.</p></li>
+</ul>
+<p><strong>Order:</strong> (1) a multi-threaded VM, for all effects at all scales; (2) the Pi 3
+GLES2 tier for float-only effects at ≥ 8×1024; (3) Pi 4/5 compute, which adds
+the hash effects.</p>
+<p><strong>Skip Pi 3 GLES2 only if</strong> MAX on a Pi 3 will never exceed ~4×1024. In that
+case the VM suffices and Pi 4/5 compute is the better investment.</p>
+</li>
 <li><p><strong>Readback vs direct DPI scan-out</strong> (§4): start with readback (recommended)?
 DPI is a later optimisation that costs GPIO pins and a frame-sync redesign.</p></li>
 <li><p><strong>P4 priority</strong> (§9): is the PIE SIMD tier (shortlist #1) the P4 track to fund
@@ -1199,7 +1454,10 @@ should <code class="docutils literal notranslate"><span class="pre">PREFILL</spa
 <li><a class="reference internal" href="#max-image-changes-this-needs-proposals">MAX image changes this needs (proposals)</a></li>
 </ul>
 </li>
-<li><a class="reference internal" href="#expected-speedups">5. Expected speedups</a></li>
+<li><a class="reference internal" href="#measured-speedups-pi-3b-videocore-iv-gles2-vs-the-vm">5. Measured speedups: Pi 3B+ (VideoCore IV), GLES2 vs the VM</a><ul>
+<li><a class="reference internal" href="#gles2-coverage-what-still-can-t-go-to-the-pi-3-gpu">GLES2 coverage: what still can’t go to the Pi 3 GPU</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#multi-generation-tiering-and-fallback">6. Multi-generation tiering and fallback</a></li>
 <li><a class="reference internal" href="#prior-art-ledsuitdisplaydriver-ledsuit-fpga-20192020">7. Prior art: ledsuitdisplaydriver + ledsuit-fpga (2019–2020)</a></li>
 <li><a class="reference internal" href="#pi-toolchain-reuse-from-td-deploy">8. Pi toolchain: reuse from td-deploy</a></li>
@@ -1208,7 +1466,7 @@ should <code class="docutils literal notranslate"><span class="pre">PREFILL</spa
 </ul>
 </li>
 <li><a class="reference internal" href="#prototype-fx-gpu-this-pr">10. Prototype (<code class="docutils literal notranslate"><span class="pre">//fx_gpu</span></code>, this PR)</a><ul>
-<li><a class="reference internal" href="#pi-3-measurement-step-2-payload-ready-run-pending">Pi 3 measurement (step 2): payload ready, run pending</a></li>
+<li><a class="reference internal" href="#pi-3-measurement-step-2-done-run-1">Pi 3 measurement (step 2): done, run 1</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#staged-plan">11. Staged plan</a></li>
