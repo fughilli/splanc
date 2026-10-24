@@ -465,9 +465,9 @@ is primary.</p></li>
 </section>
 <section id="frame-pacing-and-jitter-on-linux">
 <h3>Frame pacing and jitter on Linux<a class="headerlink" href="#frame-pacing-and-jitter-on-linux" title="Link to this heading">¶</a></h3>
-<ul class="simple">
-<li><p><strong>The FPGA is the timing master; the host only has to stay ahead.</strong></p>
 <ul>
+<li><p><strong>The FPGA is the timing master; the host only has to stay ahead.</strong></p>
+<ul class="simple">
 <li><p>Since #370 the FIFO is latch-safe: a next-frame CS may land anywhere in the
 previous frame’s latch without losing bytes.</p></li>
 <li><p>It must not land during the previous frame’s <em>emission</em>, or the frames merge
@@ -481,7 +481,7 @@ Then Pi-side jitter only has to stay under one period.</p></li>
 </ul>
 </li>
 <li><p><strong>Output thread:</strong></p>
-<ul>
+<ul class="simple">
 <li><p>SCHED_FIFO priority, pinned to an isolated core (<code class="docutils literal notranslate"><span class="pre">isolcpus</span></code>/<code class="docutils literal notranslate"><span class="pre">nohz_full</span></code> on the
 Pi 4/5; on the Pi 3, at least affinity away from the WiFi/USB IRQs).</p></li>
 <li><p>Absolute-deadline sleeps (<code class="docutils literal notranslate"><span class="pre">clock_nanosleep(CLOCK_MONOTONIC,</span> <span class="pre">TIMER_ABSTIME)</span></code>
@@ -495,10 +495,77 @@ pinned <code class="docutils literal notranslate"><span class="pre">core_freq</s
 the render thread. With a triple-buffered handoff the output thread never
 waits on GL. Render jitter matters only if render + readback approaches a
 period; at ~1 ms of 8.33 it doesn’t.</p></li>
-<li><p><strong>SPI:</strong> one DMA write per frame (needs <code class="docutils literal notranslate"><span class="pre">spidev.bufsiz</span></code> ≥ frame bytes, set by
-#369). Whether the Pi pauses <em>inside</em> a transfer, especially in the first
-<code class="docutils literal notranslate"><span class="pre">PREFILL</span> <span class="pre">×</span> <span class="pre">10</span> <span class="pre">µs</span></code>, is what the logic-analyzer continuity capture and the FPGA
-<code class="docutils literal notranslate"><span class="pre">STATS</span></code> counters measure (#370). <code class="docutils literal notranslate"><span class="pre">PREFILL</span> <span class="pre">=</span> <span class="pre">64</span></code> would absorb 600 µs there.</p></li>
+<li><p><strong>SPI: one DMA write per frame</strong> (needs <code class="docutils literal notranslate"><span class="pre">spidev.bufsiz</span></code> ≥ frame bytes, set by
+#369). <strong>Measured continuity</strong>: <code class="docutils literal notranslate"><span class="pre">pi-ledmapper-1</span></code> on the #369 image, rig-1 FX2,
+<code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:spi_continuity</span></code> (#370). SCK 6.17–6.24 MHz, the valid region
+for a 24 MS/s analyzer (~3.9 samples/cycle). Pauses count when CLK is held
+≥ 1 µs, cross-checked against CS:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head text-right"><p>LEDs (transfer)</p></th>
+<th class="head text-right"><p>STREAM transfers</p></th>
+<th class="head text-right"><p>pauses ≥ 1 µs inside a transfer</p></th>
+<th class="head"><p>CS-high gap, CSR write → STREAM</p></th>
+<th class="head text-right"><p>frame period</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td class="text-right"><p>1,080 (3.2 KB)</p></td>
+<td class="text-right"><p>126</p></td>
+<td class="text-right"><p><strong>0</strong></p></td>
+<td><p>5–20 µs</p></td>
+<td class="text-right"><p>23.7 ms</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>2,200 (6.6 KB)</p></td>
+<td class="text-right"><p>101</p></td>
+<td class="text-right"><p><strong>0</strong></p></td>
+<td><p>5–20 µs</p></td>
+<td class="text-right"><p>29.7 ms</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>5,400 (16 KB)</p></td>
+<td class="text-right"><p>64</p></td>
+<td class="text-right"><p><strong>0</strong></p></td>
+<td><p>10–50 µs</p></td>
+<td class="text-right"><p>46.8 ms</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>8,192 (24.6 KB)</p></td>
+<td class="text-right"><p>49</p></td>
+<td class="text-right"><p><strong>0</strong></p></td>
+<td><p>20–50 µs</p></td>
+<td class="text-right"><p>61.5 ms</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>16,384 (49 KB)</p></td>
+<td class="text-right"><p>28</p></td>
+<td class="text-right"><p><strong>0</strong></p></td>
+<td><p>20–100 µs</p></td>
+<td class="text-right"><p>104.8 ms</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>20,480 (61 KB)</p></td>
+<td class="text-right"><p>24</p></td>
+<td class="text-right"><p><strong>0</strong></p></td>
+<td><p>50–100 µs</p></td>
+<td class="text-right"><p>126.8 ms</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p><strong>Verdict:</strong> each frame is one gap-free CS-low DMA transfer up to 61 KB.
+Nothing approaches the PREFILL = 2 start-of-frame slack (20 µs), let alone 64.</p></li>
+<li><p>The only gaps are between the player’s per-frame CSR write and its STREAM:
+two separate <code class="docutils literal notranslate"><span class="pre">write()</span></code>s, outside the frame. They do cost up to 0.1 ms of frame
+period at 20k LEDs; one combined transaction would remove that.</p></li>
+<li><p>Frame periods here are set by the 4-port player’s 6.2 MHz SCK (r ≈ 1.94),
+not by the target fps.</p></li>
+<li><p><strong>Assumption:</strong> pauses are a DMA/software property, independent of SCK. The
+player’s SCK is fixed by <code class="docutils literal notranslate"><span class="pre">--fpga-ports</span></code>, so 3.2 vs 6.4 MHz couldn’t be
+compared. At 20 ports (SCK ~22–24 MHz, beyond the analyzer) the FPGA’s
+<code class="docutils literal notranslate"><span class="pre">STATS</span></code> counters are the check (#370).</p></li>
+<li><p>Rig note: the SPI tap is CS = D1, MOSI = D5. The station doc had them
+swapped; fixed in #370.</p></li>
+</ul>
+</li>
 </ul>
 </section>
 <section id="end-to-end-latency-input-to-photon-at-120-fps">
@@ -1023,13 +1090,11 @@ internal-only (no pin map) and verifies it in place-and-route (2145 LUT4, 1415
 DFF, 20/26 BSRAM, 83 MHz vs 54) and in a 20×1024 Verilator sim. It also fixes
 the core README’s stale “~2 bytes of buffer per port” claim; the core has had
 per-port BSRAM FIFOs since the double-buffer was replaced.</p></li>
-<li><p><strong>Start-of-frame gap guard.</strong> The FIFOs absorb mid-frame SPI pauses of
-hundreds of µs. Right after a frame starts, though, the only slack is
-<code class="docutils literal notranslate"><span class="pre">PREFILL</span> <span class="pre">×</span> <span class="pre">10</span> <span class="pre">µs</span></code> (20 µs by default), and a longer Pi-side pause latches the
-strip mid-frame. <code class="docutils literal notranslate"><span class="pre">PREFILL</span> <span class="pre">=</span> <span class="pre">64</span></code> absorbs 600 µs at zero resource cost (sim,
-#370). It needs the one-LUT “start on CS-end” fix for frames under 64
-bytes/port. The SPI-tap capture on rig-1 will show whether the Pi 3 actually
-pauses there.</p></li>
+<li><p><strong>Start-of-frame gap guard: not needed at the measured behaviour.</strong> The Pi 3
+sends each frame as one gap-free DMA transfer up to 61 KB (no CLK pause
+≥ 1 µs; §0). The in-tree <code class="docutils literal notranslate"><span class="pre">PREFILL</span> <span class="pre">=</span> <span class="pre">2</span></code> (20 µs of slack) is enough, so raising
+it is optional insurance. Keep the <code class="docutils literal notranslate"><span class="pre">STATS</span></code> underrun counters as the production
+health signal (#370).</p></li>
 </ol>
 </section>
 </section>
@@ -1603,9 +1668,8 @@ harness; design, numerics, P4 survey, prior art.</p></li>
 <li><p><strong>Done:</strong> Pi 3 GLES2 bench (§5). 20×1024 in 3.2–3.5 ms for every lowered
 effect, ≤ 2/255. 4-thread VM measured.</p></li>
 <li><p><strong>Pi 3 at 120 fps:</strong> the 20 × 270 / 4 × 270 bench is <strong>done</strong> (§0: GPU
-0.84–0.94 ms; noise 7.84 ms on a 4-core VM). Still open: the logic-analyzer
-continuity capture (<code class="docutils literal notranslate"><span class="pre">pi-ledmapper-1</span></code> unreachable) and FPGA <code class="docutils literal notranslate"><span class="pre">STATS</span></code> on
-hardware (#370).</p></li>
+0.84–0.94 ms; noise 7.84 ms on a 4-core VM). Logic-analyzer continuity: <strong>done</strong> (0 pauses ≥ 1 µs in
+391 transfers up to 61 KB, §0). Still open: FPGA <code class="docutils literal notranslate"><span class="pre">STATS</span></code> on hardware (#370).</p></li>
 <li><p><strong>GPU tier in the player (primary):</strong></p>
 <ul class="simple">
 <li><p>a glibc GPU helper next to the static-musl player;</p></li>
