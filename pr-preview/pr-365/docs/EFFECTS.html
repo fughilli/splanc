@@ -1052,10 +1052,12 @@ at the full cap every effect is CPU-bound near 20 fps (measured: <code class="do
 ~49 ms period; the plasma 7.25 M cycles, 20 fps, 10–15 fps during TLS
 reconnects). Up to ~1000 LEDs in total the wire is the limit for light effects.</p></li>
 </ul>
-<p>The autoscaler’s abort floor scales with the strip, so a long strip runs a heavy
-effect slower instead of having it parked: 25 fps up to 512 shaded LEDs, then the
-rung that keeps 25 × 512 = 12,800 shaded LEDs/s (rounded down, never below 5):
-20 fps at 600, 10 fps at 1024, 5 fps at 2048. <code class="docutils literal notranslate"><span class="pre">FpsState.min_fps</span></code> reports it.</p>
+<p>The autoscaler’s floor (its lowest rung) scales with the strip: 25 fps up to 512
+shaded LEDs, then the rung that keeps 25 × 512 = 12,800 shaded LEDs/s (rounded
+down, never below 5): 20 fps at 600, 10 fps at 1024, 5 fps at 2048.
+<code class="docutils literal notranslate"><span class="pre">FpsState.min_fps</span></code> reports it. An effect too heavy even for the floor is never
+parked: it keeps playing at whatever rate it achieves (<code class="docutils literal notranslate"><span class="pre">FpsState.lagging</span></code>,
+<code class="docutils literal notranslate"><span class="pre">achieved_fps</span></code>).</p>
 <p>LED-arity <code class="docutils literal notranslate"><span class="pre">buffer</span></code> arrays are sized for the stored map / configured strip (at
 least 512 LEDs), not the 2048 cap, and both decks share the 24 KB <code class="docutils literal notranslate"><span class="pre">FX_ARENA</span></code>:
 a <code class="docutils literal notranslate"><span class="pre">buffer</span> <span class="pre">vec4</span></code> costs 16 B per LED (32 KB at 2048 — it doesn’t fit); declare it
