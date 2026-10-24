@@ -197,15 +197,14 @@ impl<const N: usize> TxRing<N> {
     /// Load `frame` into the NEXT slot round-robin, never the slot armed last.
     ///
     /// The MAC has no completion we track on the direct-submission path (the descriptor's
-    /// OWN bit is never cleared), and it DMAs the frame buffer while the frame is on air,
-    /// so a frame can still be transmitting when the next one is loaded. `load_frame`
-    /// picks the first free slot, which (freed straight after `arm`) is always slot 0:
-    /// the next frame was copied over the one being sent, corrupting it (CCMP MIC fails
-    /// at the AP, silently dropped) whenever two frames went out back to back — e.g. a
-    /// 1400 + 177 byte TCP reply, the first segment of which was lost every time. Rotating
-    /// through the `N` slots leaves the previous `N - 1` buffers untouched; the caller
-    /// waits for the queue's previous arm to be taken ([`arm_pending`]) before arming,
-    /// so a slot is only rewritten `N - 1` transmissions after it was handed over.
+    /// OWN bit is never cleared) and may still be reading a frame's buffer while it is on
+    /// air. `load_frame` picks the first free slot, which (freed straight after `arm`) is
+    /// always slot 0, so every frame was written into the buffer of the one before it.
+    /// Rotating through the `N` slots leaves the previous `N - 1` buffers untouched.
+    /// NOTE: this alone does not stop back-to-back loss — re-arming the queue while its
+    /// previous frame is still on air loses that frame too; the transport paces arms by
+    /// airtime (netstack_transport.cpp `tx_pace_before`), and the caller waits for the
+    /// queue's previous arm to be taken ([`arm_pending`]).
     pub fn load_frame_next(&mut self, frame: &[u8], ac: usize) -> Result<usize, Overflow> {
         let i = self.cursor % N;
         if frame.len() + TX_HDR_LEN > MAX_FRAME || ac >= HW_TXQ_COUNT {

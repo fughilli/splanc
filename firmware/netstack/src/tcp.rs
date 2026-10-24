@@ -200,8 +200,8 @@ pub struct TcpConn {
     // fast retransmit only ONE segment (the oldest unacked) may be in flight until an ACK
     // advances snd_una. The old go-back-N burst re-sent the whole window back to back —
     // the exact transmit pattern that lost it — so a loss tied to that pattern (the first
-    // of two back-to-back frames clobbered in the TX slot) repeated on every RTO until the
-    // peer gave up: the device went silent mid-reply with no stall logged.
+    // of two back-to-back frames, lost when the TX queue is re-armed mid-frame) repeated
+    // on every RTO until the peer gave up: the device went silent mid-reply, no stall logged.
     in_recovery: bool,
 }
 
@@ -1417,8 +1417,8 @@ mod tests {
     }
 
     /// Regression for the DEVICE SILENT trace-dump stall (#358 + #360 on the C6): the TX
-    /// path lost the FIRST of two back-to-back frames (the next frame was copied over the
-    /// one still on air). A 1577-byte reply is 1400 + 177 back to back, so segment 1 was
+    /// path lost the FIRST of two back-to-back frames (the queue was re-armed with the next
+    /// frame while the first was still on air). A 1577-byte reply is 1400 + 177 back to back, so segment 1 was
     /// lost; the tail-loss probe (once per flight) was lost too under background load, and
     /// the go-back-N RTO then re-sent both segments back to back — losing segment 1 again,
     /// every time, until the peer gave up after 5 s. Model that channel (rig serial trace:
@@ -1460,7 +1460,7 @@ mod tests {
                 }
                 burst.push(buf[..n].to_vec());
             }
-            // The clobbered TX slot: of frames sent back to back, only the last survives.
+            // The re-armed TX queue: of frames sent back to back, only the last survives.
             dropped += burst.len().saturating_sub(1);
             if let Some(seg) = burst.pop() {
                 let mut ack = [0u8; 1600];

@@ -130,9 +130,9 @@ def synth_topology(
 #
 # The device caps a get_stored_map chunk at 1024 B, so one reply is one TCP segment; with
 # BULK_DEPTH requests in flight the replies leave back to back (1400 + the rest), request
-# after request — the trace-dump pattern. The C6 TX path used to copy every frame into the
-# slot of the one before it while that was still on air, so the first of two back-to-back
-# frames was lost every time, and the go-back-N RTO re-sent the same back-to-back pair,
+# after request — the trace-dump pattern. The C6 TX path re-armed its queue with the next
+# frame while the previous one was still on air, so the first of two back-to-back frames
+# was lost nearly every time, and the go-back-N RTO re-sent the same back-to-back pair,
 # losing it again until the client gave up (5 s, ctrl_budget's "DEVICE SILENT"). The
 # one-request-at-a-time readback above never hit it.
 BULK_CHUNK_LEN = 1024
