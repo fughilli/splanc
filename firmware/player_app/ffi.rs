@@ -195,19 +195,20 @@ static mut DECK_A: DeckState = DeckState::EMPTY;
 // The render loop measures every effect frame's cost (update + shade of BOTH
 // decks + the crossfade blend, or the strip transmit if that is longer) and
 // feeds it to one `FpsController` (//firmware/fps), which picks the target FPS
-// on a 5-fps ladder (25..80) keeping 5% headroom, and asks for an abort when even
-// the floor (or an app-pinned rate) can't hold. The search restarts whenever what
-// renders changes (a load, clear or (de)activation on either deck; FPS_GEN), so
-// each program — or deck pairing — finds its own rung; the app's pin and no-abort
-// hold survive that. All under the player_mutex, like the perf ring.
+// on a 5-fps ladder (25..80) keeping 5% headroom. An effect (or deck pairing)
+// that can't hold even the floor or an app-pinned rate is never parked: it keeps
+// rendering as fast as it can and fps_state reports it `lagging`. The search
+// restarts whenever what renders changes (a load, clear or (de)activation on
+// either deck; FPS_GEN), so each program — or deck pairing — finds its own rung;
+// the app's pin survives that. All under the player_mutex, like the perf ring.
 static mut FPS: FpsController = FpsController::new();
 /// Bumped by every change to what renders (fx_load / fx_clear / fx_set_active);
 /// the render side resets the controller when it differs from FPS_SEEN_GEN.
 static mut FPS_GEN: u32 = 0;
 static mut FPS_SEEN_GEN: u32 = 0;
-/// Set when the autoscaler just parked the effect; drained by loop()
-/// (lm_fps_take_abort_notify) to push fps_state{aborted=true}.
-static mut FPS_NOTIFY_ABORT: bool = false;
+/// The lag state last reported: a change is pushed to the app once
+/// (lm_fps_take_lag_notify -> an unsolicited fps_state), as an advisory.
+static mut FPS_LAG_REPORTED: bool = false;
 
 /// What renders changed: restart the autoscaler's search on the next frame.
 unsafe fn fps_invalidate() {
@@ -2755,35 +2756,38 @@ unsafe fn handle_get_effect_uniforms(frame: &[u8], out: *mut u8, out_cap: usize)
 }
 
 /// set_fps: pin the effect framerate to `target_fps` (snapped to the 5-fps
-/// ladder; 0 = autoscale) and set the no-abort hold. Reply: fps_state, so the
-/// app's control reflects what the player actually adopted.
+/// ladder; 0 = autoscale). The deprecated `no_abort` is ignored: the player
+/// never parks a slow effect, so there is nothing to hold off. Reply:
+/// fps_state, so the app's control reflects what the player actually adopted.
 unsafe fn handle_set_fps(frame: &[u8]) -> pb::ServerMessage {
-    let (target, no_abort) = match client_arm(frame) {
-        Some(CArm::SetFps(m)) => (m.target_fps(), m.no_abort()),
-        _ => (0, false),
+    let target = match client_arm(frame) {
+        Some(CArm::SetFps(m)) => m.target_fps(),
+        _ => 0,
     };
     let c = &mut *addr_of_mut!(FPS);
     // set_target snaps onto the ladder (held to the strip's floor and wire
     // ceiling); cap first so a wild value can't overflow the snap arithmetic.
+    // (A mode change that clears the lag is pushed by the next lag-notify check.)
     c.set_target(target.min(MAX_FPS));
-    c.set_abort_enabled(!no_abort);
-    build_fps_state(false)
+    build_fps_state()
 }
 
-/// An FpsState from the live autoscaler; `aborted` flags the unsolicited push
-/// sent when the effect was parked because its target couldn't be held.
-unsafe fn build_fps_state(aborted: bool) -> pb::ServerMessage {
+/// An FpsState from the live autoscaler. `aborted` / `no_abort` are deprecated
+/// and always false: a slow effect lags (`lagging`, `current_fps` = what it
+/// achieves), it is never parked.
+unsafe fn build_fps_state() -> pb::ServerMessage {
     let c = &*addr_of!(FPS);
     let mut s = pb::FpsState::default();
     s.r#target_fps = c.pinned_fps();
     s.r#current_fps = c.current_fps();
-    // The abort floor for this strip (25 fps up to 512 LEDs, lower past it).
+    // The autoscaler's lowest rung for this strip (25 fps up to 512 LEDs, lower
+    // past it); an effect slower than it runs as fast as it can.
     s.r#min_fps = c.min_fps();
     // The ladder's top as the strip's wire allows it (MAX_FPS when unbounded).
     s.r#max_fps = c.max_fps();
     s.r#auto = !c.is_pinned();
-    s.r#aborted = aborted;
-    s.r#no_abort = !c.abort_enabled();
+    s.r#lagging = c.lagging();
+    s.r#achieved_fps = c.achieved_fps();
     pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::FpsState(s)) }
 }
 
@@ -3269,14 +3273,15 @@ unsafe fn build_perf_report() -> pb::ServerMessage {
     let w = perf_rollup(&window_buf[..wn]);
 
     let id = core::str::from_utf8(&(*addr_of!(DECK_A.id))[..DECK_A.id_len]).unwrap_or("");
-    // FUG-82: headroom is against the rate the effect actually runs at.
-    let fps = (*addr_of!(FPS)).current_fps();
+    // FUG-82: headroom is against the rung the autoscaler targets; current_fps
+    // is the rate the effect really runs at (below the rung while it lags).
+    let c = &*addr_of!(FPS);
     let mut r = pb::PerfReport {
         // Identity.
         r#fxb_hash: DECK_A.hash,
         r#cpu_hz: PERF_CPU_HZ,
-        r#budget_cycles: PERF_CPU_HZ / fps.max(1),
-        r#current_fps: fps,
+        r#budget_cycles: PERF_CPU_HZ / c.rung_fps().max(1),
+        r#current_fps: c.current_fps(),
         // Rolling window.
         r#frame_cycles_min: w.frame_min,
         r#frame_cycles_mean: w.frame_mean,
@@ -4914,17 +4919,18 @@ pub unsafe extern "C" fn lm_mode_event(event: u32) -> i32 {
 /// (update + shade of every rendering deck incl. the crossfade blend, or the
 /// strip transmit if longer — they overlap). Returns how many ms the render task
 /// sleeps before the next frame (period − work, never less than the controller's
-/// minimum yield). If the effect can't hold its floor / pinned rate this parks
-/// every rendering deck (they stay loaded; set_effect resumes) and latches a
-/// notify-the-app request for loop(). Restarts the search first when what renders
-/// changed since the last frame.
+/// minimum yield; after an overrunning frame, the bounded-duty-cycle slice that
+/// keeps the network, sensors and TLS serviced). An effect that can't hold its
+/// floor / pinned rate keeps rendering — never parked — and its lag state is
+/// pushed to the app once as an advisory. Restarts the search first when what
+/// renders changed since the last frame.
 ///
 /// The strip comes with it: `wire_leds` LEDs clocked out one after another (the
 /// longest channel — both go out in parallel), whose WS2812 wire time
 /// (`ledmapper_fps::wire_frame_us`) caps the ladder at what the wire can carry,
-/// and the `leds` the frame shaded set the abort floor
-/// (`ledmapper_fps::floor_fps_for`: past 512 LEDs a heavy effect runs slower
-/// instead of being parked).
+/// and the `leds` the frame shaded set the floor
+/// (`ledmapper_fps::floor_fps_for`: past 512 LEDs a heavy effect steps down to a
+/// steady slower rung).
 ///
 /// # Safety
 /// Render task, under the player_mutex (single-threaded player state).
@@ -4937,21 +4943,11 @@ pub unsafe extern "C" fn lm_fps_on_frame(cost_us: u32, wire_leds: u32, leds: u32
     }
     c.set_wire_us(ledmapper_fps::wire_frame_us(wire_leds));
     c.set_leds(leds);
-    let d = c.on_frame(cost_us);
-    if d.abort {
-        c.take_abort();
-        for k in 0..N_DECKS {
-            fx_set_active(k, false);
-        }
-        // Parking is ours, not a new search: don't let it reset the rung the
-        // fps_state{aborted} reports.
-        FPS_SEEN_GEN = FPS_GEN;
-        FPS_NOTIFY_ABORT = true;
-    }
-    d.delay_ms
+    c.on_frame(cost_us).delay_ms
 }
 
-/// The autoscaler's current target FPS (the rate the effect runs at now).
+/// The rate the effect runs at now: the autoscaler's rung, or the rate it
+/// really achieves while lagging below it.
 ///
 /// # Safety
 /// Under the player_mutex.
@@ -4960,36 +4956,44 @@ pub unsafe extern "C" fn lm_fps_current_fps() -> u32 {
     (*addr_of!(FPS)).current_fps()
 }
 
-/// Per-frame overrun budget in CPU cycles for the current target (cpu_hz /
-/// current_fps); the render loop flags a perf-ring overrun against it.
+/// Per-frame overrun budget in CPU cycles for the current target rung (cpu_hz /
+/// rung fps); the render loop flags a perf-ring overrun against it.
 ///
 /// # Safety
 /// Under the player_mutex.
 #[no_mangle]
 pub unsafe extern "C" fn lm_fps_budget_cycles() -> u32 {
-    PERF_CPU_HZ / (*addr_of!(FPS)).current_fps().max(1)
+    PERF_CPU_HZ / (*addr_of!(FPS)).rung_fps().max(1)
 }
 
-/// Read + clear the abort-notify latch; loop() pushes fps_state{aborted=true}.
+/// Whether the effect's lag state changed since it was last reported (read +
+/// update): loop() then pushes one unsolicited fps_state — an advisory ("this
+/// effect runs below its target"), never a stop. `*lagging` gets the new state.
 ///
 /// # Safety
-/// Under the player_mutex.
+/// Under the player_mutex; `lagging` may be null.
 #[no_mangle]
-pub unsafe extern "C" fn lm_fps_take_abort_notify() -> bool {
-    let n = FPS_NOTIFY_ABORT;
-    FPS_NOTIFY_ABORT = false;
-    n
+pub unsafe extern "C" fn lm_fps_take_lag_notify(lagging: *mut bool) -> bool {
+    let now = (*addr_of!(FPS)).lagging();
+    if !lagging.is_null() {
+        *lagging = now;
+    }
+    if now == FPS_LAG_REPORTED {
+        return false;
+    }
+    FPS_LAG_REPORTED = now;
+    true
 }
 
-/// Encode an FpsState frame (`aborted` as given) into `out`: the unsolicited
-/// abort push. Returns the encoded length, -1 bad args, -2 out_cap too small.
+/// Encode the live FpsState into `out` (the unsolicited lag-change push).
+/// Returns the encoded length, -1 bad args, -2 out_cap too small.
 ///
 /// # Safety
 /// `out` must point to `out_cap` writable bytes; under the player_mutex.
 #[no_mangle]
-pub unsafe extern "C" fn lm_fps_build_state(out: *mut u8, out_cap: usize, aborted: bool) -> i32 {
+pub unsafe extern "C" fn lm_fps_build_state(out: *mut u8, out_cap: usize) -> i32 {
     if out.is_null() {
         return -1;
     }
-    encode_reply(&build_fps_state(aborted), out, out_cap)
+    encode_reply(&build_fps_state(), out, out_cap)
 }

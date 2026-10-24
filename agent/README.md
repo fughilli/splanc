@@ -151,7 +151,9 @@ the only player, or all of them in one room): `set_brightness`, `list_uniforms`,
 players: one room-frame image per time), `deploy_effect` (fleet budget check via
 `web/src/effects/multiDevice.ts`, refuses an overrun unless `force`; then a shared
 time base), `set_effect`, `rollback_effect`, `estimate_effect` (offline cost
-model, touches nothing), `measure_effect` (windowed on-device perf stream),
+model, touches nothing), `measure_effect` (windowed on-device perf stream;
+effects slower than 25 fps run at whatever rate they achieve — `lagging`,
+`achieved_fps` — the player never parks them),
 `list_textures`, `stream_texture`, `stop_texture`, the uniform keypoint tools
 `list_keypoints` / `save_keypoint` / `recall_keypoint` / `blend_keypoints` /
 `delete_keypoint` (feature `keypoints`; design

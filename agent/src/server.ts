@@ -934,8 +934,10 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     {
       description:
         "Measure the running effect for `seconds` on every selected player: frame cycles vs the frame budget, " +
-        "overruns, heap, and the framerate the player autoscaled it to (current_fps, 25..80). Over budget = the " +
-        "player parked it (aborted) or it can't hold 25 fps: roll back and simplify (rollback_on_overrun does it).",
+        "overruns, heap, and the framerate the player autoscaled it to (current_fps, 25..80). Over budget = it " +
+        "can't hold 25 fps (or a pinned rate) and lags: it keeps playing at the rate it achieves (lagging, " +
+        "achieved_fps; the player never stops it). Simplify it if smoothness matters; rollback_on_overrun rolls " +
+        "back an over-budget effect automatically.",
       inputSchema: { seconds: z.number().min(1).max(60), rollback_on_overrun: z.boolean().optional(), players },
     },
     ({ seconds, rollback_on_overrun, players: sel }) =>
@@ -944,12 +946,7 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
           await fan(sel, async (s) => {
             const m = await s.measureEffect(seconds);
             if (rollback_on_overrun && String(m["verdict"] ?? "").startsWith("over budget")) {
-              // A player that already parked the effect (FUG-82 abort) with nothing
-              // earlier to restore: leave it parked rather than clearing it.
-              m["rollback"] =
-                m["aborted"] && !s.canRestorePrevious
-                  ? { restored: null, note: "the player already parked it; no earlier effect was deployed by this bridge" }
-                  : await s.rollback();
+              m["rollback"] = await s.rollback();
             }
             return m;
           }).then(async (r) => {

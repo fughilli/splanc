@@ -601,21 +601,24 @@ export interface TlsInfoMessage {
 
 // -- framerate autoscaler (FUG-82; the "fps" feature) ------------------------
 // The player runs effects at a consistent rate on a 5-fps ladder (25..80),
-// adapted to each frame's cost with 5% headroom, and parks an effect it can't
-// run within budget (pushing fps_state{aborted}).
+// adapted to each frame's cost with 5% headroom. An effect too heavy for the
+// floor (or a pinned rate) is never parked: it keeps rendering as fast as it can
+// ("lagging"), and the player pushes fps_state when that starts or stops.
 
 /** Override the effect framerate (proto SetFps). `targetFps` 0 = autoscale,
- * otherwise pin that rate (snapped to the ladder). `noAbort` holds the rung
- * instead of parking an effect that can't keep it (benchmarks). Reply: fps_state. */
+ * otherwise pin that rate (snapped to the ladder). Reply: fps_state. */
 export interface SetFpsMessage {
   type: "set_fps";
   targetFps: number;
+  /** @deprecated Ignored by current firmware (nothing is parked any more); old
+   * firmware read it as "hold the rung instead of parking the effect". */
   noAbort?: boolean;
 }
 
 /** Framerate autoscaler state (proto FpsState): the set_fps reply, and pushed
- * unsolicited with `aborted` when the player parked the effect because even the
- * floor / pinned rate couldn't hold. `targetFps` = the pin (0 = auto). */
+ * unsolicited when the effect starts or stops `lagging` (advisory: nothing
+ * stops). `targetFps` = the pin (0 = auto); `currentFps` the rate the effect
+ * really runs at (the rung, or the achieved rate while lagging). */
 export interface FpsStateMessage {
   type: "fps_state";
   targetFps: number;
@@ -623,7 +626,14 @@ export interface FpsStateMessage {
   minFps: number;
   maxFps: number;
   auto: boolean;
+  /** The effect can't hold `minFps` / the pinned rate and runs below it. */
+  lagging: boolean;
+  /** Measured rate of the last ~30-frame window (0 = not measured yet). */
+  achievedFps: number;
+  /** @deprecated Always false on current firmware; firmware before the lag
+   * change set it when it parked (stopped) a slow effect. */
   aborted: boolean;
+  /** @deprecated Always false (echo of the ignored SetFps.noAbort). */
   noAbort: boolean;
 }
 
@@ -636,6 +646,8 @@ export function flatFpsState(m: Partial<FpsStateMessage>): FpsStateMessage {
     minFps: m.minFps ?? 0,
     maxFps: m.maxFps ?? 0,
     auto: m.auto ?? false,
+    lagging: m.lagging ?? false,
+    achievedFps: m.achievedFps ?? 0,
     aborted: m.aborted ?? false,
     noAbort: m.noAbort ?? false,
   };

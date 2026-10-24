@@ -305,7 +305,13 @@ export class LiveMux {
       if (s) this.watchFps(s, p);
       const st = s?.fpsState;
       const fps = s && (st || s.renderFps > 0)
-        ? { current: st?.currentFps || s.renderFps, target: st?.targetFps ?? 0, auto: st?.auto ?? true, aborted: st?.aborted ?? false }
+        ? {
+            current: st?.currentFps || s.renderFps,
+            target: st?.targetFps ?? 0,
+            auto: st?.auto ?? true,
+            lagging: st?.lagging ?? false,
+            achieved: st?.achievedFps ?? 0,
+          }
         : null;
       return {
         id: p.id,
@@ -323,14 +329,17 @@ export class LiveMux {
     return { players, rooms: { ...this.hub.config.groups } };
   }
 
-  /** Forward this session's fps_state: an abort (the player parked the effect) goes
-   * to every app at once; any change also refreshes the player lists (coalesced by
-   * the 2 s poll's change check, so autoscaler steps cost one message each). */
+  /** Forward this session's fps_state: the effect starting/stopping to lag (it runs
+   * below the floor / pinned rate, still playing) goes to every app at once; any
+   * change also refreshes the player lists (coalesced by the 2 s poll's change
+   * check, so autoscaler steps cost one message each). */
   private watchFps(s: DeviceSession, p: PlayerRecord): void {
     if (this.fpsWatched.has(s)) return;
     this.fpsWatched.add(s);
+    let wasLagging = false;
     s.onFps((st) => {
-      if (st.aborted) {
+      if (st.lagging !== wasLagging) {
+        wasLagging = st.lagging;
         for (const cs of this.conns.values()) {
           if (!cs.hello) continue;
           this.send(cs, {
@@ -341,7 +350,8 @@ export class LiveMux {
             target_fps: st.targetFps,
             min_fps: st.minFps,
             auto: st.auto,
-            aborted: true,
+            lagging: st.lagging,
+            achieved_fps: st.achievedFps,
           });
         }
       }

@@ -32,8 +32,9 @@
 #include "device_cert.h"        // this device's own TLS key + cert (first-boot generated)
 #include "dhcp_reply.h"
 #include "icmp_echo.h"
-#include "wifi_creds.h"     // persisted WiFi credentials: restore / persist / rescan decisions
-#include "esp_system.h"     // esp_restart / esp_reset_reason (restart-to-rescan)
+#include "wifi_creds.h"     // persisted WiFi credentials: restore / persist decisions
+#include "wifi_scan.h"      // in-place background rescan (never a reboot)
+#include "esp_system.h"     // esp_get_free_heap_size
 #include "esp_mac.h"        // esp_read_mac: the factory STA MAC
 #include "sta_mac.h"        // stable (factory) vs opt-in random station MAC
 #include "join_guard.h"     // per-boot 802.11 sequence numbers + the unanswered-auth guard
@@ -150,7 +151,7 @@ char g_pass[65];
 bool g_creds_ready = false;  // creds committed (BLE Improv, wired PROV, or restored at boot)
 bool g_restore_pending = false;  // restored at boot; the PMK derivation starts on the first loop
 bool g_using_stored = false;     // the active creds are the stored ones (not a fresh provision)
-bool g_scan_matched = false;     // the boot scan saw the active SSID (scan_latch_ap)
+bool g_scan_matched = false;     // the last scan (boot or background) saw the active SSID
 lm_wifi::Persist g_persist;      // whether/when the active creds still need writing to NVS
 
 // DHCP lease state (DORA).
@@ -258,8 +259,8 @@ void wifi_scan_cache() {
 }
 
 // Once g_ssid is known, find its cached AP and latch the real BSSID + channel + reprogram
-// the hardware. Keeps the baked default if the SSID wasn't seen in the scan (e.g. rig-3
-// fallback where they already match). Returns whether a scan match was applied.
+// the hardware. Without a match nothing is latched and the join waits for the background
+// rescan (below) to find the AP. Returns whether a scan match was applied.
 bool scan_latch_ap() {
   for (uint8_t i = 0; i < g_scan_n; i++) {
     if (strncmp(g_scan[i].ssid, g_ssid, 32) == 0) {
@@ -273,9 +274,58 @@ bool scan_latch_ap() {
       return true;
     }
   }
-  Serial.printf("[scan] no scan match for \"%s\" — keeping baked bssid ch=%u\n", g_ssid, g_chan);
+  Serial.printf("[scan] no scan match for \"%s\" — not joining until the background rescan "
+                "finds it\n", g_ssid);
   g_scan_matched = false;
   return false;
+}
+
+// --- Background rescan: find the AP again IN PLACE, never by rebooting (wifi_scan.h) ----
+// The vendor scan above only works before the MAC hijack, so it used to be repeated by
+// esp_restart() — killing the running effect every 20 s while a stored network was absent.
+// Now the netstack sweeps the channels itself from the loop (we already receive every
+// frame in all-frames mode), one non-blocking hop per pass, while render keeps going.
+lm_wifi_scan::ScanSchedule g_scan_sched;
+lm_wifi_scan::ChannelHop g_hop;
+
+// Tune to `ch` and ask for the wanted SSID there (a hidden AP answers a directed probe).
+void bgscan_tune(uint8_t ch) {
+  esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+  uint8_t f[80];
+  size_t n = lm_wifi_scan::build_probe_req(f, sizeof f, OUR_MAC, g_ssid, g_seq.next());
+  if (n) ns_mac_send(f, (uint32_t)n, 0);
+}
+
+// A frame from the RX drain: while a sweep runs, note a beacon / probe response for our SSID.
+void bgscan_on_frame(const uint8_t *rx, uint32_t n) {
+  if (!g_hop.active() || n < 36 || (rx[0] != 0x80 && rx[0] != 0x50)) return;
+  uint8_t bssid[6], ch = 0;
+  if (lm_wifi_scan::bss_for_ssid(rx, n, g_ssid, g_hop.channel(), bssid, &ch)) g_hop.on_match(bssid, ch);
+}
+
+// Remember a background-scan result in the scan cache (so a later re-latch of the same
+// SSID — a repeated PROV / Improv — finds it too).
+void scan_cache_put(const char *ssid, const uint8_t bssid[6], uint8_t ch) {
+  uint8_t i = 0;
+  while (i < g_scan_n && strncmp(g_scan[i].ssid, ssid, 32) != 0) i++;
+  if (i == g_scan_n) {
+    if (g_scan_n < sizeof g_scan / sizeof g_scan[0]) {
+      g_scan_n++;
+    } else {
+      i = g_scan_n - 1;  // full: the newest result replaces the last entry
+    }
+  }
+  strncpy(g_scan[i].ssid, ssid, 32);
+  g_scan[i].ssid[32] = 0;
+  memcpy(g_scan[i].bssid, bssid, 6);
+  g_scan[i].chan = ch;
+}
+
+// Stop a sweep (new credentials, or it finished without a match): back on the join channel.
+void bgscan_cancel() {
+  if (!g_hop.active()) return;
+  g_hop.cancel();
+  esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);
 }
 
 int mgmt_hdr(uint8_t *f, uint8_t fc) {
@@ -1411,19 +1461,6 @@ bool netstack_ws_open() { return netstack_ws_is_open(); }
 bool netstack_creds_ready() { return g_creds_ready; }
 bool netstack_leased() { return g_leased; }
 
-// Restart-to-rescan attempts in a row (wifi_creds.h rescan_due), kept across esp_restart in
-// RTC no-init memory; any other reset (power-on, watchdog, flash) starts the count over.
-static RTC_NOINIT_ATTR uint32_t s_rescan_magic;
-static RTC_NOINIT_ATTR uint32_t s_rescan_attempt;
-static constexpr uint32_t kRescanMagic = 0x52534e31;  // "RSN1"
-static uint32_t rescan_attempt() {
-  if (s_rescan_magic != kRescanMagic || esp_reset_reason() != ESP_RST_SW) {
-    s_rescan_magic = kRescanMagic;
-    s_rescan_attempt = 0;
-  }
-  return s_rescan_attempt;
-}
-
 void netstack_restore_credentials(const char *ssid, const char *pass) {
   if (!lm_wifi::valid(ssid, pass)) {
     Serial.printf("[wifi] no stored credentials — waiting for Improv / wired PROV\n");
@@ -1667,6 +1704,25 @@ static void coex_timer_cb(void *) {
 
 // Service the transport once per app loop(): RX drain + on_ip + DHCP + BLE-Improv join +
 // TLS handshake + WS pump (dispatched via lm_ws_dispatch). Non-blocking; returns quickly.
+// A provision for a DIFFERENT network (wired PROV / BLE Improv kJoin): the lease, TCP and
+// TLS/WS state belonged to the old network. Without this a board that had leased once kept
+// g_leased set, so on the new network it never ran DHCP (and BLE answered the redirect with
+// the OLD IP) — e.g. re-provisioning a board away from a network that has gone, or from
+// mistyped credentials back to the right ones. Mirrors the deauth re-join reset.
+static void drop_link_for_new_network() {
+  g_leased = false;
+  g_have_offer = false;
+  g_tcp_started = false;
+  if (TLS_SERVER) {
+    tls_session_reset();
+    g_tls_hs = false;
+    g_ws_up = false;
+    g_responding = false;
+    g_ws_rxlen = 0;
+  }
+  g_bio_tx = g_bio_rx = 0;
+}
+
 void netstack_loop() {
   static St st = AUTH;
   static uint32_t t = 0;
@@ -1719,6 +1775,7 @@ void netstack_loop() {
   uint32_t n;
   int drained = 0;
   while (drained++ < 32 && (n = ns_mac_recv(rx, sizeof(rx))) > 0) {
+  bgscan_on_frame(rx, n);  // a background sweep listens to every BSS (wifi_scan.h)
   // Broad DONE-state RX trace: what frames actually reach our ring post-link?
   static uint32_t allf = 0;
   if (st == DONE && n >= 10 && allf < 30) {
@@ -1916,6 +1973,8 @@ void netstack_loop() {
             g_persist.on_committed();  // written to NVS once this network leases
             g_ap_latched = false;  // re-latch THIS SSID's BSSID/channel from the scan cache
             st = AUTH;             // restart the join from AUTH (mirrors the BLE take path)
+            inited = false;        // the 4-way re-inits for the new AP / PMK
+            drop_link_for_new_network();
             ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass,
                          strlen(g_pass));
             Serial.printf("[t=%lu] [wire] PROV received (ssid=%s) -> associating\n",
@@ -1948,6 +2007,7 @@ void netstack_loop() {
   // cache (once) BEFORE the first auth — so auth/assoc go out on the right channel to the
   // right BSS on ANY rig, not just the baked rig-3 default.
   if (g_creds_ready && !g_ap_latched) {
+    bgscan_cancel();  // new credentials: a sweep for the old SSID is moot
     scan_latch_ap();
     g_ap_latched = true;
   }
@@ -1964,31 +2024,65 @@ void netstack_loop() {
       Serial.printf("[t=%lu] [wifi] storing credentials FAILED (ssid=%s) — will retry\n",
                     (unsigned long)millis(), g_ssid);
   }
-  // Stored network missing from the boot scan (e.g. the router still booting after a power
-  // cut): the vendor scan only runs before the MAC hijack, so rescan by restarting, on a
-  // capped backoff, never while a central is connected (it may be re-provisioning us).
-  if (PLAYER_MODE && g_ap_latched) {
-    static const uint32_t attempt = rescan_attempt();
-    static bool attempt_cleared = false;
-    if (g_scan_matched && !attempt_cleared) {
-      attempt_cleared = true;
-      s_rescan_attempt = 0;
+  // The committed network isn't reachable where we last looked: missing from the boot scan
+  // (the router still booting after a power cut), or a latched AP that stopped answering
+  // auth (rebooted onto another channel/BSSID, or gone). Find it again IN PLACE with a
+  // background sweep on a 5 s -> 60 s backoff, forever — never esp_restart: the effect
+  // keeps rendering, BLE Improv + the wired PROV console stay up the whole time, and a
+  // match re-latches the AP and restarts the join, so the board rejoins on its own as soon
+  // as the AP is back (wifi_scan.h). Also in the OTA loader (same transport).
+  if (g_ap_latched) {
+    uint32_t now_ms = (uint32_t)millis();
+    // (A lease only counts once past AUTH: re-authenticating means we hold no link.)
+    bool wanted = lm_wifi_scan::scan_wanted(g_creds_ready, st == AUTH, g_leased && st != AUTH,
+                                            g_scan_matched, g_authw.waited_ms(now_ms));
+    if (!g_hop.active() && g_scan_sched.due(wanted, now_ms)) {
+      g_hop.start();
+      Serial.printf("[t=%lu] [wifi] \"%s\" %s — background scan %u (effect keeps running)\n",
+                    (unsigned long)now_ms, g_ssid,
+                    g_scan_matched ? "not answering auth" : "not in the last scan",
+                    (unsigned)(g_scan_sched.attempt() + 1));
     }
-    if (lm_wifi::rescan_due(g_using_stored, g_scan_matched, g_leased,
-                            improv_ble_central_connected(), (uint32_t)millis(), attempt)) {
-      Serial.printf("[t=%lu] [wifi] stored network \"%s\" not in the boot scan — restarting to "
-                    "rescan (attempt %u/%u)\n", (unsigned long)millis(), g_ssid,
-                    (unsigned)(attempt + 1), (unsigned)lm_wifi::kRescanMaxAttempts);
-      s_rescan_attempt = attempt + 1;
-      delay(100);  // let the log line drain
-      esp_restart();
+    uint8_t ch = 0;
+    lm_wifi_scan::ChannelHop::Step hs = g_hop.step(now_ms, &ch);
+    if (hs == lm_wifi_scan::ChannelHop::Step::kTune) {
+      bgscan_tune(ch);
+    } else if (hs == lm_wifi_scan::ChannelHop::Step::kDone) {
+      g_scan_sched.on_scan_done(now_ms);
+      if (g_hop.found()) {
+        const uint8_t *b = g_hop.found_bssid();
+        uint8_t fch = g_hop.found_chan();
+        bool moved = memcmp(b, g_bssid, 6) != 0 || fch != g_chan;
+        scan_cache_put(g_ssid, b, fch);
+        memcpy(g_bssid, b, 6);
+        g_chan = fch;
+        g_scan_matched = true;
+        mac_own_bssid();
+        if (moved) g_authw.reset();  // a new AP/channel: its own unanswered-auth clock
+        Serial.printf("[t=%lu] [wifi] background scan found \"%s\" bssid=%02x:%02x:%02x:%02x:%02x:%02x "
+                      "ch=%u%s — joining\n", (unsigned long)now_ms, g_ssid, g_bssid[0], g_bssid[1],
+                      g_bssid[2], g_bssid[3], g_bssid[4], g_bssid[5], g_chan,
+                      moved ? "" : " (unchanged)");
+      } else {
+        g_scan_matched = false;
+        Serial.printf("[t=%lu] [wifi] background scan: \"%s\" not found; next in %lu s (BLE "
+                      "Improv stays up to re-provision)\n", (unsigned long)now_ms, g_ssid,
+                      (unsigned long)(lm_wifi_scan::scan_delay_ms(g_scan_sched.attempt()) / 1000));
+      }
+      esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);  // back on the join channel
     }
   }
   // Kick the state machine: (re)send auth periodically until associated (once creds committed AND
   // the PMK is derived). Gating on ns_pmk_ready() sequences the ~1.8s PBKDF2 (pure CPU, radio
   // yielded to BLE by coex_update) BEFORE the WiFi-active join, so the join is short + the 4-way's
   // first EAPOL finds the PMK ready (immediate M2) — the link isn't dragged through a long join.
-  if (st == AUTH && g_creds_ready && ns_pmk_ready() && millis() - t > 200) {
+  // Only toward an AP a scan actually saw (g_scan_matched): with no match g_bssid is
+  // whatever the previous network left there — auth to that AP got answered, the assoc for
+  // the new SSID then stalled, and the AUTH<->ASSOC churn kept the background rescan from
+  // ever coming due. The rescan finds the AP and sets the match. Not while a sweep has the
+  // radio on another channel either.
+  if (st == AUTH && g_creds_ready && ns_pmk_ready() && g_scan_matched && !g_hop.active() &&
+      millis() - t > 200) {
     static bool deauthed = false;  // once per boot, to this AP (see build_deauth)
     uint32_t now_ms = (uint32_t)millis();
     bool stable = !lm_sta_mac::random_mac_is_build_default() && !g_mac_fallback;
@@ -2013,7 +2107,9 @@ void netstack_loop() {
       }
       deauthed = true;
     }
-    if (stable && g_authw.give_up(now_ms, g_mac_fallback)) {
+    // Only when a scan actually saw the AP: an absent AP (powered off, still booting) isn't
+    // ignoring our MAC, so it must not cost the board its stable MAC/IP once it is back.
+    if (stable && g_scan_matched && g_authw.give_up(now_ms, g_mac_fallback)) {
       // Last resort: this AP won't talk to the factory MAC (it is still holding a stale
       // station for it). Join as a per-boot random MAC instead — a new lease/IP, but online.
       uint8_t rnd[4];
@@ -2100,6 +2196,8 @@ void netstack_loop() {
         // Re-latch the scan cache for THIS SSID and restart the join from AUTH.
         g_ap_latched = false;
         st = AUTH;
+        inited = false;  // the 4-way re-inits for the new AP / PMK
+        drop_link_for_new_network();
         // Start deriving the PMK NOW (off the hot path), overlapped with auth/assoc, so it's ready
         // by the 4-way and we never freeze the loop (which would drop the BLE link mid-join).
         ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass));

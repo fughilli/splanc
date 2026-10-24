@@ -94,10 +94,14 @@ class AppState {
     // Register as the sole owner of this device's socket so the liveness prober
     // multiplexes onto it instead of opening a parallel (slot-starving) handshake.
     connectionRegistry.register(client);
-    // FUG-82: the player parks an effect it can't render within budget and pushes
-    // fps_state{aborted}; tell the user wherever they are in the app.
+    // FUG-82: an effect too heavy for its target keeps playing, slower; the
+    // player pushes fps_state when it starts/stops lagging. Mention it once per
+    // lagging spell (not an error). Older firmware parked it instead (aborted).
+    let wasLagging = false;
     client.onFpsState((s) => {
       if (s.aborted) toast(fpsAbortMessage(s), { error: true });
+      else if (s.lagging && !wasLagging) toast(fpsLagMessage(s));
+      wasLagging = s.lagging;
     });
     client.events = {
       onConnecting: (attempt, url) =>
@@ -331,11 +335,17 @@ class AppState {
   }
 }
 
-/** The user-facing notice for an autoscaler abort (FUG-82). */
+/** The gentle notice when an effect starts lagging (FUG-82): it keeps playing. */
+export function fpsLagMessage(s: FpsStateMessage): string {
+  const rate = s.achievedFps || s.currentFps;
+  const target = s.auto ? s.minFps || 25 : s.targetFps;
+  return `Effect running at ${rate ? `${rate} fps` : "a reduced rate"} (below its ${target} fps target) — it keeps playing. Simplify it for smoother motion.`;
+}
+
+/** Older firmware (before effects lagged instead) parked an effect it couldn't
+ * hold and set fps_state.aborted; current firmware never does. */
 export function fpsAbortMessage(s: FpsStateMessage): string {
-  return s.auto
-    ? `Effect stopped: this device can't render it even at ${s.minFps || 25} fps. Simplify it (fewer ops per LED) and try again.`
-    : `Effect stopped: this device can't hold the pinned ${s.targetFps} fps. Set Framerate to Auto or a lower rate, then restart it.`;
+  return `Effect stopped by the device's older firmware: it couldn't hold ${s.auto ? `${s.minFps || 25}` : `the pinned ${s.targetFps}`} fps. Update the firmware (slow effects then keep playing) or simplify the effect.`;
 }
 
 export const appState = new AppState();

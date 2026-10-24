@@ -60,8 +60,10 @@ export class FakePlayer {
   refuse = new Map<string, { code: string; message: string }>();
   perf: { budgetCycles: number; frameCyclesMean: number; frameCyclesMax: number; overruns: number; currentFps?: number } =
     { budgetCycles: 5_333_333, frameCyclesMean: 1_000_000, frameCyclesMax: 1_200_000, overruns: 0 };
-  /** FUG-82: push fps_state{aborted} (the autoscaler parked the effect) on the next set_perf. */
-  abortOnNextPerf: { auto: boolean; targetFps: number } | null = null;
+  /** FUG-82: push fps_state{lagging} (the effect can't hold the floor / pin and runs
+   * at `achievedFps`, still playing) on the next set_perf. `oldAbort`: answer like
+   * pre-lag firmware instead, which parked the effect (aborted, no lagging). */
+  lagOnNextPerf: { auto: boolean; targetFps: number; achievedFps: number; oldAbort?: boolean } | null = null;
   /** The fake device clock = this process's performance.now() + this. */
   clockOffsetMs = 0;
   /** Delay before each time_sync_pong (simulated one-way latency). */
@@ -159,7 +161,7 @@ export class FakePlayer {
   }
 
   /** Push an fps_state (FUG-82) to every connected session, as the autoscaler does. */
-  pushFpsState(st: { targetFps: number; currentFps: number; auto: boolean; aborted: boolean }): void {
+  pushFpsState(st: { targetFps: number; currentFps: number; auto: boolean; lagging: boolean; achievedFps?: number }): void {
     for (const c of this.wss.clients) this.reply(c, { type: "fps_state", minFps: 25, maxFps: 80, ...st });
   }
 
@@ -329,17 +331,18 @@ export class FakePlayer {
       }
       case "set_perf":
       case "get_perf_report":
-        if (m.type === "set_perf" && this.abortOnNextPerf) {
-          const a = this.abortOnNextPerf;
-          this.abortOnNextPerf = null;
+        if (m.type === "set_perf" && this.lagOnNextPerf) {
+          const a = this.lagOnNextPerf;
+          this.lagOnNextPerf = null;
           this.reply(ws, {
             type: "fps_state",
             targetFps: a.targetFps,
-            currentFps: a.auto ? 25 : a.targetFps,
             minFps: 25,
             maxFps: 80,
             auto: a.auto,
-            aborted: true,
+            ...(a.oldAbort
+              ? { currentFps: a.auto ? 25 : a.targetFps, aborted: true }
+              : { currentFps: a.achievedFps, lagging: true, achievedFps: a.achievedFps }),
           });
         }
         return this.reply(ws, {

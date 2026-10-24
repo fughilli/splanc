@@ -261,11 +261,34 @@ test("under Auto an overrun above the floor is the autoscaler's cue, not a toast
     minFps: 25,
     maxFps: 80,
     auto: false,
+    lagging: false,
+    achievedFps: 0,
     aborted: false,
     noAbort: false,
   });
   client.push(perfReport({ updateMs: 1, shadeMs: 20, showMs: 3, currentFps: 45 }));
   assert.equal(toastsSaying("Effect overruns the 45 fps budget"), before45 + 1);
+});
+
+test("a lagging effect shows its achieved rate and 'lagging', with no overrun error (it keeps playing)", async (t) => {
+  const client = new PerfClient(perfReport({ updateMs: 1, shadeMs: 60, showMs: 3, currentFps: 15 }));
+  const { el } = await mountPanel(t, client);
+  client.pushFps({
+    type: "fps_state",
+    targetFps: 0,
+    currentFps: 15,
+    minFps: 25,
+    maxFps: 80,
+    auto: true,
+    lagging: true,
+    achievedFps: 15,
+    aborted: false,
+    noAbort: false,
+  });
+  const before = toastsSaying("Effect overruns the 15 fps budget");
+  client.push(perfReport({ updateMs: 1, shadeMs: 60, showMs: 3, currentFps: 15 }));
+  assert.equal(textOf(el.querySelector(".perf-fps-now")), "auto · 15 fps · lagging");
+  assert.equal(toastsSaying("Effect overruns the 15 fps budget"), before, "lagging: no error toast");
 });
 
 test("headroom is measured against the device's own frame budget, not a fixed 33 ms [rr:PR-18]", async (t) => {
