@@ -87,6 +87,12 @@ export interface SocketLike {
 export type SocketFactory = (url: string) => SocketLike;
 
 const SOCKET_OPEN = 1; // WebSocket.OPEN
+const SOCKET_CLOSED = 3; // WebSocket.CLOSED
+
+/** Backoff cap while a caller waits for the device to come back (waitForWelcome):
+ * short, so a device that just finished rebooting is picked up within ~2 s. Each
+ * attempt is still bounded by connectTimeoutMs, so this can't storm the device. */
+export const AWAITED_RECONNECT_MAX_MS = 2000;
 
 // Byte-window size for sharded uploads (submit_map / submit_topology). Kept
 // well under a TLS record so the player's mbedtls allocates a small (~this-big)
@@ -101,6 +107,9 @@ const CHUNK_BYTES = 4096;
  * pass NO timeout and keep the wait-forever behavior. Sized to comfortably clear
  * a heap-tight C6's worst-case post-welcome round trip. */
 const REQUEST_TIMEOUT_MS = 8000;
+
+/** Deadline for an OTA begin/chunk reply (see otaChunk). */
+export const OTA_TRANSFER_TIMEOUT_MS = 30_000;
 
 /** A {@link LedMapperClient} request that opted into a deadline got no reply in
  * time. Distinct from a generic failure so callers (e.g. Hardware Setup) can
@@ -247,6 +256,11 @@ export class LedMapperClient {
   // complete without the user — the cert was never trusted (cold) OR it rotated
   // under us (warm; e.g. a rename regenerates the device's self-signed cert).
   private failsSinceWelcome = 0;
+  // Set when onclose stopped auto-retrying (cert-trust give-up); cleared by connect().
+  private gaveUp = false;
+  // A backoff reconnect is already scheduled (never stack two).
+  private reconnectScheduled = false;
+  private reconnectGen = 0;
   private readonly needsTrust: boolean;
   private readonly coldRetryLimit: number;
   private readonly warmRetryLimit: number;
@@ -319,6 +333,9 @@ export class LedMapperClient {
   /** Open the socket and complete the hello/welcome handshake. */
   connect(): Promise<WelcomeMessage> {
     this.closed = false;
+    this.gaveUp = false;
+    this.reconnectScheduled = false;
+    this.reconnectGen++; // cancels a backoff reconnect still pending
     this.events.onConnecting?.(++this.attempt, this.url);
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -399,15 +416,25 @@ export class LedMapperClient {
           // but an ordinary reboot brings the SAME cert back, so allow more
           // attempts (warmRetryLimit) to reconnect within the backoff before we
           // conclude the cert changed and ask the user to re-trust.
+          //
+          // EXCEPT while someone is waiting for this device to come back
+          // (waitForWelcome — an OTA handoff, resume, install or health check). The
+          // device told us it is restarting, with the SAME identity and cert, and an
+          // app -> loader handoff takes a reboot + Wi-Fi join (scan, auth, DHCP) + TLS
+          // identity load: easily longer than the warm budget, and a give-up there
+          // stranded the update at "Restarting into the updater…" with nothing left
+          // reconnecting. So keep retrying the same target until the waiter's own
+          // deadline, at a short capped backoff so the device is picked up promptly.
           const limit = this.everWelcomed ? this.warmRetryLimit : this.coldRetryLimit;
-          const certGiveUp = this.needsTrust && ++this.failsSinceWelcome >= limit;
+          const awaited = this.welcomeListeners.size > 0;
+          const certGiveUp = this.needsTrust && ++this.failsSinceWelcome >= limit && !awaited;
           if (certGiveUp) {
+            this.gaveUp = true;
             this.events.onCertTrustNeeded?.(this.url);
           } else {
-            const delay = this.backoffMs[Math.min(this.backoffIdx++, this.backoffMs.length - 1)]!;
-            this.schedule(() => {
-              if (!this.closed) void this.connect().catch(() => undefined);
-            }, delay);
+            let delay = this.backoffMs[Math.min(this.backoffIdx++, this.backoffMs.length - 1)]!;
+            if (awaited) delay = Math.min(delay, AWAITED_RECONNECT_MAX_MS);
+            this.scheduleReconnect(delay);
           }
         }
         if (!settled) {
@@ -416,6 +443,38 @@ export class LedMapperClient {
         }
       };
     });
+  }
+
+  /** Schedule one backoff reconnect (at most one outstanding). */
+  private scheduleReconnect(delay: number): void {
+    if (this.reconnectScheduled) return;
+    this.reconnectScheduled = true;
+    const gen = this.reconnectGen;
+    this.schedule(() => {
+      if (gen !== this.reconnectGen) return; // superseded by an explicit connect()
+      this.reconnectScheduled = false;
+      if (!this.closed) void this.connect().catch(() => undefined);
+    }, delay);
+  }
+
+  /**
+   * The device said it is about to restart (an OTA handoff into its loader, or the
+   * loader booting a just-installed app). A restart sends no TCP FIN/RST, so the
+   * socket would sit half-open — nothing closes it until TCP keepalive probes the
+   * new boot (Chromium: 45 s idle, then 45 s apart), which is longer than the restart
+   * itself. Drop it now so the reconnect path runs; pair with
+   * {@link waitForWelcome}, which keeps that path retrying until the device is back.
+   * Also the recovery for a link that stopped answering (a request timed out).
+   */
+  expectRestart(): void {
+    const sock = this.sock;
+    if (this.closed) return;
+    if (sock !== null && sock.readyState !== SOCKET_CLOSED) {
+      this.abandonSocket(sock);
+      return;
+    }
+    // No live socket: make sure something is reconnecting (e.g. after a give-up).
+    if (this.gaveUp) this.scheduleReconnect(0);
   }
 
   close(): void {
@@ -543,11 +602,27 @@ export class LedMapperClient {
   private recycleStalledSocket(): void {
     const sock = this.sock;
     if (sock === null || sock.readyState !== SOCKET_OPEN) return;
+    this.abandonSocket(sock);
+  }
+
+  /** Close `sock` and run its close path NOW. A browser's close() starts the
+   * closing handshake and only fires onclose once the peer answers it — a peer
+   * that restarted or stalled never does, so Chrome sat in CLOSING for ~60 s
+   * before any reconnect could start (measured on the HITL rig, web OTA
+   * handoff). Detach its handlers, close it in the background, and run onclose
+   * (fail the waiters, schedule the reconnect) ourselves. */
+  private abandonSocket(sock: SocketLike): void {
+    const onclose = sock.onclose;
+    sock.onclose = null;
+    sock.onmessage = null;
+    sock.onerror = null;
+    sock.onopen = null;
     try {
       sock.close();
     } catch {
-      // already closing — onclose will still run
+      // already closing
     }
+    onclose?.();
   }
 
   /** After a (re)welcome: deliver a stop the device never acknowledged. */
@@ -862,6 +937,9 @@ export class LedMapperClient {
         resolve(w);
       };
       this.welcomeListeners.add(done);
+      // While anyone waits, the client keeps reconnecting (see onclose). If it had
+      // already given up (cert-trust budget spent before this wait began), restart it.
+      if (this.gaveUp && !this.closed) this.scheduleReconnect(0);
       this.schedule(() => {
         if (!this.welcomeListeners.delete(done)) return;
         reject(new RequestTimeoutError("welcome", timeoutMs));
@@ -899,11 +977,18 @@ export class LedMapperClient {
   /** Offer a signed image (its 108-byte manifest). The app answers STATE_REBOOTING
    * (it restarts into the loader); the loader answers STATE_RECEIVING + the offset. */
   otaBegin(manifest: Uint8Array, allowDowngrade = false, keyEpoch?: Uint8Array): Promise<OtaStatusMessage> {
-    return this.ota({ type: "ota_begin", manifest, allowDowngrade, ...(keyEpoch ? { keyEpoch } : {}) });
+    return this.ota(
+      { type: "ota_begin", manifest, allowDowngrade, ...(keyEpoch ? { keyEpoch } : {}) },
+      Math.max(this.requestTimeoutMs, OTA_TRANSFER_TIMEOUT_MS),
+    );
   }
 
+  /** One stop-and-wait chunk. Its deadline is the transfer's, not the 8 s short-RPC
+   * one: on a lossy Wi-Fi a 4 KB chunk can ride out several TCP retransmits (and the
+   * loader a flash erase), and giving up early costs a fresh TLS handshake + resume
+   * for a link that was about to deliver (the Python client waits 30 s too). */
   otaChunk(offset: number, data: Uint8Array): Promise<OtaStatusMessage> {
-    return this.ota({ type: "ota_chunk", offset, data });
+    return this.ota({ type: "ota_chunk", offset, data }, Math.max(this.requestTimeoutMs, OTA_TRANSFER_TIMEOUT_MS));
   }
 
   /** Verify (a SHA-256 read-back of ~2 MB) and select the new app. */

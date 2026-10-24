@@ -279,15 +279,30 @@ function renderIdle(sheet: SheetHandle, index: FirmwareIndex, selected: Firmware
         note(`${name} is in its updater (recovery mode): install firmware over Wi-Fi to bring it back.`),
       );
     }
-    sheet.body.append(
-      Button({
-        label: `Update ${name} over Wi-Fi`,
-        icon: "chip",
-        variant: "primary",
-        block: true,
-        onClick: () => void startOtaUpdate(sheet, index, selected, target),
-      }),
-    );
+    // The app advertises "ota" even on the legacy (pre-OTA) partition layout, where
+    // an update over Wi-Fi can only be refused: ask the device up front and, if it
+    // still has the old layout, say what to do instead of offering a doomed button.
+    const slot = document.createElement("div");
+    sheet.body.append(slot);
+    const offer = (): void => {
+      slot.replaceChildren(
+        Button({
+          label: `Update ${name} over Wi-Fi`,
+          icon: "chip",
+          variant: "primary",
+          block: true,
+          onClick: () => void startOtaUpdate(sheet, index, selected, target),
+        }),
+      );
+    };
+    if (inLoader(w)) offer();
+    else {
+      slot.append(note(`Checking whether ${name} can update over Wi-Fi…`));
+      void otaReadiness(target).then((ready) => {
+        if (ready === "legacy") slot.replaceChildren(note(legacyLayoutText(name)));
+        else offer();
+      });
+    }
   }
   if (usbBlocked) {
     sheet.body.append(note(usbBlocked));
@@ -526,6 +541,34 @@ async function startFlash(
 
 let usbBlocked: string | null = null;
 
+/** Whether the connected device's app can hand over to its updater: "legacy" when it
+ * still has the pre-OTA partition layout (it needs a one-time USB update first).
+ * Remembered per connection (the welcome object), so reopening the sheet doesn't ask
+ * again. An unanswered query counts as ready — the update itself reports a refusal. */
+const readiness = new WeakMap<object, Promise<"ready" | "legacy">>();
+function otaReadiness(client: LedMapperClient): Promise<"ready" | "legacy"> {
+  const w = client.welcome;
+  if (!w) return Promise.resolve("ready");
+  let p = readiness.get(w);
+  if (!p) {
+    p = client
+      .getOtaStatus()
+      .then((st) => (st.error === "legacy_layout" ? ("legacy" as const) : ("ready" as const)))
+      .catch(() => "ready" as const);
+    readiness.set(w, p);
+  }
+  return p;
+}
+
+export function legacyLayoutText(name: string): string {
+  return (
+    `${name} needs a one-time USB update before it can update over Wi-Fi (its firmware predates ` +
+    "the updater). Connect it to this phone or a computer with a USB cable and use " +
+    "“Connect a board & flash (USB)” below — its Wi-Fi settings, name and maps are kept. " +
+    "After that, updates work over Wi-Fi."
+  );
+}
+
 /** The connected device, when it can take an update over Wi-Fi. */
 function otaTarget(): LedMapperClient | null {
   const c = appState.client;
@@ -536,6 +579,7 @@ function otaTarget(): LedMapperClient | null {
 
 const OTA_PHASE_TEXT: Record<OtaProgress["phase"], string> = {
   handoff: "Restarting into the updater",
+  wait: "Waiting for the device",
   transfer: "Sending firmware",
   resume: "Reconnecting",
   verify: "Verifying",
@@ -567,6 +611,7 @@ async function startOtaUpdate(
     log.scrollTop = log.scrollHeight;
   };
   let lastPhase = "";
+  let lastKey = "";
   try {
     status.textContent = "Downloading firmware…";
     const req = await loadFlashRequest(entry);
@@ -583,10 +628,20 @@ async function startOtaUpdate(
         const pct = p.total > 0 ? Math.min(100, Math.round((p.sent / p.total) * 100)) : 0;
         fill.style.width = `${pct}%`;
         const text = OTA_PHASE_TEXT[p.phase];
-        status.textContent = p.phase === "transfer" ? `${text}… ${pct}% (${fmtKB(p.sent)} / ${fmtKB(p.total)})` : `${text}…`;
-        if (p.phase !== lastPhase) {
+        // While waiting on the device the message carries the elapsed seconds
+        // ("Waiting for the updater (12 s)") — show it, so it never looks hung.
+        status.textContent =
+          p.phase === "transfer"
+            ? `${text}… ${pct}% (${fmtKB(p.sent)} / ${fmtKB(p.total)})`
+            : p.message && p.phase !== "done" && p.phase !== "rolled_back" && p.phase !== "resume"
+              ? p.message
+              : `${text}…`;
+        const line = p.phase === "wait" ? (p.message ?? text).replace(/ \(\d+ s\)$/, "…") : p.message;
+        const key = `${p.phase}:${line ?? ""}`;
+        if (p.phase !== lastPhase || (p.phase !== "wait" && p.phase !== "transfer" && key !== lastKey)) {
           lastPhase = p.phase;
-          appendLog(p.message ? `${text}: ${p.message}` : `${text}…`);
+          lastKey = key;
+          appendLog(line ? (p.phase === "wait" ? line : `${text}: ${line}`) : `${text}…`);
         }
       },
     });
@@ -603,6 +658,7 @@ async function startOtaUpdate(
     status.textContent = "Update failed.";
     status.classList.add("flash-status--err");
     fill.classList.add("flash-bar-fill--err");
+    sheet.body.append(note(err instanceof OtaError && err.code === "legacy_layout" ? legacyLayoutText("This device") : msg));
     sheet.body.append(Button({ label: "Back", block: true, onClick: () => renderIdle(sheet, index, entry) }));
     toast(msg, { error: true });
   }

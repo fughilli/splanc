@@ -10,6 +10,7 @@ import {
   inLoader,
   MANIFEST_LEN,
   OtaError,
+  RECOVERY_TEXT,
   splitPackage,
   updateFirmware,
   versionNumber,
@@ -54,11 +55,59 @@ class FakeDevice implements OtaDevice {
     return w;
   }
 
+  // -- the browser-path hazards (the real-device failures behind the web OTA fix) --
+  /** A restart sends no FIN: the socket stays "open" (welcome kept) and nothing
+   * reconnects until the client drops it (expectRestart). */
+  halfOpen = false;
+  /** Handoffs that bring the APP back instead of the loader (a restart that didn't
+   * take / the loader's idle return). */
+  appComesBack = 0;
+  /** The device never comes back after its next restart (off the network). */
+  neverBack = false;
+  /** The chunk at/after this offset gets no answer (the link stalls, socket open). */
+  stallChunkAt = -1;
+  private stalled = false;
+  private owed = false; // a restart happened that the client hasn't noticed (halfOpen)
+  restartsExpected = 0;
+  handoffs = 0;
+
+  expectRestart(): void {
+    this.restartsExpected++;
+    if (this.stalled) {
+      this.stalled = false;
+      this.welcome = null;
+      this.deliver();
+    } else if (this.owed) {
+      this.owed = false;
+      this.welcome = null;
+      this.deliver();
+    }
+  }
+
+  private deliver(): void {
+    if (this.neverBack) return;
+    queueMicrotask(() => {
+      this.welcome = this.makeWelcome();
+      for (const l of [...this.listeners]) l(this.welcome);
+    });
+  }
+
   /** The device restarts: the socket drops, then a fresh welcome arrives. */
   reboot(): void {
+    if (this.mode === "handoff") {
+      this.handoffs++;
+      this.mode = this.appComesBack-- > 0 ? "app" : "loader";
+      this.session = null;
+      if (this.halfOpen) {
+        this.owed = true; // the old welcome stays: the socket looks open
+        return;
+      }
+      this.welcome = null;
+      this.deliver();
+      return;
+    }
     this.welcome = null;
-    if (this.mode === "handoff") this.mode = "loader";
-    else if (this.mode === "installed") {
+    if (this.mode === "installed") {
       const p = this.pending!;
       const crashes = p.image[0] === 0x43; // "C"
       if (crashes) {
@@ -72,16 +121,23 @@ class FakeDevice implements OtaDevice {
       }
     }
     this.session = null;
-    queueMicrotask(() => {
-      this.welcome = this.makeWelcome();
-      for (const l of [...this.listeners]) l(this.welcome);
-    });
+    if (this.halfOpen) {
+      this.welcome = this.makeWelcome(); // stale: the old socket still looks open
+      this.owed = true;
+      return;
+    }
+    this.deliver();
   }
 
-  waitForWelcome(pred: (w: WelcomeMessage) => boolean): Promise<WelcomeMessage> {
-    return new Promise((resolve) => {
+  waitForWelcome(pred: (w: WelcomeMessage) => boolean, timeoutMs = 60_000): Promise<WelcomeMessage> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.listeners = this.listeners.filter((x) => x !== l);
+        reject(new Error(`timed out after ${timeoutMs} ms waiting for welcome`));
+      }, timeoutMs);
       const l = (w: WelcomeMessage): void => {
         if (!pred(w)) return;
+        clearTimeout(timer);
         this.listeners = this.listeners.filter((x) => x !== l);
         resolve(w);
       };
@@ -109,6 +165,9 @@ class FakeDevice implements OtaDevice {
 
   private live(): void {
     if (!this.welcome) throw new Error("socket closed");
+    if (this.stalled) throw new Error("timed out after 8000 ms waiting for ota_status");
+    // A half-open socket: the device behind it restarted; requests go unanswered.
+    if (this.owed) throw new Error("timed out after 8000 ms waiting for ota_status");
   }
 
   async getOtaStatus(): Promise<OtaStatusFlat> {
@@ -139,6 +198,11 @@ class FakeDevice implements OtaDevice {
     this.live();
     const s = this.session!;
     if (offset !== s.next) return this.status("STATE_FAILED", "out_of_order");
+    if (this.stallChunkAt >= 0 && offset >= this.stallChunkAt) {
+      this.stallChunkAt = -1;
+      this.stalled = true; // no reply; the socket stays open
+      throw new Error("timed out after 8000 ms waiting for ota_status");
+    }
     if (this.failNextChunkAt >= 0 && offset >= this.failNextChunkAt) {
       this.failNextChunkAt = -1;
       this.reboot(); // a reset mid-transfer: back in the loader with the job kept
@@ -166,7 +230,7 @@ class FakeDevice implements OtaDevice {
   }
 }
 
-const fast = { sleep: async () => undefined, reconnectMs: 2000, healthMs: 2000 };
+const fast = { sleep: async () => undefined, reconnectMs: 2000, healthMs: 2000, restartSettleMs: 0 };
 
 test("an update hands over to the loader, streams, and waits for health", async () => {
   const dev = new FakeDevice();
@@ -229,4 +293,94 @@ test("packages and versions parse", () => {
   assert.equal(versionNumber("dev"), null);
   assert.equal(inLoader({ ota: { mode: "MODE_LOADER" } } as unknown as WelcomeMessage), true);
   assert.equal(inLoader({} as WelcomeMessage), false);
+});
+
+// -- the browser path (the real-device web OTA failure) ----------------------------------
+
+function image(n: number, seed = 7): Uint8Array {
+  const img = new Uint8Array(n).map((_, i) => (i * seed) & 255);
+  img[0] = 0xe9;
+  return img;
+}
+
+test("a restart that leaves the socket half-open: the driver drops it and finds the device", async () => {
+  // The app answers REBOOTING and restarts with no FIN, and so does the loader after
+  // INSTALLED: with nothing closing the socket the browser waited on TCP keepalive.
+  const dev = new FakeDevice();
+  dev.halfOpen = true;
+  const img = image(120_000);
+  // The device restarts ~1 ms after its reply here; the driver waits the settle time
+  // (real timers, capped small) before dropping the socket.
+  const r = await updateFirmware(dev, pkg(img, 1_012_001), {
+    ...fast,
+    restartSettleMs: 20,
+    sleep: (ms) => new Promise((res) => setTimeout(res, Math.min(ms, 20))),
+  });
+  assert.equal(r.outcome, "ok");
+  assert.equal(dev.appVersion, 1_012_001);
+  assert.ok(dev.restartsExpected >= 2, `handoff + install dropped the socket (${dev.restartsExpected})`);
+});
+
+test("the device coming back as the app (not the updater) is asked again, then reported", async () => {
+  const dev = new FakeDevice();
+  dev.appComesBack = 1;
+  const msgs: string[] = [];
+  const r = await updateFirmware(dev, pkg(image(30_000), 5), {
+    ...fast,
+    onProgress: (p) => msgs.push(`${p.phase}:${p.message ?? ""}`),
+  });
+  assert.equal(r.outcome, "ok");
+  assert.equal(dev.handoffs, 2);
+  assert.ok(msgs.some((m) => m.includes("came back running its current firmware")), msgs.join("\n"));
+
+  const stubborn = new FakeDevice();
+  stubborn.appComesBack = 99;
+  await assert.rejects(updateFirmware(stubborn, pkg(image(30_000), 5), fast), (e: unknown) => {
+    return e instanceof OtaError && e.code === "back_in_app" && /Nothing was changed/.test(e.message);
+  });
+});
+
+test("a device that never comes back fails with recovery text, ticking the wait", async () => {
+  const dev = new FakeDevice();
+  dev.neverBack = true;
+  const waits: string[] = [];
+  await assert.rejects(
+    updateFirmware(dev, pkg(image(30_000), 6), {
+      ...fast,
+      reconnectMs: 1300,
+      onProgress: (p) => {
+        if (p.phase === "wait") waits.push(p.message ?? "");
+      },
+    }),
+    (e: unknown) =>
+      e instanceof OtaError &&
+      e.code === "handoff_timeout" &&
+      e.message.includes(RECOVERY_TEXT) &&
+      e.message.includes("waited 1 s"),
+  );
+  assert.ok(waits.some((w) => /^Waiting for the updater \(1 s\)$/.test(w)), waits.join("|"));
+});
+
+test("the new firmware never coming back after install is a clear failure, not a spinner", async () => {
+  const dev = new FakeDevice();
+  const real = dev.otaFinish.bind(dev);
+  dev.otaFinish = async () => {
+    const st = await real();
+    dev.neverBack = true; // the install reboot never returns
+    return st;
+  };
+  await assert.rejects(updateFirmware(dev, pkg(image(30_000), 7), fast), (e: unknown) => {
+    return e instanceof OtaError && e.code === "reboot_timeout" && /reconnect to check which version/.test(e.message);
+  });
+});
+
+test("a stalled chunk (no reply, socket open) resumes on a fresh connection", async () => {
+  const dev = new FakeDevice();
+  dev.stallChunkAt = 40_000;
+  const img = image(100_000, 11);
+  const r = await updateFirmware(dev, pkg(img, 8), fast);
+  assert.equal(r.outcome, "ok");
+  assert.equal(r.resumes, 1);
+  assert.ok(dev.restartsExpected >= 1);
+  assert.deepEqual(dev.slot.subarray(0, img.length), img);
 });
