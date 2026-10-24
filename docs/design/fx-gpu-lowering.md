@@ -122,10 +122,34 @@ slowest one sets the rate.
   the render thread. With a triple-buffered handoff the output thread never
   waits on GL. Render jitter matters only if render + readback approaches a
   period; at ~1 ms of 8.33 it doesn't.
-- **SPI:** one DMA write per frame (needs `spidev.bufsiz` ≥ frame bytes, set by
-  #369). Whether the Pi pauses *inside* a transfer, especially in the first
-  `PREFILL × 10 µs`, is what the logic-analyzer continuity capture and the FPGA
-  `STATS` counters measure (#370). `PREFILL = 64` would absorb 600 µs there.
+- **SPI: one DMA write per frame** (needs `spidev.bufsiz` ≥ frame bytes, set by
+  #369). **Measured continuity**: `pi-ledmapper-1` on the #369 image, rig-1 FX2,
+  `//pi/hitl/harness:spi_continuity` (#370). SCK 6.17–6.24 MHz, the valid region
+  for a 24 MS/s analyzer (~3.9 samples/cycle). Pauses count when CLK is held
+  ≥ 1 µs, cross-checked against CS:
+
+  | LEDs (transfer) | STREAM transfers | pauses ≥ 1 µs inside a transfer | CS-high gap, CSR write → STREAM | frame period |
+  |---:|---:|---:|---|---:|
+  | 1,080 (3.2 KB) | 126 | **0** | 5–20 µs | 23.7 ms |
+  | 2,200 (6.6 KB) | 101 | **0** | 5–20 µs | 29.7 ms |
+  | 5,400 (16 KB) | 64 | **0** | 10–50 µs | 46.8 ms |
+  | 8,192 (24.6 KB) | 49 | **0** | 20–50 µs | 61.5 ms |
+  | 16,384 (49 KB) | 28 | **0** | 20–100 µs | 104.8 ms |
+  | 20,480 (61 KB) | 24 | **0** | 50–100 µs | 126.8 ms |
+
+  - **Verdict:** each frame is one gap-free CS-low DMA transfer up to 61 KB.
+    Nothing approaches the PREFILL = 2 start-of-frame slack (20 µs), let alone 64.
+  - The only gaps are between the player's per-frame CSR write and its STREAM:
+    two separate `write()`s, outside the frame. They do cost up to 0.1 ms of frame
+    period at 20k LEDs; one combined transaction would remove that.
+  - Frame periods here are set by the 4-port player's 6.2 MHz SCK (r ≈ 1.94),
+    not by the target fps.
+  - **Assumption:** pauses are a DMA/software property, independent of SCK. The
+    player's SCK is fixed by `--fpga-ports`, so 3.2 vs 6.4 MHz couldn't be
+    compared. At 20 ports (SCK ~22–24 MHz, beyond the analyzer) the FPGA's
+    `STATS` counters are the check (#370).
+  - Rig note: the SPI tap is CS = D1, MOSI = D5. The station doc had them
+    swapped; fixed in #370.
 
 ### End-to-end latency, input to photon, at 120 fps
 
@@ -442,13 +466,11 @@ validated in sim (#370). On hardware, the logic analyzer covers 4 channels; the
    DFF, 20/26 BSRAM, 83 MHz vs 54) and in a 20×1024 Verilator sim. It also fixes
    the core README's stale "~2 bytes of buffer per port" claim; the core has had
    per-port BSRAM FIFOs since the double-buffer was replaced.
-4. **Start-of-frame gap guard.** The FIFOs absorb mid-frame SPI pauses of
-   hundreds of µs. Right after a frame starts, though, the only slack is
-   `PREFILL × 10 µs` (20 µs by default), and a longer Pi-side pause latches the
-   strip mid-frame. `PREFILL = 64` absorbs 600 µs at zero resource cost (sim,
-   #370). It needs the one-LUT "start on CS-end" fix for frames under 64
-   bytes/port. The SPI-tap capture on rig-1 will show whether the Pi 3 actually
-   pauses there.
+4. **Start-of-frame gap guard: not needed at the measured behaviour.** The Pi 3
+   sends each frame as one gap-free DMA transfer up to 61 KB (no CLK pause
+   ≥ 1 µs; §0). The in-tree `PREFILL = 2` (20 µs of slack) is enough, so raising
+   it is optional insurance. Keep the `STATS` underrun counters as the production
+   health signal (#370).
 
 ## 5. Measured speedups: Pi 3B+ (VideoCore IV), GLES2 vs the VM
 
@@ -778,9 +800,8 @@ The agent never handled the Pi key. **Results are in §5**: 100 JSON lines, all
 2. **Done:** Pi 3 GLES2 bench (§5). 20×1024 in 3.2–3.5 ms for every lowered
    effect, ≤ 2/255. 4-thread VM measured.
 3. **Pi 3 at 120 fps:** the 20 × 270 / 4 × 270 bench is **done** (§0: GPU
-   0.84–0.94 ms; noise 7.84 ms on a 4-core VM). Still open: the logic-analyzer
-   continuity capture (`pi-ledmapper-1` unreachable) and FPGA `STATS` on
-   hardware (#370).
+   0.84–0.94 ms; noise 7.84 ms on a 4-core VM). Logic-analyzer continuity: **done** (0 pauses ≥ 1 µs in
+   391 transfers up to 61 KB, §0). Still open: FPGA `STATS` on hardware (#370).
 4. **GPU tier in the player (primary):**
    - a glibc GPU helper next to the static-musl player;
    - a load-time per-effect probe (lower → tolerance check → cache);
