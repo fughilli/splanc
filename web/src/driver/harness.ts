@@ -29,7 +29,13 @@ import { deviceStore } from "../store/deviceStore";
 import { mapStore } from "../store/mapStore";
 import { appState } from "../ui/app/state";
 import type { Router } from "../ui/app/router";
-import { driverCapture, driverCaptureError, driverUsesVirtualBle, setDriverActive } from "./guard";
+import {
+  driverCapture,
+  driverCaptureError,
+  driverUsesVirtualBle,
+  setDriverActive,
+  setDriverFixtureScene,
+} from "./guard";
 
 type Json = Record<string, unknown>;
 
@@ -306,6 +312,116 @@ async function handle(msg: Incoming): Promise<unknown> {
       return result as unknown as Json;
     }
 
+    // --- Calibrate IMU (hands-free): a synthetic tilting fixture + fake IMU,
+    // the REAL capture screen / registration / ImuCalFlow / write-back. ------
+    case "openImuCalibration": {
+      const { ImuCalScene } = await import("./imuCalScene");
+      const { imuCalPending, deviceKeyOf } = await import("../capture/imuCalWriteback");
+      const c = client();
+      const scene = new ImuCalScene();
+      scene.failWrites = Number(p.failWrites ?? 0);
+      imuScene = scene;
+      setDriverFixtureScene(scene);
+      // The fake fixture answers the sensor + capture-profile RPCs on THIS
+      // client (the mock device doesn't model an IMU).
+      const cr = c as unknown as Record<string, unknown>;
+      cr["getSensors"] = async () => scene.sensorState();
+      cr["setSensorMount"] = async (q: number[], meta: { poses: number; yawResolved: boolean; atMs?: number }) =>
+        scene.setMount(q, meta);
+      cr["getCaptureProfile"] = async () => ({ mapId: "" });
+      cr["setCaptureProfile"] = async (prof: unknown) => prof;
+      // ...and advertises the extrinsic feature in every (re)connect's welcome,
+      // as sensor-core firmware does, so the reconnect push applies to it.
+      const proto = Object.getPrototypeOf(c) as object;
+      const base = Object.getOwnPropertyDescriptor(proto, "welcome")?.get;
+      Object.defineProperty(c, "welcome", {
+        configurable: true,
+        get: () => {
+          const w = base?.call(c) as { features?: string[] } | null;
+          return w ? { ...w, features: [...(w.features ?? []), "imu_extrinsic"] } : w;
+        },
+      });
+      imuKey = deviceKeyOf(c.welcome?.mac);
+      imuCalPending.clear(imuKey);
+      const map = {
+        mapId: `imucal-scene-${Date.now()}`,
+        createdAt: new Date().toISOString(),
+        units: "meters" as const,
+        frame: "gravity_leveled" as const,
+        ledCount: scene.leds.length,
+        leds: scene.leds.map((xyz, id) => ({ id, xyz, confidence: 1, nViews: 4, rmsReprojPx: 0.3, parallaxDeg: 12 })),
+        unmapped: [],
+        stats: { rmsReprojPxGlobal: 0.3, medianParallaxDeg: 12 },
+      };
+      const id = await mapStore.importBundleObject({ map } as never, { source: "pull" });
+      // The "user": tilt to the next pose each time the screen shows one taken.
+      if (imuUser !== null) clearInterval(imuUser);
+      imuUser = setInterval(() => {
+        const taken = document.querySelectorAll(".capture-cal-dot--done").length;
+        if (taken > 0 && taken < scene.tips.length) scene.tiltTo(taken);
+      }, 200);
+      driverRouter?.navigate(`/capture?calibrate=${encodeURIComponent(id)}&leds=${scene.leds.length}`);
+      return { mapId: id, leds: scene.leds.length };
+    }
+    case "awaitImuCalPending": {
+      // The write failed (link dropped mid-write): the solve must be pending.
+      const { imuCalPending } = await import("../capture/imuCalWriteback");
+      const key = imuKey;
+      const deadline = Date.now() + Number(p.timeoutMs ?? 90000);
+      for (;;) {
+        const taken = document.querySelectorAll(".capture-cal-dot--done").length;
+        const prompt = document.querySelector(".capture-cal-prompt")?.textContent ?? "";
+        const pending = imuCalPending.get(key);
+        if (taken >= 3 && pending !== null && /reconnects/.test(prompt)) {
+          return { taken, prompt, pending: true, mountExtrinsic: imuScene?.mount.mountExtrinsic ?? false };
+        }
+        if (Date.now() >= deadline) throw new Error(`no pending calibration: taken=${taken} prompt=${prompt}`);
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
+    case "dropConnection": {
+      // Close the live socket as a dropped link would: the client reconnects on
+      // its own and the connection manager's onConnected runs again.
+      (client() as unknown as { sock: { close(): void } | null }).sock?.close();
+      return { dropped: true };
+    }
+    case "awaitImuCalibration": {
+      const { imuCalPending } = await import("../capture/imuCalWriteback");
+      const scene = imuScene;
+      if (!scene) throw new Error("send openImuCalibration first");
+      const key = imuKey;
+      const deadline = Date.now() + Number(p.timeoutMs ?? 90000);
+      const snapshot = () => ({
+        taken: document.querySelectorAll(".capture-cal-dot--done").length,
+        prompt: document.querySelector(".capture-cal-prompt")?.textContent ?? "",
+        status: document.querySelector("[data-testid=imucal-status]")?.textContent ?? "",
+        writes: scene.writes,
+        mountExtrinsic: scene.mount.mountExtrinsic,
+        mountYawResolved: scene.mount.mountYawResolved,
+        mountPoses: scene.mount.mountPoses,
+        mountErrorDeg: scene.mountErrorDeg(),
+        // The written mount must be the TRUE R_fi of the synthetic fixture.
+        mountAccurate: scene.mountErrorDeg() < 2,
+        pending: imuCalPending.get(key) !== null,
+        route: location.hash,
+      });
+      for (;;) {
+        const error = driverCaptureError();
+        if (error) throw new Error(`capture startup failed: ${error}`);
+        const st = snapshot();
+        if (st.mountExtrinsic && !st.pending && st.writes > 0) {
+          if (imuUser !== null) clearInterval(imuUser);
+          imuUser = null;
+          emit("milestone", { name: "imu_calibrated", detail: st as unknown as Json });
+          return st as unknown as Json;
+        }
+        if (Date.now() >= deadline) {
+          throw new Error(`calibration timeout: ${JSON.stringify(st)}`);
+        }
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
+
     // --- device configuration --------------------------------------------
     case "setHardwareConfig": {
       const reply = await client().setHardwareConfig(p as Json);
@@ -334,6 +450,10 @@ async function handle(msg: Incoming): Promise<unknown> {
 }
 
 let driverRouter: Router | null = null;
+/** The running Calibrate-IMU scene + its "user" (openImuCalibration). */
+let imuScene: import("./imuCalScene").ImuCalScene | null = null;
+let imuUser: ReturnType<typeof setInterval> | null = null;
+let imuKey = "";
 
 /**
  * Bootstrap the app-driver. Called from `main.ts` when `?driver=` is present,

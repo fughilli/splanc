@@ -548,3 +548,68 @@ fn rest_up_and_installed_extrinsic() {
     hub.calibrate(CalAction::Level).unwrap();
     assert_eq!(hub.snapshot().cal_flags & calib::FLAG_EXTRINSIC, 0);
 }
+
+/// Zero-g offsets within the MPU-6050's spec (-50 mg on x, +80 mg on z): the
+/// accel gain is learned upright (z up), then the fixture is laid on its side
+/// (x up). |a| is then ~12% off g; the fixture must still come to rest there
+/// (the Calibrate IMU flow needs a settled up in every pose), while a slow
+/// tilt never counts as rest.
+#[test]
+fn tilted_pose_with_zero_g_offsets_comes_to_rest() {
+    let (mut hub, mut bus, mut t) = running_hub(0x68, 0x68);
+    let off = Vec3::new(-0.05 * GRAVITY, 0.0, 0.08 * GRAVITY);
+    let upright = Vec3::new(0.0, 0.0, GRAVITY).add(off);
+    run(&mut hub, &mut bus, &mut t, 300, |_| (upright, Vec3::ZERO));
+    assert_eq!(hub.snapshot().at_rest, 1, "upright rest");
+    // Slow tilt to the side at 10 °/s: never at rest while it moves.
+    let rate = 10.0 * DEG;
+    let mut moving_rest = 0;
+    run(&mut hub, &mut bus, &mut t, 900, |i| {
+        let ang = rate * (i as f32) * 0.01;
+        let q = Quat::from_axis_angle(Vec3::new(0.0, 1.0, 0.0), ang.min(90.0 * DEG));
+        (accel_at(q).add(off), Vec3::new(0.0, rate, 0.0))
+    });
+    for _ in 0..10 {
+        bus.dev().produce(raw_accel(Vec3::new(GRAVITY, 0.0, 0.0).add(off)), raw_gyro(Vec3::new(0.0, rate, 0.0)), 0);
+        t += 10_000;
+        hub.poll(&mut bus, t);
+        moving_rest += hub.snapshot().at_rest as u32;
+    }
+    assert_eq!(moving_rest, 0, "rotating is not rest");
+    // On its side, still.
+    let side = Vec3::new(GRAVITY, 0.0, 0.0).add(off);
+    run(&mut hub, &mut bus, &mut t, 200, |_| (side, Vec3::ZERO));
+    let s = hub.snapshot();
+    assert_eq!(s.at_rest, 1, "on its side with offsets: {:?}", s.accel);
+    assert!(s.rest_samples >= 100, "{}", s.rest_samples);
+    let up = Vec3::from_array(s.rest_up_imu);
+    assert!(up.dot(Vec3::new(1.0, 0.0, 0.0)) > 0.99, "{up:?}");
+}
+
+/// The installed extrinsic survives a reboot: the record the sensor task
+/// persists (take_cal_dirty -> encode -> NVS) reloads into a fresh hub with the
+/// same mount, flags and metadata.
+#[test]
+fn extrinsic_survives_a_reboot() {
+    let (mut hub, mut bus, mut t) = running_hub(0x68, 0x68);
+    let a = Vec3::new(GRAVITY, 0.0, 0.0);
+    run(&mut hub, &mut bus, &mut t, 150, |_| (a, Vec3::ZERO));
+    let h = core::f32::consts::FRAC_1_SQRT_2;
+    let r_fi = Quat::new(0.0, h, h, 0.0);
+    hub.set_extrinsic(r_fi, 0.8, 3, true, 1_792_000_123);
+    assert!(hub.take_cal_dirty(), "the task persists after an extrinsic");
+    let rec = hub.calibration().encode();
+    let before = hub.snapshot();
+    // Reboot: a fresh hub seeded from the persisted record.
+    let (mut hub2, mut bus2, mut t2) = running_hub(0x68, 0x68);
+    hub2.load_calibration(Calibration::decode(&rec).expect("persisted record decodes"));
+    run(&mut hub2, &mut bus2, &mut t2, 60, |_| (a, Vec3::ZERO));
+    let s = hub2.snapshot();
+    assert!(Quat::from_array(s.mount_map).angle_to(r_fi) < 1e-4, "{:?}", s.mount_map);
+    assert_eq!(s.cal_flags, before.cal_flags);
+    assert_ne!(s.cal_flags & calib::FLAG_YAW_RESOLVED, 0);
+    assert_eq!((s.mount_poses, s.calibrated_at), (3, 1_792_000_123));
+    assert!((s.mount_residual_deg - 0.8).abs() < 1e-6);
+    // Loading isn't a change: nothing to re-persist.
+    assert!(!hub2.take_cal_dirty());
+}

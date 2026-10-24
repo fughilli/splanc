@@ -15,6 +15,7 @@ import { deviceProber } from "../../net/deviceProber";
 import { toast, type PillState } from "../kit";
 import type { FpsStateMessage } from "../../net/proto";
 import { inLoader } from "../../net/otaUpdate";
+import { pushPendingOnConnect } from "../../capture/imuCalReconnect";
 
 export interface ConnStatus {
   state: PillState;
@@ -110,7 +111,16 @@ class AppState {
           text: attempt <= 1 ? "connecting…" : `connecting (${attempt})…`,
           error: null,
         }),
-      onConnected: () => this.setStatus({ state: "connecting", text: "syncing clock…", certUrl: null }),
+      onConnected: () => {
+        this.setStatus({ state: "connecting", text: "syncing clock…", certUrl: null });
+        // A Calibrate IMU solve that never reached this device (it dropped
+        // mid-write): push it now, on every (re)connection, until confirmed.
+        void pushPendingOnConnect(client, {
+          delayMs: 1500,
+          isCurrent: () => this.client === client,
+          notify: (t) => toast(t),
+        }).catch(() => undefined);
+      },
       onDisconnected: () => this.setStatus({ state: "connecting", text: "reconnecting…" }),
       onServerError: (code, msg) => this.setStatus({ state: "error", text: "error", error: `server ${code}: ${msg}` }),
       // The client gave up auto-retrying because the cert isn't trusted — show

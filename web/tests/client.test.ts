@@ -879,3 +879,53 @@ test("a reply before the deadline resolves; the later timeout fires harmlessly",
   // no second rejection.
   scheduled[scheduled.length - 1]!();
 });
+
+test("sensor_state RPCs queue instead of rejecting: a set_sensor_mount during a get_sensors poll is sent", async () => {
+  // Regression (Calibrate IMU "accepted but not calibrated"): the screen polled
+  // get_sensors at 5 Hz, and request() is single-flight per reply type, so a
+  // set_sensor_mount issued while a poll was in flight rejected with "request
+  // already pending for sensor_state" BEFORE it was sent — the save was lost.
+  const { client, sockets } = makeClient();
+  void client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+
+  const poll = client.getSensors();
+  const write = client.setSensorMount([1, 0, 0, 0], { residualDeg: 0.5, poses: 3, yawResolved: true, atMs: 5000 });
+  await Promise.resolve();
+  assert.deepEqual(
+    s.allSent().filter((m) => m.type !== "hello").map((m) => m.type),
+    ["get_sensors"],
+    "one at a time",
+  );
+  s.receive({ type: "sensor_state", status: "SENSOR_STATUS_RUNNING" });
+  await poll;
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  assert.equal(s.lastSent().type, "set_sensor_mount", "the write goes out after the poll's reply");
+  s.receive({ type: "sensor_state", status: "SENSOR_STATUS_RUNNING", calibrationSeq: 1 });
+  const st = await write;
+  assert.equal(st.calibrationSeq, 1);
+});
+
+test("a lost sensor_state reply times out instead of wedging every later sensor request", async () => {
+  const { client, sockets, scheduled } = makeClient();
+  void client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+  const n0 = scheduled.length;
+  const lost = client.getSensors();
+  lost.catch(() => undefined);
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  assert.equal(s.lastSent().type, "get_sensors");
+  assert.ok(scheduled.length > n0, "the sensor request scheduled a deadline");
+  // The reply never comes: fire the request deadline (the latest callback).
+  scheduled[scheduled.length - 1]!();
+  await assert.rejects(lost, (e: unknown) => e instanceof RequestTimeoutError);
+  const next = client.getSensors();
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  assert.equal(s.allSent().filter((m) => m.type === "get_sensors").length, 2, "the next poll is sent");
+  s.receive({ type: "sensor_state", status: "SENSOR_STATUS_RUNNING" });
+  assert.equal((await next).status, "SENSOR_STATUS_RUNNING");
+});

@@ -99,3 +99,23 @@ export function setDriverCaptureError(error: string | null): void {
 export function driverCaptureError(): string | null {
   return captureError;
 }
+
+/** A synthetic Calibrate-IMU scene (driver/imuCalScene.ts): the fixture's LED
+ * geometry (map frame) and its fixture->room rotation over time, which the
+ * synthetic camera renders from a near-still viewpoint. Null outside that
+ * journey. */
+export interface DriverFixtureScene {
+  /** LED positions in the fixture/map frame, by id. */
+  leds: [number, number, number][];
+  /** Fixture->room rotation [x, y, z, w] (about the LED centroid) at
+   * performance.now() time `tMs`. */
+  fixtureRotAt(tMs: number): [number, number, number, number];
+}
+
+let fixtureScene: DriverFixtureScene | null = null;
+export function setDriverFixtureScene(s: DriverFixtureScene | null): void {
+  fixtureScene = s;
+}
+export function driverFixtureScene(): DriverFixtureScene | null {
+  return fixtureScene;
+}

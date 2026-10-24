@@ -1,0 +1,34 @@
+{
+  "name": "imu_calibrate_reconnect",
+  "description": "Calibrate IMU when the link drops mid-write: the same hands-free scene as imu_calibrate, but the first set_sensor_mount fails as a dropped socket would. The screen must keep the solve PENDING for this device (and say it will be sent on reconnect); then the journey drops the real socket, the client reconnects on its own, and the connection manager's onConnected pushes the pending calibration and clears it once the read-back matches.",
+  "inputs": {},
+  "steps": [
+    { "runFlow": "connect" },
+    {
+      "description": "open Calibrate IMU with the first mount write failing",
+      "do": "openImuCalibration",
+      "with": { "failWrites": 1 },
+      "expect": { "mapId": "present" }
+    },
+    {
+      "description": "three poses, solve, the write fails -> pending on this phone",
+      "do": "awaitImuCalPending",
+      "with": { "timeoutMs": 150000 },
+      "timeout": 170,
+      "expect": { "pending": { "equals": true }, "mountExtrinsic": { "equals": false } }
+    },
+    { "description": "drop the socket; the client reconnects by itself", "do": "dropConnection" },
+    {
+      "description": "the reconnect pushes the pending calibration and confirms it",
+      "do": "awaitImuCalibration",
+      "with": { "timeoutMs": 60000 },
+      "timeout": 80,
+      "expect": {
+        "mountExtrinsic": { "equals": true },
+        "mountYawResolved": { "equals": true },
+        "mountAccurate": { "equals": true },
+        "pending": { "equals": false }
+      }
+    }
+  ]
+}

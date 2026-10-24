@@ -923,12 +923,26 @@ export class LedMapperClient {
   /** The motion sensor's live state (docs/design/sensor-core.md). Needs the
    * "sensors" feature. */
   async getSensors(): Promise<SensorStateMessage> {
-    const r = (await this.request(
-      { type: "get_sensors" } as unknown as ClientMessage,
-      "sensor_state",
-    )) as unknown as Partial<SensorStateMessage>;
+    const r = (await this.sensorRequest({ type: "get_sensors" } as unknown as ClientMessage)) as unknown as
+      Partial<SensorStateMessage>;
     return normalizeSensorState(r);
   }
+
+  /** get_sensors / calibrate_sensors / set_sensor_mount all answer
+   * sensor_state, and request() is single-flight per reply type: a poll in
+   * flight made a concurrent set_sensor_mount reject ("request already
+   * pending") before it was ever sent — the Calibrate IMU save was silently
+   * lost that way. Queue them instead, each with a deadline so one lost reply
+   * can't wedge every later sensor request. */
+  private sensorRequest(msg: ClientMessage): Promise<ServerMessage> {
+    const run = this.sensorChain.then(() => this.request(msg, "sensor_state", this.requestTimeoutMs));
+    this.sensorChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+  private sensorChain: Promise<void> = Promise.resolve();
 
   /** Run a sensor calibration action. Applied by the device's sensor task at its
    * next poll: the reply is the state BEFORE it ran — poll getSensors until
@@ -939,10 +953,10 @@ export class LedMapperClient {
       level: "ACTION_LEVEL",
       reset: "ACTION_RESET",
     };
-    const r = (await this.request(
-      { type: "calibrate_sensors", action: actions[action] } as unknown as ClientMessage,
-      "sensor_state",
-    )) as unknown as Partial<SensorStateMessage>;
+    const r = (await this.sensorRequest({
+      type: "calibrate_sensors",
+      action: actions[action],
+    } as unknown as ClientMessage)) as unknown as Partial<SensorStateMessage>;
     return normalizeSensorState(r);
   }
 
@@ -953,17 +967,14 @@ export class LedMapperClient {
     quat: number[],
     meta: { residualDeg: number; poses: number; yawResolved: boolean; atMs?: number },
   ): Promise<SensorStateMessage> {
-    const r = (await this.request(
-      {
-        type: "set_sensor_mount",
-        quat,
-        residualDeg: meta.residualDeg,
-        poses: meta.poses,
-        yawResolved: meta.yawResolved,
-        calibratedAtMs: String(meta.atMs ?? Date.now()),
-      } as unknown as ClientMessage,
-      "sensor_state",
-    )) as unknown as Partial<SensorStateMessage>;
+    const r = (await this.sensorRequest({
+      type: "set_sensor_mount",
+      quat,
+      residualDeg: meta.residualDeg,
+      poses: meta.poses,
+      yawResolved: meta.yawResolved,
+      calibratedAtMs: String(meta.atMs ?? Date.now()),
+    } as unknown as ClientMessage)) as unknown as Partial<SensorStateMessage>;
     return normalizeSensorState(r);
   }
 
@@ -982,9 +993,12 @@ export class LedMapperClient {
 
   /** The stored map's capture profile (mapId "" = none stored). */
   async getCaptureProfile(): Promise<CaptureProfileFlat> {
+    // Deadline: the Calibrate IMU screen awaits this before starting the code,
+    // so a device that never answers must not leave it stuck.
     const r = (await this.request(
       { type: "get_capture_profile" } as unknown as ClientMessage,
       "capture_profile",
+      this.requestTimeoutMs,
     )) as unknown as Partial<CaptureProfileFlat>;
     return normalizeProfile(r);
   }
