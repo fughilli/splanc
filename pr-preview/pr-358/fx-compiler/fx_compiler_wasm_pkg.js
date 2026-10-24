@@ -93,6 +93,20 @@ export function fx_compile(src) {
 }
 
 /**
+ * Like [`fx_compile`] but with the variance pass (per-frame hoisting + per-LED
+ * memoization) off — for the calibration micro-benchmarks, which must measure
+ * raw opcodes rather than a cache hit.
+ * @param {string} src
+ * @returns {CompileResult}
+ */
+export function fx_compile_no_memo(src) {
+    const ptr0 = passStringToWasm0(src, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.fx_compile_no_memo(ptr0, len0);
+    return CompileResult.__wrap(ret);
+}
+
+/**
  * Disassemble compiled `.fxb` bytecode to a readable op listing (offsets +
  * mnemonics + operands, entry points labelled). Wraps the authoritative
  * `ledmapper_fx_compiler::disassemble` so the editor's disassembly panel can
