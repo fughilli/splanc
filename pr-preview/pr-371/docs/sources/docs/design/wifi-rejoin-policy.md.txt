@@ -18,13 +18,33 @@ Two questions drove this:
 |---|---|---|
 | xmit (WS2812 transmit kick) | 11 | none; the frame goes out by PARLIO + GDMA from SRAM |
 | render | 10 | none |
-| loopTask (netstack) | 10 | RX drain, join, PBKDF2, DHCP, TLS, background sweep hops |
+| loopTask (netstack) | 9, or 10 while a wss session streams | RX drain, join, PBKDF2 (at 8), DHCP, TLS, background sweep hops |
 | vendor WiFi task | 23 | `esp_wifi_set_channel` (one per sweep hop) |
 | esp_timer task | 22 | the 4 ms coex tick (BLE slices) |
 
-The netstack loop runs at the render task's priority (#145: under a full-perf benchmark a
-lower-priority loop starved the network). Equal priorities are time-sliced per 1 ms tick
-whenever both are runnable.
+### Loop priority
+
+The netstack loop runs one priority below render whenever the link is joining,
+scanning, leasing, deriving a PMK, or idle, so none of that work can delay a frame. It
+moves up to render's priority only while a wss session is open on a leased link with no
+sweep or PMK derivation running (`netstack_data_plane_active`, re-checked every loop).
+Equal priorities are time-sliced per 1 ms tick whenever both are runnable, so a
+streaming session gets about half of a busy CPU. A rejoin always tears the session down
+first, so the rejoin path never runs at render's priority.
+
+Keeping the loop below render all the time starved streaming. It then ran only in
+render's sleeps: about 3-4 ms of each 12 ms frame under a light 80 fps effect. A
+30 fps texture stream outran it. `video_latency_netstack` (hitl-rig-2, c6-fa0324,
+24x24 RGB565 at 30 fps for 120 s, one reservation, same DUT):
+
+| loop priority | verdict | latency p50 / p95 / p99 ms | loop gap (5 s max), p50 | zero windows | end |
+|---|---|---|---|---|---|
+| always below render | FAIL | 523 / 1003 / 1160 | 134 ms | 230 | device closed the session at 104 s |
+| always at render (before) | PASS | 20.6 / 27.4 / 34.7 | 30 ms | 0 | done |
+| follows the data plane | PASS | 20.7 / 29.1 / 39.2 | 31 ms | 0 | done |
+
+While a session streams, a light effect renders at ~55-60 fps instead of 80 (the
+autoscaler sees the shared CPU), as before #371.
 
 ### Measurement
 

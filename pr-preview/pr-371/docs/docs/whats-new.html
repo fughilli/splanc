@@ -330,7 +330,9 @@ passphrase, a missing network, DHCP retries and the address fallback are now
 invisible on the strip: on the logic analyzer, frame intervals stay within
 0.7 ms of steady for a light effect and within the effect’s own jitter for a
 heavy one. The network now runs below the render task, PBKDF2 no longer
-shares the CPU with frames, and frames are paced on wall time.</p></li>
+shares the CPU with frames, and frames are paced on wall time. While an app
+session is open, the network shares the CPU with rendering as before, so
+30 fps video streams keep a ~20 ms latency.</p></li>
 <li><p><strong>Choose how a board rejoins.</strong> <code class="docutils literal notranslate"><span class="pre">auto</span></code> (the default: quick retries that slow
 to one sweep every 15 min after a day without the network), <code class="docutils literal notranslate"><span class="pre">fixed</span></code>,
 <code class="docutils literal notranslate"><span class="pre">manual</span></code>, or <code class="docutils literal notranslate"><span class="pre">offline</span></code> for a unit deployed where it will never see its AP

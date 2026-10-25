@@ -349,8 +349,8 @@ set up on an AP once and then deployed somewhere it will never see that AP again
 <td><p>none</p></td>
 </tr>
 <tr class="row-even"><td><p>loopTask (netstack)</p></td>
-<td><p>10</p></td>
-<td><p>RX drain, join, PBKDF2, DHCP, TLS, background sweep hops</p></td>
+<td><p>9, or 10 while a wss session streams</p></td>
+<td><p>RX drain, join, PBKDF2 (at 8), DHCP, TLS, background sweep hops</p></td>
 </tr>
 <tr class="row-odd"><td><p>vendor WiFi task</p></td>
 <td><p>23</p></td>
@@ -363,9 +363,58 @@ set up on an AP once and then deployed somewhere it will never see that AP again
 </tbody>
 </table>
 </div>
-<p>The netstack loop runs at the render task’s priority (#145: under a full-perf benchmark a
-lower-priority loop starved the network). Equal priorities are time-sliced per 1 ms tick
-whenever both are runnable.</p>
+</section>
+<section id="loop-priority">
+<h3>Loop priority<a class="headerlink" href="#loop-priority" title="Link to this heading">¶</a></h3>
+<p>The netstack loop runs one priority below render whenever the link is joining,
+scanning, leasing, deriving a PMK, or idle, so none of that work can delay a frame. It
+moves up to render’s priority only while a wss session is open on a leased link with no
+sweep or PMK derivation running (<code class="docutils literal notranslate"><span class="pre">netstack_data_plane_active</span></code>, re-checked every loop).
+Equal priorities are time-sliced per 1 ms tick whenever both are runnable, so a
+streaming session gets about half of a busy CPU. A rejoin always tears the session down
+first, so the rejoin path never runs at render’s priority.</p>
+<p>Keeping the loop below render all the time starved streaming. It then ran only in
+render’s sleeps: about 3-4 ms of each 12 ms frame under a light 80 fps effect. A
+30 fps texture stream outran it. <code class="docutils literal notranslate"><span class="pre">video_latency_netstack</span></code> (hitl-rig-2, c6-fa0324,
+24x24 RGB565 at 30 fps for 120 s, one reservation, same DUT):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>loop priority</p></th>
+<th class="head"><p>verdict</p></th>
+<th class="head"><p>latency p50 / p95 / p99 ms</p></th>
+<th class="head"><p>loop gap (5 s max), p50</p></th>
+<th class="head"><p>zero windows</p></th>
+<th class="head"><p>end</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>always below render</p></td>
+<td><p>FAIL</p></td>
+<td><p>523 / 1003 / 1160</p></td>
+<td><p>134 ms</p></td>
+<td><p>230</p></td>
+<td><p>device closed the session at 104 s</p></td>
+</tr>
+<tr class="row-odd"><td><p>always at render (before)</p></td>
+<td><p>PASS</p></td>
+<td><p>20.6 / 27.4 / 34.7</p></td>
+<td><p>30 ms</p></td>
+<td><p>0</p></td>
+<td><p>done</p></td>
+</tr>
+<tr class="row-even"><td><p>follows the data plane</p></td>
+<td><p>PASS</p></td>
+<td><p>20.7 / 29.1 / 39.2</p></td>
+<td><p>31 ms</p></td>
+<td><p>0</p></td>
+<td><p>done</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>While a session streams, a light effect renders at ~55-60 fps instead of 80 (the
+autoscaler sees the shared CPU), as before #371.</p>
 </section>
 <section id="measurement">
 <h3>Measurement<a class="headerlink" href="#measurement" title="Link to this heading">¶</a></h3>
@@ -624,6 +673,7 @@ does not act on it. That build is deprecated.</p></li>
 <li><a class="reference internal" href="#">Wi-Fi rejoin policy and render isolation (netstack C6)</a><ul>
 <li><a class="reference internal" href="#render-isolation">1. Render isolation</a><ul>
 <li><a class="reference internal" href="#what-shares-the-core">What shares the core</a></li>
+<li><a class="reference internal" href="#loop-priority">Loop priority</a></li>
 <li><a class="reference internal" href="#measurement">Measurement</a></li>
 </ul>
 </li>
