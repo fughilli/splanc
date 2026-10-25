@@ -39,6 +39,7 @@
 #include "esp_mac.h"        // esp_read_mac: the factory STA MAC
 #include "sta_mac.h"        // stable (factory) vs opt-in random station MAC
 #include "join_guard.h"     // per-boot 802.11 sequence numbers + the unanswered-auth guard
+#include "serial_log.h"     // Console(): the ordered, lossless log ring (identity lines)
 
 extern "C" {
 void ns_mac_rx_install();
@@ -1672,8 +1673,14 @@ static void radio_bringup(bool at_boot) {
   bool factory = lm_sta_mac::choose(factory_mac, lm_sta_mac::random_mac_is_build_default(), rnd,
                                     OUR_MAC);
   g_seq.seed((uint16_t)(rnd[3] | (rnd[0] << 8)));  // a new boot never reuses the last one's
-  Serial.printf("MAC %02x:%02x:%02x:%02x:%02x:%02x (%s)\n", OUR_MAC[0], OUR_MAC[1], OUR_MAC[2],
-                OUR_MAC[3], OUR_MAC[4], OUR_MAC[5], factory ? "factory" : "random per boot");
+  // Through the Log() ring, not a direct Serial.printf: this is the board's identity line
+  // (the stable_identity HITL gate keys on it), and a direct write at the 0 ms TX timeout
+  // set above is dropped whole whenever the boot log burst is still draining (tx lock
+  // held / HWCDC ring full) — every first boot after an erase on #353's main — or lands
+  // spliced inside a half-drained log line. The ring keeps it ordered and delivered.
+  Console().printf("MAC %02x:%02x:%02x:%02x:%02x:%02x (%s)\n", OUR_MAC[0], OUR_MAC[1],
+                   OUR_MAC[2], OUR_MAC[3], OUR_MAC[4], OUR_MAC[5],
+                   factory ? "factory" : "random per boot");
   g_our_mac_ptr = OUR_MAC;
   // Cache every AP in range NOW, while the vendor WiFi RX still works — after the MAC
   // hijack below we own the ring and the vendor scan can't run. scan_latch_ap() (in the

@@ -137,11 +137,18 @@ def grade(boot1: dict | None, boot2: dict | None, mdns: dict | None, refusal: di
     if not boot2 or not boot2.get("booted"):
         return {"verdict": "SKIP", "problems": [], "skip": "reboot never came back up (infra)"}
     p: list[str] = []
-    if boot1.get("mac_kind") != "factory":
+    if not boot1.get("sta_mac"):
+        # Still a FAIL (the gate can't vouch for an identity it never saw), but named for
+        # what it is: the firmware's console lost the line, not a random MAC.
+        p.append(
+            "no `MAC <mac> (factory|random per boot)` line in the first boot's serial "
+            "(the console dropped or spliced it; see the flash serial log)"
+        )
+    elif boot1.get("mac_kind") != "factory":
         p.append(
             f"station MAC is not the factory MAC ({boot1.get('sta_mac')} {boot1.get('mac_kind')})"
         )
-    if boot1.get("sta_mac") != boot2.get("sta_mac"):
+    if boot1.get("sta_mac") and boot1.get("sta_mac") != boot2.get("sta_mac"):
         p.append(
             f"station MAC changed across reboot: {boot1.get('sta_mac')} -> {boot2.get('sta_mac')}"
         )

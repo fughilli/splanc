@@ -243,7 +243,7 @@ def run(args) -> int:
             with open(os.path.join(args.log_dir, f"stable_identity_{k}.log"), "w") as f:
                 f.write(v)
     if g["verdict"] == "FAIL":
-        for k in ("reboot", "provision"):
+        for k in ("reboot", "provision", "flash"):
             if k in logs:
                 _log(f"----- {k} serial log -----")
                 _log(logs[k][-6000:])
