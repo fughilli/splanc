@@ -31,7 +31,14 @@ export interface OtaDevice {
   otaBegin(manifest: Uint8Array, allowDowngrade?: boolean, keyEpoch?: Uint8Array): Promise<OtaStatusFlat>;
   otaChunk(offset: number, data: Uint8Array): Promise<OtaStatusFlat>;
   otaFinish(): Promise<OtaStatusFlat>;
+  /** Resolve on the next connection handshake whose welcome satisfies `pred`; the
+   * connection must keep reconnecting while this is pending (LedMapperClient does,
+   * past its cert-trust give-up). Rejects after `timeoutMs`. */
   waitForWelcome(pred: (w: WelcomeMessage) => boolean, timeoutMs: number): Promise<WelcomeMessage>;
+  /** The device is restarting (or the link stopped answering): drop the current
+   * socket so the reconnect starts now instead of when TCP keepalive notices the
+   * half-open connection. Optional (a transport that sees the drop itself). */
+  expectRestart?(): void;
 }
 
 export interface OtaManifest {
@@ -59,6 +66,7 @@ export class OtaError extends Error {
 
 export type OtaPhase =
   | "handoff" // the app is restarting into the loader
+  | "wait" // waiting for the device to come back on Wi-Fi (message has the seconds)
   | "transfer" // streaming the image
   | "resume" // the link dropped; resuming
   | "verify" // the loader is checking the image
@@ -78,8 +86,14 @@ export interface OtaProgress {
 export interface OtaOptions {
   allowDowngrade?: boolean;
   onProgress?: (p: OtaProgress) => void;
-  /** How long to wait for the device to come back after each restart. */
+  /** How long to wait for the device to come back after each restart (the app ->
+   * loader handoff: a reboot, a Wi-Fi join and the TLS identity load; then the
+   * loader -> new app boot). Default 180 s. */
   reconnectMs?: number;
+  /** After the device answers a restart (REBOOTING / INSTALLED) it restarts ~0.4 s
+   * later without closing the socket; wait this long, then drop the socket and
+   * reconnect. Default 1500 ms. */
+  restartSettleMs?: number;
   /** How long the new app gets to prove healthy (its own deadline is 120 s). */
   healthMs?: number;
   maxResumes?: number;
@@ -142,29 +156,121 @@ function failed(st: OtaStatusFlat): boolean {
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+/** What a user can do when the device doesn't come back — shown with every timeout. */
+export const RECOVERY_TEXT =
+  "If it is in its updater (recovery mode), reload this page and reconnect to it, then press " +
+  "Update over Wi-Fi again — that works from the updater.";
+
+/** …and when the update never started (the handoff): the updater gives the device
+ * back by itself (loader idle timeout for reason "update", firmware/ota boot.rs). */
+const HANDOFF_RECOVERY_TEXT =
+  `${RECOVERY_TEXT} If you leave it, an updater that was never sent the update returns to ` +
+  "the current firmware by itself within 5 minutes.";
+
+/** …and mid-transfer: a started update keeps the device in its updater (the app slot
+ * is partly rewritten) until an update completes. */
+const TRANSFER_RECOVERY_TEXT =
+  `${RECOVERY_TEXT} It stays in its updater until an update completes; its settings are kept.`;
+
+/** Wait for the device's next handshake (`pred`), reporting the elapsed seconds once
+ * a second so the UI never shows a silent spinner. A timeout becomes an OtaError
+ * with `code` and the user-facing `text`. */
+async function awaitDevice(
+  dev: OtaDevice,
+  pred: (w: WelcomeMessage) => boolean,
+  timeoutMs: number,
+  tick: (seconds: number) => void,
+  code: string,
+  text: string,
+  pending?: Promise<WelcomeMessage>,
+): Promise<WelcomeMessage> {
+  const t0 = Date.now();
+  const iv = setInterval(() => tick(Math.round((Date.now() - t0) / 1000)), 1000);
+  try {
+    return await (pending ?? dev.waitForWelcome(pred, timeoutMs));
+  } catch (e) {
+    if (e instanceof OtaError) throw e;
+    throw new OtaError(code, `${text} (waited ${Math.round(timeoutMs / 1000)} s)`);
+  } finally {
+    clearInterval(iv);
+  }
+}
+
+/** A request that got no reply in time (the link stalled; the socket may still
+ * look open) — as opposed to one that failed because the socket closed. */
+function timedOut(e: unknown): boolean {
+  return e instanceof Error && (e.name === "RequestTimeoutError" || /timed out/i.test(e.message));
+}
+
+/** How many times the app is asked to restart into the updater before giving up
+ * (it can come back as the app: a restart that didn't take, or the updater's idle
+ * return). */
+const MAX_HANDOFFS = 3;
+
 /** Install `pkg` on `dev`. Throws OtaError with the device's refusal code. */
 export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaOptions = {}): Promise<OtaResult> {
   const { manifest, image, info } = splitPackage(pkg);
   const sleep = opts.sleep ?? defaultSleep;
-  const reconnectMs = opts.reconnectMs ?? 120_000;
+  const reconnectMs = opts.reconnectMs ?? 180_000;
+  const settleMs = opts.restartSettleMs ?? 1500;
   const total = info.size;
   const report = (phase: OtaPhase, sent: number, message?: string): void =>
     opts.onProgress?.({ phase, sent, total, version: info.version, ...(message ? { message } : {}) });
+  const waiting = (what: string, sent: number) => (sec: number) =>
+    report("wait", sent, `${what} (${sec} s)`);
+  /** The device answered a restart: let the reply land, then drop the (about to be
+   * half-open) socket so the reconnect starts now. */
+  const restarting = async (): Promise<void> => {
+    if (!dev.expectRestart) return;
+    await sleep(settleMs);
+    dev.expectRestart();
+  };
+  let handoffs = 0;
 
-  if (!inLoader(dev.welcome)) {
+  /** From the app: ask it to restart into the loader and wait for the loader. */
+  const handoff = async (): Promise<void> => {
+    if (inLoader(dev.welcome)) return;
     const st = await dev.getOtaStatus();
     if (st.error === "legacy_layout") {
       throw new OtaError("legacy_layout", "This device needs a one-time USB update before it can update over Wi-Fi.");
     }
-    report("handoff", 0, "Restarting into the updater…");
-    const back = dev.waitForWelcome(inLoader, reconnectMs);
-    const r = await dev.otaBegin(manifest, opts.allowDowngrade ?? false, opts.keyEpoch);
-    if (failed(r)) {
-      back.catch(() => undefined);
-      throw new OtaError(r.error, `The device refused the update: ${r.error}`);
+    for (;;) {
+      if (++handoffs > MAX_HANDOFFS) {
+        throw new OtaError(
+          "back_in_app",
+          "The device keeps coming back running its current firmware instead of its updater, so the " +
+            "update didn't start. Nothing was changed; try again.",
+        );
+      }
+      report("handoff", 0, "Restarting into the updater…");
+      // Registered BEFORE the offer: from here the connection keeps reconnecting.
+      const back = dev.waitForWelcome(() => true, reconnectMs);
+      let r: OtaStatusFlat;
+      try {
+        r = await dev.otaBegin(manifest, opts.allowDowngrade ?? false, opts.keyEpoch);
+      } catch (e) {
+        // The reply was lost (the app may already be restarting): find out from
+        // whatever comes back.
+        report("handoff", 0, `No answer to the update offer (${String(e)}); waiting for the device…`);
+        if (timedOut(e)) dev.expectRestart?.();
+        const w = await awaitDevice(dev, () => true, reconnectMs, waiting("Waiting for the device", 0),
+          "handoff_timeout", `The device didn't come back on Wi-Fi. ${HANDOFF_RECOVERY_TEXT}`, back);
+        if (inLoader(w)) return;
+        continue;
+      }
+      if (failed(r)) {
+        back.catch(() => undefined);
+        throw new OtaError(r.error, `The device refused the update: ${r.error}`);
+      }
+      await restarting();
+      const w = await awaitDevice(dev, () => true, reconnectMs, waiting("Waiting for the updater", 0),
+        "handoff_timeout", `The device didn't come back in its updater. ${HANDOFF_RECOVERY_TEXT}`, back);
+      if (inLoader(w)) return;
+      report("handoff", 0, "The device came back running its current firmware; asking it again…");
     }
-    await back;
-  }
+  };
+
+  await handoff();
 
   const t0 = Date.now();
   let resumes = 0;
@@ -190,8 +296,25 @@ export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaO
     } catch (e) {
       if (e instanceof OtaError) throw e;
       if (++resumes > (opts.maxResumes ?? 8)) throw new OtaError("link", `Gave up after ${resumes - 1} resumes: ${String(e)}`);
-      report("resume", Math.max(0, offset), String(e));
-      if (!inLoader(dev.welcome)) await dev.waitForWelcome(inLoader, reconnectMs);
+      const at = Math.max(0, offset);
+      report("resume", at, String(e));
+      // A link that stopped answering (a timed-out chunk, socket still open — or
+      // half-open under a device that reset): drop it and resume on a FRESH
+      // connection; a late reply on the old one would otherwise be taken as the
+      // answer to the next request. A socket that closed reconnects by itself.
+      let w = dev.welcome;
+      if (timedOut(e) && dev.expectRestart) {
+        const back = dev.waitForWelcome(() => true, reconnectMs);
+        dev.expectRestart();
+        w = await awaitDevice(dev, () => true, reconnectMs, waiting("Reconnecting to the updater", at),
+          "resume_timeout", `Lost the connection to the updater mid-transfer. ${TRANSFER_RECOVERY_TEXT}`, back);
+      } else if (!w) {
+        w = await awaitDevice(dev, () => true, reconnectMs, waiting("Reconnecting to the updater", at),
+          "resume_timeout", `Lost the connection to the updater mid-transfer. ${TRANSFER_RECOVERY_TEXT}`);
+      }
+      // The updater gave the device back to its app (nothing was left installed):
+      // hand it over again and start the transfer over.
+      if (!inLoader(w)) await handoff();
       offset = -1;
     }
   }
@@ -199,22 +322,39 @@ export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaO
 
   report("verify", total, "Verifying…");
   const backAfterInstall = dev.waitForWelcome(() => true, reconnectMs);
-  const fin = await dev.otaFinish();
-  if (fin.state !== "STATE_INSTALLED") {
-    backAfterInstall.catch(() => undefined);
-    throw new OtaError(fin.error || "not_installed", `The image didn't install: ${fin.error}`);
+  let installed = true;
+  try {
+    const fin = await dev.otaFinish();
+    if (fin.state !== "STATE_INSTALLED") {
+      backAfterInstall.catch(() => undefined);
+      throw new OtaError(fin.error || "not_installed", `The image didn't install: ${fin.error}`);
+    }
+  } catch (e) {
+    if (e instanceof OtaError) throw e;
+    // The verify reply was lost: the health check below finds out what happened.
+    installed = false;
+    dev.expectRestart?.();
   }
   report("reboot", total, "Starting the new firmware…");
-  await backAfterInstall;
+  if (installed) await restarting();
+  await awaitDevice(dev, () => true, reconnectMs, waiting("Waiting for the new firmware", total),
+    "reboot_timeout",
+    "The image was sent and verified, but the device didn't come back on Wi-Fi after restarting into it. " +
+      "Reload this page and reconnect to check which version it runs.",
+    backAfterInstall);
 
   // The new app boots pending verify and proves itself healthy, or rolls back.
   report("health", total, "Checking the new firmware is healthy…");
-  const deadline = Date.now() + (opts.healthMs ?? 240_000);
+  const tHealth = Date.now();
+  const deadline = tHealth + (opts.healthMs ?? 240_000);
   let final: OtaStatusFlat | null = null;
   let outcome: OtaResult["outcome"] = "timeout";
   while (Date.now() < deadline) {
     try {
-      if (!dev.welcome) await dev.waitForWelcome(() => true, Math.max(1000, deadline - Date.now()));
+      if (!dev.welcome) {
+        await awaitDevice(dev, () => true, Math.max(1000, deadline - Date.now()),
+          waiting("Waiting for the new firmware", total), "health_timeout", "", undefined);
+      }
       final = await dev.getOtaStatus();
       if (final.mode === "MODE_LOADER" && final.lastResult === "rolled_back") {
         outcome = "rolled_back";
@@ -224,8 +364,10 @@ export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaO
         outcome = "ok";
         break;
       }
+      report("health", total, `Checking the new firmware is healthy (${Math.round((Date.now() - tHealth) / 1000)} s)…`);
     } catch {
-      // rebooting (a rollback restarts it) — try again
+      // Rebooting (a rollback restarts it) or the link stopped answering: reconnect.
+      if (dev.welcome) dev.expectRestart?.();
     }
     await sleep(3000);
   }
@@ -235,7 +377,7 @@ export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaO
       outcome,
       outcome === "rolled_back"
         ? "The new firmware didn't start correctly; the device rolled back to its updater. Try another version."
-        : "The device didn't confirm the new firmware in time.",
+        : "The device didn't confirm the new firmware in time. Reload this page and reconnect to check which version it runs.",
     );
   }
   return { version: info.version, outcome, resumes, final, transferMs };

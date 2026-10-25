@@ -102,6 +102,7 @@ py_library(
         "hitl_ws.py",
         "improv.py",
         "jit_soak_core.py",
+        "lan_relay.py",
         "led_pattern.py",
         "loaded_tls_core.py",
         "map_upload_core.py",
@@ -704,6 +705,49 @@ py_test(
         ":harness",
         "//pi/server",
         "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Web OTA journey: the over-the-air update driven through the REAL web app (headless
+# Chromium + the built //web:dist), not the Python client — the handoff into the
+# loader, the transfer, the boot into the new firmware and the health check, with
+# every reconnect made by net/client.ts. The browser reaches the DUT through
+# lan_relay.py (in the reservation container), which reproduces a phone's LAN socket
+# semantics (half-open after a restart, found by a 45 s keepalive) and can emulate a
+# slow Wi-Fi rejoin (--restart-blackout) or a mid-transfer stall (--stall).
+# Tagged `hitl_web`, NOT `hitl`: it needs Playwright's Chromium on the runner, so it
+# is opt-in (`bazel test //pi/hitl/harness:web_ota_journey`) rather than in the pool.
+py_test(
+    name = "web_ota_journey",
+    timeout = "eternal",
+    srcs = ["hitl_web_ota.py"],
+    args = [
+        "--restart-blackout=75",
+        "--stall=12",
+    ],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_ota_b_testsigned",
+        "//firmware/player_app:esp32c6_ota_testkey_flashbundle",
+        "//web:dist",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_OTA_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_ota_testkey_flashbundle.tar",
+        "HITL_OTA_B_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_ota_b_testsigned.ota",
+        "HITL_WEB_DIST_RUNFILE": "_main/web/dist",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_web_ota.py",
+    tags = [
+        "hitl_web",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "@rules_python//python/runfiles",
+        requirement("playwright"),
         requirement("websockets"),
     ],
 )
