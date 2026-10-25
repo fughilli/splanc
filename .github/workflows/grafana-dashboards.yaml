@@ -61,10 +61,11 @@ jobs:
             #   - id:null so Grafana keys on the model's uid (create-or-update),
             #   - overwrite:true so a repeat push updates in place,
             #   - folderUid as resolved above.
-            payload=$(jq \
+            #   - __GITHUB_REPOSITORY__ becomes this repo (owner/name), for dashboards
+            #     that read release assets (hitl-capacity), so no JSON names the owner.
+            payload=$(sed "s#__GITHUB_REPOSITORY__#${GITHUB_REPOSITORY}#g" "$f" | jq \
               --arg folder "$folder" \
-              '{dashboard: (.id = null), overwrite: true, folderUid: $folder, message: "synced from repo by CI"}' \
-              "$f")
+              '{dashboard: (.id = null), overwrite: true, folderUid: $folder, message: "synced from repo by CI"}')
             code=$(curl -s -o /tmp/resp.json -w '%{http_code}' \
               -H "Authorization: Bearer ${GRAFANA_TOKEN}" \
               -H "Content-Type: application/json" \
