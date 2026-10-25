@@ -78,6 +78,7 @@ stream), upgrading the bridge's SDK is enough; the relay doesn't change.
 | `POST /bridge/register` | `{public_key, ts, sig}` → `{bridge_id}`. |
 | `GET /bridge/connect?id=` | The bridge's WebSocket upgrade (header `x-splanc-bridge-auth`). |
 | `GET /live` | An app's live (VJ) WebSocket, bearer token in the subprotocol list, passed through to the bridge ([live-vj-relay.md](live-vj-relay.md)). |
+| `POST /bugs` | An agent files a bug on the Splanc repo with the Worker's `GITHUB_ISSUES_TOKEN` secret; per-bridge / per-IP rate limits; `503 not_configured` without the secret ([agent-bug-reports.md](agent-bug-reports.md)). |
 | `GET /healthz` | `{"ok":true}`. |
 
 `/mcp` answers `401` with `WWW-Authenticate: Bearer resource_metadata="<relay>/.well-known/
