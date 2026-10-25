@@ -331,6 +331,11 @@ uint32_t lm_osc_ingest(const uint8_t *data, size_t len);
 // Netstack OSC: stash a datagram (latest value per address; network task) and apply
 // what's waiting at a frame boundary (render task, under player_mutex). The caller
 // serializes the two with a short critical section.
+// The mailbox is bound lazily to a heap block of lm_osc_mailbox_bytes() (4-aligned,
+// never freed; once only) — before that, lm_osc_post keeps nothing.
+size_t lm_osc_mailbox_bytes(void);
+bool lm_osc_mailbox_bind(uint8_t *mem);
+bool lm_osc_mailbox_bound(void);
 uint32_t lm_osc_post(const uint8_t *data, size_t len);
 uint32_t lm_osc_drain(void);
 // Select OSC addressing: true (default) resolves uniform names via the active

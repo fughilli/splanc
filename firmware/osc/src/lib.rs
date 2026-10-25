@@ -575,17 +575,26 @@ fn parse_slot(s: &str) -> Option<u16> {
 /// Longest OSC address the [`Mailbox`] keeps (a longer one is dropped).
 pub const MAILBOX_ADDR_CAP: usize = 40;
 
+/// One waiting address. All-zero is "empty" (an OSC address is never empty: it
+/// starts with '/'), so a [`Mailbox`] is zero-initialised: as a static it lands
+/// in `.bss`, and the firmware can bind one into a fresh heap block. Arguments
+/// are kept already converted to `f32` — the only form [`apply_message`] reads
+/// (`OscArg::as_f32`) — which keeps an entry at 60 B instead of 112.
 #[derive(Clone, Copy)]
 struct Entry {
     addr: [u8; MAILBOX_ADDR_CAP],
+    vals: [f32; 4],
     addr_len: u8,
-    args: [OscArg; 4],
     n_args: u8,
-    used: bool,
 }
 
-const EMPTY_ENTRY: Entry =
-    Entry { addr: [0; MAILBOX_ADDR_CAP], addr_len: 0, args: [OscArg::Other; 4], n_args: 0, used: false };
+const EMPTY_ENTRY: Entry = Entry { addr: [0; MAILBOX_ADDR_CAP], vals: [0.0; 4], addr_len: 0, n_args: 0 };
+
+impl Entry {
+    fn used(&self) -> bool {
+        self.addr_len != 0
+    }
+}
 
 /// Received OSC messages waiting for the next frame, LATEST VALUE PER ADDRESS.
 ///
@@ -626,13 +635,16 @@ impl<const N: usize> Mailbox<N> {
                 *dropped += 1;
                 return;
             }
-            let hit = entries.iter().position(|e| e.used && &e.addr[..e.addr_len as usize] == a);
+            if a.is_empty() {
+                return; // parse_message only yields '/'-addresses; keep `addr_len != 0` = used
+            }
+            let hit = entries.iter().position(|e| e.used() && &e.addr[..e.addr_len as usize] == a);
             let i = match hit {
                 Some(i) => {
                     *coalesced += 1;
                     i
                 }
-                None => match entries.iter().position(|e| !e.used) {
+                None => match entries.iter().position(|e| !e.used()) {
                     Some(i) => i,
                     None => {
                         *dropped += 1;
@@ -641,18 +653,15 @@ impl<const N: usize> Mailbox<N> {
                 },
             };
             let e = &mut entries[i];
-            e.used = true;
             e.addr[..a.len()].copy_from_slice(a);
             e.addr_len = a.len() as u8;
             let mut n = 0usize;
-            for arg in m.args() {
+            for v in m.args().iter().filter_map(OscArg::as_f32) {
                 if n == 4 {
                     break;
                 }
-                if arg.as_f32().is_some() {
-                    e.args[n] = *arg;
-                    n += 1;
-                }
+                e.vals[n] = v;
+                n += 1;
             }
             e.n_args = n as u8;
             kept += 1;
@@ -662,7 +671,7 @@ impl<const N: usize> Mailbox<N> {
 
     /// Messages waiting.
     pub fn len(&self) -> usize {
-        self.entries.iter().filter(|e| e.used).count()
+        self.entries.iter().filter(|e| e.used()).count()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -679,11 +688,14 @@ impl<const N: usize> Mailbox<N> {
         set: &mut impl FnMut(u16, &[f32]),
     ) -> usize {
         let mut writes = 0usize;
-        for e in self.entries.iter_mut().filter(|e| e.used) {
-            e.used = false;
-            let Ok(addr) = core::str::from_utf8(&e.addr[..e.addr_len as usize]) else { continue };
+        for e in self.entries.iter_mut().filter(|e| e.used()) {
+            let len = e.addr_len as usize;
+            e.addr_len = 0;
+            let Ok(addr) = core::str::from_utf8(&e.addr[..len]) else { continue };
             let mut msg = OscMessage { addr, args: [OscArg::Other; MAX_ARGS], n_args: e.n_args as usize };
-            msg.args[..e.n_args as usize].copy_from_slice(&e.args[..e.n_args as usize]);
+            for (dst, v) in msg.args.iter_mut().zip(&e.vals[..e.n_args as usize]) {
+                *dst = OscArg::Float(*v);
+            }
             if apply_message(&msg, cfg, table, shadow, set) {
                 writes += 1;
             }
@@ -694,7 +706,7 @@ impl<const N: usize> Mailbox<N> {
     /// Forget everything waiting (the active effect changed).
     pub fn clear(&mut self) {
         for e in self.entries.iter_mut() {
-            e.used = false;
+            e.addr_len = 0;
         }
     }
 }

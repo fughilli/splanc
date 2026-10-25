@@ -1999,15 +1999,29 @@ static void osc_task(void *) {
 // the render task applies what's waiting at the next frame boundary (osc_drain_frame), so
 // a controller sending faster than the device renders never builds a queue
 // (docs/design/live-control.md). The two meet in a short critical section.
+// The mailbox itself (~730 B) is heap-allocated on the FIRST datagram, not static:
+// static RAM comes straight out of the boot heap that sizes the LED buffers
+// (led_store_begin -> board.max_leds), so OSC must not cost a byte until it is used.
 static portMUX_TYPE g_osc_mux = portMUX_INITIALIZER_UNLOCKED;
-static uint32_t g_osc_datagrams = 0;
 
 void lm_netstack_osc_rx(const uint8_t *data, size_t len) {
   if (len == 0 || len > kOscRxCap) return;
+  if (!lm_osc_mailbox_bound()) {  // only this (network) task binds it
+    const size_t bytes = lm_osc_mailbox_bytes();
+    void *mem = heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!mem) return;  // heap exhausted right now: drop this datagram, retry on the next
+    taskENTER_CRITICAL(&g_osc_mux);
+    const bool bound = lm_osc_mailbox_bind(static_cast<uint8_t *>(mem));
+    taskEXIT_CRITICAL(&g_osc_mux);
+    if (!bound) {
+      free(mem);
+      return;
+    }
+    Log().printf("[osc] first datagram on udp/%u (mailbox %u B)\n", kOscPort, (unsigned)bytes);
+  }
   taskENTER_CRITICAL(&g_osc_mux);
   lm_osc_post(data, len);
   taskEXIT_CRITICAL(&g_osc_mux);
-  if (g_osc_datagrams++ == 0) Log().printf("[osc] first datagram on udp/%u\n", kOscPort);
 }
 
 static void osc_drain_frame() {

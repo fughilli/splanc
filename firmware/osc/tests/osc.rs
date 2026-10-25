@@ -273,3 +273,16 @@ fn mailbox_flattens_one_bundle_level_only() {
     assert_eq!(mb.post(&outer), 1);
     assert_eq!(mb.len(), 1);
 }
+
+#[test]
+fn mailbox_is_compact_and_zero_initialised() {
+    // The firmware binds the mailbox into a fresh heap block on the first OSC
+    // datagram (static RAM would shrink board.max_leds): keep it small, and an
+    // all-zero block must read as empty.
+    assert!(std::mem::size_of::<Mailbox<12>>() <= 12 * 60 + 8, "{}", std::mem::size_of::<Mailbox<12>>());
+    let mb: Mailbox<12> = unsafe { std::mem::zeroed() };
+    assert!(mb.is_empty());
+    let mut mb = mb;
+    mb.post(&msg("/speed", "i", &7i32.to_be_bytes()));
+    assert_eq!(mb.len(), 1);
+}
