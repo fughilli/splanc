@@ -1,0 +1,228 @@
+<!-- This guide is mirrored, in the website's style, at https://splanc.io/quickstart
+     (Studio-Fug/splanc.io: src/pages/quickstartContent.tsx). Keep the two in sync:
+     the same sections, steps, labels and facts. Only this file has "Go deeper". -->
+
+# Splanc quickstart
+
+From a bare ESP32-C6 board and an LED strip to mapped, animated lights, using
+only a browser. No toolchain and no command line are needed until you add an AI
+agent. Each step below links to the full docs, and [Go deeper](#go-deeper) at
+the end points into the technical documentation. The same guide is on the
+website at <https://splanc.io/quickstart>.
+
+Current releases: firmware `firmware-v1.10.0`, app `app-v1.10.0`, Pi bridge
+`pi-bridge-v1.0.1` ([releases](https://github.com/Studio-Fug/splanc/releases)).
+
+## 1. What you need
+
+| Item                               | Notes                                                                                                                                                                                                                                     |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| An **ESP32-C6** board              | Any ESP32-C6 board should work. The reference board is the **ESP32-C6 SuperMini**; the firmware's default pins are chosen for it.                                                                                                         |
+| A **WS2812-family** strip          | WS281x / NeoPixel-style, one data wire. Up to 1024 LEDs per channel, on two channels. The frame rate drops as the LED count grows (the strip's signalling rate and each effect's per-frame budget); the firmware scales it automatically. |
+| A **5 V power supply**             | Sized for your strip.                                                                                                                                                                                                                     |
+| A **USB-C data cable**             | Data-capable, not charge-only. You flash the board with it.                                                                                                                                                                               |
+| A **computer with Chrome or Edge** | A Mac, Windows or Linux laptop or desktop, for flashing and first setup. Chrome on an Android phone can do both too.                                                                                                                      |
+| A **phone**                        | For mapping and control, once the board is set up: Android (Chrome) or iPhone. **The iPhone app can't set up new hardware**, so iPhone users flash and set up the board on a computer first.                                              |
+| A Raspberry Pi (optional)          | Only for the [cloud bridge](#7-bring-your-ai-agent) (Pi 5 or 4 recommended; Pi 3 and Zero 2 W work).                                                                                                                                      |
+
+Splanc's own first-party controllers are the hardware we'd pick, naturally. But
+the firmware is open source, so use anything you want.
+
+## 2. Wire it
+
+```text
+ESP32-C6 GPIO20  ──────────────▶  strip DIN      (channel 1)
+ESP32-C6 GPIO14  ──────────────▶  2nd strip DIN  (channel 2, optional)
+ESP32-C6 GND     ──────┬───────   strip GND
+5 V supply −     ──────┘
+5 V supply +     ──────────────▶  strip 5V
+```
+
+- **Data → GPIO20.** A second strip (or the second half of a long one) goes on
+  **GPIO14**; the two channels clock out in parallel.
+- **Common ground**: the board, the strip and the supply share GND.
+- **Power the strip from the supply**, not from the board.
+- Pins are configurable later in the app (the device's ⋮ menu ▸
+  **Hardware**). Avoid the C6's strapping pins (4/5/8/9/15), USB-JTAG (12/13)
+  and, on the SuperMini, 18/19 (its internal flash).
+
+Source: [`firmware/player_app/led_config.h`](../firmware/player_app/led_config.h).
+
+## 3. Flash the firmware
+
+1. Plug the board in over USB and open **<https://splanc.io/app>** in Chrome or
+   Edge on a computer (Mac, Windows or Linux), or in Chrome on Android. iPhone
+   and iPad can't flash, and the iPhone app can't set up new hardware.
+2. On the **Set up your device** screen tap the chip icon, **Flash new device
+   (USB)**. Later, it's in the device sheet as **Flash firmware (USB)**.
+3. Leave **Firmware source** on **GitHub releases**. The newest release is
+   picked for you (**Heapless netstack — firmware-v1.10.0**).
+4. Tap **Connect a board & flash**, pick the board in the browser's port
+   chooser, and keep it plugged in until **✓ Flashed successfully**.
+
+Board not listed? Tap **Try without vendor filter**, and try another cable.
+More: [Flashing firmware](user-guide.md#flashing-firmware).
+
+## 4. Put it on Wi-Fi
+
+1. Tap the Bluetooth icon, **Add device (Bluetooth)**.
+2. Enter your Wi-Fi name and password (the eye button shows the password), tap
+   **Scan for device**, and pick the board in the Bluetooth chooser.
+3. The board joins your Wi-Fi and the app connects to it. The first time, your
+   browser asks you to trust the device's own security certificate; accept it
+   once.
+
+From firmware 1.10.0 the board **saves its Wi-Fi** once it has joined, so it
+rejoins by itself after a power cut, a reset or a firmware update. A board on an
+older release needs one last provision after updating.
+
+Do this step on the same computer (or Android phone) you flashed from: the
+iPhone app can't set up new hardware. Once the board is on your Wi-Fi, an
+iPhone maps and controls it like any other phone: add it with **Enter address
+manually**. More: [Connecting a device](user-guide.md#connecting-a-device).
+
+## 5. Map it
+
+1. Check the basics in the device's ⋮ menu ▸ **Hardware** (the device sheet
+   opens from the status pill at the top): the LED count on each channel,
+   and **Check color order** if red doesn't look red.
+2. In **Maps**, tap **+ New**, confirm the **Number of LEDs on the fixture**, and
+   tap **Start mapping**.
+3. Frame the fixture and **walk slowly around it**. Views from several angles
+   let the solver triangulate depth. Keep going until the live preview looks
+   complete, then tap **Stop & finish**.
+4. LEDs behind a diffuser? Turn on **Diffuse capture** on the capture screen.
+   It lights every Nth LED per phase (the **Stride length**, default 4, set in
+   **Hardware**) so neighbouring spots don't bleed together.
+
+You get a **3D map** of every LED, in metres with +Y up, plus a topology
+skeleton (strands, junctions, loops). Tidy it in the mapping workspace, send
+it to the device, or export it to TouchDesigner or Chromatik. More:
+[Mapping a fixture](user-guide.md#mapping-a-fixture-with-the-camera).
+
+## 6. Play
+
+- **Effects**: pick one in the **Effects** tab, or write your own in the editor.
+  The preview runs the same VM as the firmware, so what you see is what the
+  fixture does. Push it to the device. ([Effects engine](../EFFECTS.md))
+- **Show mode**: the **Effects** tab's ⋯ menu, **Show mode (cue +
+  crossfade)**, gives you two decks with a crossfader. **⋯ ▸ Live via bridge**
+  drives every fixture on your bridge from one phone.
+- **MIDI**: **Settings ▸ MIDI** names your controller's knobs. Bind them to an
+  effect's uniforms in the editor.
+- **Effects AI**: describe a change and the editor's assistant drafts it. Use
+  your own API key (Anthropic, OpenAI, Gemini, ...), a local server (Ollama, LM
+  Studio, llama.cpp), or a model that runs in the browser.
+
+## 7. Bring your AI agent
+
+Splanc works with **Claude** (Claude Code, or claude.ai through a custom
+connector), **ChatGPT** (a custom MCP server, or Codex), and any other model or
+client that supports MCP.
+
+**On your own computer** (Claude Code, Codex, or anything with a shell and
+Node.js 20 or later on the same LAN as the lights). Add the Splanc MCP server
+(stdio):
+
+```sh
+claude mcp add splanc -- npx -y https://splanc.io/agent/splanc-agent.tgz
+```
+
+For other MCP clients, use the command `npx` with the args
+`["-y", "https://splanc.io/agent/splanc-agent.tgz"]` over stdio. Or just tell
+the agent _"Use splanc.io to set the mood of the room"_: it reads
+<https://splanc.io/AGENTS.md> and finds every fixture on your LAN. There is no
+LAN authentication, so anyone on your network can drive the lights. More:
+[`agent/README.md`](../agent/README.md).
+
+**From the cloud** (claude.ai, ChatGPT, Claude Code on the web):
+
+1. Set up a **Splanc bridge**. Write a microSD card with the **Splanc Bridge
+   Flasher** (from the `pi-bridge-v…` release), boot the Pi, and it shows
+   **Ready to pair** with a code like `ABCD-EFGH`.
+   ([Pi bridge guide](pi-bridge.md))
+2. Add **`https://splanc.pages.dev/mcp`** to your agent. In Claude, go to
+   Settings → Connectors → Add custom connector; in ChatGPT, add it as a custom
+   MCP server with OAuth. When it asks you to sign in, type the pairing code.
+   ([Cloud agent guide](guides/cloud-agent.md), or
+   [run your own relay with Tailscale](guides/relay-tailscale.md))
+
+## 8. Optional extras
+
+- **Motion sensor**: wire an **MPU-6050** (e.g. a GY-521) to **SDA GPIO6,
+  SCL GPIO7**, with INT on **GPIO21** (optional). The player finds it at boot,
+  and effects react through uniforms such as `imu_gravity`, `imu_shake` and
+  `imu_tap`. Try `agent/skill/examples/imu_tilt.fx`.
+  ([sensor-core.md](design/sensor-core.md))
+- **Several fixtures and rooms**: add more boards. An agent treats them as
+  rooms, with a shared room frame and clock, and **Live via bridge** drives
+  them all from the app.
+- **Colour correction**: per-device gamma and white balance
+  (the device's ⋮ menu ▸ **Gamma**).
+
+## 9. Troubleshooting
+
+1. **Flashing finds no board**: use a data-capable USB cable, tap **Try without
+   vendor filter**, and use desktop Chrome/Edge or Android Chrome (iOS can't
+   flash).
+2. **No Bluetooth option**: your browser has no Web Bluetooth (iPhone, Firefox),
+   and the iPhone app can't set up new hardware. Provision from Chrome or Edge
+   on a computer, or Chrome on Android, then connect by address.
+3. **The app can't reach the device after Wi-Fi setup**: accept the device's
+   certificate when the browser asks (once per device). A certificate-changed
+   warning is expected only after a factory reset: tap **I reset it — trust the
+   new certificate**.
+4. **Colours are wrong**: the device's ⋮ menu ▸ **Hardware** ▸ **Check color
+   order**, then tap the swatch that matches what the strip shows.
+5. **A map comes out wrong or empty**: walk slower and cover more angles, and
+   try **Diffuse capture** for diffused fixtures. Turn on **Settings ▸ Behavior
+   ▸ Developer ▸ Enable Debug Settings** to save a capture bundle you can attach
+   to a bug report.
+
+Bridge problems (code expired, no players listed) are covered in the
+[cloud agent](guides/cloud-agent.md#troubleshooting) and
+[Pi bridge](pi-bridge.md#troubleshooting) guides.
+
+**Get help**: open an issue on
+[GitHub](https://github.com/Studio-Fug/splanc/issues), or ask on the
+[Splanc Discord](https://discord.gg/wqY9pHavnD). The full walkthrough of every
+screen is the [user guide](user-guide.md); recent changes are in
+[What's new](whats-new.md).
+
+## Go deeper
+
+The technical documentation behind each step:
+
+- **Using the app**: the [user guide](user-guide.md), every screen in order.
+  Jump to [flashing](user-guide.md#flashing-firmware),
+  [connecting a device](user-guide.md#connecting-a-device),
+  [mapping](user-guide.md#mapping-a-fixture-with-the-camera),
+  [the mapping workspace](user-guide.md#the-mapping-workspace),
+  [the effect editor](user-guide.md#the-effect-editor) and
+  [MIDI](user-guide.md#midi-controllers).
+- **How mapping works**: [the design spec](../led-mapper-design.md), and
+  [mapping-solve-paths.md](design/mapping-solve-paths.md) on the live-preview and
+  final solves.
+- **Effects**: [EFFECTS.md](../EFFECTS.md) covers the effects language, the
+  bytecode VM, uniforms, textures and MIDI. See also
+  [effects-runtime.md](design/effects-runtime.md),
+  [effects-compiler.md](design/effects-compiler.md),
+  [uniform keypoints](design/uniform-keypoints.md) and the
+  [FX VM performance tables](fx-vm-performance.md).
+- **The protocol** between the app, agents and players:
+  [`shared/protocol/README.md`](../shared/protocol/README.md).
+- **Firmware**: [over-the-air updates](design/ota.md) (the split loader, signing,
+  recovery and key rotation), [per-device certificates](design/per-device-cert.md), the
+  [RAM budget](design/ram-budget.md) and [memory regions](design/memory-regions.md),
+  and [the manifesto](manifesto.md) on why it's built this way.
+- **Sensors**: [sensor-core.md](design/sensor-core.md), with the IMU pins, fusion,
+  calibration and sensor drivers written in the effects language.
+- **Agents, rooms and the cloud**: [`agent/README.md`](../agent/README.md), the
+  [agent skill](../agent/skill/SKILL.md),
+  [multi-fixture rooms](design/agent-multi-fixture.md), the
+  [cloud relay design](design/cloud-relay.md) and
+  [live VJ through the relay](design/live-vj-relay.md).
+- **iPhone**: [ios-support.md](design/ios-support.md) lists what works in Safari
+  and what doesn't.
+- **Building from source and contributing**: [DEVELOPERS.md](../DEVELOPERS.md),
+  plus the [hardware-in-the-loop test rig](../pi/hitl/README.md).
