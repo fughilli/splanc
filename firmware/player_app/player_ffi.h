@@ -207,6 +207,9 @@ int32_t lm_decode_upload_stream(int32_t arm, LmRefill refill, LmRewind rewind,
 // integer so the loop touches no f64 (the C6 RISC-V FPU is single-precision
 // only): absolute frame index at player-clock ms `t` is
 // ((t - epoch_ms) * 1000) / bit_period_us.
+// Auto-stop: ends the mapping pattern once start_mapping's stop_after_ms has
+// elapsed (player-clock ms). Call under the player lock before lm_pattern_timing.
+bool lm_pattern_expire(int64_t now_ms);
 bool lm_pattern_timing(int64_t *epoch_ms, uint32_t *bit_period_us,
                        uint32_t *cycle_frames, uint32_t *led_count);
 bool lm_pattern_color(uint32_t led, uint32_t frame_index, uint8_t rgb[3]);

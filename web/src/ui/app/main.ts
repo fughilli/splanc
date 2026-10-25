@@ -30,6 +30,7 @@ import { EffectEditorScreen } from "../screens/effectEditor";
 import { ShowModeScreen } from "../screens/showMode";
 import { BridgeLiveScreen } from "../screens/bridgeLive";
 import { CaptureScreen } from "../screens/capture";
+import { RoomLocalizeScreen } from "../screens/roomLocalize";
 import { PerfPanelScreen } from "../screens/perfPanel";
 import { CalibrateScreen } from "../screens/calibrate";
 import { PerfProfilesScreen } from "../screens/perfProfiles";
@@ -181,6 +182,10 @@ async function main(): Promise<void> {
     .add("/settings/ai", () => {
       shell.setChrome({ title: "AI provider", back: true, tabs: true });
       return AiSettingsScreen(router);
+    })
+    .add("/room", () => {
+      shell.setChrome({ title: "Localize room", back: true, tabs: false });
+      return RoomLocalizeScreen(router);
     })
     .add("/capture", (m) => {
       shell.setChrome({ title: "Capture", back: true, tabs: false, overlay: true });

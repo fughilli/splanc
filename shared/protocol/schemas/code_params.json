@@ -77,6 +77,11 @@
       "type": ["integer", "null"],
       "minimum": 0,
       "description": "The schedule phase currently being driven (0-based). null when striding is off."
+    },
+    "codeOffset": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Group capture: this fixture's LED i transmits id (i + codeOffset) of a code book of ledCount ids shared by the group. null/absent = 0."
     }
   }
 }

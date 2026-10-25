@@ -209,9 +209,10 @@ export function bundleSummary(b: Pick<CaptureBundle, "outcome" | "decision" | "f
 }
 
 /** Suggested export file name, e.g. splanc-capture-2026-10-21T07-05-12-fallback-degenerate.splanc-capture.json */
-export function bundleFileName(b: Pick<CaptureBundle, "createdAt" | "outcome">): string {
+export function bundleFileName(b: { createdAt: string; outcome: string; format?: string }): string {
   const stamp = b.createdAt.replace(/\.\d+Z$/, "Z").replace(/[:]/g, "-");
-  return `splanc-capture-${stamp}-${b.outcome}${BUNDLE_EXT}`;
+  const kind = b.format === "splanc-localize-bundle" ? "localize" : "capture";
+  return `splanc-${kind}-${stamp}-${b.outcome}${BUNDLE_EXT}`;
 }
 
 /** Whether a run should be logged (debug mode on). */
@@ -220,7 +221,7 @@ export function shouldLogRun(outcome: FinalDecision["outcome"], keepSuccessful: 
 }
 
 /** Serialized size estimate (bytes) — what the list shows. */
-export function bundleBytes(b: CaptureBundle): number {
+export function bundleBytes(b: object): number {
   return JSON.stringify(b).length;
 }
 

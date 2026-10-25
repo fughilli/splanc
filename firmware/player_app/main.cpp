@@ -1533,6 +1533,9 @@ static uint32_t render_once() {
   // mapping pattern, so "start mapping" never visibly flashed the strip
   // (FUG-62). Check them first; when neither is active they fall through to the
   // effect / idle branches below.
+  // A group-capture pattern with stop_after_ms ends by itself (a phone that
+  // died mid-capture must not leave the fixture flashing).
+  lm_pattern_expire((int64_t)millis());
   if (lm_pattern_timing(&epoch_ms, &bit_period_us, &cycle_frames, &led_count)) {
     // Integer pattern clock — no f64. Elapsed ms since the epoch, then frames =
     // elapsed_us / period_us (64-bit product so it can't overflow).

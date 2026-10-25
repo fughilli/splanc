@@ -34,6 +34,8 @@ export function MapBrowserScreen(router: Router): Screen {
   const tabMenuItems = [
     { icon: "upload" as const, label: "Import…", onClick: () => void importFromFile() },
     { icon: "download" as const, label: "Export library", onClick: () => void exportLibrary() },
+    // Multi-fixture: place several mapped fixtures from one capture (room poses).
+    { icon: "triad" as const, label: "Localize room…", onClick: () => router.navigate("/room") },
   ];
 
   // -- search + sort controls

@@ -70,7 +70,10 @@ export type QueryOp =
   | "align" // shared time base
   | "lock" // {on: boolean}: the Show Mode lock
   | "probe" // per player device round trip, through the same queue as controls
-  | "identify";
+  | "identify"
+  // Multi-fixture localization (docs/design/multi-fixture-localization.md §4):
+  // {action: "prepare"|"start"|"stop"|"set_pose", ...} — see web/src/net/groupCapture.ts.
+  | "group_capture";
 
 export interface QueryMsg {
   t: "q";

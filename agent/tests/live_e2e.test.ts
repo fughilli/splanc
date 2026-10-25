@@ -408,6 +408,75 @@ test("latency: ping, device probe and slider -> player, relay vs direct", async 
   }
 });
 
+test("group_capture: prepare reads maps, start arms every player on one shared epoch, set_pose stores poses", async () => {
+  const c = liveClient();
+  try {
+    await c.connect();
+    await until(() => c.players.every((p) => p.connected), "players connected");
+    // Different device clocks: the bridge must convert ONE hub epoch per player.
+    players[0]!.clockOffsetMs = 12_345;
+    players[1]!.clockOffsetMs = -7_000;
+    for (const p of players) p.features = [...p.features, "group_capture", "fixture_pose", "stored_map"];
+
+    // A player the previous test dropped may still be re-opening its session.
+    const prep = await until(async () => {
+      const r = await c.query("group_capture", { action: "prepare" }, ["all"]);
+      return r.ok && r.results!.every((x) => x.ok) ? r : null;
+    }, "every player prepared", 20_000);
+    for (const r of prep.results!) {
+      const v = r.result as { map: { leds: unknown[] } | null; led_count: number };
+      assert.ok(r.ok && v.map && v.map.leds.length > 0, JSON.stringify(r));
+      assert.ok(v.led_count > 0);
+    }
+    const ids = prep.results!.map((r) => r.player.id);
+    const n = (prep.results![0]!.result as { led_count: number }).led_count;
+    // Players the earlier tests restarted may still be settling; the start is
+    // idempotent (a restarted pattern), so retry until both take it.
+    let t0 = 0;
+    const start = await until(async () => {
+      t0 = performance.now();
+      const r = await c.query("group_capture", {
+        action: "start",
+        epoch_lead_ms: 1000,
+        members: ids.map((id, i) => ({ to: id, options: { ledCount: n, symbols: 4, bitPeriodMs: 100, codeOffset: i * n, codeSpace: 2 * n } })),
+      });
+      return r.ok && r.results!.every((x) => x.ok) ? r : null;
+    }, "every player armed", 30_000);
+    const d = start.data as { hub_epoch_ms: number; hub_now_ms: number };
+    assert.ok(d.hub_epoch_ms < d.hub_now_ms && d.hub_now_ms - d.hub_epoch_ms < 10_000, JSON.stringify(d));
+    for (const r of start.results!) {
+      const v = r.result as { code_params: { ledCount: number }; skew_bound_ms: number };
+      assert.ok(r.ok, JSON.stringify(r));
+      assert.equal(v.code_params.ledCount, 2 * n);
+    }
+    // Each player got the SAME instant, expressed in its own clock.
+    const inHub = players.map((p) => p.mapping!.epochMs - p.clockOffsetMs);
+    assert.ok(Math.abs(inHub[0]! - inHub[1]!) < 25, `epochs ${inHub}`);
+    assert.ok(Math.abs(inHub[0]! - (t0 - 1000)) < 5_000);
+    assert.deepEqual(
+      players.map((p) => p.mapping!.options["codeOffset"]).sort(),
+      [0, n],
+    );
+
+    const stop = await c.query("group_capture", { action: "stop" }, ["all"]);
+    assert.equal(stop.ok, true, JSON.stringify(stop));
+    assert.ok(players.every((p) => p.mapping === null));
+
+    const pose = { room: "living", translation: [1.5, 0, -0.5], rotation: [0, 0.38268343, 0, 0.92387953], scale: 1.01 };
+    const sp = await c.query("group_capture", { action: "set_pose", poses: [{ to: ids[1], pose }] });
+    assert.equal(sp.ok, true, JSON.stringify(sp));
+    assert.equal(sp.results!.length, 1);
+    // The hub keeps it (the agent's room model); the device too when its session
+    // saw the fixture_pose feature at connect time.
+    assert.deepEqual(hub.pose(ids[1]!)?.translation, [1.5, 0, -0.5]);
+    const target = players.find((p) => p.mac.toUpperCase() === ids[1]!.toUpperCase())!;
+    if ((sp.results![0]!.result as { on_device?: boolean }).on_device) assert.deepEqual(target.pose?.["translation"], [1.5, 0, -0.5]);
+  } finally {
+    for (const p of players) p.clockOffsetMs = 0;
+    c.close();
+  }
+});
+
 test("revoking the app's credential ends the relay session and its LAN ticket", async () => {
   const c = liveClient();
   const w = await c.connect();

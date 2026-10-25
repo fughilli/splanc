@@ -76,6 +76,13 @@ export const FORBIDDEN_TYPES = new Set([
   "set_jit",
 ]);
 
+/** The ONE exemption from FORBIDDEN_TYPES: the app's room localization through
+ * the bridge (live `group_capture`, docs/design/multi-fixture-localization.md)
+ * starts/stops the group mapping pattern — only inside {@link
+ * DeviceSession.groupCaptureScope}, which only the live mux's group_capture
+ * query (a paired, human-operated app) enters. No MCP tool or CLI path can. */
+export const GROUP_CAPTURE_TYPES = new Set(["start_mapping", "stop_mapping"]);
+
 /** Device features the bridge can use when the firmware advertises them
  * (Welcome.features or the discovery manifest's protocol.features). */
 export type Feature =
@@ -237,6 +244,8 @@ export class DeviceSession {
   /** Bumped whenever an effect is (de)activated through this session, so caches
    * of the active effect's uniform manifest (the live mux's) know to re-read it. */
   effectGen = 0;
+  /** >0 while {@link groupCaptureScope} runs (permits GROUP_CAPTURE_TYPES). */
+  private groupScope = 0;
 
   constructor(private readonly opts: SessionOptions) {
     this.extraFeatures = opts.features ?? [];
@@ -250,7 +259,7 @@ export class DeviceSession {
         // ones (belt and braces under the tool layer, which never builds them).
         const t = sniffType(data);
         if (t !== null) {
-          if (FORBIDDEN_TYPES.has(t)) {
+          if (FORBIDDEN_TYPES.has(t) && !(this.groupScope > 0 && GROUP_CAPTURE_TYPES.has(t))) {
             this.blockedTypes.push(t);
             throw new ToolError(`the bridge never sends ${t}`);
           }
@@ -1379,6 +1388,20 @@ export class DeviceSession {
   }
 
   // -- room ------------------------------------------------------------------------
+
+  /** Run `fn` (serialized like every call) with the group-capture exemption:
+   * start_mapping / stop_mapping may go out for its duration. Only the live
+   * mux's `group_capture` query calls this. `fn` uses `this.client` directly. */
+  groupCaptureScope<T>(fn: () => Promise<T>): Promise<T> {
+    return this.run(async () => {
+      this.groupScope++;
+      try {
+        return await fn();
+      } finally {
+        this.groupScope--;
+      }
+    });
+  }
 
   /** Estimate this player's clock offset (TimeSyncPing/Pong, min-RTT of `rounds`). */
   async syncClock(rounds = 6): Promise<ClockSync> {
