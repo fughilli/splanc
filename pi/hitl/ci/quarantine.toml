@@ -1,0 +1,13 @@
+# Quarantined HITL tests: they still run and report, but never fail the lane.
+#
+# Policy (thresholds, entry, exit): pi/hitl/ci/README.md "Flake budget". Every entry
+# needs all six keys; the verdict step (hitl_verdict.py) refuses a malformed list by
+# quarantining nothing, so a typo makes tests gate rather than hide.
+#
+# [[quarantine]]
+# test = "//pi/hitl/harness:example_netstack"
+# reason = "37% non-infra attempt failures over 7 days (bazel TIMEOUT mid-run)"
+# issue = "https://github.com/<org>/<repo>/issues/<n>"
+# owner = "@someone"
+# since = 2026-10-25
+# review_by = 2026-11-08

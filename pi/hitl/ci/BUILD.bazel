@@ -1,0 +1,38 @@
+"""HITL CI lane helpers: the lane's verdict (infra skips, quarantine) and flake report.
+
+The workflow (.github/workflows/hitl.yaml) runs hitl_verdict.py with the runner's
+python3, so everything here is stdlib-only (README.md has the policy). The targets below let //pi/hitl/tests
+unit-test the policy and the checked-in quarantine list.
+"""
+
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "verdict_core",
+    srcs = ["verdict_core.py"],
+    imports = ["."],
+)
+
+py_binary(
+    name = "hitl_verdict",
+    srcs = ["hitl_verdict.py"],
+    data = ["quarantine.toml"],
+    deps = [":verdict_core"],
+)
+
+exports_files(["quarantine.toml"])
+
+py_library(
+    name = "flake_report_lib",
+    srcs = ["flake_report.py"],
+    imports = ["."],
+    deps = [":verdict_core"],
+)
+
+py_binary(
+    name = "flake_report",
+    srcs = ["flake_report.py"],
+    deps = [":verdict_core"],
+)
