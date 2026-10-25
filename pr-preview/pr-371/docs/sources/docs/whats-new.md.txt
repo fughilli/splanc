@@ -5,6 +5,22 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 
 ## October 2026
 
+### Place several fixtures in one room from one phone capture
+
+- **Maps → ⋯ → Localize room…** films several already-mapped fixtures at once and
+  solves where each one is relative to the others. All of them flash disjoint
+  codes on a shared clock (new firmware feature `group_capture`), so a handheld
+  phone works.
+- **No bridge needed.** The app arms each fixture in turn and they keep flashing
+  while you walk past. With a paired bridge it arms them all in one go.
+- **Live 3D preview** while you film, then per-fixture accuracy (±cm), warnings
+  (not enough shared views, a tilted or rescaled map, a strip filmed edge-on),
+  and a nudge/rotate pad for manual fine-tuning. **Save poses** stores them on
+  each device, so `led.room` effects and agents (`plot_fixture`, the room
+  resource) see the room.
+- Design, method and synthetic accuracy (median ~1.3 cm / 0.4° per fixture):
+  [multi-fixture-localization.md](design/multi-fixture-localization.md).
+
 ### Wi-Fi rejoin policy, and Wi-Fi work never disturbs the LEDs
 
 - **Rejoining doesn't touch the LED output.** Scanning, joining, a wrong
