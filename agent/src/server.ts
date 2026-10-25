@@ -599,6 +599,74 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     ({ action, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.calibrateSensors(action)))),
   );
 
+  // -- Wi-Fi rejoin policy (docs/design/wifi-rejoin-policy.md) ------------------------------
+  server.registerTool(
+    "get_wifi_policy",
+    {
+      description:
+        "Read the player's Wi-Fi rejoin policy and link state: mode (auto / fixed / manual / offline), its " +
+        "timings, whether it is joined / searching (next scan, how long the network has been unseen), and " +
+        "ota_pending (a firmware update installed but not yet confirmed).",
+      inputSchema: { players },
+    },
+    ({ players: sel }) => guard(async () => ok(await fan(sel, (s) => s.getWifiPolicy()))),
+  );
+  server.registerTool(
+    "set_wifi_policy",
+    {
+      description:
+        "Change how the player rejoins its Wi-Fi network; unset fields keep their value. auto: rescans 5 s " +
+        "doubling to scan_cap_s, slowing to sparse_interval_s after decay_after_h hours unseen (0 = never). " +
+        "fixed: a rescan every interval_s. manual: never joins on its own (rejoin_now opens a ~2 min join " +
+        "window). offline: for a forward-deployed unit with no AP — the Wi-Fi radio goes silent now and stays " +
+        "off after reboots; Wi-Fi credentials are KEPT, so switching back to auto rejoins. Reconfiguring an " +
+        "offline unit needs Bluetooth (the Splanc app) or the wired console — this bridge loses it. Before " +
+        "manual/offline: get_wifi_policy and make sure ota_pending is false (confirm any pending firmware " +
+        "update first, while the player is online); the player refuses otherwise (refused: ota_pending). Only " +
+        "pass force=true when the user explicitly asks to go anyway. Confirm with the user before offline.",
+      inputSchema: {
+        mode: z.enum(["auto", "fixed", "manual", "offline"]).optional(),
+        scan_cap_s: z.number().int().min(10).max(86400).optional().describe("auto: backoff cap (default 60)"),
+        interval_s: z.number().int().min(10).max(86400).optional().describe("fixed: rescan period (default 300)"),
+        decay_after_h: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe("auto: hours unseen before slowing down (0 = never; default 24)"),
+        sparse_interval_s: z
+          .number()
+          .int()
+          .min(60)
+          .max(86400)
+          .optional()
+          .describe("auto: the slowed rescan period (default 900)"),
+        rejoin_now: z.boolean().optional().describe("try to (re)join now (manual: opens a join window)"),
+        force: z
+          .boolean()
+          .optional()
+          .describe("override the unconfirmed-update refusal for manual/offline; only on the user's explicit say-so"),
+        players,
+      },
+    },
+    ({ mode, scan_cap_s, interval_s, decay_after_h, sparse_interval_s, rejoin_now, force, players: sel }) =>
+      guard(async () =>
+        ok(
+          await fan(sel, (s) =>
+            s.setWifiPolicy({
+              mode,
+              scanCapS: scan_cap_s,
+              intervalS: interval_s,
+              decayAfterH: decay_after_h,
+              sparseIntervalS: sparse_interval_s,
+              rejoinNow: rejoin_now === true,
+              force: force === true,
+            }),
+          ),
+        ),
+      ),
+  );
+
   // -- sensor drivers (FUG-107) -----------------------------------------------------------
   server.registerTool(
     "scan_i2c",

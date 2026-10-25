@@ -166,7 +166,8 @@ decks, crossfade position, live deck), `plot_fixture` (a four-view 3D PNG of the
 map or a posed room, pure-TS rasteriser `src/plot.ts`, capped at 512 KB; colour by
 index / confidence / segment / channel / fixture / an effect frame), `read_sensors` /
 `calibrate_sensors` (feature `sensors`: the on-board IMU, design
-[sensor-core.md](../docs/design/sensor-core.md)), `export_map`
+[sensor-core.md](../docs/design/sensor-core.md)), `get_wifi_policy` /
+`set_wifi_policy` (feature `wifi_policy`, see below), `export_map`
 (the stored map as TouchDesigner CSV or a Chromatik `.lxf`, same serializer as
 the app's Export map; see the user guide), a confirm-gated
 `set_device_name` (one player).
@@ -182,6 +183,16 @@ Hub tools: `list_players`, `refresh_players` (`sweep`), `add_player`,
 (blinks), `set_room`, `set_fixture_pose`,
 `align_time`. One player + no selector keeps #274's flat result shape;
 otherwise `{results: [{player, ok, result|error}], summary}`.
+
+Wi-Fi rejoin policy (forward-deployed units): `set_wifi_policy` picks how a
+player rejoins its network — `auto` (backoff rescans, slowing after a long
+absence), `fixed`, `manual` (only on `rejoin_now`) or `offline` (radio off, also
+after reboots, for a venue with no AP; credentials are kept, so `auto` rejoins).
+The intended flow: set the unit up on an AP, confirm any firmware update while it
+is online, then switch it to `offline`. The player refuses `manual` / `offline`
+while an update is unconfirmed (`refused: "ota_pending"`); the tool sends `force`
+only when the caller sets it. An offline unit is out of the bridge's reach —
+switch it back over Bluetooth (the app) or the wired console (`WIFI MODE auto`).
 
 CLI: `splanc-agent <command>` runs one tool (dashes for underscores: `list-players`,
 `set-uniforms k=v`, `ramp-uniforms k=v --seconds 20` (waits), `deploy-effect <id>

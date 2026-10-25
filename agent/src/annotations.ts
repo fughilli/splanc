@@ -75,6 +75,10 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   deploy_driver: write("Load a sensor driver", true, true),
   driver_state: read("Read the sensor driver"),
   remove_driver: write("Remove the sensor driver", true, true),
+  // Wi-Fi rejoin policy: offline/manual can take the player off the network
+  // (recoverable only over BLE / the console), so it counts as destructive.
+  get_wifi_policy: read("Read the Wi-Fi rejoin policy"),
+  set_wifi_policy: write("Change the Wi-Fi rejoin policy", true, false),
   // effect authoring
   compile_effect: read("Compile an effect"),
   estimate_effect: read("Estimate an effect's frame cost"),

@@ -211,6 +211,8 @@ void ota_app_boot() {
   }
 }
 
+bool ota_app_pending() { return g_pending; }
+
 void ota_app_poll(bool render_alive, bool tls_ready, bool leased) {
   uint32_t now = millis();
   if (g_handoff_at != 0 && (int32_t)(now - g_handoff_at) >= 0) {

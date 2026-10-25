@@ -25,6 +25,8 @@ import { bleRediscover, connectOverBle, openAddDevice } from "./addDevice";
 import { appendGrouped, openFolderPicker } from "./folders";
 import { deviceImuReady } from "../../store/deviceMap";
 import { inLoader } from "../../net/otaUpdate";
+import { formatWifiStatus } from "../../net/wifiPolicy";
+import { WifiPolicySection } from "./wifiPolicySection";
 
 let openHandle: { close: () => void } | null = null;
 
@@ -601,6 +603,23 @@ function openDeviceDetail(dev: KnownDevice): void {
     buildRowFor("Firmware build", fwFields),
     rowFor("Folder", cur.folder || "Ungrouped"),
   );
+
+  // -- Wi-Fi rejoin policy (firmware advertising "wifi_policy"): a status line on
+  // the card and the settings section. Over BLE too — an offline unit is only
+  // reachable that way, and this is how it is switched back.
+  if (isActive && client && (client.welcome?.features ?? []).includes("wifi_policy")) {
+    const wifiLine = document.createElement("div");
+    wifiLine.className = "device-detail-wifi";
+    wifiLine.textContent = "Wi-Fi: …";
+    const section = WifiPolicySection(client, (p) => {
+      wifiLine.textContent = formatWifiStatus(p);
+      wifiLine.dataset["state"] = p.mode === "offline" ? "offline" : p.state;
+      wifiLine.dataset["otaPending"] = String(p.otaPending);
+    });
+    const wifiDivider = document.createElement("hr");
+    wifiDivider.className = "device-detail-divider";
+    sheet.body.append(wifiLine, wifiDivider, section);
+  }
 }
 
 /**

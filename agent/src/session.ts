@@ -33,6 +33,12 @@ import {
   type UniformValueFlat,
 } from "../../web/src/net/proto";
 import { TextureStreamer, type TextureFormat } from "../../web/src/net/textureCodec";
+import {
+  formatWifiStatus,
+  OTA_PENDING_WARNING,
+  type WifiPolicy,
+  type WifiPolicyRequest,
+} from "../../web/src/net/wifiPolicy";
 import { OtaError, updateFirmware, type OtaPhase, type OtaProgress } from "../../web/src/net/otaUpdate";
 import type { Pose } from "./config";
 import { compile, type CompileOutcome, type Toolchain } from "./fxhost";
@@ -99,6 +105,7 @@ export type Feature =
   | "fps"
   | "sensors"
   | "drivers"
+  | "wifi_policy"
   | (string & {});
 
 export type Deck = 0 | 1;
@@ -495,6 +502,71 @@ export class DeviceSession {
       throw new ToolError(`the player's firmware (${this.fwVersion}) doesn't store uniform keypoints`);
     }
     if (!KEYPOINTS_IN_PROTO) throw new ToolError("this agent bundle predates uniform keypoints; update it");
+  }
+
+  // -- Wi-Fi rejoin policy (docs/design/wifi-rejoin-policy.md) --------------------
+  // How the player rejoins its stored network. `force` is sent ONLY when the
+  // caller set it: the firmware refuses manual/offline while a fresh update is
+  // unconfirmed, and that refusal is reported, never silently overridden.
+
+  private requireWifiPolicy(): void {
+    if (!this.has("wifi_policy")) {
+      throw new ToolError(`the player's firmware (${this.fwVersion}) has no configurable Wi-Fi rejoin policy`);
+    }
+    if (!WIFI_POLICY_IN_PROTO) throw new ToolError("this agent bundle predates the Wi-Fi rejoin policy; update it");
+  }
+
+  async getWifiPolicy(): Promise<Record<string, unknown>> {
+    this.requireWifiPolicy();
+    return DeviceSession.wifiView(await this.run(() => this.client.getWifiPolicy()));
+  }
+
+  async setWifiPolicy(req: WifiPolicyRequest): Promise<Record<string, unknown>> {
+    this.requireWifiPolicy();
+    const clean: WifiPolicyRequest = {};
+    for (const k of ["mode", "scanCapS", "intervalS", "decayAfterH", "sparseIntervalS"] as const) {
+      if (req[k] !== undefined) (clean as Record<string, unknown>)[k] = req[k];
+    }
+    if (req.rejoinNow === true) clean.rejoinNow = true;
+    if (req.force === true) clean.force = true;
+    return DeviceSession.wifiView(await this.run(() => this.client.setWifiPolicy(clean)));
+  }
+
+  private static wifiView(p: WifiPolicy): Record<string, unknown> {
+    const out: Record<string, unknown> = {
+      status: formatWifiStatus(p).replace(/^Wi-Fi: /, ""),
+      mode: p.mode,
+      state: p.state,
+      ssid: p.ssid,
+      radio_on: p.radioOn,
+      scan_cap_s: p.scanCapS,
+      interval_s: p.intervalS,
+      decay_after_h: p.decayAfterH,
+      sparse_interval_s: p.sparseIntervalS,
+      next_scan_s: p.nextScanS,
+      scans: p.scans,
+      unseen_s: p.unseenS,
+      decayed: p.decayed,
+      ota_pending: p.otaPending,
+    };
+    if (p.refused) {
+      out["refused"] = p.refused;
+      out["applied"] = false;
+      out["note"] =
+        p.refused === "ota_pending"
+          ? "NOT applied: a firmware update is installed but not yet confirmed. Keep the player online until " +
+            "the update is confirmed, then retry. Only pass force=true if the user explicitly accepts going " +
+            "manual/offline with an unconfirmed update."
+          : `NOT applied: ${p.refused}`;
+    } else if (p.otaPending) {
+      out["note"] = OTA_PENDING_WARNING;
+    }
+    if (p.mode === "offline" && !p.refused) {
+      out["offline_note"] =
+        "Offline: the Wi-Fi radio is off (no scans, also after reboot); credentials are kept. This bridge " +
+        "loses the player; switch it back to auto over Bluetooth (the app) or the wired console (`WIFI MODE auto`).";
+    }
+    return out;
   }
 
   // -- motion sensor (docs/design/sensor-core.md) ---------------------------------
@@ -1678,6 +1750,7 @@ export const DECKS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === 
 export const KEYPOINTS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "blend_keypoints");
 export const SENSORS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "get_sensors");
 export const DRIVERS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "submit_driver");
+export const WIFI_POLICY_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "set_wifi_policy");
 
 interface DriverStateReply {
   running?: boolean;

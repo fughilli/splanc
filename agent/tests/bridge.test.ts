@@ -384,6 +384,7 @@ describe("mcp", () => {
       "export_map",
       "get_effect",
       "get_keypoint",
+      "get_wifi_policy",
       "list_decks",
       "list_keypoints",
       "list_players",
@@ -397,7 +398,7 @@ describe("mcp", () => {
       "search_effects",
     ]);
     const destructive = tools.filter((t) => t.annotations!.destructiveHint).map((t) => t.name);
-    for (const d of ["forget_player", "delete_keypoint", "rollback_effect", "deploy_effect", "crossfade_to", "set_device_name", "trust_player", "delete_effect", "update_effect"]) {
+    for (const d of ["forget_player", "delete_keypoint", "rollback_effect", "deploy_effect", "crossfade_to", "set_device_name", "trust_player", "delete_effect", "update_effect", "set_wifi_policy"]) {
       assert.ok(destructive.includes(d), d);
     }
     // measure_effect can roll back (rollback_on_overrun): not read-only.
