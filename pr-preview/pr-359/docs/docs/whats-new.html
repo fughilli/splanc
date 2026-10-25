@@ -322,6 +322,24 @@
 it in depth. The full history is in the git log and <a class="reference internal" href="#../WORKLOG.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code></span></a>.</p>
 <section id="october-2026">
 <h2>October 2026<a class="headerlink" href="#october-2026" title="Link to this heading">¶</a></h2>
+<section id="place-several-fixtures-in-one-room-from-one-phone-capture">
+<h3>Place several fixtures in one room from one phone capture<a class="headerlink" href="#place-several-fixtures-in-one-room-from-one-phone-capture" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Maps → ⋯ → Localize room…</strong> films several already-mapped fixtures at once and
+solves where each one is relative to the others. All of them flash disjoint
+codes on a shared clock (new firmware feature <code class="docutils literal notranslate"><span class="pre">group_capture</span></code>), so a handheld
+phone works.</p></li>
+<li><p><strong>No bridge needed.</strong> The app arms each fixture in turn and they keep flashing
+while you walk past. With a paired bridge it arms them all in one go.</p></li>
+<li><p><strong>Live 3D preview</strong> while you film, then per-fixture accuracy (±cm), warnings
+(not enough shared views, a tilted or rescaled map, a strip filmed edge-on),
+and a nudge/rotate pad for manual fine-tuning. <strong>Save poses</strong> stores them on
+each device, so <code class="docutils literal notranslate"><span class="pre">led.room</span></code> effects and agents (<code class="docutils literal notranslate"><span class="pre">plot_fixture</span></code>, the room
+resource) see the room.</p></li>
+<li><p>Design, method and synthetic accuracy (median ~1.3 cm / 0.4° per fixture):
+<a class="reference internal" href="design/multi-fixture-localization.html"><span class="std std-doc">multi-fixture-localization.md</span></a>.</p></li>
+</ul>
+</section>
 <section id="calibrate-imu-is-hands-free">
 <h3>Calibrate IMU is hands-free<a class="headerlink" href="#calibrate-imu-is-hands-free" title="Link to this heading">¶</a></h3>
 <ul class="simple">
@@ -996,6 +1014,7 @@ the way it is.</p></li>
             <ul>
 <li><a class="reference internal" href="#">What’s new</a><ul>
 <li><a class="reference internal" href="#october-2026">October 2026</a><ul>
+<li><a class="reference internal" href="#place-several-fixtures-in-one-room-from-one-phone-capture">Place several fixtures in one room from one phone capture</a></li>
 <li><a class="reference internal" href="#calibrate-imu-is-hands-free">Calibrate IMU is hands-free</a></li>
 <li><a class="reference internal" href="#slow-effects-lag-instead-of-being-parked-and-wi-fi-rescans-without-a-reboot">Slow effects lag instead of being parked, and Wi-Fi rescans without a reboot</a></li>
 <li><a class="reference internal" href="#effects-stop-recomputing-what-doesn-t-change-and-the-cost-estimate-is-honest">Effects stop recomputing what doesn’t change (and the cost estimate is honest)</a></li>
