@@ -273,8 +273,8 @@
     },
     {
       "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:rejoin_loop",
-      "message": "//pi/hitl/harness:rejoin_loop pi/hitl/harness/rejoin_loop error and traces to no requirement",
+      "entity": "//pi/hitl/harness:stable_identity",
+      "message": "//pi/hitl/harness:stable_identity pi/hitl/harness/stable_identity error and traces to no requirement",
       "route": "autonomous"
     },
     {
