@@ -16,7 +16,7 @@ import { Card } from "../kit";
 import { installAboutStyles } from "./about.css";
 import type { Router, Screen } from "../app/router";
 
-const GITHUB_URL = "https://github.com/fughilli/splanc";
+const GITHUB_URL = "https://github.com/Studio-Fug/splanc";
 const STUDIO_URL = "https://fug.studio";
 const COPYRIGHT = "© Fughilli Industries, LLC 2026";
 
@@ -211,7 +211,7 @@ function aboutBody(): HTMLElement {
   const links = document.createElement("div");
   links.className = "about-links";
   links.append(
-    linkRow("Source code", extLink("github.com/fughilli/splanc", GITHUB_URL)),
+    linkRow("Source code", extLink("github.com/Studio-Fug/splanc", GITHUB_URL)),
     linkRow("Studio", extLink("fug.studio", STUDIO_URL)),
     linkRow("Version", textValue(appBuildInfo.version || "unknown")),
     linkRow("Build", buildValue(appBuildInfo.gitCommit, appBuildInfo.gitDirty)),

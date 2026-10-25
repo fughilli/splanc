@@ -19,7 +19,13 @@
 // always executes _worker.js, so routing here is deterministic. GitHub Pages can't
 // run it, so the client targets the absolute Cloudflare URL — hence the open CORS.
 
-const ALLOW_PREFIX = "https://github.com/fughilli/splanc/releases/download/";
+// Both owners: the repo moves from fughilli to the Studio-Fug org, and the releases
+// API then reports Studio-Fug asset URLs (to shipped clients too), while older
+// cached indexes still carry fughilli ones (GitHub redirects those).
+export const ALLOW_PREFIXES = Object.freeze([
+  "https://github.com/Studio-Fug/splanc/releases/download/",
+  "https://github.com/fughilli/splanc/releases/download/",
+]);
 
 const CORS = {
   "access-control-allow-origin": "*",
@@ -30,7 +36,7 @@ const CORS = {
 async function ghAsset(request) {
   if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
   const target = new URL(request.url).searchParams.get("url");
-  if (!target || !target.startsWith(ALLOW_PREFIX)) {
+  if (!target || !ALLOW_PREFIXES.some((p) => target.startsWith(p))) {
     return new Response("gh-asset: url must be a splanc release-download URL", {
       status: 400,
       headers: CORS,
@@ -65,7 +71,7 @@ export const FREE_DEMO_MODELS = Object.freeze([
 const DEMO_PATH = "/api/demo-ai/chat/completions";
 const DEMO_ORIGINS = new Set([
   "https://splanc.io", "https://www.splanc.io", "https://splanc.pages.dev",
-  "https://ledmapper.pages.dev", "https://fughilli.github.io",
+  "https://ledmapper.pages.dev", "https://fughilli.github.io", "https://studio-fug.github.io",
 ]);
 const DEMO_TOOLS = new Set([
   "set_script", "capture_preview", "estimate_performance", "list_midi_controls", "set_midi_mapping",

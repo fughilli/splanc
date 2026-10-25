@@ -187,7 +187,7 @@ def test_live_latest_json_shape_parses():
         "version": "1.7.1",
         "sha256": "bdd9fc71b2177f648755245ba040c51fc3e8a693bfe428bdd50b09d5dd46a402",
         "url": "https://splanc.io/agent/splanc-agent.tgz",
-        "source": {"repository": "fughilli/splanc", "release": "firmware-v1.7.1"},
+        "source": {"repository": "Studio-Fug/splanc", "release": "firmware-v1.7.1"},
     }
     assert su.parse_latest(json.dumps(doc).encode()).version == "1.7.1"
 

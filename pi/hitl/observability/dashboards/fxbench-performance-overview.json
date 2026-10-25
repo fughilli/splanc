@@ -555,7 +555,7 @@
           "source": "url",
           "format": "table",
           "parser": "backend",
-          "url": "https://github.com/fughilli/splanc/releases/download/fxbench-data/measurements-recent.json",
+          "url": "https://github.com/Studio-Fug/splanc/releases/download/fxbench-data/measurements-recent.json",
           "url_options": {
             "method": "GET",
             "data": ""
@@ -692,7 +692,7 @@
           "source": "url",
           "format": "table",
           "parser": "backend",
-          "url": "https://github.com/fughilli/splanc/releases/download/fxbench-data/measurements-recent.json",
+          "url": "https://github.com/Studio-Fug/splanc/releases/download/fxbench-data/measurements-recent.json",
           "url_options": {
             "method": "GET",
             "data": ""
@@ -823,7 +823,7 @@
           "source": "url",
           "format": "table",
           "parser": "backend",
-          "url": "https://github.com/fughilli/splanc/releases/download/fxbench-data/measurements-recent.json",
+          "url": "https://github.com/Studio-Fug/splanc/releases/download/fxbench-data/measurements-recent.json",
           "url_options": {
             "method": "GET",
             "data": ""
@@ -917,7 +917,7 @@
           "source": "url",
           "format": "table",
           "parser": "backend",
-          "url": "https://github.com/fughilli/splanc/releases/download/fxbench-data/measurements-recent.json",
+          "url": "https://github.com/Studio-Fug/splanc/releases/download/fxbench-data/measurements-recent.json",
           "url_options": {
             "method": "GET",
             "data": ""

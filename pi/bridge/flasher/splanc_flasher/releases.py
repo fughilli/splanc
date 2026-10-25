@@ -3,7 +3,7 @@
 Adapted from td-deploy Studio (app/deploy_engine/{download,releases}.py, MIT).
 
 The image is built and published by CI (.github/workflows/pi-bridge-image.yml) on
-its own release track: tags ``pi-bridge-v<X.Y.Z>`` in fughilli/splanc, each with
+its own release track: tags ``pi-bridge-v<X.Y.Z>`` in Studio-Fug/splanc, each with
 ``splanc-bridge-<board>-<X.Y.Z>.img.zst`` + ``.img.zst.sha256`` per board. The
 repo's other releases (firmware-v*, app-v*, pi-v*) are ignored, so GitHub's
 "latest release" can't be used: we list releases and pick the newest
@@ -25,7 +25,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-REPO = os.environ.get("SPLANC_FLASHER_REPO", "fughilli/splanc")
+REPO = os.environ.get("SPLANC_FLASHER_REPO", "Studio-Fug/splanc")
 TAG_PREFIX = "pi-bridge-v"
 API = "https://api.github.com/repos/{repo}/releases?per_page=100"
 USER_AGENT = "splanc-bridge-flasher"

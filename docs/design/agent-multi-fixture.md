@@ -127,7 +127,7 @@ effects on two devices drift apart.
 - One line:
 
   ```
-  claude mcp add splanc -- npx -y https://github.com/fughilli/splanc/releases/latest/download/splanc-agent.tgz
+  claude mcp add splanc -- npx -y https://github.com/Studio-Fug/splanc/releases/latest/download/splanc-agent.tgz
   ```
 
   Also provide an MCP registry `server.json` packages entry (the spec's

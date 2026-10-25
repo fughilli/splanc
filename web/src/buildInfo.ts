@@ -23,7 +23,7 @@ export interface BuildInfo {
 }
 
 /** `owner/repo` for GitHub API calls (releases enumeration — see githubReleaseRepo). */
-export const REPO_SLUG = "fughilli/splanc";
+export const REPO_SLUG = "Studio-Fug/splanc";
 const REPO_URL = `https://github.com/${REPO_SLUG}`;
 
 /** This web app's own build info (empty when built without --stamp / in tests). */

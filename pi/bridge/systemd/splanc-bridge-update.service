@@ -1,6 +1,6 @@
 [Unit]
 Description=Update the Splanc bridge to the latest release
-Documentation=https://github.com/fughilli/splanc/blob/main/docs/pi-bridge.md
+Documentation=https://github.com/Studio-Fug/splanc/blob/main/docs/pi-bridge.md
 Wants=network-online.target
 After=network-online.target
 

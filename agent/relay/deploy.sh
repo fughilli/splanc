@@ -12,7 +12,7 @@
 # subdomain (the Workers & Pages dashboard assigns one on first visit).
 #
 # Direct bug filing (POST /bugs) needs one Worker secret, set once and never in the
-# repo: a fine-grained GitHub PAT with Issues: write on fughilli/splanc only —
+# repo: a fine-grained GitHub PAT with Issues: write on Studio-Fug/splanc only —
 #   pnpm dlx wrangler@4 secret put GITHUB_ISSUES_TOKEN --config wrangler.toml
 # Without it /bugs answers 503 not_configured and agents hand out issue links
 # (docs/design/agent-bug-reports.md).

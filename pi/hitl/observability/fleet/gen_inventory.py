@@ -47,7 +47,9 @@ RESERVE_DIR = os.path.normpath(os.path.join(HERE, "..", "..", "reserve"))
 FLEET_MAP = os.path.join(HERE, "fleet.json")
 OUT_FILE = os.path.join(HERE, "fleet-inventory.json")
 
-REPO = "fughilli/splanc"
+# The Actions run's own repo (owner-agnostic across the move to Studio-Fug):
+# POST/DELETE through GitHub's rename redirect (307) fail in urllib.
+REPO = os.environ.get("GITHUB_REPOSITORY") or "Studio-Fug/splanc"
 API = "https://api.github.com"
 RELEASE_TAG = "fleet-inventory"
 

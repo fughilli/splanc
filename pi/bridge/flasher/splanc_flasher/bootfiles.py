@@ -158,7 +158,7 @@ def render_conf(
 ) -> str:
     lines = [
         "# Splanc bridge settings, read by the Pi on every boot. You can edit this file",
-        "# on any computer; see https://github.com/fughilli/splanc/blob/main/docs/pi-bridge.md",
+        "# on any computer; see https://github.com/Studio-Fug/splanc/blob/main/docs/pi-bridge.md",
         "#",
         "#   HOSTNAME=splanc-bridge     the Pi's name on the network (<name>.local)",
         "#   WIFI_COUNTRY=US            two-letter country code for WiFi channels",

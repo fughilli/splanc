@@ -1951,7 +1951,7 @@ impl Player {
         if is_release_version(version) && !self.fw_git_dirty {
             j.raw("{\"url\":");
             if x.bundle_url.is_empty() {
-                j.raw("\"https://github.com/fughilli/splanc/releases/download/firmware-v");
+                j.raw("\"https://github.com/Studio-Fug/splanc/releases/download/firmware-v");
                 j.raw(version);
                 j.raw("/splanc-agent-");
                 j.raw(version);

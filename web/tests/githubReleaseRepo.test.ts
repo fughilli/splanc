@@ -60,7 +60,7 @@ test("version comes from the tag; a non-SHA target_commitish yields no commit", 
 });
 
 test("proxiedAssetUrl routes an asset URL through the CORS proxy, encoded", () => {
-  const raw = "https://github.com/fughilli/splanc/releases/download/firmware-v1.0.0/esp32c6-vendor-1.0.0.tar";
+  const raw = "https://github.com/Studio-Fug/splanc/releases/download/firmware-v1.0.0/esp32c6-vendor-1.0.0.tar";
   const p = proxiedAssetUrl(raw);
   assert.ok(p.startsWith("https://splanc.pages.dev/gh-asset?url="));
   // The original URL must be percent-encoded so its :/ don't corrupt our query.

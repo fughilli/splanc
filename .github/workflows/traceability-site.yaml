@@ -1,5 +1,5 @@
 # Publish the requirements traceability reports to GitHub Pages, at
-# https://fughilli.github.io/splanc/traceability/ , whenever a Test or HITL run
+# https://studio-fug.github.io/splanc/traceability/ , whenever a Test or HITL run
 # on main completes (and on demand):
 #
 #   /traceability/           the COMBINED report: the model at the latest main

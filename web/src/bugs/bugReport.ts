@@ -1,5 +1,5 @@
 /**
- * `file_bug`: how every Splanc agent files a bug against github.com/fughilli/splanc
+ * `file_bug`: how every Splanc agent files a bug against github.com/Studio-Fug/splanc
  * (docs/design/agent-bug-reports.md). One pure module (no DOM, no Node), shared by
  *
  * - the MCP hub (agent/src/server.ts: stdio, the CLI, and the LAN bridge behind
@@ -19,7 +19,7 @@
  *       back to (a).
  */
 
-export const BUG_REPO = "fughilli/splanc";
+export const BUG_REPO = "Studio-Fug/splanc";
 export const BUG_TOOL_NAME = "file_bug";
 /** Every agent-filed issue carries this label (plus `severity:<level>`). */
 export const AGENT_FILED_LABEL = "agent-filed";
@@ -54,7 +54,7 @@ export const BUG_LIMITS = {
 
 /** The tool's description: when to file, and the confirmation rule. */
 export const FILE_BUG_DESCRIPTION =
-  "File a bug against Splanc (github.com/fughilli/splanc). Use it for a reproducible defect: a crash, " +
+  "File a bug against Splanc (github.com/Studio-Fug/splanc). Use it for a reproducible defect: a crash, " +
   "reboot or hang; a tool or the app failing in a way that isn't the user's input; the preview and the " +
   "real fixture disagreeing (device/preview mismatch); a compile that should work but doesn't; wrong " +
   "output. Not for questions, feature wishes or one-off network blips. Reproduce it first when you can, " +

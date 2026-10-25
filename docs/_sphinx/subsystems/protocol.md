@@ -22,7 +22,7 @@ The Rust side (`shared/protocol/rust/`) builds `ledmapper.proto` two ways:
 - **`ledmapper_pb` / `ledmapper_pb_fw`** — micropb structs. The `_fw` profile
   is the firmware's capacity profile, which caps the repeated fields and skips
   the fat arms. These are used for encoding replies and on the host.
-- **`ledmapper_view`** — zero-copy [pbview](https://github.com/fughilli/splanc/tree/main/oss/pbview)
+- **`ledmapper_view`** — zero-copy [pbview](https://github.com/Studio-Fug/splanc/tree/main/oss/pbview)
   views (`oss/pbview`, `pbview_library`). A view is a borrowed two-word handle
   with lazy accessors over the wire bytes. `parse` validates once, and there is
   no allocation, no `unsafe` and no panic on any input. The firmware decodes

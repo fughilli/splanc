@@ -47,7 +47,7 @@ def main() -> None:
         "Primitive Obsession uses the spatial bands with the topology flood disabled. "
         "Colors are normalized RGB values. The gallery cycles every 12 seconds, "
         "with gently orbiting views and smoothed mouse parallax.\n\n"
-        f"Source repository: https://github.com/fughilli/splanc/tree/{commit}\n\n"
+        f"Source repository: https://github.com/Studio-Fug/splanc/tree/{commit}\n\n"
         "To refresh after building Splanc:\n\n```sh\n"
         "python3 tools/fixtures/export_hero.py /path/to/splanc.io/public/scenes/maxa "
         "--runtime /path/to/built/wasm/bundles\n```\n\n"

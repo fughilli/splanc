@@ -169,7 +169,7 @@ let
   stateDir = "/var/lib/hitl";
 
   # Token file for the periodic pipeline trigger (launchd job below). Holds a GitHub
-  # PAT with actions:write on fughilli/splanc (a fine-grained PAT, or a classic
+  # PAT with actions:write on Studio-Fug/splanc (a fine-grained PAT, or a classic
   # repo-scoped token). Placed OUT-OF-BAND (never in the world-readable nix store):
   #   sudo install -m600 -o root /path/to/token /var/lib/hitl/github-dispatch.token
   # The job no-ops if it's absent/empty, so a Mac without the token still deploys.
@@ -258,10 +258,12 @@ in
         ''
           tok=$(cat ${dispatchTokenFile} 2>/dev/null) || exit 0
           [ -n "$tok" ] || exit 0
-          exec ${pkgs.curl}/bin/curl -sS -X POST \
+          # -L: follow GitHub's 307 if the repo has moved (curl keeps POST + body + auth
+          # on the same host); -f: fail loudly instead of logging a 3xx/4xx body as success.
+          exec ${pkgs.curl}/bin/curl -fsSL -X POST \
             -H "Authorization: token $tok" \
             -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/fughilli/splanc/actions/workflows/hitl.yaml/dispatches \
+            https://api.github.com/repos/Studio-Fug/splanc/actions/workflows/hitl.yaml/dispatches \
             -d '{"ref":"main"}'
         ''
       ];

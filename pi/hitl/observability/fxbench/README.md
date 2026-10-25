@@ -76,7 +76,7 @@ The dataset is multi-MB and grows every run, so it is **not committed to git**
 (the repo's `check-added-large-files` hook caps files at 600 KB). It lives as
 assets on the `fxbench-data` GitHub _release_, re-uploaded each ingest; Grafana
 reads the fixed download URLs
-(`https://github.com/fughilli/splanc/releases/download/fxbench-data/…`). Only the
+(`https://github.com/Studio-Fug/splanc/releases/download/fxbench-data/…`). Only the
 small `data/ingest_state.json` run-id ledger is tracked in git, so the incremental
 ingest knows which runs it has already seen. If a write-scoped Loki/Prometheus
 token is later added to the "HITL"/"Grafana" Actions environments, the same rows

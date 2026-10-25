@@ -6,8 +6,8 @@
 (() => {
   const api = window.flasher;
   const $ = (id) => document.getElementById(id);
-  const GUIDE = 'https://github.com/fughilli/splanc/blob/main/docs/guides/cloud-agent.md';
-  const HELP = 'https://github.com/fughilli/splanc/blob/main/docs/pi-bridge.md';
+  const GUIDE = 'https://github.com/Studio-Fug/splanc/blob/main/docs/guides/cloud-agent.md';
+  const HELP = 'https://github.com/Studio-Fug/splanc/blob/main/docs/pi-bridge.md';
   const ORDER = ['board', 'wifi', 'card', 'write'];
 
   const state = {

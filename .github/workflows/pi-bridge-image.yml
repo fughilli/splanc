@@ -281,7 +281,7 @@ jobs:
             cat >notes.md <<EOF
           Splanc bridge $VERSION: a ready-to-flash Raspberry Pi SD image that runs the Splanc cloud bridge, and the **Splanc Bridge Flasher** desktop app that writes it.
 
-          **Most people:** download the flasher for your computer below, open it, pick your Pi, enter your WiFi, pick the SD card. See [docs/pi-bridge.md](https://github.com/fughilli/splanc/blob/main/docs/pi-bridge.md).
+          **Most people:** download the flasher for your computer below, open it, pick your Pi, enter your WiFi, pick the SD card. See [docs/pi-bridge.md](https://github.com/Studio-Fug/splanc/blob/main/docs/pi-bridge.md).
 
           The flasher is not code-signed yet: on macOS, open it once via System Settings > Privacy & Security > Open Anyway; on Windows, SmartScreen > More info > Run anyway.
           EOF

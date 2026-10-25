@@ -58,12 +58,12 @@ const github = http.createServer((req, res) => {
       gh.searches.push(url.searchParams.get("q") ?? "");
       return send(200, { items: gh.items });
     }
-    if (req.method === "POST" && url.pathname === "/repos/fughilli/splanc/issues") {
+    if (req.method === "POST" && url.pathname === "/repos/Studio-Fug/splanc/issues") {
       const j = JSON.parse(body) as Filed;
       if (gh.rejectLabels && j.labels) return send(422, { message: "Validation Failed" });
       const n = 1000 + gh.filed.length;
       gh.filed.push({ ...j, auth: String(req.headers["authorization"]) });
-      return send(201, { number: n, html_url: `https://github.com/fughilli/splanc/issues/${n}` });
+      return send(201, { number: n, html_url: `https://github.com/Studio-Fug/splanc/issues/${n}` });
     }
     send(404, { message: "Not Found" });
   });
@@ -283,13 +283,13 @@ describe("file_bug on the relay's /mcp", () => {
       assert.ok(fbTool, "file_bug listed");
       assert.equal(fbTool.annotations?.openWorldHint, true);
 
-      gh.items = [{ number: 42, title: "Preview and fixture disagree", html_url: "https://github.com/fughilli/splanc/issues/42" }];
+      gh.items = [{ number: 42, title: "Preview and fixture disagree", html_url: "https://github.com/Studio-Fug/splanc/issues/42" }];
       const draft = await fileBugAtRelay(token, REPORT);
       assert.equal(draft.status, "possible_duplicates");
       assert.equal(draft.duplicates[0]!.number, 42);
-      assert.match(draft.submit_url!, /^https:\/\/github\.com\/fughilli\/splanc\/issues\/new\?/);
+      assert.match(draft.submit_url!, /^https:\/\/github\.com\/Studio-Fug\/splanc\/issues\/new\?/);
       assert.match(draft.report.body, /"bridge": "online \(too old/);
-      assert.ok(gh.searches.at(-1)!.startsWith("repo:fughilli/splanc is:issue is:open"));
+      assert.ok(gh.searches.at(-1)!.startsWith("repo:Studio-Fug/splanc is:issue is:open"));
       gh.items = [];
 
       const n = gh.filed.length;
