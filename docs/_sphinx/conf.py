@@ -75,7 +75,7 @@ html_extra_path = ["_assets"]
 html_theme_options = {
     "sidebar_hide_name": False,
     "navigation_with_keys": True,
-    "source_repository": "https://github.com/fughilli/splanc/",
+    "source_repository": "https://github.com/Studio-Fug/splanc/",
     "source_branch": "main",
     "source_directory": "docs/_sphinx/",
     "light_css_variables": {

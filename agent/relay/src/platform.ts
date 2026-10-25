@@ -65,7 +65,7 @@ export interface Env {
    * repository only, for POST /bugs (docs/design/agent-bug-reports.md). Unset =
    * direct bug filing is "not configured" and agents hand out a link instead. */
   GITHUB_ISSUES_TOKEN?: string;
-  /** owner/repo bugs are filed in (default fughilli/splanc). */
+  /** owner/repo bugs are filed in (default Studio-Fug/splanc). */
   GITHUB_ISSUES_REPO?: string;
   /** GitHub API base (default https://api.github.com; tests point it at a mock). */
   GITHUB_API_URL?: string;

@@ -134,7 +134,7 @@ The HTML, JSON, Markdown (also added to the job summary) and queue are uploaded
 as the `traceability-report` artifact.
 
 The reports are published at
-**<https://fughilli.github.io/splanc/traceability/>** after every Test or HITL
+**<https://studio-fug.github.io/splanc/traceability/>** after every Test or HITL
 run on `main` ([`.github/workflows/traceability-site.yaml`](../.github/workflows/traceability-site.yaml)):
 the page is the combined report (the latest main Test run's software evidence
 and the latest main HITL run's hardware evidence against the model), with each

@@ -100,6 +100,12 @@ repos:
   # baked cache and rebuilds the drifted hooks at startup.
   - repo: local
     hooks:
+      - id: repo-links
+        name: no links to the repo's pre-transfer home
+        language: script
+        entry: tools/check_repo_links.py
+        pass_filenames: false
+        always_run: true
       - id: prek-overlay-config-copy
         name: sync container overlay prek config copy
         language: script

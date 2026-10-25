@@ -3,7 +3,7 @@
 # Settings: /etc/splanc-bridge/bridge.env (OLED=, OLED_ROTATE=, SPLANC_DISPLAY_HDMI=).
 [Unit]
 Description=Splanc bridge screens (HDMI + OLED HAT)
-Documentation=https://github.com/fughilli/splanc/blob/main/docs/pi-bridge.md
+Documentation=https://github.com/Studio-Fug/splanc/blob/main/docs/pi-bridge.md
 After=splanc-bridge.service systemd-user-sessions.service
 StartLimitIntervalSec=0
 

@@ -14,7 +14,7 @@ import { readFile } from "node:fs/promises";
 
 import { splitPackage, versionNumber } from "../../web/src/net/otaUpdate";
 
-export const REPO = "fughilli/splanc";
+export const REPO = "Studio-Fug/splanc";
 
 export interface PackageSource {
   /** "1.9.0", "v1.9.0" or "latest". */

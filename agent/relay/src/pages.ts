@@ -7,7 +7,7 @@
 export const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-export const DOCS_URL = "https://github.com/fughilli/splanc/blob/main/docs/guides/cloud-agent.md";
+export const DOCS_URL = "https://github.com/Studio-Fug/splanc/blob/main/docs/guides/cloud-agent.md";
 
 const STYLE = `
 :root{--bg:#f7f7f8;--fg:#16161a;--muted:#5d5d66;--card:#fff;--line:#d9d9de;--accent:#6b3cf5;--err:#b3261e;--warn:#8a5a00}

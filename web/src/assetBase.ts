@@ -9,7 +9,7 @@
  * URL strings in TS — Vite never sees them — so we resolve them against the
  * current document here. That makes ONE built bundle work whether it is served
  * from an origin root (the Pi M2 server, Cloudflare ledmapper.pages.dev) or from
- * a subpath (the GitHub Pages project site https://fughilli.github.io/splanc/
+ * a subpath (the GitHub Pages project site https://studio-fug.github.io/splanc/
  * and its per-PR previews under /pr-preview/pr-N/).
  *
  * The app is a multi-page app whose HTML entry points (index/wall/effects) all

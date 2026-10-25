@@ -63,7 +63,7 @@
           "source": "url",
           "format": "table",
           "parser": "backend",
-          "url": "https://raw.githubusercontent.com/fughilli/splanc/main/pi/hitl/observability/fleet/fleet-inventory.json",
+          "url": "https://raw.githubusercontent.com/Studio-Fug/splanc/main/pi/hitl/observability/fleet/fleet-inventory.json",
           "url_options": { "method": "GET", "data": "" },
           "root_selector": "$",
           "columns": [

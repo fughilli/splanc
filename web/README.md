@@ -148,9 +148,9 @@ CI publishes the same static site to GitHub Pages off the `gh-pages` branch
 
 - **Every open PR** gets a staging copy under `pr-preview/pr-N/`, and the CI
   bot posts the link on the PR
-  (`https://fughilli.github.io/splanc/pr-preview/pr-N/`).
+  (`https://studio-fug.github.io/splanc/pr-preview/pr-N/`).
 - **Merges to `main`** publish the main site at the Pages root
-  (`https://fughilli.github.io/splanc/`) and also deploy Cloudflare production
+  (`https://studio-fug.github.io/splanc/`) and also deploy Cloudflare production
   (`//web:deploy_cloudflare`, creds from the `CLOUDFLARE_API_TOKEN` /
   `CLOUDFLARE_ACCOUNT_ID` repo secrets).
 

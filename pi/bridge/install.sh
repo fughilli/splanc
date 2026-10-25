@@ -395,7 +395,7 @@ main() {
       --no-apt) NO_APT=1 ;;
       --no-node) NO_NODE=1 ;;
       -h | --help)
-        sed -n '2,/^set -eu/p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//' | grep -v '^set -eu' || echo "see https://github.com/fughilli/splanc/blob/main/docs/pi-bridge.md"
+        sed -n '2,/^set -eu/p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//' | grep -v '^set -eu' || echo "see https://github.com/Studio-Fug/splanc/blob/main/docs/pi-bridge.md"
         exit 0
         ;;
       *) die "unknown option: $1 (see --help)" ;;

@@ -124,7 +124,7 @@ export function confirmFilingText(issue: PreparedIssue): { title: string; messag
   return {
     title: "File this bug on GitHub?",
     message:
-      `"${issue.title}" will be filed as a public issue on github.com/fughilli/splanc (severity ${issue.severity}, ` +
+      `"${issue.title}" will be filed as a public issue on github.com/Studio-Fug/splanc (severity ${issue.severity}, ` +
       "labelled agent-filed). Passwords, tokens, keys and exact addresses were removed; your effect's source is " +
       "included only if you agreed to attach it.",
     confirmLabel: "File it",

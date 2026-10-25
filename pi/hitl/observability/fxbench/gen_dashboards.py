@@ -75,7 +75,7 @@ INFINITY = {"type": "yesoreyeram-infinity-datasource", "uid": "grafanacloud-infi
 # committed to git (the repo's check-added-large-files hook caps at 600 KB). The
 # ingest workflow re-uploads these assets each run; a fixed download URL always
 # resolves to the latest. Infinity follows the release redirect to the blob store.
-BASE = "https://github.com/fughilli/splanc/releases/download/fxbench-data"
+BASE = "https://github.com/Studio-Fug/splanc/releases/download/fxbench-data"
 MEAS_URL = f"{BASE}/measurements.json"
 # The bounded (trailing-window) slice the performance-overview dashboard reads —
 # same schema as measurements.json, but small and non-growing (see

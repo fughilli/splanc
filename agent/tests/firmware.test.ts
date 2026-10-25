@@ -34,13 +34,13 @@ function fakeFetch(routes: Record<string, unknown>) {
 test("latest resolves through the releases API to the release's .ota asset", async () => {
   const pkg = otaPackage(1_009_000);
   const f = fakeFetch({
-    "https://api.github.com/repos/fughilli/splanc/releases/latest": { tag_name: "firmware-v1.9.0" },
+    "https://api.github.com/repos/Studio-Fug/splanc/releases/latest": { tag_name: "firmware-v1.9.0" },
     [releasePackageUrl("1.9.0")]: pkg,
   });
   const r = await resolvePackage({ version: "latest" }, f.impl);
   assert.equal(r.version, 1_009_000);
   assert.equal(r.label, "firmware 1.9.0");
-  assert.equal(releasePackageUrl("v1.9.0"), "https://github.com/fughilli/splanc/releases/download/firmware-v1.9.0/esp32c6-netstack-1.9.0.ota");
+  assert.equal(releasePackageUrl("v1.9.0"), "https://github.com/Studio-Fug/splanc/releases/download/firmware-v1.9.0/esp32c6-netstack-1.9.0.ota");
 });
 
 test("a release without an OTA package says so", async () => {

@@ -1,7 +1,7 @@
 # Agent bug reports (`file_bug`)
 
 Every Splanc agent can file a bug against
-[fughilli/splanc](https://github.com/fughilli/splanc) with one shared tool, `file_bug`.
+[Studio-Fug/splanc](https://github.com/Studio-Fug/splanc) with one shared tool, `file_bug`.
 
 ## Where it is
 
@@ -48,7 +48,7 @@ The shared core is `web/src/bugs/bugReport.ts`. It is a pure module that the age
    - **Dropped from objects:** keys named after secrets or the private library.
 5. **Look for duplicates.** The tool searches open issues in the repository through the public GitHub search API (unauthenticated) and ranks them by title overlap. Likely duplicates come back in `duplicates`, so the agent can point the user at them or comment there.
 6. **Submit.**
-   - `submit: "url"` (the default, always available): the result carries `submit_url`, a pre-filled `https://github.com/fughilli/splanc/issues/new?title=…&body=…&labels=agent-filed,severity:<s>` link. The user submits it under their own account. Above 7600 characters the body is cut to fit, with a note and a balanced code fence, and the footer is kept.
+   - `submit: "url"` (the default, always available): the result carries `submit_url`, a pre-filled `https://github.com/Studio-Fug/splanc/issues/new?title=…&body=…&labels=agent-filed,severity:<s>` link. The user submits it under their own account. Above 7600 characters the body is cut to fit, with a note and a balanced code fence, and the footer is kept.
    - `submit: "direct"`: needs `user_confirmed: true`, which the agent sets only after the user has read the report and agreed. If possible duplicates were found, it also needs `ignore_duplicates: true`. In the app, a confirmation dialog is shown as well. If the relay can't file the report, the result falls back to the link. That covers: not configured, rate limited, offline, or GitHub refusing it.
 
 Every issue body ends with a visible "Filed by an AI agent through Splanc (<surface>)" line and the hidden marker `<!-- splanc:agent-filed v1 -->`. Every issue is labelled `agent-filed` and `severity:<level>`.
@@ -91,7 +91,7 @@ The request body is `{title, body, severity, surface}` as JSON.
 The relay never files anything until its owner adds the secret. Until then, every agent hands out links.
 
 1. On github.com, go to Settings → Developer settings → Fine-grained tokens and create a token:
-   - **Repository access:** only `fughilli/splanc`.
+   - **Repository access:** only `Studio-Fug/splanc`.
    - **Permissions:** Issues: Read and write. Nothing else.
    - **Expiry:** pick one and note it. When the token expires, direct filing reports "GitHub answered 401" and agents fall back to links.
 2. Store it as a Worker secret, from `agent/relay/` with the Cloudflare credentials loaded:

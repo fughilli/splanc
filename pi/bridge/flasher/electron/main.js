@@ -126,9 +126,9 @@ ipcMain.handle('pick-image', async () => {
 });
 
 const LINKS = new Set([
-  'https://github.com/fughilli/splanc/blob/main/docs/guides/cloud-agent.md',
-  'https://github.com/fughilli/splanc/blob/main/docs/pi-bridge.md',
-  'https://github.com/fughilli/splanc/releases',
+  'https://github.com/Studio-Fug/splanc/blob/main/docs/guides/cloud-agent.md',
+  'https://github.com/Studio-Fug/splanc/blob/main/docs/pi-bridge.md',
+  'https://github.com/Studio-Fug/splanc/releases',
 ]);
 ipcMain.handle('open-link', (_e, url) => {
   if (LINKS.has(url)) shell.openExternal(url);

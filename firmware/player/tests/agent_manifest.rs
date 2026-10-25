@@ -81,7 +81,7 @@ fn manifest_mirrors_the_welcome_and_names_the_release_bundle() {
     assert_eq!(m["tls"]["cert_sha256"], "ab12");
     assert_eq!(
         m["bundle"]["url"],
-        "https://github.com/fughilli/splanc/releases/download/firmware-v1.2.0/splanc-agent-1.2.0.tgz"
+        "https://github.com/Studio-Fug/splanc/releases/download/firmware-v1.2.0/splanc-agent-1.2.0.tgz"
     );
     assert_eq!(m["bundle"]["mcp"]["command"], "npx");
     assert_eq!(m["bundle"]["mcp"]["args"], serde_json::json!(["-y", "@splanc/agent@1.2.0", "--host", "{host}"]));

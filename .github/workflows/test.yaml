@@ -320,7 +320,7 @@ jobs:
   # Deploy the PWA to GitHub Pages (FUG-26).
   #
   # Hosting model: the gh-pages branch is the Pages source. The main site lives
-  # at its root (https://fughilli.github.io/splanc/) and every open PR gets a
+  # at its root (https://studio-fug.github.io/splanc/) and every open PR gets a
   # staging copy under pr-preview/pr-N/. The web bundle is built base-relative
   # (web/vite.config.ts), so the same tree works at both the root and a subpath.
   #

@@ -41,7 +41,7 @@ fleet-inventory.json   ──committed (tiny; the 600 KB hook is fine)──►
 
 Unlike the multi-MB `fxbench-data` dataset (a release asset), this artifact is a
 few KB, so it's committed and served from
-`https://raw.githubusercontent.com/fughilli/splanc/main/pi/hitl/observability/fleet/fleet-inventory.json`
+`https://raw.githubusercontent.com/Studio-Fug/splanc/main/pi/hitl/observability/fleet/fleet-inventory.json`
 — no release, no token, and the change is reviewable in the PR. A
 `--upload-release` mode is provided for parity if you'd rather serve it from a
 `fleet-inventory` GitHub release like fx_bench (then point the panel's URL at the

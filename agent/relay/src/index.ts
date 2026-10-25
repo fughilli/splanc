@@ -118,7 +118,7 @@ export default {
               bearer_methods_supported: ["header"],
               scopes_supported: SCOPES_SUPPORTED,
               resource_name: "Splanc lights",
-              resource_documentation: "https://github.com/fughilli/splanc/blob/main/docs/guides/cloud-agent.md",
+              resource_documentation: "https://github.com/Studio-Fug/splanc/blob/main/docs/guides/cloud-agent.md",
             },
             200,
             { "cache-control": "public, max-age=3600" },

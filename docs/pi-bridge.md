@@ -31,7 +31,7 @@ You need at least one of the two screens to read the pairing code from the Pi.
 ## 1. Get the Splanc Bridge Flasher
 
 Download it from the newest **Splanc bridge** release on
-[the releases page](https://github.com/fughilli/splanc/releases) (the releases named "Splanc
+[the releases page](https://github.com/Studio-Fug/splanc/releases) (the releases named "Splanc
 bridge …", tagged `pi-bridge-v…`):
 
 | Your computer               | File                                                    |

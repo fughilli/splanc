@@ -11,7 +11,7 @@ the end points into the technical documentation. The same guide is on the
 website at <https://splanc.io/quickstart>.
 
 Current releases: firmware `firmware-v1.10.0`, app `app-v1.10.0`, Pi bridge
-`pi-bridge-v1.0.1` ([releases](https://github.com/fughilli/splanc/releases)).
+`pi-bridge-v1.0.1` ([releases](https://github.com/Studio-Fug/splanc/releases)).
 
 ## 1. What you need
 
@@ -184,7 +184,7 @@ Bridge problems (code expired, no players listed) are covered in the
 [Pi bridge](pi-bridge.md#troubleshooting) guides.
 
 **Get help**: open an issue on
-[GitHub](https://github.com/fughilli/splanc/issues), or ask on the
+[GitHub](https://github.com/Studio-Fug/splanc/issues), or ask on the
 [Splanc Discord](https://discord.gg/wqY9pHavnD). The full walkthrough of every
 screen is the [user guide](user-guide.md); recent changes are in
 [What's new](whats-new.md).

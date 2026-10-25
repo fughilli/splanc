@@ -146,7 +146,7 @@ in
 
     systemd.services.splanc-bridge = {
       description = "Splanc cloud bridge";
-      documentation = [ "https://github.com/fughilli/splanc/blob/main/docs/pi-bridge.md" ];
+      documentation = [ "https://github.com/Studio-Fug/splanc/blob/main/docs/pi-bridge.md" ];
       wantedBy = [ "multi-user.target" ];
       wants = [ "network-online.target" ];
       after = [ "network-online.target" "splanc-flash-config.service" ];

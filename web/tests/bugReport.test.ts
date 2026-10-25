@@ -156,7 +156,7 @@ describe("buildIssueUrl", () => {
     const r = buildIssueUrl(issue);
     assert.equal(r.truncated, false);
     const u = new URL(r.url);
-    assert.equal(u.origin + u.pathname, "https://github.com/fughilli/splanc/issues/new");
+    assert.equal(u.origin + u.pathname, "https://github.com/Studio-Fug/splanc/issues/new");
     assert.equal(u.searchParams.get("title"), REPORT.title);
     assert.equal(u.searchParams.get("labels"), "agent-filed,severity:medium");
     assert.equal(u.searchParams.get("body"), issue.body);
@@ -191,7 +191,7 @@ describe("findDuplicates", () => {
       return new Response(
         JSON.stringify({
           items: [
-            { number: 12, title: "Fixture stays dark while preview animates", html_url: "https://github.com/fughilli/splanc/issues/12" },
+            { number: 12, title: "Fixture stays dark while preview animates", html_url: "https://github.com/Studio-Fug/splanc/issues/12" },
             { number: 13, title: "Unrelated: flasher on Windows", html_url: "u13" },
             { number: 14, title: "Preview rainbow fixture dark", html_url: "u14", pull_request: {} },
           ],
@@ -201,7 +201,7 @@ describe("findDuplicates", () => {
     };
     const r = await findDuplicates(REPORT.title, { fetch });
     const q = new URL(asked).searchParams.get("q")!;
-    assert.match(q, /^repo:fughilli\/splanc is:issue is:open /);
+    assert.match(q, /^repo:Studio-Fug\/splanc is:issue is:open /);
     assert.match(q, /in:title,body preview OR shows OR rainbow OR fixture OR stays OR dark$/);
     assert.deepEqual(r.candidates.map((c) => c.number), [12], "PRs and unrelated titles are dropped");
   });
@@ -225,11 +225,11 @@ describe("submitDirect", () => {
     const r = await submitDirect("https://relay.example/", issue, {
       fetch: async (url, init) => {
         seen = { url, init: init! };
-        return new Response(JSON.stringify({ number: 7, url: "https://github.com/fughilli/splanc/issues/7" }), { status: 201 });
+        return new Response(JSON.stringify({ number: 7, url: "https://github.com/Studio-Fug/splanc/issues/7" }), { status: 201 });
       },
       headers: (body) => ({ "x-test": String(body.length) }),
     });
-    assert.deepEqual(r, { ok: true, number: 7, url: "https://github.com/fughilli/splanc/issues/7" });
+    assert.deepEqual(r, { ok: true, number: 7, url: "https://github.com/Studio-Fug/splanc/issues/7" });
     assert.equal(seen!.url, "https://relay.example/bugs");
     const sent = JSON.parse(String(seen!.init.body));
     assert.deepEqual(Object.keys(sent).sort(), ["body", "severity", "surface", "title"]);
@@ -250,7 +250,7 @@ describe("submitDirect", () => {
 });
 
 describe("fileBug", () => {
-  const filed = async () => ({ ok: true as const, number: 99, url: "https://github.com/fughilli/splanc/issues/99" });
+  const filed = async () => ({ ok: true as const, number: 99, url: "https://github.com/Studio-Fug/splanc/issues/99" });
 
   test("default: a link, nothing filed", async () => {
     let called = false;
@@ -265,7 +265,7 @@ describe("fileBug", () => {
     });
     assert.equal(r.status, "draft");
     assert.equal(called, false);
-    assert.match(r.submit_url!, /^https:\/\/github\.com\/fughilli\/splanc\/issues\/new\?/);
+    assert.match(r.submit_url!, /^https:\/\/github\.com\/Studio-Fug\/splanc\/issues\/new\?/);
     assert.match(r.report.body, /"firmware": "1.10.0"/);
   });
 
@@ -286,7 +286,7 @@ describe("fileBug", () => {
       { surface: "mcp", duplicates: dup, direct: filed },
     );
     assert.equal(again.status, "filed");
-    assert.deepEqual(again.issue, { number: 99, url: "https://github.com/fughilli/splanc/issues/99" });
+    assert.deepEqual(again.issue, { number: 99, url: "https://github.com/Studio-Fug/splanc/issues/99" });
   });
 
   test("confirmed: filed; the relay not configured: back to the link", async () => {

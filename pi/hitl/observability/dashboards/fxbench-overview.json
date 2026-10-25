@@ -89,7 +89,7 @@
           "source": "url",
           "format": "table",
           "parser": "backend",
-          "url": "https://github.com/fughilli/splanc/releases/download/fxbench-data/goldens.json",
+          "url": "https://github.com/Studio-Fug/splanc/releases/download/fxbench-data/goldens.json",
           "url_options": {
             "method": "GET",
             "data": ""
@@ -172,7 +172,7 @@
           "source": "url",
           "format": "table",
           "parser": "backend",
-          "url": "https://github.com/fughilli/splanc/releases/download/fxbench-data/measurements.json",
+          "url": "https://github.com/Studio-Fug/splanc/releases/download/fxbench-data/measurements.json",
           "url_options": {
             "method": "GET",
             "data": ""
