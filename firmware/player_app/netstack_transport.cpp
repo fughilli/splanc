@@ -1321,15 +1321,26 @@ size_t g_ws_rxlen = 0;
 // the TLS write spin so the peer's ACK is processed and the stop-and-wait TCP frees its
 // in-flight segment — otherwise a write that spans >1 segment (or follows an unacked one)
 // deadlocks: bio_send returns WANT_WRITE forever because no RX drain runs to clear tx_data.
+// loopTask's link RX scratch, shared by its two receive paths: netstack_loop's drain and
+// pump_link_once (the TLS-write spin). One full MPDU (ns_mac_recv truncates to the cap, and
+// a truncated frame fails CCMP's MIC) plus one software-CCMP plaintext. The paths never
+// nest: pump_link_once runs only under tls_write_all (ws_pump / lm_ws_send, after the
+// drain), and nothing the drain calls (handle_l3, bgscan_on_frame, the EAPOL replies)
+// reaches a TLS write; g_rx_draining turns a violation into a skipped RX instead of a
+// clobbered frame. Static rather than on the drain's frame: those 1.6 KB were the
+// biggest frame on loopTask's deepest path (stack_bound_test). Was four 1.6 KB buffers.
+constexpr uint32_t kRxFrameCap = 1600;
+uint8_t g_rxf[kRxFrameCap];
+uint8_t g_rx_pt[kRxFrameCap];
+bool g_rx_draining = false;
+
 static void pump_link_once() {
-  static uint8_t rxb[1600];
-  uint32_t n = ns_mac_recv(rxb, sizeof(rxb));
-  if (n > 0 && (rxb[0] & 0x0c) == 0x08 && (rxb[1] & 0x40)) {  // protected data frame from the AP
-    static uint8_t pt[1600];  // static: single-threaded, and keeps this off the deep TLS-write stack
+  uint32_t n = g_rx_draining ? 0 : ns_mac_recv(g_rxf, sizeof(g_rxf));
+  if (n > 0 && (g_rxf[0] & 0x0c) == 0x08 && (g_rxf[1] & 0x40)) {  // protected data frame from the AP
     uint32_t pl = 0;
     for (uint32_t trim = 0; trim <= 4 && pl == 0; trim++)
-      if (n > trim + 32) pl = ns_sta_decrypt(rxb, n - trim, pt, sizeof(pt));
-    if (pl) { note_rx_sa(rxb); handle_l3(pt, pl); }
+      if (n > trim + 32) pl = ns_sta_decrypt(g_rxf, n - trim, g_rx_pt, sizeof(g_rx_pt));
+    if (pl) { note_rx_sa(g_rxf); handle_l3(g_rx_pt, pl); }
   }
   // ALWAYS try to stream the send window out — whether or not a frame arrived. During a
   // TLS write-stall (snd_buf full) the only way it drains is ACKs freeing space + the RTO's
@@ -2046,7 +2057,9 @@ void netstack_loop() {
   // rx must hold a FULL MPDU: ns_mac_recv truncates to cap, and a truncated frame fails
   // CCMP's MIC (silently dropped, no ACK) — which stalled inbound data segments >~360B
   // (e.g. a 410-byte TLS ClientHello -> ~498-byte MPDU) while small control frames passed.
-  uint8_t f[256], rx[1600];
+  // It is the shared static g_rxf (see pump_link_once), not a stack array.
+  uint8_t f[256];
+  uint8_t *const rx = g_rxf;
 
   // Keep own-MAC valid the whole time so hardware auto-ACK stays on (no retransmit
   // storm). Post-link we DISABLE the HW crypto engine (CTRL0=0) so the MAC passes
@@ -2061,7 +2074,8 @@ void netstack_loop() {
   // fill the fixed RX ring and drop an inbound SYN/data segment before we service it.
   uint32_t n;
   int drained = 0;
-  while (g_radio_up && drained++ < 32 && (n = ns_mac_recv(rx, sizeof(rx))) > 0) {
+  g_rx_draining = true;
+  while (g_radio_up && drained++ < 32 && (n = ns_mac_recv(rx, kRxFrameCap)) > 0) {
   bgscan_on_frame(rx, n);  // a background sweep listens to every BSS (wifi_scan.h)
   // Broad DONE-state RX trace: what frames actually reach our ring post-link?
   static uint32_t allf = 0;
@@ -2183,7 +2197,7 @@ void netstack_loop() {
       // Protected data frame from the AP: CCMP-decrypt and look for a DHCP reply.
       // The RX frame carries a trailing 4-byte FCS that would corrupt CCMP's MIC
       // (it lives in the last 8 bytes), so trim it before decap.
-      static uint8_t pt[1600];  // static: keep the drain's decrypt buffer off the deep stack
+      uint8_t *const pt = g_rx_pt;  // shared with pump_link_once (never nested)
       // The RX MPDU has no trailing FCS here, so decap over the full length; fall
       // back to an FCS-trimmed length in case a driver variant appends one.
       // The RX hardware pads odd-length MPDUs to even (and some paths append a 4-byte
@@ -2192,7 +2206,7 @@ void netstack_loop() {
       // the MIC validates. (Was: only n and n-4, which missed the odd->even +1 pad.)
       uint32_t pl = 0;
       for (uint32_t trim = 0; trim <= 4 && pl == 0; trim++) {
-        if (n > trim + 32) pl = ns_sta_decrypt(rx, n - trim, pt, sizeof(pt));
+        if (n > trim + 32) pl = ns_sta_decrypt(rx, n - trim, pt, kRxFrameCap);
       }
       static uint32_t pf = 0;
       if (pf++ < 8)
@@ -2211,6 +2225,7 @@ void netstack_loop() {
     }
   }
   } // end RX drain loop
+  g_rx_draining = false;
 
   // Commit WiFi credentials before associating. Two runtime provisioning paths, no baked creds:
   //  (1) BLE Improv — the provisioner writes wifi-settings over GATT (handled below); and
