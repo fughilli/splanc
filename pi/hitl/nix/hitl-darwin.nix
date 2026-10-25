@@ -258,7 +258,9 @@ in
         ''
           tok=$(cat ${dispatchTokenFile} 2>/dev/null) || exit 0
           [ -n "$tok" ] || exit 0
-          exec ${pkgs.curl}/bin/curl -sS -X POST \
+          # -L: follow GitHub's 307 if the repo has moved (curl keeps POST + body + auth
+          # on the same host); -f: fail loudly instead of logging a 3xx/4xx body as success.
+          exec ${pkgs.curl}/bin/curl -fsSL -X POST \
             -H "Authorization: token $tok" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/fughilli/splanc/actions/workflows/hitl.yaml/dispatches \

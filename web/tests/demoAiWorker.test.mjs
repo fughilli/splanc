@@ -154,6 +154,28 @@ test('static assets and existing worker routes remain separate', async () => {
   assert.equal(gh.status, 400);
 });
 
+test('gh-asset accepts splanc release URLs under either owner (repo transfer), nothing else', async () => {
+  const seen = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u) => { seen.push(String(u)); return new Response('tar'); };
+  try {
+    for (const owner of ['Studio-Fug', 'fughilli']) {
+      const asset = `https://github.com/${owner}/splanc/releases/download/firmware-v1.0.0/esp32c6-ota-1.0.0.tar`;
+      const r = await worker.fetch(new Request(`https://splanc.pages.dev/gh-asset?url=${encodeURIComponent(asset)}`), {});
+      assert.equal(r.status, 200, owner);
+      assert.equal(r.headers.get('access-control-allow-origin'), '*');
+    }
+    for (const bad of ['https://github.com/someone/splanc/releases/download/x.tar',
+                       'https://github.com/Studio-Fug/other/releases/download/x.tar']) {
+      const r = await worker.fetch(new Request(`https://splanc.pages.dev/gh-asset?url=${encodeURIComponent(bad)}`), {});
+      assert.equal(r.status, 400, bad);
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.equal(seen.length, 2);
+});
+
 test('splanc.pages.dev is retired: app paths 301 to splanc.io/app, agent files to the root, APIs stay', async () => {
   const noAssets = { ASSETS: { fetch: async () => assert.fail('retired origin must not serve the app') } };
   const loc = async (u) => {
