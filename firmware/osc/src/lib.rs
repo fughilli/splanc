@@ -97,6 +97,45 @@ pub fn for_each_message(data: &[u8], f: &mut impl FnMut(&OscMessage)) -> bool {
     }
 }
 
+/// [`for_each_message`] without recursion: a message, or a bundle of messages
+/// (elements that are themselves bundles are skipped). For callers whose stack
+/// must be statically bounded (the firmware's network task).
+pub fn for_each_message_shallow(data: &[u8], f: &mut impl FnMut(&OscMessage)) -> bool {
+    match data.first() {
+        Some(b'/') => match parse_message(data) {
+            Some(m) => {
+                f(&m);
+                true
+            }
+            None => false,
+        },
+        Some(b'#') => {
+            if data.len() < 16 || &data[..8] != b"#bundle\0" {
+                return false;
+            }
+            let mut pos = 16;
+            while pos < data.len() {
+                let Some(size) = read_i32(data, pos) else { return false };
+                pos += 4;
+                let Some(end) = pos.checked_add(size as usize) else { return false };
+                if end > data.len() {
+                    return false;
+                }
+                let elem = &data[pos..end];
+                if elem.first() == Some(&b'/') {
+                    match parse_message(elem) {
+                        Some(m) => f(&m),
+                        None => return false,
+                    }
+                }
+                pos = end;
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
 fn parse_bundle(data: &[u8], f: &mut impl FnMut(&OscMessage)) -> bool {
     // "#bundle\0" (8) + time tag (8), then length-prefixed elements.
     if data.len() < 16 || &data[..8] != b"#bundle\0" {
@@ -527,4 +566,147 @@ fn axis_index(s: &str) -> Option<usize> {
 fn parse_slot(s: &str) -> Option<u16> {
     let digits = s.strip_prefix("slot").or_else(|| s.strip_prefix('s')).unwrap_or(s);
     digits.parse().ok()
+}
+
+// ---------------------------------------------------------------------------
+// Latest-wins mailbox (docs/design/live-control.md: OSC on the netstack build)
+// ---------------------------------------------------------------------------
+
+/// Longest OSC address the [`Mailbox`] keeps (a longer one is dropped).
+pub const MAILBOX_ADDR_CAP: usize = 40;
+
+/// One waiting address. All-zero is "empty" (an OSC address is never empty: it
+/// starts with '/'), so a [`Mailbox`] is zero-initialised: as a static it lands
+/// in `.bss`, and the firmware can bind one into a fresh heap block. Arguments
+/// are kept already converted to `f32` — the only form [`apply_message`] reads
+/// (`OscArg::as_f32`) — which keeps an entry at 60 B instead of 112.
+#[derive(Clone, Copy)]
+struct Entry {
+    addr: [u8; MAILBOX_ADDR_CAP],
+    vals: [f32; 4],
+    addr_len: u8,
+    n_args: u8,
+}
+
+const EMPTY_ENTRY: Entry = Entry { addr: [0; MAILBOX_ADDR_CAP], vals: [0.0; 4], addr_len: 0, n_args: 0 };
+
+impl Entry {
+    fn used(&self) -> bool {
+        self.addr_len != 0
+    }
+}
+
+/// Received OSC messages waiting for the next frame, LATEST VALUE PER ADDRESS.
+///
+/// The network side [`post`](Mailbox::post)s every datagram as it arrives (cheap:
+/// parse + a table scan, no VM work); the render side [`drain`](Mailbox::drain)s
+/// once per frame, applying each address's newest value. A controller sending
+/// faster than the device renders therefore never queues: a burst of 50 moves
+/// on `/speed` between two frames costs one uniform write. Fixed capacity `N`;
+/// a new address when full is dropped (counted in `dropped`).
+pub struct Mailbox<const N: usize> {
+    entries: [Entry; N],
+    /// Messages replaced by a newer one for the same address before a drain.
+    pub coalesced: u32,
+    /// Messages dropped (mailbox full, or an address too long).
+    pub dropped: u32,
+}
+
+impl<const N: usize> Default for Mailbox<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const N: usize> Mailbox<N> {
+    pub const fn new() -> Self {
+        Mailbox { entries: [EMPTY_ENTRY; N], coalesced: 0, dropped: 0 }
+    }
+
+    /// Stash every message of one datagram (one bundle level flattened; a
+    /// nested bundle is skipped — the walk is iterative, so it is stack-bounded
+    /// on the network task). Returns the number of messages kept.
+    pub fn post(&mut self, data: &[u8]) -> usize {
+        let mut kept = 0usize;
+        let (entries, coalesced, dropped) = (&mut self.entries, &mut self.coalesced, &mut self.dropped);
+        for_each_message_shallow(data, &mut |m| {
+            let a = m.addr.as_bytes();
+            if a.len() > MAILBOX_ADDR_CAP {
+                *dropped += 1;
+                return;
+            }
+            if a.is_empty() {
+                return; // parse_message only yields '/'-addresses; keep `addr_len != 0` = used
+            }
+            let hit = entries.iter().position(|e| e.used() && &e.addr[..e.addr_len as usize] == a);
+            let i = match hit {
+                Some(i) => {
+                    *coalesced += 1;
+                    i
+                }
+                None => match entries.iter().position(|e| !e.used()) {
+                    Some(i) => i,
+                    None => {
+                        *dropped += 1;
+                        return;
+                    }
+                },
+            };
+            let e = &mut entries[i];
+            e.addr[..a.len()].copy_from_slice(a);
+            e.addr_len = a.len() as u8;
+            let mut n = 0usize;
+            for v in m.args().iter().filter_map(OscArg::as_f32) {
+                if n == 4 {
+                    break;
+                }
+                e.vals[n] = v;
+                n += 1;
+            }
+            e.n_args = n as u8;
+            kept += 1;
+        });
+        kept
+    }
+
+    /// Messages waiting.
+    pub fn len(&self) -> usize {
+        self.entries.iter().filter(|e| e.used()).count()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Apply every waiting message (oldest address first) through the same
+    /// resolution as [`ingest`], then empty the mailbox. Returns the writes.
+    pub fn drain(
+        &mut self,
+        cfg: &Config,
+        table: &PortTable,
+        shadow: &mut Shadow,
+        set: &mut impl FnMut(u16, &[f32]),
+    ) -> usize {
+        let mut writes = 0usize;
+        for e in self.entries.iter_mut().filter(|e| e.used()) {
+            let len = e.addr_len as usize;
+            e.addr_len = 0;
+            let Ok(addr) = core::str::from_utf8(&e.addr[..len]) else { continue };
+            let mut msg = OscMessage { addr, args: [OscArg::Other; MAX_ARGS], n_args: e.n_args as usize };
+            for (dst, v) in msg.args.iter_mut().zip(&e.vals[..e.n_args as usize]) {
+                *dst = OscArg::Float(*v);
+            }
+            if apply_message(&msg, cfg, table, shadow, set) {
+                writes += 1;
+            }
+        }
+        writes
+    }
+
+    /// Forget everything waiting (the active effect changed).
+    pub fn clear(&mut self) {
+        for e in self.entries.iter_mut() {
+            e.addr_len = 0;
+        }
+    }
 }

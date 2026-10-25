@@ -388,6 +388,19 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
 static mut OSC_TABLE: PortTable = PortTable::empty();
 static mut OSC_SHADOW: Shadow = Shadow::new();
 static mut OSC_BY_NAME: bool = true;
+/// OSC received on the netstack build's UDP :9000, latest value per address,
+/// applied at the next frame boundary (lm_osc_post / lm_osc_drain). The ~730 B
+/// mailbox is NOT a static: the firmware heap-allocates it on the first OSC
+/// datagram (lm_osc_mailbox_bytes / lm_osc_mailbox_bind), so a board that never
+/// sees OSC pays nothing and the boot-time LED sizing (board.max_leds, derived
+/// from the heap left after the image's .data/.bss) is untouched.
+type OscMailbox = osc::Mailbox<12>;
+static mut OSC_MAILBOX: *mut OscMailbox = core::ptr::null_mut();
+
+/// The OSC mailbox, if one has been bound.
+unsafe fn osc_mailbox() -> Option<&'static mut OscMailbox> {
+    (*addr_of!(OSC_MAILBOX)).as_mut()
+}
 /// Hidden-buffer/texture arena for the fx VM (LoadBuf/StoreBuf). 24 KB, now
 /// BYTE-addressed (FUG-10 packed storage) so narrow elements pack tightly — a
 /// fixed8 vec4 trail on 256 LEDs is 1 KB, an f32 one 4 KB; the VM clamps a
@@ -4455,6 +4468,9 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
         // component leaks across a hot-reload. OSC drives deck A only.
         *addr_of_mut!(OSC_TABLE) = osc::parse_manifest(prog.manifest);
         (*addr_of_mut!(OSC_SHADOW)).reset();
+        if let Some(mb) = osc_mailbox() {
+            mb.clear();
+        }
     }
     // Only build the per-LED fixed context mirrors / uv projection / room read
     // on the hot path when the program actually reads them (FUG-122).
@@ -4552,6 +4568,9 @@ unsafe fn fx_clear(d: usize) {
         (*addr_of_mut!(DECK_A)).morph.clear();
         *addr_of_mut!(OSC_TABLE) = PortTable::empty();
         (*addr_of_mut!(OSC_SHADOW)).reset();
+        if let Some(mb) = osc_mailbox() {
+            mb.clear();
+        }
         // Drop the JIT table (the exec region is a fixed static, reused on next
         // load; the VM was just cleared above, so the installed table goes too).
         FX_JIT_N = 0;
@@ -4758,6 +4777,83 @@ pub unsafe extern "C" fn lm_osc_ingest(data: *const u8, len: usize) -> u32 {
     let table = &*addr_of!(OSC_TABLE);
     let shadow = &mut *addr_of_mut!(OSC_SHADOW);
     osc::ingest(bytes, &cfg, table, shadow, &mut |slot, vals| {
+        if let Some(vm) = (*addr_of_mut!(DECK_A.vm)).as_mut() {
+            vm.set_uniform(slot as usize, vals);
+        }
+    }) as u32
+}
+
+/// Heap bytes [`lm_osc_mailbox_bind`] needs (4-byte aligned).
+#[no_mangle]
+pub extern "C" fn lm_osc_mailbox_bytes() -> usize {
+    core::mem::size_of::<OscMailbox>()
+}
+
+/// Whether [`lm_osc_mailbox_bind`] has run.
+#[no_mangle]
+pub unsafe extern "C" fn lm_osc_mailbox_bound() -> bool {
+    !(*addr_of!(OSC_MAILBOX)).is_null()
+}
+
+/// Bind the OSC mailbox to `mem` (at least [`lm_osc_mailbox_bytes`], 4-aligned,
+/// living for the process), emptied. Once only: a second bind is refused.
+/// Returns whether `mem` is now the mailbox.
+///
+/// # Safety
+/// `mem` must be valid for that many writes and never used elsewhere; serialized
+/// with [`lm_osc_post`] / [`lm_osc_drain`] (the same critical section).
+#[no_mangle]
+pub unsafe extern "C" fn lm_osc_mailbox_bind(mem: *mut u8) -> bool {
+    if mem.is_null()
+        || (mem as usize) % core::mem::align_of::<OscMailbox>() != 0
+        || !(*addr_of!(OSC_MAILBOX)).is_null()
+    {
+        return false;
+    }
+    let mb = mem as *mut OscMailbox;
+    mb.write(OscMailbox::new());
+    *addr_of_mut!(OSC_MAILBOX) = mb;
+    true
+}
+
+/// Stash one OSC datagram for the next frame (netstack build: the UDP receive
+/// path calls this from the network task). Latest value per address wins — a
+/// controller faster than the render rate never queues. Returns the messages
+/// kept (0 before [`lm_osc_mailbox_bind`]). Never blocks, never allocates.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes; the caller serializes this with
+/// [`lm_osc_drain`] (a short critical section).
+#[no_mangle]
+pub unsafe extern "C" fn lm_osc_post(data: *const u8, len: usize) -> u32 {
+    if data.is_null() || len == 0 {
+        return 0;
+    }
+    match osc_mailbox() {
+        Some(mb) => mb.post(core::slice::from_raw_parts(data, len)) as u32,
+        None => 0,
+    }
+}
+
+/// Apply the OSC waiting in the mailbox to deck A's uniforms (at a frame
+/// boundary, before update()). Returns the uniform writes.
+///
+/// # Safety
+/// Render task, under the player lock; serialized with [`lm_osc_post`].
+#[no_mangle]
+pub unsafe extern "C" fn lm_osc_drain() -> u32 {
+    let Some(mb) = osc_mailbox() else { return 0 };
+    if mb.is_empty() {
+        return 0;
+    }
+    if !lm_fx_active() {
+        mb.clear();
+        return 0;
+    }
+    let cfg = OscConfig { prefix: "/", by_name: OSC_BY_NAME };
+    let table = &*addr_of!(OSC_TABLE);
+    let shadow = &mut *addr_of_mut!(OSC_SHADOW);
+    mb.drain(&cfg, table, shadow, &mut |slot, vals| {
         if let Some(vm) = (*addr_of_mut!(DECK_A.vm)).as_mut() {
             vm.set_uniform(slot as usize, vals);
         }
