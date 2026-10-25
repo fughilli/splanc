@@ -85,6 +85,12 @@ int32_t lm_tex_ingest(const uint8_t *data, size_t len, int64_t now_ms, uint8_t *
 // Whether the set_uniforms just handled asked to be persisted (SetUniforms.commit,
 // unset = true). A commit=false update is applied live but not saved.
 bool lm_set_uniforms_commit(void);
+// Live-control channel (docs/design/live-control.md). After lm_player_handle: whether
+// the frame was a live-control update (set_uniforms / set_crossfade / blend_keypoints),
+// and — for one carrying a non-zero seq — replace the reply with its tiny ControlAck
+// (written to out; returns its length, 0 = keep the legacy reply).
+bool lm_last_was_live_control(void);
+int32_t lm_take_control_ack(uint8_t *out, size_t out_cap);
 // FX decks (docs/design/uniform-keypoints.md): the deck the effect arm just
 // handled targeted (0 = A, 1 = B). Only deck A's frames are persisted.
 uint32_t lm_fx_last_deck(void);

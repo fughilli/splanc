@@ -157,9 +157,17 @@ test("set_crossfade round-trips + welcome carries the crossfade echo (FUG-110)",
   ]) {
     const req = { type: "set_crossfade", position, mode };
     // set_crossfade isn't in the flat schema union (client casts, like
-    // set_brightness), so cast at the boundary.
-    assert.deepEqual(decodeClient(encodeClient(req as never)), req);
+    // set_brightness), so cast at the boundary. An unset live-control seq
+    // decodes as 0 (no presence).
+    assert.deepEqual(decodeClient(encodeClient(req as never)), { ...req, seq: 0 });
   }
+  // The live-control channel's seq + the device's ControlAck (feature "control_ack").
+  const live = { type: "set_crossfade", position: 0.25, mode: 0, seq: 42 };
+  assert.deepEqual(decodeClient(encodeClient(live as never)), live);
+  assert.deepEqual(decodeServer(encodeServer({ type: "control_ack", seq: 42 } as never)), {
+    type: "control_ack",
+    seq: 42,
+  });
   // Welcome echoes the applied crossfade (optional double) + mode (uint32).
   const w = { type: "welcome", sessionId: "s", crossfade: 0.75, crossfadeMode: 1 };
   const back = decodeServer(encodeServer(w as never)) as {
@@ -194,7 +202,9 @@ test("effect arms carry the deck selector (FUG-110)", () => {
     values: [{ slot: 0, value: [0.5] }],
     deck: 1,
   };
-  assert.deepEqual(decodeClient(encodeClient(su as never)), su);
+  assert.deepEqual(decodeClient(encodeClient(su as never)), { ...su, seq: 0 });
+  const seqd = { ...su, commit: false, seq: 7 };
+  assert.deepEqual(decodeClient(encodeClient(seqd as never)), seqd);
 });
 
 test("set_fps / fps_state round-trip (FUG-82 autoscaler arms)", () => {

@@ -289,7 +289,10 @@ export class FakePlayer {
             e.current = e.current.filter((c) => c.slot !== v.slot).concat([v]);
           }
         }
-        return;
+        // Like the firmware: a seq'd (live-channel) update gets a ControlAck, a
+        // legacy one its playback_state.
+        if (m["seq"]) return this.reply(ws, { type: "control_ack", seq: m["seq"] });
+        return this.reply(ws, { type: "playback_state", active: false, effect: "off" });
       }
       case "set_effect": {
         const d = (m["deck"] as number) ?? 0;
@@ -318,7 +321,7 @@ export class FakePlayer {
           this.crossfade = Math.min(1, Math.max(0, m["position"] as number));
           this.crossfadeMode = (m["mode"] as number) ?? 0;
           this.crossfades.push({ position: this.crossfade, mode: this.crossfadeMode, at: performance.now() });
-          this.reply(ws, this.welcome());
+          this.reply(ws, m["seq"] ? { type: "control_ack", seq: m["seq"] } : this.welcome());
         };
         if (this.crossfadeDelayMs > 0) setTimeout(apply, this.crossfadeDelayMs);
         else apply();

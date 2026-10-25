@@ -49,7 +49,6 @@ import {
   type ShowAction,
 } from "../../midi/showRouter";
 import { FxCompilerWorker } from "../../effects/editor/compiler";
-import { Throttle } from "../../effects/keypoints";
 import { KeypointStrip } from "./keypointStrip";
 import { appState } from "../app/state";
 import type { Router, Screen } from "../app/router";
@@ -84,13 +83,11 @@ export function ShowModeScreen(_router: Router): Screen {
     return appState.client?.isConnected === true;
   }
 
-  // Fire-and-forget at <= 25 Hz, always delivering the last position (a
-  // single-flight request would drop most of a fast drag).
-  const xfOut = new Throttle<[number, number]>(([p, m]) => {
-    appState.client?.sendCrossfade(p, m);
-  }, 40);
+  // Through the client's live-control channel: the last position wins and the
+  // send rate follows the device (one update in flight, paced on its ack), so a
+  // fast drag or a MIDI fader never queues up behind itself.
   function pushCrossfade(): void {
-    if (appState.client?.isConnected) xfOut.push([crossfade, mode]);
+    appState.client?.sendCrossfade(crossfade, mode);
   }
 
   const strips = [0, 1].map((d) =>
