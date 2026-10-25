@@ -1936,6 +1936,11 @@ bool netstack_take_policy_change(NetstackWifiPolicy *out) {
 // joined is, and still rolls a broken image back.
 bool netstack_wifi_wants_network() { return autonomous((uint32_t)millis()) && g_seen_this_boot; }
 
+bool netstack_data_plane_active() {
+  return g_radio_up && !g_silent && g_leased && g_tls_hs && g_ws_up && !g_hop.active() &&
+         ns_pmk_ready();
+}
+
 void netstack_set_unseen_base(uint32_t seconds) { g_unseen_base_s = seconds; }
 
 void netstack_wifi_status(NetstackWifiStatus *o) {

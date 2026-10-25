@@ -28,7 +28,9 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
   invisible on the strip: on the logic analyzer, frame intervals stay within
   0.7 ms of steady for a light effect and within the effect's own jitter for a
   heavy one. The network now runs below the render task, PBKDF2 no longer
-  shares the CPU with frames, and frames are paced on wall time.
+  shares the CPU with frames, and frames are paced on wall time. While an app
+  session is open, the network shares the CPU with rendering as before, so
+  30 fps video streams keep a ~20 ms latency.
 - **Choose how a board rejoins.** `auto` (the default: quick retries that slow
   to one sweep every 15 min after a day without the network), `fixed`,
   `manual`, or `offline` for a unit deployed where it will never see its AP

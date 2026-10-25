@@ -2724,6 +2724,25 @@ static void poll_wifi_policy() {
   }
 }
 
+// The loop task's priority, re-decided every loop. One below render whenever the link is
+// joining / scanning / leasing / deriving a PMK / idle: none of that may delay a frame
+// (wifi_cadence: zero late frames across every rejoin path). AT render's priority while
+// a wss session is up on a settled link (netstack_data_plane_active): the two then
+// round-robin, so the session gets about half of a busy CPU instead of only render's
+// sleeps — what the network had before #371, and what a 30 fps texture stream needs.
+// (Measured on hitl-rig-2, video_latency_netstack 30 fps / 120 s: see
+// docs/design/wifi-rejoin-policy.md "Loop priority".) The loop sleeps 1 tick per pass,
+// so an idle session costs render almost nothing; a rejoin always drops the session
+// first (link reset clears it), so the rejoin path itself is never at render's level.
+static void loop_priority_follow_data_plane() {
+  static UBaseType_t s_prio = kRenderTaskPrio - 1;
+  UBaseType_t want = netstack_data_plane_active() ? kRenderTaskPrio : kRenderTaskPrio - 1;
+  if (want != s_prio) {
+    s_prio = want;
+    vTaskPrioritySet(nullptr, want);
+  }
+}
+
 // Console lines "WIFI MODE …" / "WIFI REJOIN" / "WIFI STATUS" (the transport handles its
 // own link diagnostics first and passes the rest here).
 void netstack_console_hook(const char *line, size_t len) {
@@ -3011,6 +3030,12 @@ void setup() {
   // CPU work stretched frames whenever both were runnable (wifi_cadence on hitl-rig-2:
   // a heavy effect's frames 184 -> 196 ms during PBKDF2, a light one's 12 -> 15 ms
   // around 4-way retries). Sensors (5) stay below both.
+  //
+  // EXCEPT while a wss session is streaming (loop_priority_follow_data_plane, every
+  // loop): then the loop shares render's priority again. Below render the loop only ran
+  // in render's sleeps — under a light effect at 80 fps that is ~25 % of the CPU, and a
+  // 30 fps texture stream outran it (video_latency_netstack on hitl-rig-2: loop gaps of
+  // 135-145 ms, the receive window advertised zero 300+ times, the session closed).
   vTaskPrioritySet(nullptr, kRenderTaskPrio - 1);
 #endif
   // Boot is done: from here on every heap allocation is attributed to its call site
@@ -3166,6 +3191,7 @@ void loop() {
 #else
   netstack_loop();  // RX drain + DHCP + BLE-Improv join + TLS/WS pump (dispatched shared)
   poll_wifi_policy();
+  loop_priority_follow_data_plane();
   mode_observe();
 #if defined(LM_SENSORS)
   // Driver VM (FUG-107): a submitted I2C driver's poll(), when due. Try-lock: a
