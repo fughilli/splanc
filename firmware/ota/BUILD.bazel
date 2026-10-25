@@ -44,7 +44,9 @@ rr_rust_test(
     name = "wire_test",
     srcs = ["tests/wire.rs"],
     edition = "2021",
-    env = {"RUST_MIN_STACK": "16777216"},
+    # Debug builds keep several whole host ServerMessages on the stack per test;
+    # each new oneof arm grows them, and 16 MiB stopped being enough at 41+ arms.
+    env = {"RUST_MIN_STACK": "67108864"},
     rule = rust_test,
     deps = [
         ":ota",
