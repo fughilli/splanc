@@ -104,3 +104,20 @@ def test_grade_infra_skip():
     assert core.grade(None, None, None, None)["verdict"] == "SKIP"
     b = core.parse_boot(BOOT)
     assert core.grade(b, {"booted": False}, None, None)["verdict"] == "SKIP"
+
+
+def test_grade_missing_mac_line_fails_with_a_named_problem():
+    # #353 main: the first boot's `MAC ... (factory)` line was dropped by the console
+    # (0 ms TX timeout under the boot log burst). Still a FAIL, but named for what it is,
+    # not as "MAC changed None -> <mac>".
+    b1 = core.parse_boot(BOOT.replace("MAC 8c:fd:49:10:3a:84 (factory)\n", ""))
+    assert b1["sta_mac"] is None and b1["lease_ip"] == "10.42.0.37"
+    g = core.grade(b1, core.parse_boot(BOOT), core.parse_answers(_answer()), _ok_refusal())
+    assert g["verdict"] == "FAIL"
+    assert len(g["problems"]) == 1 and "no `MAC" in g["problems"][0], g
+
+
+def test_grade_mac_changed_still_fails_when_both_present():
+    b2 = core.parse_boot(BOOT.replace("3a:84 (factory)", "3a:85 (factory)"))
+    g = core.grade(core.parse_boot(BOOT), b2, core.parse_answers(_answer()), _ok_refusal())
+    assert g["verdict"] == "FAIL" and any("MAC changed" in p for p in g["problems"])
