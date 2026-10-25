@@ -49,7 +49,9 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
-REPO = "fughilli/splanc"
+# The Actions run's own repo (owner-agnostic across the move to Studio-Fug):
+# POST/DELETE through GitHub's rename redirect (307) fail in urllib.
+REPO = os.environ.get("GITHUB_REPOSITORY") or "fughilli/splanc"
 API = "https://api.github.com"
 WORKFLOW = "hitl.yaml"
 JOB_NAME = "hitl_tests"

@@ -8,6 +8,11 @@ on:
   push:
     branches:
       - main
+  # GitHub's native merge queue: required checks must also run on the queue's
+  # temporary merge commit, or a queued PR waits forever. The build/test jobs run
+  # unchanged; the Pages preview jobs are pull_request-only and skip.
+  merge_group:
+    types: [checks_requested]
 jobs:
   test:
     # Don't run the (heavy) build on a PR-close event — that only tears down the
