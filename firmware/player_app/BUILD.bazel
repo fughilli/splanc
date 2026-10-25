@@ -243,6 +243,25 @@ rust_test(
     ],
 )
 
+# Video present-at scheduling (SetTexture.seq/present_at_ms -> TextureAck, the
+# jitter buffer + lm_tex_present). Own binary: fresh process-global FFI state.
+rust_test(
+    name = "video_present_test",
+    srcs = ["tests/video_present.rs"],
+    edition = "2021",
+    # Process-global FFI state: run the cases one after another.
+    env = {
+        "RUST_MIN_STACK": "100663296",
+        "RUST_TEST_THREADS": "1",
+    },
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
 # The color-order counting probe must preempt the FX engine with no map stored.
 # Own binary (fresh process-global FFI state) so it can arm an effect + skip the
 # map without the full-flow test's ordering — see tests/counting_preempt.rs.
