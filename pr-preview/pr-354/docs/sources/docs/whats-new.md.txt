@@ -21,6 +21,26 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 - Design, method and synthetic accuracy (median ~1.3 cm / 0.4° per fixture):
   [multi-fixture-localization.md](design/multi-fixture-localization.md).
 
+### Wi-Fi rejoin policy, and Wi-Fi work never disturbs the LEDs
+
+- **Rejoining doesn't touch the LED output.** Scanning, joining, a wrong
+  passphrase, a missing network, DHCP retries and the address fallback are now
+  invisible on the strip: on the logic analyzer, frame intervals stay within
+  0.7 ms of steady for a light effect and within the effect's own jitter for a
+  heavy one. The network now runs below the render task, PBKDF2 no longer
+  shares the CPU with frames, and frames are paced on wall time. While an app
+  session is open, the network shares the CPU with rendering as before, so
+  30 fps video streams keep a ~20 ms latency.
+- **Choose how a board rejoins.** `auto` (the default: quick retries that slow
+  to one sweep every 15 min after a day without the network), `fixed`,
+  `manual`, or `offline` for a unit deployed where it will never see its AP
+  again: the radio stays off, the show plays, BLE and the console stay up for
+  reconfiguration, and the credentials are kept. Set it from the device sheet,
+  the agent, BLE, or the console (`WIFI MODE …`). An unconfirmed firmware update
+  must be confirmed before going offline, and an update never rolls back just
+  because the AP is gone. Details:
+  [wifi-rejoin-policy.md](design/wifi-rejoin-policy.md).
+
 ### Calibrate IMU is hands-free
 
 - **No Capture pose or Save buttons.** When the map registers in the viewfinder
