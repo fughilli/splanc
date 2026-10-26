@@ -128,14 +128,22 @@ uint32_t app_version() {
     p.end();
   }
   if (v == 0 || g_slot == nullptr || size == 0 || size > g_slot->size) return g_app_version = 0;
-  static uint8_t buf[2048];
+  // A one-shot read buffer: 2 KB of heap for the few hundred ms of hashing (was a
+  // static, i.e. 2 KB of .bss for the whole process — boot heap that sizes
+  // max_leds), or a small stack chunk if the heap can't spare it.
+  constexpr uint32_t kChunk = 2048;
+  uint8_t small[256];
+  uint8_t *heap = static_cast<uint8_t *>(malloc(kChunk));
+  uint8_t *buf = heap ? heap : small;
+  const uint32_t cap = heap ? kChunk : sizeof small;
   mbedtls_sha256_context h;
   mbedtls_sha256_init(&h);
   bool ok = mbedtls_sha256_starts(&h, 0) == 0;
-  for (uint32_t off = 0; ok && off < size; off += sizeof buf) {
-    uint32_t n = size - off < sizeof buf ? size - off : sizeof buf;
+  for (uint32_t off = 0; ok && off < size; off += cap) {
+    uint32_t n = size - off < cap ? size - off : cap;
     ok = esp_partition_read(g_slot, off, buf, n) == ESP_OK && mbedtls_sha256_update(&h, buf, n) == 0;
   }
+  free(heap);
   uint8_t got[32];
   ok = ok && mbedtls_sha256_finish(&h, got) == 0;
   mbedtls_sha256_free(&h);

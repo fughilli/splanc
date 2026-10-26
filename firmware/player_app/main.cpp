@@ -349,17 +349,25 @@ static const uint32_t kXmitTaskStack = 2048;
 // wss TLS handshake needs. Shared by the ws:81 and wss:443 paths.
 //
 // The netstack build never receives into rx: its transports (WS reassembly in
-// g_ws_rx, the BLE frame ring) dispatch every message in place. rx only stages
-// the two whole frames read back off flash — a persisted control/effect frame at
-// boot (fs_replay) and a reassembled sharded effect upload — and an effect frame
-// is bounded by the VM's 4 KiB bytecode cap (ffi.rs FX_MAX_BYTES) plus its
-// envelope, so 4.5 KiB covers it (a larger effect is refused either way).
+// g_ws_rx, the BLE frame ring) dispatch every message in place. The only whole
+// frames it stages are the two read back off flash — a persisted control/effect
+// frame at boot (fs_replay) and a reassembled sharded effect upload — and an
+// effect frame is bounded by the VM's 4 KiB bytecode cap (ffi.rs FX_MAX_BYTES)
+// plus its envelope, so 4.5 KiB covers it (a larger effect is refused either
+// way). Both are rare, one-shot and run on loopTask, so on that build the stage
+// is a heap block of the frame's exact size for the duration of the dispatch
+// (rx_stage_get/put) instead of 4.5 KiB of .bss held for the whole process — the
+// boot heap that sizes max_leds (led_store_begin runs before the boot replay).
 #if defined(LM_NETSTACK)
 static const size_t kRxCap = 4608;
+static uint8_t *rx_stage_get(size_t n) { return static_cast<uint8_t *>(malloc(n ? n : 1)); }
+static void rx_stage_put(uint8_t *p) { free(p); }
 #else
 static const size_t kRxCap = 12288;
-#endif
 static uint8_t rx[kRxCap];      // one whole (non-sharded) message
+static uint8_t *rx_stage_get(size_t) { return rx; }
+static void rx_stage_put(uint8_t *) {}
+#endif
 static size_t rx_len = 0;
 // Encoded reply frames are control-sized. The 16 bytes in front are headroom for a WS
 // frame header, written in place by the netstack transport (kWsSendHeadroom) so it needn't
@@ -962,7 +970,7 @@ static void upload_rewind(void *ctx) { fseek(static_cast<FILE *>(ctx), 0, SEEK_S
 // Replay a persisted frame through the session core on boot — the SAME decode a
 // live upload takes. map/topology can be big, so they stream off flash block by
 // block (no whole-frame buffer); everything else (effect, selection, uniforms)
-// is control-sized and decodes in one pass through rx.
+// is control-sized and decodes in one pass through a staged copy (rx_stage_get).
 static void fs_replay(const char *path) {
   FILE *f = fs_open(path, "rb");
   if (f == nullptr) return;
@@ -982,11 +990,15 @@ static void fs_replay(const char *path) {
     lm_decode_upload_stream(arm, upload_refill, upload_rewind, f, (size_t)n, tx, sizeof tx);  // reply discarded
     Log().printf("littlefs: restored %s (%ld B, streamed)\n", path, n);
   } else if ((size_t)n <= kRxCap) {
-    size_t got = fread(rx, 1, (size_t)n, f);
+    uint8_t *buf = rx_stage_get((size_t)n);
+    size_t got = buf ? fread(buf, 1, (size_t)n, f) : 0;
     if (got == (size_t)n) {
-      lm_player_handle(rx, got, now, now, tx, sizeof tx);  // reply discarded
+      lm_player_handle(buf, got, now, now, tx, sizeof tx);  // reply discarded
       Log().printf("littlefs: restored %s (%ld B)\n", path, n);
+    } else if (buf == nullptr) {
+      Log().printf("littlefs: no heap to restore %s (%ld B)\n", path, n);
     }
+    rx_stage_put(buf);
   }
   fclose(f);
   rx_len = 0;
@@ -1252,11 +1264,11 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
   upload_active = false;
 
   // EFFECT (kind 2): the reassembled frame is an ordinary submit_effect message,
-  // not a stream-decode-to-file target like map/topology. Load it back into rx
+  // not a stream-decode-to-file target like map/topology. Load it back into one buffer
   // and dispatch it in-memory through the shared handler, which validates it and
   // (via persist_if_upload) writes the raw .fxb to kEffectPath. Sharding it this
   // way is purely a TRANSPORT concern — it lets a large effect fit the BLE
-  // frame cap; the handler still needs the whole frame (<= kRxCap) in rx.
+  // frame cap; the handler still needs the whole frame (<= kRxCap) in one buffer.
   if (upload_kind == 2) {
     if (upload_total > kRxCap) {
       remove(kUploadTmp);
@@ -1264,11 +1276,16 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
     }
     FILE *ef = fs_open(kUploadTmp, "rb");
     if (ef == nullptr) return -1;
-    size_t rn = fread(rx, 1, upload_total, ef);
+    uint8_t *buf = rx_stage_get(upload_total);
+    size_t rn = buf ? fread(buf, 1, upload_total, ef) : 0;
     fclose(ef);
     remove(kUploadTmp);
-    if (rn != upload_total) return -1;
-    return dispatch_plain(rx, rn);
+    // dispatch_plain persists the frame (persist_if_upload) before returning,
+    // so the stage is free to go after it.
+    int32_t r = rn == upload_total ? dispatch_plain(buf, rn) : -1;
+    if (buf == nullptr) Log().printf("[upload] no heap to stage the %u B effect\n", (unsigned)upload_total);
+    rx_stage_put(buf);
+    return r;
   }
 
   // Map/topology: decode the reassembled frame straight off flash, then persist
