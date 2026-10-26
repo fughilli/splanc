@@ -1,0 +1,96 @@
+# HITL capacity model: "should I buy more boards?" (pi/hitl/observability/capacity).
+#
+# Every 2 hours: read the hitl-reserved capacity series (Prometheus, through Grafana)
+# for the CI pool's rigs, merge them with the committed journal backfill and the
+# history kept on the `hitl-capacity-data` release, run the Erlang-C model, and
+# re-upload capacity.json + aggregates.json to that release. The HITL capacity
+# dashboard (pi/hitl/observability/dashboards/hitl-capacity.json) reads
+# capacity.json through the Infinity datasource.
+#
+# Config, in the "Grafana" Actions environment (shared with grafana-dashboards.yaml):
+#   secrets.GRAFANA_TOKEN       service-account token that may query datasources
+#                               (Viewer is enough). Unset: the model runs on the
+#                               backfill + release history only, and says so.
+#   secrets/vars.GRAFANA_URL    default https://splanc.grafana.net
+#   vars.HITL_CAPACITY_HOSTS    rigs in the CI pool (default hitl-rig-1,hitl-rig-2;
+#                               keep fenced hosts such as rig-3 out)
+# PRs that touch the model only run the unit tests and the dashboard freshness check.
+name: HITL capacity model
+on:
+  schedule:
+    - cron: '41 */2 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'pi/hitl/observability/capacity/**'
+      - 'pi/hitl/observability/dashboards/hitl-capacity.json'
+      - '.github/workflows/hitl-capacity.yaml'
+  pull_request:
+    paths:
+      - 'pi/hitl/observability/capacity/**'
+      - 'pi/hitl/observability/dashboards/hitl-capacity.json'
+      - '.github/workflows/hitl-capacity.yaml'
+
+permissions:
+  contents: write # manage the hitl-capacity-data release
+
+concurrency:
+  group: hitl-capacity-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'main' }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Unit tests (Erlang C, journal parsing, model)
+        working-directory: pi/hitl/observability/capacity
+        run: |
+          set -euo pipefail
+          python3 test_erlang.py
+          python3 test_reservations.py
+          python3 test_capacity_model.py
+      - name: Fail if the committed dashboard is stale
+        run: python3 pi/hitl/observability/capacity/gen_dashboard.py --check
+
+  publish:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: Grafana
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compute capacity.json and refresh the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GRAFANA_URL: ${{ secrets.GRAFANA_URL || vars.GRAFANA_URL || 'https://splanc.grafana.net' }}
+          GRAFANA_TOKEN: ${{ secrets.GRAFANA_TOKEN }}
+          HITL_CAPACITY_HOSTS: ${{ vars.HITL_CAPACITY_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GRAFANA_TOKEN:-}" ]; then
+            echo "::warning title=HITL capacity: no live data::GRAFANA_TOKEN is unset in the 'Grafana' environment; the model ran on the journal backfill and release history only."
+          fi
+          mkdir -p capacity-out
+          python3 pi/hitl/observability/capacity/run_capacity.py publish \
+            --repo "${{ github.repository }}" \
+            --seed-from-release \
+            --upload-release \
+            --out-dir capacity-out | tee capacity-out/summary.txt
+          {
+            echo '### HITL capacity'
+            echo '```'
+            cat capacity-out/summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

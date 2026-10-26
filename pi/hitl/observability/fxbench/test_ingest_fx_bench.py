@@ -83,6 +83,45 @@ class RatioEnrichment(unittest.TestCase):
         self.assertIsNone(empty_show["ln_ratio"])
 
 
+class GateFloor(unittest.TestCase):
+    """The fx_bench gate passes within ±margin OR ±floorCycles (absolute)."""
+
+    def test_golden_band_is_the_looser_of_margin_and_floor(self):
+        rows = {(g["label"], g["build"]): g for g in ing.load_goldens_from_repo()}
+        sw = rows[("sweep16", "interp")]
+        self.assertEqual(sw["floorCycles"], 8000)
+        self.assertEqual(sw["marginPct"], 15.0)  # margin itself unchanged
+        # 15% of ~34.5 K is ~5.2 K < 8 K, so the floor sets the band.
+        self.assertEqual(sw["goldenHigh"] - sw["goldenFrameCycles"], 8000)
+        self.assertEqual(sw["goldenFrameCycles"] - sw["goldenLow"], 8000)
+        big = rows[("lavalamp", "interp")]
+        g = big["goldenFrameCycles"]
+        self.assertEqual(big["goldenHigh"], round(g * 1.10))  # margin wins for real effects
+
+    def test_parse_log_reads_the_floor_report_format(self):
+        log = "\n".join(
+            [
+                "[jit] pinned OFF for this run",
+                "  sweep16: frame=41041 show=9000 @ 16 LEDs",
+                "  big500: frame=7200000 show=9000 @ 500 LEDs",
+                "[golden] web/tests/testdata/device-bench-esp32c6.json: checked 2 effect(s), "
+                "default margin ±10%, floor ±8000 cycles",
+                "  FLOOR sweep16        frame=41041 vs golden 34496 (+19.0%, margin ±15%) "
+                "passed by floor: +6545 cycles within ±8000",
+                "  OFF  big500         frame=7200000 vs golden 6000000 (+20.0%, margin ±10%) "
+                "+1200000 cycles, outside floor ±8000",
+            ]
+        )
+        meas, goldens = ing.parse_log(log)
+        self.assertEqual(
+            [(m["label"], m["frame"]) for m in meas], [("sweep16", 41041), ("big500", 7200000)]
+        )
+        self.assertEqual(
+            [(g["label"], g["goldenFrameCycles"], g["marginPct"]) for g in goldens],
+            [("big500", 6000000, 10.0)],
+        )
+
+
 class RecentSlice(unittest.TestCase):
     def test_old_row_excluded_from_recent_but_present_in_full(self):
         goldens = [_golden("sweep16", "jit", frame=100, show=200)]

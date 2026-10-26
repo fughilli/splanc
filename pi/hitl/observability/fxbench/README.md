@@ -54,7 +54,8 @@ data/measurements.json         compact array for Grafana (2 rows/sample: metric=
 data/measurements-recent.json  a trailing-window slice (RECENT_WINDOW_DAYS, default
                                180d) of the same schema — what the performance-overview
                                reads so it never fetches the unbounded full asset
-data/goldens.json              golden value + ±margin band per effect/build
+data/goldens.json              golden value + pass band per effect/build (the looser
+                               of ±margin and the ±floorCycles absolute floor)
 data/goldens_line.json         golden as a flat line (value at first & last timestamps)
       │
       ▼   uploaded as assets on the `fxbench-data` GitHub release (--upload-release)

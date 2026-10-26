@@ -3,7 +3,7 @@
 //! behaviour the firmware relies on (the crate itself is `no_std`).
 
 use ledmapper_osc::{
-    for_each_message, ingest, parse_manifest, Config, OscArg, PortTable, Shadow,
+    for_each_message, ingest, parse_manifest, Config, Mailbox, OscArg, PortTable, Shadow,
 };
 
 /// Build a null-terminated, 4-byte-padded OSC-string.
@@ -212,4 +212,77 @@ fn prefix_is_stripped() {
     );
     assert_eq!(n, 1);
     assert_eq!(writes, vec![(0, vec![3.0])]);
+}
+
+// --- latest-wins mailbox (netstack OSC) -------------------------------------
+
+fn bundle(elems: &[Vec<u8>]) -> Vec<u8> {
+    let mut v = ostr("#bundle");
+    v.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 1]);
+    for e in elems {
+        v.extend_from_slice(&(e.len() as i32).to_be_bytes());
+        v.extend_from_slice(e);
+    }
+    v
+}
+
+#[test]
+fn mailbox_keeps_the_latest_value_per_address() {
+    let table = parse_manifest(MANIFEST.as_bytes());
+    let cfg = Config { prefix: "/", by_name: true };
+    let mut shadow = Shadow::new();
+    let mut mb: Mailbox<4> = Mailbox::new();
+    for i in 0..50 {
+        assert_eq!(mb.post(&msg("/speed", "f", &(i as f32).to_be_bytes())), 1);
+    }
+    // A bundle with two addresses (one already waiting).
+    let b = bundle(&[msg("/speed", "f", &99f32.to_be_bytes()), msg("/tint/y", "f", &0.5f32.to_be_bytes())]);
+    assert_eq!(mb.post(&b), 2);
+    assert_eq!(mb.len(), 2);
+    assert_eq!(mb.coalesced, 50);
+    let mut writes = Vec::new();
+    let n = mb.drain(&cfg, &table, &mut shadow, &mut |slot, v| writes.push((slot, v.to_vec())));
+    assert_eq!(n, 2);
+    let speed = table.resolve("speed").unwrap().slot;
+    assert_eq!(writes[0], (speed, vec![99.0]), "one write, the newest value");
+    assert!(mb.is_empty(), "drained");
+    assert_eq!(mb.drain(&cfg, &table, &mut shadow, &mut |_, _| panic!("nothing waits")), 0);
+}
+
+#[test]
+fn mailbox_bounds_and_garbage() {
+    let mut mb: Mailbox<2> = Mailbox::new();
+    assert_eq!(mb.post(b"garbage"), 0);
+    mb.post(&msg("/a", "f", &1f32.to_be_bytes()));
+    mb.post(&msg("/b", "f", &1f32.to_be_bytes()));
+    assert_eq!(mb.post(&msg("/c", "f", &1f32.to_be_bytes())), 0, "full: a new address is dropped");
+    let long = format!("/{}", "x".repeat(60));
+    assert_eq!(mb.post(&msg(&long, "f", &1f32.to_be_bytes())), 0);
+    assert_eq!(mb.dropped, 2);
+    mb.clear();
+    assert!(mb.is_empty());
+}
+
+#[test]
+fn mailbox_flattens_one_bundle_level_only() {
+    // The network-task path is iterative: a nested bundle is skipped, its
+    // sibling message kept.
+    let inner = bundle(&[msg("/a", "f", &1f32.to_be_bytes())]);
+    let outer = bundle(&[inner, msg("/b", "f", &2f32.to_be_bytes())]);
+    let mut mb: Mailbox<4> = Mailbox::new();
+    assert_eq!(mb.post(&outer), 1);
+    assert_eq!(mb.len(), 1);
+}
+
+#[test]
+fn mailbox_is_compact_and_zero_initialised() {
+    // The firmware binds the mailbox into a fresh heap block on the first OSC
+    // datagram (static RAM would shrink board.max_leds): keep it small, and an
+    // all-zero block must read as empty.
+    assert!(std::mem::size_of::<Mailbox<12>>() <= 12 * 60 + 8, "{}", std::mem::size_of::<Mailbox<12>>());
+    let mb: Mailbox<12> = unsafe { std::mem::zeroed() };
+    assert!(mb.is_empty());
+    let mut mb = mb;
+    mb.post(&msg("/speed", "i", &7i32.to_be_bytes()));
+    assert_eq!(mb.len(), 1);
 }

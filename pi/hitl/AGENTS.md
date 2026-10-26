@@ -189,6 +189,55 @@ download`, the BOOT button is held/stuck — this needs a human to release it an
 - The lease is heartbeated while a `hitl` command runs; if your process dies the
   lease expires and the next agent is promoted.
 
+## Queue etiquette: priorities, ETA and back-off
+
+The rigs schedule reservations by **class**: `merge-queue` (merge-queue runs and the
+post-merge run on main) > `pr-ci` > `dev`. You are `dev` unless you set
+`$HITL_PRIORITY` (only CI does). A class only reorders the **queue**; nobody's
+active reservation is ever preempted. Lower classes age: a `dev` reservation can be
+overtaken only by CI arriving within 60 min of it (`pr-ci`: 20 min), so you always
+get a turn — but during a CI burst that turn can be an hour away.
+
+**Before reserving, check the queue (cheap, no reservation):**
+
+```sh
+python3 pi/hitl/harness/hitl_client.py queue      # or: bazel run //pi/hitl/reserve:hitl -- queue
+curl -s http://hitl-rig-1:8087/queue               # raw JSON
+```
+
+Per rig it prints the queue depth per class and, per unit type, the ETA a new
+reservation of each class would face plus a dev hint (`dev: go ahead` or
+`dev: back off <t>`).
+
+**Back-off convention (dev):**
+
+1. If some rig says `dev: go ahead` (`retry_after_seconds == 0`) for your unit type,
+   reserve.
+2. Otherwise **don't enqueue**: wait `retry_after_seconds` (≤ 10 min) ± 20 % jitter
+   and check again. After ~30 min of backing off, enqueue anyway; aging guarantees a
+   turn.
+3. Hold at most one queued reservation per task; never queue on several rigs at once.
+4. Never kill a queued client; release its reservation
+   (`POST /reservation/<id>/release`). A killed waiter keeps its slot until the 30 min
+   lease lapses.
+
+`hitl_client.Reservation` applies 1–2 automatically for dev reservations
+(`HITL_BACKOFF=0` disables it, `HITL_BACKOFF_MAX` bounds it; default 1800 s). It
+also releases its queued slot on Ctrl-C/SIGTERM.
+
+**Waiting is progress-driven.** While queued, the harness logs
+`queued: position N class=… eta~…` and keeps waiting as long as the queue makes
+progress: your position drops, or a unit you can use frees up. It gives up only when:
+
+- no progress for `HITL_QUEUE_STALL_TIMEOUT` (3600 s);
+- the rig is unhealthy (daemon unreachable for 300 s, or no unit can serve you);
+- `HITL_ACTIVATE_TIMEOUT` is set and passes (it's now an explicit hard cap);
+- `HITL_DEADLINE` (CI's epoch ceiling) passes.
+
+If your rig gets cordoned for maintenance while you wait, an unpinned client moves to
+another rig. Against a rig daemon that predates priorities, the old fixed 2400 s
+timeout still applies.
+
 ## Deploying the rig (and the `bazel run` hang)
 
 Push a new rig image with `bazel run //pi/hitl:update -- <host>` (autodetects the

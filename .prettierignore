@@ -15,3 +15,8 @@ pi/hitl/internal/skus/skus.json
 # in ingest_state.json is emitted one-id-per-line by json.dump, which prettier
 # re-packs to fit printWidth, so a fresh cron commit would perpetually re-fail lint.
 pi/hitl/observability/fxbench/data/
+
+# HITL capacity-model backfill (hourly aggregates from the rig journals), written
+# minified by run_capacity.py backfill. Data, not source: pretty-printing it would
+# push it past the 600 KB large-file gate.
+pi/hitl/observability/capacity/data/

@@ -762,6 +762,9 @@ void send_ip(const uint8_t *ip, int iplen) { send_ip_l2(ip, iplen, neighbor_mac(
 extern bool g_ws_up;  // the WS session is live (defined with the TLS server below)
 static const uint8_t kMdnsGroup[4] = {224, 0, 0, 251};
 static const uint8_t kMdnsMac[6] = {0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb};
+// Native OSC input (TouchDesigner, Ableton, TouchOSC, …): the same port the vendor
+// build's osc_task binds. Datagrams go to the app's latest-wins mailbox.
+constexpr uint16_t kOscUdpPort = 9000;
 constexpr int kUdpPayloadOff = 20 + 8;  // IPv4 (no options) + UDP, in tx_ip_slot()
 
 // Wrap the `len` bytes already at tx_ip_slot()+kUdpPayloadOff in IPv4+UDP (from our
@@ -1067,6 +1070,10 @@ void handle_l3(const uint8_t *pt, int pl) {
     const int udplen = (udp[4] << 8) | udp[5];
     if (udplen < 8 || udplen > iplen - ihl) return;
     uint16_t sport = (udp[0] << 8) | udp[1], dport = (udp[2] << 8) | udp[3];
+    if (dport == kOscUdpPort && g_leased) { // native OSC (docs/design/live-control.md)
+      lm_netstack_osc_rx(udp + 8, (size_t)(udplen - 8));
+      return;
+    }
     if (dport == 5353 && g_leased) { // mDNS query (multicast group or unicast to us)
       bool unicast = false;
       int n = lm_mdns_reply(udp + 8, (size_t)(udplen - 8), sport, g_offer_ip,

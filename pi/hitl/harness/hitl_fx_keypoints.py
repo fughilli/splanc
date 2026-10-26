@@ -46,11 +46,18 @@ QUEUE_S = 2400.0
 
 
 class PatientReservation(Reservation):
-    """A reservation that waits --queue-s for its turn (shared rigs run long CI
-    queues; the harness default is 40 min)."""
+    """A reservation that waits at least --queue-s for its turn (shared rigs run
+    long CI queues). Against a priority-aware daemon the base class already waits
+    for as long as the queue makes progress; --queue-s then only raises the legacy
+    fixed timeout used against an older daemon (and any explicit cap)."""
 
-    def _await_active(self, timeout: float = 2400.0) -> None:
-        super()._await_active(timeout=max(timeout, QUEUE_S))
+    def _await_active(
+        self, timeout: float | None = None, legacy_timeout: float | None = None
+    ) -> None:
+        super()._await_active(
+            timeout=None if timeout is None else max(timeout, QUEUE_S),
+            legacy_timeout=max(legacy_timeout or timeout or 2400.0, QUEUE_S),
+        )
 
 
 def _log(msg: str) -> None:

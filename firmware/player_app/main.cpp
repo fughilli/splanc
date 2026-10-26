@@ -84,31 +84,46 @@
 // ships esp-idf as precompiled libs whose memory protection leaves the data heap
 // non-executable and code IRAM non-writable — no RWX anywhere — and a custom
 // sdkconfig would need a full IDF-from-source build. Instead we carve out one
-// small static region and make just IT read+write+execute using a spare RISC-V
-// PMP entry. The runtime PMP dump showed entries 3/4 free + UNLOCKED and, being
+// small static region and make just IT read+write+execute using two spare RISC-V
+// PMP entries. The runtime PMP dump showed entries 3/4 free + UNLOCKED and, being
 // lower-index than the SRAM data-region entries (PMP is lowest-index-wins), an
 // RWX entry there overrides the default NX for this range only. W^X stays
-// enforced everywhere else. Power-of-2 size + alignment for NAPOT encoding.
+// enforced everywhere else.
+//
+// TOR, not NAPOT: entry 3 (A=OFF) holds the base and entry 4 (A=TOR, RWX) the
+// top, so the region needs no power-of-two alignment. NAPOT needed the region
+// aligned to its own 2 KB size, which made the whole .dram0.bss output section
+// 2048-aligned and cost ~1.8 KB of padding (432 B in front of .bss + 1,416 B
+// inside it), all taken straight off the boot heap that sizes max_leds. The C6
+// PMP granularity is 4 bytes (IDF's own IRAM/DRAM split is a TOR entry at the
+// 4-byte-aligned _iram_text_end). IDF's esp_cpu_configure_region_protection
+// leaves entries 3 and 4 unset; entry 5 is an A=OFF base marker for its TOR
+// entry 6, so it does not read pmpaddr4 and the spec's lock rule (a locked TOR
+// entry i freezes pmpaddr i-1) doesn't apply. Same 2 KB RWX window, same
+// lowest-index-wins override of the RW SRAM entry 7.
 // This device is heap-critically-tight (mbedtls needs ~28 KB for a TLS session),
 // so the region is SMALL and the Rust side compiles its RV32 segments DIRECTLY
 // into it (no separate scratch buffer, no copy) — the whole JIT static footprint
 // on the firmware is just this 2 KB.
 namespace {
-constexpr uint32_t kJitRegionSize = 2048;  // power of two (NAPOT); 512 RV32 words
-alignas(kJitRegionSize) uint8_t g_jit_region[kJitRegionSize];
+constexpr uint32_t kJitRegionSize = 2048;  // 512 RV32 words; any multiple of 4
+alignas(4) uint8_t g_jit_region[kJitRegionSize];
 bool g_jit_armed = false;
 
 void jit_arm_exec_region() {
   uintptr_t base = (uintptr_t)g_jit_region;  // C6 SRAM data addr == physical
-  // NAPOT: pmpaddr = (base>>2) | ((size>>3) - 1); base is size-aligned.
-  uintptr_t pmpaddr = (base >> 2) | ((kJitRegionSize >> 3) - 1);
-  asm volatile("csrw 0x3b3, %0" ::"r"(pmpaddr));  // pmpaddr3
-  // pmpcfg0 byte 3 = entry 3 = A=NAPOT(3)<<3 | X | W | R = 0x1f (unlocked). The
-  // locked low entries (0-2) ignore the write per the PMP spec, so preserve them.
-  uint32_t cfg0;
-  asm volatile("csrr %0, 0x3a0" : "=r"(cfg0));
-  cfg0 = (cfg0 & 0x00ffffffu) | (0x1fu << 24);
-  asm volatile("csrw 0x3a0, %0" ::"r"(cfg0));
+  asm volatile("csrw 0x3b3, %0" ::"r"(base >> 2));                     // pmpaddr3
+  asm volatile("csrw 0x3b4, %0" ::"r"((base + kJitRegionSize) >> 2));  // pmpaddr4
+  // pmpcfg0 byte 3 = entry 3 = A=OFF (0): just the TOR base. pmpcfg1 byte 0 =
+  // entry 4 = A=TOR(1)<<3 | X | W | R = 0x0f (unlocked). The locked entries
+  // (0-2, 5-7) ignore the write per the PMP spec; preserve them anyway.
+  uint32_t cfg;
+  asm volatile("csrr %0, 0x3a0" : "=r"(cfg));
+  cfg &= 0x00ffffffu;
+  asm volatile("csrw 0x3a0, %0" ::"r"(cfg));
+  asm volatile("csrr %0, 0x3a1" : "=r"(cfg));
+  cfg = (cfg & 0xffffff00u) | 0x0fu;
+  asm volatile("csrw 0x3a1, %0" ::"r"(cfg));
   asm volatile("fence.i" ::: "memory");
   g_jit_armed = true;
 }
@@ -1544,6 +1559,10 @@ static void ws_poll() {
 // they don't chase a frame clock, so a slow tick keeps CPU/DMA use low.
 static const uint32_t kStaticPollMs = 100;
 
+#if defined(LM_NETSTACK)
+static void osc_drain_frame();  // native OSC on the netstack build (below)
+#endif
+
 // Compute + push (at most) one frame. Player reads happen under player_mutex
 // (the core is single-threaded); the long RMT strip transmit runs OUTSIDE the
 // lock so the loop-task message handler isn't blocked by the strip write. Returns
@@ -1775,6 +1794,9 @@ static uint32_t render_once() {
     // negligible against the per-frame float ops).
     uint32_t c_frame_start = esp_cpu_get_cycle_count();
     uint32_t c_update_start = c_frame_start;
+#if defined(LM_NETSTACK)
+    osc_drain_frame();  // OSC that arrived since the last frame, newest value per address
+#endif
     bool updated = lm_fx_update(fx_time_s, dt_s, this_seq, n);
     uint32_t c_update_end = esp_cpu_get_cycle_count();
     if (updated) {
@@ -2003,10 +2025,42 @@ static void osc_task(void *) {
   }
 }
 #else
-// TODO(netstack-osc): the heapless stack has no UDP receive path yet, so native OSC input
-// (uniform_bench / video_stream) is disabled on this build and setup() doesn't start the
-// task. Add a ns UDP listener + feed lm_osc_ingest to re-enable. Everything else (WS
-// player, effects, render) is unaffected.
+// Netstack build: no sockets or task — the heapless stack's UDP receive path hands every
+// datagram for udp/9000 to lm_netstack_osc_rx (netstack_transport.cpp), on the network
+// task. It is only STASHED (lm_osc_post: parse + latest value per address, no VM work);
+// the render task applies what's waiting at the next frame boundary (osc_drain_frame), so
+// a controller sending faster than the device renders never builds a queue
+// (docs/design/live-control.md). The two meet in a short critical section.
+// The mailbox itself (~730 B) is heap-allocated on the FIRST datagram, not static:
+// static RAM comes straight out of the boot heap that sizes the LED buffers
+// (led_store_begin -> board.max_leds), so OSC must not cost a byte until it is used.
+static portMUX_TYPE g_osc_mux = portMUX_INITIALIZER_UNLOCKED;
+
+void lm_netstack_osc_rx(const uint8_t *data, size_t len) {
+  if (len == 0 || len > kOscRxCap) return;
+  if (!lm_osc_mailbox_bound()) {  // only this (network) task binds it
+    const size_t bytes = lm_osc_mailbox_bytes();
+    void *mem = heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!mem) return;  // heap exhausted right now: drop this datagram, retry on the next
+    taskENTER_CRITICAL(&g_osc_mux);
+    const bool bound = lm_osc_mailbox_bind(static_cast<uint8_t *>(mem));
+    taskEXIT_CRITICAL(&g_osc_mux);
+    if (!bound) {
+      free(mem);
+      return;
+    }
+    Log().printf("[osc] first datagram on udp/%u (mailbox %u B)\n", kOscPort, (unsigned)bytes);
+  }
+  taskENTER_CRITICAL(&g_osc_mux);
+  lm_osc_post(data, len);
+  taskEXIT_CRITICAL(&g_osc_mux);
+}
+
+static void osc_drain_frame() {
+  taskENTER_CRITICAL(&g_osc_mux);
+  lm_osc_drain();
+  taskEXIT_CRITICAL(&g_osc_mux);
+}
 #endif
 
 // The render task: forever, render one frame then sleep until the next is due.
