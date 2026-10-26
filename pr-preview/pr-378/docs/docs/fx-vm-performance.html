@@ -260,6 +260,7 @@
 <li class="toctree-l2"><a class="reference internal" href="design/heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
@@ -398,7 +399,7 @@ held-out programs (<code class="docutils literal notranslate"><span class="pre">
 <td><p>65 fit + 7 held-out</p></td>
 </tr>
 <tr class="row-odd"><td><p>Regression margins</p></td>
-<td><p>default 10%, sweep16 15%</p></td>
+<td><p>default 10%, sweep16 15%, or within 8,000 cycles</p></td>
 </tr>
 <tr class="row-even"><td><p>Fit residual</p></td>
 <td><p>±25.0%</p></td>
@@ -425,12 +426,12 @@ held-out programs (<code class="docutils literal notranslate"><span class="pre">
 </thead>
 <tbody>
 <tr class="row-even"><td><p>update_fixed</p></td>
-<td><p>8836.7</p></td>
-<td><p>55229.6</p></td>
+<td><p>14057.2</p></td>
+<td><p>87857.6</p></td>
 </tr>
 <tr class="row-odd"><td><p>shade_fixed</p></td>
-<td><p>923.3</p></td>
-<td><p>5770.9</p></td>
+<td><p>891.2</p></td>
+<td><p>5570.1</p></td>
 </tr>
 <tr class="row-even"><td><p>show_fixed</p></td>
 <td><p>45073.2</p></td>
@@ -465,28 +466,28 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-odd"><td><p>BinMath:pow</p></td>
-<td><p>1535.86</p></td>
-<td><p>9599.11</p></td>
+<td><p>1535.69</p></td>
+<td><p>9598.06</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:tan</p></td>
-<td><p>968.00</p></td>
-<td><p>6049.97</p></td>
+<td><p>967.83</p></td>
+<td><p>6048.93</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>BinMath:atan2</p></td>
-<td><p>954.04</p></td>
-<td><p>5962.76</p></td>
+<td><p>953.87</p></td>
+<td><p>5961.72</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Hsv2Rgb</p></td>
-<td><p>849.10</p></td>
-<td><p>5306.87</p></td>
+<td><p>848.99</p></td>
+<td><p>5306.17</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>UnMath:log</p></td>
-<td><p>778.28</p></td>
-<td><p>4864.27</p></td>
+<td><p>778.30</p></td>
+<td><p>4864.36</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>NormalizeFix</p></td>
@@ -500,8 +501,8 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:sqrt</p></td>
-<td><p>615.96</p></td>
-<td><p>3849.72</p></td>
+<td><p>615.79</p></td>
+<td><p>3848.69</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>BinMath</p></td>
@@ -515,23 +516,23 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-odd"><td><p>Smoothstep</p></td>
-<td><p>578.17</p></td>
-<td><p>3613.55</p></td>
+<td><p>578.11</p></td>
+<td><p>3613.20</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:exp</p></td>
-<td><p>572.49</p></td>
-<td><p>3578.05</p></td>
+<td><p>572.45</p></td>
+<td><p>3577.78</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Cross</p></td>
-<td><p>561.82</p></td>
-<td><p>3511.39</p></td>
+<td><p>561.66</p></td>
+<td><p>3510.35</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Normalize</p></td>
-<td><p>506.89</p></td>
-<td><p>3168.04</p></td>
+<td><p>506.83</p></td>
+<td><p>3167.69</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>DistanceFix</p></td>
@@ -545,13 +546,13 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-odd"><td><p>UnMath:cos</p></td>
-<td><p>439.02</p></td>
-<td><p>2743.89</p></td>
+<td><p>438.86</p></td>
+<td><p>2742.86</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Palette</p></td>
-<td><p>416.07</p></td>
-<td><p>2600.42</p></td>
+<td><p>415.90</p></td>
+<td><p>2599.40</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>SqrtFix</p></td>
@@ -565,23 +566,23 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-odd"><td><p>UnMath:sin</p></td>
-<td><p>367.84</p></td>
-<td><p>2299.02</p></td>
+<td><p>367.68</p></td>
+<td><p>2297.99</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Distance</p></td>
-<td><p>364.05</p></td>
-<td><p>2275.31</p></td>
+<td><p>363.99</p></td>
+<td><p>2274.97</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>BinMath:mod</p></td>
-<td><p>363.45</p></td>
-<td><p>2271.56</p></td>
+<td><p>363.29</p></td>
+<td><p>2270.53</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Length</p></td>
-<td><p>314.66</p></td>
-<td><p>1966.63</p></td>
+<td><p>314.60</p></td>
+<td><p>1966.28</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Hsv2RgbFix</p></td>
@@ -605,8 +606,8 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-odd"><td><p>Div</p></td>
-<td><p>256.38</p></td>
-<td><p>1602.36</p></td>
+<td><p>256.21</p></td>
+<td><p>1601.34</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>F2Fix</p></td>
@@ -640,8 +641,8 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>Mix</p></td>
-<td><p>241.10</p></td>
-<td><p>1506.86</p></td>
+<td><p>241.06</p></td>
+<td><p>1506.62</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>CrossFix</p></td>
@@ -660,8 +661,8 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>Hash3</p></td>
-<td><p>141.98</p></td>
-<td><p>887.40</p></td>
+<td><p>141.83</p></td>
+<td><p>886.41</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Scale</p></td>
@@ -670,48 +671,48 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:fract</p></td>
-<td><p>122.36</p></td>
-<td><p>764.76</p></td>
+<td><p>122.20</p></td>
+<td><p>763.76</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Dot</p></td>
-<td><p>117.91</p></td>
-<td><p>736.95</p></td>
+<td><p>117.87</p></td>
+<td><p>736.72</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:ceil</p></td>
-<td><p>117.79</p></td>
-<td><p>736.20</p></td>
+<td><p>117.63</p></td>
+<td><p>735.21</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Clamp</p></td>
-<td><p>112.79</p></td>
-<td><p>704.97</p></td>
+<td><p>112.72</p></td>
+<td><p>704.50</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Sub</p></td>
-<td><p>112.16</p></td>
-<td><p>701.00</p></td>
+<td><p>112.00</p></td>
+<td><p>700.01</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Mul</p></td>
-<td><p>108.45</p></td>
-<td><p>677.81</p></td>
+<td><p>108.27</p></td>
+<td><p>676.67</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Hash1</p></td>
-<td><p>105.58</p></td>
-<td><p>659.87</p></td>
+<td><p>105.42</p></td>
+<td><p>658.89</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Add</p></td>
-<td><p>103.58</p></td>
-<td><p>647.37</p></td>
+<td><p>103.40</p></td>
+<td><p>646.24</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>BinMath:step</p></td>
-<td><p>100.73</p></td>
-<td><p>629.54</p></td>
+<td><p>100.57</p></td>
+<td><p>628.56</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>ExpFix</p></td>
@@ -720,13 +721,13 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>BinMath:max</p></td>
-<td><p>97.84</p></td>
-<td><p>611.51</p></td>
+<td><p>97.68</p></td>
+<td><p>610.53</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>BinMath:min</p></td>
-<td><p>97.48</p></td>
-<td><p>609.24</p></td>
+<td><p>97.32</p></td>
+<td><p>608.26</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>DivFix</p></td>
@@ -770,8 +771,8 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:floor</p></td>
-<td><p>73.02</p></td>
-<td><p>456.39</p></td>
+<td><p>72.87</p></td>
+<td><p>455.41</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>&#64;dispatch</p></td>
@@ -780,8 +781,8 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:sign</p></td>
-<td><p>65.66</p></td>
-<td><p>410.37</p></td>
+<td><p>65.51</p></td>
+<td><p>409.41</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Cmp</p></td>
@@ -880,8 +881,8 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:abs</p></td>
-<td><p>38.87</p></td>
-<td><p>242.95</p></td>
+<td><p>38.72</p></td>
+<td><p>242.02</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>AbsI</p></td>
@@ -990,8 +991,8 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>Neg</p></td>
-<td><p>16.05</p></td>
-<td><p>100.34</p></td>
+<td><p>15.83</p></td>
+<td><p>98.93</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>BrCmpI</p></td>
@@ -1094,7 +1095,7 @@ benchmark actually exercised). Sorted by cost.</p>
 in-editor AI is fed, relative to a float multiply (each runs once per LED in
 <code class="docutils literal notranslate"><span class="pre">shade()</span></code>):</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>BUILTIN COSTS on this device (esp32c6 @ 160 MHz, measured on your board) — per call, relative to a float multiply. shade() runs each ONCE PER LED, so favor the cheap ones:
-  abs 0.4x, sign 0.6x, floor 0.7x, min 0.9x, max 0.9x, step 0.9x, add 1.0x, hash 1.0x, mul 1.0x, sub 1.0x, clamp 1.0x, ceil 1.1x, dot 1.1x, fract 1.1x, mix 2.2x, div 2.4x, length 2.9x, mod 3.4x, distance 3.4x, sin 3.4x, palette0 3.8x, cos 4.0x, normalize 4.7x, cross 5.2x, exp 5.3x, smoothstep 5.3x, sqrt 5.7x, log 7.2x, hsv2rgb 7.8x, atan2 8.8x, tan 8.9x, pow 14x
+  abs 0.4x, sign 0.6x, floor 0.7x, min 0.9x, max 0.9x, step 0.9x, add 1.0x, hash 1.0x, mul 1.0x, sub 1.0x, clamp 1.0x, ceil 1.1x, dot 1.1x, fract 1.1x, mix 2.2x, div 2.4x, length 2.9x, mod 3.4x, distance 3.4x, sin 3.4x, palette0 3.8x, cos 4.1x, normalize 4.7x, cross 5.2x, exp 5.3x, smoothstep 5.3x, sqrt 5.7x, log 7.2x, hsv2rgb 7.8x, atan2 8.8x, tan 8.9x, pow 14x
 Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; swap sin/cos/pow for fixed16/fixed8 (LUT trig, no soft-float) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt).
 </pre></div>
 </div>
@@ -1119,7 +1120,7 @@ programs the fit never saw. Cycles are the wall-time re-expressed at the device 
 <tr class="row-even"><td><p>clamp32M</p></td>
 <td><p>128</p></td>
 <td><p>52.85</p></td>
-<td><p>51.86</p></td>
+<td><p>51.85</p></td>
 <td><p>-1.9%</p></td>
 <td><p>8.46M</p></td>
 <td><p>8.30M</p></td>
@@ -1135,15 +1136,15 @@ programs the fit never saw. Cycles are the wall-time re-expressed at the device 
 <tr class="row-even"><td><p>expf2M</p></td>
 <td><p>128</p></td>
 <td><p>53.93</p></td>
-<td><p>53.42</p></td>
-<td><p>-0.9%</p></td>
+<td><p>53.41</p></td>
+<td><p>-1.0%</p></td>
 <td><p>8.63M</p></td>
 <td><p>8.55M</p></td>
 </tr>
 <tr class="row-odd"><td><p>hsv2rgbM</p></td>
 <td><p>128</p></td>
 <td><p>35.49</p></td>
-<td><p>33.30</p></td>
+<td><p>33.31</p></td>
 <td><p>-6.2%</p></td>
 <td><p>5.68M</p></td>
 <td><p>5.33M</p></td>
@@ -1151,10 +1152,10 @@ programs the fit never saw. Cycles are the wall-time re-expressed at the device 
 <tr class="row-even"><td><p>lavalamp</p></td>
 <td><p>200</p></td>
 <td><p>102.48</p></td>
-<td><p>107.14</p></td>
-<td><p>+4.6%</p></td>
+<td><p>107.09</p></td>
+<td><p>+4.5%</p></td>
 <td><p>16.40M</p></td>
-<td><p>17.14M</p></td>
+<td><p>17.13M</p></td>
 </tr>
 <tr class="row-odd"><td><p>mix3M</p></td>
 <td><p>128</p></td>
@@ -1203,7 +1204,7 @@ LED transmit path, excluded from the gate as transmit-bound noise).</p>
 <tr class="row-odd"><td><p>sweep16</p></td>
 <td><p>fit</p></td>
 <td><p>16</p></td>
-<td><p>29,648</p></td>
+<td><p>34,496</p></td>
 <td><p>49,289</p></td>
 </tr>
 <tr class="row-even"><td><p>sweep256</p></td>
@@ -1662,13 +1663,13 @@ off.</p>
 <td><p>65 fit + 7 held-out</p></td>
 </tr>
 <tr class="row-odd"><td><p>Regression margins</p></td>
-<td><p>default 10%, sweep16 15%</p></td>
+<td><p>default 10%, sweep16 15%, or within 8,000 cycles</p></td>
 </tr>
 <tr class="row-even"><td><p>Fit residual</p></td>
 <td><p>±24.4%</p></td>
 </tr>
 <tr class="row-odd"><td><p>Held-out accuracy</p></td>
-<td><p>RMS 6.2% · mean 4.6% · max 11.3% · R² 0.970</p></td>
+<td><p>RMS 6.2% · mean 4.6% · max 11.3% · R² 0.971</p></td>
 </tr>
 <tr class="row-even"><td><p>Verdict</p></td>
 <td><p>PASS (RMS 6.2% vs 13% tolerance)</p></td>
@@ -1689,12 +1690,12 @@ off.</p>
 </thead>
 <tbody>
 <tr class="row-even"><td><p>update_fixed</p></td>
-<td><p>8372.6</p></td>
-<td><p>52328.6</p></td>
+<td><p>14340.1</p></td>
+<td><p>89625.5</p></td>
 </tr>
 <tr class="row-odd"><td><p>shade_fixed</p></td>
-<td><p>927.8</p></td>
-<td><p>5798.5</p></td>
+<td><p>891.0</p></td>
+<td><p>5569.0</p></td>
 </tr>
 <tr class="row-even"><td><p>show_fixed</p></td>
 <td><p>43510.5</p></td>
@@ -1729,28 +1730,28 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-odd"><td><p>BinMath:pow</p></td>
-<td><p>1536.31</p></td>
-<td><p>9601.92</p></td>
+<td><p>1536.12</p></td>
+<td><p>9600.72</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:tan</p></td>
-<td><p>967.74</p></td>
-<td><p>6048.38</p></td>
+<td><p>967.55</p></td>
+<td><p>6047.19</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>BinMath:atan2</p></td>
-<td><p>953.76</p></td>
-<td><p>5961.01</p></td>
+<td><p>953.57</p></td>
+<td><p>5959.82</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Hsv2Rgb</p></td>
-<td><p>848.82</p></td>
-<td><p>5305.15</p></td>
+<td><p>848.70</p></td>
+<td><p>5304.35</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>UnMath:log</p></td>
-<td><p>777.49</p></td>
-<td><p>4859.31</p></td>
+<td><p>777.50</p></td>
+<td><p>4859.41</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>NormalizeFix</p></td>
@@ -1764,8 +1765,8 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:sqrt</p></td>
-<td><p>615.70</p></td>
-<td><p>3848.14</p></td>
+<td><p>615.51</p></td>
+<td><p>3846.95</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>BinMath</p></td>
@@ -1779,23 +1780,23 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-odd"><td><p>UnMath:exp</p></td>
-<td><p>572.58</p></td>
-<td><p>3578.64</p></td>
+<td><p>572.53</p></td>
+<td><p>3578.34</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Smoothstep</p></td>
-<td><p>561.86</p></td>
-<td><p>3511.61</p></td>
+<td><p>561.79</p></td>
+<td><p>3511.21</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Cross</p></td>
-<td><p>561.07</p></td>
-<td><p>3506.71</p></td>
+<td><p>560.88</p></td>
+<td><p>3505.52</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Normalize</p></td>
-<td><p>506.83</p></td>
-<td><p>3167.66</p></td>
+<td><p>506.76</p></td>
+<td><p>3167.26</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>DistanceFix</p></td>
@@ -1809,13 +1810,13 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-odd"><td><p>UnMath:cos</p></td>
-<td><p>438.54</p></td>
-<td><p>2740.85</p></td>
+<td><p>438.35</p></td>
+<td><p>2739.67</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Palette</p></td>
-<td><p>416.05</p></td>
-<td><p>2600.29</p></td>
+<td><p>415.86</p></td>
+<td><p>2599.12</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>SqrtFix</p></td>
@@ -1829,23 +1830,23 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-odd"><td><p>UnMath:sin</p></td>
-<td><p>367.83</p></td>
-<td><p>2298.95</p></td>
+<td><p>367.64</p></td>
+<td><p>2297.77</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Distance</p></td>
-<td><p>363.90</p></td>
-<td><p>2274.36</p></td>
+<td><p>363.83</p></td>
+<td><p>2273.96</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>BinMath:mod</p></td>
-<td><p>363.68</p></td>
-<td><p>2272.99</p></td>
+<td><p>363.49</p></td>
+<td><p>2271.82</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Length</p></td>
-<td><p>314.28</p></td>
-<td><p>1964.25</p></td>
+<td><p>314.22</p></td>
+<td><p>1963.86</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Hsv2RgbFix</p></td>
@@ -1869,8 +1870,8 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-odd"><td><p>Div</p></td>
-<td><p>256.48</p></td>
-<td><p>1603.01</p></td>
+<td><p>256.30</p></td>
+<td><p>1601.85</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>F2Fix</p></td>
@@ -1904,8 +1905,8 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>Mix</p></td>
-<td><p>241.17</p></td>
-<td><p>1507.28</p></td>
+<td><p>241.12</p></td>
+<td><p>1507.01</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>CrossFix</p></td>
@@ -1924,8 +1925,8 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>Hash3</p></td>
-<td><p>142.09</p></td>
-<td><p>888.04</p></td>
+<td><p>141.91</p></td>
+<td><p>886.91</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Scale</p></td>
@@ -1934,38 +1935,38 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:fract</p></td>
-<td><p>122.54</p></td>
-<td><p>765.85</p></td>
+<td><p>122.35</p></td>
+<td><p>764.72</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Dot</p></td>
-<td><p>117.89</p></td>
-<td><p>736.80</p></td>
+<td><p>117.85</p></td>
+<td><p>736.54</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:ceil</p></td>
-<td><p>117.76</p></td>
-<td><p>736.01</p></td>
+<td><p>117.58</p></td>
+<td><p>734.88</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Sub</p></td>
-<td><p>112.13</p></td>
-<td><p>700.84</p></td>
+<td><p>111.95</p></td>
+<td><p>699.71</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Mul</p></td>
-<td><p>108.27</p></td>
-<td><p>676.69</p></td>
+<td><p>108.06</p></td>
+<td><p>675.38</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Hash1</p></td>
-<td><p>105.48</p></td>
-<td><p>659.26</p></td>
+<td><p>105.30</p></td>
+<td><p>658.13</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Add</p></td>
-<td><p>104.26</p></td>
-<td><p>651.60</p></td>
+<td><p>104.05</p></td>
+<td><p>650.30</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>ExpFix</p></td>
@@ -1974,13 +1975,13 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>BinMath:max</p></td>
-<td><p>97.67</p></td>
-<td><p>610.47</p></td>
+<td><p>97.50</p></td>
+<td><p>609.35</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>BinMath:min</p></td>
-<td><p>97.48</p></td>
-<td><p>609.27</p></td>
+<td><p>97.30</p></td>
+<td><p>608.15</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>DivFix</p></td>
@@ -2014,8 +2015,8 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>Clamp</p></td>
-<td><p>79.89</p></td>
-<td><p>499.29</p></td>
+<td><p>79.80</p></td>
+<td><p>498.75</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>CosFix</p></td>
@@ -2029,13 +2030,13 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-odd"><td><p>BinMath:step</p></td>
-<td><p>78.90</p></td>
-<td><p>493.14</p></td>
+<td><p>78.74</p></td>
+<td><p>492.11</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:floor</p></td>
-<td><p>72.96</p></td>
-<td><p>455.97</p></td>
+<td><p>72.78</p></td>
+<td><p>454.85</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>&#64;dispatch</p></td>
@@ -2044,8 +2045,8 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:sign</p></td>
-<td><p>65.38</p></td>
-<td><p>408.60</p></td>
+<td><p>65.20</p></td>
+<td><p>407.50</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Cmp</p></td>
@@ -2144,8 +2145,8 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:abs</p></td>
-<td><p>39.19</p></td>
-<td><p>244.96</p></td>
+<td><p>39.02</p></td>
+<td><p>243.90</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>AbsI</p></td>
@@ -2254,8 +2255,8 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>Neg</p></td>
-<td><p>15.96</p></td>
-<td><p>99.74</p></td>
+<td><p>15.70</p></td>
+<td><p>98.14</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>BrCmpI</p></td>
@@ -2358,7 +2359,7 @@ benchmark actually exercised). Sorted by cost.</p>
 in-editor AI is fed, relative to a float multiply (each runs once per LED in
 <code class="docutils literal notranslate"><span class="pre">shade()</span></code>):</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>BUILTIN COSTS on this device (esp32c6 @ 160 MHz, measured on your board) — per call, relative to a float multiply. shade() runs each ONCE PER LED, so favor the cheap ones:
-  abs 0.4x, sign 0.6x, floor 0.7x, step 0.7x, clamp 0.7x, min 0.9x, max 0.9x, add 1.0x, hash 1.0x, mul 1.0x, sub 1.0x, ceil 1.1x, dot 1.1x, fract 1.1x, mix 2.2x, div 2.4x, length 2.9x, mod 3.4x, distance 3.4x, sin 3.4x, palette0 3.8x, cos 4.1x, normalize 4.7x, cross 5.2x, smoothstep 5.2x, exp 5.3x, sqrt 5.7x, log 7.2x, hsv2rgb 7.8x, atan2 8.8x, tan 8.9x, pow 14x
+  abs 0.4x, sign 0.6x, floor 0.7x, step 0.7x, clamp 0.7x, min 0.9x, max 0.9x, add 1.0x, hash 1.0x, mul 1.0x, sub 1.0x, ceil 1.1x, dot 1.1x, fract 1.1x, mix 2.2x, div 2.4x, length 2.9x, mod 3.4x, distance 3.4x, sin 3.4x, palette0 3.8x, cos 4.1x, normalize 4.7x, cross 5.2x, smoothstep 5.2x, exp 5.3x, sqrt 5.7x, log 7.2x, hsv2rgb 7.9x, atan2 8.8x, tan 9.0x, pow 14x
 Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; swap sin/cos/pow for fixed16/fixed8 (LUT trig, no soft-float) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt).
 </pre></div>
 </div>
@@ -2394,15 +2395,15 @@ programs the fit never saw. Cycles are the wall-time re-expressed at the device 
 <td><p>22.84</p></td>
 <td><p>-0.1%</p></td>
 <td><p>3.66M</p></td>
-<td><p>3.65M</p></td>
+<td><p>3.66M</p></td>
 </tr>
 <tr class="row-even"><td><p>expf2M</p></td>
 <td><p>128</p></td>
 <td><p>53.90</p></td>
-<td><p>53.41</p></td>
+<td><p>53.40</p></td>
 <td><p>-0.9%</p></td>
 <td><p>8.62M</p></td>
-<td><p>8.55M</p></td>
+<td><p>8.54M</p></td>
 </tr>
 <tr class="row-odd"><td><p>hsv2rgbM</p></td>
 <td><p>128</p></td>
@@ -2415,10 +2416,10 @@ programs the fit never saw. Cycles are the wall-time re-expressed at the device 
 <tr class="row-even"><td><p>lavalamp</p></td>
 <td><p>200</p></td>
 <td><p>97.38</p></td>
-<td><p>107.11</p></td>
-<td><p>+10.0%</p></td>
+<td><p>107.05</p></td>
+<td><p>+9.9%</p></td>
 <td><p>15.58M</p></td>
-<td><p>17.14M</p></td>
+<td><p>17.13M</p></td>
 </tr>
 <tr class="row-odd"><td><p>mix3M</p></td>
 <td><p>128</p></td>
@@ -2431,7 +2432,7 @@ programs the fit never saw. Cycles are the wall-time re-expressed at the device 
 <tr class="row-even"><td><p>neg2M</p></td>
 <td><p>128</p></td>
 <td><p>12.15</p></td>
-<td><p>12.30</p></td>
+<td><p>12.29</p></td>
 <td><p>+1.2%</p></td>
 <td><p>1.94M</p></td>
 <td><p>1.97M</p></td>
@@ -2468,7 +2469,7 @@ LED transmit path, excluded from the gate as transmit-bound noise).</p>
 <tr class="row-odd"><td><p>sweep16</p></td>
 <td><p>fit</p></td>
 <td><p>16</p></td>
-<td><p>29,237</p></td>
+<td><p>34,774</p></td>
 <td><p>49,144</p></td>
 </tr>
 <tr class="row-even"><td><p>sweep256</p></td>

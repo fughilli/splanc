@@ -260,6 +260,7 @@
 <li class="toctree-l2"><a class="reference internal" href="design/heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
@@ -322,6 +323,31 @@
 it in depth. The full history is in the git log and <a class="reference internal" href="#../WORKLOG.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code></span></a>.</p>
 <section id="october-2026">
 <h2>October 2026<a class="headerlink" href="#october-2026" title="Link to this heading">¶</a></h2>
+<section id="heavy-effects-no-longer-lock-players-off-the-network-1-12-4">
+<h3>Heavy effects no longer lock players off the network (1.12.4)<a class="headerlink" href="#heavy-effects-no-longer-lock-players-off-the-network-1-12-4" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>A player running a heavy effect stays reachable.</strong> In 1.12.3 an effect that
+nearly filled its frame budget left the network task almost no CPU: new
+connections timed out, a rejoin never finished, and since the effect resumes
+at boot, a power cycle didn’t help (only Bluetooth did). Rendering now always
+leaves the network at least 20% of the CPU, and a connecting client gets an
+equal share while it connects. Such an effect runs a little slower instead
+(e.g. 25 → 21 fps).</p></li>
+<li><p><strong>No more ghost sessions.</strong> A client that gave up mid-connect could leave the
+device’s single connection slot occupied for good. Quiet sessions are now
+probed and dead ones freed, as are half-closed page fetches.</p></li>
+<li><p>Details: <a class="reference internal" href="design/wifi-rejoin-policy.html#heavy-effects-1-12-4-hotfix"><span class="std std-ref">wifi-rejoin-policy.md</span></a>.</p></li>
+</ul>
+</section>
+<section id="wi-fi-rejoin-the-long-absence-slow-down-is-opt-in">
+<h3>Wi-Fi rejoin: the long-absence slow-down is opt-in<a class="headerlink" href="#wi-fi-rejoin-the-long-absence-slow-down-is-opt-in" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">auto</span></code> now keeps its once-a-minute retries indefinitely; the 24 h → 15 min slow-down
+is off unless you set <strong>Slow down after unseen for</strong> (<code class="docutils literal notranslate"><span class="pre">decay_after_h</span></code>), and boards
+that never chose it turn it off on update
+(<a class="reference internal" href="design/wifi-rejoin-policy.html#decay-is-opt-in"><span class="std std-ref">details</span></a>).</p></li>
+</ul>
+</section>
 <section id="place-several-fixtures-in-one-room-from-one-phone-capture">
 <h3>Place several fixtures in one room from one phone capture<a class="headerlink" href="#place-several-fixtures-in-one-room-from-one-phone-capture" title="Link to this heading">¶</a></h3>
 <ul class="simple">
@@ -338,6 +364,28 @@ each device, so <code class="docutils literal notranslate"><span class="pre">led
 resource) see the room.</p></li>
 <li><p>Design, method and synthetic accuracy (median ~1.3 cm / 0.4° per fixture):
 <a class="reference internal" href="design/multi-fixture-localization.html"><span class="std std-doc">multi-fixture-localization.md</span></a>.</p></li>
+</ul>
+</section>
+<section id="wi-fi-rejoin-policy-and-wi-fi-work-never-disturbs-the-leds">
+<h3>Wi-Fi rejoin policy, and Wi-Fi work never disturbs the LEDs<a class="headerlink" href="#wi-fi-rejoin-policy-and-wi-fi-work-never-disturbs-the-leds" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Rejoining doesn’t touch the LED output.</strong> Scanning, joining, a wrong
+passphrase, a missing network, DHCP retries and the address fallback are now
+invisible on the strip: on the logic analyzer, frame intervals stay within
+0.7 ms of steady for a light effect and within the effect’s own jitter for a
+heavy one. The network now runs below the render task, PBKDF2 no longer
+shares the CPU with frames, and frames are paced on wall time. While an app
+session is open, the network shares the CPU with rendering as before, so
+30 fps video streams keep a ~20 ms latency.</p></li>
+<li><p><strong>Choose how a board rejoins.</strong> <code class="docutils literal notranslate"><span class="pre">auto</span></code> (the default: quick retries backing
+off to once a minute; slowing further after a long absence is opt-in), <code class="docutils literal notranslate"><span class="pre">fixed</span></code>,
+<code class="docutils literal notranslate"><span class="pre">manual</span></code>, or <code class="docutils literal notranslate"><span class="pre">offline</span></code> for a unit deployed where it will never see its AP
+again: the radio stays off, the show plays, BLE and the console stay up for
+reconfiguration, and the credentials are kept. Set it from the device sheet,
+the agent, BLE, or the console (<code class="docutils literal notranslate"><span class="pre">WIFI</span> <span class="pre">MODE</span> <span class="pre">…</span></code>). An unconfirmed firmware update
+must be confirmed before going offline, and an update never rolls back just
+because the AP is gone. Details:
+<a class="reference internal" href="design/wifi-rejoin-policy.html"><span class="std std-doc">wifi-rejoin-policy.md</span></a>.</p></li>
 </ul>
 </section>
 <section id="calibrate-imu-is-hands-free">
@@ -1014,7 +1062,10 @@ the way it is.</p></li>
             <ul>
 <li><a class="reference internal" href="#">What’s new</a><ul>
 <li><a class="reference internal" href="#october-2026">October 2026</a><ul>
+<li><a class="reference internal" href="#heavy-effects-no-longer-lock-players-off-the-network-1-12-4">Heavy effects no longer lock players off the network (1.12.4)</a></li>
+<li><a class="reference internal" href="#wi-fi-rejoin-the-long-absence-slow-down-is-opt-in">Wi-Fi rejoin: the long-absence slow-down is opt-in</a></li>
 <li><a class="reference internal" href="#place-several-fixtures-in-one-room-from-one-phone-capture">Place several fixtures in one room from one phone capture</a></li>
+<li><a class="reference internal" href="#wi-fi-rejoin-policy-and-wi-fi-work-never-disturbs-the-leds">Wi-Fi rejoin policy, and Wi-Fi work never disturbs the LEDs</a></li>
 <li><a class="reference internal" href="#calibrate-imu-is-hands-free">Calibrate IMU is hands-free</a></li>
 <li><a class="reference internal" href="#slow-effects-lag-instead-of-being-parked-and-wi-fi-rescans-without-a-reboot">Slow effects lag instead of being parked, and Wi-Fi rescans without a reboot</a></li>
 <li><a class="reference internal" href="#effects-stop-recomputing-what-doesn-t-change-and-the-cost-estimate-is-honest">Effects stop recomputing what doesn’t change (and the cost estimate is honest)</a></li>
