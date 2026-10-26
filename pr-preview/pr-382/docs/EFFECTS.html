@@ -260,6 +260,7 @@
 <li class="toctree-l2"><a class="reference internal" href="docs/design/heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/app-ux-overhaul.html">App UX overhaul</a></li>
@@ -921,8 +922,11 @@ for how to run it.</p>
 held-out). Regenerate with <code class="docutils literal notranslate"><span class="pre">fx_bench</span> <span class="pre">--emit-golden</span> <span class="pre">&lt;path&gt;</span></code>.</p></li>
 <li><p><strong>Regression gate:</strong> a program fails if <code class="docutils literal notranslate"><span class="pre">abs(measured/golden</span> <span class="pre">−</span> <span class="pre">1)</span></code> exceeds its
 margin — default <strong>10%</strong>, with <code class="docutils literal notranslate"><span class="pre">sweep16</span></code> at 15% (a deliberately safe band until
-per-effect run-to-run variance is characterized). <strong>Only frame cycles are
-gated</strong>; show cycles (transmit) are noisier and excluded.</p></li>
+per-effect run-to-run variance is characterized) — <strong>and</strong> it is more than
+<strong>8,000 cycles</strong> (50 µs) off the golden. The absolute floor absorbs the fixed
+per-frame flash-cache cost that moves with code layout; it only matters for
+tiny programs like <code class="docutils literal notranslate"><span class="pre">sweep16</span></code>. <strong>Only frame cycles are gated</strong>; show cycles
+(transmit) are noisier and excluded.</p></li>
 </ul>
 <p>Representative measured frame-cycle costs at 160 MHz (full set in the golden):</p>
 <div class="table-wrapper colwidths-auto docutils container">
