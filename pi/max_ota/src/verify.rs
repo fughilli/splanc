@@ -1,8 +1,8 @@
 //! Is this offer installable on this device? (docs/design/max-ota.md "Signing")
 //!
 //! The same 108-byte manifest as the C6 (`splanc_ota::manifest`), checked against
-//! the MAX ring only (`crate::ring::RING`: key id 3, never the loader ring's 0/1/2),
-//! with the board in flags bits 24..31. The player (unprivileged, facing the
+//! the MAX ring only (`crate::ring::RING`: key ids 3 `max` and 4 `max_backup`, never
+//! the loader ring's 0/1/2), with the board in flags bits 24..31. The player (unprivileged, facing the
 //! network) runs this for a quick answer to `ota_begin`; the root updater runs it
 //! again before it downloads anything, and is the authority.
 

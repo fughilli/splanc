@@ -6,7 +6,7 @@
 //! back by itself, across resets and power cuts.
 //!
 //! * [`verify`]: the C6's signed 108-byte manifest, checked against the MAX ring
-//!   (key id 3 only) and the board in flags bits 24..31.
+//!   (key ids 3 `max` and 4 `max_backup` only) and the board in flags bits 24..31.
 //! * [`image`]: the `.nixclosure` header + zstd `nix-store --export` payload.
 //! * [`updater`]: the state machine (download, import, stage the one-shot trial,
 //!   boot reconcile, health, commit, roll back) over the [`updater::Sys`] seam;

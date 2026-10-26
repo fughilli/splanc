@@ -20,13 +20,21 @@ def ring_cmd(ring, lang = "cpp", tool = ":gen_key_header"):
     ]) + " --out $@"
 
 # The Splanc MAX (Raspberry Pi) updater's ring (docs/design/max-ota.md "Signing"):
-# its OWN key id 3, never the loader ring's 0/1/2, so a C6 image can't install on a
+# its OWN key ids, never the loader ring's 0/1/2, so a C6 image can't install on a
 # MAX and a MAX key can't sign C6 firmware. //pi/max_ota generates it with
 # ring_cmd(..., lang = "rust").
+#   3 `max`        online: the MAX_OTA_SIGNING_KEY secret signs every MAX release.
+#   4 `max_backup` OFFLINE (cold storage, never in CI): signs the key-epoch record
+#                  that revokes a compromised `max`, and the bridge image that
+#                  carries its replacement ("Key rotation").
+# An UNSET .pub is an entry that verifies nothing (the build still works).
 MAX_RELEASE_RING = {
     "3": "//firmware/ota:keys/max.pub",
+    "4": "//firmware/ota:keys/max_backup.pub",
 }
 
+# The TEST counterparts (public keys, HITL / development): test_max + test_max_backup.
 MAX_TEST_RING = {
     "3": "//firmware/ota:keys/test_max.pub",
+    "4": "//firmware/ota:keys/test_max_backup.pub",
 }

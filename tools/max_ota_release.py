@@ -10,8 +10,9 @@ Writes, for board B and release X.Y.Z:
   max-B-X.Y.Z.nixclosure    the image: a text header (board, version, toplevel, and
                             for a delta the `base:` paths it leaves out), then
                             zstd(nix-store --export <the paths the device needs>);
-  max-B-X.Y.Z.manifest      its 108-byte signed manifest (key id 3, board in flags
-                            bits 24..31) — what a client sends in ota_begin;
+  max-B-X.Y.Z.manifest      its 108-byte signed manifest (key id 3 `max` — or 4
+                            `max_backup` with --key-id 4 — board in flags bits
+                            24..31) — what a client sends in ota_begin;
   with --base-toplevel, a delta instead: max-B-X.Y.Z-from-W.nixclosure/.manifest,
   holding only the paths the base release doesn't have.
 
@@ -20,6 +21,11 @@ client only ever handles the 108-byte manifest. Refuses to sign when the key isn
 the one whose public half is committed (UNSET, or a different key): every MAX would
 refuse such an image. `--key-file` signs with a file instead (the TEST key for HITL
 images: firmware/ota/keys/test_max.key, with --pubkey firmware/ota/keys/test_max.pub).
+
+CI only ever signs with key id 3 (the MAX_OTA_SIGNING_KEY secret). `--key-id 4`
+(--pubkey firmware/ota/keys/max_backup.pub --key-file <offline file>) is for the
+owner, by hand on an offline machine: the bridge image of a rotation after the max
+key is revoked (docs/design/max-ota.md "Key rotation").
 Stdlib only; needs nix-store and zstd on PATH; the signature is //firmware/ota:ota_sign.
 """
 
@@ -34,6 +40,7 @@ import sys
 
 MAGIC = "SPLANC-MAX-OTA 1"
 KEY_ID_MAX = 3
+KEY_ID_MAX_BACKUP = 4
 BOARDS = {"pi3": 1, "pi4": 2, "pi5": 3, "zero2w": 4}
 STORE_RE = re.compile(r"^/nix/store/[0-9a-df-np-sv-z]{32}-[A-Za-z0-9+._?=-]+$")
 
@@ -53,8 +60,8 @@ def version_number(v):
     return a * 1_000_000 + b * 1_000 + c
 
 
-def manifest_flags(board, security_version):
-    return (KEY_ID_MAX << 8) | (security_version << 16) | (BOARDS[board] << 24)
+def manifest_flags(board, security_version, key_id=KEY_ID_MAX):
+    return (key_id << 8) | (security_version << 16) | (BOARDS[board] << 24)
 
 
 def header(board, version, toplevel, base):
@@ -115,6 +122,14 @@ def main():
     ap.add_argument("--key-env", default="MAX_OTA_SIGNING_KEY")
     ap.add_argument("--key-file", default="")
     ap.add_argument("--security-version", type=int, default=0)
+    ap.add_argument(
+        "--key-id",
+        type=int,
+        default=KEY_ID_MAX,
+        choices=range(KEY_ID_MAX, 8),
+        help="3 max (CI); 4 max_backup (offline, by hand); 5..7 a successor online key"
+        " after a rotation (docs/design/max-ota.md)",
+    )
     ap.add_argument("--base-toplevel", default="", help="build a delta against this system")
     ap.add_argument("--base-version", default="", help="the base's version (names the delta)")
     ap.add_argument("--name", default="", help="override the asset base name (HITL images)")
@@ -135,6 +150,11 @@ def main():
     if want == "unset":
         sys.exit(
             f"max_ota_release: {a.pubkey} is UNSET — generate the MAX key first (docs/design/max-ota.md)"
+        )
+    if a.key_id == KEY_ID_MAX_BACKUP and not a.key_file:
+        sys.exit(
+            "max_ota_release: --key-id 4 (max_backup) is the OFFLINE key: sign by hand with"
+            " --key-file, never from a CI secret"
         )
     key_args = ["--key-file", a.key_file] if a.key_file else ["--key-env", a.key_env]
     if not a.key_file and not os.environ.get(a.key_env):
@@ -163,7 +183,7 @@ def main():
     if size >= 1 << 32:
         sys.exit("max_ota_release: image is 4 GiB or more; the manifest can't describe it")
     man = os.path.join(a.out_dir, f"{name}.manifest")
-    flags = manifest_flags(a.board, a.security_version)
+    flags = manifest_flags(a.board, a.security_version, a.key_id)
     out = subprocess.run(
         [
             a.signer,

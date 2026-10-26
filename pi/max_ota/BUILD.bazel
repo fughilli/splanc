@@ -12,8 +12,9 @@ load("//pi/player_rs/musl:transition.bzl", "static_musl_binary")
 
 package(default_visibility = ["//visibility:public"])
 
-# The trusted keyring as a Rust const: the MAX key (id 3) only. --//firmware/ota:
-# trust=test swaps in the checked-in TEST key (HITL / development images).
+# The trusted keyring as a Rust const: the MAX keys only (id 3 `max`, id 4
+# `max_backup`; an UNSET one verifies nothing). --//firmware/ota:trust=test swaps in
+# the checked-in TEST keys (HITL / development images).
 genrule(
     name = "ring_rs",
     srcs = select({
@@ -58,7 +59,8 @@ rust_library(
     deps = DEPS,
 )
 
-# The same library against the TEST ring (tests sign with keys/test_max.key).
+# The same library against the TEST ring (tests sign with keys/test_max.key and,
+# for rotation, keys/test_max_backup.key).
 rust_library(
     name = "max_ota_testring",
     srcs = SRCS,
@@ -82,9 +84,15 @@ rust_test(
 rust_test(
     name = "updater_test",
     srcs = ["tests/updater.rs"],
-    data = ["//firmware/ota:keys/test_max.key"],
+    data = [
+        "//firmware/ota:keys/test_max.key",
+        "//firmware/ota:keys/test_max_backup.key",
+    ],
     edition = "2021",
-    env = {"MAX_TEST_KEY": "$(rootpath //firmware/ota:keys/test_max.key)"},
+    env = {
+        "MAX_TEST_BACKUP_KEY": "$(rootpath //firmware/ota:keys/test_max_backup.key)",
+        "MAX_TEST_KEY": "$(rootpath //firmware/ota:keys/test_max.key)",
+    },
     deps = [
         ":max_ota_testring",
         "//firmware/ota",

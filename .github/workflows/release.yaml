@@ -176,6 +176,11 @@ jobs:
   # MAX_OTA_SIGNING_KEY secret), never the C6 loader ring's keys. Until that key
   # exists (firmware/ota/keys/max.pub is UNSET) or while the secret is missing, the
   # job SKIPS signing with a warning instead of failing the firmware release.
+  # The MAX ring's other key, id 4 `max_backup` (firmware/ota/keys/max_backup.pub),
+  # is OFFLINE: there is no secret for it and nothing here signs with it
+  # (max_ota_release.py refuses --key-id 4 without --key-file). The owner uses it by
+  # hand, on an offline machine, only to rotate away from a compromised max key: the
+  # max_epoch.bin record and one bridge image (docs/design/max-ota.md "Key rotation").
   max:
     if: startsWith(github.ref, 'refs/tags/firmware-v')
     needs: firmware # publish onto the release the firmware job created
