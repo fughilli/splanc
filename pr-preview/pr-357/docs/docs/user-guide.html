@@ -261,6 +261,7 @@
 <li class="toctree-l2"><a class="reference internal" href="design/heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
@@ -709,6 +710,11 @@ app uses.</p>
 <li><p><strong>Rename</strong> — the display name is reflected to the device itself.</p></li>
 <li><p>A row’s ⋮ menu shows the recorded LAN address, MAC, and Bluetooth name, and can <strong>forget</strong> the
 device.</p></li>
+<li><p><strong>Wi-Fi rejoin</strong> (device settings) picks how a board finds its network again: <strong>Auto</strong> (the
+default) retries quickly, then once a minute for as long as it takes; <strong>Fixed</strong>, <strong>Manual</strong>, or
+<strong>Offline</strong> for a unit that will never see its network again. To save airtime when an Auto board’s
+network may be gone for a long time, set <strong>Slow down after unseen for</strong> (hours) to opt in to one
+scan per <strong>Slowed scan interval</strong> (15 min by default). It is off (0) unless you set it.</p></li>
 </ul>
 </section>
 </section>

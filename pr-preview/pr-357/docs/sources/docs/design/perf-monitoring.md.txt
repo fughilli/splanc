@@ -104,6 +104,17 @@ no f64).
   that overran its period still sleeps `≥ max(4 ms, 25% of its cost)`: the render
   task outranks the network task, so a lagging effect is duty-cycle bounded
   (≤ 80% CPU) and WiFi/TLS, the sensors and control stay responsive.
+- **Guaranteed network share.** Every frame, not only an overrunning one, sleeps
+  at least 25% of its render *compute* (`frame_cycles`: update + shade + blend;
+  `lm_fps_net_share_ms`), and a rung whose period can't hold the compute plus
+  that share counts as a miss, so the effect steps down a rung (or lags at the
+  floor) instead. The netstack loop runs one priority below render while no
+  client is connecting or connected, so it only gets render's sleeps: in 1.12.3 a
+  frame that just fit its rung slept the 1-3 ms left of its period, a new
+  client's TLS handshake (~0.5 s of CPU) never finished inside its 8 s timeout,
+  and two field players stayed unreachable under such an effect (also after a
+  power cycle, since the effect persists). The wire ceiling still uses the 95%
+  budget: the transmit runs on DMA and leaves the CPU free.
 - **Decks + crossfade.** The cost fed to the controller is the whole frame —
   `lm_fx_update` / `lm_fx_shade` drive *every* rendering deck and blend them by
   the crossfade — so a two-deck show is costed as one frame. The search restarts
