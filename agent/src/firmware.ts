@@ -60,13 +60,6 @@ export function releaseMaxManifestUrl(board: string, version: string): string {
   return `https://github.com/${REPO}/releases/download/firmware-v${v}/${maxManifestAsset(board, v)}`;
 }
 
-/** The MAX ring's key-epoch record (the C6's key-epoch.bin is signed by keys a MAX
- * doesn't trust). */
-export function releaseMaxEpochUrl(version: string): string {
-  const v = version.replace(/^v/, "");
-  return `https://github.com/${REPO}/releases/download/firmware-v${v}/max-key-epoch.bin`;
-}
-
 async function latestVersion(fetchImpl: Fetch): Promise<string> {
   const res = await fetchImpl(`https://api.github.com/repos/${REPO}/releases/latest`, {
     headers: { Accept: "application/vnd.github+json" },
@@ -95,7 +88,8 @@ export async function resolvePackage(src: PackageSource, fetchImpl: Fetch = fetc
     if (!res.ok) throw new Error(`firmware ${version} has no Splanc MAX image for ${src.board} (HTTP ${res.status} for ${url})`);
     bytes = new Uint8Array(await res.arrayBuffer());
     if (bytes.length !== MANIFEST_LEN) throw new Error(`${url} isn't a ${MANIFEST_LEN}-byte manifest`);
-    const er = await fetchImpl(releaseMaxEpochUrl(version));
+    // The same key-epoch.bin as the C6: a MAX trusts the same ring.
+    const er = await fetchImpl(releaseEpochUrl(version));
     return {
       bytes,
       version: parseManifest(bytes).version,

@@ -1,7 +1,8 @@
 # Firmware updates over the air (split loader + app)
 
-(The Splanc MAX — a Raspberry Pi — updates through the same protocol and keyring
-tooling, as whole NixOS systems it downloads itself: [max-ota.md](max-ota.md).)
+(The Splanc MAX — a Raspberry Pi — updates through the same protocol, with the
+**same signing keys** (this keyring), as whole NixOS systems it downloads itself:
+[max-ota.md](max-ota.md). The signed board field keeps the two apart.)
 
 Status: implemented (PR "OTA: split loader + app"). HITL results at the end.
 
@@ -185,10 +186,15 @@ A release's **`.ota`** package is this manifest followed by the image.
   no key, so test images don't need a second app build, and a bad signature costs
   one round trip through the loader, which refuses it and returns to the app.
 
-**Flags:** the manifest's `flags` carry the signing **key id** (bits 8–15) and a
-**security version** (bits 16–23). Both are inside the signed bytes. Key id 0 at
-security version 0 is flags 0, the swarm's default, so the 108-byte layout is
-unchanged.
+**Flags:** the manifest's `flags` carry the signing **key id** (bits 8–15), a
+**security version** (bits 16–23) and the **board** (bits 24–31). All are inside the
+signed bytes. Key id 0 at security version 0 is flags 0, the swarm's default, so the
+108-byte layout is unchanged.
+
+**Board:** 0 for a C6 app image; 1.. for a Splanc MAX board (max-ota.md). The MAX
+trusts the same keys, so a MAX image is validly signed as far as the loader's ring
+is concerned: the app's pre-check and the loader (`session::check_offer`) refuse
+any board but 0 as `wrong_board`, and the MAX refuses board 0.
 
 ## Signing
 
@@ -314,6 +320,11 @@ It uses pure-Rust P-256 (RFC 6979 deterministic signatures).
 | 0 | `release` | `keys/release.pub` | online: the `OTA_SIGNING_KEY` secret signs every release |
 | 1 | `backup` | `keys/backup.pub` | **offline**, in cold storage; signs key-epoch records (and images, in an emergency) |
 | 2 | `next` | `keys/next.pub` | a planned successor, committed one loader release before CI switches to it |
+| 3, 4 | — | — | **reserved** for a possible future separate Splanc MAX key (+ backup); unused, in no ring |
+
+The Splanc MAX updater trusts **this same ring** (`firmware/ota/ring.bzl`, one
+source for both), so everything below — key epochs, `key-epoch.bin`, the runbooks —
+covers MAX units too.
 
 An `UNSET` entry verifies nothing. A manifest names its key id, and the loader
 verifies it against **that key only**. The id has to be in the ring and must not

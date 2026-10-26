@@ -221,12 +221,7 @@ fn epoch_records_sign_and_verify() {
 #[test]
 fn committed_public_keys_are_valid_and_in_the_pubkey_format() {
     // `pubkey` of a private key prints exactly what a keys/*.pub file holds.
-    for (key, pubf) in [
-        ("OTA_TEST_KEY", "OTA_TEST_PUB"),
-        ("OTA_TEST_BACKUP_KEY", "OTA_TEST_BACKUP_PUB"),
-        ("OTA_TEST_MAX_KEY", "OTA_TEST_MAX_PUB"),
-        ("OTA_TEST_MAX_BACKUP_KEY", "OTA_TEST_MAX_BACKUP_PUB"),
-    ] {
+    for (key, pubf) in [("OTA_TEST_KEY", "OTA_TEST_PUB"), ("OTA_TEST_BACKUP_KEY", "OTA_TEST_BACKUP_PUB")] {
         let k = runfile(key);
         let out = sign(&["pubkey", "--key-file", k.to_str().unwrap()]);
         let printed = String::from_utf8(out.stdout).unwrap().trim().to_string();

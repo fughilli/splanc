@@ -12,9 +12,10 @@ load("//pi/player_rs/musl:transition.bzl", "static_musl_binary")
 
 package(default_visibility = ["//visibility:public"])
 
-# The trusted keyring as a Rust const: the MAX keys only (id 3 `max`, id 4
-# `max_backup`; an UNSET one verifies nothing). --//firmware/ota:trust=test swaps in
-# the checked-in TEST keys (HITL / development images).
+# The trusted keyring as a Rust const: the C6 loader's ring itself (ring.bzl: 0
+# `release`, 1 `backup`, 2 `next`; an UNSET one verifies nothing). The signed board
+# field keeps C6 and MAX images apart. --//firmware/ota:trust=test swaps in the
+# checked-in TEST keys (test, test_backup), as for the C6 loader.
 genrule(
     name = "ring_rs",
     srcs = select({
@@ -59,8 +60,8 @@ rust_library(
     deps = DEPS,
 )
 
-# The same library against the TEST ring (tests sign with keys/test_max.key and,
-# for rotation, keys/test_max_backup.key).
+# The same library against the TEST ring (tests sign with keys/test.key and, for
+# rotation, keys/test_backup.key).
 rust_library(
     name = "max_ota_testring",
     srcs = SRCS,
@@ -85,13 +86,13 @@ rust_test(
     name = "updater_test",
     srcs = ["tests/updater.rs"],
     data = [
-        "//firmware/ota:keys/test_max.key",
-        "//firmware/ota:keys/test_max_backup.key",
+        "//firmware/ota:keys/test.key",
+        "//firmware/ota:keys/test_backup.key",
     ],
     edition = "2021",
     env = {
-        "MAX_TEST_BACKUP_KEY": "$(rootpath //firmware/ota:keys/test_max_backup.key)",
-        "MAX_TEST_KEY": "$(rootpath //firmware/ota:keys/test_max.key)",
+        "OTA_TEST_BACKUP_KEY": "$(rootpath //firmware/ota:keys/test_backup.key)",
+        "OTA_TEST_KEY": "$(rootpath //firmware/ota:keys/test.key)",
     },
     deps = [
         ":max_ota_testring",

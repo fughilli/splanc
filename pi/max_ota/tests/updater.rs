@@ -339,8 +339,8 @@ impl Sys for Pi {
     }
 }
 
-// -- signing (the TEST keys: firmware/ota/keys/test_max.key, id 3, and
-// test_max_backup.key, id 4) ------------------------------------------------------------
+// -- signing (the C6 TEST keys, the same ring: firmware/ota/keys/test.key, id 0
+// `release`, and test_backup.key, id 1 `backup`) ----------------------------------------
 
 fn load_key(var: &str) -> SigningKey {
     let rel = std::env::var(var).expect(var);
@@ -351,14 +351,14 @@ fn load_key(var: &str) -> SigningKey {
     SigningKey::from_slice(&b).unwrap()
 }
 
-/// The TEST `max` key (id 3): what CI's MAX_OTA_SIGNING_KEY is to a release ring.
+/// The TEST `release` key (id 0): what CI's OTA_SIGNING_KEY is to a release ring.
 fn test_key() -> SigningKey {
-    load_key("MAX_TEST_KEY")
+    load_key("OTA_TEST_KEY")
 }
 
-/// The TEST `max_backup` key (id 4): the offline backup's stand-in.
+/// The TEST `backup` key (id 1): the offline backup's stand-in.
 fn backup_key() -> SigningKey {
-    load_key("MAX_TEST_BACKUP_KEY")
+    load_key("OTA_TEST_BACKUP_KEY")
 }
 
 fn sign_with(key: &SigningKey, version: u32, image: &[u8], flags: u32) -> Vec<u8> {
@@ -394,7 +394,7 @@ fn setup(new: SysInfo) -> (Pi, Vec<u8>) {
     pi.systems.insert(NEW.into(), new);
     let img = new_image(V_NEW);
     pi.web.insert(release_url(Board::Pi3, V_NEW), img.clone());
-    let man = sign(V_NEW, &img, board::flags(3, 0, Board::Pi3));
+    let man = sign(V_NEW, &img, board::flags(0, 0, Board::Pi3));
     (pi, man)
 }
 
@@ -491,10 +491,10 @@ fn refusals() {
     let (pi0, _) = setup(ok_new());
     let img = new_image(V_NEW);
     let cases: Vec<(Vec<u8>, &str)> = vec![
-        (sign(V_NEW, &img, board::flags(3, 0, Board::Pi5)), "wrong_board"),
-        (sign(V_NEW, &img, keyring::flags(3, 0)), "wrong_board"), // a C6-style manifest (board 0)
-        (sign(V_NEW, &img, board::flags(0, 0, Board::Pi3)), "unknown_key"), // the loader ring's id: never trusted
-        (sign(1_000_000, &img, board::flags(3, 0, Board::Pi3)), "downgrade"),
+        (sign(V_NEW, &img, board::flags(0, 0, Board::Pi5)), "wrong_board"),
+        (sign(V_NEW, &img, keyring::flags(0, 0)), "wrong_board"), // a C6 manifest (board 0), the shared key
+        (sign(V_NEW, &img, board::flags(3, 0, Board::Pi3)), "unknown_key"), // id 3: reserved, in no ring
+        (sign(1_000_000, &img, board::flags(0, 0, Board::Pi3)), "downgrade"),
         (vec![0; 50], "bad_manifest"),
     ];
     for (man, code) in cases {
@@ -506,16 +506,16 @@ fn refusals() {
     // A Pi 5 has no trial boot yet: refused before anything is fetched.
     let mut pi = pi0.clone();
     pi.board = Board::Pi5;
-    run_services(&mut pi, Some(&req(&sign(V_NEW, &img, board::flags(3, 0, Board::Pi5)))));
+    run_services(&mut pi, Some(&req(&sign(V_NEW, &img, board::flags(0, 0, Board::Pi5)))));
     assert_eq!(state(&pi).error, "bootloader_unsupported");
     // Nor on a Pi whose U-Boot doesn't know the flag (pi-v1.0.0's).
     let mut pi = pi0.clone();
     pi.files.insert("/boot/firmware/u-boot-rpi3.bin".into(), b"stock u-boot".to_vec());
-    run_services(&mut pi, Some(&req(&sign(V_NEW, &img, board::flags(3, 0, Board::Pi3)))));
+    run_services(&mut pi, Some(&req(&sign(V_NEW, &img, board::flags(0, 0, Board::Pi3)))));
     assert_eq!(state(&pi).error, "bootloader_unsupported");
     // A source URL that isn't http(s).
     let mut pi = pi0;
-    let r = Request { source_url: "file:///etc/shadow".into(), ..req(&sign(V_NEW, &img, board::flags(3, 0, Board::Pi3))) };
+    let r = Request { source_url: "file:///etc/shadow".into(), ..req(&sign(V_NEW, &img, board::flags(0, 0, Board::Pi3))) };
     run_services(&mut pi, Some(&r));
     assert_eq!(state(&pi).error, "bad_url");
 }
@@ -526,12 +526,12 @@ fn security_floor_and_downgrade_flag() {
     let img = new_image(V_NEW);
     pi.web.insert(release_url(Board::Pi3, V_NEW), img.clone());
     // Security version 2 installs and raises the floor...
-    run_services(&mut pi, Some(&req(&sign(V_NEW, &img, board::flags(3, 2, Board::Pi3)))));
+    run_services(&mut pi, Some(&req(&sign(V_NEW, &img, board::flags(0, 2, Board::Pi3)))));
     assert_eq!(state(&pi).last_result, "ok");
     assert_eq!(state(&pi).keys.security_floor, 2);
     // ...so an older-security image is refused even with allow_downgrade.
     let old_img = new_image(1_009_500);
-    let r = Request { allow_downgrade: true, ..req(&sign(1_009_500, &old_img, board::flags(3, 1, Board::Pi3))) };
+    let r = Request { allow_downgrade: true, ..req(&sign(1_009_500, &old_img, board::flags(0, 1, Board::Pi3))) };
     run_services(&mut pi, Some(&r));
     assert_eq!(state(&pi).error, "security_floor");
 }
@@ -590,7 +590,7 @@ fn delta_needs_its_base() {
     let mut img = image::encode_header("pi3", V_NEW, NEW, &base);
     img.extend_from_slice(format!("FAKE-EXPORT\n{DEP}\n{NEW}\n").as_bytes());
     pi.web.insert("http://lan/delta".into(), img.clone());
-    let r = Request { source_url: "http://lan/delta".into(), ..req(&sign(V_NEW, &img, board::flags(3, 0, Board::Pi3))) };
+    let r = Request { source_url: "http://lan/delta".into(), ..req(&sign(V_NEW, &img, board::flags(0, 0, Board::Pi3))) };
     run_services(&mut pi, Some(&r));
     assert_eq!(state(&pi).error, "missing_base");
     // With the base present, the same delta installs.
@@ -613,69 +613,94 @@ fn tampered_image_is_refused() {
 
 #[test]
 fn key_epoch_revokes_a_key() {
-    // A record signed by key 3 can't revoke key 3 (its own signer): refused, and the
+    // A record signed by key 0 can't revoke key 0 (its own signer): refused, and the
     // update with it is refused too — a bad epoch must never be ignored silently.
     let (mut pi, man) = setup(ok_new());
-    let mut rec = keyring::EpochRecord { epoch: 1, revoked: 1 << 3, signer: 3, signature: [0; 64] };
-    let sig: Signature = test_key().sign(&rec.signed_bytes());
-    rec.signature.copy_from_slice(&sig.to_bytes());
-    let r = Request { key_epoch: rec.encode().to_vec(), ..req(&man) };
+    let r = Request { key_epoch: epoch_record(1, 1 << RELEASE, RELEASE, &test_key()), ..req(&man) };
     run_services(&mut pi, Some(&r));
     assert_eq!(state(&pi).error, "bad_revocation");
     // An epoch that revokes nothing new is applied and the update proceeds.
-    let mut rec = keyring::EpochRecord { epoch: 1, revoked: 1 << 5, signer: 3, signature: [0; 64] };
-    let sig: Signature = test_key().sign(&rec.signed_bytes());
-    rec.signature.copy_from_slice(&sig.to_bytes());
-    let r = Request { key_epoch: rec.encode().to_vec(), ..req(&man) };
+    let r = Request { key_epoch: epoch_record(1, 1 << 5, RELEASE, &test_key()), ..req(&man) };
     run_services(&mut pi, Some(&r));
     let st = state(&pi);
     assert_eq!((st.last_result.as_str(), st.keys.epoch, st.keys.revoked), ("ok", 1, 1 << 5));
 }
 
 #[test]
-fn a_c6_key_epoch_is_ignored() {
-    // The C6's key-epoch.bin (signed by its backup key, id 1) isn't for the MAX ring:
-    // ignored, the update proceeds and the MAX key state is unchanged.
-    let (mut pi, man) = setup(ok_new());
-    let mut rec = keyring::EpochRecord { epoch: 9, revoked: 1, signer: 1, signature: [0; 64] };
-    let sig: Signature = test_key().sign(&rec.signed_bytes());
-    rec.signature.copy_from_slice(&sig.to_bytes());
-    let r = Request { key_epoch: rec.encode().to_vec(), ..req(&man) };
-    run_services(&mut pi, Some(&r));
-    let st = state(&pi);
-    assert_eq!((st.last_result.as_str(), st.keys.epoch, st.keys.revoked), ("ok", 0, 0));
+fn a_record_from_a_key_outside_the_ring_is_refused() {
+    // Same ring as the C6, same rule: the signer must be a provisioned ring key. Id 3
+    // (reserved for a separate MAX key) and id 2 (`next`, not in the test ring) aren't.
+    for signer in [2u8, 3] {
+        let (mut pi, man) = setup(ok_new());
+        let r = Request { key_epoch: epoch_record(1, 1 << RELEASE, signer, &backup_key()), ..req(&man) };
+        run_services(&mut pi, Some(&r));
+        let st = state(&pi);
+        assert_eq!((st.error.as_str(), st.keys.epoch, st.keys.revoked), ("unknown_key", 0, 0), "signer {signer}");
+        assert_eq!(pi.booted, OLD);
+    }
 }
 
-// -- the offline backup key (id 4, `max_backup`) and rotation -------------------------------
-// The MAX counterpart of firmware/ota/tests/ota.rs `keyring_tests` (release/backup)
-// and docs/design/ota.md "Runbook: the release key is compromised", end to end on the
-// simulated Pi (docs/design/max-ota.md "Key rotation").
-
-const MAX: u8 = 3;
-const MAX_BACKUP: u8 = 4;
+// -- shared keys: the board field is the separation ------------------------------------------
 
 #[test]
-fn the_ring_holds_max_and_max_backup() {
+fn the_ring_is_the_c6_ring() {
     let ids: Vec<(u8, &str, bool)> = ring().iter().map(|(id, name, k)| (*id, *name, k.is_some())).collect();
-    assert_eq!(ids, vec![(MAX, "test_max", true), (MAX_BACKUP, "test_max_backup", true)]);
+    assert_eq!(ids, vec![(RELEASE, "test", true), (BACKUP, "test_backup", true)]);
     assert!(splanc_max_ota::test_trust());
 }
 
 #[test]
+fn c6_images_signed_by_the_shared_key_are_refused() {
+    // A C6 app image's manifest: board 0, signed by the release (or backup) key the
+    // MAX trusts too. The board is the only thing that keeps it off: wrong_board,
+    // before anything is fetched. (The C6 side: firmware/ota/tests/ota.rs refuses
+    // board != 0.)
+    let (pi0, _) = setup(ok_new());
+    let img = new_image(V_NEW);
+    for (key, id) in [(test_key(), RELEASE), (backup_key(), BACKUP)] {
+        for sv in [0u8, 5] {
+            let man = sign_with(&key, V_NEW, &img, keyring::flags(id, sv));
+            assert_eq!(board::board_id(Manifest::decode(&man).unwrap().flags), 0);
+            let mut pi = pi0.clone();
+            run_services(&mut pi, Some(&req(&man)));
+            let st = state(&pi);
+            assert_eq!((st.error.as_str(), pi.booted.as_str()), ("wrong_board", OLD), "key {id} sv {sv}");
+            assert!(pi.files.keys().all(|k| !k.contains("/dl/")));
+        }
+    }
+    // Nor another MAX board's image, nor an unknown board id.
+    for b in [2u32, 3, 4, 9, 0xff] {
+        let man = sign(V_NEW, &img, keyring::flags(RELEASE, 0) | (b << 24));
+        let mut pi = pi0.clone();
+        run_services(&mut pi, Some(&req(&man)));
+        assert_eq!(state(&pi).error, "wrong_board", "board {b}");
+    }
+}
+
+// -- the offline backup key (id 1, `backup`) and rotation ------------------------------------
+// The MAX counterpart of firmware/ota/tests/ota.rs `keyring_tests` (release/backup)
+// and docs/design/ota.md "Runbook: the release key is compromised", end to end on the
+// simulated Pi (docs/design/max-ota.md "Key rotation"): the same keys and the same
+// key-epoch.bin as the C6.
+
+const RELEASE: u8 = keyring::KEY_RELEASE;
+const BACKUP: u8 = keyring::KEY_BACKUP;
+
+#[test]
 fn backup_signed_images_install() {
-    // The backup is a full ring key: an image it signs under id 4 installs (the bridge
+    // The backup is a full ring key: an image it signs under id 1 installs (the bridge
     // release of a rotation is signed with it, by hand, offline).
     let (mut pi, _) = setup(ok_new());
     let img = new_image(V_NEW);
-    let man = sign_with(&backup_key(), V_NEW, &img, board::flags(MAX_BACKUP, 0, Board::Pi3));
+    let man = sign_with(&backup_key(), V_NEW, &img, board::flags(BACKUP, 0, Board::Pi3));
     run_services(&mut pi, Some(&req(&man)));
     let st = state(&pi);
     assert_eq!((st.last_result.as_str(), pi.booted.as_str()), ("ok", NEW), "{st:?}");
     // Each key verifies under its own id only.
     let (pi0, _) = setup(ok_new());
     for man in [
-        sign_with(&backup_key(), V_NEW, &img, board::flags(MAX, 0, Board::Pi3)),
-        sign_with(&test_key(), V_NEW, &img, board::flags(MAX_BACKUP, 0, Board::Pi3)),
+        sign_with(&backup_key(), V_NEW, &img, board::flags(RELEASE, 0, Board::Pi3)),
+        sign_with(&test_key(), V_NEW, &img, board::flags(BACKUP, 0, Board::Pi3)),
     ] {
         let mut pi = pi0.clone();
         run_services(&mut pi, Some(&req(&man)));
@@ -685,37 +710,37 @@ fn backup_signed_images_install() {
 }
 
 #[test]
-fn backup_rotates_away_from_a_compromised_max_key() {
-    // The max key is stolen: the backup signs epoch 1 revoking id 3
-    // (firmware/ota/keys/max_epoch.bin -> the release's max-key-epoch.bin).
-    let revoke_max = epoch_record(1, 1 << MAX, MAX_BACKUP, &backup_key());
-    let (mut pi, max_man) = setup(ok_new());
+fn backup_rotates_away_from_a_compromised_release_key() {
+    // The release key is stolen: the backup signs epoch 1 revoking id 0
+    // (firmware/ota/keys/epoch.bin -> the release's key-epoch.bin, the C6's record).
+    let revoke = epoch_record(1, 1 << RELEASE, BACKUP, &backup_key());
+    let (mut pi, rel_man) = setup(ok_new());
     // An offer signed by the stolen key, sent with the record: the record is applied
     // (and persisted) first, so the offer itself is refused.
-    run_services(&mut pi, Some(&Request { key_epoch: revoke_max.clone(), ..req(&max_man) }));
+    run_services(&mut pi, Some(&Request { key_epoch: revoke.clone(), ..req(&rel_man) }));
     let st = state(&pi);
-    assert_eq!((st.error.as_str(), st.keys.epoch, st.keys.revoked), ("revoked_key", 1, 1 << MAX));
+    assert_eq!((st.error.as_str(), st.keys.epoch, st.keys.revoked), ("revoked_key", 1, 1 << RELEASE));
     assert_eq!(pi.booted, OLD);
-    // From then on max-signed images are refused even without the record...
-    run_services(&mut pi, Some(&req(&max_man)));
+    // From then on release-signed images are refused even without the record...
+    run_services(&mut pi, Some(&req(&rel_man)));
     assert_eq!(state(&pi).error, "revoked_key");
     // ...and so is any record the revoked key signs (it can't undo its revocation).
-    let by_max = epoch_record(2, (1 << MAX) | (1 << 5), MAX, &test_key());
-    run_services(&mut pi, Some(&Request { key_epoch: by_max, ..req(&max_man) }));
+    let by_rel = epoch_record(2, (1 << RELEASE) | (1 << 5), RELEASE, &test_key());
+    run_services(&mut pi, Some(&Request { key_epoch: by_rel, ..req(&rel_man) }));
     let st = state(&pi);
-    assert_eq!((st.error.as_str(), st.keys.epoch, st.keys.revoked), ("revoked_key", 1, 1 << MAX));
+    assert_eq!((st.error.as_str(), st.keys.epoch, st.keys.revoked), ("revoked_key", 1, 1 << RELEASE));
     // The backup's bridge image installs; resending the same record is harmless
     // (stale = already applied), so every client can keep sending it.
     let img = new_image(V_NEW);
-    let bridge = sign_with(&backup_key(), V_NEW, &img, board::flags(MAX_BACKUP, 0, Board::Pi3));
-    run_services(&mut pi, Some(&Request { key_epoch: revoke_max, ..req(&bridge) }));
+    let bridge = sign_with(&backup_key(), V_NEW, &img, board::flags(BACKUP, 0, Board::Pi3));
+    run_services(&mut pi, Some(&Request { key_epoch: revoke, ..req(&bridge) }));
     let st = state(&pi);
-    assert_eq!((st.last_result.as_str(), st.keys.epoch, st.keys.revoked), ("ok", 1, 1 << MAX), "{st:?}");
+    assert_eq!((st.last_result.as_str(), st.keys.epoch, st.keys.revoked), ("ok", 1, 1 << RELEASE), "{st:?}");
     assert_eq!(pi.booted, NEW);
     // The revocation outlives the update (it is device state, not image state).
     let newer = new_image(V_NEW + 1);
     pi.web.insert(release_url(Board::Pi3, V_NEW + 1), newer.clone());
-    run_services(&mut pi, Some(&req(&sign(V_NEW + 1, &newer, board::flags(MAX, 0, Board::Pi3)))));
+    run_services(&mut pi, Some(&req(&sign(V_NEW + 1, &newer, board::flags(RELEASE, 0, Board::Pi3)))));
     assert_eq!(state(&pi).error, "revoked_key");
 }
 
@@ -725,38 +750,33 @@ fn backup_epoch_rules() {
     // a record with a bad signature is refused (with the offer).
     let (pi0, man) = setup(ok_new());
     let mut pi = pi0.clone();
-    run_services(&mut pi, Some(&Request { key_epoch: epoch_record(1, 1 << MAX_BACKUP, MAX_BACKUP, &backup_key()), ..req(&man) }));
+    run_services(&mut pi, Some(&Request { key_epoch: epoch_record(1, 1 << BACKUP, BACKUP, &backup_key()), ..req(&man) }));
     assert_eq!((state(&pi).error.as_str(), state(&pi).keys.revoked), ("bad_revocation", 0));
     let mut pi = pi0.clone();
-    run_services(&mut pi, Some(&Request { key_epoch: epoch_record(1, 1 << MAX, MAX_BACKUP, &backup_key()), ..req(&man) }));
-    run_services(&mut pi, Some(&Request { key_epoch: epoch_record(2, 0, MAX_BACKUP, &backup_key()), ..req(&man) }));
-    assert_eq!((state(&pi).error.as_str(), state(&pi).keys.revoked), ("bad_revocation", 1 << MAX));
-    // The max key's signature claiming to be the backup's.
+    run_services(&mut pi, Some(&Request { key_epoch: epoch_record(1, 1 << RELEASE, BACKUP, &backup_key()), ..req(&man) }));
+    run_services(&mut pi, Some(&Request { key_epoch: epoch_record(2, 0, BACKUP, &backup_key()), ..req(&man) }));
+    assert_eq!((state(&pi).error.as_str(), state(&pi).keys.revoked), ("bad_revocation", 1 << RELEASE));
+    // The release key's signature claiming to be the backup's.
     let mut pi = pi0;
-    run_services(&mut pi, Some(&Request { key_epoch: epoch_record(1, 1 << MAX, MAX_BACKUP, &test_key()), ..req(&man) }));
+    run_services(&mut pi, Some(&Request { key_epoch: epoch_record(1, 1 << RELEASE, BACKUP, &test_key()), ..req(&man) }));
     assert_eq!((state(&pi).error.as_str(), state(&pi).keys.revoked), ("bad_signature", 0));
 }
 
 #[test]
-fn an_unset_backup_slot_verifies_nothing() {
-    // A release ring before the owner commits max_backup.pub (UNSET): id 4 is in the
-    // ring but has no key, so backup-signed images are unknown_key and a backup-signed
-    // record is not for this ring (ignored, like the C6's), never trusted.
-    let max_pub = ring().iter().find(|(id, _, _)| *id == MAX).and_then(|(_, _, k)| *k).unwrap();
-    let unset: &'static verify::Ring = Box::leak(Box::new([(MAX, "max", Some(max_pub)), (MAX_BACKUP, "max_backup", None)]));
+fn an_unset_slot_verifies_nothing() {
+    // A ring whose backup is UNSET (as `next` is in the release ring): id 1 is in the
+    // ring but has no key, so backup-signed images and records are unknown_key.
+    let rel_pub = ring().iter().find(|(id, _, _)| *id == RELEASE).and_then(|(_, _, k)| *k).unwrap();
+    let unset: &'static verify::Ring = Box::leak(Box::new([(RELEASE, "release", Some(rel_pub)), (BACKUP, "backup", None)]));
     let img = new_image(V_NEW);
     let dev = verify::Device { board: Board::Pi3, keys: keyring::KeyState::default(), app_version: 0 };
-    let bk = sign_with(&backup_key(), V_NEW, &img, board::flags(MAX_BACKUP, 0, Board::Pi3));
-    assert_eq!(verify::check_offer(&bk, false, &dev, unset).map(|_| ()), Err(verify::Refusal::Key(keyring::KeyRefusal::UnknownKey)));
-    let max = sign(V_NEW, &img, board::flags(MAX, 0, Board::Pi3));
-    assert!(verify::check_offer(&max, false, &dev, unset).is_ok());
-    let rec = epoch_record(1, 1 << MAX, MAX_BACKUP, &backup_key());
-    assert_eq!(verify::apply_epoch(&dev.keys, &rec, unset), Ok(dev.keys));
-    // The updater on that ring: the max-signed update proceeds, nothing revoked.
-    let (mut pi, man) = setup(ok_new());
-    let mut u = Updater::load(&mut pi, lay(), unset);
-    u.handle_request(&Request { key_epoch: rec, ..req(&man) });
-    assert_eq!((u.st.phase, u.st.keys.revoked), (Phase::Downloading, 0));
+    let unknown = Err(verify::Refusal::Key(keyring::KeyRefusal::UnknownKey));
+    let bk = sign_with(&backup_key(), V_NEW, &img, board::flags(BACKUP, 0, Board::Pi3));
+    assert_eq!(verify::check_offer(&bk, false, &dev, unset).map(|_| ()), unknown);
+    let rel = sign(V_NEW, &img, board::flags(RELEASE, 0, Board::Pi3));
+    assert!(verify::check_offer(&rel, false, &dev, unset).is_ok());
+    let rec = epoch_record(1, 1 << RELEASE, BACKUP, &backup_key());
+    assert_eq!(verify::apply_epoch(&dev.keys, &rec, unset).map(|_| ()), unknown);
 }
 
 /// The power-cut sweep: cut at EVERY mutating step of a whole update (request to

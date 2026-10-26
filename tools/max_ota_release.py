@@ -1,18 +1,19 @@
 """Package and sign a Splanc MAX system for over-the-air updates
 (docs/design/max-ota.md "Release artifacts").
 
-  MAX_OTA_SIGNING_KEY=<hex> python3 tools/max_ota_release.py \\
+  OTA_SIGNING_KEY=<hex> python3 tools/max_ota_release.py \\
       --toplevel /nix/store/...-nixos-system-ledmapper-... --board pi3 --version 1.10.0 \\
-      --signer bazel-bin/firmware/ota/ota_sign --pubkey firmware/ota/keys/max.pub \\
+      --signer bazel-bin/firmware/ota/ota_sign --pubkey firmware/ota/keys/release.pub \\
       --out-dir _assets [--base-toplevel /nix/store/...-previous-release] [--base-version 1.9.0]
 
 Writes, for board B and release X.Y.Z:
   max-B-X.Y.Z.nixclosure    the image: a text header (board, version, toplevel, and
                             for a delta the `base:` paths it leaves out), then
                             zstd(nix-store --export <the paths the device needs>);
-  max-B-X.Y.Z.manifest      its 108-byte signed manifest (key id 3 `max` — or 4
-                            `max_backup` with --key-id 4 — board in flags bits
-                            24..31) — what a client sends in ota_begin;
+  max-B-X.Y.Z.manifest      its 108-byte signed manifest (key id 0 `release` — the
+                            C6's key; 1 `backup` with --key-id 1 — and the board
+                            in flags bits 24..31, which is what keeps C6 and MAX
+                            images apart) — what a client sends in ota_begin;
   with --base-toplevel, a delta instead: max-B-X.Y.Z-from-W.nixclosure/.manifest,
   holding only the paths the base release doesn't have.
 
@@ -20,12 +21,13 @@ The Pi fetches the image itself (from the release, by the manifest's version); t
 client only ever handles the 108-byte manifest. Refuses to sign when the key isn't
 the one whose public half is committed (UNSET, or a different key): every MAX would
 refuse such an image. `--key-file` signs with a file instead (the TEST key for HITL
-images: firmware/ota/keys/test_max.key, with --pubkey firmware/ota/keys/test_max.pub).
+images: firmware/ota/keys/test.key, with --pubkey firmware/ota/keys/test.pub).
 
-CI only ever signs with key id 3 (the MAX_OTA_SIGNING_KEY secret). `--key-id 4`
-(--pubkey firmware/ota/keys/max_backup.pub --key-file <offline file>) is for the
-owner, by hand on an offline machine: the bridge image of a rotation after the max
-key is revoked (docs/design/max-ota.md "Key rotation").
+The keys are the C6's (one ring, firmware/ota/ring.bzl). CI only ever signs with key
+id 0 (the OTA_SIGNING_KEY secret). `--key-id 1` (--pubkey firmware/ota/keys/backup.pub
+--key-file <offline file>) is for the owner, by hand on an offline machine: the
+bridge image of a rotation after the release key is revoked (docs/design/ota.md
+"Key rotation"). Ids 3/4 are reserved for a possible separate MAX key.
 Stdlib only; needs nix-store and zstd on PATH; the signature is //firmware/ota:ota_sign.
 """
 
@@ -39,8 +41,9 @@ import subprocess
 import sys
 
 MAGIC = "SPLANC-MAX-OTA 1"
-KEY_ID_MAX = 3
-KEY_ID_MAX_BACKUP = 4
+KEY_ID_RELEASE = 0
+KEY_ID_BACKUP = 1
+KEY_ID_NEXT = 2
 BOARDS = {"pi3": 1, "pi4": 2, "pi5": 3, "zero2w": 4}
 STORE_RE = re.compile(r"^/nix/store/[0-9a-df-np-sv-z]{32}-[A-Za-z0-9+._?=-]+$")
 
@@ -60,7 +63,7 @@ def version_number(v):
     return a * 1_000_000 + b * 1_000 + c
 
 
-def manifest_flags(board, security_version, key_id=KEY_ID_MAX):
+def manifest_flags(board, security_version, key_id=KEY_ID_RELEASE):
     return (key_id << 8) | (security_version << 16) | (BOARDS[board] << 24)
 
 
@@ -119,16 +122,15 @@ def main():
     ap.add_argument("--signer", required=True)
     ap.add_argument("--pubkey", required=True)
     ap.add_argument("--out-dir", required=True)
-    ap.add_argument("--key-env", default="MAX_OTA_SIGNING_KEY")
+    ap.add_argument("--key-env", default="OTA_SIGNING_KEY")
     ap.add_argument("--key-file", default="")
     ap.add_argument("--security-version", type=int, default=0)
     ap.add_argument(
         "--key-id",
         type=int,
-        default=KEY_ID_MAX,
-        choices=range(KEY_ID_MAX, 8),
-        help="3 max (CI); 4 max_backup (offline, by hand); 5..7 a successor online key"
-        " after a rotation (docs/design/max-ota.md)",
+        default=KEY_ID_RELEASE,
+        choices=(KEY_ID_RELEASE, KEY_ID_BACKUP, KEY_ID_NEXT),
+        help="0 release (CI); 1 backup (offline, by hand); 2 next (a planned successor)",
     )
     ap.add_argument("--base-toplevel", default="", help="build a delta against this system")
     ap.add_argument("--base-version", default="", help="the base's version (names the delta)")
@@ -149,11 +151,11 @@ def main():
     want = read_pub(a.pubkey)
     if want == "unset":
         sys.exit(
-            f"max_ota_release: {a.pubkey} is UNSET — generate the MAX key first (docs/design/max-ota.md)"
+            f'max_ota_release: {a.pubkey} is UNSET: no key to sign with (docs/design/ota.md "Key rotation")'
         )
-    if a.key_id == KEY_ID_MAX_BACKUP and not a.key_file:
+    if a.key_id == KEY_ID_BACKUP and not a.key_file:
         sys.exit(
-            "max_ota_release: --key-id 4 (max_backup) is the OFFLINE key: sign by hand with"
+            "max_ota_release: --key-id 1 (backup) is the OFFLINE key: sign by hand with"
             " --key-file, never from a CI secret"
         )
     key_args = ["--key-file", a.key_file] if a.key_file else ["--key-env", a.key_env]

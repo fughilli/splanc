@@ -19,22 +19,30 @@ def ring_cmd(ring, lang = "cpp", tool = ":gen_key_header"):
         for kid in sorted(ring.keys())
     ]) + " --out $@"
 
-# The Splanc MAX (Raspberry Pi) updater's ring (docs/design/max-ota.md "Signing"):
-# its OWN key ids, never the loader ring's 0/1/2, so a C6 image can't install on a
-# MAX and a MAX key can't sign C6 firmware. //pi/max_ota generates it with
-# ring_cmd(..., lang = "rust").
-#   3 `max`        online: the MAX_OTA_SIGNING_KEY secret signs every MAX release.
-#   4 `max_backup` OFFLINE (cold storage, never in CI): signs the key-epoch record
-#                  that revokes a compromised `max`, and the bridge image that
-#                  carries its replacement ("Key rotation").
+# The OTA signing keyring (docs/design/ota.md "Key rotation"), the ONE source for
+# both the C6 loader (//firmware/ota:ota_key_h, C++) and the Splanc MAX updater
+# (//pi/max_ota:ring_rs, Rust): the MAX trusts the same keys (docs/design/max-ota.md
+# "Signing"). The signed board field (flags bits 24..31) keeps their images apart.
+#   0 `release` online: the OTA_SIGNING_KEY secret signs every C6 and MAX release.
+#   1 `backup`  OFFLINE (cold storage, never in CI): signs key-epoch records that
+#               revoke a compromised `release`, and bridge images.
+#   2 `next`    a planned successor (UNSET until committed).
+#   3, 4        RESERVED for a possible future separate MAX key (+ its backup);
+#               unused, in no ring.
 # An UNSET .pub is an entry that verifies nothing (the build still works).
-MAX_RELEASE_RING = {
-    "3": "//firmware/ota:keys/max.pub",
-    "4": "//firmware/ota:keys/max_backup.pub",
+RELEASE_RING = {
+    "0": "//firmware/ota:keys/release.pub",
+    "1": "//firmware/ota:keys/backup.pub",
+    "2": "//firmware/ota:keys/next.pub",
 }
 
-# The TEST counterparts (public keys, HITL / development): test_max + test_max_backup.
-MAX_TEST_RING = {
-    "3": "//firmware/ota:keys/test_max.pub",
-    "4": "//firmware/ota:keys/test_max_backup.pub",
+# The checked-in TEST keys (public knowledge: HITL / development only).
+TEST_RING = {
+    "0": "//firmware/ota:keys/test.pub",
+    "1": "//firmware/ota:keys/test_backup.pub",
 }
+
+# The Splanc MAX updater's rings ARE the C6 rings (not copies).
+MAX_RELEASE_RING = RELEASE_RING
+
+MAX_TEST_RING = TEST_RING

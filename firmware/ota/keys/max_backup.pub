@@ -1,9 +1,0 @@
-# Splanc MAX backup signing key (key id 4, "max_backup"): OFFLINE, kept in cold
-# storage by the owner; only this public half is in the repo. Never a CI secret:
-# nothing in CI signs with it. Trusted ONLY by the MAX (Raspberry Pi) updater. It
-# signs the MAX key-epoch record that revokes a compromised `max` key (id 3), and
-# the bridge image that carries the replacement key (docs/design/max-ota.md
-# "Key rotation"). Generate it on an offline machine with
-#   bazel run //firmware/ota:ota_sign -- keygen
-# keep the `private` line offline, and replace UNSET with the `public` line.
-UNSET

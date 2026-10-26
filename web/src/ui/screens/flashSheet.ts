@@ -677,8 +677,8 @@ async function c6Package(entry: FirmwareEntry): Promise<{ pkg: Uint8Array; keyEp
 
 /** A Splanc MAX (pull device, docs/design/max-ota.md): just the release's signed
  * manifest for this board (`max-<board>-<ver>.manifest`, 108 bytes); the Pi
- * downloads the system image itself. Its key-epoch record is `max-key-epoch.bin`
- * (the C6's key-epoch.bin is signed by keys a MAX doesn't hold). */
+ * downloads the system image itself. Its key-epoch record is the release's
+ * `key-epoch.bin`, the C6's: a MAX trusts the same keyring. */
 async function maxPackage(client: LedMapperClient, entry: FirmwareEntry): Promise<{ pkg: Uint8Array; keyEpoch?: Uint8Array }> {
   const st = await client.getOtaStatus();
   const board = st.board ?? "";
@@ -690,7 +690,7 @@ async function maxPackage(client: LedMapperClient, entry: FirmwareEntry): Promis
     throw new OtaError("no_package", `Firmware ${entry.version} has no Splanc MAX image for this board (${board}).`);
   }
   const pkg = new Uint8Array(await res.arrayBuffer());
-  const er = await fetch(proxiedAssetUrl(siblingAssetUrl(entry.tarUrl, "max-key-epoch.bin"))).catch(() => null);
+  const er = await fetch(proxiedAssetUrl(siblingAssetUrl(entry.tarUrl, "key-epoch.bin"))).catch(() => null);
   return { pkg, ...(er?.ok ? { keyEpoch: new Uint8Array(await er.arrayBuffer()) } : {}) };
 }
 

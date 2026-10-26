@@ -4,10 +4,13 @@
 //! Every board needs its own kernel, firmware and device tree, so each one gets its
 //! own artifact, and the board travels in the signed manifest: bits 24..31 of
 //! `flags` (bits 8..15 are the key id and 16..23 the security version, as on the
-//! C6). The C6 leaves those bits 0, which no MAX board uses, so a C6 image is
-//! refused as `wrong_board` even before its key id (0, not in the MAX ring) is.
+//! C6). The MAX trusts the C6's signing keys (docs/design/max-ota.md "Signing"),
+//! so this signed field is the WHOLE separation: a C6 image (board 0) is refused
+//! here as `wrong_board`, and the C6 refuses any board but 0 (splanc_ota
+//! `session::check_offer`).
 
 use splanc_ota::keyring;
+use splanc_ota::manifest;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Board {
@@ -90,10 +93,10 @@ pub enum TrialBoot {
 
 /// The board id in a manifest's flags (bits 24..31; 0 = not a MAX image).
 pub fn board_id(flags: u32) -> u8 {
-    (flags >> 24) as u8
+    manifest::board(flags)
 }
 
 /// flags for a MAX manifest: key id, security version and board.
 pub fn flags(key_id: u8, security_version: u8, board: Board) -> u32 {
-    keyring::flags(key_id, security_version) | ((board.id() as u32) << 24)
+    keyring::flags(key_id, security_version) | ((board.id() as u32) << manifest::BOARD_SHIFT)
 }

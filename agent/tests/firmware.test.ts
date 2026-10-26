@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { canaryRollout, releaseMaxEpochUrl, releaseMaxManifestUrl, releasePackageUrl, resolvePackage } from "../src/firmware";
+import { canaryRollout, releaseEpochUrl, releaseMaxManifestUrl, releasePackageUrl, resolvePackage } from "../src/firmware";
 
 function otaPackage(version: number, size = 64): Uint8Array {
   const out = new Uint8Array(108 + size);
@@ -58,13 +58,13 @@ test("a local package is read and checked", async () => {
   await assert.rejects(resolvePackage({ packagePath: p }), /doesn't match/);
 });
 
-test("a Splanc MAX gets its board's release manifest and the MAX key epoch", async () => {
+test("a Splanc MAX gets its board's release manifest and the shared key epoch", async () => {
   const man = otaPackage(1_010_000, 0); // 108 bytes: a manifest alone
   const epoch = new Uint8Array(80).fill(7);
   const f = fakeFetch({
     "https://api.github.com/repos/fughilli/splanc/releases/latest": { tag_name: "firmware-v1.10.0" },
     [releaseMaxManifestUrl("pi3", "1.10.0")]: man,
-    [releaseMaxEpochUrl("1.10.0")]: epoch,
+    [releaseEpochUrl("1.10.0")]: epoch,
   });
   const r = await resolvePackage({ version: "latest", board: "pi3" }, f.impl);
   assert.equal(r.version, 1_010_000);
@@ -75,8 +75,9 @@ test("a Splanc MAX gets its board's release manifest and the MAX key epoch", asy
     releaseMaxManifestUrl("pi3", "v1.10.0"),
     "https://github.com/fughilli/splanc/releases/download/firmware-v1.10.0/max-pi3-1.10.0.manifest",
   );
-  // The C6 key-epoch.bin is never sent to a MAX (its signers aren't in the MAX ring).
-  assert.ok(!f.seen.some((u) => u.endsWith("/key-epoch.bin")));
+  // The same key-epoch.bin as the C6 (one ring); there is no MAX-only record.
+  assert.ok(f.seen.some((u) => u.endsWith("/firmware-v1.10.0/key-epoch.bin")));
+  assert.ok(!f.seen.some((u) => u.endsWith("/max-key-epoch.bin")));
   await assert.rejects(resolvePackage({ version: "1.9.0", board: "pi5" }, f.impl), /no Splanc MAX image for pi5/);
 });
 

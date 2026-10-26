@@ -1,8 +1,9 @@
 //! Is this offer installable on this device? (docs/design/max-ota.md "Signing")
 //!
 //! The same 108-byte manifest as the C6 (`splanc_ota::manifest`), checked against
-//! the MAX ring only (`crate::ring::RING`: key ids 3 `max` and 4 `max_backup`, never
-//! the loader ring's 0/1/2), with the board in flags bits 24..31. The player (unprivileged, facing the
+//! the ring (`crate::ring::RING`: the C6 loader's ring, 0 `release`, 1 `backup`,
+//! 2 `next`) and the board in flags bits 24..31, which is mandatory: the keys are
+//! shared, so the signed board is what keeps a C6 image (board 0) off a MAX. The player (unprivileged, facing the
 //! network) runs this for a quick answer to `ota_begin`; the root updater runs it
 //! again before it downloads anything, and is the authority.
 
@@ -65,7 +66,7 @@ pub fn signature_ok(public: &[u8; 65], msg: &[u8], sig: &[u8; 64]) -> bool {
 }
 
 /// Check a manifest offered for install. Ok = the parsed manifest, signed by a
-/// trusted, unrevoked MAX key, for this board, at or above the security floor, and
+/// trusted, unrevoked ring key, for this board, at or above the security floor, and
 /// not a downgrade unless asked for.
 pub fn check_offer(manifest: &[u8], allow_downgrade: bool, dev: &Device, ring: &Ring) -> Result<Manifest, Refusal> {
     let m = Manifest::decode(manifest).ok_or(Refusal::BadManifest)?;
@@ -86,16 +87,13 @@ pub fn check_offer(manifest: &[u8], allow_downgrade: bool, dev: &Device, ring: &
     Ok(m)
 }
 
-/// Apply a key-epoch record (docs/design/ota.md "Key rotation"): the new key state,
-/// or the current one when the record is not newer (already applied) or isn't for
-/// this ring at all (its signer isn't a MAX key: e.g. the C6's key-epoch.bin, which a
-/// client might send by mistake — ignoring it can only leave restrictions out that
-/// a MAX record would add, never loosen one).
+/// Apply a key-epoch record (docs/design/ota.md "Key rotation"; the release's
+/// `key-epoch.bin`, the same record the C6 loaders apply: same ring): the new key
+/// state, or the current one when the record is not newer (already applied). A
+/// record whose signer isn't a provisioned ring key is refused (`unknown_key`), as
+/// on the C6.
 pub fn apply_epoch(st: &KeyState, rec: &[u8], ring: &Ring) -> Result<KeyState, Refusal> {
     let r = EpochRecord::decode(rec).ok_or(Refusal::BadEpoch)?;
-    if ring_key(ring, r.signer).is_none() {
-        return Ok(*st);
-    }
     let sig_ok = ring_key(ring, r.signer).is_some_and(|k| signature_ok(k, &r.signed_bytes(), &r.signature));
     match keyring::apply_epoch(st, &r, sig_ok, |id| ring_key(ring, id).is_some()) {
         Ok(next) => Ok(next),

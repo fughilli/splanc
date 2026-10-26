@@ -4,7 +4,8 @@
 #   pi/hitl/max_ota_images.sh OUT_DIR [APP]        (APP: ledmapper_pi3, the default)
 #
 # Three systems from THIS tree, all trusting the checked-in TEST key
-# (--//firmware/ota:trust=test) and signed with it (firmware/ota/keys/test_max.key):
+# (--//firmware/ota:trust=test) and signed with it (firmware/ota/keys/test.key: the
+# C6 TEST release key, since the MAX shares the C6 ring):
 #   A  9.1.0             the setup image (deployed over SSH by the gate)
 #   B  9.2.0             a good update
 #   U  9.3.0 unhealthy   a player that runs but never reports healthy
@@ -57,7 +58,7 @@ signer="$(bazel "${bazel_flags[@]}" cquery --output=files //firmware/ota:ota_sig
 pack() { # name toplevel version base
   python3 tools/max_ota_release.py --toplevel "$2" --board "$board" --version "$3" \
     --base-toplevel "$4" --name "$1" --signer "$signer" \
-    --pubkey firmware/ota/keys/test_max.pub --key-file firmware/ota/keys/test_max.key \
+    --pubkey firmware/ota/keys/test.pub --key-file firmware/ota/keys/test.key \
     --zstd-level "${MAX_ZSTD_LEVEL:-9}" --out-dir "$out"
 }
 pack b_from_a "$top_b" 9.2.0 "$top_a"

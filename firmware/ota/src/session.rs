@@ -17,7 +17,7 @@
 //! against the signed manifest.
 
 use crate::image::{self, ImageError};
-use crate::manifest::{Manifest, ENCODED_LEN, FLAG_LOADER};
+use crate::manifest::{self, Manifest, ENCODED_LEN, FLAG_LOADER};
 
 pub const SECTOR: u32 = 4096;
 /// Largest `ota_chunk.data`: one sector, and what fits the netstack's 6 KiB WS
@@ -46,6 +46,9 @@ pub enum Refusal {
     BadSignature,
     /// FLAG_LOADER images are reserved (no loader self-update yet).
     LoaderImage,
+    /// Signed for another board (a Splanc MAX image: flags bits 24..31 != 0). The
+    /// MAX shares the C6's keys, so the signature alone doesn't keep it out.
+    WrongBoard,
     TooLarge,
     Downgrade,
     NoSession,
@@ -65,6 +68,7 @@ impl Refusal {
             Refusal::BadManifest => "bad_manifest",
             Refusal::BadSignature => "bad_signature",
             Refusal::LoaderImage => "loader_image",
+            Refusal::WrongBoard => "wrong_board",
             Refusal::TooLarge => "too_large",
             Refusal::Downgrade => "downgrade",
             Refusal::NoSession => "no_session",
@@ -80,7 +84,8 @@ impl Refusal {
 }
 
 /// Check an offer before anything is touched: signature (checked by the caller,
-/// passed in), the reserved loader flag, size, and version order. Shared by
+/// passed in), the reserved loader flag, the board (C6 = 0), size, and version
+/// order. Shared by
 /// the app (which checks before rebooting into the loader, so a bad manifest
 /// costs no reboot) and the loader (which is authoritative).
 pub fn check_offer(m: &Manifest, signature_ok: bool, t: &Target, allow_downgrade: bool) -> Result<(), Refusal> {
@@ -89,6 +94,9 @@ pub fn check_offer(m: &Manifest, signature_ok: bool, t: &Target, allow_downgrade
     }
     if m.flags & FLAG_LOADER != 0 {
         return Err(Refusal::LoaderImage);
+    }
+    if manifest::board(m.flags) != manifest::BOARD_C6 {
+        return Err(Refusal::WrongBoard);
     }
     if m.size == 0 {
         return Err(Refusal::BadManifest);

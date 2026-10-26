@@ -1,7 +1,0 @@
-# Splanc MAX OTA signing key (key id 3, "max"): the public half of the
-# MAX_OTA_SIGNING_KEY repository secret. Trusted ONLY by the MAX (Raspberry Pi)
-# updater, never by the C6 loader; the MAX updater trusts none of the loader
-# ring's keys (0 release, 1 backup, 2 next). Generate it with
-#   bazel run //firmware/ota:ota_sign -- keygen
-# and replace UNSET with the `public` line (docs/design/max-ota.md "Signing").
-UNSET

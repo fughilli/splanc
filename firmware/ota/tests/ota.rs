@@ -122,6 +122,18 @@ fn offers_are_checked_before_anything_is_touched() {
     let mut loader = m;
     loader.flags = FLAG_LOADER;
     assert_eq!(session::check_offer(&loader, true, &target(0), false), Err(Refusal::LoaderImage));
+    // A Splanc MAX image (board != 0 in the signed flags), validly signed by the
+    // SHARED release key: the board, not the key, keeps it off a C6.
+    for board in [1u32, 2, 3, 4, 0xff] {
+        let mut max = m;
+        max.flags = splanc_ota::keyring::flags(splanc_ota::keyring::KEY_RELEASE, 0) | (board << manifest::BOARD_SHIFT);
+        assert_eq!(session::check_offer(&max, true, &target(0), false), Err(Refusal::WrongBoard), "board {board}");
+        assert_eq!(Refusal::WrongBoard.code(), "wrong_board");
+        // The C entry points the app and the loader call say so too.
+        let enc = max.encode();
+        let err = unsafe { splanc_ota::capi::ota_check_offer(enc.as_ptr(), enc.len(), true, SLOT, 0, false) };
+        assert_eq!(unsafe { std::ffi::CStr::from_ptr(err) }.to_str(), Ok("wrong_board"));
+    }
     let mut big = m;
     big.size = SLOT + 1;
     assert_eq!(session::check_offer(&big, true, &target(0), false), Err(Refusal::TooLarge));

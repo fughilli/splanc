@@ -25,7 +25,7 @@ Inside ONE reservation, each phase on the system the previous one left:
                  healthy): the Pi comes back on A, rolled_back.
 
 Ends on A, a working system. Every image is signed with the checked-in TEST key for
-a TEST-trust updater (never the MAX release key). Each phase's journal (the OTA units
+a TEST-trust updater (never the release key). Each phase's journal (the OTA units
 and the player) is saved to --log-dir; on a failure the last boots' journals too.
 
 Images: pi/hitl/max_ota_images.sh OUT_DIR (nix-built, so not Bazel data), then

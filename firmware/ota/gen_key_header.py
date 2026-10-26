@@ -1,8 +1,8 @@
 """Emit the loader's trusted OTA keyring as a C++ header.
 
   gen_key_header.py --key 0=keys/release.pub --key 1=keys/backup.pub --out ota_key.h
-  gen_key_header.py --lang rust --key 3=keys/max.pub --key 4=keys/max_backup.pub --out ring.rs
-      (the MAX updater)
+  gen_key_header.py --lang rust --key 0=keys/release.pub ... --out ring.rs
+      (the same ring for the Splanc MAX updater, ring.bzl)
 
 Each .pub holds a SEC1 uncompressed P-256 public key (65 bytes) as hex, with
 optional `#` comment lines; the literal UNSET (a key not provisioned yet) yields an

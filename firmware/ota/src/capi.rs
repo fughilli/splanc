@@ -18,6 +18,7 @@ fn c(code: &str) -> *const c_char {
         "bad_manifest" => c"bad_manifest",
         "bad_signature" => c"bad_signature",
         "loader_image" => c"loader_image",
+        "wrong_board" => c"wrong_board",
         "too_large" => c"too_large",
         "downgrade" => c"downgrade",
         "no_session" => c"no_session",

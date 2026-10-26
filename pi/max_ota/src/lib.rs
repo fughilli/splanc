@@ -5,8 +5,9 @@
 //! the player proves healthy; otherwise U-Boot's default (the old system) comes
 //! back by itself, across resets and power cuts.
 //!
-//! * [`verify`]: the C6's signed 108-byte manifest, checked against the MAX ring
-//!   (key ids 3 `max` and 4 `max_backup` only) and the board in flags bits 24..31.
+//! * [`verify`]: the C6's signed 108-byte manifest, checked against the ring
+//!   (the C6 loader's keys, the same ring) and the board in flags bits 24..31,
+//!   which is what keeps C6 and MAX images apart.
 //! * [`image`]: the `.nixclosure` header + zstd `nix-store --export` payload.
 //! * [`updater`]: the state machine (download, import, stage the one-shot trial,
 //!   boot reconcile, health, commit, roll back) over the [`updater::Sys`] seam;
