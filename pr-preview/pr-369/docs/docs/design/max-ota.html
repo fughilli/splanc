@@ -535,20 +535,23 @@ the first 44 bytes.</p>
 <td><p>loader image (refused)</p></td>
 </tr>
 <tr class="row-odd"><td><p>8–15</p></td>
-<td><p>key id: <strong>3</strong> <code class="docutils literal notranslate"><span class="pre">max</span></code> (every release) or <strong>4</strong> <code class="docutils literal notranslate"><span class="pre">max_backup</span></code> (offline, rotation only)</p></td>
+<td><p>key id: the C6 ring’s, <strong>0</strong> <code class="docutils literal notranslate"><span class="pre">release</span></code> (every release) or <strong>1</strong> <code class="docutils literal notranslate"><span class="pre">backup</span></code> (offline, rotation only)</p></td>
 </tr>
 <tr class="row-even"><td><p>16–23</p></td>
 <td><p>security version</p></td>
 </tr>
 <tr class="row-odd"><td><p>24–31</p></td>
-<td><p><strong>board</strong>: 1 <code class="docutils literal notranslate"><span class="pre">pi3</span></code>, 2 <code class="docutils literal notranslate"><span class="pre">pi4</span></code>, 3 <code class="docutils literal notranslate"><span class="pre">pi5</span></code>, 4 <code class="docutils literal notranslate"><span class="pre">zero2w</span></code>; 0 = not a MAX image</p></td>
+<td><p><strong>board</strong>: 1 <code class="docutils literal notranslate"><span class="pre">pi3</span></code>, 2 <code class="docutils literal notranslate"><span class="pre">pi4</span></code>, 3 <code class="docutils literal notranslate"><span class="pre">pi5</span></code>, 4 <code class="docutils literal notranslate"><span class="pre">zero2w</span></code>; 0 = a C6 image. <strong>Mandatory</strong></p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p><strong>The keyring.</strong> It is the same keyring and tooling as the C6
-(<code class="docutils literal notranslate"><span class="pre">firmware/ota/keys</span></code>, <code class="docutils literal notranslate"><span class="pre">ota_sign</span></code>, key epochs, security floor), but the MAX trusts
-<strong>only its own key ids</strong>:</p>
+<p><strong>The keyring: the C6’s own.</strong> A MAX trusts exactly the keys the C6 loaders trust,
+from the same source: <code class="docutils literal notranslate"><span class="pre">firmware/ota/ring.bzl</span></code> holds <code class="docutils literal notranslate"><span class="pre">RELEASE_RING</span></code> / <code class="docutils literal notranslate"><span class="pre">TEST_RING</span></code>,
+which <code class="docutils literal notranslate"><span class="pre">//firmware/ota</span></code> (the loader’s C++ header) and <code class="docutils literal notranslate"><span class="pre">//pi/max_ota</span></code> (a Rust const,
+<code class="docutils literal notranslate"><span class="pre">gen_key_header.py</span> <span class="pre">--lang</span> <span class="pre">rust</span></code>) both generate; <code class="docutils literal notranslate"><span class="pre">MAX_RELEASE_RING</span></code> /
+<code class="docutils literal notranslate"><span class="pre">MAX_TEST_RING</span></code> are the same dicts, not copies. <code class="docutils literal notranslate"><span class="pre">--//firmware/ota:trust=test</span></code>
+swaps in the TEST keys (<code class="docutils literal notranslate"><span class="pre">test</span></code>, <code class="docutils literal notranslate"><span class="pre">test_backup</span></code>) for both.</p>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
 <thead>
@@ -559,113 +562,82 @@ the first 44 bytes.</p>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p>3</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">max</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">keys/max.pub</span></code></p></td>
-<td><p>online: the <code class="docutils literal notranslate"><span class="pre">MAX_OTA_SIGNING_KEY</span></code> secret signs every MAX release</p></td>
+<tr class="row-even"><td><p>0</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">release</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">keys/release.pub</span></code></p></td>
+<td><p>online: the <code class="docutils literal notranslate"><span class="pre">OTA_SIGNING_KEY</span></code> secret signs every C6 <strong>and</strong> MAX release</p></td>
 </tr>
-<tr class="row-odd"><td><p>4</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">max_backup</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">keys/max_backup.pub</span></code></p></td>
-<td><p><strong>offline</strong>, in cold storage, never in CI; signs the key-epoch record that revokes a compromised <code class="docutils literal notranslate"><span class="pre">max</span></code>, and the bridge image of a rotation</p></td>
+<tr class="row-odd"><td><p>1</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">backup</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">keys/backup.pub</span></code></p></td>
+<td><p><strong>offline</strong>, in cold storage, never in CI; signs key-epoch records and, in a rotation, bridge images</p></td>
+</tr>
+<tr class="row-even"><td><p>2</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">next</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">keys/next.pub</span></code></p></td>
+<td><p>a planned successor (<code class="docutils literal notranslate"><span class="pre">UNSET</span></code> today)</p></td>
+</tr>
+<tr class="row-odd"><td><p>3, 4</p></td>
+<td><p>—</p></td>
+<td><p>—</p></td>
+<td><p><strong>reserved</strong> for a possible future separate MAX key (+ its backup); unused, in no ring</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>An <code class="docutils literal notranslate"><span class="pre">UNSET</span></code> entry verifies nothing, and the build works with it (as with <code class="docutils literal notranslate"><span class="pre">max.pub</span></code>
-before the owner creates it). A manifest names its key id and is verified against
-<strong>that key only</strong>. Ids 5–7 are free for a successor key after a rotation (below).</p>
+<p>An <code class="docutils literal notranslate"><span class="pre">UNSET</span></code> entry verifies nothing. A manifest names its key id and is verified
+against <strong>that key only</strong>. There are no MAX-specific key files and no MAX-specific
+secret.</p>
+<p><strong>The board is the separation.</strong> With shared keys, a C6 image is validly signed as
+far as a MAX is concerned, and vice versa. What keeps them apart is the signed board
+field, checked on both sides:</p>
 <ul class="simple">
-<li><p><strong>Never the loader ring’s keys.</strong> The C6 loader trusts 0 <code class="docutils literal notranslate"><span class="pre">release</span></code>, 1 <code class="docutils literal notranslate"><span class="pre">backup</span></code> and
-2 <code class="docutils literal notranslate"><span class="pre">next</span></code>; the MAX updater trusts none of them.</p></li>
+<li><p><strong>A MAX refuses board 0</strong> (a C6 image) and any board but its own, as
+<code class="docutils literal notranslate"><span class="pre">wrong_board</span></code>, before anything is downloaded (<code class="docutils literal notranslate"><span class="pre">verify::check_offer</span></code>).</p></li>
+<li><p><strong>A C6 refuses any board but 0</strong>, as <code class="docutils literal notranslate"><span class="pre">wrong_board</span></code>: the app’s pre-check and the
+loader both go through <code class="docutils literal notranslate"><span class="pre">splanc_ota::session::check_offer</span></code>.</p></li>
 <li><p><strong>Never a bare sha256</strong> (contrast <code class="docutils literal notranslate"><span class="pre">pi/bridge/selfupdate.py</span></code>).</p></li>
-<li><p><strong>Separation both ways.</strong> A C6 image can’t install on a MAX: board 0 is refused as
-<code class="docutils literal notranslate"><span class="pre">wrong_board</span></code>, and key 0 as <code class="docutils literal notranslate"><span class="pre">unknown_key</span></code>. A MAX key can’t sign C6 firmware: the
-loaders don’t have it.</p></li>
-<li><p><strong>Where the ring comes from.</strong> <code class="docutils literal notranslate"><span class="pre">firmware/ota/ring.bzl</span></code> holds <code class="docutils literal notranslate"><span class="pre">MAX_RELEASE_RING</span></code>
-(<code class="docutils literal notranslate"><span class="pre">max</span></code> + <code class="docutils literal notranslate"><span class="pre">max_backup</span></code>) / <code class="docutils literal notranslate"><span class="pre">MAX_TEST_RING</span></code> (<code class="docutils literal notranslate"><span class="pre">test_max</span></code> + <code class="docutils literal notranslate"><span class="pre">test_max_backup</span></code>).
-<code class="docutils literal notranslate"><span class="pre">gen_key_header.py</span> <span class="pre">--lang</span> <span class="pre">rust</span></code> writes the ring as a Rust const into
-<code class="docutils literal notranslate"><span class="pre">//pi/max_ota</span></code>. <code class="docutils literal notranslate"><span class="pre">--//firmware/ota:trust=test</span></code> swaps in the TEST keys, as it does
-for the C6 loader (release/backup ↔ test/test_backup).</p></li>
 <li><p><strong>Who checks.</strong> The player checks every offer for a quick answer. The root updater
 checks it again before it downloads anything; it is the authority.</p></li>
 </ul>
-<p><strong>Key files:</strong></p>
-<div class="table-wrapper colwidths-auto docutils container">
-<table class="docutils align-default">
-<thead>
-<tr class="row-odd"><th class="head"><p>file</p></th>
-<th class="head"><p></p></th>
-</tr>
-</thead>
-<tbody>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">firmware/ota/keys/max.pub</span></code></p></td>
-<td><p>the public half of the <code class="docutils literal notranslate"><span class="pre">MAX_OTA_SIGNING_KEY</span></code> secret (<strong>UNSET</strong> until the owner creates it, below)</p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">firmware/ota/keys/max_backup.pub</span></code></p></td>
-<td><p><strong>UNSET</strong> until the owner creates it (below): the public half of the offline backup key. Its private half is never in the repo or CI</p></td>
-</tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">firmware/ota/keys/test_max.key</span></code> / <code class="docutils literal notranslate"><span class="pre">.pub</span></code></p></td>
-<td><p>the public TEST <code class="docutils literal notranslate"><span class="pre">max</span></code> key (id 3): HITL and development images only</p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">firmware/ota/keys/test_max_backup.key</span></code> / <code class="docutils literal notranslate"><span class="pre">.pub</span></code></p></td>
-<td><p>the public TEST <code class="docutils literal notranslate"><span class="pre">max_backup</span></code> key (id 4): key epochs and backup-signed images in test-trust updaters and the host tests</p></td>
-</tr>
-</tbody>
-</table>
-</div>
-<p><strong>Key epochs.</strong> The updater applies a key-epoch record (<code class="docutils literal notranslate"><span class="pre">ota_begin.key_epoch</span></code>)
-whose signer is in the MAX ring. Records signed by other keys, such as the C6’s
-<code class="docutils literal notranslate"><span class="pre">key-epoch.bin</span></code>, are ignored rather than refused, so a client that sends the C6
-record by mistake can’t block an update. A MAX revocation ships as
-<code class="docutils literal notranslate"><span class="pre">max-key-epoch.bin</span></code> (from <code class="docutils literal notranslate"><span class="pre">firmware/ota/keys/max_epoch.bin</span></code>). The rules are the C6’s
-(docs/design/ota.md “Key rotation”): the epoch must rise, revocations never shrink, a
-record can’t revoke its own signer, and a revoked key signs nothing more, records
-included. The revocations are device state (<code class="docutils literal notranslate"><span class="pre">/var/lib/splanc-ota</span></code>), so they outlive
-every later update; only a re-flash resets them.</p>
+<p><strong>When separate keys would be worth revisiting.</strong> Sharing is right while the C6 and
+the MAX ship from the same repo, the same release and the same CI secret holders.
+If the MAX ever gets its own distribution channel (a separate release stream or
+mirror), or different people should be able to sign MAX systems than C6 firmware,
+give the MAX its own key: ids <strong>3</strong> (<code class="docutils literal notranslate"><span class="pre">max</span></code>, online) and <strong>4</strong> (<code class="docutils literal notranslate"><span class="pre">max_backup</span></code>,
+offline) are reserved for that, in no ring today. Moving to them is a normal
+rotation (below): ship a system whose ring has 3/4, then revoke 0/1 for the MAX.</p>
+<p><strong>Key epochs.</strong> The same record as the C6: the updater applies the release’s
+<code class="docutils literal notranslate"><span class="pre">key-epoch.bin</span></code> (from <code class="docutils literal notranslate"><span class="pre">firmware/ota/keys/epoch.bin</span></code>), sent in <code class="docutils literal notranslate"><span class="pre">ota_begin.key_epoch</span></code>
+by the web app and the agent. The rules are the C6’s (docs/design/ota.md “Key
+rotation”): the signer must be a provisioned ring key (<code class="docutils literal notranslate"><span class="pre">unknown_key</span></code> otherwise), the
+epoch must rise, revocations never shrink, a record can’t revoke its own signer, and
+a revoked key signs nothing more, records included. The revocations are device state
+(<code class="docutils literal notranslate"><span class="pre">/var/lib/splanc-ota</span></code>), so they outlive every later update; only a re-flash resets
+them.</p>
 <section id="key-rotation">
 <h3>Key rotation<a class="headerlink" href="#key-rotation" title="Link to this heading">¶</a></h3>
-<p>The ring is part of the system image, so on a MAX (unlike the C6 loader) <strong>a new
-ring ships over the air</strong>: the bridge image below carries it. What can’t come over
-the air is trust in a key the running system doesn’t know, which is why the backup
-(id 4) has to be in the ring <em>before</em> it is needed. A unit whose system predates
-<code class="docutils literal notranslate"><span class="pre">max_backup.pub</span></code> (an <code class="docutils literal notranslate"><span class="pre">UNSET</span></code> slot) ignores backup-signed records and refuses
-backup-signed images as <code class="docutils literal notranslate"><span class="pre">unknown_key</span></code>: a compromise of <code class="docutils literal notranslate"><span class="pre">max</span></code> reaches it only via
-<code class="docutils literal notranslate"><span class="pre">deploy_live</span></code> or a re-flash.</p>
-<p><strong>Runbook: the <code class="docutils literal notranslate"><span class="pre">max</span></code> key is compromised.</strong></p>
-<ol class="arabic">
-<li><p><strong>Take the backup out of cold storage.</strong> On an offline machine, sign an epoch
-revoking id 3 (<code class="docutils literal notranslate"><span class="pre">&lt;stored+1&gt;</span></code>: 1 for the first record):</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">ota_sign</span> <span class="n">epoch</span> <span class="o">--</span><span class="n">key</span><span class="o">-</span><span class="n">file</span> <span class="n">max_backup</span><span class="o">.</span><span class="n">key</span> <span class="o">--</span><span class="n">key</span><span class="o">-</span><span class="nb">id</span> <span class="mi">4</span> <span class="o">--</span><span class="n">epoch</span> <span class="o">&lt;</span><span class="n">stored</span><span class="o">+</span><span class="mi">1</span><span class="o">&gt;</span> <span class="o">--</span><span class="n">revoke</span> <span class="mi">3</span> <span class="o">--</span><span class="n">out</span> <span class="n">max_epoch</span><span class="o">.</span><span class="n">bin</span>
-<span class="n">ota_sign</span> <span class="n">verify</span><span class="o">-</span><span class="n">epoch</span> <span class="o">--</span><span class="n">ring</span> <span class="mi">3</span><span class="o">=</span><span class="n">keys</span><span class="o">/</span><span class="nb">max</span><span class="o">.</span><span class="n">pub</span><span class="p">,</span><span class="mi">4</span><span class="o">=</span><span class="n">keys</span><span class="o">/</span><span class="n">max_backup</span><span class="o">.</span><span class="n">pub</span> <span class="o">--</span><span class="ow">in</span> <span class="n">max_epoch</span><span class="o">.</span><span class="n">bin</span>
-</pre></div>
-</div>
-</li>
-<li><p><strong>Commit it as <code class="docutils literal notranslate"><span class="pre">firmware/ota/keys/max_epoch.bin</span></code>.</strong> Every release now ships it as
-<code class="docutils literal notranslate"><span class="pre">max-key-epoch.bin</span></code>, and the web app and the agent send it with <code class="docutils literal notranslate"><span class="pre">ota_begin</span></code>. Each
-unit applies it at its next update attempt and from then on refuses anything the
-stolen key signs (<code class="docutils literal notranslate"><span class="pre">revoked_key</span></code>). Revoked ids are never reused.</p></li>
-<li><p><strong>Generate the successor online key</strong> (<code class="docutils literal notranslate"><span class="pre">ota_sign</span> <span class="pre">keygen</span></code>), and give it a <strong>fresh
-id</strong> (5, <code class="docutils literal notranslate"><span class="pre">max_next</span></code>): add <code class="docutils literal notranslate"><span class="pre">&quot;5&quot;:</span> <span class="pre">&quot;//firmware/ota:keys/max_next.pub&quot;</span></code> to
-<code class="docutils literal notranslate"><span class="pre">MAX_RELEASE_RING</span></code> (and a TEST counterpart), point <code class="docutils literal notranslate"><span class="pre">MAX_OTA_SIGNING_KEY</span></code> at its
-private half, and pass <code class="docutils literal notranslate"><span class="pre">--key-id</span> <span class="pre">5</span></code> in the release workflow’s <code class="docutils literal notranslate"><span class="pre">max</span></code> job.</p></li>
-<li><p><strong>Sign one bridge release with the backup</strong>, by hand on the offline machine, for
-the release that first carries the new ring (CI can’t: the units don’t trust id 5
-yet, and nothing in CI holds the backup):</p>
+<p>It is the C6’s (docs/design/ota.md “Runbook: the release key is compromised”), and
+one <code class="docutils literal notranslate"><span class="pre">key-epoch.bin</span></code> covers both kinds of fixture. What differs on a MAX:</p>
+<ul>
+<li><p><strong>The ring ships over the air.</strong> It is part of the system image, so a MAX bridge
+release can carry a new ring (the C6 needs a USB migration for that).</p></li>
+<li><p><strong>Bridge images are signed by hand with the backup</strong>, on the offline machine,
+until units trust the successor key:</p>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">python3</span> <span class="n">tools</span><span class="o">/</span><span class="n">max_ota_release</span><span class="o">.</span><span class="n">py</span> <span class="o">--</span><span class="n">toplevel</span> <span class="o">&lt;</span><span class="n">system</span><span class="o">&gt;</span> <span class="o">--</span><span class="n">board</span> <span class="n">pi3</span> <span class="o">--</span><span class="n">version</span> <span class="n">X</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">Z</span> \
-  <span class="o">--</span><span class="n">signer</span> <span class="n">ota_sign</span> <span class="o">--</span><span class="n">pubkey</span> <span class="n">firmware</span><span class="o">/</span><span class="n">ota</span><span class="o">/</span><span class="n">keys</span><span class="o">/</span><span class="n">max_backup</span><span class="o">.</span><span class="n">pub</span> \
-  <span class="o">--</span><span class="n">key</span><span class="o">-</span><span class="nb">id</span> <span class="mi">4</span> <span class="o">--</span><span class="n">key</span><span class="o">-</span><span class="n">file</span> <span class="n">max_backup</span><span class="o">.</span><span class="n">key</span> <span class="o">--</span><span class="n">out</span><span class="o">-</span><span class="nb">dir</span> <span class="n">_assets</span>
+  <span class="o">--</span><span class="n">signer</span> <span class="n">ota_sign</span> <span class="o">--</span><span class="n">pubkey</span> <span class="n">firmware</span><span class="o">/</span><span class="n">ota</span><span class="o">/</span><span class="n">keys</span><span class="o">/</span><span class="n">backup</span><span class="o">.</span><span class="n">pub</span> \
+  <span class="o">--</span><span class="n">key</span><span class="o">-</span><span class="nb">id</span> <span class="mi">1</span> <span class="o">--</span><span class="n">key</span><span class="o">-</span><span class="n">file</span> <span class="n">backup</span><span class="o">.</span><span class="n">key</span> <span class="o">--</span><span class="n">out</span><span class="o">-</span><span class="nb">dir</span> <span class="n">_assets</span>
 </pre></div>
 </div>
-<p>Upload the <code class="docutils literal notranslate"><span class="pre">.nixclosure</span></code> / <code class="docutils literal notranslate"><span class="pre">.manifest</span></code> to the release. Once the units run it they
-trust id 5, and CI signs with it from the next release on.</p>
+<p>CI never does this: there is no backup secret, and <code class="docutils literal notranslate"><span class="pre">max_ota_release.py</span></code> refuses
+<code class="docutils literal notranslate"><span class="pre">--key-id</span> <span class="pre">1</span></code> without <code class="docutils literal notranslate"><span class="pre">--key-file</span></code>.</p>
 </li>
-<li><p><strong>Put the backup back in cold storage.</strong> A replacement backup (if it was
-exposed) is a new id too, added the same way.</p></li>
-</ol>
-<p>The tests (<code class="docutils literal notranslate"><span class="pre">//pi/max_ota:updater_test</span></code>, “rotation” below) run this end to end with
-the TEST keys: a backup-signed record revoking <code class="docutils literal notranslate"><span class="pre">max</span></code>, after which max-signed images
-are refused and backup-signed ones install.</p>
+<li><p><strong>Revoked ids are never reused</strong>, on either kind of fixture: a successor key takes
+<code class="docutils literal notranslate"><span class="pre">next</span></code> (2) or another free id.</p></li>
+</ul>
+<p>The tests (<code class="docutils literal notranslate"><span class="pre">//pi/max_ota:updater_test</span></code>) run this end to end with the TEST keys: a
+backup-signed (id 1) record revoking <code class="docutils literal notranslate"><span class="pre">release</span></code> (id 0), after which release-signed
+images are refused and backup-signed ones install.</p>
 <p><strong>Anti-rollback.</strong> It works exactly as on the C6:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">allow_downgrade</span></code> lets a client install an older version;</p></li>
@@ -879,7 +851,7 @@ updater’s phase, <code class="docutils literal notranslate"><span class="pre">
 <code class="docutils literal notranslate"><span class="pre">pullUpdate</span></code> sends the manifest and follows the device through download → verify →
 reboot → health, reconnecting across reboots. The Flash screen shows
 <strong>“Update ⟨name⟩ over Wi-Fi”</strong> for a MAX. It fetches
-<code class="docutils literal notranslate"><span class="pre">max-&lt;board&gt;-&lt;ver&gt;.manifest</span></code> (and <code class="docutils literal notranslate"><span class="pre">max-key-epoch.bin</span></code>) from the selected release,
+<code class="docutils literal notranslate"><span class="pre">max-&lt;board&gt;-&lt;ver&gt;.manifest</span></code> (and the shared <code class="docutils literal notranslate"><span class="pre">key-epoch.bin</span></code>) from the selected release,
 with <code class="docutils literal notranslate"><span class="pre">board</span></code> taken from <code class="docutils literal notranslate"><span class="pre">ota_status</span></code>. Progress reads “The device is downloading the
 firmware… n%”, then the C6’s verify / reboot / health steps.</p></li>
 <li><p><strong>Agent <code class="docutils literal notranslate"><span class="pre">update_firmware</span></code>.</strong> It resolves one package per kind of player: the C6
@@ -906,10 +878,10 @@ every <code class="docutils literal notranslate"><span class="pre">firmware-v*</
 <td><p>the image (full closure, zstd -19)</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">max-pi3-X.Y.Z.manifest</span></code></p></td>
-<td><p>108 bytes, signed with <code class="docutils literal notranslate"><span class="pre">MAX_OTA_SIGNING_KEY</span></code> (key id 3, board 1). CI never signs with <code class="docutils literal notranslate"><span class="pre">max_backup</span></code> (id 4): it has no secret, and <code class="docutils literal notranslate"><span class="pre">max_ota_release.py</span></code> refuses <code class="docutils literal notranslate"><span class="pre">--key-id</span> <span class="pre">4</span></code> without <code class="docutils literal notranslate"><span class="pre">--key-file</span></code></p></td>
+<td><p>108 bytes, signed with <code class="docutils literal notranslate"><span class="pre">OTA_SIGNING_KEY</span></code> (key id 0, the C6’s key, checked against <code class="docutils literal notranslate"><span class="pre">release.pub</span></code> as in the C6 job; board 1). CI never signs with <code class="docutils literal notranslate"><span class="pre">backup</span></code> (id 1): it has no secret, and <code class="docutils literal notranslate"><span class="pre">max_ota_release.py</span></code> refuses <code class="docutils literal notranslate"><span class="pre">--key-id</span> <span class="pre">1</span></code> without <code class="docutils literal notranslate"><span class="pre">--key-file</span></code></p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">max-key-epoch.bin</span></code></p></td>
-<td><p>when <code class="docutils literal notranslate"><span class="pre">firmware/ota/keys/max_epoch.bin</span></code> exists</p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">key-epoch.bin</span></code></p></td>
+<td><p>the C6’s, published by the firmware job; a MAX applies it too</p></td>
 </tr>
 </tbody>
 </table>
@@ -918,8 +890,8 @@ every <code class="docutils literal notranslate"><span class="pre">firmware-v*</
 <li><p><strong>The version.</strong> The system is stamped with the release version
 (<code class="docutils literal notranslate"><span class="pre">SPLANC_MAX_VERSION</span></code> → <code class="docutils literal notranslate"><span class="pre">/etc/splanc-max/version</span></code>), so “latest” names the same
 version for every fixture.</p></li>
-<li><p><strong>No key yet.</strong> The job <strong>skips with a warning</strong>, without failing the firmware
-release, while <code class="docutils literal notranslate"><span class="pre">max.pub</span></code> is UNSET or the secret is missing.</p></li>
+<li><p><strong>The key.</strong> The job fails, like the C6 job, if <code class="docutils literal notranslate"><span class="pre">OTA_SIGNING_KEY</span></code> is missing or
+isn’t <code class="docutils literal notranslate"><span class="pre">release.pub</span></code>’s private half.</p></li>
 <li><p><strong>SD images.</strong> <code class="docutils literal notranslate"><span class="pre">pi-v*</span></code> SD images keep their own tag. They report version 0
 (<code class="docutils literal notranslate"><span class="pre">0.0.0-dev</span></code>) until their first OTA, so any release updates them.</p></li>
 </ul>
@@ -950,7 +922,7 @@ v1.0.0 unit.</p>
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">//pi/max_ota:updater_test</span></code></p></td>
-<td><p>the simulated Pi: happy path, refusals (<code class="docutils literal notranslate"><span class="pre">bad_signature</span></code>, <code class="docutils literal notranslate"><span class="pre">wrong_board</span></code>, a C6-style manifest, the loader ring’s key id, <code class="docutils literal notranslate"><span class="pre">downgrade</span></code>, <code class="docutils literal notranslate"><span class="pre">bad_manifest</span></code>, Pi 5, a stock U-Boot, <code class="docutils literal notranslate"><span class="pre">bad_url</span></code>), security floor, an unhealthy trial, a trial kernel panic, no network in the trial, download retries, delta base check, a tampered image, key epochs, <strong>rotation</strong> (the ring holds <code class="docutils literal notranslate"><span class="pre">max</span></code> + <code class="docutils literal notranslate"><span class="pre">max_backup</span></code>; backup-signed images install; a backup-signed epoch revokes <code class="docutils literal notranslate"><span class="pre">max</span></code>, after which max-signed images and max-signed records are refused and the backup’s bridge image installs; the backup can’t revoke itself or un-revoke; an <code class="docutils literal notranslate"><span class="pre">UNSET</span></code> backup slot verifies nothing), and the <strong>power cut at every step</strong> sweep</p></td>
+<td><p>the simulated Pi: happy path, refusals (<code class="docutils literal notranslate"><span class="pre">bad_signature</span></code>, <code class="docutils literal notranslate"><span class="pre">wrong_board</span></code>, a reserved key id, <code class="docutils literal notranslate"><span class="pre">downgrade</span></code>, <code class="docutils literal notranslate"><span class="pre">bad_manifest</span></code>, Pi 5, a stock U-Boot, <code class="docutils literal notranslate"><span class="pre">bad_url</span></code>), <strong>shared keys</strong> (the ring is the C6 test ring; C6 images — board 0 — signed by the shared release or backup key are refused as <code class="docutils literal notranslate"><span class="pre">wrong_board</span></code>, as are other boards), security floor, an unhealthy trial, a trial kernel panic, no network in the trial, download retries, delta base check, a tampered image, key epochs (a signer outside the ring is <code class="docutils literal notranslate"><span class="pre">unknown_key</span></code>), <strong>rotation</strong> (backup-signed images install; a backup-signed epoch revokes <code class="docutils literal notranslate"><span class="pre">release</span></code>, after which release-signed images and records are refused and the backup’s bridge image installs; the backup can’t revoke itself or un-revoke; an <code class="docutils literal notranslate"><span class="pre">UNSET</span></code> slot verifies nothing), and the <strong>power cut at every step</strong> sweep</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">//pi/max_ota:max_ota_unit_test</span></code></p></td>
 <td><p>header, extlinux mirror, health verdicts, state/request round trips</p></td>
@@ -958,16 +930,19 @@ v1.0.0 unit.</p>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">//pi/player_rs:player_rs_test</span></code></p></td>
 <td><p>the OTA arms, status mapping, pending request, download offset, <code class="docutils literal notranslate"><span class="pre">pull_only</span></code>, the welcome features</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">//firmware/ota:wire_test</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">//firmware/ota:ota_test</span></code></p></td>
+<td><p>the other direction: a MAX image (board ≠ 0) signed by the shared release key is refused by the C6’s offer check (<code class="docutils literal notranslate"><span class="pre">wrong_board</span></code>), also through the C entry point</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">//firmware/ota:wire_test</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">source_url</span></code>, <code class="docutils literal notranslate"><span class="pre">board</span></code> and <code class="docutils literal notranslate"><span class="pre">STATE_DOWNLOADING</span></code> against the generated bindings</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">//web:otaPull_test</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">//web:otaPull_test</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">pullUpdate</span></code> against a simulated MAX (rollback, refusals, dispatch)</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">//agent:firmware_test</span></code></p></td>
-<td><p>the MAX manifest + MAX key epoch resolution</p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">//agent:firmware_test</span></code></p></td>
+<td><p>the MAX manifest + the shared <code class="docutils literal notranslate"><span class="pre">key-epoch.bin</span></code> resolution</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">//pi/hitl/tests:hitl_test</span></code> (<code class="docutils literal notranslate"><span class="pre">test_max_ota_core.py</span></code>)</p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">//pi/hitl/tests:hitl_test</span></code> (<code class="docutils literal notranslate"><span class="pre">test_max_ota_core.py</span></code>)</p></td>
 <td><p>the Python <code class="docutils literal notranslate"><span class="pre">pull()</span></code> client</p></td>
 </tr>
 </tbody>
@@ -991,37 +966,13 @@ filesystem. Journals of the OTA units and the player are saved per phase.</p>
 </section>
 <section id="what-the-owner-must-do-decisions">
 <h2>What the owner must do (decisions)<a class="headerlink" href="#what-the-owner-must-do-decisions" title="Link to this heading">¶</a></h2>
-<ol class="arabic">
-<li><p><strong>Create the MAX signing key offline:</strong></p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">bazel</span> <span class="n">run</span> <span class="o">//</span><span class="n">firmware</span><span class="o">/</span><span class="n">ota</span><span class="p">:</span><span class="n">ota_sign</span> <span class="o">--</span> <span class="n">keygen</span>
-</pre></div>
-</div>
-<ul class="simple">
-<li><p>Commit the <code class="docutils literal notranslate"><span class="pre">public</span></code> line as <code class="docutils literal notranslate"><span class="pre">firmware/ota/keys/max.pub</span></code> (replacing <code class="docutils literal notranslate"><span class="pre">UNSET</span></code>).</p></li>
-<li><p>Store the <code class="docutils literal notranslate"><span class="pre">private</span></code> line as the <strong><code class="docutils literal notranslate"><span class="pre">MAX_OTA_SIGNING_KEY</span></code></strong> repository secret
-(Settings → Secrets and variables → Actions; 64 lowercase hex characters).</p></li>
-</ul>
-<p>Until both exist, releases carry no MAX images. Units can still be updated with
-<code class="docutils literal notranslate"><span class="pre">deploy_live</span></code>, and test-trust units with test-signed images.</p>
-</li>
-<li><p><strong>Create the MAX backup key offline</strong> (decided: yes). It is the only way to
-revoke a compromised <code class="docutils literal notranslate"><span class="pre">max</span></code> key without a re-flash. The slot (id 4,
-<code class="docutils literal notranslate"><span class="pre">keys/max_backup.pub</span></code> in <code class="docutils literal notranslate"><span class="pre">MAX_RELEASE_RING</span></code>) is in place and <code class="docutils literal notranslate"><span class="pre">UNSET</span></code>. On an
-offline machine:</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">bazel</span> <span class="n">run</span> <span class="o">//</span><span class="n">firmware</span><span class="o">/</span><span class="n">ota</span><span class="p">:</span><span class="n">ota_sign</span> <span class="o">--</span> <span class="n">keygen</span>
-</pre></div>
-</div>
-<ul class="simple">
-<li><p>Keep the <code class="docutils literal notranslate"><span class="pre">private</span></code> line <strong>offline</strong> (cold storage, like the C6 <code class="docutils literal notranslate"><span class="pre">backup</span></code>). Never
-in the repo, never a CI secret: nothing in CI signs with it.</p></li>
-<li><p>Commit the <code class="docutils literal notranslate"><span class="pre">public</span></code> line as <code class="docutils literal notranslate"><span class="pre">firmware/ota/keys/max_backup.pub</span></code> (replacing
-<code class="docutils literal notranslate"><span class="pre">UNSET</span></code>, keep the comment lines).</p></li>
-<li><p>Check that the two keys differ: <code class="docutils literal notranslate"><span class="pre">max.pub</span></code> and <code class="docutils literal notranslate"><span class="pre">max_backup.pub</span></code> must not hold the
-same line, and neither may be the C6’s <code class="docutils literal notranslate"><span class="pre">release.pub</span></code> / <code class="docutils literal notranslate"><span class="pre">backup.pub</span></code>.</p></li>
-</ul>
-<p>Every MAX system built from then on trusts it; units only gain it by installing
-such a system (an update or a re-flash).</p>
-</li>
+<ol class="arabic simple">
+<li><p><strong>Nothing for signing keys.</strong> A MAX uses the C6’s keys: the existing
+<code class="docutils literal notranslate"><span class="pre">OTA_SIGNING_KEY</span></code> secret / <code class="docutils literal notranslate"><span class="pre">release.pub</span></code> and the offline <code class="docutils literal notranslate"><span class="pre">backup.pub</span></code>. There is
+no MAX key to create, no MAX secret and no MAX key file. The C6 runbooks
+(docs/design/ota.md “Key rotation”) now cover MAX units too.</p></li>
+<li><p><strong>Revisit separate keys</strong> only if the MAX gets its own distribution channel or
+its own signers (see “Signing”); ids 3/4 are reserved for that.</p></li>
 <li><p><strong>Internet for MAX units.</strong> By default the Pi downloads from github.com. A
 fixture on an isolated LAN needs a mirror passed as <code class="docutils literal notranslate"><span class="pre">source_url</span></code>; the bridge
 could serve one. That is not built yet.</p></li>
