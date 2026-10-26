@@ -260,6 +260,7 @@
 <li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 <li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
@@ -415,6 +416,59 @@ render’s sleeps: about 3-4 ms of each 12 ms frame under a light 80 fps effect.
 </div>
 <p>While a session streams, a light effect renders at ~55-60 fps instead of 80 (the
 autoscaler sees the shared CPU), as before #371.</p>
+<section id="heavy-effects-1-12-4-hotfix">
+<h4>Heavy effects (1.12.4 hotfix)<a class="headerlink" href="#heavy-effects-1-12-4-hotfix" title="Link to this heading">¶</a></h4>
+<p>Below render, the loop only gets render’s sleeps. In 1.12.3 a frame that fit its rung
+slept only what was left of its period (1-3 ms of 40 ms at the 25 fps floor), so under
+such an effect a NEW client never connected: its TLS handshake (~0.5 s of CPU) took
+longer than the client’s 8 s timeout, no session ever opened, and the loop never rose.
+The same starved the rejoin (PBKDF2, the join, DHCP) and, because the effect persists,
+every boot. Two field players went unreachable this way. Two changes:</p>
+<ul class="simple">
+<li><p><strong>Guaranteed share.</strong> Every frame sleeps at least 25% of its render compute (render
+never takes more than 80% of the CPU), and a rung that can’t hold compute plus that
+share counts as a miss, so the effect runs a rung lower or lags
+(<code class="docutils literal notranslate"><span class="pre">firmware/fps</span></code> <code class="docutils literal notranslate"><span class="pre">net_share_ms</span></code>; see <a class="reference internal" href="perf-monitoring.html"><span class="std std-doc">perf-monitoring.md</span></a>). The
+rejoin path still never runs at render’s priority, so it still can’t delay a frame.</p></li>
+<li><p><strong>Clients count as data plane.</strong> The loop also moves up to render’s priority while a
+client is mid-accept, mid-handshake or being served a one-shot GET, not only once its
+wss session is up. A stalled handshake is reclaimed after 4 s, so this can’t pin it.</p></li>
+</ul>
+<p>Starved handshakes also left the single :443 slot wedged after the effect was gone: a
+client that timed out could still complete the upgrade (its RST lost to the full RX
+ring), leaving a ghost wss session that RST-refused every later client. The loop now
+pings a session that has been silent for 15 s (a live client answers; a dead one gets
+reclaimed by the no-ACK gate), reclaims a served one-shot GET whose FIN never arrived
+after 8 s, and a DHCP NAK or 8 unanswered REQUESTs fall back to DISCOVER.</p>
+<p><code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:heavy_effect_reachability</span></code> (a Swirl-like effect sized to ~93% of the
+40 ms floor period, hitl-rig-1):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>firmware</p></th>
+<th class="head"><p>idle: new connections</p></th>
+<th class="head"><p>forced rejoin</p></th>
+<th class="head"><p>reboot, effect persisted</p></th>
+<th class="head"><p>render</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>1.12.3 (main da79f829), 2 DUTs</p></td>
+<td><p>0/10 within 8 s</p></td>
+<td><p>none within 80 s</p></td>
+<td><p>none within 80 s</p></td>
+<td><p>25 fps, 3 ms sleeps, loop gaps 4.3-4.7 s</p></td>
+</tr>
+<tr class="row-odd"><td><p>hotfix</p></td>
+<td><p>5/5, 1.4-2.5 s</p></td>
+<td><p>first at 24 s</p></td>
+<td><p>first at 19 s</p></td>
+<td><p>21 fps (lagging), 10 ms sleeps, loop gaps &lt;= 0.67 s</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
 </section>
 <section id="measurement">
 <h3>Measurement<a class="headerlink" href="#measurement" title="Link to this heading">¶</a></h3>
@@ -563,7 +617,7 @@ transport (the same protocol arms), and the wired console:</p>
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">auto</span></code> (default)</p></td>
-<td><p>Background sweeps 5 s, 10, 20, 40 … up to <code class="docutils literal notranslate"><span class="pre">scan_cap_s</span></code> (default 60). After <code class="docutils literal notranslate"><span class="pre">decay_after_h</span></code> hours (default 24; 0 = never) without ever seeing the network, at most one sweep per <code class="docutils literal notranslate"><span class="pre">sparse_interval_s</span></code> (default 900).</p></td>
+<td><p>Background sweeps 5 s, 10, 20, 40 … up to <code class="docutils literal notranslate"><span class="pre">scan_cap_s</span></code> (default 60), then every <code class="docutils literal notranslate"><span class="pre">scan_cap_s</span></code> for as long as the network is missing. Opt-in decay: after <code class="docutils literal notranslate"><span class="pre">decay_after_h</span></code> hours (default 0 = off) without ever seeing the network, at most one sweep per <code class="docutils literal notranslate"><span class="pre">sparse_interval_s</span></code> (default 900).</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">fixed</span></code></p></td>
 <td><p>One sweep every <code class="docutils literal notranslate"><span class="pre">interval_s</span></code> (default 300).</p></td>
@@ -577,14 +631,45 @@ transport (the same protocol arms), and the wired console:</p>
 </tbody>
 </table>
 </div>
-<section id="decay-default">
-<h3>Decay default<a class="headerlink" href="#decay-default" title="Link to this heading">¶</a></h3>
-<p>The decay is on by default (24 h → 15 min). A unit whose AP is gone for good stops
-sweeping every minute (each sweep is ~1.6 s of channel hopping), yet a unit whose AP was
-only down for a weekend still rejoins on its own within 15 min of it coming back. Decaying
-to <code class="docutils literal notranslate"><span class="pre">offline</span></code> instead would strand such units, so offline is only ever an explicit choice.
-The unseen time is persisted hourly (<code class="docutils literal notranslate"><span class="pre">wifi_unseen</span></code>), so a nightly power cycle doesn’t
-reset the clock.</p>
+<section id="decay-is-opt-in">
+<h3>Decay is opt-in<a class="headerlink" href="#decay-is-opt-in" title="Link to this heading">¶</a></h3>
+<p>Auto mode keeps its backoff cap indefinitely unless the user enables the decay
+(<code class="docutils literal notranslate"><span class="pre">decay_after_h</span></code> &gt; 0, e.g. 24 h → 15 min). The decay saves airtime and power when a
+network is gone for good (each sweep is ~1.6 s of channel hopping), but it also makes a
+returning network take up to <code class="docutils literal notranslate"><span class="pre">sparse_interval_s</span></code> to be noticed, and a board whose AP was
+only off for a long weekend should rejoin within a minute. #371 shipped it on by default
+(24 h); it became opt-in afterwards, by user decision. Decaying to <code class="docutils literal notranslate"><span class="pre">offline</span></code> instead would
+strand units, so offline is only ever an explicit choice. When enabled, the unseen time
+is persisted hourly (<code class="docutils literal notranslate"><span class="pre">wifi_unseen</span></code>), so a nightly power cycle doesn’t reset the clock.</p>
+<p>Migration. The NVS record is written whole on any change, so a v1 record (firmware with
+the 24 h default) carries <code class="docutils literal notranslate"><span class="pre">decay_after_h</span></code> = 24 whether or not the user ever chose it.
+Version 2 of the record has the same layout; on load:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Stored record</p></th>
+<th class="head"><p><code class="docutils literal notranslate"><span class="pre">decay_after_h</span></code> after the upgrade</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>none (never changed the policy)</p></td>
+<td><p>0 (the new default)</p></td>
+</tr>
+<tr class="row-odd"><td><p>v1, decay 24</p></td>
+<td><p>0: read as the old default, never chosen</p></td>
+</tr>
+<tr class="row-even"><td><p>v1, any other value (0, 12, 48 …)</p></td>
+<td><p>kept: an explicit choice</p></td>
+</tr>
+<tr class="row-odd"><td><p>v2 (written by this firmware)</p></td>
+<td><p>as stored, 24 included</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>A user who had explicitly typed 24 h on old firmware loses it and has to set it again;
+that case can’t be told apart from the default. Downgrading to old firmware rejects a v2
+record and falls back to the old defaults (decay on).</p>
 </section>
 <section id="forward-deployed-units">
 <h3>Forward-deployed units<a class="headerlink" href="#forward-deployed-units" title="Link to this heading">¶</a></h3>
@@ -673,12 +758,15 @@ does not act on it. That build is deprecated.</p></li>
 <li><a class="reference internal" href="#">Wi-Fi rejoin policy and render isolation (netstack C6)</a><ul>
 <li><a class="reference internal" href="#render-isolation">1. Render isolation</a><ul>
 <li><a class="reference internal" href="#what-shares-the-core">What shares the core</a></li>
-<li><a class="reference internal" href="#loop-priority">Loop priority</a></li>
+<li><a class="reference internal" href="#loop-priority">Loop priority</a><ul>
+<li><a class="reference internal" href="#heavy-effects-1-12-4-hotfix">Heavy effects (1.12.4 hotfix)</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#measurement">Measurement</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#rejoin-policy">2. Rejoin policy</a><ul>
-<li><a class="reference internal" href="#decay-default">Decay default</a></li>
+<li><a class="reference internal" href="#decay-is-opt-in">Decay is opt-in</a></li>
 <li><a class="reference internal" href="#forward-deployed-units">Forward-deployed units</a></li>
 <li><a class="reference internal" href="#ota-interaction">OTA interaction</a></li>
 <li><a class="reference internal" href="#status">Status</a></li>

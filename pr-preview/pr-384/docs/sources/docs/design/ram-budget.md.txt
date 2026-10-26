@@ -101,10 +101,11 @@ draws, paired with the device's `esp_get_free_heap_size()`:
    - The static bound is now a CI gate (`//tools/stack_bound`,
      `//firmware/player_app:stack_bound_test`, manifest in
      `firmware/player_app/stack_bound.json`). It fails when `(bound + 256 B
-     ISR) × 1.25` exceeds a task's stack. Current figures: loopTask 9.7 of
-     14 KiB, render 2.5 of 4, xmit 0.9 of 1.5, logdrain 0.4 of 1.5 (round 4
-     trimmed render 5 → 4, xmit and logdrain 2 → 1.5 KiB; those two were 3 KiB
-     before that).
+     ISR) × 1.25` exceeds a task's stack. Current figures: loopTask 8.3 of
+     11 KiB (14 KiB until the netstack's RX frame moved off netstack_loop's
+     stack into a static shared with the TLS-write pump, round 4), render 2.5
+     of 4, xmit 0.9 of 1.5, logdrain 0.4 of 1.5 (round 4 trimmed render
+     5 → 4, xmit and logdrain 2 → 1.5 KiB; those two were 3 KiB before that).
 
    The netstack transports dispatch every message IN PLACE (WS reassembly
    buffer / BLE frame), so `rx` only stages frames read back off flash and
