@@ -122,21 +122,55 @@ slowest one sets the rate.
     channel in the 120 fps mode, and the FPGA paces the host with a
     **frame-done** output (#370). `frame_done` is a level that goes HIGH when
     every port has shifted out its frame *and* the latch has elapsed, and LOW
-    when the next STREAM starts. It sits on a Tang Nano 9K pin (28, provisional)
-    wired to a Pi GPIO input (GPIO 22 proposed).
-  - **Pi-side use:** the output thread asks for rising-edge events on that line
-    (`/dev/gpiochip0`, GPIO v2 line request with edge detection; libgpiod or
-    the `gpio-cdev` ioctls). Each frame it waits for the edge (or sees the line
-    already HIGH), then writes the CSR + STREAM. A timeout of one period plus
-    margin falls back to deadline pacing, so a broken wire degrades to today's
-    behaviour instead of stalling. A frame started on frame-done can't merge
+    when the next STREAM starts. **Confirmed (owner, 2026-10-26):** a dedicated
+    GPIO, Tang Nano 9K pin 28 → Pi GPIO 22 (header pin 15), 3.3 V both sides,
+    not in-band SPI status and not FPGA double-buffering (20/26 BSRAM used).
+  - **Pi-side use (implemented in #370, `pi/player_rs` pacing.rs / gpio_cdev.rs):**
+    the output thread requests rising-edge events on that line (raw GPIO v2
+    ioctls, since libgpiod can't link into the static-musl player). Each frame
+    it renders, sleeps to the absolute deadline, then goes at once if the line
+    is HIGH or waits for the edge, and sends CSR + STREAM as one SPI message.
+    A timeout of one period + margin sends on the timer. Three in a row switch
+    to timed pacing (one log line), and the line is re-checked every second. A
+    broken wire degrades to today's behaviour instead of stalling. A frame started on frame-done can't merge
     with the previous one, so the host no longer has to model wire time, and
     Pi-side jitter only has to stay inside the cap's ≥ 220 µs slack instead of
     the ~42 µs of a 266-LED strip. Rendering keeps running ahead
     (triple-buffered), so only the SPI handoff waits on the edge.
-- **Output thread:**
-  - SCHED_FIFO priority, pinned to an isolated core (`isolcpus`/`nohz_full` on the
-    Pi 4/5; on the Pi 3, at least affinity away from the WiFi/USB IRQs).
+- **Output thread** (userspace RT only, by owner decision: no kernel driver,
+  no PREEMPT_RT; implemented in #370, measured in §0 "Output-thread latency"):
+  - SCHED_FIFO 45 for the output thread only, below the IRQ threads (50) and the
+    `spi0` message pump (raised to 46 by the unit), pinned to the last CPU.
+    `mlockall`. The unit grants CAP_SYS_NICE + CAP_IPC_LOCK to the `ledmapper`
+    user instead of running the whole process at FIFO 50. `isolcpus=3` is an
+    opt-in `apps.nix` switch.
+  - **Measured on the Pi 3B+ (`pi-ledmapper-2`, 2026-10-26, #370 README
+    "Measured output-thread latency"):**
+    - Bench: kernel 6.12.87 `PREEMPT_VOLUNTARY`, 120 fps, 20 × 66 LEDs. The
+      frame-done wire isn't fitted, so these are timed-pacing numbers.
+    - Timer wake-up, p50 / p99 / max:
+      - idle: 84 / 91 / 256 µs without RT, **29 / 35 / 71 µs with RT**;
+      - under CPU load: 146 / 4,318 / 10,303 µs without RT, **83 / 236 /
+        622 µs with RT**;
+      - RT with the load kept off the output CPU (≈ `isolcpus=3`): 31 / 78 /
+        220 µs.
+    - Wake → SPI ioctl ≤ 24 µs. The 3-byte CSR ioctl, which bounds ioctl → CS,
+      is 46 / 183 / 317 µs with RT.
+    - Frame period under load: p99 12.3 ms / max 18.5 ms without RT,
+      **8.47 / 8.89 ms with RT**.
+    - Edge → CS is estimated at ≈ 0.4 ms p99 (≈ 0.25 ms with the CPU kept
+      clear). A late wake only stretches that one period; it can't merge frames.
+    - Edge → wake gets measured directly (the kernel's edge timestamps) once
+      pin 28 → GPIO 22 is wired.
+  - **PREEMPT_RT:** not enabled.
+    - The Pi kernel is 6.12.87 with `ARCH_SUPPORTS_RT=y`, so mainline
+      `CONFIG_PREEMPT_RT=y` is a Kconfig change.
+    - But it changes the nixos-raspberrypi kernel derivation, which means a
+      from-source kernel build (hours, no binary cache since attic went away).
+    - The remaining tail under load comes from non-preemptible kernel sections
+      of other tasks on the output CPU, which `isolcpus` addresses without a
+      rebuild. So PREEMPT_RT is the option to take only if wired edge → CS
+      measurements still miss the budget.
   - Absolute-deadline sleeps (`clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME)`
     or `timerfd`), so periods don't accumulate drift.
   - The `performance` governor, to avoid DVFS latency spikes. On the Pi 3, also a
@@ -208,8 +242,8 @@ frame-done signal, now in #370) and with shorter strips.
   the last bit. Frame-done paced at 260 LEDs: 8/8 clean frames, one edge per
   frame.
 - **Pinned 20-port top:** ports 0–7 on pins 70–77 (as the 8-port top), ports
-  8–19 on 40 35 41 42 51 53 54 55 56 57 68 69 (owner's choice), frame-done on 28
-  (provisional). Place-and-route: 2354 LUT4, 1449 DFF, 20/26 BSRAM, 31 IOB, fmax
+  8–19 on 40 35 41 42 51 53 54 55 56 57 68 69 (owner's choice), frame-done on 28 →
+  Pi GPIO 22 (confirmed). Place-and-route: 2354 LUT4, 1449 DFF, 20/26 BSRAM, 31 IOB, fmax
   75.4 MHz at the 54 MHz core. Pins 53–57 are Gowin dual-purpose configuration
   pins, built with the `*_as_gpio` flags; hardware bring-up is pending.
 
@@ -841,8 +875,10 @@ The agent never handled the Pi key. **Results are in §5**: 100 JSON lines, all
    - a glibc GPU helper next to the static-musl player;
    - a load-time per-effect probe (lower → tolerance check → cache);
    - a triple-buffered render → readback → `FpgaCodec` → SPI pipeline;
-   - a SCHED_FIFO output thread paced on the FPGA's frame-done GPIO edge, with
-     absolute-deadline pacing as the timeout fallback;
+   - ~~a SCHED_FIFO output thread paced on the FPGA's frame-done GPIO edge, with
+     absolute-deadline pacing as the timeout fallback~~ **done in #370** (edge
+     wait, fallback, RT settings, unit caps; on-wire edge latency pending the
+     wire);
    - the 120 fps strip cap (260 LEDs/port) checked against the live map, not
      just the start-up strip (`wire::check_frame_rate`, #370).
 5. **Multi-threaded VM in the player (fallback):** for effects that don't lower.
@@ -873,7 +909,7 @@ The agent never handled the Pi key. **Results are in §5**: 100 JSON lines, all
    cores, and noise-class effects (7.84 ms measured) miss the 8.33 ms period; Pi 4/5
    compute lowers those too. **Decided (2026-10-26):** the 120 fps mode caps
    strips at 260 LEDs/channel (theoretical 274 / 267), and the FPGA gets a
-   frame-done pacing output (#370; pin 28 provisional, see §0).
+   frame-done pacing output (#370; pin 28 → Pi GPIO 22, confirmed, see §0).
 3. **Readback vs direct DPI scan-out** (§4): start with readback (recommended)?
    DPI is a later optimisation that costs GPIO pins and a frame-sync redesign.
 4. **P4 priority** (§9): is the PIE SIMD tier (shortlist #1) the P4 track to fund
@@ -882,6 +918,5 @@ The agent never handled the Pi key. **Results are in §5**: 100 JSON lines, all
    can't drop below the 20-channel drain under frequency scaling? This is a small
    `config.txt` change. (`spidev.bufsiz` is already handled by #369.)
 6. **20-channel pin map** (#370): **decided**: ports 8–19 on pins 40 35 41 42 51
-   53 54 55 56 57 68 69. Still to confirm: the frame-done pin (28 proposed, to
-   Pi GPIO 22). And should `PREFILL` go to 64, with the one-LUT "start on CS-end" fix, to tolerate
+   53 54 55 56 57 68 69. The frame-done pin is **decided** (28 → Pi GPIO 22). Still open: should `PREFILL` go to 64, with the one-LUT "start on CS-end" fix, to tolerate
    600 µs Pi-side pauses at frame start?
