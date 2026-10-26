@@ -84,31 +84,46 @@
 // ships esp-idf as precompiled libs whose memory protection leaves the data heap
 // non-executable and code IRAM non-writable — no RWX anywhere — and a custom
 // sdkconfig would need a full IDF-from-source build. Instead we carve out one
-// small static region and make just IT read+write+execute using a spare RISC-V
-// PMP entry. The runtime PMP dump showed entries 3/4 free + UNLOCKED and, being
+// small static region and make just IT read+write+execute using two spare RISC-V
+// PMP entries. The runtime PMP dump showed entries 3/4 free + UNLOCKED and, being
 // lower-index than the SRAM data-region entries (PMP is lowest-index-wins), an
 // RWX entry there overrides the default NX for this range only. W^X stays
-// enforced everywhere else. Power-of-2 size + alignment for NAPOT encoding.
+// enforced everywhere else.
+//
+// TOR, not NAPOT: entry 3 (A=OFF) holds the base and entry 4 (A=TOR, RWX) the
+// top, so the region needs no power-of-two alignment. NAPOT needed the region
+// aligned to its own 2 KB size, which made the whole .dram0.bss output section
+// 2048-aligned and cost ~1.8 KB of padding (432 B in front of .bss + 1,416 B
+// inside it), all taken straight off the boot heap that sizes max_leds. The C6
+// PMP granularity is 4 bytes (IDF's own IRAM/DRAM split is a TOR entry at the
+// 4-byte-aligned _iram_text_end). IDF's esp_cpu_configure_region_protection
+// leaves entries 3 and 4 unset; entry 5 is an A=OFF base marker for its TOR
+// entry 6, so it does not read pmpaddr4 and the spec's lock rule (a locked TOR
+// entry i freezes pmpaddr i-1) doesn't apply. Same 2 KB RWX window, same
+// lowest-index-wins override of the RW SRAM entry 7.
 // This device is heap-critically-tight (mbedtls needs ~28 KB for a TLS session),
 // so the region is SMALL and the Rust side compiles its RV32 segments DIRECTLY
 // into it (no separate scratch buffer, no copy) — the whole JIT static footprint
 // on the firmware is just this 2 KB.
 namespace {
-constexpr uint32_t kJitRegionSize = 2048;  // power of two (NAPOT); 512 RV32 words
-alignas(kJitRegionSize) uint8_t g_jit_region[kJitRegionSize];
+constexpr uint32_t kJitRegionSize = 2048;  // 512 RV32 words; any multiple of 4
+alignas(4) uint8_t g_jit_region[kJitRegionSize];
 bool g_jit_armed = false;
 
 void jit_arm_exec_region() {
   uintptr_t base = (uintptr_t)g_jit_region;  // C6 SRAM data addr == physical
-  // NAPOT: pmpaddr = (base>>2) | ((size>>3) - 1); base is size-aligned.
-  uintptr_t pmpaddr = (base >> 2) | ((kJitRegionSize >> 3) - 1);
-  asm volatile("csrw 0x3b3, %0" ::"r"(pmpaddr));  // pmpaddr3
-  // pmpcfg0 byte 3 = entry 3 = A=NAPOT(3)<<3 | X | W | R = 0x1f (unlocked). The
-  // locked low entries (0-2) ignore the write per the PMP spec, so preserve them.
-  uint32_t cfg0;
-  asm volatile("csrr %0, 0x3a0" : "=r"(cfg0));
-  cfg0 = (cfg0 & 0x00ffffffu) | (0x1fu << 24);
-  asm volatile("csrw 0x3a0, %0" ::"r"(cfg0));
+  asm volatile("csrw 0x3b3, %0" ::"r"(base >> 2));                     // pmpaddr3
+  asm volatile("csrw 0x3b4, %0" ::"r"((base + kJitRegionSize) >> 2));  // pmpaddr4
+  // pmpcfg0 byte 3 = entry 3 = A=OFF (0): just the TOR base. pmpcfg1 byte 0 =
+  // entry 4 = A=TOR(1)<<3 | X | W | R = 0x0f (unlocked). The locked entries
+  // (0-2, 5-7) ignore the write per the PMP spec; preserve them anyway.
+  uint32_t cfg;
+  asm volatile("csrr %0, 0x3a0" : "=r"(cfg));
+  cfg &= 0x00ffffffu;
+  asm volatile("csrw 0x3a0, %0" ::"r"(cfg));
+  asm volatile("csrr %0, 0x3a1" : "=r"(cfg));
+  cfg = (cfg & 0xffffff00u) | 0x0fu;
+  asm volatile("csrw 0x3a1, %0" ::"r"(cfg));
   asm volatile("fence.i" ::: "memory");
   g_jit_armed = true;
 }
