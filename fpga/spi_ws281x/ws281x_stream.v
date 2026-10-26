@@ -26,6 +26,12 @@
 // the end of a latch with no new STREAM in progress (leftovers of a malformed
 // frame). The round-robin demux realigns at the start of every STREAM.
 //
+// frame_done is the host pacing signal: HIGH only while the FSM is idle with
+// every FIFO empty and no STREAM in progress, i.e. after every active port has
+// shifted out its last bit AND the latch has run. A host that starts each STREAM
+// only after its rising edge can never merge two frames (see README, "Frame-done
+// pacing"). It stays HIGH through WRITE_CSR transactions.
+//
 // num_ports (and, later, led_type -> timing preset) are runtime CSR inputs.
 
 // ---------------------------------------------------------------------------
@@ -109,6 +115,11 @@ module ws281x_stream #(
     input  wire                 stream_active,
     output reg  [MAX_PORTS-1:0] ws,
     output reg                  frame_pulse,  // 1-cycle strobe when a frame starts
+    // Level, registered: HIGH = the previous frame has fully shifted out on every
+    // port AND its latch (reset LOW) has elapsed, and no STREAM is in progress.
+    // Falls when the next STREAM starts (stream_active, one byte after CS-low);
+    // rises 2 clk after the latch ends. The host paces frames on its rising edge.
+    output reg                  frame_done,
     // STATS (all 0 when STATS == 0). Cumulative since reset; no read-back yet.
     output reg                  underrun,     // 1-cycle strobe: a FIFO ran dry mid-frame
     output reg  [         15:0] underruns,    // saturating count of those stalls
@@ -268,8 +279,14 @@ module ws281x_stream #(
       ws      <= {MAX_PORTS{1'b0}};
       arrived <= 1'b0;
       sa_q    <= 1'b0;
+      frame_done <= 1'b0;
     end else begin
       sa_q <= stream_active;
+      // Pacing level. In S_IDLE with no STREAM and every FIFO empty, the last
+      // frame (if any) has emitted and latched. If a STREAM began during the latch,
+      // stream_active or buffered bytes (any_ne) keep it LOW: that frame starts at
+      // once instead.
+      frame_done <= (state == S_IDLE) && !stream_active && !any_ne;
       // SPI byte -> round-robin demux pointer; realigned at every STREAM start.
       if (stream_valid) wr_port <= (wr_sel == num_ports - 8'd1) ? 8'd0 : wr_sel + 8'd1;
       else if (stream_active && !sa_q) wr_port <= 8'd0;

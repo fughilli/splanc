@@ -19,7 +19,7 @@ use ledmapper_player::Player;
 use ledmapper_player_rs::render::{render_fpga, tick_fpga, RecordingSink, Sink};
 use ledmapper_player_rs::server::{self, SharedPlayer};
 use ledmapper_player_rs::session;
-use ledmapper_player_rs::wire::{matched_speed_hz, FpgaCodec, GRB};
+use ledmapper_player_rs::wire::{check_frame_rate, leds_per_port, matched_speed_hz, FpgaCodec, GRB};
 use sink::SpidevSink;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -57,6 +57,12 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // How many LEDs to clear when idle: the self-drive length, else the strip
     // implied by the ports (a small nonzero so an idle strip is explicitly dark).
     let dark_n = if start_leds > 0 { start_leds } else { ports };
+    // Frame-rate ladder: the 120 fps mode caps the strip at 260 LEDs/port
+    // (wire::MAX_LEDS_PER_PORT_120FPS). Checked against the strip known at start.
+    if let Err(e) = check_frame_rate(fps, leds_per_port(dark_n, ports)) {
+        eprintln!("player_rs: {e}");
+        std::process::exit(2);
+    }
 
     let epoch = Instant::now();
     let player: SharedPlayer = Arc::new(Mutex::new(Player::new(

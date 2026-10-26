@@ -26,6 +26,7 @@ module spi_ws281x_tb;
   reg               ss = 1, sck = 0, mosi = 0;
   wire [MAX_PORTS-1:0] ws;
   wire                 frame_pulse;  // observed only; connected to avoid PINMISSING
+  wire                 frame_done;   // observed only; connected to avoid PINMISSING
 
   spi_ws281x #(
       .MAX_PORTS(MAX_PORTS),
@@ -42,6 +43,7 @@ module spi_ws281x_tb;
       .mosi(mosi),
       .ws(ws),
       .frame_pulse(frame_pulse),
+      .frame_done(frame_done),
       .underrun(),
       .underruns(),
       .min_fill(),

@@ -26,7 +26,10 @@ apicula / Verilator), brought in via `git_override` in the root `MODULE.bazel`.
 - `ws281x_stream.v` — round-robin demux + per-port elastic BSRAM FIFO + one lockstep
   WS281x timing FSM driving all active ports.
 - `spi_ws281x.v` — top wrapper (slave → ctrl → {csr, stream}).
-- `tangnano9k_top.v` — Tang Nano 9K top: 27 MHz → Gowin `rPLL` → 54 MHz → core.
+- `tangnano9k_top.v` — Tang Nano 9K top: 27 MHz → Gowin `rPLL` → 54 MHz → core
+  (8 ports, pins 70–77).
+- `tangnano9k_20p_top.v` + `tangnano9k_20p.cst` — the 20-port Splanc MAX top
+  (20 pinned ports, 1024 LEDs/port, plus the `frame_done` pacing output).
 
 ## SPI protocol
 
@@ -54,6 +57,7 @@ bazel test  //fpga/spi_ws281x:all                     # Verilator: slave, core, 
 bazel build //fpga/spi_ws281x:spi_ws281x_tangnano9k   # -> .fs bitstream (rPLL + core)
 bazel run   //fpga/spi_ws281x:spi_ws281x_tangnano9k_flash          # SRAM load
 bazel run   //fpga/spi_ws281x:spi_ws281x_tangnano9k_flash -- -f    # persistent SPI flash
+bazel build //fpga/spi_ws281x:spi_ws281x_tangnano9k_20p  # 20-port MAX top (+ frame_done)
 ```
 
 Waveforms (per rules_fpga): each `*_sim` also exposes `.trace` / `.surfer` /
@@ -96,7 +100,8 @@ POP/LOAD), each port's FIFO peaks at about `frame_bytes × (1 − 1/r) + PREFILL
   `spi_ws281x_120fps_sim` phase D). Frame period ≥ `3L × 9.963 µs` (+ ~40 µs
   prefill latency) + latch. At 120 fps that is ≤ 274 LEDs/port at an 80 µs latch
   and ≤ 267 at 300 µs. Double-buffered FIFO banks would remove the constraint:
-  two 810 B banks fit one 2048 B BSRAM at 270 LEDs.
+  two 810 B banks fit one 2048 B BSRAM at 270 LEDs. The `frame_done` output
+  (below) tells the host exactly when it may start.
 - **`STATS = 1`** (on in the 20-port top) adds outputs, cumulative since reset:
 
   - `underrun`: a strobe whenever a FIFO runs dry mid-frame;
@@ -108,9 +113,65 @@ POP/LOAD), each port's FIFO peaks at about `frame_bytes × (1 − 1/r) + PREFILL
 
   The SPI slave has no MISO, so there's no read-back yet. The 20-port top shows a
   sticky underrun flag stretched to 100 ms on `led[1]`, which any analyzer rate
-  (or a human) can see, and folds the counters into the kept XOR. A CSR
-  read-back over MISO (needs a pin) is the production follow-up. With it, the
-  player could report underruns.
+  (or a human) can see. Its counters have no path to a pin, so synthesis drops
+  them there. A CSR read-back over MISO (needs a pin) is the production
+  follow-up. With it, the player could report underruns.
+
+## 120 fps strip cap: 260 LEDs per port
+
+The 120 fps mode is capped at **260 LEDs per port** (owner decision), below the
+theoretical 274 (80 µs latch) / 267 (300 µs latch). The wire sets the budget:
+one WS bit is 67 core clocks = 1.2407 µs at 54 MHz, a byte 8 bits + 2 clocks of
+POP/LOAD = 9.963 µs, an LED 29.89 µs.
+
+| LEDs/port | emission | + prefill ~40 µs + latch 80 µs | + latch 300 µs | slack in 8.333 ms (80 / 300 µs) |
+| --------: | -------: | -----------------------------: | -------------: | ------------------------------: |
+|       274 |  8.19 ms |                        8.31 ms |     (> period) |                      ~20 µs / — |
+|       267 |  7.98 ms |                        8.10 ms |        8.32 ms |                ~230 µs / ~15 µs |
+|   **260** |  7.77 ms |                    **7.89 ms** |    **8.11 ms** |           **~440 µs / ~220 µs** |
+
+At the cap the host keeps ≥ 220 µs per period at either latch for the
+frame-done wake-up, the per-frame CSR write and scheduling jitter. At the limit
+it would have ~15 µs, which Linux can't guarantee. The player enforces the cap
+(`pi/player_rs` `wire::check_frame_rate`: above 60 fps, at most
+`MAX_LEDS_PER_PORT_120FPS` = 260 LEDs per port; nothing above 120 fps).
+
+## Frame-done pacing (`frame_done`)
+
+`spi_ws281x` / `ws281x_stream` output `frame_done`, a registered level:
+
+- **HIGH**: every active port has shifted out its frame **and** the latch
+  (`RESET_NS` or `RESET_ALT_NS`, per `led_type`) has elapsed, and no STREAM is in
+  progress. It rises 2 core clocks after the latch ends and is HIGH after reset.
+- **LOW** from the start of the next STREAM (one byte after CS-low, when the
+  opcode decodes). WRITE_CSR transactions leave it HIGH, so the per-frame
+  `num_ports` write doesn't disturb it.
+- If a STREAM started during the latch (latch-safe FIFO), it stays LOW: that
+  frame starts at once.
+
+On the 20-port top it drives pin **28** (provisional, see the pin table), wired
+to a Pi GPIO input (proposed: **GPIO 22**, header pin 15; free of SPI0 and the
+UART/I²C pins). Pi-side use, for the player's output thread:
+
+1. Request the line once with rising-edge detection (`/dev/gpiochip0`, GPIO v2
+   line request; libgpiod, or the raw ioctls in a static-musl binary).
+2. Per frame: if the line is already HIGH, go; else wait for the rising-edge
+   event, with a timeout of one period + margin.
+3. Write the CSR + STREAM (one transfer if possible). The line falls as the
+   STREAM opcode lands.
+4. On timeout (unwired pin, old bitstream), fall back to absolute-deadline
+   pacing. A broken wire then degrades to today's behaviour instead of stalling.
+
+A STREAM started on frame-done can never merge with the previous frame, so the
+host doesn't have to model wire time. Rendering stays ahead (triple-buffered)
+and only the SPI handoff waits on the edge.
+
+Verilator (`spi_ws281x_120fps_sim`): `frame_done` is never HIGH while any port
+drives HIGH, and every rising edge comes ≥ one latch (and < latch + one bit +
+8 clocks) after the last WS falling edge, in every phase. Phase E paces 20 ×
+260 LEDs on the edge plus a modelled 100 µs host wake-up: 8/8 frames clean,
+one edge per frame, periods **7.99 ms** (80 µs latch) and **8.21 ms** (300 µs),
+both within 8.333 ms.
 
 ## Measured Pi 3 SPI continuity (rig-1, `pi-ledmapper-1`, #369 image)
 
@@ -132,35 +193,79 @@ pauses counted when CLK is held ≥ 1 µs:
 - Rig wiring: CS is **D1** and MOSI **D5** (the station doc had them swapped;
   fixed).
 
-## Internal-only 20-port variant (`tangnano9k_20p_top.v`, NOT for flashing)
+## 20-port MAX top (`tangnano9k_20p_top.v`, `tangnano9k_20p.cst`)
 
-For sign-off of a 20-output MAX before the WS pin map is chosen.
-`//fpga/spi_ws281x:spi_ws281x_tangnano9k_20p`: 20 ports × 1024 LEDs, 2048 B FIFO per
-port, 54 MHz core. It has **no WS output pins**: all 20 outputs are XOR-folded
-into a registered bit on onboard `led[0]` (with the STATS counters; `led[1]` =
-underrun flag), so every port's logic reaches a real
-pin and survives synthesis/P&R (`tangnano9k_20p.cst` = clock + SPI + LEDs only).
-**Do not flash it**: it has no pin map. The in-tree 8-pin `tangnano9k_top`
-target is unchanged.
+`//fpga/spi_ws281x:spi_ws281x_tangnano9k_20p` (flash:
+`:spi_ws281x_tangnano9k_20p_flash`): 20 ports × 1024 LEDs, 2048 B FIFO per port,
+54 MHz core, STATS underrun flag on `led[1]`, `led[0]` lit while streaming,
+`frame_done` on a pin. Board: **Tang Nano 9K** (GW1NR-LV9QN88PC6/I5, the device
+in `@rules_fpga//fpga/platforms:tangnano9k`). The 8-port `tangnano9k_top` is
+unchanged.
 
-Place-and-route (yosys 0.55 + nextpnr-himbaechel 0.9, GW1NR-9C, `--freq` = core
-clock; `scaling_report.sh`):
+|         port |    pin | pad (bank)        | notes                                                        |
+| -----------: | -----: | ----------------- | ------------------------------------------------------------ |
+|          0–7 |  70–77 | IOT41B…IOT37A (1) | as the 8-port top; 70–75 also go to the HDMI connector       |
+|            8 |     40 | IOB33B (2)        |                                                              |
+|            9 |     35 | IOB29A (2)        | GCLKT_4 clock-capable input, plain I/O here                  |
+|           10 |     41 | IOB41A (2)        |                                                              |
+|           11 |     42 | IOB41B (2)        |                                                              |
+|           12 |     51 | IOR17B (1)        | GCLKC_3, the pair of `clk27` (52); single-ended, fine        |
+|           13 |     53 | IOR15B (1)        | dual-purpose DOUT / WE_N                                     |
+|           14 |     54 | IOR15A (1)        | dual-purpose DIN / CLKHOLD_N                                 |
+|           15 |     55 | IOR14B (1)        | dual-purpose SSPI_CS_N / D0                                  |
+|           16 |     56 | IOR14A (1)        | dual-purpose SO / D1                                         |
+|           17 |     57 | IOR13A (1)        | dual-purpose FASTRD_N / D3                                   |
+|           18 |     68 | IOT42B (1)        | also HDMI (TMDS clock pair)                                  |
+|           19 |     69 | IOT42A (1)        | also HDMI (TMDS clock pair)                                  |
+| `frame_done` | **28** | IOB11B (2)        | **provisional**: next to MOSI (27), no dual-purpose function |
 
-|           ports | LEDs/port |       FIFO B/port | core MHz |           LUT4 |            DFF |      ALU |     BSRAM |                             fmax MHz |
-| --------------: | --------: | ----------------: | -------: | -------------: | -------------: | -------: | --------: | -----------------------------------: |
-| 8 (in-tree top) |       553 |              1659 |       54 |      1269/8640 |       647/6480 |      686 |      8/26 |                                 74.7 |
-|               8 |      1024 |              2048 |       54 |            972 |            647 |      696 |      8/26 |                                 88.7 |
-|              16 |      1024 |              2048 |       54 |           1776 |           1159 |     1296 |     16/26 |                                 78.2 |
-|          **20** |  **1024** |          **2048** |   **54** | **2145 (25%)** | **1415 (22%)** | **1614** | **20/26** |                             **83.1** |
-|              20 |       553 |              1659 |       54 |           2522 |           1415 |     1614 |     20/26 |                                 76.7 |
-|              20 |      1024 |              2048 |       81 |           2274 |           1415 |     1574 |     20/26 |                  70.7 — **fails 81** |
-|              20 |      1024 | 3072 (full frame) |       54 |              — |              — |        — |  needs 40 | **does not place** (BSRAM exhausted) |
+Checks (pads and banks from the apicula GW1NR-9C QN88P chipdb):
 
-Per port: +64 DFF, ~+95 LUT4, +1 BSRAM — linear 8 → 16 → 20, so no port was
-optimised away. fmax varies a few MHz run to run with placement; every 54 MHz
-configuration closes with ≥ 20 MHz margin, but the core does **not** close at 81
-MHz, so a faster SPI front end would need the slave on its own SCK clock domain,
-not a faster core clock.
+- **No conflicts**: none of the 13 pins is the clock (52), SPI (25–27), an
+  onboard LED (10, 11, 13–16), a button (3, 4) or the config flash (MSPI 59–62).
+- **Bank voltage**: every WS pin and `frame_done` is in bank 1 or 2, the same
+  banks as the 8-port WS outputs (70–77, bank 1) and the SPI inputs (25–27, bank
+  2), which already run LVCMOS33 on the rig. Bank 3 (onboard LEDs, buttons,
+  79–86; 1.8 V per Sipeed's board docs) is not used for any port. The owner's
+  order needed no change.
+- **Dual-purpose pins 53–57** belong to the SSPI / CPU / MSPI configuration
+  interfaces. The bitstream sets them to user I/O: nextpnr `--vopt sspi_as_gpio`
+  and gowin_pack `--sspi_as_gpio --cpu_as_gpio --mspi_as_gpio` (rules_fpga gains
+  `nextpnr_opts` / `packer_opts` through `//patches:rules_fpga-extra-tool-opts.patch`).
+  The board configures from its flash over MSPI and the design leaves 59–62
+  unconstrained. The flags do change the packed configuration fuses. Whether
+  each pin toggles is **untested on hardware**: bring-up should check ports
+  13–17 first.
+- **Board sharing**: 68–75 also run to the HDMI connector, and per the Sipeed
+  pinout most of these pins are also on the 40-pin RGB-LCD FPC. Leave both
+  unconnected on a MAX unit.
+
+Place-and-route of the pinned design (yosys 0.55 + nextpnr-himbaechel 0.9,
+GW1NR-9C, `--freq` = core clock; `scaling_report.sh`, which uses the 20-port cst
+minus the unused ports' lines for smaller counts; 2026-10-26):
+
+|                        ports | LEDs/port |       FIFO B/port | core MHz |                LUT4 |                 DFF |      ALU |     BSRAM |        IOB |                                          fmax MHz |
+| ---------------------------: | --------: | ----------------: | -------: | ------------------: | ------------------: | -------: | --------: | ---------: | ------------------------------------------------: |
+| 8 (in-tree `tangnano9k_top`) |       553 |              1659 |       54 |                1178 |                 658 |      698 |      8/26 |         18 |                                              85.6 |
+|                            8 |      1024 |              2048 |       54 |                1185 |                 681 |      712 |      8/26 |         19 |                                              83.4 |
+|                           16 |      1024 |              2048 |       54 |                1923 |                1193 |     1322 |     16/26 |         27 |                                              73.3 |
+|                 **20 (MAX)** |  **1024** |          **2048** |   **54** | **2354/8640 (27%)** | **1449/6480 (22%)** | **1634** | **20/26** | **31/274** |                                          **75.4** |
+|                           20 |       553 |              1659 |       54 |                2681 |                1449 |     1640 |     20/26 |         31 |                                              78.4 |
+|                           20 |      1024 |              2048 |       81 |                2175 |                1450 |     1634 |     20/26 |         31 |                                72.8, **fails 81** |
+|                           20 |      1024 | 3072 (full frame) |       54 |                   — |                   — |        — |  needs 40 |          — | **does not place** (BSRAM exhausted; earlier run) |
+
+The MAX row is the Bazel bitstream. Its timing: worst setup slack 5.25 ns at the
+18.52 ns period. The critical path is 13.27 ns (7.54 logic, 5.72 routing), from the
+`num_ports` CSR through a FIFO count compare to the FSM / underrun register. The
+SPI inputs go through 2-FF synchronizers (asynchronous, not timed) and the WS
+outputs are registered. Per port: +64 DFF, ~+95–110 LUT4, +1 BSRAM, so no port
+is optimised away. fmax varies a few MHz run to run with placement. Every 54 MHz
+configuration closes with ≥ 19 MHz margin, but the core does **not** close at
+81 MHz, so a faster SPI front end would need the slave on its own SCK clock
+domain, not a faster core clock. (The earlier internal-only variant XOR-folded
+the outputs and the STATS counters onto one LED pin: 3,086 LUT4 / 1,671 DFF /
+60.8 MHz with STATS. With real pins and no counter read-back, synthesis drops
+the counters.)
 
 `spi_ws281x_20p_sim` (Verilator, SCK asynchronous to the core clock): 20 ports ×
 1024 LEDs, every byte on every port bit-exact, every high pulse exactly T0H/T1H,
@@ -184,7 +289,3 @@ to 20, ports ≥ `num_ports` (13) never go high, no overflow. Sweeps (54 MHz cor
 So for 20 ports the host must clock SPI between ~16.7 and ~27 MHz (≥ 16.06 Mbit/s
 drain + margin; the 2-FF SPI slave at a 54 MHz core tops out between 27 and 30
 MHz) and must not pause within `PREFILL × 10 µs` of a frame's start.
-
-To pin it out: add `ws[19:0]` to the top, 20 `IO_LOC`s to a `.cst`, and drop the
-XOR fold. Check Tang Nano 9K header I/O availability (the in-tree map uses pins
-70–77, SPI 25–27, LEDs 10–16) before choosing.

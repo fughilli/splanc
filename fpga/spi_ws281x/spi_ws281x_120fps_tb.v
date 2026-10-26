@@ -11,11 +11,20 @@
 //      120 fps limit at a 300 us latch).
 //   C: a 1-LED frame (3 bytes/port < PREFILL = 4): must still be emitted
 //      ("start when CS ends with data").
+//   E: frame-done pacing at the 260-LED cap: each STREAM starts only after the
+//      core's frame_done rises, plus a modelled 100 us host wake-up latency
+//      (Linux GPIO edge -> output thread). 4 frames at led_type 0 (80 us latch)
+//      and 4 at led_type 1 (300 us). Every frame must be clean, frame_done must
+//      rise exactly once per frame, and the achieved period must stay within the
+//      120 fps period (8.333 ms) at both latches.
 //   D: frames started 1.3 ms too early (7.0 ms cadence at 270 LEDs): the next
 //      frame's bytes join a frame that is still emitting, so the latch between
 //      them is lost. That is the failure mode the host must avoid by pacing CS to
 //      wire time + latch. The test asserts the merge happens.
 // Also checks STATS: no underruns, and max_byte_gap is about one byte at SCK.
+// frame_done invariants, every cycle of every phase: never HIGH while any port
+// drives HIGH, and every rising edge comes >= one latch after the last WS falling
+// edge on any port (and within latch + one bit period + a few clocks of it).
 `timescale 1ns / 1ps
 
 module spi_ws281x_120fps_tb;
@@ -31,14 +40,17 @@ module spi_ws281x_120fps_tb;
   localparam integer T1H_CLK = T1H_NS * CLK_MHZ / 1000;
   localparam integer MID = (T0H_CLK + T1H_CLK) / 2;
   localparam integer LATCH_CLK = 50 * CLK_MHZ;
-  localparam integer MAXF = 16;
+  localparam integer MAXF = 24;
+  localparam integer DFIRST = 16;  // phase D frames index from here (merges expected)
+  localparam real WAKE_NS = 100000.0;  // modelled host wake-up after frame_done rises
+  localparam integer CAP_LEDS = 260;   // the 120 fps strip-length cap
   localparam [7:0] OP_WRITE_CSR = 8'h01, OP_STREAM = 8'h02;
 
   reg clk = 0;
   always #(CLK_HALF) clk = ~clk;
   reg rst = 1, ss = 1, sck = 0, mosi = 0;
   wire [MAX_PORTS-1:0] ws;
-  wire frame_pulse, st_underrun;
+  wire frame_pulse, frame_done, st_underrun;
   wire [15:0] st_underruns, st_min_fill, st_max_byte_gap;
   wire [8*MAX_PORTS-1:0] st_port_underruns;
 
@@ -62,6 +74,7 @@ module spi_ws281x_120fps_tb;
       .mosi(mosi),
       .ws(ws),
       .frame_pulse(frame_pulse),
+      .frame_done(frame_done),
       .underrun(st_underrun),
       .underruns(st_underruns),
       .min_fill(st_min_fill),
@@ -91,7 +104,7 @@ module spi_ws281x_120fps_tb;
     begin
       if (fidx[p] < nexp) begin
         if (bidx[p] != exp_k[fidx[p]]) begin
-          if (fidx[p] >= 10) merged = merged + 1;  // phase D frames
+          if (fidx[p] >= DFIRST) merged = merged + 1;  // phase D frames
           else begin
             count_err = count_err + 1;
             if (count_err < 6)
@@ -117,7 +130,7 @@ module spi_ws281x_120fps_tb;
         acc[di] <= bv;
         last_fall[di] = cyc;
         if (bitc[di] == 7) begin
-          if (fidx[di] < nexp && fidx[di] < 10 && bidx[di] < exp_k[fidx[di]] &&
+          if (fidx[di] < nexp && fidx[di] < DFIRST && bidx[di] < exp_k[fidx[di]] &&
               bv !== pat(fidx[di], di, bidx[di])) begin
             data_err = data_err + 1;
             if (data_err < 6)
@@ -131,6 +144,30 @@ module spi_ws281x_120fps_tb;
       if (!ws[di] && in_frame[di] && (cyc - last_fall[di]) == LATCH_CLK) close_frame(di);
       was_high[di] <= ws[di];
     end
+  end
+
+  // ---- frame_done monitor ----
+  integer reset_clk = 80000 * CLK_MHZ / 1000;  // current latch, tracks led_type
+  integer last_any_fall = -1000000, fd_rises = 0, fd_err = 0, mi, since;
+  reg fd_q = 1'b0;
+  always @(posedge clk) begin
+    for (mi = 0; mi < MAX_PORTS; mi = mi + 1)
+      if (!ws[mi] && was_high[mi]) last_any_fall = cyc;
+    if (!rst && frame_done && (|ws)) begin
+      fd_err = fd_err + 1;
+      if (fd_err < 6) $display("frame_done HIGH while a port drives HIGH at cyc %0d", cyc);
+    end
+    if (!rst && frame_done && !fd_q) begin
+      fd_rises = fd_rises + 1;
+      since = cyc - last_any_fall;
+      if (since < reset_clk || (last_any_fall > 0 && since < 1000000 &&
+                                since > reset_clk + PERIOD_NS * CLK_MHZ / 1000 + 8)) begin
+        fd_err = fd_err + 1;
+        if (fd_err < 6)
+          $display("frame_done rose %0d clk after the last WS fall (latch %0d clk)", since, reset_clk);
+      end
+    end
+    fd_q = frame_done;
   end
 
   task automatic spi_byte(input [7:0] b);
@@ -174,8 +211,8 @@ module spi_ws281x_120fps_tb;
     end
   endtask
 
-  integer p, f, errors = 0;
-  real t0;
+  integer p, f, errors = 0, rises0;
+  real t0, tprev, per, per_max0, per_max1;
   initial begin
     for (p = 0; p < MAX_PORTS; p = p + 1) begin
       fidx[p] = 0; bidx[p] = 0; bitc[p] = 0; acc[p] = 0;
@@ -192,23 +229,64 @@ module spi_ws281x_120fps_tb;
     // B: led_type 1 (300 us latch), 266 LEDs, 3 frames at 120 fps
     #(FRAME_NS);
     csr(8'h01, 8'd1);
+    reset_clk = 300000 * CLK_MHZ / 1000;
     t0 = $realtime + 1000.0;
     for (f = 4; f < 7; f = f + 1) frame(f, 266 * 3, t0 + (f - 4) * FRAME_NS);
     // C: 1-LED frame (3 bytes/port < PREFILL 4), then idle
     #(FRAME_NS);
     csr(8'h01, 8'd0);
+    reset_clk = 80000 * CLK_MHZ / 1000;
     frame(7, 3, $realtime + 1000.0);
     #(2_000_000.0);
-    // (pad the expected list so phase-D frames index from 10)
-    exp_k[8] = 0;
-    exp_k[9] = 0;
-    nexp = 10;
-    for (p = 0; p < MAX_PORTS; p = p + 1) fidx[p] = 10;
-    $display("A-C: frames_ok(port0)=%0d data_err=%0d count_err=%0d underruns=%0d min_fill=%0d max_byte_gap=%0d clk (one byte at %0.0f MHz = %0.1f clk)",
+    // E: frame-done pacing at the cap, 4 frames per latch type (frames 8..15).
+    rises0 = fd_rises;
+    per_max0 = 0.0;
+    per_max1 = 0.0;
+    for (f = 8; f < 16; f = f + 1) begin
+      if (f == 12) begin
+        wait (frame_done == 1'b1);
+        csr(8'h01, 8'd1);  // WRITE_CSR keeps frame_done HIGH
+        reset_clk = 300000 * CLK_MHZ / 1000;
+      end
+      wait (frame_done == 1'b1);
+      #(WAKE_NS);
+      if (frame_done !== 1'b1) begin
+        $error("frame_done fell while idle");
+        errors = errors + 1;
+      end
+      if (f != 8 && f != 12) begin
+        per = $realtime - tprev;
+        if (f < 12 && per > per_max0) per_max0 = per;
+        if (f > 12 && per > per_max1) per_max1 = per;
+      end
+      tprev = $realtime;
+      frame(f, CAP_LEDS * 3, $realtime);
+    end
+    wait (frame_done == 1'b1);
+    #(1000.0);  // let the monitor count this edge
+    $display("E (frame-done paced, %0d LEDs, +%0.0f us wake): period %0.3f ms @80us latch, %0.3f ms @300us latch (120 fps = %0.3f ms); frame_done rises=%0d",
+             CAP_LEDS, WAKE_NS / 1000.0, per_max0 / 1.0e6, per_max1 / 1.0e6, FRAME_NS / 1.0e6,
+             fd_rises - rises0);
+    if (per_max0 > FRAME_NS || per_max1 > FRAME_NS || per_max0 == 0.0 || per_max1 == 0.0) begin
+      $error("frame-done paced period exceeds the 120 fps period at the %0d-LED cap", CAP_LEDS);
+      errors = errors + 1;
+    end
+    if (fd_rises - rises0 != 8) begin
+      $error("expected 8 frame_done rising edges in phase E, got %0d", fd_rises - rises0);
+      errors = errors + 1;
+    end
+    reset_clk = 80000 * CLK_MHZ / 1000;
+    csr(8'h01, 8'd0);
+    #(1_000_000.0);
+    // (pad the expected list so phase-D frames index from DFIRST)
+    for (f = 16; f < DFIRST; f = f + 1) exp_k[f] = 0;
+    nexp = DFIRST;
+    for (p = 0; p < MAX_PORTS; p = p + 1) fidx[p] = DFIRST;
+    $display("A-C,E: frames_ok(port0)=%0d data_err=%0d count_err=%0d underruns=%0d min_fill=%0d max_byte_gap=%0d clk (one byte at %0.0f MHz = %0.1f clk)",
              frames_ok, data_err, count_err, st_underruns, st_min_fill, st_max_byte_gap, SCK_MHZ,
              8.0 * CLK_MHZ / SCK_MHZ);
-    if (frames_ok != 8) begin
-      $error("expected 8 clean frames on port 0 (4 A + 3 B + 1 C), got %0d", frames_ok);
+    if (frames_ok != 16) begin
+      $error("expected 16 clean frames on port 0 (4 A + 3 B + 1 C + 8 E), got %0d", frames_ok);
       errors = errors + 1;
     end
     errors = errors + data_err + count_err;
@@ -222,13 +300,15 @@ module spi_ws281x_120fps_tb;
     end
     // D: too early (7.0 ms cadence at 270 LEDs): expect merged frames
     t0 = $realtime + 1000.0;
-    for (f = 10; f < 13; f = f + 1) frame(f, 270 * 3, t0 + (f - 10) * 7.0e6);
+    for (f = DFIRST; f < DFIRST + 3; f = f + 1) frame(f, 270 * 3, t0 + (f - DFIRST) * 7.0e6);
     #(12_000_000.0);
     $display("D (7.0 ms cadence, too early): merged-frame detections=%0d (expected > 0)", merged);
     if (merged == 0) begin
       $error("expected the too-early cadence to merge frames");
       errors = errors + 1;
     end
+    $display("frame_done: %0d rising edges total, %0d invariant violations", fd_rises, fd_err);
+    errors = errors + fd_err;
     if (errors == 0) $display("spi_ws281x_120fps_tb: PASS");
     else $fatal(1, "spi_ws281x_120fps_tb: %0d errors", errors);
     $finish;
