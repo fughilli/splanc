@@ -23,7 +23,7 @@ const BASE: WifiPolicy = {
   mode: "auto",
   scanCapS: 60,
   intervalS: 300,
-  decayAfterH: 24,
+  decayAfterH: 0,
   sparseIntervalS: 900,
   state: "joined",
   nextScanS: 0,

@@ -168,8 +168,9 @@ effect:
 
 - `get_wifi_policy` reports the mode, whether the player is joined or searching
   (next scan, how long the network has been unseen) and `ota_pending`.
-- `set_wifi_policy {mode}`: `auto` (default; backoff rescans, slowing after
-  `decay_after_h` hours unseen), `fixed` (every `interval_s`), `manual` (only on
+- `set_wifi_policy {mode}`: `auto` (default; backoff rescans up to `scan_cap_s`,
+  indefinitely; slowing to `sparse_interval_s` after `decay_after_h` hours unseen
+  is opt-in, `0` = off by default), `fixed` (every `interval_s`), `manual` (only on
   `rejoin_now`), `offline` (no AP at the venue: Wi-Fi radio off, also after
   reboots; the show keeps playing). Unset fields keep their value.
 - Before `manual` / `offline`: make sure `ota_pending` is false — confirm any

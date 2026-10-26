@@ -5,6 +5,13 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 
 ## October 2026
 
+### Wi-Fi rejoin: the long-absence slow-down is opt-in
+
+- `auto` now keeps its once-a-minute retries indefinitely; the 24 h → 15 min slow-down
+  is off unless you set **Slow down after unseen for** (`decay_after_h`), and boards
+  that never chose it turn it off on update
+  ([details](design/wifi-rejoin-policy.md#decay-is-opt-in)).
+
 ### Place several fixtures in one room from one phone capture
 
 - **Maps → ⋯ → Localize room…** films several already-mapped fixtures at once and
@@ -31,8 +38,8 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
   shares the CPU with frames, and frames are paced on wall time. While an app
   session is open, the network shares the CPU with rendering as before, so
   30 fps video streams keep a ~20 ms latency.
-- **Choose how a board rejoins.** `auto` (the default: quick retries that slow
-  to one sweep every 15 min after a day without the network), `fixed`,
+- **Choose how a board rejoins.** `auto` (the default: quick retries backing
+  off to once a minute; slowing further after a long absence is opt-in), `fixed`,
   `manual`, or `offline` for a unit deployed where it will never see its AP
   again: the radio stays off, the show plays, BLE and the console stay up for
   reconfiguration, and the credentials are kept. Set it from the device sheet,

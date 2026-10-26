@@ -110,19 +110,36 @@ WIFI SCAN | DHCP | GIVEUP   (link diagnostics)
 
 | Mode | Behaviour when the network is missing |
 |---|---|
-| `auto` (default) | Background sweeps 5 s, 10, 20, 40 … up to `scan_cap_s` (default 60). After `decay_after_h` hours (default 24; 0 = never) without ever seeing the network, at most one sweep per `sparse_interval_s` (default 900). |
+| `auto` (default) | Background sweeps 5 s, 10, 20, 40 … up to `scan_cap_s` (default 60), then every `scan_cap_s` for as long as the network is missing. Opt-in decay: after `decay_after_h` hours (default 0 = off) without ever seeing the network, at most one sweep per `sparse_interval_s` (default 900). |
 | `fixed` | One sweep every `interval_s` (default 300). |
 | `manual` | Never scans or joins on its own. A rejoin command or a new provision opens a 2 min join window (the auto backoff inside it). A dropped link stays down until told. |
 | `offline` | The radio is off: never started at boot, no scans, no RF. Switching to offline at runtime goes silent at once (goodbye to the AP, no TX, MAC released to sleep); the radio is fully off from the next boot. The show plays; BLE and the console stay up. Credentials are kept. |
 
-### Decay default
+### Decay is opt-in
 
-The decay is on by default (24 h → 15 min). A unit whose AP is gone for good stops
-sweeping every minute (each sweep is ~1.6 s of channel hopping), yet a unit whose AP was
-only down for a weekend still rejoins on its own within 15 min of it coming back. Decaying
-to `offline` instead would strand such units, so offline is only ever an explicit choice.
-The unseen time is persisted hourly (`wifi_unseen`), so a nightly power cycle doesn't
-reset the clock.
+Auto mode keeps its backoff cap indefinitely unless the user enables the decay
+(`decay_after_h` > 0, e.g. 24 h → 15 min). The decay saves airtime and power when a
+network is gone for good (each sweep is ~1.6 s of channel hopping), but it also makes a
+returning network take up to `sparse_interval_s` to be noticed, and a board whose AP was
+only off for a long weekend should rejoin within a minute. #371 shipped it on by default
+(24 h); it became opt-in afterwards, by user decision. Decaying to `offline` instead would
+strand units, so offline is only ever an explicit choice. When enabled, the unseen time
+is persisted hourly (`wifi_unseen`), so a nightly power cycle doesn't reset the clock.
+
+Migration. The NVS record is written whole on any change, so a v1 record (firmware with
+the 24 h default) carries `decay_after_h` = 24 whether or not the user ever chose it.
+Version 2 of the record has the same layout; on load:
+
+| Stored record | `decay_after_h` after the upgrade |
+|---|---|
+| none (never changed the policy) | 0 (the new default) |
+| v1, decay 24 | 0: read as the old default, never chosen |
+| v1, any other value (0, 12, 48 …) | kept: an explicit choice |
+| v2 (written by this firmware) | as stored, 24 included |
+
+A user who had explicitly typed 24 h on old firmware loses it and has to set it again;
+that case can't be told apart from the default. Downgrading to old firmware rejects a v2
+record and falls back to the old defaults (decay on).
 
 ### Forward-deployed units
 

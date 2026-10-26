@@ -92,7 +92,7 @@ export class FakePlayer {
     mode: "WIFI_MODE_AUTO",
     scanCapS: 60,
     intervalS: 300,
-    decayAfterH: 24,
+    decayAfterH: 0,
     sparseIntervalS: 900,
     state: "WIFI_LINK_JOINED",
     ssid: "Venue1",

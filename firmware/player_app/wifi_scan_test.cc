@@ -182,8 +182,11 @@ static void test_probe_request_round_trips_through_the_parser_shape() {
 static void test_policy_delays() {
   using lm_wifi_scan::Policy;
   using lm_wifi_scan::policy_delay_ms;
-  Policy p;  // auto, cap 60, decay 24 h -> 900 s
+  Policy p;  // auto, cap 60, decay off (opt-in)
   bool dec = true;
+  // The default never decays: a year unseen still scans at the cap.
+  assert(policy_delay_ms(p, 9, 365u * 24 * 3600, &dec) == 60000 && !dec);
+  p.decay_h = 24;  // opted in: 24 h -> 900 s
   assert(policy_delay_ms(p, 0, 0, &dec) == 5000 && !dec);
   assert(policy_delay_ms(p, 3, 0) == 40000);
   assert(policy_delay_ms(p, 4, 0) == 60000 && policy_delay_ms(p, 400, 0) == 60000);

@@ -692,6 +692,12 @@ export const GUIDE_TOPICS: GuideTopic[] = [
           "**Rename** — the display name is reflected to the device itself.",
           "A row's ⋮ menu shows the recorded LAN address, MAC, and Bluetooth name, and " +
             "can **forget** the device.",
+          "**Wi-Fi rejoin** (device settings) picks how a board finds its network again: " +
+            "**Auto** (the default) retries quickly, then once a minute for as long as it " +
+            "takes; **Fixed**, **Manual**, or **Offline** for a unit that will never see its " +
+            "network again. To save airtime when an Auto board's network may be gone for a " +
+            "long time, set **Slow down after unseen for** (hours) to opt in to one scan per " +
+            "**Slowed scan interval** (15 min by default). It is off (0) unless you set it.",
         ],
       },
     ],
