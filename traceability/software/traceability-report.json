@@ -18,7 +18,7 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 2230,
+    "test_cases": 2245,
     "gaps": 35
   },
   "levels": [
@@ -3042,7 +3042,37 @@
           "target": "//pi/hitl/tests:hitl_test"
         },
         {
+          "name": "pi.hitl.tests.test_fx_bench::test_committed_goldens_carry_the_floor[device-bench-esp32c6-jit.json]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_committed_goldens_carry_the_floor[device-bench-esp32c6.json]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
           "name": "pi.hitl.tests.test_fx_bench::test_cpu_hz_default",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_floor_defaults_when_golden_has_none",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_floor_is_8000_cycles_50us_at_160mhz",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_frame_gate_rule_prefers_margin_then_floor",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/hitl/tests:hitl_test"
@@ -3091,6 +3121,60 @@
         },
         {
           "name": "pi.hitl.tests.test_fx_bench::test_intended_led_count_parses_header",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_pr382_sweep16_layout_shift_passes_by_floor[40623-interp]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_pr382_sweep16_layout_shift_passes_by_floor[40623-jit]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_pr382_sweep16_layout_shift_passes_by_floor[40800-interp]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_pr382_sweep16_layout_shift_passes_by_floor[40800-jit]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_pr382_sweep16_layout_shift_passes_by_floor[41041-interp]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_pr382_sweep16_layout_shift_passes_by_floor[41041-jit]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_pr382_sweep16_would_fail_without_floor",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_real_regression_on_big_effect_still_fails",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_report_lines_name_the_rule_and_stay_ingest_parseable",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/hitl/tests:hitl_test"
@@ -3145,6 +3229,12 @@
         },
         {
           "name": "pi.hitl.tests.test_fx_bench::test_stable_cycles_prefers_frame_window_min",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_sweep16_beyond_floor_still_fails",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/hitl/tests:hitl_test"
@@ -3273,7 +3363,7 @@
           ],
           "relation": "verifies",
           "path": "pi/hitl/tests/test_fx_bench.py",
-          "line": 23
+          "line": 26
         },
         {
           "ids": [
@@ -4476,7 +4566,37 @@
           "target": "//pi/hitl/tests:hitl_test"
         },
         {
+          "name": "pi.hitl.tests.test_fx_bench::test_committed_goldens_carry_the_floor[device-bench-esp32c6-jit.json]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_committed_goldens_carry_the_floor[device-bench-esp32c6.json]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
           "name": "pi.hitl.tests.test_fx_bench::test_cpu_hz_default",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_floor_defaults_when_golden_has_none",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_floor_is_8000_cycles_50us_at_160mhz",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_frame_gate_rule_prefers_margin_then_floor",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/hitl/tests:hitl_test"
@@ -4525,6 +4645,60 @@
         },
         {
           "name": "pi.hitl.tests.test_fx_bench::test_intended_led_count_parses_header",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_pr382_sweep16_layout_shift_passes_by_floor[40623-interp]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_pr382_sweep16_layout_shift_passes_by_floor[40623-jit]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_pr382_sweep16_layout_shift_passes_by_floor[40800-interp]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_pr382_sweep16_layout_shift_passes_by_floor[40800-jit]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_pr382_sweep16_layout_shift_passes_by_floor[41041-interp]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_pr382_sweep16_layout_shift_passes_by_floor[41041-jit]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_pr382_sweep16_would_fail_without_floor",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_real_regression_on_big_effect_still_fails",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_report_lines_name_the_rule_and_stay_ingest_parseable",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/hitl/tests:hitl_test"
@@ -4579,6 +4753,12 @@
         },
         {
           "name": "pi.hitl.tests.test_fx_bench::test_stable_cycles_prefers_frame_window_min",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_fx_bench::test_sweep16_beyond_floor_still_fails",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/hitl/tests:hitl_test"
@@ -4707,7 +4887,7 @@
           ],
           "relation": "verifies",
           "path": "pi/hitl/tests/test_fx_bench.py",
-          "line": 23
+          "line": 26
         }
       ]
     },
