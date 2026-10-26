@@ -105,11 +105,42 @@ def cpu_hz_of(report: dict[str, Any], default: int = 160_000_000) -> int:
     return hz if hz > 0 else default
 
 
+# Absolute floor of the frame-cycle gate: an effect also passes when its frame is
+# within this many cycles of the golden, whatever the percentage. Every frame pays
+# a FIXED frame-start cost (flash-cache misses on the update/shade entry path after
+# the netstack, BLE and log code have evicted it between frames), and that cost
+# moves with code LAYOUT alone. Measured on c6-123170 (#371, fx_bench window-min):
+# never-called padding moved sweep16 by +13..+18% (27.3 K -> 30.9..32.2 K) and the
+# 128-LED `empty` by a similar absolute amount; the frame-start miss cost was
+# ~2.7 K cycles on main and ~7.4 K on #371, and an untimed warm-up shade removed
+# most of it. #382 (lazy rx/OTA buffers) moved sweep16 by +5.8..+6.5 K again.
+# 8,000 cycles covers that ~7-8 K layout band and is 50 us at 160 MHz (under 1% of
+# a 120 fps frame). Against the 10% default margin it only matters for goldens
+# under 80 K cycles (today just sweep16, ~34.5 K); any effect of real size is
+# still held to its percentage margin.
+DEFAULT_FLOOR_CYCLES = 8_000
+
+
+def frame_gate_rule(measured: int, golden: int, margin: float, floor_cycles: int) -> str | None:
+    """Which rule lets a measured frame through against its golden: "margin" when
+    it is within +-margin (relative), else "floor" when it is within +-floor_cycles
+    (absolute), else None (an offender). The margin rule is checked first, so
+    "floor" means the effect passed ONLY because of the absolute floor."""
+    if golden <= 0:
+        return None
+    if abs(measured / golden - 1.0) <= margin:
+        return "margin"
+    if abs(measured - golden) <= floor_cycles:
+        return "floor"
+    return None
+
+
 def bundle_to_golden(
     bundle: dict[str, Any],
     *,
     default_margin: float = 0.05,
     per_label_margin: dict[str, float] | None = None,
+    floor_cycles: int = DEFAULT_FLOOR_CYCLES,
 ) -> dict[str, Any]:
     """Turn a measured bundle into the unified golden = the full device-measurement
     bundle (kept verbatim, incl. each sample's fxbBase64 so the web estimator can
@@ -120,27 +151,43 @@ def bundle_to_golden(
     golden["fxBenchMargins"] = {
         "default": default_margin,
         "perLabel": dict(per_label_margin or {}),
+        "floorCycles": int(floor_cycles),
     }
     return golden
 
 
 def compare_to_golden(
-    bundle: dict[str, Any], golden: dict[str, Any], margin: float | None = None
+    bundle: dict[str, Any],
+    golden: dict[str, Any],
+    margin: float | None = None,
+    floor_cycles: int | None = None,
 ) -> dict[str, Any]:
     """Compare a measured bundle's per-effect FRAME cycles to the golden bundle.
     Frame cycles are the FX-VM execution cost the device profile is fit from; show
     cycles (the transmit path) are noisier and NOT gated. The golden is a full
     device-measurement bundle; margins come from its `fxBenchMargins` block
     (per-label override, else the `margin` arg, else its `default`, else 5%).
-    Returns {ok, checked, missing, offenders:[{label, measured, golden, ratio,
-    margin}], defaultMargin}."""
+
+    An effect passes if its frame is within its relative margin OR within an
+    absolute floor of `floorCycles` of the golden (the `floor_cycles` arg, else
+    the golden's `floorCycles`, else DEFAULT_FLOOR_CYCLES); see
+    DEFAULT_FLOOR_CYCLES for why. Returns {ok, checked, missing, offenders:[{label,
+    measured, golden, ratio, margin, floor}], passes:[{... rule}], byRule:{margin,
+    floor}, defaultMargin, floorCycles}."""
     margins = golden.get("fxBenchMargins", {}) or {}
     default_margin = margin if margin is not None else float(margins.get("default", 0.05))
     per_label = margins.get("perLabel", {}) or {}
+    floor = int(
+        floor_cycles
+        if floor_cycles is not None
+        else margins.get("floorCycles", DEFAULT_FLOOR_CYCLES)
+    )
     gmap = {s["label"]: s for s in (golden.get("fit") or []) + (golden.get("heldout") or [])}
     measured = {s["label"]: s for s in (bundle.get("fit") or []) + (bundle.get("heldout") or [])}
     offenders: list[dict[str, Any]] = []
+    passes: list[dict[str, Any]] = []
     missing: list[str] = []
+    by_rule = {"margin": 0, "floor": 0}
     checked = 0
     for label, g in gmap.items():
         gv = int(g.get("measuredFrameCycles", 0))
@@ -153,18 +200,65 @@ def compare_to_golden(
         mv = int(m.get("measuredFrameCycles", 0))
         eff = float(per_label.get(label, default_margin))
         checked += 1
-        ratio = mv / gv
-        if abs(ratio - 1.0) > eff:
-            offenders.append(
-                {"label": label, "measured": mv, "golden": gv, "ratio": ratio, "margin": eff}
-            )
+        row = {
+            "label": label,
+            "measured": mv,
+            "golden": gv,
+            "ratio": mv / gv,
+            "margin": eff,
+            "floor": floor,
+        }
+        rule = frame_gate_rule(mv, gv, eff, floor)
+        if rule is None:
+            offenders.append(row)
+        else:
+            by_rule[rule] += 1
+            passes.append({**row, "rule": rule})
     return {
         "ok": not offenders and not missing,
         "checked": checked,
         "missing": sorted(missing),
         "offenders": offenders,
+        "passes": passes,
+        "byRule": by_rule,
         "defaultMargin": default_margin,
+        "floorCycles": floor,
     }
+
+
+def golden_report_lines(golden_path: str, result: dict[str, Any]) -> list[str]:
+    """The fx_bench gate's log lines for a compare_to_golden result. Parsed by the Grafana fx_bench ingest
+    (pi/hitl/observability/fxbench/ingest_fx_bench.py): keep the `[golden] <path>:
+    checked N effect(s)` header and the `OFF <label> frame=M vs golden G (+P%,
+    margin ±M%)` prefix stable. Effects that passed only through the absolute floor
+    get a `FLOOR` line (never `OFF`, no `show=`, so neither ingest regex matches)."""
+    floor = result["floorCycles"]
+    lines = [
+        f"[golden] {golden_path}: checked {result['checked']} effect(s), "
+        f"default margin ±{result['defaultMargin'] * 100:g}%, floor ±{floor} cycles"
+    ]
+    for p in result["passes"]:
+        if p["rule"] == "floor":
+            lines.append(
+                f"  FLOOR {p['label']:<14} frame={p['measured']} vs golden {p['golden']} "
+                f"({(p['ratio'] - 1) * 100:+.1f}%, margin ±{p['margin'] * 100:g}%) "
+                f"passed by floor: {p['measured'] - p['golden']:+d} cycles within ±{floor}"
+            )
+    for o in result["offenders"]:
+        lines.append(
+            f"  OFF  {o['label']:<14} frame={o['measured']} vs golden {o['golden']} "
+            f"({(o['ratio'] - 1) * 100:+.1f}%, margin ±{o['margin'] * 100:g}%) "
+            f"{o['measured'] - o['golden']:+d} cycles, outside floor ±{floor}"
+        )
+    if result["missing"]:
+        lines.append(f"  MISSING (not measured this run): {', '.join(result['missing'])}")
+    by_rule = result["byRule"]
+    if result["ok"]:
+        lines.append(
+            "PASS: profiling run matches the golden "
+            f"({by_rule['margin']} by margin, {by_rule['floor']} by floor)"
+        )
+    return lines
 
 
 def assemble_bundle(

@@ -75,7 +75,12 @@ _JIT_RE = re.compile(r"\[jit\] pinned (?P<state>ON|OFF) for this run")
 # that follows. Legacy logs (pre-chip-dimension) carry no `[chip]` line and default
 # to esp32c6 so all existing/backfilled data stays esp32c6.
 _CHIP_RE = re.compile(r"\[chip\] (?P<soc>[a-z0-9]+)")
+# Absolute floor of the fx_bench gate when a golden carries no `floorCycles`; mirrors
+# pi/hitl/harness/fx_bench_core.DEFAULT_FLOOR_CYCLES (this script runs standalone in
+# the fxbench-ingest workflow, so it can't import the harness).
+DEFAULT_FLOOR_CYCLES = 8_000
 # `[golden] .../device-bench-<soc>[-jit].json: checked N effect(s), default margin ±P%`
+# (since the absolute floor: `..., floor ±F cycles` follows; not needed here).
 _GOLDEN_RE = re.compile(
     r"device-bench-(?P<soc>[a-z0-9]+)(?P<jit>-jit)?\.json: checked (?P<n>\d+) effect"
 )
@@ -329,12 +334,16 @@ def load_goldens_from_repo() -> list[dict]:
         margins = g.get("fxBenchMargins", {}) or {}
         default_m = float(margins.get("default", 0.10))
         per_label = margins.get("perLabel", {}) or {}
+        # The gate passes within ±margin OR within ±floorCycles (absolute), so the
+        # band drawn is the looser of the two (fx_bench_core.frame_gate_rule).
+        floor = int(margins.get("floorCycles", DEFAULT_FLOOR_CYCLES))
         for section in ("fit", "heldout"):
             for s in g.get(section, []) or []:
                 gv = int(s.get("measuredFrameCycles", 0))
                 if gv <= 0:
                     continue
                 m = float(per_label.get(s["label"], default_m))
+                half_band = max(gv * m, floor)
                 soc = g.get("soc", "esp32c6")
                 out.append(
                     {
@@ -349,8 +358,9 @@ def load_goldens_from_repo() -> list[dict]:
                         "goldenShowCycles": int(s.get("measuredShowCycles", 0)),
                         "ledCount": int(s.get("ledCount", 0)),
                         "marginPct": round(m * 100, 3),
-                        "goldenLow": int(round(gv * (1 - m))),
-                        "goldenHigh": int(round(gv * (1 + m))),
+                        "floorCycles": floor,
+                        "goldenLow": int(round(gv - half_band)),
+                        "goldenHigh": int(round(gv + half_band)),
                     }
                 )
     return out

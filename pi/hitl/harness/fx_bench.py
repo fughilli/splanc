@@ -61,10 +61,12 @@ from typing import Any
 
 import hitl_ws
 from fx_bench_core import (
+    DEFAULT_FLOOR_CYCLES,
     assemble_bundle,
     bundle_to_golden,
     compare_to_golden,
     cpu_hz_of,
+    golden_report_lines,
     intended_led_count,
     run_health_failure,
     sample_from,
@@ -96,6 +98,14 @@ _GOLDEN_RUNFILE = "_main/web/tests/testdata/device-bench-{soc}.json"
 # (a fixed absolute jitter is a big % of a ~100 K-cycle program).
 _GOLDEN_PER_LABEL_MARGIN = {"sweep16": 0.15}
 _GOLDEN_DEFAULT_MARGIN = 0.10
+# ...OR within an absolute floor of 8,000 frame cycles (50 us at 160 MHz) of the
+# golden, whichever is looser. The floor absorbs the fixed per-FRAME cold-flash-cache
+# cost that moves with code layout alone (~7-8 K cycles measured on #371/#382); it
+# is what keeps the 16-LED sweep16 from failing on PRs that only move memory
+# around, without widening any percentage. Rationale + data: fx_bench_core
+# DEFAULT_FLOOR_CYCLES. Like the margins, it is stamped into the golden's
+# fxBenchMargins.floorCycles (the ACTIVE gate) on --emit-golden.
+_GOLDEN_FLOOR_CYCLES = DEFAULT_FLOOR_CYCLES
 
 
 def _rlocation(rloc: str) -> str | None:
@@ -790,6 +800,14 @@ def main() -> None:
         "(per-label margins in the golden still win)",
     )
     ap.add_argument(
+        "--floor-cycles",
+        type=int,
+        default=None,
+        help="override the golden's absolute frame-cycle floor: an effect within "
+        "this many cycles of its golden passes regardless of the percentage margin "
+        f"(default: the golden's fxBenchMargins.floorCycles, else {DEFAULT_FLOOR_CYCLES})",
+    )
+    ap.add_argument(
         "--no-golden-check",
         action="store_true",
         help="just measure + write the bundle; skip the golden margin check",
@@ -842,6 +860,7 @@ def main() -> None:
             bundle,
             default_margin=_GOLDEN_DEFAULT_MARGIN,
             per_label_margin=_GOLDEN_PER_LABEL_MARGIN,
+            floor_cycles=_GOLDEN_FLOOR_CYCLES,
         )
         with open(args.emit_golden, "w") as f:
             json.dump(golden, f, indent=2)
@@ -866,21 +885,10 @@ def main() -> None:
         return
     with open(golden_path) as f:
         golden = json.load(f)
-    result = compare_to_golden(bundle, golden, args.margin)
-    _log(
-        f"[golden] {golden_path}: checked {result['checked']} effect(s), "
-        f"default margin ±{result['defaultMargin'] * 100:g}%"
-    )
-    for o in result["offenders"]:
-        _log(
-            f"  OFF  {o['label']:<14} frame={o['measured']} vs golden {o['golden']} "
-            f"({(o['ratio'] - 1) * 100:+.1f}%, margin ±{o['margin'] * 100:g}%)"
-        )
-    if result["missing"]:
-        _log(f"  MISSING (not measured this run): {', '.join(result['missing'])}")
-    if result["ok"]:
-        _log("PASS: profiling run matches the golden within margin")
-    else:
+    result = compare_to_golden(bundle, golden, args.margin, args.floor_cycles)
+    for line in golden_report_lines(golden_path, result):
+        _log(line)
+    if not result["ok"]:
         raise SystemExit(
             f"FAIL: {len(result['offenders'])} effect(s) off-margin, "
             f"{len(result['missing'])} missing vs golden"

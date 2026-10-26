@@ -524,6 +524,7 @@
     "default": 0.1,
     "perLabel": {
       "sweep16": 0.15
-    }
+    },
+    "floorCycles": 8000
   }
 }
