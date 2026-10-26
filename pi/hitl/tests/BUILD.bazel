@@ -78,6 +78,9 @@ py_test(
         "//pi/hitl/reserve:catalog-mac.json",
         "//pi/hitl/reserve:catalog-phone.json",
         "//pi/hitl/reserve:catalog-sdr.json",
+        # test_fx_bench pins the fx_bench gate's fxBenchMargins (margins + floor).
+        "//web:tests/testdata/device-bench-esp32c6.json",
+        "//web:tests/testdata/device-bench-esp32c6-jit.json",
     ],
     imports = ["."],
     legacy_create_init = False,
