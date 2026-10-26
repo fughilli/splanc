@@ -260,6 +260,7 @@
 <li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 <li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
@@ -462,6 +463,17 @@ of how long a frame took — the whole point being a <em>consistent</em> rate. A
 that overran its period still sleeps <code class="docutils literal notranslate"><span class="pre">≥</span> <span class="pre">max(4</span> <span class="pre">ms,</span> <span class="pre">25%</span> <span class="pre">of</span> <span class="pre">its</span> <span class="pre">cost)</span></code>: the render
 task outranks the network task, so a lagging effect is duty-cycle bounded
 (≤ 80% CPU) and WiFi/TLS, the sensors and control stay responsive.</p></li>
+<li><p><strong>Guaranteed network share.</strong> Every frame, not only an overrunning one, sleeps
+at least 25% of its render <em>compute</em> (<code class="docutils literal notranslate"><span class="pre">frame_cycles</span></code>: update + shade + blend;
+<code class="docutils literal notranslate"><span class="pre">lm_fps_net_share_ms</span></code>), and a rung whose period can’t hold the compute plus
+that share counts as a miss, so the effect steps down a rung (or lags at the
+floor) instead. The netstack loop runs one priority below render while no
+client is connecting or connected, so it only gets render’s sleeps: in 1.12.3 a
+frame that just fit its rung slept the 1-3 ms left of its period, a new
+client’s TLS handshake (~0.5 s of CPU) never finished inside its 8 s timeout,
+and two field players stayed unreachable under such an effect (also after a
+power cycle, since the effect persists). The wire ceiling still uses the 95%
+budget: the transmit runs on DMA and leaves the CPU free.</p></li>
 <li><p><strong>Decks + crossfade.</strong> The cost fed to the controller is the whole frame —
 <code class="docutils literal notranslate"><span class="pre">lm_fx_update</span></code> / <code class="docutils literal notranslate"><span class="pre">lm_fx_shade</span></code> drive <em>every</em> rendering deck and blend them by
 the crossfade — so a two-deck show is costed as one frame. The search restarts
