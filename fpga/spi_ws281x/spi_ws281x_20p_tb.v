@@ -73,6 +73,7 @@ module spi_ws281x_20p_tb;
   reg                  ss = 1, sck = 0, mosi = 0;
   wire [MAX_PORTS-1:0] ws;
   wire                 frame_pulse;
+  wire                 frame_done;   // observed only; connected to avoid PINMISSING
   wire                 st_underrun;
   wire [15:0]          st_underruns, st_min_fill, st_max_byte_gap;
   wire [8*MAX_PORTS-1:0] st_port_underruns;
@@ -96,6 +97,7 @@ module spi_ws281x_20p_tb;
       .mosi(mosi),
       .ws(ws),
       .frame_pulse(frame_pulse),
+      .frame_done(frame_done),
       .underrun(st_underrun),
       .underruns(st_underruns),
       .min_fill(st_min_fill),

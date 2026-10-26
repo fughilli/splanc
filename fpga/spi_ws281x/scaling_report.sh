@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Place-and-route scaling report for the spi_ws281x core on the Tang Nano 9K
 # (GW1NR-9C): utilisation (LUT/FF/BSRAM/IO) and nextpnr fmax for a set of
-# port counts / FIFO depths / core clocks, via the INTERNAL-ONLY
-# tangnano9k_20p_top (outputs XOR-folded to one pin so no port is optimised away).
+# port counts / FIFO depths / core clocks, via the pinned 20-port top
+# (tangnano9k_20p_top + tangnano9k_20p.cst). For NUM_WS < 20 the cst lines of
+# the unused ports are dropped, so ports 0..NUM_WS-1 keep their real pins.
 #
 #   YOSYS=... NEXTPNR=... fpga/spi_ws281x/scaling_report.sh [OUT_DIR] [CONFIG...]
 #
@@ -32,8 +33,11 @@ for c in "${CONFIGS[@]}"; do
     echo "{\"config\":\"$tag\",\"ok\":false,\"stage\":\"yosys\"}"
     continue
   fi
+  awk -v n="$np" 'match($0, /"ws\[[0-9]+\]"/) {
+      i = substr($0, RSTART + 4, RLENGTH - 6) + 0; if (i >= n) next } { print }' \
+    "$HERE/tangnano9k_20p.cst" >"$OUT/$tag.cst"
   if "$NEXTPNR" --device GW1NR-LV9QN88PC6/I5 --vopt family=GW1N-9C \
-    --vopt cst="$HERE/tangnano9k_20p.cst" --json "$OUT/$tag.json" \
+    --vopt cst="$OUT/$tag.cst" --vopt sspi_as_gpio --json "$OUT/$tag.json" \
     --write "$OUT/$tag.pnr.json" --freq "$mhz" --report "$OUT/$tag.report.json" \
     >"$OUT/$tag.nextpnr.log" 2>&1; then ok=true; else ok=false; fi
   python3 - "$OUT/$tag.report.json" "$OUT/$tag.nextpnr.log" "$tag" "$ok" "$mhz" <<'PY'

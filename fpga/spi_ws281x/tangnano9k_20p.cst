@@ -1,7 +1,17 @@
-// Tang Nano 9K (GW1NR-9C) constraints for the INTERNAL-ONLY 20-port variant
-// (tangnano9k_20p_top.v). Same clock/SPI/LED pins as tangnano9k.cst; NO WS output
-// pins -- the 20 outputs are XOR-folded onto led[0] until the user picks the pin
-// map. Not for flashing.
+// Tang Nano 9K (GW1NR-LV9QN88PC6/I5) pin constraints for the 20-port MAX top
+// (tangnano9k_20p_top.v). Clock / SPI / onboard LEDs as tangnano9k.cst.
+//
+// WS outputs: ports 0-7 keep the 8-port top's pins 70-77; ports 8-19 are the
+// owner's pins 40 35 41 42 51 53 54 55 56 57 68 69, in that order. Every WS pin
+// and frame_done is in bank 1 or bank 2 (3.3 V on the Tang Nano 9K; the same
+// banks as the 8-port WS outputs 70-77 and the SPI inputs 25-27), so LVCMOS33
+// throughout. Banks/pads from the apicula GW1NR-9C QN88P chipdb.
+//
+// Board sharing, check before plugging anything in: 68-75 also run to the
+// onboard HDMI connector, and per the Sipeed pinout most of these pins are also
+// on the 40-pin RGB-LCD FPC. Leave both unconnected on a MAX unit.
+// 53-57 are configuration dual-purpose pins (CPU/SSPI); the board configures
+// from flash over MSPI (59-62), so they are free after configuration.
 IO_LOC "clk27" 52;
 IO_PORT "clk27" IO_TYPE=LVCMOS33 PULL_MODE=UP;
 
@@ -12,6 +22,56 @@ IO_PORT "sck" IO_TYPE=LVCMOS33 PULL_MODE=UP;
 IO_LOC "mosi" 27;
 IO_PORT "mosi" IO_TYPE=LVCMOS33 PULL_MODE=UP;
 
+// Frame-done pacing output -> a Pi GPIO input (README, "Frame-done pacing").
+// PROVISIONAL pin choice (owner to confirm): 28 = IOB11B, bank 2, next to MOSI
+// on the header, no dual-purpose function.
+IO_LOC "frame_done" 28;
+IO_PORT "frame_done" IO_TYPE=LVCMOS33 DRIVE=8;
+
+// WS281x outputs.
+IO_LOC "ws[0]" 70;  // IOT bank 1, as the 8-port top
+IO_PORT "ws[0]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[1]" 71;  // IOT bank 1, as the 8-port top
+IO_PORT "ws[1]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[2]" 72;  // IOT bank 1, as the 8-port top
+IO_PORT "ws[2]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[3]" 73;  // IOT bank 1, as the 8-port top
+IO_PORT "ws[3]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[4]" 74;  // IOT bank 1, as the 8-port top
+IO_PORT "ws[4]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[5]" 75;  // IOT bank 1, as the 8-port top
+IO_PORT "ws[5]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[6]" 76;  // IOT bank 1, as the 8-port top
+IO_PORT "ws[6]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[7]" 77;  // IOT bank 1, as the 8-port top
+IO_PORT "ws[7]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[8]" 40;  // IOB33B bank 2
+IO_PORT "ws[8]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[9]" 35;  // IOB29A bank 2, GCLKT_4
+IO_PORT "ws[9]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[10]" 41;  // IOB41A bank 2
+IO_PORT "ws[10]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[11]" 42;  // IOB41B bank 2
+IO_PORT "ws[11]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[12]" 51;  // IOR17B bank 1, GCLKC_3 (pair of clk27 on 52)
+IO_PORT "ws[12]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[13]" 53;  // IOR15B bank 1, dual-purpose DOUT/WE_N
+IO_PORT "ws[13]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[14]" 54;  // IOR15A bank 1, dual-purpose DIN/CLKHOLD_N
+IO_PORT "ws[14]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[15]" 55;  // IOR14B bank 1, dual-purpose SSPI_CS_N/D0
+IO_PORT "ws[15]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[16]" 56;  // IOR14A bank 1, dual-purpose SO/D1
+IO_PORT "ws[16]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[17]" 57;  // IOR13A bank 1, dual-purpose FASTRD_N/D3
+IO_PORT "ws[17]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[18]" 68;  // IOT42B bank 1
+IO_PORT "ws[18]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[19]" 69;  // IOT42A bank 1
+IO_PORT "ws[19]" IO_TYPE=LVCMOS33 DRIVE=8;
+
+// 6 onboard user LEDs (active low): led[0] lit while streaming (frame_done LOW),
+// led[1] underrun flag, led[5:2] activity.
 IO_LOC "led[0]" 10;
 IO_PORT "led[0]" IO_TYPE=LVCMOS33 DRIVE=8;
 IO_LOC "led[1]" 11;

@@ -1,19 +1,23 @@
 `timescale 1ns / 1ps
-// INTERNAL-ONLY 20-port variant of the Tang Nano 9K top, for resource / timing /
-// simulation sign-off before the WS output pin map is chosen. NOT for flashing:
-// it has no WS output pins.
+// 20-port Tang Nano 9K top for Splanc MAX: 27 MHz crystal -> rPLL 54 MHz ->
+// spi_ws281x with 20 pinned WS281x outputs + a frame-done pacing output.
 //
-// Why the outputs are folded: with no top-level ws[] pins, yosys would remove
-// every port's FIFO + driver as dead logic and the utilisation/fmax numbers would
-// be fake. Instead all NUM_WS outputs are XOR-reduced into one onboard LED pin
-// (led[0]): every port's output still reaches a real pin, so every port's
-// datapath survives synthesis and is placed and routed. The per-port FF/LUT/BSRAM
-// counts scaling 8 -> 16 -> 20 (fx-gpu-lowering.md / the PR) confirm it.
-// led[5:1] keep the frame-activity animation of the 8-pin top.
+// Pin map (tangnano9k_20p.cst): ports 0-7 on the 8-port top's pins 70-77 (so an
+// 8-port harness keeps working), ports 8-19 on 40 35 41 42 51 53 54 55 56 57 68
+// 69 (owner's choice, in that order), frame_done on pin 28. All in the 3.3 V
+// banks 1/2, which already carry the 8-port top's WS outputs and SPI inputs.
+//
+// frame_done (level, active HIGH) = every port has shifted out its frame AND the
+// latch has elapsed, with no STREAM in progress. The Pi waits for its rising
+// edge before starting the next SPI burst (README, "Frame-done pacing").
+//
+// STATS is on for the `underrun` strobe (sticky 100 ms flag on led[1]). The
+// counters (underruns, min_fill, port_underruns, max_byte_gap) have no read-back
+// path yet (no MISO pin), so synthesis removes them here.
 //
 // Parameters default to the 20-port MAX target and can be overridden with
-// defines for scaling runs (yosys -D / verilog_top defines):
-//   TN9K_NUM_WS     ports (default 20)
+// defines for scaling runs (scaling_report.sh drops the cst lines of unused ports):
+//   TN9K_NUM_WS     ports (default 20; the cst pins at most 20)
 //   TN9K_MAX_LEDS   LEDs per port (default 1024)
 //   TN9K_FIFO_DEPTH bytes per port FIFO (default 2048 = one BSRAM; 0 = full frame)
 //   TN9K_CLK_MHZ    core clock from the rPLL: 54 (x2) or 81 (x3)
@@ -36,11 +40,13 @@ module tangnano9k_20p_top #(
     parameter integer FIFO_DEPTH = `TN9K_FIFO_DEPTH,
     parameter integer CLK_MHZ    = `TN9K_CLK_MHZ
 ) (
-    input  wire       clk27,  // 27 MHz crystal
-    input  wire       ss,     // SPI chip select (active low)
-    input  wire       sck,    // SPI clock
-    input  wire       mosi,   // SPI data in
-    output wire [5:0] led     // led[0] = XOR fold; led[1] = underrun flag; led[5:2] activity
+    input  wire              clk27,      // 27 MHz crystal
+    input  wire              ss,         // SPI chip select (active low)
+    input  wire              sck,        // SPI clock
+    input  wire              mosi,       // SPI data in
+    output wire [NUM_WS-1:0] ws,         // WS281x outputs
+    output wire              frame_done, // HIGH: frame emitted + latched, idle (Pi pacing)
+    output wire [       5:0] led         // led[0] streaming; led[1] underrun flag; led[5:2] activity
 );
   localparam integer FBDIV = CLK_MHZ / 27 - 1;  // 54 -> 1 (x2), 81 -> 2 (x3)
   wire clk;
@@ -92,11 +98,8 @@ module tangnano9k_20p_top #(
     if (pll_lock && !rst_cnt[9]) rst_cnt <= rst_cnt + 1'b1;
   end
 
-  wire [NUM_WS-1:0] ws;
-  wire              frame_pulse;
-  wire              underrun;
-  wire [15:0]       underruns, min_fill, max_byte_gap;
-  wire [8*NUM_WS-1:0] port_underruns;
+  wire frame_pulse;
+  wire underrun;
 
   spi_ws281x #(
       .MAX_PORTS (NUM_WS),
@@ -113,17 +116,13 @@ module tangnano9k_20p_top #(
       .mosi(mosi),
       .ws  (ws),
       .frame_pulse(frame_pulse),
+      .frame_done(frame_done),
       .underrun(underrun),
-      .underruns(underruns),
-      .min_fill(min_fill),
-      .port_underruns(port_underruns),
-      .max_byte_gap(max_byte_gap)
+      .underruns(),
+      .min_fill(),
+      .port_underruns(),
+      .max_byte_gap()
   );
-
-  // Output termination: one registered XOR of every port (and every STATS
-  // counter, so they're kept and their cost is real) -> a real pin.
-  reg ws_fold = 1'b0;
-  always @(posedge clk) ws_fold <= ^ws ^ ^underruns ^ ^min_fill ^ ^max_byte_gap ^ ^port_underruns;
 
   // Underrun health flag on led[1]: any FIFO underrun stretches to >= ~100 ms,
   // visible to the logic analyzer at any sample rate (and to a human).
@@ -152,5 +151,5 @@ module tangnano9k_20p_top #(
       end
     end
   end
-  assign led = {~(4'b0001 << pos[1:0]), ~ur_flag, ~ws_fold};  // active low
+  assign led = {~(4'b0001 << pos[1:0]), ~ur_flag, frame_done};  // active low; led[0] lit while streaming
 endmodule

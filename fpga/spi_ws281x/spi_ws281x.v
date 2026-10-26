@@ -26,6 +26,7 @@ module spi_ws281x #(
     input  wire                 mosi,
     output wire [MAX_PORTS-1:0] ws,
     output wire                 frame_pulse,  // 1-cycle strobe per driven frame
+    output wire                 frame_done,   // level: frame emitted + latched, idle (host pacing)
     // STATS outputs (constant 0 when STATS == 0), cumulative since reset:
     output wire                 underrun,     // 1-cycle strobe: a FIFO ran dry mid-frame
     output wire [         15:0] underruns,    // saturating stall count
@@ -106,6 +107,7 @@ module spi_ws281x #(
       .stream_active(stream_active),
       .ws(ws),
       .frame_pulse(frame_pulse),
+      .frame_done(frame_done),
       .underrun(underrun),
       .underruns(underruns),
       .min_fill(min_fill),

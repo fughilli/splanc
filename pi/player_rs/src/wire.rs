@@ -156,6 +156,51 @@ pub fn matched_speed_hz(num_ports: u32) -> u32 {
     (f64::from(num_ports) * 8.0 * 1_000_000.0 / WS_BYTE_US) as u32
 }
 
+// ---------------------------------------------------------------------------
+// Frame-rate ladder for the FPGA path (Splanc MAX).
+//
+// All ports drive in parallel, so the frame rate depends only on the LEDs per
+// port L and the latch: the wire needs `3 * L * 9.963 us` (the core's 1.2407 us
+// bit at 54 MHz) + ~40 us of start-of-frame prefill + the latch (80 us
+// classic WS2812B, 300 us WS2812B-V5/SK6812 class). At 120 fps (8.333 ms) the
+// theoretical limit is 274 LEDs/port at 80 us and 267 at 300 us.
+//
+// The 120 fps mode caps L at 260 (owner decision): 260 LEDs take 7.771 ms, so
+// even at the 300 us latch the frame is done (prefill + emission + latch) at
+// ~8.11 ms, leaving ~220 us per period for the host (frame-done GPIO wake-up,
+// CSR write, scheduling jitter); ~440 us at the 80 us latch. Verified in Verilator: frame-done paced at 260
+// LEDs with a 100 us host wake-up gives 7.99 / 8.21 ms periods
+// (fpga/spi_ws281x:spi_ws281x_120fps_sim, phase E).
+// ---------------------------------------------------------------------------
+
+/// Highest frame rate the FPGA path supports.
+pub const MAX_FPS: f64 = 120.0;
+/// Rates above this run in the "120 fps mode", where the strip-length cap applies.
+pub const FPS_120_MODE_ABOVE: f64 = 60.0;
+/// Max LEDs per port in the 120 fps mode (theoretical 267/274; margin for the
+/// host's frame-done wake-up and jitter, see above).
+pub const MAX_LEDS_PER_PORT_120FPS: usize = 260;
+
+/// LEDs on the longest port when `total` pixels are split evenly over `ports`
+/// (the [`split_ports`] default).
+pub fn leds_per_port(total: usize, ports: usize) -> usize {
+    total.div_ceil(ports.max(1))
+}
+
+/// Validate a frame rate against the strip length on each FPGA port.
+pub fn check_frame_rate(fps: f64, leds_per_port: usize) -> Result<(), String> {
+    if !(fps > 0.0 && fps <= MAX_FPS) {
+        return Err(format!("fps {fps} out of range (0, {MAX_FPS}]"));
+    }
+    if fps > FPS_120_MODE_ABOVE && leds_per_port > MAX_LEDS_PER_PORT_120FPS {
+        return Err(format!(
+            "{leds_per_port} LEDs/port at {fps} fps: the 120 fps mode (> {FPS_120_MODE_ABOVE} fps) \
+             allows at most {MAX_LEDS_PER_PORT_120FPS} LEDs per port"
+        ));
+    }
+    Ok(())
+}
+
 /// Encodes the driver's per-frame colours into `spi_ws281x` transactions.
 ///
 /// Reused across frames: [`configure`](FpgaCodec::configure) (the CSR write) is
@@ -360,6 +405,24 @@ mod tests {
         assert!(dark[1..].iter().all(|&b| b == 0));
         assert_eq!(dark.len(), 1 + 3 * 2); // 3 bytes/px * 1 px/port * 2 ports
         assert!(FpgaCodec::new(0, GRB, None).is_err());
+    }
+
+    #[test]
+    fn frame_rate_ladder() {
+        assert_eq!(leds_per_port(5200, 20), 260);
+        assert_eq!(leds_per_port(5201, 20), 261);
+        assert_eq!(leds_per_port(7, 0), 7);
+        // 120 fps mode: cap is 260 LEDs/port.
+        assert!(check_frame_rate(120.0, 260).is_ok());
+        assert!(check_frame_rate(120.0, 261).is_err());
+        assert!(check_frame_rate(61.0, 261).is_err());
+        // At or below 60 fps the cap doesn't apply.
+        assert!(check_frame_rate(60.0, 553).is_ok());
+        assert!(check_frame_rate(10.0, 1024).is_ok());
+        // Out of range.
+        assert!(check_frame_rate(121.0, 10).is_err());
+        assert!(check_frame_rate(0.0, 10).is_err());
+        assert!(check_frame_rate(f64::NAN, 10).is_err());
     }
 
     #[test]
