@@ -152,13 +152,22 @@ the first 44 bytes.
 | bits | field |
 |---|---|
 | 0 | loader image (refused) |
-| 8–15 | key id: **3** for MAX |
+| 8–15 | key id: **3** `max` (every release) or **4** `max_backup` (offline, rotation only) |
 | 16–23 | security version |
 | 24–31 | **board**: 1 `pi3`, 2 `pi4`, 3 `pi5`, 4 `zero2w`; 0 = not a MAX image |
 
 **The keyring.** It is the same keyring and tooling as the C6
 (`firmware/ota/keys`, `ota_sign`, key epochs, security floor), but the MAX trusts
-**only key id 3, `max`**:
+**only its own key ids**:
+
+| id | name | file | role |
+|---|---|---|---|
+| 3 | `max` | `keys/max.pub` | online: the `MAX_OTA_SIGNING_KEY` secret signs every MAX release |
+| 4 | `max_backup` | `keys/max_backup.pub` | **offline**, in cold storage, never in CI; signs the key-epoch record that revokes a compromised `max`, and the bridge image of a rotation |
+
+An `UNSET` entry verifies nothing, and the build works with it (as with `max.pub`
+before the owner creates it). A manifest names its key id and is verified against
+**that key only**. Ids 5–7 are free for a successor key after a rotation (below).
 
 - **Never the loader ring's keys.** The C6 loader trusts 0 `release`, 1 `backup` and
   2 `next`; the MAX updater trusts none of them.
@@ -166,10 +175,11 @@ the first 44 bytes.
 - **Separation both ways.** A C6 image can't install on a MAX: board 0 is refused as
   `wrong_board`, and key 0 as `unknown_key`. A MAX key can't sign C6 firmware: the
   loaders don't have it.
-- **Where the ring comes from.** `firmware/ota/ring.bzl` holds `MAX_RELEASE_RING` /
-  `MAX_TEST_RING`. `gen_key_header.py --lang rust` writes the ring as a Rust const
-  into `//pi/max_ota`. `--//firmware/ota:trust=test` swaps in the TEST key, as it
-  does for the C6 loader.
+- **Where the ring comes from.** `firmware/ota/ring.bzl` holds `MAX_RELEASE_RING`
+  (`max` + `max_backup`) / `MAX_TEST_RING` (`test_max` + `test_max_backup`).
+  `gen_key_header.py --lang rust` writes the ring as a Rust const into
+  `//pi/max_ota`. `--//firmware/ota:trust=test` swaps in the TEST keys, as it does
+  for the C6 loader (release/backup ↔ test/test_backup).
 - **Who checks.** The player checks every offer for a quick answer. The root updater
   checks it again before it downloads anything; it is the authority.
 
@@ -177,16 +187,66 @@ the first 44 bytes.
 
 | file | |
 |---|---|
-| `firmware/ota/keys/max.pub` | **UNSET**: the public half of the `MAX_OTA_SIGNING_KEY` secret (the owner creates it, below) |
-| `firmware/ota/keys/test_max.key` / `.pub` | the public TEST key: HITL and development images only |
+| `firmware/ota/keys/max.pub` | the public half of the `MAX_OTA_SIGNING_KEY` secret (**UNSET** until the owner creates it, below) |
+| `firmware/ota/keys/max_backup.pub` | **UNSET** until the owner creates it (below): the public half of the offline backup key. Its private half is never in the repo or CI |
+| `firmware/ota/keys/test_max.key` / `.pub` | the public TEST `max` key (id 3): HITL and development images only |
+| `firmware/ota/keys/test_max_backup.key` / `.pub` | the public TEST `max_backup` key (id 4): key epochs and backup-signed images in test-trust updaters and the host tests |
 
 **Key epochs.** The updater applies a key-epoch record (`ota_begin.key_epoch`)
 whose signer is in the MAX ring. Records signed by other keys, such as the C6's
 `key-epoch.bin`, are ignored rather than refused, so a client that sends the C6
 record by mistake can't block an update. A MAX revocation ships as
-`max-key-epoch.bin` (from `firmware/ota/keys/max_epoch.bin`). With a single MAX key
-there is nothing to revoke *to*. A `max_backup` key (id 4, offline) would make
-rotation possible; that is a decision for the owner (below).
+`max-key-epoch.bin` (from `firmware/ota/keys/max_epoch.bin`). The rules are the C6's
+(docs/design/ota.md "Key rotation"): the epoch must rise, revocations never shrink, a
+record can't revoke its own signer, and a revoked key signs nothing more, records
+included. The revocations are device state (`/var/lib/splanc-ota`), so they outlive
+every later update; only a re-flash resets them.
+
+### Key rotation
+
+The ring is part of the system image, so on a MAX (unlike the C6 loader) **a new
+ring ships over the air**: the bridge image below carries it. What can't come over
+the air is trust in a key the running system doesn't know, which is why the backup
+(id 4) has to be in the ring *before* it is needed. A unit whose system predates
+`max_backup.pub` (an `UNSET` slot) ignores backup-signed records and refuses
+backup-signed images as `unknown_key`: a compromise of `max` reaches it only via
+`deploy_live` or a re-flash.
+
+**Runbook: the `max` key is compromised.**
+
+1. **Take the backup out of cold storage.** On an offline machine, sign an epoch
+   revoking id 3 (`<stored+1>`: 1 for the first record):
+
+   ```
+   ota_sign epoch --key-file max_backup.key --key-id 4 --epoch <stored+1> --revoke 3 --out max_epoch.bin
+   ota_sign verify-epoch --ring 3=keys/max.pub,4=keys/max_backup.pub --in max_epoch.bin
+   ```
+2. **Commit it as `firmware/ota/keys/max_epoch.bin`.** Every release now ships it as
+   `max-key-epoch.bin`, and the web app and the agent send it with `ota_begin`. Each
+   unit applies it at its next update attempt and from then on refuses anything the
+   stolen key signs (`revoked_key`). Revoked ids are never reused.
+3. **Generate the successor online key** (`ota_sign keygen`), and give it a **fresh
+   id** (5, `max_next`): add `"5": "//firmware/ota:keys/max_next.pub"` to
+   `MAX_RELEASE_RING` (and a TEST counterpart), point `MAX_OTA_SIGNING_KEY` at its
+   private half, and pass `--key-id 5` in the release workflow's `max` job.
+4. **Sign one bridge release with the backup**, by hand on the offline machine, for
+   the release that first carries the new ring (CI can't: the units don't trust id 5
+   yet, and nothing in CI holds the backup):
+
+   ```
+   python3 tools/max_ota_release.py --toplevel <system> --board pi3 --version X.Y.Z \
+     --signer ota_sign --pubkey firmware/ota/keys/max_backup.pub \
+     --key-id 4 --key-file max_backup.key --out-dir _assets
+   ```
+
+   Upload the `.nixclosure` / `.manifest` to the release. Once the units run it they
+   trust id 5, and CI signs with it from the next release on.
+5. **Put the backup back in cold storage.** A replacement backup (if it was
+   exposed) is a new id too, added the same way.
+
+The tests (`//pi/max_ota:updater_test`, "rotation" below) run this end to end with
+the TEST keys: a backup-signed record revoking `max`, after which max-signed images
+are refused and backup-signed ones install.
 
 **Anti-rollback.** It works exactly as on the C6:
 
@@ -366,7 +426,7 @@ every `firmware-v*` tag, after the C6 job, onto the same release.
 | Asset | |
 |---|---|
 | `max-pi3-X.Y.Z.nixclosure` | the image (full closure, zstd -19) |
-| `max-pi3-X.Y.Z.manifest` | 108 bytes, signed with `MAX_OTA_SIGNING_KEY` (key id 3, board 1) |
+| `max-pi3-X.Y.Z.manifest` | 108 bytes, signed with `MAX_OTA_SIGNING_KEY` (key id 3, board 1). CI never signs with `max_backup` (id 4): it has no secret, and `max_ota_release.py` refuses `--key-id 4` without `--key-file` |
 | `max-key-epoch.bin` | when `firmware/ota/keys/max_epoch.bin` exists |
 
 - **The version.** The system is stamped with the release version
@@ -397,7 +457,7 @@ v1.0.0 unit.
 
 | Target | Covers |
 |---|---|
-| `//pi/max_ota:updater_test` | the simulated Pi: happy path, refusals (`bad_signature`, `wrong_board`, a C6-style manifest, the loader ring's key id, `downgrade`, `bad_manifest`, Pi 5, a stock U-Boot, `bad_url`), security floor, an unhealthy trial, a trial kernel panic, no network in the trial, download retries, delta base check, a tampered image, key epochs, and the **power cut at every step** sweep |
+| `//pi/max_ota:updater_test` | the simulated Pi: happy path, refusals (`bad_signature`, `wrong_board`, a C6-style manifest, the loader ring's key id, `downgrade`, `bad_manifest`, Pi 5, a stock U-Boot, `bad_url`), security floor, an unhealthy trial, a trial kernel panic, no network in the trial, download retries, delta base check, a tampered image, key epochs, **rotation** (the ring holds `max` + `max_backup`; backup-signed images install; a backup-signed epoch revokes `max`, after which max-signed images and max-signed records are refused and the backup's bridge image installs; the backup can't revoke itself or un-revoke; an `UNSET` backup slot verifies nothing), and the **power cut at every step** sweep |
 | `//pi/max_ota:max_ota_unit_test` | header, extlinux mirror, health verdicts, state/request round trips |
 | `//pi/player_rs:player_rs_test` | the OTA arms, status mapping, pending request, download offset, `pull_only`, the welcome features |
 | `//firmware/ota:wire_test` | `source_url`, `board` and `STATE_DOWNLOADING` against the generated bindings |
@@ -435,9 +495,24 @@ filesystem. Journals of the OTA units and the player are saved per phase.
 
    Until both exist, releases carry no MAX images. Units can still be updated with
    `deploy_live`, and test-trust units with test-signed images.
-2. **Optional: a MAX backup key** (id 4, offline, like the C6 `backup`). It is the
-   only way to revoke a compromised `max` key without a re-flash. It needs a
-   `keys/max_backup.pub` slot in `MAX_RELEASE_RING`.
+2. **Create the MAX backup key offline** (decided: yes). It is the only way to
+   revoke a compromised `max` key without a re-flash. The slot (id 4,
+   `keys/max_backup.pub` in `MAX_RELEASE_RING`) is in place and `UNSET`. On an
+   offline machine:
+
+   ```
+   bazel run //firmware/ota:ota_sign -- keygen
+   ```
+
+   - Keep the `private` line **offline** (cold storage, like the C6 `backup`). Never
+     in the repo, never a CI secret: nothing in CI signs with it.
+   - Commit the `public` line as `firmware/ota/keys/max_backup.pub` (replacing
+     `UNSET`, keep the comment lines).
+   - Check that the two keys differ: `max.pub` and `max_backup.pub` must not hold the
+     same line, and neither may be the C6's `release.pub` / `backup.pub`.
+
+   Every MAX system built from then on trusts it; units only gain it by installing
+   such a system (an update or a re-flash).
 3. **Internet for MAX units.** By default the Pi downloads from github.com. A
    fixture on an isolated LAN needs a mirror passed as `source_url`; the bridge
    could serve one. That is not built yet.

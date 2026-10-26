@@ -428,7 +428,22 @@ bridge.
 - **Package source:** the `.ota` comes from the release bundle
   `esp32c6-ota-<ver>.tar`, which carries it inside, or from a cached copy for
   offline use.
+- **Entry point:** the connected device's own sheet (Devices) has **Update firmware**;
+  the add-device row's chip icon is for flashing a new board over USB. Before offering
+  the Wi-Fi button the sheet asks the app for `get_ota_status`: a legacy-layout app
+  (it still advertises `ota`) gets the "needs a one-time USB update" note instead.
 - **Driver:** `web/src/net/otaUpdate.ts`, shared with the agent.
+- **Reconnects (the browser path):** the app and the loader restart without closing
+  the socket, so the browser's socket goes half-open and only TCP keepalive (Chromium:
+  45 s) would notice. After a REBOOTING/INSTALLED reply the driver waits 1.5 s and
+  calls `expectRestart()`, which abandons the socket at once (a browser `close()`
+  waits ~60 s for a closing handshake the restarted peer never answers). While any
+  `waitForWelcome` is pending the client keeps retrying the same target at a ≤2 s
+  backoff, past its cert-trust give-up, until the wait's own deadline (180 s per
+  restart). The sheet shows "Waiting for the updater (N s)"; a timeout ends in a
+  failure with recovery text, never a silent spinner. A device that comes back as
+  the app is asked again (up to 3 handoffs). Chunk and begin replies get 30 s (as in
+  the Python client); a timed-out chunk resumes on a fresh connection.
 - **Agent:** `update_firmware {version: "latest" | X.Y.Z, allow_downgrade?, players}`
   fetches the release's `.ota` (`esp32c6-netstack-<ver>.ota`). For development,
   set `SPLANC_OTA_PACKAGE=path`. It rolls out **canary-first**: one player alone,
@@ -499,6 +514,12 @@ anything could copy them. The migration runs in **two phases**:
   and resume, rollback, bad signature, legacy layout.
 - `//web:partitionTable_test` and `//agent:firmware_test` cover table parsing,
   package resolution and the canary rollout.
+
+**Web journey** (`//pi/hitl/harness:web_ota_journey`, tags `hitl_web` + `manual`,
+opt-in): the same update through the real web app in headless Chromium, through
+`lan_relay.py` in the reservation container (a phone's LAN socket semantics; it can
+emulate a slow Wi-Fi rejoin after each restart and a mid-transfer stall). The OTA gate
+below drives the Python client, which can't see a bug in the browser path.
 
 **HITL gate** (`//pi/hitl/harness:ota_gate`, tags `hitl` + `manual`, one reservation):
 
