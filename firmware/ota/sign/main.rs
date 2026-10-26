@@ -1,9 +1,12 @@
 //! Firmware image signing for OTA (docs/design/ota.md "Signing").
 //!
-//!   ota_sign keygen
-//!       A new ECDSA P-256 key: prints the private scalar (hex — store it as the
-//!       OTA_SIGNING_KEY GitHub Actions secret, never in the repo) and the public
-//!       key (hex, SEC1 uncompressed — commit it as firmware/ota/keys/release.pub).
+//!   ota_sign keygen [--name release|backup|next|max|max_backup] [--pub-out F.pub] [--force]
+//!       A new ECDSA P-256 key: prints the private scalar (hex: store it as the
+//!       signing secret, never in the repo) and the public key (hex, SEC1
+//!       uncompressed: commit it as firmware/ota/keys/<name>.pub). --name prints the
+//!       exact secret (or "offline") and file for that key. --pub-out writes a
+//!       ready-to-commit .pub (header comment + hex) and refuses to replace a
+//!       real key unless --force; the private half is only ever printed.
 //!   ota_sign pubkey [--key-env VAR | --key-file F]
 //!       The public key for a private key.
 //!   ota_sign sign --version 1.9.0|1009000 --in app.bin --out app.manifest
@@ -160,6 +163,164 @@ fn verify(a: &Args) -> Result<(), String> {
     Ok(())
 }
 
+/// A named key of the OTA keyrings (docs/design/ota.md "Key names"): which secret
+/// (or offline store) holds its private half, and the header its .pub file carries.
+struct KeyRole {
+    name: &'static str,
+    id: u8,
+    /// Where the private half goes (completes "private (...)").
+    private_home: &'static str,
+    /// The .pub header comment lines (without "# "); `{date}` = today (UTC).
+    header: &'static [&'static str],
+}
+
+const ROLES: &[KeyRole] = &[
+    KeyRole {
+        name: "release",
+        id: 0,
+        private_home: "store as the OTA_SIGNING_KEY repository secret, never in the repo",
+        header: &[
+            "Release OTA signing key (key id 0, \"release\"): the public half of the",
+            "OTA_SIGNING_KEY repository secret. SEC1 uncompressed P-256, hex.",
+            "See docs/design/ota.md \"Signing\" and \"Key rotation\". Generated {date}.",
+        ],
+    },
+    KeyRole {
+        name: "backup",
+        id: 1,
+        private_home: "OFFLINE: keep it in cold storage, never in the repo or CI",
+        header: &[
+            "Backup OTA signing key (key id 1, \"backup\"): OFFLINE, kept in cold storage by",
+            "the owner; only this public half is in the repo. Signs key-epoch records that",
+            "revoke a compromised release key (docs/design/ota.md \"Key rotation\").",
+            "SEC1 uncompressed P-256, hex. Provisioned {date}.",
+        ],
+    },
+    KeyRole {
+        name: "next",
+        id: 2,
+        private_home: "keep it offline until the rotation makes it the OTA_SIGNING_KEY secret; never in the repo",
+        header: &[
+            "Planned successor key (key id 2, \"next\"): commit its public half one loader",
+            "release BEFORE switching CI signing to it (docs/design/ota.md \"Key rotation\").",
+            "SEC1 uncompressed P-256, hex. Generated {date}.",
+        ],
+    },
+    KeyRole {
+        name: "max",
+        id: 3,
+        private_home: "store as the MAX_OTA_SIGNING_KEY repository secret, never in the repo",
+        header: &[
+            "Splanc MAX OTA signing key (key id 3, \"max\"): the public half of the",
+            "MAX_OTA_SIGNING_KEY repository secret. SEC1 uncompressed P-256, hex.",
+            "See docs/design/ota.md \"Key names\". Generated {date}.",
+        ],
+    },
+    KeyRole {
+        name: "max_backup",
+        id: 4,
+        private_home: "OFFLINE: keep it in cold storage, never in the repo or CI",
+        header: &[
+            "Splanc MAX backup OTA signing key (key id 4, \"max_backup\"): OFFLINE, kept in",
+            "cold storage by the owner, never in CI; only this public half is in the repo.",
+            "Signs key-epoch records that revoke a compromised max key.",
+            "SEC1 uncompressed P-256, hex. Provisioned {date}.",
+        ],
+    },
+];
+
+fn role(name: &str) -> Result<&'static KeyRole, String> {
+    ROLES.iter().find(|r| r.name == name).ok_or_else(|| {
+        let names: Vec<&str> = ROLES.iter().map(|r| r.name).collect();
+        format!("unknown key name {name:?} (want one of {})", names.join("|"))
+    })
+}
+
+/// Today's date (UTC) as YYYY-MM-DD, from the system clock (civil-from-days).
+fn today() -> String {
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let z = (secs / 86_400) as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// The .pub file text for `role` (or a generic header) and the public hex.
+fn pub_file(role: Option<&KeyRole>, public: &str) -> String {
+    let date = today();
+    let mut out = String::new();
+    match role {
+        Some(r) => {
+            for l in r.header {
+                out.push_str("# ");
+                out.push_str(&l.replace("{date}", &date));
+                out.push('\n');
+            }
+        }
+        None => out.push_str(&format!("# OTA signing key. SEC1 uncompressed P-256, hex. Generated {date}.\n")),
+    }
+    out.push_str(public);
+    out.push('\n');
+    out
+}
+
+fn keygen(a: &Args) -> Result<(), String> {
+    let pub_out = a.opt("--pub-out");
+    let force = a.0.iter().any(|x| x == "--force");
+    let mut chosen = a.opt("--name").map(|n| role(&n)).transpose()?;
+    if let Some(path) = &pub_out {
+        let p = std::path::Path::new(path);
+        if p.extension().and_then(|e| e.to_str()) != Some("pub") {
+            return Err(format!("--pub-out {path}: must be a .pub file (only the public half is ever written)"));
+        }
+        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        match chosen {
+            Some(r) if r.name != stem && !force => {
+                return Err(format!(
+                    "--name {} but --pub-out is {stem}.pub (want {}.pub; --force to write it anyway)",
+                    r.name, r.name
+                ))
+            }
+            None => chosen = ROLES.iter().find(|r| r.name == stem),
+            _ => {}
+        }
+        if let Ok(old) = fs::read_to_string(p) {
+            let placeholder = old.lines().any(|l| l.trim() == "UNSET");
+            if !placeholder && !force {
+                return Err(format!(
+                    "{path} already holds a key; replacing it changes what devices trust (--force to overwrite)"
+                ));
+            }
+        }
+    }
+    let k = SigningKey::random(&mut rand_core::OsRng);
+    let public = public_hex(&k);
+    if let Some(path) = &pub_out {
+        fs::write(path, pub_file(chosen, &public)).map_err(|e| format!("{path}: {e}"))?;
+    }
+    match chosen {
+        Some(r) => {
+            println!("key: {} (id {})", r.name, r.id);
+            println!("private ({}): {}", r.private_home, hex(&k.to_bytes()));
+            println!("public  (commit as firmware/ota/keys/{}.pub): {public}", r.name);
+        }
+        None => {
+            println!("private (store as the signing secret, never in the repo): {}", hex(&k.to_bytes()));
+            println!("public  (commit as firmware/ota/keys/<name>.pub): {public}");
+        }
+    }
+    if let Some(path) = &pub_out {
+        println!("wrote {path} (public half only)");
+    }
+    Ok(())
+}
+
 fn run() -> Result<(), String> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let Some(cmd) = argv.first().cloned() else {
@@ -167,12 +328,7 @@ fn run() -> Result<(), String> {
     };
     let a = Args(argv[1..].to_vec());
     match cmd.as_str() {
-        "keygen" => {
-            let k = SigningKey::random(&mut rand_core::OsRng);
-            println!("private (OTA_SIGNING_KEY secret): {}", hex(&k.to_bytes()));
-            println!("public  (firmware/ota/keys/release.pub): {}", public_hex(&k));
-            Ok(())
-        }
+        "keygen" => keygen(&a),
         "pubkey" => {
             println!("{}", public_hex(&signing_key(&a)?));
             Ok(())
