@@ -68,9 +68,37 @@ fn record_round_trips_and_rejects_junk() {
     assert_eq!(decode(&encode(&p)), Some(p));
     assert_eq!(decode(&[]), None);
     let mut bad = encode(&p);
-    bad[0] = 2;
+    bad[0] = 0;
     assert_eq!(decode(&bad), None);
     assert_eq!(decode(&encode(&p)[..17]), None);
+    // An explicit decay chosen on this firmware (24 h included) persists.
+    let on = LmWifiPolicy { decay_after_h: 24, ..DEFAULT_POLICY };
+    assert_eq!(decode(&encode(&on)), Some(on));
+}
+
+#[test]
+fn decay_is_opt_in_and_v1_records_migrate() {
+    assert_eq!(DEFAULT_POLICY.decay_after_h, 0, "decay off by default");
+    assert_eq!(DEFAULT_POLICY.sparse_interval_s, 900, "the sparse period is ready for when it is enabled");
+    let v1 = |p: &LmWifiPolicy| {
+        let mut r = encode(p);
+        r[0] = 1;
+        r
+    };
+    // A v1 record (pre-opt-in firmware) carries the old default 24 h whenever the user
+    // never chose a decay: it reads back as off, the rest of the record intact.
+    let old = LmWifiPolicy { mode: MODE_FIXED, interval_s: 120, decay_after_h: 24, ..DEFAULT_POLICY };
+    assert_eq!(decode(&v1(&old)), Some(LmWifiPolicy { decay_after_h: 0, ..old }));
+    // Any other v1 decay was an explicit choice: kept (off stays off).
+    for h in [0, 1, 12, 48, 8_760] {
+        let p = LmWifiPolicy { decay_after_h: h, ..DEFAULT_POLICY };
+        assert_eq!(decode(&v1(&p)).unwrap().decay_after_h, h, "v1 decay {h}");
+    }
+    // Records are written as v2 from now on.
+    assert_eq!(encode(&DEFAULT_POLICY)[0], 2);
+    let mut v3 = encode(&DEFAULT_POLICY);
+    v3[0] = 3;
+    assert_eq!(decode(&v3), None, "an unknown future version keeps the defaults");
 }
 
 #[test]

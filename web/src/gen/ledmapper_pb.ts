@@ -1635,7 +1635,8 @@ export type SetWifiPolicy = Message<"ledmapper.v1.SetWifiPolicy"> & {
 
   /**
    * auto: after this many hours without ever seeing the network, slow the
-   * rescans to sparse_interval_s (0 = never; default 24).
+   * rescans to sparse_interval_s. Opt-in: 0 = off (the default; older
+   * firmware defaulted to 24).
    *
    * @generated from field: optional uint32 decay_after_h = 4;
    */

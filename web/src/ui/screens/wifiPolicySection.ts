@@ -33,7 +33,9 @@ export interface WifiPolicyClient {
 
 const MODE_LABEL: Record<WifiMode, string> = { auto: "Auto", fixed: "Fixed", manual: "Manual", offline: "Offline" };
 const MODE_HINT: Record<WifiMode, string> = {
-  auto: "Rescans soon after losing the network, backing off to the cap; slows down after a long absence.",
+  auto:
+    "Rescans soon after losing the network, backing off to the cap and keeping that pace. Optionally slows " +
+    "down after a long absence (off unless you set the hours below).",
   fixed: "Rescans at a steady interval while the network is missing.",
   manual: "Never looks for the network on its own — only when you tap Rejoin now.",
   offline: "Forward-deployed: Wi-Fi radio off, credentials kept. Change it over Bluetooth or the console.",
@@ -48,7 +50,7 @@ interface NumField {
 }
 const FIELDS: NumField[] = [
   { key: "scanCapS", label: "Longest wait between scans (s)", min: 10, max: 86400, modes: ["auto"] },
-  { key: "decayAfterH", label: "Slow down after unseen for (h, 0 = never)", min: 0, max: 100000, modes: ["auto"] },
+  { key: "decayAfterH", label: "Slow down after unseen for (h, 0 = off)", min: 0, max: 8760, modes: ["auto"] },
   { key: "sparseIntervalS", label: "Slowed scan interval (s)", min: 60, max: 86400, modes: ["auto"] },
   { key: "intervalS", label: "Scan interval (s)", min: 10, max: 86400, modes: ["fixed"] },
 ];

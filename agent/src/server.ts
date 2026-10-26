@@ -616,7 +616,8 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     {
       description:
         "Change how the player rejoins its Wi-Fi network; unset fields keep their value. auto: rescans 5 s " +
-        "doubling to scan_cap_s, slowing to sparse_interval_s after decay_after_h hours unseen (0 = never). " +
+        "doubling to scan_cap_s and holding there; opt-in: slow to sparse_interval_s after decay_after_h hours unseen " +
+        "(0 = off, the default; set it only when the user asks to save airtime/power on a long-absent network). " +
         "fixed: a rescan every interval_s. manual: never joins on its own (rejoin_now opens a ~2 min join " +
         "window). offline: for a forward-deployed unit with no AP — the Wi-Fi radio goes silent now and stays " +
         "off after reboots; Wi-Fi credentials are KEPT, so switching back to auto rejoins. Reconfiguring an " +
@@ -633,7 +634,7 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
           .int()
           .min(0)
           .optional()
-          .describe("auto: hours unseen before slowing down (0 = never; default 24)"),
+          .describe("auto, opt-in: hours unseen before slowing down (0 = off, the default; e.g. 24)"),
         sparse_interval_s: z
           .number()
           .int()

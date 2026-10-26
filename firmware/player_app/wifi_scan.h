@@ -70,7 +70,7 @@ struct Policy {
   uint8_t mode = kModeAuto;
   uint32_t cap_s = 60;         // auto: the backoff cap
   uint32_t interval_s = 300;   // fixed: the rescan period
-  uint32_t decay_h = 24;       // auto: hours unseen before the sparse period (0 = never)
+  uint32_t decay_h = 0;        // auto: hours unseen before the sparse period (0 = off; opt-in)
   uint32_t sparse_s = 900;     // the decayed period
 };
 // A commanded rejoin (manual mode) / a new provision opens a join window this long.

@@ -49,7 +49,7 @@ test("get_wifi_policy: mode, state, timings, status line", { skip }, async () =>
   assert.equal(r["mode"], "auto");
   assert.equal(r["state"], "joined");
   assert.equal(r["scan_cap_s"], 60);
-  assert.equal(r["decay_after_h"], 24);
+  assert.equal(r["decay_after_h"], 0, "decay is opt-in (off by default)");
   assert.equal(r["ota_pending"], false);
   assert.equal("refused" in r, false);
   s.close();
@@ -65,6 +65,17 @@ test("set_wifi_policy sends only the given fields and never force by default", {
   assert.equal(sent["intervalS"], 120);
   assert.equal("scanCapS" in sent, false);
   assert.equal(sent["force"] ?? false, false);
+  s.close();
+});
+
+test("set_wifi_policy: the decay is opt-in (sent only when given)", { skip }, async () => {
+  const s = await connect(["wifi_policy"]);
+  let r = await s.setWifiPolicy({ mode: "auto" });
+  assert.equal(r["decay_after_h"], 0);
+  assert.equal("decayAfterH" in sets()[0]!, false);
+  r = await s.setWifiPolicy({ decayAfterH: 24 });
+  assert.equal(r["decay_after_h"], 24);
+  assert.equal(sets()[1]!["decayAfterH"], 24);
   s.close();
 });
 

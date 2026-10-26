@@ -1,8 +1,8 @@
 //! Wi-Fi rejoin policy (docs/design/wifi-rejoin-policy.md): the protocol side.
 //!
 //! The policy says how the board (re)joins its stored network when it isn't on it:
-//! `auto` (background rescans on a capped exponential backoff, decaying to a sparse
-//! period after long absence), `fixed` (every N s), `manual` (only when told), or
+//! `auto` (background rescans on a capped exponential backoff, optionally decaying to a
+//! sparse period after a long absence: opt-in, off by default), `fixed` (every N s), `manual` (only when told), or
 //! `offline` (a forward-deployed unit: the radio stays off, the show plays, BLE and
 //! the console stay up for reconfiguration; credentials are kept).
 //!
@@ -43,16 +43,21 @@ pub struct LmWifiPolicy {
     pub sparse_interval_s: u32,
 }
 
-/// The defaults: today's behaviour (5 s -> 60 s backoff), decaying after a day of
-/// absence to one sweep every 15 min — a unit whose AP is gone for good stops
-/// sweeping every minute, but still rejoins on its own when it comes back.
+/// The defaults: auto, 5 s -> 60 s backoff, held at the cap for as long as the
+/// network is missing. The decay (slowing to one sweep per `sparse_interval_s` after
+/// `decay_after_h` hours unseen) is opt-in: `decay_after_h` 0 = off.
 pub const DEFAULT_POLICY: LmWifiPolicy = LmWifiPolicy {
     mode: MODE_AUTO,
     scan_cap_s: 60,
     interval_s: 300,
-    decay_after_h: 24,
+    decay_after_h: 0,
     sparse_interval_s: 900,
 };
+
+/// The decay's default before it became opt-in. Every v1 NVS record carries it unless
+/// the user picked another value, so a v1 record holding exactly this is read as "never
+/// chosen" and migrates to off (see [`decode`]).
+pub const V1_DEFAULT_DECAY_H: u32 = 24;
 
 /// The live link facts the C++ transport reports every loop.
 #[repr(C)]
@@ -120,10 +125,18 @@ pub fn apply(cur: LmWifiPolicy, req: &Request, ota_pending: bool) -> Result<LmWi
 }
 
 /// The NVS record: version, mode, then the four u32s little-endian (18 bytes).
+///
+/// Version 2 (decay opt-in) has the v1 layout; only the meaning of the stored decay
+/// differs. v1 records were written whole on any change, so they carry the old
+/// default decay (24 h) whether or not the user ever chose it: [`decode`] maps a v1
+/// decay of exactly 24 to off and keeps any other value (an explicit choice). v2
+/// records are taken as stored, so a decay chosen after the upgrade (24 included)
+/// sticks. Older firmware rejects a v2 record and falls back to its own defaults.
 pub const RECORD_LEN: usize = 18;
+pub const RECORD_VERSION: u8 = 2;
 pub fn encode(p: &LmWifiPolicy) -> [u8; RECORD_LEN] {
     let mut r = [0u8; RECORD_LEN];
-    r[0] = 1;
+    r[0] = RECORD_VERSION;
     r[1] = p.mode;
     for (i, v) in [p.scan_cap_s, p.interval_s, p.decay_after_h, p.sparse_interval_s].iter().enumerate() {
         r[2 + 4 * i..6 + 4 * i].copy_from_slice(&v.to_le_bytes());
@@ -131,15 +144,17 @@ pub fn encode(p: &LmWifiPolicy) -> [u8; RECORD_LEN] {
     r
 }
 pub fn decode(r: &[u8]) -> Option<LmWifiPolicy> {
-    if r.len() != RECORD_LEN || r[0] != 1 {
+    if r.len() != RECORD_LEN || !(1..=RECORD_VERSION).contains(&r[0]) {
         return None;
     }
     let u = |i: usize| u32::from_le_bytes([r[2 + 4 * i], r[3 + 4 * i], r[4 + 4 * i], r[5 + 4 * i]]);
+    let decay = u(2);
+    let decay_after_h = if r[0] == 1 && decay == V1_DEFAULT_DECAY_H { 0 } else { decay };
     Some(sanitize(LmWifiPolicy {
         mode: r[1],
         scan_cap_s: u(0),
         interval_s: u(1),
-        decay_after_h: u(2),
+        decay_after_h,
         sparse_interval_s: u(3),
     }))
 }

@@ -95,8 +95,8 @@ int lm_mdns_reply(const uint8_t *query, size_t qlen, uint16_t src_port, const ui
                   uint8_t *out, size_t cap, bool *unicast);
 
 // --- Wi-Fi rejoin policy (docs/design/wifi-rejoin-policy.md) -------------------------
-// mode: 0 auto (5 s -> scan_cap_s backoff, decaying to sparse_interval_s after
-// decay_after_h hours unseen), 1 fixed (every interval_s), 2 manual (only in a join
+// mode: 0 auto (5 s -> scan_cap_s backoff; opt-in decay to sparse_interval_s after
+// decay_after_h hours unseen, 0 = off), 1 fixed (every interval_s), 2 manual (only in a join
 // window opened by netstack_wifi_rejoin or a new provision), 3 offline (radio off).
 struct NetstackWifiPolicy {
   uint8_t mode;
