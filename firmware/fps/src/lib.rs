@@ -45,6 +45,17 @@
 //!   [`MIN_SLICE_MS`] slice and ≥ (100 − [`RENDER_DUTY_PCT`])% of the wall clock —
 //!   so the network loop, the IMU sampler and TLS are always serviced between
 //!   frames, however heavy the effect.
+//! - **Guaranteed network share.** Independently of the period, a frame whose
+//!   render COMPUTE took `cpu_us` sleeps at least [`net_share_ms`] after it —
+//!   (100 − [`RENDER_DUTY_PCT`])% of the wall clock — and a rung whose period
+//!   can't hold `cpu_us` plus that share is a miss
+//!   ([`on_frame_cpu`](FpsController::on_frame_cpu)). Without it a frame that
+//!   just fit its rung slept only the 1-3 ms left of its period: the netstack
+//!   loop below render got a few % of the CPU, too little for a new client's TLS
+//!   handshake, DHCP or a Wi-Fi rejoin (1.12.3 field: players running a
+//!   near-budget effect became unreachable, at every boot too, since the effect
+//!   persists). The effect runs a rung lower instead — it lags, it never starves
+//!   the network.
 //!
 //! Pure, `no_std`, zero-dependency, integer-only (no hardware f64 on the C6) so
 //! it unit-tests on the host and compiles unchanged for the device.
@@ -112,11 +123,13 @@ pub const LADDER_LEN: u32 = (MAX_FPS - LADDER_MIN_FPS) / FPS_STEP + 1;
 /// i.e. we insist on (100 - this)% = 5% headroom for the other tasks.
 pub const HEADROOM_PCT: u32 = 95;
 
-/// The most of the wall clock a frame that overran its period may take: such a
-/// frame then sleeps ≥ (100 − this)% ([`overrun_yield_ms`]). 80% render / 20%
+/// The most of the wall clock render may take: a frame that overran its period
+/// sleeps ≥ (100 − this)% of its cost ([`overrun_yield_ms`]), and EVERY frame
+/// sleeps ≥ (100 − this)% of its compute ([`net_share_ms`]). 80% render / 20%
 /// for the network loop, the IMU sampler and TLS — under a heavy effect that
 /// used to win ~95% of the CPU the IMU fell from 100 Hz to ~11 Hz with FIFO
-/// overflows (PixieLamp bootloop log).
+/// overflows (PixieLamp bootloop log), and a near-budget one starved the
+/// netstack loop until no new client could connect (1.12.3 field report).
 pub const RENDER_DUTY_PCT: u32 = 80;
 /// The shortest sleep after a frame that overran its period, in ms: a slice
 /// long enough for the lower/equal-priority tasks to run a full pass (the
@@ -188,6 +201,9 @@ pub struct FpsController {
     win_missed: u32,
     /// Worst (largest) frame cost seen this window, in µs — gates step-up.
     win_max_cost_us: u32,
+    /// Worst render compute seen this window, in µs (0 = not reported): with the
+    /// network's share it gates step-up ([`cpu_fits`]).
+    win_max_cpu_us: u32,
     /// Sum of this window's frame intervals (cost + the sleep after it), in µs.
     win_interval_us: u32,
     /// The rate the last closed window really ran at (0 = no window yet).
@@ -217,6 +233,7 @@ impl FpsController {
             win_frames: 0,
             win_missed: 0,
             win_max_cost_us: 0,
+            win_max_cpu_us: 0,
             win_interval_us: 0,
             achieved_fps: 0,
             lagging: false,
@@ -243,6 +260,7 @@ impl FpsController {
         self.win_frames = 0;
         self.win_missed = 0;
         self.win_max_cost_us = 0;
+        self.win_max_cpu_us = 0;
         self.win_interval_us = 0;
     }
 
@@ -407,6 +425,16 @@ impl FpsController {
     /// returned delay is period−work so the frame *interval* holds the target,
     /// not work+period — and never less than the bounded-duty-cycle yield.
     pub fn on_frame(&mut self, cost_us: u32) -> Decision {
+        self.on_frame_cpu(cost_us, 0)
+    }
+
+    /// [`on_frame`](Self::on_frame) with the frame's render COMPUTE (`cpu_us`:
+    /// update + shade + blend, not the waits or the transmit) as well: the frame
+    /// then also owes the rest of the device [`net_share_ms`] of sleep, and a rung
+    /// whose period can't hold the compute plus that share ([`cpu_fits`]) is a
+    /// miss — the effect steps down (lags) instead of starving the network.
+    /// `cpu_us` = 0 means unknown (the old wall-cost-only behaviour).
+    pub fn on_frame_cpu(&mut self, cost_us: u32, cpu_us: u32) -> Decision {
         let period = period_us(self.rung_fps());
         let headroom_budget = headroom_budget_us(period);
 
@@ -419,11 +447,14 @@ impl FpsController {
         } else {
             headroom_budget
         };
-        if cost_us > miss_over {
+        if cost_us > miss_over || !cpu_fits(cpu_us, period) {
             self.win_missed += 1;
         }
         if cost_us > self.win_max_cost_us {
             self.win_max_cost_us = cost_us;
+        }
+        if cpu_us > self.win_max_cpu_us {
+            self.win_max_cpu_us = cpu_us;
         }
 
         // Sleep = period − work already spent this frame, so successive frame
@@ -433,12 +464,15 @@ impl FpsController {
         // clock — see min_yield_ms). A frame that overran its period instead
         // sleeps the bounded-duty-cycle slice (overrun_yield_ms): the effect lags,
         // the rest of the device keeps being serviced.
+        // And never less than the network's guaranteed share of this frame's
+        // compute (net_share_ms; 0 when the caller reported no compute).
         let delay_ms = if cost_us > period {
             overrun_yield_ms(cost_us)
         } else {
             let remaining_us = period - cost_us;
             ((remaining_us + 500) / 1000).max(min_yield_ms(cost_us))
-        };
+        }
+        .max(if cpu_us > 0 { net_share_ms(cpu_us) } else { 0 });
         self.win_interval_us = self
             .win_interval_us
             .saturating_add(cost_us.saturating_add(delay_ms.saturating_mul(1000)));
@@ -455,6 +489,7 @@ impl FpsController {
     fn evaluate_window(&mut self) {
         let missed = self.win_missed;
         let max_cost = self.win_max_cost_us;
+        let max_cpu = self.win_max_cpu_us;
         let over_limit = missed > self.miss_limit();
         if self.win_interval_us > 0 {
             // Rounded frames-per-second of the window just closed.
@@ -480,7 +515,7 @@ impl FpsController {
                 // we saw would still leave 5% headroom at the FASTER rung, so we
                 // don't immediately bounce back down.
                 let next_period = period_us(fps_at(self.idx + 1));
-                if max_cost <= headroom_budget_us(next_period) {
+                if max_cost <= headroom_budget_us(next_period) && cpu_fits(max_cpu, next_period) {
                     self.idx += 1;
                 }
             }
@@ -510,6 +545,26 @@ pub fn overrun_yield_ms(cost_us: u32) -> u32 {
     let free_us =
         (cost_us as u64 * (100 - RENDER_DUTY_PCT) as u64).div_ceil(RENDER_DUTY_PCT as u64);
     (free_us.div_ceil(1000) as u32).max(MIN_SLICE_MS)
+}
+
+/// The sleep a frame owes the rest of the device after `cpu_us` of render
+/// compute, in ms: at least `cpu × (100 − RENDER_DUTY_PCT) / RENDER_DUTY_PCT`
+/// (rounded up) and 1 ms — so render's compute never takes more than
+/// [`RENDER_DUTY_PCT`]% of the wall clock, whatever rung it runs at. The
+/// netstack loop (TCP, a new client's TLS handshake, DHCP, the Wi-Fi join) runs
+/// one priority below render and only gets this sleep.
+#[inline]
+pub fn net_share_ms(cpu_us: u32) -> u32 {
+    let free_us =
+        (cpu_us as u64 * (100 - RENDER_DUTY_PCT) as u64).div_ceil(RENDER_DUTY_PCT as u64);
+    (free_us.div_ceil(1000) as u32).max(1)
+}
+
+/// Whether `cpu_us` of render compute plus the network's share of it
+/// ([`net_share_ms`], unrounded) fits in `period_us`. Unknown compute (0) fits.
+#[inline]
+pub fn cpu_fits(cpu_us: u32, period_us: u32) -> bool {
+    (cpu_us as u64) * 100 <= (period_us as u64) * RENDER_DUTY_PCT as u64
 }
 
 /// The per-frame cost ceiling that still leaves the required headroom.
@@ -673,6 +728,91 @@ mod tests {
         assert_eq!(c.on_frame(110_000).delay_ms, overrun_yield_ms(110_000));
         assert_eq!(overrun_yield_ms(110_000), 28);
         assert_eq!(overrun_yield_ms(1_000), MIN_SLICE_MS);
+    }
+
+    /// Settle a fresh controller on frames of `cpu_us` compute (= the wall cost,
+    /// as for a compute-bound effect) and return the last few decisions.
+    fn settle(cpu_us: u32, windows: u32) -> (FpsController, [u32; WINDOW_N as usize]) {
+        let mut c = FpsController::new();
+        let mut last = [0u32; WINDOW_N as usize];
+        for i in 0..WINDOW_N * windows {
+            last[(i % WINDOW_N) as usize] = c.on_frame_cpu(cpu_us, cpu_us).delay_ms;
+        }
+        (c, last)
+    }
+
+    #[test]
+    fn a_near_budget_frame_leaves_the_network_its_share() {
+        // The 1.12.3 field case: a frame costing 93 % of the 25 fps floor's 40 ms.
+        // Wall-cost-only, it held the floor and slept the 3 ms left of its period
+        // (7 % for the netstack loop below render: no new client's TLS handshake
+        // completed). With its compute reported, it sleeps the network's share.
+        let cost = budget(MIN_FPS) * 93 / 95;
+        let mut old = FpsController::new();
+        old.set_target(MIN_FPS);
+        assert_eq!(old.on_frame(cost).delay_ms, 3);
+        let mut c = FpsController::new();
+        c.set_target(MIN_FPS);
+        let d = c.on_frame_cpu(cost, cost).delay_ms;
+        assert_eq!(d, net_share_ms(cost));
+        assert!((d as u64 * 1000) * 100 >= (cost as u64 + d as u64 * 1000) * (100 - RENDER_DUTY_PCT) as u64);
+    }
+
+    #[test]
+    fn every_frame_leaves_the_network_its_share_at_any_cost() {
+        // Whatever rung the autoscaler settles on, render's compute takes at most
+        // RENDER_DUTY_PCT of each frame interval (cost + sleep).
+        let mut cpu = 500u32;
+        while cpu <= 400_000 {
+            let (c, last) = settle(cpu, 12);
+            for d in last {
+                let sleep_us = d as u64 * 1000;
+                assert!(
+                    (cpu as u64) * 100 <= (cpu as u64 + sleep_us) * RENDER_DUTY_PCT as u64,
+                    "cpu {cpu} us at {} fps slept only {d} ms",
+                    c.rung_fps()
+                );
+            }
+            // Off the floor, the rung's period holds the compute plus the share.
+            if !c.lagging() {
+                assert!(cpu_fits(cpu, period_us(c.rung_fps())), "cpu {cpu} at {} fps", c.rung_fps());
+            }
+            cpu = cpu * 5 / 4;
+        }
+    }
+
+    #[test]
+    fn compute_that_cannot_keep_the_share_steps_down_instead() {
+        // 26 ms of compute: wall-cost-only it holds 35 fps (28.6 ms, 95 % = 27.1 ms)
+        // and leaves the network 2.6 ms a frame; with the share it settles at 30 fps
+        // (33.3 ms holds 26 ms + 6.5 ms) and sleeps >= 7 ms.
+        let mut old = FpsController::new();
+        for _ in 0..WINDOW_N * 12 {
+            old.on_frame(26_000);
+        }
+        assert_eq!(old.rung_fps(), 35);
+        let (c, last) = settle(26_000, 12);
+        assert_eq!(c.rung_fps(), 30);
+        assert!(!c.lagging());
+        assert!(last.iter().all(|&d| d >= net_share_ms(26_000)));
+        assert_eq!(net_share_ms(26_000), 7);
+        // ... and a compute that fits no rung lags at the floor, still sharing.
+        let (c, last) = settle(39_000, 6);
+        assert_eq!(c.rung_fps(), MIN_FPS);
+        assert!(c.lagging());
+        assert!(last.iter().all(|&d| d >= net_share_ms(39_000)));
+    }
+
+    #[test]
+    fn net_share_rounds_up_to_whole_ms() {
+        assert_eq!(net_share_ms(0), 1);
+        assert_eq!(net_share_ms(1_000), 1);
+        assert_eq!(net_share_ms(4_000), 1);
+        assert_eq!(net_share_ms(4_001), 2);
+        assert_eq!(net_share_ms(37_200), 10);
+        assert!(cpu_fits(0, period_us(MAX_FPS)));
+        assert!(cpu_fits(32_000, period_us(25)));
+        assert!(!cpu_fits(32_001, period_us(25)));
     }
 
     #[test]

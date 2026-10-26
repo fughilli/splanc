@@ -668,7 +668,7 @@ fn full_device_flow_through_the_c_abi() {
     let mut lag = false;
     assert!(!unsafe { lm_fps_take_lag_notify(&mut lag) }, "nothing to report yet");
     for _ in 0..200 {
-        let delay = unsafe { lm_fps_on_frame(20_000, 0, 0) };
+        let delay = unsafe { lm_fps_on_frame(20_000, 0, 0, 0) };
         assert!(delay >= 5, "an overrunning frame yields >= max(4 ms, 25%) ({delay} ms)");
         assert!(unsafe { lm_fx_active() }, "a slow effect is never parked");
     }
@@ -693,7 +693,7 @@ fn full_device_flow_through_the_c_abi() {
     // Much heavier frames (60 ms: ~13 fps flat out) still never park it. (Two
     // decks crossfading are costed as one frame, so the same holds for a pair.)
     for _ in 0..200 {
-        unsafe { lm_fps_on_frame(60_000, 0, 0) };
+        unsafe { lm_fps_on_frame(60_000, 0, 0, 0) };
     }
     assert!(unsafe { lm_fx_active() }, "still rendering");
 
@@ -702,26 +702,26 @@ fn full_device_flow_through_the_c_abi() {
     let fauto = set_fps(0, false, 8200.0);
     assert!(fauto.r#auto && fauto.r#target_fps == 0 && !fauto.r#lagging);
     for _ in 0..(12 * 30) {
-        unsafe { lm_fps_on_frame(2_000, 0, 0) };
+        unsafe { lm_fps_on_frame(2_000, 0, 0, 0) };
     }
     assert_eq!(unsafe { lm_fps_current_fps() }, 80, "a cheap effect climbs to the ceiling");
     // A new activation restarts the search at the default 30-fps rung.
     unsafe { lm_fx_set_active(false) };
     unsafe { lm_fx_set_active(true) };
-    unsafe { lm_fps_on_frame(2_000, 0, 0) };
+    unsafe { lm_fps_on_frame(2_000, 0, 0, 0) };
     assert_eq!(unsafe { lm_fps_current_fps() }, 30);
     // A 2 x 1024-LED strip: the wire (1024 LEDs x 28.8 us + latch = 29.8 ms)
     // caps the ladder at 30 fps however cheap the frames, and the 2048 shaded
     // LEDs lower the autoscaler floor to 5 fps; fps_state reports both.
     for _ in 0..(12 * 30) {
-        unsafe { lm_fps_on_frame(2_000, 1024, 2048) };
+        unsafe { lm_fps_on_frame(2_000, 0, 1024, 2048) };
     }
     assert_eq!(unsafe { lm_fps_current_fps() }, 30, "the wire caps the climb");
     let fs = set_fps(0, false, 8300.0);
     assert_eq!((fs.r#current_fps, fs.r#min_fps, fs.r#max_fps), (30, 5, 30));
     // ~45 ms frames (a plasma over 2048 LEDs) step down to a steady 20 fps.
     for _ in 0..(12 * 30) {
-        unsafe { lm_fps_on_frame(45_000, 1024, 2048) };
+        unsafe { lm_fps_on_frame(45_000, 0, 1024, 2048) };
     }
     assert!(unsafe { lm_fx_active() }, "a long strip's heavy effect keeps running");
     assert_eq!(unsafe { lm_fps_current_fps() }, 20);

@@ -1949,17 +1949,28 @@ static uint32_t render_once() {
     // With the strip: its wire floor (28.8 us per LED of the longest channel +
     // the latch) caps the ladder at what the wire can carry, and its length
     // lowers the autoscaler floor past 512 LEDs (a steady slower rung).
-    next_delay_ms = lm_fps_on_frame(cost_us, wire_leds, perf_led_count);
+    //
+    // The frame's render COMPUTE (update + shade + blend) buys the network its
+    // guaranteed share: every frame sleeps >= 25% of it (render <= 80% of the
+    // CPU), and a rung that can't hold compute + share steps down (lm_fps_on_frame).
+    // The netstack loop runs one priority below render and only gets these sleeps:
+    // with just the 1-3 ms a near-budget frame left of its period, a NEW client's
+    // TLS handshake, DHCP and the Wi-Fi join starved (1.12.3 field: players stayed
+    // unreachable under such an effect, at every boot too since it persists).
+    uint32_t cpu_us = perf_frame_c / (160000000u / 1000000u);
+    uint32_t share_ms = lm_fps_net_share_ms(cpu_us);
+    next_delay_ms = lm_fps_on_frame(cost_us, cpu_us, wire_leds, perf_led_count);
     {
       // The autoscaler picked the rung (and, for a frame that overran its period, the
       // bounded-duty-cycle sleep). Within the period, sleep to the next frame START:
-      // period − the wall time this frame has already taken. The transmit overlaps the
-      // next frame's render (the next stage waits for it), so it shortens nothing here.
+      // period − the wall time this frame has already taken — but never less than the
+      // network's share of this frame's compute. The transmit overlaps the next frame's
+      // render (the next stage waits for it), so it shortens nothing here.
       uint32_t period_us = lm_fps_budget_cycles() / (160000000u / 1000000u);
       if (cost_us <= period_us && fx_elapsed_us >= 0 && (uint64_t)fx_elapsed_us < period_us) {
         uint32_t want_us = period_us - (uint32_t)fx_elapsed_us;
         next_delay_ms = (want_us + 500) / 1000;
-        if (next_delay_ms < 1) next_delay_ms = 1;
+        if (next_delay_ms < share_ms) next_delay_ms = share_ms;
       }
     }
     if (next_delay_ms < g_fx_delay_min) g_fx_delay_min = next_delay_ms;
@@ -2830,10 +2841,13 @@ static void poll_wifi_policy() {
 
 // The loop task's priority, re-decided every loop. One below render whenever the link is
 // joining / scanning / leasing / deriving a PMK / idle: none of that may delay a frame
-// (wifi_cadence: zero late frames across every rejoin path). AT render's priority while
-// a wss session is up on a settled link (netstack_data_plane_active): the two then
-// round-robin, so the session gets about half of a busy CPU instead of only render's
-// sleeps — what the network had before #371, and what a 30 fps texture stream needs.
+// (wifi_cadence: zero late frames across every rejoin path); render leaves it at least
+// the network's share of every frame (lm_fps_net_share_ms: >= 25% of its compute). AT
+// render's priority while a client is on a settled link — a wss session up, or a new
+// client mid-accept / mid-TLS-handshake (netstack_data_plane_active): the two then
+// round-robin, so the client gets about half of a busy CPU instead of only render's
+// sleeps — what the network had before #371, what a 30 fps texture stream needs, and
+// what lets a new client's handshake finish inside its timeout under a heavy effect.
 // (Measured on hitl-rig-2, video_latency_netstack 30 fps / 120 s: see
 // docs/design/wifi-rejoin-policy.md "Loop priority".) The loop sleeps 1 tick per pass,
 // so an idle session costs render almost nothing; a rejoin always drops the session

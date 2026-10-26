@@ -416,8 +416,14 @@ int32_t lm_perf_build_report(uint8_t *out, size_t out_cap);
 // channel; the two go out in parallel): their WS2812 wire time (28.8 us per LED
 // + the latch) caps the ladder at what the wire can carry. The `leds` it shaded
 // set the floor (25 fps up to 512 LEDs, proportionally lower past it, so a long
-// strip gets a steady slower rung for a heavy effect).
-uint32_t lm_fps_on_frame(uint32_t cost_us, uint32_t wire_leds, uint32_t leds);
+// strip gets a steady slower rung for a heavy effect). `cpu_us` is the frame's
+// render COMPUTE (update + shade + blend; 0 = unknown): every frame then sleeps
+// >= lm_fps_net_share_ms(cpu_us), and a rung that can't hold the compute plus that
+// share is a miss — the network's guaranteed share (the loop runs below render).
+uint32_t lm_fps_on_frame(uint32_t cost_us, uint32_t cpu_us, uint32_t wire_leds, uint32_t leds);
+// The sleep (ms) a frame owes the lower-priority tasks after cpu_us of render
+// compute: >= 25% of it (render <= 80% of the wall clock) and >= 1 ms.
+uint32_t lm_fps_net_share_ms(uint32_t cpu_us);
 // The rate the effect runs at now (the rung, or what it achieves while lagging).
 uint32_t lm_fps_current_fps(void);
 // Per-frame overrun budget in CPU cycles for the current rung (cpu_hz / fps).

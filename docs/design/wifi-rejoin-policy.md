@@ -46,6 +46,39 @@ render's sleeps: about 3-4 ms of each 12 ms frame under a light 80 fps effect. A
 While a session streams, a light effect renders at ~55-60 fps instead of 80 (the
 autoscaler sees the shared CPU), as before #371.
 
+#### Heavy effects (1.12.4 hotfix)
+
+Below render, the loop only gets render's sleeps. In 1.12.3 a frame that fit its rung
+slept only what was left of its period (1-3 ms of 40 ms at the 25 fps floor), so under
+such an effect a NEW client never connected: its TLS handshake (~0.5 s of CPU) took
+longer than the client's 8 s timeout, no session ever opened, and the loop never rose.
+The same starved the rejoin (PBKDF2, the join, DHCP) and, because the effect persists,
+every boot. Two field players went unreachable this way. Two changes:
+
+- **Guaranteed share.** Every frame sleeps at least 25% of its render compute (render
+  never takes more than 80% of the CPU), and a rung that can't hold compute plus that
+  share counts as a miss, so the effect runs a rung lower or lags
+  (`firmware/fps` `net_share_ms`; see [perf-monitoring.md](perf-monitoring.md)). The
+  rejoin path still never runs at render's priority, so it still can't delay a frame.
+- **Clients count as data plane.** The loop also moves up to render's priority while a
+  client is mid-accept, mid-handshake or being served a one-shot GET, not only once its
+  wss session is up. A stalled handshake is reclaimed after 4 s, so this can't pin it.
+
+Starved handshakes also left the single :443 slot wedged after the effect was gone: a
+client that timed out could still complete the upgrade (its RST lost to the full RX
+ring), leaving a ghost wss session that RST-refused every later client. The loop now
+pings a session that has been silent for 15 s (a live client answers; a dead one gets
+reclaimed by the no-ACK gate), reclaims a served one-shot GET whose FIN never arrived
+after 8 s, and a DHCP NAK or 8 unanswered REQUESTs fall back to DISCOVER.
+
+`//pi/hitl/harness:heavy_effect_reachability` (a Swirl-like effect sized to ~93% of the
+40 ms floor period, hitl-rig-1):
+
+| firmware | idle: new connections | forced rejoin | reboot, effect persisted | render |
+|---|---|---|---|---|
+| 1.12.3 (main da79f829), 2 DUTs | 0/10 within 8 s | none within 80 s | none within 80 s | 25 fps, 3 ms sleeps, loop gaps 4.3-4.7 s |
+| hotfix | 5/5, 1.4-2.5 s | first at 24 s | first at 19 s | 21 fps (lagging), 10 ms sleeps, loop gaps <= 0.67 s |
+
 ### Measurement
 
 `//pi/hitl/harness:wifi_cadence` drives every recovery path on the wired console while an

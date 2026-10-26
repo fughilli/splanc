@@ -118,8 +118,9 @@ bool netstack_take_policy_change(NetstackWifiPolicy *out);
 // The OTA health check only requires a lease when it is — a fresh update never rolls
 // back merely because the AP is gone.
 bool netstack_wifi_wants_network(void);
-// Whether the data plane is busy: a live wss session on a leased link, with no sweep or
-// PMK derivation in flight. The player runs its loop task AT render's priority only
+// Whether the data plane is busy: a client on the :443 slot (a live wss session, or one
+// mid-accept / mid-TLS-handshake / being served a GET) on a leased link, with no sweep
+// or PMK derivation in flight. The player runs its loop task AT render's priority only
 // then (main.cpp loop()), and one below it for everything else (joins, scans, DHCP).
 bool netstack_data_plane_active(void);
 // Seconds the network had already been unseen before this boot (persisted by the app).

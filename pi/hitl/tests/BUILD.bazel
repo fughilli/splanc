@@ -36,6 +36,7 @@ py_test(
         "test_fx_bench.py",
         "test_hardware_config_pattern.py",
         "test_heap_census.py",
+        "test_heavy_effect_reachability_core.py",
         "test_improv.py",
         "test_improv_find.py",
         "test_jit_soak.py",

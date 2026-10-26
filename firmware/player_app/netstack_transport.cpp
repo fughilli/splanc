@@ -1114,6 +1114,12 @@ void handle_l3(const uint8_t *pt, int pl) {
         g_have_offer = true;
         Serial.printf("[t=%lu] *** DHCP OFFER received — L3 over heapless CCMP link ***\n", (unsigned long)millis());
         send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
+      } else if (mt == 6 && !g_leased && g_have_offer) {
+        // NAK for the address we REQUESTed (the stale one a deauth left in g_offer_ip, or
+        // one the server gave away meanwhile): back to a fresh DISCOVER instead of
+        // re-REQUESTing it forever.
+        g_have_offer = false;
+        Serial.printf("[t=%lu] [dhcp] NAK -> re-DISCOVER\n", (unsigned long)millis());
       } else if (mt == 5) {
         bool first = !g_leased;
         g_leased = true;
@@ -1961,8 +1967,18 @@ bool netstack_take_policy_change(NetstackWifiPolicy *out) {
 bool netstack_wifi_wants_network() { return autonomous((uint32_t)millis()) && g_seen_this_boot; }
 
 bool netstack_data_plane_active() {
-  return g_radio_up && !g_silent && g_leased && g_tls_hs && g_ws_up && !g_hop.active() &&
-         ns_pmk_ready();
+  if (!(g_radio_up && !g_silent && g_leased && !g_hop.active() && ns_pmk_ready())) return false;
+  if (g_tls_hs && g_ws_up) return true;  // a live wss session
+  // A client on the :443 slot that isn't streaming yet: mid-accept (SynRcvd), mid-TLS
+  // handshake / WS upgrade (Established), or a one-shot GET being served. A NEW client's
+  // handshake (~0.5 s of ECDHE/ECDSA CPU) must not live on render's leftovers: below
+  // render it only ran in the sleeps between frames, and under a near-budget effect it
+  // never finished inside a client's timeout — no session, so the loop never rose
+  // (1.12.3 field: players stayed unreachable). A stalled handshake is reclaimed after
+  // 4 s without progress (netstack_loop), so this can't pin the loop up.
+  if (!g_tcp_started) return false;
+  uint32_t s = ns_tcp_state();
+  return s == 2 || s == 6 || g_responding;
 }
 
 void netstack_set_unseen_base(uint32_t seconds) { g_unseen_base_s = seconds; }
@@ -2577,11 +2593,24 @@ void netstack_loop() {
   // link mid-DHCP (the remaining rig-2 failure mode). A tight retry recovers a lost packet quickly
   // so the lease lands fast and the redirect goes out while the link is still up.
   uint32_t dhcp_retry = improv_ble_central_connected() ? 350 : 1200;
+  // A deauth keeps the last offer (g_have_offer) so a rejoin REQUESTs its old address
+  // straight away; if the server neither ACKs nor NAKs it within ~8 REQUESTs, start over
+  // with a DISCOVER (a stale offer must never pin the board lease-less).
+  static uint8_t s_req_tries = 0;
   if (st == DONE && !g_leased && millis() - t > dhcp_retry) {
     t = millis();
+    if (g_have_offer && ++s_req_tries > 8) {
+      g_have_offer = false;
+      Serial.printf("[t=%lu] [dhcp] no ACK for the REQUEST -> re-DISCOVER\n",
+                    (unsigned long)millis());
+    }
     if (g_have_offer) send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
-    else send_dhcp(1, nullptr, nullptr, "DISCOVER");
+    else {
+      s_req_tries = 0;
+      send_dhcp(1, nullptr, nullptr, "DISCOVER");
+    }
   }
+  if (g_leased) s_req_tries = 0;
   // DHCP T1 renewal: once leased, renew at half the lease so a short-lease commercial AP
   // never lets our binding lapse — otherwise the AP reclaims the IP and we go silently
   // unreachable a lease-time after provisioning (the CoolerKids drop). Reuse the broadcast
@@ -2830,6 +2859,65 @@ void netstack_loop() {
         }
       } else {
         txstuck_since = 0;  // idle (nothing unacked) or not up — peer is fine
+      }
+    }
+    // Idle-session keepalive. A client that gave up mid-connect (its handshake outlasted
+    // its timeout while the loop was starved) or vanished without a FIN/RST that reached us
+    // can still complete the upgrade: the slot then holds a ghost wss session with nothing
+    // in flight, so the peer-gone gate above never arms, and every NEW client's SYN is
+    // RST-refused by load-shedding (serving_live) until a reboot — measured on 1.12.3 under
+    // a heavy effect (heavy_effect_reachability). After 15 s without a byte from the peer,
+    // send a WebSocket ping: a live client's stack ACKs it (and its WS layer pongs), a
+    // closed socket answers with a RST (the slot re-listens), and a vanished host never
+    // ACKs, so the peer-gone gate reclaims the slot 6 s later.
+    {
+      static uint32_t quiet_since = 0;
+      static uint32_t last_rx = 0;
+      if (s == 2 && TLS_SERVER && g_tls_hs && g_ws_up && ns_tcp_tx_room() >= 2048) {
+        uint32_t rx = ns_tcp_rcv_nxt();
+        if (quiet_since == 0 || rx != last_rx) {
+          quiet_since = millis() == 0 ? 1 : millis();
+          last_rx = rx;
+        } else if (millis() - quiet_since > 15000) {
+          uint8_t ping[kWsSendHeadroom + 1];
+          ws_send(WS_OP_PING, ping + kWsSendHeadroom, 0, kWsSendHeadroom);
+          quiet_since = millis() == 0 ? 1 : millis();
+        }
+      } else {
+        quiet_since = 0;
+      }
+    }
+    // Served-and-closing reclaim. A one-shot GET (the agent's /.well-known/splanc.json
+    // manifest, the cert-trust page) sets g_responding, writes its reply + close_notify and
+    // then waits for the client's FIN. If that FIN (or the client's RST) is lost — e.g. the
+    // 16-slot RX ring overflowed while the loop was starved under a heavy effect, or the
+    // client timed out and dropped its socket — nothing else frees the single slot: the
+    // pre-WS gate above exempts g_responding, the peer-gone gate only fires with unacked
+    // data, and TCP has no keepalive. Every later SYN is then dropped at the peer-match gate
+    // (serving_live is 0) while mDNS and ping still answer: the device looks present but
+    // never accepts a client again. So once the reply is fully ACKed and nothing has moved
+    // either way for 8 s (a live client FINs within milliseconds), re-listen.
+    {
+      static uint32_t close_since = 0;
+      static uint32_t last_prog = 0;
+      if (s == 2 && TLS_SERVER && g_responding && !g_ws_up && ns_tcp_tx_room() >= 2048) {
+        uint32_t prog = ns_tcp_snd_una() + ns_tcp_rcv_nxt();
+        if (close_since == 0 || prog != last_prog) {
+          close_since = millis() == 0 ? 1 : millis();
+          last_prog = prog;
+        } else if (millis() - close_since > 8000) {
+          Serial.println("*** SERVER served-and-closing, no FIN 8s — reclaiming ***");
+          static uint32_t ciss = 0x7000;
+          ns_tcp_listen(g_offer_ip, SERVER_PORT, ciss);
+          ciss += 0x1000;
+          tls_session_reset(); g_tls_hs = false; g_ws_up = false; g_responding = false; g_ws_rxlen = 0;
+          g_bio_tx = g_bio_rx = 0;
+          close_since = 0;
+          last_state = 99;
+          s = ns_tcp_state();
+        }
+      } else {
+        close_since = 0;
       }
     }
     if (s == 2 && TLS_SERVER) { // Established: drive the TLS handshake, then read+echo
