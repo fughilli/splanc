@@ -5,6 +5,20 @@ it in depth. The full history is in the git log and [`WORKLOG.md`](../WORKLOG.md
 
 ## October 2026
 
+### Heavy effects no longer lock players off the network (1.12.4)
+
+- **A player running a heavy effect stays reachable.** In 1.12.3 an effect that
+  nearly filled its frame budget left the network task almost no CPU: new
+  connections timed out, a rejoin never finished, and since the effect resumes
+  at boot, a power cycle didn't help (only Bluetooth did). Rendering now always
+  leaves the network at least 20% of the CPU, and a connecting client gets an
+  equal share while it connects. Such an effect runs a little slower instead
+  (e.g. 25 → 21 fps).
+- **No more ghost sessions.** A client that gave up mid-connect could leave the
+  device's single connection slot occupied for good. Quiet sessions are now
+  probed and dead ones freed, as are half-closed page fetches.
+- Details: [wifi-rejoin-policy.md](design/wifi-rejoin-policy.md#heavy-effects-1124-hotfix).
+
 ### Wi-Fi rejoin: the long-absence slow-down is opt-in
 
 - `auto` now keeps its once-a-minute retries indefinitely; the 24 h → 15 min slow-down

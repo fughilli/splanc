@@ -97,6 +97,7 @@ py_library(
         "fx_bench_core.py",
         "hardware_config_pattern.py",
         "heap_census.py",
+        "heavy_effect_reachability_core.py",
         "hitl_client.py",
         "hitl_improv.py",
         "hitl_ws.py",
@@ -651,6 +652,53 @@ py_test(
     },
     imports = ["."],
     main = "hitl_no_reboot_no_park.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# A board playing a heavy effect stays reachable for NEW clients (1.12.3 field
+# regression: a near-budget effect starved the netstack loop below render priority, so no
+# TLS handshake / rejoin / DHCP completed, and the persisted effect re-locked it on every
+# boot). A Swirl-like effect sized to ~93 % of the 25 fps floor's period; then new
+# connections after 30 s with no session, a forced rejoin and a reboot with the effect
+# persisted must each connect in time. Pure logic: heavy_effect_reachability_core.
+genrule(
+    name = "swirl_heavy_fxb",
+    srcs = ["ab_demo/swirlHeavy.fx"],
+    outs = ["swirlHeavy.fxb"],
+    cmd = "$(execpath //fx_compiler:fx_compile) $< $@",
+    tools = ["//fx_compiler:fx_compile"],
+)
+
+py_test(
+    name = "heavy_effect_reachability",
+    timeout = "eternal",
+    srcs = [
+        "hitl_heavy_effect_reachability.py",
+        "hitl_map_upload.py",
+    ],
+    data = [
+        ":swirl_heavy_fxb",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HEAVY_FXB_RUNFILE": "_main/pi/hitl/harness/swirlHeavy.fxb",
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # netstack: chunk the map into 1 KB windows (one TLS record each).
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_heavy_effect_reachability.py",
     tags = [
         "hitl",
         "manual",

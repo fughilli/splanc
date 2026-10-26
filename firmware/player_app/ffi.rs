@@ -5455,10 +5455,22 @@ pub unsafe extern "C" fn lm_mode_event(event: u32) -> i32 {
 /// (`ledmapper_fps::floor_fps_for`: past 512 LEDs a heavy effect steps down to a
 /// steady slower rung).
 ///
+/// `cpu_us` is the frame's render COMPUTE (update + shade + blend, no waits, no
+/// transmit; 0 = unknown): the frame then sleeps at least the network's share of
+/// it (`ledmapper_fps::net_share_ms`), and a rung that can't hold the compute plus
+/// that share is a miss, so the effect steps down rather than starving the
+/// netstack loop that runs below render (1.12.3: near-budget effects left it
+/// 1-3 ms a frame and new clients could no longer connect).
+///
 /// # Safety
 /// Render task, under the player_mutex (single-threaded player state).
 #[no_mangle]
-pub unsafe extern "C" fn lm_fps_on_frame(cost_us: u32, wire_leds: u32, leds: u32) -> u32 {
+pub unsafe extern "C" fn lm_fps_on_frame(
+    cost_us: u32,
+    cpu_us: u32,
+    wire_leds: u32,
+    leds: u32,
+) -> u32 {
     let c = &mut *addr_of_mut!(FPS);
     if FPS_SEEN_GEN != FPS_GEN {
         FPS_SEEN_GEN = FPS_GEN;
@@ -5466,7 +5478,15 @@ pub unsafe extern "C" fn lm_fps_on_frame(cost_us: u32, wire_leds: u32, leds: u32
     }
     c.set_wire_us(ledmapper_fps::wire_frame_us(wire_leds));
     c.set_leds(leds);
-    c.on_frame(cost_us).delay_ms
+    c.on_frame_cpu(cost_us, cpu_us).delay_ms
+}
+
+/// The sleep (ms) a frame owes the lower-priority tasks after `cpu_us` of render
+/// compute (`ledmapper_fps::net_share_ms`): main.cpp floors its wall-clock
+/// re-pacing with it.
+#[no_mangle]
+pub extern "C" fn lm_fps_net_share_ms(cpu_us: u32) -> u32 {
+    ledmapper_fps::net_share_ms(cpu_us)
 }
 
 /// The rate the effect runs at now: the autoscaler's rung, or the rate it
