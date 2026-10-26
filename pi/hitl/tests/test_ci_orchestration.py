@@ -152,3 +152,50 @@ def test_suite_runs_with_flaky_attempts_so_a_transient_wedge_recovers():
     attempts = [int(n) for c in commands for n in re.findall(r"--flaky_test_attempts=(\d+)\b", c)]
     assert attempts, "the HITL bazel test invocation does not pass --flaky_test_attempts=<N>"
     assert min(attempts) >= 2, f"--flaky_test_attempts={min(attempts)} gives a wedged DUT no retry"
+
+
+# --- priority classes + progress-driven queue waits (hitl-reserve #17) ---------
+
+
+def _gating_command():
+    """The pool lane's `bazel test` (the one forwarding HITL_SERVERS)."""
+    commands = [c for text, _, _ in _steps(_text()) for c in _bazel_test_commands(text)]
+    gating = [c for c in commands if "--test_env=HITL_SERVERS" in c]
+    assert len(gating) == 1, f"expected one pool-lane bazel test, got {gating}"
+    return gating[0]
+
+
+def test_ci_reserves_with_a_priority_class_from_the_event():
+    m = re.search(r"(?m)^\s*HITL_PRIORITY:\s*(.+?)\s*$", _text())
+    assert m, "the HITL job sets no HITL_PRIORITY (rig queue scheduling class)"
+    expr = m.group(1)
+    # merge_group runs and the post-merge push to main are merge-critical; the rest
+    # of CI is pr-ci. (dev is the default outside CI, never set here.)
+    assert "merge_group" in expr and "push" in expr and "'merge-queue'" in expr, expr
+    assert "'pr-ci'" in expr, expr
+    assert "--test_env=HITL_PRIORITY" in _gating_command(), "HITL_PRIORITY not forwarded to tests"
+    assert re.search(r"(?m)^\s*merge_group:\s*$", _text()), "no merge_group trigger"
+
+
+def test_queue_waits_have_a_job_ceiling_not_a_fixed_timeout():
+    text = _text()
+    cmd = _gating_command()
+    # Tests may wait in a progressing queue past the old 3600 s per-test bound ...
+    m = re.search(r"--test_timeout=(\S+)", cmd)
+    assert m, "the pool lane keeps Bazel's 3600 s eternal timeout (it caps the queue wait)"
+    eternal = int(m.group(1).split(",")[-1])
+    assert eternal > 3600, f"eternal test timeout {eternal}s still caps the queue wait"
+    # ... while the whole job keeps a hard ceiling: a deadline for getting a unit,
+    # forwarded to every test, under the job's timeout-minutes ...
+    assert "--test_env=HITL_DEADLINE" in cmd
+    assert re.search(r"export HITL_DEADLINE=", text), "HITL_DEADLINE is never computed"
+    tm = re.search(r"(?m)^\s*timeout-minutes:\s*(\d+)\s*$", text)
+    assert tm and int(tm.group(1)) <= 360, "the HITL job has no explicit timeout-minutes ceiling"
+    budget = re.search(r"(?m)^\s*HITL_QUEUE_BUDGET_MIN:\s*'?(\d+)'?\s*$", text)
+    assert budget and int(budget.group(1)) < int(
+        tm.group(1)
+    ), "queue budget must leave time for the body"
+    # ... and a hung test body still can't hold a board for longer than an hour.
+    hold = re.search(r"(?m)^\s*HITL_HOLD_MAX:\s*'?(\d+)'?\s*$", text)
+    assert hold and 0 < int(hold.group(1)) <= 3600, "raising the Bazel timeout needs HITL_HOLD_MAX"
+    assert "--test_env=HITL_HOLD_MAX" in cmd

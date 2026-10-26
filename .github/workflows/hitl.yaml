@@ -52,6 +52,10 @@ on:
   push:
     branches:
       - main
+  # GitHub's native merge queue: each merge group runs the suite at the exact commit
+  # that will land. Harmless until the merge queue is enabled (no event fires).
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
     inputs:
       server:
@@ -101,6 +105,10 @@ jobs:
     if: >-
       github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'hitl') && (github.event.action != 'labeled' || contains(fromJSON('["hitl", "hitl-android", "hitl-ios"]'), github.event.label.name)))
     runs-on: ubuntu-latest
+    # The hard ceiling for the whole run (GitHub's maximum). Reservation waits are
+    # progress-driven (see HITL_DEADLINE / HITL_HOLD_MAX below), so this — not a fixed
+    # per-reservation timeout — is what bounds a run in a burst.
+    timeout-minutes: 360
     # Opt into the "HITL" environment so its TS_AUTHKEY secret + HITL_SERVERS
     # variable (and the HITL_WIFI_* secrets, if set) are visible to this job.
     environment: HITL
@@ -131,6 +139,19 @@ jobs:
       HITL_IOS_FLASH_C6: ${{ vars.HITL_IOS_FLASH_C6 || '' }}
       # `server` input only exists on workflow_dispatch; empty on pull_request.
       SERVER: ${{ github.event.inputs.server }}
+      # Reservation scheduling class on the rigs (hitl-reserve priority classes;
+      # reservations QUEUE and never preempt — a class only reorders the queue).
+      # merge-critical = the merge queue's merge_group runs and the post-merge run on
+      # main; everything else CI (labelled PRs, the Mac's periodic dispatch) = pr-ci.
+      # Humans/agents outside CI default to dev. Older rig daemons ignore it (FIFO).
+      HITL_PRIORITY: ${{ (github.event_name == 'merge_group' || github.event_name == 'push') && 'merge-queue' || 'pr-ci' }}
+      # Max time ONE test may HOLD a unit once active (the harness SIGTERMs itself and
+      # releases). Replaces the old per-test 3600 s Bazel bound on the hold, now that
+      # the Bazel timeout is raised to let tests wait in a progressing queue.
+      HITL_HOLD_MAX: '3600'
+      # Minutes after the suite starts by which a test must have gotten its unit
+      # (HITL_DEADLINE below); leaves the rest of the 360 min job for the body.
+      HITL_QUEUE_BUDGET_MIN: '240'
       # Optional Grafana Cloud Loki push of the run's pass/fail (FUG-117). Unset
       # in the HITL environment = the push step no-ops; see
       # pi/hitl/observability/README.md ("Reporting from GitHub").
@@ -185,7 +206,7 @@ jobs:
                 -q '.[].filename' 2>/dev/null || true)
             else
               files=$(gh api \
-                "repos/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.sha }}" \
+                "repos/${{ github.repository }}/compare/${{ github.event.merge_group.base_sha || github.event.before }}...${{ github.sha }}" \
                 -q '.files[].filename' 2>/dev/null || true)
             fi
             if printf '%s\n' "$files" | grep -Eq \
@@ -222,7 +243,7 @@ jobs:
                 -q '.[].filename' 2>/dev/null || true)
             else
               files=$(gh api \
-                "repos/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.sha }}" \
+                "repos/${{ github.repository }}/compare/${{ github.event.merge_group.base_sha || github.event.before }}...${{ github.sha }}" \
                 -q '.files[].filename' 2>/dev/null || true)
             fi
             if printf '%s\n' "$files" | grep -Eq \
@@ -333,6 +354,11 @@ jobs:
             n=$(echo "$t" | wc -w)
             if [ "$n" -eq 0 ]; then echo "(no targets in this set)"; return 0; fi
             echo "running $n HITL tests in parallel (queued on the bench)"
+            # Queue waits are progress-driven, not fixed: hitl_client waits while the
+            # rig queue drains and gives up only on a stall / unhealthy rig / the
+            # HITL_DEADLINE ceiling. So the per-test (eternal) Bazel timeout is raised
+            # from 3600 s to 5 h — the queue wait counts against it — while
+            # HITL_HOLD_MAX keeps a hung test from holding a board past an hour.
             # --flaky_test_attempts=3: reservations QUEUE (never preempt) — a test holds
             # its DUT until it releases — but a DUT's own bring-up can still flake per
             # boot (e.g. the netstack WSS/TLS server occasionally not accepting a
@@ -349,6 +375,10 @@ jobs:
               --jobs="$n" \
               --local_test_jobs="$n" \
               --flaky_test_attempts=3 \
+              --test_timeout=-1,-1,-1,18000 \
+              --test_env=HITL_PRIORITY \
+              --test_env=HITL_DEADLINE \
+              --test_env=HITL_HOLD_MAX \
               --test_env=HITL_SERVERS \
               --test_env=HITL_WIFI_SSID \
               --test_env=HITL_WIFI_PASS \
@@ -370,6 +400,11 @@ jobs:
           # Each lane records its failure instead of exiting, so one lane failing never
           # hides the others' results (the periodic run reports pool + Android + iOS);
           # the step still fails at the end if any lane failed.
+          # The CI job's ceiling for getting a unit: every test (and flaky retry)
+          # gives up queueing at this epoch, so a burst can't run the job into its
+          # 360 min timeout with nothing reported.
+          export HITL_DEADLINE=$(( $(date +%s) + HITL_QUEUE_BUDGET_MIN * 60 ))
+          echo "HITL class=$HITL_PRIORITY; reservation deadline $(date -u -d @"$HITL_DEADLINE" +%H:%MZ)"
           rc=0
           echo "::group::HITL tests (GATING)"
           HITL_EXCLUDE_HOSTS="hitl-rig-3" run_hitl_set "$all" || rc=1
@@ -402,6 +437,7 @@ jobs:
               --flaky_test_attempts=2 \
               --test_env=HITL_ANDROID_SERVER \
               --test_env=HITL_ANDROID_PIN \
+              --test_env=HITL_PRIORITY \
               --test_env=HITL_OWNER \
               --test_env=HITL_SERIAL_LOG_DIR \
               --test_env=GITHUB_SHA || rc=1
@@ -434,6 +470,7 @@ jobs:
               --test_env=HITL_IOS_JOURNEYS \
               --test_env=HITL_IOS_BLE_MODE \
               --test_env=HITL_IOS_FLASH_C6 \
+              --test_env=HITL_PRIORITY \
               --test_env=HITL_OWNER \
               --test_env=HITL_SERIAL_LOG_DIR \
               --test_env=GITHUB_SHA || rc=1

@@ -36,10 +36,10 @@
     # The generalized reservation system. Not a flake (plain Go module source);
     # buildGoModule consumes it in nix/packages.nix. Kept in lockstep with the
     # @hitl_reserve git_override in //MODULE.bazel — bump both together. Now
-    # 4d323e3 (PR #16: per-class concurrency caps + /reservation/{id}/wifi station
-    # stats, see the MODULE.bazel comment).
+    # d531698 (PR #17: priority classes + queue progress/ETA + /queue + capacity
+    # metrics; see the MODULE.bazel comment).
     hitl-reserve = {
-      url = "github:fughilli/hitl-reserve/4d323e3f1e5c571286687944ecee6e8a5dac79bd";
+      url = "github:fughilli/hitl-reserve/d5316982b10668b73affed44a2c8f155f751d081";
       flake = false;
     };
   };

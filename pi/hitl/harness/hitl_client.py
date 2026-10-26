@@ -148,8 +148,197 @@ def _pool() -> list[str]:
     return urls
 
 
-# How many times a queued reservation re-queues after the daemon forgets it (404).
+# How many times a queued reservation re-queues after the daemon forgets it (404),
+# or migrates off a host that was cordoned while we waited.
 _MAX_REQUEUES = 3
+
+# Scheduling classes understood by a priority-aware hitl-reserved, highest first.
+PRIORITY_CLASSES = ("merge-queue", "pr-ci", "dev")
+
+
+def _priority() -> str:
+    """$HITL_PRIORITY normalized to a class name (default dev). Unknown values pass
+    through lowercased; the daemon maps anything it doesn't know to dev."""
+    return (os.environ.get("HITL_PRIORITY") or "dev").strip().lower() or "dev"
+
+
+def _env_float(name: str, default: float | None) -> float | None:
+    v = os.environ.get(name)
+    if v is None or not v.strip():
+        return default
+    return float(v)
+
+
+class WaitPolicy:
+    """When a queued client stops waiting for activation. Pure (see QueueWatch).
+
+    * legacy_timeout — against a daemon that predates priorities (no queue-progress
+      fields): the old fixed timeout (2400 s), unchanged behaviour.
+    * stall_timeout ($HITL_QUEUE_STALL_TIMEOUT, default 3600 s) — against a
+      priority-aware daemon: give up only after the queue made NO progress for this
+      long (progress = our position dropped, or a unit we can use was freed). Default
+      one hour because a CI-held unit is bounded by HITL_HOLD_MAX (3600 s in CI), so
+      an hour with no unit freeing up means the rig is wedged, not busy.
+    * hard_cap ($HITL_ACTIVATE_TIMEOUT or a caller's explicit timeout) — an absolute
+      cap on this wait, if set.
+    * deadline ($HITL_DEADLINE, unix epoch s) — the CI job's ceiling: never wait past
+      it, so later flaky-retry attempts can't queue beyond the job's budget.
+    * max_wait ($HITL_ACTIVATE_MAX, default 6 h) — a safety net for a priority-aware
+      wait with no other cap.
+    * unreachable_timeout ($HITL_RIG_UNREACHABLE_TIMEOUT, 300 s) /
+      blocked_timeout (300 s) — the rig is unhealthy: the daemon stopped answering, or
+      it reports no unit that could ever serve us (unplugged).
+    * cordon_migrate_after (120 s) — our host was cordoned for maintenance: try to
+      move to another host (see Reservation._migrate_off_cordoned)."""
+
+    def __init__(
+        self,
+        legacy_timeout: float = 2400.0,
+        stall_timeout: float = 3600.0,
+        hard_cap: float | None = None,
+        deadline: float | None = None,
+        max_wait: float = 6 * 3600.0,
+        unreachable_timeout: float = 300.0,
+        blocked_timeout: float = 300.0,
+        cordon_migrate_after: float = 120.0,
+    ) -> None:
+        self.legacy_timeout = legacy_timeout
+        self.stall_timeout = stall_timeout
+        self.hard_cap = hard_cap
+        self.deadline = deadline
+        self.max_wait = max_wait
+        self.unreachable_timeout = unreachable_timeout
+        self.blocked_timeout = blocked_timeout
+        self.cordon_migrate_after = cordon_migrate_after
+
+    @classmethod
+    def from_env(
+        cls, timeout: float | None = None, legacy_timeout: float | None = None
+    ) -> "WaitPolicy":
+        """`timeout` is an explicit hard cap (the caller's or $HITL_ACTIVATE_TIMEOUT
+        via acquire); it also serves as the legacy fixed timeout unless
+        `legacy_timeout` is given."""
+        legacy = legacy_timeout if legacy_timeout is not None else timeout
+        return cls(
+            legacy_timeout=2400.0 if legacy is None else legacy,
+            stall_timeout=_env_float("HITL_QUEUE_STALL_TIMEOUT", 3600.0),
+            hard_cap=timeout,
+            deadline=_env_float("HITL_DEADLINE", None),
+            max_wait=_env_float("HITL_ACTIVATE_MAX", 6 * 3600.0),
+            unreachable_timeout=_env_float("HITL_RIG_UNREACHABLE_TIMEOUT", 300.0),
+        )
+
+
+def _fmt_s(s: float) -> str:
+    s = max(0, int(s))
+    return f"{s // 60}m{s % 60:02d}s" if s >= 60 else f"{s}s"
+
+
+class QueueWatch:
+    """Tracks one queued reservation's waiting and decides when to give up (pure:
+    every method takes `now`, so tests drive it without sleeping).
+
+    A daemon is priority-aware when its reservation view carries `priority`; then
+    the stall/health rules apply. Otherwise only the legacy fixed timeout does
+    (plus the hard cap / deadline, which apply to both)."""
+
+    def __init__(self, policy: WaitPolicy, now: float) -> None:
+        self.p = policy
+        self.start = now
+        self.aware = False
+        self.progress_at = now  # last progress, client clock
+        self.last_ok = now  # last successful poll
+        self.unreachable_since: float | None = None
+        self.blocked = ""
+        self.blocked_since: float | None = None
+        self.last_pos: int | None = None
+        self._last_line = ""
+        self._last_print = -1e18
+
+    def reset_progress(self, now: float) -> None:
+        """A requeue/migration: a fresh slot is a fresh start for the stall clock."""
+        self.progress_at = now
+        self.last_pos = None
+
+    def observe_unreachable(self, now: float) -> None:
+        if self.unreachable_since is None:
+            self.unreachable_since = now
+
+    def observe(self, view: dict, now: float) -> str | None:
+        """Fold in one queued view; return a log line to print, if any."""
+        self.last_ok = now
+        self.unreachable_since = None
+        pos = view.get("position", -1)
+        if view.get("priority"):
+            self.aware = True
+            # The daemon's own clock judges progress (immune to client clock skew).
+            sp = view.get("since_progress_seconds") or 0
+            self.progress_at = max(self.progress_at, now - float(sp))
+        if self.last_pos is not None and isinstance(pos, int) and pos < self.last_pos:
+            self.progress_at = now
+        self.last_pos = pos if isinstance(pos, int) else self.last_pos
+        blocked = view.get("blocked") or ""
+        if blocked != self.blocked:
+            self.blocked, self.blocked_since = blocked, (now if blocked else None)
+        if not self.aware:
+            line = f"queued: position {pos}"
+            if line != self._last_line:
+                self._last_line = line
+                return line
+            return None
+        line = f"queued: position {pos} class={view.get('priority')}"
+        eta = view.get("eta_seconds")
+        if eta is not None:
+            line += f" eta~{_fmt_s(eta)}"
+        if blocked:
+            line += f" BLOCKED({blocked})"
+        stalled = now - self.progress_at
+        # Print on change (ignoring the stall counter), else once a minute with it.
+        if line != self._last_line or now - self._last_print >= 60:
+            self._last_line, self._last_print = line, now
+            return line + (f" (no queue progress for {_fmt_s(stalled)})" if stalled >= 60 else "")
+        return None
+
+    def should_migrate(self, now: float) -> bool:
+        return (
+            self.aware
+            and self.blocked == "cordoned"
+            and self.blocked_since is not None
+            and now - self.blocked_since >= self.p.cordon_migrate_after
+        )
+
+    def verdict(self, now: float) -> str | None:
+        """None to keep waiting, else the reason to give up (completes the sentence
+        'reservation X did not activate …')."""
+        p = self.p
+        waited = now - self.start
+        if p.deadline is not None and now >= p.deadline:
+            return f"before the CI deadline (HITL_DEADLINE; waited {waited:.0f}s)"
+        if p.hard_cap is not None and waited >= p.hard_cap:
+            return f"within {p.hard_cap:.0f}s"
+        if not self.aware:
+            if waited >= p.legacy_timeout:
+                return f"within {p.legacy_timeout:.0f}s"
+            return None
+        if waited >= p.max_wait:
+            return f"within the {p.max_wait:.0f}s safety cap (HITL_ACTIVATE_MAX)"
+        if now - self.progress_at >= p.stall_timeout:
+            return (
+                f"(queue stalled: no progress for {now - self.progress_at:.0f}s, "
+                f"HITL_QUEUE_STALL_TIMEOUT={p.stall_timeout:.0f}; waited {waited:.0f}s)"
+            )
+        if (
+            self.unreachable_since is not None
+            and now - self.unreachable_since >= p.unreachable_timeout
+        ):
+            return f"(rig unhealthy: daemon unreachable for {now - self.unreachable_since:.0f}s)"
+        if (
+            self.blocked == "no-unit"
+            and self.blocked_since is not None
+            and now - self.blocked_since >= p.blocked_timeout
+        ):
+            return f"(rig unhealthy: no unit can serve this request for {now - self.blocked_since:.0f}s)"
+        return None
 
 
 def _get(url: str, timeout: float = 10.0) -> dict:
@@ -201,6 +390,13 @@ class Reservation:
         # $HITL_SERVER pins a specific rig for every script (the old CLI honored it on
         # every subcommand); an explicit arg still wins.
         self.server = server or os.environ.get("HITL_SERVER") or None
+        self._pinned_server = bool(self.server)  # pinned => never migrate off it
+        # Scheduling class on a priority-aware daemon: CI sets $HITL_PRIORITY from the
+        # GitHub event (merge-queue / pr-ci); humans and agents default to dev.
+        self.priority = _priority()
+        # Who is reserving (daemon metrics' owner_kind): the harness is automation.
+        self.actor = os.environ.get("HITL_ACTOR") or "agent"
+        self._hold_timer: threading.Timer | None = None
         self.owner = owner or os.environ.get("HITL_OWNER") or f"hitl-harness@{socket.gethostname()}"
         # `require` is a single capability alias; expand it (analyzer -> the granular
         # logic-analyzer-* tap cap) exactly as the old CLI's parseRequire did, then
@@ -242,9 +438,18 @@ class Reservation:
     def acquire(self) -> None:
         """Reserve a matching free rig and hold it with a heartbeat thread."""
         self._gen_key()
+        if self.priority == "dev":
+            self._dev_backoff()
         base = self._pick_server()
         pub = open(self._keyfile + ".pub").read().strip()
-        body = {"owner": self.owner, "ssh_public_key": pub}
+        body = {
+            "owner": self.owner,
+            "ssh_public_key": pub,
+            # hitl-reserve scheduling class + actor; a daemon that predates them
+            # ignores both (plain FIFO).
+            "priority": self.priority,
+            "actor": self.actor,
+        }
         if self.device:
             body["unit"] = self.device
         if self.sku:
@@ -258,18 +463,27 @@ class Reservation:
         if not self.id:
             raise ReserveError(f"reserve gave no id: {res}")
         self._start_heartbeat()
-        # $HITL_ACTIVATE_TIMEOUT: how long to sit in a contended rig's FIFO (s).
-        self._await_active(float(os.environ.get("HITL_ACTIVATE_TIMEOUT") or 2400))
-        print(f"reserved: id={self.id} on {self.server} unit={self._unit}", flush=True)
+        # $HITL_ACTIVATE_TIMEOUT, if set, is a hard cap on the wait (s); otherwise a
+        # priority-aware daemon is waited on for as long as its queue makes progress
+        # (see WaitPolicy), and an old daemon for the legacy fixed 2400 s.
+        env = os.environ.get("HITL_ACTIVATE_TIMEOUT")
+        self._await_active(float(env) if env else None)
+        print(
+            f"reserved: id={self.id} on {self.server} unit={self._unit} class={self.priority}",
+            flush=True,
+        )
+        self._start_hold_watchdog()
         self._serial_start()
 
-    def _pick_server(self) -> str:
+    def _pick_server(self, pool: list[str] | None = None, allow_cordoned: bool = True) -> str:
         """Pick a host to reserve on. Prefer a host with the MOST free matching units
         (spreads load), else one with a matching busy unit (to queue on), else fail
         immediately. Break ties RANDOMLY so a burst of concurrent reservations (the
         CI suite fires the whole set at once) fans out across the fleet instead of all
-        piling onto the first rig."""
-        pool = [self.server] if self.server else _pool()
+        piling onto the first rig. `allow_cordoned=False` refuses to fall back to a
+        cordoned host (used when migrating OFF a cordoned one)."""
+        if pool is None:
+            pool = [self.server] if self.server else _pool()
         if not pool:
             raise ReserveError(
                 "no hosts: set --server, $HITL_HOSTS/$HITL_SERVERS, or join a tailnet "
@@ -309,7 +523,7 @@ class Reservation:
             return random.choice([b for b, n in free if n == most])
         if queueable:
             return random.choice(queueable)
-        if cordoned:
+        if cordoned and allow_cordoned:
             print(f"all matching hosts are cordoned; queueing on one: {cordoned}", flush=True)
             return random.choice(cordoned)
         requested = (
@@ -332,15 +546,84 @@ class Reservation:
             return False
         return True
 
+    # --- dev back-off (the documented convention, applied for dev reservations) ---
+    def _dev_backoff(self) -> None:
+        """Before a DEV reservation enqueues, consult the rigs' cheap GET /queue and
+        back off while every rig says dev should wait (CI bursts), instead of piling
+        more waiters onto the queue. Bounded by $HITL_BACKOFF_MAX (default 1800 s):
+        after that we enqueue anyway and the daemon's priority aging guarantees a
+        turn. Disabled with HITL_BACKOFF=0. A rig without /queue (old daemon) or an
+        unreachable pool ends the back-off at once (old behaviour)."""
+        if os.environ.get("HITL_BACKOFF", "1") == "0":
+            return
+        budget = float(os.environ.get("HITL_BACKOFF_MAX") or 1800)
+        give_up_at = time.time() + budget
+        pool = [self.server] if self.server else _pool()
+        while True:
+            wait = self._dev_retry_after(pool)
+            remaining = give_up_at - time.time()
+            if wait is None or wait <= 0:
+                return
+            if remaining <= 0:
+                print("[hitl] dev back-off budget spent; enqueueing anyway", flush=True)
+                return
+            sleep_s = min(remaining, wait * random.uniform(0.8, 1.2))
+            print(
+                f"[hitl] fleet busy with CI (dev retry-after {wait:.0f}s on every rig); "
+                f"backing off {sleep_s:.0f}s before enqueueing (HITL_BACKOFF=0 disables)",
+                flush=True,
+            )
+            time.sleep(sleep_s)
+
+    def _dev_retry_after(self, pool: list[str]) -> float | None:
+        """The smallest dev retry-after hint (s) across the pool for a unit type this
+        request can use; 0 = go ahead now, None = no hint available (old daemon,
+        unreachable pool, or no matching type) -> don't back off."""
+        best: float | None = None
+        for base in pool:
+            try:
+                st = _get(base + "/status", timeout=5)
+                q = _get(base + "/queue", timeout=5)
+            except Exception:  # noqa: BLE001 (old daemon: 404 on /queue; or unreachable)
+                return None
+            types = {u.get("type") for u in st.get("units") or [] if self._unit_matches(u)}
+            for t in q.get("types") or []:
+                if t.get("type") in types:
+                    v = float(t.get("retry_after_seconds") or 0)
+                    best = v if best is None else min(best, v)
+        return best
+
     # The whole CI suite fires at once against a small fleet, so a queue behind a
-    # multi-minute soak is routine; wait generously (the targets themselves run
-    # timeout=eternal). On timeout we RELEASE so we don't strand a queued slot with
-    # the heartbeat thread keeping it alive.
-    def _await_active(self, timeout: float = 2400.0) -> None:
-        deadline = time.time() + timeout
-        last_pos = -1
+    # multi-minute soak is routine. A priority-aware daemon reports queue progress, so
+    # we wait while it drains and give up only on a STALL, an unhealthy rig, a hard
+    # cap or the CI job's deadline (WaitPolicy); against an old daemon we keep the
+    # legacy fixed timeout. On giving up we RELEASE so we don't strand a queued slot
+    # with the heartbeat thread keeping it alive; on an interrupt (Ctrl-C, SIGTERM
+    # from a test timeout) we release too, so a killed client never leaks its slot.
+    def _await_active(
+        self, timeout: float | None = None, legacy_timeout: float | None = None
+    ) -> None:
+        try:
+            self._await_active_inner(WaitPolicy.from_env(timeout, legacy_timeout))
+        except (KeyboardInterrupt, SystemExit):
+            # Interrupted while queued (Ctrl-C, or SIGTERM -> SystemExit from a test
+            # timeout / cancelled job): release, or the slot outlives us until its
+            # lease lapses and then activates for nobody.
+            if self.id:
+                try:
+                    self.release(outcome="cancelled")
+                except Exception:  # noqa: BLE001
+                    pass
+            raise
+
+    def _await_active_inner(self, policy: "WaitPolicy") -> None:
+        watch = QueueWatch(policy, time.time())
         requeues = 0
-        while time.time() < deadline:
+        while True:
+            now = time.time()
+            reason = watch.verdict(now)
+            if reason:
+                break
             try:
                 r = _get(f"{self.server}/reservation/{self.id}")
             except urllib.error.HTTPError as e:
@@ -366,10 +649,11 @@ class Reservation:
                 print(
                     f"requeued: daemon lost reservation {old} (restart?); now {self.id}", flush=True
                 )
-                last_pos = -1
+                watch.reset_progress(time.time())
                 continue
             except (urllib.error.URLError, ConnectionError, TimeoutError, OSError):
-                # Daemon briefly unreachable (restarting): keep waiting until the deadline.
+                # Daemon briefly unreachable (restarting): keep waiting, within policy.
+                watch.observe_unreachable(time.time())
                 time.sleep(5)
                 continue
             state = r.get("state")
@@ -392,17 +676,53 @@ class Reservation:
                 return
             if state == "released":
                 raise ReserveError(f"reservation released before activating: {r.get('message')}")
-            pos = r.get("position", -1)
-            if pos != last_pos:
-                print(f"queued: position {pos}", flush=True)
-                last_pos = pos
+            line = watch.observe(r, time.time())
+            if line:
+                print(line, flush=True)
+            if (
+                watch.should_migrate(time.time())
+                and requeues < _MAX_REQUEUES
+                and self._migrate_off_cordoned()
+            ):
+                requeues += 1
+                watch.reset_progress(time.time())
+                continue
             time.sleep(2)
         reservation_id = self.id
         try:
             self.release()
         except Exception:  # noqa: BLE001
             pass
-        raise ReserveError(f"reservation {reservation_id} did not activate within {timeout:.0f}s")
+        raise ReserveError(f"reservation {reservation_id} did not activate {reason}")
+
+    def _migrate_off_cordoned(self) -> bool:
+        """Our host went into maintenance while we were queued (a redeploy drain can
+        take hours). If we weren't pinned to it and another host can serve us, move:
+        release here, re-reserve there. Returns whether we moved."""
+        if self._pinned_server:
+            return False
+        try:
+            others = [b for b in _pool() if b != self.server]
+            if not others or not self._reserve_body:
+                return False
+            target = self._pick_server(pool=others, allow_cordoned=False)
+            res = _post(f"{target}/reserve", self._reserve_body)
+        except Exception as e:  # noqa: BLE001 (no alternative: keep waiting here)
+            print(f"[hitl] host cordoned; no other host to move to ({e})", flush=True)
+            return False
+        if not res.get("id"):
+            return False
+        old_server, old_id = self.server, self.id
+        try:
+            _post(f"{old_server}/reservation/{old_id}/release")
+        except Exception:  # noqa: BLE001 (its lease will lapse)
+            pass
+        self.server, self.id = target, res["id"]
+        print(
+            f"migrated: {old_server} is cordoned; re-queued on {target} as {self.id}",
+            flush=True,
+        )
+        return True
 
     def _start_heartbeat(self) -> None:
         self._hb_stop = threading.Event()
@@ -417,18 +737,49 @@ class Reservation:
         self._hb_thread = threading.Thread(target=beat, daemon=True)
         self._hb_thread.start()
 
-    def release(self) -> None:
+    def _start_hold_watchdog(self) -> None:
+        """$HITL_HOLD_MAX (s): bound how long this process may HOLD the unit once
+        active. CI sets it because the per-test Bazel timeout is raised to cover long
+        queue waits — without this a hung test body would now pin a scarce board for
+        hours. On expiry we SIGTERM ourselves: the harness's SIGTERM hook turns that
+        into SystemExit, so `finally: release()` still fetches the serial log and
+        frees the unit (outcome=cancelled)."""
+        hold_max = float(os.environ.get("HITL_HOLD_MAX") or 0)
+        if hold_max <= 0:
+            return
+
+        def fire() -> None:
+            print(
+                f"[hitl] held the unit for HITL_HOLD_MAX={hold_max:.0f}s; terminating to free it",
+                flush=True,
+            )
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        self._hold_timer = threading.Timer(hold_max, fire)
+        self._hold_timer.daemon = True
+        self._hold_timer.start()
+
+    def release(self, outcome: str | None = None) -> None:
         # Fetch the DUT serial log BEFORE releasing (the container goes with the lease),
         # and dump its tail right away if we're unwinding from a failure.
-        failing = _exc_is_failure(sys.exc_info()[1])
+        exc = sys.exc_info()[1]
+        failing = _exc_is_failure(exc)
+        if outcome is None and (_TERMINATING or isinstance(exc, KeyboardInterrupt)):
+            outcome = "cancelled"  # the run was killed (test timeout / Ctrl-C), not done
+        if self._hold_timer is not None:
+            self._hold_timer.cancel()
+            self._hold_timer = None
         self._serial_fetch()
         if failing:
             _dump_serial_logs()
         if self._hb_stop:
             self._hb_stop.set()
         if self.id and self.server:
+            # ?outcome=cancelled is accounted separately in the daemon's capacity
+            # metrics; an older daemon ignores the query string.
+            q = "?outcome=cancelled" if outcome == "cancelled" else ""
             try:
-                _post(f"{self.server}/reservation/{self.id}/release")
+                _post(f"{self.server}/reservation/{self.id}/release{q}")
                 print("released", flush=True)
             except Exception as e:  # noqa: BLE001
                 print(f"release: {e}", flush=True)
@@ -893,6 +1244,10 @@ class Reservation:
                 proc.kill()
 
 
+# Set once SIGTERM arrives (a Bazel test timeout, a cancelled CI job, or the
+# HITL_HOLD_MAX watchdog): release() then reports outcome=cancelled.
+_TERMINATING = False
+
 # --- failure hooks: print the DUT serial tail when the test is failing ------------
 # [label, text, dumped] for every log fetched in this process.
 _SERIAL_LOGS: list[list] = []
@@ -944,6 +1299,8 @@ def _install_failure_hooks() -> None:
             if signal.getsignal(signal.SIGTERM) in (signal.SIG_DFL, None):
 
                 def _term(signum, _frame):
+                    global _TERMINATING
+                    _TERMINATING = True
                     print("[serial] SIGTERM (test timeout?) — releasing", flush=True)
                     raise SystemExit(128 + signum)
 
@@ -1005,4 +1362,56 @@ def _wait_listen(port: int, timeout: float) -> bool:
     return _wait_port("127.0.0.1", port, timeout)
 
 
+def queue_status(pool: list[str] | None = None) -> list[dict]:
+    """Every pool host's cheap queue overview (GET /queue on a priority-aware
+    daemon): depth per class, per unit type the ETA a new reservation of each class
+    would face and the dev back-off hint. A host that can't answer appears as
+    {"url": ..., "error": ...}. See AGENTS.md "Queue etiquette"."""
+    out = []
+    for base in pool if pool is not None else _pool():
+        try:
+            q = _get(base + "/queue", timeout=5)
+            q["url"] = base
+            out.append(q)
+        except Exception as e:  # noqa: BLE001
+            out.append({"url": base, "error": str(e)})
+    return out
+
+
+def _print_queue(summaries: list[dict]) -> None:
+    for q in summaries:
+        if "error" in q:
+            print(f"{q['url']}  UNAVAILABLE ({q['error']})")
+            continue
+        maint = "  CORDONED" if q.get("cordoned") else ""
+        print(f"{q['url']}  queued={q.get('queue_length', 0)}{maint}")
+        for c in q.get("classes") or []:
+            print(
+                f"  class {c['class']:<12} queued={c['queued']:<3} "
+                f"oldest={_fmt_s(c.get('oldest_wait_seconds', 0))}"
+            )
+        for t in q.get("types") or []:
+            etas = " ".join(
+                f"{k}~{_fmt_s(v)}" for k, v in sorted((t.get("eta_new_seconds") or {}).items())
+            )
+            ra = t.get("retry_after_seconds") or 0
+            hint = "dev: go ahead" if not ra else f"dev: back off {_fmt_s(ra)}"
+            print(
+                f"  type  {t['type']:<14} units={t['units']} free={t['free']} "
+                f"queued={t['queued']} eta-new[{etas}]  {hint}"
+            )
+
+
 _install_failure_hooks()
+
+if __name__ == "__main__":
+    # `python3 hitl_client.py queue [--json]`: the cheap pre-reserve check.
+    if len(sys.argv) >= 2 and sys.argv[1] == "queue":
+        res = queue_status()
+        if "--json" in sys.argv[2:]:
+            print(json.dumps(res, indent=2))
+        else:
+            _print_queue(res)
+    else:
+        print("usage: hitl_client.py queue [--json]", file=sys.stderr)
+        sys.exit(2)

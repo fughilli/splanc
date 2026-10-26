@@ -427,7 +427,11 @@ git_override(
 bazel_dep(name = "hitl_reserve", version = "0.0.0")
 git_override(
     module_name = "hitl_reserve",
-    # 4d323e3 (PR #16, squash-merged on main): per-unit-class concurrency caps
+    # d531698 (PR #17, squash-merged on main): priority classes merge-queue >
+    # pr-ci > dev with aging (no preemption), queue progress/ETA on queued reservations, GET /queue + `hitl
+    # queue`, per-class queue metrics + capacity counters (busy/available seconds,
+    # request/abandon/wait/hold). Backward-compatible: old clients are dev.
+    # Prior: 4d323e3 (PR #16, squash-merged on main): per-unit-class concurrency caps
     # (--max-concurrent-class TYPE=N, so rig-1's network Pi jobs no longer idle its
     # USB C6s behind the host cap) + GET/POST /reservation/{id}/wifi, the AP's
     # `iw station dump` stats for a reservation's own DUT stations
@@ -444,7 +448,7 @@ git_override(
     # nix/hitl-app.nix passes 2 fleet-wide), PR #4 (--net-host), PR #3 (--mount dbus).
     # Backward-compatible. Keep in lockstep with the hitl-reserve rev in
     # pi/hitl/flake.nix / flake.lock (bump all three together).
-    commit = "4d323e3f1e5c571286687944ecee6e8a5dac79bd",
+    commit = "d5316982b10668b73affed44a2c8f155f751d081",
     remote = "https://github.com/fughilli/hitl-reserve.git",
 )
 
