@@ -18,7 +18,7 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 2206,
+    "test_cases": 2230,
     "gaps": 35
   },
   "levels": [
@@ -6338,7 +6338,19 @@
           "target": "//pi/hitl/tests:hitl_test"
         },
         {
+          "name": "pi.hitl.tests.test_ci_orchestration::test_ci_reserves_with_a_priority_class_from_the_event",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
           "name": "pi.hitl.tests.test_ci_orchestration::test_concurrency_group_is_scoped_per_ref_not_global",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_ci_orchestration::test_queue_waits_have_a_job_ceiling_not_a_fixed_timeout",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/hitl/tests:hitl_test"
@@ -6351,6 +6363,138 @@
         },
         {
           "name": "pi.hitl.tests.test_ci_orchestration::test_suite_runs_with_flaky_attempts_so_a_transient_wedge_recovers",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_await_active_outlasts_the_old_2400s_timeout",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_await_active_releases_and_raises_on_a_stall",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_aware_daemon_gives_up_on_a_stall",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_aware_daemon_waits_past_2400s_while_the_queue_progresses",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_client_seen_position_drop_counts_as_progress",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_deadline_and_hard_cap_apply_to_any_daemon",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_dev_backoff_is_bounded",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_dev_backoff_skips_old_daemons_and_ci",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_dev_backs_off_while_every_rig_says_wait",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_hold_watchdog_terminates_after_hold_max",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_interrupt_while_queued_releases_as_cancelled",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_legacy_daemon_keeps_the_fixed_timeout",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_log_line_shows_class_eta_and_stall",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_migrates_off_a_host_cordoned_while_waiting",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_no_hold_watchdog_by_default",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_pinned_server_never_migrates",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_policy_from_env",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_priority_defaults_to_dev",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_queue_status_reports_unavailable_hosts",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_reserve_body_carries_priority_and_actor",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_sigterm_flag_marks_release_cancelled",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/hitl/tests:hitl_test"
+        },
+        {
+          "name": "pi.hitl.tests.test_reservation_queue_priority::test_unhealthy_rig_unreachable_or_no_unit",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/hitl/tests:hitl_test"
@@ -6510,6 +6654,14 @@
           "relation": "verifies",
           "path": "pi/hitl/tests/test_ci_orchestration.py",
           "line": 29
+        },
+        {
+          "ids": [
+            "PR-36"
+          ],
+          "relation": "verifies",
+          "path": "pi/hitl/tests/test_reservation_queue_priority.py",
+          "line": 26
         },
         {
           "ids": [
