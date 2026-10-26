@@ -160,10 +160,11 @@ extern "C" __attribute__((weak)) void lm_heap_freeze(void) {}
 // ~4 KiB board-capabilities catalog (lm_player_handle ~10 KB + hardware_config_state
 // ~10 KB frames). With the descriptor spliced in at encode time (Player::encode_reply) the
 // static worst-case bound over the ELF call graph (direct calls + the mbedtls bio/RNG
-// callbacks) is ~9.7 KB (stack_bound_test, which gates every task's stack against its
-// bound: the protocol-handler path; the netstack's TX layers build one in-place frame, no
-// per-layer stack buffer). Measured high-water on the ram_audit worst case: 4.8 KB.
-SET_LOOP_TASK_STACK_SIZE(14 * 1024);
+// callbacks) is ~8.5 KB (stack_bound_test, which gates every task's stack against its
+// bound x 1.25 + ISR context = 10.9 KB: the protocol-handler path; the netstack's TX
+// layers build one in-place frame, and its RX frame is a shared static, not a 1.6 KB
+// local in netstack_loop). Measured high-water on the ram_audit worst case: 4.8 KB.
+SET_LOOP_TASK_STACK_SIZE(11 * 1024);
 #else
 SET_LOOP_TASK_STACK_SIZE(24 * 1024);
 #endif
