@@ -100,6 +100,9 @@ class Config:
     # Supply for the headline is the healthy/usable boards over the window's last
     # supply_hours, so a board added (or lost) mid-window counts right away.
     supply_hours: float = 24.0
+    # Alloy's scrape interval for the daemon (observability/alloy.alloy): converts a
+    # live counter's sample count into the seconds of an hour it was observed.
+    scrape_interval_s: float = 15.0
     slo_grid_min: tuple = (5, 10, 15, 20, 30, 45, 60)
     growth_grid: tuple = (1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0)
     headroom_max: float = 10.0
@@ -306,15 +309,26 @@ def aggregate_records(
     }
 
 
+def covered_hours(aggs: dict) -> set[int]:
+    """Hours some source actually observed: those with supply (avail) rows. Every
+    source writes an avail row for each hour it covers (the journal backfill for
+    every hour of its range, Prometheus for every hour the capacity counters were
+    scraped), so an hour without one is a gap (unknown), not an idle bench."""
+    if "covered" in aggs:
+        return set(aggs["covered"])
+    return {r["t"] for r in aggs.get("avail", [])}
+
+
 def merge_aggregates(*aggs: dict) -> dict:
-    """Union of aggregate sets; for an hour covered by several sources the LATER one
-    in the argument list wins (pass the backfill first, live data last)."""
+    """Union of aggregate sets. Each hour comes from exactly ONE source: for an hour
+    several sources cover, the LATER one in the argument list wins (pass the backfill
+    first, live data last), so the overlap is never double-counted. ``covered`` lists
+    the hours with data; hours between sources (e.g. from the end of the journal
+    backfill to the rig redeploy) are gaps the model skips."""
     out = {"demand": [], "busy": [], "avail": [], "sources": [], "unretried_timeout_fraction": {}}
     claimed: set[int] = set()
     for a in reversed([a for a in aggs if a]):
-        hours = {r["t"] for k in ("demand", "busy", "avail") for r in a.get(k, [])}
-        if a.get("start") is not None:
-            hours |= set(range(int(a["start"]), int(a["end"]), HOUR))
+        hours = covered_hours(a) | {r["t"] for k in ("demand", "busy") for r in a.get(k, [])}
         mine = hours - claimed
         for k in ("demand", "busy", "avail"):
             out[k].extend(r for r in a.get(k, []) if r["t"] in mine)
@@ -326,6 +340,7 @@ def merge_aggregates(*aggs: dict) -> dict:
         out["start"], out["end"] = min(claimed), max(claimed) + HOUR
     for k in ("demand", "busy", "avail"):
         out[k].sort(key=lambda r: r["t"])
+    out["covered"] = sorted({r["t"] for r in out["avail"]})
     return out
 
 
@@ -389,8 +404,13 @@ def _usable_by_hour(aggs: dict, units: list[str], start: int, end: int) -> dict[
     out: dict[int, float] = collections.Counter()
     for a in aggs["avail"]:
         if start <= a["t"] < end and a["caps_class"] in units:
-            out[a["t"]] += a.get("usable_s", a["avail_s"]) / HOUR
+            out[a["t"]] += a.get("usable_s", a["avail_s"]) / _covered_s(a)
     return out
+
+
+def _covered_s(row: dict) -> float:
+    """Seconds of the hour the supply counter was observed (journal rows: all of it)."""
+    return max(1.0, min(float(HOUR), float(row.get("covered_s") or HOUR)))
 
 
 def pool_window(aggs: dict, pool: str, start: int, end: int, cfg: Config) -> Window:
@@ -403,7 +423,8 @@ def pool_window(aggs: dict, pool: str, start: int, end: int, cfg: Config) -> Win
     are always the pool's own requests.
     """
     p = POOLS[pool]
-    hours = list(range(start, end, HOUR))
+    covered = covered_hours(aggs)
+    hours = [h for h in range(start, end, HOUR) if h in covered]
     eff = dict.fromkeys(hours, 0.0)
     queued = dict.fromkeys(hours, 0.0)
     dem_bh = dict.fromkeys(hours, 0.0)
@@ -453,39 +474,59 @@ def pool_window(aggs: dict, pool: str, start: int, end: int, cfg: Config) -> Win
     cs2 = (hold_sq / tot["served"]) / hold**2 - 1.0 if hold else 1.0
     for d, wt in rows:
         dem_bh[d["t"]] += (d["hold_s"] + d["unserved"] * hold) * wt / HOUR
+    # Supply. Each avail row is board-seconds over the part of its hour the counter
+    # was observed (covered_s), so boards = avail_s / covered_s; the hour's weight is
+    # its coverage. A counter that has existed for 20 minutes therefore reads as the
+    # boards it saw, not as a third of them.
     hosts = set()
-    avail_s = usable_s = 0.0
+    cov = dict.fromkeys(hours, 0.0)  # fraction of each hour observed (any row)
     for a in aggs["avail"]:
-        if start <= a["t"] < end and a["caps_class"] in p["units"]:
-            u = a.get("usable_s", a["avail_s"])
-            avail_s += a["avail_s"]
-            usable_s += u
-            healthy_h[a["t"]] += a["avail_s"] / HOUR
-            usable_h[a["t"]] += u / HOUR
+        if a["t"] in cov:
+            cov[a["t"]] = max(cov[a["t"]], _covered_s(a) / HOUR)
+        if a["t"] in healthy_h and a["caps_class"] in p["units"]:
+            c = _covered_s(a)
+            healthy_h[a["t"]] += a["avail_s"] / c
+            usable_h[a["t"]] += a.get("usable_s", a["avail_s"]) / c
             if a["avail_s"] > 0:
                 hosts.add(a["host"])
+
+    def mean(series, hs):
+        w = sum(cov[h] for h in hs)
+        return sum(series[h] * cov[h] for h in hs) / w if w else 0.0
+
+    # Headline supply: the most recent cfg.supply_hours of OBSERVED time. When the
+    # newest source (e.g. just-deployed live counters) covers less than that, the rest
+    # comes from the newest older data (the journal backfill) rather than from the gap
+    # between them, which would read as zero boards.
+    recent, acc = [], 0.0
+    for h in sorted(hours, reverse=True):
+        if acc >= cfg.supply_hours:
+            break
+        if cov[h] > 0:
+            recent.append(h)
+            acc += cov[h]
+    healthy_now, usable_now = mean(healthy_h, recent), mean(usable_h, recent)
     n = max(1, len(hours))
-    recent = [h for h in hours if h >= end - cfg.supply_hours * HOUR] or hours
-    healthy_now = sum(healthy_h[h] for h in recent) / max(1, len(recent))
-    usable_now = sum(usable_h[h] for h in recent) / max(1, len(recent))
-    counts = sorted(eff.values())
-    mean = sum(counts) / n
-    var = sum((x - mean) ** 2 for x in counts) / n
+    # Hourly arrival RATES: a partly observed hour (a counter born mid-hour) is
+    # scaled up to a full hour.
+    counts = sorted(eff[h] / cov[h] if cov[h] > 0 else eff[h] for h in hours)
+    m = sum(counts) / n
+    var = sum((x - m) ** 2 for x in counts) / n
     total_eff = sum(prio.values())
     return Window(
         pool=pool,
         start=start,
         end=end,
         hours=len(hours),
-        healthy=avail_s / (n * HOUR),
-        usable=usable_s / (n * HOUR),
+        healthy=mean(healthy_h, hours),
+        usable=mean(usable_h, hours),
         healthy_now=healthy_now,
         usable_now=usable_now,
         hosts=max(1, len(hosts)),
         hold=hold,
         cs2=max(0.0, cs2),
-        idc=var / mean if mean else 1.0,
-        lam_mean=mean / HOUR,
+        idc=var / m if m else 1.0,
+        lam_mean=m / HOUR,
         lam_peak=quantile(counts, cfg.peak_quantile) / HOUR,
         shares={c: (prio[c] / total_eff if total_eff else 0.0) for c in PRIO_CLASSES},
         served=tot["served"],
@@ -493,7 +534,7 @@ def pool_window(aggs: dict, pool: str, start: int, end: int, cfg: Config) -> Win
         timeouts=tot["timeouts"],
         requests=tot["requests"],
         demand_bh=(hold_s + tot["unserved"] * hold) / HOUR,
-        healthy_bh=avail_s / HOUR,
+        healthy_bh=sum(healthy_h[h] * cov[h] for h in hours),
         hourly_eff=eff,
         hourly_queued=queued,
         hourly_demand_bh=dem_bh,
@@ -860,11 +901,12 @@ def daily_rows(
 ) -> list[dict]:
     """Per-day, per-pool demand / load, the trailing-window deficit, and PR efficiency."""
     rows = []
+    covered = covered_hours(aggs)
     day0 = int(start // DAY) * DAY
     for d in range(day0, end, DAY):
         lo, hi = max(d, start), min(d + DAY, end)
-        if hi - lo < HOUR:
-            continue
+        if hi - lo < HOUR or not any(h in covered for h in range(lo, hi, HOUR)):
+            continue  # no data that day (a gap between sources)
         date = _date(d)
         win_lo = max(start, int(hi - cfg.window_days * DAY))
         wins = {p: pool_window(aggs, p, win_lo, hi, cfg) for p in POOLS}
@@ -1027,7 +1069,14 @@ def build_dataset(
         daily.sort(key=lambda r: (r["date"], r["pool"]))
     return {
         "generated_at": _iso(now if now is not None else end),
-        "window": {"start": _iso(start), "end": _iso(end), "hours": int((end - start) / HOUR)},
+        "window": {
+            "start": _iso(start),
+            "end": _iso(end),
+            # hours with data; the rest of the 7 days is a gap the model skipped
+            "hours": sum(1 for h in covered_hours(aggs) if start <= h < end),
+            "gap_hours": int((end - start) / HOUR)
+            - sum(1 for h in covered_hours(aggs) if start <= h < end),
+        },
         "sources": aggs.get("sources", []),
         "policy_in_effect": policy,
         "config": dataclasses.asdict(cfg),

@@ -216,6 +216,67 @@ class Model(unittest.TestCase):
         self.assertTrue(cm.WAIT_BUCKETS[5] <= t <= cm.WAIT_BUCKETS[7])
 
 
+class Coverage(unittest.TestCase):
+    """Regression (run 40264967792): live counters only ~2 h old after the redeploy,
+    a 23 h gap after the journal backfill, and supply read as 0.22 C6 boards."""
+
+    def setUp(self):
+        self.backfill = synthetic_aggs(hours=7 * 24)
+        self.backfill["source"] = "journal"
+        gap = 23 * 3600
+        t_live = T0 + 7 * 24 * 3600 + gap
+        live = synthetic_aggs(hours=2)
+        for k in ("demand", "avail"):
+            for r in live[k]:
+                r["t"] += t_live - T0
+                r["live"] = True
+        for r in live["avail"]:  # first hour: counters born 22 min before its end
+            if r["t"] == t_live:
+                r["covered_s"] = 1335.0
+                r["avail_s"] *= 1335.0 / 3600
+        live["start"], live["end"], live["source"] = t_live, t_live + 7200, "prometheus"
+        self.live, self.end = live, t_live + 7200
+        self.aggs = cm.merge_aggregates(self.backfill, live)
+
+    def test_supply_normalised_by_coverage_and_skips_gap(self):
+        w = cm.pool_window(self.aggs, "c6", int(self.end - 7 * 86400), self.end, CFG)
+        self.assertAlmostEqual(w.healthy_now, 4.0)
+        self.assertAlmostEqual(w.usable_now, 4.0)
+        self.assertAlmostEqual(w.healthy, 4.0)
+        self.assertEqual(w.hours, 7 * 24 - 23)  # the gap is not 23 idle hours
+        # a short-lived counter alone still reads as whole boards
+        alone = cm.pool_window(cm.merge_aggregates(self.live), "c6", self.end - 7200, self.end, CFG)
+        self.assertAlmostEqual(alone.healthy_now, 4.0)
+
+    def test_headline_after_redeploy(self):
+        ds = cm.build_dataset(self.aggs, CFG)
+        row = next(
+            r
+            for r in ds["headline"]
+            if r["pool"] == "c6"
+            and r["policy"] == "fifo"
+            and r["slo_min"] == 10
+            and r["growth"] == 1.0
+        )
+        self.assertAlmostEqual(row["healthy"], 4.0)
+        self.assertGreater(row["headroom"], 0.0)
+        self.assertEqual(ds["window"]["gap_hours"], 23)
+
+    def test_overlap_is_never_double_counted(self):
+        # live data re-covering the last backfill hours replaces them, hour by hour
+        overlap = synthetic_aggs(hours=3)
+        shift = 7 * 24 * 3600 - 3 * 3600
+        for k in ("demand", "avail"):
+            for r in overlap[k]:
+                r["t"] += shift
+        overlap["start"], overlap["end"] = T0 + shift, T0 + shift + 3 * 3600
+        m = cm.merge_aggregates(self.backfill, overlap)
+        total = sum(d["served"] for d in m["demand"])
+        self.assertAlmostEqual(total, sum(d["served"] for d in self.backfill["demand"]))
+        hours = [r["t"] for r in m["avail"] if r["caps_class"] == "c6"]
+        self.assertEqual(len(hours), len(set(hours)))
+
+
 class Prometheus(unittest.TestCase):
     def test_cumulative_to_counts(self):
         cum = {10.0: 1, 30.0: 3, 60.0: 3, float("inf"): 5}
@@ -254,8 +315,10 @@ class Prometheus(unittest.TestCase):
                         [(t, 1800.0)],
                     )
                 ]
+            if "count_over_time(hitl_unit_available_seconds_total" in expr:
+                return [({"host": "hitl-rig-1"}, [(t, 89.0)])]  # scraped 89 x 15 s = 1335 s
             if "available_seconds_total" in expr:
-                return [({"caps_class": "c6", "host": "hitl-rig-1"}, [(t, 7200.0)])]
+                return [({"caps_class": "c6", "host": "hitl-rig-1"}, [(t, 2670.0)])]
             return []
 
         a = sources.prom_aggregates(query, ["hitl-rig-1"], T0, T0 + 3600, CFG, {"c6": 0.25})
@@ -263,7 +326,10 @@ class Prometheus(unittest.TestCase):
         self.assertEqual((d["t"], d["requests"], d["served"], d["hold_s"]), (T0, 10.0, 8.0, 2400.0))
         self.assertEqual((d["timeouts"], d["unserved"]), (2.0, 0.5))
         self.assertTrue(d["live"])
-        self.assertEqual(a["avail"][0]["avail_s"], 7200.0)
+        self.assertEqual((a["avail"][0]["avail_s"], a["avail"][0]["covered_s"]), (2670.0, 1335.0))
+        # 2670 board-seconds over 1335 observed seconds = 2 boards, not 0.74
+        w = cm.pool_window(cm.merge_aggregates(a), "c6", T0, T0 + 3600, CFG)
+        self.assertAlmostEqual(w.healthy_now, 2.0)
         self.assertEqual((a["start"], a["end"]), (T0, T0 + 3600))
         self.assertEqual(cm.current_policy(a, T0, T0 + 3600), "priority")
 
