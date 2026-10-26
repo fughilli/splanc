@@ -37,6 +37,7 @@ py_test(
         "test_hardware_config_pattern.py",
         "test_heap_census.py",
         "test_heavy_effect_reachability_core.py",
+        "test_hitl_verdict.py",
         "test_improv.py",
         "test_improv_find.py",
         "test_jit_soak.py",
@@ -75,6 +76,7 @@ py_test(
     data = [
         "//:.github/workflows/hitl.yaml",
         "//firmware/player_app:board_caps.textproto",
+        "//pi/hitl/ci:quarantine.toml",
         "//pi/hitl/reserve:catalog.json",
         "//pi/hitl/reserve:catalog-mac.json",
         "//pi/hitl/reserve:catalog-phone.json",
@@ -87,6 +89,8 @@ py_test(
     legacy_create_init = False,
     main = "pytest_main.py",
     deps = [
+        "//pi/hitl/ci:flake_report_lib",
+        "//pi/hitl/ci:verdict_core",
         "//pi/hitl/harness",
         "//pi/hitl/harness:hitl_e2e_lib",
         "@rules_python//python/runfiles",

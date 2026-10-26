@@ -35,6 +35,12 @@
 # (the Mac's 6h periodic + manual runs) always run the full suite. hitl_tests is not
 # a required status check (main has no branch protection), so the skip never blocks
 # a merge by itself; the merge queue enforces HITL-green for non-`nohitl` PRs.
+#
+# What fails the job (pi/hitl/ci/README.md). An infra outcome — the reservation never
+# activated (deadline, stalled queue, unhealthy rig), no rig had a matching unit, the rig's ssh/tunnel failed, the test was
+# killed while still queued — is not a test failure: such a test is re-queued once and
+# then SKIPPED with a warning. A test in pi/hitl/ci/quarantine.toml runs and reports
+# but doesn't gate. Every other failure gates.
 name: HITL tests
 on:
   # Runs on `hitl`-labelled PRs (full flash + improv + ws against a real rig),
@@ -386,6 +392,7 @@ jobs:
               --test_env=HITL_SERIAL_LOG_DIR \
               --test_env=HITL_EXCLUDE_HOSTS \
               --test_env=GITHUB_SHA \
+              --build_event_json_file="$BEP" \
               "${server_arg[@]}"
           }
           # rig-3 is fenced fleet-wide (HITL_EXCLUDE_HOSTS): its Pi 3 onboard AP drops the
@@ -406,9 +413,30 @@ jobs:
           export HITL_DEADLINE=$(( $(date +%s) + HITL_QUEUE_BUDGET_MIN * 60 ))
           echo "HITL class=$HITL_PRIORITY; reservation deadline $(date -u -d @"$HITL_DEADLINE" +%H:%MZ)"
           rc=0
+          # The verdict (pi/hitl/ci/hitl_verdict.py) reads the run's build events and
+          # each failing attempt's log: a test whose every failing attempt was infra
+          # (reservation never activated, no rig with a matching unit, rig ssh/tunnel
+          # failure, killed while still queued) is re-queued ONCE, and if it is still
+          # infra it is SKIPPED with a warning instead of failing the job. A test listed
+          # in pi/hitl/ci/quarantine.toml runs and reports but never fails the job. Any
+          # other failure gates, exactly as before. See pi/hitl/ci/README.md.
           echo "::group::HITL tests (GATING)"
-          HITL_EXCLUDE_HOSTS="hitl-rig-3" run_hitl_set "$all" || rc=1
+          t="$RUNNER_TEMP"
+          echo "$all" | tr ' ' '\n' | sed '/^$/d' > "$t/hitl-targets.txt"
+          BEP="$t/hitl-bep-1.json" HITL_EXCLUDE_HOSTS="hitl-rig-3" run_hitl_set "$all" && e1=0 || e1=$?
+          verdict_args=(--targets "$t/hitl-targets.txt" --bep "$t/hitl-bep-1.json" --bazel-exit "$e1")
+          python3 pi/hitl/ci/hitl_verdict.py "${verdict_args[@]}" \
+            --requeue-out "$t/hitl-requeue.txt" > /dev/null || true
+          # (Not past HITL_DEADLINE: a re-queued test would give up at once.)
+          if [ -s "$t/hitl-requeue.txt" ] && [ "$(date +%s)" -lt "$HITL_DEADLINE" ]; then
+            echo "re-queueing the infra-only failures once:"; cat "$t/hitl-requeue.txt"
+            BEP="$t/hitl-bep-2.json" HITL_EXCLUDE_HOSTS="hitl-rig-3" \
+              run_hitl_set "$(cat "$t/hitl-requeue.txt")" && e2=0 || e2=$?
+            verdict_args+=(--bep "$t/hitl-bep-2.json" --bazel-exit "$e2")
+          fi
           echo "::endgroup::"
+          python3 pi/hitl/ci/hitl_verdict.py "${verdict_args[@]}" \
+            --json-out "$t/hitl-verdict.json" --summary "$GITHUB_STEP_SUMMARY" || rc=1
 
           # The Android phone-HITL journeys (amd-rig's `android-phone` unit, the :8088
           # phone daemon). Separate from the pool run above: it reserves ONE named unit
@@ -497,6 +525,15 @@ jobs:
           cd "$testlogs"
           find . -name test.xml -exec install -D -m 0644 {} "$GITHUB_WORKSPACE/hitl-traceability-evidence/{}" \;
           echo "collected $(find "$GITHUB_WORKSPACE/hitl-traceability-evidence" -name test.xml 2>/dev/null | wc -l) test.xml from $testlogs"
+
+      - name: Upload the HITL verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hitl-verdict
+          path: ${{ runner.temp }}/hitl-verdict.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Upload DUT serial logs
         if: always()
