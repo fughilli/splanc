@@ -42,8 +42,18 @@ For each pool, over a rolling **7-day window**:
   load comes in bursts (a CI suite fires every test at once).
 - **Hold.** 1/μ is the mean hold of served requests, including wasted holds such as
   lease expiries. Removing waste lowers demand.
-- **Supply.** Healthy boards are the units that are present and not cordoned, over
-  the last 24 h of the window, so a board added or lost mid-window counts right away.
+- **Supply.** Healthy boards are the units that are present and not cordoned, averaged
+  over the last 24 h of **observed** time, so a board added or lost mid-window counts
+  right away. Each hour's board-seconds are divided by the seconds its counters were
+  actually observed (`covered_s`: the live series' sample count × the 15 s scrape
+  interval). A counter that has existed for 20 minutes therefore reads as whole boards.
+  When the newest source covers less than 24 h (for example right after a redeploy),
+  the rest comes from the newest older data, the journal backfill.
+- **Coverage.** Each hour comes from exactly one source; live data wins over the
+  backfill, so an overlap is never double-counted. Hours that no source observed,
+  such as the gap between the end of the backfill and the redeploy, are skipped:
+  they are unknown, not zero demand on zero boards. The window reports `hours` (with
+  data) and `gap_hours`.
   **Usable** boards are what the daemons' concurrency caps (`--max-concurrent`,
   `--max-concurrent-class`) let run at once. healthy − usable is capacity lost to caps:
   fix the config instead of buying boards.

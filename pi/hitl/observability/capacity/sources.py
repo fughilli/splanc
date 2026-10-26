@@ -241,6 +241,21 @@ def prom_aggregates(
                         "avail_s": round(min(float(v), 1e9), 1),
                     }
                 )
+    # How much of each hour each host's counters were actually scraped: the newest
+    # sample count of its unit series x the scrape interval. The first hour after a
+    # deploy is only partly covered, and a counter that has existed for 20 minutes
+    # must not read as a third of a board.
+    covered: dict[tuple, float] = {}
+    for labels, pts in q(
+        f"max by (host) (count_over_time(hitl_unit_available_seconds_total{{{sel}}}[1h]))"
+    ):
+        for t, v in pts:
+            h = cm._hour(t - cm.HOUR)
+            covered[(h, labels.get("host", "?"))] = min(
+                float(cm.HOUR), float(v) * cfg.scrape_interval_s
+            )
+    for r in avail:
+        r["covered_s"] = round(covered.get((r["t"], r["host"]), float(cm.HOUR)), 1)
     hours = sorted({r["t"] for r in avail})
     out = {
         "source": "prometheus",

@@ -523,7 +523,12 @@
             },
             {
               "selector": "hours",
-              "text": "hours",
+              "text": "hours with data",
+              "type": "number"
+            },
+            {
+              "selector": "gap_hours",
+              "text": "gap hours",
               "type": "number"
             }
           ],

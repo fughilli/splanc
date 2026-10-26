@@ -265,7 +265,16 @@ def build() -> dict:
     L.add(
         stat(
             "Data window",
-            [target("window", [col("end", "window end (UTC)"), col("hours", "hours", "number")])],
+            [
+                target(
+                    "window",
+                    [
+                        col("end", "window end (UTC)"),
+                        col("hours", "hours with data", "number"),
+                        col("gap_hours", "gap hours", "number"),
+                    ],
+                )
+            ],
             decimals=0,
             text_mode="value_and_name",
             description="The 7-day window the model ran on, and its end. A stale end means the live "
