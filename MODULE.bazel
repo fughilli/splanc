@@ -248,6 +248,14 @@ player_crate.spec(
     package = "spidev",
     version = "0.6",
 )
+
+# Output-thread pacing + RT (pi/player_rs gpio_cdev.rs/pacing.rs/rt.rs): GPIO v2
+# ioctls, SCHED_FIFO, affinity, mlockall. Already resolved transitively (tokio,
+# spidev, mio); this only makes it a direct dep.
+player_crate.spec(
+    package = "libc",
+    version = "0.2",
+)
 player_crate.spec(
     features = [
         "rt-multi-thread",

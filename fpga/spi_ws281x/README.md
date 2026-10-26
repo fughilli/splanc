@@ -149,22 +149,75 @@ it would have ~15 µs, which Linux can't guarantee. The player enforces the cap
 - If a STREAM started during the latch (latch-safe FIFO), it stays LOW: that
   frame starts at once.
 
-On the 20-port top it drives pin **28** (provisional, see the pin table), wired
-to a Pi GPIO input (proposed: **GPIO 22**, header pin 15; free of SPI0 and the
-UART/I²C pins). Pi-side use, for the player's output thread:
+On the 20-port top it drives pin **28**, wired to **Pi GPIO 22** (header pin
+15). Both are 3.3 V (bank 2 is LVCMOS33), so it's a direct wire. **Confirmed
+by the owner (2026-10-26)**: a dedicated GPIO, not in-band SPI status (no MISO
+yet, and a status read costs a transfer per poll) and not FPGA double-buffering
+(20/26 BSRAM used, no room for the general case).
 
-1. Request the line once with rising-edge detection (`/dev/gpiochip0`, GPIO v2
-   line request; libgpiod, or the raw ioctls in a static-musl binary).
-2. Per frame: if the line is already HIGH, go; else wait for the rising-edge
-   event, with a timeout of one period + margin.
-3. Write the CSR + STREAM (one transfer if possible). The line falls as the
-   STREAM opcode lands.
-4. On timeout (unwired pin, old bitstream), fall back to absolute-deadline
-   pacing. A broken wire then degrades to today's behaviour instead of stalling.
+**Wiring** (Pi 3/4/5 40-pin header ↔ Tang Nano 9K, whose header holes are
+silk-labelled with the FPGA pin number):
 
-A STREAM started on frame-done can never merge with the previous frame, so the
-host doesn't have to model wire time. Rendering stays ahead (triple-buffered)
-and only the SPI handoff waits on the edge.
+| signal       | Tang Nano 9K       | Pi header            | notes                          |
+| ------------ | ------------------ | -------------------- | ------------------------------ |
+| `frame_done` | pin **28**         | pin **15** (GPIO 22) | optional 330 Ω series resistor |
+| ground       | any header **GND** | pin **14** (or 20)   | run it beside the signal wire  |
+
+The Pi requests the line with its pull-down, so an unwired or unconfigured pin
+reads LOW and never produces an edge.
+
+### Pi side (`pi/player_rs`, pacing.rs / gpio_cdev.rs / rt.rs)
+
+The output thread, per frame:
+
+1. Renders the frame (before any waiting, so the edge → SPI handoff is just
+   the ioctl).
+2. Sleeps to the frame's **absolute deadline** at `--fps`
+   (`clock_nanosleep(TIMER_ABSTIME)`), so a short strip doesn't run faster than
+   asked.
+3. **Gates on `frame_done`**: it drains stale edge events and reads the level.
+   If the line is HIGH it goes at once; otherwise it waits (`ppoll` on the GPIO
+   v2 line-request fd) for the rising edge, for at most one period + max(¼
+   period, 1 ms).
+4. Sends CSR + STREAM as **one `SPI_IOC_MESSAGE(2)`**: one syscall, CS deasserted
+   between the two transfers (`cs_change`). `--spi-split` restores two writes.
+
+- **Fallback:** 3 consecutive timeouts switch to **timed pacing**, with no edge
+  waits, so an unwired board loses nothing per frame. Timed mode checks the
+  line's event queue once a second and resumes edge pacing when edges appear.
+  Each transition logs one line, rate-limited to one per minute per kind, with
+  a count of suppressed repeats. On an unwired bench, the whole log is one line
+  at start-up.
+- **GPIO access:** raw GPIO uAPI v2 ioctls (`libc`). libgpiod is C and can't link
+  into the static-musl player, and three ioctls didn't justify a new crate.
+- **Chip selection:** `--frame-done-chip auto` picks the chip labelled
+  `pinctrl-bcm2835` / `-bcm2711` / `-rp1`. The header's GPIO 22 is then the same
+  on every Pi, including the Pi 5's gpiochip4 → 0 renumbering in 6.6.47.
+- **Flags:** `--frame-done-gpio 22` (default; `none` disables it).
+- **Kernel timestamps:** each edge event carries the kernel's IRQ-time
+  `CLOCK_MONOTONIC` stamp. `--pace-stats S` reports `edge_to_wake` (IRQ → thread
+  running) directly once wired.
+
+**Userspace real-time.** No kernel driver and no PREEMPT_RT, by owner decision.
+
+- **Output thread** (`--rt on`, default): `SCHED_FIFO` **45**, pinned to the
+  last CPU (`--rt-cpu`). That is below the threaded IRQ handlers (FIFO 50) and
+  the SPI pump it blocks on, and above everything else.
+- **Memory:** `mlockall(MCL_CURRENT|MCL_FUTURE)`, only when it can't later trip
+  RLIMIT_MEMLOCK. Otherwise a capped limit would fail the 8 MiB tokio stack
+  mmaps.
+- **SPI message pump:** the `spi0` kthread goes to `SCHED_FIFO` **46**, set by
+  `chrt` in the unit's root `ExecStartPre`. The kthread is named after the
+  controller device: `spi0` on the Pi 3/4 (spi-bcm2835) and on the Pi 5 (RP1
+  DesignWare SPI). Since ~6.0 an uncontended `spi_sync` runs in the caller's
+  context anyway.
+- **systemd unit** (`apps.nix`): the player runs as `ledmapper` with ambient
+  `CAP_SYS_NICE` + `CAP_IPC_LOCK` and `LimitMEMLOCK=infinity`, not as root. It
+  no longer uses sbc-deploy's `realtime = true`, which put the **whole
+  process** (WSS server and render pool too) at FIFO 50.
+- **Optional:** `isolateOutputCpu` in `apps.nix` (default off) adds
+  `isolcpus=3 irqaffinity=0-2`. It changes only the command line, not the
+  kernel.
 
 Verilator (`spi_ws281x_120fps_sim`): `frame_done` is never HIGH while any port
 drives HIGH, and every rising edge comes ≥ one latch (and < latch + one bit +
@@ -172,6 +225,96 @@ drives HIGH, and every rising edge comes ≥ one latch (and < latch + one bit +
 260 LEDs on the edge plus a modelled 100 µs host wake-up: 8/8 frames clean,
 one edge per frame, periods **7.99 ms** (80 µs latch) and **8.21 ms** (300 µs),
 both within 8.333 ms.
+
+## Measured output-thread latency (rig-1, `pi-ledmapper-2`, 2026-10-26)
+
+**Bench:**
+
+- Pi 3B+, kernel 6.12.87 (`PREEMPT_VOLUNTARY`, `HZ=250`), schedutil governor.
+- The production image, with the player service stopped and the bench binary
+  run by hand.
+- **The frame-done wire isn't fitted on this bench**, so every run is timed
+  pacing after the one-line fallback.
+- The STREAM is 20 ports × 66 LEDs (3,961 B), the largest that fits the default
+  `spidev.bufsiz` 4096 as one CSR + STREAM message. MAX images set 65536 (#369).
+- SCK is requested at 24 MHz, `--fps 120`.
+- Each run is 7,200 frames (60 s), or 21,600 (180 s) when loaded, after 120
+  warm-up frames.
+- Load: 4 busy loops, plus a pipe copy, plus a page-cache reader (all
+  SCHED_OTHER).
+- Measured with `player --frames N`, Pi-side `CLOCK_MONOTONIC` stamps. µs as
+  p50 / p99 / max:
+
+| RT (`--rt`)                               | load   | timer wake late    | wake → SPI ioctl | CSR+STREAM ioctl    | frame period (min / p50 / p99 / max) |
+| ----------------------------------------- | ------ | ------------------ | ---------------- | ------------------- | ------------------------------------ |
+| off                                       | idle   | 84 / 91 / 256      | 0.2 / 0.2 / 6    | 1529 / 1565 / 1658  | 8163 / 8333 / 8344 / 8506            |
+| **on**                                    | idle   | 29 / 35 / 71       | 0.2 / 0.2 / 6    | 1523 / 1571 / 1607  | 8292 / 8333 / 8347 / 8376            |
+| off                                       | loaded | 146 / 4318 / 10303 | 0.2 / 0.6 / 51   | 1677 / 5686 / 12942 | 2066 / 8334 / 12327 / 18496          |
+| **on**                                    | loaded | 83 / 236 / 622     | 0.2 / 0.6 / 24   | 1677 / 1997 / 2754  | 7785 / 8334 / 8470 / 8887            |
+| **on**, load on CPUs 0–2 (≈ `isolcpus=3`) | loaded | 31 / 78 / 220      | 0.2 / 0.5 / 8    | 1595 / 1734 / 2728  | 8161 / 8334 / 8375 / 8515            |
+
+What each column is:
+
+- **Timer wake late:** how far past the absolute deadline the output thread
+  runs (the cyclictest number, measured in the player's own thread).
+- **Wake → SPI ioctl:** userspace handoff only. Render happens before the wait.
+- **CSR+STREAM ioctl:** the whole combined transfer. The 3,961 B on the wire
+  take ~1.52 ms at the Pi 3's ~20.8 MHz effective SCK.
+- **Ioctl entry → CS assert:** not separable Pi-side. Its upper bound is the
+  3-byte CSR ioctl in `--spi-split` runs (loaded): **46 / 183 / 317 µs with RT**,
+  48 / 216 / 4,486 µs without.
+
+Findings:
+
+- **The RT settings are what keep 120 fps under load.** Without them, a busy CPU
+  pushes the p99 period to 12.3 ms (frames slip a whole period) and the worst
+  to 18.5 ms. With them, p99 is 8.47 ms and the worst 8.89 ms.
+- **Idle, RT cuts timer wake-up by ~3×** (84 → 29 µs p50). An RT thread has no
+  timer slack, while SCHED_OTHER gets 50 µs.
+- **What's left under load is the kernel, not the player.** It's the
+  non-preemptible kernel sections of the other tasks on CPU 3
+  (`PREEMPT_VOLUNTARY`). Keeping them off CPU 3, as `isolcpus=3` would, cuts
+  the worst wake from 622 to 220 µs. The userspace handoff is ≤ 24 µs worst
+  case.
+- **Edge → CS estimate (not measured; needs the wire):** GPIO IRQ → wake, plus
+  wake → ioctl, plus ioctl → CS. The GPIO wake path (hard IRQ stamps the
+  edge, the cdev's IRQ thread at FIFO 50 wakes the poller) should track the
+  timer wake path plus one thread hop. Under load with RT, the estimate is about
+  **0.25 + 0.001 + ≤ 0.18 ≈ 0.4 ms p99, ≤ ~1 ms worst**. With CPU 3 kept clear,
+  about 0.25 ms p99.
+  - That is around the 260-LED cap's 220–440 µs slack. With frame-done pacing a
+    late wake **can't merge frames**: it only stretches that one period (8.33 →
+    ~8.9 ms worst case).
+- **Render time drops from 1.9 to 1.05 ms per frame with RT on** (mapping
+  pattern, 1,320 LEDs). schedutil runs the CPU at its maximum frequency while
+  an RT task is runnable. Render still happens on the output thread today: at
+  20 × 260 that is ~4 ms of each 8.33 ms period at full clock. The planned
+  triple-buffered render thread / GPU tier (#368 §11) moves it off.
+- **Privilege model** (checked with `systemd-run` as `ledmapper`):
+  - with ambient `CAP_SYS_NICE` + `CAP_IPC_LOCK`: FIFO 45, CPU 3 and mlockall
+    all apply;
+  - with no capabilities: each step logs one line and the player carries on
+    (FIFO 45 → SCHED_OTHER, unlocked).
+- **Fallback is quiet:** an unwired GPIO 22 costs three ~10 ms waits at start-up
+  and one log line. With `--frame-done-gpio none` there are no waits at all.
+- **spidev `bufsiz` and the combined message:** spidev rounds each transfer to
+  `ARCH_DMA_MINALIGN` (128 B on arm64) before checking `bufsiz`. A 4,084 B
+  CSR + STREAM pair therefore fails at 4096. The sink switches to two writes on
+  the first `EMSGSIZE` and logs once. At MAX's 65536, every 20 × 1024 frame
+  fits.
+
+**Follow-up once the wire is fitted** (pin 28 → GPIO 22, plus ground):
+
+1. Flash the 20-port bitstream (`:spi_ws281x_tangnano9k_20p_flash`) on an image
+   with `spidev.bufsiz=65536` (#369).
+2. Run `player --no-serve --fpga-ports 20 --start 5200 --fps 120 --frames 7200`
+   (with `--rt on` and `--rt off`) and check the summary:
+   - `edge` / `high` > 0 and `timeout=0`;
+   - **`edge_to_wake`** is the measured IRQ → thread number;
+   - `period` shows whether the 260-LED frames hold 8.33 ms.
+3. On an analyzer, put pin 28 and CS on two channels (24 MS/s = 42 ns resolution).
+   The interval from the rising frame-done edge to the next falling CS is the
+   true edge → CS latency, which the Pi-side estimate above stands in for.
 
 ## Measured Pi 3 SPI continuity (rig-1, `pi-ledmapper-1`, #369 image)
 
@@ -202,22 +345,22 @@ pauses counted when CLK is held ≥ 1 µs:
 in `@rules_fpga//fpga/platforms:tangnano9k`). The 8-port `tangnano9k_top` is
 unchanged.
 
-|         port |    pin | pad (bank)        | notes                                                        |
-| -----------: | -----: | ----------------- | ------------------------------------------------------------ |
-|          0–7 |  70–77 | IOT41B…IOT37A (1) | as the 8-port top; 70–75 also go to the HDMI connector       |
-|            8 |     40 | IOB33B (2)        |                                                              |
-|            9 |     35 | IOB29A (2)        | GCLKT_4 clock-capable input, plain I/O here                  |
-|           10 |     41 | IOB41A (2)        |                                                              |
-|           11 |     42 | IOB41B (2)        |                                                              |
-|           12 |     51 | IOR17B (1)        | GCLKC_3, the pair of `clk27` (52); single-ended, fine        |
-|           13 |     53 | IOR15B (1)        | dual-purpose DOUT / WE_N                                     |
-|           14 |     54 | IOR15A (1)        | dual-purpose DIN / CLKHOLD_N                                 |
-|           15 |     55 | IOR14B (1)        | dual-purpose SSPI_CS_N / D0                                  |
-|           16 |     56 | IOR14A (1)        | dual-purpose SO / D1                                         |
-|           17 |     57 | IOR13A (1)        | dual-purpose FASTRD_N / D3                                   |
-|           18 |     68 | IOT42B (1)        | also HDMI (TMDS clock pair)                                  |
-|           19 |     69 | IOT42A (1)        | also HDMI (TMDS clock pair)                                  |
-| `frame_done` | **28** | IOB11B (2)        | **provisional**: next to MOSI (27), no dual-purpose function |
+|         port |    pin | pad (bank)        | notes                                                     |
+| -----------: | -----: | ----------------- | --------------------------------------------------------- |
+|          0–7 |  70–77 | IOT41B…IOT37A (1) | as the 8-port top; 70–75 also go to the HDMI connector    |
+|            8 |     40 | IOB33B (2)        |                                                           |
+|            9 |     35 | IOB29A (2)        | GCLKT_4 clock-capable input, plain I/O here               |
+|           10 |     41 | IOB41A (2)        |                                                           |
+|           11 |     42 | IOB41B (2)        |                                                           |
+|           12 |     51 | IOR17B (1)        | GCLKC_3, the pair of `clk27` (52); single-ended, fine     |
+|           13 |     53 | IOR15B (1)        | dual-purpose DOUT / WE_N                                  |
+|           14 |     54 | IOR15A (1)        | dual-purpose DIN / CLKHOLD_N                              |
+|           15 |     55 | IOR14B (1)        | dual-purpose SSPI_CS_N / D0                               |
+|           16 |     56 | IOR14A (1)        | dual-purpose SO / D1                                      |
+|           17 |     57 | IOR13A (1)        | dual-purpose FASTRD_N / D3                                |
+|           18 |     68 | IOT42B (1)        | also HDMI (TMDS clock pair)                               |
+|           19 |     69 | IOT42A (1)        | also HDMI (TMDS clock pair)                               |
+| `frame_done` | **28** | IOB11B (2)        | **confirmed** → Pi GPIO 22 (header 15); next to MOSI (27) |
 
 Checks (pads and banks from the apicula GW1NR-9C QN88P chipdb):
 
