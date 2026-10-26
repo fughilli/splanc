@@ -58,6 +58,17 @@ In the spi_ws281x core the bit is 1.2407 µs, so a byte takes 9.963 µs and an L
 120 fps limit is **274 LEDs/channel at 80 µs** and **267 at 300 µs**. The
 #370 sim runs 20 × 270 and 20 × 266 at a 120 fps cadence.
 
+**120 fps cap: 260 LEDs per channel (owner decision, 2026-10-26).** It keeps
+margin below the theoretical 267/274. 260 LEDs = 780 bytes × 9.963 µs = 7.771 ms
+of emission; with ~40 µs of prefill and the latch the frame is done at 7.89 ms
+(80 µs) or 8.11 ms (300 µs). That leaves **≥ 220 µs per period** at the
+worst-case latch (~440 µs at 80 µs) for the host: the frame-done GPIO wake-up,
+the CSR write and scheduling jitter. The cap is enforced in the player
+(`wire::check_frame_rate`: above 60 fps, at most `MAX_LEDS_PER_PORT_120FPS` =
+260 LEDs per port; nothing above 120 fps) and documented in the FPGA README
+(#370). Verilator, frame-done paced at 260 LEDs with a modelled 100 µs host
+wake-up: 7.99 ms periods at 80 µs and 8.21 ms at 300 µs, both within 8.333 ms.
+
 **SPI demand is set by the port count, not the fps.** While strips stream, the
 FPGA drains 0.8 Mbit/s per port, so 20 ports need ≥ 16.06 Mbit/s sustained
 (#370 sim: SCK 16.7–27 MHz works at a 54 MHz core). At 120 fps the strips stream
@@ -105,11 +116,24 @@ slowest one sets the rate.
   - It must not land during the previous frame's *emission*, or the frames merge
     (asserted in `spi_ws281x_120fps_sim` phase D).
   - Jitter slack is `period − (3L × 9.963 µs + 40 µs + latch)`: ~143 µs at
-    270 LEDs / 80 µs, but only ~42 µs at 266 / 300 µs.
-  - For production, either keep `L` a few LEDs under the limit (e.g. ≤ 260 gives
-    ≥ 0.4 ms of slack), or better, let the FPGA pace the host with a "frame done"
-    signal: a GPIO from the core's latch end, or a CSR read once MISO exists.
-    Then Pi-side jitter only has to stay under one period.
+    270 LEDs / 80 µs, but only ~42 µs at 266 / 300 µs. At the 260-LED cap it is
+    ~440 µs (80 µs latch) and ~220 µs (300 µs).
+  - **Decided (owner, 2026-10-26): both.** Strips are capped at 260 LEDs per
+    channel in the 120 fps mode, and the FPGA paces the host with a
+    **frame-done** output (#370). `frame_done` is a level that goes HIGH when
+    every port has shifted out its frame *and* the latch has elapsed, and LOW
+    when the next STREAM starts. It sits on a Tang Nano 9K pin (28, provisional)
+    wired to a Pi GPIO input (GPIO 22 proposed).
+  - **Pi-side use:** the output thread asks for rising-edge events on that line
+    (`/dev/gpiochip0`, GPIO v2 line request with edge detection; libgpiod or
+    the `gpio-cdev` ioctls). Each frame it waits for the edge (or sees the line
+    already HIGH), then writes the CSR + STREAM. A timeout of one period plus
+    margin falls back to deadline pacing, so a broken wire degrades to today's
+    behaviour instead of stalling. A frame started on frame-done can't merge
+    with the previous one, so the host no longer has to model wire time, and
+    Pi-side jitter only has to stay inside the cap's ≥ 220 µs slack instead of
+    the ~42 µs of a 266-LED strip. Rendering keeps running ahead
+    (triple-buffered), so only the SPI handoff waits on the edge.
 - **Output thread:**
   - SCHED_FIFO priority, pinned to an isolated core (`isolcpus`/`nohz_full` on the
     Pi 4/5; on the Pi 3, at least affinity away from the WiFi/USB IRQs).
@@ -161,12 +185,12 @@ of its wire time:
 | input sampled at the next render start | 0–8.3 ms (avg 4.2) |
 | GPU render + readback | ~1 ms |
 | wait for the SPI slot (double buffer) | 0–8.3 ms |
-| prefill + emission + latch (270 LEDs) | ~8.2 ms |
+| prefill + emission + latch (270 LEDs; 7.9–8.1 ms at the 260 cap) | ~8.2 ms |
 | **total** | **~10–26 ms, typically ~15–18 ms** |
 
 For comparison, 1024 LEDs/channel at 30 fps comes to ~50–100 ms. Latency gets
 shorter with a shallower pipeline (render just-in-time against the FPGA
-frame-done signal) and with shorter strips.
+frame-done signal, now in #370) and with shorter strips.
 
 ### FPGA support (#370)
 
@@ -179,6 +203,15 @@ frame-done signal) and with shorter strips.
 - Self-instrumentation (`STATS`): underrun counts (total and per port), the
   minimum FIFO level, and the longest byte-to-byte gap with CS low. A sticky
   underrun flag is shown on `led[1]`.
+- **Frame-done output** (`frame_done`), simulated in `spi_ws281x_120fps_sim`:
+  never HIGH while any port drives, and every rising edge comes one latch after
+  the last bit. Frame-done paced at 260 LEDs: 8/8 clean frames, one edge per
+  frame.
+- **Pinned 20-port top:** ports 0–7 on pins 70–77 (as the 8-port top), ports
+  8–19 on 40 35 41 42 51 53 54 55 56 57 68 69 (owner's choice), frame-done on 28
+  (provisional). Place-and-route: 2354 LUT4, 1449 DFF, 20/26 BSRAM, 31 IOB, fmax
+  75.4 MHz at the 54 MHz core. Pins 53–57 are Gowin dual-purpose configuration
+  pins, built with the `*_as_gpio` flags; hardware bring-up is pending.
 
 ### Next measurement (Pi 3, for the operator)
 
@@ -401,11 +434,12 @@ frame; CS-high latches). It must sustain ≥ the drain rate
 | 4×1024 | 4,096 | 30.7 (32.6) | 3.2 | 4.4 | 12,289 | **no** | peak ≈ 1,538 of 1,659 B at r = 2 (7% margin; overflows at r > 2.17) / ok |
 | 8×1024 | 8,192 | 30.7 (32.6) | 6.4 | 8.9 | 24,577 | **no** | as 4×1024 / ok |
 | 16×1024 | 16,384 | 30.7 (32.6) | 12.9 | 17.7 | 49,153 | **no** | needs 16 ports / ok |
-| 20×1024 | 20,480 | 30.7 (32.6) | 16.1 | 22.1 | 61,441 | **no** | needs 20 ports / ok (20/26 BSRAM, 83 MHz) |
+| 20×1024 | 20,480 | 30.7 (32.6) | 16.1 | 22.1 | 61,441 | **no** | needs 20 ports / ok (20/26 BSRAM, 75 MHz pinned) |
 
 The table is *computed* from the core and protocol constants. The wire timing is
 validated in sim (#370). On hardware, the logic analyzer covers 4 channels; the
-16- and 20-channel rows are **extrapolation** until a 20-pin bitstream exists.
+16- and 20-channel rows are **extrapolation** until the pinned 20-port bitstream
+(#370) is brought up on a board.
 
 **Render + readback, measured on a Pi 3B+ (vc4; §5).** At each layout:
 - GPU (render + readback, pipelined): ≈ 0.3 ms at 1×500, 0.6 ms at 4×550, 0.9 ms
@@ -459,11 +493,12 @@ validated in sim (#370). On hardware, the logic analyzer covers 4 channels; the
    breaks frames when it does.
 3. **20 channels on the FPGA:** the in-tree Tang Nano bitstream drives **8**
    outputs (`NUM_WS = 8`, `ws[0..7]` on pins 70–77) with **553 LEDs/port** FIFOs.
-   20 × 1024 needs `MAX_PORTS = NUM_WS = 20`, 12 more `.cst` pins (Tang Nano 9K
-   header I/O to be chosen), `FIFO_DEPTH = 2048` (one BSRAM/port; full-frame FIFOs
-   need 40 of the 26 BSRAMs), and SPI ≥ 16.7 MHz. Draft **#370** adds that variant
-   internal-only (no pin map) and verifies it in place-and-route (2145 LUT4, 1415
-   DFF, 20/26 BSRAM, 83 MHz vs 54) and in a 20×1024 Verilator sim. It also fixes
+   20 × 1024 needs `MAX_PORTS = NUM_WS = 20`, 12 more `.cst` pins,
+   `FIFO_DEPTH = 2048` (one BSRAM/port; full-frame FIFOs need 40 of the 26
+   BSRAMs), and SPI ≥ 16.7 MHz. Draft **#370** adds the pinned 20-port top
+   (owner's pins 40 35 41 42 51 53 54 55 56 57 68 69 for ports 8–19, plus a
+   frame-done output on pin 28) and verifies it in place-and-route (2354 LUT4,
+   1449 DFF, 20/26 BSRAM, 75.4 MHz vs 54) and in a 20×1024 Verilator sim. It also fixes
    the core README's stale "~2 bytes of buffer per port" claim; the core has had
    per-port BSRAM FIFOs since the double-buffer was replaced.
 4. **Start-of-frame gap guard: not needed at the measured behaviour.** The Pi 3
@@ -806,13 +841,17 @@ The agent never handled the Pi key. **Results are in §5**: 100 JSON lines, all
    - a glibc GPU helper next to the static-musl player;
    - a load-time per-effect probe (lower → tolerance check → cache);
    - a triple-buffered render → readback → `FpgaCodec` → SPI pipeline;
-   - a SCHED_FIFO output thread paced on absolute deadlines (or FPGA frame-done).
+   - a SCHED_FIFO output thread paced on the FPGA's frame-done GPIO edge, with
+     absolute-deadline pacing as the timeout fallback;
+   - the 120 fps strip cap (260 LEDs/port) checked against the live map, not
+     just the start-up strip (`wire::check_frame_rate`, #370).
 5. **Multi-threaded VM in the player (fallback):** for effects that don't lower.
 6. **Image:** the lean Mesa overlay (§8), Pi 4 / Zero 2 W board targets, a pinned
    Pi 3 `core_freq`, and `spidev.bufsiz` via #369.
 7. **Pi 4/5 compute:** `naga` SPIR-V, V3D compute, exact integers (adds hash
    effects); golden tolerance tests per tier.
-8. **FPGA (#370):** a 20-port pin map; `PREFILL` + frame-done pacing; MISO CSR
+8. **FPGA (#370):** done in sim + P&R: the 20-port pin map and the frame-done
+   output. Open: hardware bring-up of the 20-port bitstream; `PREFILL`; MISO CSR
    read-back for `STATS` (player-visible underruns); optional double-buffered
    FIFO banks, so frames can overlap emission.
 9. **GPU-native textures/decks** and an in-shader LUT sine (class-3 exactness),
@@ -832,9 +871,9 @@ The agent never handled the Pi key. **Results are in §5**: 100 JSON lines, all
    loops. Measured at 20×1024, a 4-thread VM is 3.1–3.97× faster than one
    thread. At 120 fps (20 × 270) it fits most effects but takes 20–50% of all four
    cores, and noise-class effects (7.84 ms measured) miss the 8.33 ms period; Pi 4/5
-   compute lowers those too. **Open decision:** the 120 fps strip-length policy:
-   ≤ 274 LEDs/channel (80 µs latch) or ≤ 267 (300 µs) at the limit, or ≤ ~260
-   for jitter margin. And whether to add an FPGA "frame done" pacing signal.
+   compute lowers those too. **Decided (2026-10-26):** the 120 fps mode caps
+   strips at 260 LEDs/channel (theoretical 274 / 267), and the FPGA gets a
+   frame-done pacing output (#370; pin 28 provisional, see §0).
 3. **Readback vs direct DPI scan-out** (§4): start with readback (recommended)?
    DPI is a later optimisation that costs GPIO pins and a frame-sync redesign.
 4. **P4 priority** (§9): is the PIE SIMD tier (shortlist #1) the P4 track to fund
@@ -842,6 +881,7 @@ The agent never handled the Pi key. **Results are in §5**: 100 JSON lines, all
 5. **Pi 3 `core_freq` pin** (§4): fix the VideoCore core clock so the SPI clock
    can't drop below the 20-channel drain under frequency scaling? This is a small
    `config.txt` change. (`spidev.bufsiz` is already handled by #369.)
-6. **20-channel pin map** (#370): pick the 12 extra Tang Nano 9K header pins. And
-   should `PREFILL` go to 64, with the one-LUT "start on CS-end" fix, to tolerate
+6. **20-channel pin map** (#370): **decided**: ports 8–19 on pins 40 35 41 42 51
+   53 54 55 56 57 68 69. Still to confirm: the frame-done pin (28 proposed, to
+   Pi GPIO 22). And should `PREFILL` go to 64, with the one-LUT "start on CS-end" fix, to tolerate
    600 µs Pi-side pauses at frame start?
