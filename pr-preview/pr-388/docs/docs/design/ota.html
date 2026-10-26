@@ -706,24 +706,27 @@ another key’s labels:</p>
 <td><p>offline until a planned rotation makes it <code class="docutils literal notranslate"><span class="pre">OTA_SIGNING_KEY</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">firmware/ota/keys/next.pub</span></code></p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">max</span></code></p></td>
+<tr class="row-odd"><td><p>(reserved)</p></td>
 <td><p>3</p></td>
-<td><p>the <code class="docutils literal notranslate"><span class="pre">MAX_OTA_SIGNING_KEY</span></code> repository secret (Splanc MAX)</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">firmware/ota/keys/max.pub</span></code></p></td>
+<td><p>none: reserved for a possible future separate Splanc MAX key</p></td>
+<td><p>none</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">max_backup</span></code></p></td>
+<tr class="row-even"><td><p>(reserved)</p></td>
 <td><p>4</p></td>
-<td><p><strong>offline</strong>, cold storage; never in the repo or CI</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">firmware/ota/keys/max_backup.pub</span></code></p></td>
+<td><p>none: reserved, as id 3</p></td>
+<td><p>none</p></td>
 </tr>
 </tbody>
 </table>
 </div>
+<p>The C6 and Splanc MAX share this ring: MAX images are signed with the same
+<code class="docutils literal notranslate"><span class="pre">release</span></code> key (and <code class="docutils literal notranslate"><span class="pre">backup</span></code> / <code class="docutils literal notranslate"><span class="pre">next</span></code> play the same roles). keygen has no name for
+ids 3 and 4.</p>
 <p>Without <code class="docutils literal notranslate"><span class="pre">--name</span></code>, keygen prints neutral labels: <code class="docutils literal notranslate"><span class="pre">private</span> <span class="pre">(store</span> <span class="pre">as</span> <span class="pre">the</span> <span class="pre">signing</span> <span class="pre">secret,</span> <span class="pre">never</span> <span class="pre">in</span> <span class="pre">the</span> <span class="pre">repo)</span></code> and <code class="docutils literal notranslate"><span class="pre">public</span> <span class="pre">(commit</span> <span class="pre">as</span> <span class="pre">firmware/ota/keys/&lt;name&gt;.pub)</span></code>.</p>
-<p><strong>Procedure</strong> (any key; <code class="docutils literal notranslate"><span class="pre">max</span></code> shown):</p>
+<p><strong>Procedure</strong> (any key; <code class="docutils literal notranslate"><span class="pre">next</span></code> shown):</p>
 <ol class="arabic">
 <li><p>Generate it and write the public half straight into the repo:</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">bazel</span> <span class="n">run</span> <span class="o">//</span><span class="n">firmware</span><span class="o">/</span><span class="n">ota</span><span class="p">:</span><span class="n">ota_sign</span> <span class="o">--</span> <span class="n">keygen</span> <span class="o">--</span><span class="n">name</span> <span class="nb">max</span> <span class="o">--</span><span class="n">pub</span><span class="o">-</span><span class="n">out</span> <span class="s2">&quot;$PWD/firmware/ota/keys/max.pub&quot;</span>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">bazel</span> <span class="n">run</span> <span class="o">//</span><span class="n">firmware</span><span class="o">/</span><span class="n">ota</span><span class="p">:</span><span class="n">ota_sign</span> <span class="o">--</span> <span class="n">keygen</span> <span class="o">--</span><span class="n">name</span> <span class="nb">next</span> <span class="o">--</span><span class="n">pub</span><span class="o">-</span><span class="n">out</span> <span class="s2">&quot;$PWD/firmware/ota/keys/next.pub&quot;</span>
 </pre></div>
 </div>
 <p>(Run it from the repo root: <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span></code> executes in its own directory, so
@@ -731,13 +734,13 @@ another key’s labels:</p>
 <p><code class="docutils literal notranslate"><span class="pre">--pub-out</span></code> writes the header comment (key id, purpose) and the hex in the
 same format as the other <code class="docutils literal notranslate"><span class="pre">.pub</span></code> files. It only fills a missing file or an
 <code class="docutils literal notranslate"><span class="pre">UNSET</span></code> placeholder; replacing a real key needs <code class="docutils literal notranslate"><span class="pre">--force</span></code>, and a file name that
-doesn’t match <code class="docutils literal notranslate"><span class="pre">--name</span></code> (say <code class="docutils literal notranslate"><span class="pre">--name</span> <span class="pre">max</span> <span class="pre">--pub-out</span> <span class="pre">…/release.pub</span></code>) is refused.
-Without <code class="docutils literal notranslate"><span class="pre">--name</span></code>, a file name that is a key name (<code class="docutils literal notranslate"><span class="pre">max.pub</span></code>) selects that key.
+doesn’t match <code class="docutils literal notranslate"><span class="pre">--name</span></code> (say <code class="docutils literal notranslate"><span class="pre">--name</span> <span class="pre">next</span> <span class="pre">--pub-out</span> <span class="pre">…/release.pub</span></code>) is refused.
+Without <code class="docutils literal notranslate"><span class="pre">--name</span></code>, a file name that is a key name (<code class="docutils literal notranslate"><span class="pre">next.pub</span></code>) selects that key.
 The private half is never written to a file; keygen only prints it.</p>
 </li>
 <li><p>Copy the <code class="docutils literal notranslate"><span class="pre">private</span></code> line’s hex to where its row in the table says: the named
 repository secret (Settings → Secrets and variables → Actions), or offline
-storage for <code class="docutils literal notranslate"><span class="pre">backup</span></code> / <code class="docutils literal notranslate"><span class="pre">max_backup</span></code>. Then clear your terminal scrollback.</p></li>
+storage for <code class="docutils literal notranslate"><span class="pre">backup</span></code> (and for <code class="docutils literal notranslate"><span class="pre">next</span></code> until the rotation). Then clear your terminal scrollback.</p></li>
 <li><p>Check the pair before committing:
 <code class="docutils literal notranslate"><span class="pre">ota_sign</span> <span class="pre">pubkey</span> <span class="pre">--key-env</span> <span class="pre">&lt;SECRET&gt;</span></code> (with the private hex in that variable)
 must equal <code class="docutils literal notranslate"><span class="pre">ota_sign</span> <span class="pre">check-pub</span> <span class="pre">--in</span> <span class="pre">firmware/ota/keys/&lt;name&gt;.pub</span></code>.</p></li>
