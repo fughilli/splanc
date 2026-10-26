@@ -37,6 +37,7 @@ py_test(
         "test_hardware_config_pattern.py",
         "test_heap_census.py",
         "test_heavy_effect_reachability_core.py",
+        "test_hitl_select.py",
         "test_hitl_verdict.py",
         "test_improv.py",
         "test_improv_find.py",
@@ -74,9 +75,11 @@ py_test(
     # reservation catalogs and the HITL CI workflow are the multi-DUT isolation +
     # orchestration config the catalog/CI tests pin (PR-24, PR-30, PR-36).
     data = [
+        "testdata/hitl_select_prs.json",
         "//:.github/workflows/hitl.yaml",
         "//firmware/player_app:board_caps.textproto",
         "//pi/hitl/ci:quarantine.toml",
+        "//pi/hitl/ci:overrides.toml",
         "//pi/hitl/reserve:catalog.json",
         "//pi/hitl/reserve:catalog-mac.json",
         "//pi/hitl/reserve:catalog-phone.json",
@@ -90,6 +93,7 @@ py_test(
     main = "pytest_main.py",
     deps = [
         "//pi/hitl/ci:flake_report_lib",
+        "//pi/hitl/ci:select_core",
         "//pi/hitl/ci:verdict_core",
         "//pi/hitl/harness",
         "//pi/hitl/harness:hitl_e2e_lib",

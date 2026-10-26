@@ -1,0 +1,96 @@
+# HITL test-selection overrides: inputs Bazel can't see (pi/hitl/ci/select_core.py).
+#
+# The selection runs only the HITL tests a change can affect. Target Determinator
+# decides that from the configured Bazel graph (sources, BUILD/.bzl, .bazelrc flags,
+# MODULE.bazel / patches, select() and transitions). This map only ADDS tests, for
+# what the graph doesn't show. Keep it small and give each rule a reason: a rule that
+# Bazel could already see is noise, and every rule widens what runs.
+#
+# Each [[rule]]: id, why, paths (globs: `**` any depth, `*` within one directory),
+# then one or more of:
+#   pool  = "all"           every `hitl`-tagged pool test
+#   tests = ["//label", …]  specific tests (a pool test, or an opt-in web-lane test)
+#   lanes = ["android"|"ios"]  switch on a single-unit phone lane
+#
+# The phone and web lanes are opt-in and path-selected only: their tests depend on
+# //web:dist (and the firmware), so Bazel marks them impacted by nearly every change,
+# and each has one shared unit. These globs are the old hitl.yaml path filters.
+
+[[rule]]
+id = "hitl-workflow"
+why = "the HITL lane itself: how tests are discovered, retried, gated and reported"
+paths = [".github/workflows/hitl.yaml"]
+pool = "all"
+
+[[rule]]
+id = "hitl-selection"
+why = "the selection and verdict code and this map; not a dependency of any test"
+paths = ["pi/hitl/ci/**"]
+pool = "all"
+
+[[rule]]
+id = "rig-catalogs"
+why = "the reservation catalogs the rig daemons serve route every test to a DUT; the tests reach them through the deployed daemon, not the build graph"
+paths = ["pi/hitl/reserve/**"]
+pool = "all"
+
+[[rule]]
+id = "bazel-version"
+why = "a Bazel upgrade can change every action; the version isn't part of the configured graph"
+paths = [".bazelversion"]
+pool = "all"
+
+[[rule]]
+id = "web-ota-journey"
+why = "the browser OTA path (net/client.ts reconnects, otaUpdate.ts, the Flash sheet) and the loader/OTA firmware it drives"
+paths = [
+  "web/src/net/client.ts",
+  "web/src/net/otaUpdate.ts",
+  "web/src/flash/**",
+  "web/src/ui/screens/deviceSheet.ts",
+  "firmware/loader/**",
+  "firmware/ota/**",
+  "pi/hitl/harness/hitl_web_ota.py",
+  "pi/hitl/harness/lan_relay.py",
+]
+tests = ["//pi/hitl/harness:web_ota_journey"]
+
+[[rule]]
+id = "android-phone"
+why = "phone / BLE / Improv / netstack-BLE / provisioning paths the Android journeys exercise"
+paths = [
+  "pi/hitl/phone/**",
+  "pi/hitl/reserve/catalog-phone.json",
+  "pi/hitl/nix/hitl-phone-daemon.nix",
+  "pi/hitl/nix/hitl-amd-ap.nix",
+  "firmware/player_app/**",
+  "firmware/netstack/**",
+  "firmware/blehost/**",
+  "web/src/net/**",
+  "web/src/driver/**",
+  "web/src/ui/screens/deviceSheet.ts",
+  "web/src/ui/screens/addDevice.ts",
+]
+lanes = ["android"]
+
+[[rule]]
+id = "ios-phone"
+why = "the iOS build, Capacitor shell, native plugins and phone driver the iOS journeys exercise"
+paths = [
+  "pi/hitl/phone/ios_*",
+  "pi/hitl/phone/phone_e2e*",
+  "pi/hitl/phone/phone_target*",
+  "pi/hitl/phone/driver_server*",
+  "pi/hitl/phone/journey_runner*",
+  "pi/hitl/phone/launcher*",
+  "pi/hitl/phone/journeys/**",
+  "pi/hitl/reserve/catalog-mac.json",
+  "pi/hitl/nix/hitl-darwin.nix",
+  "tools/ios_build_server.py",
+  "web/ios-config/**",
+  "web/capacitor.config.ts",
+  "web/native-plugins/**",
+  "web/src/driver/**",
+  "web/src/net/capacitorImprov.ts",
+]
+lanes = ["ios"]

@@ -98,7 +98,11 @@ bazel test $(bazel query 'attr(tags, "\bhitl\b", tests(//...))') --test_output=s
 ```
 
 So a new test **joins the lane just by carrying the `hitl` tag** — nothing else
-to register. (To list the current set, run that query.) Author one as a
+to register. On a PR or merge group the lane then runs only the tests the change can
+affect: Target Determinator diffs the configured Bazel graph, so declare everything
+your test reads as `data`/`deps` (an undeclared input is invisible to it), and add a
+rule to `pi/hitl/ci/overrides.toml` only for inputs Bazel can't see (see
+`pi/hitl/ci/select_core.py`). (To list the current set, run that query.) Author one as a
 `py_test` under `//pi/hitl/harness`:
 
 ```starlark
