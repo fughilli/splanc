@@ -1,6 +1,6 @@
 //! Firmware image signing for OTA (docs/design/ota.md "Signing").
 //!
-//!   ota_sign keygen [--name release|backup|next|max|max_backup] [--pub-out F.pub] [--force]
+//!   ota_sign keygen [--name release|backup|next] [--pub-out F.pub] [--force]
 //!       A new ECDSA P-256 key: prints the private scalar (hex: store it as the
 //!       signing secret, never in the repo) and the public key (hex, SEC1
 //!       uncompressed: commit it as firmware/ota/keys/<name>.pub). --name prints the
@@ -163,8 +163,9 @@ fn verify(a: &Args) -> Result<(), String> {
     Ok(())
 }
 
-/// A named key of the OTA keyrings (docs/design/ota.md "Key names"): which secret
+/// A named key of the OTA keyring (docs/design/ota.md "Key names"): which secret
 /// (or offline store) holds its private half, and the header its .pub file carries.
+/// The C6 and Splanc MAX share this ring; ids 3 and 4 are reserved (no key yet).
 struct KeyRole {
     name: &'static str,
     id: u8,
@@ -204,27 +205,6 @@ const ROLES: &[KeyRole] = &[
             "Planned successor key (key id 2, \"next\"): commit its public half one loader",
             "release BEFORE switching CI signing to it (docs/design/ota.md \"Key rotation\").",
             "SEC1 uncompressed P-256, hex. Generated {date}.",
-        ],
-    },
-    KeyRole {
-        name: "max",
-        id: 3,
-        private_home: "store as the MAX_OTA_SIGNING_KEY repository secret, never in the repo",
-        header: &[
-            "Splanc MAX OTA signing key (key id 3, \"max\"): the public half of the",
-            "MAX_OTA_SIGNING_KEY repository secret. SEC1 uncompressed P-256, hex.",
-            "See docs/design/ota.md \"Key names\". Generated {date}.",
-        ],
-    },
-    KeyRole {
-        name: "max_backup",
-        id: 4,
-        private_home: "OFFLINE: keep it in cold storage, never in the repo or CI",
-        header: &[
-            "Splanc MAX backup OTA signing key (key id 4, \"max_backup\"): OFFLINE, kept in",
-            "cold storage by the owner, never in CI; only this public half is in the repo.",
-            "Signs key-epoch records that revoke a compromised max key.",
-            "SEC1 uncompressed P-256, hex. Provisioned {date}.",
         ],
     },
 ];

@@ -278,8 +278,6 @@ fn keygen_name_prints_that_keys_secret_and_file() {
         ("release", 0, Some("OTA_SIGNING_KEY repository secret")),
         ("backup", 1, None),
         ("next", 2, None),
-        ("max", 3, Some("MAX_OTA_SIGNING_KEY repository secret")),
-        ("max_backup", 4, None),
     ] {
         let out = sign(&["keygen", "--name", name]);
         assert!(out.status.success(), "{name}: {}", String::from_utf8_lossy(&out.stderr));
@@ -291,7 +289,7 @@ fn keygen_name_prints_that_keys_secret_and_file() {
             Some(s) => assert!(private_line.contains(s), "{name}: names {s}"),
             None => assert!(!private_line.contains("SIGNING_KEY repository secret"), "{name}: not a CI secret"),
         }
-        if name.ends_with("backup") {
+        if name == "backup" {
             assert!(private_line.contains("OFFLINE"), "{name}: offline key");
         }
         if name != "release" {
@@ -300,9 +298,13 @@ fn keygen_name_prints_that_keys_secret_and_file() {
         let (private, public) = keygen_halves(&text);
         assert_halves_match(&private, &public);
     }
-    let bad = sign(&["keygen", "--name", "releese"]);
-    assert!(!bad.status.success());
-    assert!(String::from_utf8_lossy(&bad.stderr).contains("unknown key name"));
+    // Unknown names, including the reserved ids' former MAX names, are refused.
+    for bad_name in ["releese", "max", "max_backup"] {
+        let bad = sign(&["keygen", "--name", bad_name]);
+        assert!(!bad.status.success(), "{bad_name}");
+        assert!(String::from_utf8_lossy(&bad.stderr).contains("unknown key name"), "{bad_name}");
+        assert!(bad.stdout.is_empty(), "{bad_name}: no key printed");
+    }
 }
 
 #[test]
@@ -312,30 +314,30 @@ fn keygen_pub_out_writes_a_committable_pub_and_guards_real_keys() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = |f: &str| dir.join(f).to_str().unwrap().to_string();
 
-    // --name max --pub-out max.pub: header (key id, purpose) + the public hex only.
-    let out = sign(&["keygen", "--name", "max", "--pub-out", &path("max.pub")]);
+    // --name backup --pub-out backup.pub: header (key id, purpose) + the public hex only.
+    let out = sign(&["keygen", "--name", "backup", "--pub-out", &path("backup.pub")]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     let (private, public) = keygen_halves(&text);
-    assert!(text.contains(&format!("wrote {} (public half only)", path("max.pub"))));
-    let file = std::fs::read_to_string(path("max.pub")).unwrap();
+    assert!(text.contains(&format!("wrote {} (public half only)", path("backup.pub"))));
+    let file = std::fs::read_to_string(path("backup.pub")).unwrap();
     let (comments, body): (Vec<&str>, Vec<&str>) = file.lines().partition(|l| l.starts_with('#'));
     assert!(comments.len() >= 2 && comments.iter().all(|l| l.starts_with("# ")));
-    assert!(file.contains("key id 3, \"max\"") && file.contains("MAX_OTA_SIGNING_KEY"));
+    assert!(file.contains("key id 1, \"backup\"") && file.contains("OFFLINE"));
     assert_eq!(body, vec![public.as_str()], "exactly one key line");
     assert!(!file.contains(&private), "the private half never reaches the file");
-    let chk = sign(&["check-pub", "--in", &path("max.pub")]);
+    let chk = sign(&["check-pub", "--in", &path("backup.pub")]);
     assert!(chk.status.success());
     assert_eq!(String::from_utf8_lossy(&chk.stdout).trim(), public, "check-pub reads the file back");
 
     // A real key is never silently replaced; --force does it.
-    let again = sign(&["keygen", "--name", "max", "--pub-out", &path("max.pub")]);
+    let again = sign(&["keygen", "--name", "backup", "--pub-out", &path("backup.pub")]);
     assert!(!again.status.success());
     assert!(String::from_utf8_lossy(&again.stderr).contains("already holds a key"));
-    assert_eq!(std::fs::read_to_string(path("max.pub")).unwrap(), file, "untouched");
-    let forced = sign(&["keygen", "--name", "max", "--pub-out", &path("max.pub"), "--force"]);
+    assert_eq!(std::fs::read_to_string(path("backup.pub")).unwrap(), file, "untouched");
+    let forced = sign(&["keygen", "--name", "backup", "--pub-out", &path("backup.pub"), "--force"]);
     assert!(forced.status.success());
-    assert_ne!(std::fs::read_to_string(path("max.pub")).unwrap(), file);
+    assert_ne!(std::fs::read_to_string(path("backup.pub")).unwrap(), file);
 
     // An UNSET placeholder is filled without --force; the name comes from the file name.
     std::fs::write(path("next.pub"), "# Planned successor key (key id 2, \"next\").\nUNSET\n").unwrap();
@@ -346,14 +348,14 @@ fn keygen_pub_out_writes_a_committable_pub_and_guards_real_keys() {
     let next_file = std::fs::read_to_string(path("next.pub")).unwrap();
     assert!(next_file.contains("key id 2, \"next\"") && !next_file.contains("UNSET"));
 
-    // A name / file mismatch (the max key written over release.pub) is refused.
-    let mismatch = sign(&["keygen", "--name", "max", "--pub-out", &path("release.pub")]);
+    // A name / file mismatch (another key written over release.pub) is refused.
+    let mismatch = sign(&["keygen", "--name", "backup", "--pub-out", &path("release.pub")]);
     assert!(!mismatch.status.success());
-    assert!(String::from_utf8_lossy(&mismatch.stderr).contains("want max.pub"));
+    assert!(String::from_utf8_lossy(&mismatch.stderr).contains("want backup.pub"));
     assert!(!dir.join("release.pub").exists());
 
     // Only .pub files are ever written (never a private key file).
-    let key_file = sign(&["keygen", "--name", "max", "--pub-out", &path("max.key")]);
+    let key_file = sign(&["keygen", "--name", "backup", "--pub-out", &path("backup.key")]);
     assert!(!key_file.status.success());
-    assert!(!dir.join("max.key").exists());
+    assert!(!dir.join("backup.key").exists());
 }

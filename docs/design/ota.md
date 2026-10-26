@@ -249,18 +249,22 @@ another key's labels:
 | `release` | 0 | the `OTA_SIGNING_KEY` repository secret | `firmware/ota/keys/release.pub` |
 | `backup` | 1 | **offline**, cold storage; never in the repo or CI | `firmware/ota/keys/backup.pub` |
 | `next` | 2 | offline until a planned rotation makes it `OTA_SIGNING_KEY` | `firmware/ota/keys/next.pub` |
-| `max` | 3 | the `MAX_OTA_SIGNING_KEY` repository secret (Splanc MAX) | `firmware/ota/keys/max.pub` |
-| `max_backup` | 4 | **offline**, cold storage; never in the repo or CI | `firmware/ota/keys/max_backup.pub` |
+| (reserved) | 3 | none: reserved for a possible future separate Splanc MAX key | none |
+| (reserved) | 4 | none: reserved, as id 3 | none |
+
+The C6 and Splanc MAX share this ring: MAX images are signed with the same
+`release` key (and `backup` / `next` play the same roles). keygen has no name for
+ids 3 and 4.
 
 Without `--name`, keygen prints neutral labels: `private (store as the signing
 secret, never in the repo)` and `public (commit as firmware/ota/keys/<name>.pub)`.
 
-**Procedure** (any key; `max` shown):
+**Procedure** (any key; `next` shown):
 
 1. Generate it and write the public half straight into the repo:
 
    ```
-   bazel run //firmware/ota:ota_sign -- keygen --name max --pub-out "$PWD/firmware/ota/keys/max.pub"
+   bazel run //firmware/ota:ota_sign -- keygen --name next --pub-out "$PWD/firmware/ota/keys/next.pub"
    ```
 
    (Run it from the repo root: `bazel run` executes in its own directory, so
@@ -269,12 +273,12 @@ secret, never in the repo)` and `public (commit as firmware/ota/keys/<name>.pub)
    `--pub-out` writes the header comment (key id, purpose) and the hex in the
    same format as the other `.pub` files. It only fills a missing file or an
    `UNSET` placeholder; replacing a real key needs `--force`, and a file name that
-   doesn't match `--name` (say `--name max --pub-out …/release.pub`) is refused.
-   Without `--name`, a file name that is a key name (`max.pub`) selects that key.
+   doesn't match `--name` (say `--name next --pub-out …/release.pub`) is refused.
+   Without `--name`, a file name that is a key name (`next.pub`) selects that key.
    The private half is never written to a file; keygen only prints it.
 2. Copy the `private` line's hex to where its row in the table says: the named
    repository secret (Settings → Secrets and variables → Actions), or offline
-   storage for `backup` / `max_backup`. Then clear your terminal scrollback.
+   storage for `backup` (and for `next` until the rotation). Then clear your terminal scrollback.
 3. Check the pair before committing:
    `ota_sign pubkey --key-env <SECRET>` (with the private hex in that variable)
    must equal `ota_sign check-pub --in firmware/ota/keys/<name>.pub`.
