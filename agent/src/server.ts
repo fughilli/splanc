@@ -335,7 +335,9 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     {
       description:
         "A fixture's LED map as a file for other show software: format csv (default) = TouchDesigner Points DAT " +
-        "(index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength; metres, +y up; load in a " +
+        "(index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength,segment_arclength; metres, " +
+        "+y up; arclength = distance along the strip from the channel's first LED, segment_arclength = along the " +
+        "topology segment; load in a " +
         "Table DAT -> DAT to SOP), or lxf = a Chromatik/LX Studio fixture. One row/point per LED in output order; " +
         "unmapped LEDs are interpolated with mapped=0. up=z rewrites the CSV to +z up. Returns filename + content.",
       inputSchema: { format: z.enum(["csv", "lxf"]).optional(), up: z.enum(["y", "z"]).optional(), players },

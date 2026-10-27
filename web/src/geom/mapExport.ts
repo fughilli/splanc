@@ -18,6 +18,15 @@
  * at the strip ends — the same fill the firmware renders them at (#255). With
  * no mapped LED at all every position is the origin.
  *
+ * Arclength: `arclength` is the distance ALONG THE STRIP, metres — the running
+ * sum of LED-to-LED distances in output order (over the interpolated positions
+ * too), restarting at 0 on each output channel (each channel is its own
+ * physical strip). It is monotonic and ends near the strip's physical length
+ * whatever the topology looks like. The topology's own coordinate — the LED's
+ * foot point along its `segment` — is the separate `segment_arclength` column:
+ * the two only agree for a single straight-run segment that follows the strip
+ * (a coil / tube topology is its centreline, which can be far shorter; #396).
+ *
  * Axes: Splanc maps are gravity-levelled, right-handed, +Y up (the WebXR
  * convention) — the same as TouchDesigner and Chromatik, so the default export
  * is unchanged. `up: "z"` rewrites to right-handed +Z up (Blender-style):
@@ -59,8 +68,11 @@ export interface ExportRow {
   channelIndex: number;
   /** Topology segment id, or -1 when there is no topology / association. */
   segment: number;
-  /** Arclength of the LED's foot point along `segment`, metres (0 when none). */
+  /** Distance along the strip from the channel's first LED, metres: the
+   * cumulative LED-to-LED distance in output order (see the module doc). */
   arclength: number;
+  /** Arclength of the LED's foot point along `segment`, metres (0 when none). */
+  segmentArclength: number;
 }
 
 /** CSV header — a TouchDesigner Points DAT (DAT to SOP) layout. */
@@ -75,6 +87,7 @@ export const CSV_COLUMNS = [
   "channel_index",
   "segment",
   "arclength",
+  "segment_arclength",
 ] as const;
 
 /** LED count the export covers: the map's count, widened to any larger id. */
@@ -93,6 +106,10 @@ export function channelLayoutFor(n: number, counts: readonly number[] | null | u
   while (c.length > 1 && c[c.length - 1] === 0) c.pop();
   const sum = c.reduce((s, x) => s + x, 0);
   return sum === n && n > 0 ? c : null;
+}
+
+function dist3(a: Vec3, b: Vec3): number {
+  return Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
 }
 
 function toUp(p: Vec3, up: UpAxis): Vec3 {
@@ -140,8 +157,10 @@ export function exportRows(map: OutputMap, opts: MapExportOptions = {}): ExportR
   const rows: ExportRow[] = [];
   let index = 0;
   layout.forEach((count, channel) => {
+    let along = 0;
     for (let j = 0; j < count; j++, index++) {
       const s = assoc.get(index);
+      if (j > 0) along += dist3(filled[index - 1]!, filled[index]!);
       rows.push({
         index,
         xyz: toUp(filled[index]!, up),
@@ -150,7 +169,8 @@ export function exportRows(map: OutputMap, opts: MapExportOptions = {}): ExportR
         channel,
         channelIndex: j,
         segment: s?.segment ?? -1,
-        arclength: s?.arclength ?? 0,
+        arclength: along,
+        segmentArclength: s?.arclength ?? 0,
       });
     }
   });
@@ -180,6 +200,7 @@ export function mapToCsv(map: OutputMap, opts: MapExportOptions = {}): string {
         r.channelIndex,
         r.segment,
         num(r.arclength, 5),
+        num(r.segmentArclength, 5),
       ].join(","),
     );
   }

@@ -515,6 +515,56 @@ describe("mcp", () => {
 
   });
 
+  test("export_map: arclength runs along the strip, segment_arclength along the topology", async () => {
+    const server = createServer(session);
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "0" });
+    await Promise.all([server.connect(a), client.connect(b)]);
+    const r = await client.callTool({ name: "export_map", arguments: {} });
+    const csv = String(JSON.parse((r.content as { text: string }[])[0]!.text)["content"]).split("\n");
+    const header = csv[0]!.split(",");
+    assert.deepEqual(header.slice(-3), ["segment", "arclength", "segment_arclength"]);
+    const s = csv.slice(1).map((l) => Number(l.split(",")[header.indexOf("arclength")]));
+    assert.equal(s[0], 0);
+    for (let i = 1; i < s.length; i++) assert.ok(s[i]! > s[i - 1]!, `monotonic at ${i}: ${s[i - 1]} -> ${s[i]}`);
+    await client.close();
+  });
+
+  test("device: an unconfigured channel count (0) reports the stored map's LEDs it renders (#397)", async () => {
+    const read = async () => {
+      const server = createServer(session);
+      const [a, b] = InMemoryTransport.createLinkedPair();
+      const client = new Client({ name: "test", version: "0" });
+      await Promise.all([server.connect(a), client.connect(b)]);
+      const d = await client.readResource({ uri: "splanc://device" });
+      await client.close();
+      return JSON.parse((d.contents[0] as { text: string }).text) as {
+        channels: { channel: number; ledCount: number; configuredLedCount: number; ledCountSource: string }[];
+      };
+    };
+    player.hwLedCounts = [0, 0];
+    const leds = player.bundle!.map!.ledCount;
+    assert.ok(leds > 0);
+    let d = await read();
+    assert.deepEqual(
+      d.channels.map((c) => [c.channel, c.ledCount, c.configuredLedCount, c.ledCountSource]),
+      [
+        [0, leds, 0, "map"],
+        [1, 0, 0, "unset"],
+      ],
+    );
+    // A configured count is reported as is (and doesn't need the map).
+    player.hwLedCounts = [12, 7];
+    d = await read();
+    assert.deepEqual(
+      d.channels.map((c) => [c.ledCount, c.configuredLedCount, c.ledCountSource]),
+      [
+        [12, 12, "configured"],
+        [7, 7, "configured"],
+      ],
+    );
+  });
+
   test("compile_effect reports diagnostics for broken source", async () => {
     const c = await compile("vec3 shade(Led led) { return undefined_thing; }");
     assert.equal(c.ok, false);

@@ -76,6 +76,10 @@ export class FakePlayer {
   pingDelayMs = 0;
   /** Manifest features (see agentManifest). */
   features: string[] = ["effects", "perf", "textures", "stored_map"];
+  /** hardware_config_state per-channel LED counts (0 = not configured). */
+  hwLedCounts: number[] = [64];
+  /** hardware_config_state.led_capacity (0 = not reported). */
+  ledCapacity = 0;
   /** Also send them in Welcome.features (current firmware does). */
   welcomeFeatures = true;
   /** Every HTTPS GET (the manifest route) and every /ws connection, in order. */
@@ -277,7 +281,14 @@ export class FakePlayer {
       case "get_hardware_config":
         return this.reply(ws, {
           type: "hardware_config_state",
-          channels: [{ channel: 0, gpio: 20, ledType: "ws281x", colorOrder: "GRB", ledCount: 64 }],
+          channels: this.hwLedCounts.map((ledCount, channel) => ({
+            channel,
+            gpio: channel === 0 ? 20 : 14,
+            ledType: "ws281x",
+            colorOrder: "GRB",
+            ledCount,
+          })),
+          ledCapacity: this.ledCapacity,
           board: { board: "ESP32-C6 SuperMini", gpioPins: [], ledModes: [], ledChannels: 2, maxLeds: 512 },
         });
       case "get_effect_uniforms": {

@@ -40,6 +40,7 @@ import {
   type WifiPolicyRequest,
 } from "../../web/src/net/wifiPolicy";
 import { OtaError, updateFirmware, type OtaPhase, type OtaProgress } from "../../web/src/net/otaUpdate";
+import { renderedChannels } from "./channels";
 import type { Pose } from "./config";
 import { FxDebugger } from "../../web/src/fx/fxDebug";
 import { compile, type CompileOutcome, type Toolchain } from "./fxhost";
@@ -411,12 +412,24 @@ export class DeviceSession {
     } catch {
       hw = null; // older firmware: no hardware-config arm
     }
+    // A channel count of 0 is "not configured", not "no LEDs": a map-sized
+    // fixture renders the stored map's LEDs (#397). Only pull the map for that.
+    const hwChannels = hw?.channels ?? [];
+    let mapLeds = 0;
+    if (hwChannels.length && hwChannels.every((c) => (c.ledCount | 0) <= 0)) {
+      try {
+        const m = (await this.mappingBundle()).map;
+        mapLeds = m?.ledCount || m?.leds?.length || 0;
+      } catch {
+        mapLeds = 0; // no stored map
+      }
+    }
     return {
       name: w.deviceName,
       id: w.mac,
       firmware: { version: w.fwVersion, commit: w.fwGitCommit, dirty: w.fwGitDirty },
       board: hw?.board?.board ?? null,
-      channels: hw?.channels ?? [],
+      channels: renderedChannels(hwChannels, mapLeds, hw?.ledCapacity ?? 0),
       max_leds: hw?.board?.maxLeds ?? null,
       brightness: (w as unknown as { brightness?: number }).brightness ?? 1,
       features: [...this.features()].sort(),
