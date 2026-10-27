@@ -252,6 +252,7 @@
 <li class="toctree-l2"><a class="reference internal" href="design/effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
@@ -460,35 +461,45 @@ benchmark actually exercised). Sorted by cost.</p>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p>FloodFrom</p></td>
+<tr class="row-even"><td><p>SampleTex</p></td>
+<td><p>4300.00</p></td>
+<td><p>26875.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>FloodFrom</p></td>
 <td><p>2000.00</p></td>
 <td><p>12500.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>BinMath:pow</p></td>
+<tr class="row-even"><td><p>BinMath:pow</p></td>
 <td><p>1535.69</p></td>
 <td><p>9598.06</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>UnMath:tan</p></td>
+<tr class="row-odd"><td><p>UnMath:tan</p></td>
 <td><p>967.83</p></td>
 <td><p>6048.93</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>BinMath:atan2</p></td>
+<tr class="row-even"><td><p>BinMath:atan2</p></td>
 <td><p>953.87</p></td>
 <td><p>5961.72</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>Hsv2Rgb</p></td>
+<tr class="row-odd"><td><p>Hsv2Rgb</p></td>
 <td><p>848.99</p></td>
 <td><p>5306.17</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>UnMath:log</p></td>
+<tr class="row-even"><td><p>UnMath:log</p></td>
 <td><p>778.30</p></td>
 <td><p>4864.36</p></td>
 <td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>&#64;ctxfix</p></td>
+<td><p>700.00</p></td>
+<td><p>4375.00</p></td>
+<td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>NormalizeFix</p></td>
 <td><p>700.00</p></td>
@@ -560,527 +571,522 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p>2587.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>SampleTex</p></td>
-<td><p>400.00</p></td>
-<td><p>2500.00</p></td>
-<td><p></p></td>
-</tr>
-<tr class="row-odd"><td><p>UnMath:sin</p></td>
+<tr class="row-even"><td><p>UnMath:sin</p></td>
 <td><p>367.68</p></td>
 <td><p>2297.99</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>Distance</p></td>
+<tr class="row-odd"><td><p>Distance</p></td>
 <td><p>363.99</p></td>
 <td><p>2274.97</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>BinMath:mod</p></td>
+<tr class="row-even"><td><p>BinMath:mod</p></td>
 <td><p>363.29</p></td>
 <td><p>2270.53</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>Length</p></td>
+<tr class="row-odd"><td><p>Length</p></td>
 <td><p>314.60</p></td>
 <td><p>1966.28</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>Hsv2RgbFix</p></td>
+<tr class="row-even"><td><p>Hsv2RgbFix</p></td>
 <td><p>300.00</p></td>
 <td><p>1875.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>LogFix</p></td>
+<tr class="row-odd"><td><p>LogFix</p></td>
 <td><p>300.00</p></td>
 <td><p>1875.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>TanFix</p></td>
+<tr class="row-even"><td><p>TanFix</p></td>
 <td><p>300.00</p></td>
 <td><p>1875.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>Atan2Fix</p></td>
+<tr class="row-odd"><td><p>Atan2Fix</p></td>
 <td><p>279.00</p></td>
 <td><p>1743.75</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>Div</p></td>
+<tr class="row-even"><td><p>Div</p></td>
 <td><p>256.21</p></td>
 <td><p>1601.34</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>F2Fix</p></td>
+<tr class="row-odd"><td><p>F2Fix</p></td>
 <td><p>249.00</p></td>
 <td><p>1556.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>F2I</p></td>
+<tr class="row-even"><td><p>F2I</p></td>
 <td><p>249.00</p></td>
 <td><p>1556.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>Fix2F</p></td>
+<tr class="row-odd"><td><p>Fix2F</p></td>
 <td><p>249.00</p></td>
 <td><p>1556.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>FixFromF</p></td>
+<tr class="row-even"><td><p>FixFromF</p></td>
 <td><p>249.00</p></td>
 <td><p>1556.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>FixToF</p></td>
+<tr class="row-odd"><td><p>FixToF</p></td>
 <td><p>249.00</p></td>
 <td><p>1556.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>I2F</p></td>
+<tr class="row-even"><td><p>I2F</p></td>
 <td><p>249.00</p></td>
 <td><p>1556.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>Mix</p></td>
+<tr class="row-odd"><td><p>Mix</p></td>
 <td><p>241.06</p></td>
 <td><p>1506.62</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>CrossFix</p></td>
+<tr class="row-even"><td><p>CrossFix</p></td>
 <td><p>200.00</p></td>
 <td><p>1250.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>PaletteFix</p></td>
+<tr class="row-odd"><td><p>PaletteFix</p></td>
 <td><p>200.00</p></td>
 <td><p>1250.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>SmoothstepFix</p></td>
+<tr class="row-even"><td><p>SmoothstepFix</p></td>
 <td><p>150.00</p></td>
 <td><p>937.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>Hash3</p></td>
+<tr class="row-odd"><td><p>Hash3</p></td>
 <td><p>141.83</p></td>
 <td><p>886.41</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>Scale</p></td>
+<tr class="row-even"><td><p>Scale</p></td>
 <td><p>126.00</p></td>
 <td><p>787.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>UnMath:fract</p></td>
+<tr class="row-odd"><td><p>UnMath:fract</p></td>
 <td><p>122.20</p></td>
 <td><p>763.76</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>Dot</p></td>
+<tr class="row-even"><td><p>Dot</p></td>
 <td><p>117.87</p></td>
 <td><p>736.72</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>UnMath:ceil</p></td>
+<tr class="row-odd"><td><p>UnMath:ceil</p></td>
 <td><p>117.63</p></td>
 <td><p>735.21</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>Clamp</p></td>
+<tr class="row-even"><td><p>Clamp</p></td>
 <td><p>112.72</p></td>
 <td><p>704.50</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>Sub</p></td>
+<tr class="row-odd"><td><p>Sub</p></td>
 <td><p>112.00</p></td>
 <td><p>700.01</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>Mul</p></td>
+<tr class="row-even"><td><p>Mul</p></td>
 <td><p>108.27</p></td>
 <td><p>676.67</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>Hash1</p></td>
+<tr class="row-odd"><td><p>Hash1</p></td>
 <td><p>105.42</p></td>
 <td><p>658.89</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>Add</p></td>
+<tr class="row-even"><td><p>Add</p></td>
 <td><p>103.40</p></td>
 <td><p>646.24</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>BinMath:step</p></td>
+<tr class="row-odd"><td><p>BinMath:step</p></td>
 <td><p>100.57</p></td>
 <td><p>628.56</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>ExpFix</p></td>
+<tr class="row-even"><td><p>ExpFix</p></td>
 <td><p>100.00</p></td>
 <td><p>625.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>BinMath:max</p></td>
+<tr class="row-odd"><td><p>BinMath:max</p></td>
 <td><p>97.68</p></td>
 <td><p>610.53</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>BinMath:min</p></td>
+<tr class="row-even"><td><p>BinMath:min</p></td>
 <td><p>97.32</p></td>
 <td><p>608.26</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>DivFix</p></td>
+<tr class="row-odd"><td><p>DivFix</p></td>
 <td><p>80.00</p></td>
 <td><p>500.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>DivFixN</p></td>
+<tr class="row-even"><td><p>DivFixN</p></td>
 <td><p>80.00</p></td>
 <td><p>500.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>DivI</p></td>
+<tr class="row-odd"><td><p>DivI</p></td>
 <td><p>80.00</p></td>
 <td><p>500.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>Hash3Fix</p></td>
+<tr class="row-even"><td><p>Hash3Fix</p></td>
 <td><p>80.00</p></td>
 <td><p>500.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>ModI</p></td>
+<tr class="row-odd"><td><p>ModI</p></td>
 <td><p>80.00</p></td>
 <td><p>500.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>PaintTex</p></td>
+<tr class="row-even"><td><p>PaintTex</p></td>
 <td><p>80.00</p></td>
 <td><p>500.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>CosFix</p></td>
+<tr class="row-odd"><td><p>CosFix</p></td>
 <td><p>79.00</p></td>
 <td><p>493.75</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>SinFix</p></td>
+<tr class="row-even"><td><p>SinFix</p></td>
 <td><p>79.00</p></td>
 <td><p>493.75</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>UnMath:floor</p></td>
+<tr class="row-odd"><td><p>UnMath:floor</p></td>
 <td><p>72.87</p></td>
 <td><p>455.41</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>&#64;dispatch</p></td>
+<tr class="row-even"><td><p>&#64;dispatch</p></td>
 <td><p>69.00</p></td>
 <td><p>431.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>UnMath:sign</p></td>
+<tr class="row-odd"><td><p>UnMath:sign</p></td>
 <td><p>65.51</p></td>
 <td><p>409.41</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>Cmp</p></td>
+<tr class="row-even"><td><p>Cmp</p></td>
 <td><p>60.00</p></td>
 <td><p>375.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>HashFix</p></td>
+<tr class="row-odd"><td><p>HashFix</p></td>
 <td><p>60.00</p></td>
 <td><p>375.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>LoadBuf</p></td>
+<tr class="row-even"><td><p>LoadBuf</p></td>
 <td><p>60.00</p></td>
 <td><p>375.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>StoreBuf</p></td>
+<tr class="row-odd"><td><p>StoreBuf</p></td>
 <td><p>60.00</p></td>
 <td><p>375.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>MixFix</p></td>
+<tr class="row-even"><td><p>MixFix</p></td>
 <td><p>50.00</p></td>
 <td><p>312.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>MixVFix</p></td>
+<tr class="row-odd"><td><p>MixVFix</p></td>
 <td><p>50.00</p></td>
 <td><p>312.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>LoadLedCache</p></td>
+<tr class="row-even"><td><p>LoadLedCache</p></td>
 <td><p>48.00</p></td>
 <td><p>300.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>DotFix</p></td>
+<tr class="row-odd"><td><p>DotFix</p></td>
 <td><p>45.00</p></td>
 <td><p>281.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>MulFix</p></td>
+<tr class="row-even"><td><p>MulFix</p></td>
 <td><p>45.00</p></td>
 <td><p>281.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>MulFixN</p></td>
+<tr class="row-odd"><td><p>MulFixN</p></td>
 <td><p>45.00</p></td>
 <td><p>281.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>MulI</p></td>
+<tr class="row-even"><td><p>MulI</p></td>
 <td><p>45.00</p></td>
 <td><p>281.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>ScaleFix</p></td>
+<tr class="row-odd"><td><p>ScaleFix</p></td>
 <td><p>45.00</p></td>
 <td><p>281.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>ClampI</p></td>
+<tr class="row-even"><td><p>ClampI</p></td>
 <td><p>40.00</p></td>
 <td><p>250.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>ClampVFix</p></td>
+<tr class="row-odd"><td><p>ClampVFix</p></td>
 <td><p>40.00</p></td>
 <td><p>250.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>IncLocalI</p></td>
+<tr class="row-even"><td><p>IncLocalI</p></td>
 <td><p>40.00</p></td>
 <td><p>250.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>LoadLocalIdx</p></td>
+<tr class="row-odd"><td><p>LoadLocalIdx</p></td>
 <td><p>40.00</p></td>
 <td><p>250.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>LoadStateIdx</p></td>
+<tr class="row-even"><td><p>LoadStateIdx</p></td>
 <td><p>40.00</p></td>
 <td><p>250.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>StoreLocalIdx</p></td>
+<tr class="row-odd"><td><p>StoreLocalIdx</p></td>
 <td><p>40.00</p></td>
 <td><p>250.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>StoreStateIdx</p></td>
+<tr class="row-even"><td><p>StoreStateIdx</p></td>
 <td><p>40.00</p></td>
 <td><p>250.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>UnMath:abs</p></td>
+<tr class="row-odd"><td><p>UnMath:abs</p></td>
 <td><p>38.72</p></td>
 <td><p>242.02</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>AbsI</p></td>
+<tr class="row-even"><td><p>AbsI</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>AddI</p></td>
+<tr class="row-odd"><td><p>AddI</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>CeilFix</p></td>
+<tr class="row-even"><td><p>CeilFix</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>FixRescale</p></td>
+<tr class="row-odd"><td><p>FixRescale</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>FloorFix</p></td>
+<tr class="row-even"><td><p>FloorFix</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>FractFix</p></td>
+<tr class="row-odd"><td><p>FractFix</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>MaxI</p></td>
+<tr class="row-even"><td><p>MaxI</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>MinI</p></td>
+<tr class="row-odd"><td><p>MinI</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>NegI</p></td>
+<tr class="row-even"><td><p>NegI</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>SignI</p></td>
+<tr class="row-odd"><td><p>SignI</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>StepI</p></td>
+<tr class="row-even"><td><p>StepI</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>SubI</p></td>
+<tr class="row-odd"><td><p>SubI</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>Call</p></td>
+<tr class="row-even"><td><p>Call</p></td>
 <td><p>30.00</p></td>
 <td><p>187.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>GraphQuery</p></td>
+<tr class="row-odd"><td><p>GraphQuery</p></td>
 <td><p>30.00</p></td>
 <td><p>187.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>StoreLedCache</p></td>
+<tr class="row-even"><td><p>StoreLedCache</p></td>
 <td><p>30.00</p></td>
 <td><p>187.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>LoadLocal</p></td>
+<tr class="row-odd"><td><p>LoadLocal</p></td>
 <td><p>18.00</p></td>
 <td><p>112.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>LoadState</p></td>
+<tr class="row-even"><td><p>LoadState</p></td>
 <td><p>18.00</p></td>
 <td><p>112.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>LoadUniform</p></td>
+<tr class="row-odd"><td><p>LoadUniform</p></td>
 <td><p>18.00</p></td>
 <td><p>112.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>StoreLocal</p></td>
+<tr class="row-even"><td><p>StoreLocal</p></td>
 <td><p>18.00</p></td>
 <td><p>112.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>StoreState</p></td>
+<tr class="row-odd"><td><p>StoreState</p></td>
 <td><p>18.00</p></td>
 <td><p>112.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>TeeLocal</p></td>
+<tr class="row-even"><td><p>TeeLocal</p></td>
 <td><p>18.00</p></td>
 <td><p>112.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>Neg</p></td>
+<tr class="row-odd"><td><p>Neg</p></td>
 <td><p>15.83</p></td>
 <td><p>98.93</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>BrCmpI</p></td>
+<tr class="row-even"><td><p>BrCmpI</p></td>
 <td><p>10.00</p></td>
 <td><p>62.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>BrFalse</p></td>
+<tr class="row-odd"><td><p>BrFalse</p></td>
 <td><p>10.00</p></td>
 <td><p>62.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>CmpI</p></td>
+<tr class="row-even"><td><p>CmpI</p></td>
 <td><p>10.00</p></td>
 <td><p>62.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>LoadCtx</p></td>
+<tr class="row-odd"><td><p>LoadCtx</p></td>
 <td><p>10.00</p></td>
 <td><p>62.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>Logic</p></td>
+<tr class="row-even"><td><p>Logic</p></td>
 <td><p>10.00</p></td>
 <td><p>62.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>RetFn</p></td>
+<tr class="row-odd"><td><p>RetFn</p></td>
 <td><p>10.00</p></td>
 <td><p>62.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>RetRgbFix</p></td>
+<tr class="row-even"><td><p>RetRgbFix</p></td>
 <td><p>10.00</p></td>
 <td><p>62.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>Swap</p></td>
+<tr class="row-odd"><td><p>Swap</p></td>
 <td><p>8.00</p></td>
 <td><p>50.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>Swizzle</p></td>
+<tr class="row-even"><td><p>Swizzle</p></td>
 <td><p>8.00</p></td>
 <td><p>50.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>FillLocal</p></td>
+<tr class="row-odd"><td><p>FillLocal</p></td>
 <td><p>4.00</p></td>
 <td><p>25.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>Fix2I</p></td>
+<tr class="row-even"><td><p>Fix2I</p></td>
 <td><p>2.00</p></td>
 <td><p>12.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>I2Fix</p></td>
+<tr class="row-odd"><td><p>I2Fix</p></td>
 <td><p>2.00</p></td>
 <td><p>12.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>Jmp</p></td>
+<tr class="row-even"><td><p>Jmp</p></td>
 <td><p>0.00</p></td>
 <td><p>0.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>LoadCtxFix</p></td>
+<tr class="row-odd"><td><p>LoadCtxFix</p></td>
 <td><p>0.00</p></td>
 <td><p>0.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>Pop</p></td>
+<tr class="row-even"><td><p>Pop</p></td>
 <td><p>0.00</p></td>
 <td><p>0.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>PushConst</p></td>
+<tr class="row-odd"><td><p>PushConst</p></td>
 <td><p>0.00</p></td>
 <td><p>0.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>Ret</p></td>
+<tr class="row-even"><td><p>Ret</p></td>
 <td><p>0.00</p></td>
 <td><p>0.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>RetRgb8</p></td>
+<tr class="row-odd"><td><p>RetRgb8</p></td>
 <td><p>0.00</p></td>
 <td><p>0.00</p></td>
 <td><p></p></td>
@@ -1096,7 +1102,7 @@ in-editor AI is fed, relative to a float multiply (each runs once per LED in
 <code class="docutils literal notranslate"><span class="pre">shade()</span></code>):</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>BUILTIN COSTS on this device (esp32c6 @ 160 MHz, measured on your board) — per call, relative to a float multiply. shade() runs each ONCE PER LED, so favor the cheap ones:
   abs 0.4x, sign 0.6x, floor 0.7x, min 0.9x, max 0.9x, step 0.9x, add 1.0x, hash 1.0x, mul 1.0x, sub 1.0x, clamp 1.0x, ceil 1.1x, dot 1.1x, fract 1.1x, mix 2.2x, div 2.4x, length 2.9x, mod 3.4x, distance 3.4x, sin 3.4x, palette0 3.8x, cos 4.1x, normalize 4.7x, cross 5.2x, exp 5.3x, smoothstep 5.3x, sqrt 5.7x, log 7.2x, hsv2rgb 7.8x, atan2 8.8x, tan 8.9x, pow 14x
-Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; swap sin/cos/pow for fixed16/fixed8 (LUT trig, no soft-float) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt).
+Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; do per-LED maths in fixed (fixed() around every literal; sin/cos of a fixed phase in turns is an integer LUT) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt). Every op also pays ~70 cycles of dispatch, so fewer ops is faster.
 </pre></div>
 </div>
 </section>
@@ -1724,35 +1730,45 @@ benchmark actually exercised). Sorted by cost.</p>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p>FloodFrom</p></td>
+<tr class="row-even"><td><p>SampleTex</p></td>
+<td><p>4300.00</p></td>
+<td><p>26875.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>FloodFrom</p></td>
 <td><p>2000.00</p></td>
 <td><p>12500.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>BinMath:pow</p></td>
+<tr class="row-even"><td><p>BinMath:pow</p></td>
 <td><p>1536.12</p></td>
 <td><p>9600.72</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>UnMath:tan</p></td>
+<tr class="row-odd"><td><p>UnMath:tan</p></td>
 <td><p>967.55</p></td>
 <td><p>6047.19</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>BinMath:atan2</p></td>
+<tr class="row-even"><td><p>BinMath:atan2</p></td>
 <td><p>953.57</p></td>
 <td><p>5959.82</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>Hsv2Rgb</p></td>
+<tr class="row-odd"><td><p>Hsv2Rgb</p></td>
 <td><p>848.70</p></td>
 <td><p>5304.35</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>UnMath:log</p></td>
+<tr class="row-even"><td><p>UnMath:log</p></td>
 <td><p>777.50</p></td>
 <td><p>4859.41</p></td>
 <td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>&#64;ctxfix</p></td>
+<td><p>700.00</p></td>
+<td><p>4375.00</p></td>
+<td><p></p></td>
 </tr>
 <tr class="row-even"><td><p>NormalizeFix</p></td>
 <td><p>700.00</p></td>
@@ -1824,527 +1840,522 @@ benchmark actually exercised). Sorted by cost.</p>
 <td><p>2587.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>SampleTex</p></td>
-<td><p>400.00</p></td>
-<td><p>2500.00</p></td>
-<td><p></p></td>
-</tr>
-<tr class="row-odd"><td><p>UnMath:sin</p></td>
+<tr class="row-even"><td><p>UnMath:sin</p></td>
 <td><p>367.64</p></td>
 <td><p>2297.77</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>Distance</p></td>
+<tr class="row-odd"><td><p>Distance</p></td>
 <td><p>363.83</p></td>
 <td><p>2273.96</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>BinMath:mod</p></td>
+<tr class="row-even"><td><p>BinMath:mod</p></td>
 <td><p>363.49</p></td>
 <td><p>2271.82</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>Length</p></td>
+<tr class="row-odd"><td><p>Length</p></td>
 <td><p>314.22</p></td>
 <td><p>1963.86</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>Hsv2RgbFix</p></td>
+<tr class="row-even"><td><p>Hsv2RgbFix</p></td>
 <td><p>300.00</p></td>
 <td><p>1875.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>LogFix</p></td>
+<tr class="row-odd"><td><p>LogFix</p></td>
 <td><p>300.00</p></td>
 <td><p>1875.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>TanFix</p></td>
+<tr class="row-even"><td><p>TanFix</p></td>
 <td><p>300.00</p></td>
 <td><p>1875.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>Atan2Fix</p></td>
+<tr class="row-odd"><td><p>Atan2Fix</p></td>
 <td><p>279.00</p></td>
 <td><p>1743.75</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>Div</p></td>
+<tr class="row-even"><td><p>Div</p></td>
 <td><p>256.30</p></td>
 <td><p>1601.85</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>F2Fix</p></td>
+<tr class="row-odd"><td><p>F2Fix</p></td>
 <td><p>249.00</p></td>
 <td><p>1556.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>F2I</p></td>
+<tr class="row-even"><td><p>F2I</p></td>
 <td><p>249.00</p></td>
 <td><p>1556.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>Fix2F</p></td>
+<tr class="row-odd"><td><p>Fix2F</p></td>
 <td><p>249.00</p></td>
 <td><p>1556.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>FixFromF</p></td>
+<tr class="row-even"><td><p>FixFromF</p></td>
 <td><p>249.00</p></td>
 <td><p>1556.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>FixToF</p></td>
+<tr class="row-odd"><td><p>FixToF</p></td>
 <td><p>249.00</p></td>
 <td><p>1556.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>I2F</p></td>
+<tr class="row-even"><td><p>I2F</p></td>
 <td><p>249.00</p></td>
 <td><p>1556.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>Mix</p></td>
+<tr class="row-odd"><td><p>Mix</p></td>
 <td><p>241.12</p></td>
 <td><p>1507.01</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>CrossFix</p></td>
+<tr class="row-even"><td><p>CrossFix</p></td>
 <td><p>200.00</p></td>
 <td><p>1250.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>PaletteFix</p></td>
+<tr class="row-odd"><td><p>PaletteFix</p></td>
 <td><p>200.00</p></td>
 <td><p>1250.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>SmoothstepFix</p></td>
+<tr class="row-even"><td><p>SmoothstepFix</p></td>
 <td><p>150.00</p></td>
 <td><p>937.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>Hash3</p></td>
+<tr class="row-odd"><td><p>Hash3</p></td>
 <td><p>141.91</p></td>
 <td><p>886.91</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>Scale</p></td>
+<tr class="row-even"><td><p>Scale</p></td>
 <td><p>126.00</p></td>
 <td><p>787.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>UnMath:fract</p></td>
+<tr class="row-odd"><td><p>UnMath:fract</p></td>
 <td><p>122.35</p></td>
 <td><p>764.72</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>Dot</p></td>
+<tr class="row-even"><td><p>Dot</p></td>
 <td><p>117.85</p></td>
 <td><p>736.54</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>UnMath:ceil</p></td>
+<tr class="row-odd"><td><p>UnMath:ceil</p></td>
 <td><p>117.58</p></td>
 <td><p>734.88</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>Sub</p></td>
+<tr class="row-even"><td><p>Sub</p></td>
 <td><p>111.95</p></td>
 <td><p>699.71</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>Mul</p></td>
+<tr class="row-odd"><td><p>Mul</p></td>
 <td><p>108.06</p></td>
 <td><p>675.38</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>Hash1</p></td>
+<tr class="row-even"><td><p>Hash1</p></td>
 <td><p>105.30</p></td>
 <td><p>658.13</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>Add</p></td>
+<tr class="row-odd"><td><p>Add</p></td>
 <td><p>104.05</p></td>
 <td><p>650.30</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>ExpFix</p></td>
+<tr class="row-even"><td><p>ExpFix</p></td>
 <td><p>100.00</p></td>
 <td><p>625.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>BinMath:max</p></td>
+<tr class="row-odd"><td><p>BinMath:max</p></td>
 <td><p>97.50</p></td>
 <td><p>609.35</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>BinMath:min</p></td>
+<tr class="row-even"><td><p>BinMath:min</p></td>
 <td><p>97.30</p></td>
 <td><p>608.15</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>DivFix</p></td>
+<tr class="row-odd"><td><p>DivFix</p></td>
 <td><p>80.00</p></td>
 <td><p>500.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>DivFixN</p></td>
+<tr class="row-even"><td><p>DivFixN</p></td>
 <td><p>80.00</p></td>
 <td><p>500.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>DivI</p></td>
+<tr class="row-odd"><td><p>DivI</p></td>
 <td><p>80.00</p></td>
 <td><p>500.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>Hash3Fix</p></td>
+<tr class="row-even"><td><p>Hash3Fix</p></td>
 <td><p>80.00</p></td>
 <td><p>500.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>ModI</p></td>
+<tr class="row-odd"><td><p>ModI</p></td>
 <td><p>80.00</p></td>
 <td><p>500.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>PaintTex</p></td>
+<tr class="row-even"><td><p>PaintTex</p></td>
 <td><p>80.00</p></td>
 <td><p>500.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>Clamp</p></td>
+<tr class="row-odd"><td><p>Clamp</p></td>
 <td><p>79.80</p></td>
 <td><p>498.75</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>CosFix</p></td>
+<tr class="row-even"><td><p>CosFix</p></td>
 <td><p>79.00</p></td>
 <td><p>493.75</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>SinFix</p></td>
+<tr class="row-odd"><td><p>SinFix</p></td>
 <td><p>79.00</p></td>
 <td><p>493.75</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>BinMath:step</p></td>
+<tr class="row-even"><td><p>BinMath:step</p></td>
 <td><p>78.74</p></td>
 <td><p>492.11</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>UnMath:floor</p></td>
+<tr class="row-odd"><td><p>UnMath:floor</p></td>
 <td><p>72.78</p></td>
 <td><p>454.85</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>&#64;dispatch</p></td>
+<tr class="row-even"><td><p>&#64;dispatch</p></td>
 <td><p>69.00</p></td>
 <td><p>431.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>UnMath:sign</p></td>
+<tr class="row-odd"><td><p>UnMath:sign</p></td>
 <td><p>65.20</p></td>
 <td><p>407.50</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>Cmp</p></td>
+<tr class="row-even"><td><p>Cmp</p></td>
 <td><p>60.00</p></td>
 <td><p>375.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>HashFix</p></td>
+<tr class="row-odd"><td><p>HashFix</p></td>
 <td><p>60.00</p></td>
 <td><p>375.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>LoadBuf</p></td>
+<tr class="row-even"><td><p>LoadBuf</p></td>
 <td><p>60.00</p></td>
 <td><p>375.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>StoreBuf</p></td>
+<tr class="row-odd"><td><p>StoreBuf</p></td>
 <td><p>60.00</p></td>
 <td><p>375.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>MixFix</p></td>
+<tr class="row-even"><td><p>MixFix</p></td>
 <td><p>50.00</p></td>
 <td><p>312.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>MixVFix</p></td>
+<tr class="row-odd"><td><p>MixVFix</p></td>
 <td><p>50.00</p></td>
 <td><p>312.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>LoadLedCache</p></td>
+<tr class="row-even"><td><p>LoadLedCache</p></td>
 <td><p>48.00</p></td>
 <td><p>300.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>DotFix</p></td>
+<tr class="row-odd"><td><p>DotFix</p></td>
 <td><p>45.00</p></td>
 <td><p>281.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>MulFix</p></td>
+<tr class="row-even"><td><p>MulFix</p></td>
 <td><p>45.00</p></td>
 <td><p>281.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>MulFixN</p></td>
+<tr class="row-odd"><td><p>MulFixN</p></td>
 <td><p>45.00</p></td>
 <td><p>281.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>MulI</p></td>
+<tr class="row-even"><td><p>MulI</p></td>
 <td><p>45.00</p></td>
 <td><p>281.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>ScaleFix</p></td>
+<tr class="row-odd"><td><p>ScaleFix</p></td>
 <td><p>45.00</p></td>
 <td><p>281.25</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>ClampI</p></td>
+<tr class="row-even"><td><p>ClampI</p></td>
 <td><p>40.00</p></td>
 <td><p>250.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>ClampVFix</p></td>
+<tr class="row-odd"><td><p>ClampVFix</p></td>
 <td><p>40.00</p></td>
 <td><p>250.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>IncLocalI</p></td>
+<tr class="row-even"><td><p>IncLocalI</p></td>
 <td><p>40.00</p></td>
 <td><p>250.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>LoadLocalIdx</p></td>
+<tr class="row-odd"><td><p>LoadLocalIdx</p></td>
 <td><p>40.00</p></td>
 <td><p>250.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>LoadStateIdx</p></td>
+<tr class="row-even"><td><p>LoadStateIdx</p></td>
 <td><p>40.00</p></td>
 <td><p>250.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>StoreLocalIdx</p></td>
+<tr class="row-odd"><td><p>StoreLocalIdx</p></td>
 <td><p>40.00</p></td>
 <td><p>250.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>StoreStateIdx</p></td>
+<tr class="row-even"><td><p>StoreStateIdx</p></td>
 <td><p>40.00</p></td>
 <td><p>250.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>UnMath:abs</p></td>
+<tr class="row-odd"><td><p>UnMath:abs</p></td>
 <td><p>39.02</p></td>
 <td><p>243.90</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>AbsI</p></td>
+<tr class="row-even"><td><p>AbsI</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>AddI</p></td>
+<tr class="row-odd"><td><p>AddI</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>CeilFix</p></td>
+<tr class="row-even"><td><p>CeilFix</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>FixRescale</p></td>
+<tr class="row-odd"><td><p>FixRescale</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>FloorFix</p></td>
+<tr class="row-even"><td><p>FloorFix</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>FractFix</p></td>
+<tr class="row-odd"><td><p>FractFix</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>MaxI</p></td>
+<tr class="row-even"><td><p>MaxI</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>MinI</p></td>
+<tr class="row-odd"><td><p>MinI</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>NegI</p></td>
+<tr class="row-even"><td><p>NegI</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>SignI</p></td>
+<tr class="row-odd"><td><p>SignI</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>StepI</p></td>
+<tr class="row-even"><td><p>StepI</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>SubI</p></td>
+<tr class="row-odd"><td><p>SubI</p></td>
 <td><p>32.00</p></td>
 <td><p>200.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>Call</p></td>
+<tr class="row-even"><td><p>Call</p></td>
 <td><p>30.00</p></td>
 <td><p>187.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>GraphQuery</p></td>
+<tr class="row-odd"><td><p>GraphQuery</p></td>
 <td><p>30.00</p></td>
 <td><p>187.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>StoreLedCache</p></td>
+<tr class="row-even"><td><p>StoreLedCache</p></td>
 <td><p>30.00</p></td>
 <td><p>187.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>LoadLocal</p></td>
+<tr class="row-odd"><td><p>LoadLocal</p></td>
 <td><p>18.00</p></td>
 <td><p>112.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>LoadState</p></td>
+<tr class="row-even"><td><p>LoadState</p></td>
 <td><p>18.00</p></td>
 <td><p>112.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>LoadUniform</p></td>
+<tr class="row-odd"><td><p>LoadUniform</p></td>
 <td><p>18.00</p></td>
 <td><p>112.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>StoreLocal</p></td>
+<tr class="row-even"><td><p>StoreLocal</p></td>
 <td><p>18.00</p></td>
 <td><p>112.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>StoreState</p></td>
+<tr class="row-odd"><td><p>StoreState</p></td>
 <td><p>18.00</p></td>
 <td><p>112.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>TeeLocal</p></td>
+<tr class="row-even"><td><p>TeeLocal</p></td>
 <td><p>18.00</p></td>
 <td><p>112.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>Neg</p></td>
+<tr class="row-odd"><td><p>Neg</p></td>
 <td><p>15.70</p></td>
 <td><p>98.14</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>BrCmpI</p></td>
+<tr class="row-even"><td><p>BrCmpI</p></td>
 <td><p>10.00</p></td>
 <td><p>62.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>BrFalse</p></td>
+<tr class="row-odd"><td><p>BrFalse</p></td>
 <td><p>10.00</p></td>
 <td><p>62.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>CmpI</p></td>
+<tr class="row-even"><td><p>CmpI</p></td>
 <td><p>10.00</p></td>
 <td><p>62.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>LoadCtx</p></td>
+<tr class="row-odd"><td><p>LoadCtx</p></td>
 <td><p>10.00</p></td>
 <td><p>62.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>Logic</p></td>
+<tr class="row-even"><td><p>Logic</p></td>
 <td><p>10.00</p></td>
 <td><p>62.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>RetFn</p></td>
+<tr class="row-odd"><td><p>RetFn</p></td>
 <td><p>10.00</p></td>
 <td><p>62.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>RetRgbFix</p></td>
+<tr class="row-even"><td><p>RetRgbFix</p></td>
 <td><p>10.00</p></td>
 <td><p>62.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>Swap</p></td>
+<tr class="row-odd"><td><p>Swap</p></td>
 <td><p>8.00</p></td>
 <td><p>50.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>Swizzle</p></td>
+<tr class="row-even"><td><p>Swizzle</p></td>
 <td><p>8.00</p></td>
 <td><p>50.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>FillLocal</p></td>
+<tr class="row-odd"><td><p>FillLocal</p></td>
 <td><p>4.00</p></td>
 <td><p>25.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>Fix2I</p></td>
+<tr class="row-even"><td><p>Fix2I</p></td>
 <td><p>2.00</p></td>
 <td><p>12.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>I2Fix</p></td>
+<tr class="row-odd"><td><p>I2Fix</p></td>
 <td><p>2.00</p></td>
 <td><p>12.50</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>Jmp</p></td>
+<tr class="row-even"><td><p>Jmp</p></td>
 <td><p>0.00</p></td>
 <td><p>0.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>LoadCtxFix</p></td>
+<tr class="row-odd"><td><p>LoadCtxFix</p></td>
 <td><p>0.00</p></td>
 <td><p>0.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>Pop</p></td>
+<tr class="row-even"><td><p>Pop</p></td>
 <td><p>0.00</p></td>
 <td><p>0.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>PushConst</p></td>
+<tr class="row-odd"><td><p>PushConst</p></td>
 <td><p>0.00</p></td>
 <td><p>0.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p>Ret</p></td>
+<tr class="row-even"><td><p>Ret</p></td>
 <td><p>0.00</p></td>
 <td><p>0.00</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p>RetRgb8</p></td>
+<tr class="row-odd"><td><p>RetRgb8</p></td>
 <td><p>0.00</p></td>
 <td><p>0.00</p></td>
 <td><p></p></td>
@@ -2360,7 +2371,7 @@ in-editor AI is fed, relative to a float multiply (each runs once per LED in
 <code class="docutils literal notranslate"><span class="pre">shade()</span></code>):</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>BUILTIN COSTS on this device (esp32c6 @ 160 MHz, measured on your board) — per call, relative to a float multiply. shade() runs each ONCE PER LED, so favor the cheap ones:
   abs 0.4x, sign 0.6x, floor 0.7x, step 0.7x, clamp 0.7x, min 0.9x, max 0.9x, add 1.0x, hash 1.0x, mul 1.0x, sub 1.0x, ceil 1.1x, dot 1.1x, fract 1.1x, mix 2.2x, div 2.4x, length 2.9x, mod 3.4x, distance 3.4x, sin 3.4x, palette0 3.8x, cos 4.1x, normalize 4.7x, cross 5.2x, smoothstep 5.2x, exp 5.3x, sqrt 5.7x, log 7.2x, hsv2rgb 7.9x, atan2 8.8x, tan 9.0x, pow 14x
-Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; swap sin/cos/pow for fixed16/fixed8 (LUT trig, no soft-float) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt).
+Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; do per-LED maths in fixed (fixed() around every literal; sin/cos of a fixed phase in turns is an integer LUT) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt). Every op also pays ~70 cycles of dispatch, so fewer ops is faster.
 </pre></div>
 </div>
 </section>
