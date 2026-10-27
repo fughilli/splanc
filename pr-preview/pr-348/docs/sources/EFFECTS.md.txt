@@ -364,8 +364,11 @@ for how to run it.
   held-out). Regenerate with `fx_bench --emit-golden <path>`.
 - **Regression gate:** a program fails if `abs(measured/golden − 1)` exceeds its
   margin — default **10%**, with `sweep16` at 15% (a deliberately safe band until
-  per-effect run-to-run variance is characterized). **Only frame cycles are
-  gated**; show cycles (transmit) are noisier and excluded.
+  per-effect run-to-run variance is characterized) — **and** it is more than
+  **8,000 cycles** (50 µs) off the golden. The absolute floor absorbs the fixed
+  per-frame flash-cache cost that moves with code layout; it only matters for
+  tiny programs like `sweep16`. **Only frame cycles are gated**; show cycles
+  (transmit) are noisier and excluded.
 
 Representative measured frame-cycle costs at 160 MHz (full set in the golden):
 
