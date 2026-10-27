@@ -36,6 +36,12 @@ pub enum Ty {
     Fixed16,
     Bool,
     Void,
+    // Square float matrices, column-major (GLSL conventions): `mat3` is 9 slots
+    // (3 columns of vec3), `mat4` is 16 (4 columns of vec4); `m[c]` is column c.
+    // No VM opcode knows them: every matrix operation is lowered to the existing
+    // vecN ops (`emit_mat_*`), so bytecode using them runs on any shipped VM.
+    Mat3,
+    Mat4,
     // Composite types (aggregate scalar/vec slots). The payload indexes the
     // compiler's `structs` / `arrays` side tables; their slot width comes from
     // `Compiler::ty_width` (NOT `Ty::width`, which only knows the primitives).
@@ -62,6 +68,8 @@ impl Ty {
             Ty::Vec3 => 3,
             Ty::Vec4 => 4,
             Ty::Color(_) => 3, // r, g, b channel slots
+            Ty::Mat3 => 9,
+            Ty::Mat4 => 16,
             Ty::Void | Ty::Struct(_) | Ty::Array(_) => 0,
         }
     }
@@ -73,8 +81,31 @@ impl Ty {
             _ => Ty::Vec4,
         }
     }
+    /// A scalar or vecN (matrices are numeric too, but only the operators and
+    /// builtins that lower them explicitly accept them; see [`Ty::is_mat`]).
     fn is_num(self) -> bool {
-        !matches!(self, Ty::Bool | Ty::Void | Ty::Struct(_) | Ty::Array(_) | Ty::Color(_))
+        !matches!(self, Ty::Bool | Ty::Void | Ty::Struct(_) | Ty::Array(_) | Ty::Color(_) | Ty::Mat3 | Ty::Mat4)
+    }
+    fn is_mat(self) -> bool {
+        matches!(self, Ty::Mat3 | Ty::Mat4)
+    }
+    /// A matrix's dimension (3 or 4); 0 for anything else.
+    fn mat_n(self) -> u8 {
+        match self {
+            Ty::Mat3 => 3,
+            Ty::Mat4 => 4,
+            _ => 0,
+        }
+    }
+    fn mat_of(n: u8) -> Ty {
+        if n == 3 {
+            Ty::Mat3
+        } else {
+            Ty::Mat4
+        }
+    }
+    fn is_vec(self) -> bool {
+        matches!(self, Ty::Vec2 | Ty::Vec3 | Ty::Vec4)
     }
     fn is_scalar(self) -> bool {
         matches!(self, Ty::Float | Ty::Int | Ty::Fixed | Ty::Fixed8 | Ty::Fixed16)
@@ -156,7 +187,15 @@ pub enum UiKind {
     Color,
     Toggle,
     Dropdown(Vec<String>),
+    /// A `mat3`/`mat4` uniform: a numeric grid every component of which lies in
+    /// `min..max` (the declared range, else [`MAT_DEFAULT_RANGE`]). Usually set
+    /// by an API / OSC / tracker stream rather than by hand.
+    Matrix { min: f32, max: f32 },
 }
+
+/// The range of a `mat3`/`mat4` uniform declared without one (`uniform mat4
+/// pose;`): wide enough for a pose in metres, finite so clients can clamp.
+pub const MAT_DEFAULT_RANGE: f32 = 1000.0;
 
 #[derive(Clone, Debug)]
 pub struct UniformInfo {
@@ -171,6 +210,11 @@ pub struct UniformInfo {
     /// Physical unit, from an optional string after the UI annotation
     /// (`uniform float speed : 0..5 "m/s" = 1.0;`). Empty when unstated.
     pub unit: String,
+    /// Per-component range of a vector uniform declared with the per-component
+    /// form (`: vec3(-1,-1,0) .. vec3(1,1,2)`), as (mins, maxs); `None` for a
+    /// scalar range (which applies to every component). The `ui` slider then
+    /// carries the envelope (min of mins .. max of maxs).
+    pub comp_range: Option<(Vec<f32>, Vec<f32>)>,
 }
 
 /// The `.fxb` format version the compiler emits (the header's version byte). Must
@@ -513,6 +557,11 @@ pub struct Compiler {
     memo: Option<MemoConfig>,
     // Source lints (lint.rs): expression taints + the warnings they raised.
     lint: lint::Lint,
+    /// The current function's matrix-lowering scratch locals (slot, width):
+    /// operands of a lowered matrix op are parked here and read back column by
+    /// column. Live only inside one lowering sequence (which contains no calls
+    /// and no nested lowering), so one region per function is reused by all.
+    mat_scratch: Option<(u8, u8)>,
 }
 
 /// A just-emitted numeric literal, for the constant-cast fold (FUG-122).
@@ -622,6 +671,32 @@ const NO_ENTRY: u16 = 0xFFFF;
 // compiler rejects programs that would overflow them at runtime.
 const MAX_STATE: usize = 128;
 const MAX_LOCALS: usize = 128;
+/// fx_vm::MAX_UNIFORM_SLOTS: a uniform past it would never be written.
+const MAX_UNIFORM_SLOTS: usize = 128;
+
+/// A column-major n×n identity (a matrix uniform's default).
+fn mat_identity(n: u8) -> Vec<f32> {
+    let n = n as usize;
+    (0..n * n).map(|i| if i / n == i % n { 1.0 } else { 0.0 }).collect()
+}
+
+/// A primitive type's source name (diagnostics).
+fn ty_name(t: Ty) -> &'static str {
+    match t {
+        Ty::Float => "float",
+        Ty::Vec2 => "vec2",
+        Ty::Vec3 => "vec3",
+        Ty::Vec4 => "vec4",
+        Ty::Int => "int",
+        Ty::Fixed => "fixed",
+        Ty::Fixed8 => "fixed8",
+        Ty::Fixed16 => "fixed16",
+        Ty::Bool => "bool",
+        Ty::Mat3 => "mat3",
+        Ty::Mat4 => "mat4",
+        _ => "value",
+    }
+}
 
 impl Compiler {
     fn new(
@@ -663,6 +738,7 @@ impl Compiler {
             optimize,
             memo,
             lint: lint::Lint::default(),
+            mat_scratch: None,
         }
     }
 
@@ -738,6 +814,8 @@ impl Compiler {
             "fixed16" => Ty::Fixed16,
             "bool" => Ty::Bool,
             "void" => Ty::Void,
+            "mat3" => Ty::Mat3,
+            "mat4" => Ty::Mat4,
             _ => return None,
         })
     }
@@ -895,36 +973,51 @@ impl Compiler {
 
     // uniform float speed : 0..5 = 1.0;   uniform vec3 tint : color = vec3(..);
     // uniform bool x = false;   uniform int mode : {"a","b"} = 0;
+    // uniform float x : -2.0 .. 2.0 = 0.0;   uniform vec3 dir : -1..1 = 0, 1, 0;
+    // uniform vec3 p : vec3(-1,-1,0) .. vec3(1,1,2) = vec3(0);   uniform mat4 pose;
     fn uniform_decl(&mut self) -> Result<(), Diagnostic> {
         let first_line = self.lx_toks[self.p].1;
         self.advance(); // 'uniform'
         let tyname = self.eat_ident()?;
         let ty = Self::ty_from_ident(&tyname).ok_or_else(|| self.mkdiag("unknown type"))?;
+        if matches!(ty, Ty::Void) {
+            return self.err("a uniform cannot be void");
+        }
         let name = self.eat_ident()?;
         let mut ui = default_ui(ty);
         let mut unit = String::new();
+        let mut comp_range = None;
         if *self.cur() == Tok::Sym(':') {
             self.advance();
-            ui = self.parse_ui_annotation(ty)?;
+            let (u, cr) = self.parse_ui_annotation(ty)?;
+            ui = u;
+            comp_range = cr;
             // Optional unit string: `: 0..5 "m/s"` (or just `: "m/s"`).
             if let Tok::Str(u) = self.cur().clone() {
                 self.advance();
                 unit = u;
             }
         }
-        // default
-        self.expect_sym('=')?;
-        let default = self.parse_uniform_default(ty)?;
+        // default (optional for a matrix: identity)
+        let default = if ty.is_mat() && *self.cur() == Tok::Sym(';') {
+            mat_identity(ty.mat_n())
+        } else {
+            self.expect_sym('=')?;
+            self.parse_uniform_default(ty)?
+        };
         self.expect_sym(';')?;
         let end_line = self.lx_toks[self.p.saturating_sub(1)].1;
         let doc = self.uniform_doc(first_line, end_line);
         let slot = self.n_uniform_slots;
+        if slot as usize + ty.width() as usize > MAX_UNIFORM_SLOTS {
+            return self.err(format!("too many uniforms (over the VM's {MAX_UNIFORM_SLOTS} uniform slots)"));
+        }
         self.n_uniform_slots += ty.width();
         self.syms.insert(
             name.clone(),
             Sym { kind: SymKind::Uniform, slot, ty },
         );
-        self.uniforms.push(UniformInfo { name, ty, slot, ui, default, doc, unit });
+        self.uniforms.push(UniformInfo { name, ty, slot, ui, default, doc, unit, comp_range });
         Ok(())
     }
 
@@ -947,11 +1040,68 @@ impl Compiler {
         lines.join(" ").trim().to_string()
     }
 
-    fn parse_ui_annotation(&mut self, ty: Ty) -> Result<UiKind, Diagnostic> {
+    /// A numeric literal with an optional leading `-` (range bounds, defaults).
+    fn eat_signed_num(&mut self) -> Option<f32> {
+        let neg = *self.cur() == Tok::Sym('-');
+        let at = if neg { self.p + 1 } else { self.p };
+        match self.lx_toks.get(at).map(|t| &t.0) {
+            Some(Tok::Num(v, _)) => {
+                let v = *v;
+                self.p = at;
+                self.advance();
+                Some(if neg { -v } else { v })
+            }
+            _ => None,
+        }
+    }
+
+    /// `vecN(a, b, ...)` of signed numeric literals (a per-component range bound);
+    /// a single value broadcasts to every component.
+    fn parse_vec_literal(&mut self, ty: Ty) -> Result<Vec<f32>, Diagnostic> {
+        let w = ty.width() as usize;
+        match self.cur().clone() {
+            Tok::Ident(c) if Self::ty_from_ident(&c) == Some(ty) => self.advance(),
+            _ => {
+                let tn = ty_name(ty);
+                return self.err(format!("expected {tn}(...) for a per-component range of a {tn} uniform"));
+            }
+        };
+        self.expect_sym('(')?;
+        let mut vals = Vec::new();
+        loop {
+            match self.eat_signed_num() {
+                Some(v) => vals.push(v),
+                None => return self.err("expected a number in the range bound"),
+            }
+            if *self.cur() == Tok::Sym(',') {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        self.expect_sym(')')?;
+        if vals.len() == 1 {
+            vals = vec![vals[0]; w];
+        }
+        if vals.len() != w {
+            return self.err(format!("range bound needs {w} components, got {}", vals.len()));
+        }
+        Ok(vals)
+    }
+
+    /// The `: ...` UI annotation of a uniform: `color`, a dropdown `{"a","b"}`, or
+    /// a numeric range `lo .. hi` (signed). On a vector a scalar range applies to
+    /// every component; `vecN(..) .. vecN(..)` gives each its own (returned as the
+    /// per-component range beside a slider over the envelope). A ranged vector is
+    /// a numeric slider, never a colour; a ranged matrix is a `Matrix`.
+    fn parse_ui_annotation(&mut self, ty: Ty) -> Result<(UiKind, Option<(Vec<f32>, Vec<f32>)>), Diagnostic> {
         match self.cur().clone() {
             Tok::Ident(k) if k == "color" => {
+                if ty.is_mat() {
+                    return self.err("a matrix uniform cannot be a colour; give it a range (`: -1..1`) or none");
+                }
                 self.advance();
-                Ok(UiKind::Color)
+                Ok((UiKind::Color, None))
             }
             Tok::Sym('{') => {
                 self.advance();
@@ -970,88 +1120,83 @@ impl Compiler {
                     }
                 }
                 self.expect_sym('}')?;
-                Ok(UiKind::Dropdown(opts))
+                Ok((UiKind::Dropdown(opts), None))
             }
-            Tok::Num(lo, _) => {
-                self.advance();
+            Tok::Ident(c) if ty.is_vec() && Self::ty_from_ident(&c).is_some() => {
+                let lo = self.parse_vec_literal(ty)?;
                 if *self.cur() != Tok::Range {
                     return self.err("expected '..' in range");
                 }
                 self.advance();
-                let hi = match self.cur().clone() {
-                    Tok::Num(v, _) => {
-                        self.advance();
-                        v
-                    }
-                    _ => return self.err("expected range max"),
-                };
-                let step = (hi - lo) / 100.0;
-                Ok(UiKind::Slider { min: lo, max: hi, step })
+                let hi = self.parse_vec_literal(ty)?;
+                if lo.iter().zip(&hi).any(|(a, b)| a > b) {
+                    return self.err("range min must not exceed max (per component)");
+                }
+                let mn = lo.iter().cloned().fold(f32::INFINITY, f32::min);
+                let mx = hi.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                Ok((UiKind::Slider { min: mn, max: mx, step: (mx - mn) / 100.0 }, Some((lo, hi))))
             }
-            _ => Ok(default_ui(ty)),
+            Tok::Num(..) | Tok::Sym('-') => {
+                let Some(lo) = self.eat_signed_num() else {
+                    return self.err("expected range min");
+                };
+                if *self.cur() != Tok::Range {
+                    return self.err("expected '..' in range");
+                }
+                self.advance();
+                let Some(hi) = self.eat_signed_num() else {
+                    return self.err("expected range max");
+                };
+                if lo > hi {
+                    return self.err("range min must not exceed max");
+                }
+                if ty.is_mat() {
+                    return Ok((UiKind::Matrix { min: lo, max: hi }, None));
+                }
+                let step = (hi - lo) / 100.0;
+                Ok((UiKind::Slider { min: lo, max: hi, step }, None))
+            }
+            _ => Ok((default_ui(ty), None)),
         }
     }
 
     fn parse_uniform_default(&mut self, ty: Ty) -> Result<Vec<f32>, Diagnostic> {
-        match self.cur().clone() {
+        let w = ty.width() as usize;
+        let vals = match self.cur().clone() {
             Tok::Ident(b) if b == "true" || b == "false" => {
                 self.advance();
-                Ok(vec![if b == "true" { 1.0 } else { 0.0 }])
+                return Ok(vec![if b == "true" { 1.0 } else { 0.0 }]);
             }
-            Tok::Num(v, _) => {
-                self.advance();
-                // A bare number. For a vecN uniform, also accept a comma-list
-                // (`= 0.2, 0.6, 1.0`) or broadcast a lone scalar (`= 0.5`), so
-                // `uniform vec3 tint : color = 0.2, 0.6, 1.0;` works without the
-                // `vec3(...)` wrapper (natural for colors).
+            Tok::Num(..) | Tok::Sym('-') => {
+                // A bare (signed) number. For a vecN/matN uniform, also accept a
+                // comma-list (`= 0.2, 0.6, 1.0`) or broadcast a lone scalar (`=
+                // 0.5`), so `uniform vec3 tint : color = 0.2, 0.6, 1.0;` works
+                // without the `vec3(...)` wrapper (natural for colors). A lone
+                // scalar on a matrix is its diagonal (GLSL `mat4(s)`).
+                let Some(v) = self.eat_signed_num() else {
+                    return self.err("expected default value");
+                };
                 let mut vals = vec![v];
-                if ty.width() > 1 {
+                if w > 1 {
                     while *self.cur() == Tok::Sym(',') {
                         self.advance();
-                        match self.cur().clone() {
-                            Tok::Num(x, _) => {
-                                self.advance();
-                                vals.push(x);
-                            }
-                            Tok::Sym('-') => {
-                                self.advance();
-                                if let Tok::Num(x, _) = self.cur().clone() {
-                                    self.advance();
-                                    vals.push(-x);
-                                } else {
-                                    return self.err("expected number in default");
-                                }
-                            }
-                            _ => return self.err("expected number in default"),
+                        match self.eat_signed_num() {
+                            Some(x) => vals.push(x),
+                            None => return self.err("expected number in default"),
                         }
                     }
-                    if vals.len() == 1 {
-                        return Ok(vec![vals[0]; ty.width() as usize]);
-                    }
                 }
-                Ok(vals)
+                vals
             }
             Tok::Ident(ctor) if Self::ty_from_ident(&ctor).is_some() => {
-                // vecN(a,b,c)
+                // vecN(a,b,c) / matN(...)
                 self.advance();
                 self.expect_sym('(')?;
                 let mut vals = Vec::new();
                 loop {
-                    match self.cur().clone() {
-                        Tok::Num(v, _) => {
-                            self.advance();
-                            vals.push(v);
-                        }
-                        Tok::Sym('-') => {
-                            self.advance();
-                            if let Tok::Num(v, _) = self.cur().clone() {
-                                self.advance();
-                                vals.push(-v);
-                            } else {
-                                return self.err("expected number");
-                            }
-                        }
-                        _ => return self.err("expected number in default"),
+                    match self.eat_signed_num() {
+                        Some(v) => vals.push(v),
+                        None => return self.err("expected number in default"),
                     }
                     if *self.cur() == Tok::Sym(',') {
                         self.advance();
@@ -1060,14 +1205,25 @@ impl Compiler {
                     }
                 }
                 self.expect_sym(')')?;
-                if vals.len() == 1 {
-                    Ok(vec![vals[0]; ty.width() as usize])
-                } else {
-                    Ok(vals)
-                }
+                vals
             }
-            _ => self.err("expected default value"),
+            _ => return self.err("expected default value"),
+        };
+        if ty.is_mat() {
+            return match vals.len() {
+                1 => {
+                    let mut m = mat_identity(ty.mat_n());
+                    m.iter_mut().for_each(|x| *x *= vals[0]);
+                    Ok(m)
+                }
+                n if n == w => Ok(vals),
+                n => self.err(format!("a {} default needs 1 (diagonal) or {w} values (column-major), got {n}", ty_name(ty))),
+            };
         }
+        if vals.len() == 1 && w > 1 {
+            return Ok(vec![vals[0]; w]);
+        }
+        Ok(vals)
     }
 
     // struct Agent { float pos; vec3 col; };  (fields: scalar/vec/nested struct)
@@ -1261,6 +1417,7 @@ impl Compiler {
         let ret_ty = Self::ty_from_ident(&self.eat_ident()?).unwrap();
         let name = self.eat_ident()?;
         self.cur_fn = name.clone();
+        self.mat_scratch = None;
         self.expect_sym('(')?;
         // params: `type name, ...`; the special `Led led` (shade) is the ctx
         // namespace, not a real local.
@@ -1431,8 +1588,8 @@ impl Compiler {
             self.syms.insert(name, Sym { kind: SymKind::Local, slot, ty });
             return Ok(());
         }
-        // Struct with no initializer: `Agent a;`
-        if matches!(base_ty, Ty::Struct(_)) && *self.cur() == Tok::Sym(';') {
+        // Struct (or matrix) with no initializer: `Agent a;` / `mat4 m;` (zeros).
+        if matches!(base_ty, Ty::Struct(_) | Ty::Mat3 | Ty::Mat4) && *self.cur() == Tok::Sym(';') {
             self.advance();
             let w = self.ty_width(base_ty);
             let slot = self.alloc_local(w)?;
@@ -1665,11 +1822,20 @@ impl Compiler {
         loop {
             match self.cur().clone() {
                 Tok::Sym('[') => {
-                    let ai = match p.ty {
-                        Ty::Array(i) => i,
+                    // A matrix indexes like an array of its columns (`m[c]` is a
+                    // vecN), and a vector like an array of floats (`v[i]`, so
+                    // `m[c][r]` is one element) — same slot layout.
+                    let info = match p.ty {
+                        Ty::Array(i) => self.arrays[i as usize], // Copy
+                        Ty::Mat3 | Ty::Mat4 => {
+                            let n = p.ty.mat_n();
+                            ArrayInfo { elem: Ty::vec_of(n), elem_w: n, count: n }
+                        }
+                        Ty::Vec2 | Ty::Vec3 | Ty::Vec4 => {
+                            ArrayInfo { elem: Ty::Float, elem_w: 1, count: p.ty.width() }
+                        }
                         _ => return self.err("cannot index a non-array"),
                     };
-                    let info = self.arrays[ai as usize]; // Copy
                     self.advance(); // '['
                     if let Tok::Num(v, true) = self.cur().clone() {
                         // constant index -> fold into the static offset
@@ -1739,7 +1905,9 @@ impl Compiler {
             let opc = match p.kind {
                 SymKind::State => LOAD_STATE_IDX,
                 SymKind::Local => LOAD_LOCAL_IDX,
-                SymKind::Uniform => return self.err("indexed uniforms are not supported"),
+                SymKind::Uniform => {
+                    return self.err("a uniform can only be indexed by a constant; copy it to a local first")
+                }
                 SymKind::Buffer => return self.err("internal: buffers use LoadBuf, not a place"),
             };
             self.emit(opc);
@@ -1842,7 +2010,11 @@ impl Compiler {
             lt = self.lint.binop(op, lt, rt, op_line, op_col);
             let r_lit = self.float_lit_since(r_start);
             self.warn_fixed_float_literal(op, &[(lty, l_lit), (rty, r_lit)], op_line, op_col);
-            lty = self.emit_binop(op, lty, rty)?;
+            lty = if lty.is_mat() || rty.is_mat() {
+                self.emit_mat_binop(op, lty, rty, l_start, r_start)?
+            } else {
+                self.emit_binop(op, lty, rty)?
+            };
             l_lit = None;
         }
         self.lint.taint = lt;
@@ -2061,6 +2233,375 @@ impl Compiler {
         Ok(Ty::vec_of(rw))
     }
 
+    // -- matrices (lowered to vecN ops; no matrix opcode exists) ---------------
+    //
+    // A mat3/mat4 value is 9/16 contiguous float slots, column-major. Every
+    // operation parks its operands in slots (a plain uniform/local operand is
+    // read in place; anything else goes to the function's scratch locals) and
+    // rebuilds the result column by column with Load + Swizzle-broadcast + Mul
+    // + Add (the optimizer fuses broadcast+Mul into Scale), Dot, Neg, Div. So a
+    // matrix program is ordinary bytecode for any shipped VM / JIT / cost model.
+
+    /// Scratch locals for one lowering sequence (`need` slots), reused per function.
+    fn mat_scratch(&mut self, need: u8) -> Result<u8, Diagnostic> {
+        if let Some((slot, w)) = self.mat_scratch {
+            if w >= need {
+                return Ok(slot);
+            }
+        }
+        let slot = self.alloc_local(need)?;
+        self.mat_scratch = Some((slot, need));
+        Ok(slot)
+    }
+
+    /// If `code[start..end]` is exactly one whole-variable load of width `w`
+    /// (LoadUniform/LoadState/LoadLocal), its (opcode, slot).
+    fn lone_load(&self, start: usize, end: usize, w: u8) -> Option<(u8, u8)> {
+        use fx_vm_op::*;
+        if end != start + 3 || end > self.code.len() {
+            return None;
+        }
+        let (op, slot, lw) = (self.code[start], self.code[start + 1], self.code[start + 2]);
+        (matches!(op, LOAD_UNIFORM | LOAD_STATE | LOAD_LOCAL) && lw == w).then_some((op, slot))
+    }
+
+    /// Load `w` slots at offset `off` of an operand source.
+    fn load_src(&mut self, src: (u8, u8), off: u8, w: u8) {
+        self.emit(src.0);
+        self.emit(src.1 + off);
+        self.emit(w);
+    }
+
+    /// Move a binary operator's two operands (left = `code[ls..rs]`, right =
+    /// `code[rs..]`, both already emitted) into slots and return their sources.
+    /// Scalars are converted to float first. A right operand that is a lone
+    /// load is read in place; so is a lone left uniform/local (a state variable
+    /// could be rewritten by a call in the right operand, so it is copied).
+    fn mat_operands(&mut self, l: Ty, r: Ty, ls: usize, rs: usize) -> Result<((u8, u8), (u8, u8)), Diagnostic> {
+        use fx_vm_op::*;
+        let (lw, rw) = (l.width(), r.width());
+        if r.is_scalar() && r != Ty::Float {
+            self.coerce(r, Ty::Float)?;
+        }
+        let r_direct = self.lone_load(rs, self.code.len(), rw);
+        let l_direct = if l.is_scalar() && l != Ty::Float {
+            None
+        } else {
+            self.lone_load(ls, rs, lw).filter(|(op, _)| *op != LOAD_STATE)
+        };
+        let need = if r_direct.is_none() { rw } else { 0 } + if l_direct.is_none() { lw } else { 0 };
+        let t = if need > 0 { self.mat_scratch(need)? } else { 0 };
+        let rsrc = match r_direct {
+            Some(src) => {
+                self.code.truncate(rs);
+                src
+            }
+            None => {
+                self.emit(STORE_LOCAL);
+                self.emit(t);
+                self.emit(rw);
+                (LOAD_LOCAL, t)
+            }
+        };
+        let roff = if r_direct.is_none() { rw } else { 0 };
+        let lsrc = match l_direct {
+            Some(src) => {
+                self.code.drain(ls..ls + 3);
+                src
+            }
+            None => {
+                if l.is_scalar() && l != Ty::Float {
+                    self.coerce(l, Ty::Float)?;
+                }
+                self.emit(STORE_LOCAL);
+                self.emit(t + roff);
+                self.emit(lw);
+                (LOAD_LOCAL, t + roff)
+            }
+        };
+        self.ctx_prov = None;
+        self.last_const = None;
+        Ok((lsrc, rsrc))
+    }
+
+    /// Park the single matrix/vector value emitted since `start` (on top of the
+    /// stack) in slots: in place if it is a lone load, else in scratch.
+    fn mat_operand1(&mut self, ty: Ty, start: usize) -> Result<(u8, u8), Diagnostic> {
+        use fx_vm_op::*;
+        let w = ty.width();
+        if let Some(src) = self.lone_load(start, self.code.len(), w) {
+            self.code.truncate(start);
+            self.ctx_prov = None;
+            self.last_const = None;
+            return Ok(src);
+        }
+        let t = self.mat_scratch(w)?;
+        self.emit(STORE_LOCAL);
+        self.emit(t);
+        self.emit(w);
+        Ok((LOAD_LOCAL, t))
+    }
+
+    /// `a * x` for a matrix `a` (source, n×n) and an n-vector x whose component
+    /// k is at `(x, off + k)`: sum_k col_k(a) * x[k]  (n Mul + (n-1) Add, vecN).
+    fn mat_times_cols(&mut self, a: (u8, u8), n: u8, x: (u8, u8), off: u8) {
+        use fx_vm_op::*;
+        for k in 0..n {
+            self.load_src(a, k * n, n);
+            self.load_src(x, off + k, 1);
+            self.broadcast_top(n);
+            self.emit2(MUL, n);
+            if k > 0 {
+                self.emit2(ADD, n);
+            }
+        }
+    }
+
+    fn emit_mat_binop(&mut self, op: &str, l: Ty, r: Ty, ls: usize, rs: usize) -> Result<Ty, Diagnostic> {
+        use fx_vm_op::*;
+        let (ln, rn) = (l.mat_n(), r.mat_n());
+        let shape = |t: Ty| ty_name(t);
+        // Validate the shape before touching the code.
+        enum K {
+            MatVec(u8),
+            VecMat(u8),
+            MatMat(u8),
+            AddSub(u8, u8),
+            MatScalar(u8, u8),
+            ScalarMat(u8),
+        }
+        let k = match (ln, rn) {
+            (n, m) if n > 0 && m > 0 => {
+                if n != m {
+                    return self.err(format!("{} {op} {}: matrix sizes differ", shape(l), shape(r)));
+                }
+                match op {
+                    "*" => K::MatMat(n),
+                    "+" => K::AddSub(n, ADD),
+                    "-" => K::AddSub(n, SUB),
+                    _ => return self.err(format!("matrix operator '{op}' is not supported (use * + -)")),
+                }
+            }
+            (n, 0) if r.is_vec() => {
+                if op != "*" {
+                    return self.err(format!("{} {op} {}: only * applies a matrix to a vector", shape(l), shape(r)));
+                }
+                if r.width() != n {
+                    let hint = if n == 4 && r == Ty::Vec3 {
+                        "; use transform(m, p) for a point or (m * vec4(d, 0.0)).xyz for a direction"
+                    } else {
+                        ""
+                    };
+                    return self.err(format!("{} * {}: dimension mismatch{hint}", shape(l), shape(r)));
+                }
+                K::MatVec(n)
+            }
+            (0, n) if l.is_vec() => {
+                if op != "*" || l.width() != n {
+                    return self.err(format!("{} {op} {}: only vec{n} * mat{n} is defined", shape(l), shape(r)));
+                }
+                K::VecMat(n)
+            }
+            (n, 0) if r.is_scalar() => match op {
+                "*" => K::MatScalar(n, MUL),
+                "/" => K::MatScalar(n, DIV),
+                _ => return self.err(format!("{} {op} scalar: only * and / scale a matrix", shape(l))),
+            },
+            (0, n) if l.is_scalar() => {
+                if op != "*" {
+                    return self.err(format!("scalar {op} {}: only * scales a matrix", shape(r)));
+                }
+                K::ScalarMat(n)
+            }
+            _ => return self.err(format!("{} {op} {}: unsupported operand types", shape(l), shape(r))),
+        };
+        let (a, b) = self.mat_operands(l, r, ls, rs)?;
+        Ok(match k {
+            K::MatVec(n) => {
+                self.mat_times_cols(a, n, b, 0);
+                Ty::vec_of(n)
+            }
+            K::VecMat(n) => {
+                for c in 0..n {
+                    self.load_src(a, 0, n);
+                    self.load_src(b, c * n, n);
+                    self.emit2(DOT, n);
+                }
+                Ty::vec_of(n)
+            }
+            K::MatMat(n) => {
+                for j in 0..n {
+                    self.mat_times_cols(a, n, b, j * n);
+                }
+                Ty::mat_of(n)
+            }
+            K::AddSub(n, opc) => {
+                for c in 0..n {
+                    self.load_src(a, c * n, n);
+                    self.load_src(b, c * n, n);
+                    self.emit2(opc, n);
+                }
+                Ty::mat_of(n)
+            }
+            K::MatScalar(n, opc) => {
+                for c in 0..n {
+                    self.load_src(a, c * n, n);
+                    self.load_src(b, 0, 1);
+                    self.broadcast_top(n);
+                    self.emit2(opc, n);
+                }
+                Ty::mat_of(n)
+            }
+            K::ScalarMat(n) => {
+                for c in 0..n {
+                    self.load_src(b, c * n, n);
+                    self.load_src(a, 0, 1);
+                    self.broadcast_top(n);
+                    self.emit2(MUL, n);
+                }
+                Ty::mat_of(n)
+            }
+        })
+    }
+
+    /// `-m`: column-wise Neg.
+    fn emit_mat_neg(&mut self, t: Ty, start: usize) -> Result<Ty, Diagnostic> {
+        let n = t.mat_n();
+        let a = self.mat_operand1(t, start)?;
+        for c in 0..n {
+            self.load_src(a, c * n, n);
+            self.emit2(fx_vm_op::NEG, n);
+        }
+        Ok(t)
+    }
+
+    /// `matN(...)` (the `(` consumed): one scalar = that diagonal (`mat4(1.0)` is
+    /// the identity); one matrix = a copy, or mat3(mat4) = its upper-left 3×3,
+    /// mat4(mat3) = it with an identity 4th row/column (GLSL); otherwise N column
+    /// vectors / N×N scalars / any mix totalling N×N components, column-major.
+    fn mat_ctor(&mut self, cty: Ty) -> Result<Ty, Diagnostic> {
+        let n = cty.mat_n();
+        let w = cty.width();
+        let mut args: Vec<(Ty, usize)> = Vec::new();
+        let mut taint = lint::Taint::default();
+        loop {
+            let start = self.code.len();
+            let at = self.expr()?;
+            taint = taint.union(std::mem::take(&mut self.lint.taint));
+            if at.is_scalar() && at != Ty::Float {
+                self.coerce(at, Ty::Float)?;
+            } else if !(at.is_scalar() || at.is_vec() || at.is_mat()) {
+                return self.err(format!("{}() takes scalars, vectors or a matrix", ty_name(cty)));
+            }
+            args.push((if at.is_scalar() { Ty::Float } else { at }, start));
+            if *self.cur() == Tok::Sym(',') {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        self.expect_sym(')')?;
+        self.lint.taint = taint;
+        if args.len() == 1 {
+            let (at, start) = args[0];
+            if at == Ty::Float {
+                let s = self.mat_operand1(Ty::Float, start)?;
+                for c in 0..n {
+                    for r in 0..n {
+                        if r == c {
+                            self.load_src(s, 0, 1);
+                        } else {
+                            self.push_const(0.0f32.to_bits());
+                        }
+                    }
+                }
+                return Ok(cty);
+            }
+            if at.is_mat() {
+                let m = at.mat_n();
+                if m == n {
+                    return Ok(cty);
+                }
+                let a = self.mat_operand1(at, start)?;
+                if n == 3 {
+                    for c in 0..3 {
+                        self.load_src(a, c * 4, 3);
+                    }
+                } else {
+                    for c in 0..3 {
+                        self.load_src(a, c * 3, 3);
+                        self.push_const(0.0f32.to_bits());
+                    }
+                    for v in [0.0f32, 0.0, 0.0, 1.0] {
+                        self.push_const(v.to_bits());
+                    }
+                }
+                return Ok(cty);
+            }
+        }
+        if args.iter().any(|(t, _)| t.is_mat()) {
+            return self.err(format!("{}(m) takes the matrix alone", ty_name(cty)));
+        }
+        let got: u32 = args.iter().map(|(t, _)| t.width() as u32).sum();
+        if got != w as u32 {
+            return self.err(format!(
+                "{}() needs 1 scalar (diagonal), {n} column vec{n}s or {w} scalars (column-major), got {got} components",
+                ty_name(cty)
+            ));
+        }
+        Ok(cty)
+    }
+
+    /// transpose(m) and transform(m, p) — args already on the stack.
+    fn emit_mat_builtin(&mut self, name: &str, args: &[Ty]) -> Result<Ty, Diagnostic> {
+        use fx_vm_op::*;
+        if name == "transpose" {
+            let [m] = args else { return self.err("transpose(m) takes one matrix") };
+            if !m.is_mat() {
+                return self.err("transpose(m) takes a mat3 or mat4");
+            }
+            let n = m.mat_n();
+            let t = self.mat_scratch(m.width())?;
+            self.emit(STORE_LOCAL);
+            self.emit(t);
+            self.emit(m.width());
+            for c in 0..n {
+                for r in 0..n {
+                    self.load_src((LOAD_LOCAL, t), r * n + c, 1);
+                }
+            }
+            return Ok(*m);
+        }
+        // transform(mat4 m, vec3 p) = (m * vec4(p, 1.0)).xyz, the affine point
+        // transform (rotation/scale + translation), without the 4th row:
+        // 9 Mul + 9 Add instead of 16 + 12. transform(mat3, vec2) likewise in 2D.
+        let ok = matches!(args, [Ty::Mat4, Ty::Vec3] | [Ty::Mat3, Ty::Vec2]);
+        if !ok {
+            return self.err("transform(m, p) takes (mat4, vec3) or (mat3, vec2)");
+        }
+        let (n, pw) = (args[0].mat_n(), args[1].width());
+        let t = self.mat_scratch(pw + n * n)?;
+        self.emit(STORE_LOCAL);
+        self.emit(t);
+        self.emit(pw);
+        self.emit(STORE_LOCAL);
+        self.emit(t + pw);
+        self.emit(n * n);
+        let (p, m) = ((LOAD_LOCAL, t), (LOAD_LOCAL, t + pw));
+        for k in 0..pw {
+            self.load_src(m, k * n, pw);
+            self.load_src(p, k, 1);
+            self.broadcast_top(pw);
+            self.emit2(MUL, pw);
+            if k > 0 {
+                self.emit2(ADD, pw);
+            }
+        }
+        self.load_src(m, pw * n, pw);
+        self.emit2(ADD, pw);
+        Ok(Ty::vec_of(pw))
+    }
+
     /// Broadcast the scalar on top of the stack to a width-`n` vector (.xxx).
     fn broadcast_top(&mut self, n: u8) {
         self.emit(fx_vm_op::SWIZZLE);
@@ -2075,7 +2616,11 @@ impl Compiler {
         match self.cur().clone() {
             Tok::Sym('-') => {
                 self.advance();
+                let start = self.code.len();
                 let t = self.unary()?;
+                if t.is_mat() {
+                    return self.emit_mat_neg(t, start);
+                }
                 match t {
                     Ty::Int | Ty::Fixed | Ty::Fixed8 | Ty::Fixed16 => self.emit(fx_vm_op::NEG_I),
                     _ => {
@@ -2303,11 +2848,17 @@ impl Compiler {
                 self.coerce(at, cty)?;
                 return Ok(cty);
             }
+            if cty.is_mat() {
+                return self.mat_ctor(cty);
+            }
             let w = cty.width();
             let mut got = 0u8;
             let mut taint = lint::Taint::default();
             loop {
                 let at = self.expr()?;
+                if at.is_mat() {
+                    return self.err(format!("{name}() cannot take a matrix; index a column (m[0])"));
+                }
                 taint = taint.union(std::mem::take(&mut self.lint.taint));
                 if at.is_scalar() {
                     // vec components are float
@@ -2489,6 +3040,34 @@ impl Compiler {
 
     fn emit_builtin(&mut self, name: &str, args: &[Ty]) -> Result<Ty, Diagnostic> {
         use fx_vm_op::*;
+        if matches!(name, "transpose" | "transform") {
+            return self.emit_mat_builtin(name, args);
+        }
+        if args.iter().any(|a| a.is_mat()) {
+            return self.err(format!(
+                "{name}() does not take a matrix (matrices support * + - /, transpose(), transform(), m[c] and m[c][r])"
+            ));
+        }
+        // atan(y) / atan(y, x): GLSL's names. One argument lowers to atan2(y, 1.0)
+        // (= atan(y), the principal value); two are atan2 itself. No new opcode.
+        if name == "atan" {
+            return match args.len() {
+                1 => {
+                    let w = args[0].width();
+                    self.floaten_args(args)?;
+                    self.push_const(1.0f32.to_bits());
+                    if w > 1 {
+                        self.broadcast_top(w);
+                    }
+                    self.emit(BIN_MATH);
+                    self.emit(5);
+                    self.emit(w);
+                    Ok(Ty::vec_of(w))
+                }
+                2 => self.emit_builtin("atan2", args),
+                _ => self.err("atan(y) or atan(y, x)"),
+            };
+        }
         // FUG-122 — strictly-integer/fixed colour output. `rgb`/`rgb8` and
         // `hsv2rgb`/`palette*` on fixed args produce a `Ty::Color` (3 channel
         // slots holding scaled integers) that shade()'s return lowers to
@@ -3543,6 +4122,7 @@ fn default_ui(ty: Ty) -> UiKind {
     match ty {
         Ty::Bool => UiKind::Toggle,
         Ty::Vec3 | Ty::Vec4 => UiKind::Color,
+        Ty::Mat3 | Ty::Mat4 => UiKind::Matrix { min: -MAT_DEFAULT_RANGE, max: MAT_DEFAULT_RANGE },
         _ => UiKind::Slider { min: 0.0, max: 1.0, step: 0.01 },
     }
 }
@@ -3581,6 +4161,7 @@ pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
             }
             UiKind::Color => "{\"kind\":\"color\"}".to_string(),
             UiKind::Toggle => "{\"kind\":\"toggle\"}".to_string(),
+            UiKind::Matrix { min, max } => format!("{{\"kind\":\"matrix\",\"min\":{min},\"max\":{max}}}"),
             UiKind::Dropdown(o) => {
                 let opts: Vec<String> = o.iter().map(|x| format!("\"{x}\"")).collect();
                 format!("{{\"kind\":\"dropdown\",\"options\":[{}]}}", opts.join(","))
@@ -3590,7 +4171,7 @@ pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
         // Explicit range per uniform, even where the UI kind implies it, so an agent
         // can clamp without knowing the UI vocabulary.
         let (min, max) = match &u.ui {
-            UiKind::Slider { min, max, .. } => (*min, *max),
+            UiKind::Slider { min, max, .. } | UiKind::Matrix { min, max } => (*min, *max),
             UiKind::Color | UiKind::Toggle => (0.0, 1.0),
             UiKind::Dropdown(o) => (0.0, o.len().saturating_sub(1) as f32),
         };
@@ -3602,6 +4183,12 @@ pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
             u.ty.width(),
             def.join(",")
         );
+        // A per-component vector range (`: vec3(-1,-1,0) .. vec3(1,1,2)`): the
+        // scalar min/max above are its envelope (older readers clamp to that).
+        if let Some((lo, hi)) = &u.comp_range {
+            let j = |v: &[f32]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(",");
+            let _ = write!(s, ",\"mins\":[{}],\"maxs\":[{}]", j(lo), j(hi));
+        }
         if !u.unit.is_empty() {
             let _ = write!(s, ",\"unit\":{}", json_str(&u.unit, MAX_UNIFORM_DOC));
         }

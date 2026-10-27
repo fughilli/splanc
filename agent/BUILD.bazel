@@ -175,3 +175,6 @@ agent_bundle(
     skill_strip = "agent/skill/",
     version = ":bundle_version",
 )
+
+# The skill examples, for the compiler tests that pin them (fx_compiler:matrix_test).
+exports_files(glob(["skill/examples/*.fx"]))

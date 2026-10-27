@@ -79,6 +79,21 @@ rust_test(
 )
 
 # FUG-125: differential + hill-climb harness for the bytecode optimizer.
+# #400 signed/vector uniform ranges + mat3/mat4 (lowered to vecN ops): grammar,
+# manifest, and VM equivalence against hand-written dot forms.
+rust_test(
+    name = "matrix_test",
+    srcs = ["tests/matrix.rs"],
+    compile_data = ["//agent:skill/examples/plane_slice_pose.fx"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+        "//firmware/osc",
+        "@crates//:serde_json",
+    ],
+)
+
 rust_test(
     name = "optimizer_test",
     srcs = ["tests/optimizer.rs"],

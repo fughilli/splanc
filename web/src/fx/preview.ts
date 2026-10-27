@@ -14,10 +14,14 @@ import { assetUrl } from "../assetBase";
 import type { ReplayVm } from "./fxDebug";
 
 export type FxUiKind =
+  // A scalar, or a RANGED vector (vec2..vec4 with a declared range: one slider
+  // per component; min/max may be negative). An unranged vec3/vec4 is "color".
   | { kind: "slider"; min: number; max: number; step: number }
   | { kind: "color" }
   | { kind: "toggle" }
-  | { kind: "dropdown"; options: string[] };
+  | { kind: "dropdown"; options: string[] }
+  // mat3 / mat4 (width 9 / 16), column-major as in GLSL.
+  | { kind: "matrix"; min: number; max: number };
 
 export interface FxUniform {
   name: string;
@@ -25,6 +29,15 @@ export interface FxUniform {
   width: number;
   ui: FxUiKind;
   default: number[];
+  /** Declared range (newer compilers; for a per-component vector range, the
+   * envelope of `mins`/`maxs`). */
+  min?: number | undefined;
+  max?: number | undefined;
+  /** Per-component range of a vector declared `vecN(lo..) .. vecN(hi..)`. */
+  mins?: number[] | undefined;
+  maxs?: number[] | undefined;
+  unit?: string | undefined;
+  doc?: string | undefined;
 }
 
 export interface FxDiagnostic {

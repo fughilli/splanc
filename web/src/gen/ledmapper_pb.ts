@@ -1442,7 +1442,11 @@ export const UploadChunk_KindSchema: GenEnum<UploadChunk_Kind> = /*@__PURE__*/
 
 /**
  * A single uniform's live value. `slot` indexes the effect's uniform manifest;
- * `value` carries 1..4 floats (scalar or vecN) interpreted per the manifest.
+ * `value` carries 1..4 floats (scalar or vecN) interpreted per the manifest,
+ * written into consecutive slots from `slot`. A wider uniform (mat3 = 9, mat4 =
+ * 16 floats, column-major) travels as consecutive chunks {slot, v[0..4]},
+ * {slot+4, v[4..8]}, ... — every sender and the device's replies keep to <= 4
+ * floats per value (firmware since #400 also accepts up to 16 in one).
  *
  * @generated from message ledmapper.v1.UniformValue
  */

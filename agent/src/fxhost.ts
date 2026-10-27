@@ -124,7 +124,7 @@ export async function compile(source: string, tc?: Toolchain): Promise<CompileOu
   const r: FxCompiled = await withToolchain(tc, () => compileScript(source));
   return {
     ok: r.ok,
-    diagnostics: r.diagnostics,
+    diagnostics: r.ok ? r.diagnostics : [...r.diagnostics, ...(await newerFeatureHint(source, tc))],
     warnings: r.warnings,
     uniforms: r.uniforms as unknown as ManifestUniform[],
     bytecodeBytes: r.bytecode.length,
@@ -132,6 +132,33 @@ export async function compile(source: string, tc?: Toolchain): Promise<CompileOu
     fxb: r.bytecode,
     ...(r.symbols ? { symbols: r.symbols } : {}),
   };
+}
+
+/** A player's OLDER bundle rejected `source`: if this bundle's own compiler
+ * accepts it, the effect uses language this firmware predates (e.g. mat3/mat4
+ * or ranged/signed-range vector uniforms) — say so instead of leaving only the
+ * old compiler's parse error. Empty when not applicable. */
+async function newerFeatureHint(source: string, tc: Toolchain | undefined): Promise<CompileOutcome["diagnostics"]> {
+  if (tc === undefined) return [];
+  let host: Toolchain;
+  try {
+    host = await hostToolchain();
+  } catch {
+    return [];
+  }
+  if (host === tc) return [];
+  const r = await withToolchain(host, () => compileScript(source));
+  if (!r.ok) return [];
+  return [
+    {
+      line: 0,
+      col: 0,
+      msg:
+        `this effect uses language features newer than firmware ${tc.version} (e.g. mat3/mat4 or ranged vector ` +
+        `uniforms); it compiles with this agent's newer compiler. Update the player's firmware (update_firmware), ` +
+        `or avoid those features.`,
+    },
+  ];
 }
 
 /** The source lints of `source` from this bundle's own compiler (the lints are

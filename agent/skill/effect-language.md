@@ -81,8 +81,26 @@ too (see Performance below).
 
 `float vec2 vec3 vec4 int bool`, fixed-point `fixed` (Q16.16 — integer maths,
 the fast type for per-LED work), `fixed16` (Q1.14) and `fixed8` (Q1.6) (range
-±2; mostly for compact buffer storage), `struct`s and fixed-size arrays
-(`Type name[N]`). Casts: `fixed(x)`, `float(x)`, `int(x)`.
+±2; mostly for compact buffer storage), float matrices `mat3 mat4`, `struct`s
+and fixed-size arrays (`Type name[N]`). Casts: `fixed(x)`, `float(x)`, `int(x)`.
+A vector can be indexed like an array: `v[1]` is `v.y`.
+
+### Matrices (`mat3`, `mat4`)
+
+Column-major, GLSL conventions: `m[c]` is column `c` (a `vec3`/`vec4`), `m[c][r]`
+one element (both readable and assignable; a uniform takes constant indices
+only). Constructors: `mat4(1.0)` (diagonal; the identity), `mat4(c0, c1, c2, c3)`
+(columns), 16 scalars column-major, `mat3(m4)` (upper-left 3×3), `mat4(m3)`.
+Operators: `m * v`, `v * m`, `m * m`, `m * s`, `m / s`, `m + m`, `m - m`, `-m`;
+`transpose(m)`. Points: `transform(m, p)` with a `mat4` and a `vec3` is the
+affine point transform `(m * vec4(p, 1.0)).xyz` (also `transform(mat3, vec2)`);
+a direction is `mat3(m) * d`. `uniform mat4 pose;` defaults to the identity;
+`state mat4` and locals start at zero (`mat4 m;`).
+
+Matrices cost: a per-LED `mat4 * vec4` is 16 multiplies + 12 adds of float
+(~5,000 cycles), `transform(m, p)` 9 + 9. Pre-multiply in `update()` — e.g.
+move a world-frame plane into the fixture frame once per frame and keep only
+a `dot` per LED (`examples/plane_slice_pose.fx`).
 
 ## Inputs
 
@@ -107,7 +125,9 @@ the fast type for per-LED work), `fixed16` (Q1.14) and `fixed8` (Q1.6) (range
 
 ## Builtins
 
-Math `sin cos tan abs floor ceil fract sqrt exp log sign min max pow mod step atan2`;
+Math `sin cos tan abs floor ceil fract sqrt exp log sign min max pow mod step
+atan2` (also spelled `atan(y, x)`; one-argument `atan(y)` = `atan2(y, 1.0)`);
+matrices `transpose transform`;
 vectors `clamp mix smoothstep dot cross length normalize distance`; colour
 `hsv2rgb(h, s, v)` (all 0..1) and `palette0/1/2`; noise `hash(x)` / `hash(vec3)`
 → 0..1; textures `sample paint`; topology `seg_count seg_len seg_node node_deg

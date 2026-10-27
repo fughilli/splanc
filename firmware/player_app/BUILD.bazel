@@ -245,6 +245,21 @@ rust_test(
     ],
 )
 
+# #400 wide uniforms (signed vec4 + mat4) through the C ABI: full-width defaults,
+# 16-float set_uniforms / live mailbox / OSC, current values as <= 4-float chunks.
+rust_test(
+    name = "wide_uniforms_test",
+    srcs = ["tests/wide_uniforms.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
 # The FX debugger (fxdbg.rs): pause / step / lease, chunked snapshot sections, and
 # a host replay of a paused frame that must match the device bit-exactly
 # (docs/design/fx-debugger.md). Own binary: fresh process-global FFI state.

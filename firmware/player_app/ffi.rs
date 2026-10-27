@@ -34,7 +34,7 @@ use ledmapper_fx_vm::{
     Program, Rgb as Rgb8, Vm as FxVm,
 };
 use ledmapper_keypoint::{self as kp, Morph};
-use ledmapper_osc::{self as osc, Config as OscConfig, PortTable, Shadow};
+use ledmapper_osc::{self as osc, Config as OscConfig, PortTable};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player::{upload_malformed, upload_too_large, Player};
 use ledmapper_view::ledmapper::v1 as pv;
@@ -389,13 +389,12 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
 
 /// Native OSC control (FUG-121). The active effect's uniform manifest reduced to
 /// a `name -> (slot, width)` table, rebuilt once per `lm_fx_load` so the UDP
-/// task's per-packet path is a table scan, not a JSON parse. `OSC_SHADOW` retains
-/// each slot's last values so per-axis vector messages (`/tint/x`) patch one
-/// component without clobbering the others. `OSC_BY_NAME` toggles name
+/// task's per-packet path is a table scan, not a JSON parse. A per-axis /
+/// per-element message (`/tint/x`, `/pose/12`) writes only the components it
+/// names, so the others keep their VM values. `OSC_BY_NAME` toggles name
 /// resolution vs raw slot-index addressing (`false` = the slot-only fallback /
 /// the A-B benchmark leg).
 static mut OSC_TABLE: PortTable = PortTable::empty();
-static mut OSC_SHADOW: Shadow = Shadow::new();
 static mut OSC_BY_NAME: bool = true;
 /// OSC received on the netstack build's UDP :9000, latest value per address,
 /// applied at the next frame boundary (lm_osc_post / lm_osc_drain). The ~730 B
@@ -1960,33 +1959,46 @@ pub unsafe extern "C" fn lm_live_post(data: *const u8, len: usize) -> u32 {
     }
     let d = deck_index(m.deck()) as u8;
     let mb = &mut *addr_of_mut!(LIVE_MAILBOX);
+    // A value wider than 4 floats (a mat3/mat4 uniform) waits as consecutive
+    // 4-slot chunks keyed (slot, slot+4, ...): applying them is exactly the
+    // whole write, and an entry stays 4 floats.
+    let chunks = |n: usize| n.div_ceil(4).max(1);
     // All or nothing: count the new keys first, so a move is never half-applied.
     let mut fresh = 0;
     for uv in m.values() {
-        if uv.slot() > u8::MAX as u32 {
+        let n = uv.value().count();
+        if n > osc::MAX_WIDTH || uv.slot() as usize + n > u8::MAX as usize {
             return 0;
         }
-        if mb.find(d, uv.slot() as u8).is_none() {
-            fresh += 1;
+        for k in 0..chunks(n) {
+            if mb.find(d, (uv.slot() as usize + 4 * k) as u8).is_none() {
+                fresh += 1;
+            }
         }
     }
     if mb.len + fresh > LIVE_SLOTS {
         return 0;
     }
     for uv in m.values() {
-        let mut v = LiveVal { deck: d, slot: uv.slot() as u8, n: 0, vals: [0.0; 4] };
-        for (dst, x) in v.vals.iter_mut().zip(uv.value()) {
+        let mut all = [0.0f32; osc::MAX_WIDTH];
+        let mut n = 0usize;
+        for (dst, x) in all.iter_mut().zip(uv.value()) {
             *dst = x;
-            v.n += 1;
+            n += 1;
         }
-        if v.n == 0 {
+        if n == 0 {
             continue;
         }
-        match mb.find(d, v.slot) {
-            Some(i) => mb.e[i] = v,
-            None => {
-                mb.e[mb.len] = v;
-                mb.len += 1;
+        for k in 0..chunks(n) {
+            let part = &all[4 * k..(4 * k + 4).min(n)];
+            let mut v = LiveVal { deck: d, slot: (uv.slot() as usize + 4 * k) as u8, n: part.len() as u8, vals: [0.0; 4] };
+            v.vals[..part.len()].copy_from_slice(part);
+            match mb.find(d, v.slot) {
+                Some(i) => mb.e[i] = v,
+                None => {
+                    mb.e[mb.len] = v;
+                    mb.len += 1;
+                }
             }
         }
     }
@@ -3141,8 +3153,9 @@ unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
             (*p).morph.cancel();
         }
         for uv in m.values() {
-            // UniformValue { slot, repeated float value } — packed or not.
-            let mut vals = [0.0f32; 4];
+            // UniformValue { slot, repeated float value } — packed or not; up
+            // to a whole mat4 (16 floats) into consecutive slots from `slot`.
+            let mut vals = [0.0f32; osc::MAX_WIDTH];
             let mut n = 0;
             for (dst, v) in vals.iter_mut().zip(uv.value()) {
                 *dst = v;
@@ -3232,6 +3245,18 @@ impl PbOut<'_> {
     }
 }
 
+impl PbOut<'_> {
+    /// Slot-keyed values (UniformValue) of one uniform, as consecutive chunks of
+    /// at most 4 floats at `slot`, `slot + 4`, ... — every UniformValue on the
+    /// wire stays a scalar..vec4, so readers built for 4-float values (and the
+    /// host protocol types' 4-float cap) keep decoding a mat3/mat4 uniform.
+    fn value_msgs(&mut self, field: u32, slot: u32, vals: &[f32]) {
+        for (k, part) in vals.chunks(4).enumerate() {
+            self.value_msg(field, ValueKey::Slot(slot + 4 * k as u32), part);
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum ValueKey<'a> {
     Slot(u32),
@@ -3277,7 +3302,7 @@ unsafe fn write_effect_uniforms(w: &mut PbOut, d: usize, p: *mut DeckState, prog
     if let Some(vm) = (*p).vm.as_ref() {
         let mut put = |slot: usize, width: usize| {
             if let Some(vals) = vm.uniforms.get(slot..slot + width) {
-                w.value_msg(3, ValueKey::Slot(slot as u32), vals);
+                w.value_msgs(3, slot as u32, vals);
             }
         };
         if d == DECK_A_IDX {
@@ -3680,7 +3705,7 @@ unsafe fn kp_keypoint_reply(
             let _ = kp::for_each_value(rec, |uname, v| {
                 if let Some(rule) = r.by_name(uname) {
                     if rule.width as usize == v.len() {
-                        w.value_msg(6, ValueKey::Slot(rule.slot as u32), v);
+                        w.value_msgs(6, rule.slot as u32, v);
                     }
                 }
             });
@@ -3768,7 +3793,7 @@ pub unsafe extern "C" fn lm_kp_commit_frame(out: *mut u8, cap: usize) -> i32 {
     let target = (*p).morph.target();
     let rules = &(*p).morph.rules;
     write_arm(out, cap, ARM_SET_UNIFORMS, |w| {
-        rules.unpack(&target, |slot, vals| w.value_msg(1, ValueKey::Slot(slot as u32), vals));
+        rules.unpack(&target, |slot, vals| w.value_msgs(1, slot as u32, vals));
     })
 }
 
@@ -4612,10 +4637,8 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
     let p = if d == DECK_A_IDX { addr_of_mut!(DECK_A) } else { deck_b_claim() };
     if d == DECK_A_IDX {
         // Build the OSC name->slot table for the fresh effect (once, off the
-        // render path) and clear the per-slot value shadow so no stale vector
-        // component leaks across a hot-reload. OSC drives deck A only.
+        // render path). OSC drives deck A only.
         *addr_of_mut!(OSC_TABLE) = osc::parse_manifest(prog.manifest);
-        (*addr_of_mut!(OSC_SHADOW)).reset();
         if let Some(mb) = osc_mailbox() {
             mb.clear();
         }
@@ -4717,7 +4740,6 @@ unsafe fn fx_clear(d: usize) {
         DECK_A.id_len = 0;
         (*addr_of_mut!(DECK_A)).morph.clear();
         *addr_of_mut!(OSC_TABLE) = PortTable::empty();
-        (*addr_of_mut!(OSC_SHADOW)).reset();
         if let Some(mb) = osc_mailbox() {
             mb.clear();
         }
@@ -4886,7 +4908,7 @@ unsafe fn fx_set_uniform(d: usize, slot: u32, vals: &[f32]) {
     }
 }
 
-/// Apply a uniform value (`vals` = its slot count, 1..4) to deck A's VM.
+/// Apply a uniform value (`vals` = its slot count, 1..16) to deck A's VM.
 ///
 /// # Safety
 /// `vals` must point to `n` readable f32.
@@ -4926,8 +4948,7 @@ pub unsafe extern "C" fn lm_osc_ingest(data: *const u8, len: usize) -> u32 {
     let bytes = core::slice::from_raw_parts(data, len);
     let cfg = OscConfig { prefix: "/", by_name: OSC_BY_NAME };
     let table = &*addr_of!(OSC_TABLE);
-    let shadow = &mut *addr_of_mut!(OSC_SHADOW);
-    osc::ingest(bytes, &cfg, table, shadow, &mut |slot, vals| {
+    osc::ingest(bytes, &cfg, table, &mut |slot, vals| {
         if let Some(vm) = (*addr_of_mut!(DECK_A.vm)).as_mut() {
             vm.set_uniform(slot as usize, vals);
         }
@@ -5003,8 +5024,7 @@ pub unsafe extern "C" fn lm_osc_drain() -> u32 {
     }
     let cfg = OscConfig { prefix: "/", by_name: OSC_BY_NAME };
     let table = &*addr_of!(OSC_TABLE);
-    let shadow = &mut *addr_of_mut!(OSC_SHADOW);
-    mb.drain(&cfg, table, shadow, &mut |slot, vals| {
+    mb.drain(&cfg, table, &mut |slot, vals| {
         if let Some(vm) = (*addr_of_mut!(DECK_A.vm)).as_mut() {
             vm.set_uniform(slot as usize, vals);
         }

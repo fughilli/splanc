@@ -766,6 +766,14 @@ body.is-locked {
   font-size: var(--f-caption);
   text-align: right;
 }
+/* mat3/mat4: an N×N grid of number fields spanning the control + value columns
+ * (columns set inline from N). */
+.upanel-mat {
+  grid-column: 2 / span 2;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
 .upanel-num::-webkit-outer-spin-button,
 .upanel-num::-webkit-inner-spin-button {
   appearance: none;

@@ -33,6 +33,7 @@ import {
   type UniformValueFlat,
 } from "../../web/src/net/proto";
 import { TextureStreamer, type TextureFormat } from "../../web/src/net/textureCodec";
+import { chunkUniformValues, reassembleUniformValues } from "../../web/src/net/uniformWire";
 import {
   formatWifiStatus,
   OTA_PENDING_WARNING,
@@ -46,10 +47,12 @@ import { compile, type CompileOutcome, type Toolchain } from "./fxhost";
 import { progress } from "./progress";
 import type { ClockSync } from "./timesync";
 import {
+  currentByName,
   describe,
   lerpValues,
   parseManifest,
   resolve,
+  resolveFull,
   type ManifestUniform,
   type UniformInput,
 } from "./uniforms";
@@ -198,8 +201,15 @@ interface Deployed {
   /** The effect's declared uniforms (slot + default), from its compile. */
   uniforms: ManifestUniform[];
   /** Last-known value per slot: the defaults sent on activation, then every
-   * set this session sent while it was active (restored by rollback). */
+   * set this session sent while it was active (restored by rollback). Kept as
+   * ≤4-float wire chunks (see noteChunks) so a mat4 set whole and one set in
+   * chunks never mix stale components. */
   values: Map<number, number[]>;
+}
+
+/** Record `values` into a slot-keyed map as ≤4-float wire chunks. */
+function noteChunks(into: Map<number, number[]>, values: readonly UniformValueFlat[]): void {
+  for (const c of chunkUniformValues(values)) into.set(c.slot, c.value);
 }
 
 interface TextureStream {
@@ -454,12 +464,8 @@ export class DeviceSession {
       this.live = 0;
     }
     const uniforms = parseManifest(raw.manifest ?? new Uint8Array(0));
-    const bySlot = new Map((raw.current ?? []).map((c) => [c.slot, c.value]));
-    const current = new Map<string, number[]>();
-    for (const u of uniforms) {
-      const v = bySlot.get(u.slot);
-      if (v) current.set(u.name, v);
-    }
+    // A mat3/mat4 arrives as consecutive ≤4-float slot chunks: reassemble.
+    const current = currentByName(uniforms, raw.current ?? []);
     const textures = (raw as unknown as { textures?: { index: number; width: number; height: number; elem: number }[] })
       .textures ?? [];
     return { effectId: raw.effectId ?? "", uniforms, current, textures, raw };
@@ -879,7 +885,7 @@ export class DeviceSession {
   /** Track values sent to `deck` on whichever deployed effect is there. */
   private noteSent(values: UniformValueFlat[], deck: Deck): void {
     const target = this.current?.deck === deck ? this.current : this.previous?.deck === deck && this.previous.onDevice ? this.previous : null;
-    if (target) for (const v of values) target.values.set(v.slot, v.value);
+    if (target) noteChunks(target.values, values);
   }
 
   /** `deck` default: the live deck. Deck B is never persisted (commit ignored). */
@@ -904,7 +910,13 @@ export class DeviceSession {
    * them. Send each declared uniform's value — its default, or `known` — right
    * after the submit, uncommitted (as the web app does after its own submit). */
   private async sendActivationValues(d: Deployed, known?: Map<number, number[]>): Promise<void> {
-    const values = d.uniforms.map((u) => ({ slot: u.slot, value: known?.get(u.slot) ?? u.default }));
+    const held = new Map(
+      reassembleUniformValues(
+        [...(known ?? [])].map(([slot, value]) => ({ slot, value })),
+        d.uniforms,
+      ).map((v) => [v.slot, v.value]),
+    );
+    const values = d.uniforms.map((u) => ({ slot: u.slot, value: held.get(u.slot) ?? u.default }));
     if (values.length === 0) return;
     await this.run(async () => this.sendUniforms(values, false, d.deck));
   }
@@ -920,7 +932,9 @@ export class DeviceSession {
     if (!(seconds >= 0 && seconds <= 600)) throw new ToolError("seconds must be within 0..600");
     const a = await this.activeEffect();
     if (!a.effectId) throw new ToolError("no effect is loaded; deploy one first");
-    const final = resolve(a.uniforms, targets);
+    // One full-width value per named uniform (the interpolation is per uniform;
+    // the wire chunks mat3/mat4 itself).
+    const final = resolveFull(a.uniforms, targets);
     const byName = new Map(a.uniforms.map((u) => [u.name, u]));
     // Never faster than the player renders (its autoscaled rate, once a perf
     // report or fps_state has told us), nor 60 Hz.
@@ -1144,7 +1158,7 @@ export class DeviceSession {
       const values = new Map<number, number[]>();
       for (const u of a.uniforms) {
         const v = a.current.get(u.name);
-        if (v) values.set(u.slot, v);
+        if (v) noteChunks(values, [{ slot: u.slot, value: v }]);
       }
       return { effectId: a.effectId, fxb: undefined, deck, uniforms: a.uniforms, values, onDevice: true };
     } catch {
@@ -1233,7 +1247,7 @@ export class DeviceSession {
       const a = await this.activeEffect(to);
       const wire = resolve(a.uniforms, uniforms);
       await this.run(async () => this.sendUniforms(wire, false, to));
-      for (const v of wire) incoming.values.set(v.slot, v.value);
+      noteChunks(incoming.values, wire);
     }
     // The outgoing effect is the rollback target, still loaded on its deck.
     this.previous = outgoing ? { ...outgoing, onDevice: true } : this.previous?.deck === from ? this.previous : null;
