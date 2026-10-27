@@ -32,11 +32,16 @@ OLD_JOINED = (
 
 OK = {"ok": True, "url": "http://10.42.0.221/"}
 TIMEOUT = {"ok": False, "error": "ImprovBLE provisioning failed: " + core.JOIN_TIMEOUT}
+UNABLE = {"ok": False, "error": "ImprovBLE provisioning failed: unable_to_connect"}
+NOT_FOUND = (
+    '[t=20000] [ble] "hitl-absent-1" not found in 3 sweeps (directed probe incl.) — Improv '
+    "error UNABLE_TO_CONNECT; creds kept, background rescan continues\n"
+)
 NO_DEVICE = {"ok": False, "error": "ImprovBLE provisioning failed: no Improv device found in scan"}
 
 
-def _all(r):
-    return {n: r for n in core.PHASES}
+def _all(r, absent=UNABLE):
+    return {**{n: r for n in core.PHASES + (core.RECOVER,)}, core.ABSENT: absent}
 
 
 def test_parse_counts_fresh_ride_and_old_lines():
@@ -48,7 +53,7 @@ def test_parse_counts_fresh_ride_and_old_lines():
 
 
 def test_fixed_firmware_passes():
-    s = core.parse_serial(SETUP + FRESH_SAME + FRESH_SAME + RIDE)
+    s = core.parse_serial(SETUP + FRESH_SAME + FRESH_SAME + RIDE + NOT_FOUND)
     g = core.grade(OK, _all(OK), s, 20.0)
     assert g["verdict"] == "PASS", g
 
@@ -92,3 +97,25 @@ def test_no_serial_capture_grades_on_the_provisioner_alone():
 def test_crash_fails():
     s = core.parse_serial(SETUP + FRESH_SAME + FRESH_SAME + "Guru Meditation Error\n")
     assert core.grade(OK, _all(OK), s, 20.0)["verdict"] == "FAIL"
+
+
+def test_absent_ssid_must_report_not_hang():
+    s = core.parse_serial(SETUP + FRESH_SAME + FRESH_SAME + NOT_FOUND)
+    assert s["not_found"] == 1
+    assert core.grade(OK, _all(OK), s, 20.0)["verdict"] == "PASS"
+    # The pre-fix firmware: the app waits until its own timeout.
+    hang = core.grade(OK, _all(OK, absent=TIMEOUT), core.parse_serial(SETUP + FRESH_SAME * 2), 20.0)
+    assert hang["verdict"] == "FAIL"
+    assert any("the app hangs" in p for p in hang["problems"])
+    assert any("not-found report" in p for p in hang["problems"])
+    # A board that claims to have joined an SSID that isn't there is wrong too.
+    assert core.grade(OK, _all(OK, absent=OK), None, 20.0)["verdict"] == "FAIL"
+
+
+def test_absent_ble_infra_is_skip_and_recover_failure_fails():
+    s = core.parse_serial(SETUP + FRESH_SAME * 2)
+    assert core.grade(OK, _all(OK, absent=NO_DEVICE), s, 20.0)["verdict"] == "SKIP"
+    ph = _all(OK)
+    ph[core.RECOVER] = TIMEOUT
+    g = core.grade(OK, ph, core.parse_serial(SETUP + FRESH_SAME * 2 + NOT_FOUND), 20.0)
+    assert g["verdict"] == "FAIL" and g["problems"][0].startswith("recover:")

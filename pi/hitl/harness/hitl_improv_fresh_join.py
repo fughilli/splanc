@@ -13,7 +13,10 @@ ONE reservation (the phases + grading live in improv_fresh_join_core):
   stored  reset (rejoin from the stored creds), Improv the SAME creds at once;
   joined  past the re-send coalesce window, Improv the same creds on the joined board;
   resend  straight after, the same creds again (a central re-sending after a missed
-          result): must still get PROVISIONED + redirect.
+          result): must still get PROVISIONED + redirect;
+  absent  an SSID that is not on the air (a 5 GHz-only / switched-off hotspot): must get
+          Improv error UNABLE_TO_CONNECT inside the budget instead of hanging the app;
+  recover the rig AP again: must PROVISION.
 
 Each same-creds phase must reach PROVISIONED + the redirect within --join-budget (the
 Improv client's join timeout). The reservation's always-on serial capture is parsed for
@@ -78,7 +81,7 @@ def run(args) -> int:
     res = Reservation(server=args.server, owner=args.owner, device=args.device, sku="esp32c6")
     res.acquire()
     setup: dict | None = None
-    phases: dict[str, dict | None] = {n: None for n in core.PHASES}
+    phases: dict[str, dict | None] = {n: None for n in core.ALL_PHASES}
     try:
         creds = res.wifi()
         if not creds:
@@ -120,6 +123,13 @@ def run(args) -> int:
 
             _log("[resend] the same creds again straight away (a central that missed the result)")
             phases["resend"] = _improv(res, ssid, password, args.join_budget, address)
+
+            absent = f"hitl-absent-{os.getpid() % 100000}"
+            _log(f"[absent] Improv {absent!r} (not on the air): want UNABLE_TO_CONNECT, not a hang")
+            phases["absent"] = _improv(res, absent, "password1", args.join_budget, address)
+
+            _log("[recover] Improv the rig AP again")
+            phases["recover"] = _improv(res, ssid, password, args.join_budget, address)
     finally:
         res.release()
 
@@ -135,7 +145,7 @@ def run(args) -> int:
     )
     _log(
         f"RESULT unit={res._unit} budget={args.join_budget:g}s "
-        + " ".join(f"{n}={core.classify(phases[n])}" for n in core.PHASES)
+        + " ".join(f"{n}={core.classify(phases[n])}" for n in core.ALL_PHASES)
         + f" verdict={g['verdict']}"
         + (f" skip={g['skip']!r}" if g["skip"] else "")
     )

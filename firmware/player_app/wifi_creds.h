@@ -21,6 +21,10 @@
 //     one exception: identical creds re-sent within kImprovCoalesceMs of the fresh join
 //     they would restart ride that join (a central that missed the result re-sends
 //     several times; restarting on each would keep it from ever reaching the lease);
+//   - an Improv fresh join whose SSID no sweep can see (a 5 GHz-only or switched-off
+//     hotspot) is reported to the central as UNABLE_TO_CONNECT after a few retry sweeps
+//     instead of leaving the app waiting; the creds stay committed and the background
+//     rescan continues (wifi_scan.h ImprovScanReport);
 //   - wired PROV (the HITL console path) of the network the board is already on (or
 //     joining) is a no-op, not a teardown;
 //   - a stored network that wasn't in the boot scan (the AP still booting after a power
@@ -115,8 +119,9 @@ class ImprovJoin {
     at_ms_ = now_ms;
     return ImprovProvision::kFreshJoin;
   }
-  // Another provision path (wired PROV) replaced the credentials: the next Improv write,
-  // whatever it carries, is fresh.
+  // Another provision path (wired PROV) replaced the credentials, or the fresh join was
+  // reported failed to the central (SSID not found, wifi_scan.h ImprovScanReport): the
+  // next Improv write, whatever it carries, is fresh.
   void forget() { started_ = false; }
   // When the last fresh join started (valid once one has).
   uint32_t started_ms() const { return at_ms_; }

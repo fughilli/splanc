@@ -17,7 +17,10 @@ The gate, in ONE reservation:
   3. once past the re-send coalesce window, Improv the same creds again on the joined
      board ("joined" phase) — same requirement;
   4. right away, Improv the same creds once more ("resend" phase: a central re-sending
-     after a missed result) — must still get its redirect within the budget.
+     after a missed result) — must still get its redirect within the budget;
+  5. Improv an SSID that is not on the air ("absent" phase: a 5 GHz-only or switched-off
+     hotspot) — must get Improv error UNABLE_TO_CONNECT within the budget, not hang;
+  6. Improv the rig AP again ("recover" phase) — must PROVISION within the budget.
 Serial: every same-creds phase that the firmware saw must print a fresh join (or, for
 the resend, ride the fresh join just started), and NEVER the old short-circuit lines.
 
@@ -40,6 +43,7 @@ OLD_KEEP_RE = re.compile(
     r"\[ble\] wifi-settings (?:received|re-received) \(ssid=[^)]*\) — already "
     r"(?:joining that network|associated)"
 )
+NOT_FOUND_RE = re.compile(r"\[ble\] \"[^\"]*\" not found in \d+ sweeps.*UNABLE_TO_CONNECT")
 REDIRECT_RE = re.compile(r"\[ble\] PROVISIONED -> redirect (\S+)")
 LEASE_RE = re.compile(r"DHCP LEASE ACQUIRED.*?IP\s+(\d{1,3}(?:\.\d{1,3}){3})")
 RESTORED_RE = re.compile(r"\[wifi\] restored stored credentials \(ssid=([^)]*)\)")
@@ -51,9 +55,13 @@ CRASH_RE = re.compile(
 # never reached the DUT, so the firmware never saw the creds.
 INFRA_ERRORS = ("no Improv device found", "BLE transport failed", "provisioner gave no JSON")
 JOIN_TIMEOUT = "timed out waiting for the player to join"
+UNABLE = "unable_to_connect"
 
-# The same-creds phases, in run order.
+# The same-creds phases, in run order; then the absent-SSID report and the recovery.
 PHASES = ("stored", "joined", "resend")
+ABSENT = "absent"
+RECOVER = "recover"
+ALL_PHASES = PHASES + (ABSENT, RECOVER)
 
 
 def parse_serial(log: str) -> dict:
@@ -64,6 +72,7 @@ def parse_serial(log: str) -> dict:
         "fresh_same": sum(1 for m in FRESH_RE.finditer(log) if m.group(2)),
         "ride": len(RIDE_RE.findall(log)),
         "old_keep": len(OLD_KEEP_RE.findall(log)),
+        "not_found": len(NOT_FOUND_RE.findall(log)),
         "redirects": len(REDIRECT_RE.findall(log)),
         "leases": len(LEASE_RE.findall(log)),
         "restored": RESTORED_RE.search(log) is not None,
@@ -97,7 +106,7 @@ def grade(setup: dict | None, phases: dict, serial: dict | None, budget_s: float
     problems: list[str] = []
     infra: list[str] = []
     seen = 0  # phases the firmware demonstrably received
-    for name in PHASES:
+    for name in PHASES + (RECOVER,):
         r = phases.get(name)
         c = classify(r)
         if c == "missing":
@@ -117,7 +126,25 @@ def grade(setup: dict | None, phases: dict, serial: dict | None, budget_s: float
         js = r.get("join_s")
         if js is not None and js > budget_s:
             problems.append(f"{name}: joined in {js:.1f}s, over the {budget_s:g}s budget")
+    # The absent SSID: the app must be told (UNABLE_TO_CONNECT), not left waiting.
+    ra = phases.get(ABSENT)
+    ca = classify(ra)
+    if ca in ("missing", "infra"):
+        infra.append(f"{ABSENT}: " + ("phase did not run" if ca == "missing" else ra.get("error")))
+    else:
+        seen += 1
+        err = str(ra.get("error") or "")
+        if ca == "ok":
+            problems.append(f"{ABSENT}: an SSID that is not on the air reported PROVISIONED")
+        elif JOIN_TIMEOUT in err:
+            problems.append(
+                f"{ABSENT}: no Improv error within the {budget_s:g}s budget (the app hangs)"
+            )
+        elif UNABLE not in err:
+            problems.append(f"{ABSENT}: want error {UNABLE}, got {err}")
     if serial is not None:
+        if ca in ("ok", "fail") and not serial["not_found"]:
+            problems.append("serial: no not-found report for the absent SSID")
         if serial["old_keep"]:
             problems.append(
                 f"serial: {serial['old_keep']} Improv short-circuit(s) (already joining/associated)"
