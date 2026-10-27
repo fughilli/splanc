@@ -105,6 +105,7 @@ py_library(
         "hitl_improv.py",
         "hitl_ws.py",
         "improv.py",
+        "improv_fresh_join_core.py",
         "jit_soak_core.py",
         "lan_relay.py",
         "led_pattern.py",
@@ -669,6 +670,36 @@ py_test(
     },
     imports = ["."],
     main = "hitl_upgrade_keeps_wifi.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "@rules_python//python/runfiles",
+    ],
+)
+
+# A Wi-Fi join triggered through BLE Improv is always fresh (the user's rule): reset a
+# provisioned netstack board so it rejoins from its stored creds, then Improv the SAME
+# creds — while it joins, once it is joined, and again straight away (a central
+# re-sending after a missed result) — and require PROVISIONED + the redirect inside the
+# Improv join budget every time, with the firmware logging a fresh join (never the old
+# "already joining/associated" short-circuit). Pure logic: improv_fresh_join_core.
+py_test(
+    name = "improv_fresh_join",
+    timeout = "eternal",
+    srcs = ["hitl_improv_fresh_join.py"],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_improv_fresh_join.py",
     tags = [
         "hitl",
         "manual",

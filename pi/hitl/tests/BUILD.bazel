@@ -43,6 +43,7 @@ py_test(
         "test_hitl_verdict.py",
         "test_improv.py",
         "test_improv_find.py",
+        "test_improv_fresh_join_core.py",
         "test_jit_soak.py",
         "test_lan_relay.py",
         "test_led_pattern.py",
