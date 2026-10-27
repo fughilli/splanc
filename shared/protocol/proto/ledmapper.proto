@@ -1076,11 +1076,213 @@ message ClientMessage {
     OtaAbort ota_abort = 73;
     GetOtaStatus get_ota_status = 74;
     OtaReboot ota_reboot = 75;
-    // 76-89: left free for in-flight branches (#357's FX debugger takes 80-82).
+    // 76-79: left free. FX debugger (docs/design/fx-debugger.md).
+    FxDebugControl fx_debug_control = 80;
+    GetFxSnapshot get_fx_snapshot = 81;
+    DebugFxLed debug_fx_led = 82;
+    // 83-89: left free.
     // Wi-Fi rejoin policy (docs/design/wifi-rejoin-policy.md).
     SetWifiPolicy set_wifi_policy = 90;
     GetWifiPolicy get_wifi_policy = 91;
   }
+}
+
+// --- FX debugger (docs/design/fx-debugger.md) --------------------------------
+//
+// Pause the effect engine on the device and inspect it, so a fixture that
+// doesn't match the editor preview can be explained: freeze the frame clock,
+// step frames (or to an exact time), pull the rendered output + the VM's
+// uniforms / state / buffers / per-LED inputs, and re-run one LED with its VM
+// locals. A host replays the same .fxb at the same inputs and diffs per LED
+// (web/src/fx/replay.ts). Player profile: ESP32 FX players (feature
+// "fx_debug"); other players answer error{unsupported}.
+//
+// A pause is a LEASE: it auto-resumes `hold_ms` after the last fx debugger
+// message, or ~5 s after the last session closes, so a fixture never stays
+// frozen. Mapping capture / the counting probe still preempt a paused engine.
+
+// Pause / resume / step the FX engine, or just read its debugger state.
+// Reply: fx_debug.state (or error{no_effect} for pause/step with nothing
+// rendering).
+message FxDebugControl {
+  enum Action {
+    ACTION_STATUS = 0;
+    // Freeze: nothing renders, `time` stops, the strip holds the last frame.
+    ACTION_PAUSE = 1;
+    // Unfreeze: time continues from where it stopped (a time base re-applies).
+    ACTION_RESUME = 2;
+    // Pause (if running), then render `frames` more frames; the reply comes
+    // back at once with steps_pending > 0 — poll ACTION_STATUS until it is 0.
+    ACTION_STEP = 3;
+  }
+  Action action = 1;
+  // STEP: frames to render (0 = 1; at most 600).
+  uint32 frames = 2;
+  // STEP: seconds of effect time per stepped frame (unset = the last frame's
+  // dt). Every stepped frame advances time by exactly this.
+  optional float dt = 3;
+  // STEP: render ONE frame at exactly this effect time (dt = to_time - the
+  // last frame's time, unless `dt` is given). Overrides `frames`.
+  optional float to_time = 4;
+  // The pause lease, ms after the last fx debugger message (0 = 120000; at
+  // most 600000). Every fx debugger message renews it.
+  uint32 hold_ms = 5;
+}
+
+// The FX debugger's reply envelope: `state` answers fx_debug_control,
+// `chunk` get_fx_snapshot, `led` debug_fx_led.
+message FxDebugReply {
+  oneof reply {
+    FxDebugState state = 1;
+    FxSnapshotChunk chunk = 2;
+    FxLedDebug led = 3;
+  }
+}
+
+// The engine as the debugger sees it (fx_debug.state).
+message FxDebugState {
+  bool paused = 1;
+  // Stepped frames still to render (STEP is asynchronous).
+  uint32 steps_pending = 2;
+  // Until the lease auto-resumes (0 while running).
+  uint32 hold_remaining_ms = 3;
+  // The LAST rendered frame: effect time / dt (s), frame counter, LEDs shaded.
+  float time = 4;
+  float dt = 5;
+  uint32 frame = 6;
+  uint32 led_count = 7;
+  repeated FxDeckDebug decks = 8;
+  // The crossfade the last frame blended with (deck B loaded).
+  float crossfade = 9;
+  uint32 crossfade_mode = 10;
+  // Framerate ladder (FUG-82): the rate it runs at, the pinned target (0 = auto).
+  uint32 current_fps = 11;
+  uint32 target_fps = 12;
+  // Output stage: global brightness (0..255, nscale8 after the LUT; 255 =
+  // unscaled), whether a colour LUT is applied (section LUT), the per-channel
+  // wire colour order (6 bytes: channel 0's source permutation, then channel
+  // 1's — wire byte k = output[perm[k]]) and the LEDs on each channel.
+  uint32 brightness = 13;
+  bool lut = 14;
+  bytes color_order = 15;
+  uint32 channel0_leds = 16;
+  uint32 channel1_leds = 17;
+  // The full shade() Frame of the last frame, little-endian (layout
+  // FX_FRAME_V1 in docs/design/fx-debugger.md): what a host replay feeds the VM.
+  bytes frame_ctx = 18;
+  // Last update() bounded-exec outcome (0 ok, 1 budget, 2 timeout) and the
+  // per-invocation instruction budget.
+  uint32 last_update_outcome = 19;
+  uint32 budget = 20;
+  // A shared time base (set_time_base) is driving `time`.
+  bool time_base = 21;
+  // Why the engine last auto-resumed: "" | "timeout" | "disconnect" | "load".
+  string resume_reason = 22;
+  // Snapshot section layout versions this firmware serves (FX_*_V1 = 1).
+  uint32 layout_version = 23;
+}
+
+// One FX deck as the debugger sees it.
+message FxDeckDebug {
+  uint32 deck = 1;
+  string effect_id = 2;
+  // FNV-1a of the loaded .fxb (== perf_report.fxb_hash) and its size.
+  uint32 fxb_hash = 3;
+  uint32 fxb_bytes = 4;
+  // Loaded + active (its update/shade run each frame).
+  bool renders = 5;
+  // The .fxb header flags (FLAG_* in firmware/fx_vm).
+  uint32 flags = 6;
+  // Native JIT blocks the device compiled for it (0 = pure interpreter).
+  uint32 jit_blocks = 7;
+  // Bytes of its buffer arena (section ARENA) and the VM's state / uniform slots.
+  uint32 arena_bytes = 8;
+  uint32 state_slots = 9;
+  uint32 uniform_slots = 10;
+  // A keypoint morph is moving its uniforms.
+  bool morph_running = 11;
+}
+
+// Read a window of one snapshot section: bytes [offset, offset + max_len) of
+// its little-endian dump (layouts in docs/design/fx-debugger.md). Streamed from
+// the live buffers (nothing is copied on the device), so pause first for a
+// consistent read; `frame` in the reply says which frame it came from.
+// Reply: fx_debug.chunk (or error{no_effect}, error{not_paused} for RAW).
+message GetFxSnapshot {
+  enum Section {
+    // Per LED, 3 bytes R,G,B: the frame as the strip shows it (after the colour
+    // LUT and brightness, before the wire colour order).
+    SECTION_OUTPUT = 0;
+    // Per LED, 3 bytes in WIRE order (the channel's colour order applied).
+    SECTION_WIRE = 1;
+    // The deck's VM uniform slots, f32 each.
+    SECTION_UNIFORMS = 2;
+    // The deck's VM `state` slots (statics / state vars), f32 each.
+    SECTION_STATE = 3;
+    // The deck's buffer arena (LED buffers + textures), raw bytes.
+    SECTION_ARENA = 4;
+    // The deck's .fxb, as loaded.
+    SECTION_PROGRAM = 5;
+    // Per LED, the shade() inputs the device builds (FX_LED_V1, 44 bytes).
+    SECTION_LED_CONTEXT = 6;
+    // The colour LUT, 3 x 256 bytes (R, G, B tables); empty when none.
+    SECTION_LUT = 7;
+    // Per LED, 3 bytes: the effect's blended shade() result BEFORE the LUT /
+    // brightness, recomputed by re-running shade() at the paused frame.
+    // Paused only.
+    SECTION_RAW = 8;
+    // The deck's topology graph: u32 n_seg, then per segment f32 length, i32
+    // node a, i32 node b (what the VM's graph intrinsics read).
+    SECTION_GRAPH = 9;
+  }
+  Section section = 1;
+  uint32 deck = 2;
+  uint32 offset = 3;
+  // 0 = 768; at most 1536.
+  uint32 max_len = 4;
+}
+
+message FxSnapshotChunk {
+  GetFxSnapshot.Section section = 1;
+  uint32 deck = 2;
+  uint32 total_len = 3;
+  uint32 offset = 4;
+  bytes data = 5;
+  // The frame counter when this window was read.
+  uint32 frame = 6;
+  bool paused = 7;
+}
+
+// Re-run shade() for ONE LED of a paused frame on the interpreter, keeping its
+// VM locals — the most direct evidence of where a device run departs from a
+// host replay. Reply: fx_debug.led (or error{not_paused} / {no_effect} /
+// {bad_led}).
+message DebugFxLed {
+  uint32 led = 1;
+  uint32 deck = 2;
+  // Locals to return (0 = all 128).
+  uint32 max_locals = 3;
+}
+
+message FxLedDebug {
+  uint32 led = 1;
+  uint32 deck = 2;
+  // The deck's own shade() result (no crossfade), 3 bytes: on the
+  // interpreter (`rgb`) and on the normal path, JIT included (`rgb_jit`).
+  bytes rgb = 3;
+  bytes rgb_jit = 4;
+  // What the strip shows for this LED (section OUTPUT).
+  bytes output = 5;
+  // 0 ok, 1 budget, 2 timeout (the interpreted run).
+  uint32 outcome = 6;
+  // The VM locals after the interpreted run (zeroed first, so a local the
+  // run never wrote reads 0), f32.
+  repeated float locals = 7 [packed = true];
+  // The LED's shade() inputs (one FX_LED_V1 record).
+  bytes led_context = 8;
+  // Opcodes retired + operand-stack high-water of the interpreted run.
+  uint32 instructions = 9;
+  uint32 stack_max = 10;
 }
 
 // --- Firmware update over the air (docs/design/ota.md) ----------------------
@@ -1779,7 +1981,11 @@ message ServerMessage {
     ControlAck control_ack = 41;
     // Reply to a SetTexture carrying a seq.
     TextureAck texture_ack = 42;
-    // 43-50: left free for in-flight branches (#357 fx_debug takes 50).
+    // 43-49: left free.
+    // FX debugger (docs/design/fx-debugger.md).
+    // Reply to all three FX debugger arms (one envelope arm: each extra arm
+    // grows every by-value ServerMessage frame in the debug host builds).
+    FxDebugReply fx_debug = 50;
     // Reply to set_wifi_policy / get_wifi_policy.
     WifiPolicyState wifi_policy_state = 51;
   }

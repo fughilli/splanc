@@ -665,7 +665,11 @@ impl Player {
             | CMsg::GetOtaStatus(_)
             | CMsg::OtaReboot(_)
             | CMsg::SetWifiPolicy(_)
-            | CMsg::GetWifiPolicy(_) => Some(error("unsupported", "handled by the firmware, not the player core")),
+            | CMsg::GetWifiPolicy(_)
+            // The FX debugger lives in the fx layer (player_app ffi) too.
+            | CMsg::FxDebugControl(_)
+            | CMsg::GetFxSnapshot(_)
+            | CMsg::DebugFxLed(_) => Some(error("unsupported", "handled by the firmware, not the player core")),
             // Fire-and-forget: Pi-profile telemetry, set_texture (a video frame),
             // and set_jit (the JIT debug/bench toggle) — all handled by the fx
             // layer before they reach here. Dropped.

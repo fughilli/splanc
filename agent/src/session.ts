@@ -41,6 +41,7 @@ import {
 } from "../../web/src/net/wifiPolicy";
 import { OtaError, updateFirmware, type OtaPhase, type OtaProgress } from "../../web/src/net/otaUpdate";
 import type { Pose } from "./config";
+import { FxDebugger } from "../../web/src/fx/fxDebug";
 import { compile, type CompileOutcome, type Toolchain } from "./fxhost";
 import { progress } from "./progress";
 import type { ClockSync } from "./timesync";
@@ -1379,6 +1380,32 @@ export class DeviceSession {
     await this.snapCrossfade(target, mode);
     this.live = target >= 0.5 ? 1 : 0;
     return { from: +from.toFixed(3), to: target, seconds, steps: steps + 1 };
+  }
+
+  // -- FX debugger (docs/design/fx-debugger.md) ---------------------------------
+
+  private fxdbg: FxDebugger | null = null;
+
+  /** The device-side FX debugger over this session's request queue. Throws a
+   * clear error on firmware without the "fx_debug" feature. */
+  fxDebugger(): FxDebugger {
+    if (!this.has("fx_debug")) {
+      throw new ToolError(
+        `the player's firmware (${this.fwVersion}) has no FX debugger (the "fx_debug" feature); update_firmware first`,
+      );
+    }
+    this.fxdbg ??= new FxDebugger({
+      fxDebugControl: (m) => this.run(() => this.client.fxDebugControl(m)),
+      getFxSnapshot: (m) => this.run(() => this.client.getFxSnapshot(m)),
+      debugFxLed: (m) => this.run(() => this.client.debugFxLed(m)),
+    });
+    return this.fxdbg;
+  }
+
+  /** The source this session deployed for an effect id (to name VM slots). */
+  sourceOf(effectId: string): string | undefined {
+    for (const d of [this.current, this.previous]) if (d?.effectId === effectId && d.source) return d.source;
+    return undefined;
   }
 
   /** BASIC perf for `seconds`: frame cost vs budget, overruns, heap.

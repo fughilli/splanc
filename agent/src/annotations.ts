@@ -89,6 +89,13 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   crossfade_to: write("Crossfade to an effect", true, false),
   list_decks: read("Show the FX decks"),
   measure_effect: write("Measure the running effect", true, false),
+  // FX debugger: pausing freezes the show (auto-resumes on a lease), nothing is
+  // deleted; compare_with_preview pauses + steps one frame.
+  pause_fx: write("Pause the effect engine", false, true),
+  resume_fx: write("Resume the effect engine", false, true),
+  step_fx: write("Step the paused effect", false, false),
+  snapshot_fx: read("Read the effect engine's state"),
+  compare_with_preview: write("Compare the fixture with the preview", false, false),
   // textures
   list_textures: read("List texture inputs"),
   stream_texture: write("Stream into a texture", false, true),
@@ -119,5 +126,8 @@ export const SERVER_INSTRUCTIONS =
   "say so; refresh_players looks again. Nothing here rewires or re-maps a fixture: that is done in the " +
   "Splanc app. To change effects live without a hard cut, crossfade_to fades to the new one (in step across " +
   "players; rollback_effect fades back). plot_fixture draws a fixture or a room in 3D (PNG) to check a map or poses. " +
+  "When a fixture doesn't look like the preview, compare_with_preview replays the device's exact frame on the " +
+  "host and says whether the engine, the inputs (map/topology/LED order) or the output stage differs; " +
+  "pause_fx / step_fx / snapshot_fx (with led for VM locals) then let you test the hypothesis, resume_fx ends it. " +
   "When something is reproducibly broken (a crash, a tool failing, the preview and the fixture disagreeing), " +
   "offer to report it with file_bug; it returns a GitHub link by default, and files directly only after the user agrees.";

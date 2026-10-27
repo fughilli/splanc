@@ -1559,6 +1559,8 @@ static void ws_poll() {
 // Poll cadence for the two STATIC modes (counting probe, idle heartbeat):
 // they don't chase a frame clock, so a slow tick keeps CPU/DMA use low.
 static const uint32_t kStaticPollMs = 100;
+// Poll cadence while the FX debugger holds the engine paused.
+static const uint32_t kFxDbgHoldPollMs = 20;
 
 #if defined(LM_NETSTACK)
 static void osc_drain_frame();  // native OSC on the netstack build (below)
@@ -1640,6 +1642,7 @@ static uint32_t render_once() {
   // negligible: perf-monitoring.md). The built-in patterns aren't autoscaled.
   bool perf_on = lm_perf_mode() != 0;
   bool fx_frame_rendered = false;
+  bool fx_dbg_step = false;  // this frame is an FX debugger step
   uint32_t perf_seq = 0, perf_update_c = 0, perf_shade_c = 0, perf_frame_c = 0;
   uint32_t perf_led_count = 0;
 
@@ -1744,6 +1747,11 @@ static uint32_t render_once() {
     show = true;
     was_active = true;
     last_shown_frame = 0xffffffff;
+  } else if (lm_fx_active() && lm_fxdbg_hold(millis())) {
+    // FX debugger pause (fx_debug_control): the frame clock is frozen and nothing
+    // renders or transmits — the strip latches the last frame. Re-check soon for
+    // a step / resume / lease expiry.
+    next_delay_ms = kFxDbgHoldPollMs;
   } else if (lm_fx_active()) {
     // User effect (.fxb shader): run update() once, then shade() per LED over the
     // stored map position. Bounded execution guards each invocation (instruction budget + wall-time
@@ -1781,6 +1789,8 @@ static uint32_t render_once() {
     // polls that flag and unwinds to a timeout branch. lm_fx_update clears the
     // flag at the start of each frame. The instruction budget is the primary
     // guard and is fully effective without the timer.
+    // A debugger step (paused engine) renders at the step's exact time / dt.
+    fx_dbg_step = lm_fxdbg_step(&fx_time_s, &dt_s);
     uint32_t n = lm_map_len();
     if (n > g_led_cap) n = g_led_cap;
     if (n > 0) xmit_len = n;  // drive exactly the mapped LEDs
@@ -1927,7 +1937,11 @@ static uint32_t render_once() {
   // An effect frame: feed its cost to the framerate autoscaler (FUG-82) for the
   // next sleep, and — only while a perf mode is active — push the Tier-0 sample
   // into the perf ring (drained by the phone via get_perf_report).
-  if (fx_frame_rendered) {
+  if (fx_dbg_step) {
+    // A debugger step isn't a show frame: keep it out of the autoscaler / perf
+    // ring and come straight back for the next step (or the hold).
+    next_delay_ms = 1;
+  } else if (fx_frame_rendered) {
     // Render and transmit OVERLAP (async show), so the frame-rate limiter is
     // whichever is longer, not their sum. perf_frame_c already spans BOTH decks'
     // update + shade and the crossfade blend (lm_fx_update / lm_fx_shade drive
@@ -2198,6 +2212,21 @@ static void emit_perf_report_if_due() {
 #else
   if (n > 0) ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
 #endif
+}
+
+// -- FX debugger lease (fxdbg.rs) ----------------------------------------------
+// A paused engine auto-resumes when its client goes away: with no session open,
+// the pause lapses a few seconds after the last debugger message (the hold lease
+// covers every other case), so a fixture never stays frozen.
+static void poll_fx_debugger() {
+#if defined(LM_NETSTACK)
+  bool open = netstack_ws_open();
+#else
+  bool open = ws_state == WsState::kOpen;
+#endif
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  lm_fxdbg_poll(millis(), open);
+  xSemaphoreGive(player_mutex);
 }
 
 // -- fps autoscaler: unsolicited lag advisory (FUG-82) -------------------------
@@ -2926,6 +2955,9 @@ void setup() {
   // Frames are staged into its own buffer (the transmit snapshot), so the async
   // transmit task never reads `leds` while the render task fills it.
   led_store_begin();
+  // FX debugger (fxdbg.rs): the output stage its snapshots read back.
+  lm_fxdbg_bind_output(reinterpret_cast<const uint8_t *>(leds), g_led_cap,
+                       reinterpret_cast<const uint8_t *const *>(&g_lut), &g_brightness);
   if (!ws2812_init(LED_DATA_PIN, LED_DATA_PIN_2, g_led_dma)) {
     Log().printf("[led] ws2812 RMT init FAILED (backend=%s)\n", ws2812_backend());
   }
@@ -3347,6 +3379,7 @@ void loop() {
   }
   emit_perf_report_if_due();
   emit_fps_lag_if_changed();
+  poll_fx_debugger();
 
   static uint32_t last_report = 0;
   if (millis() - last_report > 5000) {

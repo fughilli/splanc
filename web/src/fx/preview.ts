@@ -11,6 +11,7 @@
  */
 
 import { assetUrl } from "../assetBase";
+import type { ReplayVm } from "./fxDebug";
 
 export type FxUiKind =
   | { kind: "slider"; min: number; max: number; step: number }
@@ -32,6 +33,16 @@ export interface FxDiagnostic {
   msg: string;
 }
 
+/** A named VM slot range (the compiler's FX-debugger symbol table). */
+export interface FxSymbol {
+  name: string;
+  kind: "state" | "local" | "param" | "buffer";
+  /** The function of a local / param ("" for state). */
+  func: string;
+  slot: number;
+  width: number;
+}
+
 export interface FxCompiled {
   ok: boolean;
   bytecode: Uint8Array;
@@ -40,6 +51,8 @@ export interface FxCompiled {
   /** Non-fatal lints (e.g. a rate uniform multiplying `time` in a phase); each
    * msg starts "warning: ". Undefined from compiler bundles that predate them. */
   warnings?: FxDiagnostic[] | undefined;
+  /** Absent from compiler builds that predate the FX debugger. */
+  symbols?: FxSymbol[];
 }
 
 interface CompilerResult {
@@ -49,6 +62,7 @@ interface CompilerResult {
   readonly diagnostics: string;
   /** JSON warnings (absent in compiler bundles that predate them). */
   readonly warnings?: string;
+  readonly symbols?: string;
 }
 interface CompilerModule {
   default(wasm: string): Promise<unknown>;
@@ -69,6 +83,9 @@ interface FxPreviewWasm {
 interface VmModule {
   default(wasm: string): Promise<unknown>;
   FxPreview: new (fxb: Uint8Array) => FxPreviewWasm;
+  // The FX debugger's host replay (fxDebug.ts ReplayVm).
+  FxReplay?: ReplayVm["FxReplay"];
+  fx_blend_rgb8?: ReplayVm["fx_blend_rgb8"];
 }
 
 let compilerMod: Promise<CompilerModule> | null = null;
@@ -78,7 +95,7 @@ let vmMod: Promise<VmModule> | null = null;
  * {@link FxPreview} call into). */
 export interface FxModules {
   compiler?: Pick<CompilerModule, "fx_compile">;
-  vm?: Pick<VmModule, "FxPreview">;
+  vm?: Pick<VmModule, "FxPreview" | "FxReplay" | "fx_blend_rgb8">;
 }
 
 /**
@@ -115,6 +132,14 @@ function loadVm(base = assetUrl("fx-vm")): Promise<VmModule> {
   return vmMod;
 }
 
+/** The VM wasm's FX-debugger replay surface (fxDebug.ts), from the same module
+ * as the preview. Throws on a VM build that predates it. */
+export async function loadReplayVm(): Promise<ReplayVm> {
+  const mod = await loadVm();
+  if (!mod.FxReplay || !mod.fx_blend_rgb8) throw new Error("this VM build has no FX debugger replay");
+  return { FxReplay: mod.FxReplay, fx_blend_rgb8: mod.fx_blend_rgb8 };
+}
+
 /** Compile GLSL-ish effect source to `.fxb` bytecode + a uniform manifest. */
 export interface CompileScriptOptions {
   /** Run the variance pass (hoisting + per-LED memoization). Default true; the
@@ -126,6 +151,7 @@ export interface CompileScriptOptions {
 export async function compileScript(src: string, opts: CompileScriptOptions = {}): Promise<FxCompiled> {
   const mod = await loadCompiler();
   const r = opts.memo === false && mod.fx_compile_no_memo ? mod.fx_compile_no_memo(src) : mod.fx_compile(src);
+  const syms = r.ok ? r.symbols : undefined;
   return {
     ok: r.ok,
     bytecode: r.bytecode,
@@ -134,6 +160,7 @@ export async function compileScript(src: string, opts: CompileScriptOptions = {}
     // undefined (not []) from a compiler bundle that predates warnings, so a
     // host can tell "no lints" from "this compiler can't lint" (agent/src/fxhost.ts).
     warnings: r.warnings === undefined ? undefined : (JSON.parse(r.warnings) as FxDiagnostic[]),
+    ...(typeof syms === "string" ? { symbols: JSON.parse(syms) as FxSymbol[] } : {}),
   };
 }
 
