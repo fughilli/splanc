@@ -195,7 +195,8 @@ fn osc_follows_the_visible_deck() {
     assert_eq!(uniforms(0)[&0], vec![0.9, 0.8, 0.7]);
     // A 16-float mat4 by name lands on the incoming deck B.
     let pose = slot_of(1, "pose");
-    assert!(pose > 4, "pose follows k in B's layout ({pose})");
+    // Pinned: the HITL gate (osc_deck_follow_core.POSE_SLOT_B) reads it there.
+    assert_eq!(pose, 5, "B's mat4 slot");
     let m: Vec<f32> = (0..16).map(|i| i as f32 * 0.25 - 2.0).collect();
     assert_eq!(osc("/pose", &m), 1);
     assert_eq!(read(1, pose, 16), m, "/pose ,f*16 on deck B mid-fade");

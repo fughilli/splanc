@@ -51,3 +51,13 @@ def test_verdict_skip_without_baseline():
     checks = [_c("base", [0.5], [0.25], baseline=True), _c("b", None, [0.75], deck=1)]
     assert core.verdict(checks)[0] == core.SKIP
     assert core.verdict([])[0] == core.SKIP
+
+
+def test_joined_reassembles_chunks():
+    # get_effect_uniforms reports a mat4 as 4-float chunks at slot, slot+4, ...
+    cur = {0: [0.9, 0.8, 0.7], 3: [0.25], 8: [0.0] * 4, 12: [1.0] * 4, 16: [2.0] * 4, 20: [3.0] * 4}
+    assert core.joined(cur, 0, 4) == [0.9, 0.8, 0.7, 0.25]
+    assert core.joined(cur, 8, 16) == [0.0] * 4 + [1.0] * 4 + [2.0] * 4 + [3.0] * 4
+    assert core.joined(cur, 3, 1) == [0.25]
+    assert core.joined(cur, 4, 1) is None
+    assert core.joined({8: [0.0] * 4}, 8, 16) == [0.0] * 4

@@ -28,13 +28,16 @@ void update() {}
 vec3 shade(Led led) { return col * k; }
 """
 
-# Deck B's: a DIFFERENT layout — tint = slots 0..2, gain = 3, k = 4. A table that
-# stayed on deck A's manifest would write B's gain (slot 3) for /k.
-FX_B = """uniform vec3 tint : color = 0.0, 0.0, 0.0;
+# Deck B's: a DIFFERENT layout — tint = slots 0..2, gain = 3, k = 4, then a mat4
+# pose (the tracker's 16 floats). A table that stayed on deck A's manifest would
+# write B's gain (slot 3) for /k. tint's non-zero default shows a per-axis write
+# keeps B's own other components (nothing of A's /col carries over).
+FX_B = """uniform vec3 tint : color = 0.1, 0.2, 0.3;
 uniform float gain : 0.0 .. 1.0 = 1.0;
 uniform float k : 0.0 .. 1.0 = 0.5;
+uniform mat4 pose;
 void update() {}
-vec3 shade(Led led) { return tint * gain * k; }
+vec3 shade(Led led) { return tint * gain * k * transform(pose, led.pos).x; }
 """
 
 # The external tracker's contract: `/plane ,ffff` after a deploy_effect.
@@ -43,12 +46,16 @@ void update() {}
 vec3 shade(Led led) { return vec3(abs(plane.x), abs(plane.y), abs(plane.z)); }
 """
 
+# B's mat4 slot (pinned by //firmware/player_app:osc_decks_test via the manifest).
+POSE_SLOT_B = 5
+
 SLOT = {
     ("A", "col"): 0,
     ("A", "k"): 3,
     ("B", "tint"): 0,
     ("B", "gain"): 3,
     ("B", "k"): 4,
+    ("B", "pose"): POSE_SLOT_B,
     ("P", "plane"): 0,
 }
 
@@ -62,6 +69,20 @@ def osc_message(addr: str, args: list[float]) -> bytes:
     """One OSC message of float32 args (`,f...`)."""
     out = _osc_str(addr) + _osc_str("," + "f" * len(args))
     return out + b"".join(struct.pack(">f", float(a)) for a in args)
+
+
+def joined(cur: dict[int, list[float]], slot: int, n: int) -> list[float] | None:
+    """`n` consecutive slots from `slot` out of get_effect_uniforms.current, which
+    reports a value wider than 4 floats as 4-float chunks at slot, slot+4, ..."""
+    out: list[float] = []
+    s = slot
+    while len(out) < n:
+        c = cur.get(s)
+        if not c:
+            return out or None
+        out.extend(c)
+        s += len(c)
+    return out[:n]
 
 
 @dataclass

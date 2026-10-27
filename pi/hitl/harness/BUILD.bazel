@@ -114,6 +114,7 @@ py_library(
         "map_upload_core.py",
         "mapping_trigger_core.py",
         "no_reboot_no_park_core.py",
+        "osc_deck_follow_core.py",
         "ota_core.py",
         "provision.py",
         "rejoin_loop_core.py",

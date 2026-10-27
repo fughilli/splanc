@@ -8,7 +8,8 @@ wss, and sends OSC to udp/9000 FROM THE RIG (the DUT's LAN, like a controller):
   2. crossfade_to: deck B (FX_B, a different uniform layout) cued, then the
      crossfade stepped 0 -> 1 like the agent's fade. Mid-fade /k lands on B's k
      (slot 4), not B's gain (slot 3, A's k slot) and not deck A; /tint/y patches
-     B's tint without A's /col shadow leaking in; at 1.0 /k still drives B;
+     only B's tint.y (B keeps its own x/z; nothing of A's /col carries over) and
+     a 16-float /pose lands on B's mat4; at 1.0 /k and /pose/12 ,fff drive B;
   3. rollback: set_effect deck A, the crossfade stepped back 1 -> 0: mid-fade and
      at 0 /k drives deck A, deck B keeps its value;
   4. the tracker contract: deploy a `plane` vec4 effect on deck A (crossfade
@@ -139,6 +140,10 @@ class Session:
         await self.rpc({"type": "set_crossfade", "position": pos, "mode": 0}, "welcome")
 
 
+# A distinct 16-float pose (exact in float32).
+POSE = [i * 0.25 - 2.0 for i in range(16)]
+
+
 async def scenario(url: str, send, fxbs: dict[str, str], leds: int) -> list[core.Check]:
     """Run the four phases; one Check per expectation. `send(msgs)` puts OSC on
     the DUT's udp/9000 from the rig (blocking)."""
@@ -159,7 +164,7 @@ async def scenario(url: str, send, fxbs: dict[str, str], leds: int) -> list[core
         """Poll deck `deck`'s `slot` until it reads `want` (or `wait_s` passes)."""
         t0, got = time.monotonic(), None
         while True:
-            got = (await s.values(deck)).get(slot)
+            got = core.joined(await s.values(deck), slot, len(want))
             c = core.Check(step, deck, slot, want, got, baseline)
             if c.ok or time.monotonic() - t0 > wait_s:
                 break
@@ -212,13 +217,26 @@ async def scenario(url: str, send, fxbs: dict[str, str], leds: int) -> list[core
         await expect(s, "mid-fade to B /k", B, S[("B", "k")], [0.75])
         await expect(s, "mid-fade to B: B.gain untouched", B, S[("B", "gain")], [1.0], wait_s=0)
         await expect(s, "mid-fade to B: A.k untouched", A, S[("A", "k")], [0.25], wait_s=0)
+        # Per-axis: B's tint.y only; x/z keep B's own (.1, .3), not A's /col.
         await osc([("/tint/y", [0.5])])
-        await expect(s, "mid-fade to B /tint/y (no A shadow)", B, S[("B", "tint")], [0.0, 0.5, 0.0])
+        await expect(
+            s, "mid-fade to B /tint/y (no A carry-over)", B, S[("B", "tint")], [0.1, 0.5, 0.3]
+        )
+        # A whole mat4 by name lands on the incoming deck.
+        await osc([("/pose", POSE)])
+        await expect(s, "mid-fade to B /pose ,f*16", B, S[("B", "pose")], POSE)
+        await expect(
+            s, "mid-fade to B: A untouched by /pose", A, 0, [0.9, 0.8, 0.7, 0.25], wait_s=0
+        )
         for pos in (0.7, 0.9, 1.0):
             await s.crossfade(pos)
         await osc([("/k", [0.6])])
         await expect(s, "fade complete (B) /k", B, S[("B", "k")], [0.6])
         await expect(s, "fade complete (B): A.k untouched", A, S[("A", "k")], [0.25], wait_s=0)
+        # Per-element: /pose/12 ,fff writes elements 12..14 of B's pose only.
+        await osc([("/pose/12", [1.0, -2.0, 0.5])])
+        want = POSE[:12] + [1.0, -2.0, 0.5] + POSE[15:]
+        await expect(s, "fade complete (B) /pose/12 ,fff", B, S[("B", "pose")], want)
 
         # 3. rollback: re-activate A, fade 1 -> 0.
         await s.rpc({"type": "set_effect", "effect_id": "oscA", "deck": A}, "playback_state")
