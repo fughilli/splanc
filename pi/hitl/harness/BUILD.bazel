@@ -1093,6 +1093,45 @@ py_test(
     ],
 )
 
+# Native OSC follows the visible FX deck (#402): deck A alone, a crossfade to a
+# deck B with a different uniform layout (mid-fade + complete, incl. a mat4 /pose
+# and /pose/12), a rollback fade back, and the tracker's /plane ,ffff after a
+# deploy; OSC is sent from the rig to udp/9000 and read back per deck with
+# get_effect_uniforms. Gate: SKIP when the deck-A baseline never lands (bench),
+# FAIL on any deck-follow miss. Pure verdict in osc_deck_follow_core (unit-tested
+# in //pi/hitl/tests).
+#   bazel run //pi/hitl/harness:osc_deck_follow -- --server http://hitl-rig-2:8087
+py_test(
+    name = "osc_deck_follow",
+    timeout = "eternal",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_osc_deck_follow.py",
+    ],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//fx_compiler:fx_compile",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # esp32c6-only reservation (skip rig-3's esp32c3 DUT); see :e2e_netstack.
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_osc_deck_follow.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # On-LAN live-control latency budget (docs/design/live-control.md "Measuring the
 # budget"): flashes the LM_CTRL_TRACE measurement image and runs the stdlib probe
 # (ctrl_budget_probe.py) inside the reservation, straight to the DUT over the rig AP; the

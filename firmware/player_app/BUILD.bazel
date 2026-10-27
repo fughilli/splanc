@@ -260,6 +260,23 @@ rust_test(
     ],
 )
 
+# Native OSC follows the visible FX deck (#402): crossfade start / complete,
+# rollback, same-effect copies, deploy, and no value carried across decks. Own
+# binary: fresh process-global FFI state.
+rust_test(
+    name = "osc_decks_test",
+    srcs = ["tests/osc_decks.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+        "@crates//:serde_json",
+    ],
+)
+
 # The FX debugger (fxdbg.rs): pause / step / lease, chunked snapshot sections, and
 # a host replay of a paused frame that must match the device bit-exactly
 # (docs/design/fx-debugger.md). Own binary: fresh process-global FFI state.
