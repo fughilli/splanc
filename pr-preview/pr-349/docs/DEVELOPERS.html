@@ -252,6 +252,7 @@
 <li class="toctree-l2"><a class="reference internal" href="docs/design/effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
@@ -260,6 +261,7 @@
 <li class="toctree-l2"><a class="reference internal" href="docs/design/heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/app-ux-overhaul.html">App UX overhaul</a></li>
@@ -723,9 +725,19 @@ drift:</p>
 <li><p><strong>Golden:</strong> <code class="docutils literal notranslate"><span class="pre">web/tests/testdata/device-bench-esp32c6.json</span></code>
 (<code class="docutils literal notranslate"><span class="pre">cpuHz:</span> <span class="pre">160_000_000</span></code>, 65 fit + 7 held-out programs). Regenerate with
 <code class="docutils literal notranslate"><span class="pre">fx_bench</span> <span class="pre">--emit-golden</span> <span class="pre">&lt;path&gt;</span></code>.</p></li>
-<li><p><strong>Gate:</strong> a program is an offender if <code class="docutils literal notranslate"><span class="pre">abs(measured/golden</span> <span class="pre">−</span> <span class="pre">1)</span></code> exceeds its
-margin — default <strong>10%</strong>, <code class="docutils literal notranslate"><span class="pre">sweep16</span></code> <strong>15%</strong>. Only frame cycles are gated; show
-cycles are noisier and excluded.</p></li>
+<li><p><strong>Gate:</strong> a program passes if its frame is within its margin of the golden —
+default <strong>10%</strong>, <code class="docutils literal notranslate"><span class="pre">sweep16</span></code> <strong>15%</strong> — <strong>or</strong> within an absolute floor of
+<strong>8,000 cycles</strong> (50 µs at 160 MHz), whichever is looser. Only frame cycles are
+gated; show cycles are noisier and excluded.</p></li>
+<li><p><strong>Why the floor:</strong> every frame starts with a partly cold flash cache, and that
+fixed cost moves with code layout alone, by about 7-8 K cycles (never-called
+padding moved <code class="docutils literal notranslate"><span class="pre">sweep16</span></code> by 13-18%). That is a large percentage of the 16-LED
+<code class="docutils literal notranslate"><span class="pre">sweep16</span></code> (~34.5 K cycles) but under 1% of a real effect, so the floor only
+matters for goldens under ~80 K cycles. A <code class="docutils literal notranslate"><span class="pre">FLOOR</span></code> log line names each effect
+that passed by the floor alone; <code class="docutils literal notranslate"><span class="pre">OFF</span></code> lines are offenders. The values live in
+the golden’s <code class="docutils literal notranslate"><span class="pre">fxBenchMargins</span></code> (<code class="docutils literal notranslate"><span class="pre">default</span></code>, <code class="docutils literal notranslate"><span class="pre">perLabel</span></code>, <code class="docutils literal notranslate"><span class="pre">floorCycles</span></code>), stamped
+from <code class="docutils literal notranslate"><span class="pre">fx_bench.py</span></code> on <code class="docutils literal notranslate"><span class="pre">--emit-golden</span></code>; <code class="docutils literal notranslate"><span class="pre">--margin</span></code> / <code class="docutils literal notranslate"><span class="pre">--floor-cycles</span></code> override
+them for a run.</p></li>
 </ul>
 <p>The measured bundle also feeds the browser device-profile fit
 (<code class="docutils literal notranslate"><span class="pre">web/src/effects/deviceProfile.ts</span></code>), whose held-out software estimate is gated at

@@ -26,17 +26,17 @@ held-out programs (`profileValidation.ts`), gated at the same tolerance as
 
 ## esp32c6 — esp32c6
 
-| Field              | Value                                      |
-| ------------------ | ------------------------------------------ |
-| SoC                | esp32c6                                    |
-| Device             | esp32c6                                    |
-| deviceKey          | esp32c6                                    |
-| CPU clock          | 160 MHz (160,000,000 Hz)                   |
-| Programs           | 65 fit + 7 held-out                        |
-| Regression margins | default 10%, sweep16 15%                   |
-| Fit residual       | ±25.0%                                     |
-| Held-out accuracy  | RMS 3.7% · mean 3.0% · max 6.2% · R² 0.994 |
-| Verdict            | PASS (RMS 3.7% vs 13% tolerance)           |
+| Field              | Value                                            |
+| ------------------ | ------------------------------------------------ |
+| SoC                | esp32c6                                          |
+| Device             | esp32c6                                          |
+| deviceKey          | esp32c6                                          |
+| CPU clock          | 160 MHz (160,000,000 Hz)                         |
+| Programs           | 65 fit + 7 held-out                              |
+| Regression margins | default 10%, sweep16 15%, or within 8,000 cycles |
+| Fit residual       | ±25.0%                                           |
+| Held-out accuracy  | RMS 3.7% · mean 3.0% · max 6.2% · R² 0.994       |
+| Verdict            | PASS (RMS 3.7% vs 13% tolerance)                 |
 
 ### Fixed overheads
 
@@ -304,17 +304,17 @@ interpreted. Same calibration corpus and firmware as the interpreter section abo
 differs — so compare per-opcode and per-program costs directly against it to see where the JIT pays
 off.
 
-| Field              | Value                                       |
-| ------------------ | ------------------------------------------- |
-| SoC                | esp32c6                                     |
-| Device             | esp32c6 (JIT)                               |
-| deviceKey          | esp32c6-jit                                 |
-| CPU clock          | 160 MHz (160,000,000 Hz)                    |
-| Programs           | 65 fit + 7 held-out                         |
-| Regression margins | default 10%, sweep16 15%                    |
-| Fit residual       | ±24.4%                                      |
-| Held-out accuracy  | RMS 6.2% · mean 4.6% · max 11.3% · R² 0.971 |
-| Verdict            | PASS (RMS 6.2% vs 13% tolerance)            |
+| Field              | Value                                            |
+| ------------------ | ------------------------------------------------ |
+| SoC                | esp32c6                                          |
+| Device             | esp32c6 (JIT)                                    |
+| deviceKey          | esp32c6-jit                                      |
+| CPU clock          | 160 MHz (160,000,000 Hz)                         |
+| Programs           | 65 fit + 7 held-out                              |
+| Regression margins | default 10%, sweep16 15%, or within 8,000 cycles |
+| Fit residual       | ±24.4%                                           |
+| Held-out accuracy  | RMS 6.2% · mean 4.6% · max 11.3% · R² 0.971      |
+| Verdict            | PASS (RMS 6.2% vs 13% tolerance)                 |
 
 ### Fixed overheads
 
