@@ -76,7 +76,27 @@ opcode):
   uniform vec3  tint  : color      = 0.2, 0.6, 1.0;   // color picker
   uniform int   mode  : {"fire","ice"} = 0;    // dropdown
   uniform bool  invert = false;                // toggle
+  uniform float tilt  : -1.0 .. 1.0 = -0.2;    // signed range
+  uniform vec4  plane : -5 .. 5 = 0, 1, 0, 1;  // ranged vector: numeric, not a colour
+  uniform vec3  p : vec3(-1,-1,0) .. vec3(1,1,2) = vec3(0.0);  // per-component range
+  uniform mat4  pose;                          // matrix, identity default (`: lo .. hi` optional)
   ```
+
+  A `vec3`/`vec4` without a range is a colour (`ui.kind: color`, 0..1); with a
+  range it is a numeric slider vector (`ui.kind: slider`; the per-component form
+  adds `mins`/`maxs` to the manifest, `min`/`max` being their envelope). A
+  `mat3`/`mat4` is `ui.kind: matrix`, width 9/16, column-major, range ±1000
+  unless declared.
+
+- **Matrices** — `mat3`/`mat4` (column-major, GLSL): `m[c]` column, `m[c][r]`
+  element, constructors (diagonal scalar, N columns, N×N scalars, `mat3(m4)`,
+  `mat4(m3)`), `m*v v*m m*m m*s m/s m+m m-m -m`, `transpose(m)`, and
+  `transform(m, p)` = `(m * vec4(p, 1.0)).xyz`. No VM opcode knows matrices:
+  the compiler lowers every operation to the vecN ops (Load / Swizzle-broadcast
+  / Mul / Add / Dot), parking operands in per-function scratch locals, so
+  matrix programs are ordinary bytecode for every shipped VM, JIT and cost
+  model. Per LED a `mat4 * vec4` is 16 multiplies + 12 adds: pre-multiply in
+  `update()` where you can.
 
 - **State** — `state` variables persist across frames; written by `update()`,
   read-only in `shade()`. Good for phases/integrators.
@@ -294,6 +314,12 @@ JSON via `manifest_json` (fields per uniform: `name`, `slot`, `width`, `ui`,
 repeated float value }` records; `firmware/player_app/ffi.rs` decodes them and
   calls `lm_fx_set_uniform(slot, vals, n)`. `get_effect_uniforms` returns the
   manifest bytes to the app.
+- **Wide uniforms (mat3/mat4):** on the wire a `UniformValue` carries at most 4
+  floats; clients send a wider uniform as consecutive chunks `{slot, v[0..4]}`,
+  `{slot+4, v[4..8]}`, … (exactly a whole write, on any firmware), and the
+  device reports current values the same way. Firmware since #400 also accepts
+  up to 16 floats in one value. OSC addresses: see `firmware/osc` (`/pose` + 16
+  floats, `/pose/<i>` flat component, `/pose/<c>/<r>` element).
 
 ## Textures and video-texture streaming
 
