@@ -1899,6 +1899,126 @@ pub unsafe extern "C" fn lm_player_handle(
     encode_reply(&reply, out, out_cap)
 }
 
+// -- live-control mailbox (docs/design/live-control.md "Applying live moves") --
+// A seq'd, uncommitted set_uniforms (the live channel's moves) is not handled under
+// the player lock: the network task stashes it here (latest value per deck+slot) and
+// acks at once, and the render task applies what is waiting right before the next
+// frame's update() — the earliest instant any path could have applied it. The network
+// task never waits behind a whole render frame for the lock, so the ack (the client's
+// pacing signal) and every message behind it go through at network speed.
+
+/// Distinct (deck, slot) pairs that can wait for one frame; a move that would overflow
+/// falls back to the locked path (which applies the waiting ones first).
+const LIVE_SLOTS: usize = 16;
+
+#[derive(Clone, Copy)]
+struct LiveVal {
+    deck: u8,
+    slot: u8,
+    n: u8,
+    vals: [f32; 4],
+}
+
+struct LiveMailbox {
+    e: [LiveVal; LIVE_SLOTS],
+    len: usize,
+}
+
+impl LiveMailbox {
+    const fn new() -> Self {
+        LiveMailbox { e: [LiveVal { deck: 0, slot: 0, n: 0, vals: [0.0; 4] }; LIVE_SLOTS], len: 0 }
+    }
+    fn clear(&mut self) {
+        self.len = 0;
+    }
+    fn find(&self, deck: u8, slot: u8) -> Option<usize> {
+        self.e[..self.len].iter().position(|v| v.deck == deck && v.slot == slot)
+    }
+}
+
+static mut LIVE_MAILBOX: LiveMailbox = LiveMailbox::new();
+
+/// Network task: stash a live move for the next frame. A set_uniforms with a non-zero
+/// `seq` and `commit: false` (the live channel) is taken — its values replace any older
+/// ones for the same deck+slot, the ControlAck is armed (lm_take_control_ack) and its
+/// seq returned. Anything else returns 0: dispatch it normally.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes; the caller serializes this with
+/// [`lm_live_drain`] (a short critical section). Loop task only.
+#[no_mangle]
+pub unsafe extern "C" fn lm_live_post(data: *const u8, len: usize) -> u32 {
+    if data.is_null() || len == 0 {
+        return 0;
+    }
+    let frame = core::slice::from_raw_parts(data, len);
+    let Some(CArm::SetUniforms(m)) = client_arm(frame) else {
+        return 0;
+    };
+    if m.seq() == 0 || m.commit() != Some(false) {
+        return 0;
+    }
+    let d = deck_index(m.deck()) as u8;
+    let mb = &mut *addr_of_mut!(LIVE_MAILBOX);
+    // All or nothing: count the new keys first, so a move is never half-applied.
+    let mut fresh = 0;
+    for uv in m.values() {
+        if uv.slot() > u8::MAX as u32 {
+            return 0;
+        }
+        if mb.find(d, uv.slot() as u8).is_none() {
+            fresh += 1;
+        }
+    }
+    if mb.len + fresh > LIVE_SLOTS {
+        return 0;
+    }
+    for uv in m.values() {
+        let mut v = LiveVal { deck: d, slot: uv.slot() as u8, n: 0, vals: [0.0; 4] };
+        for (dst, x) in v.vals.iter_mut().zip(uv.value()) {
+            *dst = x;
+            v.n += 1;
+        }
+        if v.n == 0 {
+            continue;
+        }
+        match mb.find(d, v.slot) {
+            Some(i) => mb.e[i] = v,
+            None => {
+                mb.e[mb.len] = v;
+                mb.len += 1;
+            }
+        }
+    }
+    LIVE_CONTROL = true;
+    CONTROL_ACK_SEQ = m.seq();
+    m.seq()
+}
+
+/// Apply (and empty) the waiting live moves. Under the player lock.
+unsafe fn live_apply() -> u32 {
+    let mb = &mut *addr_of_mut!(LIVE_MAILBOX);
+    let n = mb.len;
+    for v in &mb.e[..n] {
+        if let Some(p) = deck(v.deck as usize) {
+            (*p).morph.cancel();
+        }
+        fx_set_uniform(v.deck as usize, v.slot as u32, &v.vals[..v.n as usize]);
+    }
+    mb.clear();
+    n as u32
+}
+
+/// Render task, at a frame boundary before update(): apply the live moves that arrived
+/// since the last frame. Returns the uniform writes.
+///
+/// # Safety
+/// Under the player lock; serialized with [`lm_live_post`] (a short critical section).
+#[no_mangle]
+pub unsafe extern "C" fn lm_live_drain() -> u32 {
+    live_apply()
+}
+
 // -- live-control acks (docs/design/live-control.md) ------------------------
 // A live update (set_uniforms / set_crossfade) carrying a non-zero `seq` is
 // answered with a tiny ControlAck{seq} instead of its legacy reply (playback_state
@@ -2454,6 +2574,10 @@ pub const FEATURES: &[&str] =
         "wifi_policy",
         "control_ack",
         "fx_debug",
+        // Live moves (seq'd, commit:false set_uniforms) are acked without waiting
+        // for the render frame and applied at the next frame boundary
+        // (lm_live_post): a client may keep more than one batch in flight.
+        "live_mailbox",
     ];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
@@ -3002,6 +3126,9 @@ pub unsafe extern "C" fn lm_set_uniforms_commit() -> bool {
 /// running keypoint morph on that deck stops where it is — the slider wins).
 /// Reply: playback_state.
 unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
+    // Live moves still waiting for the next frame are OLDER than this set: apply them
+    // first so this one wins (loop task, under the player lock: no drain can race).
+    live_apply();
     UNIFORMS_COMMIT = true;
     FX_LAST_DECK = 0;
     if let Some(CArm::SetUniforms(m)) = client_arm(frame) {
@@ -4493,6 +4620,8 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
             mb.clear();
         }
     }
+    // Live moves queued for the old effect: its slot numbers mean nothing now.
+    (*addr_of_mut!(LIVE_MAILBOX)).clear();
     // Only build the per-LED fixed context mirrors / uv projection / room read
     // on the hot path when the program actually reads them (FUG-122).
     (*p).uses_ctxfix = prog.uses_ctxfix();
@@ -4592,6 +4721,7 @@ unsafe fn fx_clear(d: usize) {
         if let Some(mb) = osc_mailbox() {
             mb.clear();
         }
+        (*addr_of_mut!(LIVE_MAILBOX)).clear();
         // Drop the JIT table (the exec region is a fixed static, reused on next
         // load; the VM was just cleared above, so the installed table goes too).
         FX_JIT_N = 0;

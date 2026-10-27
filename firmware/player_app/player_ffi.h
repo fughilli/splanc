@@ -338,6 +338,12 @@ bool lm_osc_mailbox_bind(uint8_t *mem);
 bool lm_osc_mailbox_bound(void);
 uint32_t lm_osc_post(const uint8_t *data, size_t len);
 uint32_t lm_osc_drain(void);
+// Live-control mailbox (docs/design/live-control.md): lm_live_post stashes a seq'd,
+// uncommitted set_uniforms for the next frame and arms its ControlAck (returns the seq;
+// 0 = not a live move, dispatch normally); lm_live_drain applies the waiting moves at a
+// frame boundary, under the player lock. Serialize the two with a critical section.
+uint32_t lm_live_post(const uint8_t *data, size_t len);
+uint32_t lm_live_drain(void);
 // Select OSC addressing: true (default) resolves uniform names via the active
 // effect's manifest (unknown names fall back to slot index); false treats every
 // address as a raw slot number.

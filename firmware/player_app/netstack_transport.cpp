@@ -47,6 +47,7 @@ void ns_mac_rx_stats(uint32_t *out);  // [ring high-water, full-ring polls] (hig
 void ns_tcp_stats(uint32_t *out);     // [segs, ooo, dup, trunc, zero_wnd, rto, fast_rexmit]
 uint32_t ns_aes_selftest(uint8_t *out); // FIPS-197 AES-128: bit0=enc ok, bit1=dec ok; out=ciphertext
 uint32_t ns_mac_recv(uint8_t *out, uint32_t cap);
+uint32_t ns_mac_rx_pending(void);
 uint32_t ns_mac_send(const uint8_t *frame, uint32_t len, uint32_t queue);
 uint32_t ns_mac_send_sec(const uint8_t *frame, uint32_t len, uint32_t queue); // HW CCMP encrypt
 uint32_t ns_tx_desc_word0(uint32_t idx); // read back TX descriptor word0 (secure-TX diagnostic)
@@ -86,6 +87,7 @@ uint32_t ns_tcp_enqueue(const uint8_t *data, uint32_t len);          // buffer i
 uint32_t ns_tcp_pump_tx(uint32_t now_ms, uint8_t *out, uint32_t cap); // emit next windowed segment
 uint32_t ns_tcp_tx_room(void);                                       // free send-window bytes
 uint32_t ns_tcp_tick(uint32_t now_ms, uint8_t *out, uint32_t cap); // stack RTO: emits a retransmit when it fires
+uint32_t ns_tcp_tx_pending(void);  // send side holds queued/unacked data (RTO + window live)
 uint32_t ns_tcp_window_ack(uint8_t *out, uint32_t cap); // window-update ACK after draining rx
 uint32_t ns_tcp_recv(uint8_t *out, uint32_t cap);
 void ns_tcp_listen(const uint8_t *src, uint16_t sport, uint32_t iss); // passive open (server)
@@ -126,6 +128,23 @@ extern "C" void sta_rx_start_handler(void *req) {
 // No-op promiscuous sink: keeps the RX hardware + all-frames filter enabled but
 // stops the vendor from processing/delivering packets, so our ring owns RX.
 void IRAM_ATTR sink(void *, wifi_promiscuous_pkt_type_t) {}
+
+NsRxStamps g_ns_rx_stamps = {};
+void (*g_ns_reply_hook)(int outcome) = nullptr;
+// The stamps are written only by the LM_CTRL_TRACE measurement build (the
+// :netstack_transport_ctrltrace library): the shipping image runs none of these timer
+// reads on the loop task's RX path.
+#if defined(LM_CTRL_TRACE)
+#define NS_TRACE(stmt) \
+  do {                 \
+    stmt;              \
+  } while (0)
+static inline uint32_t ns_now_us() { return (uint32_t)esp_timer_get_time(); }
+#else
+#define NS_TRACE(stmt) \
+  do {                 \
+  } while (0)
+#endif
 
 namespace {
 constexpr uintptr_t WIFI_MAC_INTR_MAP = 0x60010000;
@@ -1019,6 +1038,8 @@ void handle_l3(const uint8_t *pt, int pl) {
   if (pt[7] == 0x06) { handle_arp(pt, pl); return; } // ARP
   if (pt[7] != 0x00) return;            // only IPv4 past here
   const uint8_t *ip = pt + 8;
+  NS_TRACE(g_ns_rx_stamps.l3_reap_us = g_ns_rx_stamps.reap_us;
+           g_ns_rx_stamps.l3_empty_us = g_ns_rx_stamps.empty_poll_us);
   if (pl >= 8 + 20) learn_neighbor(ip + 12);
   // Identify EVERY inbound IPv4 packet (proto + ports) — chasing why the client's TCP
   // data segment never arrives amid a flood of large frames.
@@ -1050,6 +1071,10 @@ void handle_l3(const uint8_t *pt, int pl) {
                       (tcp[2] << 8) | tcp[3], tcp[13],
                       (uint32_t)((tcp[4] << 24) | (tcp[5] << 16) | (tcp[6] << 8) | tcp[7]), dlen,
                       ns_tcp_state());
+      NS_TRACE(if (dlen > 0) {
+        g_ns_rx_stamps.data_reap_us = g_ns_rx_stamps.reap_us;
+        g_ns_rx_stamps.data_empty_us = g_ns_rx_stamps.empty_poll_us;
+      });
       uint32_t rl = ns_tcp_on_ip(millis(), ip, iplen, tx_ip_slot(), kTxIpCap);
       if (rl > 0) send_ip(tx_ip_slot(), rl);
     }
@@ -1349,6 +1374,10 @@ bool g_rx_draining = false;
 
 static void pump_link_once() {
   uint32_t n = g_rx_draining ? 0 : ns_mac_recv(g_rxf, sizeof(g_rxf));
+  NS_TRACE(if (!g_rx_draining) {  // a skipped RX (see g_rx_draining) is not an empty ring
+    if (n == 0) g_ns_rx_stamps.empty_poll_us = ns_now_us();
+    else g_ns_rx_stamps.reap_us = ns_now_us();
+  });
   if (n > 0 && (g_rxf[0] & 0x0c) == 0x08 && (g_rxf[1] & 0x40)) {  // protected data frame from the AP
     uint32_t pl = 0;
     for (uint32_t trim = 0; trim <= 4 && pl == 0; trim++)
@@ -1432,6 +1461,7 @@ static bool ws_pump() {
     if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE) return true;  // drained
     if (r <= 0) return false;  // close_notify or error
     g_ws_rxlen += r;
+    NS_TRACE(g_ns_rx_stamps.decoded_us = ns_now_us());
 
     if (!g_ws_up) {
       // Wait for the full HTTP upgrade request (ends with a blank line), then 101.
@@ -1525,12 +1555,17 @@ static bool ws_pump() {
         // every frame behind it unread for up to seconds — exactly the input backlog a
         // knob stream builds (docs/design/live-control.md). A seq'd client whose ack is
         // dropped times out and sends its next update anyway.
+        int outcome = tn > 0 && reply ? 1 : 0;
         if (tn > 0 && reply && lm_ws_reply_droppable() &&
-            ns_tcp_tx_room() < (size_t)tn + kWsSendHeadroom + 96)
+            ns_tcp_tx_room() < (size_t)tn + kWsSendHeadroom + 96) {
           tn = 0;
+          outcome = 2;
+        }
         if (tn > 0 && reply &&
             !ws_send(WS_OP_BINARY, const_cast<uint8_t *>(reply), (size_t)tn, kWsSendHeadroom))
           return false;
+        NS_TRACE(if (g_ns_reply_hook) g_ns_reply_hook(outcome));
+        (void)outcome;
       } else if (h.opcode == WS_OP_PING) {
         if (!ws_send(WS_OP_PONG, payload, h.payload_len, h.header_len)) return false;
       } else if (h.opcode == WS_OP_CLOSE) {
@@ -1977,6 +2012,17 @@ bool netstack_take_policy_change(NetstackWifiPolicy *out) {
 // joined is, and still rolls a broken image back.
 bool netstack_wifi_wants_network() { return autonomous((uint32_t)millis()) && g_seen_this_boot; }
 
+bool netstack_service_due() {
+  if (!g_radio_up) return false;
+  bool rx = ns_mac_rx_pending() != 0;
+  // An empty poll here is an empty-ring observation like netstack_loop's own (the trace
+  // attributes a frame's ring wait from the last empty poll before its reap).
+  NS_TRACE(if (!rx) g_ns_rx_stamps.empty_poll_us = ns_now_us());
+  // Data still in the send window: only netstack_loop streams it out and runs its RTO
+  // (a lost ControlAck is resent from ns_tcp_tick), so it must not wait for the frame end.
+  return rx || (g_tcp_started && ns_tcp_tx_pending() != 0);
+}
+
 bool netstack_data_plane_active() {
   if (!(g_radio_up && !g_silent && g_leased && !g_hop.active() && ns_pmk_ready())) return false;
   if (g_tls_hs && g_ws_up) return true;  // a live wss session
@@ -2095,10 +2141,11 @@ void netstack_loop() {
 
   // Drain up to N frames per loop() so a burst (e.g. dnsmasq's DHCP retransmits) can't
   // fill the fixed RX ring and drop an inbound SYN/data segment before we service it.
-  uint32_t n;
+  uint32_t n = 0;
   int drained = 0;
   g_rx_draining = true;
   while (g_radio_up && drained++ < 32 && (n = ns_mac_recv(rx, kRxFrameCap)) > 0) {
+  NS_TRACE(g_ns_rx_stamps.reap_us = ns_now_us());
   bgscan_on_frame(rx, n);  // a background sweep listens to every BSS (wifi_scan.h)
   // Broad DONE-state RX trace: what frames actually reach our ring post-link?
   static uint32_t allf = 0;
@@ -2249,6 +2296,7 @@ void netstack_loop() {
   }
   } // end RX drain loop
   g_rx_draining = false;
+  NS_TRACE(if (n == 0) g_ns_rx_stamps.empty_poll_us = ns_now_us());
 
   // Commit WiFi credentials before associating. Two runtime provisioning paths, no baked creds:
   //  (1) BLE Improv — the provisioner writes wifi-settings over GATT (handled below); and

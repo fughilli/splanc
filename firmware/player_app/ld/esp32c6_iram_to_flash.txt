@@ -53,4 +53,10 @@ iram: .text.lm_fx_shade .text._ZN15ledmapper_fx_vm7Program5parse* .text._ZN15led
 # by a constant ~+9 k cycles per frame (sweep16 +16%, past its 15% margin) and a
 # pure-padding build of the old code reproduced it exactly. At the start of
 # .flash.text their addresses no longer depend on the app code in front of them.
-flash-first: .text._ZL11render_oncev .text._ZL8cc_applyPKh .text.lm_fx_update .text.lm_fx_last_update_outcome .text.lm_map_len .text.lm_map_led .text.lm_time_base .text._ZN20ledmapper_player_ffi16fx_advance_morph* .text._ZN15ledmapper_fx_vm2Vm*
+# The interpreter itself is a free function (ledmapper_fx_vm::run, mangled
+# _ZN15ledmapper_fx_vm3run…), as are load_ctx, the memo ops and the math helpers,
+# so the `2Vm*` (Vm methods) glob alone left ~40 KB of the hot path at the END of
+# the Rust player: #366's ~1.8 KB of new app code shifted `run` and moved fx_bench's
+# sweep16 by ~+6 k cycles (+18 %) with no change on the frame path. `fx_vm[0-9]*`
+# pins the whole fx_vm crate (every item path starts with a length digit).
+flash-first: .text._ZL11render_oncev .text._ZL8cc_applyPKh .text.lm_fx_update .text.lm_fx_last_update_outcome .text.lm_map_len .text.lm_map_led .text.lm_time_base .text._ZN20ledmapper_player_ffi16fx_advance_morph* .text._ZN15ledmapper_fx_vm2Vm* .text._ZN15ledmapper_fx_vm[0-9]*

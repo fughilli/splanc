@@ -630,6 +630,12 @@ NETSTACK_VARIANTS = [
         "_ota_unhealthy",
         ["LM_OTA_FAULT=2"],
     ),
+    # Live-control latency trace (docs/design/live-control.md "Measuring the budget"):
+    # per-stage timestamps for every control message and frame, paged out over the WS.
+    (
+        "_ctrltrace",
+        ["LM_CTRL_TRACE=1"],
+    ),
 ]
 
 [cc_binary(
@@ -690,7 +696,8 @@ NETSTACK_VARIANTS = [
         ":device_cert",  # per-device TLS key + cert (first-boot keygen, littlefs-persisted)
         ":improv_ble_netstack",
         ":improv_codec",
-        ":netstack_transport",
+        # The LM_CTRL_TRACE image links the stamping transport twin (see below).
+        ":netstack_transport_ctrltrace" if sfx == "_ctrltrace" else ":netstack_transport",
         ":ota_app",  # OTA handoff + health (docs/design/ota.md)
         ":player_ffi",
         ":ws_codec",
@@ -740,8 +747,11 @@ cc_library(
 # app-specific parts behind the lm_* seam the binary provides. Shared by the player
 # (:player_app_netstack) and the OTA loader (//firmware/loader), which provide that
 # seam differently.
-cc_library(
-    name = "netstack_transport",
+# "_ctrltrace" is the LM_CTRL_TRACE measurement twin (its RX/TLS/reply stamps feed
+# :player_app_netstack_ctrltrace's live-control trace); the shipping player and the OTA
+# loader link the plain one, which compiles the stamps out.
+[cc_library(
+    name = "netstack_transport" + sfx,
     srcs = [
         "ble_address.h",
         "dhcp_reply.h",
@@ -761,7 +771,7 @@ cc_library(
     ],
     copts = ["-fno-rtti"],
     includes = ["."],
-    local_defines = select({
+    local_defines = extra + select({
         "@embedded//platforms:is_esp32c3": ["LM_CHIP_ESP32C3"],
         "//conditions:default": [],
     }),
@@ -779,7 +789,13 @@ cc_library(
         "@embedded//libs/vendor:wifi",
     ],
     alwayslink = True,
-)
+) for sfx, extra in [
+    ("", []),
+    (
+        "_ctrltrace",
+        ["LM_CTRL_TRACE=1"],
+    ),
+]]
 
 # The BLE side of the transport's improv_ble.h seam: Improv provisioning + the BLE player
 # transport on the heapless host (native HCI, no Bluedroid). The player links it; the OTA
@@ -830,6 +846,20 @@ esptool_flash(
 flash_bundle(
     name = "esp32c6_netstack_flashbundle",
     flash = ":flash_esp32c6_netstack",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32c6_netstack_ctrltrace",
+    app = ":esp32c6_netstack_ctrltrace",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+# The measurement image //pi/hitl/harness:ctrl_budget flashes (not shipped).
+flash_bundle(
+    name = "esp32c6_netstack_ctrltrace_flashbundle",
+    flash = ":flash_esp32c6_netstack_ctrltrace",
     tags = ["manual"],
 )
 

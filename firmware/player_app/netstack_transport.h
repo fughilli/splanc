@@ -54,6 +54,25 @@ uint32_t netstack_rekey_count(void);
 // last call (reset on read). Formats one "[net] ..." fragment into `buf`.
 int netstack_net_stats(char *buf, size_t cap);
 
+// Live-control latency stamps (docs/design/live-control.md "Measuring the budget"): the
+// transport's view of the newest inbound frame, in esp_timer microseconds truncated to 32
+// bits. Maintained only in the LM_CTRL_TRACE build (:netstack_transport_ctrltrace, linked by
+// :player_app_netstack_ctrltrace), which copies them into its per-message trace at dispatch;
+// in every other build they stay zero and the reply hook is never called.
+struct NsRxStamps {
+  volatile uint32_t empty_poll_us;  // the last RX-ring poll that found the ring empty
+  volatile uint32_t reap_us;        // the frame being handled now was taken off the ring
+  volatile uint32_t data_reap_us;   // ... the newest frame that carried TCP payload
+  volatile uint32_t data_empty_us;  // empty_poll_us as of that reap (it arrived after this)
+  volatile uint32_t l3_reap_us;     // reap_us / empty_poll_us as of the newest L3 packet
+  volatile uint32_t l3_empty_us;    //   (a UDP datagram: OSC)
+  volatile uint32_t decoded_us;     // mbedtls_ssl_read last returned a record
+};
+extern NsRxStamps g_ns_rx_stamps;
+// Called after each WS message dispatch's reply: 1 = sent, 2 = dropped (best-effort reply
+// on a full send window), 0 = no reply. nullptr = nobody listening (the default).
+extern void (*g_ns_reply_hook)(int outcome);
+
 // PROVIDED BY main.cpp (the shared dispatch seam). Handle one received binary WS message
 // (`in`/`len`): upload-chunk streaming OR lm_player_handle + persistence + poll_after_message,
 // identical to the vendor ws:81 / wss:443 paths. Writes the reply into the app's tx buffer and
@@ -123,6 +142,11 @@ bool netstack_wifi_wants_network(void);
 // or PMK derivation in flight. The player runs its loop task AT render's priority only
 // then (main.cpp loop()), and one below it for everything else (joins, scans, DHCP).
 bool netstack_data_plane_active(void);
+// Whether netstack_loop() has work right now: a frame in the MAC RX ring it hasn't taken
+// (one descriptor scan, no copy) or data in the TCP send window (its pump + RTO). Loop task
+// only. The player's loop() polls this while a render frame is in progress and runs
+// netstack_loop() only when it is true (main.cpp loop()).
+bool netstack_service_due(void);
 // Seconds the network had already been unseen before this boot (persisted by the app).
 void netstack_set_unseen_base(uint32_t seconds);
 // The live link state (WifiLinkState numbering) for the app / agent / console.
