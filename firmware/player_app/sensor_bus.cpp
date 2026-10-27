@@ -28,8 +28,10 @@ constexpr int kXferTimeoutMs = 10;
 // data or dt accuracy (sample timing comes from the IMU clock).
 constexpr UBaseType_t kSensorTaskPrio = 5;
 // Static-bound-checked (stack_bound.json "sensor"); heap-allocated only when a
-// sensor is present. Static bound 1,056 B (1,640 B with the 1.25 margin).
-static const uint32_t kSensorTaskStack = 2560;
+// sensor is present. Static bound ~2.3 KB (3,160 B with the 1.25 margin + ISR context):
+// persist_cal's Log().printf runs ROM vsnprintf (~1.5 KB), which the bound counted as
+// 0 B until it learned the ROM frames.
+static const uint32_t kSensorTaskStack = 3328;
 
 i2c_master_bus_handle_t g_bus = nullptr;
 // Device handles per 7-bit address, created lazily (only 0x68/0x69 are used).

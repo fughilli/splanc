@@ -161,11 +161,14 @@ extern "C" __attribute__((weak)) void lm_heap_freeze(void) {}
 // ~4 KiB board-capabilities catalog (lm_player_handle ~10 KB + hardware_config_state
 // ~10 KB frames). With the descriptor spliced in at encode time (Player::encode_reply) the
 // static worst-case bound over the ELF call graph (direct calls + the mbedtls bio/RNG
-// callbacks) is ~8.5 KB (stack_bound_test, which gates every task's stack against its
-// bound x 1.25 + ISR context = 10.9 KB: the protocol-handler path; the netstack's TX
-// layers build one in-place frame, and its RX frame is a shared static, not a 1.6 KB
-// local in netstack_loop). Measured high-water on the ram_audit worst case: 4.8 KB.
-SET_LOOP_TASK_STACK_SIZE(11 * 1024);
+// callbacks + the mask-ROM frames) is ~9.4 KB (stack_bound_test, which gates every task's
+// stack against its bound x 1.25 + ISR context = 11.7 KB). The deepest path is an FX
+// debugger snapshot shading through a sensor driver's I2C bus recovery, whose Log().printf
+// runs ROM vsnprintf (~1.5 KB, uncounted before the bound learned ROM frames). The
+// netstack's TX layers build one in-place frame, and its RX frame is a shared static.
+// Measured high-water: 4.8 KB (ram_audit worst case), ~4.3 KB (Android phone journeys,
+// `[stack]` status line).
+SET_LOOP_TASK_STACK_SIZE(12 * 1024);
 #else
 SET_LOOP_TASK_STACK_SIZE(24 * 1024);
 #endif
@@ -336,14 +339,15 @@ static constexpr uint32_t kMidFramePollMs = 4;
 // taken while waiting for player_mutex (render takes it INSIDE player_mutex).
 static SemaphoreHandle_t tex_mutex = nullptr;
 static const UBaseType_t kRenderTaskPrio = 10;   // tune on-device if needed
-// render: static bound ~3.3 KB (stack_bound_test; render_once -> lm_fx_update -> fx_rebuild_topo's
-// ~2.5 KB one-shot topology scratch; the FX VM's other indirect sites are its own
-// jump tables + ROM soft-float leaves, and JIT segments use no machine stack), so
-// 5 KB is ~1.5x. The measured high-water (~0.8 KB) is NOT a sizing basis.
+// render: static bound ~3.8 KB (stack_bound_test; render_once -> the FX VM -> a sensor
+// driver's I2C bus recovery, whose Log().printf runs ROM vsnprintf, ~1.5 KB on its own;
+// JIT segments use no machine stack), so 5 KB is what the gate's x1.25 + ISR context
+// needs. The measured high-water (~0.8 KB, `[stack]` status line) is NOT a sizing basis.
 static const uint32_t kRenderTaskStack = 5120;
-// xmit: just stages/sends the LED frame; static bound ~0.9 KB (stack_bound_test),
-// measured ~0.5 KB.
-static const uint32_t kXmitTaskStack = 2048;
+// xmit: just stages/sends the LED frame; static bound ~0.9 KB (stack_bound_test; the gate
+// needs 1.4 KB), measured ~0.5 KB. It must never format a log line (ROM vsnprintf is
+// ~1.5 KB): its outcomes are handed to loop() to log (g_hw_reconfig_result).
+static const uint32_t kXmitTaskStack = 1536;
 
 // Largest inbound protocol message: a full submit_map for kMaxLeds (~96 B/LED,
 // so 256 LEDs ≈ 25 KB; 32 KB leaves headroom). Sized to the LED cap rather than
@@ -767,6 +771,11 @@ static int g_hw_gpio1 = LED_DATA_PIN_2;
 static volatile int g_hw_req_gpio0 = LED_DATA_PIN;
 static volatile int g_hw_req_gpio1 = LED_DATA_PIN_2;
 static volatile bool g_hw_reconfig_req = false;
+// The reconfigure's outcome, for loop() to log (1 = ok, -1 = failed; written last by
+// the transmit task). The transmit task never formats a log line itself: ROM
+// vsnprintf alone needs ~1.5 KB, three times what its stack is sized for.
+static volatile int g_hw_reconfig_done_gpio0 = 0, g_hw_reconfig_done_gpio1 = 0;
+static volatile int8_t g_hw_reconfig_result = 0;
 
 static uint32_t lut_crc(const LutRecord *r) {
   return esp_rom_crc32_le(0, reinterpret_cast<const uint8_t *>(r),
@@ -2335,13 +2344,14 @@ static void xmit_task(void *) {
     if (g_hw_reconfig_req) {
       int ng0 = g_hw_req_gpio0, ng1 = g_hw_req_gpio1;
       g_hw_reconfig_req = false;
-      if (ws2812_reconfigure(ng0, ng1)) {
+      const bool ok = ws2812_reconfigure(ng0, ng1);
+      if (ok) {
         g_hw_gpio0 = ng0;
         g_hw_gpio1 = ng1;
-        Log().printf("[hw] RMT reconfigured to gpio=%d/%d\n", ng0, ng1);
-      } else {
-        Log().printf("[hw] RMT reconfigure to gpio=%d/%d FAILED\n", ng0, ng1);
       }
+      g_hw_reconfig_done_gpio0 = ng0;
+      g_hw_reconfig_done_gpio1 = ng1;
+      g_hw_reconfig_result = ok ? 1 : -1;  // logged by loop(), see the global's note
     }
     int64_t t0 = g_show_timed ? esp_timer_get_time() : 0;
     if (g_show_timed) {  // an effect frame: its wire-out start feeds the cadence stats
@@ -3547,6 +3557,13 @@ static void mode_observe() {
 void loop() {
   // loop() now only services the network stacks; the LEDs are driven by
   // render_task (started in setup), decoupled from this cooperative cycle.
+  if (g_hw_reconfig_result != 0) {
+    const int8_t r = g_hw_reconfig_result;
+    g_hw_reconfig_result = 0;
+    Log().printf(r > 0 ? "[hw] RMT reconfigured to gpio=%d/%d\n"
+                       : "[hw] RMT reconfigure to gpio=%d/%d FAILED\n",
+                 g_hw_reconfig_done_gpio0, g_hw_reconfig_done_gpio1);
+  }
   if (g_reboot_at_ms && (int32_t)(millis() - g_reboot_at_ms) >= 0) {
     Log().printf("[led] restarting to resize the LED buffers\n");
     delay(50);  // let the log drain
@@ -3687,6 +3704,15 @@ void loop() {
                  net, (unsigned)g_mtx_wait_max_us, (unsigned)g_handle_max_us);
     g_mtx_wait_max_us = 0;
     g_handle_max_us = 0;
+    // Each task's stack high-water: the fewest bytes ever left free (FreeRTOS fills
+    // stacks with 0xa5). The static bound (stack_bound_test) can't see ROM printf
+    // frames or other indirect calls, so this is the field check behind it.
+    auto stk_free = [](const char *name) -> unsigned {
+      TaskHandle_t h = xTaskGetHandle(name);
+      return h ? (unsigned)uxTaskGetStackHighWaterMark(h) : 0u;
+    };
+    Log().printf("[stack] free loopTask=%u render=%u xmit=%u logdrain=%u\n", stk_free("loopTask"),
+                 stk_free("render"), stk_free("xmit"), stk_free("logdrain"));
 #endif
 #if defined(LM_SENSORS)
     sensor_log_status();
