@@ -142,10 +142,11 @@ bool netstack_wifi_wants_network(void);
 // or PMK derivation in flight. The player runs its loop task AT render's priority only
 // then (main.cpp loop()), and one below it for everything else (joins, scans, DHCP).
 bool netstack_data_plane_active(void);
-// Whether the MAC RX ring holds a frame netstack_loop() hasn't taken yet (one descriptor
-// scan, no copy). Loop task only. The player's loop() polls this while a render frame is
-// in progress and runs netstack_loop() only when something arrived (main.cpp loop()).
-bool netstack_rx_pending(void);
+// Whether netstack_loop() has work right now: a frame in the MAC RX ring it hasn't taken
+// (one descriptor scan, no copy) or data in the TCP send window (its pump + RTO). Loop task
+// only. The player's loop() polls this while a render frame is in progress and runs
+// netstack_loop() only when it is true (main.cpp loop()).
+bool netstack_service_due(void);
 // Seconds the network had already been unseen before this boot (persisted by the app).
 void netstack_set_unseen_base(uint32_t seconds);
 // The live link state (WifiLinkState numbering) for the app / agent / console.

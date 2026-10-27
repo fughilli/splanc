@@ -3588,12 +3588,13 @@ void loop() {
   // mutex (live control: a message must not wait in the RX ring for a whole frame). But a
   // full pass every tick inside the frame — policy, OTA, BLE, status, the netstack timers
   // — evicted the effect's code from the flash cache and stretched every frame (fx_bench
-  // +11..+22 % frame cycles; rig-1 absfM 1.557 -> 1.90 M). Mid-frame, poll the RX ring only (one
-  // descriptor scan): when something arrived, run the netstack (decode, dispatch, live
-  // mailbox, ack) right away; everything else waits for the frame to end, as before the
-  // try-locks, when the loop sat on the mutex for the rest of the frame.
+  // +11..+22 % frame cycles; rig-1 absfM 1.557 -> 1.90 M). Mid-frame, run the netstack only
+  // when it has work (netstack_service_due: a frame in the RX ring — decode, dispatch, live
+  // mailbox, ack — or data in the TCP send window, whose pump and RTO resend a lost ack);
+  // everything else waits for the frame to end, as before the try-locks, when the loop sat
+  // on the mutex for the rest of the frame.
   if (g_render_in_frame) {
-    if (netstack_rx_pending()) netstack_loop();
+    if (netstack_service_due()) netstack_loop();
     // Sleep until the frame ends (render gives the mutex: the full pass runs at once, as
     // when the loop blocked on it) or the next RX poll is due. Polling on every tick still
     // cost +4 % frame cycles on a 10 ms frame (each wake is a context switch plus

@@ -96,10 +96,11 @@ unaffected. On firmware without `control_ack` the channel paces on the legacy re
   a wss client up the loop sits at render's priority, and a full pass on every tick
   (policy, OTA, BLE, status, timers) evicted the effect from the flash cache — fx_bench
   frame cycles +11..+22 %, a heavy gate frame 54 -> 65 ms. While render holds the mutex
-  (`g_render_in_frame`) loop() only polls the RX ring (one descriptor scan,
-  `netstack_rx_pending`) every 4 ms, runs the netstack when something arrived, and
-  otherwise waits on the mutex until the frame ends; the rest of the pass runs between
-  frames. That costs ~1 % of frame cycles (absfM 1.557 -> 1.576 M on rig-1, vs 1.90 M
+  (`g_render_in_frame`) loop() checks every 4 ms whether the netstack has work
+  (`netstack_service_due`: a frame in the RX ring — one descriptor scan — or data in the
+  TCP send window, whose pump and RTO resend a lost ack), runs only the netstack then,
+  and otherwise waits on the mutex until the frame ends; the rest of the pass runs
+  between frames. That costs ~1 % of frame cycles (absfM 1.557 -> 1.576 M on rig-1, vs 1.90 M
   with a full pass per tick). The OSC / live-mailbox drain runs at the frame boundary
   just before the timed update span, and only calls into the mailbox when a move was
   posted. The `LM_CTRL_TRACE` stamps (main.cpp and the transport's RX/TLS/reply stamps,

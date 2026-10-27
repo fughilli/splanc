@@ -430,6 +430,12 @@ impl TcpConn {
         SND_BUF - self.snd_len
     }
 
+    /// Bytes still owned by the send side (queued or in flight, not yet ACKed): while any
+    /// are, `pump_tx` / `tick` (the send window, the RTO) have work to do.
+    pub fn tx_pending(&self) -> bool {
+        self.snd_len > 0
+    }
+
     /// Oldest unacked send sequence. Advances when the peer ACKs our data — the real
     /// forward-progress signal a liveness watchdog needs. A saturating stream keeps the
     /// send window near-full (tx_room low) yet snd_una climbs steadily; only a genuinely

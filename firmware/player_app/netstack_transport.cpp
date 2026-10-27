@@ -87,6 +87,7 @@ uint32_t ns_tcp_enqueue(const uint8_t *data, uint32_t len);          // buffer i
 uint32_t ns_tcp_pump_tx(uint32_t now_ms, uint8_t *out, uint32_t cap); // emit next windowed segment
 uint32_t ns_tcp_tx_room(void);                                       // free send-window bytes
 uint32_t ns_tcp_tick(uint32_t now_ms, uint8_t *out, uint32_t cap); // stack RTO: emits a retransmit when it fires
+uint32_t ns_tcp_tx_pending(void);  // send side holds queued/unacked data (RTO + window live)
 uint32_t ns_tcp_window_ack(uint8_t *out, uint32_t cap); // window-update ACK after draining rx
 uint32_t ns_tcp_recv(uint8_t *out, uint32_t cap);
 void ns_tcp_listen(const uint8_t *src, uint16_t sport, uint32_t iss); // passive open (server)
@@ -2011,12 +2012,15 @@ bool netstack_take_policy_change(NetstackWifiPolicy *out) {
 // joined is, and still rolls a broken image back.
 bool netstack_wifi_wants_network() { return autonomous((uint32_t)millis()) && g_seen_this_boot; }
 
-bool netstack_rx_pending() {
-  bool pending = g_radio_up && ns_mac_rx_pending() != 0;
+bool netstack_service_due() {
+  if (!g_radio_up) return false;
+  bool rx = ns_mac_rx_pending() != 0;
   // An empty poll here is an empty-ring observation like netstack_loop's own (the trace
   // attributes a frame's ring wait from the last empty poll before its reap).
-  NS_TRACE(if (!pending) g_ns_rx_stamps.empty_poll_us = ns_now_us());
-  return pending;
+  NS_TRACE(if (!rx) g_ns_rx_stamps.empty_poll_us = ns_now_us());
+  // Data still in the send window: only netstack_loop streams it out and runs its RTO
+  // (a lost ControlAck is resent from ns_tcp_tick), so it must not wait for the frame end.
+  return rx || (g_tcp_started && ns_tcp_tx_pending() != 0);
 }
 
 bool netstack_data_plane_active() {

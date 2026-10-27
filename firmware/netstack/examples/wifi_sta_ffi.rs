@@ -224,6 +224,13 @@ pub extern "C" fn ns_tcp_tx_room() -> u32 {
     unsafe { TCP.as_ref().map(|c| c.tx_room() as u32).unwrap_or(0) }
 }
 
+/// Whether the send side still holds data (queued or unacknowledged): the RTO and the
+/// send window need servicing (`ns_tcp_tick` / `ns_tcp_pump_tx`) until it drains.
+#[no_mangle]
+pub extern "C" fn ns_tcp_tx_pending() -> u32 {
+    unsafe { TCP.as_ref().map(|c| c.tx_pending() as u32).unwrap_or(0) }
+}
+
 /// Oldest unacked send sequence — advances on every peer ACK. The forward-progress
 /// signal the reclaim watchdogs need so they fire only on a truly silent peer, never on
 /// a healthy saturating stream (window full but snd_una climbing).
