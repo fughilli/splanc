@@ -120,6 +120,198 @@ export class FxPreview {
     }
 }
 if (Symbol.dispose) FxPreview.prototype[Symbol.dispose] = FxPreview.prototype.free;
+
+/**
+ * Host replay of a device frame for the FX debugger (docs/design/fx-debugger.md,
+ * web/src/fx/fxDebug.ts): the SAME VM, restored to a device snapshot (uniforms,
+ * `state` + the flood field, buffer arena, topology graph) and fed the device's
+ * exact frame context (FX_FRAME_V1) and per-LED inputs (FX_LED_V1 records), so
+ * its output can be diffed against the device's bit for bit.
+ */
+export class FxReplay {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        FxReplayFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_fxreplay_free(ptr, 0);
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    arena() {
+        const ret = wasm.fxreplay_arena(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * The VM locals after the last shade (f32).
+     * @returns {Float32Array}
+     */
+    locals() {
+        const ret = wasm.fxreplay_locals(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @param {Uint8Array} fxb
+     */
+    constructor(fxb) {
+        const ptr0 = passArray8ToWasm0(fxb, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.fxreplay_new(ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        FxReplayFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * SECTION_ARENA: the deck's buffer arena, raw.
+     * @param {Uint8Array} bytes
+     */
+    set_arena(bytes) {
+        const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.fxreplay_set_arena(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * The per-invocation instruction budget (the device's `budget`).
+     * @param {number} instructions
+     */
+    set_budget(instructions) {
+        wasm.fxreplay_set_budget(this.__wbg_ptr, instructions);
+    }
+    /**
+     * FX_FRAME_V1 (fx_debug.state.frame_ctx). False when malformed.
+     * @param {Uint8Array} ctx
+     * @returns {boolean}
+     */
+    set_frame(ctx) {
+        const ptr0 = passArray8ToWasm0(ctx, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.fxreplay_set_frame(this.__wbg_ptr, ptr0, len0);
+        return ret !== 0;
+    }
+    /**
+     * SECTION_GRAPH: n_seg, then (len f32, node a, node b) per segment, as words.
+     * @param {Uint32Array} words
+     */
+    set_graph_words(words) {
+        const ptr0 = passArray32ToWasm0(words, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.fxreplay_set_graph_words(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * SECTION_STATE as u32 words: `state` slots, then the flood_from field.
+     * @param {Uint32Array} words
+     */
+    set_state(words) {
+        const ptr0 = passArray32ToWasm0(words, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.fxreplay_set_state(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * Every uniform slot (SECTION_UNIFORMS as f32s).
+     * @param {Float32Array} vals
+     */
+    set_uniforms(vals) {
+        const ptr0 = passArrayF32ToWasm0(vals, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.fxreplay_set_uniforms(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * Shade LED `idx` from its FX_LED_V1 record: [r, g, b, outcome, has_ctx].
+     * No map entry -> black (the device holds black too).
+     * @param {Uint8Array} rec
+     * @param {number} idx
+     * @returns {Uint8Array}
+     */
+    shade(rec, idx) {
+        const ptr0 = passArray8ToWasm0(rec, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.fxreplay_shade(this.__wbg_ptr, ptr0, len0, idx);
+        var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v2;
+    }
+    /**
+     * The device's debug_fx_led run: isolated (as `shade_isolated`) on zeroed
+     * scratch. Returns [r, g, b, outcome, has_ctx, instrs (u32 LE), stack_max
+     * (u16 LE)]; read the locals with `locals()`.
+     * @param {Uint8Array} rec
+     * @param {number} idx
+     * @returns {Uint8Array}
+     */
+    shade_debug(rec, idx) {
+        const ptr0 = passArray8ToWasm0(rec, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.fxreplay_shade_debug(this.__wbg_ptr, ptr0, len0, idx);
+        var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v2;
+    }
+    /**
+     * Like `shade`, but LED `idx`'s per-LED buffer elements are restored after
+     * the run (the device's debugger re-runs: no side effect on the state).
+     * @param {Uint8Array} rec
+     * @param {number} idx
+     * @returns {Uint8Array}
+     */
+    shade_isolated(rec, idx) {
+        const ptr0 = passArray8ToWasm0(rec, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.fxreplay_shade_isolated(this.__wbg_ptr, ptr0, len0, idx);
+        var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v2;
+    }
+    /**
+     * The state in SECTION_STATE's layout (to diff against the device's).
+     * @returns {Uint32Array}
+     */
+    state() {
+        const ret = wasm.fxreplay_state(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * Run update() once. Returns the outcome (0 ok, 1 budget, 2 timeout).
+     * @returns {number}
+     */
+    update() {
+        const ret = wasm.fxreplay_update(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+}
+if (Symbol.dispose) FxReplay.prototype[Symbol.dispose] = FxReplay.prototype.free;
+
+/**
+ * The device's crossfade blend of two decks' colours (ledmapper_keypoint
+ * blend_rgb8: mode 0 = linear RGB, 1 = HSV shortest hue).
+ * @param {Uint8Array} a
+ * @param {Uint8Array} b
+ * @param {number} t
+ * @param {number} mode
+ * @returns {Uint8Array}
+ */
+export function fx_blend_rgb8(a, b, t, mode) {
+    const ptr0 = passArray8ToWasm0(a, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(b, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.fx_blend_rgb8(ptr0, len0, ptr1, len1, t, mode);
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
@@ -150,6 +342,19 @@ function __wbg_get_imports() {
 const FxPreviewFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_fxpreview_free(ptr, 1));
+const FxReplayFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_fxreplay_free(ptr, 1));
+
+function getArrayF32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getFloat32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+
+function getArrayU32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
 
 function getArrayU8FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
