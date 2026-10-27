@@ -20,6 +20,15 @@ module grades it. Phases (one reservation):
           connection within REJOIN_DEADLINE_S;
   boot    reset with the heavy effect persisted: a connection must succeed within
           BOOT_DEADLINE_S of the reset (the persisted effect starts before Wi-Fi).
+  session an effect past the floor (SESSION_DUTY of its period: it lags, never parked)
+          and ONE live session driven like the agent bridge for SESSION_S: repeated
+          measure_effect cycles (1 Hz perf reports) and the bridge's liveness
+          heartbeat (a time_sync_ping after HEARTBEAT_BUSY_S of silence, dead after
+          HEARTBEAT_MISSES unanswered). The session must never be declared dead nor
+          dropped (1.12.7 field: "stopped answering during the call ... 14.1 s"),
+          a silent session held HOLD_IDLE_S at that effect must still answer, and
+          CHURN_CYCLES close-then-reconnect-at-once cycles must never be RST-refused
+          (load-shedding re-armed while the closed session waited for the peer's FIN).
 
 Every phase gates on its persistent END state (a run of good connections), never on
 one slow attempt (hitl-gate-test-authoring). Infra — no baseline connection, the
@@ -61,6 +70,26 @@ CAL_MAX_LEDS = 512  # the 25 fps floor holds up to 512 LEDs (fps floor_fps_for)
 # A sized frame outside this band of the floor period gets one more sizing pass (the
 # probe's fixed per-frame overhead makes the first linear estimate land low).
 CAL_BAND = (0.91, 0.95)
+
+# Session phase: the frame cost as a share of the floor's period (the PixieLamp field
+# effect was estimated at 1.38x) and the band one more sizing pass aims for.
+SESSION_DUTY = 1.4
+SESSION_BAND = (1.3, 1.5)
+# How long the agent-style live session runs, and its measure_effect cycle: BASIC perf
+# at 1 Hz for SESSION_MEASURE_S, then SESSION_REST_S of quiet (heartbeat only).
+SESSION_S = 150.0
+SESSION_MEASURE_S = 10.0
+SESSION_REST_S = 20.0
+# The agent bridge's liveness watchdog (agent/src/liveness.ts LIVENESS_DEFAULTS): ping
+# after busyMs of silence while a call is in flight, each ping may take pingTimeoutMs,
+# `misses` unanswered in a row (nothing else arriving) = dead.
+HEARTBEAT_BUSY_S = 4.0
+HEARTBEAT_TIMEOUT_S = 5.0
+HEARTBEAT_MISSES = 2
+# Session phase, last: close-and-reconnect-at-once cycles at the same effect. The
+# closing client's reconnect must never be RST-refused (a reset here is the bug: the
+# device re-armed load-shedding while the old session waited for the peer's FIN).
+CHURN_CYCLES = 20
 
 OK = "ok"
 SLOW = "slow"  # completed, but past HANDSHAKE_S
@@ -182,6 +211,50 @@ def grade_reconnect(
     return out
 
 
+def grade_session(live: dict, held: dict | None, rig_ok: bool = True) -> dict:
+    """The live heartbeat session (`live`: {"opened", "s", "deaths", "dropped",
+    "max_silence_s", "pings", "pings_missed", "reports", ...}) and the silent hold at
+    the same effect (`held`: {"ok", ...} or None when not run)."""
+    out = {
+        k: live.get(k)
+        for k in ("s", "deaths", "dropped", "max_silence_s", "pings", "pings_missed", "reports")
+    }
+    if held is not None:
+        out["held"] = bool(held.get("ok"))
+    if not live.get("opened"):
+        out["verdict"] = "SKIP" if not rig_ok else "FAIL"
+        out["why"] = "rig unreachable" if not rig_ok else "the live session never opened"
+        return out
+    problems = []
+    if live.get("deaths"):
+        problems.append(
+            f"session declared dead {live['deaths']}x by the agent heartbeat "
+            f"(max silence {live.get('max_silence_s')}s)"
+        )
+    if live.get("dropped"):
+        problems.append(f"session dropped: {live['dropped']}")
+    if not live.get("reports"):
+        problems.append("no perf reports arrived")
+    churn = live.get("churn")
+    if churn is not None:
+        out["churn"] = {k: churn.get(k) for k in ("cycles", "ok", "reset", "other")}
+        if churn.get("reset"):
+            problems.append(
+                f"{churn['reset']}/{churn.get('cycles')} immediate reconnects were RST-refused"
+            )
+    if held is not None and not held.get("ok"):
+        problems.append(f"a silent live session was dropped (held {HOLD_IDLE_S:g}s)")
+    if problems and not rig_ok:
+        out["verdict"] = "SKIP"
+        out["why"] = "rig unreachable"
+    elif problems:
+        out["verdict"] = "FAIL"
+        out["why"] = "; ".join(problems)
+    else:
+        out["verdict"] = "PASS"
+    return out
+
+
 _LOOP_GAP_RE = re.compile(r"\[net\] t=\d+ .*?loop_gap_max=(\d+)us")
 _FT_RE = re.compile(r"\[ft\] r(\d+):\d+/(\d+)/(\d+) .*?fps=(\d+) sl=(\d+)-(\d+)")
 _LEASE_RE = re.compile(r"DHCP LEASE ACQUIRED")
@@ -243,7 +316,12 @@ def verdict(baseline_ok: bool, calibrated: bool, phases: dict[str, dict]) -> dic
 
 # The console windows each phase captures (hitl_heavy_effect_reachability.py saves
 # every one to its --log-dir, the test's undeclared outputs).
-PHASE_WINDOWS = {"idle": ("idle",), "rejoin": ("rejoin_drop", "rejoin"), "boot": ("boot",)}
+PHASE_WINDOWS = {
+    "idle": ("idle",),
+    "rejoin": ("rejoin_drop", "rejoin"),
+    "boot": ("boot",),
+    "session": ("session",),
+}
 # Slack on a window's planned activity: the reader's ssh start, the last dial's tail.
 WINDOW_SLACK_S = 30.0
 # A passing phase's window prints only this tail on a FAIL (the failing ones print whole).
@@ -258,6 +336,13 @@ def idle_window_s(hold_s: float, wait_s: float, gap_s: float, open_timeout_s: fl
     window early once the phase is done."""
     hold = open_timeout_s + hold_s + 15.0 if hold_s > 0 else 0.0
     return hold + wait_s + MAX_ATTEMPTS * (HANDSHAKE_S + 0.5 + gap_s) + WINDOW_SLACK_S
+
+
+def session_window_s(live_s: float, hold_s: float, open_timeout_s: float) -> float:
+    """The session phase's console window: the live session (open + hello, SESSION_S,
+    the closing calls) and then the silent hold at the same effect."""
+    hold = open_timeout_s + hold_s + 15.0 if hold_s > 0 else 0.0
+    return open_timeout_s + live_s + 30.0 + hold + WINDOW_SLACK_S
 
 
 def windows_to_print(phases: dict[str, dict], windows: list[str]) -> list[tuple[str, bool]]:
@@ -277,11 +362,16 @@ def result_line(unit: str, cal: dict, phases: dict[str, dict], g: dict) -> str:
     parts = [f"RESULT unit={unit}"]
     if cal:
         parts.append(f"leds={cal.get('leds')} duty={cal.get('duty')}")
-    for name in ("idle", "rejoin", "boot"):
+    for name in ("idle", "rejoin", "boot", "session"):
         p = phases.get(name)
         if not p:
             continue
-        if name == "idle":
+        if name == "session":
+            parts.append(
+                f"session={p['verdict']}(deaths={p.get('deaths')},"
+                f"max_silence_s={p.get('max_silence_s')})"
+            )
+        elif name == "idle":
             parts.append(
                 f"idle={p['verdict']}({p['streak']}/{STREAK},ok={p['ok']}/{p['attempts']})"
             )

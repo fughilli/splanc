@@ -740,6 +740,16 @@ genrule(
     tools = ["//fx_compiler:fx_compile"],
 )
 
+# The session phase's effect: hash value noise + sin terms + hsv2rgb, sized to ~1.4x
+# the floor (the 1.12.7 PixieLamp field case: an agent's live session went unanswered).
+genrule(
+    name = "heavy_session_fxb",
+    srcs = ["ab_demo/heavySession.fx"],
+    outs = ["heavySession.fxb"],
+    cmd = "$(execpath //fx_compiler:fx_compile) $< $@",
+    tools = ["//fx_compiler:fx_compile"],
+)
+
 py_test(
     name = "heavy_effect_reachability",
     timeout = "eternal",
@@ -748,12 +758,14 @@ py_test(
         "hitl_map_upload.py",
     ],
     data = [
+        ":heavy_session_fxb",
         ":swirl_heavy_fxb",
         "//firmware/player_app:esp32c6_netstack_flashbundle",
         "@hitl_reserve//cmd/hitl",
     ],
     env = {
         "HEAVY_FXB_RUNFILE": "_main/pi/hitl/harness/swirlHeavy.fxb",
+        "SESSION_FXB_RUNFILE": "_main/pi/hitl/harness/heavySession.fxb",
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
         # netstack: chunk the map into 1 KB windows (one TLS record each).
         "HITL_CHUNK_BYTES": "1024",
