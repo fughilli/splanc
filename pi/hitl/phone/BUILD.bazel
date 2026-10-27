@@ -200,6 +200,18 @@ py_test(
     deps = [":phone"],
 )
 
+# Offline tests for the Android CI rep's DUT console handling (the whole log saved to
+# the test outputs, a longer excerpt printed on failure), without a reservation.
+py_test(
+    name = "android_journeys_test",
+    srcs = [
+        "android_journeys.py",
+        "android_journeys_test.py",
+    ],
+    imports = ["."],
+    main = "android_journeys_test.py",
+)
+
 # Dry-run tests for the reservation-driven iOS runner: payload manifest + the remote
 # phone_e2e command construction, WITHOUT a reservation or hardware (hitl_client is
 # imported lazily inside _run, so the pure planning surface tests offline).

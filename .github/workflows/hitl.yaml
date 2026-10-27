@@ -654,6 +654,56 @@ jobs:
           find . -name test.xml -exec install -D -m 0644 {} "$GITHUB_WORKSPACE/hitl-traceability-evidence/{}" \;
           echo "collected $(find "$GITHUB_WORKSPACE/hitl-traceability-evidence" -name test.xml 2>/dev/null | wc -l) test.xml from $testlogs"
 
+      # Every HITL test's undeclared outputs ($TEST_UNDECLARED_OUTPUTS_DIR: the DUT
+      # console windows heavy_effect_reachability saves, android_journeys' whole DUT
+      # log, fx_bench's bundle, ...). Bazel zips them into <target>/test.outputs/
+      # outputs.zip, and a --flaky_test_attempts retry moves a failed attempt's to
+      # <target>/test_attempts/attempt_N.outputs/outputs.zip. Each zip is unpacked to
+      # hitl-test-outputs/<package>/<target>/<test|test_attempts/attempt_N>.outputs/.
+      # The hitl-serial-logs capture pauses while a test holds the console itself, so
+      # these files are the only copy of those windows. Every test's outputs go up while
+      # the zips total under HITL_OUTPUTS_MAX_MB; past that only the tests that failed an
+      # attempt (failed, or passed on a retry) keep theirs.
+      - name: Collect HITL test outputs
+        if: always() && env.HITL_TESTLOGS != ''
+        env:
+          HITL_OUTPUTS_MAX_MB: '300'
+        run: |
+          dest="$GITHUB_WORKSPACE/hitl-test-outputs"
+          list="$RUNNER_TEMP/hitl-outputs.txt"
+          cd "$HITL_TESTLOGS"
+          find . -path '*.outputs/outputs.zip' -printf '%s %P\n' | sort -k2 > "$list"
+          total=$(awk '{ s += $1 } END { print s + 0 }' "$list")
+          echo "$(wc -l < "$list") outputs.zip, $(( total / 1048576 )) MB in all"
+          only_failed=0
+          if [ "$total" -gt $(( HITL_OUTPUTS_MAX_MB * 1048576 )) ]; then
+            only_failed=1
+            echo "::warning::HITL test outputs exceed ${HITL_OUTPUTS_MAX_MB} MB: keeping only tests that failed an attempt"
+          fi
+          kept=0
+          while read -r _size zip; do
+            rel="${zip%/outputs.zip}"            # <pkg>/<target>/test.outputs or .../attempt_N.outputs
+            target="${rel%/test.outputs}"
+            target="${target%/test_attempts/*}"  # <pkg>/<target>
+            if [ "$only_failed" = 1 ] && [ ! -d "$target/test_attempts" ] \
+                && ! grep -qs -e '<failure' -e '<error' "$target/test.xml"; then
+              continue
+            fi
+            mkdir -p "$dest/$rel"
+            unzip -q -o "$zip" -d "$dest/$rel" || echo "::warning::could not unpack $zip"
+            kept=$(( kept + 1 ))
+          done < "$list"
+          echo "unpacked $kept outputs.zip into hitl-test-outputs"
+
+      - name: Upload HITL test outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hitl-test-outputs
+          path: hitl-test-outputs
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Upload the HITL verdict
         if: always()
         uses: actions/upload-artifact@v4

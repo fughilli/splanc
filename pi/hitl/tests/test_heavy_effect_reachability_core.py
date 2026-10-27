@@ -128,3 +128,35 @@ def test_result_line():
     line = core.result_line("c6-123170", {"leds": 476, "duty": 0.93}, phases, g)
     assert line.startswith("RESULT unit=c6-123170 leds=476 duty=0.93 idle=FAIL(0/5,ok=0/10)")
     assert "boot=PASS(first_ok_s=20)" in line and line.endswith("verdict=FAIL")
+
+
+def test_idle_window_covers_the_hold_the_wait_and_every_dial():
+    # main 49475165: the held session dropped somewhere in a 35 s hold; the window must
+    # span that hold, the 30 s closed wait and all MAX_ATTEMPTS dials (each up to 8.5 s).
+    w = core.idle_window_s(core.HOLD_IDLE_S, core.IDLE_WAIT_S, 2.0, 25.0)
+    dials = core.MAX_ATTEMPTS * (core.HANDSHAKE_S + 0.5 + 2.0)
+    assert w >= 25.0 + core.HOLD_IDLE_S + 15.0 + core.IDLE_WAIT_S + dials
+    # No hold: the window covers only the wait and the dials.
+    assert core.idle_window_s(0, core.IDLE_WAIT_S, 2.0, 25.0) == core.IDLE_WAIT_S + dials + (
+        core.WINDOW_SLACK_S
+    )
+
+
+def test_a_failing_phase_prints_its_whole_window():
+    f = {"verdict": "FAIL", "why": "x"}
+    p = {"verdict": "PASS"}
+    windows = ["idle", "rejoin_drop", "rejoin", "boot"]
+    assert core.windows_to_print({"idle": f, "rejoin": p, "boot": p}, windows) == [
+        ("idle", True),
+        ("rejoin_drop", False),
+        ("rejoin", False),
+        ("boot", False),
+    ]
+    assert core.windows_to_print({"idle": p, "rejoin": f}, windows) == [
+        ("idle", False),
+        ("rejoin_drop", True),
+        ("rejoin", True),
+        ("boot", False),
+    ]
+    # Only captured windows print; an unknown phase never crashes it.
+    assert core.windows_to_print({"idle": f, "other": f}, ["idle"]) == [("idle", True)]

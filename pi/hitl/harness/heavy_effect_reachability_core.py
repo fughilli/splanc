@@ -241,6 +241,38 @@ def verdict(baseline_ok: bool, calibrated: bool, phases: dict[str, dict]) -> dic
     return {"verdict": "SKIP", "skip": "no phase could be graded", "problems": []}
 
 
+# The console windows each phase captures (hitl_heavy_effect_reachability.py saves
+# every one to its --log-dir, the test's undeclared outputs).
+PHASE_WINDOWS = {"idle": ("idle",), "rejoin": ("rejoin_drop", "rejoin"), "boot": ("boot",)}
+# Slack on a window's planned activity: the reader's ssh start, the last dial's tail.
+WINDOW_SLACK_S = 30.0
+# A passing phase's window prints only this tail on a FAIL (the failing ones print whole).
+PASS_WINDOW_TAIL = 5000
+
+
+def idle_window_s(hold_s: float, wait_s: float, gap_s: float, open_timeout_s: float) -> float:
+    """How long the idle phase's console window stays open. It must cover the held
+    silent session (open + hello, the hold, the closing RPC), the closed wait and up
+    to MAX_ATTEMPTS dials (each up to HANDSHAKE_S + 0.5 s, gap_s apart), so the moment
+    a held session drops or a dial stalls is always inside it. The harness ends the
+    window early once the phase is done."""
+    hold = open_timeout_s + hold_s + 15.0 if hold_s > 0 else 0.0
+    return hold + wait_s + MAX_ATTEMPTS * (HANDSHAKE_S + 0.5 + gap_s) + WINDOW_SLACK_S
+
+
+def windows_to_print(phases: dict[str, dict], windows: list[str]) -> list[tuple[str, bool]]:
+    """(window, whole) for each captured console window, in capture order, to print on
+    a FAIL: the whole window for every phase that FAILed, the last PASS_WINDOW_TAIL
+    characters for the others."""
+    failing = {
+        w
+        for name, p in phases.items()
+        if p.get("verdict") == "FAIL"
+        for w in PHASE_WINDOWS.get(name, ())
+    }
+    return [(w, w in failing) for w in windows]
+
+
 def result_line(unit: str, cal: dict, phases: dict[str, dict], g: dict) -> str:
     parts = [f"RESULT unit={unit}"]
     if cal:
