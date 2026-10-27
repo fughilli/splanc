@@ -305,7 +305,7 @@ def run(args) -> int:
             raise SystemExit(1)
     finally:
         r.release()
-        _log(core.result_line(args.unit or "", status, checks, reasons))
+        _log(core.result_line(args.unit or r._unit or "", status, checks, reasons))
     return 1 if status == core.FAIL else 0
 
 
