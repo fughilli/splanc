@@ -324,6 +324,12 @@ static void led_show_async(bool timed, uint32_t count0, uint32_t count1,
 // handler take it in turn. Priority sits above the Arduino loopTask (1) but
 // well below the WiFi/BLE stacks (~23) so networking still preempts rendering.
 static SemaphoreHandle_t player_mutex = nullptr;
+// True while render_once holds player_mutex for a frame (render task writes, the loop task
+// reads). The netstack loop then only services arrivals (loop()): see "loopTask during a
+// render frame" there.
+static volatile bool g_render_in_frame = false;
+// How often loop() polls the RX ring while a render frame is in progress (see loop()).
+static constexpr uint32_t kMidFramePollMs = 4;
 // Guards only the video jitter queue (lm_tex_ingest on the network task vs
 // lm_tex_present on the render task), so a streamed set_texture never waits for
 // the player mutex the render task holds across a whole update+shade. Never
@@ -1823,6 +1829,7 @@ static uint32_t render_once() {
   uint32_t perf_led_count = 0;
 
   xSemaphoreTake(player_mutex, portMAX_DELAY);
+  g_render_in_frame = true;
   {
     // millis() was seen to step back ~230 s on a c6 mid-stream; keep the shared time
     // base and the queued video present times continuous across such a step.
@@ -1977,16 +1984,20 @@ static uint32_t render_once() {
     lm_tex_present(now);
     if (tex_mutex != nullptr) xSemaphoreGive(tex_mutex);
     bool ft_due = false;
-    // Cycle-counter span around update() (perf-monitoring.md: two CSR reads,
-    // negligible against the per-frame float ops).
-    uint32_t c_frame_start = esp_cpu_get_cycle_count();
-    uint32_t c_update_start = c_frame_start;
 #if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
     tr_frame_start(this_seq);
 #endif
 #if defined(LM_NETSTACK)
-    osc_drain_frame();  // OSC that arrived since the last frame, newest value per address
+    // Control input that arrived since the last frame (OSC: newest value per address; the
+    // WS live channel's mailbox), applied at the frame boundary before update() reads the
+    // uniforms. Outside the cycle span below: it is input handling, not the effect's
+    // compute, and it runs mailbox code the effect never touches (cold in the flash cache).
+    osc_drain_frame();
 #endif
+    // Cycle-counter span around update() (perf-monitoring.md: two CSR reads,
+    // negligible against the per-frame float ops).
+    uint32_t c_frame_start = esp_cpu_get_cycle_count();
+    uint32_t c_update_start = c_frame_start;
     bool updated = lm_fx_update(fx_time_s, dt_s, this_seq, n);
     uint32_t c_update_end = esp_cpu_get_cycle_count();
     if (updated) {
@@ -2088,6 +2099,7 @@ static uint32_t render_once() {
     }
   }
   if (!fx_frame_rendered) s_fx_last_ms = 0;  // the next effect frame starts fresh
+  g_render_in_frame = false;
   xSemaphoreGive(player_mutex);
 
   // Hand the frame to the async transmit task (see led_show_async): the render
@@ -2283,16 +2295,26 @@ void lm_netstack_osc_rx(const uint8_t *data, size_t len) {
 #endif
 }
 
+// Set (under g_osc_mux) when lm_live_post stashed a move; the frame boundary only calls
+// into the mailbox then, so an idle knob costs every frame one flag test, not a call into
+// cold mailbox code. (A stale true — the locked path or an effect load already emptied the
+// mailbox — costs one empty drain.)
+static bool g_live_waiting = false;
+
 static void osc_drain_frame() {
   taskENTER_CRITICAL(&g_osc_mux);
   lm_osc_drain();
-  lm_live_drain();  // the WS live channel's moves (lm_live_post), same boundary
+  if (g_live_waiting) {
+    g_live_waiting = false;
+    lm_live_drain();  // the WS live channel's moves (lm_live_post), same boundary
+  }
   taskEXIT_CRITICAL(&g_osc_mux);
 }
 
 static bool live_post(const uint8_t *in, size_t len) {
   taskENTER_CRITICAL(&g_osc_mux);
   uint32_t seq = lm_live_post(in, len);
+  if (seq != 0) g_live_waiting = true;
   taskEXIT_CRITICAL(&g_osc_mux);
   return seq != 0;
 }
@@ -3561,6 +3583,26 @@ void loop() {
     reissue_cert_for_lan();
   }
 #else
+  // loopTask during a render frame. While a wss client is up the loop runs AT render's
+  // priority and the two round-robin on every tick, and loop() never parks on the render
+  // mutex (live control: a message must not wait in the RX ring for a whole frame). But a
+  // full pass every tick inside the frame — policy, OTA, BLE, status, the netstack timers
+  // — evicted the effect's code from the flash cache and stretched every frame (fx_bench
+  // +11..+22 % frame cycles; rig-1 absfM 1.557 -> 1.90 M). Mid-frame, poll the RX ring only (one
+  // descriptor scan): when something arrived, run the netstack (decode, dispatch, live
+  // mailbox, ack) right away; everything else waits for the frame to end, as before the
+  // try-locks, when the loop sat on the mutex for the rest of the frame.
+  if (g_render_in_frame) {
+    if (netstack_rx_pending()) netstack_loop();
+    // Sleep until the frame ends (render gives the mutex: the full pass runs at once, as
+    // when the loop blocked on it) or the next RX poll is due. Polling on every tick still
+    // cost +4 % frame cycles on a 10 ms frame (each wake is a context switch plus
+    // flash-cache refills for the effect); every kMidFramePollMs it is ~1 %, and a message
+    // waits at most that long in the RX ring.
+    if (xSemaphoreTake(player_mutex, pdMS_TO_TICKS(kMidFramePollMs)) == pdTRUE)
+      xSemaphoreGive(player_mutex);
+    return;
+  }
   netstack_loop();  // RX drain + DHCP + BLE-Improv join + TLS/WS pump (dispatched shared)
   poll_wifi_policy();
   loop_priority_follow_data_plane();

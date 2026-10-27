@@ -92,9 +92,18 @@ unaffected. On firmware without `control_ack` the channel paces on the legacy re
   notify, the 5 s status line) read lock-free or try-lock: a blocking take there held
   loopTask off the RX ring for the rest of every render frame (a message waited ~a
   whole frame before it was even reaped; 400 OSC datagrams/s overflowed the ring
-  until the session died). The cost: loopTask now really runs during a frame (same
-  priority, round-robin), so a heavy frame takes longer — see the budget below. The
-  render duty-cycle split is the fps controller's call.
+  until the session died). It must not run its whole pass inside a frame either: with
+  a wss client up the loop sits at render's priority, and a full pass on every tick
+  (policy, OTA, BLE, status, timers) evicted the effect from the flash cache — fx_bench
+  frame cycles +11..+22 %, a heavy gate frame 54 -> 65 ms. While render holds the mutex
+  (`g_render_in_frame`) loop() only polls the RX ring (one descriptor scan,
+  `netstack_rx_pending`) every 4 ms, runs the netstack when something arrived, and
+  otherwise waits on the mutex until the frame ends; the rest of the pass runs between
+  frames. That costs ~1 % of frame cycles (absfM 1.557 -> 1.576 M on rig-1, vs 1.90 M
+  with a full pass per tick). The OSC / live-mailbox drain runs at the frame boundary
+  just before the timed update span, and only calls into the mailbox when a move was
+  posted. The `LM_CTRL_TRACE` stamps (main.cpp and the transport's RX/TLS/reply stamps,
+  via `:netstack_transport_ctrltrace`) exist only in the measurement image.
 - **Persist off the gesture.** The coalesced effect-selection save waits until the
   live controls (committed or not) have also been quiet for 1.5 s, so a littlefs
   write never lands mid-turn.

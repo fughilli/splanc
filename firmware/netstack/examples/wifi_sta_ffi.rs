@@ -413,18 +413,34 @@ pub extern "C" fn ns_mac_rx_stats(out: *mut u32) {
     }
 }
 
+/// Reap newly completed descriptors into the ring (updating the diagnostics).
+unsafe fn rx_reap() {
+    if RX.reap() > 0 {
+        let ready = RX.ready_count() as u32;
+        if ready > RX_HWM {
+            RX_HWM = ready;
+        }
+        if ready as usize >= RX_SLOTS {
+            RX_FULL = RX_FULL.wrapping_add(1);
+        }
+    }
+}
+
+/// Frames waiting in the RX ring (completed by the MAC, not yet taken by
+/// `ns_mac_recv`). One descriptor scan, no copy: lets the caller skip a whole
+/// service pass when nothing arrived. Same task as `ns_mac_recv`.
+#[no_mangle]
+pub extern "C" fn ns_mac_rx_pending() -> u32 {
+    unsafe {
+        rx_reap();
+        RX.ready_count() as u32
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn ns_mac_recv(out: *mut u8, cap: u32) -> u32 {
     unsafe {
-        if RX.reap() > 0 {
-            let ready = RX.ready_count() as u32;
-            if ready > RX_HWM {
-                RX_HWM = ready;
-            }
-            if ready as usize >= RX_SLOTS {
-                RX_FULL = RX_FULL.wrapping_add(1);
-            }
-        }
+        rx_reap();
         if let Some((idx, buf)) = RX.next_frame() {
             let frame = rx_frame(buf);
             let n = frame.len().min(cap as usize);
