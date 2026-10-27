@@ -92,9 +92,19 @@ unaffected. On firmware without `control_ack` the channel paces on the legacy re
   notify, the 5 s status line) read lock-free or try-lock: a blocking take there held
   loopTask off the RX ring for the rest of every render frame (a message waited ~a
   whole frame before it was even reaped; 400 OSC datagrams/s overflowed the ring
-  until the session died). The cost: loopTask now really runs during a frame (same
-  priority, round-robin), so a heavy frame takes longer — see the budget below. The
-  render duty-cycle split is the fps controller's call.
+  until the session died). It must not run its whole pass inside a frame either: with
+  a wss client up the loop sits at render's priority, and a full pass on every tick
+  (policy, OTA, BLE, status, timers) evicted the effect from the flash cache — fx_bench
+  frame cycles +11..+22 %, a heavy gate frame 54 -> 65 ms. While render holds the mutex
+  (`g_render_in_frame`) loop() checks every 4 ms whether the netstack has work
+  (`netstack_service_due`: a frame in the RX ring — one descriptor scan — or data in the
+  TCP send window, whose pump and RTO resend a lost ack), runs only the netstack then,
+  and otherwise waits on the mutex until the frame ends; the rest of the pass runs
+  between frames. That costs ~1 % of frame cycles (absfM 1.557 -> 1.576 M on rig-1, vs 1.90 M
+  with a full pass per tick). The OSC / live-mailbox drain runs at the frame boundary
+  just before the timed update span, and only calls into the mailbox when a move was
+  posted. The `LM_CTRL_TRACE` stamps (main.cpp and the transport's RX/TLS/reply stamps,
+  via `:netstack_transport_ctrltrace`) exist only in the measurement image.
 - **Persist off the gesture.** The coalesced effect-selection save waits until the
   live controls (committed or not) have also been quiet for 1.5 s, so a littlefs
   write never lands mid-turn.
@@ -131,6 +141,14 @@ light = trivial shade pinned at 60 fps:
 | light wss | 17 | 23 / 224 | 19 / 40 | 27 / 49 | 27 / 54 |
 | light wss +400 pps | 17 | 26 / 246 | 19 / 39 | 29 / 49 | 27 / 54 |
 | light OSC | 17 | 12 / 31 | 10 / 18 | 19 / 28 | 27 / 54 |
+
+With loopTask's mid-frame passes cut to the netstack-when-due path (see "loopTask never
+parks"), the heavy frame is shorter (gate shader 56 -> 50 ms) and, A/B on rig-2 with the
+probe paced at the same 55.6 ms, heavy wss applied p50/p99 is 54-59 / 117 ms before and
+60-62 / 104-108 ms after (+400 pps: 72 / 134-146 -> 62 / 118). The bench paces the heavy
+probe at the device's idle `currentFps`, which is now higher (23 vs 18 fps) than the
+loaded frame rate; at that pace the client sends ~28 % more batches than frames and the
+p99 picks up a few RTO-recovered acks (~130 ms).
 
 Where the heavy-effect time went before: ~55 ms client pacing, ~51 ms in the RX ring
 (loopTask parked on the mutex), ~3 ms decode, ~50 ms on the mutex at dispatch (the

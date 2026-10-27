@@ -252,6 +252,7 @@
 <li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
@@ -413,9 +414,19 @@ load clears the mailbox.</p></li>
 notify, the 5 s status line) read lock-free or try-lock: a blocking take there held
 loopTask off the RX ring for the rest of every render frame (a message waited ~a
 whole frame before it was even reaped; 400 OSC datagrams/s overflowed the ring
-until the session died). The cost: loopTask now really runs during a frame (same
-priority, round-robin), so a heavy frame takes longer — see the budget below. The
-render duty-cycle split is the fps controller’s call.</p></li>
+until the session died). It must not run its whole pass inside a frame either: with
+a wss client up the loop sits at render’s priority, and a full pass on every tick
+(policy, OTA, BLE, status, timers) evicted the effect from the flash cache — fx_bench
+frame cycles +11..+22 %, a heavy gate frame 54 -&gt; 65 ms. While render holds the mutex
+(<code class="docutils literal notranslate"><span class="pre">g_render_in_frame</span></code>) loop() checks every 4 ms whether the netstack has work
+(<code class="docutils literal notranslate"><span class="pre">netstack_service_due</span></code>: a frame in the RX ring — one descriptor scan — or data in the
+TCP send window, whose pump and RTO resend a lost ack), runs only the netstack then,
+and otherwise waits on the mutex until the frame ends; the rest of the pass runs
+between frames. That costs ~1 % of frame cycles (absfM 1.557 -&gt; 1.576 M on rig-1, vs 1.90 M
+with a full pass per tick). The OSC / live-mailbox drain runs at the frame boundary
+just before the timed update span, and only calls into the mailbox when a move was
+posted. The <code class="docutils literal notranslate"><span class="pre">LM_CTRL_TRACE</span></code> stamps (main.cpp and the transport’s RX/TLS/reply stamps,
+via <code class="docutils literal notranslate"><span class="pre">:netstack_transport_ctrltrace</span></code>) exist only in the measurement image.</p></li>
 <li><p><strong>Persist off the gesture.</strong> The coalesced effect-selection save waits until the
 live controls (committed or not) have also been quiet for 1.5 s, so a littlefs
 write never lands mid-turn.</p></li>
@@ -501,6 +512,13 @@ light = trivial shade pinned at 60 fps:</p>
 </tbody>
 </table>
 </div>
+<p>With loopTask’s mid-frame passes cut to the netstack-when-due path (see “loopTask never
+parks”), the heavy frame is shorter (gate shader 56 -&gt; 50 ms) and, A/B on rig-2 with the
+probe paced at the same 55.6 ms, heavy wss applied p50/p99 is 54-59 / 117 ms before and
+60-62 / 104-108 ms after (+400 pps: 72 / 134-146 -&gt; 62 / 118). The bench paces the heavy
+probe at the device’s idle <code class="docutils literal notranslate"><span class="pre">currentFps</span></code>, which is now higher (23 vs 18 fps) than the
+loaded frame rate; at that pace the client sends ~28 % more batches than frames and the
+p99 picks up a few RTO-recovered acks (~130 ms).</p>
 <p>Where the heavy-effect time went before: ~55 ms client pacing, ~51 ms in the RX ring
 (loopTask parked on the mutex), ~3 ms decode, ~50 ms on the mutex at dispatch (the
 one-in-flight sender phase-locks to the frame), ~4 ms to the frame start, 50 ms render,
