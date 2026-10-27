@@ -142,6 +142,14 @@ light = trivial shade pinned at 60 fps:
 | light wss +400 pps | 17 | 26 / 246 | 19 / 39 | 29 / 49 | 27 / 54 |
 | light OSC | 17 | 12 / 31 | 10 / 18 | 19 / 28 | 27 / 54 |
 
+With loopTask's mid-frame passes cut to the netstack-when-due path (see "loopTask never
+parks"), the heavy frame is shorter (gate shader 56 -> 50 ms) and, A/B on rig-2 with the
+probe paced at the same 55.6 ms, heavy wss applied p50/p99 is 54-59 / 117 ms before and
+60-62 / 104-108 ms after (+400 pps: 72 / 134-146 -> 62 / 118). The bench paces the heavy
+probe at the device's idle `currentFps`, which is now higher (23 vs 18 fps) than the
+loaded frame rate; at that pace the client sends ~28 % more batches than frames and the
+p99 picks up a few RTO-recovered acks (~130 ms).
+
 Where the heavy-effect time went before: ~55 ms client pacing, ~51 ms in the RX ring
 (loopTask parked on the mutex), ~3 ms decode, ~50 ms on the mutex at dispatch (the
 one-in-flight sender phase-locks to the frame), ~4 ms to the frame start, 50 ms render,
