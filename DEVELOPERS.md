@@ -366,6 +366,11 @@ DUT onto the rig's AP, then exercises its slice over wss:
   inter-fixture skew < 20 ms.
 
 Every HITL failure carries the DUT's serial log (the `hitl-serial-logs` artifact).
+That capture pauses while a test reads the console itself, so each test also saves
+its own console windows and other files to `$TEST_UNDECLARED_OUTPUTS_DIR`. CI
+unpacks every test's `outputs.zip`, failed retry attempts included, into the
+`hitl-test-outputs` artifact (`<package>/<target>/test.outputs/` and
+`.../test_attempts/attempt_N.outputs/`).
 
 ### FX performance benchmark & regression gate
 

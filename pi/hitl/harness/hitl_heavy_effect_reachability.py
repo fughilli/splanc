@@ -22,7 +22,9 @@ This gate reproduces it on a rig C6 inside ONE reservation:
 
 The pass/fail policy is heavy_effect_reachability_core (unit-tested in
 //pi/hitl/tests). Console windows (the firmware's [net] loop_gap_max and [ft] render
-lines) are saved to --log-dir; the Reservation's serial capture tail prints on FAIL.
+lines) are saved to --log-dir (default: the test's undeclared outputs, which CI uploads
+as hitl-test-outputs) as each one closes; on FAIL every failing phase's window prints
+whole, plus the Reservation's serial capture tail.
 
     bazel run //pi/hitl/harness:heavy_effect_reachability -- --server http://hitl-rig-1:8087
 
@@ -109,23 +111,57 @@ def _attempt(ws_url: str, t0: float, timeout: float | None = None) -> dict:
     return a
 
 
-def _console(res, seconds: float, line: str | None = None, lead: float = 0.5) -> str:
+REMOTE_DIR = "/tmp/heavyreach"
+
+
+def _pidfile(tag: str) -> str:
+    return f"{REMOTE_DIR}/console_{tag}.pid"
+
+
+def _console(
+    res, seconds: float, line: str | None = None, lead: float = 0.5, tag: str | None = None
+) -> str:
     """Capture the DUT console for `seconds`, writing `line` `lead` s after the reader
     attached (provision.wire_provision_dut's tty recipe: a write wakes the C6's CDC TX;
-    the Reservation's background capture is paused around it)."""
+    the Reservation's background capture is paused around it). With `tag`, the reader's
+    pid lands in _pidfile(tag) once it runs: _await_console waits for it and
+    _end_console ends the window early."""
     write = (
         "printf '%s\\n' {} > /dev/ttyACM0".format(shlex.quote(line))
         if line
         else "printf '\\n' > /dev/ttyACM0"
     )
+    mark = f"echo $! > {_pidfile(tag)}; " if tag else ""
     cmd = (
         "stty -F /dev/ttyACM0 raw -echo 115200 2>/dev/null; "
-        + f"timeout {seconds:g} cat /dev/ttyACM0 & sleep {lead:g}; "
+        + f"timeout {seconds:g} cat /dev/ttyACM0 & {mark}sleep {lead:g}; "
         + write
         + "; wait"
     )
     proc = res.ssh_serialized(cmd, capture=True, timeout=seconds + 60)
     return (proc.stdout or "") + (proc.stderr or "")
+
+
+def _await_console(res, tag: str, timeout: float = 90.0) -> bool:
+    """Block until the tagged console reader runs (it may queue behind the rig's
+    serialize lock), so what follows happens inside its window."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        try:
+            if res.ssh(f"test -s {_pidfile(tag)}", capture=True, timeout=30).returncode == 0:
+                return True
+        except Exception:  # noqa: BLE001 — retried until the deadline
+            pass
+        time.sleep(1.0)
+    return False
+
+
+def _end_console(res, tag: str) -> None:
+    """End a tagged console window now (its phase is done)."""
+    try:
+        res.ssh(f"kill $(cat {_pidfile(tag)}) 2>/dev/null; rm -f {_pidfile(tag)}", timeout=30)
+    except Exception:  # noqa: BLE001 — the window then just runs to its timeout
+        pass
 
 
 class _Bg:
@@ -225,8 +261,21 @@ async def _hold_idle(ws_url: str, seconds: float) -> dict:
         await _rpc(
             sock, {"type": "hello", "client": "heavy_reach_idle", "app_version": "1"}, "welcome"
         )
-        await asyncio.sleep(seconds)
-        await _rpc(sock, {"type": "set_fps", "target_fps": 0}, "fps_state", timeout=15.0)
+        quiet = time.monotonic()
+        closed_after: float | None = None
+        try:
+            # Sleep out the hold, but note the moment the device drops the session.
+            await asyncio.wait_for(asyncio.shield(sock.wait_closed()), timeout=seconds)
+            closed_after = time.monotonic() - quiet
+        except asyncio.TimeoutError:
+            pass
+        try:
+            await _rpc(sock, {"type": "set_fps", "target_fps": 0}, "fps_state", timeout=15.0)
+        except Exception as e:
+            # When in the hold it died, to line up with the idle console window.
+            if closed_after is not None:
+                e.add_note(f"session closed {closed_after:.1f}s into the quiet hold")
+            raise
         return {"ok": True, "s": round(time.monotonic() - t0, 1)}
     finally:
         await sock.close()
@@ -247,6 +296,16 @@ def _run_attempts(ws_url: str, t0: float, deadline_s: float, follow: int, gap: f
             time.sleep(gap)
             out.append(_attempt(ws_url, t0))
     return out
+
+
+def _save_log(log_dir: str | None, name: str, text: str) -> None:
+    """Write one console window to --log-dir as soon as it closes (a later crash or
+    timeout must not lose it)."""
+    if not log_dir:
+        return
+    os.makedirs(log_dir, exist_ok=True)
+    with open(os.path.join(log_dir, f"heavy_reach_{name}.log"), "w", encoding="utf-8") as f:
+        f.write(text)
 
 
 def _rig_ok(res) -> bool:
@@ -315,12 +374,26 @@ def run(args) -> int:
                         _log(
                             f"[3/5] idle: sessions closed {args.idle_wait:g}s, then NEW connections"
                         )
-                        bg = _Bg(lambda: _console(res, args.idle_wait + args.hold_idle + 90))
+                        window = core.idle_window_s(
+                            args.hold_idle, args.idle_wait, args.gap, hitl_ws.OPEN_TIMEOUT
+                        )
+                        res.ssh(f"mkdir -p {REMOTE_DIR}; rm -f {_pidfile('idle')}", timeout=30)
+                        bg = _Bg(lambda: _console(res, window, tag="idle"))
+                        t_win = time.monotonic()
+                        if not _await_console(res, "idle"):
+                            _log("  idle console window did not attach; continuing without it")
+                        _log(f"  idle console window ({window:g}s) open")
                         if args.hold_idle > 0:
                             try:
                                 held = asyncio.run(_hold_idle(ws_url, args.hold_idle))
                             except Exception as e:  # noqa: BLE001 — reported, graded below
-                                held = {"ok": False, "err": f"{type(e).__name__}: {e}"[:160]}
+                                notes = " ".join(getattr(e, "__notes__", []))
+                                held = {
+                                    "ok": False,
+                                    "err": f"{type(e).__name__}: {e} {notes}".strip()[:200],
+                                }
+                            # When the hold ended, in idle-console-window time.
+                            held["window_end_s"] = round(time.monotonic() - t_win, 1)
                             _log(f"  quiet session held {args.hold_idle:g}s: {held}")
                             consoles["held_session"] = held
                         time.sleep(args.idle_wait)
@@ -331,7 +404,9 @@ def run(args) -> int:
                             if core.longest_ok_run([a["cat"] for a in attempts]) >= core.STREAK:
                                 break
                             time.sleep(args.gap)
-                        logs["idle"] = bg.join(args.idle_wait + 120)
+                        _end_console(res, "idle")
+                        logs["idle"] = bg.join(window + 120)
+                        _save_log(args.log_dir, "idle", logs["idle"])
                         phases["idle"] = core.grade_idle(
                             attempts,
                             rig_ok=_rig_ok(res),
@@ -343,6 +418,7 @@ def run(args) -> int:
                         bogus = f"hitl-no-such-ap-{uuid.uuid4().hex[:6]}"
                         _log(f"[4/5] rejoin: PROV {bogus!r}, then the rig AP again")
                         logs["rejoin_drop"] = _console(res, 8.0, f"PROV {bogus} not-a-real-pass")
+                        _save_log(args.log_dir, "rejoin_drop", logs["rejoin_drop"])
                         bg = _Bg(
                             lambda: _console(
                                 res, core.REJOIN_DEADLINE_S + 30, f"PROV {ssid} {password}"
@@ -354,6 +430,7 @@ def run(args) -> int:
                             ws_url, t0, core.REJOIN_DEADLINE_S + 20, core.FOLLOW_STREAK, args.gap
                         )
                         logs["rejoin"] = bg.join(core.REJOIN_DEADLINE_S + 120)
+                        _save_log(args.log_dir, "rejoin", logs["rejoin"])
                         phases["rejoin"] = core.grade_reconnect(
                             attempts, core.REJOIN_DEADLINE_S, rig_ok=_rig_ok(res)
                         )
@@ -381,6 +458,7 @@ def run(args) -> int:
                             ws_url, t0, core.BOOT_DEADLINE_S + 20, core.FOLLOW_STREAK, args.gap
                         )
                         logs["boot"] = bg.join(core.BOOT_DEADLINE_S + 180)
+                        _save_log(args.log_dir, "boot", logs["boot"])
                         booted = core.booted(logs["boot"])
                         phases["boot"] = core.grade_reconnect(
                             attempts, core.BOOT_DEADLINE_S, booted=booted, rig_ok=_rig_ok(res)
@@ -394,15 +472,15 @@ def run(args) -> int:
         res.release()
 
     g = core.verdict(baseline_ok, bool(cal), phases)
-    if args.log_dir:
-        os.makedirs(args.log_dir, exist_ok=True)
-        for name, text in logs.items():
-            with open(os.path.join(args.log_dir, f"heavy_reach_{name}.log"), "w") as f:
-                f.write(text)
     if g["verdict"] == "FAIL":
-        for name, text in logs.items():
-            _log(f"----- {name} console window (tail) -----")
-            _log(text[-5000:])
+        for name, whole in core.windows_to_print(phases, list(logs)):
+            text = logs[name]
+            if whole or len(text) <= core.PASS_WINDOW_TAIL:
+                _log(f"----- {name} console window (whole, {len(text)} chars) -----")
+                _log(text)
+            else:
+                _log(f"----- {name} console window (tail; whole file in the test outputs) -----")
+                _log(text[-core.PASS_WINDOW_TAIL :])
         tail = res.serial_tail()
         if tail:
             _log(tail)
