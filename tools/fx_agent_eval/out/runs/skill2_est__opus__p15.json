@@ -1,0 +1,69 @@
+{
+  "name": "skill2_est__opus__p15",
+  "variant": "skill2_est",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p15",
+  "prompt": "water caustics shimmer",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Water caustics shimmer: three travelling sine waves wrap seamlessly around the\n// cylinder. Integer angular frequencies make them meet at the seam. Where they\n// cancel, thin bright lines form a moving caustic web over a deep-water base.\n// A fourth slow wave makes the light flicker like a wavy surface overhead.\n// Per-LED maths are fixed point. Each wave's spatial argument depends only on\n// the LED and on `scale`, so it is computed once into a per-LED buffer (and\n// again whenever scale changes); each frame then costs one buffer read, an add\n// and an integer sin() per wave. Phases advance in update().\nuniform float speed   : 0.0 .. 3.0 = 0.6;   // how fast the web drifts\nuniform float scale   : 0.5 .. 4.0 = 1.5;   // vertical density of the pattern\nuniform float sharp   : 1.0 .. 6.0 = 2.5;   // thin crisp lines (high) vs broad glow (low)\nuniform float shimmer : 0.0 .. 1.0 = 0.5;   // flicker depth of the light\nuniform float glint   : 0.0 .. 1.0 = 0.4;   // white hot-spots on the brightest lines\nuniform vec3  deep    : color = 0.0, 0.05, 0.16;\nuniform vec3  light   : color = 0.25, 0.8, 1.0;\n\nstate fixed p1;\nstate fixed p2;\nstate fixed p3;\nstate fixed p4;\nstate fixed k;\nstate fixed lastk;\nstate bool  refill;\nstate fixed sh;\nstate fixed sm;\nstate fixed base;\nstate vec3  hot;\n\n// Per-LED spatial wave arguments (turns, wrapped to 0..1).\nbuffer fixed u1;\nbuffer fixed u2;\nbuffer fixed u3;\nbuffer fixed u4;\n\nvoid update() {\n  p1 = fract(p1 + fixed(dt * speed * 0.23));\n  p2 = fract(p2 + fixed(dt * speed * 0.31));\n  p3 = fract(p3 - fixed(dt * speed * 0.17));\n  p4 = fract(p4 + fixed(dt * speed * 0.53));\n  // height 0.30 m -> ~1.0, times scale\n  k = fixed(scale * 3.33);\n  refill = (k != lastk);\n  lastk = k;\n  sh = fixed(sharp);\n  sm = fixed(shimmer * 0.5);\n  base = fixed(1.0 - shimmer * 0.5);\n  hot = vec3(glint, glint, glint);\n}\n\nvec3 shade(Led led) {\n  int i = led.idx;\n  fixed s1;\n  fixed s2;\n  fixed s3;\n  fixed s4;\n  if (refill) {\n    // Angle around the vertical axis, in turns.\n    fixed a = atan2(fixed(led.pos.z), fixed(led.pos.x));\n    fixed y = fixed(led.pos.y) * k;\n    s1 = fract(a * fixed(3.0) + y * fixed(1.3));\n    s2 = fract(y * fixed(1.7) - a * fixed(2.0));\n    s3 = fract(a * fixed(5.0) - y * fixed(0.9));\n    s4 = fract(y * fixed(2.3) + a * fixed(4.0));\n    u1[i] = s1;\n    u2[i] = s2;\n    u3[i] = s3;\n    u4[i] = s4;\n  } else {\n    s1 = u1[i];\n    s2 = u2[i];\n    s3 = u3[i];\n    s4 = u4[i];\n  }\n\n  fixed s = sin(s1 + p1) + sin(s2 + p2) + sin(s3 + p3);\n\n  // Bright where the waves cancel: a thin network of lines.\n  fixed b = clamp(fixed(1.0) - abs(s) * sh, fixed(0.0), fixed(1.0));\n  b = b * b;\n\n  // Surface flicker.\n  b = clamp(b * (base + sm * sin(s4 + p4)), fixed(0.0), fixed(1.0));\n\n  float bf = float(b);\n  return mix(deep, light, bf) + hot * (bf * bf);\n}\n```",
+      "is_error": false,
+      "session_id": "aea6dc28-3051-4c8b-bfe9-bdc66f2a1b4f",
+      "wall_s": 32.2,
+      "duration_api_ms": 31067,
+      "cost_usd": 0.07760399999999999,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 3021,
+        "cache_read_input_tokens": 14560,
+        "cache_creation_input_tokens": 1783
+      },
+      "thinking_tokens": 1573,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 52,
+          "col": 11,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "```glsl\n// Water caustics shimmer: three travelling sine waves wrap seamlessly around the\n// cylinder. Integer angular frequencies make them meet at the seam. Where they\n// cancel, thin bright lines form a moving caustic web over a deep-water base.\n// A fourth slow wave makes the light flicker like a wavy surface overhead.\n// Per-LED maths are fixed point. Each wave's spatial argument depends only on\n// the LED and on `scale`, so it is computed once into a per-LED buffer (and\n// again whenever scale changes); each frame then costs one buffer read, an add\n// and an integer sin() per wave. Phases advance in update().\nuniform float speed   : 0.0 .. 3.0 = 0.6;   // how fast the web drifts\nuniform float scale   : 0.5 .. 4.0 = 1.5;   // vertical density of the pattern\nuniform float sharp   : 1.0 .. 6.0 = 2.5;   // thin crisp lines (high) vs broad glow (low)\nuniform float shimmer : 0.0 .. 1.0 = 0.5;   // flicker depth of the light\nuniform float glint   : 0.0 .. 1.0 = 0.4;   // white hot-spots on the brightest lines\nuniform vec3  deep    : color = 0.0, 0.05, 0.16;\nuniform vec3  light   : color = 0.25, 0.8, 1.0;\n\nstate fixed p1;\nstate fixed p2;\nstate fixed p3;\nstate fixed p4;\nstate fixed k;\nstate fixed lastk;\nstate bool  refill;\nstate fixed sh;\nstate fixed sm;\nstate fixed base;\nstate vec3  hot;\n\n// Per-LED spatial wave arguments (turns, wrapped to 0..1).\nbuffer fixed u1;\nbuffer fixed u2;\nbuffer fixed u3;\nbuffer fixed u4;\n\nvoid update() {\n  p1 = fract(p1 + fixed(dt * speed * 0.23));\n  p2 = fract(p2 + fixed(dt * speed * 0.31));\n  p3 = fract(p3 - fixed(dt * speed * 0.17));\n  p4 = fract(p4 + fixed(dt * speed * 0.53));\n  // height 0.30 m -> ~1.0, times scale\n  k = fixed(scale * 3.33);\n  refill = (k != lastk);\n  lastk = k;\n  sh = fixed(sharp);\n  sm = fixed(shimmer * 0.5);\n  base = fixed(1.0 - shimmer * 0.5);\n  hot = vec3(glint, glint, glint);\n}\n\nvec3 shade(Led led) {\n  int i = led.idx;\n  fixed s1 = fixed(0.0);\n  fixed s2 = fixed(0.0);\n  fixed s3 = fixed(0.0);\n  fixed s4 = fixed(0.0);\n  if (refill) {\n    // Angle around the vertical axis, in turns.\n    fixed a = atan2(fixed(led.pos.z), fixed(led.pos.x));\n    fixed y = fixed(led.pos.y) * k;\n    s1 = fract(a * fixed(3.0) + y * fixed(1.3));\n    s2 = fract(y * fixed(1.7) - a * fixed(2.0));\n    s3 = fract(a * fixed(5.0) - y * fixed(0.9));\n    s4 = fract(y * fixed(2.3) + a * fixed(4.0));\n    u1[i] = s1;\n    u2[i] = s2;\n    u3[i] = s3;\n    u4[i] = s4;\n  } else {\n    s1 = u1[i];\n    s2 = u2[i];\n    s3 = u3[i];\n    s4 = u4[i];\n  }\n\n  fixed s = sin(s1 + p1) + sin(s2 + p2) + sin(s3 + p3);\n\n  // Bright where the waves cancel: a thin network of lines.\n  fixed b = clamp(fixed(1.0) - abs(s) * sh, fixed(0.0), fixed(1.0));\n  b = b * b;\n\n  // Surface flicker.\n  b = clamp(b * (base + sm * sin(s4 + p4)), fixed(0.0), fixed(1.0));\n\n  float bf = float(b);\n  return mix(deep, light, bf) + hot * (bf * bf);\n}\n```",
+      "is_error": false,
+      "session_id": "aea6dc28-3051-4c8b-bfe9-bdc66f2a1b4f",
+      "wall_s": 13.1,
+      "duration_api_ms": 42532,
+      "cost_usd": 0.1477606,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1528,
+        "cache_read_input_tokens": 16343,
+        "cache_creation_input_tokens": 4540
+      },
+      "thinking_tokens": 44,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1692
+    }
+  ],
+  "started": "2026-10-23T00:53:01",
+  "base_program": "firmware/fx_perf_bench/agent/skill2__opus__p15.fx",
+  "base_estimate": [38.74, [], []],
+  "est_outcome": "revised",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.2254,
+  "total_wall_s": 45.3,
+  "program": "firmware/fx_perf_bench/agent/skill2_est__opus__p15.fx"
+}

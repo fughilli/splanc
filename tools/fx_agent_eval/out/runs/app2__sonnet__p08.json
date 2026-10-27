@@ -1,0 +1,39 @@
+{
+  "name": "app2__sonnet__p08",
+  "variant": "app2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p08",
+  "prompt": "lava lamp blobs",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```glsl\nuniform float speed     : 0.1 .. 3.0 = 1.0;\nuniform float blob_size : 0.03 .. 0.12 = 0.07;\nuniform float bg_glow   : 0.0 .. 0.5  = 0.08;\n\nstruct Blob {\n  fixed px;\n  fixed py;\n  fixed pz;\n  fixed phase;\n  fixed rot;\n  fixed spd;\n};\n\nstate Blob blobs[4];\nstate bool inited;\nstate fixed r2_blob;\nstate fixed inv_r2;\nstate fixed bg_f;\n\nvoid update() {\n  float fr = blob_size;\n  r2_blob = fixed(fr * fr);\n  inv_r2  = fixed(1.0 / (fr * fr));\n  bg_f    = fixed(bg_glow);\n\n  if (!inited) {\n    for (int i = 0; i < 4; i = i + 1) {\n      float fi       = float(i);\n      blobs[i].phase = fixed(hash(fi * 3.14));\n      blobs[i].rot   = fixed(hash(fi * 7.31));\n      blobs[i].spd   = fixed(0.06 + hash(fi * 11.07) * 0.06);\n      blobs[i].py    = fixed(0.04 + hash(fi *  2.71) * 0.22);\n      blobs[i].px    = fixed(0.0);\n      blobs[i].pz    = fixed(0.0);\n    }\n    inited = true;\n  }\n\n  for (int i = 0; i < 4; i = i + 1) {\n    blobs[i].phase = fract(blobs[i].phase + blobs[i].spd * fixed(dt * speed));\n    blobs[i].rot   = fract(blobs[i].rot   + blobs[i].spd * fixed(dt * speed * 0.28));\n    blobs[i].py    = fixed(0.15) + sin(blobs[i].phase) * fixed(0.11);\n    blobs[i].px    = cos(blobs[i].rot) * fixed(0.055);\n    blobs[i].pz    = sin(blobs[i].rot) * fixed(0.055);\n  }\n}\n\nvec3 shade(Led led) {\n  fixed lx = fixed(led.pos.x);\n  fixed ly = fixed(led.pos.y);\n  fixed lz = fixed(led.pos.z);\n\n  fixed field = fixed(0.0);\n\n  for (int i = 0; i < 4; i = i + 1) {\n    fixed dx = lx - blobs[i].px;\n    fixed dy = ly - blobs[i].py;\n    fixed dz = lz - blobs[i].pz;\n    fixed d2 = dx*dx + dy*dy + dz*dz;\n    fixed f  = clamp((r2_blob - d2) * inv_r2, fixed(0.0), fixed(1.0));\n    field    = field + f;\n  }\n\n  field = clamp(field, fixed(0.0), fixed(1.0));\n\n  fixed hue = fixed(0.08) - field * fixed(0.06);\n  fixed sat = fixed(0.95);\n  fixed val = field * field + bg_f * (fixed(1.0) - field);\n\n  return hsv2rgb(hue, sat, val);\n}\n```",
+      "is_error": false,
+      "session_id": "41311bbf-2e96-401b-8cb6-29104f793fdd",
+      "wall_s": 654.1,
+      "duration_api_ms": 652496,
+      "cost_usd": 0.7116234,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 6,
+        "output_tokens": 46819,
+        "cache_read_input_tokens": 10128,
+        "cache_creation_input_tokens": 1047
+      },
+      "thinking_tokens": 45925,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1118
+    }
+  ],
+  "started": "2026-10-23T01:08:46",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.7116,
+  "total_wall_s": 654.1,
+  "program": "firmware/fx_perf_bench/agent/app2__sonnet__p08.fx"
+}

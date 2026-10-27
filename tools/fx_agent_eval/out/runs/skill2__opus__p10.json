@@ -1,0 +1,66 @@
+{
+  "name": "skill2__opus__p10",
+  "variant": "skill2",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p10",
+  "prompt": "matrix-style green rain falling down",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Matrix rain: bright green drops with fading trails fall down the cylinder in\n// columns spaced around the lamp. Each column has its own random speed and phase.\n// The head of each drop glows near-white. A dim glyph flicker runs along the\n// trails, and a faint green glow shows on the rest of the lamp.\n// Fixed point throughout: column phases advance in update(), and shade() does\n// a cached atan2, a few lattice lookups and the integer hsv2rgb.\nuniform float speed   : 0.1 .. 3.0 = 0.8;    // fall speed (lamp heights per second)\nuniform float columns : 4.0 .. 32.0 = 14.0;  // rain columns around the lamp\nuniform float trail   : 0.05 .. 0.9 = 0.35;  // trail length (fraction of height)\nuniform float drops   : 1.0 .. 3.0 = 1.0;    // drops per column at once\nuniform float hue     : 0.0 .. 1.0 = 0.33;   // 0.33 = matrix green\nuniform float glow    : 0.0 .. 0.3 = 0.03;   // faint background glow\nuniform float flicker : 0.0 .. 1.0 = 0.35;   // glyph shimmer in the trails\nuniform bool  flip    = false;               // set if the helix starts at the top\n\nstate fixed rnd[64];\nstate fixed cph[32];\nstate bool  seeded;\nstate int   tick;\nstate float tacc;\nstate fixed ncol;\nstate fixed invtrail;\nstate fixed kdrops;\nstate fixed fhue;\nstate fixed fglow;\nstate fixed ffl;\n\nvoid update() {\n  if (!seeded) {\n    for (int i = 0; i < 64; i = i + 1) {\n      rnd[i] = fixed(hash(float(i) * 1.731 + 0.37));\n    }\n    for (int j = 0; j < 32; j = j + 1) {\n      cph[j] = rnd[(j * 7 + 3) % 64];\n    }\n    seeded = true;\n  }\n  for (int i = 0; i < 32; i = i + 1) {\n    cph[i] = fract(cph[i] + fixed(dt * speed * (0.55 + 0.9 * float(rnd[i]))));\n  }\n  tacc = tacc + dt;\n  if (tacc > 0.08) {\n    tacc = tacc - 0.08;\n    tick = (tick + 7) % 64;\n  }\n  ncol = fixed(columns);\n  invtrail = fixed(1.0 / trail);\n  kdrops = fixed(floor(drops + 0.5));\n  fhue = fixed(hue);\n  fglow = fixed(glow);\n  ffl = fixed(flicker);\n}\n\nvec3 shade(Led led) {\n  // Angle around the lamp's axis, from the top-down projection (centre ~0.5, 0.5).\n  fixed ang = atan2(fixed(led.uv.y) - fixed(0.5), fixed(led.uv.x) - fixed(0.5)) + fixed(0.5);\n  int c = min(int(ang * ncol), 31);\n\n  // Height along the helix: the LED index rises with the strip.\n  fixed h = fixed(led.idx) / fixed(led.count);\n  if (flip) {\n    h = fixed(1.0) - h;\n  }\n\n  // v = 0 is the drop head (lowest point). The trail extends upward, and the\n  // whole pattern moves down as the phase grows.\n  fixed v = fract(h * kdrops + cph[c] + rnd[c + 32]);\n  fixed b = clamp(fixed(1.0) - v * invtrail, fixed(0.0), fixed(1.0));\n  b = b * b;\n  fixed head = clamp(fixed(1.0) - v * fixed(25.0), fixed(0.0), fixed(1.0));\n\n  fixed g = rnd[(led.idx + tick + c * 5) % 64];\n  fixed val = max(b * (fixed(1.0) - ffl * g), fglow);\n  fixed sat = fixed(1.0) - head * fixed(0.8);\n  return hsv2rgb(fhue, sat, val);\n}\n```",
+      "is_error": false,
+      "session_id": "d19fad03-ec66-4fda-a0a7-47889cbc051c",
+      "wall_s": 40.6,
+      "duration_api_ms": 39069,
+      "cost_usd": 0.08521999999999999,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 3869,
+        "cache_read_input_tokens": 14560,
+        "cache_creation_input_tokens": 615
+      },
+      "thinking_tokens": 2455,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 72,
+          "col": 46,
+          "msg": "'%' is integer-only; use mod() for floats"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "```glsl\n// Matrix rain: bright green drops with fading trails fall down the cylinder in\n// columns spaced around the lamp. Each column has its own random speed and phase.\n// The head of each drop glows near-white. A dim glyph flicker runs along the\n// trails, and a faint green glow shows on the rest of the lamp.\n// Fixed point throughout: column phases advance in update(), and shade() does\n// a cached atan2, a few lattice lookups and the integer hsv2rgb.\nuniform float speed   : 0.1 .. 3.0 = 0.8;    // fall speed (lamp heights per second)\nuniform float columns : 4.0 .. 32.0 = 14.0;  // rain columns around the lamp\nuniform float trail   : 0.05 .. 0.9 = 0.35;  // trail length (fraction of height)\nuniform float drops   : 1.0 .. 3.0 = 1.0;    // drops per column at once\nuniform float hue     : 0.0 .. 1.0 = 0.33;   // 0.33 = matrix green\nuniform float glow    : 0.0 .. 0.3 = 0.03;   // faint background glow\nuniform float flicker : 0.0 .. 1.0 = 0.35;   // glyph shimmer in the trails\nuniform bool  flip    = false;               // set if the helix starts at the top\n\nstate fixed rnd[64];\nstate fixed cph[32];\nstate bool  seeded;\nstate int   tick;\nstate float tacc;\nstate fixed ncol;\nstate fixed invtrail;\nstate fixed kdrops;\nstate fixed fhue;\nstate fixed fglow;\nstate fixed ffl;\n\nvoid update() {\n  if (!seeded) {\n    for (int i = 0; i < 64; i = i + 1) {\n      rnd[i] = fixed(hash(float(i) * 1.731 + 0.37));\n    }\n    for (int j = 0; j < 32; j = j + 1) {\n      cph[j] = rnd[(j * 7 + 3) % 64];\n    }\n    seeded = true;\n  }\n  for (int i = 0; i < 32; i = i + 1) {\n    cph[i] = fract(cph[i] + fixed(dt * speed * (0.55 + 0.9 * float(rnd[i]))));\n  }\n  tacc = tacc + dt;\n  if (tacc > 0.08) {\n    tacc = tacc - 0.08;\n    tick = (tick + 7) % 64;\n  }\n  ncol = fixed(columns);\n  invtrail = fixed(1.0 / trail);\n  kdrops = fixed(floor(drops + 0.5));\n  fhue = fixed(hue);\n  fglow = fixed(glow);\n  ffl = fixed(flicker);\n}\n\nvec3 shade(Led led) {\n  // Angle around the lamp's axis, from the top-down projection (centre ~0.5, 0.5).\n  fixed ang = atan2(fixed(led.uv.y) - fixed(0.5), fixed(led.uv.x) - fixed(0.5)) + fixed(0.5);\n  int c = min(int(ang * ncol), 31);\n\n  // Height along the helix: the LED index rises with the strip.\n  fixed h = fixed(led.idx) / fixed(led.count);\n  if (flip) {\n    h = fixed(1.0) - h;\n  }\n\n  // v = 0 is the drop head (lowest point). The trail extends upward, and the\n  // whole pattern moves down as the phase grows.\n  fixed v = fract(h * kdrops + cph[c] + rnd[c + 32]);\n  fixed b = clamp(fixed(1.0) - v * invtrail, fixed(0.0), fixed(1.0));\n  b = b * b;\n  fixed head = clamp(fixed(1.0) - v * fixed(25.0), fixed(0.0), fixed(1.0));\n\n  fixed g = rnd[(int(led.idx) + tick + c * 5) % 64];\n  fixed val = max(b * (fixed(1.0) - ffl * g), fglow);\n  fixed sat = fixed(1.0) - head * fixed(0.8);\n  return hsv2rgb(fhue, sat, val);\n}\n```",
+      "is_error": false,
+      "session_id": "d19fad03-ec66-4fda-a0a7-47889cbc051c",
+      "wall_s": 13.6,
+      "duration_api_ms": 51374,
+      "cost_usd": 0.160651,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1473,
+        "cache_read_input_tokens": 15175,
+        "cache_creation_input_tokens": 5366
+      },
+      "thinking_tokens": 56,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1886
+    }
+  ],
+  "started": "2026-10-23T00:21:52",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.2459,
+  "total_wall_s": 54.2,
+  "program": "firmware/fx_perf_bench/agent/skill2__opus__p10.fx"
+}

@@ -1,0 +1,39 @@
+{
+  "name": "skill2__sonnet__p01",
+  "variant": "skill2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p01",
+  "prompt": "a calm ocean swell rolling up the lamp",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Calm ocean swell rolling up the lamp.\n// A primary swell rolls upward along the helix; a slow angular ripple wraps\n// around the cylinder to give the breathing quality of open-sea swells.\n// Colours travel from deep ocean blue at troughs through teal to near-white\n// foam at crests.\n\nuniform float speed  : 0.0 .. 3.0 = 0.40;   // swell travel speed\nuniform float swells : 0.5 .. 4.0 = 1.50;   // wave crests along the lamp\nuniform float ripple : 0.0 .. 1.0 = 0.30;   // angular surface variation\nuniform float foam   : 0.0 .. 1.0 = 0.35;   // white at wave crests\nuniform vec3  deep   : color = 0.00, 0.08, 0.25;\nuniform vec3  mid    : color = 0.00, 0.38, 0.55;\nuniform vec3  crest  : color = 0.72, 0.94, 1.00;\n\nstate fixed ph;   // vertical swell phase in turns\nstate fixed pr;   // angular ripple phase in turns\nstate fixed k;    // wave count (fixed copy of swells)\nstate fixed rk;   // ripple amplitude\n\nvoid update() {\n    // ph decreases so that sin(h*k + ph) crests move upward over time\n    ph = fract(ph - fixed(dt * speed * 0.25));\n    pr = fract(pr + fixed(dt * speed * 0.07));\n    k  = fixed(swells);\n    rk = fixed(ripple * 0.35);\n}\n\nvec3 shade(Led led) {\n    fixed h   = fixed(led.uv.y);                           // 0 = bottom, 1 = top\n    fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)); // turns; compiler caches per LED\n\n    // Primary swell rolling upward, normalised to 0..1\n    fixed sv = sin(h * k + ph) * fixed(0.5) + fixed(0.5);\n\n    // Slow angular ripple \u2014 softens the look like wind lines on water\n    fixed rv = sin(ang * fixed(3.0) + pr + h * fixed(0.4)) * rk;\n\n    fixed t  = clamp(sv + rv, fixed(0.0), fixed(1.0));\n    float tf = float(t);\n\n    // Smooth two-stop blend: deep ocean \u2192 mid teal \u2192 bright crest (branchless)\n    float t1 = clamp(tf * 2.0, 0.0, 1.0);\n    float t2 = clamp(tf * 2.0 - 1.0, 0.0, 1.0);\n    vec3 col  = mix(mix(deep, mid, t1), crest, t2);\n\n    // Extra foam brightening at wave crests\n    float f = clamp((tf - (1.0 - foam)) / max(foam, 0.01), 0.0, 1.0);\n    return mix(col, crest, f * 0.4);\n}\n```",
+      "is_error": false,
+      "session_id": "25a31865-1b05-41fc-a774-dc9dde8c6767",
+      "wall_s": 136.5,
+      "duration_api_ms": 135301,
+      "cost_usd": 0.198897,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 8530,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 11823
+      },
+      "thinking_tokens": 7725,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1290
+    }
+  ],
+  "started": "2026-10-23T00:22:57",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.1989,
+  "total_wall_s": 136.5,
+  "program": "firmware/fx_perf_bench/agent/skill2__sonnet__p01.fx"
+}

@@ -1,0 +1,39 @@
+{
+  "name": "app2__sonnet__p10",
+  "variant": "app2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p10",
+  "prompt": "matrix-style green rain falling down",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```glsl\n// Matrix-style green rain on a helical cylinder\n// 10 drops, each a narrow angular column falling from top to bottom\n\nuniform float speed     : 0.1 .. 3.0 = 1.2;\nuniform float trail_len : 0.05 .. 0.5 = 0.25;\nuniform vec3  tint      : color = 0.0, 1.0, 0.0;\n\nstruct Drop {\n  fixed ang;   // column angle in turns (0..1)\n  fixed head;  // Y of the falling head, 0=bottom 1=top, counts downward\n  fixed spd;   // fall speed (normalised units per second)\n};\n\nstate Drop drops[10];\nstate bool  inited;\nstate fixed tlen;\nstate fixed tlen_inv;\nstate fixed tc_r;\nstate fixed tc_g;\nstate fixed tc_b;\n\nvoid update() {\n  // Precompute once per frame\n  tlen     = fixed(trail_len);\n  tlen_inv = fixed(1.0 / trail_len);\n  tc_r     = fixed(tint.r);\n  tc_g     = fixed(tint.g);\n  tc_b     = fixed(tint.b);\n\n  // Seed all drops on the first frame\n  if (!inited) {\n    for (int i = 0; i < 10; i = i + 1) {\n      float fi      = float(i);\n      drops[i].ang  = fixed(hash(fi * 1.618));\n      drops[i].head = fixed(hash(fi * 2.718) * 1.5);   // staggered start\n      drops[i].spd  = fixed(0.2 + hash(fi * 5.678) * 0.35);\n    }\n    inited = true;\n  }\n\n  // Advance every drop; respawn when the full trail clears the bottom\n  fixed step_size = fixed(dt) * fixed(speed);\n  for (int i = 0; i < 10; i = i + 1) {\n    drops[i].head = drops[i].head - drops[i].spd * step_size;\n    if (drops[i].head + tlen < fixed(-0.05)) {\n      float seed    = float(frame) * 0.0013 + float(i) * 0.137;\n      drops[i].head = fixed(1.0) + fixed(hash(seed) * 0.5);   // appear above top\n      drops[i].ang  = fixed(hash(seed + 3.7));\n      drops[i].spd  = fixed(0.2 + hash(seed + 7.3) * 0.35);\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  // Normalise LED position: y \u2192 0 (bottom) .. 1 (top)\n  fixed y   = fixed(led.pos.y) * fixed(3.333);\n  // Azimuth in turns, 0..1 \u2014 atan2 of fixed args uses integer LUT + is cached per LED\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n\n  fixed brightness = fixed(0.0);\n  fixed head_f     = fixed(0.0);\n\n  for (int i = 0; i < 10; i = i + 1) {\n    // Angular distance with wraparound\n    fixed da = abs(ang - drops[i].ang);\n    if (da > fixed(0.5)) { da = fixed(1.0) - da; }\n\n    if (da < fixed(0.04)) {                           // narrow column ~8% of circumference\n      fixed dy = y - drops[i].head;                  // positive \u2192 LED is in the trail above head\n      if (dy >= fixed(0.0) && dy < tlen) {\n        fixed b  = (tlen - dy) * tlen_inv;            // 1 at head, 0 at tail\n        brightness = max(brightness, b);\n        // Brighter \"character\" zone near the head\n        fixed hf = clamp(fixed(1.0) - dy * fixed(20.0), fixed(0.0), fixed(1.0));\n        head_f   = max(head_f, hf);\n      }\n    }\n  }\n\n  // Trail: pure tint colour.  Head: whitish-green flash\n  fixed r  = clamp(tc_r * brightness + head_f * fixed(0.8),  fixed(0.0), fixed(1.0));\n  fixed g  = clamp(tc_g * brightness + head_f * fixed(0.15), fixed(0.0), fixed(1.0));\n  fixed bv = clamp(tc_b * brightness + head_f * fixed(0.6),  fixed(0.0), fixed(1.0));\n\n  return vec3(float(r), float(g), float(bv));\n}\n```\n\n**How it works:**\n\n| Layer | Detail |\n|---|---|\n| **10 agents** (struct array in `state`) | Each stores an angular column position, a falling head Y, and a random speed |\n| **Column matching** | Angular wrap-safe `abs(\u2026)` with `da < fixed(0.04)` \u2192 ~8% of circumference per column |\n| **Trail brightness** | Linear falloff from 1 at the head to 0 at the tail via `(tlen \u2212 dy) * tlen_inv` |\n| **Head flash** | `clamp(1 \u2212 dy\u00b720, 0, 1)` gives a bright white-green glyph tip; the rest of the trail stays pure green |\n| **Respawn** | When the entire trail has cleared the floor, the drop re-enters from just above the top with a fresh random column and speed, seeded by `frame` so every reset is unique |\n| **Performance** | All per-LED math is `fixed`; `atan2(fixed, fixed)` is the integer LUT path and gets cached once per LED by the compiler; 10-iteration loop \u2248 5,500 cycles/LED, well under the 8,000-cycle budget |",
+      "is_error": false,
+      "session_id": "d56f8157-5ab3-4ef6-891b-d5a4b55ecafd",
+      "wall_s": 292.1,
+      "duration_api_ms": 285249,
+      "cost_usd": 0.33555419999999997,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 22066,
+        "cache_read_input_tokens": 5064,
+        "cache_creation_input_tokens": 506
+      },
+      "thinking_tokens": 20544,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1160
+    }
+  ],
+  "started": "2026-10-23T00:13:06",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.3356,
+  "total_wall_s": 292.1,
+  "program": "firmware/fx_perf_bench/agent/app2__sonnet__p10.fx"
+}

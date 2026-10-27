@@ -1,0 +1,39 @@
+{
+  "name": "skill2__sonnet__p05",
+  "variant": "skill2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p05",
+  "prompt": "a heartbeat pulse from the centre outward",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Heartbeat: a lub-dub double pulse radiates from the vertical centre of the\n// lamp simultaneously toward the top and bottom, creating an expanding bright\n// ring on each beat. Fixed-point per-LED maths: \u2248 3 400 cycles/LED, well under\n// the 33 ms / 30 fps budget at 500 LEDs.\n//\n// led.uv.y: 0 = lowest LED, 1 = highest.  Midpoint 0.5 = vertical centre.\n// d: normalised distance from that midpoint, 0 (centre) \u2192 1 (top or bottom).\n// w1 / w2: wavefront positions for the two beats, expressed in the same 0..1\n//   units.  Both travel at `speed` units/s; beat 2 lags beat 1 by b2gap of\n//   the period, so their separation is constant and they never overlap.\n\nuniform float bpm   : 30.0 .. 120.0 = 65.0;   // heart rate\nuniform float speed : 0.5  .. 5.0   = 2.5;    // wavefront expansion (units/s)\nuniform float tail  : 0.03 .. 0.35  = 0.13;   // pulse half-width in distance units\nuniform float b2gap : 0.05 .. 0.45  = 0.18;   // 2nd beat delay (fraction of period)\nuniform float b2amp : 0.2  .. 1.0   = 0.65;   // 2nd beat amplitude\nuniform vec3  color : color = 1.0, 0.12, 0.22; // pulse colour (deep rose-red)\n\nstate fixed w1;     // beat-1 wavefront\nstate fixed w2;     // beat-2 wavefront\nstate fixed itail;  // 1.0 / tail, hoisted out of shade()\nstate fixed b2a;    // b2amp as fixed\n\nvoid update() {\n  float period = 60.0 / bpm;\n  // mod() gives the elapsed time since the last firing of each beat.\n  // beat 2 always lags beat 1 by b2gap * period seconds.\n  w1    = fixed(mod(time,                  period) * speed);\n  w2    = fixed(mod(time - b2gap * period, period) * speed);\n  itail = fixed(1.0 / tail);\n  b2a   = fixed(b2amp);\n}\n\nvec3 shade(Led led) {\n  // Normalised distance from vertical midpoint: 0 = centre, 1 = top/bottom.\n  fixed d = abs(fixed(led.uv.y) - fixed(0.5)) * fixed(2.0);\n\n  // Triangular pulse: peak where d == wavefront, decays linearly over `tail`\n  // on each side.  Beats maintain a constant separation of b2gap * period *\n  // speed \u2248 0.42 distance units (> 2 * tail), so they never overlap.\n  fixed v1 = max(fixed(1.0) - abs(d - w1) * itail, fixed(0.0));\n  fixed v2 = max(fixed(1.0) - abs(d - w2) * itail, fixed(0.0)) * b2a;\n\n  // Whichever beat is brighter wins.  Convert once to float for the colour\n  // multiply; the rest of the chain is fixed arithmetic.\n  return color * float(max(v1, v2));\n}\n```",
+      "is_error": false,
+      "session_id": "cddfbf12-a4a9-4a0d-a692-ce73a2cb8163",
+      "wall_s": 344.3,
+      "duration_api_ms": 341799,
+      "cost_usd": 0.34594709999999995,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 22633,
+        "cache_read_input_tokens": 11317,
+        "cache_creation_input_tokens": 508
+      },
+      "thinking_tokens": 21754,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1176
+    }
+  ],
+  "started": "2026-10-23T00:25:59",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.3459,
+  "total_wall_s": 344.3,
+  "program": "firmware/fx_perf_bench/agent/skill2__sonnet__p05.fx"
+}

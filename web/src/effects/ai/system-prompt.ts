@@ -20,7 +20,39 @@ const contextTable = CONTEXTS.map(
     `  ${c.name}${c.members.length ? ` (.${c.members.map((m) => m.name).join(", .")})` : ""} — ${c.doc}`,
 ).join("\n");
 
-/** Two worked examples — few-shot examples do more for validity than prose. */
+/**
+ * The measured C6 cost table + rules (docs/design/fx-perf-study.md, Q2). Each
+ * number is one call's cycles on the device INCLUDING the ~70 cycles of
+ * interpreter dispatch every opcode pays (web/src/store/costTableStore.ts
+ * DEFAULT_COSTS + @dispatch; texture/ctx-mirror costs measured on the bench).
+ * Appending the equivalent table to the old prompt cut the in-app agent's
+ * measured cost by 30%; keep the numbers honest — the models act on them.
+ */
+export const PERF_GUIDE = `PERFORMANCE — READ THIS, IT DECIDES WHETHER AN EFFECT FITS THE FRAME.
+The device is an ESP32-C6 at 160 MHz with NO floating-point unit. shade() runs once per LED per frame: at 500 LEDs and 30 fps that is ~10,600 cycles per LED, ~2,600 of which the runtime already spends. Measured cycles per call (each includes ~70 cycles of dispatch that EVERY opcode pays — loads, constants and locals too):
+  int/fixed + - * min max abs clamp fract floor mix step mod: 100-150 · fixed / 150
+  fixed sin/cos (angle in TURNS) 150 · exp(fixed) 170 · atan2(fixed, fixed) 350 · sqrt/log/tan(fixed) 370-480 · hsv2rgb(fixed, fixed, fixed) 370 · pow(fixed, fixed) 720
+  float + - * 195 · float / 350 · vec3 + - * 440 (a vecN op pays every lane) · float floor 260 · fract 340 · mod 590
+  float sin 570 · cos 650 · sqrt 680 · exp/log 850 · atan2 1040 · tan 1300 · pow 1800
+  smoothstep 700 per lane · dot(vec3) 440 · length(vec3) 1000 · distance(vec3) 1200 · normalize(vec3) 1600 · cross 720 · hsv2rgb(float) 1300 · palette 500
+  hash(x) 185 · 3-D value noise built from hash (8 hashes + mixes) ~9,000 · int/fixed <-> float conversion 320 · buffer read/write 130 · texture sample() ~3,800
+So shade() should be a few dozen cheap ops: ~8 float transcendentals per LED already blow the frame.
+RULES:
+1. Per-LED maths in \`fixed\` (Q16.16, the default fast type; \`int\` for indices). Read LED inputs as fixed — \`fixed(led.uv.x)\`, \`fixed(led.s)\`, \`fixed(led.pos.y)\` are direct loads (the first one costs ~1,200 cycles per LED once, covering all of them) — and wrap EVERY literal: \`x * fixed(0.6)\`. One float operand (a literal or a float variable) turns the whole expression into soft-float plus two 320-cycle conversions; the compiler warns about it.
+2. Phases and waves: \`state fixed\` phases in TURNS advanced in update() (\`ph = fract(ph + fixed(dt * speed))\`), then sin/cos of a fixed argument (integer LUT; 1.0 = one full turn, not 2π).
+3. Colour: hsv2rgb(h, s, v) with all three args the same fixed type is the integer path; return it directly from shade(). For float colour maths keep scalars and build the vec3 once at the end.
+4. Per-frame work goes in update() → \`state\` (time phases, uniform maths, colours made from uniforms). The compiler also hoists frame-invariant subexpressions written in shade() and caches up to 4 per-LED-invariant scalars (atan2/length of led.pos, hash(float(led.idx)), …) once per LED — only for expressions written directly in shade() and assigned once to a local, never inside your helper functions. For more, fill a \`buffer\` on the first frame.
+5. No float pow/exp per LED: x*x, a clamp/mix ramp or a polynomial (exp/pow of a fixed argument exist but saturate: exp(fixed) covers only -2..0.69). Compare dot(d, d) with r*r instead of length(d) < r. In fixed, clamp((x - a) * k, fixed(0.0), fixed(1.0)) replaces smoothstep. Multiply by a reciprocal instead of dividing by a constant.
+6. No per-LED loops over many items and no per-LED multi-octave noise: a loop multiplies its body by the trip count. Precompute into state/buffers in update() or on the first frame; for noise use a fixed-point lattice in a \`state fixed\` array (lattice lookups + fixed mix).
+7. sqrt/atan2/pow/log/tan/hsv2rgb have integer paths only when every argument is the same fixed type (atan2 and tan of fixed args use TURNS too). smoothstep, hash, dot, length, distance, normalize and cross are always float (fixed arguments are converted).
+8. RAM is scarce: narrow buffer/texture elements with \`: fixed8\` (0..1 colours) or \`: fixed16\`.
+When performance matters, check with the estimate_performance tool: it returns the frame estimate and the top cost findings with what to change.`;
+
+/** The same facts in ~a fifth of the tokens, for the tiny on-device models. */
+export const PERF_GUIDE_COMPACT = `PERFORMANCE (ESP32-C6, NO float unit; ~8,000 cycles per LED per frame at 500 LEDs): every op costs >= 70 cycles. int/fixed ops 100-150, fixed sin/cos 150, float + - * 195, float sin 570, sqrt 680, exp 850, atan2 1040, pow 1800, smoothstep 700, length 1000, hsv2rgb(float) 1300, int/fixed<->float conversion 320. So: per-LED maths in \`fixed\` with \`fixed(...)\` around every literal; \`state fixed\` phases in TURNS advanced in update() (sin/cos of a fixed arg: 1.0 = full circle); hsv2rgb with three fixed args; hoist anything not per-LED into update(); no per-LED loops or pow/exp.`;
+
+/** Worked examples — few-shot examples do more for validity (and for cheap
+ * code: the models copy the fixed-point idioms they are shown) than prose. */
 const EXAMPLES = `EXAMPLE 1 — a moving band along the trunk:
 uniform float speed : 0.0 .. 5.0 = 1.0;
 uniform float width : 0.02 .. 0.5 = 0.12;
@@ -33,14 +65,26 @@ vec3 shade(Led led) {
   return tint * band;
 }
 
-EXAMPLE 2 — a spatial hue gradient that drifts:
-uniform float scale : 0.2 .. 4.0 = 1.0;
-uniform float drift : 0.0 .. 2.0 = 0.3;
-state float hue;
-void update() { hue = fract(hue + dt * drift); }
+EXAMPLE 2 — a rotating rainbow with a vertical wobble, per-LED maths all fixed point:
+uniform float speed : 0.0 .. 4.0 = 1.0;
+uniform float waves : 0.5 .. 8.0 = 3.0;
+uniform float sat   : 0.0 .. 1.0 = 0.9;
+state fixed ph1;
+state fixed ph2;
+state fixed k;
+state fixed s;
+void update() {
+  ph1 = fract(ph1 + fixed(dt * speed * 0.25));   // phases in TURNS, advanced once per frame
+  ph2 = fract(ph2 + fixed(dt * speed * 0.17));
+  k = fixed(waves);
+  s = fixed(sat);
+}
 vec3 shade(Led led) {
-  float h = fract(led.pos.y * scale + hue);
-  return hsv2rgb(h, 0.9, 1.0);
+  // angle around the vertical axis: atan2 of fixed args is in TURNS (-0.5..0.5),
+  // and it depends only on led.*, so the compiler caches it once per LED
+  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);
+  fixed w = sin(fixed(led.uv.y) * k + ph2) * fixed(0.125);   // fixed sin: integer LUT, turns
+  return hsv2rgb(fract(ang + ph1 + w), s, fixed(1.0));       // all-fixed hsv2rgb: integer path
 }
 
 EXAMPLE 3 — a breathing pulse driven by state (rate in breaths per second):
@@ -54,28 +98,31 @@ void update() {
 }
 vec3 shade(Led led) { return base * glow; }
 
-EXAMPLE 4 — agents simulated in update() with a struct array:
-struct Agent { float pos; float vel; vec3 col; };
-state Agent agents[8];
+EXAMPLE 4 — agents simulated in update() with a struct array (a per-LED loop multiplies its body by the trip count, so keep it short and in fixed point):
+struct Agent { fixed pos; fixed vel; vec3 col; };
+state Agent agents[4];
 state bool inited;
 void update() {
   if (!inited) {
-    for (int i = 0; i < 8; i = i + 1) {
-      agents[i].pos = hash(float(i));
-      agents[i].vel = 0.1 + hash(float(i) * 3.0) * 0.3;
+    for (int i = 0; i < 4; i = i + 1) {
+      agents[i].pos = fixed(hash(float(i)));
+      agents[i].vel = fixed(0.1 + hash(float(i) * 3.0) * 0.3);
       agents[i].col = hsv2rgb(hash(float(i) * 7.0), 0.9, 1.0);
     }
     inited = true;
   }
-  for (int i = 0; i < 8; i = i + 1) {
-    agents[i].pos = fract(agents[i].pos + agents[i].vel * dt);
+  for (int i = 0; i < 4; i = i + 1) {
+    agents[i].pos = fract(agents[i].pos + agents[i].vel * fixed(dt));
   }
 }
 vec3 shade(Led led) {
+  fixed s = fixed(led.s);
   vec3 c = vec3(0.0, 0.0, 0.0);
-  for (int i = 0; i < 8; i = i + 1) {
-    float d = abs(led.s - agents[i].pos);
-    c = c + agents[i].col * smoothstep(0.06, 0.0, d);
+  for (int i = 0; i < 4; i = i + 1) {
+    fixed d = abs(s - agents[i].pos);
+    if (d < fixed(0.0625)) {
+      c = c + agents[i].col * float(fixed(1.0) - d * fixed(16.0));
+    }
   }
   return c;
 }`;
@@ -89,44 +136,7 @@ HARD CONSTRAINTS:
 TYPES:
 ${typeTable}
 
-PERFORMANCE — READ THIS, IT DECIDES WHETHER AN EFFECT FITS THE FRAME BUDGET.
-The target is a tiny microcontroller with NO hardware floating-point unit: every
-\`float\` operation is software-emulated (~10–50× an integer op). \`shade(Led)\` runs
-once PER LED (often 60–512×) every frame; \`update()\` runs once. So the biggest win
-is doing hot per-LED math in \`int\`/\`fixed\` on operations that have a native
-integer path — those cost essentially nothing. So:
-- Prefer \`int\` for indices/counters/modes and \`fixed\`/\`fixed16\`/\`fixed8\` for smooth
-  per-LED quantities (phase, brightness, positions, colour ramps). \`int\`/\`fixed\`
-  arithmetic (\`+ - * / %\`) runs natively — NO soft-float.
-- The device also runs an on-device JIT (on by default): hot STRAIGHT-LINE runs of
-  \`int\`/\`fixed\` ops compile to native RV32 for a further ~2× on top of the native
-  interpreter path. Float and branch-heavy code stays interpreted (no JIT benefit),
-  so a tight loop of \`int\`/\`fixed\` arithmetic is the genuine fast path — a further
-  reason to keep hot per-LED math in \`int\`/\`fixed\` and avoid \`if\`-ladders and
-  soft-float in it. Note estimate_performance models the INTERPRETER, so it
-  over-estimates frame time for straight-line \`int\`/\`fixed\` — the JIT runs that
-  faster on hardware than the tool predicts.
-- These builtins run NATIVELY on \`int\`/\`fixed\` args (no soft-float, so keep hot
-  math in these + fixed types): \`min max abs clamp mod sign step floor ceil fract mix\`.
-  And \`sin\`/\`cos\`/\`exp\` are native on a \`fixed\`/\`fixed16\`/\`fixed8\` arg (integer LUT;
-  angle in TURNS, 1.0 = one full circle) — this is how you do trig with zero
-  soft-float. (Given a \`float\` arg, all of the above use the float path instead.)
-- These builtins are FLOAT-ONLY — an \`int\`/\`fixed\` arg is CONVERTED to float first,
-  and the op is soft-float: \`sqrt log tan pow atan2 smoothstep dot cross length
-  normalize distance hsv2rgb palette\`. Avoid them in hot per-LED code: compare
-  squared distances (\`dot(d,d)\`) instead of \`length\`/\`distance\`, use fixed \`sin\`/\`cos\`
-  + polynomials instead of \`pow\`/\`exp\`, and hoist any that must run into \`update()\`.
-- Hoist everything that isn't per-LED into \`update()\` (runs 1×) and stash it in
-  \`state\`; keep \`shade()\` lean. A \`sin(time)\` belongs in update(), not shade().
-  Reuse subexpressions; avoid redundant vec constructions and swizzles.
-- RAM is the scarcest resource. Narrow the storage of \`buffer\`/\`texture\` elements
-  with a \`: fixed8\` (1 byte/component) or \`: fixed16\` (2 bytes) annotation instead
-  of the default f32 (4 bytes): \`buffer vec3 trail : fixed8;\`,
-  \`texture vec3 img(64, 64) : fixed16;\`. That quarters/halves the RAM (and the
-  device decodes them without per-texel float). Use \`fixed8\` for colours and other
-  0..1 values, \`fixed16\` when you need more precision.
-When performance matters, don't guess — measure with the estimate_performance tool
-(see the optimization workflow) and cut the hottest opcodes it reports.
+${PERF_GUIDE}
 
 CONTEXTS (read-only globals):
 ${contextTable}
@@ -208,16 +218,15 @@ STATE & DATA:
 
 SENSORS: for motion reactions declare by exact name (a knob when no IMU): \`uniform vec3 imu_gravity = 0.0, -1.0, 0.0;\` (unit down, map frame), \`uniform float imu_shake : 0.0 .. 1.0 = 0.0;\`, \`uniform float imu_tap : 0.0 .. 1000.0 = 0.0;\` (a counter: compare with a state copy), also imu_quat (vec4 w,x,y,z), imu_euler, imu_accel, imu_gyro.
 
-PERFORMANCE (target is an MCU with NO float unit): keep hot per-LED math in \`int\`/\`fixed\`/\`fixed16\`/\`fixed8\` (native, no soft-float); \`sin\`/\`cos\`/\`exp\` on a \`fixed\` arg are LUT-based (angle in TURNS, 1.0 = full circle). Hoist anything not per-LED into update(). Narrow buffer/texture storage with \`: fixed8\`/\`: fixed16\` to save RAM.
+${PERF_GUIDE_COMPACT}
 
-EXAMPLE 1 — rotating pinwheel (angle around the map center from led.uv):
+EXAMPLE 1 — rotating pinwheel (fixed point: phase in turns, atan2 of fixed args gives turns):
 uniform float speed : 0.0 .. 5.0 = 0.5;
-state float spin;
-void update() { spin = fract(spin + dt * speed); }
+state fixed ph;
+void update() { ph = fract(ph + fixed(dt * speed)); }
 vec3 shade(Led led) {
-  float ang = atan2(led.uv.y - 0.5, led.uv.x - 0.5) / 6.2832;
-  float hue = fract(ang * 4.0 + spin);
-  return hsv2rgb(hue, 1.0, 1.0);
+  fixed ang = atan2(fixed(led.uv.y) - fixed(0.5), fixed(led.uv.x) - fixed(0.5));
+  return hsv2rgb(fract(ang * fixed(4.0) + ph), fixed(1.0), fixed(1.0));
 }
 
 EXAMPLE 2 — whole-map breathing glow (an integrated phase in state):
@@ -230,11 +239,12 @@ vec3 shade(Led led) { return base * glow; }
 
 EXAMPLE 3 — bright head moving along the strip with a fading tail (led.s):
 uniform float speed : 0.0 .. 3.0 = 0.7;
-state float head;
-void update() { head = fract(head + dt * speed); }
+state fixed head;
+void update() { head = fract(head + fixed(dt * speed)); }
 vec3 shade(Led led) {
-  float behind = fract(head - led.s);
-  return vec3(1.0, 0.8, 0.4) * exp(-8.0 * behind);
+  fixed t = fixed(1.0) - fract(head - fixed(led.s));
+  t = t * t;
+  return vec3(1.0, 0.8, 0.4) * float(t * t);
 }
 
 These are PATTERNS, not answers: adapt the math to the actual request — never return an example unchanged, and never reference a variable an example declared unless YOU declare it too.

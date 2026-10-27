@@ -15,6 +15,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import { LIBRARY_TOOLS } from "../relay/src/library";
+import { SEED_EFFECTS } from "../relay/src/librarySeed";
 import { mergeTools, parseSingle, rewriteReply } from "../relay/src/mcpLibrary";
 import type { RelayFrame, ReqFrame, StateFrame } from "../relay/src/protocol";
 import { RelayLink } from "../src/bridge/relayLink";
@@ -215,7 +216,7 @@ describe("relay-served library", () => {
       const before = fb.reqs.length;
       const seeded = await call(token, "search_effects", {});
       assert.equal(seeded.isError, false);
-      assert.equal(seeded.json.total, 5, "a new library starts with the examples");
+      assert.equal(seeded.json.total, SEED_EFFECTS.length, "a new library starts with the examples");
       const saved = await call(token, "save_effect", OCEAN);
       assert.equal(saved.json.status, "created");
       assert.deepEqual(saved.json.uniforms, ["speed"]);

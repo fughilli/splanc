@@ -1,0 +1,39 @@
+{
+  "name": "skill2__opus__p04",
+  "variant": "skill2",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p04",
+  "prompt": "a slow rainbow rotating around the lamp (cylindrical)",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Slow rainbow rotating around the cylindrical lamp.\n// Hue follows the LED's angle around the vertical (+Y) axis; the whole\n// rainbow turns slowly. Fixed-point throughout: atan2 of fixed args returns\n// turns and is cached per LED; the phase advances once per frame in update().\nuniform float speed      : 0.0 .. 0.5 = 0.05;   // revolutions per second\nuniform float bands      : 1.0 .. 4.0 = 1.0;    // rainbows around the lamp\nuniform float twist      : 0.0 .. 2.0 = 1.0;    // 1 = straight; <1 / >1 twist the bands up the lamp\nuniform float sat        : 0.0 .. 1.0 = 0.9;\nuniform float brightness : 0.0 .. 1.0 = 1.0;\nuniform bool  reverse    = false;\nuniform float center_x   : 0.0 .. 0.4 = 0.2;    // axis X offset (0.2 = map origin)\nuniform float center_z   : 0.0 .. 0.4 = 0.2;    // axis Z offset (0.2 = map origin)\n\nstate fixed ph;\nstate fixed k;\nstate fixed tw;\nstate fixed s;\nstate fixed v;\nstate fixed cx;\nstate fixed cz;\n\nvoid update() {\n  float d = dt * speed;\n  if (reverse) {\n    d = -d;\n  }\n  ph = fract(ph + fixed(d));\n  k  = fixed(bands);\n  tw = fixed(twist - 1.0);\n  s  = fixed(sat);\n  v  = fixed(brightness);\n  cx = fixed(center_x - 0.2);\n  cz = fixed(center_z - 0.2);\n}\n\nvec3 shade(Led led) {\n  // Angle around the vertical axis in turns (-0.5..0.5), shifted to 0..1.\n  fixed ang = atan2(fixed(led.pos.z) - cz, fixed(led.pos.x) - cx) + fixed(0.5);\n  fixed h = fract(ang * k + fixed(led.uv.y) * tw + ph);\n  return hsv2rgb(h, s, v);\n}\n```",
+      "is_error": false,
+      "session_id": "38a8245b-58c3-44d8-b273-1298175908de",
+      "wall_s": 13.8,
+      "duration_api_ms": 11989,
+      "cost_usd": 0.146048,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1228,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 15185
+      },
+      "thinking_tokens": 478,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1329
+    }
+  ],
+  "started": "2026-10-23T00:04:15",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.146,
+  "total_wall_s": 13.8,
+  "program": "firmware/fx_perf_bench/agent/skill2__opus__p04.fx"
+}

@@ -1,0 +1,39 @@
+{
+  "name": "app2__sonnet__p07",
+  "variant": "app2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p07",
+  "prompt": "fireflies blinking at random",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```\n// Fireflies \u2014 16 independent agents blinking with naturalistic sin^4 pulses,\n// drifting slowly along the helix arc.\n\nuniform float speed     : 0.1 .. 4.0  = 1.0;\nuniform float glow_size : 0.01 .. 0.12 = 0.05;\nuniform vec3  tint      : color        = 0.9, 1.0, 0.08;\n\n// \u2500\u2500 agent state \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nstruct Firefly {\n  fixed pos;        // position on led.s (0..1)\n  fixed phase;      // blink phase in turns\n  fixed blink_spd;  // turns per second\n  fixed drift;      // slow wander velocity\n  fixed brt;        // pre-baked brightness for this frame\n};\n\nstate Firefly flies[16];\nstate fixed   gz;        // = fixed(glow_size), avoids per-LED float\u2192fixed\nstate fixed   inv_gz;    // reciprocal, avoids division in shade()\nstate bool    inited;\n\nvoid update() {\n  // \u2500\u2500 seed on first frame \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  if (!inited) {\n    for (int i = 0; i < 16; i = i + 1) {\n      flies[i].pos       = fixed(hash(float(i) * 1.6180));\n      flies[i].phase     = fixed(hash(float(i) * 2.7182));\n      // blink period 1.5 \u2013 6 s so they're rarely all on together\n      flies[i].blink_spd = fixed(0.15 + hash(float(i) * 4.3219) * 0.5);\n      // slow random drift \u00b10.5 % of arc per second\n      flies[i].drift     = fixed((hash(float(i) * 9.8765) - 0.5) * 0.01);\n    }\n    inited = true;\n  }\n\n  // \u2500\u2500 per-frame: update glow constants \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  gz     = fixed(glow_size);\n  inv_gz = fixed(1.0) / gz;\n\n  fixed spd_dt = fixed(speed * dt);   // combined advance per frame\n  fixed dt_f   = fixed(dt);\n\n  // \u2500\u2500 advance agents, bake brightness \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  for (int i = 0; i < 16; i = i + 1) {\n    flies[i].phase = fract(flies[i].phase + flies[i].blink_spd * spd_dt);\n    flies[i].pos   = fract(flies[i].pos   + flies[i].drift      * dt_f);\n\n    // sin^4 of the phase: positive half only \u2192 brief warm flash,\n    // mostly dark.  All integer fixed arithmetic.\n    fixed sp      = max(fixed(0.0), sin(flies[i].phase));\n    fixed b       = sp * sp;\n    flies[i].brt  = b * b;\n  }\n}\n\n// \u2500\u2500 per-LED shade \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nvec3 shade(Led led) {\n  fixed s     = fixed(led.s);          // 1 200-cycle load covers all led.*\n  fixed total = fixed(0.0);\n\n  for (int i = 0; i < 16; i = i + 1) {\n    fixed d = abs(s - flies[i].pos);\n    if (d < gz) {\n      // linear cone falloff: bright at centre, zero at gz\n      total = total + flies[i].brt * (fixed(1.0) - d * inv_gz);\n    }\n  }\n\n  // clamp then single float conversion for the final vec3 multiply\n  return tint * float(clamp(total, fixed(0.0), fixed(1.0)));\n}\n```\n\n**What the effect does**\n\n| Parameter | Role |\n|---|---|\n| `speed` | Scales how fast all fireflies blink and drift |\n| `glow_size` | Radius of each firefly's soft cone (in `s` arc units) |\n| `tint` | Colour \u2014 defaults to warm yellow-green |\n\n**Design notes**\n- **Agents in `state`** \u2014 positions and phases are advanced once per frame in `update()`; the baked `brt` field means `shade()` only touches already-computed fixed values.  \n- **sin\u2074 blink** \u2014 using the positive half of the sine raised to the 4th power gives a brief, sharp flash (\u224815 % of the cycle) then darkness, which matches real firefly rhythm.  \n- **Blink periods 1.5\u20136 s** with independent random speeds so the group never synchs up.  \n- **Per-LED cost** \u2248 1 200 (led load) + 16 \u00d7 ~320 (loop body, mostly branch-not-taken) + 760 (final colour) \u2248 **7 000 cycles** \u2014 comfortably inside the ~8 000-cycle budget.",
+      "is_error": false,
+      "session_id": "817bf682-0b25-4032-9462-3ad6bd53aaa1",
+      "wall_s": 154.9,
+      "duration_api_ms": 150518,
+      "cost_usd": 0.16600920000000002,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 10763,
+        "cache_read_input_tokens": 5064,
+        "cache_creation_input_tokens": 506
+      },
+      "thinking_tokens": 9485,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 847
+    }
+  ],
+  "started": "2026-10-23T00:08:53",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.166,
+  "total_wall_s": 154.9,
+  "program": "firmware/fx_perf_bench/agent/app2__sonnet__p07.fx"
+}

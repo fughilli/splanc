@@ -1,0 +1,39 @@
+{
+  "name": "app2__sonnet__p14",
+  "variant": "app2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p14",
+  "prompt": "a scanner beam sweeping left to right",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```c\n// Scanner beam that sweeps azimuthally around the cylinder\n// with a sharp leading edge and a phosphor-style decaying trail.\n\nuniform float speed      : 0.1 .. 3.0  = 0.8;   // rotations per second\nuniform float beam_width : 0.01 .. 0.12 = 0.03;  // leading-edge width (fraction of circle)\nuniform float tail_len   : 0.05 .. 0.6  = 0.30;  // phosphor tail length (fraction of circle)\nuniform float tail_glow  : 0.0 .. 1.0   = 0.50;  // tail brightness multiplier\nuniform vec3  beam_color : color = 0.15, 0.9, 1.0;\n\nstate fixed sweep;    // current beam angle, 0..1 turns\nstate fixed inv_bw;   // reciprocal of beam_width \u2014 avoids per-LED division\nstate fixed inv_tl;   // reciprocal of tail_len\nstate fixed tail_g;   // fixed copy of tail_glow uniform\n\nvoid update() {\n  sweep  = fract(sweep + fixed(dt * speed));   // advance beam one frame\n  inv_bw = fixed(1.0 / beam_width);            // precompute per-frame (float div once)\n  inv_tl = fixed(1.0 / tail_len);\n  tail_g = fixed(tail_glow);\n}\n\nvec3 shade(Led led) {\n  // Azimuthal angle of this LED in [0, 1) turns.\n  // atan2 of fixed args returns TURNS (-0.5..0.5); shift to [0, 1).\n  // The compiler caches this per-LED since it depends only on led.*.\n  fixed ang   = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n\n  // Circular distance: 0 = beam just arrived, grows as the tail fades behind it.\n  fixed delta = fract(sweep - ang + fixed(1.0));\n\n  // Sharp bright leading edge \u2014 linear ramp from 1 \u2192 0 over beam_width.\n  fixed beam  = clamp(fixed(1.0) - delta * inv_bw, fixed(0.0), fixed(1.0));\n\n  // Phosphor trail \u2014 quadratic falloff for a natural decay look.\n  fixed t     = clamp(fixed(1.0) - delta * inv_tl, fixed(0.0), fixed(1.0));\n  fixed trail = t * t * tail_g;\n\n  fixed brite = max(beam, trail);\n  return beam_color * float(brite);\n}\n```\n\n**How it works:**\n\n| piece | detail |\n|---|---|\n| `sweep` | advances 0\u21921 continuously at `speed` rotations/second; `fract` keeps it in range |\n| `ang` | LED's azimuthal position in [0,1) turns via `atan2(z,x)` (integer LUT, ~350 cycles, cached per-LED by the compiler) |\n| `delta` | circular lag of the LED behind the beam front; 0 = just hit, grows to 1 before the next sweep |\n| **beam** | linear ramp, width controlled by `beam_width`, collapses to zero outside |\n| **trail** | quadratic (`t\u00b2`) for the phosphor-persistence look, scaled by `tail_glow` |\n| reciprocals | `inv_bw` / `inv_tl` computed once in `update()` so shade uses fast fixed multiplication, not division |",
+      "is_error": false,
+      "session_id": "04a40d36-90bf-4598-aaa7-0f4797163b81",
+      "wall_s": 189.0,
+      "duration_api_ms": 187876,
+      "cost_usd": 0.2159952,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 14095,
+        "cache_read_input_tokens": 5064,
+        "cache_creation_input_tokens": 507
+      },
+      "thinking_tokens": 13204,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1005
+    }
+  ],
+  "started": "2026-10-23T00:17:42",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.216,
+  "total_wall_s": 189.0,
+  "program": "firmware/fx_perf_bench/agent/app2__sonnet__p14.fx"
+}

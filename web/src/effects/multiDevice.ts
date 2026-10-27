@@ -22,6 +22,7 @@ import {
   type CostTable,
   type FrameEstimate,
 } from "./costModel";
+import { findingsToLines, perfFindings } from "./perfFindings";
 
 /** One device to estimate against. `key` is a stable identity (device MAC/id or
  * a SoC label); `table` is its resolved cost table (per-device if calibrated). */
@@ -73,7 +74,16 @@ export function estimateAcrossDevices(
 /** Render a compact fleet summary for the AI generator's perf context. Lists
  * each device's budget consumption + color, flags the binding device, and warns
  * on any that overrun — so the model optimizes for the whole fleet. */
-export function describeFleet(fleet: FleetEstimate): string {
+export function describeFleet(
+  fleet: FleetEstimate,
+  /** The compiled program (+ its source and the compiler's perf warnings), to
+   * append the top cost findings for the binding device. */
+  program?: {
+    bytecode: Uint8Array;
+    source?: string | undefined;
+    warnings?: { line: number; col: number; msg: string }[] | undefined;
+  },
+): string {
   if (fleet.devices.length === 0) return "No device targets to estimate against.";
   const lines: string[] = [];
   lines.push(
@@ -87,7 +97,7 @@ export function describeFleet(fleet: FleetEstimate): string {
       : ">budget";
     const soc = d.target.table.soc;
     const mhz = (d.target.table.cpuHz / 1e6).toFixed(0);
-    const cal = d.target.calibrated ? "calibrated" : "uncalibrated (default model — wide error)";
+    const cal = d.target.calibrated ? "calibrated" : "default model (fitted on a bench C6, ±15%)";
     const bind = fleet.binding === d ? " ← binding" : "";
     lines.push(
       `- ${d.target.label} (${soc} @ ${mhz} MHz, ${d.target.ledCount} LEDs, ${cal}): ` +
@@ -108,9 +118,26 @@ export function describeFleet(fleet: FleetEstimate): string {
   if (!fleet.allFit) {
     lines.push("Optimize for the binding device first; it must fit before the others matter.");
   }
-  lines.push(
-    "To cut per-LED cost: hoist loop-invariant work into update(), prefer step/mix/polynomial " +
-      "over sin/pow/exp, and avoid length/normalize/distance (hidden sqrt).",
-  );
+  let findings: string[] = [];
+  if (program && bind) {
+    try {
+      findings = findingsToLines(
+        perfFindings(program.bytecode, { table: bind.target.table, source: program.source, warnings: program.warnings }),
+        bind.target.ledCount,
+        bind.target.table.cpuHz,
+      );
+    } catch {
+      findings = []; // never let the analysis break the estimate
+    }
+  }
+  if (findings.length > 0) {
+    lines.push(`Top cost findings on ${bind!.target.label} (apply these first):`);
+    for (const f of findings) lines.push(`- ${f}`);
+  } else {
+    lines.push(
+      "To cut per-LED cost: keep per-LED maths in fixed point (fixed() around literals, sin/cos of a fixed " +
+        "phase in turns), hoist per-frame work into update(), and avoid pow/exp/smoothstep/length per LED.",
+    );
+  }
   return lines.join("\n");
 }

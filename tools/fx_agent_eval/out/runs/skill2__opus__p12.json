@@ -1,0 +1,66 @@
+{
+  "name": "skill2__opus__p12",
+  "variant": "skill2",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p12",
+  "prompt": "a breathing meditation glow",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Breathing meditation glow: a soft warm light that slowly fills the lamp\n// from the bottom on the in-breath, rests at the top during the hold, then\n// sinks and dims on the out-breath. Use it as a breathing guide: the default\n// is one breath every 8 s, with short pauses after each in- and out-breath.\n// Fixed point per LED: one subtract, a few multiplies, a clamp and an integer\n// hsv2rgb.\n\nuniform float period   : 3.0 .. 16.0 = 8.0;   // seconds per full breath\nuniform float hold     : 0.0 .. 0.4 = 0.2;    // share of the breath spent pausing\nuniform float depth    : 0.0 .. 1.0 = 0.75;   // how much it dims on the out-breath\nuniform float rise     : 0.0 .. 1.0 = 0.8;    // 0 = whole lamp pulses, 1 = light fills upward\nuniform float softness : 0.0 .. 1.0 = 0.5;    // blur of the rising edge\nuniform float hue      : 0.0 .. 1.0 = 0.07;   // warm amber by default\nuniform float hue_drift: 0.0 .. 0.3 = 0.05;   // hue change from bottom to top\nuniform float sat      : 0.0 .. 1.0 = 0.75;\nuniform float glow     : 0.1 .. 1.0 = 0.85;   // peak brightness\n\nstate float ph;        // breath phase 0..1\nstate fixed y0;        // lowest LED height\nstate fixed invh;      // 1 / lamp height\nstate fixed lvl;       // current fill level (0..1 of height, extended past the ends)\nstate fixed edge;      // edge sharpness\nstate fixed vbase;     // brightness floor (rest of lamp)\nstate fixed vamp;      // brightness added where filled\nstate fixed hu;\nstate fixed hs;\nstate fixed sa;\n\nvoid update() {\n  ph = fract(ph + dt / max(period, 0.5));\n\n  // Breath curve: inhale, hold, exhale, hold. Smoothstep-shaped ramps.\n  float hh = hold * 0.5;\n  float ramp = max((1.0 - 2.0 * hh) * 0.5, 0.01);\n  float b = 0.0;\n  if (ph < ramp) {\n    float x = ph / ramp;\n    b = x * x * (3.0 - 2.0 * x);\n  } else if (ph < ramp + hh) {\n    b = 1.0;\n  } else if (ph < 2.0 * ramp + hh) {\n    float x = (ph - ramp - hh) / ramp;\n    b = 1.0 - x * x * (3.0 - 2.0 * x);\n  } else {\n    b = 0.0;\n  }\n\n  // Lamp height from the room-frame box.\n  float ymin = room.min.y;\n  float ymax = room.max.y;\n  y0 = fixed(ymin);\n  invh = fixed(1.0 / max(ymax - ymin, 0.01));\n\n  // Edge width 0.08..0.6 of the height; level travels from below the bottom\n  // to above the top so the ends get fully dark / fully lit.\n  float w = 0.08 + 0.52 * softness;\n  edge = fixed(1.0 / w);\n  lvl = fixed(-w * 0.5 + b * (1.0 + w));\n\n  // Brightness: a floor that itself breathes, plus the rising fill.\n  float floorv = glow * (1.0 - depth) + glow * depth * b * (1.0 - rise);\n  vbase = fixed(floorv);\n  vamp = fixed(max(glow - floorv, 0.0) * rise);\n\n  hu = fixed(hue);\n  hs = fixed(hue_drift);\n  sa = fixed(sat);\n}\n\nvec3 shade(Led led) {\n  fixed h = (fixed(led.room.y) - y0) * invh;\n  fixed f = clamp((lvl - h) * edge + fixed(0.5), fixed(0.0), fixed(1.0));\n  fixed v = vbase + f * vamp;\n  return hsv2rgb(fract(hu + h * hs), sa, v);\n}\n```",
+      "is_error": false,
+      "session_id": "a8053fa0-a090-4909-aae7-616353b145a2",
+      "wall_s": 29.1,
+      "duration_api_ms": 27544,
+      "cost_usd": 0.062784,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2748,
+        "cache_read_input_tokens": 14560,
+        "cache_creation_input_tokens": 613
+      },
+      "thinking_tokens": 1331,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 39,
+          "col": 10,
+          "msg": "expected '{'"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "```glsl\n// Breathing meditation glow: a soft warm light that slowly fills the lamp\n// from the bottom on the in-breath, rests at the top during the hold, then\n// sinks and dims on the out-breath. Use it as a breathing guide: the default\n// is one breath every 8 s, with short pauses after each in- and out-breath.\n// Fixed point per LED: one subtract, a few multiplies, a clamp and an integer\n// hsv2rgb.\n\nuniform float period   : 3.0 .. 16.0 = 8.0;   // seconds per full breath\nuniform float hold     : 0.0 .. 0.4 = 0.2;    // share of the breath spent pausing\nuniform float depth    : 0.0 .. 1.0 = 0.75;   // how much it dims on the out-breath\nuniform float rise     : 0.0 .. 1.0 = 0.8;    // 0 = whole lamp pulses, 1 = light fills upward\nuniform float softness : 0.0 .. 1.0 = 0.5;    // blur of the rising edge\nuniform float hue      : 0.0 .. 1.0 = 0.07;   // warm amber by default\nuniform float hue_drift: 0.0 .. 0.3 = 0.05;   // hue change from bottom to top\nuniform float sat      : 0.0 .. 1.0 = 0.75;\nuniform float glow     : 0.1 .. 1.0 = 0.85;   // peak brightness\n\nstate float ph;        // breath phase 0..1\nstate fixed y0;        // lowest LED height\nstate fixed invh;      // 1 / lamp height\nstate fixed lvl;       // current fill level (0..1 of height, extended past the ends)\nstate fixed edge;      // edge sharpness\nstate fixed vbase;     // brightness floor (rest of lamp)\nstate fixed vamp;      // brightness added where filled\nstate fixed hu;\nstate fixed hs;\nstate fixed sa;\n\nvoid update() {\n  ph = fract(ph + dt / max(period, 0.5));\n\n  // Breath curve: inhale, hold, exhale, hold. Smoothstep-shaped ramps.\n  float hh = hold * 0.5;\n  float ramp = max((1.0 - 2.0 * hh) * 0.5, 0.01);\n  float b = 0.0;\n  if (ph < ramp) {\n    float x = ph / ramp;\n    b = x * x * (3.0 - 2.0 * x);\n  } else {\n    if (ph < ramp + hh) {\n      b = 1.0;\n    } else {\n      if (ph < 2.0 * ramp + hh) {\n        float x2 = (ph - ramp - hh) / ramp;\n        b = 1.0 - x2 * x2 * (3.0 - 2.0 * x2);\n      } else {\n        b = 0.0;\n      }\n    }\n  }\n\n  // Lamp height from the room-frame box.\n  float ymin = room.min.y;\n  float ymax = room.max.y;\n  y0 = fixed(ymin);\n  invh = fixed(1.0 / max(ymax - ymin, 0.01));\n\n  // Edge width 0.08..0.6 of the height; level travels from below the bottom\n  // to above the top so the ends get fully dark / fully lit.\n  float w = 0.08 + 0.52 * softness;\n  edge = fixed(1.0 / w);\n  lvl = fixed(-w * 0.5 + b * (1.0 + w));\n\n  // Brightness: a floor that itself breathes, plus the rising fill.\n  float floorv = glow * (1.0 - depth) + glow * depth * b * (1.0 - rise);\n  vbase = fixed(floorv);\n  vamp = fixed(max(glow - floorv, 0.0) * rise);\n\n  hu = fixed(hue);\n  hs = fixed(hue_drift);\n  sa = fixed(sat);\n}\n\nvec3 shade(Led led) {\n  fixed h = (fixed(led.room.y) - y0) * invh;\n  fixed f = clamp((lvl - h) * edge + fixed(0.5), fixed(0.0), fixed(1.0));\n  fixed v = vbase + f * vamp;\n  return hsv2rgb(fract(hu + h * hs), sa, v);\n}\n```",
+      "is_error": false,
+      "session_id": "a8053fa0-a090-4909-aae7-616353b145a2",
+      "wall_s": 12.6,
+      "duration_api_ms": 38484,
+      "cost_usd": 0.1300626,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1517,
+        "cache_read_input_tokens": 15173,
+        "cache_creation_input_tokens": 4237
+      },
+      "thinking_tokens": 81,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1942
+    }
+  ],
+  "started": "2026-10-23T00:22:15",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.1928,
+  "total_wall_s": 41.7,
+  "program": "firmware/fx_perf_bench/agent/skill2__opus__p12.fx"
+}
