@@ -29,6 +29,11 @@ rust_library(
     ],
     crate_name = "ledmapper_player_rs",
     edition = "2021",
+    # Linux-only: spidev, the GPIO v2 uAPI, SCHED_FIFO / affinity, ppoll and
+    # clock_nanosleep (pacing.rs, rt.rs, gpio_cdev.rs). The deploy builds it for
+    # the aarch64-linux-musl platform (//pi/player_rs/musl), from macOS too;
+    # a native macOS `bazel test //...` skips it.
+    target_compatible_with = ["@platforms//os:linux"],
     deps = [
         # The reused firmware session/pattern/effects core — host protobuf
         # profile (the Pi has RAM to spare), depended on directly (no FFI).
@@ -70,6 +75,7 @@ rust_binary(
         ],
         "//conditions:default": [],
     }),
+    target_compatible_with = ["@platforms//os:linux"],
     deps = [
         ":player_rs",
         "//firmware/player",
@@ -85,4 +91,5 @@ rust_test(
     # Envelope structs carry inline heapless storage (see //shared/protocol/rust)
     # and land on the test thread's stack — same bump the firmware player tests use.
     env = {"RUST_MIN_STACK": "16777216"},
+    target_compatible_with = ["@platforms//os:linux"],
 )
