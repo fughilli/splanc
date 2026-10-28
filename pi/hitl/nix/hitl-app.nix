@@ -341,6 +341,18 @@ in
   # on this driver, so never blacklist it there.
   boot.blacklistedKernelModules = lib.optionals isPi3 [ "onboard_usb_dev" ];
 
+  # Pi 5 USB current limit. The rigs are powered by a Waveshare PoE HAT (F), which
+  # does no USB-PD negotiation, so the Pi 5 firmware assumes a 3 A supply and caps
+  # total USB current at 600 mA. Four ESP32-C6 DUTs + the RTL8851BU dongle + a
+  # Saleae exceed that: ports trip over-current, DUTs brown out, HITL goes flaky.
+  # usb_max_current_enable=1 lifts the cap to 1.6 A. ASSUMES the PoE+ supply can
+  # really deliver more than 3 A to the Pi. Pi-5-only (a Pi 3 has no such knob);
+  # config.txt is generated, so this must live here, not as a hand edit on the rig.
+  hardware.raspberry-pi.config.all.options.usb_max_current_enable = lib.mkIf (!isPi3) {
+    enable = true;
+    value = true;
+  };
+
   # Dedicated USB AP radio (RTL8851BU / rtw89), only when SBC_AP_DONGLE=1. A
   # post-boot module (not initrd/kernel), so it rides the deploy_live layer — no SD
   # reimage. udev autoloads it once usb_modeswitch flips the dongle into WiFi mode.
