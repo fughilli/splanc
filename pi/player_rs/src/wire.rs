@@ -255,6 +255,66 @@ impl FpgaCodec {
     pub fn dark(&self, n: usize) -> Vec<u8> {
         self.frame(&vec![[0, 0, 0]; n])
     }
+
+    /// Pixels on port `p` for an `n`-LED frame, as [`split_ports`] cuts them:
+    /// `(start, len)` into the flat list, clipped to `n`.
+    fn port_span(&self, p: usize, n: usize) -> (usize, usize) {
+        let (start, count) = match self.port_counts.as_deref() {
+            Some(pc) => (pc[..p].iter().sum::<usize>(), pc[p]),
+            None => {
+                let (base, extra) = (n / self.num_ports, n % self.num_ports);
+                (p * base + p.min(extra), base + usize::from(p < extra))
+            }
+        };
+        let start = start.min(n);
+        (start, (start + count).min(n) - start)
+    }
+
+    /// Byte length of the STREAM for an `n`-LED frame.
+    pub fn stream_len(&self, n: usize) -> usize {
+        let width = (0..self.num_ports)
+            .map(|p| self.port_span(p, n).1)
+            .max()
+            .unwrap_or(0);
+        1 + 3 * width * self.num_ports
+    }
+
+    /// [`frame`](Self::frame) with colour order `order`, written into `out`
+    /// (cleared first). Byte-identical to `frame`, but it encodes in place with
+    /// no per-port vectors, so a reused `out` never allocates once its capacity
+    /// covers the frame: the render thread's per-frame path.
+    pub fn frame_into(&self, colors: &[Rgb], order: [u8; 3], out: &mut Vec<u8>) {
+        let n = colors.len();
+        let ports = self.num_ports;
+        out.clear();
+        out.resize(self.stream_len(n), 0);
+        out[0] = OP_STREAM;
+        for p in 0..ports {
+            let (start, len) = self.port_span(p, n);
+            // Port p's wire byte k sits at 1 + k * ports + p.
+            let mut i = 1 + p;
+            for &px in &colors[start..start + len] {
+                let w = to_wire(px, order);
+                out[i] = w[0];
+                out[i + ports] = w[1];
+                out[i + 2 * ports] = w[2];
+                i += 3 * ports;
+            }
+        }
+    }
+
+    /// [`dark`](Self::dark) into `out` (cleared first), allocation-free.
+    pub fn dark_into(&self, n: usize, out: &mut Vec<u8>) {
+        out.clear();
+        out.resize(self.stream_len(n), 0);
+        out[0] = OP_STREAM;
+    }
+
+    /// [`configure`](Self::configure) into `out` (cleared first).
+    pub fn configure_into(&self, out: &mut Vec<u8>) {
+        out.clear();
+        out.extend_from_slice(&[OP_WRITE_CSR, CSR_NUM_PORTS, self.num_ports as u8]);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -375,6 +435,49 @@ mod tests {
             6, 0, // k=5
         ];
         assert_eq!(encode_stream(&ports, GRB), expected);
+    }
+
+    #[test]
+    fn frame_into_matches_frame() {
+        let colors: Vec<Rgb> = (0..53u32)
+            .map(|i| [(i * 7) as u8, (i * 13 + 1) as u8, (i * 29 + 2) as u8])
+            .collect();
+        let mut out = Vec::new();
+        for ports in [1usize, 2, 3, 7, 20] {
+            let codec = FpgaCodec::new(ports, GRB, None).unwrap();
+            for n in [0usize, 1, 5, 19, 20, 21, 53] {
+                for order in [GRB, RGB_ORDER, [2, 1, 0]] {
+                    let probe = FpgaCodec { order, ..codec.clone() };
+                    codec.frame_into(&colors[..n], order, &mut out);
+                    assert_eq!(out, probe.frame(&colors[..n]), "ports={ports} n={n}");
+                    assert_eq!(out.len(), codec.stream_len(n));
+                }
+                codec.dark_into(n, &mut out);
+                assert_eq!(out, codec.dark(n), "dark ports={ports} n={n}");
+            }
+            codec.configure_into(&mut out);
+            assert_eq!(out, codec.configure());
+        }
+        // Topology split, including counts past the end of the frame.
+        let codec = FpgaCodec::new(3, GRB, Some(vec![10, 30, 5])).unwrap();
+        for n in [0usize, 4, 12, 40, 45, 53] {
+            codec.frame_into(&colors[..n], GRB, &mut out);
+            assert_eq!(out, codec.frame(&colors[..n]), "topology n={n}");
+        }
+    }
+
+    #[test]
+    fn frame_into_reuses_capacity() {
+        let codec = FpgaCodec::new(20, GRB, None).unwrap();
+        let colors = vec![[1, 2, 3]; 5200];
+        let mut out = Vec::with_capacity(codec.stream_len(5200));
+        let ptr = out.as_ptr();
+        for _ in 0..3 {
+            codec.frame_into(&colors, GRB, &mut out);
+            codec.dark_into(5200, &mut out);
+        }
+        assert_eq!(out.as_ptr(), ptr, "no reallocation once sized");
+        assert_eq!(out.len(), 1 + 5200 * 3);
     }
 
     #[test]

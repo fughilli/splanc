@@ -146,6 +146,16 @@ module spi_ws281x_120fps_tb;
     end
   end
 
+`ifdef TRACE
+  // The `.trace` / `.surfer` targets (rules_fpga) need a "dump" file. 174 ms of a
+  // 54 MHz core is ~10 M cycles, so dump the testbench scope only (the SPI pins,
+  // ws, frame_done, STATS), not the core's internals; BUILD uses FST.
+  initial begin
+    $dumpfile("dump");
+    $dumpvars(1, spi_ws281x_120fps_tb);
+  end
+`endif
+
   // ---- frame_done monitor ----
   integer reset_clk = 80000 * CLK_MHZ / 1000;  // current latch, tracks led_type
   integer last_any_fall = -1000000, fd_rises = 0, fd_err = 0, mi, since;

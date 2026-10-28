@@ -111,6 +111,28 @@ pub fn lock_all_memory() -> io::Result<()> {
     Ok(())
 }
 
+/// SCHED_FIFO priority of the pipelined render thread: below the output
+/// thread (45), so a render overrun can never delay a frame-done wake-up.
+pub const DEFAULT_RENDER_PRIO: i32 = 40;
+
+/// The default render CPU: the one below the output CPU (CPU 2 on a 4-core
+/// Pi, leaving 0-1 to the WSS server and IRQs), or None with fewer than 3 CPUs
+/// or an unpinned output thread.
+pub fn default_render_cpu(output_cpu: Option<usize>, ncpu: usize) -> Option<usize> {
+    match output_cpu {
+        Some(c) if ncpu >= 3 && c >= 1 => Some(c - 1),
+        _ => None,
+    }
+}
+
+/// Parse a `--render-cpu` value: `auto` (`default_render_cpu`), `none`, or N.
+pub fn parse_render_cpu(spec: &str, output_cpu: Option<usize>, ncpu: usize) -> Result<Option<usize>, String> {
+    match spec {
+        "auto" => Ok(default_render_cpu(output_cpu, ncpu)),
+        s => parse_cpu(s, ncpu).map_err(|e| e.replace("--rt-cpu", "--render-cpu")),
+    }
+}
+
 /// Parse a `--rt-cpu` value: `auto` (last CPU), `none`/`-1` (don't pin), or N.
 pub fn parse_cpu(spec: &str, ncpu: usize) -> Result<Option<usize>, String> {
     match spec {
@@ -137,6 +159,17 @@ mod tests {
         assert_eq!(parse_cpu("2", 4), Ok(Some(2)));
         assert!(parse_cpu("4", 4).is_err());
         assert!(parse_cpu("x", 4).is_err());
+    }
+
+    #[test]
+    fn render_cpu_spec() {
+        assert_eq!(parse_render_cpu("auto", Some(3), 4), Ok(Some(2)));
+        assert_eq!(parse_render_cpu("auto", None, 4), Ok(None));
+        assert_eq!(parse_render_cpu("auto", Some(1), 2), Ok(None));
+        assert_eq!(parse_render_cpu("auto", Some(0), 4), Ok(None));
+        assert_eq!(parse_render_cpu("1", Some(3), 4), Ok(Some(1)));
+        assert_eq!(parse_render_cpu("none", Some(3), 4), Ok(None));
+        assert!(parse_render_cpu("9", Some(3), 4).unwrap_err().contains("--render-cpu"));
     }
 
     #[test]

@@ -326,6 +326,13 @@ pub struct PaceStats {
     pub spi: Vec<u64>,
     /// SPI ioctl entry to the next frame's SPI ioctl entry.
     pub period: Vec<u64>,
+    /// Pipelined only: player lock hold per render (fresh frames).
+    pub lock: Vec<u64>,
+    /// Pipelined only: render done -> SPI ioctl entry (frame age at send).
+    pub age: Vec<u64>,
+    /// Pipelined only: player sampled (render start) -> SPI ioctl entry, i.e.
+    /// the input -> light latency the pipeline adds to (every send).
+    pub sample_to_spi: Vec<u64>,
 }
 
 impl PaceStats {
@@ -344,6 +351,15 @@ impl PaceStats {
             summarize(&mut self.spi).fmt_us("spi"),
             summarize(&mut self.period).fmt_us("period"),
         ]
+        .into_iter()
+        .chain(
+            // Pipelined-only fields, omitted from the serial report.
+            [("lock", &mut self.lock), ("age", &mut self.age), ("sample_to_spi", &mut self.sample_to_spi)]
+                .into_iter()
+                .filter(|(_, v)| !v.is_empty())
+                .map(|(name, v)| summarize(v).fmt_us(name)),
+        )
+        .collect::<Vec<_>>()
         .join(" ")
     }
 }

@@ -12,10 +12,12 @@
 
 pub mod gpio_cdev;
 pub mod pacing;
+pub mod pipeline;
 pub mod render;
 pub mod rt;
 pub mod server;
 pub mod session;
+pub mod triple;
 pub mod wire;
 
 pub use render::{render_fpga, tick_fpga, RecordingSink, Sink};
