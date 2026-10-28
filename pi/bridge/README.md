@@ -120,11 +120,18 @@ image/nix/rpi.nix           Pi bits: SPI + I2C + key pull-ups in config.txt, gpi
 image/nix/lean.nix          size trims (no docs, rescue tools, nixpkgs source, ModemManager, gtk3)
 image/nix/packages.nix      agent bundle (agent-pin.json), Python env (luma from requirements.lock,
                             lgpio from its sdist), fonts
+image/nix/system-update.nix full-system OTA: splanc-system-update timer/service, the boot-time
+                            health check + rollback (splanc-system-update-confirm), panic/watchdog
+image/nix/system-update-rpi.nix  Pi 5 tryboot mode + FAT generation limit
 image/nix/vm-test.nix       QEMU smoke test (generic aarch64 VM, same appliance modules)
+image/nix/vm-test-ota.nix   QEMU test of the system OTA (A -> B, bad keys, health-check rollback)
 image/splanc_image/         on-device Python: bootconfig.py (boot-partition settings),
                             selfupdate.py (verified agent bundle updates), improv.py +
-                            wifi_profiles.py (Improv WiFi provisioning, saved networks)
+                            wifi_profiles.py (Improv WiFi provisioning, saved networks),
+                            sysupdate.py (system OTA), nixcache.py (cache layout),
+                            sysrelease.py (CI: release assets)
 image/agent-pin.json        the agent bundle baked into the image (version, url, sha256)
+image/ota-public-keys.txt   Nix public keys a system update must be signed with
 ```
 
 - **First boot, every boot:** `splanc-flash-config` runs before NetworkManager and avahi. It
@@ -156,8 +163,8 @@ image/agent-pin.json        the agent bundle baked into the image (version, url,
   `/var/lib/splanc-agent` survive reboots; the journal is in RAM, `/tmp` is tmpfs and `/` is mounted
   `noatime`. A fully read-only root wasn't worth it: the first boot grows the root partition and
   registers the Nix store, so it would need an overlay.
-- **OS updates:** by writing a newer `pi-bridge-v*` image (which resets the bridge identity, so
-  agents pair again). An A/B or `nix copy`-based in-place update is future work.
+- **System updates:** over the air, see [System updates](#system-updates). Writing a newer image
+  still works but resets the bridge identity (agents pair again).
 - **Boards:** Pi 5 (bcm2712 kernel) and Pi 3 / Pi 4 / Zero 2 W (one shared bcm2711 kernel, so they
   cost one kernel build between them). All four ship; the Zero 2 W (512 MB) gets zram swap.
 
@@ -180,6 +187,121 @@ CI (`.github/workflows/pi-bridge-image.yml`) builds every board on pushes to mai
 (closure top-25 + raw/compressed size, failing above 1 GB compressed), compresses with
 `zstd -19` and attaches `splanc-bridge-<board>-<ver>.img.zst` + `.sha256` to the release, along with
 the flasher installers. Agents decide when to cut a tag (the workflow header says how).
+
+### System updates
+
+Everything in the image (kernel, systemd units, the display code, NetworkManager config, a new
+service) updates over the air as a whole NixOS generation, the way `nixos-rebuild boot` + reboot
+would. The agent bundle keeps its own faster path (above): it ships more often than images, needs
+no reboot, and a system update doesn't touch `/var/lib/splanc-agent`.
+
+**Release (CI).** Three steps in `.github/workflows/pi-bridge-image.yml`, so that only one small
+job ever sees the signing key:
+
+1. `image` (every run, per board, environment `CI`): copies the system closure into an
+   **unsigned** `file://` binary cache and flattens it once as a dry run (the step summary shows
+   asset count and MB). On a `pi-bridge-v*` tag push it uploads the cache as a run artifact
+   (`syscache-<board>`, ~480 MB, kept 1 day). It never has the key.
+2. `ota-sign` (only `pi-bridge-v*` tag pushes; environment **`Bridge release`**, the only place
+   `BRIDGE_NIX_SIGNING_KEY` exists): no repo build, just a sparse checkout of
+   `splanc_image/` + `ota-public-keys.txt`, Nix, and the artifacts. It refuses a key whose public
+   half isn't in `ota-public-keys.txt`, signs every path of each closure with `nix store sign`
+   (against the `file://` cache, `--recursive` from the toplevel) and flattens them with
+   `sysrelease.py --require-key` (which refuses any unsigned path) into the `ota-signed` artifact.
+3. `ota-publish` (after the image release is out): uploads only that signed output.
+
+The signer takes the build's own artifacts rather than re-fetching the closures from Cachix: it
+signs exactly the bytes this run built, needs no aarch64 runner or Cachix access, and doesn't
+extend the key's trust to whatever else can push to the cache. The result, with no other
+infrastructure:
+
+```text
+pi-bridge-ota-vX.Y.Z (prerelease)   <filehash>.nar.zst  one per store path, shared between boards
+                                    bridge-system-<board>-X.Y.Z.json  manifest: every narinfo (signed),
+                                                                      the toplevel, the NAR base URL
+pi-bridge-ota (prerelease, fixed)   bridge-system-<board>.json        pointer: version, toplevel,
+                                                                      manifest URL + sha256
+```
+
+A plain HTTP binary cache needs a `.narinfo` per store path, and a GitHub release holds at most
+1000 assets: the Pi 5 closure is 616 store paths (598 distinct NARs, 480 MB zstd, 1.26 GB
+unpacked), all four boards together ~650 NARs. So the narinfos travel together in the manifest
+(~0.5 MB) and only the NARs are separate assets (each well under the 2 GiB asset limit; the
+largest, the Pi 5 kernel, is 116 MB). CI fails the OTA publish (not the image release) above 990
+assets. Without the secret (or on anything but a tag push) nothing is signed or published, and no
+job fails.
+
+**Device (`splanc-system-update.timer`, every 15 min; checks the channel every ~6 h).**
+
+1. Fetch the pointer; nothing to do if it names the running system or one that failed here before.
+2. Fetch the manifest (sha256 from the pointer), compute the closure, ask Nix which store paths are
+   missing, check there's room (else drop old generations + GC), download only those NARs and
+   check each against its narinfo's FileHash/FileSize. A small change is a few MB; a nixpkgs bump
+   is most of the 480 MB.
+3. `nix store verify --no-contents --sigs-needed 1` with **only** the keys in
+   `ota-public-keys.txt`: every path of the closure must be signed by one of them. Then
+   `nix copy --from file://...` imports it (Nix checks each NAR's signed NarHash). The imported
+   system must be a bridge system for this board. Nothing so far touches the running system.
+4. Wait while an app is connected through the bridge (`clients` in status.json; at most 3 days),
+   then: `nix-env -p /nix/var/nix/profiles/system --set <new>` (sbc-deploy's `deploy_live` does
+   the same), install the boot entry and reboot. A failure here puts the old profile + boot entry
+   back.
+5. On the next boot `splanc-system-update-confirm` waits (5 min max) for the health check: the
+   health units (`splanc-bridge`, `splanc-display`, `NetworkManager`, plus any a module adds to
+   `splancBridge.systemUpdate.healthUnits`) active and up for 30 s without a restart, a default
+   route if there was one before, boot finished. A unit that was already failing on the old system
+   doesn't count. Pass: keep current + previous generation, GC the rest. Fail: previous
+   generation back as the boot default, the new one remembered as bad, reboot.
+
+**Boot modes.** Reboot (not a live `switch`): kernel and initrd changes need it anyway, the health
+check then tests exactly what boots next time, and rollback is clean. Downtime is one reboot; the
+fixtures keep playing (they don't depend on the bridge), only remote control pauses.
+
+- **Pi 5, `tryboot`:** the firmware boots `nixos/default/` straight from the FAT partition. The
+  updater leaves that (and `config.txt`) on the old system, has the old system's installer add
+  `nixos/<N>-default/` for the new generation, writes `tryboot.txt` (the new `config.txt` with
+  `os_prefix=nixos/<N>-default/`) and reboots with `reboot "0 tryboot"`: the firmware uses it for
+  that one boot only. Only a passing health check makes the new system the default. So anything
+  that stops the new system before the commit (kernel panic → `panic=10`, stage-1 failure →
+  `boot.panic_on_fail`, a hang → the 15 s hardware watchdog, a power cut) boots the old system
+  again, which notices and rolls back. The FAT partition keeps one older generation (default +
+  newest, ~50 MB each) because the default of four would fill the 256 MB partition.
+- **Pi 3 / Pi 4 / Zero 2 W, `reboot`:** U-Boot/extlinux has no one-shot entry, so the new
+  generation is the default before the reboot. Rollback needs the new system to reach the health
+  check; a system that can't boot at all can't roll itself back (choose the previous entry on the
+  U-Boot console, or reflash).
+
+**Signing key.** `ota-public-keys.txt` (committed) is baked into the image; the secret key lives
+only in the `BRIDGE_NIX_SIGNING_KEY` secret of the GitHub environment `Bridge release`, which only
+`pi-bridge-v*` tags may deploy to. Setup (repo **Settings → Environments**):
+
+1. **New environment** → name `Bridge release` → **Configure environment**.
+2. **Deployment branches and tags** → **Selected branches and tags** → **Add deployment branch
+   or tag rule** → Ref type **Tag**, name pattern `pi-bridge-v*` → **Add rule**. (Optionally also
+   **Required reviewers**, to approve each release's signing by hand.)
+3. **Environment secrets** → **Add environment secret** → name `BRIDGE_NIX_SIGNING_KEY`, value =
+   the whole secret key file (`splanc-bridge-1:...`).
+4. **Environments → `CI`** → delete `BRIDGE_NIX_SIGNING_KEY` there if it was added (also check
+   **Secrets and variables → Actions** for a repository-level copy, and delete that too).
+
+`ota-sign` refuses to sign if the key's public half isn't listed in `ota-public-keys.txt`.
+Whoever controls the `pi-bridge-ota` channel can point bridges at any release
+signed with the key, including an older one; re-pointing is also how a bad release is rolled back:
+
+```sh
+gh release download pi-bridge-ota-v1.2.0 -p 'bridge-system-pi5-1.2.0.json'
+PYTHONPATH=pi/bridge/image python3 -m splanc_image.sysrelease pointer \
+  --manifest bridge-system-pi5-1.2.0.json --out bridge-system-pi5.json \
+  --manifest-url https://github.com/fughilli/splanc/releases/download/pi-bridge-ota-v1.2.0/bridge-system-pi5-1.2.0.json
+gh release upload pi-bridge-ota bridge-system-pi5.json --clobber
+```
+
+On the bridge: `splanc-system-update status` (state, last result, staged/pending update),
+`sudo splanc-system-update check` (check now; installs when idle), `... apply` (install now even if
+an app is connected), `... logs`. `SPLANC_AUTO_UPDATE=0` in `splanc-bridge.conf` turns the
+automatic checks off, as for the agent. Progress goes to `/run/splanc-system-update/status.json`
+(`state`: downloading, verifying, staged, installing, rebooting, confirming, committing,
+rolling_back, idle, failed, disabled) for the screens to show.
 
 ## The flasher
 

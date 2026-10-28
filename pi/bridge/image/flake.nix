@@ -59,6 +59,7 @@
         ./nix/flash-config.nix
         ./nix/improv.nix
         ./nix/lean.nix
+        ./nix/system-update.nix
         { splancBridge.imageRev = rev; }
       ];
 
@@ -71,6 +72,7 @@
             sbc-deploy.nixosModules.sbc-base
             sbc-deploy.nixosModules.spi
             ./nix/rpi.nix
+            ./nix/system-update-rpi.nix
             { splancBridge.board = key; }
           ] ++ bridgeModules;
         };
@@ -92,6 +94,11 @@
       # A generic-aarch64 QEMU VM with the same appliance modules (no Pi kernel or
       # firmware): boots, applies a flash-time boot config, runs the bridge against
       # a stub bundle, and self-updates from a local latest.json. See nix/vm-test.nix.
-      checks.${system}.vm = import ./nix/vm-test.nix { inherit pkgs bridgeModules; };
+      checks.${system} = {
+        vm = import ./nix/vm-test.nix { inherit pkgs bridgeModules; };
+        # Full-system OTA: signed delta update A -> B, a rejected unsigned /
+        # wrong-key release, and a B that fails its health check rolling back.
+        vm-ota = import ./nix/vm-test-ota.nix { inherit pkgs bridgeModules; };
+      };
     };
 }

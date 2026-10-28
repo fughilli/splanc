@@ -208,9 +208,14 @@ fixture's details are open.
   the Pi checks splanc.io for a new Splanc release. If there is one, it downloads it, checks its
   checksum, switches to it and restarts the bridge. Your pairings are kept. The previous version
   stays on the card too.
-- **The Pi's operating system** is updated by writing the card again with the flasher when a new
-  Splanc bridge release comes out. Writing the card starts fresh, so you pair your agents again
-  afterwards. (An in-place system update is planned.)
+- **The Pi's operating system updates itself too** (cards written with a flasher release that has
+  system updates). It checks a few times a day; a new Splanc bridge system downloads in the
+  background, and once no app is connected through the bridge, the Pi restarts into it (about a
+  minute without the bridge; your fixtures keep playing). Your pairings and Wi-Fi are kept. If the
+  new system doesn't come up healthy within five minutes, the Pi goes back to the previous one by
+  itself. Only updates signed by Splanc are accepted.
+- Writing the card again with the flasher also works, but starts fresh: you pair your agents again
+  afterwards.
 
 ## Changing settings later
 
@@ -226,7 +231,7 @@ boots.
 | `OLED=auto`                | The OLED HAT: `auto`, `spi`, `i2c` or `off`.                          |
 | `OLED_ROTATE=2`            | `0`–`3`, in steps of 90°. Use `0` if the OLED picture is upside down. |
 | `SPLANC_DISPLAY_HDMI=auto` | The HDMI status page: `auto` or `off`.                                |
-| `SPLANC_AUTO_UPDATE=1`     | `0` turns the daily Splanc updates off.                               |
+| `SPLANC_AUTO_UPDATE=1`     | `0` turns the automatic updates (software + system) off.              |
 
 To put the bridge on another Wi-Fi network (a venue, a new router), use the Splanc app on your
 phone, the same way you add a fixture: **Add device over Bluetooth**, choose the network, then
