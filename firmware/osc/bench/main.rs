@@ -10,7 +10,7 @@
 
 use std::time::Instant;
 
-use ledmapper_osc::{ingest, parse_manifest, Config, Shadow};
+use ledmapper_osc::{ingest, parse_manifest, Config};
 
 /// A representative manifest: 8 scalar sliders + a colour + a vec2 (10 uniforms).
 fn manifest() -> String {
@@ -73,13 +73,12 @@ fn main() {
     let cfg_name = Config { prefix: "/", by_name: true };
     let cfg_slot = Config { prefix: "/", by_name: false };
 
-    let mut shadow = Shadow::new();
     let name_ns = time(iters, || {
-        let n = ingest(std::hint::black_box(&pkt_name), &cfg_name, &table, &mut shadow, &mut |_, _| {});
+        let n = ingest(std::hint::black_box(&pkt_name), &cfg_name, &table, &mut |_, _| {});
         std::hint::black_box(n);
     });
     let slot_ns = time(iters, || {
-        let n = ingest(std::hint::black_box(&pkt_slot), &cfg_slot, &table, &mut shadow, &mut |_, _| {});
+        let n = ingest(std::hint::black_box(&pkt_slot), &cfg_slot, &table, &mut |_, _| {});
         std::hint::black_box(n);
     });
 

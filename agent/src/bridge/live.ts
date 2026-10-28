@@ -36,7 +36,7 @@ import { encodeClient, type UniformValueFlat } from "../../../web/src/net/proto"
 import type { Hub, PlayerResult } from "../hub";
 import type { PlayerRecord } from "../registry";
 import { ToolError, type DeviceSession } from "../session";
-import { describe, parseManifest, resolve, type ManifestUniform } from "../uniforms";
+import { currentByName, describe, parseManifest, resolve, type ManifestUniform } from "../uniforms";
 
 /** One app connection, whichever path it came by. */
 export interface LiveConn {
@@ -592,12 +592,13 @@ export class LiveMux {
             async (s, p) => {
               const man = await this.manifest(s, p.id, deck, true);
               const raw = await s.run(() => s.client.getEffectUniforms(undefined, deck));
-              const cur = new Map((raw.current ?? []).map((c) => [c.slot, c.value]));
+              // Wide uniforms (mat3/mat4) arrive as ≤4-float slot chunks.
+              const cur = currentByName(man.uniforms, raw.current ?? []);
               let keypoints: unknown = null;
               if (man.effectId && s.keypointsUsable()) keypoints = await s.listKeypoints(deck).then((k) => k.keypoints, () => null);
               return {
                 effect_id: man.effectId || null,
-                uniforms: man.uniforms.map((u) => describe(u, cur.get(u.slot))),
+                uniforms: man.uniforms.map((u) => describe(u, cur.get(u.name))),
                 keypoints,
               };
             },

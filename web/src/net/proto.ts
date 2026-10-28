@@ -20,6 +20,7 @@ import {
   MappingBundleSchema,
   ServerMessageSchema,
 } from "../gen/ledmapper_pb";
+import { chunkUniformValues } from "./uniformWire";
 
 // Envelope arm names: snake ("type" values, proto field names) <-> camel
 // (proto3 JSON names). Explicit tables — no string munging surprises.
@@ -260,6 +261,11 @@ export function encodeClient(msg: ClientMessage): Uint8Array {
   const { type, ...rest } = msg as unknown as Json & { type: string };
   const arm = CLIENT_ARMS[type];
   if (arm === undefined) throw new Error(`unknown client message type ${type}`);
+  // A UniformValue carries at most 4 floats on the wire: wider uniforms (mat3 /
+  // mat4) go as consecutive slot chunks, the same write on old and new firmware.
+  if ((type === "set_uniforms" || type === "save_keypoint") && Array.isArray(rest["values"])) {
+    rest["values"] = chunkUniformValues(rest["values"] as UniformValueFlat[]);
+  }
   // bytes -> base64 first: stripNulls would otherwise walk a Uint8Array's
   // numeric indices and destroy the field.
   const inner = trajectoryToProto(stripNulls(bytesToProto(rest)));

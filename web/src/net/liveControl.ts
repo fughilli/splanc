@@ -21,6 +21,7 @@
 
 import { LatestWinsSender, type LiveTimer } from "./liveSender";
 import type { BlendOptions, KeypointWeightFlat, UniformValueFlat } from "./proto";
+import { chunkUniformValues } from "./uniformWire";
 
 /** What the channel needs from its connection (LedMapperClient implements it). */
 export interface LiveHost {
@@ -132,7 +133,9 @@ export class LiveControl {
   setUniforms(values: UniformValueFlat[], opts: { deck?: number; commit?: boolean } = {}): void {
     const deck = opts.deck === 1 ? 1 : 0;
     const k = this.knownFor(deck);
-    for (const v of values) {
+    // Key by wire chunk (a mat4 = 4 slot-consecutive chunks), so a later full-
+    // width write and earlier chunks never coalesce into a stale mix.
+    for (const v of chunkUniformValues(values)) {
       const value = [...v.value];
       k.set(v.slot, value);
       this.sender.push(`u|${deck}|${v.slot}`, { kind: "u", deck, slot: v.slot, value });
@@ -172,7 +175,7 @@ export class LiveControl {
    * submit) so a later commit persists them too. */
   noteValues(values: UniformValueFlat[], deck = 0): void {
     const k = this.knownFor(deck === 1 ? 1 : 0);
-    for (const v of values) k.set(v.slot, [...v.value]);
+    for (const v of chunkUniformValues(values)) k.set(v.slot, [...v.value]);
   }
 
   /** Resolves when nothing is pending or in flight. */

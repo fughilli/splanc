@@ -60,7 +60,14 @@ async function guard<T>(fn: () => Promise<T>) {
   }
 }
 
-const uniformValue = z.union([z.number(), z.boolean(), z.string(), z.array(z.number())]);
+const uniformValue = z
+  .union([z.number(), z.boolean(), z.string(), z.array(z.number()).max(16)])
+  .describe(
+    "A number (scalar; for a vector, every component; for a matrix, that value on the diagonal), a boolean " +
+      "(toggle), a string (dropdown option), or an array of the uniform's `width` numbers: vec2/3/4 = 2/3/4, " +
+      "mat3 = 9 and mat4 = 16 numbers in COLUMN-MAJOR order (GLSL: [col0.x, col0.y, col0.z, col0.w, col1.x, ...]). " +
+      "Ranges may be negative and per component (list_uniforms: min/max, mins/maxs).",
+  );
 const players = z
   .union([z.string(), z.array(z.string())])
   .optional()
@@ -457,7 +464,10 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
   server.registerTool(
     "list_uniforms",
     {
-      description: "The active effect's uniforms: names, widths, UI hints, ranges, defaults, current values.",
+      description:
+        "The active effect's uniforms: names, widths, UI hints, ranges, defaults, current values. A ranged vector " +
+        "(ui slider, width > 1) has a range per component (mins/maxs when they differ; bounds may be negative). " +
+        "A matrix (ui kind matrix, rows/cols 3 or 4) is width 9/16, values column-major.",
       inputSchema: { players },
     },
     ({ players: sel }) => guard(async () => ok(await fan(sel, (s) => s.listUniforms()))),
@@ -467,7 +477,8 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     {
       description:
         "Set uniforms on the active effect by NAME (on every selected player). Values are checked against each " +
-        "uniform's width and range. commit=true persists them across reboots (use sparingly: flash wear).",
+        "uniform's width and (per-component, possibly negative) range; a mat4 is 16 numbers, column-major. " +
+        "commit=true persists them across reboots (use sparingly: flash wear).",
       inputSchema: { values: z.record(z.string(), uniformValue), commit: z.boolean().optional(), players },
     },
     ({ values, commit, players: sel }) =>
@@ -479,7 +490,9 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
       description:
         "Glide uniforms to targets over `seconds` on every selected player at once (the hub interpolates at its " +
         "stream rate, uncommitted, then commits the final values once). The way to change a mood smoothly: e.g. " +
-        "{rain: 0.8} over 20 s. Returns when the ramp is done.",
+        "{rain: 0.8} over 20 s. Returns when the ramp is done. Vectors and matrices are interpolated " +
+        "component-wise (a matrix ramp is element-wise, NOT a rotation interpolation: halfway between two " +
+        "rotations is not a rotation; ramp angles in the effect instead if that matters).",
       inputSchema: { targets: z.record(z.string(), uniformValue), seconds: z.number().min(0).max(600), players },
     },
     ({ targets, seconds, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.rampUniforms(targets, seconds)))),
@@ -540,7 +553,8 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
       description:
         "Blend up to 4 saved keypoints by weight (normalised) — a position between known-good looks, computed on " +
         "the device per uniform: numbers interpolate, colours blend in RGB or HSV (shortest hue), toggles and " +
-        "dropdowns take the heaviest keypoint's value. `seconds` morphs there from the current look.",
+        "dropdowns take the heaviest keypoint's value; vectors and matrices blend component-wise (for a matrix " +
+        "that is NOT a rotation interpolation). `seconds` morphs there from the current look.",
       inputSchema: {
         weights: z.record(z.string(), z.number().min(0)),
         seconds: z.number().min(0).max(600).optional(),
