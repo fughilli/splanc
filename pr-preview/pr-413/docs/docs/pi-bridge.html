@@ -596,9 +596,14 @@ fixture’s details are open.</p>
 the Pi checks splanc.io for a new Splanc release. If there is one, it downloads it, checks its
 checksum, switches to it and restarts the bridge. Your pairings are kept. The previous version
 stays on the card too.</p></li>
-<li><p><strong>The Pi’s operating system</strong> is updated by writing the card again with the flasher when a new
-Splanc bridge release comes out. Writing the card starts fresh, so you pair your agents again
-afterwards. (An in-place system update is planned.)</p></li>
+<li><p><strong>The Pi’s operating system updates itself too</strong> (cards written with a flasher release that has
+system updates). It checks a few times a day; a new Splanc bridge system downloads in the
+background, and once no app is connected through the bridge, the Pi restarts into it (about a
+minute without the bridge; your fixtures keep playing). Your pairings and Wi-Fi are kept. If the
+new system doesn’t come up healthy within five minutes, the Pi goes back to the previous one by
+itself. Only updates signed by Splanc are accepted.</p></li>
+<li><p>Writing the card again with the flasher also works, but starts fresh: you pair your agents again
+afterwards.</p></li>
 </ul>
 </section>
 <section id="changing-settings-later">
@@ -633,7 +638,7 @@ boots.</p>
 <td><p>The HDMI status page: <code class="docutils literal notranslate"><span class="pre">auto</span></code> or <code class="docutils literal notranslate"><span class="pre">off</span></code>.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">SPLANC_AUTO_UPDATE=1</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code> turns the daily Splanc updates off.</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code> turns the automatic updates (software + system) off.</p></td>
 </tr>
 </tbody>
 </table>
