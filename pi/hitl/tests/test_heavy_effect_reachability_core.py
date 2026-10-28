@@ -160,3 +160,62 @@ def test_a_failing_phase_prints_its_whole_window():
     ]
     # Only captured windows print; an unknown phase never crashes it.
     assert core.windows_to_print({"idle": f, "other": f}, ["idle"]) == [("idle", True)]
+
+
+def live(**kw) -> dict:
+    base = {
+        "opened": True,
+        "s": 150.0,
+        "deaths": 0,
+        "dropped": [],
+        "max_silence_s": 4.2,
+        "pings": 20,
+        "pings_missed": 0,
+        "reports": 65,
+        "churn": {"cycles": 20, "ok": 20, "reset": 0, "other": 0},
+    }
+    base.update(kw)
+    return base
+
+
+def test_session_passes_a_serviced_session():
+    g = core.grade_session(live(), {"ok": True})
+    assert g["verdict"] == "PASS"
+    assert g["held"] is True and g["churn"]["reset"] == 0
+
+
+def test_session_fails_when_the_heartbeat_declares_it_dead():
+    # 1.12.7 PixieLamp: "no reply from the player for 14.1 s (2 heartbeat pings unanswered)".
+    g = core.grade_session(live(deaths=1, max_silence_s=14.1), {"ok": True})
+    assert g["verdict"] == "FAIL" and "declared dead 1x" in g["why"] and "14.1" in g["why"]
+
+
+def test_session_fails_on_a_drop_a_reset_reconnect_or_a_dropped_hold():
+    assert core.grade_session(live(dropped=["@40s reset"]), None)["verdict"] == "FAIL"
+    g = core.grade_session(live(churn={"cycles": 20, "ok": 10, "reset": 10, "other": 0}), None)
+    assert g["verdict"] == "FAIL" and "10/20 immediate reconnects were RST-refused" in g["why"]
+    g = core.grade_session(live(), {"ok": False, "err": "ConnectionResetError"})
+    assert g["verdict"] == "FAIL" and "silent live session" in g["why"]
+    # A slow (timed-out) reconnect under contention is reported, never gated.
+    g = core.grade_session(live(churn={"cycles": 20, "ok": 18, "reset": 0, "other": 2}), None)
+    assert g["verdict"] == "PASS"
+
+
+def test_session_needs_reports_and_skips_on_infra():
+    assert core.grade_session(live(reports=0), None)["verdict"] == "FAIL"
+    assert core.grade_session(live(opened=False), None, rig_ok=False)["verdict"] == "SKIP"
+    assert core.grade_session(live(opened=False), None)["verdict"] == "FAIL"
+    assert core.grade_session(live(deaths=2), None, rig_ok=False)["verdict"] == "SKIP"
+
+
+def test_session_result_line_and_window():
+    g = {"verdict": "PASS", "skip": None, "problems": []}
+    phases = {"session": core.grade_session(live(), {"ok": True})}
+    line = core.result_line("c6-003f08", {"leds": 450, "duty": 0.93}, phases, g)
+    assert "session=PASS(deaths=0,max_silence_s=4.2)" in line
+    assert core.session_window_s(150.0, 35.0, 25.0) == 25.0 + 150.0 + 30.0 + 75.0 + 30.0
+    f = {"verdict": "FAIL"}
+    assert core.windows_to_print({"session": f}, ["idle", "session"]) == [
+        ("idle", False),
+        ("session", True),
+    ]

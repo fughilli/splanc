@@ -184,9 +184,17 @@ class _Bg:
         return self.out.get("v") or ""
 
 
-async def _calibrate(ws_url: str, fxb: bytes, args) -> dict:
-    """Probe map -> frame cost -> sized map, all in ONE session (the open session is
-    what keeps an unfixed board reachable while it is set up)."""
+async def _calibrate(
+    ws_url: str,
+    fxb: bytes,
+    args,
+    duty: float = core.CAL_DUTY,
+    band: tuple[float, float] = core.CAL_BAND,
+    effect_id: str = "__heavyreach",
+) -> dict:
+    """Probe map -> frame cost -> sized map (one frame = `duty` of the floor's period),
+    all in ONE session (the open session is what keeps an unfixed board reachable
+    while it is set up)."""
     from hitl_map_upload import _open_ws, _rpc, _submit_chunked
     from map_upload_core import synth_output_map
 
@@ -203,7 +211,7 @@ async def _calibrate(ws_url: str, fxb: bytes, args) -> dict:
                 sock,
                 {
                     "type": "submit_effect",
-                    "effect_id": "__heavyreach",
+                    "effect_id": effect_id,
                     "fxb": base64.b64encode(fxb).decode("ascii"),
                     "activate": True,
                 },
@@ -231,10 +239,10 @@ async def _calibrate(ws_url: str, fxb: bytes, args) -> dict:
         probe = await load(args.probe_leds, 1)
         if not probe["frame_cycles"]:
             return {}
-        n = args.leds or core.leds_for_budget(probe["frame_cycles"], args.probe_leds)
+        n = args.leds or core.leds_for_budget(probe["frame_cycles"], args.probe_leds, duty=duty)
         m = await load(n, 2)
-        if not args.leds and not (core.CAL_BAND[0] <= m["duty"] <= core.CAL_BAND[1]):
-            n2 = core.leds_for_budget(m["frame_cycles"], n)
+        if not args.leds and not (band[0] <= m["duty"] <= band[1]):
+            n2 = core.leds_for_budget(m["frame_cycles"], n, duty=duty)
             if n2 != n:
                 m = await load(n2, 3)
         cal = {**m, "probe": probe}
@@ -254,9 +262,15 @@ async def _hold_idle(ws_url: str, seconds: float) -> dict:
     from hitl_map_upload import _rpc
 
     t0 = time.monotonic()
-    sock = await websockets.connect(
-        ws_url, max_size=2**22, ssl=_ssl_ctx(), open_timeout=hitl_ws.OPEN_TIMEOUT
-    )
+    try:
+        sock = await websockets.connect(
+            ws_url, max_size=2**22, ssl=_ssl_ctx(), open_timeout=hitl_ws.OPEN_TIMEOUT
+        )
+    except Exception as e:
+        # Refused/reset before the hold began: the device RST-refused a new client
+        # (load-shedding armed while the previous session was still closing).
+        e.add_note(f"at connect, {time.monotonic() - t0:.1f}s in")
+        raise
     try:
         await _rpc(
             sock, {"type": "hello", "client": "heavy_reach_idle", "app_version": "1"}, "welcome"
@@ -279,6 +293,195 @@ async def _hold_idle(ws_url: str, seconds: float) -> dict:
         return {"ok": True, "s": round(time.monotonic() - t0, 1)}
     finally:
         await sock.close()
+
+
+async def _live_session(ws_url: str, seconds: float, t_win: float) -> dict:
+    """ONE session driven like the agent bridge (agent/src/session.ts measureEffect +
+    liveness.ts) for `seconds`: measure_effect cycles (set_perf BASIC 1 Hz, listen,
+    get_perf_report, set_perf OFF, then a quiet rest) under the bridge's heartbeat: a
+    time_sync_ping after HEARTBEAT_BUSY_S without a frame from the player, each allowed
+    HEARTBEAT_TIMEOUT_S; HEARTBEAT_MISSES unanswered in a row (nothing else arriving)
+    declare it dead, as the bridge would ("stopped answering during the call"). A dead
+    or dropped session is reopened (the hub reconnects) and counted. Times in `events`
+    are console-window seconds (`t_win`), to line up with the session window."""
+    import websockets
+    from server import proto_wire
+
+    out: dict = {
+        "opened": False,
+        "deaths": 0,
+        "dropped": [],
+        "pings": 0,
+        "pings_missed": 0,
+        "reports": 0,
+        "max_silence_s": 0.0,
+        "events": [],
+    }
+    t_start = time.monotonic()
+    end = t_start + seconds
+
+    def note(what: str) -> None:
+        ev = f"@{time.monotonic() - t_win:.1f}s {what}"
+        out["events"].append(ev)
+        _log(f"    session {ev}")
+
+    while time.monotonic() < end:
+        try:
+            sock = await websockets.connect(
+                ws_url,
+                max_size=2**22,
+                ssl=_ssl_ctx(),
+                open_timeout=hitl_ws.OPEN_TIMEOUT,
+                ping_interval=None,  # the bridge (Node ws) sends no WebSocket pings
+            )
+        except Exception as e:  # noqa: BLE001 — a failed reopen is an event, retried
+            note(f"open failed: {type(e).__name__}: {e}"[:160])
+            await asyncio.sleep(2.0)
+            continue
+        state = {"last_rx": time.monotonic(), "dead": None}
+        waiters: dict[str, list[asyncio.Future]] = {}
+
+        async def reader() -> None:
+            async for raw in sock:
+                now = time.monotonic()
+                gap = now - state["last_rx"]
+                if gap > out["max_silence_s"]:
+                    out["max_silence_s"] = round(gap, 2)
+                if gap > core.HEARTBEAT_BUSY_S:
+                    note(f"player silent {gap:.1f}s")
+                state["last_rx"] = now
+                try:
+                    msg = proto_wire.decode_server(raw)
+                except Exception:  # noqa: BLE001 — an undecodable frame is still a sign of life
+                    continue
+                kind = msg.get("type")
+                if kind == "perf_report":
+                    out["reports"] += 1
+                for fut in waiters.pop(kind, []):
+                    if not fut.done():
+                        fut.set_result(msg)
+
+        async def call(flat: dict, expect: str, timeout: float) -> dict:
+            fut = asyncio.get_running_loop().create_future()
+            waiters.setdefault(expect, []).append(fut)
+            await sock.send(proto_wire.encode_client(flat))
+            return await asyncio.wait_for(fut, timeout=timeout)
+
+        async def heartbeat() -> None:
+            # liveness.ts check(): while a call is in flight (always, here) ping after
+            # busyMs of silence; dead after `misses` pings with nothing arriving.
+            while True:
+                await asyncio.sleep(0.25)
+                if time.monotonic() - state["last_rx"] < core.HEARTBEAT_BUSY_S:
+                    continue
+                answered = False
+                for _ in range(core.HEARTBEAT_MISSES):
+                    before = state["last_rx"]
+                    out["pings"] += 1
+                    try:
+                        await call(
+                            {"type": "time_sync_ping", "t0": time.time() * 1000.0},
+                            "time_sync_pong",
+                            core.HEARTBEAT_TIMEOUT_S,
+                        )
+                        answered = True
+                    except asyncio.TimeoutError:
+                        out["pings_missed"] += 1
+                        answered = state["last_rx"] != before
+                    if answered:
+                        break
+                if not answered:
+                    silent = time.monotonic() - state["last_rx"]
+                    state["dead"] = (
+                        f"no reply from the player for {silent:.1f} s "
+                        f"({core.HEARTBEAT_MISSES} heartbeat pings unanswered)"
+                    )
+                    return
+
+        async def measure_cycles() -> None:
+            await call(
+                {"type": "hello", "client": "heavy_session", "app_version": "1"}, "welcome", 15.0
+            )
+            out["opened"] = True
+            while time.monotonic() < end:
+                await call(
+                    {"type": "set_perf", "mode": "BASIC", "interval_ms": 1000}, "perf_report", 15.0
+                )
+                await asyncio.sleep(min(core.SESSION_MEASURE_S, max(0.0, end - time.monotonic())))
+                await call({"type": "get_perf_report"}, "perf_report", 15.0)
+                await call(
+                    {"type": "set_perf", "mode": "OFF", "interval_ms": 0}, "perf_report", 15.0
+                )
+                await asyncio.sleep(min(core.SESSION_REST_S, max(0.0, end - time.monotonic())))
+
+        rd = asyncio.ensure_future(reader())
+        hb = asyncio.ensure_future(heartbeat())
+        mc = asyncio.ensure_future(measure_cycles())
+        try:
+            done, _ = await asyncio.wait({rd, hb, mc}, return_when=asyncio.FIRST_COMPLETED)
+            if hb in done and state["dead"]:
+                out["deaths"] += 1
+                note(f"DEAD: {state['dead']}")
+            elif rd in done:
+                exc = rd.exception()
+                why = (
+                    f"{type(exc).__name__}: {exc}"
+                    if exc
+                    else f"closed by the player ({sock.close_code})"
+                )
+                out["dropped"].append(f"@{time.monotonic() - t_win:.1f}s {why}"[:200])
+                note(f"DROPPED: {why}"[:200])
+            elif mc in done and mc.exception() is not None:
+                exc = mc.exception()
+                if not isinstance(exc, asyncio.TimeoutError):
+                    out["dropped"].append(
+                        f"@{time.monotonic() - t_win:.1f}s {type(exc).__name__}: {exc}"[:200]
+                    )
+                note(f"call failed: {type(exc).__name__}: {exc}"[:200])
+        finally:
+            for t in (rd, hb, mc):
+                t.cancel()
+            try:
+                await asyncio.wait_for(sock.close(), timeout=5.0)
+            except Exception:  # noqa: BLE001
+                pass
+    out["s"] = round(time.monotonic() - t_start, 1)
+    return out
+
+
+async def _reconnect_churn(ws_url: str, cycles: int) -> dict:
+    """The agent bridge's (and the app's) reconnect pattern: open, hello, close, and
+    reconnect AT ONCE, `cycles` times. The device must never RST-refuse the closing
+    client's own reconnect (load-shedding re-armed while the old session waited for the
+    peer's FIN). A reconnect that merely waits for the slot is fine; a reset is not."""
+    import websockets
+    from hitl_map_upload import _rpc
+
+    out = {"cycles": cycles, "ok": 0, "reset": 0, "other": 0, "errs": []}
+    for i in range(cycles):
+        try:
+            sock = await websockets.connect(
+                ws_url,
+                max_size=2**22,
+                ssl=_ssl_ctx(),
+                open_timeout=hitl_ws.OPEN_TIMEOUT,
+                close_timeout=2,
+            )
+            try:
+                await _rpc(
+                    sock,
+                    {"type": "hello", "client": "heavy_churn", "app_version": "1"},
+                    "welcome",
+                    timeout=15.0,
+                )
+            finally:
+                await sock.close()
+            out["ok"] += 1
+        except Exception as e:  # noqa: BLE001 — classified below
+            reset = isinstance(e, ConnectionResetError) or "reset" in str(e).lower()
+            out["reset" if reset else "other"] += 1
+            out["errs"].append(f"#{i} {type(e).__name__}: {e}"[:120])
+    return out
 
 
 def _run_attempts(ws_url: str, t0: float, deadline_s: float, follow: int, gap: float) -> list[dict]:
@@ -315,6 +518,64 @@ def _rig_ok(res) -> bool:
         return False
 
 
+def _session_phase(res, ws_url: str, args, phases: dict, logs: dict, consoles: dict) -> None:
+    """[6/6] an effect past the floor (SESSION_DUTY) + one agent-style live session with
+    heartbeat pings for SESSION_S, then a silent hold at the same effect."""
+    _log(f"[6/6] session: a {core.SESSION_DUTY:g}x effect + an agent-style heartbeat session")
+    with open(args.session_fxb, "rb") as fh:
+        sfxb = fh.read()
+    try:
+        scal = asyncio.run(
+            _calibrate(
+                ws_url,
+                sfxb,
+                argparse.Namespace(**{**vars(args), "leds": args.session_leds}),
+                duty=core.SESSION_DUTY,
+                band=core.SESSION_BAND,
+                effect_id="__heavysession",
+            )
+        )
+    except (SystemExit, OSError, RuntimeError, asyncio.TimeoutError) as e:
+        _log(f"  session calibration could not run: {e!r}")
+        scal = {}
+    if not scal:
+        phases["session"] = {"verdict": "SKIP", "why": "session effect never calibrated"}
+        return
+    consoles["session_cal"] = {k: scal.get(k) for k in ("leds", "duty", "achieved_fps", "lagging")}
+    window = core.session_window_s(args.session_s, args.hold_idle, hitl_ws.OPEN_TIMEOUT)
+    res.ssh(f"mkdir -p {REMOTE_DIR}; rm -f {_pidfile('session')}", timeout=30)
+    bg = _Bg(lambda: _console(res, window, tag="session"))
+    t_win = time.monotonic()
+    if not _await_console(res, "session"):
+        _log("  session console window did not attach; continuing without it")
+    _log(f"  session console window ({window:g}s) open")
+    live = asyncio.run(_live_session(ws_url, args.session_s, t_win))
+    summary = {k: v for k, v in live.items() if k != "events"}
+    _log(f"  live session: {summary}")
+    held = None
+    if args.hold_idle > 0:
+        try:
+            held = asyncio.run(_hold_idle(ws_url, args.hold_idle))
+        except Exception as e:  # noqa: BLE001 — reported, graded below
+            notes = " ".join(getattr(e, "__notes__", []))
+            held = {"ok": False, "err": f"{type(e).__name__}: {e} {notes}".strip()[:200]}
+        held["window_end_s"] = round(time.monotonic() - t_win, 1)
+        _log(f"  quiet session held {args.hold_idle:g}s at the session effect: {held}")
+    churn = asyncio.run(_reconnect_churn(ws_url, core.CHURN_CYCLES))
+    _log(f"  reconnect churn: {churn}")
+    live["churn"] = churn
+    _end_console(res, "session")
+    logs["session"] = bg.join(window + 120)
+    _save_log(args.log_dir, "session", logs["session"])
+    phases["session"] = core.grade_session(live, held, rig_ok=_rig_ok(res))
+    consoles["session"] = {
+        **core.summarize_console(logs["session"]),
+        "events": live.get("events", [])[-20:],
+        "held": held,
+    }
+    _log(f"  session: {json.dumps(phases['session'])} console={consoles['session']}")
+
+
 def run(args) -> int:
     from hitl_client import Reservation
     from provision import HarnessError, ensure_booted, wire_provision_dut
@@ -337,7 +598,7 @@ def run(args) -> int:
             res.ssh("mkdir -p /tmp/heavyreach")
             res.scp_to([args.bundle], "/tmp/heavyreach/")
             remote = f"/tmp/heavyreach/{os.path.basename(args.bundle)}"
-            _log("[1/5] flash --erase-fs + wired PROV onto the rig AP")
+            _log("[1/6] flash --erase-fs + wired PROV onto the rig AP")
             proc = res.ssh_serialized(
                 f"hitl-flash {remote} --erase-fs --monitor --monitor-seconds 10",
                 capture=True,
@@ -364,7 +625,7 @@ def run(args) -> int:
                         _attempt(ws_url, time.monotonic(), hitl_ws.OPEN_TIMEOUT)["cat"] == core.OK
                     )
                 if baseline_ok:
-                    _log("[2/5] calibrate the heavy effect to the 25 fps floor")
+                    _log("[2/6] calibrate the heavy effect to the 25 fps floor")
                     try:
                         cal = asyncio.run(_calibrate(ws_url, fxb, args))
                     except (SystemExit, OSError, RuntimeError, asyncio.TimeoutError) as e:
@@ -372,7 +633,7 @@ def run(args) -> int:
                 if cal:
                     if "idle" in args.phases:
                         _log(
-                            f"[3/5] idle: sessions closed {args.idle_wait:g}s, then NEW connections"
+                            f"[3/6] idle: sessions closed {args.idle_wait:g}s, then NEW connections"
                         )
                         window = core.idle_window_s(
                             args.hold_idle, args.idle_wait, args.gap, hitl_ws.OPEN_TIMEOUT
@@ -416,7 +677,7 @@ def run(args) -> int:
                         _log(f"  idle: {json.dumps(phases['idle'])} console={consoles['idle']}")
                     if "rejoin" in args.phases:
                         bogus = f"hitl-no-such-ap-{uuid.uuid4().hex[:6]}"
-                        _log(f"[4/5] rejoin: PROV {bogus!r}, then the rig AP again")
+                        _log(f"[4/6] rejoin: PROV {bogus!r}, then the rig AP again")
                         logs["rejoin_drop"] = _console(res, 8.0, f"PROV {bogus} not-a-real-pass")
                         _save_log(args.log_dir, "rejoin_drop", logs["rejoin_drop"])
                         bg = _Bg(
@@ -442,7 +703,7 @@ def run(args) -> int:
                             f"  rejoin: {json.dumps(phases['rejoin'])} console={consoles['rejoin']}"
                         )
                     if "boot" in args.phases:
-                        _log("[5/5] boot: reset with the heavy effect persisted")
+                        _log("[5/6] boot: reset with the heavy effect persisted")
                         bg = _Bg(
                             lambda: (lambda p: (p.stdout or "") + (p.stderr or ""))(
                                 res.ssh_serialized(
@@ -468,6 +729,8 @@ def run(args) -> int:
                             "leased": core.leased(logs["boot"]),
                         }
                         _log(f"  boot: {json.dumps(phases['boot'])} console={consoles['boot']}")
+                    if "session" in args.phases:
+                        _session_phase(res, ws_url, args, phases, logs, consoles)
     finally:
         res.release()
 
@@ -516,7 +779,16 @@ def main() -> None:
         help="first hold one silent session this long; it must still answer (0 = skip)",
     )
     ap.add_argument("--gap", type=float, default=2.0, help="pause between connection attempts (s)")
-    ap.add_argument("--phases", default="idle,rejoin,boot")
+    ap.add_argument("--phases", default="idle,rejoin,boot,session")
+    ap.add_argument(
+        "--session-fxb",
+        default=_runfile(os.environ.get("SESSION_FXB_RUNFILE")),
+        help="the session phase's effect (heavySession.fxb)",
+    )
+    ap.add_argument("--session-leds", type=int, default=0, help="session map size (0 = calibrate)")
+    ap.add_argument(
+        "--session-s", type=float, default=core.SESSION_S, help="live heartbeat session (s)"
+    )
     ap.add_argument("--lease-timeout", type=float, default=90.0)
     ap.add_argument(
         "--log-dir",
@@ -526,6 +798,8 @@ def main() -> None:
     args = ap.parse_args()
     if not args.fxb or (not args.bundle and not args.no_flash):
         raise SystemExit("need --bundle and --fxb (run via bazel)")
+    if "session" in args.phases and not args.session_fxb:
+        raise SystemExit("the session phase needs --session-fxb (run via bazel)")
     raise SystemExit(run(args))
 
 

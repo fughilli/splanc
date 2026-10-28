@@ -1339,6 +1339,14 @@ void tls_init() {
 // time_sync, set_device_name, get_hardware_config — all handled inside lm_player_handle.
 constexpr bool PLAYER_MODE = true;
 bool g_ws_up = false;
+// The current wss session is closing: ws_pump returned false (the peer's WS close / TLS
+// close_notify, a torn read, or a reply that couldn't be written) and our close_notify is
+// out, but the slot stays Established — g_ws_up still set — until the peer's FIN lands and
+// the s==4/0 path re-listens. Load-shedding (serving_live) must stay DISARMED for that whole
+// stretch: the client that just closed reconnects at once on a fresh port (the agent
+// bridge's reconnect, the post-WS cert-trust GET, a HITL driver's next session) and must
+// never be RST-refused. Set where the close starts; cleared by the next WS upgrade.
+bool g_ws_closing = false;
 // True once ws_pump has begun writing a RESPONSE on the current slot — the WS 101 upgrade
 // OR the one-shot cert-trust-page GET. Distinguishes an actively-serving connection (which
 // must NOT be killed by the pre-WS 4s wedge gate while it finishes serving + closing) from
@@ -1532,6 +1540,7 @@ static bool ws_pump() {
                        "Connection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", accept);
       if (!tls_write_all((const uint8_t *)resp, n)) return false;
       g_ws_up = true;
+      g_ws_closing = false;
       g_ws_rxlen = 0;  // the request body ends at the blank line; nothing after it yet
       Serial.println("*** WS UPGRADED — LED Mapper protocol over heapless TLS ***");
       continue;  // keep draining: streamed frames may already be buffered behind the upgrade
@@ -2932,7 +2941,12 @@ void netstack_loop() {
     // it either latches a fresh LISTEN or, if the old slot is still closing, is silently
     // dropped and retried (its previous behavior), never RST-refused.
     {
-      bool live = (s == 2) && (TLS_SERVER ? (PLAYER_MODE ? g_ws_up : g_tls_hs) : true);
+      // Not while closing (g_ws_closing): g_ws_up stays set until the peer's FIN, and
+      // re-arming here on every scan of that wait RST-refused the closing client's own
+      // reconnect whenever its FIN was late or lost (heavy_effect_reachability under
+      // contention: "a silent live session was dropped" — reset at connect).
+      bool live = (s == 2) && !g_ws_closing &&
+                  (TLS_SERVER ? (PLAYER_MODE ? g_ws_up : g_tls_hs) : true);
       ns_tcp_set_serving_live(live ? 1u : 0u);
     }
     // Reclaim a wedged half-open connection. A concurrent-handshake burst (the tls_churn
@@ -3119,6 +3133,7 @@ void netstack_loop() {
           // regression). Clearing it here — ahead of the scan-top update next loop — makes the
           // no-reject guarantee hold across the whole transition, not just from the next scan.
           ns_tcp_set_serving_live(0u);
+          g_ws_closing = true;  // ...and keep it disarmed until the re-listen (scan top)
           mbedtls_ssl_close_notify(&g_ssl);
         } else {
           // The WS pump just drained the TCP rx (mbedtls read the record) — if that re-opened
