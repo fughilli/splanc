@@ -9,17 +9,17 @@
     "user_needs": 8,
     "user_needs_validated": 0,
     "requirements": 39,
-    "requirements_verified": 10,
-    "requirements_under_verified": 19,
+    "requirements_verified": 15,
+    "requirements_under_verified": 14,
     "requirements_partial": 0,
     "requirements_failed": 0,
     "requirements_unverified": 10,
     "risks": 12,
-    "risks_mitigated": 3,
+    "risks_mitigated": 6,
     "mitigations": 12,
-    "mitigations_verified": 3,
+    "mitigations_verified": 6,
     "test_cases": 2516,
-    "gaps": 36
+    "gaps": 29
   },
   "levels": [
     {
@@ -2291,7 +2291,7 @@
     {
       "id": "PR-13",
       "title": "Browser provisioning, rename, discovery, LAN and direct connection",
-      "status": "UNDER-VERIFIED",
+      "status": "VERIFIED",
       "description": "The browser experience shall support device provisioning, rename, discovery, LAN connection, and direct connection by available connection modes.",
       "evidence": [
         {
@@ -2312,22 +2312,19 @@
           "name": "hitl_e2e::flash_boot",
           "status": "passed",
           "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
+          "target": "//pi/hitl/harness:e2e_netstack"
         },
         {
           "name": "hitl_e2e::improv_provision",
           "status": "passed",
           "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
+          "target": "//pi/hitl/harness:e2e_netstack"
         },
         {
           "name": "hitl_e2e::websocket_checks",
           "status": "passed",
           "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
+          "target": "//pi/hitl/harness:e2e_netstack"
         },
         {
           "name": "pi.hitl.tests.test_improv::test_build_wifi_rpc_layout_and_checksum",
@@ -2628,7 +2625,7 @@
         }
       ],
       "demanded_level": "hitl",
-      "provided_level": "simulation",
+      "provided_level": "hitl",
       "satisfies": [
         "UN-5"
       ],
@@ -3683,7 +3680,7 @@
     {
       "id": "PR-21",
       "title": "Careful device memory management for networking/control/effects",
-      "status": "UNDER-VERIFIED",
+      "status": "VERIFIED",
       "description": "The device firmware and associated protocols shall manage memory carefully enough to support intended networking, control, and effect workloads on target hardware.",
       "evidence": [
         {
@@ -3708,12 +3705,11 @@
           "name": "hitl_e2e::flash_boot",
           "status": "passed",
           "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
+          "target": "//pi/hitl/harness:e2e_netstack"
         }
       ],
       "demanded_level": "hil",
-      "provided_level": "simulation",
+      "provided_level": "hitl",
       "satisfies": [
         "UN-7"
       ],
@@ -3785,8 +3781,7 @@
           "name": "hitl_e2e::websocket_checks",
           "status": "passed",
           "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
+          "target": "//pi/hitl/harness:e2e_netstack"
         },
         {
           "name": "pi.server.tests.test_session::test_add_or_stop_without_session_raises",
@@ -3838,7 +3833,7 @@
         }
       ],
       "demanded_level": "simulation",
-      "provided_level": "simulation",
+      "provided_level": "hitl",
       "satisfies": [
         "UN-4",
         "UN-7"
@@ -4388,7 +4383,7 @@
     {
       "id": "PR-26",
       "title": "Bound device allocation pressure and abort unsafe workloads",
-      "status": "UNDER-VERIFIED",
+      "status": "VERIFIED",
       "description": "Reduce allocation pressure, prefer zero-copy or streamed handling where possible, store large static data efficiently, monitor memory budgets, and abort unsafe workloads (mitigates device heap exhaustion/fragmentation).",
       "category": "risk-control",
       "evidence": [
@@ -4444,12 +4439,11 @@
           "name": "hitl_e2e::flash_boot",
           "status": "passed",
           "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
+          "target": "//pi/hitl/harness:e2e_netstack"
         }
       ],
       "demanded_level": "hitl",
-      "provided_level": "simulation",
+      "provided_level": "hitl",
       "satisfies": [
         "UN-7"
       ],
@@ -5058,7 +5052,7 @@
     {
       "id": "PR-29",
       "title": "Readiness-aware, reconnect-hardened provisioning",
-      "status": "UNDER-VERIFIED",
+      "status": "VERIFIED",
       "description": "Improve readiness checks, investigate coexistence/reconnect behavior, perform repeated provisioning validation, and harden naming/discovery so provisioning/association is reliable.",
       "category": "risk-control",
       "evidence": [
@@ -5066,8 +5060,7 @@
           "name": "hitl_e2e::improv_provision",
           "status": "passed",
           "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
+          "target": "//pi/hitl/harness:e2e_netstack"
         },
         {
           "name": "pi.hitl.tests.test_improv::test_build_wifi_rpc_layout_and_checksum",
@@ -5151,7 +5144,7 @@
         }
       ],
       "demanded_level": "hitl",
-      "provided_level": "simulation",
+      "provided_level": "hitl",
       "satisfies": [
         "UN-5"
       ],
@@ -6478,7 +6471,7 @@
     {
       "id": "PR-35",
       "title": "Reconcile device identity on stable attributes",
-      "status": "UNDER-VERIFIED",
+      "status": "VERIFIED",
       "description": "Reconcile identity on stable hardware attributes where possible, keep naming surfaces consistent, and refresh network-facing identity correctly after changes so IP/hostname/AP/device-record confusion is avoided.",
       "category": "risk-control",
       "evidence": [
@@ -6486,8 +6479,7 @@
           "name": "hitl_e2e::websocket_checks",
           "status": "passed",
           "level": "hitl",
-          "target": "//pi/hitl/harness:e2e_netstack",
-          "stale": true
+          "target": "//pi/hitl/harness:e2e_netstack"
         }
       ],
       "demanded_level": "hitl",
@@ -6504,7 +6496,6 @@
         "firmware",
         "web"
       ],
-      "stale": true,
       "pyramid_violation": true,
       "implemented_in": [
         {
@@ -7123,7 +7114,7 @@
     {
       "id": "MIT-1",
       "title": "Bound device allocation pressure and abort unsafe workloads",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "description": "Risk control for RISK-1 (Device heap exhaustion or fragmentation during runtime workloads); FUG-88 prose mitigation, specified as PR-26.",
       "type": null,
       "mitigates": [
@@ -7168,7 +7159,7 @@
     {
       "id": "MIT-4",
       "title": "Readiness-aware, reconnect-hardened provisioning",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "description": "Risk control for RISK-4 (Provisioning or wireless association is unreliable); FUG-88 prose mitigation, specified as PR-29.",
       "type": null,
       "mitigates": [
@@ -7258,7 +7249,7 @@
     {
       "id": "MIT-10",
       "title": "Reconcile device identity on stable attributes",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "description": "Risk control for RISK-10 (Device identity inconsistencies across IP/hostname/AP/records); FUG-88 prose mitigation, specified as PR-35.",
       "type": null,
       "mitigates": [
@@ -7305,7 +7296,7 @@
     {
       "id": "RISK-1",
       "title": "Device heap exhaustion or fragmentation during runtime workloads",
-      "status": "PARTIAL",
+      "status": "MITIGATED",
       "description": "Undermines UN-5, UN-6, UN-7 by causing disconnects, instability, or inability to complete operations during networking/control workloads.",
       "residual": "Reduced but not eliminated \u2014 long-session heap headroom still needs on-hardware soak coverage (PR-26 is HITL-demanded).",
       "severity": "high",
@@ -7348,7 +7339,7 @@
     {
       "id": "RISK-4",
       "title": "Provisioning or wireless association is unreliable",
-      "status": "PARTIAL",
+      "status": "MITIGATED",
       "description": "Directly harms UN-5 and weakens UN-8 when HITL depends on it.",
       "residual": "Reconnect/coexistence hardening helps, but association reliability is only as good as the last repeated on-bench provisioning run (PR-29 is HITL).",
       "severity": "high",
@@ -7430,7 +7421,7 @@
     {
       "id": "RISK-10",
       "title": "Device identity inconsistencies across IP/hostname/AP/records",
-      "status": "PARTIAL",
+      "status": "MITIGATED",
       "description": "Cause connection confusion, harming UN-5.",
       "severity": "medium",
       "likelihood": null,
@@ -7484,10 +7475,8 @@
     "web": "PARTIAL"
   },
   "high_open_risks": [
-    "RISK-1",
     "RISK-2",
     "RISK-3",
-    "RISK-4",
     "RISK-5"
   ],
   "pyramid_violations": [
@@ -7561,14 +7550,6 @@
     },
     {
       "kind": "under-verified",
-      "entity": "PR-13",
-      "message": "demands hitl, best passing evidence is simulation",
-      "route": "human-gate",
-      "demanded_level": "hitl",
-      "provided_level": "simulation"
-    },
-    {
-      "kind": "under-verified",
       "entity": "PR-14",
       "message": "demands hil, best passing evidence is simulation",
       "route": "human-gate",
@@ -7608,14 +7589,6 @@
     },
     {
       "kind": "under-verified",
-      "entity": "PR-21",
-      "message": "demands hil, best passing evidence is simulation",
-      "route": "human-gate",
-      "demanded_level": "hil",
-      "provided_level": "simulation"
-    },
-    {
-      "kind": "under-verified",
       "entity": "PR-23",
       "message": "demands hitl, best passing evidence is simulation",
       "route": "human-gate",
@@ -7625,14 +7598,6 @@
     {
       "kind": "under-verified",
       "entity": "PR-24",
-      "message": "demands hitl, best passing evidence is simulation",
-      "route": "human-gate",
-      "demanded_level": "hitl",
-      "provided_level": "simulation"
-    },
-    {
-      "kind": "under-verified",
-      "entity": "PR-26",
       "message": "demands hitl, best passing evidence is simulation",
       "route": "human-gate",
       "demanded_level": "hitl",
@@ -7652,14 +7617,6 @@
       "message": "demands hil, best passing evidence is simulation",
       "route": "human-gate",
       "demanded_level": "hil",
-      "provided_level": "simulation"
-    },
-    {
-      "kind": "under-verified",
-      "entity": "PR-29",
-      "message": "demands hitl, best passing evidence is simulation",
-      "route": "human-gate",
-      "demanded_level": "hitl",
       "provided_level": "simulation"
     },
     {
@@ -7684,14 +7641,6 @@
       "message": "no test evidence",
       "route": "autonomous",
       "demanded_level": "simulation"
-    },
-    {
-      "kind": "stale",
-      "entity": "PR-35",
-      "message": "only passing evidence is against an older build",
-      "route": "human-gate",
-      "demanded_level": "hitl",
-      "provided_level": "hitl"
     },
     {
       "kind": "pyramid",
@@ -7733,12 +7682,6 @@
     },
     {
       "kind": "high-risk-open",
-      "entity": "RISK-1",
-      "message": "high risk; mitigation is PARTIAL",
-      "route": "human-gate"
-    },
-    {
-      "kind": "high-risk-open",
       "entity": "RISK-2",
       "message": "high risk; mitigation is PARTIAL",
       "route": "human-gate"
@@ -7746,12 +7689,6 @@
     {
       "kind": "high-risk-open",
       "entity": "RISK-3",
-      "message": "high risk; mitigation is PARTIAL",
-      "route": "human-gate"
-    },
-    {
-      "kind": "high-risk-open",
-      "entity": "RISK-4",
       "message": "high risk; mitigation is PARTIAL",
       "route": "human-gate"
     },
