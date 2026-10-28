@@ -5,8 +5,9 @@
 #   nix build ./pi/bridge/image#checks.aarch64-linux.vm -L
 #
 # It checks, in order:
-#   1. the baked agent bundle (agent-pin.json) runs, and when it predates
-#      `splanc-agent bridge` the screens say so instead of crash-looping;
+#   1. the baked agent bundle (agent-pin.json) runs `splanc-agent bridge` and
+#      writes its status (every baked bundle since #309 has the bridge, so
+#      the "no bridge yet" fallback in bridge.nix can't be reached here);
 #   2. splanc-flash-config applies a flasher-written boot partition: hostname,
 #      WiFi profile moved into NetworkManager (0600 root) and off the FAT
 #      partition, settings -> bridge.env (unknown keys dropped), SSH keys ->
@@ -102,9 +103,10 @@ pkgs.testers.runNixOSTest {
     machine.wait_for_unit("stub-splanc-io.service")
     machine.wait_for_open_port(8000)
 
-    with subtest("baked bundle predates the bridge: the screens say so"):
-        machine.wait_until_succeeds("grep -q 'has no bridge yet' /run/splanc-bridge/status.json", timeout=120)
+    with subtest("baked bundle runs the bridge"):
+        machine.wait_until_succeeds("test -s /run/splanc-bridge/status.json", timeout=120)
         machine.succeed("systemctl is-active splanc-bridge.service")
+        machine.fail("grep -q 'has no bridge yet' /run/splanc-bridge/status.json")
 
     with subtest("flash-time boot config"):
         machine.succeed("mkdir -p /boot/firmware/system-connections")
