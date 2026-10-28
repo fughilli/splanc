@@ -253,6 +253,14 @@ export class DeviceSession {
   private lastFpsAt = 0;
   private activatedAt = 0;
   private readonly fpsSubs = new Set<(st: FpsStateMessage) => void>();
+  /** Wall-clock (Date.now) of the last fps_state, for the bridge display's perf age. */
+  private lastFpsWall = 0;
+  /** The last perf report that measured frames (whoever turned perf on: measure_effect,
+   * the app) and when it arrived (Date.now) — the bridge display shows it. */
+  private lastPerf: { r: PerfReportMessage; at: number } | null = null;
+  /** The hardware config's channel counts + capacity, once {@link loadLedInfo} read them. */
+  private hwLeds: { channels: { channel: number; ledCount: number }[]; capacity: number } | null = null;
+  private ledInfoLoad: Promise<void> | null = null;
   /**
    * A live performer's show lock (docs/design/live-vj-relay.md, "Arbitration"):
    * while set, every mutating method refuses with a ToolError naming the holder,
@@ -301,10 +309,12 @@ export class DeviceSession {
       if (st.currentFps > 0) this.playerFps = st.currentFps;
       this.lastFps = st;
       this.lastFpsAt = performance.now();
+      this.lastFpsWall = Date.now();
       for (const fn of this.fpsSubs) fn(st);
     });
     this.client.onPerfReport((r) => {
       if ((r.currentFps ?? 0) > 0) this.playerFps = r.currentFps!;
+      if (r.frameCyclesMax > 0 || r.frameCyclesMean > 0) this.lastPerf = { r, at: Date.now() };
     });
   }
 
@@ -316,6 +326,73 @@ export class DeviceSession {
 
   get fpsState(): FpsStateMessage | null {
     return this.lastFps;
+  }
+
+  /** Read what the bridge display needs to count this fixture's LEDs, once per
+   * session: the hardware config, plus the stored map's LED count only when no
+   * channel is configured (channels.ts: then the map is what it renders). Never
+   * throws; older firmware without the hardware-config arm just has no count. */
+  loadLedInfo(): Promise<void> {
+    this.ledInfoLoad ??= (async () => {
+      try {
+        const hw = await this.run(() => this.client.getHardwareConfig());
+        this.hwLeds = {
+          channels: (hw.channels ?? []).map((c) => ({ channel: c.channel, ledCount: c.ledCount })),
+          capacity: hw.ledCapacity ?? 0,
+        };
+      } catch {
+        return; // no hardware-config arm, or the connection dropped
+      }
+      if (this.hwLeds.channels.some((c) => (c.ledCount | 0) > 0)) return;
+      await this.mappingBundle().catch(() => undefined); // no stored map: no count
+    })();
+    return this.ledInfoLoad;
+  }
+
+  /** LEDs this player renders (channels.ts), from what this session already read;
+   * null when unknown. Synchronous: the bridge's status file is built from it. */
+  ledTotal(): { leds: number; source: "configured" | "map" } | null {
+    const map = this.fixture?.bundle.map;
+    const mapLeds = map ? map.ledCount || map.leds?.length || 0 : 0;
+    if (!this.hwLeds) return null;
+    const ch = renderedChannels(this.hwLeds.channels, mapLeds, this.hwLeds.capacity);
+    const leds = ch.reduce((n, c) => n + c.ledCount, 0);
+    if (leds <= 0) return null;
+    return { leds, source: ch.some((c) => c.ledCountSource === "configured") ? "configured" : "map" };
+  }
+
+  /** The running effect's id as far as this session knows it: the one it deployed,
+   * else the one the last perf report named. */
+  get knownEffect(): string | null {
+    return this.current?.effectId || this.lastPerf?.r.effectId || null;
+  }
+
+  /** The latest performance numbers this session holds (no device round trip):
+   * the last perf report (budget used, overruns, heap) and fps_state (rate, lag).
+   * null when it has neither. `at` is Date.now() ms of the newest. */
+  perfSnapshot(): {
+    fps?: number;
+    budget_used?: number;
+    overruns?: number;
+    lagging?: boolean;
+    heap_free?: number;
+    at: number;
+  } | null {
+    const p = this.lastPerf;
+    const st = this.lastFps;
+    if (!p && !st) return null;
+    const out: { fps?: number; budget_used?: number; overruns?: number; lagging?: boolean; heap_free?: number; at: number } = {
+      at: Math.max(p?.at ?? 0, st ? this.lastFpsWall : 0),
+    };
+    const fps = st?.lagging && st.achievedFps > 0 ? st.achievedFps : this.playerFps;
+    if (fps > 0) out.fps = Math.round(fps * 10) / 10;
+    if (p) {
+      if (p.r.budgetCycles > 0) out.budget_used = +(p.r.frameCyclesMean / p.r.budgetCycles).toFixed(3);
+      out.overruns = p.r.overruns;
+      if (p.r.heapFree > 0) out.heap_free = p.r.heapFree;
+    }
+    if (st) out.lagging = st.lagging;
+    return out;
   }
 
   /** Every fps_state the player pushes (set_fps replies, lagging changes); returns unsubscribe. */

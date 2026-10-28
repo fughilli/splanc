@@ -196,7 +196,7 @@ The bridge writes the status file **atomically** (temp file in the same director
 ```json
 {"v":1,"state":"starting|offline|unpaired|pairing|paired|error","relay":"<url>","bridge_id":"…",
  "pairing":{"code":"ABCD-EFGH","expires_at":<unix s>,"url":"<redeem url>"}|null,
- "clients":<int connected cloud sessions>,"players":[{"name":"…","host":"…","ok":true}],
+ "clients":<int connected cloud sessions>,"players":[{"name":"…","host":"…","ok":true, …details}],
  "lan_ip":"…","error":"…"|null,"updated_at":<unix s>}
 ```
 
@@ -208,6 +208,7 @@ The bridge writes the status file **atomically** (temp file in the same director
 | `pairing` | Only while connected and unexpired. `url` is `<relay>/pair?code=<code>` (good for a QR code). |
 | `clients` | MCP sessions active in the last 10 minutes. |
 | `players` | Every player the hub knows; `ok` = a session is open or it answered discovery in the last 15 min. |
+| `players[]` details | Optional, omitted when unknown (still contract v1; the OLED's fixture screens read them): `id` (MAC), `fw`, `room`, `seen` (unix s of the last message or discovery answer), `session` (`live`, `reconnecting`, `none`), `error` (why it's unreachable or refused), `leds` + `leds_src` (`configured`, or `map` when no channel count is set: the stored map's count, as `agent/src/channels.ts`), `effect` (the running effect's id when the bridge knows it), `perf` (`fps`, `budget_used`, `overruns`, `lagging`, `heap_free`, `at`: the newest perf report / fps_state the bridge holds, from `measure_effect` or the player's own pushes). The bridge reads each player's hardware config once per session for `leds` (plus its stored map only when no channel is configured); everything else is what it already holds. No certificate pins or tokens. |
 | `lan_ip` | The bridge's first non-loopback IPv4 address. |
 | `error` | Last connection error while `offline`, the fatal error in `error`, else `null`. |
 | `updated_at` | Unix seconds of this write. |

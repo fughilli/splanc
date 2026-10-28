@@ -1,15 +1,31 @@
-"""OLED layouts: 128x64, 1-bit (Waveshare 1.3" OLED HAT, SH1106)."""
+"""OLED layouts: 128x64, 1-bit (Waveshare 1.3" OLED HAT, SH1106).
+
+Each screen (a "scene": a top-level page, a fixture's detail, the boot logo) is
+drawn whole; a slide between two scenes (anim.py) draws both and offsets them.
+Overlays (toasts, the revoke hold/confirm) go on top, then the burn-in shift.
+"""
 
 from __future__ import annotations
 
 import time
 from typing import Optional
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
+from . import boot as boot_mod
 from . import draw as d
-from .status import WAITING, Status, fmt_remaining, short_url
-from .ui import View
+from .anim import Scene, SlideView
+from .status import (
+    WAITING,
+    Player,
+    Status,
+    fmt_ago,
+    fmt_bytes,
+    fmt_remaining,
+    host_kind,
+    short_url,
+)
+from .ui import DETAIL_ROWS, LIST_ROWS, View
 
 W, H = 128, 64
 ON, OFF = 255, 0
@@ -117,30 +133,168 @@ def _qr(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
         dr.text((x, 28 + i * 15), part, font=cf, fill=ON)
 
 
-def _players(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
+ROW_H = 12  # list / detail row pitch
+BODY_Y = 14  # where the rows start (under the header rule)
+BODY_H = H - BODY_Y
+
+
+def _glyph(dr: ImageDraw.ImageDraw, x: int, y: int, cond: str, fill=ON) -> None:
+    """A fixture's state, 7x7 at (x, y): ● connected, ○ idle, ◐ reconnecting, ✕ unreachable."""
+    box = [x, y, x + 6, y + 6]
+    if cond == "connected":
+        dr.ellipse(box, fill=fill)
+    elif cond == "idle":
+        dr.ellipse(box, outline=fill)
+    elif cond == "reconnecting":
+        dr.ellipse(box, outline=fill)
+        dr.pieslice(box, 90, 270, fill=fill)
+    else:
+        dr.line([x, y, x + 6, y + 6], fill=fill)
+        dr.line([x, y + 6, x + 6, y], fill=fill)
+
+
+def _row_hint(p: Player, now: float) -> str:
+    """The short right-hand note on a list row: its frame rate, or how long it's been gone."""
+    if p.condition == "unreachable":
+        if p.seen is None:
+            return ""
+        ago = max(0, int(now - p.seen))
+        return f"{ago}s" if ago < 60 else f"{ago // 60}m" if ago < 3600 else f"{ago // 3600}h"
+    if p.perf and p.perf.fps:
+        return ("lag " if p.perf.lagging else "") + f"{p.perf.fps:.0f}fps"
+    return ""
+
+
+def _scrollbar(
+    dr: ImageDraw.ImageDraw, top: float, total: int, shown: int, y0: int, h: int
+) -> None:
+    if total <= shown:
+        return
+    for y in range(y0, y0 + h, 3):  # a dotted track
+        dr.point((W - 2, y), fill=ON)
+    th = max(5, round(h * shown / total))
+    ty = y0 + round((h - th) * max(0.0, min(1.0, top / (total - shown))))
+    dr.rectangle([W - 3, ty, W - 1, ty + th - 1], fill=ON)
+
+
+def _players(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v: View) -> None:
     _header(dr, "Fixtures", f"{s.players_ok}/{len(s.players)} ok")
     small = d.font("sans", 9)
     if not s.players:
         _center(dr, 26, "None found yet", small)
         _center(dr, 40, "searching the LAN…", small)
         return
-    rows = 4
-    shown = s.players[:rows] if len(s.players) <= rows else s.players[: rows - 1]
-    for i, p in enumerate(shown):
-        y = 15 + i * 12
-        if p.ok:
-            dr.ellipse([M, y + 2, M + 6, y + 8], fill=ON)
-        else:
-            dr.line([M, y + 2, M + 6, y + 8], fill=ON)
-            dr.line([M, y + 8, M + 6, y + 2], fill=ON)
-        dr.text((M + 10, y), d.ellipsize(dr, p.name, small, W - M - 12), font=small, fill=ON)
-    if len(s.players) > rows:
-        dr.text(
-            (M + 10, 15 + (rows - 1) * 12),
-            f"+{len(s.players) - rows + 1} more",
-            font=small,
+    n = len(s.players)
+    scrolls = n > LIST_ROWS
+    right = W - (5 if scrolls else 1)
+    body = Image.new("1", (W, BODY_H), OFF)
+    bd = ImageDraw.Draw(body)
+    bd.fontmode = "1"
+    top = v.list_top
+    first = max(0, int(top))
+    for i in range(first, min(n, first + LIST_ROWS + 1)):
+        p = s.players[i]
+        y = round((i - top) * ROW_H) + 1
+        _glyph(bd, M + 1, y + 2, p.condition)
+        hint = _row_hint(p, now)
+        hw = d.text_size(bd, hint, small)[0] if hint else 0
+        if hint:
+            bd.text((right - 2 - hw, y), hint, font=small, fill=ON)
+        name_w = right - (M + 11) - (hw + 6 if hint else 2)
+        bd.text((M + 11, y), d.ellipsize(bd, p.name, small, name_w), font=small, fill=ON)
+    # The highlight: an inverted bar that glides between rows.
+    hy = round((v.list_pos - top) * ROW_H)
+    bar = Image.new("1", (W, BODY_H), OFF)
+    ImageDraw.Draw(bar).rounded_rectangle([0, hy, right, hy + ROW_H - 1], radius=2, fill=ON)
+    body = ImageChops.logical_xor(body, bar)
+    img.paste(body, (0, BODY_Y))
+    if scrolls:
+        _scrollbar(dr, top, n, LIST_ROWS, BODY_Y + 1, BODY_H - 2)
+
+
+def detail_rows(p: Optional[Player], now: float) -> list:
+    """(label, value) rows of a fixture's detail screen, in order. The error wraps
+    over several rows (label only on the first)."""
+    if p is None:
+        return [("", "Fixture is gone")]
+    cond = p.condition
+    rows = [
+        (
+            "State",
+            {
+                "connected": "Connected",
+                "idle": "Idle (no session)",
+                "reconnecting": "Reconnecting…",
+                "unreachable": "Unreachable",
+            }[cond],
+        )
+    ]
+    if p.error:
+        probe = ImageDraw.Draw(Image.new("1", (1, 1)))
+        lines = _wrap(probe, p.error, d.font("sans", 9), W - VALUE_X - 6, 3)
+        rows += [("Error" if i == 0 else "", ln) for i, ln in enumerate(lines)]
+    rows.append(("Seen", fmt_ago(None if p.seen is None else now - p.seen)))
+    rows.append(host_kind(p.host))
+    rows.append(("ID", p.id or "-"))
+    rows.append(("FW", p.fw or "-"))
+    rows.append(("Room", p.room or "-"))
+    rows.append(
+        ("LEDs", "-" if not p.leds else f"{p.leds}" + (" (map)" if p.leds_src == "map" else ""))
+    )
+    rows.append(("Effect", p.effect or "-"))
+    f = p.perf
+    if f is None:
+        rows.append(("Perf", "no data yet"))
+        return rows
+    fps = "-" if not f.fps else f"{f.fps:g}"
+    rows.append(("FPS", fps + ("  lagging" if f.lagging else "")))
+    rows.append(("Budget", "-" if f.budget_used is None else f"{f.budget_used * 100:.0f}% used"))
+    rows.append(("Overrun", "-" if f.overruns is None else str(f.overruns)))
+    rows.append(("Heap", fmt_bytes(f.heap_free) + " free" if f.heap_free is not None else "-"))
+    rows.append(("Perf", fmt_ago(None if f.at is None else now - f.at)))
+    return rows
+
+
+def detail_row_count(p: Optional[Player], now: float) -> int:
+    return len(detail_rows(p, now))
+
+
+VALUE_X = 40
+
+
+def _detail(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v: View) -> None:
+    p = s.player(v.key)
+    small = d.font("sans", 9)
+    f = d.font("bold", 10)
+    title = p.name if p else "Fixture"
+    dr.text((M, 0), d.ellipsize(dr, title, f, W - 2 * M - 12), font=f, fill=ON)
+    if p:
+        _glyph(dr, W - M - 7, 2, p.condition)
+    dr.line([M, 12, W - M - 1, 12], fill=ON)
+    rows = detail_rows(p, now)
+    scrolls = len(rows) > DETAIL_ROWS
+    right = W - (5 if scrolls else 1)
+    body = Image.new("1", (W, BODY_H), OFF)
+    bd = ImageDraw.Draw(body)
+    bd.fontmode = "1"
+    top = v.detail_scroll
+    first = max(0, int(top))
+    for i in range(first, min(len(rows), first + DETAIL_ROWS + 1)):
+        label, value = rows[i]
+        y = round((i - top) * ROW_H) + 1
+        if label:
+            bd.text((M, y), label, font=small, fill=ON)
+        x = VALUE_X if label or i > 0 else M
+        vf = d.fit_font(bd, value, "sans", right - x - 1, 9, 7)
+        bd.text(
+            (x, y + 1 if vf is not small else y),
+            d.ellipsize(bd, value, vf, right - x - 1),
+            font=vf,
             fill=ON,
         )
+    img.paste(body, (0, BODY_Y))
+    if scrolls:
+        _scrollbar(dr, top, len(rows), DETAIL_ROWS, BODY_Y + 1, BODY_H - 2)
 
 
 def _network(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
@@ -159,7 +313,100 @@ def _network(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
         dr.text((40, y), d.ellipsize(dr, v, small, W - 41), font=small, fill=ON)
 
 
-PAGE_RENDERERS = {"home": _home, "qr": _qr, "players": _players, "network": _network}
+PAGE_RENDERERS = {"home": _home, "qr": _qr, "network": _network}
+LIST_RENDERERS = {"players": _players, "detail": _detail}
+
+
+def _boot(img: Image.Image, dr: ImageDraw.ImageDraw, t: Optional[float], frames) -> None:
+    if frames is not None:
+        img.paste(frames.at(t or 0.0), (0, 0))
+        return
+    _center(dr, 22, "Splanc", d.font("bold", 16))  # no pre-rendered frames: plain
+
+
+_SCENE_CACHE: dict = {}
+_SCENE_CACHE_MAX = 4
+
+
+def _scene_key(status: Status, scene: Scene, view: View, now: float, frames):
+    """What a scene's pixels depend on. A slide re-uses both scenes' images for
+    every frame (only the offsets change), halving the per-frame cost on a Pi."""
+    if scene.page == "boot":
+        return None  # a different frame each time anyway
+    if scene.page == "players":
+        extra = (view.sel, view.list_pos, view.list_top)
+    elif scene.page == "detail":
+        extra = (view.detail_scroll,)
+    else:
+        extra = ()
+    return (scene, status, extra, int(now))
+
+
+def _scene(status: Status, scene: Scene, view: View, now: float, frames) -> Image.Image:
+    key = _scene_key(status, scene, view, now, frames)
+    if key is not None:
+        hit = _SCENE_CACHE.get(key)
+        if hit is not None:
+            return hit
+    img = _draw_scene(status, scene, view, now, frames)
+    if key is not None:
+        if len(_SCENE_CACHE) >= _SCENE_CACHE_MAX:
+            _SCENE_CACHE.pop(next(iter(_SCENE_CACHE)))
+        _SCENE_CACHE[key] = img
+    return img
+
+
+def _draw_scene(status: Status, scene: Scene, view: View, now: float, frames) -> Image.Image:
+    img = Image.new("1", (W, H), OFF)
+    dr = ImageDraw.Draw(img)
+    dr.fontmode = "1"  # no anti-aliasing: crisp 1-bit glyphs
+    if scene.page == "boot":
+        _boot(img, dr, view.boot_t, frames)
+    elif scene.page in LIST_RENDERERS:
+        v = view if scene.key == view.key or scene.page != "detail" else _with_key(view, scene.key)
+        LIST_RENDERERS[scene.page](img, dr, status, now, v)
+    else:
+        PAGE_RENDERERS.get(scene.page, _home)(dr, status, now)
+    return img
+
+
+def _with_key(view: View, key: str) -> View:
+    from dataclasses import replace
+
+    return replace(view, key=key)
+
+
+def _compose(src: Image.Image, dst: Image.Image, sv: SlideView) -> Image.Image:
+    """Both scenes of a slide at progress ``sv.p``. "slide": they move together.
+    "push": the scene on top (entering on left, leaving on right) slides over the
+    other, which drifts a third as far (parallax), with a 1 px edge between."""
+    p = sv.p
+    out = Image.new("1", (W, H), OFF)
+    horiz = sv.direction in ("left", "right")
+    span = W if horiz else H
+    sign = -1 if sv.direction in ("left", "up") else 1
+
+    def at(off: float):
+        o = round(off)
+        return (o, 0) if horiz else (0, o)
+
+    if sv.style == "push" and horiz:
+        entering = sv.direction == "left"  # opening: dst comes in on top
+        under, over = (src, dst) if entering else (dst, src)
+        if entering:
+            under_off, over_off = sign * p * span / 3, (1 - p) * span
+        else:
+            under_off, over_off = -(1 - p) * span / 3, p * span
+        out.paste(under, at(under_off))
+        ox = round(over_off)
+        out.paste(Image.new("1", (W, H), OFF), (ox, 0))  # the top layer is opaque
+        out.paste(over, (ox, 0))
+        if 0 < ox < W:
+            ImageDraw.Draw(out).line([ox - 1, 0, ox - 1, H - 1], fill=ON)
+        return out
+    out.paste(src, at(sign * p * span))
+    out.paste(dst, at(sign * p * span - sign * span))
+    return out
 
 
 def _overlay(img: Image.Image, dr: ImageDraw.ImageDraw, v: View) -> None:
@@ -191,15 +438,36 @@ def _overlay(img: Image.Image, dr: ImageDraw.ImageDraw, v: View) -> None:
         dr.text(((W - tw) // 2, top + 2), text, font=f, fill=OFF)
 
 
-def render(status: Status, view: View, now: Optional[float] = None) -> Image.Image:
-    """One OLED frame (mode "1", 128x64)."""
+_DEFAULT_FRAMES = []
+
+
+def default_frames():
+    if not _DEFAULT_FRAMES:
+        _DEFAULT_FRAMES.append(boot_mod.load())
+    return _DEFAULT_FRAMES[0]
+
+
+def render(status: Status, view: View, now: Optional[float] = None, frames=None) -> Image.Image:
+    """One OLED frame (mode "1", 128x64). ``frames``: the boot animation (default:
+    the pre-rendered file next to the package, when there is one)."""
     now = time.time() if now is None else now
-    img = Image.new("1", (W, H), OFF)
     if view.asleep:
-        return img
+        return Image.new("1", (W, H), OFF)
+    if frames is None and (
+        view.page == "boot" or (view.slide and "boot" in (view.slide.src.page, view.slide.dst.page))
+    ):
+        frames = default_frames()
+    if view.slide is not None:
+        sv = view.slide
+        img = _compose(
+            _scene(status, sv.src, view, now, frames), _scene(status, sv.dst, view, now, frames), sv
+        )
+    else:
+        img = _scene(
+            status, Scene(view.page, view.key), view, now, frames
+        ).copy()  # cached: draw on a copy
     dr = ImageDraw.Draw(img)
-    dr.fontmode = "1"  # no anti-aliasing: crisp 1-bit glyphs
-    PAGE_RENDERERS.get(view.page, _home)(dr, status, now)
+    dr.fontmode = "1"
     _overlay(img, dr, view)
     dx, dy = view.shift
     if dx or dy:

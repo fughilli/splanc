@@ -5,8 +5,13 @@ Contract (written atomically by ``splanc-agent bridge``)::
     {"v": 1, "state": "starting|offline|unpaired|pairing|paired|error",
      "relay": "<url>", "bridge_id": "...",
      "pairing": {"code": "ABCD-EFGH", "expires_at": <unix s>, "url": "<redeem url>"} | null,
-     "clients": <int>, "players": [{"name": "...", "host": "...", "ok": true}],
+     "clients": <int>, "players": [{"name": "...", "host": "...", "ok": true, ...details}],
      "lan_ip": "...", "error": "..." | null, "updated_at": <unix s>}
+
+Each player may also carry optional details (the fixture screens): ``id`` (MAC),
+``fw``, ``room``, ``seen`` (unix s), ``session`` (live|reconnecting|none),
+``error``, ``leds`` + ``leds_src`` (configured|map), ``effect`` and ``perf``
+{fps, budget_used, overruns, lagging, heap_free, at} — see docs/design/cloud-relay.md.
 
 The display must never crash on a bad file: anything unreadable becomes a
 synthetic status (``waiting`` when the file is absent, ``error`` when garbled),
@@ -15,6 +20,7 @@ and unknown fields/states are tolerated.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 from dataclasses import dataclass, field
@@ -50,10 +56,48 @@ def control_path() -> str:
 
 
 @dataclass(frozen=True)
+class Perf:
+    """The newest performance numbers the bridge holds for a player."""
+
+    at: Optional[float] = None  # unix s they arrived
+    fps: Optional[float] = None
+    budget_used: Optional[float] = None  # mean frame cost / budget (1.0 = all of it)
+    overruns: Optional[int] = None
+    lagging: Optional[bool] = None
+    heap_free: Optional[int] = None
+
+
+@dataclass(frozen=True)
 class Player:
     name: str
     host: str
     ok: bool
+    id: str = ""
+    fw: str = ""
+    room: str = ""
+    seen: Optional[float] = None
+    session: str = ""  # live | reconnecting | none | "" (an older bridge: unknown)
+    error: Optional[str] = None
+    leds: Optional[int] = None
+    leds_src: str = ""
+    effect: str = ""
+    perf: Optional[Perf] = None
+
+    @property
+    def key(self) -> str:
+        """Stable identity across status updates (the menu keeps its place by it)."""
+        return self.id or self.host or self.name
+
+    @property
+    def condition(self) -> str:
+        """``connected`` | ``reconnecting`` | ``idle`` | ``unreachable``."""
+        if self.session == "live":
+            return "connected"
+        if self.session == "reconnecting":
+            return "reconnecting"
+        if self.error or not self.ok:
+            return "unreachable"
+        return "idle" if self.session == "none" else "connected"
 
 
 @dataclass(frozen=True)
@@ -99,6 +143,24 @@ class Status:
     def players_ok(self) -> int:
         return sum(1 for p in self.players if p.ok)
 
+    def player(self, key: str) -> Optional[Player]:
+        for p in self.players:
+            if p.key == key:
+                return p
+        return None
+
+    def salient(self) -> tuple:
+        """What counts as "something changed" for waking/undimming the screen: not
+        the per-fixture last-contact times and perf numbers, which tick constantly."""
+        return (
+            self.state,
+            self.pairing,
+            self.clients,
+            self.lan_ip,
+            self.error,
+            tuple((p.key, p.name, p.ok, p.condition) for p in self.players),
+        )
+
 
 def _num(v) -> Optional[float]:
     if isinstance(v, bool) or not isinstance(v, (int, float)):
@@ -108,6 +170,44 @@ def _num(v) -> Optional[float]:
 
 def _str(v) -> str:
     return v if isinstance(v, str) else ""
+
+
+def _int(v) -> Optional[int]:
+    n = _num(v)
+    return int(n) if n is not None and n >= 0 else None
+
+
+def _perf(v) -> Optional[Perf]:
+    if not isinstance(v, dict):
+        return None
+    lag = v.get("lagging")
+    return Perf(
+        at=_num(v.get("at")),
+        fps=_num(v.get("fps")),
+        budget_used=_num(v.get("budget_used")),
+        overruns=_int(v.get("overruns")),
+        lagging=lag if isinstance(lag, bool) else None,
+        heap_free=_int(v.get("heap_free")),
+    )
+
+
+def _player(item: dict) -> Player:
+    err = item.get("error")
+    return Player(
+        name=_str(item.get("name")) or _str(item.get("host")) or "?",
+        host=_str(item.get("host")),
+        ok=item.get("ok") is True,
+        id=_str(item.get("id")),
+        fw=_str(item.get("fw")),
+        room=_str(item.get("room")),
+        seen=_num(item.get("seen")),
+        session=_str(item.get("session")),
+        error=err if isinstance(err, str) and err else None,
+        leds=_int(item.get("leds")),
+        leds_src=_str(item.get("leds_src")),
+        effect=_str(item.get("effect")),
+        perf=_perf(item.get("perf")),
+    )
 
 
 def parse(doc) -> Status:
@@ -124,13 +224,7 @@ def parse(doc) -> Status:
     players = []
     for item in doc.get("players") or []:
         if isinstance(item, dict):
-            players.append(
-                Player(
-                    name=_str(item.get("name")) or _str(item.get("host")) or "?",
-                    host=_str(item.get("host")),
-                    ok=item.get("ok") is True,
-                )
-            )
+            players.append(_player(item))
     clients = doc.get("clients")
     err = doc.get("error")
     return Status(
@@ -173,6 +267,7 @@ class StatusWatcher:
         self.path = path or status_path()
         self._sig = None
         self.status = load(self.path)
+        self.salient_changed = False  # the last poll() changed what wakes the screen
 
     def _signature(self):
         try:
@@ -189,6 +284,7 @@ class StatusWatcher:
         self._sig = sig
         new = load(self.path)
         changed = new != self.status
+        self.salient_changed = new.salient() != self.status.salient()
         self.status = new
         return changed
 
@@ -215,3 +311,45 @@ def fmt_remaining(seconds: Optional[float]) -> str:
     h, rem = divmod(s, 3600)
     m, sec = divmod(rem, 60)
     return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+
+def fmt_ago(seconds: Optional[float]) -> str:
+    """``just now``, ``12 s ago``, ``5 min ago``, ``3 h ago``, ``2 d ago``; ``never``."""
+    if seconds is None:
+        return "never"
+    s = int(seconds)
+    if s < 2:
+        return "just now"  # also clock skew (a "seen" a little in the future)
+    if s < 60:
+        return f"{s} s ago"
+    if s < 3600:
+        return f"{s // 60} min ago"
+    if s < 86400:
+        return f"{s // 3600} h ago"
+    return f"{s // 86400} d ago"
+
+
+def fmt_bytes(n: Optional[int]) -> str:
+    """``54.2 KB`` / ``812 B`` / ``1.3 MB`` (1 KB = 1024 B, as the firmware reports)."""
+    if n is None:
+        return "-"
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n / (1024 * 1024):.1f} MB"
+
+
+def host_kind(host: str) -> tuple:
+    """(label, value) for a player's address: ``("IP", "192.0.2.7")``, a link-local
+    IPv4 tagged ``(LL)``, ``("IPv6", "fe80::1")`` (zone dropped), else ``("Host", host)``."""
+    if not host:
+        return ("IP", "-")
+    bare = host.strip("[]").split("%", 1)[0]
+    try:
+        ip = ipaddress.ip_address(bare)
+    except ValueError:
+        return ("Host", host)
+    if ip.version == 4:
+        return ("IP", f"{ip} (LL)" if ip.is_link_local else str(ip))
+    return ("IPv6", str(ip))
