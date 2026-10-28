@@ -12,6 +12,13 @@ oled-fixture-detail-*.png (healthy, scrolled, unreachable), oled-boot-sheet.png
 (every 3rd boot frame), and the animations oled-boot.gif (logo -> first screen)
 and oled-fixture-nav.gif (into a fixture's detail and back), simulated with the
 real UI state machine on a fake clock at ANIM_FPS.
+
+    --font-set NAME        draw the OLED screens with that font set (fonts.SETS)
+    --font-sets PATH.png   instead: one comparison sheet, a row per font set and
+                           a column per key screen (also PATH-4x.png, enlarged)
+    --titles PATH.png      instead: the title rows of four screens per set at 8x,
+                           to judge letter spacing
+    --sets a,b,c           limit --font-sets / --titles to these sets (in this order)
 """
 
 from __future__ import annotations
@@ -20,7 +27,7 @@ import os
 import sys
 
 from PIL import Image, ImageDraw
-from splanc_display import boot, fake_bridge, render_hdmi, render_oled
+from splanc_display import boot, fake_bridge, fonts, render_hdmi, render_oled
 from splanc_display.status import WAITING, Status, parse
 from splanc_display.ui import PAGES, OledUI, View
 
@@ -221,7 +228,137 @@ def menu_tiles_for_docs() -> list:
     return [(n, oled_preview(render_oled.render(s, v, now=NOW), scale=3)) for n, s, v in views]
 
 
+def font_set_views():
+    """(label, status, view) of the screens the font sets are compared on."""
+    st = statuses()
+    pairing = st["pairing"]
+    many = fixtures_status(9)
+    down = next(p for p in pairing.players if not p.ok)
+    return [
+        ("pairing / home", pairing, View(page="home")),
+        ("pairing / qr", pairing, View(page="qr")),
+        ("paired / home", st["paired"], View(page="home")),
+        ("fixtures", many, View(page="players", sel=1, list_pos=1)),
+        ("detail", pairing, View(page="detail", key=pairing.players[0].key)),
+        ("detail (unreachable)", pairing, View(page="detail", key=down.key)),
+        ("network", pairing, View(page="network")),
+        ("error", st["error"], View(page="home")),
+        ("offline", st["offline"], View(page="home")),
+        ("revoke confirm", pairing, View(page="home", overlay="confirm", overlay_seconds=8.0)),
+        ("toast", pairing, View(page="players", overlay="toast", overlay_text="Identify sent")),
+    ]
+
+
+def font_sets_sheet(path: str, scale: int = 2, sets=None) -> Image.Image:
+    """A row per font set, a column per screen; labelled. Also writes PATH-4x.png."""
+    views = font_set_views()
+    tiles = {}
+    for name in sets or fonts.SETS:
+        fonts.set_active(name)
+        tiles[name] = [
+            oled_preview(render_oled.render(s, v, now=NOW), scale=scale) for _, s, v in views
+        ]
+    fonts.set_active(fonts.DEFAULT_SET)
+    tw, th = next(iter(tiles.values()))[0].size
+    pad, lab_w, head = 10, 190, 20
+    out = Image.new(
+        "RGB",
+        (lab_w + len(views) * (tw + pad) + pad, head + len(tiles) * (th + pad) + pad),
+        (255, 255, 255),
+    )
+    dr = ImageDraw.Draw(out)
+    for c, (label, _, _) in enumerate(views):
+        dr.text((lab_w + c * (tw + pad), 4), label, fill=(0, 0, 0))
+    for r, (name, row) in enumerate(tiles.items()):
+        fs = fonts.SETS[name]
+        y = head + r * (th + pad)
+        lines = [name + (" (default)" if name == fonts.DEFAULT_SET else ""), fs.license]
+        lines += _wrap_words(fs.summary, 28)
+        for i, line in enumerate(lines):
+            dr.text((pad, y + 4 + i * 14), line, fill=(0, 0, 0) if i == 0 else (90, 90, 90))
+        for c, t in enumerate(row):
+            out.paste(t, (lab_w + c * (tw + pad), y))
+    out.save(path)
+    big = out.resize((out.width * 2, out.height * 2), Image.NEAREST)
+    root, ext = os.path.splitext(path)
+    big.save(root + "-4x" + ext)
+    return out
+
+
+def titles_sheet(path: str, sets=None, scale: int = 8) -> Image.Image:
+    """Each set's header row on four screens ("Ready to pair", "Fixtures", a
+    fixture's name, the revoke banner), cropped to the title and enlarged."""
+    st = statuses()
+    pairing = st["pairing"]
+    views = [
+        ("Ready to pair", pairing, View(page="home")),
+        ("Fixtures", pairing, View(page="players")),
+        ("Living room arch", pairing, View(page="detail", key=pairing.players[0].key)),
+        ("REVOKE ALL?", pairing, View(page="home", overlay="confirm", overlay_seconds=8.0)),
+    ]
+    rows = []
+    for name in sets or fonts.SETS:
+        fonts.set_active(name)
+        crops = []
+        for _, s, v in views:
+            img = render_oled.render(s, v, now=NOW)
+            h = 15 if v.overlay else render_oled._rule_y() + 1
+            crops.append(oled_preview(img.crop((0, 0, 128, h)), scale=scale))
+        rows.append((name, crops))
+    fonts.set_active(fonts.DEFAULT_SET)
+    pad, lab = 12, 26
+    cw = max(c.width for _, cs in rows for c in cs)
+    ch = max(c.height for _, cs in rows for c in cs)
+    out = Image.new(
+        "RGB",
+        (2 * (cw + pad) + pad, len(rows) * 2 * (ch + pad) + len(rows) * lab + pad),
+        (255, 255, 255),
+    )
+    dr = ImageDraw.Draw(out)
+    lf = fonts.ttf("bold", 18)
+    y = pad
+    for name, crops in rows:
+        dr.text((pad, y), f"{name}: {fonts.SETS[name].summary}", font=lf, fill=(0, 0, 0))
+        y += lab
+        for i, c in enumerate(crops):
+            r, col = divmod(i, 2)
+            out.paste(c, (pad + col * (cw + pad), y + r * (ch + pad)))
+        y += 2 * (ch + pad)
+    out.save(path)
+    return out
+
+
+def _wrap_words(text: str, n: int) -> list:
+    lines, cur = [], ""
+    for w in text.split():
+        if cur and len(cur) + 1 + len(w) > n:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = (cur + " " + w).strip()
+    return lines + ([cur] if cur else [])
+
+
 def main(argv) -> int:
+    argv = list(argv)
+    if "--font-set" in argv:
+        i = argv.index("--font-set")
+        fonts.set_active(argv[i + 1])
+        del argv[i : i + 2]
+    sets = None
+    if "--sets" in argv:
+        i = argv.index("--sets")
+        sets = argv[i + 1].split(",")
+        del argv[i : i + 2]
+        for n in sets:
+            fonts.SETS[n]  # noqa: B018 (an unknown name fails here, loudly)
+    for flag, fn in (("--font-sets", font_sets_sheet), ("--titles", titles_sheet)):
+        if flag in argv:
+            path = argv[argv.index(flag) + 1]
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            fn(path, sets=sets)
+            print(f"wrote {path}")
+            return 0
     if len(argv) > 2 and argv[1] == "--docs":
         return docs(argv[2])
     out = argv[1] if len(argv) > 1 else "gallery"

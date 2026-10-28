@@ -11,14 +11,15 @@
 #                byte-compiled, as a PYTHONPATH entry, plus the OLED boot
 #                animation rendered from web/public/icons/splanc.svg by
 #                pi/bridge/tools/gen_boot_frames.py (Pillow only; as Bazel's
-#                //pi/bridge:boot_frames does for the agent bundle).
-#   fonts        the four DejaVu faces the screens draw with (not the whole family).
+#                //pi/bridge:boot_frames does for the agent bundle), and the fonts
+#                vendored in splanc_display/fonts/ (the same files every other
+#                consumer draws with; pi/bridge/tools/vendor_fonts.py).
 #
 # luma.core / luma.oled / segno come from PyPI at exactly the versions + sha256
 # in pi/bridge/display/requirements.lock (the Pi OS installer's lockfile), so the
 # image and `install.sh` run the same display stack. lgpio (not in nixpkgs) is
 # built from its PyPI sdist with the C library linked in statically.
-{ lib, fetchurl, runCommand, stdenvNoCC, python3, swig, dejavu_fonts }:
+{ lib, fetchurl, runCommand, stdenvNoCC, python3, swig }:
 let
   pin = lib.importJSON ../agent-pin.json;
   ps = python3.pkgs;
@@ -102,7 +103,10 @@ let
     mkdir -p $out
     cp -R ${lib.fileset.toSource {
       root = ../../display;
-      fileset = lib.fileset.fileFilter (f: f.hasExt "py") ../../display/splanc_display;
+      fileset = lib.fileset.unions [
+        (lib.fileset.fileFilter (f: f.hasExt "py") ../../display/splanc_display)
+        ../../display/splanc_display/fonts
+      ];
     }}/splanc_display $out/
     cp -R ${lib.fileset.toSource {
       root = ../.;
@@ -114,13 +118,7 @@ let
     python3 -m compileall -q $out
     # Smoke: the modules import with this exact environment.
     PYTHONPATH=$out python3 -c 'import splanc_display.main, splanc_display.hat, splanc_image.selfupdate, splanc_image.bootconfig; from splanc_display import boot; assert boot.load()'
-  '';
-
-  fonts = runCommand "splanc-bridge-fonts" { } ''
-    mkdir -p $out
-    for f in DejaVuSans DejaVuSans-Bold DejaVuSansMono DejaVuSansMono-Bold; do
-      cp ${dejavu_fonts}/share/fonts/truetype/$f.ttf $out/
-    done
+    PYTHONPATH=$out python3 -c 'from splanc_display import fonts; [fs.fonts(r) for fs in fonts.SETS.values() for r in fonts.ROLES]'
   '';
 
   agentBundle = stdenvNoCC.mkDerivation {
@@ -148,5 +146,5 @@ let
   };
 in
 {
-  inherit agentBundle pyEnv splancPy fonts lgpio luma-core luma-oled segno pin;
+  inherit agentBundle pyEnv splancPy lgpio luma-core luma-oled segno pin;
 }

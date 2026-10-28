@@ -93,6 +93,8 @@ class App:
         vt: int = 8,
         rotate: int = 2,
         boot_frames="auto",
+        oled_device=None,
+        hdmi_device=None,
     ):
         self.clock, self.wall = clock, wall
         self.hdmi_mode, self.oled_mode = hdmi, oled
@@ -108,6 +110,10 @@ class App:
         self.frame_cost = 0.0  # EWMA seconds to render + push one OLED frame
         self._oled_key = None
         self.button_factory = button_factory
+        # Hardware seams for the host simulator (sim.py): factories for a stand-in
+        # OLED device (luma's display/contrast/hide/show/cleanup) and HDMI screen
+        # (Framebuffer's visible/show/changed/close/size). They replace --oled/--hdmi.
+        self.oled_device, self.hdmi_device = oled_device, hdmi_device
         self._sync_fixtures()
         self.stop = threading.Event()
         self.oled = None
@@ -140,7 +146,9 @@ class App:
         if self.oled is not None or now < self._oled_next_try:
             return
         self._oled_next_try = now + OLED_RETRY
-        if self.oled_mode.startswith("png:"):
+        if self.oled_device is not None:
+            self.oled, self.oled_kind = self.oled_device(), "sim"
+        elif self.oled_mode.startswith("png:"):
             self.oled, self.oled_kind = PngOled(self.oled_mode[4:]), "png"
         else:
             from . import hat
@@ -237,6 +245,9 @@ class App:
         if self.hdmi is not None or self.hdmi_mode == "off" or now < self._hdmi_next_try:
             return
         self._hdmi_next_try = now + HDMI_RETRY
+        if self.hdmi_device is not None:
+            self.hdmi = self.hdmi_device()
+            return
         if self.hdmi_mode.startswith("png:"):
             self.hdmi = PngSink(self.hdmi_mode[4:])
             return

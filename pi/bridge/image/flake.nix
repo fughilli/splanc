@@ -87,7 +87,7 @@
         lib.mapAttrs' (k: v: lib.nameValuePair "image-${k}" v.config.system.build.sdImage) systems
         // lib.mapAttrs' (k: v: lib.nameValuePair "toplevel-${k}" v.config.system.build.toplevel) systems
         // {
-          inherit (bridgePkgs) agentBundle pyEnv splancPy fonts lgpio luma-core luma-oled;
+          inherit (bridgePkgs) agentBundle pyEnv splancPy lgpio luma-core luma-oled;
           default = systems.pi5.config.system.build.sdImage;
         };
 

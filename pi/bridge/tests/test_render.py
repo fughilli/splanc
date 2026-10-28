@@ -129,4 +129,7 @@ def test_oled_asleep_is_black_and_shift_moves():
     assert render_oled.render(s, View(page="home", asleep=True), now=NOW).histogram()[255] == 0
     a = render_oled.render(s, View(page="home"), now=NOW)
     b = render_oled.render(s, View(page="home", shift=(1, 1)), now=NOW)
-    assert a.histogram()[255] == b.histogram()[255] and a.tobytes() != b.tobytes()
+    # The shift moves the picture; a full-width lit title bar (inverse sets) loses at most
+    # the one column and row pushed off the edge.
+    assert abs(a.histogram()[255] - b.histogram()[255]) <= a.width + a.height
+    assert a.tobytes() != b.tobytes()

@@ -15,6 +15,8 @@ Targets:
                     screen to the test's undeclared outputs
   :installer_test   install.sh into a fake root (install/upgrade/refusals/uninstall)
   :render_gallery   `bazel run //pi/bridge:render_gallery -- <dir>`: review PNGs
+  :sim              `bazel run //pi/bridge:sim`: the display service on mocked
+                    OLED/keys/HDMI, driven from a web page (splanc_display/sim.py)
   :boot_frames      the OLED boot animation, pre-rendered from the Splanc logo
                     (web/public/icons/splanc.svg) by tools/gen_boot_frames.py with
                     only Pillow: generated here (and in the NixOS image's
@@ -54,7 +56,9 @@ genrule(
 py_library(
     name = "splanc_display",
     srcs = glob(["display/splanc_display/*.py"]),
-    data = [":boot_frames"],
+    # The fonts every screen draws with, vendored (tools/vendor_fonts.py): the same
+    # files here, in the agent bundle (:bundle_files) and in the NixOS image.
+    data = [":boot_frames"] + glob(["display/splanc_display/fonts/**"]),
     imports = ["display"],
     deps = [
         requirement("pillow"),
@@ -84,17 +88,28 @@ py_binary(
     deps = [":splanc_display"],
 )
 
+py_binary(
+    name = "sim",
+    srcs = ["tools/display_sim.py"],
+    main = "tools/display_sim.py",
+    deps = [":splanc_display"],
+)
+
 filegroup(
     name = "bundle_files",
     srcs = [
         "display/requirements.lock",
         "install.sh",
         ":boot_frames",
-    ] + glob([
-        "bin/*",
-        "display/splanc_display/*.py",
-        "systemd/*",
-    ]),
+    ] + glob(
+        [
+            "bin/*",
+            "display/splanc_display/*.py",
+            "display/splanc_display/fonts/**",
+            "systemd/*",
+        ],
+        exclude = ["display/splanc_display/sim*.py"],  # host-only (the simulator)
+    ),
 )
 
 sh_test(

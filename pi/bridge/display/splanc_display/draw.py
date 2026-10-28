@@ -1,64 +1,66 @@
-"""Shared drawing helpers: fonts (DejaVu, with fallbacks) and QR codes (segno)."""
+"""Shared drawing helpers: text in the bundled fonts (fonts.py) and QR codes (segno)."""
 
 from __future__ import annotations
 
-import functools
-import os
+from typing import Optional
 
-from PIL import ImageDraw, ImageFont
+from PIL import ImageDraw
 
-# fonts-dejavu-core on Debian/Pi OS; the others are common elsewhere (dev boxes).
-_FONT_DIRS = (
-    "/usr/share/fonts/truetype/dejavu",
-    "/usr/share/fonts/dejavu",
-    "/usr/share/fonts/TTF",
-    "/usr/local/share/fonts",
-)
-_FACES = {
-    "sans": "DejaVuSans.ttf",
-    "bold": "DejaVuSans-Bold.ttf",
-    "mono": "DejaVuSansMono.ttf",
-    "monobold": "DejaVuSansMono-Bold.ttf",
-}
+from . import fonts
+
+# Set to a list to record every text drawn: (image size, (l, t, r, b) ink box, text).
+# The render tests use it to check that no text leaves its box.
+TRACE: Optional[list] = None
 
 
-def _font_path(face: str):
-    extra = os.environ.get("SPLANC_DISPLAY_FONT_DIR")
-    for d in ((extra,) if extra else ()) + _FONT_DIRS:
-        p = os.path.join(d, _FACES[face])
-        if os.path.exists(p):
-            return p
-    return None
-
-
-@functools.lru_cache(maxsize=64)
 def font(face: str, size: int):
-    """A TrueType font at ``size`` px, or PIL's built-in font if none is installed."""
-    p = _font_path(face)
-    if p:
-        return ImageFont.truetype(p, size)
-    try:
-        return ImageFont.load_default(size=size)  # Pillow >= 10.1
-    except TypeError:
-        return ImageFont.load_default()
+    """DejaVu ``face`` (sans|bold|mono|monobold) at ``size`` px, from the bundled
+    files. There is no fallback: a missing font raises (FileNotFoundError)."""
+    return fonts.ttf(face, size)
 
 
-def text_size(draw: ImageDraw.ImageDraw, text: str, f) -> tuple:
-    left, top, right, bottom = draw.textbbox((0, 0), text, font=f)
+def is_bitmap(f) -> bool:
+    return isinstance(f, fonts.BitmapFont)
+
+
+def text(dr: ImageDraw.ImageDraw, xy, s: str, f, fill) -> None:
+    """Draw ``s`` with its top-left at ``xy`` (TrueType: the ascender line; bitmap:
+    the top of the tallest letter), in either kind of font."""
+    if TRACE is not None and s:
+        box = f.ink_box(xy, s) if is_bitmap(f) else dr.textbbox(xy, s, font=f)
+        if box is not None and box[2] > box[0]:
+            TRACE.append((dr.im.size, tuple(int(v) for v in box), s))
+    if is_bitmap(f):
+        f.draw(dr, xy, s, fill)
+    else:
+        dr.text(xy, s, font=f, fill=fill)
+
+
+def text_size(dr: ImageDraw.ImageDraw, s: str, f) -> tuple:
+    if is_bitmap(f):
+        return f.width(s), f.height
+    left, top, right, bottom = dr.textbbox((0, 0), s, font=f)
     return right - left, bottom - top
+
+
+def line_height(dr: ImageDraw.ImageDraw, f) -> int:
+    """Rows one line of ``f`` needs (bitmap: its ink height; TrueType: "Ag")."""
+    return f.height if is_bitmap(f) else text_size(dr, "Ag", f)[1]
+
+
+def fit(dr: ImageDraw.ImageDraw, s: str, candidates: list, max_w: int):
+    """The first font of ``candidates`` (largest first) in which ``s`` fits max_w."""
+    for f in candidates:
+        if text_size(dr, s, f)[0] <= max_w:
+            return f
+    return candidates[-1]
 
 
 def fit_font(
     draw: ImageDraw.ImageDraw, text: str, face: str, max_w: int, max_size: int, min_size: int = 6
 ):
-    """The largest font of ``face`` (<= max_size) in which ``text`` fits max_w."""
-    size = max_size
-    while size > min_size:
-        f = font(face, size)
-        if text_size(draw, text, f)[0] <= max_w:
-            return f
-        size -= 1
-    return font(face, min_size)
+    """The largest DejaVu ``face`` (<= max_size) in which ``text`` fits max_w."""
+    return fit(draw, text, [font(face, n) for n in range(max_size, min_size - 1, -1)], max_w)
 
 
 def ellipsize(draw: ImageDraw.ImageDraw, text: str, f, max_w: int) -> str:
