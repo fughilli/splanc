@@ -314,6 +314,8 @@ async function authorizePost(req: Request, env: Env, origin: string): Promise<Re
       code_challenge: p.code_challenge,
       resource: p.resource,
       scope: p.scope,
+      // For the bridge's client list (its grant's label).
+      client_name: c.client.name,
     }),
   });
   const { code: authCode } = (await issued.json()) as { code: string };
@@ -374,7 +376,8 @@ async function pair(req: Request, env: Env, origin: string): Promise<Response> {
   if (!r.body.bridge) return fail("", "invalid_grant", "That code isn't valid or has expired. Get a new one on the bridge.", 400);
   const t = await toBridge(env, r.body.bridge, origin, "/pair/token", {
     method: "POST",
-    body: JSON.stringify({ label: form["label"] ?? "" }),
+    // `client: "app"`: the Splanc app (its kind in the bridge's client list).
+    body: JSON.stringify({ label: form["label"] ?? "", client: form["client"] === "app" ? "app" : "" }),
   });
   const { token: tok } = (await t.json()) as { token: string };
   if (wantsJson) return json({ token: tok, mcp_url: `${origin}/mcp` });

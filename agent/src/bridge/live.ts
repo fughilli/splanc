@@ -150,6 +150,11 @@ export class LiveMux {
     return this.conns.size;
   }
 
+  /** The grants with a live connection open now (the status file's paired clients). */
+  get grants(): Set<string> {
+    return new Set([...this.conns.values()].map((c) => c.conn.grant));
+  }
+
   // -- connections -----------------------------------------------------------------------
 
   attach(conn: LiveConn): void {

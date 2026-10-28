@@ -8,7 +8,7 @@ from typing import Optional
 from PIL import Image, ImageDraw
 
 from . import draw as d
-from .status import WAITING, Status, fmt_remaining, short_url
+from .status import WAITING, Status, fmt_age, fmt_remaining, short_url
 
 BASE_W, BASE_H = 1920, 1080
 
@@ -184,7 +184,60 @@ def _message(c: _Canvas, s: Status, now: float, oled: bool) -> None:
         c.text((130, top + size * 1.3 + i * 60), line, "sans", 44, MUTED)
 
 
-def _panels(c: _Canvas, s: Status, oled: bool) -> None:
+def _clients_panel(c: _Canvas, s: Status, x: float, top: float, w: float, now: float) -> None:
+    """Paired clients: a row each (live dot, name, last used), or the count when
+    the list isn't available (an older relay or bridge)."""
+    n = len(s.paired)
+    c.text((x + 36, top + 30), "PAIRED CLIENTS", "bold", 28, MUTED)
+    if n:
+        c.text(
+            (x + w - 36, top + 30), f"{s.clients_live}/{n} active", "sans", 28, MUTED, anchor="ra"
+        )
+    if not n:
+        note = {
+            "relay_outdated": "Client list needs a relay update",
+            "ok": "None yet: pair with a code",
+            "offline": "None (relay unreachable)",
+        }.get(s.clients_state)
+        if note is None:  # an older bridge, or not connected yet: the count
+            c.text((x + 36, top + 70), str(s.clients), "bold", 110, TEXT)
+            c.text(
+                (x + 36 + c.width(str(s.clients), "bold", 110) + 24, top + 150),
+                "connected",
+                "sans",
+                34,
+                MUTED,
+            )
+            return
+        c.text((x + 36, top + 90), c.ell(note, "sans", 34, w - 72), "sans", 34, TEXT)
+        if s.clients_state == "relay_outdated" and s.clients:
+            c.text(
+                (x + 36, top + 140), _plural(s.clients, "session") + " connected", "sans", 30, MUTED
+            )
+        return
+    rows = 3
+    shown = s.paired[:rows] if n <= rows else s.paired[: rows - 1]
+    for i, cl in enumerate(shown):
+        y = top + 100 + i * 46
+        c.dot(x + 48, y, 9, OK if cl.live else MUTED)
+        age = fmt_age(None if cl.last_used_at is None else max(0.0, now - cl.last_used_at))
+        aw = c.width(age, "sans", 30)
+        c.text((x + w - 36, y), age, "sans", 30, MUTED, anchor="rm")
+        c.text(
+            (x + 72, y), c.ell(cl.label, "sans", 32, w - 140 - aw), "sans", 32, TEXT, anchor="lm"
+        )
+    if n > rows:
+        c.text(
+            (x + 72, top + 100 + (rows - 1) * 46),
+            f"+{n - rows + 1} more",
+            "sans",
+            32,
+            MUTED,
+            anchor="lm",
+        )
+
+
+def _panels(c: _Canvas, s: Status, oled: bool, now: float) -> None:
     top, bottom = 760, 1000
     gap = 40
     w = (BASE_W - 160 - 2 * gap) / 3
@@ -221,16 +274,7 @@ def _panels(c: _Canvas, s: Status, oled: bool) -> None:
             anchor="lm",
         )
     # Clients
-    x = xs[1]
-    c.text((x + 36, top + 30), "PAIRED CLIENTS", "bold", 28, MUTED)
-    c.text((x + 36, top + 70), str(s.clients), "bold", 110, TEXT)
-    c.text(
-        (x + 36 + c.width(str(s.clients), "bold", 110) + 24, top + 150),
-        "connected",
-        "sans",
-        34,
-        MUTED,
-    )
+    _clients_panel(c, s, xs[1], top, w, now)
     # Network
     x = xs[2]
     c.text((x + 36, top + 30), "NETWORK", "bold", 28, MUTED)
@@ -271,7 +315,7 @@ def render(
         _pairing(c, status, now)
     else:
         _message(c, status, now, oled)
-    _panels(c, status, oled)
+    _panels(c, status, oled, now)
     if (w, h) == (cw, ch):
         return inner
     out = Image.new("RGB", (w, h), BG)

@@ -9,6 +9,8 @@
  *   and refresh tokens and personal tokens (`tok:`), all stored as SHA-256
  *   hashes of their secret, plus rotated-out refresh tokens (`used:`) for reuse
  *   detection;
+ * - per-grant metadata (`grant:<id>`: kind, label, created, last used), the
+ *   bridge's paired-client list (docs/design/cloud-relay.md, "Paired clients");
  * - the live pairing code mirror (`pairing`; the code itself lives in the
  *   Directory, which maps code -> bridge);
  * - the tunnel: each MCP HTTP request becomes a `req` frame; `res`/`chunk`/`end`
@@ -25,7 +27,7 @@
  */
 
 import { grantedScope } from "./oauth";
-import { b64url, ed25519Verify, randomSecret, sha256b64url, sha256hex } from "./crypto";
+import { b64url, ed25519Verify, fromB64url, randomSecret, sha256b64url, sha256hex } from "./crypto";
 import { EffectLibrary, LIBRARY_TOOL_NAMES, callLibraryTool, deployNoteText, slugEffectId, type EffectMeta, type LibraryStore } from "./library";
 import { BUG_TOOL_NAME } from "../../../web/src/bugs/bugReport";
 import { relayFileBug } from "./bugs";
@@ -71,6 +73,8 @@ import {
   WIRE_VERSION,
   connectMessage,
   type BridgeFrame,
+  type GrantInfo,
+  type GrantKind,
   type Pairing,
   type RelayFrame,
 } from "./protocol";
@@ -82,6 +86,9 @@ export const AUTH_CODE_TTL_S = 300;
 export const REQUEST_TIMEOUT_MS = 10 * 60_000;
 export const MAX_INFLIGHT = 32;
 export const MAX_BODY = 4 * 1024 * 1024;
+/** A grant's last_used_at is written at most this often (Durable Object writes
+ * are a free-tier budget: 100 k rows/day across every bridge). */
+export const LAST_USED_WRITE_S = 60;
 
 export type TokenKind = "at" | "rt" | "pt" | "ac";
 
@@ -121,6 +128,49 @@ interface CodeRec {
   resource: string;
   scope: string;
   exp: number;
+  /** The client's name from its registration (absent on codes from an older relay). */
+  name?: string;
+}
+
+/** `grant:<id>`: what the bridge's client list shows about one grant. Grants paired
+ * before the relay kept these have none until first used (then one is made from
+ * their tokens); `grantList` makes the same from the tokens meanwhile. */
+interface GrantRec {
+  kind: GrantKind;
+  label: string;
+  created: number;
+  last_used: number | null;
+}
+
+/** A readable name for an OAuth client id: a dynamic registration's own name (its
+ * id carries it; the HMAC was checked when the code was issued), a metadata
+ * document's host. */
+export function clientLabel(client: string): string {
+  if (client === "personal") return "Personal token";
+  if (client.startsWith("dcr.")) {
+    try {
+      const n = (JSON.parse(new TextDecoder().decode(fromB64url(client.split(".")[1] ?? ""))) as { n?: unknown }).n;
+      if (typeof n === "string" && n.trim()) return n.trim().slice(0, 80);
+    } catch {
+      // not ours
+    }
+  }
+  try {
+    return new URL(client).host || "Connector";
+  } catch {
+    return "Connector";
+  }
+}
+
+/** A grant record made from one of its tokens (a grant from before grant records). */
+function grantFromToken(rec: TokRec): GrantRec {
+  const personal = rec.client === "personal";
+  return {
+    kind: personal ? "token" : "connector",
+    label: (rec.label || clientLabel(rec.client)).slice(0, 80),
+    created: rec.created,
+    last_used: null,
+  };
 }
 
 interface Pending {
@@ -266,8 +316,10 @@ export class BridgeObject {
       case "/oauth/revoke":
         await this.revokeToken((await body())["token"] ?? "");
         return json({ ok: true });
-      case "/pair/token":
-        return this.personalToken((await body())["label"] ?? "", bid, origin);
+      case "/pair/token": {
+        const b = await body();
+        return this.personalToken(b["label"] ?? "", b["client"] ?? "", bid, origin);
+      }
       case "/bugs/verify":
         return json({ ok: await this.verifyBugCaller(req, bid, origin) });
       default:
@@ -305,14 +357,16 @@ export class BridgeObject {
     const { response, socket } = upgrade(this.env, this.state, ["bridge"]);
     socket.serializeAttachment({ at: now(this.env), n: Math.random() });
     autoResponse(this.env, this.state, PING, PONG);
+    const grants = await this.grantList();
     const hello: RelayFrame = {
       t: "hello",
       v: WIRE_VERSION,
       bridge_id: bid,
       relay: origin,
       mcp_url: `${origin}/mcp`,
-      credentials: await this.credentialCount(),
+      credentials: grants.length,
       pairing: await this.pairing(),
+      grants,
     };
     socket.send(JSON.stringify(hello));
     return response;
@@ -341,8 +395,18 @@ export class BridgeObject {
     }
   }
 
-  private async pushState(reason: string): Promise<void> {
-    this.send({ t: "state", credentials: await this.credentialCount(), pairing: await this.pairing(), reason });
+  /** Tell the bridge its credentials or pairing changed; `grants`: the client list
+   * changed too (sent only to a bridge that keeps one: its `caps` said so). */
+  private async pushState(reason: string, grants = true): Promise<void> {
+    const list = await this.grantList();
+    this.send({ t: "state", credentials: list.length, pairing: await this.pairing(), reason });
+    if (grants && this.wantsGrants()) this.send({ t: "grants", grants: list, reason });
+  }
+
+  /** Whether the current bridge socket asked for `grants` frames (its caps). */
+  private wantsGrants(): boolean {
+    const a = this.bridge()?.deserializeAttachment() as { grants?: number } | null | undefined;
+    return !!a?.grants;
   }
 
   async webSocketMessage(ws: HSocket, message: string | ArrayBuffer): Promise<void> {
@@ -417,9 +481,16 @@ export class BridgeObject {
       case "revoke_all":
         await this.revokeAll();
         return;
+      case "list_grants":
+        this.send({ t: "grants", grants: await this.grantList() });
+        return;
+      case "revoke_grant":
+        await this.revokeGrant(typeof f.grant === "string" ? f.grant : "");
+        return;
       case "caps": {
         const a = (ws.deserializeAttachment() ?? {}) as Record<string, unknown>;
-        ws.serializeAttachment({ ...a, live: f.live ?? 0 });
+        ws.serializeAttachment({ ...a, live: f.live ?? 0, grants: f.grants ?? 0 });
+        if (f.grants) this.send({ t: "grants", grants: await this.grantList() });
         // The bridge (re)connected: hand it every live session still open here.
         for (const s of this.state.getWebSockets("app")) {
           const x = appOf(s);
@@ -500,7 +571,7 @@ export class BridgeObject {
   /** Is this credential this bridge's: one of its relay tokens (the MCP resource's),
    * or its Ed25519 signature over the report (BUG_AUTH_HEADER)? */
   private async verifyBugCaller(req: Request, bid: string, origin: string): Promise<boolean> {
-    if (req.headers.get("authorization")) return (await this.authorize(req, bid, origin)) === null;
+    if (req.headers.get("authorization")) return !((await this.authorize(req, bid, origin)) instanceof Response);
     const [sigBid, ts, sig] = (req.headers.get(BUG_AUTH_HEADER) ?? "").split(".");
     const t = Number(ts);
     if (sigBid !== bid || !Number.isFinite(t) || Math.abs(this.nowS() - t) > SIGNATURE_WINDOW_S) return false;
@@ -511,7 +582,8 @@ export class BridgeObject {
 
   // -- the MCP tunnel ------------------------------------------------------------------
 
-  private async authorize(req: Request, bid: string, origin: string): Promise<Response | null> {
+  /** The caller's token record, or the 401 to answer. */
+  private async authorize(req: Request, bid: string, origin: string): Promise<Response | TokRec> {
     const h = req.headers.get("authorization") ?? "";
     const tok = parseToken(h.startsWith("Bearer ") ? h.slice(7) : null);
     const deny = () =>
@@ -520,7 +592,7 @@ export class BridgeObject {
     const rec = await this.lookup(tok.secret);
     if (!rec || rec.k !== tok.kind || (rec.exp !== null && rec.exp <= this.nowS())) return deny();
     if (rec.resource && rec.resource !== `${origin}/mcp`) return deny();
-    return null;
+    return rec;
   }
 
   private async lookup(secret: string): Promise<TokRec | null> {
@@ -532,8 +604,9 @@ export class BridgeObject {
   }
 
   private async mcp(req: Request, bid: string, origin: string): Promise<Response> {
-    const denied = await this.authorize(req, bid, origin);
-    if (denied) return denied;
+    const auth = await this.authorize(req, bid, origin);
+    if (auth instanceof Response) return auth;
+    await this.touch(auth);
     // No standalone GET stream: it would keep this object awake (billed) for as long
     // as a client holds it. The spec lets a server decline it with 405.
     if (req.method !== "POST" && req.method !== "DELETE") {
@@ -772,6 +845,7 @@ export class BridgeObject {
     }
     const c = b64url(crypto.getRandomValues(new Uint8Array(9)));
     const label = (rec.label || (rec.client === "personal" ? "app" : "connector")).slice(0, 80);
+    await this.touch(rec, rec.k === "pt"); // a personal token that opens a live session is the app's
     const { response, socket } = upgrade(this.env, this.state, ["app", `app:${c}`], { "sec-websocket-protocol": LIVE_SUBPROTOCOL });
     socket.serializeAttachment({ app: c, fam: rec.fam, label, at: now(this.env) } satisfies AppAttachment);
     autoResponse(this.env, this.state, PING, PONG);
@@ -846,31 +920,67 @@ export class BridgeObject {
       expires_at: j.expires_at!,
       url: `${origin}/pair?code=${encodeURIComponent(j.code)}`,
     });
-    await this.pushState("new pairing code");
+    await this.pushState("new pairing code", false);
   }
 
   private async clearPairing(reason: string): Promise<void> {
     if (await this.state.storage.get("pairing")) {
       await this.state.storage.delete("pairing");
-      await this.pushState(reason);
+      await this.pushState(reason, false);
     }
   }
 
   // -- credentials -----------------------------------------------------------------------
 
-  /** Live grants (OAuth families with a refresh token + personal tokens); purges the expired. */
-  private async credentialCount(): Promise<number> {
+  /** Live grants (OAuth families with a refresh token + personal tokens), oldest
+   * first, with their metadata; purges the expired (and grant records whose tokens
+   * are all gone). Its length is the bridge's credential count. */
+  private async grantList(): Promise<GrantInfo[]> {
     const t = this.nowS();
-    const fams = new Set<string>();
+    const fams = new Map<string, TokRec>();
     const dead: string[] = [];
     for (const [k, v] of await this.state.storage.list<TokRec>({ prefix: "tok:" })) {
       if (v.exp !== null && v.exp <= t) dead.push(k);
-      else if (v.k !== "at") fams.add(v.fam);
+      else if (v.k !== "at") {
+        const had = fams.get(v.fam);
+        if (!had || v.created < had.created) fams.set(v.fam, v);
+      }
     }
     for (const [k, v] of await this.state.storage.list<{ exp: number }>({ prefix: "used:" })) if (v.exp <= t) dead.push(k);
     for (const [k, v] of await this.state.storage.list<CodeRec>({ prefix: "ac:" })) if (v.exp <= t) dead.push(k);
+    const recs = await this.state.storage.list<GrantRec>({ prefix: "grant:" });
+    for (const k of recs.keys()) if (!fams.has(k.slice(6))) dead.push(k);
     for (let i = 0; i < dead.length; i += 128) await this.state.storage.delete(dead.slice(i, i + 128));
-    return fams.size;
+    const out: GrantInfo[] = [];
+    for (const [fam, tok] of fams) {
+      const g = recs.get(`grant:${fam}`) ?? grantFromToken(tok);
+      out.push({ id: fam, label: g.label, kind: g.kind, created_at: g.created, last_used_at: g.last_used });
+    }
+    return out.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
+  }
+
+  /** grant id -> unix s of the last last_used write this wake period (throttle). */
+  private readonly touched = new Map<string, number>();
+
+  /** A grant was used (an MCP call, a live session, a refresh): record when, at most
+   * once per LAST_USED_WRITE_S per grant (one row read per grant per wake period,
+   * one row write per minute of use), and tell the bridge. `app`: it opened a live
+   * session, which only the app does (a personal token's kind becomes `app`). */
+  private async touch(rec: TokRec, app = false): Promise<void> {
+    const t = this.nowS();
+    const last = this.touched.get(rec.fam);
+    if (!app && last !== undefined && t - last < LAST_USED_WRITE_S) return;
+    const key = `grant:${rec.fam}`;
+    const g = await this.state.storage.get<GrantRec>(key);
+    const promote = app && (g?.kind ?? grantFromToken(rec).kind) === "token";
+    if (!promote && g?.last_used != null && t - g.last_used < LAST_USED_WRITE_S) {
+      this.touched.set(rec.fam, g.last_used);
+      return;
+    }
+    const next: GrantRec = { ...(g ?? grantFromToken(rec)), last_used: t, ...(promote ? { kind: "app" as const } : {}) };
+    await this.state.storage.put<GrantRec>(key, next);
+    this.touched.set(rec.fam, t);
+    if (this.wantsGrants()) this.send({ t: "grants", grants: await this.grantList(), reason: "client used" });
   }
 
   private async mint(kind: "at" | "rt" | "pt", bid: string, rec: Omit<TokRec, "k" | "created">): Promise<string> {
@@ -891,6 +1001,7 @@ export class BridgeObject {
       resource: b["resource"]!,
       scope: grantedScope(b["scope"]),
       exp: this.nowS() + AUTH_CODE_TTL_S,
+      ...(b["client_name"] ? { name: String(b["client_name"]).slice(0, 80) } : {}),
     });
     await this.clearPairing("pairing code redeemed");
     return json({ code: `spl_ac_${bid}_${secret}` });
@@ -926,7 +1037,14 @@ export class BridgeObject {
       if (!/^[A-Za-z0-9._~-]{43,128}$/.test(verifier) || (await sha256b64url(verifier)) !== rec.challenge) {
         return oauthError("invalid_grant", "PKCE verification failed");
       }
-      const r = await this.grant(bid, b64url(crypto.getRandomValues(new Uint8Array(12))), rec.client, resource, grantedScope(rec.scope));
+      const fam = b64url(crypto.getRandomValues(new Uint8Array(12)));
+      const r = await this.grant(bid, fam, rec.client, resource, grantedScope(rec.scope));
+      await this.state.storage.put<GrantRec>(`grant:${fam}`, {
+        kind: "connector",
+        label: (rec.name?.trim() || clientLabel(rec.client)).slice(0, 80),
+        created: this.nowS(),
+        last_used: null,
+      });
       await this.pushState("connector authorized");
       return r;
     }
@@ -946,6 +1064,7 @@ export class BridgeObject {
       }
       if (rec.exp !== null && rec.exp <= this.nowS()) return oauthError("invalid_grant", "refresh token expired");
       if (rec.client !== b["client_id"]) return oauthError("invalid_grant", "client mismatch");
+      await this.touch(rec);
       await this.state.storage.delete(`tok:${h}`);
       this.tokCache.delete(h);
       await this.state.storage.put(`used:${h}`, { fam: rec.fam, exp: rec.exp ?? this.nowS() + REFRESH_TTL_S });
@@ -955,14 +1074,23 @@ export class BridgeObject {
     return oauthError("unsupported_grant_type", "authorization_code or refresh_token");
   }
 
-  private async personalToken(label: string, bid: string, origin: string): Promise<Response> {
+  /** `/pair`: a personal token. `kind`: "app" when the Splanc app asked (it says
+   * so; an older app is recognised when it opens its first live session). */
+  private async personalToken(label: string, kind: string, bid: string, origin: string): Promise<Response> {
     const fam = b64url(crypto.getRandomValues(new Uint8Array(12)));
+    const app = kind === "app";
     const token = await this.mint("pt", bid, {
       exp: null,
       fam,
       client: "personal",
       resource: `${origin}/mcp`,
       label: label.slice(0, 80),
+    });
+    await this.state.storage.put<GrantRec>(`grant:${fam}`, {
+      kind: app ? "app" : "token",
+      label: (label.trim() || (app ? "Splanc app" : "Personal token")).slice(0, 80),
+      created: this.nowS(),
+      last_used: null,
     });
     await this.clearPairing("pairing code redeemed");
     await this.pushState("personal token issued");
@@ -972,10 +1100,25 @@ export class BridgeObject {
   private async revokeFamily(fam: string): Promise<number> {
     const dead: string[] = [];
     for (const [k, v] of await this.state.storage.list<TokRec>({ prefix: "tok:" })) if (v.fam === fam) dead.push(k);
+    if (await this.state.storage.get(`grant:${fam}`)) dead.push(`grant:${fam}`);
     for (let i = 0; i < dead.length; i += 128) await this.state.storage.delete(dead.slice(i, i + 128));
     this.tokCache.clear();
+    this.touched.delete(fam);
     this.endLive([fam]);
     return dead.length;
+  }
+
+  /** The bridge's `revoke_grant`: one paired client, as `POST /revoke` with one of
+   * its tokens would (its tokens, its live sessions; the `revoked` frame ends its
+   * LAN tickets on the bridge). Only this bridge's own socket gets here. */
+  private async revokeGrant(fam: string): Promise<void> {
+    const known = fam !== "" && (await this.grantList()).some((g) => g.id === fam);
+    if (!known) {
+      this.send({ t: "error", for: "revoke_grant", grant: fam, message: "no paired client with that id" });
+      return;
+    }
+    await this.revokeFamily(fam);
+    await this.pushState("client revoked");
   }
 
   private async revokeToken(token: string): Promise<void> {
@@ -990,11 +1133,12 @@ export class BridgeObject {
   /** Revoke every credential for this bridge (the bridge's "revoke all" button). */
   private async revokeAll(): Promise<void> {
     const keys: string[] = [];
-    for (const prefix of ["tok:", "used:", "ac:"]) {
+    for (const prefix of ["tok:", "used:", "ac:", "grant:"]) {
       for (const k of (await this.state.storage.list({ prefix })).keys()) keys.push(k);
     }
     for (let i = 0; i < keys.length; i += 128) await this.state.storage.delete(keys.slice(i, i + 128));
     this.tokCache.clear();
+    this.touched.clear();
     this.endLive(["*"]);
     await this.pushState("all credentials revoked");
   }

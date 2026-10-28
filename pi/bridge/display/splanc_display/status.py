@@ -6,7 +6,13 @@ Contract (written atomically by ``splanc-agent bridge``)::
      "relay": "<url>", "bridge_id": "...",
      "pairing": {"code": "ABCD-EFGH", "expires_at": <unix s>, "url": "<redeem url>"} | null,
      "clients": <int>, "players": [{"name": "...", "host": "...", "ok": true, ...details}],
+     "paired_clients": [{"id", "label", "kind", "created_at", "last_used_at", "live"}],
+     "paired_clients_state": "ok|offline|relay_outdated|unknown",
      "lan_ip": "...", "error": "..." | null, "updated_at": <unix s>}
+
+``clients`` counts the cloud sessions active in the last 10 minutes; the paired
+clients (a relay grant each: an AI connector, the app, a personal token) are in
+``paired_clients``, which an older bridge doesn't write (``clients_state`` "").
 
 Each player may also carry optional details (the fixture screens): ``id`` (MAC),
 ``fw``, ``room``, ``seen`` (unix s), ``session`` (live|reconnecting|none),
@@ -100,6 +106,29 @@ class Player:
         return "idle" if self.session == "none" else "connected"
 
 
+KIND_LABELS = {"connector": "AI connector", "app": "Splanc app", "token": "Personal token"}
+
+
+@dataclass(frozen=True)
+class Client:
+    """One paired client (a relay grant): what the Clients pages show."""
+
+    id: str
+    label: str
+    kind: str = ""  # connector | app | token | "" (unknown)
+    created_at: Optional[float] = None
+    last_used_at: Optional[float] = None  # None = never (since the relay kept it)
+    live: bool = False  # a live session open, or used through the relay in 10 min
+
+    @property
+    def key(self) -> str:
+        return self.id
+
+    @property
+    def kind_label(self) -> str:
+        return KIND_LABELS.get(self.kind, self.kind.capitalize() or "Client")
+
+
 @dataclass(frozen=True)
 class Pairing:
     code: str
@@ -128,6 +157,9 @@ class Status:
     lan_ip: str = ""
     error: Optional[str] = None
     updated_at: Optional[float] = None
+    paired: tuple = field(default_factory=tuple)  # Client, oldest first
+    # ok | offline (the last list heard) | relay_outdated | unknown | "" (older bridge)
+    clients_state: str = ""
 
     @property
     def label(self) -> str:
@@ -149,6 +181,16 @@ class Status:
                 return p
         return None
 
+    def client(self, key: str) -> Optional[Client]:
+        for c in self.paired:
+            if c.key == key:
+                return c
+        return None
+
+    @property
+    def clients_live(self) -> int:
+        return sum(1 for c in self.paired if c.live)
+
     def salient(self) -> tuple:
         """What counts as "something changed" for waking/undimming the screen: not
         the per-fixture last-contact times and perf numbers, which tick constantly."""
@@ -159,6 +201,8 @@ class Status:
             self.lan_ip,
             self.error,
             tuple((p.key, p.name, p.ok, p.condition) for p in self.players),
+            self.clients_state,
+            tuple((c.id, c.label, c.live) for c in self.paired),
         )
 
 
@@ -210,6 +254,20 @@ def _player(item: dict) -> Player:
     )
 
 
+def _client(item: dict) -> Optional[Client]:
+    cid = _str(item.get("id"))
+    if not cid:
+        return None
+    return Client(
+        id=cid,
+        label=_str(item.get("label")).strip() or "Unnamed client",
+        kind=_str(item.get("kind")),
+        created_at=_num(item.get("created_at")),
+        last_used_at=_num(item.get("last_used_at")),
+        live=item.get("live") is True,
+    )
+
+
 def parse(doc) -> Status:
     """A status document (already JSON-decoded) -> Status. Never raises."""
     if not isinstance(doc, dict):
@@ -226,6 +284,12 @@ def parse(doc) -> Status:
         if isinstance(item, dict):
             players.append(_player(item))
     clients = doc.get("clients")
+    paired = []
+    raw = doc.get("paired_clients")
+    for item in raw if isinstance(raw, list) else []:
+        c = _client(item) if isinstance(item, dict) else None
+        if c is not None:
+            paired.append(c)
     err = doc.get("error")
     return Status(
         state=state,
@@ -241,6 +305,8 @@ def parse(doc) -> Status:
         lan_ip=_str(doc.get("lan_ip")),
         error=err if isinstance(err, str) and err else None,
         updated_at=_num(doc.get("updated_at")),
+        paired=tuple(paired),
+        clients_state=_str(doc.get("paired_clients_state")),
     )
 
 
@@ -327,6 +393,20 @@ def fmt_ago(seconds: Optional[float]) -> str:
     if s < 86400:
         return f"{s // 3600} h ago"
     return f"{s // 86400} d ago"
+
+
+def fmt_age(seconds: Optional[float]) -> str:
+    """The short form for a list row: ``now``, ``40s``, ``5m``, ``3h``, ``2d``; ``never``."""
+    if seconds is None:
+        return "never"
+    s = int(seconds)
+    if s < 60:
+        return "now" if s < 10 else f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m"
+    if s < 86400:
+        return f"{s // 3600}h"
+    return f"{s // 86400}d"
 
 
 def fmt_bytes(n: Optional[int]) -> str:

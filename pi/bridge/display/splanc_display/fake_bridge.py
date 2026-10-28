@@ -66,6 +66,60 @@ SAMPLE_PLAYERS = [
 # Relative times in the samples (seconds before ``now``).
 _SEEN_AGO = {"Living room arch": 2, "Porch lights": 12, "Tree wrap": 340}
 
+# Paired clients (relay grants): (id, label, kind, added s ago, last used s ago | None, live).
+SAMPLE_CLIENTS = [
+    ("Qm3xT9vKa2LpRw8e", "Claude", "connector", 12 * 86400, 300, True),
+    ("Hn7cY2bWq5ZsJd1u", "Kevin's iPhone", "app", 3 * 86400, 40, True),
+    ("Vr4kP8mNt6XeGa0o", "Home Assistant script", "token", 40 * 86400, None, False),
+]
+
+CLIENT_NAMES = [
+    ("ChatGPT", "connector"),
+    ("Splanc app (Android)", "app"),
+    ("Claude Code on the web", "connector"),
+    ("Studio laptop", "app"),
+    ("curl", "token"),
+    ("A connector with a really long client name, longer than any screen", "connector"),
+]
+
+
+def make_client(i: int, now: float, used_ago=None, live: bool = False) -> dict:
+    """A made-up paired client (the ``paired_clients`` shape)."""
+    name, kind = CLIENT_NAMES[i % len(CLIENT_NAMES)]
+    if i >= len(CLIENT_NAMES):
+        name += f" {i // len(CLIENT_NAMES) + 1}"
+    return {
+        "id": f"Fk{i:02d}"
+        + "".join(random.Random(i).choice(string.ascii_letters) for _ in range(12)),
+        "label": name,
+        "kind": kind,
+        "created_at": int(now) - 3600 * (i + 1),
+        "last_used_at": None if used_ago is None else int(now) - int(used_ago),
+        "live": live,
+    }
+
+
+def sample_clients(now: float) -> list:
+    return [
+        {
+            "id": cid,
+            "label": label,
+            "kind": kind,
+            "created_at": int(now) - added,
+            "last_used_at": None if used is None else int(now) - used,
+            "live": live,
+        }
+        for cid, label, kind, added, used, live in SAMPLE_CLIENTS
+    ]
+
+
+def many_clients(now: float, n: int = 9) -> list:
+    """``n`` made-up clients for the list screens (the 6th has a very long name)."""
+    return [
+        make_client(i, now, used_ago=(i * 977) % 200000 if i % 3 else None, live=i % 4 == 0)
+        for i in range(n)
+    ]
+
 
 def _players(now: float) -> list:
     out = []
@@ -133,6 +187,8 @@ def sample(state: str, now: float, code: str = "K7QX-M2PD", **over) -> dict:
         "pairing": None,
         "clients": 0,
         "players": [],
+        "paired_clients": [],
+        "paired_clients_state": "unknown" if state in ("starting", "error") else "ok",
         "lan_ip": "192.168.1.42",
         "error": None,
         "updated_at": int(now),
@@ -147,6 +203,10 @@ def sample(state: str, now: float, code: str = "K7QX-M2PD", **over) -> dict:
         }
     if state == "paired":
         doc["clients"] = 2
+        doc["paired_clients"] = sample_clients(now)
+    if state == "offline":
+        doc["paired_clients"] = sample_clients(now)
+        doc["paired_clients_state"] = "offline"
     if state == "starting":
         doc["lan_ip"] = ""
     if state == "error":
@@ -249,6 +309,19 @@ class FakeBridge:
         if cmd == "revoke_all":
             self.set(sample("unpaired", now))
             return {"ok": True, "revoked": 2}
+        if cmd == "clients":
+            return {
+                "ok": True,
+                "state": self.doc.get("paired_clients_state", "ok"),
+                "clients": self.doc.get("paired_clients") or [],
+            }
+        if cmd == "revoke":
+            grant = req.get("grant")
+            left = [c for c in self.doc.get("paired_clients") or [] if c.get("id") != grant]
+            if len(left) == len(self.doc.get("paired_clients") or []):
+                return {"ok": False, "error": "no paired client with that id"}
+            self.set(dict(self.doc, paired_clients=left, updated_at=int(now)))
+            return {"ok": True, "revoked": grant}
         if cmd == "identify":
             return {"ok": True, "players": len(self.doc.get("players") or [])}
         return {"ok": False, "error": f"unknown command {cmd!r}"}

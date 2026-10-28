@@ -210,16 +210,25 @@ const CTL: Record<string, string> = {
   identify: "identify",
   status: "status",
   live: "live",
+  clients: "clients",
+  revoke: "revoke",
 };
 
-/** `splanc-agent bridge-ctl <new-code|revoke-all|identify|status>`: talk to a running bridge. */
+/** `splanc-agent bridge-ctl <new-code|revoke-all|identify|status|live|clients|revoke <id>>`:
+ * talk to a running bridge. */
 async function bridgeCtl(p: Parsed): Promise<number> {
   const cmd = CTL[p.positional[1] ?? ""];
   if (!cmd) throw new Error(`bridge-ctl: one of ${Object.keys(CTL).join(", ")}`);
+  const req: Record<string, unknown> = { cmd };
+  if (cmd === "revoke") {
+    const id = p.positional[2];
+    if (!id) throw new Error("bridge-ctl revoke <client id> (ids: splanc-agent bridge-ctl clients)");
+    req["grant"] = id;
+  }
   const path =
     flag(p, "control") ?? controlSocketCandidates().find((c) => existsSync(c)) ?? DEFAULT_CONTROL_PATH;
   const reply = await new Promise<string>((resolve, reject) => {
-    const c = net.connect(path, () => c.write(`${JSON.stringify({ cmd })}\n`));
+    const c = net.connect(path, () => c.write(`${JSON.stringify(req)}\n`));
     let buf = "";
     c.setEncoding("utf8");
     c.on("data", (d: string) => {

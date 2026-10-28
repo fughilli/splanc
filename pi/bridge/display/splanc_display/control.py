@@ -1,6 +1,7 @@
 """Client for the bridge's control socket (newline-delimited JSON over AF_UNIX).
 
 -> {"cmd": "new_pairing_code"} | {"cmd": "revoke_all"} | {"cmd": "identify"}
+   | {"cmd": "clients"} | {"cmd": "revoke", "grant": "<client id>"}
 <- {"ok": true, ...} | {"ok": false, "error": "..."}
 """
 
@@ -12,7 +13,7 @@ from typing import Optional
 
 from . import status as st
 
-COMMANDS = ("new_pairing_code", "revoke_all", "identify")
+COMMANDS = ("new_pairing_code", "revoke_all", "identify", "clients", "revoke")
 
 
 class ControlError(Exception):

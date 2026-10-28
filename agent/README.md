@@ -128,9 +128,9 @@ always-on LAN host (a Pi, or anything with Node 20+) and keeps an outbound WebSo
 relay, which serves it as a remote MCP endpoint, `<relay>/mcp` (Streamable HTTP, OAuth sign-in
 with the pairing code shown on the bridge, or a bearer token from `<relay>/pair`). The bridge
 writes `/run/splanc-bridge/status.json` and listens on `/run/splanc-bridge/control.sock` for
-its display (`splanc-agent bridge-ctl new-code|revoke-all|identify|status`). `splanc-agent relay`
-hosts the relay yourself (e.g. behind `tailscale funnel`). Design, wire protocol, display
-contract, threat model and free-tier budget:
+its display (`splanc-agent bridge-ctl new-code|revoke-all|identify|status|clients|revoke <id>`).
+`splanc-agent relay` hosts the relay yourself (e.g. behind `tailscale funnel`). Design, wire
+protocol, display contract, threat model and free-tier budget:
 [docs/design/cloud-relay.md](../docs/design/cloud-relay.md); user guides:
 [cloud agent](../docs/guides/cloud-agent.md), [Tailscale](../docs/guides/relay-tailscale.md).
 

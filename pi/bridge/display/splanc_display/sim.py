@@ -16,8 +16,10 @@ logo, status watcher, control client) and swaps only the hardware at its seams:
 and, for the bridge, either
 
     --bridge fake  (default) fake_bridge's FakeBridge driven by a small model
-                   (fixtures, relay up/down, pairing code, paired clients, failing
-                   commands), with every knob on the page
+                   (fixtures, relay up/down, pairing code, connected sessions,
+                   paired clients with names/kinds/last use (add, remove, toggle
+                   live, an outdated relay), failing commands), with every knob
+                   on the page; the Clients page's revoke works against it
     --bridge real  the actual ``splanc-agent bridge`` (Node) with its status file
                    and control socket in a temp dir, against a local
                    ``splanc-agent relay`` it starts (or --relay URL). Fixtures
@@ -280,6 +282,12 @@ class FakeModel(fake_bridge.FakeBridge):
         self.players: List[dict] = fake_bridge._players(now)
         self._extra = fake_bridge.many_players(now, 30)
         self._added = 0
+        # Paired clients (relay grants), the ``paired_clients`` shape; last_used_at
+        # is kept as seconds-ago (like _ago) so it stays fresh across heartbeats.
+        self.paired_list: List[dict] = []
+        self._used_ago: Dict[str, Optional[float]] = {}
+        self._client_n = 0
+        self.relay_outdated = False
         self._hb_stop = threading.Event()
         self._hb: Optional[threading.Thread] = None
         self._ago: Dict[str, float] = {}  # player key -> seconds since seen
@@ -314,6 +322,16 @@ class FakeModel(fake_bridge.FakeBridge):
                 p["perf"] = dict(p["perf"], at=int(now) - 3)
             players.append(p)
         pairing = self.pairing if state == "pairing" else None
+        clients = []
+        for c in self.paired_list:
+            ago = self._used_ago.get(c["id"])
+            clients.append(dict(c, last_used_at=None if ago is None else int(now - ago)))
+        if self.relay_outdated:
+            cstate, clients = "relay_outdated", []
+        elif self.phase != "running":
+            cstate, clients = "unknown", []
+        else:
+            cstate = "ok" if self.relay_up else "offline"
         error = None
         if state == "error":
             error = "relay rejected this bridge (bad credentials) - run: splanc-bridge logs"
@@ -325,6 +343,8 @@ class FakeModel(fake_bridge.FakeBridge):
             players=players,
             pairing=pairing,
             clients=self.clients if state in ("paired", "pairing") else 0,
+            paired_clients=clients,
+            paired_clients_state=cstate,
             error=error,
         )
 
@@ -379,9 +399,29 @@ class FakeModel(fake_bridge.FakeBridge):
             self.publish()
             return {"ok": True, "code": code}
         if cmd == "revoke_all":
-            n, self.paired, self.clients = self.clients, False, 0
+            n = max(self.clients, len(self.paired_list))
+            self.paired, self.clients, self.paired_list = False, 0, []
             self.publish()
             return {"ok": True, "revoked": n}
+        if cmd == "clients":
+            doc = self.build()
+            return {
+                "ok": True,
+                "state": doc["paired_clients_state"],
+                "clients": doc["paired_clients"],
+            }
+        if cmd == "revoke":
+            if self.relay_outdated:
+                return {"ok": False, "error": "the client list needs a relay update"}
+            grant = req.get("grant")
+            hit = [c for c in self.paired_list if c["id"] == grant]
+            if not hit:
+                return {"ok": False, "error": "no paired client with that id"}
+            self.paired_list = [c for c in self.paired_list if c["id"] != grant]
+            if not self.paired_list:
+                self.paired = self.clients > 0
+            self.publish()
+            return {"ok": True, "revoked": grant, "label": hit[0]["label"]}
         return {"ok": False, "error": f"unknown command {cmd!r}"}
 
     # --- knobs (the page's bridge panel) ----------------------------------------------
@@ -405,7 +445,25 @@ class FakeModel(fake_bridge.FakeBridge):
                 {"key": self._key(p), "name": p["name"], "ok": bool(p.get("ok"))}
                 for p in self.players
             ],
+            "relay_outdated": self.relay_outdated,
+            "paired_clients": [
+                {
+                    "id": c["id"],
+                    "label": c["label"],
+                    "kind": c["kind"],
+                    "live": bool(c.get("live")),
+                    "used_ago": self._used_ago.get(c["id"]),
+                }
+                for c in self.paired_list
+            ],
         }
+
+    def _add_client(self, now: float, used_ago=None, live: bool = True) -> None:
+        c = fake_bridge.make_client(self._client_n, now, used_ago=used_ago, live=live)
+        self._client_n += 1
+        c.pop("last_used_at", None)
+        self.paired_list.append(c)
+        self._used_ago[c["id"]] = used_ago
 
     def act(self, action: str, arg=None) -> None:
         now = time.time()
@@ -419,6 +477,7 @@ class FakeModel(fake_bridge.FakeBridge):
             self.paired = bool(arg)
             if not self.paired:
                 self.clients = 0
+                self.paired_list = []
         elif action == "clients":
             self.clients = max(0, int(arg))
             if self.clients:
@@ -474,6 +533,31 @@ class FakeModel(fake_bridge.FakeBridge):
                     p.pop("error", None)
                     self._ago[arg] = 1
                 self.players[i] = p
+        elif action == "client_add":  # a new pairing, in use right now
+            self._add_client(now, used_ago=1, live=True)
+            self.paired = True
+        elif action == "client_remove":  # revoked elsewhere (the app, POST /revoke)
+            self.paired_list = [c for c in self.paired_list if c["id"] != arg]
+        elif action == "client_live":  # toggle: in use now / idle since 2 h
+            for c in self.paired_list:
+                if c["id"] == arg:
+                    c["live"] = not c.get("live")
+                    self._used_ago[arg] = 1 if c["live"] else 7200
+        elif action == "client_list":  # presets: sample | many | none | outdated
+            if arg == "outdated":
+                self.relay_outdated = not self.relay_outdated
+            else:
+                self.paired_list, self._used_ago = [], {}
+                for c in (
+                    fake_bridge.sample_clients(now)
+                    if arg == "sample"
+                    else fake_bridge.many_clients(now, 12) if arg == "many" else []
+                ):
+                    u = c.pop("last_used_at")
+                    self._used_ago[c["id"]] = None if u is None else now - u
+                    self.paired_list.append(c)
+                if self.paired_list:
+                    self.paired = True
         elif action == "fixtures":  # preset lists
             self.players = (
                 []

@@ -1,8 +1,8 @@
 # Cloud relay + LAN bridge
 
 Status: implemented (relay Worker `agent/relay/`, bridge `agent/src/bridge/`, Node host
-`agent/src/relayHost.ts`). Tests: `//agent:relay_test`, `//agent:lanbridge_test`,
-`//agent:relay_e2e_test`.
+`agent/src/relayHost.ts`). Tests: `//agent:relay_test`, `//agent:relay_clients_test`,
+`//agent:lanbridge_test`, `//agent:relay_e2e_test`.
 
 ## Problem
 
@@ -107,16 +107,18 @@ possession). The relay picks a random 20-character base32 bridge id.
 
 | Direction | Frame | Meaning |
 | --- | --- | --- |
-| relay → bridge | `{"t":"hello","v":1,"bridge_id","relay","mcp_url","credentials","pairing"}` | Sent on connect. |
+| relay → bridge | `{"t":"hello","v":1,"bridge_id","relay","mcp_url","credentials","pairing","grants"}` | Sent on connect. `grants` (the [paired clients](#paired-clients)) is absent from an older relay. |
 | relay → bridge | `{"t":"state","credentials","pairing","reason"}` | Credentials or pairing changed. |
 | relay → bridge | `{"t":"req","id","method","headers","body"}` | One tunnelled HTTP request. |
 | relay → bridge | `{"t":"cancel","id"}` | The client went away (or the 10 min timeout hit). |
-| relay → bridge | `{"t":"error","for","message"}` | A bridge request failed (e.g. `new_code` rate-limited). |
+| relay → bridge | `{"t":"error","for","grant"?,"message"}` | A bridge request failed (e.g. `new_code` rate-limited; `revoke_grant` of an unknown id, with that `grant`). |
 | bridge → relay | `{"t":"res","id","status","headers","body","end":true}` | A whole reply in ONE message. |
 | bridge → relay | `{"t":"res",...}` then `{"t":"chunk","id","data"}`… `{"t":"end","id"}` | A streamed (SSE) reply. |
 | bridge → relay | `{"t":"new_code"}` / `{"t":"revoke_all"}` | Pairing control from the bridge's local API. |
 | bridge → relay | `ping` (plain text) | Liveness fallback; auto-answered `pong` without waking the object. |
-| bridge → relay | `{"t":"caps","live":1}` | After `hello`: this bridge speaks the live protocol (else `/live` answers `501`). |
+| bridge → relay | `{"t":"caps","live":1,"grants":1}` | After `hello`: this bridge speaks the live protocol (else `/live` answers `501`); `grants`: it keeps the client list (send it `grants` frames). |
+| bridge → relay | `{"t":"list_grants"}` / `{"t":"revoke_grant","grant"}` | Send the client list now / revoke one paired client ([Paired clients](#paired-clients)). |
+| relay → bridge | `{"t":"grants","grants":[…],"reason"?}` | The client list: after `caps` with `grants`, on `list_grants`, and on every change (pairing, revoke, a last-used write). Only to a bridge whose `caps` asked. |
 | both | `{"t":"live","c","d"}` / `{"t":"live_close","c",…}` | One live-protocol message for app connection `c`, verbatim / its end ([live-vj-relay.md](live-vj-relay.md)). |
 | relay → bridge | `{"t":"live_open","c","label","grant"}` / `{"t":"revoked","grants"}` | An app opened a live session (re-sent after a reconnect) / these grants were revoked. |
 
@@ -172,9 +174,55 @@ Bridges pair headlessly with a short code shown on the bridge's display.
   request to the right Durable Object; the hash is checked there.
 - **Refresh reuse detection**: a rotated-out refresh token is remembered (as a hash); if it is
   ever presented again, the whole grant is revoked (someone holds a copy).
-- **Revocation**: `POST /revoke` (one grant), or `revoke_all` from the bridge (every credential
-  for that bridge; the display's "revoke all" button). Live MCP sessions on the bridge are
-  dropped too.
+- **Revocation**: `POST /revoke` (one grant, by its token holder), `revoke_grant` from the bridge
+  (one grant by id: the display's Clients page, `splanc-bridge revoke <id>`), or `revoke_all`
+  from the bridge (every credential for that bridge; the display's "revoke all" button). Live MCP
+  sessions on the bridge are dropped too.
+
+## Paired clients
+
+Every credential belongs to a **grant** (one pairing: an OAuth connector's access + refresh
+tokens, rotated together, or one personal token). The relay keeps a little metadata per grant so
+the bridge can list its clients and revoke them one at a time.
+
+**Record**: `grant:<id>` in the bridge's `BridgeObject` storage (a new key in the existing class:
+no Durable Object migration), `{kind, label, created, last_used}`:
+
+| Field | Meaning |
+| --- | --- |
+| id | The grant id (the tokens' `fam`): 12 random bytes, base64url. Opaque, not a credential. |
+| `kind` | `connector` (OAuth), `app` (the Splanc app: its `/pair` says `client: "app"`, or the grant opened a live session, which only the app does), `token` (any other personal token). |
+| `label` | The OAuth client's name (from its registration, passed with the authorization code), the app's device name, or the personal token's `label`; else "Personal token" / the client's host. |
+| `created` | Unix seconds of the pairing. |
+| `last_used` | Unix seconds of the last MCP request, live session or refresh; `null` until then. |
+
+A grant from before these records is listed from its tokens (label, `connector`/`token`, the
+oldest token's time, never used) and gets a record when it is next used. Records whose tokens are
+all gone (expired, revoked) are purged with the tokens, so the list and `credentials` agree.
+
+**Last used** is written at most once per `LAST_USED_WRITE_S` (60 s) per grant: the first use in
+a wake period reads the record (one row), and writes it only if the stored time is a minute old;
+later uses in the same minute touch nothing. Each write also pushes a `grants` frame to the
+bridge (outgoing messages are free).
+
+**Frames**: the list rides in `hello` (every bridge gets it; an older bridge ignores the field)
+and in `grants` frames, which only a bridge whose `caps` said `grants: 1` receives.
+`revoke_grant {grant}` runs the same path as `POST /revoke`: every token of the grant is deleted
+(access, refresh, personal; a later refresh with it is `invalid_grant`), its live sockets close
+with `4003`, the bridge gets `revoked {grants: [id]}` (it ends that grant's live sessions and LAN
+tickets), then `state` and `grants`. An unknown id gets `error {for: "revoke_grant", grant}`.
+
+**Authorization**: listing and revoking are bridge-socket frames, so only the bridge's own
+signed connection can send them, and they act on that bridge's Durable Object only (another
+bridge naming the id gets "unknown"). A live (app) socket's messages are passed through verbatim
+as `live` frames and never interpreted as control frames.
+
+**Compatibility**: an old bridge on a new relay gets `grants` only inside `hello` (ignored). A new
+bridge on an old relay sends `caps` with `grants: 1` (ignored), sees no `grants` in `hello`, and
+reports `paired_clients_state: "relay_outdated"`: the display says the client list needs a relay
+update, and `revoke` explains that instead of sending a frame the relay can't read. Old apps keep
+working: `/pair` without `client` makes a `token` grant, which becomes `app` on its first live
+session.
 
 Client registration is stateless: a DCR client id is
 `dcr.<b64url {redirect_uris, name, auth method}>.<HMAC>`; a confidential client's secret is an
@@ -197,6 +245,8 @@ The bridge writes the status file **atomically** (temp file in the same director
 {"v":1,"state":"starting|offline|unpaired|pairing|paired|error","relay":"<url>","bridge_id":"…",
  "pairing":{"code":"ABCD-EFGH","expires_at":<unix s>,"url":"<redeem url>"}|null,
  "clients":<int connected cloud sessions>,"players":[{"name":"…","host":"…","ok":true, …details}],
+ "paired_clients":[{"id","label","kind","created_at","last_used_at","live"}],
+ "paired_clients_state":"ok|offline|relay_outdated|unknown",
  "lan_ip":"…","error":"…"|null,"updated_at":<unix s>}
 ```
 
@@ -209,6 +259,8 @@ The bridge writes the status file **atomically** (temp file in the same director
 | `clients` | MCP sessions active in the last 10 minutes. |
 | `players` | Every player the hub knows; `ok` = a session is open or it answered discovery in the last 15 min. |
 | `players[]` details | Optional, omitted when unknown (still contract v1; the OLED's fixture screens read them): `id` (MAC), `fw`, `room`, `seen` (unix s of the last message or discovery answer), `session` (`live`, `reconnecting`, `none`), `error` (why it's unreachable or refused), `leds` + `leds_src` (`configured`, or `map` when no channel count is set: the stored map's count, as `agent/src/channels.ts`), `effect` (the running effect's id when the bridge knows it), `perf` (`fps`, `budget_used`, `overruns`, `lagging`, `heap_free`, `at`: the newest perf report / fps_state the bridge holds, from `measure_effect` or the player's own pushes). The bridge reads each player's hardware config once per session for `leds` (plus its stored map only when no channel is configured); everything else is what it already holds. No certificate pins or tokens. |
+| `paired_clients` | Optional in contract v1 (added later; a display treats it as absent on an older bridge). Every paired client ([Paired clients](#paired-clients)), oldest first: `id` (grant id), `label`, `kind` (`connector`, `app`, `token`), `created_at`, `last_used_at` (unix s or `null`), `live` (a live session is open, or it was used through the relay in the last 10 min). No tokens. |
+| `paired_clients_state` | `ok`: the relay's current list. `offline`: the last list it sent (the relay is unreachable). `relay_outdated`: the relay keeps no list (the list stays empty). `unknown`: not connected yet. |
 | `lan_ip` | The bridge's first non-loopback IPv4 address. |
 | `error` | Last connection error while `offline`, the fatal error in `error`, else `null`. |
 | `updated_at` | Unix seconds of this write. |
@@ -223,9 +275,13 @@ display service in the bridge user's group). Newline-delimited JSON, one reply l
 | `{"cmd":"revoke_all"}` | `{"ok":true,"revoked":<n>}` once the relay confirms; live sessions are dropped. |
 | `{"cmd":"identify"}` | Blinks every known fixture (brightness dips 3×, then restored): `{"ok":true,"players":<n>,"results":[…]}`. |
 | `{"cmd":"status"}` | `{"ok":true,"status":<the status object>}` (extra; same as the file). |
+| `{"cmd":"clients"}` | `{"ok":true,"state":<paired_clients_state>,"clients":[…]}` (plus a `note` when the relay is outdated). |
+| `{"cmd":"revoke","grant":"<id>"}` | Revokes one client by id, or by a unique prefix of ≥ 4 characters: `{"ok":true,"revoked":<id>,"label"}` once the relay confirms (`revoked` frame); `{"ok":false,"error"}` for an unknown id, offline, or an outdated relay. |
 | anything else | `{"ok":false,"error":"unknown cmd …"}` |
 
-`splanc-agent bridge-ctl new-code|revoke-all|identify|status` is a CLI over the same socket.
+`splanc-agent bridge-ctl new-code|revoke-all|identify|status|live|clients|revoke <id>` is a CLI
+over the same socket; on the Pi, `splanc-bridge clients` and `splanc-bridge revoke <id>` print
+and ask the same.
 
 ## Effects library
 
@@ -336,13 +392,15 @@ Costs per action:
 
 | Action | Worker req | DO req | Rows R / W |
 | --- | --- | --- | --- |
-| One MCP message (`POST /mcp`) | 1 | 1 + 1/20 (the bridge's reply) | ≤ 1 / 0 |
+| One MCP message (`POST /mcp`) | 1 | 1 + 1/20 (the bridge's reply) | ≤ 2 / ≤ 1 (the grant's last-used: read once per wake, written at most once a minute) |
 | Unauthenticated `/mcp` probe | 1 | 0 | 0 / 0 |
-| Bridge connect | 1 | 1 | 2 + #tokens / 0–1 |
+| Bridge connect | 1 | 1 | 2 + #tokens + #grants / 0–1 |
+| Client list (`list_grants`, after `caps`, on a change) | 0 | 1/20 when the bridge asks; 0 when pushed | #tokens + #grants / 0 |
+| Revoke one client (`revoke_grant`) | 0 | 1/20 + 1 | ~2 × (#tokens + #grants) / #its tokens + 1 |
 | Idle bridge, per day | 0 | ~0 (pings are free; reconnects 1 each) | 0 / 0 |
 | New pairing code | 0 | 1/20 + 1 | 4 / 3 |
 | Full OAuth connect (register, authorize ×2, token) | 4 | ~6 | ~10 / ~8 |
-| Token refresh (daily per client) | 1 | 2 | 3 / 3 |
+| Token refresh (daily per client) | 1 | 2 | 4 / 3–4 |
 | Library tool call (search, get, save, …) | 1 | 1 (no bridge message) | first per wake: #entries; then 0–1 / 0–2 |
 | Library bookkeeping on a deploy / measure through the relay | 0 (same request) | 0 | first per wake: #entries / 1–3 |
 
@@ -360,7 +418,9 @@ For a household doing a few sessions a day (~40 GB-s), one free account serves a
 bridges. The design choices that keep it there: quick replies coalesced into one message, `405` on
 `GET /mcp`,
 hibernatable bridge sockets with free pings, `401`s answered without a Durable Object, no
-per-request storage writes, and token checks cached per wake period. The effects library adds
+per-request storage writes (a client's last-used time is written at most once a minute: a
+client in continuous use writes 1,440 rows/day, 1.4 % of the 100 k daily row writes; a typical
+few-sessions-a-day household a handful), and token checks cached per wake period. The effects library adds
 no Worker requests and no socket messages: its calls are answered inside the one Durable Object
 request, its index (≤ 500 small rows) is read once per wake, and a save writes two rows.
 
@@ -395,17 +455,17 @@ bridge sits on; the bridge's identity key; the relay's free-tier budget.
 | --- | --- | --- |
 | Guessing a pairing code | 40-bit codes, 10 min, single use; ≤ 10 failures per IP per 10 min; ≤ 300 failures per 10 min globally, checked before lookup | With N live codes, a guesser at the global ceiling wins with probability 300·N/2⁴⁰ per 10 min (N = 10: ~10⁻⁴ per year) |
 | Burning the global failure budget | — | A determined attacker can block pairing for everyone in 10-min windows (retry later; self-host) |
-| Someone near the display reads the code | Codes show only while unpaired (first hour) or on a button press; `clients` on the display; revoke-all button | Physical presence + 10 min = can pair; that is the trust model of a code on a screen |
+| Someone near the display reads the code | Codes show only while unpaired (first hour) or on a button press; every paired client listed on the display with its last use; revoke one client, or all | Physical presence + 10 min = can pair; that is the trust model of a code on a screen |
 | Consent phishing (attacker sends the user an authorize link for the attacker's client) | Consent page names the client and the redirect host, warns on loopback redirects; the user has to type a code from their own device | Like any device-code flow, a user who types the code into an attacker's page grants the attacker access |
 | Stolen access token | 24 h lifetime; hashes only at rest; revocable per grant or all at once | Valid until revoked or expired |
 | Stolen refresh token | Rotation on every use; reuse of a rotated token revokes the grant | The thief wins if they use it first and the user never refreshes again |
-| Stolen personal token | Never expires by design (headers-only clients); revoke-all | User-managed |
+| Stolen personal token | Never expires by design (headers-only clients); listed on the bridge with its last use; revoke it alone, or all | User-managed |
 | Token passthrough / confused deputy | Tokens are audience-bound to `<relay>/mcp` (RFC 8707 `resource` checked); `Authorization` is never forwarded to the bridge | — |
 | Bridge impersonation | Ed25519 key on the bridge (file mode 0600); signed timestamps (±300 s) on connect | A captured connect header (TLS makes that hard) replays for 5 min, which only reconnects the real bridge |
 | Relay operator / Cloudflare | The relay holds no device keys, Wi-Fi credentials or certificate pins; it sees MCP traffic: tool arguments and results (effect source, fixture maps, player names and LAN addresses) | A malicious relay can drive the lights as any connected agent could. Self-host to remove it |
 | Bridge as a LAN pivot | The bridge speaks only the hub's MCP tools; no arbitrary HTTP | `add_player` / `refresh_players` make the bridge TCP-probe :443 and GET `/.well-known/splanc.json` on hosts an agent names, and sweep its local /24s |
 | Prompt-injected or careless cloud agent | The tool surface is bounded (no re-flash/re-map; `set_device_name` and `delete_keypoint` are confirm-gated by the skill) | Lights can be set to anything the effect engine can do |
-| Local users | Control socket mode 0660; status file world-readable (no secrets in it) | Anyone in the bridge's group can mint codes and revoke |
+| Local users | Control socket mode 0660; status file world-readable (no secrets in it: client labels and grant ids, never tokens) | Anyone in the bridge's group can mint codes and revoke |
 | Consent page injection / clickjacking | Every value escaped; CSP `default-src 'none'`, `frame-ancestors 'none'`; no scripts | — |
 | SSRF via Client ID Metadata Documents | Only https URLs with a path; 5 s, 16 KiB, no redirects; Workers can't reach private networks | The relay can be made to fetch public URLs (rate-bound by `/authorize` use) |
 | Library abuse (a paired agent filling it) | Size caps per entry and per installation (500 entries, 8 MB); private per bridge, so nothing one user stores reaches another | A paired agent can fill or delete its own user's library |
@@ -423,6 +483,11 @@ them), and the bridge host's own security.
   page, PKCE, single-use codes, confidential clients, tampered client ids, CIMD), refresh
   rotation + reuse detection, `/pair`, RFC 7009, revoke-all, offline `503`, `405` GET, in-flight
   requests failing fast when the bridge drops, no token passthrough, hashes-only storage.
+- `//agent:relay_clients_test`: the paired-client list (in `hello`, `grants` frames only for a
+  bridge that asked, labels and kinds for connectors, the app and personal tokens, grants from
+  before grant records), last-used throttling (one write per minute, refresh counts, pushes),
+  `revoke_grant` (access and refresh tokens refused, live sockets closed, other grants
+  untouched, unknown ids), and that another bridge or an app socket can't list or revoke.
 - `//agent:library_test`: the library on its own and in the stdio/CLI server: validation and
   caps, search ranking, LRU eviction (saved entries never), dedupe by source hash, duplicate
   lineage, deploy accumulation and perf, the seed examples, the uniform reader against the real
@@ -434,7 +499,8 @@ them), and the bridge host's own security.
   the offline relay session (a real SDK client) and its `404` once the bridge is back, one
   library per bridge. `relay_e2e_test` deploys a library entry through the real bridge.
 - `//agent:lanbridge_test`: the display contract (every field, states, atomic writes), every
-  control command, reconnect after a dropped socket, `offline` during a relay outage, recovery
+  control command (`clients`, `revoke` by id or prefix), an older relay (`relay_outdated`, revoke
+  refused with the reason), reconnect after a dropped socket, `offline` during a relay outage, recovery
   with the same bridge id and credentials after a relay restart.
 - `//agent:relay_e2e_test`: the MCP SDK's Streamable HTTP client (as a connector) → relay →
   bridge → hub → two fake players; the pairing code read from the status file; tools, resources,

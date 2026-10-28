@@ -72,6 +72,26 @@ export interface Pairing {
 
 // -- relay -> bridge -----------------------------------------------------------------
 
+/** One paired client as the relay tells its bridge (docs/design/cloud-relay.md,
+ * "Paired clients"): a grant, i.e. every token one pairing produced. No secrets. */
+export interface GrantInfo {
+  /** The grant id (opaque, stable): what `revoke_grant` names. */
+  id: string;
+  /** The OAuth client's name, the app's device name, or the personal token's label. */
+  label: string;
+  /** `connector` = an OAuth (custom connector) client; `app` = the Splanc app;
+   * `token` = a personal bearer token from /pair. */
+  kind: GrantKind;
+  /** Unix seconds. */
+  created_at: number;
+  /** Unix seconds of the last MCP call, live session or refresh through the relay
+   * (written at most once a minute per grant); null = not used since the relay
+   * started keeping it. */
+  last_used_at: number | null;
+}
+
+export type GrantKind = "connector" | "app" | "token";
+
 export interface HelloFrame {
   t: "hello";
   v: number;
@@ -82,6 +102,9 @@ export interface HelloFrame {
   /** Live credentials (OAuth grants + personal tokens) for this bridge. */
   credentials: number;
   pairing: Pairing | null;
+  /** Every paired client (a relay with per-client management; an older relay
+   * leaves it out, and a bridge then says the list needs a relay update). */
+  grants?: GrantInfo[];
 }
 
 export interface StateFrame {
@@ -109,7 +132,20 @@ export interface ErrorFrame {
   t: "error";
   /** The bridge request this answers, if any. */
   for?: string;
+  /** For `revoke_grant`: the grant it named. */
+  grant?: string;
   message: string;
+}
+
+/** relay -> bridge: the paired clients, after `caps` with `grants: 1`, on a
+ * `list_grants`, and whenever the list changes (a pairing, a revoke, a refresh
+ * token reuse) or a client's last-used time is written (at most once a minute
+ * per client). Never sent to a bridge that didn't ask for it in `caps`. */
+export interface GrantsFrame {
+  t: "grants";
+  grants: GrantInfo[];
+  /** What changed, for the bridge's log. */
+  reason?: string;
 }
 
 // -- live sessions (docs/design/live-vj-relay.md) --------------------------------------
@@ -178,7 +214,8 @@ export type RelayFrame =
   | LiveOpenFrame
   | LiveFrame
   | LiveCloseFrame
-  | RevokedFrame;
+  | RevokedFrame
+  | GrantsFrame;
 
 // -- bridge -> relay -----------------------------------------------------------------
 
@@ -217,6 +254,22 @@ export interface RevokeAllFrame {
 export interface CapsFrame {
   t: "caps";
   live?: number;
+  /** 1 = this bridge keeps the paired-client list: send it `grants` frames. */
+  grants?: number;
+}
+
+/** bridge -> relay: send the paired-client list now (a `grants` frame). */
+export interface ListGrantsFrame {
+  t: "list_grants";
+}
+
+/** bridge -> relay: revoke one paired client: all its tokens (access, refresh,
+ * personal), its live sessions and (on the bridge) its LAN tickets, the same as
+ * `POST /revoke` with one of its tokens. Answered by `revoked` {grants: [grant]}
+ * then a `grants` frame, or `error` {for: "revoke_grant", grant} when unknown. */
+export interface RevokeGrantFrame {
+  t: "revoke_grant";
+  grant: string;
 }
 
 export type BridgeFrame =
@@ -226,5 +279,7 @@ export type BridgeFrame =
   | NewCodeFrame
   | RevokeAllFrame
   | CapsFrame
+  | ListGrantsFrame
+  | RevokeGrantFrame
   | LiveFrame
   | LiveCloseFrame;
