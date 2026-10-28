@@ -132,3 +132,89 @@ def test_ctl_status_and_commands(bridge, monkeypatch, capsys):
     assert ctl.main(["revoke-all"]) == 2  # no tty, no --yes: refuses
     assert ctl.main(["revoke-all", "--yes"]) == 0
     assert bridge.commands == ["new_pairing_code", "revoke_all"]
+
+
+def test_boot_animation_plays_then_idle_draws_nothing(bridge, tmp_path, buttons, clock):
+    from PIL import Image
+    from splanc_display import boot
+
+    frames = boot.BootFrames([Image.new("1", (128, 64), v) for v in (0, 255)], fps=10)
+    bridge.set(fake_bridge.sample("paired", time.time()))
+    app = main.App(
+        hdmi="off",
+        oled="png:" + str(tmp_path / "o.png"),
+        clock=clock,
+        status_path=bridge.status_path,
+        control_path=bridge.control_path,
+        button_factory=buttons,
+        boot_frames=frames,
+    )
+    wait = app.step()
+    assert app.ui.view().page == "boot" and wait == pytest.approx(app.frame_interval())
+    assert app.frame_interval() >= 1 / main.MAX_FPS
+    clock.advance(0.25)  # past the logo: the hand-off slide runs
+    app.step()
+    assert app.ui.view().slide is not None
+    clock.advance(1.0)
+    assert app.step() == main.IDLE_TICK  # settled: back to the idle poll
+    n = app.oled.frames
+    for _ in range(5):
+        app.step()  # nothing changed (same second): no redraw, no SPI traffic
+    assert app.oled.frames == n
+
+
+def test_press_wakes_the_loop_and_slides(bridge, tmp_path, buttons, clock):
+    bridge.set(fake_bridge.sample("paired", time.time()))
+    app = main.App(
+        hdmi="off",
+        oled="png:" + str(tmp_path / "o.png"),
+        clock=clock,
+        status_path=bridge.status_path,
+        control_path=bridge.control_path,
+        button_factory=buttons,
+        boot_frames=None,
+    )
+    app.step()
+    assert not app.wake.is_set()
+    buttons.by_pin[KEY_PINS["right"]].press()
+    assert app.wake.is_set()  # the run loop's wait ends at once
+    assert app.step() == pytest.approx(app.frame_interval())  # animating: frame pacing
+    assert app.ui.view().page == "qr" and app.ui.view().slide is not None
+
+
+def test_frame_interval_backs_off_on_a_slow_panel(bridge, tmp_path, clock):
+    app = main.App(
+        hdmi="off", oled="off", clock=clock, status_path=bridge.status_path, boot_frames=None
+    )
+    app.frame_cost = 0.005
+    assert app.frame_interval() == pytest.approx(1 / main.MAX_FPS)
+    app.frame_cost = 0.040  # a slow Pi: keep drawing to half a core
+    assert app.frame_interval() == pytest.approx(0.040 / main.FRAME_CPU_SHARE)
+
+
+def test_fixture_list_follows_the_status(bridge, tmp_path, buttons, clock):
+    doc = fake_bridge.sample("paired", time.time())
+    doc["players"] = fake_bridge.many_players(time.time(), 6)
+    bridge.set(doc)
+    app = main.App(
+        hdmi="off",
+        oled="png:" + str(tmp_path / "o.png"),
+        clock=clock,
+        status_path=bridge.status_path,
+        control_path=bridge.control_path,
+        button_factory=buttons,
+        boot_frames=None,
+    )
+    app.step()
+    press = lambda k: (buttons.by_pin[KEY_PINS[k]].press(), app.step())  # noqa: E731
+    press("right")
+    press("right")
+    press("down")
+    press("press")
+    v = app.ui.view()
+    assert v.page == "detail" and v.key == doc["players"][1]["id"]
+    # The fixture vanishes from the bridge's list: back to the list.
+    doc["players"] = [p for p in doc["players"] if p["id"] != v.key]
+    doc["updated_at"] += 1
+    bridge.set(doc)
+    assert drain(app, lambda: app.ui.view().page == "players")

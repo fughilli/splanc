@@ -25,6 +25,9 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { toolCalls, toolFailure } from "../../relay/src/mcpLibrary";
 import type { Pairing, RelayFrame, ReqFrame, ResFrame } from "../../relay/src/protocol";
 import type { Hub } from "../hub";
+import type { PlayerRecord } from "../registry";
+import type { DeviceSession } from "../session";
+import { trusted } from "../trust";
 import type { ProgressSink } from "../progress";
 import type { BugFilingOptions } from "../bugs";
 import { createServer } from "../server";
@@ -38,6 +41,33 @@ export const DEFAULT_CONTROL_PATH = "/run/splanc-bridge/control.sock";
 
 export type BridgeState = "starting" | "offline" | "unpaired" | "pairing" | "paired" | "error";
 
+/** One fixture in the status file. `name`/`host`/`ok` are contract v1's; the rest
+ * (added for the OLED's fixture screens) are optional and omitted when unknown.
+ * No secrets: the id is the player's MAC, never a certificate pin or token. */
+export interface BridgePlayer {
+  name: string;
+  host: string;
+  ok: boolean;
+  /** The player's MAC (absent until a Welcome named it). */
+  id?: string;
+  fw?: string;
+  room?: string;
+  /** Unix seconds the bridge last heard from it (session traffic or a discovery answer). */
+  seen?: number;
+  /** The bridge's /ws session: open, reconnecting by itself, or none. */
+  session?: "live" | "reconnecting" | "none";
+  /** Why it is unreachable / refused (absent while fine). */
+  error?: string;
+  /** LEDs it renders: the configured count, else the stored map's (channels.ts). */
+  leds?: number;
+  leds_src?: "configured" | "map";
+  /** The running effect's id, when this bridge knows it. */
+  effect?: string;
+  /** The newest perf numbers the bridge holds (measure_effect / a perf report /
+   * fps_state); `at` = unix seconds they arrived. */
+  perf?: { fps?: number; budget_used?: number; overruns?: number; lagging?: boolean; heap_free?: number; at: number };
+}
+
 /** The status file (contract v1; docs/design/cloud-relay.md "Display contract"). */
 export interface BridgeStatus {
   v: 1;
@@ -46,7 +76,7 @@ export interface BridgeStatus {
   bridge_id: string;
   pairing: Pairing | null;
   clients: number;
-  players: { name: string; host: string; ok: boolean }[];
+  players: BridgePlayer[];
   lan_ip: string;
   error: string | null;
   updated_at: number;
@@ -78,6 +108,8 @@ export interface LanBridgeOptions {
   live?: { stateDir?: string; port?: number; host?: string; advertise?: string };
   /** file_bug's direct filing (signed as this bridge; passed to createServer). */
   bugs?: BugFilingOptions;
+  /** Read each connected player's LED count once for the display (default true). */
+  details?: boolean;
 }
 
 interface Session {
@@ -126,6 +158,10 @@ export class LanBridge {
   readonly live: LiveMux;
   private readonly tickets: LanTickets | null;
   private lan: LiveLan | null = null;
+  /** Sessions whose LED count has been asked for (once each; see loadDetails). */
+  private readonly detailed = new WeakSet<DeviceSession>();
+  /** Each player's last-known LED count, kept when its session goes away. */
+  private readonly knownLeds = new Map<string, { leds: number; source: "configured" | "map" }>();
 
   constructor(private readonly opts: LanBridgeOptions) {
     this.link = opts.link;
@@ -161,7 +197,12 @@ export class LanBridge {
     this.link.onFrame = (f) => this.onFrame(f);
     this.link.start();
     const hb = this.opts.heartbeatMs ?? 30_000;
-    this.timers.push(setInterval(() => this.writeStatus(), Math.max(1000, Math.min(hb, 5000))));
+    this.timers.push(
+      setInterval(() => {
+        void this.loadDetails();
+        this.writeStatus();
+      }, Math.max(1000, Math.min(hb, 5000))),
+    );
     this.timers.push(setInterval(() => this.sweepSessions(), 60_000));
     const refresh = this.opts.refreshMs ?? 5 * 60_000;
     if (refresh > 0) {
@@ -184,6 +225,7 @@ export class LanBridge {
         this.writeStatus();
         await this.opts.hub.warm();
         this.writeStatus();
+        void this.loadDetails();
       },
       (e: Error) => this.log(`discovery: ${e.message}`),
     );
@@ -232,15 +274,64 @@ export class LanBridge {
       bridge_id: l.bridgeId ?? "",
       pairing,
       clients: [...this.sessions.values()].filter((s) => nowMs - s.last < CLIENT_WINDOW_MS).length,
-      players: this.opts.hub.registry.list().map((p) => ({
-        name: p.name,
-        host: p.host,
-        ok: this.opts.hub.isConnected(p.id) || (p.lastSeen > 0 && nowMs - p.lastSeen < 15 * 60_000),
-      })),
+      players: this.opts.hub.registry.list().map((p) => this.playerStatus(p, nowMs)),
       lan_ip: lanIp(),
       error: this.fatal ?? (this.stopping ? "bridge stopped" : state === "offline" ? l.lastError : null),
       updated_at: Math.floor(nowMs / 1000),
     };
+  }
+
+  /** One fixture's entry: the registry record, plus what its open session already
+   * holds (no device round trips here: this runs every few seconds). */
+  private playerStatus(p: PlayerRecord, nowMs: number): BridgePlayer {
+    const hub = this.opts.hub;
+    const out: BridgePlayer = {
+      name: p.name,
+      host: p.host,
+      ok: hub.isConnected(p.id) || (p.lastSeen > 0 && nowMs - p.lastSeen < 15 * 60_000),
+    };
+    if (!p.id.startsWith("host:")) out.id = p.id;
+    if (p.fw) out.fw = p.fw;
+    const room = hub.roomOf(p.id) || hub.pose(p.id)?.room;
+    if (room) out.room = room;
+    const st = hub.sessionState(p.id);
+    out.session = st.state;
+    const heard = st.heard_s_ago !== undefined ? nowMs - st.heard_s_ago * 1000 : 0;
+    const seen = Math.max(p.lastSeen, heard);
+    if (seen > 0) out.seen = Math.floor(seen / 1000);
+    if (p.trust && !trusted(p.trust) && p.trust.kind !== "unverified") out.error = "its TLS certificate changed";
+    else if (p.checked === "unreachable" && st.state !== "live") out.error = p.manifestError || "not answering";
+    const s = hub.openSession(p.id);
+    const fresh = s?.ledTotal();
+    if (fresh) this.knownLeds.set(p.id, fresh);
+    const leds = fresh ?? this.knownLeds.get(p.id);
+    if (leds) {
+      out.leds = leds.leds;
+      out.leds_src = leds.source;
+    }
+    if (s) {
+      const fx = s.knownEffect;
+      if (fx) out.effect = fx;
+      const perf = s.perfSnapshot();
+      if (perf) out.perf = { ...perf, at: Math.floor(perf.at / 1000) };
+    }
+    return out;
+  }
+
+  /** Ask each newly connected player for its LED count (one hardware-config read
+   * per session, plus the stored map when no channel is configured). Resolves when
+   * those reads finish (the timers don't wait; tests do). */
+  loadDetails(): Promise<void> {
+    if (this.opts.details === false) return Promise.resolve();
+    const hub = this.opts.hub;
+    const loads: Promise<void>[] = [];
+    for (const p of hub.registry.list()) {
+      const s = hub.openSession(p.id);
+      if (!s || this.detailed.has(s) || !hub.isConnected(p.id)) continue;
+      this.detailed.add(s);
+      loads.push(s.loadLedInfo().then(() => this.writeStatus()));
+    }
+    return Promise.all(loads).then(() => undefined);
   }
 
   /** Write the status file when it changed (or the heartbeat is due). */

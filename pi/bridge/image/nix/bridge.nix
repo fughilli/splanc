@@ -201,6 +201,9 @@ in
         WorkingDirectory = "/run/splanc-display";
         RuntimeDirectory = "splanc-display";
         ExecStart = "${bp.pyEnv}/bin/python3 -m splanc_display.main";
+        # Below the bridge: animation frames never take CPU or I/O from its network work.
+        Nice = 10;
+        IOSchedulingClass = "idle";
         # Switch to VT 8 and put it in graphics mode so the console doesn't draw over us.
         AmbientCapabilities = [ "CAP_SYS_TTY_CONFIG" ];
         CapabilityBoundingSet = [ "CAP_SYS_TTY_CONFIG" ];

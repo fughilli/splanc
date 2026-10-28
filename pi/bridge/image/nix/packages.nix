@@ -8,7 +8,10 @@
 #                luma.oled/luma.core, gpiozero + lgpio (Pi 5's RP1 GPIO), spidev,
 #                smbus2, cbor2.
 #   splancPy     pi/bridge/display/splanc_display + pi/bridge/image/splanc_image,
-#                byte-compiled, as a PYTHONPATH entry.
+#                byte-compiled, as a PYTHONPATH entry, plus the OLED boot
+#                animation rendered from web/public/icons/splanc.svg by
+#                pi/bridge/tools/gen_boot_frames.py (Pillow only; as Bazel's
+#                //pi/bridge:boot_frames does for the agent bundle).
 #   fonts        the four DejaVu faces the screens draw with (not the whole family).
 #
 # luma.core / luma.oled / segno come from PyPI at exactly the versions + sha256
@@ -106,9 +109,11 @@ let
       fileset = lib.fileset.fileFilter (f: f.hasExt "py") ../splanc_image;
     }}/splanc_image $out/
     chmod -R u+w $out
+    python3 ${../../tools/gen_boot_frames.py} --svg ${../../../../web/public/icons/splanc.svg} \
+      --out $out/splanc_display/boot_frames.bin
     python3 -m compileall -q $out
     # Smoke: the modules import with this exact environment.
-    PYTHONPATH=$out python3 -c 'import splanc_display.main, splanc_display.hat, splanc_image.selfupdate, splanc_image.bootconfig'
+    PYTHONPATH=$out python3 -c 'import splanc_display.main, splanc_display.hat, splanc_image.selfupdate, splanc_image.bootconfig; from splanc_display import boot; assert boot.load()'
   '';
 
   fonts = runCommand "splanc-bridge-fonts" { } ''

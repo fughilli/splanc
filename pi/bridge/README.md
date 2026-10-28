@@ -23,9 +23,12 @@ systemd/                    splanc-bridge.service, splanc-display.service, updat
 display/splanc_display/     the screen service (Python)
   status.py                   status.json contract -> Status (lenient), file watcher
   control.py                  control.sock client
-  ui.py                       OLED/button state machine (pages, KEY3 hold+confirm, dim/sleep)
+  ui.py                       OLED/button state machine (pages, fixture list + detail menu,
+                              KEY3 hold+confirm, dim/sleep, boot hand-off)
+  anim.py                     easing, gliding values, scene slides (retarget, never queue)
+  boot.py                     loads the pre-rendered boot animation (boot_frames.bin)
   render_hdmi.py              1920x1080-grid status page, scaled to any framebuffer
-  render_oled.py              128x64 1-bit pages + overlays
+  render_oled.py              128x64 1-bit pages, fixture list/detail, slides + overlays
   fb.py                       /dev/fb0 writer (RGB565/XRGB8888, stride), VT 8 takeover
   hat.py                      SH1106 via luma.oled, gpiozero DC/RST adapter, keys, detection
   main.py                     the service loop (HDMI on its own thread)
@@ -33,8 +36,24 @@ display/splanc_display/     the screen service (Python)
   fake_bridge.py              stand-in bridge for tests and demos
 display/requirements.lock   hash-pinned pure wheels (luma.core, luma.oled, segno)
 tests/                      pytest suite + installer_test.sh
-tools/render_gallery.py     PNGs of every screen, for review and for the docs
+tools/render_gallery.py     PNGs of every screen (+ boot/menu GIFs), for review and for the docs
+tools/gen_boot_frames.py    the boot animation from web/public/icons/splanc.svg -> 1-bit frames
+                            (a build step: //pi/bridge:boot_frames, and the image's splancPy)
 ```
+
+## OLED frame pacing
+
+The SH1106 takes a full frame as 8 pages of 128 bytes (plus 3 command bytes each): 1048 bytes,
+about 1 ms on the wire at the 8 MHz SPI clock (`hat.py`), or ~25 ms over I2C at 400 kHz
+(~95 ms at the Pi's default 100 kHz). On a desktop-class core, rendering a frame takes
+0.25–0.6 ms (a slide reuses both screens' images: ~0.02 ms) and luma's 1-bit packing ~0.23 ms;
+a Pi 3 / Zero 2 W core is roughly 10–15x slower, so a frame costs ~5–10 ms there, plus a few ms
+of spidev/GPIO calls. `main.py` measures the real cost (render + push, EWMA) and draws animation
+frames at `max(1/30 s, cost / 0.5)`: at most 30 fps, and never more than half a core. Slides last
+120–250 ms (`anim.py`), so a Pi shows 4–7 frames per slide. Nothing is drawn while nothing moves
+(the loop polls at 10 Hz and redraws once a second for the "12 s ago" texts), a press wakes the
+loop at once, and `splanc-display.service` runs at `Nice=10` with idle I/O priority, below the
+bridge.
 
 ## The bridge contract
 
@@ -214,6 +233,8 @@ under Bazel, which has neither; run it in a venv that has the lockfile plus `gpi
 | Covered                                                                                                                                                                                                                | How                                                                                                                                                |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status parsing, watcher, button state machine (KEY1/2, KEY3 hold → confirm → revoke, paging, dim/sleep)                                                                                                                | `display_test` (pytest, fake clock and dispatcher)                                                                                                 |
+| Fixture menu (list scroll, detail, back, fixtures appearing/vanishing), slide timing and interruption, boot hand-off, frame pacing                                                                                     | `display_test` (`test_menu.py`, `test_anim.py`, `test_app.py`; fake clock)                                                                         |
+| Fixture detail text (missing fields, long names, IPv4/link-local/IPv6, unreachable), boot frames (built file, SVG rasterizer)                                                                                          | `display_test` (`test_fixture_detail.py`, `test_menu_render.py`)                                                                                   |
 | HDMI + OLED rendering of every state and overlay, at several framebuffer sizes                                                                                                                                         | `display_test`; PNGs go to the test's `outputs.zip`                                                                                                |
 | Framebuffer ioctl parsing, RGB565/XRGB packing, stride, VT takeover                                                                                                                                                    | `display_test` (faked ioctls on a regular file)                                                                                                    |
 | Buttons → socket → bridge → status → screens                                                                                                                                                                           | `display_test` end to end against `fake_bridge` (real AF_UNIX socket)                                                                              |
