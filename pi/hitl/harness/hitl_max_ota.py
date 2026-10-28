@@ -17,6 +17,8 @@ Inside ONE reservation, each phase on the system the previous one left:
                  before anything is fetched; still on B.
   3. unhealthy — U (a player that never reports healthy): the trial is rolled back at
                  the deadline and the Pi is on B again by itself (rolled_back).
+  3b. noboot   — N (a system whose stage 1 panics: it never reaches userspace): the
+                 panic reboot lands on extlinux.conf's default, B (rolled_back).
   4. powercut  — B -> A (allow_downgrade) with the power cut half way through the
                  download (`echo b > /proc/sysrq-trigger`: an immediate reset, no sync,
                  no unmount — the network DUTs have no switchable power): the Pi
@@ -27,6 +29,17 @@ Inside ONE reservation, each phase on the system the previous one left:
 Ends on A, a working system. Every image is signed with the checked-in TEST key for
 a TEST-trust updater (never the release key). Each phase's journal (the OTA units
 and the player) is saved to --log-dir; on a failure the last boots' journals too.
+
+State that must survive every phase (content hashes, not just names): the Wi-Fi
+profiles, the identity (hostname, SSH host key, deploy key) and /var/lib/ledmapper
+(the stored app data, plus a sentinel the gate plants there and removes at the end).
+The player's TLS cert is generated in memory at every start, so there's none to keep.
+
+Effects keep running: across the upgrade the gate samples the player's health file
+(`ticks` = frames pushed to SPI) about once a second. The old system must render
+right through the download and staging (no parked effects) until the reboot, and
+the trial's player must start no later than after a plain reboot (setup's deploy
+reboot is the reference): the fixture is dark for the reboot itself, no longer.
 
 Images: pi/hitl/max_ota_images.sh OUT_DIR (nix-built, so not Bazel data), then
 
@@ -54,10 +67,15 @@ import threading
 import time
 from typing import Any
 
-PHASES = ("setup", "upgrade", "badsig", "unhealthy", "powercut", "trialcut")
+PHASES = ("setup", "upgrade", "badsig", "unhealthy", "noboot", "powercut", "trialcut")
 KEY = os.environ.get("MAX_DEPLOY_KEY", "pi/provisioning/secrets/deploy_key")
 REMOTE_HTTP = 18080
 JOURNAL_UNITS = "-u splanc-ota-boot -u splanc-ota-apply -u splanc-ota-health -u sbc-led-driver -u splanc-identity"
+SENTINEL = "/var/lib/ledmapper/sessions/max-ota-gate-sentinel.json"
+# Render slack: health is rewritten every 2 s and sampled every 1 s.
+MAX_RENDER_GAP_S = 8.0
+# The trial's player may start this much later (DUT uptime) than after a plain reboot.
+MAX_START_DELAY_S = 15.0
 
 
 def _log(msg: str) -> None:
@@ -249,10 +267,13 @@ class Pi:
         """What must survive every update."""
         script = (
             "echo host=$(cat /var/lib/sbc/hostname 2>/dev/null)/$(hostname);"
-            "echo wifi=$(ls /etc/NetworkManager/system-connections 2>/dev/null | sort | sha256sum | cut -c1-16);"
+            "echo wifi=$(cd /etc/NetworkManager/system-connections 2>/dev/null &&"
+            ' ls | sort | while read -r f; do echo "$f"; cat "$f"; done | sha256sum | cut -c1-16);'
             "echo hostkey=$(ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub 2>/dev/null | cut -d' ' -f2);"
             "echo deploykey=$(sha256sum /var/lib/sbc/authorized_keys.d/root 2>/dev/null | cut -c1-16);"
-            "echo appdata=$(ls -la /var/lib/ledmapper 2>/dev/null | wc -l);"
+            "echo appdata=$(cd /var/lib/ledmapper 2>/dev/null && find . -type f -print0 | sort -z"
+            " | xargs -0r sha256sum | sha256sum | cut -c1-16);"
+            f"echo sentinel=$(cat {SENTINEL} 2>/dev/null);"
             "echo version=$(cat /run/current-system/etc/splanc-max/version 2>/dev/null);"
             "echo system=$(readlink /run/current-system);"
             "echo uboot=$(grep -c splanc-trial /boot/firmware/u-boot*.bin 2>/dev/null | tail -n1);"
@@ -277,9 +298,74 @@ class Pi:
         return "\n".join(parts)
 
 
+class RenderSampler:
+    """Streams the player's health file (+ boot_id, uptime) about once a second over
+    its own SSH session, reconnecting across reboots, into `samples`."""
+
+    SCRIPT = (
+        "b=$(cat /proc/sys/kernel/random/boot_id); while :; do"
+        " echo \"S $b $(cut -d' ' -f1 /proc/uptime) $(tr '\\n' ' ' 2>/dev/null </run/ledmapper/health)\";"
+        " sleep 1; done"
+    )
+
+    def __init__(self, pi: Pi) -> None:
+        self.pi = pi
+        self.samples: list[Any] = []
+        self._stop = threading.Event()
+        self._proc: subprocess.Popen | None = None
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+
+    def __enter__(self) -> "RenderSampler":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self._stop.set()
+        if self._proc is not None:
+            with contextlib.suppress(Exception):
+                self._proc.terminate()
+        self._thread.join(10)
+
+    def _loop(self) -> None:
+        import ota_core as oc
+
+        while not self._stop.is_set():
+            try:
+                self._proc = subprocess.Popen(
+                    self.pi.base() + ["root@127.0.0.1", self.SCRIPT],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                )
+                for line in self._proc.stdout:  # type: ignore[union-attr]
+                    s = oc.parse_render_sample(line, time.monotonic())
+                    if s is not None:
+                        self.samples.append(s)
+                    if self._stop.is_set():
+                        break
+                self._proc.wait(5)
+            except Exception:  # noqa: BLE001 — the DUT is rebooting
+                pass
+            self._stop.wait(2)
+
+
 def deploy(pi: Pi, toplevel: str) -> str:
     """nix copy + set the profile + switch-to-configuration boot + reboot (deploy_live's
     steps, but `boot`, so the new U-Boot and the new system start clean)."""
+    # The image must trust the key this gate logs in with: its first activation
+    # seeds the persistent /var/lib/sbc/authorized_keys.d/root from the baked keys,
+    # so an image built without pi/provisioning/secrets/deploy_key.pub (the build
+    # then mints a fresh pair) would lock every later deploy out of the unit.
+    pub = subprocess.run(
+        ["ssh-keygen", "-y", "-f", KEY], capture_output=True, text=True, check=True
+    ).stdout.split()[:2]
+    baked = os.path.join(toplevel, "etc/ssh/authorized_keys.d/root")
+    keys = [ln.split()[:2] for ln in open(baked)] if os.path.exists(baked) else []
+    if pub not in keys:
+        raise RuntimeError(
+            f"{toplevel} doesn't trust {KEY} (rebuild the images with its .pub in"
+            " pi/provisioning/secrets/); refusing to deploy it"
+        )
     env = dict(os.environ)
     env["NIX_SSHOPTS"] = " ".join(shlex.quote(a) for a in pi.base()[1:])
     t0 = time.monotonic()
@@ -320,7 +406,7 @@ def run(args) -> int:
     )
     man = {
         n: open(os.path.join(imgs, f"{n}.manifest"), "rb").read()
-        for n in ("b_from_a", "u_from_b", "a_from_b")
+        for n in ("b_from_a", "u_from_b", "n_from_b", "a_from_b")
     }
     badsig = bytearray(man["b_from_a"])
     badsig[44 + 7] ^= 1
@@ -391,11 +477,28 @@ def run(args) -> int:
             return r
 
         # -- 0. setup -----------------------------------------------------------------
+        # A stored-app-data sentinel (removed at the end): /var/lib/ledmapper is
+        # otherwise often just an empty sessions/ dir on a rig unit.
+        token = os.urandom(8).hex()
+        pi.run(
+            f"mkdir -p {os.path.dirname(SENTINEL)} && "
+            f'printf \'{{"gate": "{token}"}}\\n\' > {SENTINEL} && '
+            f"(chown ledmapper:ledmapper {SENTINEL} 2>/dev/null; true)"
+        )
+        stack.callback(lambda: pi.run(f"rm -f {SENTINEL}", timeout=30))
         before = pi.state()
         _log(f"[setup] before: {json.dumps(before)}")
+        plain_start: float | None = None
         if "setup" in args.phases:
             _log(f"[setup] deploying A {tops['a']}")
-            report["phases"]["setup"] = {"deploy": deploy(pi, tops["a"])}
+            old_boot = pi.boot_id()
+            with RenderSampler(pi) as rs:
+                report["phases"]["setup"] = {"deploy": deploy(pi, tops["a"])}
+                time.sleep(10)  # a few frames on the new boot
+            w = oc.render_window(rs.samples, old_boot)
+            plain_start = w.start_uptime_s
+            report["phases"]["setup"]["render"] = w.__dict__
+            _log(f"[setup] plain reboot render window: {json.dumps(w.__dict__)}")
         st = pi.state()
         logs["setup"] = pi.journal()
         _log(f"[setup] now: {json.dumps(st)}")
@@ -405,7 +508,7 @@ def run(args) -> int:
                 "setup.trial_uboot", st.get("uboot", "0") not in ("", "0"), st.get("uboot", "")
             )
         )
-        keep = ("host", "wifi", "hostkey", "appdata")
+        keep = ("host", "wifi", "hostkey", "appdata", "sentinel")
 
         def kept(name: str, ref: dict[str, str]) -> None:
             now = pi.state()
@@ -432,7 +535,14 @@ def run(args) -> int:
             report["phases"].setdefault(name, {})["state"] = now
 
         ref = pi.state()
-        for k in ("host", "wifi", "hostkey", "appdata"):
+        checks.append(
+            oc.Check(
+                "setup.sentinel_planted",
+                ref.get("sentinel", "").find(token) >= 0,
+                ref.get("sentinel", ""),
+            )
+        )
+        for k in keep:
             checks.append(
                 oc.Check(
                     f"setup.kept_{k}",
@@ -443,7 +553,39 @@ def run(args) -> int:
 
         # -- 1. A -> B -------------------------------------------------------------------
         if "upgrade" in args.phases:
-            phase("upgrade", man["b_from_a"], "ok", source_url=url("b_from_a"))
+            old_boot = pi.boot_id()
+            with RenderSampler(pi) as rs:
+                phase("upgrade", man["b_from_a"], "ok", source_url=url("b_from_a"))
+            w = oc.render_window(rs.samples, old_boot)
+            report["phases"]["upgrade"]["render"] = w.__dict__
+            _log(f"[upgrade] render window: {json.dumps(w.__dict__)} (plain reboot: {plain_start})")
+            checks.append(
+                oc.Check(
+                    "upgrade.renders_while_staging",
+                    w.staging_gap_s is not None and w.staging_gap_s <= MAX_RENDER_GAP_S,
+                    f"longest gap {w.staging_gap_s}s",
+                )
+            )
+            checks.append(
+                oc.Check(
+                    "upgrade.renders_until_reboot",
+                    w.stop_lead_s is not None and w.stop_lead_s <= MAX_RENDER_GAP_S,
+                    f"last frame {w.stop_lead_s}s before the old system went away",
+                )
+            )
+            if plain_start is None:
+                checks.append(
+                    oc.Check("upgrade.dark_only_for_reboot", None, "no plain-reboot reference")
+                )
+            else:
+                checks.append(
+                    oc.Check(
+                        "upgrade.dark_only_for_reboot",
+                        w.start_uptime_s is not None
+                        and w.start_uptime_s <= plain_start + MAX_START_DELAY_S,
+                        f"trial player started at uptime {w.start_uptime_s}s (plain reboot {plain_start:.1f}s)",
+                    )
+                )
             st = pi.state()
             checks.append(
                 oc.Check("upgrade.runs_b", st.get("system") == tops["b"], st.get("system", ""))
@@ -466,6 +608,18 @@ def run(args) -> int:
             err = ((r.final if r else {}) or {}).get("error", "")
             checks.append(oc.Check("unhealthy.reason", err.startswith("unhealthy"), err))
             kept("unhealthy", ref)
+        # -- 3b. a system that never boots: the panic reboot brings back the old one ---------
+        if "noboot" in args.phases:
+            r = phase(
+                "noboot", man["n_from_b"], "rolled_back", tops["n"], source_url=url("n_from_b")
+            )
+            st = pi.state()
+            checks.append(
+                oc.Check("noboot.back_on_b", st.get("system") == tops["b"], st.get("system", ""))
+            )
+            rc, out = pi.run("journalctl --list-boots --no-pager | tail -n 3")
+            report["phases"]["noboot"]["boots"] = out
+            kept("noboot", ref)
         # -- 4. power cut half way through the download: resume -----------------------------
         if "powercut" in args.phases:
             fired = {"done": False, "at": 0}

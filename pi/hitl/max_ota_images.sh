@@ -9,8 +9,10 @@
 #   A  9.1.0             the setup image (deployed over SSH by the gate)
 #   B  9.2.0             a good update
 #   U  9.3.0 unhealthy   a player that runs but never reports healthy
+#   N  9.4.0 noboot      a system whose stage 1 panics: the trial never boots
 # packed as deltas (only what the device lacks) with tools/max_ota_release.py:
-#   b_from_a  u_from_b  a_from_b  (.nixclosure + .manifest), plus toplevels.txt.
+#   b_from_a  u_from_b  n_from_b  a_from_b  (.nixclosure + .manifest), plus
+# toplevels.txt.
 # Then: bazel run //pi/hitl/harness:max_ota_gate -- --images OUT_DIR ...
 # Needs Nix (an aarch64-linux builder, as for any ledmapper image). Never ship these.
 set -euo pipefail
@@ -20,6 +22,14 @@ board="${MAX_BOARD:-pi3}"
 root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 cd "$root"
 mkdir -p "$out"
+# The gate deploys A with the LED-Mapper deploy key and A's first activation
+# persists the keys it bakes: without the real public half here the build mints a
+# fresh pair, and the unit would trust only that from then on.
+pubkey=pi/provisioning/secrets/deploy_key.pub
+[[ -s "$pubkey" ]] || {
+  echo "no $pubkey: copy the LED-Mapper deploy key's .pub there first" >&2
+  exit 1
+}
 read -r -a bazel_flags <<<"${MAX_OTA_BAZEL_FLAGS:-}"
 
 build() { # name version variant
@@ -36,14 +46,15 @@ build() { # name version variant
   cat "$f"
 }
 
-if [[ -s "$out/toplevels.txt" && -z "${MAX_OTA_REBUILD:-}" ]]; then
+if [[ -s "$out/toplevels.txt" && -z "${MAX_OTA_REBUILD:-}" ]] && grep -q '^n=' "$out/toplevels.txt"; then
   # shellcheck disable=SC1090
-  . <(sed 's/^/top_/' "$out/toplevels.txt") # a=… b=… u=… -> top_a=…
+  . <(sed 's/^/top_/' "$out/toplevels.txt") # a=… b=… u=… n=… -> top_a=…
 else
   top_a="$(build a 9.1.0 "")"
   top_b="$(build b 9.2.0 "")"
   top_u="$(build u 9.3.0 unhealthy)"
-  printf 'a=%s\nb=%s\nu=%s\n' "$top_a" "$top_b" "$top_u" >"$out/toplevels.txt"
+  top_n="$(build n 9.4.0 noboot)"
+  printf 'a=%s\nb=%s\nu=%s\nn=%s\n' "$top_a" "$top_b" "$top_u" "$top_n" >"$out/toplevels.txt"
 fi
 
 # zstd for the packer (from the same nixpkgs as the image, if it isn't installed).
@@ -63,5 +74,6 @@ pack() { # name toplevel version base
 }
 pack b_from_a "$top_b" 9.2.0 "$top_a"
 pack u_from_b "$top_u" 9.3.0 "$top_b"
+pack n_from_b "$top_n" 9.4.0 "$top_b"
 pack a_from_b "$top_a" 9.1.0 "$top_b"
 ls -l "$out"

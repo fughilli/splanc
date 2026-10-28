@@ -160,3 +160,51 @@ def test_pull_refusals():
 def test_pulls_image():
     assert oc.pulls_image(pb.Welcome(features=["ota", "ota_pull"]))
     assert not oc.pulls_image(pb.Welcome(features=["ota"]))
+
+
+# -- render_window: the fixture is dark only for the reboot itself -----------------
+
+
+def _samples(spec):
+    """(t, boot, uptime, ticks, up_ms) tuples -> RenderSamples."""
+    return [oc.RenderSample(*s) for s in spec]
+
+
+def test_parse_render_sample():
+    s = oc.parse_render_sample("S abc 12.5 listening=1 ticks=40 up_ms=9000 ", 3.0)
+    assert s == oc.RenderSample(3.0, "abc", 12.5, 40, 9000)
+    assert oc.parse_render_sample("S abc 12.5 ", 3.0) is None  # no health file yet
+    assert oc.parse_render_sample("garbage", 3.0) is None
+
+
+def test_render_window_renders_through_staging_and_restarts():
+    old = [(float(t), "A", 1000.0 + t, 100 + 30 * t, 500_000 + 1000 * t) for t in range(10)]
+    # The new boot: the player starts at uptime 20 s and renders from 22 s.
+    new = [
+        (40.0, "B", 21.0, 0, 1000),
+        (41.0, "B", 22.0, 30, 2000),
+        (42.0, "B", 23.0, 60, 3000),
+    ]
+    w = oc.render_window(_samples(old + new), "A")
+    assert w.staging_gap_s == 1.0
+    assert w.stop_lead_s == 0.0
+    assert w.start_uptime_s == 20.0
+    assert w.first_frame_uptime_s == 22.0
+
+
+def test_render_window_sees_parked_effects():
+    # The render loop stopped at t=3 while the device kept answering until t=9.
+    old = [(float(t), "A", 1000.0 + t, 100 + 30 * min(t, 3), 500_000 + 1000 * t) for t in range(10)]
+    w = oc.render_window(_samples(old), "A")
+    assert w.stop_lead_s == 6.0
+    assert w.staging_gap_s == 1.0  # the stall is the tail: stop_lead_s
+    assert w.start_uptime_s is None  # never came back
+
+
+def test_render_window_player_restart_is_not_a_frame():
+    # A player restart (up_ms drops) in the old boot isn't counted as rendering.
+    old = _samples(
+        [(0.0, "A", 1.0, 500, 9000), (1.0, "A", 2.0, 600, 500), (2.0, "A", 3.0, 630, 1500)]
+    )
+    w = oc.render_window(old, "A")
+    assert w.staging_gap_s == 2.0 and w.stop_lead_s == 0.0

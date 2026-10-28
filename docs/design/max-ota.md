@@ -447,7 +447,7 @@ v1.0.0 unit.
 | `//pi/hitl/tests:hitl_test` (`test_max_ota_core.py`) | the Python `pull()` client |
 
 **HITL gate** (`//pi/hitl/harness:max_ota_gate`, a `py_binary` tagged `hitl` +
-`manual`). Its images are Nix-built: `pi/hitl/max_ota_images.sh OUT` builds A/B/U
+`manual`). Its images are Nix-built: `pi/hitl/max_ota_images.sh OUT` builds A/B/U/N
 with TEST trust and packs deltas. It runs on rig-1's `pi-ledmapper-1/2` in one
 reservation:
 
@@ -455,8 +455,22 @@ reservation:
 - **upgrade:** A → B;
 - **badsig;**
 - **unhealthy:** U rolls back to B;
+- **noboot:** N, a system that never boots (`SPLANC_MAX_VARIANT=noboot`: its stage 1
+  is pointed at a missing init with `boot.panic_on_fail`, so it panics before
+  userspace), rolls back to B through the `panic=10` reboot;
 - **powercut:** B → A with an immediate reset mid-download, then resume;
 - **trialcut:** A → B with a reset during the trial; back on A.
+
+Kept state is compared by content: the Wi-Fi profiles (names and contents), the
+hostname, SSH host key and deploy key, and a hash of every file under
+`/var/lib/ledmapper`, where the gate also plants a sentinel (removed at the end).
+The player's TLS cert is made in memory at each start, so there is none to keep.
+
+**Effects keep running.** Across setup's plain deploy reboot and the upgrade, the
+gate samples the player's health file (`ticks`) about once a second. The upgrade
+passes only if the old system rendered through the whole download and staging (no
+gap over 8 s), kept rendering until it went down for the reboot, and the trial's
+player started no more than 15 s (DUT uptime) later than after the plain reboot.
 
 The network DUTs have no switchable power. `echo b > /proc/sysrq-trigger` resets
 immediately, with no sync and no unmount, which is what a cut does to the
@@ -487,6 +501,39 @@ filesystem. Journals of the OTA units and the player are saved per phase.
   as `import_failed` or `flash_error`.
 
 ## HITL results
+
+### pi-ledmapper-2, 2026-10-28 (rebased on main, all seven phases)
+
+`//pi/hitl/harness:max_ota_gate` on rig-1 / **pi-ledmapper-2** (splanc-max-1: Pi 3
+Model B+ Rev 1.4, no FPGA attached; the player still renders to spidev), in one
+reservation and one run. Images from this tree: A 9.1.0, B 9.2.0, U 9.3.0
+(unhealthy), N 9.4.0 (noboot); deltas of 66 KB (A↔B, B→N) and 3.4 MB (B→U), all
+TEST-signed. **Verdict: PASS, 61 of 61 checks.** The unit ends on A, a working system.
+
+| phase | result | numbers |
+|---|---|---|
+| setup | PASS | A deployed over SSH (from the unit's pre-OTA Sep-24 system); trial U-Boot in place; sentinel planted |
+| upgrade A→B | PASS | **87 s**: download 4.5 s, installed at 8.5 s, trial up at 62 s, healthy and committed at 86 s |
+| effects keep running | PASS | the old system rendered through download + staging (longest frame gap 2.1 s, = the health file period) and until it went down (0 s); the trial's player started at uptime 20.7 s vs 19.3 s after a plain reboot |
+| bad signature | PASS | `bad_signature` before any fetch; dl/ empty; still on B |
+| unhealthy (U) | PASS | trial booted, never healthy, rolled back at the deadline (`unhealthy: no health file`), back on B; 403 s |
+| noboot (N) | PASS | the trial panicked in stage 1 (no journal from it); the `panic=10` reboot booted B and the boot reconcile reported `rolled_back` (`trial_failed`); 95 s |
+| power cut mid-download | PASS | `sysrq b` at 28,672 / 66,584 B; resumed by HTTP Range after the reset; installed, healthy, committed; on A; 155 s |
+| power cut in the trial | PASS | `sysrq b` during the unproven trial; back on A (`trial_reset`); 120 s |
+
+Wi-Fi profiles (contents), hostname, SSH host key, deploy key, `/var/lib/ledmapper`
+(content hash) and the sentinel were identical after every phase.
+
+**Found on the way:** an image built in a checkout without
+`pi/provisioning/secrets/deploy_key.pub` gets a freshly minted deploy key (sbc-deploy
+`keys_ensure`), and its first activation persists that key as the unit's only
+persistent deploy key, locking the real key out. The gate now refuses to deploy an
+image that doesn't trust its key, and `max_ota_images.sh` refuses to build without
+the public half. Also note: committing an update garbage-collects all but the
+current and previous generation, so a unit's pre-OTA system is gone after its
+second committed update.
+
+### pi-ledmapper-1, 2026-10-23
 
 `//pi/hitl/harness:max_ota_gate` on rig-1 / **pi-ledmapper-1** (splanc-max-2: Pi 3
 Model B+ Rev 1.4 with its Tang Nano 9K), in one reservation, 2026-10-23. The images

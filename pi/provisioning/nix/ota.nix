@@ -111,7 +111,15 @@ in
   # that wedges falls back by itself.
   systemd.watchdog.runtimeTime = "15s";
   systemd.watchdog.rebootTime = "30s";
-  boot.kernelParams = [ "panic=10" ];
+  boot.kernelParams = [ "panic=10" ]
+    # HITL test image (docs/design/max-ota.md "HITL"): SPLANC_MAX_VARIANT=noboot is
+    # a system that never boots. Its stage 1 can't find the init named here (the
+    # last init= wins over the one extlinux puts first) and panics, so the trial
+    # dies before userspace and the panic reboot must bring the old system back.
+    ++ lib.optionals (builtins.getEnv "SPLANC_MAX_VARIANT" == "noboot") [
+    "boot.panic_on_fail"
+    "init=/splanc-ota-noboot"
+  ];
 
   # The updater's state (world-readable: the player answers get_ota_status from
   # it) and the inbox the player (group ledmapper) drops requests into.

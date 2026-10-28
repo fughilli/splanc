@@ -491,3 +491,78 @@ def migration_checks(before: dict[str, Any], after: dict[str, Any]) -> list[Chec
         )
     )
     return out
+
+
+# -- Splanc MAX: is the fixture dark only for the reboot itself? -------------------
+# (docs/design/max-ota.md "HITL"; the "effects must keep running" rule.) The MAX gate
+# samples the player's health file (/run/ledmapper/health: `ticks` = frames the
+# render loop pushed to SPI, `up_ms` = the player's uptime) about once a second
+# across an update. These turn that timeline into the numbers the gate checks.
+
+
+@dataclass
+class RenderSample:
+    t: float  # the gate's monotonic clock (s)
+    boot: str  # the DUT's boot_id
+    uptime: float  # the DUT's /proc/uptime (s)
+    ticks: int
+    up_ms: int
+
+
+def parse_render_sample(line: str, t: float) -> RenderSample | None:
+    """`S <boot_id> <uptime> listening=1 ticks=N up_ms=M` -> a sample (None if the
+    player had no health file yet)."""
+    parts = line.split()
+    if len(parts) < 3 or parts[0] != "S":
+        return None
+    kv = dict(p.split("=", 1) for p in parts[3:] if "=" in p)
+    if "ticks" not in kv or "up_ms" not in kv:
+        return None
+    try:
+        return RenderSample(t, parts[1], float(parts[2]), int(kv["ticks"]), int(kv["up_ms"]))
+    except ValueError:
+        return None
+
+
+def _advances(samples: list[RenderSample]) -> list[RenderSample]:
+    """The samples at which a new frame had been rendered since the previous one
+    (the same player run: its up_ms only grows)."""
+    out = []
+    for prev, s in zip(samples, samples[1:]):
+        if s.up_ms >= prev.up_ms and s.ticks > prev.ticks:
+            out.append(s)
+    return out
+
+
+@dataclass
+class RenderWindow:
+    staging_gap_s: float | None = None  # longest stretch with no new frame, old boot
+    stop_lead_s: float | None = None  # last new frame -> the old boot's last sample
+    start_uptime_s: float | None = None  # next boot: the DUT uptime the player started at
+    first_frame_uptime_s: float | None = None  # next boot: uptime of the first new frame
+
+
+def render_window(samples: list[RenderSample], old_boot: str) -> RenderWindow:
+    """Across one reboot out of `old_boot`: did the old system render right up to
+    the reboot (no parked effects while it downloaded and staged), and how soon
+    after the next boot did the player start rendering again?"""
+    w = RenderWindow()
+    old = [s for s in samples if s.boot == old_boot]
+    adv = _advances(old)
+    if old and adv:
+        times = [old[0].t] + [s.t for s in adv]
+        w.staging_gap_s = max(b - a for a, b in zip(times, times[1:])) if len(times) > 1 else 0.0
+        w.stop_lead_s = old[-1].t - adv[-1].t
+    seen_old = False
+    nxt: list[RenderSample] = []
+    for s in samples:
+        if s.boot == old_boot:
+            seen_old = True
+        elif seen_old and (not nxt or s.boot == nxt[0].boot):
+            nxt.append(s)
+    nadv = _advances(nxt)
+    if nadv:
+        s = nadv[0]
+        w.start_uptime_s = s.uptime - s.up_ms / 1000.0
+        w.first_frame_uptime_s = s.uptime
+    return w
