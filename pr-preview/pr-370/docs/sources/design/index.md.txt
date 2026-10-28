@@ -12,6 +12,7 @@ The effects runtime <../docs/design/effects-runtime>
 The effects compiler <../docs/design/effects-compiler>
 Performance monitoring <../docs/design/perf-monitoring>
 FX decks, crossfade & uniform keypoints <../docs/design/uniform-keypoints>
+FX debugger: pause, inspect, replay <../docs/design/fx-debugger>
 ```
 
 ## Capture, solve & reconstruct
@@ -37,6 +38,14 @@ Memory regions & the mode model <../docs/design/memory-regions>
 Post-boot heap census <../docs/design/heap-census>
 Kani under Bazel <../docs/design/kani-bazel>
 mbedtls dynamic buffers <../docs/design/mbedtls-dynamic-buffers>
+```
+
+## Hardware platforms
+
+```{toctree}
+:maxdepth: 1
+
+ESP32-P4 + ESP32-C6 split player <../docs/design/p4-c6-split>
 ```
 
 ## Agents & multi-fixture

@@ -76,7 +76,27 @@ opcode):
   uniform vec3  tint  : color      = 0.2, 0.6, 1.0;   // color picker
   uniform int   mode  : {"fire","ice"} = 0;    // dropdown
   uniform bool  invert = false;                // toggle
+  uniform float tilt  : -1.0 .. 1.0 = -0.2;    // signed range
+  uniform vec4  plane : -5 .. 5 = 0, 1, 0, 1;  // ranged vector: numeric, not a colour
+  uniform vec3  p : vec3(-1,-1,0) .. vec3(1,1,2) = vec3(0.0);  // per-component range
+  uniform mat4  pose;                          // matrix, identity default (`: lo .. hi` optional)
   ```
+
+  A `vec3`/`vec4` without a range is a colour (`ui.kind: color`, 0..1); with a
+  range it is a numeric slider vector (`ui.kind: slider`; the per-component form
+  adds `mins`/`maxs` to the manifest, `min`/`max` being their envelope). A
+  `mat3`/`mat4` is `ui.kind: matrix`, width 9/16, column-major, range ±1000
+  unless declared.
+
+- **Matrices** — `mat3`/`mat4` (column-major, GLSL): `m[c]` column, `m[c][r]`
+  element, constructors (diagonal scalar, N columns, N×N scalars, `mat3(m4)`,
+  `mat4(m3)`), `m*v v*m m*m m*s m/s m+m m-m -m`, `transpose(m)`, and
+  `transform(m, p)` = `(m * vec4(p, 1.0)).xyz`. No VM opcode knows matrices:
+  the compiler lowers every operation to the vecN ops (Load / Swizzle-broadcast
+  / Mul / Add / Dot), parking operands in per-function scratch locals, so
+  matrix programs are ordinary bytecode for every shipped VM, JIT and cost
+  model. Per LED a `mat4 * vec4` is 16 multiplies + 12 adds: pre-multiply in
+  `update()` where you can.
 
 - **State** — `state` variables persist across frames; written by `update()`,
   read-only in `shade()`. Good for phases/integrators.
@@ -103,9 +123,13 @@ node_side term_count term`, plus `flood_from(node)` to re-root `led.dist`).
 On `int` and fixed-point (`fixed`/`fixed16`/`fixed8`) arguments, the arithmetic
 builtins run **natively** — `min max abs clamp mod sign step floor ceil fract mix`
 each have integer/fixed opcodes, and `sin`/`cos`/`exp` use a compile-time LUT
-(angle in **turns**) — instead of coercing to soft-float. Everything that stays
-float-valued converts its int/fixed args (never reinterpreting the bits). This is
-the main lever for keeping hot paths off the FPU-less C6's soft-float.
+(angle in **turns**; `exp` covers only -2..0.69) — instead of coercing to
+soft-float. `sqrt tan log` on a fixed argument, and `atan2 pow` / `hsv2rgb` when
+every argument is the same fixed type, take integer opcodes too (`atan2` then
+returns turns). `smoothstep hash dot length distance normalize cross` are always
+float. Everything that stays float-valued converts its int/fixed args (never
+reinterpreting the bits; ~320 cycles each). This is the main lever for keeping
+hot paths off the FPU-less C6's soft-float.
 
 ### Example
 
@@ -120,7 +144,7 @@ uniform float rainbow : 0.0 .. 1.0 = 0.6;
 buffer float trail;
 state  float head;
 
-void update() { head = fract(time * speed * 0.2); }
+void update() { head = fract(head + dt * speed * 0.2); }
 
 vec3 shade(Led led) {
   float spark = smoothstep(width, 0.0, abs(led.dist - head));
@@ -132,8 +156,25 @@ vec3 shade(Led led) {
 }
 ```
 
+### Rate controls: integrate, never `time * speed`
+
+The example advances `head` by `dt * speed` each frame instead of computing
+`fract(time * speed * 0.2)`. That is deliberate: `time * speed` rescales the
+whole elapsed time, so moving the `speed` slider jumps the phase by
+Δspeed × time (whole cycles after a few minutes) and the effect stutters while
+the knob moves. Keep one `state` phase per rate uniform, advance it in
+`update()` with `ph = fract(ph + dt * speed);` (the `fract` bounds float
+precision; integrate non-periodic offsets such as a noise scroll without it),
+and use `ph` in `shade()` — `fract(led.s - ph)`, `sin(ph * 6.2832)`. In fixed
+point: `ph = fract(ph + fixed(dt) * fixed(speed));` and `sin(fixed16(ph))`
+(turns). `time` alone, or times a literal, is fine. The compiler warns when a
+value it can trace to `time` × a uniform reaches a phase builtin (`fract`,
+`sin`/`cos`, `mod`/`%`, `floor`/`ceil`, `hash`, `hsv2rgb`, `palette*`):
+`Compiled::warnings` (`fx_compiler/src/lint.rs`), surfaced by the editor, its
+AI and the agent's `compile_effect` / `deploy_effect`.
+
 The compiler entry point is `compile(src) -> Result<Compiled, Vec<Diagnostic>>`
-where `Compiled { fxb: Vec<u8>, uniforms: Vec<UniformInfo> }`; `disassemble(fxb)`
+where `Compiled { fxb: Vec<u8>, uniforms: Vec<UniformInfo>, warnings, .. }`; `disassemble(fxb)`
 produces a readable op listing (exposed to the editor as `fx_disassemble`).
 
 ## Execution model
@@ -273,6 +314,12 @@ JSON via `manifest_json` (fields per uniform: `name`, `slot`, `width`, `ui`,
 repeated float value }` records; `firmware/player_app/ffi.rs` decodes them and
   calls `lm_fx_set_uniform(slot, vals, n)`. `get_effect_uniforms` returns the
   manifest bytes to the app.
+- **Wide uniforms (mat3/mat4):** on the wire a `UniformValue` carries at most 4
+  floats; clients send a wider uniform as consecutive chunks `{slot, v[0..4]}`,
+  `{slot+4, v[4..8]}`, … (exactly a whole write, on any firmware), and the
+  device reports current values the same way. Firmware since #400 also accepts
+  up to 16 floats in one value. OSC addresses: see `firmware/osc` (`/pose` + 16
+  floats, `/pose/<i>` flat component, `/pose/<c>/<r>` element).
 
 ## Textures and video-texture streaming
 
@@ -343,22 +390,25 @@ for how to run it.
   held-out). Regenerate with `fx_bench --emit-golden <path>`.
 - **Regression gate:** a program fails if `abs(measured/golden − 1)` exceeds its
   margin — default **10%**, with `sweep16` at 15% (a deliberately safe band until
-  per-effect run-to-run variance is characterized). **Only frame cycles are
-  gated**; show cycles (transmit) are noisier and excluded.
+  per-effect run-to-run variance is characterized) — **and** it is more than
+  **8,000 cycles** (50 µs) off the golden. The absolute floor absorbs the fixed
+  per-frame flash-cache cost that moves with code layout; it only matters for
+  tiny programs like `sweep16`. **Only frame cycles are gated**; show cycles
+  (transmit) are noisier and excluded.
 
 Representative measured frame-cycle costs at 160 MHz (full set in the golden):
 
-| Program                         | Frame cycles             | Notes                            |
-| ------------------------------- | ------------------------ | -------------------------------- |
-| `empty`                         | ~0.49 M                  | per-frame overhead floor         |
-| `sweep16` / `sweep256`          | ~0.10 M / ~0.97 M        | per-LED anchors (16 / 256 LEDs)  |
-| `addM` / `mulM` / `negM`        | ~2.5 M / ~2.5 M / ~1.8 M | cheap arithmetic                 |
-| `sinM` / `cosM` / `tanM`        | ~3.9 M / ~4.1 M / ~6.8 M | LUT sin/cos (see the hill-climb) |
-| `expfM` / `powfM`               | ~6.2 M / ~9.1 M          | exp still soft-float poly        |
-| `hash12M` / `hash32M`           | ~2.9 M / ~4.2 M          | integer bit-mix hash             |
-| `smoothstep32M` / `distance32M` | ~21.4 M / ~14.4 M        | heaviest float ops               |
-| `hsv2rgbM` / `mix3M` (held-out) | ~7.1 M / ~6.7 M          | validation set                   |
-| `lavalamp` (held-out)           | ~3.6 M                   | a realistic 200-LED effect       |
+| Program                         | Frame cycles             | Notes                           |
+| ------------------------------- | ------------------------ | ------------------------------- |
+| `empty`                         | ~0.49 M                  | per-frame overhead floor        |
+| `sweep16` / `sweep256`          | ~0.10 M / ~0.97 M        | per-LED anchors (16 / 256 LEDs) |
+| `addM` / `mulM` / `negM`        | ~2.5 M / ~2.5 M / ~1.8 M | cheap arithmetic                |
+| `sinM` / `cosM` / `tanM`        | ~3.9 M / ~4.1 M / ~6.8 M | float sin/cos ≈ 570 cy per call |
+| `expfM` / `powfM`               | ~6.2 M / ~9.1 M          | exp still soft-float poly       |
+| `hash12M` / `hash32M`           | ~2.9 M / ~4.2 M          | hash ≈ 185 cy per call          |
+| `smoothstep32M` / `distance32M` | ~21.4 M / ~14.4 M        | heaviest float ops              |
+| `hsv2rgbM` / `mix3M` (held-out) | ~7.1 M / ~6.7 M          | validation set                  |
+| `lavalamp` (held-out)           | ~3.6 M                   | a realistic 200-LED effect      |
 
 `show_cycles` cluster tightly at ~1.0–1.1 M across programs (transmit-bound, not
 FX-bound). These numbers back the browser-side cost model
@@ -376,18 +426,23 @@ auto-generated from the goldens into
 [`docs/fx-vm-performance.md`](./docs/fx-vm-performance.md) and pinned by a CI freshness
 gate (`bazel run //web:gen_fx_vm_perf_doc` to regenerate).
 
-These costs are the target of an ongoing FX-VM hill-climb (see `WORKLOG.md`):
-sin/cos are now compile-time LUTs and `hash` is an integer bit-mix, which is why
-they land far below the other transcendentals. A practical consequence of the
-FPU-less C6: prefer int/fixed types (`fixed8`/`fixed16`) on hot paths so the
-arithmetic builtins take their native opcodes instead of soft-float. (Beware of
-float literals in fixed arithmetic: `x * 0.6` promotes a fixed `x` to soft-float;
-write `x * fixed(0.6)`.)
+These costs are the target of an ongoing FX-VM hill-climb (see `WORKLOG.md`).
+Float `sin`/`cos` use a table internally but still cost ~570–650 cycles per call
+(range reduction + interpolation in soft-float), and `hash` ~185 — cheaper than
+`exp`/`pow`, not cheap: every opcode also pays ~70 cycles of dispatch. The
+cheap forms on the FPU-less C6 are the integer ones: per-LED maths in `fixed`
+(Q16.16) with `fixed()` around every literal (`x * 0.6` promotes a fixed `x` to
+soft-float — the compiler warns), `sin`/`cos` of a fixed angle in TURNS
+(~150), and `hsv2rgb`/`atan2`/`sqrt` with all-fixed arguments. The measured
+per-op-class table the authoring agents are given is `PERF_GUIDE` in
+`web/src/effects/ai/system-prompt.ts` (and "Performance" in
+`agent/skill/effect-language.md`); `estimate_effect` / `estimate_performance`
+return the top cost findings for a program (`web/src/effects/perfFindings.ts`).
 
 The compiler now does the classic hoisting for you
 ([`docs/design/fx-memoization.md`](./docs/design/fx-memoization.md)):
 
-- **Per-frame values** in `shade()` (`sin(time * speed)`, uniform math, `state`
+- **Per-frame values** in `shade()` (`sin(time * 2.0)`, uniform math, `state`
   reads) are computed **once per frame** in a prepare entry the VM runs before
   the first LED.
 - **Per-LED-invariant values** (`atan2(led.pos.x, led.pos.z)`,
@@ -431,10 +486,12 @@ and the autoscaler (`firmware/fps`, FUG-82) runs at whichever is lower:
   ~49 ms period; the plasma 7.25 M cycles, 20 fps, 10–15 fps during TLS
   reconnects). Up to ~1000 LEDs in total the wire is the limit for light effects.
 
-The autoscaler's abort floor scales with the strip, so a long strip runs a heavy
-effect slower instead of having it parked: 25 fps up to 512 shaded LEDs, then the
-rung that keeps 25 × 512 = 12,800 shaded LEDs/s (rounded down, never below 5):
-20 fps at 600, 10 fps at 1024, 5 fps at 2048. `FpsState.min_fps` reports it.
+The autoscaler's floor (its lowest rung) scales with the strip: 25 fps up to 512
+shaded LEDs, then the rung that keeps 25 × 512 = 12,800 shaded LEDs/s (rounded
+down, never below 5): 20 fps at 600, 10 fps at 1024, 5 fps at 2048.
+`FpsState.min_fps` reports it. An effect too heavy even for the floor is never
+parked: it keeps playing at whatever rate it achieves (`FpsState.lagging`,
+`achieved_fps`).
 
 LED-arity `buffer` arrays are sized for the stored map / configured strip (at
 least 512 LEDs), not the 2048 cap, and both decks share the 24 KB `FX_ARENA`:

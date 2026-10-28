@@ -101,9 +101,14 @@ draws, paired with the device's `esp_get_free_heap_size()`:
    - The static bound is now a CI gate (`//tools/stack_bound`,
      `//firmware/player_app:stack_bound_test`, manifest in
      `firmware/player_app/stack_bound.json`). It fails when `(bound + 256 B
-     ISR) × 1.25` exceeds a task's stack. Current figures: loopTask 9.7 of
-     14 KiB, render 3.2 of 5, xmit 0.9 of 2, logdrain 0.7 of 2 (the last two
-     trimmed from 3 KiB).
+     ISR) × 1.25` exceeds a task's stack. Mask-ROM callees count too: the
+     manifest's `rom_frames` table (`tools/stack_bound/rom_frames.py`, from the
+     chip's ROM ELF) gives their depth, because ROM newlib printf alone is
+     ~1.5 KiB and every `Log().printf` runs it. Current figures: loopTask 9.1
+     of 12 KiB, render 3.7 of 5, xmit 0.9 of 1.5 (it never formats a log
+     line; loop() logs its reconfigure outcome), logdrain 0.4 of 1.5, sensor
+     2.2 of 3.25. The `[stack]` status line reports each task's measured
+     high-water every 5 s.
 
    The netstack transports dispatch every message IN PLACE (WS reassembly
    buffer / BLE frame), so `rx` only stages frames read back off flash and

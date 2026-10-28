@@ -252,6 +252,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
@@ -260,6 +261,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/app-ux-overhaul.html">App UX overhaul</a></li>
@@ -328,6 +330,7 @@ project’s own design docs, folded into the site as-is.</p>
 <li class="toctree-l1"><a class="reference internal" href="../docs/design/effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/design/perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 </ul>
 </div>
 </section>
@@ -352,6 +355,14 @@ free heap, and how that is kept true (see also <a class="reference internal" hre
 <li class="toctree-l1"><a class="reference internal" href="../docs/design/heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+</ul>
+</div>
+</section>
+<section id="hardware-platforms">
+<h2>Hardware platforms<a class="headerlink" href="#hardware-platforms" title="Link to this heading">¶</a></h2>
+<div class="toctree-wrapper compound">
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../docs/design/p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 </ul>
 </div>
 </section>
@@ -445,6 +456,7 @@ procedures.</p></li>
 <li><a class="reference internal" href="#effects">Effects</a></li>
 <li><a class="reference internal" href="#capture-solve-reconstruct">Capture, solve &amp; reconstruct</a></li>
 <li><a class="reference internal" href="#firmware-memory-verification">Firmware memory &amp; verification</a></li>
+<li><a class="reference internal" href="#hardware-platforms">Hardware platforms</a></li>
 <li><a class="reference internal" href="#agents-multi-fixture">Agents &amp; multi-fixture</a></li>
 <li><a class="reference internal" href="#app-platform">App &amp; platform</a></li>
 <li><a class="reference internal" href="#cross-cutting">Cross-cutting</a></li>

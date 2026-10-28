@@ -252,6 +252,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../design/effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../design/perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
@@ -260,6 +261,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../design/heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../design/app-ux-overhaul.html">App UX overhaul</a></li>
@@ -358,13 +360,19 @@ On the Pi image, set it in the flasher’s <strong>Advanced ▸ Relay URL</stron
 <code class="docutils literal notranslate"><span class="pre">splanc-bridge.conf</span></code> on the card’s boot partition; on a Raspberry Pi OS install it goes in
 <code class="docutils literal notranslate"><span class="pre">/etc/splanc-bridge/bridge.env</span></code>.) It finds your players (mDNS,
 then a scan of the local network), connects to the relay, and asks
-for a pairing code. Without a screen, read the code with:</p>
+for a pairing code. Without a screen, read the code over SSH. On the <strong>Splanc Pi image</strong>, which
+has no Node, so no <code class="docutils literal notranslate"><span class="pre">npx</span></code>, use the bridge’s own command:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>ssh<span class="w"> </span>root@splanc-bridge.local<span class="w"> </span>splanc-bridge<span class="w"> </span>status
+</pre></div>
+</div>
+<p>On any other machine running the bridge (Raspberry Pi OS install, a computer):</p>
 <div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>npx<span class="w"> </span>-y<span class="w"> </span>https://splanc.io/agent/splanc-agent.tgz<span class="w"> </span>bridge-ctl<span class="w"> </span>status
 </pre></div>
 </div>
 <p>The code is under <code class="docutils literal notranslate"><span class="pre">status.pairing.code</span></code> (<code class="docutils literal notranslate"><span class="pre">ABCD-EFGH</span></code>). It lasts 10 minutes and works once. For
-a new one: the Pi’s button, or <code class="docutils literal notranslate"><span class="pre">npx</span> <span class="pre">-y</span> <span class="pre">https://splanc.io/agent/splanc-agent.tgz</span> <span class="pre">bridge-ctl</span> <span class="pre">new-code</span></code>
-(it prints the code). An unpaired bridge makes new codes by itself during its first hour, until
+a new one: the Pi’s button, <code class="docutils literal notranslate"><span class="pre">ssh</span> <span class="pre">root&#64;splanc-bridge.local</span> <span class="pre">splanc-bridge</span> <span class="pre">new-code</span></code> on the Pi image,
+or <code class="docutils literal notranslate"><span class="pre">npx</span> <span class="pre">-y</span> <span class="pre">https://splanc.io/agent/splanc-agent.tgz</span> <span class="pre">bridge-ctl</span> <span class="pre">new-code</span></code> elsewhere
+(each prints the code). An unpaired bridge makes new codes by itself during its first hour, until
 one is used; after that, ask for one. Off the Pi image, <code class="docutils literal notranslate"><span class="pre">bridge-ctl</span></code> finds the bridge’s control
 socket by itself (it falls back to <code class="docutils literal notranslate"><span class="pre">$XDG_RUNTIME_DIR/splanc-bridge/</span></code>, else <code class="docutils literal notranslate"><span class="pre">/tmp/splanc-bridge/</span></code>, when
 <code class="docutils literal notranslate"><span class="pre">/run/splanc-bridge/</span></code> isn’t writable); run it as the same user as the bridge.</p>
@@ -389,10 +397,13 @@ connector. Name it “Splanc”, paste <code class="docutils literal notranslate
 </li>
 <li><p><strong>Anything that takes a bearer token instead of a sign-in button</strong>: open <code class="docutils literal notranslate"><span class="pre">&lt;relay&gt;/pair</span></code>, enter
 the code, and copy the token it shows (once). Give the client the URL <code class="docutils literal notranslate"><span class="pre">&lt;relay&gt;/mcp</span></code> and the
-header <code class="docutils literal notranslate"><span class="pre">Authorization:</span> <span class="pre">Bearer</span> <span class="pre">&lt;token&gt;</span></code>. That page also shows the exact <code class="docutils literal notranslate"><span class="pre">claude</span> <span class="pre">mcp</span> <span class="pre">add</span> <span class="pre">…</span> <span class="pre">--header</span></code> command.</p></li>
+header <code class="docutils literal notranslate"><span class="pre">Authorization:</span> <span class="pre">Bearer</span> <span class="pre">&lt;token&gt;</span></code>. That page also shows the exact <code class="docutils literal notranslate"><span class="pre">claude</span> <span class="pre">mcp</span> <span class="pre">add</span> <span class="pre">…</span> <span class="pre">--header</span></code> command. A script calling <code class="docutils literal notranslate"><span class="pre">&lt;relay&gt;/mcp</span></code> directly must send its own <code class="docutils literal notranslate"><span class="pre">User-Agent</span></code>
+header: the relay’s Cloudflare front end rejects some default library user agents (for
+example Python’s <code class="docutils literal notranslate"><span class="pre">urllib</span></code>) with error 1010.</p></li>
 </ul>
 <p>Each agent (or each person) pairs once with its own code: after the first one, get the next code
-with the button or <code class="docutils literal notranslate"><span class="pre">bridge-ctl</span> <span class="pre">new-code</span></code>. The bridge’s screen shows <strong>Paired</strong> and how many cloud
+with the button or <code class="docutils literal notranslate"><span class="pre">new-code</span></code> (<code class="docutils literal notranslate"><span class="pre">splanc-bridge</span> <span class="pre">new-code</span></code> on the Pi image, <code class="docutils literal notranslate"><span class="pre">bridge-ctl</span> <span class="pre">new-code</span></code>
+elsewhere). The bridge’s screen shows <strong>Paired</strong> and how many cloud
 sessions are connected.</p>
 <section id="chatgpt">
 <h3>ChatGPT<a class="headerlink" href="#chatgpt" title="Link to this heading">¶</a></h3>

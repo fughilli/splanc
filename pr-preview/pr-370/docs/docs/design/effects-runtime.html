@@ -252,6 +252,7 @@
 <li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
@@ -260,6 +261,7 @@
 <li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 <li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
@@ -704,10 +706,13 @@ always-on fallback (JIT disabled, or the region full).</p>
 <p>The executable memory is a <strong>bounded W^X carve-out</strong>. The arduino-esp32 C6 build
 ships esp-idf as precompiled libs (no RWX heap: IRAM is RX, DRAM is NX), so rather
 than weaken memory protection globally, the firmware makes one small static buffer
-read+write+execute via a spare RISC-V <strong>PMP</strong> entry: entries 3/4 are free and
+read+write+execute via two spare RISC-V <strong>PMP</strong> entries: entries 3/4 are free and
 unlocked and, being lower-index than the SRAM data-region entries (PMP is
-lowest-index-wins), an RWX NAPOT entry there overrides the default NX for just that
-range — W^X stays enforced everywhere else.</p>
+lowest-index-wins), an RWX TOR range there (entry 3 = base, entry 4 = top) overrides
+the default NX for just that range — W^X stays enforced everywhere else. TOR rather
+than NAPOT so the buffer needs only 4-byte alignment: a NAPOT region must be aligned
+to its own size, which made all of <code class="docutils literal notranslate"><span class="pre">.dram0.bss</span></code> 2048-aligned and cost ~1.8 KB of
+boot heap in padding.</p>
 <p>Validated on a real ESP32-C6 over HITL with a fixed-point-heavy <code class="docutils literal notranslate"><span class="pre">shade()</span></code>: the
 native JIT renders <strong>bit-identically</strong> to the interpreter and cuts per-LED
 <code class="docutils literal notranslate"><span class="pre">shade()</span></code> cost by ~<strong>2.1×</strong> (≈10077 → 4723 cycles). The boot self-bench

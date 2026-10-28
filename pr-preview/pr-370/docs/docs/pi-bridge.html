@@ -252,6 +252,7 @@
 <li class="toctree-l2"><a class="reference internal" href="design/effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
@@ -260,6 +261,7 @@
 <li class="toctree-l2"><a class="reference internal" href="design/heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
@@ -470,15 +472,41 @@ the page shows:</p>
 <li><p><strong>Network</strong>: the Pi’s address, the relay and the bridge ID.</p></li>
 </ul>
 <p><img alt="HDMI after pairing" src="docs/img/pi-bridge/hdmi-paired.png" /></p>
-<p><strong>OLED HAT</strong>: four pages, which rotate every 8 seconds:</p>
+<p><strong>OLED HAT</strong>: when the screen service starts it plays a short Splanc logo animation (about two
+seconds, while the bridge itself starts up), then slides to four pages, which rotate every 8
+seconds:</p>
 <ol class="arabic simple">
 <li><p><strong>Home</strong>: the state, the pairing code in large letters, the short pairing link, the time left
 and the number of clients.</p></li>
 <li><p><strong>Scan to pair</strong>: a QR code of the pairing link.</p></li>
-<li><p><strong>Fixtures</strong>: up to four players, with ● for online and × for offline.</p></li>
+<li><p><strong>Fixtures</strong>: every player the bridge knows, in a list that scrolls. Each row shows ● for
+connected, ○ for found but idle, ◐ for reconnecting, or × for unreachable, and on the right
+the frame rate (or, for an unreachable one, how long ago it was last heard from).</p></li>
 <li><p><strong>Network</strong>: the IP address, the relay, the number of clients and the bridge ID.</p></li>
 </ol>
 <p><img alt="OLED pages" src="docs/img/pi-bridge/oled-pages.png" /></p>
+<p>On the <strong>Fixtures</strong> page, move the joystick up and down to pick a fixture and press it to open
+that fixture’s details:</p>
+<ul class="simple">
+<li><p>its state (connected, idle, reconnecting or unreachable) and, when unreachable, why;</p></li>
+<li><p>when the bridge last heard from it (“12 s ago”);</p></li>
+<li><p>its IP address (link-local addresses are marked “LL”), its ID (MAC address) and firmware
+version;</p></li>
+<li><p>its room and its LED count. When no channel has a count set, the count comes from the
+fixture’s map, marked “(map)”;</p></li>
+<li><p>the running effect, when the bridge knows it;</p></li>
+<li><p>its latest performance numbers: frame rate (and whether the effect is lagging), the share of
+the frame budget used, overruns, free heap, and how old those numbers are. They come from
+the last time an agent measured an effect (<code class="docutils literal notranslate"><span class="pre">measure_effect</span></code>) or from the fixture’s own
+reports. “no data yet” means nothing has measured it since the bridge started.</p></li>
+</ul>
+<p>Move the joystick up and down to scroll the details. Push it left, or press it, to go back to the
+list. The details stay open while you look at them, and go back to the list after 5 minutes
+without a press. If the fixture disappears from the bridge’s list while it is open, the screen
+goes back to the list.</p>
+<p><img alt="The fixture list, a fixture's details, and an unreachable fixture" src="docs/img/pi-bridge/oled-fixtures.png" /></p>
+<p>Every change of screen slides: pages slide sideways, a fixture’s details slide in over the list
+and back out, and the highlight in the list glides. A press during a slide takes effect at once.</p>
 <p>To protect the OLED from burn-in, it behaves as follows:</p>
 <ul class="simple">
 <li><p>the image moves by one pixel every minute;</p></li>
@@ -542,18 +570,23 @@ and the number of clients.</p></li>
 <td><p>Revoke all clients. A progress bar fills while you hold. Then a confirm screen appears: press <strong>KEY3</strong> again to confirm. Any other key, or 10 seconds of waiting, cancels.</p></td>
 </tr>
 <tr class="row-odd"><td><p>Joystick right / down</p></td>
-<td><p>Next page.</p></td>
+<td><p>Next page. On the <strong>Fixtures</strong> page, down picks the next fixture instead.</p></td>
 </tr>
 <tr class="row-even"><td><p>Joystick left / up</p></td>
-<td><p>Previous page.</p></td>
+<td><p>Previous page. On the <strong>Fixtures</strong> page, up picks the previous fixture instead.</p></td>
 </tr>
 <tr class="row-odd"><td><p>Joystick press</p></td>
-<td><p>Back to the home page.</p></td>
+<td><p>Back to the home page. On the <strong>Fixtures</strong> page, it opens the picked fixture.</p></td>
+</tr>
+<tr class="row-even"><td><p>In a fixture’s details</p></td>
+<td><p>Up / down scroll. Left or press go back to the list.</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>After a joystick press, the pages stop rotating for 30 seconds.</p>
+<p><strong>KEY1</strong> works from every screen: it goes to the home page so you can see the new code.</p>
+<p>After a joystick press, the pages stop rotating for 30 seconds. They don’t rotate while a
+fixture’s details are open.</p>
 <p><img alt="Holding KEY3, the revoke confirm screen, a button result, and the paired home page" src="docs/img/pi-bridge/oled-overlays.png" /></p>
 </section>
 <section id="updates">
@@ -563,9 +596,14 @@ and the number of clients.</p></li>
 the Pi checks splanc.io for a new Splanc release. If there is one, it downloads it, checks its
 checksum, switches to it and restarts the bridge. Your pairings are kept. The previous version
 stays on the card too.</p></li>
-<li><p><strong>The Pi’s operating system</strong> is updated by writing the card again with the flasher when a new
-Splanc bridge release comes out. Writing the card starts fresh, so you pair your agents again
-afterwards. (An in-place system update is planned.)</p></li>
+<li><p><strong>The Pi’s operating system updates itself too</strong> (cards written with a flasher release that has
+system updates). It checks a few times a day; a new Splanc bridge system downloads in the
+background, and once no app is connected through the bridge, the Pi restarts into it (about a
+minute without the bridge; your fixtures keep playing). Your pairings and Wi-Fi are kept. If the
+new system doesn’t come up healthy within five minutes, the Pi goes back to the previous one by
+itself. Only updates signed by Splanc are accepted.</p></li>
+<li><p>Writing the card again with the flasher also works, but starts fresh: you pair your agents again
+afterwards.</p></li>
 </ul>
 </section>
 <section id="changing-settings-later">
@@ -600,12 +638,19 @@ boots.</p>
 <td><p>The HDMI status page: <code class="docutils literal notranslate"><span class="pre">auto</span></code> or <code class="docutils literal notranslate"><span class="pre">off</span></code>.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">SPLANC_AUTO_UPDATE=1</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code> turns the daily Splanc updates off.</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code> turns the automatic updates (software + system) off.</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>To join a different Wi-Fi network, write the card again with the flasher (and pair again).</p>
+<p>To put the bridge on another Wi-Fi network (a venue, a new router), use the Splanc app on your
+phone, the same way you add a fixture: <strong>Add device over Bluetooth</strong>, choose the network, then
+pick the bridge (it shows up under its name, <code class="docutils literal notranslate"><span class="pre">splanc-bridge</span></code> unless you renamed it) in the
+Bluetooth list. The bridge saves the network next to the ones it already knows and joins it; it
+then joins whichever known network is in range by itself. Sending a network it already knows
+updates that network’s password. If the bridge can’t join, the app says so and the bridge keeps
+its saved networks as they were. A paired bridge stays paired. You can also write the card again
+with the flasher (that resets the bridge, so you pair again).</p>
 </section>
 <section id="troubleshooting">
 <h2>Troubleshooting<a class="headerlink" href="#troubleshooting" title="Link to this heading">¶</a></h2>
