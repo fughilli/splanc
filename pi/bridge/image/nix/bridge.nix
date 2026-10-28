@@ -189,7 +189,6 @@ in
         PYTHONPATH = "${bp.splancPy}";
         PYTHONUNBUFFERED = "1";
         PYTHONDONTWRITEBYTECODE = "1";
-        SPLANC_DISPLAY_FONT_DIR = "${bp.fonts}";
         GPIOZERO_PIN_FACTORY = "lgpio";
         LG_WD = "/run/splanc-display";
       };

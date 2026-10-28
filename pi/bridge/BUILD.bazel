@@ -56,7 +56,9 @@ genrule(
 py_library(
     name = "splanc_display",
     srcs = glob(["display/splanc_display/*.py"]),
-    data = [":boot_frames"],
+    # The fonts every screen draws with, vendored (tools/vendor_fonts.py): the same
+    # files here, in the agent bundle (:bundle_files) and in the NixOS image.
+    data = [":boot_frames"] + glob(["display/splanc_display/fonts/**"]),
     imports = ["display"],
     deps = [
         requirement("pillow"),
@@ -103,6 +105,7 @@ filegroup(
         [
             "bin/*",
             "display/splanc_display/*.py",
+            "display/splanc_display/fonts/**",
             "systemd/*",
         ],
         exclude = ["display/splanc_display/sim*.py"],  # host-only (the simulator)

@@ -7,6 +7,7 @@ Overlays (toasts, the revoke hold/confirm) go on top, then the burn-in shift.
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Optional
 
@@ -14,6 +15,7 @@ from PIL import Image, ImageChops, ImageDraw
 
 from . import boot as boot_mod
 from . import draw as d
+from . import fonts
 from .anim import Scene, SlideView
 from .status import (
     WAITING,
@@ -31,20 +33,105 @@ W, H = 128, 64
 ON, OFF = 255, 0
 M = 2  # margin: the 1 px burn-in shift never clips anything
 
+# The font set of the frame being drawn (fonts.active() at the start of render()).
+_fs = fonts.SETS[fonts.DEFAULT_SET]
+
+
+def F(role: str):
+    """The active set's font for ``role`` (fonts.ROLES)."""
+    return _fs.get(role)
+
+
+def _fit(dr: ImageDraw.ImageDraw, text: str, role: str, max_w: int):
+    return d.fit(dr, text, _fs.fonts(role), max_w)
+
+
+def _rule_y() -> int:
+    """The header rule: under the title (12 for 9-12 px titles; a 13 px bitmap
+    title pushes it, and the body, down a row)."""
+    f = F("title")
+    return min(14, max(12, f.height)) if d.is_bitmap(f) else 12
+
+
+def _body_y() -> int:
+    return _rule_y() + 2
+
+
+def _row_dy(f) -> int:
+    """Where text sits in a ROW_H row: TrueType one px down (as drawn since the
+    start); bitmap fonts centred on their ink height."""
+    return max(0, (ROW_H - f.height) // 2) if d.is_bitmap(f) else 1
+
+
+def _value_x(dr: ImageDraw.ImageDraw, labels) -> int:
+    """The value column: VALUE_X, or right of the widest label in a wide bitmap font."""
+    f = F("small")
+    if not d.is_bitmap(f):
+        return VALUE_X
+    return max(VALUE_X, M + max(d.text_size(dr, k, f)[0] for k in labels) + 5)
+
+
+DETAIL_LABELS = (
+    "State",
+    "Error",
+    "Seen",
+    "Host",
+    "IP",
+    "IPv6",
+    "ID",
+    "FW",
+    "Room",
+    "LEDs",
+    "Effect",
+    "FPS",
+    "Budget",
+    "Overrun",
+    "Heap",
+    "Perf",
+)
+
+
+def _rows_h(f, body_h: int) -> int:
+    """A bitmap body shows whole rows only (no sliver of the next one at the bottom)."""
+    return min(body_h, LIST_ROWS * ROW_H) if d.is_bitmap(f) else body_h
+
+
+def _y(y: int, f, bottom: int = 64) -> int:
+    """``y``, moved up if a bitmap font's line would run off the bottom."""
+    if d.is_bitmap(f):
+        return min(y, bottom - f.height)
+    return y
+
 
 def _header(dr: ImageDraw.ImageDraw, title: str, right: str = "") -> None:
-    f = d.font("bold", 10)
-    rf = d.font("sans", 9)
+    f = F("title")
+    rf = F("small")
     rw = d.text_size(dr, right, rf)[0] if right else 0
-    dr.text((M, 0), d.ellipsize(dr, title, f, W - 2 * M - rw - 4), font=f, fill=ON)
+    ty, ry = 0, 1
+    if d.is_bitmap(f):  # both on the title's baseline, just above the rule
+        ty = max(0, _rule_y() - 1 - f.height)
+        ry = ty + f.ascent - rf.ascent if d.is_bitmap(rf) else 1
+    d.text(dr, (M, ty), d.ellipsize(dr, title, f, W - 2 * M - rw - 4), f, ON)
     if right:
-        dr.text((W - M - rw, 1), right, font=rf, fill=ON)
-    dr.line([M, 12, W - M - 1, 12], fill=ON)
+        d.text(dr, (W - M - rw, ry), right, rf, ON)
+    dr.line([M, _rule_y(), W - M - 1, _rule_y()], fill=ON)
 
 
-def _center(dr: ImageDraw.ImageDraw, y: int, text: str, f) -> None:
+def _stack(dr: ImageDraw.ImageDraw, top: int, bottom: int, lines: list) -> None:
+    """Centre ``lines`` ((text, font), ...) between top and bottom, evenly spaced by
+    their fonts' heights; the first ones are dropped if they can't all fit."""
+    while len(lines) > 1 and sum(f.height for _, f in lines) > bottom - top:
+        lines = lines[1:]
+    gap = (bottom - top - sum(f.height for _, f in lines)) // (len(lines) + 1)
+    y = top + gap
+    for text, f in lines:
+        _center(dr, y, text, f)
+        y += f.height + gap
+
+
+def _center(dr: ImageDraw.ImageDraw, y: int, text: str, f, fill=ON) -> None:
     w, _ = d.text_size(dr, text, f)
-    dr.text(((W - w) // 2, y), text, font=f, fill=ON)
+    d.text(dr, ((W - w) // 2, _y(y, f)), text, f, fill)
 
 
 def _wrap(dr: ImageDraw.ImageDraw, text: str, f, max_w: int, max_lines: int) -> list:
@@ -72,18 +159,26 @@ def _players_badge(s: Status) -> str:
 
 def _home(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
     _header(dr, s.label, _players_badge(s))
-    small = d.font("sans", 9)
+    small = F("small")
     code = s.active_code(now)
     if code:
-        f = d.fit_font(dr, code.code, "monobold", W - 2 * M, 20)
-        _center(dr, 15, code.code, f)
-        _center(dr, 39, short_url(code.url, 24), small)
+        f = _fit(dr, code.code, "code", W - 2 * M)
+        if d.is_bitmap(f):  # code, url, footer: spread over the space under the rule
+            foot = H - small.height
+            url_y = foot - 1 - small.height
+            top = _body_y()
+            _center(dr, top + max(0, (url_y - top - f.height) // 2), code.code, f)
+            _center(dr, url_y, short_url(code.url, 24), small)
+        else:
+            foot = 52
+            _center(dr, 15, code.code, f)
+            _center(dr, 39, short_url(code.url, 24), small)
         left = "exp " + fmt_remaining(code.remaining(now)) if code.expires_at else ""
-        dr.text((M, 52), left, font=small, fill=ON)
+        d.text(dr, (M, foot), left, small, ON)
         right = f"{s.clients} client" + ("" if s.clients == 1 else "s")
-        dr.text((W - M - d.text_size(dr, right, small)[0], 52), right, font=small, fill=ON)
+        d.text(dr, (W - M - d.text_size(dr, right, small)[0], foot), right, small, ON)
         return
-    big = d.font("bold", 14)
+    big = F("big")
     if s.state == "paired":
         _center(dr, 16, f"{s.clients} client" + ("" if s.clients == 1 else "s"), big)
         _center(dr, 36, "connected", small)
@@ -96,8 +191,10 @@ def _home(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
         _center(dr, 36, "can't reach the relay", small)
         _center(dr, 51, s.lan_ip or "", small)
     elif s.state == "error":
-        for i, line in enumerate(_wrap(dr, s.error or "unknown error", small, W - 2 * M, 4)):
-            dr.text((M, 15 + i * 12), line, font=small, fill=ON)
+        pitch = max(12, d.line_height(dr, small))
+        n = max(1, (H - _body_y() + 1) // pitch)
+        for i, line in enumerate(_wrap(dr, s.error or "unknown error", small, W - 2 * M, n)):
+            d.text(dr, (M, _body_y() + 1 + i * pitch), line, small, ON)
     else:  # unpaired / pairing without a live code
         expired = s.pairing is not None and s.pairing.expired(now)
         _center(dr, 16, "Code expired" if expired else "No code", big)
@@ -108,7 +205,7 @@ def _home(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
 def _qr(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
     code = s.active_code(now)
     matrix = d.qr_matrix(code.url) if code and code.url else None
-    small = d.font("sans", 9)
+    small = F("small")
     if not matrix:
         _header(dr, "Scan to pair")
         _center(dr, 24, "No pairing code", small)
@@ -125,12 +222,21 @@ def _qr(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
     d.draw_qr(dr, matrix, q * box, y, box, dark=OFF)
     x = size + 2 * q * box + 3
     tw = W - x - 1
-    dr.text((x, 2), "Scan to", font=small, fill=ON)
-    dr.text((x, 12), "pair", font=small, fill=ON)
     halves = code.code.split("-", 1) if "-" in code.code else [code.code]
-    cf = d.fit_font(dr, max(halves, key=len), "monobold", tw, 13)
+    cf = _fit(dr, max(halves, key=len), "code_qr", tw)
+    if d.is_bitmap(small):  # label lines, then the halves, stacked from the bottom
+        lh = small.height
+        d.text(dr, (x, 1), "Scan to", small, ON)
+        d.text(dr, (x, 1 + lh), "pair", small, ON)
+        pitch = cf.height + 1
+        y0 = max(2 + 2 * lh, H - 1 - len(halves) * pitch)
+        for i, part in enumerate(halves):
+            d.text(dr, (x, y0 + i * pitch), part, cf, ON)
+        return
+    d.text(dr, (x, 2), "Scan to", small, ON)
+    d.text(dr, (x, 12), "pair", small, ON)
     for i, part in enumerate(halves):
-        dr.text((x, 28 + i * 15), part, font=cf, fill=ON)
+        d.text(dr, (x, 28 + i * 15), part, cf, ON)
 
 
 ROW_H = 12  # list / detail row pitch
@@ -179,7 +285,7 @@ def _scrollbar(
 
 def _players(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v: View) -> None:
     _header(dr, "Fixtures", f"{s.players_ok}/{len(s.players)} ok")
-    small = d.font("sans", 9)
+    small = F("small")
     if not s.players:
         _center(dr, 26, "None found yet", small)
         _center(dr, 40, "searching the LAN…", small)
@@ -187,32 +293,35 @@ def _players(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v
     n = len(s.players)
     scrolls = n > LIST_ROWS
     right = W - (5 if scrolls else 1)
-    body = Image.new("1", (W, BODY_H), OFF)
+    body_y = _body_y()
+    body_h = _rows_h(small, H - body_y)
+    body = Image.new("1", (W, body_h), OFF)
     bd = ImageDraw.Draw(body)
     bd.fontmode = "1"
     top = v.list_top
+    dy = _row_dy(small)
     first = max(0, int(top))
     for i in range(first, min(n, first + LIST_ROWS + 1)):
         p = s.players[i]
-        y = round((i - top) * ROW_H) + 1
-        _glyph(bd, M + 1, y + 2, p.condition)
+        y = round((i - top) * ROW_H)
+        _glyph(bd, M + 1, y + 3, p.condition)
         hint = _row_hint(p, now)
         hw = d.text_size(bd, hint, small)[0] if hint else 0
         if hint:
-            bd.text((right - 2 - hw, y), hint, font=small, fill=ON)
+            d.text(bd, (right - 2 - hw, y + dy), hint, small, ON)
         name_w = right - (M + 11) - (hw + 6 if hint else 2)
-        bd.text((M + 11, y), d.ellipsize(bd, p.name, small, name_w), font=small, fill=ON)
+        d.text(bd, (M + 11, y + dy), d.ellipsize(bd, p.name, small, name_w), small, ON)
     # The highlight: an inverted bar that glides between rows.
     hy = round((v.list_pos - top) * ROW_H)
-    bar = Image.new("1", (W, BODY_H), OFF)
+    bar = Image.new("1", (W, body_h), OFF)
     ImageDraw.Draw(bar).rounded_rectangle([0, hy, right, hy + ROW_H - 1], radius=2, fill=ON)
     body = ImageChops.logical_xor(body, bar)
-    img.paste(body, (0, BODY_Y))
+    img.paste(body, (0, body_y))
     if scrolls:
-        _scrollbar(dr, top, n, LIST_ROWS, BODY_Y + 1, BODY_H - 2)
+        _scrollbar(dr, top, n, LIST_ROWS, body_y + 1, body_h - 2)
 
 
-def detail_rows(p: Optional[Player], now: float) -> list:
+def detail_rows(p: Optional[Player], now: float, fs: Optional[fonts.FontSet] = None) -> list:
     """(label, value) rows of a fixture's detail screen, in order. The error wraps
     over several rows (label only on the first)."""
     if p is None:
@@ -231,7 +340,11 @@ def detail_rows(p: Optional[Player], now: float) -> list:
     ]
     if p.error:
         probe = ImageDraw.Draw(Image.new("1", (1, 1)))
-        lines = _wrap(probe, p.error, d.font("sans", 9), W - VALUE_X - 6, 3)
+        f = (fs or fonts.active()).get("small")
+        vx = VALUE_X
+        if d.is_bitmap(f):
+            vx = max(VALUE_X, M + max(f.width(k) for k in DETAIL_LABELS) + 5)
+        lines = _wrap(probe, p.error, f, W - vx - 6, 3)
         rows += [("Error" if i == 0 else "", ln) for i, ln in enumerate(lines)]
     rows.append(("Seen", fmt_ago(None if p.seen is None else now - p.seen)))
     rows.append(host_kind(p.host))
@@ -264,42 +377,45 @@ VALUE_X = 40
 
 def _detail(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v: View) -> None:
     p = s.player(v.key)
-    small = d.font("sans", 9)
-    f = d.font("bold", 10)
+    small = F("small")
     title = p.name if p else "Fixture"
-    dr.text((M, 0), d.ellipsize(dr, title, f, W - 2 * M - 12), font=f, fill=ON)
+    _header(dr, d.ellipsize(dr, title, F("title"), W - 2 * M - 12))
     if p:
-        _glyph(dr, W - M - 7, 2, p.condition)
-    dr.line([M, 12, W - M - 1, 12], fill=ON)
-    rows = detail_rows(p, now)
+        _glyph(dr, W - M - 7, max(1, _rule_y() - 10), p.condition)
+    rows = detail_rows(p, now, _fs)
     scrolls = len(rows) > DETAIL_ROWS
     right = W - (5 if scrolls else 1)
-    body = Image.new("1", (W, BODY_H), OFF)
+    body_y = _body_y()
+    body_h = _rows_h(small, H - body_y)
+    body = Image.new("1", (W, body_h), OFF)
     bd = ImageDraw.Draw(body)
     bd.fontmode = "1"
     top = v.detail_scroll
+    vx = _value_x(bd, DETAIL_LABELS)
+    dy = _row_dy(small)
     first = max(0, int(top))
     for i in range(first, min(len(rows), first + DETAIL_ROWS + 1)):
         label, value = rows[i]
-        y = round((i - top) * ROW_H) + 1
+        y = round((i - top) * ROW_H)
         if label:
-            bd.text((M, y), label, font=small, fill=ON)
-        x = VALUE_X if label or i > 0 else M
-        vf = d.fit_font(bd, value, "sans", right - x - 1, 9, 7)
-        bd.text(
-            (x, y + 1 if vf is not small else y),
-            d.ellipsize(bd, value, vf, right - x - 1),
-            font=vf,
-            fill=ON,
-        )
-    img.paste(body, (0, BODY_Y))
+            d.text(bd, (M, y + dy), label, small, ON)
+        x = vx if label or i > 0 else M
+        vf = _fit(bd, value, "value", right - x - 1)
+        if vf is small:
+            vy = y + dy
+        elif d.is_bitmap(vf) and d.is_bitmap(small):  # a smaller font: same baseline
+            vy = y + dy + small.ascent - vf.ascent
+        else:
+            vy = y + dy + 1
+        d.text(bd, (x, vy), d.ellipsize(bd, value, vf, right - x - 1), vf, ON)
+    img.paste(body, (0, body_y))
     if scrolls:
-        _scrollbar(dr, top, len(rows), DETAIL_ROWS, BODY_Y + 1, BODY_H - 2)
+        _scrollbar(dr, top, len(rows), DETAIL_ROWS, body_y + 1, body_h - 2)
 
 
 def _network(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
     _header(dr, "Network")
-    small = d.font("sans", 9)
+    small = F("small")
     relay = short_url(s.relay, 40) or "-"
     rows = [
         ("IP", s.lan_ip or "no network"),
@@ -307,10 +423,11 @@ def _network(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
         ("Clients", str(s.clients)),
         ("ID", s.bridge_id or "-"),
     ]
+    vx = _value_x(dr, [k for k, _ in rows]) if d.is_bitmap(small) else 40
     for i, (k, v) in enumerate(rows):
-        y = 15 + i * 12
-        dr.text((M, y), k, font=small, fill=ON)
-        dr.text((40, y), d.ellipsize(dr, v, small, W - 41), font=small, fill=ON)
+        y = _body_y() + i * ROW_H + _row_dy(small)
+        d.text(dr, (M, y), k, small, ON)
+        d.text(dr, (vx, y), d.ellipsize(dr, v, small, W - vx - 1), small, ON)
 
 
 PAGE_RENDERERS = {"home": _home, "qr": _qr, "network": _network}
@@ -321,7 +438,8 @@ def _boot(img: Image.Image, dr: ImageDraw.ImageDraw, t: Optional[float], frames)
     if frames is not None:
         img.paste(frames.at(t or 0.0), (0, 0))
         return
-    _center(dr, 22, "Splanc", d.font("bold", 16))  # no pre-rendered frames: plain
+    f = F("boot")
+    _center(dr, (H - d.line_height(dr, f)) // 2, "Splanc", f)  # no pre-rendered frames
 
 
 _SCENE_CACHE: dict = {}
@@ -339,7 +457,7 @@ def _scene_key(status: Status, scene: Scene, view: View, now: float, frames):
         extra = (view.detail_scroll,)
     else:
         extra = ()
-    return (scene, status, extra, int(now))
+    return (scene, status, extra, int(now), _fs.name)
 
 
 def _scene(status: Status, scene: Scene, view: View, now: float, frames) -> Image.Image:
@@ -410,7 +528,8 @@ def _compose(src: Image.Image, dst: Image.Image, sv: SlideView) -> Image.Image:
 
 
 def _overlay(img: Image.Image, dr: ImageDraw.ImageDraw, v: View) -> None:
-    small = d.font("sans", 9)
+    small = F("small")
+    title = F("title")
     if v.overlay == "hold":
         dr.rectangle([0, 0, W - 1, H - 1], fill=OFF)
         _header(dr, "Revoke all clients")
@@ -422,20 +541,31 @@ def _overlay(img: Image.Image, dr: ImageDraw.ImageDraw, v: View) -> None:
     elif v.overlay == "confirm":
         dr.rectangle([0, 0, W - 1, H - 1], fill=OFF)
         dr.rectangle([0, 0, W - 1, 13], fill=ON)
-        f = d.font("bold", 10)
-        t = "REVOKE ALL?"
-        dr.text(((W - d.text_size(dr, t, f)[0]) // 2, 1), t, font=f, fill=OFF)
-        _center(dr, 17, "Unpairs every client.", small)
-        _center(dr, 29, "KEY3 = yes", d.font("bold", 10))
-        _center(dr, 41, "any other key = no", small)
-        _center(dr, 53, f"cancels in {max(0, v.overlay_seconds):.0f} s", small)
+        _center(
+            dr,
+            max(0, (14 - d.line_height(dr, title)) // 2) if d.is_bitmap(title) else 1,
+            "REVOKE ALL?",
+            title,
+            OFF,
+        )
+        lines = [
+            ("Unpairs every client.", small),
+            ("KEY3 = yes", title),
+            ("any other key = no", small),
+            (f"cancels in {max(0, v.overlay_seconds):.0f} s", small),
+        ]
+        if not d.is_bitmap(small):
+            for (text, f), y in zip(lines, (17, 29, 41, 53)):
+                _center(dr, y, text, f)
+            return
+        _stack(dr, 15, H, lines)
     elif v.overlay == "toast" and v.overlay_text:
-        f = d.font("bold", 10)
+        f = title
         text = d.ellipsize(dr, v.overlay_text, f, W - 8)
         tw, _ = d.text_size(dr, text, f)
-        top = H - 16
+        top = min(H - 16, H - 4 - f.height) if d.is_bitmap(f) else H - 16
         dr.rectangle([0, top, W - 1, H - 1], fill=ON)
-        dr.text(((W - tw) // 2, top + 2), text, font=f, fill=OFF)
+        d.text(dr, ((W - tw) // 2, top + 2), text, f, OFF)
 
 
 _DEFAULT_FRAMES = []
@@ -447,9 +577,26 @@ def default_frames():
     return _DEFAULT_FRAMES[0]
 
 
-def render(status: Status, view: View, now: Optional[float] = None, frames=None) -> Image.Image:
+_render_lock = threading.Lock()  # _fs and the scene cache are per frame
+
+
+def render(
+    status: Status,
+    view: View,
+    now: Optional[float] = None,
+    frames=None,
+    font_set: Optional[str] = None,
+) -> Image.Image:
     """One OLED frame (mode "1", 128x64). ``frames``: the boot animation (default:
-    the pre-rendered file next to the package, when there is one)."""
+    the pre-rendered file next to the package, when there is one). ``font_set``:
+    a fonts.SETS name (default: fonts.active())."""
+    global _fs
+    with _render_lock:
+        _fs = fonts.SETS[font_set] if font_set else fonts.active()
+        return _render(status, view, now, frames)
+
+
+def _render(status: Status, view: View, now: Optional[float], frames) -> Image.Image:
     now = time.time() if now is None else now
     if view.asleep:
         return Image.new("1", (W, H), OFF)
