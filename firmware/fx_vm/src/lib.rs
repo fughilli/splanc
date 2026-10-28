@@ -1509,6 +1509,102 @@ impl Vm {
         }
     }
 
+    /// The `GraphQuery` opcode's result for `kind` with int args `a`, `b` (the
+    /// same [`GraphRef::query`] the interpreter's arm calls). For native code
+    /// (firmware/fx_aot), whose helpers must match the VM bit for bit.
+    pub fn graph_query(&self, kind: u8, a: i32, b: i32) -> f32 {
+        GraphRef {
+            n_seg: self.n_seg,
+            seg_len: &self.seg_len,
+            seg_node: &self.seg_node,
+            node_deg: &self.node_deg,
+            node_seg: &self.node_seg,
+            node_side: &self.node_side,
+        }
+        .query(kind, a, b)
+    }
+
+    /// What `LoadCtx C_LED_DIST` pushes for `led`: the `flood_from` geodesic
+    /// distance when a source is set, else `led.dist`. Mirrors the interpreter's
+    /// arm expression for expression (fx_vm/tests/vm.rs checks they agree), for
+    /// native code (firmware/fx_aot).
+    pub fn led_dist(&self, led: &Led) -> f32 {
+        let dist = &self.dist_src;
+        if dist.set && led.seg >= 0 && (led.seg as usize) < (self.n_seg as usize).min(MAX_SEG) {
+            let si = led.seg as usize;
+            let a = self.seg_node[si][0];
+            let b = self.seg_node[si][1];
+            let l = self.seg_len[si];
+            let da = if a >= 0 && (a as usize) < MAX_NODE {
+                dist.d[a as usize] + led.s * l
+            } else {
+                f32::INFINITY
+            };
+            let db = if b >= 0 && (b as usize) < MAX_NODE {
+                dist.d[b as usize] + (1.0 - led.s) * l
+            } else {
+                f32::INFINITY
+            };
+            let g = if da < db { da } else { db };
+            if g.is_finite() {
+                (g / dist.max).min(1.0)
+            } else {
+                1.0
+            }
+        } else {
+            led.dist
+        }
+    }
+
+    /// The `FloodFrom` opcode's effect for source node `src`: a single-source
+    /// geodesic sweep into the VM's distance field. Mirrors the interpreter's
+    /// arm (fx_vm/tests/vm.rs checks they agree), for native code (fx_aot).
+    pub fn flood_from(&mut self, src: i32) {
+        let dist = &mut self.dist_src;
+        for x in dist.d.iter_mut() {
+            *x = f32::INFINITY;
+        }
+        dist.set = false;
+        if src >= 0 && (src as usize) < MAX_NODE {
+            dist.d[src as usize] = 0.0;
+            let ns = (self.n_seg as usize).min(MAX_SEG);
+            for _ in 0..MAX_NODE {
+                let mut changed = false;
+                for si in 0..ns {
+                    let a = self.seg_node[si][0];
+                    let b = self.seg_node[si][1];
+                    if a < 0 || b < 0 {
+                        continue;
+                    }
+                    let (a, b) = (a as usize, b as usize);
+                    if a >= MAX_NODE || b >= MAX_NODE {
+                        continue;
+                    }
+                    let w = self.seg_len[si];
+                    if dist.d[a] + w < dist.d[b] {
+                        dist.d[b] = dist.d[a] + w;
+                        changed = true;
+                    }
+                    if dist.d[b] + w < dist.d[a] {
+                        dist.d[a] = dist.d[b] + w;
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+            let mut mx = 0.0f32;
+            for &x in dist.d.iter() {
+                if x.is_finite() && x > mx {
+                    mx = x;
+                }
+            }
+            dist.max = if mx > 1e-6 { mx } else { 1.0 };
+            dist.set = true;
+        }
+    }
+
     /// Run `update()` (if present), evolving `state`. Uses the default budget.
     pub fn run_update(&mut self, prog: &Program, frame: &Frame) {
         self.run_update_bounded(prog, frame, &Budget::default());
@@ -3792,7 +3888,7 @@ pub fn tanf(x: f32) -> f32 {
     }
 }
 
-fn un_math(f: u8, x: f32) -> f32 {
+pub fn un_math(f: u8, x: f32) -> f32 {
     match f {
         F_SIN => sinf(x),
         F_COS => cosf(x),
@@ -3816,7 +3912,7 @@ fn un_math(f: u8, x: f32) -> f32 {
         _ => x,
     }
 }
-fn bin_math(f: u8, a: f32, b: f32) -> f32 {
+pub fn bin_math(f: u8, a: f32, b: f32) -> f32 {
     match f {
         B_MIN => {
             if a < b {
@@ -3918,7 +4014,7 @@ pub fn hsv2rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
     (r + m, g + m, b + m)
 }
 
-fn palette(id: u8, t: f32) -> (f32, f32, f32) {
+pub fn palette(id: u8, t: f32) -> (f32, f32, f32) {
     let t = clamp01(t);
     match id {
         // fire: black -> red -> orange -> yellow -> white
@@ -4058,7 +4154,7 @@ fn isqrt_i64(v: i64) -> i64 {
 
 /// `sqrt(x)` in Q1.`frac` for an i64 operand (used by the vector length ops,
 /// whose sum-of-squares can exceed i32). `sqrt(x)·2^frac = sqrt(raw·2^frac)`.
-fn sqrt_fix_i64(raw: i64, frac: u32) -> i64 {
+pub fn sqrt_fix_i64(raw: i64, frac: u32) -> i64 {
     if raw <= 0 {
         return 0;
     }
@@ -4071,7 +4167,7 @@ pub fn sqrt_fix(raw: i32, frac: u32) -> i32 {
 }
 
 /// `tan(turns)` in Q1.`frac` = sin/cos. Guards a near-zero cosine (returns 0).
-fn tan_fix(raw: i32, frac: u32) -> i32 {
+pub fn tan_fix(raw: i32, frac: u32) -> i32 {
     let c = cos_fix(raw, frac);
     if c == 0 {
         return 0;
@@ -4122,7 +4218,7 @@ pub fn atan2_fix(y: i32, x: i32, frac: u32) -> i32 {
 /// `ln(x)` in Q1.`frac` for `x = raw/2^frac > 0`. Decomposes x = m·2^e with the
 /// mantissa m ∈ [1,2), so ln(x) = e·ln2 + ln(m); ln(m) via a short minimax poly.
 /// All integer (Q30 intermediate). Returns 0 for x ≤ 0.
-fn log_fix(raw: i32, frac: u32) -> i32 {
+pub fn log_fix(raw: i32, frac: u32) -> i32 {
     if raw <= 0 {
         return 0;
     }
@@ -4155,7 +4251,7 @@ fn log_fix(raw: i32, frac: u32) -> i32 {
 /// `a^b` in Q1.`frac` via `exp(b·ln a)`, both LUT/poly-based (integer). Uses the
 /// bounded [-2,2) `exp_fix`, so large results saturate — adequate for effect
 /// shaping curves. `a ≤ 0` returns 0.
-fn pow_fix(a: i32, b: i32, frac: u32) -> i32 {
+pub fn pow_fix(a: i32, b: i32, frac: u32) -> i32 {
     if a <= 0 {
         return 0;
     }
@@ -4167,13 +4263,13 @@ fn pow_fix(a: i32, b: i32, frac: u32) -> i32 {
 /// Deterministic `hash -> [0,1)` in Q1.`frac` from a raw 32-bit slot word (the
 /// int/fixed bits). Reuses the integer avalanche mixer — no soft-float, unlike
 /// the f32 `hash1`. The top `frac` bits of the mixed value form the fraction.
-fn hash_fix(bits: u32, frac: u32) -> i32 {
+pub fn hash_fix(bits: u32, frac: u32) -> i32 {
     let h = mix32(bits ^ 0x9e37_79b9);
     h.wrapping_shr(32 - frac) as i32
 }
 
 /// 3-input fixed hash -> [0,1) in Q1.`frac` (folds three slot words).
-fn hash3_fix(x: u32, y: u32, z: u32, frac: u32) -> i32 {
+pub fn hash3_fix(x: u32, y: u32, z: u32, frac: u32) -> i32 {
     let mut h = mix32(x ^ 0x9e37_79b9);
     h = mix32(h ^ y.wrapping_add(0x85eb_ca6b));
     h = mix32(h ^ z.wrapping_add(0xc2b2_ae35));
@@ -4183,7 +4279,7 @@ fn hash3_fix(x: u32, y: u32, z: u32, frac: u32) -> i32 {
 /// `hsv2rgb` entirely in Q1.`frac`. `h` is in TURNS (wrapped), `s`,`v` in [0,1];
 /// returns `(r,g,b)` each Q1.frac in [0,1]. Mirrors the float `hsv2rgb` using
 /// only integer arithmetic (the ±chroma ramp is a fixed abs/sub).
-fn hsv2rgb_fix(h: i32, s: i32, v: i32, frac: u32) -> (i32, i32, i32) {
+pub fn hsv2rgb_fix(h: i32, s: i32, v: i32, frac: u32) -> (i32, i32, i32) {
     let one = 1i64 << frac;
     let mulf = |a: i64, b: i64| (a * b) >> frac;
     // hue sextant: h6 = frac_of(h) * 6
@@ -4208,7 +4304,7 @@ fn hsv2rgb_fix(h: i32, s: i32, v: i32, frac: u32) -> (i32, i32, i32) {
 }
 
 /// Fixed-point palette lookup (mirrors the float `palette`), Q1.`frac` in/out.
-fn palette_fix(id: u8, t: i32, frac: u32) -> (i32, i32, i32) {
+pub fn palette_fix(id: u8, t: i32, frac: u32) -> (i32, i32, i32) {
     let one = 1i64 << frac;
     let clamp01f = |x: i64| x.clamp(0, one);
     let t = clamp01f(t as i64);
