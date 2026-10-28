@@ -1,0 +1,16 @@
+"""The Pi Improv-over-BLE service's pure codec, for Bazel tests that speak it.
+
+The service itself is packaged by Nix (../improv.nix for the LED Mapper Pi,
+pi/bridge/image/nix/improv.nix for the Splanc bridge); Bazel only needs the
+dependency-free codec: //pi/bridge/image:image_py_test drives the bridge's
+provisioning path with the exact bytes the phone app writes.
+"""
+
+load("@rules_python//python:defs.bzl", "py_library")
+
+py_library(
+    name = "improv_codec",
+    srcs = ["improv_codec.py"],
+    imports = ["."],
+    visibility = ["//pi/bridge:__subpackages__"],
+)

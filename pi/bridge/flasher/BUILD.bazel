@@ -20,6 +20,8 @@ py_library(
     name = "splanc_flasher",
     srcs = glob(["splanc_flasher/*.py"]) + ["sidecar.py"],
     imports = ["."],
+    # The image's Improv path renders WiFi keyfiles with bootfiles.py.
+    visibility = ["//pi/bridge:__subpackages__"],
 )
 
 py_test(

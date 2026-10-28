@@ -14,6 +14,7 @@
 
 import { Button, PasswordReveal, Sheet, confirmDialog, toast } from "../kit";
 import {
+  bridgeHostFromRedirect,
   provisionViaBle,
   requestImprovDevice,
   wsUrlFromRedirect,
@@ -220,6 +221,14 @@ async function provisionWithDevice(
 ): Promise<void> {
   const urls = await provisionViaBle(device, creds.ssid, creds.password, setStatus);
   prefs.addWifi(creds); // only after the device reports it JOINED
+  // A Splanc bridge (Pi) joined the network: it isn't a player to connect to, it
+  // pairs with the code on its screen (Live via bridge). Don't add it as a device.
+  const bridgeHost = urls.map((u) => bridgeHostFromRedirect(u)).find((h) => h !== null);
+  if (bridgeHost) {
+    setStatus(`Bridge joined ${creds.ssid} (${bridgeHost}).`);
+    toast(`Bridge is on ${creds.ssid}. Not paired yet? Open Live via bridge and enter the code on its screen.`);
+    return;
+  }
   const target = urls.map((u) => wsUrlFromRedirect(u)).find((u) => u !== null);
   if (!target) throw new Error(`device joined but sent no usable address (${urls})`);
   setStatus(`Provisioned at ${target} — connecting…`);

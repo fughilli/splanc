@@ -96,13 +96,15 @@ NetworkManager, lean firmware) and adds:
 image/nix/bridge.nix        the appliance: users, splanc-bridge / splanc-display services,
                             agent self-update timer, optional SSH, read-mostly tuning
 image/nix/flash-config.nix  splanc-flash-config.service: applies the flasher's boot-partition files
+image/nix/improv.nix        splanc-improv.service: Improv-over-BLE WiFi provisioning from the phone app
 image/nix/rpi.nix           Pi bits: SPI + I2C + key pull-ups in config.txt, gpiochip perms, image name
 image/nix/lean.nix          size trims (no docs, rescue tools, nixpkgs source, ModemManager, gtk3)
 image/nix/packages.nix      agent bundle (agent-pin.json), Python env (luma from requirements.lock,
                             lgpio from its sdist), fonts
 image/nix/vm-test.nix       QEMU smoke test (generic aarch64 VM, same appliance modules)
 image/splanc_image/         on-device Python: bootconfig.py (boot-partition settings),
-                            selfupdate.py (verified agent bundle updates)
+                            selfupdate.py (verified agent bundle updates), improv.py +
+                            wifi_profiles.py (Improv WiFi provisioning, saved networks)
 image/agent-pin.json        the agent bundle baked into the image (version, url, sha256)
 ```
 
@@ -111,6 +113,19 @@ image/agent-pin.json        the agent bundle baked into the image (version, url,
   `system-connections/*.nmconnection` into NetworkManager (root, 0600) and deletes them from the
   FAT partition, writes the other settings to `/run/splanc-flash/bridge.env` for the services, and
   merges `authorized_keys` (sshd only starts if there are keys; there are no passwords).
+- **WiFi from the phone (Improv over BLE):** `splanc-improv` (started when a Bluetooth adapter
+  appears, advertising for as long as it runs, like the LED Mapper Pi's `sbc-improv`) is the Pi
+  player's Improv GATT service (`pi/provisioning/nix/improv`, reused as is) with a bridge-specific
+  join: a fresh scan every time (never a "same credentials" no-op; an SSID no sweep sees is tried
+  as hidden), then the network is stored as a NetworkManager keyfile rendered by the flasher's own
+  `render_nmconnection` (byte-identical to a flash-time profile, root 0600 in
+  `/etc/NetworkManager/system-connections`), **added** next to the known networks
+  (`splanc-wifi`, `splanc-wifi-2`, ...) and deduplicated by SSID (same SSID: replaced in place,
+  same file/id/uuid), and joined with `nmcli connection up`. Joined: the phone gets
+  `http://<wifi ip>/#splanc-bridge` (the app then tells the user to pair rather than adding a
+  player). Not joined: the store is rolled back, the previous network is re-joined and the phone
+  gets UNABLE_TO_CONNECT. BlueZ + bless/bleak/dbus-fast add about 28 MB
+  (uncompressed) to the closure (Python and ICU are already there).
 - **The agent:** the image bakes the bundle named in `agent-pin.json` (a `firmware-v*` release
   asset, sha256-pinned). `splanc-agent-update.timer` (2 min after boot, then daily) runs
   `selfupdate.py` as the `splanc-update` user: it fetches `splanc.io/agent/latest.json`, checks the
@@ -222,7 +237,9 @@ under Bazel, which has neither; run it in a venv that has the lockfile plus `gpi
 | Real downloads: latest.json → bundle sha256, pinned Node tarball sha256, venv + hash-locked pip                                                                                                                        | manual dry run into a fake root, with the display then run against the fake bridge                                                                 |
 | Image: boot-partition settings parsing/validation, keyfile move off the FAT partition, SSH key merge                                                                                                                   | `//pi/bridge/image:image_py_test`                                                                                                                  |
 | Image: self-update (sha256, hostile tarballs, rollback by publishing an older version, pruning)                                                                                                                        | `//pi/bridge/image:image_py_test`                                                                                                                  |
+| Image: Improv WiFi: phone-app RPC bytes -> Pi codec -> keyfile byte-identical to the flasher's (tricky SSIDs/PSKs), add vs dedupe, fresh scan + join, hidden fallback, rollback on failure                             | `//pi/bridge/image:image_py_test` (fake nmcli)                                                                                                     |
 | Image: boots; flash config applied; bridge on the baked bundle, then self-updated onto a newer one with the flash-time relay; NetworkManager reads the flasher's tricky keyfile exactly; HDMI page renders; CLI        | `checks.aarch64-linux.vm` (QEMU, generic aarch64; CI `vm-test` job)                                                                                |
+| Image: Improv-stored networks read back exactly by NetworkManager; real-nmcli failed join leaves the store untouched; no BT adapter, no service                                                                        | `checks.aarch64-linux.vm`                                                                                                                          |
 | Image: every board evaluates and builds; config.txt has SPI/I2C/pull-ups; size budget                                                                                                                                  | CI `image` job (and `nix eval` locally)                                                                                                            |
 | Flasher: disk filtering, raw write + read-back, progress protocol, elevation wrappers, keyfile/conf rendering round-tripped through the image's parser, release lookup, download + checksum + unpack, sidecar protocol | `//pi/bridge/flasher:flasher_test`; again on each OS before packaging                                                                              |
 | Units                                                                                                                                                                                                                  | `systemd-analyze verify` with Bookworm's systemd 252 (clean), plus `security --offline`                                                            |
@@ -237,6 +254,9 @@ Not yet verified on hardware:
 - the VT 8 switch;
 - apt on real Pi OS;
 - the Pi 5 RP1 GPIO path;
+- Improv over BLE on the bridge: advertising/GATT via BlueZ on the Pi's UART Bluetooth, a phone
+  provisioning it, and a real `nmcli connection up` onto a WiFi network (the GATT side is the LED
+  Mapper Pi's unchanged service);
 - the SD image booting on real Pi 3/4/5/Zero 2 W hardware (CI builds it and the VM test runs the
   same appliance modules, but QEMU can't run the Pi firmware);
 - the flasher writing a real card on macOS, Windows and Linux (the installers are built and their

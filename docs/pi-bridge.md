@@ -195,7 +195,14 @@ boots.
 | `SPLANC_DISPLAY_HDMI=auto` | The HDMI status page: `auto` or `off`.                                |
 | `SPLANC_AUTO_UPDATE=1`     | `0` turns the daily Splanc updates off.                               |
 
-To join a different Wi-Fi network, write the card again with the flasher (and pair again).
+To put the bridge on another Wi-Fi network (a venue, a new router), use the Splanc app on your
+phone, the same way you add a fixture: **Add device over Bluetooth**, choose the network, then
+pick the bridge (it shows up under its name, `splanc-bridge` unless you renamed it) in the
+Bluetooth list. The bridge saves the network next to the ones it already knows and joins it; it
+then joins whichever known network is in range by itself. Sending a network it already knows
+updates that network's password. If the bridge can't join, the app says so and the bridge keeps
+its saved networks as they were. A paired bridge stays paired. You can also write the card again
+with the flasher (that resets the bridge, so you pair again).
 
 ## Troubleshooting
 
