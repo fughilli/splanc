@@ -113,18 +113,39 @@ are the **same names** the TestFlight job in
 [`.github/workflows/macos.yaml`](../.github/workflows/macos.yaml) uses, so one set
 of secrets serves both the local target and the CI action:
 
-| Env var                           | What                                                                                                            |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `APP_STORE_CONNECT_KEY_ID`        | App Store Connect API key — Key ID                                                                              |
-| `APP_STORE_CONNECT_ISSUER_ID`     | …its Issuer ID                                                                                                  |
-| `APP_STORE_CONNECT_KEY_P8_BASE64` | base64 of the `AuthKey_<KeyID>.p8` (or `…_PATH`, or leave it in `~/.private_keys/`)                             |
-| `APPLE_TEAM_ID`                   | 10-char Developer Team ID (else `SPLANC_IOS_TEAM` / the `ios-config` default)                                   |
-| `APPLE_DIST_CERT_P12_BASE64`      | base64 "Apple Distribution" `.p12` — **optional**, only where the keychain has no dist cert (a fresh CI runner) |
-| `APPLE_DIST_CERT_PASSWORD`        | …the `.p12` export password                                                                                     |
-| `IOS_BUILD_NUMBER`                | `CFBundleVersion` for the upload (unique + increasing per build); default = epoch seconds                       |
+| Env var                             | What                                                                                                                |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `APP_STORE_CONNECT_KEY_ID`          | App Store Connect API key — Key ID                                                                                  |
+| `APP_STORE_CONNECT_ISSUER_ID`       | …its Issuer ID                                                                                                      |
+| `APP_STORE_CONNECT_KEY_P8_BASE64`   | base64 of the `AuthKey_<KeyID>.p8` (or `…_PATH`, or leave it in `~/.private_keys/`)                                 |
+| `APPLE_TEAM_ID`                     | 10-char Developer Team ID (else `SPLANC_IOS_TEAM` / the `ios-config` default)                                       |
+| `APPLE_DIST_CERT_P12_BASE64`        | base64 "Apple Distribution" `.p12` — **optional**, only where the keychain has no dist cert (a fresh CI runner)     |
+| `APPLE_DIST_CERT_PASSWORD`          | …the `.p12` export password                                                                                         |
+| `APPLE_PROVISIONING_PROFILE_BASE64` | base64 App Store `.mobileprovision` for `dev.splanc.app`, signed by that cert → **manual** signing (required in CI) |
+| `IOS_BUILD_NUMBER`                  | `CFBundleVersion` for the upload (unique + increasing per build); default = epoch seconds                           |
 
 A dev Mac that already ships device builds has a distribution cert in its login
 keychain, so the two `APPLE_DIST_CERT_*` vars are only needed on a clean machine.
+
+**Signing mode.** With `APPLE_PROVISIONING_PROFILE_BASE64` set, `tf-signing-prep`
+installs the profile (into both `~/Library/MobileDevice/Provisioning Profiles/` and
+Xcode 16's `~/Library/Developer/Xcode/UserData/Provisioning Profiles/`, as
+`<UUID>.mobileprovision`) after checking it is an App Store profile for
+`<team>.dev.splanc.app`; `tf-archive` pins `CODE_SIGN_STYLE = Manual`,
+`"Apple Distribution"`, the profile and its team onto the **App target only** (via
+`web/ios-config/manual_signing.pl` on the archived configuration — global
+`xcodebuild` overrides would also hit the Swift-package targets, which reject
+provisioning profiles; the `project.pbxproj` is restored afterwards); and `tf-export`
+writes `signingStyle manual` with a `provisioningProfiles` entry. Neither step uses
+`-allowProvisioningUpdates`, so nothing is created on Apple's side. **Without** the
+profile, both fall back to Xcode automatic signing via the API key and print a loud
+warning: on a machine with no cached development cert (every fresh CI runner) that
+mints a new "Apple Development" certificate per run, which is what hit Apple's
+certificate cap and failed TestFlight for app-v1.12.1–1.12.7. Make the profile at
+developer.apple.com → Profiles → **+** → Distribution / App Store Connect → App ID
+`dev.splanc.app` → the same Apple Distribution cert as the `.p12`; it expires
+yearly — regenerate it and update the secret.
+
 One-time Apple-side setup (membership, register the `dev.splanc.app` App ID, create
 the App Store Connect app record, mint the API key) is described in the workflow
 header. The container/`iosctl` path uses the same tasks via the `testflight` chain
@@ -132,23 +153,23 @@ header. The container/`iosctl` path uses the same tasks via the `testflight` cha
 
 ### The tasks (`/tasks`)
 
-| Task              | Runs                                                              |
-| ----------------- | ----------------------------------------------------------------- |
-| `install`         | `pnpm install` — pull the Capacitor deps                          |
-| `web-build`       | `pnpm --dir web build` → `web/dist` (the WKWebView payload)       |
-| `cap-add-ios`     | `cap add ios` — **one-time**, generates `web/ios/App`             |
-| `ios-config`      | apply `web/ios-config/apply.sh` (Info.plist usage strings)        |
-| `cap-sync`        | `cap sync ios` — copy `web/dist` + install plugin pods            |
-| `pod-install`     | `pod install` in `web/ios/App`                                    |
-| `ios-build`       | `xcodebuild build` for the simulator                              |
-| `ios-run`         | `cap run ios` — build + launch on a simulator/device              |
-| `open-xcode`      | `cap open ios` — open in Xcode                                    |
-| `list-sims`       | list bootable simulators                                          |
-| `tf-build-number` | stamp `CFBundleVersion` (`$IOS_BUILD_NUMBER`, else epoch)         |
-| `tf-signing-prep` | place the ASC API key (+ optional dist `.p12`) for signing/upload |
-| `tf-archive`      | `xcodebuild archive` — App-Store-signed (automatic signing)       |
-| `tf-export`       | `xcodebuild -exportArchive` → `build/export/*.ipa`                |
-| `tf-upload`       | `xcrun altool --upload-app` → App Store Connect / TestFlight      |
+| Task              | Runs                                                                                  |
+| ----------------- | ------------------------------------------------------------------------------------- |
+| `install`         | `pnpm install` — pull the Capacitor deps                                              |
+| `web-build`       | `pnpm --dir web build` → `web/dist` (the WKWebView payload)                           |
+| `cap-add-ios`     | `cap add ios` — **one-time**, generates `web/ios/App`                                 |
+| `ios-config`      | apply `web/ios-config/apply.sh` (Info.plist usage strings)                            |
+| `cap-sync`        | `cap sync ios` — copy `web/dist` + install plugin pods                                |
+| `pod-install`     | `pod install` in `web/ios/App`                                                        |
+| `ios-build`       | `xcodebuild build` for the simulator                                                  |
+| `ios-run`         | `cap run ios` — build + launch on a simulator/device                                  |
+| `open-xcode`      | `cap open ios` — open in Xcode                                                        |
+| `list-sims`       | list bootable simulators                                                              |
+| `tf-build-number` | stamp `CFBundleVersion` (`$IOS_BUILD_NUMBER`, else epoch)                             |
+| `tf-signing-prep` | place the ASC API key (+ optional dist `.p12` + App Store profile)                    |
+| `tf-archive`      | `xcodebuild archive` — App-Store-signed (manual with the profile; automatic fallback) |
+| `tf-export`       | `xcodebuild -exportArchive` → `build/export/*.ipa`                                    |
+| `tf-upload`       | `xcrun altool --upload-app` → App Store Connect / TestFlight                          |
 
 Chains: `bootstrap` = install → web-build → cap-add-ios → ios-config → cap-sync →
 pod-install; `rebuild` = web-build → cap-sync → ios-build; `launch` = web-build →

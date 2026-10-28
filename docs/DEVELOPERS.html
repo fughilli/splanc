@@ -708,7 +708,12 @@ causes a watchdog reset that looks like a firmware hang).</p></li>
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">time_base_skew</span></code></strong> — two analyzer-tapped DUTs on one shared epoch; asserts
 inter-fixture skew &lt; 20 ms.</p></li>
 </ul>
-<p>Every HITL failure carries the DUT’s serial log (the <code class="docutils literal notranslate"><span class="pre">hitl-serial-logs</span></code> artifact).</p>
+<p>Every HITL failure carries the DUT’s serial log (the <code class="docutils literal notranslate"><span class="pre">hitl-serial-logs</span></code> artifact).
+That capture pauses while a test reads the console itself, so each test also saves
+its own console windows and other files to <code class="docutils literal notranslate"><span class="pre">$TEST_UNDECLARED_OUTPUTS_DIR</span></code>. CI
+unpacks every test’s <code class="docutils literal notranslate"><span class="pre">outputs.zip</span></code>, failed retry attempts included, into the
+<code class="docutils literal notranslate"><span class="pre">hitl-test-outputs</span></code> artifact (<code class="docutils literal notranslate"><span class="pre">&lt;package&gt;/&lt;target&gt;/test.outputs/</span></code> and
+<code class="docutils literal notranslate"><span class="pre">.../test_attempts/attempt_N.outputs/</span></code>).</p>
 </section>
 <section id="fx-performance-benchmark-regression-gate">
 <h3>FX performance benchmark &amp; regression gate<a class="headerlink" href="#fx-performance-benchmark-regression-gate" title="Link to this heading">¶</a></h3>

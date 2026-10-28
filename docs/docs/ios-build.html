@@ -441,15 +441,36 @@ of secrets serves both the local target and the CI action:</p>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">APPLE_DIST_CERT_PASSWORD</span></code></p></td>
 <td><p>…the <code class="docutils literal notranslate"><span class="pre">.p12</span></code> export password</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">IOS_BUILD_NUMBER</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">APPLE_PROVISIONING_PROFILE_BASE64</span></code></p></td>
+<td><p>base64 App Store <code class="docutils literal notranslate"><span class="pre">.mobileprovision</span></code> for <code class="docutils literal notranslate"><span class="pre">dev.splanc.app</span></code>, signed by that cert → <strong>manual</strong> signing (required in CI)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">IOS_BUILD_NUMBER</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">CFBundleVersion</span></code> for the upload (unique + increasing per build); default = epoch seconds</p></td>
 </tr>
 </tbody>
 </table>
 </div>
 <p>A dev Mac that already ships device builds has a distribution cert in its login
-keychain, so the two <code class="docutils literal notranslate"><span class="pre">APPLE_DIST_CERT_*</span></code> vars are only needed on a clean machine.
-One-time Apple-side setup (membership, register the <code class="docutils literal notranslate"><span class="pre">dev.splanc.app</span></code> App ID, create
+keychain, so the two <code class="docutils literal notranslate"><span class="pre">APPLE_DIST_CERT_*</span></code> vars are only needed on a clean machine.</p>
+<p><strong>Signing mode.</strong> With <code class="docutils literal notranslate"><span class="pre">APPLE_PROVISIONING_PROFILE_BASE64</span></code> set, <code class="docutils literal notranslate"><span class="pre">tf-signing-prep</span></code>
+installs the profile (into both <code class="docutils literal notranslate"><span class="pre">~/Library/MobileDevice/Provisioning</span> <span class="pre">Profiles/</span></code> and
+Xcode 16’s <code class="docutils literal notranslate"><span class="pre">~/Library/Developer/Xcode/UserData/Provisioning</span> <span class="pre">Profiles/</span></code>, as
+<code class="docutils literal notranslate"><span class="pre">&lt;UUID&gt;.mobileprovision</span></code>) after checking it is an App Store profile for
+<code class="docutils literal notranslate"><span class="pre">&lt;team&gt;.dev.splanc.app</span></code>; <code class="docutils literal notranslate"><span class="pre">tf-archive</span></code> pins <code class="docutils literal notranslate"><span class="pre">CODE_SIGN_STYLE</span> <span class="pre">=</span> <span class="pre">Manual</span></code>,
+<code class="docutils literal notranslate"><span class="pre">&quot;Apple</span> <span class="pre">Distribution&quot;</span></code>, the profile and its team onto the <strong>App target only</strong> (via
+<code class="docutils literal notranslate"><span class="pre">web/ios-config/manual_signing.pl</span></code> on the archived configuration — global
+<code class="docutils literal notranslate"><span class="pre">xcodebuild</span></code> overrides would also hit the Swift-package targets, which reject
+provisioning profiles; the <code class="docutils literal notranslate"><span class="pre">project.pbxproj</span></code> is restored afterwards); and <code class="docutils literal notranslate"><span class="pre">tf-export</span></code>
+writes <code class="docutils literal notranslate"><span class="pre">signingStyle</span> <span class="pre">manual</span></code> with a <code class="docutils literal notranslate"><span class="pre">provisioningProfiles</span></code> entry. Neither step uses
+<code class="docutils literal notranslate"><span class="pre">-allowProvisioningUpdates</span></code>, so nothing is created on Apple’s side. <strong>Without</strong> the
+profile, both fall back to Xcode automatic signing via the API key and print a loud
+warning: on a machine with no cached development cert (every fresh CI runner) that
+mints a new “Apple Development” certificate per run, which is what hit Apple’s
+certificate cap and failed TestFlight for app-v1.12.1–1.12.7. Make the profile at
+developer.apple.com → Profiles → <strong>+</strong> → Distribution / App Store Connect → App ID
+<code class="docutils literal notranslate"><span class="pre">dev.splanc.app</span></code> → the same Apple Distribution cert as the <code class="docutils literal notranslate"><span class="pre">.p12</span></code>; it expires
+yearly — regenerate it and update the secret.</p>
+<p>One-time Apple-side setup (membership, register the <code class="docutils literal notranslate"><span class="pre">dev.splanc.app</span></code> App ID, create
 the App Store Connect app record, mint the API key) is described in the workflow
 header. The container/<code class="docutils literal notranslate"><span class="pre">iosctl</span></code> path uses the same tasks via the <code class="docutils literal notranslate"><span class="pre">testflight</span></code> chain
 (with <code class="docutils literal notranslate"><span class="pre">web-build</span></code>): <code class="docutils literal notranslate"><span class="pre">tools/iosctl</span> <span class="pre">run</span> <span class="pre">testflight</span></code>.</p>
@@ -498,10 +519,10 @@ header. The container/<code class="docutils literal notranslate"><span class="pr
 <td><p>stamp <code class="docutils literal notranslate"><span class="pre">CFBundleVersion</span></code> (<code class="docutils literal notranslate"><span class="pre">$IOS_BUILD_NUMBER</span></code>, else epoch)</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">tf-signing-prep</span></code></p></td>
-<td><p>place the ASC API key (+ optional dist <code class="docutils literal notranslate"><span class="pre">.p12</span></code>) for signing/upload</p></td>
+<td><p>place the ASC API key (+ optional dist <code class="docutils literal notranslate"><span class="pre">.p12</span></code> + App Store profile)</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">tf-archive</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">xcodebuild</span> <span class="pre">archive</span></code> — App-Store-signed (automatic signing)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">xcodebuild</span> <span class="pre">archive</span></code> — App-Store-signed (manual with the profile; automatic fallback)</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">tf-export</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">xcodebuild</span> <span class="pre">-exportArchive</span></code> → <code class="docutils literal notranslate"><span class="pre">build/export/*.ipa</span></code></p></td>
