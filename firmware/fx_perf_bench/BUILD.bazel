@@ -28,6 +28,7 @@ rust_binary(
     edition = "2021",
     deps = [
         "//firmware/fx_aot",
+        "//firmware/fx_sig",
         "//firmware/fx_vm",
         "//fx_compiler",
     ],
@@ -115,6 +116,7 @@ rust_static_library(
     deps = [
         "//firmware/fx_aot:fx_aot_nostd",
         "//firmware/fx_jit",
+        "//firmware/fx_sig",
         "//firmware/fx_vm",
     ],
 )
@@ -133,6 +135,7 @@ rust_test(
     deps = [
         "//firmware/fx_aot:fx_aot_nostd",
         "//firmware/fx_jit",
+        "//firmware/fx_sig",
         "//firmware/fx_vm",
     ],
 )
@@ -147,6 +150,7 @@ rust_library(
     deps = [
         "//firmware/fx_aot:fx_aot_nostd",
         "//firmware/fx_jit",
+        "//firmware/fx_sig",
         "//firmware/fx_vm",
     ],
 )

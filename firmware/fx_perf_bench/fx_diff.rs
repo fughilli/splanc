@@ -22,9 +22,7 @@ fn desc(path: &str) -> &'static EffectDesc {
         uniforms: Box::leak(uniforms.into_boxed_slice()),
         err: "",
         aot_ok: false,
-        aot_code: &[],
-        aot_update: -1,
-        aot_shade: 0,
+        aot_fxn: &[],
     }))
 }
 

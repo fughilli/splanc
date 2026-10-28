@@ -1,7 +1,10 @@
 # Native (AOT) effect execution on the ESP32-C6
 
-Status: **design + stages 1–2 in progress** (this PR). Stage 3 (signing and an
-on-device loader) waits on the trust decision below. Background numbers:
+Status: **design + stages 1–2, rebased onto main (#350 fused ops, #328 memo),
+plus the signature-checking infrastructure** (this PR). The trust model is
+decided (2026-10-28, "Trust" below): unsigned on-device lowering, and
+user-key HMAC signatures for prebuilt images, with a public dev key on every
+device for now. Stage 3 (wiring both into `player_app`) remains. Background numbers:
 [fx-perf-study.md](fx-perf-study.md), "Q1 — the native ceiling" and "A native
 AOT path: feasibility".
 
@@ -35,6 +38,22 @@ the effect) unless all of these hold:
   slot operand is in range;
 - no opcode outside the supported set appears. `JitCall` and the I2C intrinsics
   are always refused; drivers (`FLAG_DRIVER`) stay on the VM.
+
+**Fused superinstructions and the memo cache (main, #350/#328).** Before
+lowering, `fx_aot::defuse` expands `BinTop`, `BinPair`, `PushConsts`,
+`LoadCtxLanes` and `MulAdd` into the base opcodes they fuse (each fusion is
+exact in `fx_vm`), and turns the per-LED memo brackets
+`LoadLedCache`/`StoreLedCache` into no-ops. Native code binds no memo cache,
+which the VM defines as running the original code. Branches are re-targeted.
+Each expansion carries a budget weight (1 on its first op, 0 on the rest), so
+the native per-block budget decrement still counts a fused op once, as the
+VM does. The generic helper reads operand bytes from the *expanded* stream,
+so an image ships them as `Image::op_code` (and a `.fxn` carries them). The
+memo pass's per-frame **prepare entry** (`Program::prep_entry`) is lowered as
+a third entry (`Image::prep_off`); the host runs it once per frame after
+`update()`, where the VM runs it lazily before the first LED. A fixed-point
+`frac` operand above 30, which the VM now faults on, keeps the effect on the
+VM.
 
 Because depth is static, **every operand-stack slot has a fixed home at compile
 time**, and no runtime stack pointer is needed:
@@ -274,116 +293,299 @@ them into `fx_load`/`fx_clear`/park in `ffi.rs`:
 
 ## Trust: who may produce native code the device runs?
 
-Native code is machine code arriving over the network. Devices can't trust the
-user's browser, and effects are written by users and agents at runtime. The
-45-effect library is agent-written, not first-party. So "signed by our CI"
-alone would leave most of the effects that matter on the VM.
+**Owner decision (2026-10-28).** "Users should be able to sign effects for
+their own fixtures — we need an efficient way to check those signatures. 4
+bytes of an HMAC computed against a user's provisioned key would be sufficient
+as a signature. We don't currently have a provisioning scheme that allows users
+to 'pair' their fixtures so that only their authenticated commands can run, so
+for now let's just provision a dev key and get the signature checking infra
+brought up." Follow-up the same day: don't bind a signature to the firmware
+build (that would invalidate every user's signed effects on each release).
+Bind a small **native ABI** version and a non-downgrade **minimum firmware**
+instead, and retire old blobs by **key epoch / key revocation**.
 
-### (a) Device-side lowering: no signature for user/agent effects
+This replaces the earlier recommendation ("(a) everywhere + a CI-held P-256
+native key; per-owner keys rejected"). The reasoning that changed is in
+"Threat model" below: every image passes the sandbox verifier and runs under
+arena W^X whoever signed it, so a stolen user key yields sandboxed native
+code, not arbitrary machine code.
 
-The device runs `fx_aot` on the `.fxb` it already accepts, then the verifier,
-then installs the result. The only code involved is the lowering crate inside
-the OTA-signed firmware, so nothing new needs to be trusted and no key exists
-to steal.
+### The three paths and how they relate
 
-- **Cost:**
-  - flash for the lowering and verifier. Estimate ~25–40 KB; the app slot has
-    ~197 KB headroom (2,359,296-byte slot, 2,157,392-byte image);
-  - lowering time at load (estimate a few ms for a 4 KB `.fxb`, measured in
-    stage 2);
-  - transient heap while lowering (the code buffer plus a per-instruction
-    depth table, ~2 bytes per bytecode byte).
-- **Security property:** the lowering must be sound for *every* input. That's
-  the same bar the VM already meets: it never reads or writes outside its slot
-  arrays for any `.fxb`. The verifier and PMP back it up independently.
-- **Limits:**
-  - code quality is what this compiler produces, the same on host and device
-    because it's the same crate;
-  - code a host could build but the device can't (LLVM-optimised Rust/C
-    effects, or a heavier register-allocating compiler) isn't covered;
-  - pure offline installs work.
+| path | who produces the code | signature | status |
+|---|---|---|---|
+| **(a) on-device lowering** | the firmware's own `fx_aot`, from the `.fxb` it already accepted | **none needed**: the only code involved is inside the OTA-signed firmware | lowering + verifier exist; `player_app` wiring is stage 3 |
+| **(b) user-signed prebuilt `.fxn`** | the user's tools (`fx_sign`, later the app/agent) | **4-byte HMAC-SHA256** under a key the device holds: the public **dev key** on every device today, a per-user paired key later | **built** (`firmware/fx_sig`), wired into the bench load path |
+| (c) first-party P-256-signed prebuilt | CI | ECDSA under a dedicated `native` key id | **not built**; see below |
 
-### (b) Dedicated native key id: prebuilt first-party code
+For one effect the device prefers, in order: a valid `.fxn` for exactly that
+`.fxb` (b) → lowering it itself (a) → the VM. Any failure at any step falls
+through to the next, and the VM always works: **an effect never refuses to
+play** because of a signature. What (a) and (b) share, and what the signature
+never bypasses:
 
-A new key, **id 3 `native`** (plus id 4 `native_next` for rotation), signs
-prebuilt native images in CI. These are images the device couldn't produce
-itself: hand-tuned or LLVM-compiled first-party library effects, and static
-installations.
+- the instruction-stream **verifier** (`fx_aot::verify`) on every image;
+- placement **only in the FX arena** (no fit → VM), executed under PMP X +
+  PMA no-W;
+- the instruction budget mirrored into native code.
 
-- **Role separation:**
-  - The native key is **never in the loader's ring**, so it can never sign a
-    firmware image.
-  - It is **never accepted as an epoch signer**, so a stolen native key can't
-    revoke the release key.
-  - It shares the keyring's id space, so the existing epoch mechanism revokes
-    it: a `release` or `backup`-signed epoch with bit 3 set.
-- **Why not the release key:** CI would then sign machine code built from
-  library sources with the same key that authorises firmware. A compiler or
-  workflow bug, or a malicious library PR, would yield a release-key
-  signature. A separate role confines that.
-- **Binding:** a `.fxn` image carries the SHA-256 of the `.fxb` it implements,
-  plus the helper-ABI version, inside the signed bytes. The device runs it
-  only next to that exact bytecode. The VM stays available, and the effect's
-  uniforms and manifest still come from the `.fxb`.
-- **Cost:**
-  - one more CI secret (`FX_NATIVE_SIGNING_KEY`) and a keygen, done by the
-    owner;
-  - the app gains a native keyring header and a P-256 verify. mbedtls and the
-    C6's ECDSA accelerator are already linked for TLS;
-  - the app reads the loader's persisted `kepoch`/`krevoked` from NVS;
-  - the signed images still go through the verifier.
+The signature only decides whether a prebuilt image is *considered*. (b)
+exists for code the device can't or shouldn't produce itself: a heavier host
+optimiser, hand-tuned images, or skipping on-device lowering time and transient
+heap at load.
 
-### (c) Relay compile-and-sign
+**(c) P-256 first-party images: not needed now.** The HMAC path already
+carries prebuilt images, and there is no first-party native library yet. If one
+appears that must run on devices sharing no symmetric key with CI, add it as an
+asymmetric variant of the same container (format version 2 or a flag bit: the
+header has both) under a key id that is never in the loader ring and never an
+epoch signer. The earlier role-separation argument for that key still holds.
+The relay compile-and-sign option stays rejected: an online signing oracle
+proves nothing that (a) doesn't.
 
-The relay (Cloudflare Worker) would compile user source with the pinned
-compiler and sign the native output with an online key.
+### Signature format (`firmware/fx_sig`)
 
-- **Cost:**
-  - **The relay has no compiler today** (`agent/relay/src/library.ts`: "the
-    relay has no compiler"). Shipping fx_compiler and the lowering as WASM to
-    a free-tier Worker hits bundle-size and CPU-time limits.
-  - **The key is online and signs anything submitted.** Anyone who can reach
-    the endpoint (rate-limited, authenticated or not) gets machine code
-    signed. The signature then proves only "our compiler made this from some
-    source", which is exactly the property (a) gets with no key at all.
-  - Every native deploy depends on the relay being available, and offline
-    installs get nothing.
-  - A Worker secret is a weaker place for a code-signing key than a CI secret.
-- **Benefit over (a):** none for code from this compiler. It would help only if
-  the relay ran a much heavier optimiser than the device can.
+A `.fxn` is a 40-byte header, the RV32 code words, and the operand bytes the
+image's generic helper reads (`fx_aot::Image::op_code`: the `.fxb` code with the
+fused superinstructions expanded). All integers are little-endian.
 
-### Rejected: per-owner key provisioned at setup
+| off | size | field | notes |
+|---:|---:|---|---|
+| 0 | 4 | magic `FXN1` | |
+| 4 | 1 | format version | 1 |
+| 5 | 1 | `key_id` | 0 = dev key; 1.. = user keys |
+| 6 | 2 | `key_epoch` | must be ≥ the device's `min_epoch` |
+| 8 | 2 | `abi` | `fx_aot::NATIVE_ABI`; must be one the firmware lists |
+| 10 | 2 | `flags` | 0 (reserved for an asymmetric variant) |
+| 12 | 4 | `min_fw` | firmware must be ≥ this (see below) |
+| 16 | 8 | `scope` | all-zero = fleet (any device with the key), else a device id (MAC, zero-padded) |
+| 24 | 2 | `code_words` | |
+| 26 | 2 | `op_code_len` | |
+| 28 | 2 | `update_off` | word offset, `0xFFFF` = none |
+| 30 | 2 | `shade_off` | word offset |
+| 32 | 2 | `prep_off` | per-frame prepare entry, `0xFFFF` = none |
+| 34 | 2 | reserved | must be 0 |
+| 36 | 4 | **tag** | |
 
-The owner's app or agent would sign and the device would trust the owner's
-key, enrolled over BLE. The key would live in a browser or on an agent host,
-so any XSS, malicious MCP client or compromised agent host could sign
-arbitrary machine code for all of that owner's devices. It also needs
-multi-client enrolment and recovery UX. It adds risk without improving on (a).
+```text
+digest = SHA-256(code bytes || op_code || the .fxb it was lowered from)
+tag    = HMAC-SHA256(key, "splanc-fx-sig-v1" || header[0..36] || digest)[0..4]
+```
 
-### Recommendation
+- **Domain separation**: the 16-byte prefix `splanc-fx-sig-v1` and the magic and
+  format version inside `header[0..36]`. A tag for anything else under the same
+  key can't be replayed here.
+- **Everything is bound**: every header field (key id, epoch, ABI, `min_fw`,
+  scope, sizes, entry offsets), the code, the operand bytes, and the exact
+  `.fxb`. The device already holds the `.fxb`, so it is hashed, not shipped
+  twice. A blob checked against any other bytecode fails. `abi` and `min_fw`
+  sit in the header **and** in the MAC'd message, so they can't be relabelled.
+- **Not bound**: the firmware build. A blob stays valid on every firmware ≥
+  `min_fw` that lists its `abi`.
+- Comparison is constant-time (XOR-fold, no early exit).
+- Host signer: `bazel run //firmware/fx_sig:fx_sign -- sign --fxb e.fxb --out e.fxn
+  [--key-file K --key-id N] [--epoch E] [--min-fw X.Y.Z] [--scope fleet|aa:bb:..]`.
+  It lowers with `fx_aot`, runs the verifier, then signs. With no
+  `--key-file` it signs with the dev key. `fx_sign verify` checks a blob. The
+  bench generator (`firmware/fx_perf_bench/gen_effects.rs`, the place this PR
+  produces prebuilt images) signs every embedded image with the dev key
+  automatically.
 
-**(a) as the default for every user and agent effect, plus (b) for prebuilt
-first-party images. Don't build (c).**
+**Firmware version** (`min_fw`): the OTA manifest's monotonic packing,
+`major * 1_000_000 + minor * 1_000 + patch` (1.6.0 → 1006000), parsed from the
+build's `firmware-v*` version (`fx_sig::parse_fw_version`, the same function
+as `ota_parse_version`). Untagged development builds report 0, so they run
+only `min_fw = 0` blobs. Firmware older than `min_fw` keeps the effect on the
+VM.
 
-- (a) removes the trust problem rather than managing it: no key, no online
-  signer, works offline. Its security bar (a sound lowering, re-checked by a
-  verifier and PMP) is the same one the VM already has to meet.
-- (b) covers the one thing (a) can't: code the device can't produce. It keeps
-  native signing out of the firmware trust root, and it is revocable with the
-  machinery that already exists.
-- (c) costs an online signing oracle and a new relay dependency, and buys
-  nothing (a) doesn't.
+**Native ABI** (`abi`, `fx_aot::NATIVE_ABI`, currently 1) covers everything a
+prebuilt image hard-codes about the firmware that runs it:
+
+- the `NativeCtx` layout and its baked offsets;
+- the direct-helper table order and the generic helper's
+  `(ctx, win, op, code_off)` convention;
+- the register/frame layout and the entry calling convention;
+- the budget mirror;
+- the `op_code` contract.
+
+Bump it when any of those change. A firmware lists the ABIs it can run; any
+other ABI keeps the effect on the VM. Retiring an ABI is also a blunt
+revocation lever (every blob of that ABI drops to the VM or on-device
+lowering).
+
+**What the client sees on a fallback.** The device reports a stable reason
+token (`malformed`, `unknown_key`, `revoked_key`, `old_epoch`, `wrong_scope`,
+`abi_unsupported`, `fw_too_old`, `rate_limited`, `bad_tag`) together with its
+running `fw` version and native `abi`. The bench logs
+`aot <effect> ... ok=0 reason=sig:<token> fw=<n> abi=<n> vm=1`. In
+`player_app` this becomes a field of the effect-load reply (stage 3).
+
+### Why a 32-bit tag is enough, and what makes it so
+
+- HMAC-SHA256 is a PRF. Without the key, the tag of a new message is
+  unpredictable, so a forgery is a **guess**: success probability 2^-32 per
+  attempt. Seeing any number of valid tags doesn't help forge one for
+  different code.
+- Guesses can only be checked **online**, against a device. So the device
+  bounds the rate (`fx_sig::Limiter`):
+  - the first 3 consecutive bad tags are free (developer mistakes);
+  - after that each attempt waits 0.5 s, doubling, capped at **60 s**.
+  - At the cap that is one guess a minute: an expected 2^31 minutes (about
+    4,000 years) per forgery, about 8 years for a 1-in-500 chance.
+- The limiter is **device-wide**, not per connection, so new sessions don't
+  reset it.
+- Its consecutive-failure count is **persisted in NVS** and re-armed at boot,
+  so a reboot doesn't reset it either. Writes happen once per failure (bounded
+  by the backoff) and once on the next success.
+- Structural refusals (ABI, `min_fw`, key, epoch, scope) happen before the
+  limiter and the MAC. They are about public header fields and reveal nothing
+  about the key.
+- The limiter runs *before* the MAC, so during a backoff even a valid blob is
+  held off (`rate_limited`) and timing reveals nothing.
+- Every failure is logged (`sig reject reason=… boot_fails=…`).
+- Cost of a device-wide limiter: anyone flooding bad tags delays legitimate
+  native loads by up to a minute. Those effects keep running on the VM, so
+  this degrades speed, not function.
+- Birthday bounds don't apply: an attacker can't evaluate tags offline.
+- A valid blob replayed later is the same code its signer authorised. Retire
+  old blobs with the epoch or key revocation (below), not with a version
+  field. Device-scoped blobs can't be replayed onto other devices.
+
+### Threat model
+
+- **Today (dev key everywhere): the signature authenticates nothing.** The dev
+  key (`fx_sig::DEV_KEY`, key id 0, the ASCII string
+  `splanc-fx-dev-key-NOT-SECRET-v1!`) is in the repository. Anyone can sign
+  anything. What stands between a malicious `.fxn` and the device is the
+  sandbox: the verifier's narrow instruction grammar, calls only through the
+  trusted helper table, loads and stores only to the frame/state/output
+  words, the budget, and arena placement under W^X. That is the same bar
+  on-device lowering (a) has to meet. The infrastructure exists so the
+  user-key future is a provisioning change, not a format change.
+- **With per-user keys:**
+  - An attacker on the LAN without the key can submit blobs but faces 2^-32
+    per guess under the backoff above.
+  - An attacker **with** a user's key can sign native code for that user's
+    devices. The key might come from XSS in the app, a malicious MCP client
+    or a compromised agent host. That code is still confined to the sandbox
+    above. So a stolen key yields "whatever the verifier admits", the same
+    class of risk as a bug in on-device lowering. It does not yield
+    arbitrary code execution, firmware replacement (OTA has its own P-256
+    ring that this key is never part of), or access outside the effect's
+    arena region.
+  - Recovery: revoke the key id or raise `min_epoch`. The affected effects
+    keep playing on the VM.
+- **Not covered:**
+  - confidentiality of effects;
+  - authenticating the *commands* that deliver a blob, which is the pairing
+    work below;
+  - side channels in the soft SHA. The software path isn't constant-time
+    with respect to the payload, which is public anyway. The key-dependent
+    part is the precomputed HMAC pads.
+
+### Keys, revocation and the provisioning seam
+
+- **Key ring** (`fx_sig::KeyRing`): up to 4 keys, each stored as its
+  precomputed HMAC inner/outer SHA-256 states, so a verify skips the pad
+  compressions. Key id 0 is the dev key, compiled in and installed on every
+  device by default. User keys use ids 1..31.
+- **Device policy** (`fx_sig::Policy`, persisted, never lowered, like the OTA
+  keyring's `kepoch`/`krevoked`):
+  - `min_epoch` (u16): blobs signed under a lower `key_epoch` are refused.
+    Raising it retires every older blob at once.
+  - `revoked` (u32): one bit per key id 0..31. Setting bit 0 retires every
+    dev-signed blob once user keys exist.
+- **NVS** (namespace `splanc_fxsig`):
+  - `k1`..`k3`: 32-byte user keys;
+  - `minep`, `revoked`: the policy;
+  - `fails`: the persisted backoff.
+
+  The bench image reads and writes exactly these. An erased NVS falls back to
+  dev key only, policy 0, no backoff.
+- **Provisioning seam (placeholder, not implemented).** Pairing must deliver a
+  key over an authenticated channel, never in clear over the LAN. One
+  candidate is ECDH during BLE Improv provisioning, confirmed by physical
+  presence (a button press or a code shown on the fixture). Proposed protocol
+  shape, reusing the Rust API that exists now (`KeyRing::install`/`remove`,
+  `Policy::raise_min_epoch`/`revoke`):
+  - `fx_key_status` → `{key_ids, min_epoch, revoked, fw_version, abis,
+    sig_fails, retry_ms}`. Unauthenticated, public facts only.
+  - `fx_key_provision{key_id, key_epoch, wrapped_key, proof}`: install or
+    replace a user key. `wrapped_key` is encrypted to the pairing session.
+    `proof` is the pairing transcript's MAC.
+  - `fx_key_revoke{key_id | min_epoch, auth}`: `auth` is an HMAC under a
+    currently valid user key (or physical presence), over the request and a
+    device nonce.
+  - A load-reply field `native: {ok, reason, fw_version, abi, retry_ms}` for
+    the fallback report above.
+
+  Migration off the dev key: pair (install key id 1), re-sign the user's
+  blobs, then revoke id 0. Dev-signed blobs then run on the VM or on-device
+  lowering; they never fail to play.
+
+### Device cost (measured)
+
+Rig-1 C6 (`c6-123170`, 2026-10-28), `fxpb sig` lines from the bench image's
+signature pass (`firmware/fx_perf_bench`, `sig_pass` in `src/device.rs`). One
+verify is one SHA-256 over code + op_code + `.fxb`, plus one HMAC from the
+ring's precomputed pad states (three software compressions). Best of 3:
+
+| image | payload bytes | software SHA µs | hardware SHA µs |
+|---|---:|---:|---:|
+| sparkle | 1,552 | 939 | 269 |
+| solid | 1,569 | 939 | 269 |
+| sweep | 1,662 | 1,005 | 291 |
+| cylinder | 2,112 | 1,231 | 307 |
+| pulses | 2,234 | 1,295 | 332 |
+| gradient | 2,277 | 1,295 | 309 |
+| plasma | 2,556 | 1,464 | 340 |
+| noise | 4,910 | 2,632 | 475 |
+| particles | 5,136 | 2,767 | 484 |
+| rain_naive | 9,376 | 4,921 | 747 |
+
+- **About 0.3–0.75 ms per load with the C6's SHA accelerator** (mbedtls,
+  already linked in `player_app` for TLS and OTA). The software SHA costs
+  about 0.6 µs per byte (0.9–4.9 ms). It is a once-per-load cost, never
+  per frame.
+- **RAM:**
+  - the device state (4-slot key ring with precomputed pads, policy,
+    backoff, device id) is **1,000 bytes static**;
+  - **no heap**;
+  - a verify uses a few hundred bytes of stack (two cloned SHA states and
+    the digest).
+- **Flash:** about 3.5 KB of code for `fx_sig` plus the SHA (bench ELF
+  symbols).
+- `player_app` doesn't link `fx_sig` yet (stage 3), so the netstack image's
+  static RAM/IRAM is unchanged by this PR (`esp32c6_netstack`: `.bss` and
+  `.data` identical; flash +26 bytes from the `fx_vm` merge).
+- All 11 signature cases gave the expected reason on the device: good →
+  `ok`; tampered code, op_code or tag → `bad_tag`; validly signed for
+  firmware 99.0.0 → `fw_too_old`; for ABI 2 → `abi_unsupported`; the
+  `min_fw` or epoch relabelled to an accepted value → `bad_tag`; wrong key →
+  `bad_tag`; unknown key id → `unknown_key`; the right blob against another
+  effect's `.fxb` → `bad_tag`.
+- Backoff on the device: `bad_tag ×3`, then `rate_limited`, with the good blob
+  held off during the window and accepted after it.
+- End to end on the device-wide path: the tampered `cylinder` blob logged
+  `aot cylinder helix n=500 ok=0 reason=sig:bad_tag fw=0 abi=1 vm=1` (the VM
+  frame stands); the good blob ran native with `maxdiff=0 off2=0`.
+- `tools/fx_perf/run_bench.py` now fails the run unless this whole pass holds.
 
 ## Decisions needed from the owner before production
 
-1. **Trust option(s):** (a) default + (b) as recommended, (a) only, or
-   something else. Production native execution stays off until this is
-   decided.
-2. **If (b):** generate the `native` key (`ota_sign keygen`) and add the
-   `FX_NATIVE_SIGNING_KEY` CI secret. Keep it separate from
-   `OTA_SIGNING_KEY`. Agree that it is never valid for images or epochs.
-3. **Code placement:** DECIDED (2026-10-23) — the FX arena, never general heap;
+1. **Pairing scheme** for per-user keys: which channel delivers the key (BLE
+   Improv ECDH + physical presence is the proposal), and whether one key per
+   user covers all their fixtures (fleet scope) or per-device keys are wanted.
+2. **Whether to revoke the dev key in release firmware** once pairing exists
+   (recommended: release builds ship `revoked` bit 0 set; dev builds don't).
+3. **Backoff parameters**: 3 free failures, 0.5 s doubling, 60 s cap,
+   device-wide. Accept, or prefer per-session limits plus a lower global cap.
+4. **(c) P-256 first-party images**: confirm they stay unbuilt until a
+   first-party native library exists.
+5. **Code placement:** DECIDED (2026-10-23): the FX arena, never general heap;
    no flash partition; littlefs stores only. See "Where native code lives".
+6. **Trust model:** DECIDED (2026-10-28): user-key HMAC (dev key for now) +
+   unsigned on-device lowering.
 
 ## Plan
 
@@ -403,13 +605,20 @@ first-party images. Don't build (c).**
    - measured cycles per LED against the VM on a real C6.
    - Small additive change: some private `fx_vm` maths helpers become `pub`,
      so helpers call the interpreter's exact functions.
-3. **Stage 3 (after the decision):**
+3. **Signature infrastructure (this PR):** `firmware/fx_sig` (the `.fxn`
+   container, 4-byte HMAC tag, key ring + policy, backoff), the `fx_sign` host
+   tool, dev-key signing in the bench generator, and the bench's
+   authenticate-then-load path with NVS keys and a persisted backoff.
+4. **Stage 3:**
    - for (a), on-device lowering in `player_app`, carving the arena sub-region
      and programming PMP+PMA per "Netstack wiring" (the allocation math and the
      W^X mechanism already exist);
-   - for (b), the `.fxn` container, a signer, the app-side keyring and verify,
-     and the test-key variant (mirrors OTA's `_testkey`/`--trust=test`).
-4. **Stage 4:** a Thumb-2 backend for future boards.
+   - for (b), the same `authenticate` step in `player_app`'s effect load
+     (prefer a valid `.fxn`, else lower, else VM) with the hardware SHA
+     (mbedtls is already linked), the `splanc_fxsig` NVS namespace, and the
+     fallback reason in the load reply;
+   - pairing / per-user key provisioning per "Provisioning seam".
+5. **Stage 4:** a Thumb-2 backend for future boards.
 
 ## Status, measured numbers, and what is not verified
 
@@ -507,8 +716,41 @@ byte-identical to #351's apart from the build timestamp and image hashes. The
 diff tests, 78 embedded bench images and 521,920 QEMU RV32 comparisons all
 pass. No new hardware run was needed.
 
-PR #350 is not yet integrated into this branch. Its new opcodes still need
-rebasing/integrating before this stack lands.
+**Rebased onto main (2026-10-28).** main (#350 VM perf stack, #328 memo
+cache, #344 logf/expf, #357 debugger) is merged in. The fused opcodes and memo
+brackets are expanded before lowering (`defuse`, see "What gets lowered"),
+the prepare entry is lowered, and `frac > 30` stays on the VM. On the host
+corpus **29 of 36 effects lower and match the VM bit for bit; 7 fall back**
+(study rain/flood/texture, opt fire_helix/rainbow2, agent app perf opus
+p02/p09). agent skill opus p11 now lowers. The bench's on-device JIT
+stub was also updated to the 4-argument `JitFn` from #350; the bench image
+hadn't been rebuilt on main since then and no longer compiled.
+Merging main also made the bench's JIT (#381: TOR over PMP entries 3+4) and
+AOT region (entry 4 NAPOT) clobber each other, giving an instruction access
+fault. Both are now re-armed on every use.
+
+**On a real C6 after the rebase** (rig-1 `c6-123170`, 2026-10-28, ms/frame at
+500 LEDs on the helix). Every lowered study effect ran native from its
+dev-signed `.fxn` and matched the VM on every LED (`maxdiff=0`, `off2=0`) at
+500 and 2048 LEDs:
+
+| effect | VM ms | AOT ms | speedup |
+|---|---:|---:|---:|
+| solid | 3.0 | 2.5 | 1.18x |
+| sweep | 11.3 | 8.0 | 1.41x |
+| gradient | 17.0 | 10.6 | 1.60x |
+| pulses | 19.7 | 13.8 | 1.43x |
+| sparkle | 19.8 | 12.2 | 1.62x |
+| cylinder | 22.1 | 14.0 | 1.58x |
+| plasma | 31.2 | 18.7 | 1.68x |
+| noise | 52.0 | 26.1 | 1.99x |
+| particles | 74.3 | 36.9 | 2.01x |
+| rain_naive | 62.9 | 25.9 | 2.42x |
+
+The *VM* got 1.3–2.4x faster on main (#350's fused ops and JIT register
+caching). The AOT now expands those fused ops back into base ops, so its
+margin over the VM shrank. Lowering the fused forms directly (one helper call
+per `BinTop`/`MulAdd` instead of two) is the obvious next lever.
 
 Same compiler, default uniforms, 64 LEDs × 3 frames, update plus shade,
 original/current code-generation counts (not timings):
@@ -585,8 +827,9 @@ effects qualify.
 
 **Not verified / out of scope here:**
 
-- No on-device lowering or signing yet (stage 3): the bench embeds **host**-lowered
-  (and host-verified) images and runs them unsigned from a static RWX region. The netstack arena +
+- No on-device lowering yet (stage 3): the bench embeds **host**-lowered (and
+  host-verified) images, now as dev-key-signed `.fxn`s that it authenticates
+  before running them from a static RWX region. The netstack arena +
   PMP/PMA path is implemented as allocation math + a hardware-proven mechanism but
   not yet wired into `ffi.rs`.
 - User functions, buffers/textures, graph/flood and I2C drivers stay on the VM.

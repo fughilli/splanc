@@ -33,7 +33,7 @@ pub mod micro;
 mod effects_gen;
 #[cfg(test)]
 mod host_test;
-pub use effects_gen::EFFECTS;
+pub use effects_gen::{EFFECTS, SIG_CASES, SIG_OTHER_FXB};
 
 /// One embedded effect, from gen_effects.rs.
 pub struct EffectDesc {
@@ -50,12 +50,11 @@ pub struct EffectDesc {
     /// Whether the AOT lowering (firmware/fx_aot) produced a native image for
     /// this effect (false ⇒ it falls back to the VM).
     pub aot_ok: bool,
-    /// The host-lowered RV32IM image (PIC words), copied into the bench's static
-    /// exec region and run. Empty when `!aot_ok`.
-    pub aot_code: &'static [u32],
-    /// Word offset of the native `update()` entry (-1 if none), and `shade()`.
-    pub aot_update: i32,
-    pub aot_shade: u32,
+    /// The host-lowered image as a dev-key-signed `.fxn` (firmware/fx_sig):
+    /// header + RV32 words + the defused operand bytes. The device verifies
+    /// the tag against `fxb` before copying the code into its exec region.
+    /// Empty when `!aot_ok`.
+    pub aot_fxn: &'static [u8],
 }
 
 pub const GROUP_STUDY: u8 = 0;
