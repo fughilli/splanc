@@ -170,19 +170,21 @@ reads HIGH, which is effectively timed pacing.
 
 ### Pi side (`pi/player_rs`, pacing.rs / gpio_cdev.rs / rt.rs)
 
+Rendering runs on its own thread, one frame ahead (see "Pipelined render"
+below; `--pipeline off` restores the serial loop, which renders before step 1).
 The output thread, per frame:
 
-1. Renders the frame (before any waiting, so the edge → SPI handoff is just
-   the ioctl).
-2. Sleeps to the frame's **absolute deadline** at `--fps`
+1. Sleeps to the frame's **absolute deadline** at `--fps`
    (`clock_nanosleep(TIMER_ABSTIME)`), so a short strip doesn't run faster than
    asked.
-3. **Gates on `frame_done`**: it drains stale edge events and reads the level.
+2. **Gates on `frame_done`**: it drains stale edge events and reads the level.
    If the line is HIGH it goes at once; otherwise it waits (`ppoll` on the GPIO
    v2 line-request fd) for the rising edge, for at most one period + max(¼
    period, 1 ms).
-4. Sends CSR + STREAM as **one `SPI_IOC_MESSAGE(2)`**: one syscall, CS deasserted
-   between the two transfers (`cs_change`). `--spi-split` restores two writes.
+3. Takes the newest completed frame from the triple buffer (one atomic swap)
+   and sends CSR + STREAM as **one `SPI_IOC_MESSAGE(2)`**: one syscall, CS
+   deasserted between the two transfers (`cs_change`). `--spi-split` restores
+   two writes.
 
 - **Fallback:** 3 consecutive timeouts switch to **timed pacing**, with no edge
   waits, so an unwired board loses nothing per frame. Timed mode checks the
@@ -369,9 +371,9 @@ Findings:
   - render: 4.6 ms (mapping pattern, 5,200 LEDs);
   - SPI: 5.7 ms (15,601 B at 24 MHz);
   - together 10.3 ms, against the 8.33 ms period.
-    The FPGA finishes in 7.87 ms. Moving render off the output thread (the
-    render thread / GPU tier, #368 §11) leaves 5.7 ms of SPI per 8.33 ms frame,
-    which fits.
+    The FPGA finishes in 7.87 ms. Moving render off the output thread leaves
+    5.7 ms of SPI per 8.33 ms frame, which fits: done, see "Pipelined render"
+    below (120.0 fps).
 - **Gate cost when wired:** the drain and level read take 13–31 µs p50 per
   frame, against < 2 µs unwired. That is small next to the slack.
 - **An old (8-port) bitstream holds pin 28 HIGH.** The pin is unused there, and
@@ -379,6 +381,115 @@ Findings:
   wired board running the old gateware gates "high" every frame, which is
   effectively timed pacing with no fallback log line. That's harmless, but
   "unconfigured reads LOW" above holds only for an unwired GPIO 22.
+
+## Pipelined render (rig-1, `pi-ledmapper-1`, 2026-10-28)
+
+The output thread no longer renders. A render thread renders frame N+1 while
+the output thread sends frame N (`pi/player_rs` pipeline.rs, triple.rs):
+
+- **Handoff:** a lock-free single-producer / single-consumer **triple buffer**
+  (one `AtomicU8` = the middle slot's index + a FRESH bit). The render thread
+  writes its back slot and publishes it; the output thread, right after the
+  frame-done gate, takes the newest published slot. Neither side waits or
+  touches the other's slot, so a frame being written is never sent (no
+  tearing). The slots' vectors are reused and the encoder writes in place
+  (`FpgaCodec::frame_into`, byte-identical to `frame`), so steady state
+  allocates nothing.
+- **Clock:** the output thread keeps it (absolute deadline + frame-done gate,
+  as above). The render thread follows the output's deadline grid one frame
+  ahead: the frame for deadline D starts rendering at D − period and samples
+  the player for time D. Before starting, it waits (100 µs polls, at most half
+  a period) until the output has taken the previous frame; otherwise a late
+  output would get D+1's frame at D and then repeat it.
+- **Lag beats cut-out:** if no new frame is ready, the output **re-sends the
+  last one** on the normal frame-done clock (never black, never a stalled
+  output; logged at most once a minute). After an overrun the render re-aims
+  at the next deadline it can still make.
+- **Player lock:** the render thread samples the player under its lock, then
+  encodes outside it. The output thread never takes the lock: "frame shown"
+  reports go to the render thread through a lock-free mailbox, and
+  `record_frame_shown` now carries the real SPI time, not the deadline.
+- **Threads:** render `SCHED_FIFO` **40** (below the output's 45, so a long
+  render can't delay a frame-done wake), pinned to the CPU below the output's
+  (CPU 2 on the Pi 3; 0–1 stay with the WSS server and IRQs). Both threads
+  have explicit 4 MiB stacks (static musl defaults to 128 KiB). Flags:
+  `--pipeline on|off` (default on), `--render-prio`, `--render-cpu auto|none|N`.
+
+**Bench:** same rig, wire, load mix and method as the edge-pacing runs above:
+20-port top in SRAM, service stopped, 3,600 frames per run (1,800 at 60 fps),
+`--rt on`, spi0 at FIFO 46, mapping pattern as the render load. `off` is
+the #370 serial loop in the same binary. fps = 1 / p50 period; µs.
+
+| config                               | load   | pipeline |       fps | period min / p50 / p99 / max  | fresh / repeat | render p50 / p99 / max | CPU % (output / render / process) |
+| ------------------------------------ | ------ | -------- | --------: | ----------------------------- | -------------- | ---------------------- | --------------------------------- |
+| 20 × 260 @ 120, edge                 | idle   | off      |      93.7 | 7941 / 10671 / 11688 / 12199  | n/a            | 4911 / 5924 / 6426     | 44.5 / – / 44.5                   |
+| 20 × 260 @ 120, edge                 | idle   | **on**   | **120.0** | 8304 / 8333 / 8351 / 8362     | 3480 / 0       | 4204 / 6331 / 7070     | 0.9 / 49.1 / 50.0                 |
+| 20 × 260 @ 120, edge                 | loaded | off      |      91.0 | 8018 / 10989 / 11592 / 16577  | n/a            | 5042 / 5586 / 6035     | 44.7 / – / 44.7                   |
+| 20 × 260 @ 120, edge                 | loaded | **on**   | **120.0** | 8016 / 8333 / 8442 / 9341     | 3480 / 0       | 4177 / 4359 / 4546     | 3.5 / 45.5 / 49.0                 |
+| 20 × 260 @ 120, timed                | idle   | off      |      93.8 | 6688 / 10663 / 12228 / 15164  | n/a            | 4913 / 6473 / 9385     | 45.2 / – / 45.2                   |
+| 20 × 260 @ 120, timed                | idle   | **on**   | **120.0** | 8118 / 8333 / 8351 / 8544     | 3480 / 0       | 4328 / 6793 / 7865     | 0.8 / 49.9 / 50.7                 |
+| 20 × 260 @ 120, timed                | loaded | off      |      90.2 | 6857 / 11089 / 11632 / 12224  | n/a            | 5129 / 5599 / 6045     | 45.6 / – / 45.6                   |
+| 20 × 260 @ 120, timed                | loaded | **on**   | **120.0** | 7508 / 8334 / 8464 / 9036     | 3480 / 0       | 4184 / 4340 / 6277     | 3.3 / 45.9 / 49.3                 |
+| 20 × 66 @ 120, edge                  | idle   | off      |     120.0 | 8241 / 8333 / 8383 / 8429     | n/a            | 1116 / 1529 / 2226     | 13.8 / – / 13.8                   |
+| 20 × 66 @ 120, edge                  | idle   | on       |     120.0 | 8303 / 8333 / 8347 / 8373     | 3480 / 0       | 1620 / 1669 / 1881     | 1.1 / 17.6 / 18.7                 |
+| 20 × 66 @ 120, edge                  | loaded | off      |     120.0 | 7911 / 8334 / 8508 / 8744     | n/a            | 1223 / 1736 / 2070     | 17.3 / – / 17.3                   |
+| 20 × 66 @ 120, edge                  | loaded | on       |     120.0 | 7641 / 8336 / 8484 / 9021     | 3480 / 0       | 823 / 952 / 1137       | 3.3 / 9.9 / 13.1                  |
+| 2 × 660 @ 60, every frame on an edge | idle   | off      |      50.1 | 19910 / 19952 / 20007 / 20070 | n/a            | 1933 / 2058 / 2112     | 8.9 / – / 8.9                     |
+| 2 × 660 @ 60, every frame on an edge | idle   | on       |      50.2 | 19875 / 19922 / 19966 / 19998 | 1680 / 0       | 1520 / 1646 / 1733     | 0.6 / 8.2 / 8.8                   |
+| 2 × 660 @ 60, every frame on an edge | loaded | off      |      49.8 | 19986 / 20084 / 20351 / 21259 | n/a            | 1146 / 1533 / 1693     | 6.9 / – / 6.9                     |
+| 2 × 660 @ 60, every frame on an edge | loaded | on       |      49.7 | 19979 / 20101 / 20486 / 21084 | 1680 / 0       | 821 / 946 / 1172       | 1.6 / 4.0 / 5.5                   |
+
+(2 × 660 is wire-bound by design: 19.9 ms per frame, so ~50 fps either way.
+Its edge → wake with the pipeline: 44 / 72 / 91 µs idle, 154 / 361 / 1041 µs
+loaded (p50 / p99 / max), unchanged from the serial loop.)
+
+**Logic analyzer,** 20 × 260 @ 120 idle, 2 s captures of D7 (`frame_done`)
+and D1 (CS):
+
+- **Pipelined:** 240 `frame_done` rises = **120.0 fps on the wire**, rise
+  period 8.300 / 8.333 / 8.382 ms (min / p50 / max), 0 CS periods > 1.5×.
+  `frame_done` rise → CS fall is 406 / 438 / 475 / 484 µs (min / p50 / p99 /
+  max): the FPGA now finishes 0.44 ms before the 8.33 ms deadline, so the
+  deadline, not the edge, starts each frame.
+- **Serial:** 192 rises = 96.0 fps, rise period 7.94–12.21 ms.
+
+**Latency.** The frame's content is sampled for the deadline it is sent at
+(output timer lateness 13 / 21 / 35 µs p50 / p99 / max, idle), so animation timing on the strip is
+unchanged. What grows is input → light: the player is sampled one period
+before the frame goes out.
+
+- **Player sampled → SPI start (`sample_to_spi`):** 8.23 / 8.25 / 8.34 ms idle
+  and 8.24 / 8.37 / 9.25 ms loaded (p50 / p99 / max) at 20 × 260. The serial
+  loop sampled ~4.9 ms (its render time) before the SPI start, so the pipeline
+  adds **~3.3 ms p50, bounded by one period (8.33 ms)**. Then, as before, the
+  FPGA takes 7.87 ms to shift out a 260-LED frame.
+- **Render done → SPI start (`age`):** 4.0 / 8.0 / 8.0 ms idle.
+
+**Jitter (frame period p99 − p50):** 18 µs idle, 109 µs loaded at 20 × 260
+pipelined (worst period 9.34 ms loaded). The serial loop alternated between
+8 ms and 12 ms periods.
+
+**CPU:** the output thread drops from ~45 % of a core to ~1 % (3.5 % loaded).
+The render thread takes ~45–50 % of CPU 2 at 20 × 260 @ 120. Per frame that is
+~4.2 ms, against ~4.75 ms serial; the process total grows only because 26 %
+more frames are rendered.
+
+Findings:
+
+- **0 repeats and 0 skips** in every pipelined run, idle and loaded. The only
+  "render late" line per run comes from the start-up frames before the first
+  render, which the summary drops.
+- **Render headroom at 20 × 260 is thin:** p99 6.3–6.8 ms and worst 7.9 ms idle
+  against the 8.33 ms period. Rendering is slower idle than loaded (p99 6.3 vs
+  4.4 ms), which looks like the CPU clock dropping between renders. If a render
+  does overrun, the last frame is re-sent (lag, not cut-out).
+- **The player lock is held for nearly the whole render** (`lock` ≈ render
+  time: `pattern_color` per LED is the cost, encoding is ~60 µs), so a WSS
+  request can wait up to ~4–7 ms at 20 × 260. The RT output thread never takes
+  the lock.
+- **An earlier build** let the render publish D+1's frame before a late output
+  took D's (25 skip/repeat pairs per 3,480 frames at 20 × 66 loaded); the
+  consume-wait above removed them.
 
 ## Measured Pi 3 SPI continuity (rig-1, `pi-ledmapper-1`, #369 image)
 
