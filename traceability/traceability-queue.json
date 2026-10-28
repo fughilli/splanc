@@ -198,20 +198,20 @@
     },
     {
       "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:live_latency_netstack",
+      "message": "//pi/hitl/harness:live_latency_netstack pi/hitl/harness/live_latency_netstack error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
       "entity": "//pi/hitl/harness:map_upload_netstack",
       "message": "//pi/hitl/harness:map_upload_netstack pi/hitl/harness/map_upload_netstack error and traces to no requirement",
       "route": "autonomous"
     },
     {
       "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:no_reboot_no_park",
-      "message": "//pi/hitl/harness:no_reboot_no_park pi/hitl/harness/no_reboot_no_park error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:ota_gate",
-      "message": "//pi/hitl/harness:ota_gate pi/hitl/harness/ota_gate error and traces to no requirement",
+      "entity": "//pi/hitl/harness:video_latency_netstack",
+      "message": "//pi/hitl/harness:video_latency_netstack pi/hitl/harness/video_latency_netstack error and traces to no requirement",
       "route": "autonomous"
     },
     {
