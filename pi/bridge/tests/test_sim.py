@@ -172,3 +172,18 @@ def test_sim_clock_slows_down():
     c.speed = 1
     t[0] += 1
     assert c() == pytest.approx(102.25)
+
+
+def test_font_set_switches_live(simulator):
+    from splanc_display import fonts
+
+    s = simulator
+    assert wait(lambda: page(s) == "home" and not s.app.ui.view().animating)
+    before = s.frames.oled_bits()
+    try:
+        s.set_fonts("terminus")
+        assert wait(lambda: s.frames.oled_bits() != before)
+        assert s.info()["fonts"]["active"] == "terminus"
+        assert s.font_sheet(scale=1)[:8] == b"\x89PNG\r\n\x1a\n"
+    finally:
+        fonts.set_active(fonts.DEFAULT_SET)

@@ -119,7 +119,7 @@ image/nix/improv.nix        splanc-improv.service: Improv-over-BLE WiFi provisio
 image/nix/rpi.nix           Pi bits: SPI + I2C + key pull-ups in config.txt, gpiochip perms, image name
 image/nix/lean.nix          size trims (no docs, rescue tools, nixpkgs source, ModemManager, gtk3)
 image/nix/packages.nix      agent bundle (agent-pin.json), Python env (luma from requirements.lock,
-                            lgpio from its sdist), fonts
+                            lgpio from its sdist), the display package with its vendored fonts
 image/nix/system-update.nix full-system OTA: splanc-system-update timer/service, the boot-time
                             health check + rollback (splanc-system-update-confirm), panic/watchdog
 image/nix/system-update-rpi.nix  Pi 5 tryboot mode + FAT generation limit
@@ -394,7 +394,42 @@ against a local `splanc-agent relay` it starts (no account needed; fixtures are 
 discovers on your LAN, and "stop relay" shows the offline path). It needs the agent built:
 `bazel build //agent:mcp`, or `--agent path/to/splanc-agent.mjs`. Other flags: `--push-ms 15`
 adds per-frame cost (a slow Pi's SPI push: the service then lowers its frame rate as it would
-there), `--speed 0.25`, `--hdmi-size 1280x720`, `--host 0.0.0.0` to open it from a phone.
+there), `--speed 0.25`, `--hdmi-size 1280x720`, `--host 0.0.0.0` to open it from a phone,
+`--fonts NAME` to start in a font set.
+
+### Fonts
+
+Every screen draws only with fonts vendored in `display/splanc_display/fonts/`, each family with
+its licence, and `SOURCES.txt` recording the upstream release URL and sha256 they came from plus
+the sha256 of each file (checked by `display_test`). The agent bundle, the NixOS image, the sim,
+`render_gallery` and the tests all read these same files, and nothing looks in system font
+directories, so a missing file is an error rather than a silent fallback.
+`SPLANC_DISPLAY_FONT_DIR` is an explicit override (same layout). `tools/vendor_fonts.py`
+regenerates the directory (`pip install fonttools` first). It is deterministic, and it subsets
+DejaVu (HDMI and the `dejavu` OLED set) to Latin, Greek, Cyrillic and symbols, keeping hinting
+so 1-bit rendering is unchanged.
+
+The OLED has named **font sets** (`splanc_display/fonts.py`). Each maps the screen's text roles
+(title, body, status line, pairing code, the QR page's code, fixture values) to a font and size.
+The bitmap fonts are BDF files read directly, because Pillow's `.pil` format holds only 256
+glyphs; characters a font lacks are drawn from DejaVu. Each set's line heights come from its
+glyphs, and the layout adapts to them: header rule, row centring, value column and stacking.
+`test_font_sets.py` renders every page and state in every set and fails on text that leaves
+its box or touches other text.
+
+| Set                | Sizes                                                              | Licence                        |
+| ------------------ | ------------------------------------------------------------------ | ------------------------------ |
+| `dejavu` (default) | DejaVu Sans 9-10 px, 14 px status, Mono Bold code (TrueType)       | Bitstream Vera / public domain |
+| `spleen`           | 6x12 (titles double-struck), 8x16 status, 12x24 code, 5x8 fallback | BSD-2-Clause                   |
+| `terminus`         | 6x12 (titles double-struck), 8x16 bold status, 12x24 bold code     | OFL-1.1                        |
+| `misc-fixed`       | X11 6x12, 6x13B titles, 9x15B status, 10x20 code                   | public domain                  |
+| `cozette`          | 6x13 (titles double-struck), code at 2x                            | MIT                            |
+
+Try them live in the sim (dropdown, `F` cycles, "All sets" shows the current screen in each),
+on a Pi with `SPLANC_OLED_FONTS=terminus` in the service environment, or as one comparison
+sheet: `bazel run //pi/bridge:render_gallery -- --font-sets /tmp/fontsets.png` (`--font-set
+NAME` renders the whole gallery in one set). Changing the default is one line:
+`DEFAULT_SET` in `fonts.py`.
 
 `tests/test_luma_gpiozero.py` exercises the real luma.oled and gpiozero (mock pins). It is skipped
 under Bazel, which has neither; run it in a venv that has the lockfile plus `gpiozero`, as below.

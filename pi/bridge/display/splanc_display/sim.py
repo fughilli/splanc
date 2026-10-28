@@ -50,7 +50,7 @@ from typing import Callable, Dict, List, Optional
 
 from PIL import Image
 
-from . import boot, control, fake_bridge, main
+from . import boot, control, fake_bridge, fonts, main, render_oled
 from .hat import KEY_PINS
 
 PIN_KEYS = {pin: key for key, pin in KEY_PINS.items()}
@@ -729,6 +729,47 @@ class Sim:
             app.wake.set()
             t.join(5)
 
+    def set_fonts(self, name: str) -> None:
+        """Switch the OLED font set live (the next frame uses it)."""
+        fonts.set_active(name)
+        app = self.app
+        if app is not None:
+            app._oled_key = None  # redraw even if nothing else changed
+            app.wake.set()
+
+    def font_sheet(self, scale: int = 3) -> bytes:
+        """The current screen in every font set, side by side (PNG)."""
+        from PIL import ImageDraw
+
+        app = self.app
+        if app is None:
+            raise LookupError("the display service is not running")
+        st, view = app.watcher.status, app.ui.view()
+        names = list(fonts.SETS)
+        tw, th, lab = 128 * scale, 64 * scale, 18
+        label_font = fonts.ttf("sans", 13)
+        cols = 2
+        rows = (len(names) + cols - 1) // cols
+        out = Image.new("RGB", (cols * (tw + 8) + 8, rows * (th + lab + 8) + 8), (21, 23, 26))
+        dr = ImageDraw.Draw(out)
+        for i, name in enumerate(names):
+            img = render_oled.render(st, view, frames=self.boot_frames, font_set=name)
+            tile = Image.new("RGB", img.size, (0, 0, 0))
+            tile.paste((90, 170, 255), mask=img.convert("L"))
+            r, c = divmod(i, cols)
+            x, y = 8 + c * (tw + 8), 8 + r * (th + lab + 8)
+            on = name == fonts.active().name
+            dr.text(
+                (x, y),
+                name + ("  (shown)" if on else ""),
+                font=label_font,
+                fill=(90, 170, 255) if on else (200, 200, 200),
+            )
+            out.paste(tile.resize((tw, th), Image.NEAREST), (x, y + lab))
+        buf = io.BytesIO()
+        out.save(buf, "PNG")
+        return buf.getvalue()
+
     def restart(self) -> None:
         """Like `systemctl restart splanc-display`: a fresh service, boot logo first."""
         self.stop()
@@ -776,6 +817,14 @@ class Sim:
             "oled_seq": self.frames.oled_seq,
             "hdmi_seq": self.frames.hdmi_seq,
             "restarts": self.restarts,
+            "fonts": {
+                "active": fonts.active().name,
+                "default": fonts.DEFAULT_SET,
+                "sets": [
+                    {"name": f.name, "label": f.label, "license": f.license, "summary": f.summary}
+                    for f in fonts.SETS.values()
+                ],
+            },
             "bridge": self.bridge.snapshot(),
         }
 
@@ -816,6 +865,11 @@ class Handler(BaseHTTPRequestHandler):
             buf = io.BytesIO()
             img.convert("L").resize((512, 256), Image.NEAREST).save(buf, "PNG")
             return self._send(200, buf.getvalue(), "image/png")
+        if path == "/fontsets.png":
+            try:
+                return self._send(200, self.sim.font_sheet(), "image/png")
+            except LookupError as e:
+                return self._json({"ok": False, "error": str(e)}, 503)
         if path == "/hdmi.png":
             return self._send(200, self.sim.frames.hdmi_png(), "image/png")
         if path == "/events":
@@ -882,6 +936,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.sim.buttons.release_all()
             elif path == "/restart":
                 self.sim.restart()
+            elif path == "/fonts":
+                self.sim.set_fonts(str(body.get("name")))
             elif path == "/speed":
                 self.sim.clock.speed = float(body.get("speed", 1.0))
             elif path == "/bridge":
@@ -917,6 +973,11 @@ def main_cli(argv=None) -> int:
         help="extra ms per OLED frame (emulate SPI + a slow Pi; slows the frame pacing)",
     )
     ap.add_argument("--speed", type=float, default=1.0, help="clock rate (0.25 = slow motion)")
+    ap.add_argument(
+        "--fonts",
+        default=None,
+        help=f"OLED font set ({', '.join(fonts.SETS)}; default {fonts.DEFAULT_SET}); F on the page cycles",
+    )
     ap.add_argument("--dir", help="where status.json/control.sock live (default: a temp dir)")
     a = ap.parse_args(argv)
 
@@ -938,6 +999,8 @@ def main_cli(argv=None) -> int:
         )
         bridge.phase = a.state
         bridge.start()
+    if a.fonts:
+        fonts.set_active(a.fonts)
     w, h = (int(x) for x in a.hdmi_size.lower().split("x"))
     sim = Sim(bridge, hdmi_size=(w, h), push_seconds=a.push_ms / 1000.0)
     sim.clock.speed = a.speed

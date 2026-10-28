@@ -19,7 +19,7 @@ header { padding: 12px 16px; border-bottom: 1px solid var(--line); display: flex
   gap: 16px; align-items: baseline; flex-wrap: wrap; }
 header h1 { font-size: 16px; margin: 0; font-weight: 600; }
 header .stats { color: var(--muted); font: 12px ui-monospace, Menlo, monospace; }
-main { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 16px; padding: 16px; }
+main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 440px); gap: 16px; padding: 16px; }
 @media (max-width: 1100px) { main { grid-template-columns: minmax(0, 1fr); } }
 section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
 section h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
@@ -87,7 +87,8 @@ td.n { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowr
       </div>
       <div class="legend">
         Keys: <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> joystick, <kbd>Enter</kbd>/<kbd>Space</kbd> press,
-        <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> KEY1–3 (hold works: KEY3 5 s = revoke). <kbd>R</kbd> restart.
+        <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> KEY1–3 (hold works: KEY3 5 s = revoke). <kbd>R</kbd> restart,
+        <kbd>F</kbd> next font set.
       </div>
       <div class="row" style="margin-top:10px">
         <label>Display</label>
@@ -103,6 +104,14 @@ td.n { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowr
           <option value="4">4×</option><option value="5" selected>5×</option><option value="6">6×</option>
         </select>
       </div>
+      <div class="row">
+        <label>OLED fonts</label>
+        <select id="fontset" title="F cycles"></select>
+        <button class="b" id="allsets">All sets</button>
+        <span class="mono" id="fontmeta"></span>
+      </div>
+      <img id="sheet" alt="the current screen in every font set" hidden
+        style="width:100%;max-width:800px;display:block;margin-top:8px;image-rendering:pixelated">
       <div class="err" id="err"></div>
     </section>
     <section>
@@ -207,6 +216,30 @@ function connect() {
   es.onerror = () => { $("stats").textContent = "disconnected — retrying…"; };
 }
 
+let fontsShown = "", sheetOn = false, sheetKey = "";
+function showFonts(f) {
+  const sel = $("fontset");
+  const names = f.sets.map((x) => x.name).join(",");
+  if (names !== fontsShown) {
+    fontsShown = names;
+    sel.innerHTML = f.sets.map((x) =>
+      `<option value="${esc(x.name)}">${esc(x.name)}${x.name === f.default ? " (default)" : ""}</option>`).join("");
+  }
+  if (document.activeElement !== sel) sel.value = f.active;
+  const cur = f.sets.find((x) => x.name === f.active) || {};
+  $("fontmeta").textContent = `${cur.label} · ${cur.summary} · ${cur.license}`;
+}
+function refreshSheet(force) {
+  if (!sheetOn || !info) return;
+  const v = info.view || {};
+  const key = [info.fonts.active, v.page, v.key, v.sel, v.overlay, info.bridge.state,
+    Math.floor(Date.now() / 5000)].join("|");
+  if (force || key !== sheetKey) { sheetKey = key; $("sheet").src = "/fontsets.png?t=" + Date.now(); }
+}
+function setFonts(name) {
+  post("/fonts", { name }).then((j) => { if (j && j.state) { info = j.state; showInfo(); refreshSheet(true); } });
+}
+
 function showInfo() {
   const v = info.view || {};
   $("stats").textContent = `${info.fps ? info.fps.toFixed(0) + " fps" : "idle"} · ` +
@@ -214,6 +247,8 @@ function showInfo() {
     `${info.speed}× clock · page ${v.page || "?"}${v.overlay ? " + " + v.overlay : ""}` +
     `${v.animating ? " · animating" : ""}${v.dimmed ? " · dimmed" : ""}${v.asleep ? " · asleep" : ""}`;
   $("view").textContent = Object.entries(v).map(([k, x]) => `${k}: ${x}`).join("\n");
+  showFonts(info.fonts);
+  refreshSheet(false);
   const b = info.bridge;
   $("bkind").textContent = `(${b.kind}: ${b.state || "?"})`;
   $("bfake").hidden = b.kind !== "fake"; $("breal").hidden = b.kind !== "real";
@@ -278,12 +313,21 @@ addEventListener("keydown", (e) => {
   if (e.target.tagName === "SELECT" || e.metaKey || e.ctrlKey) return;
   if (KEYMAP[e.key]) { e.preventDefault(); if (!e.repeat) keyDown(KEYMAP[e.key]); }
   else if ((e.key === "r" || e.key === "R") && !e.repeat) post("/restart");
+  else if ((e.key === "f" || e.key === "F") && !e.repeat && info) {
+    const sets = info.fonts.sets.map((x) => x.name);
+    const i = sets.indexOf(info.fonts.active);
+    setFonts(sets[(i + (e.shiftKey ? sets.length - 1 : 1)) % sets.length]);
+  }
 });
 addEventListener("keyup", (e) => { if (KEYMAP[e.key]) { e.preventDefault(); keyUp(KEYMAP[e.key]); } });
 addEventListener("blur", () => { [...down].forEach(keyUp); keyChain = keyChain.then(() => post("/release_all")); });
 
 // Display controls.
 $("restart").onclick = () => post("/restart");
+$("fontset").onchange = (e) => { setFonts(e.target.value); e.target.blur(); };
+$("allsets").onclick = (e) => {
+  sheetOn = !sheetOn; e.target.classList.toggle("on", sheetOn); $("sheet").hidden = !sheetOn; refreshSheet(true);
+};
 $("speed").onchange = (e) => post("/speed", { speed: Number(e.target.value) });
 $("grid").onclick = (e) => { grid = !grid; e.target.classList.toggle("on", grid); draw(); };
 $("tint").onchange = (e) => { tint = e.target.value; draw(); };
