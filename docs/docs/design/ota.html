@@ -320,6 +320,9 @@
         <article role="main" id="furo-main-content">
           <section id="firmware-updates-over-the-air-split-loader-app">
 <h1>Firmware updates over the air (split loader + app)<a class="headerlink" href="#firmware-updates-over-the-air-split-loader-app" title="Link to this heading">¶</a></h1>
+<p>(The Splanc MAX — a Raspberry Pi — updates through the same protocol, with the
+<strong>same signing keys</strong> (this keyring), as whole NixOS systems it downloads itself:
+<a class="reference internal" href="max-ota.html"><span class="std std-doc">max-ota.md</span></a>. The signed board field keeps the two apart.)</p>
 <p>Status: implemented (PR “OTA: split loader + app”). HITL results at the end.</p>
 <p>A Splanc C6 player updates over Wi-Fi from the web app, the agent
 (<code class="docutils literal notranslate"><span class="pre">update_firmware</span></code>) or the bridge. A small <strong>loader</strong> in the factory slot owns
@@ -627,10 +630,14 @@ compares it with the signed digest, then runs <code class="docutils literal notr
 no key, so test images don’t need a second app build, and a bad signature costs
 one round trip through the loader, which refuses it and returns to the app.</p></li>
 </ul>
-<p><strong>Flags:</strong> the manifest’s <code class="docutils literal notranslate"><span class="pre">flags</span></code> carry the signing <strong>key id</strong> (bits 8–15) and a
-<strong>security version</strong> (bits 16–23). Both are inside the signed bytes. Key id 0 at
-security version 0 is flags 0, the swarm’s default, so the 108-byte layout is
-unchanged.</p>
+<p><strong>Flags:</strong> the manifest’s <code class="docutils literal notranslate"><span class="pre">flags</span></code> carry the signing <strong>key id</strong> (bits 8–15), a
+<strong>security version</strong> (bits 16–23) and the <strong>board</strong> (bits 24–31). All are inside the
+signed bytes. Key id 0 at security version 0 is flags 0, the swarm’s default, so the
+108-byte layout is unchanged.</p>
+<p><strong>Board:</strong> 0 for a C6 app image; 1.. for a Splanc MAX board (max-ota.md). The MAX
+trusts the same keys, so a MAX image is validly signed as far as the loader’s ring
+is concerned: the app’s pre-check and the loader (<code class="docutils literal notranslate"><span class="pre">session::check_offer</span></code>) refuse
+any board but 0 as <code class="docutils literal notranslate"><span class="pre">wrong_board</span></code>, and the MAX refuses board 0.</p>
 </section>
 <section id="signing">
 <h2>Signing<a class="headerlink" href="#signing" title="Link to this heading">¶</a></h2>
@@ -793,9 +800,17 @@ run the <code class="docutils literal notranslate"><span class="pre">ota_sign</s
 <td><p><code class="docutils literal notranslate"><span class="pre">keys/next.pub</span></code></p></td>
 <td><p>a planned successor, committed one loader release before CI switches to it</p></td>
 </tr>
+<tr class="row-odd"><td><p>3, 4</p></td>
+<td><p>—</p></td>
+<td><p>—</p></td>
+<td><p><strong>reserved</strong> for a possible future separate Splanc MAX key (+ backup); unused, in no ring</p></td>
+</tr>
 </tbody>
 </table>
 </div>
+<p>The Splanc MAX updater trusts <strong>this same ring</strong> (<code class="docutils literal notranslate"><span class="pre">firmware/ota/ring.bzl</span></code>, one
+source for both), so everything below — key epochs, <code class="docutils literal notranslate"><span class="pre">key-epoch.bin</span></code>, the runbooks —
+covers MAX units too.</p>
 <p>An <code class="docutils literal notranslate"><span class="pre">UNSET</span></code> entry verifies nothing. A manifest names its key id, and the loader
 verifies it against <strong>that key only</strong>. The id has to be in the ring and must not
 be revoked; otherwise the loader refuses with <code class="docutils literal notranslate"><span class="pre">unknown_key</span></code> or <code class="docutils literal notranslate"><span class="pre">revoked_key</span></code>.</p>
