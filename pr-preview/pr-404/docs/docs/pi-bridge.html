@@ -472,15 +472,41 @@ the page shows:</p>
 <li><p><strong>Network</strong>: the Pi’s address, the relay and the bridge ID.</p></li>
 </ul>
 <p><img alt="HDMI after pairing" src="docs/img/pi-bridge/hdmi-paired.png" /></p>
-<p><strong>OLED HAT</strong>: four pages, which rotate every 8 seconds:</p>
+<p><strong>OLED HAT</strong>: when the screen service starts it plays a short Splanc logo animation (about two
+seconds, while the bridge itself starts up), then slides to four pages, which rotate every 8
+seconds:</p>
 <ol class="arabic simple">
 <li><p><strong>Home</strong>: the state, the pairing code in large letters, the short pairing link, the time left
 and the number of clients.</p></li>
 <li><p><strong>Scan to pair</strong>: a QR code of the pairing link.</p></li>
-<li><p><strong>Fixtures</strong>: up to four players, with ● for online and × for offline.</p></li>
+<li><p><strong>Fixtures</strong>: every player the bridge knows, in a list that scrolls. Each row shows ● for
+connected, ○ for found but idle, ◐ for reconnecting, or × for unreachable, and on the right
+the frame rate (or, for an unreachable one, how long ago it was last heard from).</p></li>
 <li><p><strong>Network</strong>: the IP address, the relay, the number of clients and the bridge ID.</p></li>
 </ol>
 <p><img alt="OLED pages" src="docs/img/pi-bridge/oled-pages.png" /></p>
+<p>On the <strong>Fixtures</strong> page, move the joystick up and down to pick a fixture and press it to open
+that fixture’s details:</p>
+<ul class="simple">
+<li><p>its state (connected, idle, reconnecting or unreachable) and, when unreachable, why;</p></li>
+<li><p>when the bridge last heard from it (“12 s ago”);</p></li>
+<li><p>its IP address (link-local addresses are marked “LL”), its ID (MAC address) and firmware
+version;</p></li>
+<li><p>its room and its LED count. When no channel has a count set, the count comes from the
+fixture’s map, marked “(map)”;</p></li>
+<li><p>the running effect, when the bridge knows it;</p></li>
+<li><p>its latest performance numbers: frame rate (and whether the effect is lagging), the share of
+the frame budget used, overruns, free heap, and how old those numbers are. They come from
+the last time an agent measured an effect (<code class="docutils literal notranslate"><span class="pre">measure_effect</span></code>) or from the fixture’s own
+reports. “no data yet” means nothing has measured it since the bridge started.</p></li>
+</ul>
+<p>Move the joystick up and down to scroll the details. Push it left, or press it, to go back to the
+list. The details stay open while you look at them, and go back to the list after 5 minutes
+without a press. If the fixture disappears from the bridge’s list while it is open, the screen
+goes back to the list.</p>
+<p><img alt="The fixture list, a fixture's details, and an unreachable fixture" src="docs/img/pi-bridge/oled-fixtures.png" /></p>
+<p>Every change of screen slides: pages slide sideways, a fixture’s details slide in over the list
+and back out, and the highlight in the list glides. A press during a slide takes effect at once.</p>
 <p>To protect the OLED from burn-in, it behaves as follows:</p>
 <ul class="simple">
 <li><p>the image moves by one pixel every minute;</p></li>
@@ -544,18 +570,23 @@ and the number of clients.</p></li>
 <td><p>Revoke all clients. A progress bar fills while you hold. Then a confirm screen appears: press <strong>KEY3</strong> again to confirm. Any other key, or 10 seconds of waiting, cancels.</p></td>
 </tr>
 <tr class="row-odd"><td><p>Joystick right / down</p></td>
-<td><p>Next page.</p></td>
+<td><p>Next page. On the <strong>Fixtures</strong> page, down picks the next fixture instead.</p></td>
 </tr>
 <tr class="row-even"><td><p>Joystick left / up</p></td>
-<td><p>Previous page.</p></td>
+<td><p>Previous page. On the <strong>Fixtures</strong> page, up picks the previous fixture instead.</p></td>
 </tr>
 <tr class="row-odd"><td><p>Joystick press</p></td>
-<td><p>Back to the home page.</p></td>
+<td><p>Back to the home page. On the <strong>Fixtures</strong> page, it opens the picked fixture.</p></td>
+</tr>
+<tr class="row-even"><td><p>In a fixture’s details</p></td>
+<td><p>Up / down scroll. Left or press go back to the list.</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>After a joystick press, the pages stop rotating for 30 seconds.</p>
+<p><strong>KEY1</strong> works from every screen: it goes to the home page so you can see the new code.</p>
+<p>After a joystick press, the pages stop rotating for 30 seconds. They don’t rotate while a
+fixture’s details are open.</p>
 <p><img alt="Holding KEY3, the revoke confirm screen, a button result, and the paired home page" src="docs/img/pi-bridge/oled-overlays.png" /></p>
 </section>
 <section id="updates">
