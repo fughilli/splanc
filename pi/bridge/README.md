@@ -425,11 +425,24 @@ its box or touches other text.
 | `misc-fixed`       | X11 6x12, 6x13B titles, 9x15B status, 10x20 code                   | public domain                  |
 | `cozette`          | 6x13 (titles double-struck), code at 2x                            | MIT                            |
 
+Title variants of the two favourites (the rest of each set unchanged). A set's `title_style` is
+`bold` (a bold face, real or double-struck), `tracked` (double-struck with extra spacing) or
+`inverse` (the regular face, dark on a lit title bar that also carries the right-hand info):
+
+| Set                  | Titles                                                            |
+| -------------------- | ----------------------------------------------------------------- |
+| `terminus-tracked`   | 6x12 double-struck with +1 px tracking, so letters keep their gap |
+| `terminus-14b`       | the real bold 8x14 (header 2 px taller; long titles ellipsize)    |
+| `terminus-inverse`   | regular 6x12 on a lit bar                                         |
+| `misc-fixed-7x13b`   | the real bold 7x13B                                               |
+| `misc-fixed-inverse` | regular 6x12 on a lit bar                                         |
+
 Try them live in the sim (dropdown, `F` cycles, "All sets" shows the current screen in each),
 on a Pi with `SPLANC_OLED_FONTS=terminus` in the service environment, or as one comparison
 sheet: `bazel run //pi/bridge:render_gallery -- --font-sets /tmp/fontsets.png` (`--font-set
-NAME` renders the whole gallery in one set). Changing the default is one line:
-`DEFAULT_SET` in `fonts.py`.
+NAME` renders the whole gallery in one set; `--sets a,b,c` limits a sheet to some sets, and
+`--titles PATH.png` draws just the title rows at 8x to judge letter spacing). Changing the
+default is one line: `DEFAULT_SET` in `fonts.py`.
 
 `tests/test_luma_gpiozero.py` exercises the real luma.oled and gpiozero (mock pins). It is skipped
 under Bazel, which has neither; run it in a venv that has the lockfile plus `gpiozero`, as below.

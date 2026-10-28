@@ -43,14 +43,17 @@ class BitmapFont:
     """A BDF font: glyph masks + metrics, drawn with ImageDraw.bitmap.
 
     ``scale`` multiplies every pixel (a big pairing code from a small font);
-    ``bold`` draws each glyph twice, one pixel apart (for fonts with no bold face)."""
+    ``bold`` draws each glyph twice, one pixel apart (for fonts with no bold face);
+    ``tracking`` adds that many px between glyphs (measuring, ellipsizing and
+    drawing alike), e.g. to keep a double-struck bold's letters apart."""
 
-    def __init__(self, path: str, scale: int = 1, bold: bool = False):
-        self.path, self.scale, self.bold = path, scale, bold
+    def __init__(self, path: str, scale: int = 1, bold: bool = False, tracking: int = 0):
+        self.path, self.scale, self.bold, self.tracking = path, scale, bold, tracking
         self.name = (
             os.path.splitext(os.path.basename(path))[0]
             + (f"x{scale}" if scale > 1 else "")
             + ("+bold" if bold else "")
+            + (f"+t{tracking}" if tracking else "")
         )
         glyphs, ascent, descent, cell = _parse_bdf(path)
         self.cell = cell  # (w, h) of the font's bounding box
@@ -108,7 +111,11 @@ class BitmapFont:
     def width(self, text: str) -> int:
         if not text:
             return 0
-        return sum(self._advance(c) for c in text) + (1 if self.bold else 0)
+        return (
+            sum(self._advance(c) for c in text)
+            + self.tracking * (len(text) - 1)
+            + (1 if self.bold else 0)
+        )
 
     def ink_box(self, xy, text: str) -> Optional[tuple]:
         """The pixels ``draw`` would touch (left, top, right, bottom; exclusive)."""
@@ -138,7 +145,7 @@ class BitmapFont:
                         max(box[3], gb[3]),
                     )
                 )
-            x += adv
+            x += adv + self.tracking
         return box
 
     # --- drawing ---------------------------------------------------------------
@@ -149,15 +156,15 @@ class BitmapFont:
             if g is None:
                 fb = self.fallback()
                 dr.text((x, y + self.ascent), ch, font=fb, fill=fill, anchor="ls")
-                x += round(fb.getlength(ch))
+                x += round(fb.getlength(ch)) + self.tracking
                 continue
             mask, xoff, top, adv = g
             if mask is not None:
                 pos = (x + xoff, y + self.ascent - top)
                 dr.bitmap(pos, mask, fill=fill)
-                if self.bold:
+                if self.bold and ch != "…":  # struck twice, its dots run into a bar
                     dr.bitmap((pos[0] + 1, pos[1]), mask, fill=fill)
-            x += adv
+            x += adv + self.tracking
 
 
 def _parse_bdf(path: str):
@@ -221,15 +228,15 @@ def ttf(face: str, size: int):
 
 
 @functools.lru_cache(maxsize=64)
-def bdf(rel: str, scale: int = 1, bold: bool = False) -> BitmapFont:
-    return BitmapFont(font_path(rel), scale, bold)
+def bdf(rel: str, scale: int = 1, bold: bool = False, tracking: int = 0) -> BitmapFont:
+    return BitmapFont(font_path(rel), scale, bold, tracking)
 
 
 def _load(spec):
-    """("ttf", face, size) or ("bdf", path under fonts/, scale, bold)."""
+    """("ttf", face, size) or ("bdf", path under fonts/, scale, bold[, tracking])."""
     if spec[0] == "ttf":
         return ttf(spec[1], spec[2])
-    return bdf(spec[1], spec[2], spec[3])
+    return bdf(*spec[1:])
 
 
 @dataclass(frozen=True)
@@ -239,6 +246,11 @@ class FontSet:
     license: str
     summary: str  # cell sizes, for the picker
     roles: Dict[str, tuple] = field(default_factory=dict)
+    # How titles stand out: "bold" (a bold face, real or double-struck), "tracked"
+    # (double-struck with extra spacing) or "inverse" (the title role's font, dark
+    # on a lit title bar; the header's right-hand text goes on the bar too).
+    # Only "inverse" changes the layout; the others are the title font's doing.
+    title_style: str = "bold"
 
     def fonts(self, role: str) -> list:
         spec = self.roles[role]
@@ -385,6 +397,60 @@ _add(
             "boot": ("bdf", "cozette/cozette.bdf", 2, False),
         },
     )
+)
+
+
+def _variant(base: str, name: str, summary: str, title_style: str, **roles) -> None:
+    """``base`` with some roles replaced (title variants of the sets people liked)."""
+    import dataclasses
+
+    b = SETS[base]
+    _add(
+        dataclasses.replace(
+            b,
+            name=name,
+            label=f"{b.label} ({summary.split(':')[0]})",
+            summary=summary,
+            roles={**b.roles, **roles},
+            title_style=title_style,
+        )
+    )
+
+
+_variant(
+    "terminus",
+    "terminus-tracked",
+    "tracked titles: 6x12 double-struck +1 px per glyph, so the letter gap survives",
+    "tracked",
+    title=("bdf", "terminus/ter-u12n.bdf", 1, True, 1),
+)
+_variant(
+    "terminus",
+    "terminus-14b",
+    "14b titles: the real bold 8x14 (header 2 px taller)",
+    "bold",
+    title=("bdf", "terminus/ter-u14b.bdf", 1, False),
+)
+_variant(
+    "terminus",
+    "terminus-inverse",
+    "inverse titles: regular 6x12, dark on a lit title bar",
+    "inverse",
+    title=("bdf", "terminus/ter-u12n.bdf", 1, False),
+)
+_variant(
+    "misc-fixed",
+    "misc-fixed-7x13b",
+    "7x13B titles: the real bold, 7 px wide",
+    "bold",
+    title=("bdf", "misc-fixed/7x13B.bdf", 1, False),
+)
+_variant(
+    "misc-fixed",
+    "misc-fixed-inverse",
+    "inverse titles: regular 6x12, dark on a lit title bar",
+    "inverse",
+    title=("bdf", "misc-fixed/6x12.bdf", 1, False),
 )
 
 _lock = threading.Lock()

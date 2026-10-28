@@ -183,3 +183,29 @@ def test_overlays_fit(name):
         draw.TRACE = []
         render_oled._overlay(img, dr, v)
         _check(draw.TRACE, img, f"{name}/overlay-{v.overlay}")
+
+
+def test_tracking_widens_measure_draw_and_ellipsis_alike():
+    plain = fonts.bdf("terminus/ter-u12n.bdf", 1, True)
+    tracked = fonts.bdf("terminus/ter-u12n.bdf", 1, True, 1)
+    assert tracked.width("Fixtures") == plain.width("Fixtures") + 7
+    img = Image.new("1", (80, 14))
+    dr = ImageDraw.Draw(img)
+    tracked.draw(dr, (0, 0), "Fixtures", 1)
+    box = tracked.ink_box((0, 0), "Fixtures")
+    assert img.getbbox()[2] <= box[2] <= tracked.width("Fixtures")
+    s = draw.ellipsize(dr, "Living room arch", tracked, 60)
+    assert s.endswith("…") and tracked.width(s) <= 60
+
+
+def test_inverse_title_bar():
+    fonts.set_active("terminus-inverse")
+    s = parse(fake_bridge.sample("pairing", NOW))
+    img = render_oled.render(s, View(page="players"), now=NOW)
+    bar = render_oled._rule_y()
+    # the bar is lit edge to edge except where the dark title/badge are
+    assert all(img.getpixel((x, 0)) for x in range(W))
+    assert all(img.getpixel((x, bar)) for x in range(W))
+    dark = sum(1 for x in range(W) for y in range(1, bar) if not img.getpixel((x, y)))
+    assert dark > 50  # "Fixtures" and "2/3 ok" cut out of the bar
+    assert not img.getpixel((W // 2, bar + 1))

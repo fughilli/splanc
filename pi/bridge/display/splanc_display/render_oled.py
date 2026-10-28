@@ -47,10 +47,14 @@ def _fit(dr: ImageDraw.ImageDraw, text: str, role: str, max_w: int):
 
 
 def _rule_y() -> int:
-    """The header rule: under the title (12 for 9-12 px titles; a 13 px bitmap
-    title pushes it, and the body, down a row)."""
+    """The header rule: under the title (12 for TrueType; a bitmap title gets a 1 px
+    gap above it, pushing the body down, up to 14 so four rows still fit)."""
     f = F("title")
-    return min(14, max(12, f.height)) if d.is_bitmap(f) else 12
+    if not d.is_bitmap(f):
+        return 12
+    if _fs.title_style == "inverse":  # the bar's last row: the title + 1 px above/below
+        return min(14, f.height + 1)
+    return min(14, max(12, f.height + 1))  # a 1 px gap under descenders when it fits
 
 
 def _body_y() -> int:
@@ -103,18 +107,30 @@ def _y(y: int, f, bottom: int = 64) -> int:
     return y
 
 
-def _header(dr: ImageDraw.ImageDraw, title: str, right: str = "") -> None:
+def _header(dr: ImageDraw.ImageDraw, title: str, right: str = "", reserve: int = 0) -> int:
+    """The title (+ right-hand text) and the rule, or the lit bar for an "inverse"
+    set. ``reserve``: px kept free at the right (a glyph). Returns the colour
+    anything else drawn in the header must use (OFF on a lit bar)."""
     f = F("title")
     rf = F("small")
+    inverse = d.is_bitmap(f) and _fs.title_style == "inverse"
+    ink = OFF if inverse else ON
     rw = d.text_size(dr, right, rf)[0] if right else 0
     ty, ry = 0, 1
-    if d.is_bitmap(f):  # both on the title's baseline, just above the rule
+    if inverse:
+        dr.rectangle([0, 0, W - 1, _rule_y()], fill=ON)
+        ty = 1
+        ry = ty + f.ascent - rf.ascent if d.is_bitmap(rf) else 1
+    elif d.is_bitmap(f):  # both on the title's baseline, just above the rule
         ty = max(0, _rule_y() - 1 - f.height)
         ry = ty + f.ascent - rf.ascent if d.is_bitmap(rf) else 1
-    d.text(dr, (M, ty), d.ellipsize(dr, title, f, W - 2 * M - rw - 4), f, ON)
+    max_w = W - 2 * M - rw - 4 - reserve
+    d.text(dr, (M, ty), d.ellipsize(dr, title, f, max_w), f, ink)
     if right:
-        d.text(dr, (W - M - rw, ry), right, rf, ON)
-    dr.line([M, _rule_y(), W - M - 1, _rule_y()], fill=ON)
+        d.text(dr, (W - M - rw, ry), right, rf, ink)
+    if not inverse:
+        dr.line([M, _rule_y(), W - M - 1, _rule_y()], fill=ON)
+    return ink
 
 
 def _stack(dr: ImageDraw.ImageDraw, top: int, bottom: int, lines: list) -> None:
@@ -167,6 +183,12 @@ def _home(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
             foot = H - small.height
             url_y = foot - 1 - small.height
             top = _body_y()
+            fits = [
+                c
+                for c in _fs.fonts("code")
+                if d.text_size(dr, code.code, c)[0] <= W - 2 * M and c.height < url_y - top
+            ]
+            f = fits[0] if fits else f  # the largest that fits across and between
             _center(dr, top + max(0, (url_y - top - f.height) // 2), code.code, f)
             _center(dr, url_y, short_url(code.url, 24), small)
         else:
@@ -192,9 +214,10 @@ def _home(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
         _center(dr, 51, s.lan_ip or "", small)
     elif s.state == "error":
         pitch = max(12, d.line_height(dr, small))
-        n = max(1, (H - _body_y() + 1) // pitch)
+        n = max(1, (H - _body_y()) // pitch)
+        y0 = _body_y() + (1 if (H - _body_y() - 1) // pitch >= n else 0)  # 1 px down if room
         for i, line in enumerate(_wrap(dr, s.error or "unknown error", small, W - 2 * M, n)):
-            d.text(dr, (M, _body_y() + 1 + i * pitch), line, small, ON)
+            d.text(dr, (M, y0 + i * pitch), line, small, ON)
     else:  # unpaired / pairing without a live code
         expired = s.pairing is not None and s.pairing.expired(now)
         _center(dr, 16, "Code expired" if expired else "No code", big)
@@ -379,9 +402,10 @@ def _detail(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v:
     p = s.player(v.key)
     small = F("small")
     title = p.name if p else "Fixture"
-    _header(dr, d.ellipsize(dr, title, F("title"), W - 2 * M - 12))
+    ink = _header(dr, d.ellipsize(dr, title, F("title"), W - 2 * M - 12))
     if p:
-        _glyph(dr, W - M - 7, max(1, _rule_y() - 10), p.condition)
+        gy = (_rule_y() + 1 - 7) // 2 if ink == OFF else max(1, _rule_y() - 10)
+        _glyph(dr, W - M - 7, gy, p.condition, fill=ink)
     rows = detail_rows(p, now, _fs)
     scrolls = len(rows) > DETAIL_ROWS
     right = W - (5 if scrolls else 1)

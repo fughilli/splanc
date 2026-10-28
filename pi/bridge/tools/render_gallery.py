@@ -16,6 +16,9 @@ real UI state machine on a fake clock at ANIM_FPS.
     --font-set NAME        draw the OLED screens with that font set (fonts.SETS)
     --font-sets PATH.png   instead: one comparison sheet, a row per font set and
                            a column per key screen (also PATH-4x.png, enlarged)
+    --titles PATH.png      instead: the title rows of four screens per set at 8x,
+                           to judge letter spacing
+    --sets a,b,c           limit --font-sets / --titles to these sets (in this order)
 """
 
 from __future__ import annotations
@@ -246,17 +249,17 @@ def font_set_views():
     ]
 
 
-def font_sets_sheet(path: str, scale: int = 2) -> Image.Image:
+def font_sets_sheet(path: str, scale: int = 2, sets=None) -> Image.Image:
     """A row per font set, a column per screen; labelled. Also writes PATH-4x.png."""
     views = font_set_views()
     tiles = {}
-    for name in fonts.SETS:
+    for name in sets or fonts.SETS:
         fonts.set_active(name)
         tiles[name] = [
             oled_preview(render_oled.render(s, v, now=NOW), scale=scale) for _, s, v in views
         ]
     fonts.set_active(fonts.DEFAULT_SET)
-    tw, th = tiles[fonts.DEFAULT_SET][0].size
+    tw, th = next(iter(tiles.values()))[0].size
     pad, lab_w, head = 10, 190, 20
     out = Image.new(
         "RGB",
@@ -282,6 +285,49 @@ def font_sets_sheet(path: str, scale: int = 2) -> Image.Image:
     return out
 
 
+def titles_sheet(path: str, sets=None, scale: int = 8) -> Image.Image:
+    """Each set's header row on four screens ("Ready to pair", "Fixtures", a
+    fixture's name, the revoke banner), cropped to the title and enlarged."""
+    st = statuses()
+    pairing = st["pairing"]
+    views = [
+        ("Ready to pair", pairing, View(page="home")),
+        ("Fixtures", pairing, View(page="players")),
+        ("Living room arch", pairing, View(page="detail", key=pairing.players[0].key)),
+        ("REVOKE ALL?", pairing, View(page="home", overlay="confirm", overlay_seconds=8.0)),
+    ]
+    rows = []
+    for name in sets or fonts.SETS:
+        fonts.set_active(name)
+        crops = []
+        for _, s, v in views:
+            img = render_oled.render(s, v, now=NOW)
+            h = 15 if v.overlay else render_oled._rule_y() + 1
+            crops.append(oled_preview(img.crop((0, 0, 128, h)), scale=scale))
+        rows.append((name, crops))
+    fonts.set_active(fonts.DEFAULT_SET)
+    pad, lab = 12, 26
+    cw = max(c.width for _, cs in rows for c in cs)
+    ch = max(c.height for _, cs in rows for c in cs)
+    out = Image.new(
+        "RGB",
+        (2 * (cw + pad) + pad, len(rows) * 2 * (ch + pad) + len(rows) * lab + pad),
+        (255, 255, 255),
+    )
+    dr = ImageDraw.Draw(out)
+    lf = fonts.ttf("bold", 18)
+    y = pad
+    for name, crops in rows:
+        dr.text((pad, y), f"{name}: {fonts.SETS[name].summary}", font=lf, fill=(0, 0, 0))
+        y += lab
+        for i, c in enumerate(crops):
+            r, col = divmod(i, 2)
+            out.paste(c, (pad + col * (cw + pad), y + r * (ch + pad)))
+        y += 2 * (ch + pad)
+    out.save(path)
+    return out
+
+
 def _wrap_words(text: str, n: int) -> list:
     lines, cur = [], ""
     for w in text.split():
@@ -299,12 +345,20 @@ def main(argv) -> int:
         i = argv.index("--font-set")
         fonts.set_active(argv[i + 1])
         del argv[i : i + 2]
-    if "--font-sets" in argv:
-        path = argv[argv.index("--font-sets") + 1]
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        font_sets_sheet(path)
-        print(f"wrote {path}")
-        return 0
+    sets = None
+    if "--sets" in argv:
+        i = argv.index("--sets")
+        sets = argv[i + 1].split(",")
+        del argv[i : i + 2]
+        for n in sets:
+            fonts.SETS[n]  # noqa: B018 (an unknown name fails here, loudly)
+    for flag, fn in (("--font-sets", font_sets_sheet), ("--titles", titles_sheet)):
+        if flag in argv:
+            path = argv[argv.index(flag) + 1]
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            fn(path, sets=sets)
+            print(f"wrote {path}")
+            return 0
     if len(argv) > 2 and argv[1] == "--docs":
         return docs(argv[2])
     out = argv[1] if len(argv) > 1 else "gallery"
