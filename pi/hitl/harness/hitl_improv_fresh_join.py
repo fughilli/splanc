@@ -41,6 +41,7 @@ import argparse
 import json
 import os
 import shlex
+import subprocess
 import sys
 import time
 
@@ -66,14 +67,21 @@ def default_flashbundle() -> str | None:
 def _console(res, line: str, seconds: float = 2.0) -> str:
     """Write one line to the DUT's USB-serial console and capture its answer (the
     hitl_wifi_cadence recipe: attach the reader first, then write)."""
-    write = "printf '%s\\n' {} > /dev/ttyACM0".format(shlex.quote(line))
+    # The write is bounded too: a tty write can block (seen on rig-2: the whole ssh hung
+    # past its 62 s timeout), and an unbounded one would wedge the gate.
+    write = "timeout 5 sh -c {}".format(
+        shlex.quote("printf '%s\\n' {} > /dev/ttyACM0".format(shlex.quote(line)))
+    )
     cmd = (
         "stty -F /dev/ttyACM0 raw -echo 115200 2>/dev/null; "
         + f"timeout {seconds:g} cat /dev/ttyACM0 & sleep 0.5; "
         + write
         + "; wait"
     )
-    proc = res.ssh_serialized(cmd, capture=True, timeout=seconds + 60)
+    try:
+        proc = res.ssh_serialized(cmd, capture=True, timeout=seconds + 60)
+    except subprocess.TimeoutExpired:
+        return ""  # no ack: the caller grades it as infra
     return (proc.stdout or "") + (proc.stderr or "")
 
 
@@ -102,6 +110,14 @@ def _improv(res, ssid: str, password: str, budget: float, address: str | None) -
             out = {"ok": True, "url": url, "wall_s": round(time.monotonic() - t0, 1)}
         except HarnessError as e:
             out = {"ok": False, "error": str(e), "wall_s": round(time.monotonic() - t0, 1)}
+        except subprocess.TimeoutExpired:
+            # The rig's provisioner never returned (a wedged BLE adapter/central): the
+            # bench's problem, not the firmware's — grade it as infra, don't crash.
+            out = {
+                "ok": False,
+                "error": "BLE transport failed: provisioner hung (ssh timeout)",
+                "wall_s": round(time.monotonic() - t0, 1),
+            }
         _log(f"  attempt {attempt}: {json.dumps(out)}")
         if core.classify(out) != "infra":
             break

@@ -2454,7 +2454,11 @@ void netstack_loop() {
   if (g_ap_latched) {
     uint32_t now_ms = (uint32_t)millis();
     // (A lease only counts once past AUTH: re-authenticating means we hold no link.)
-    bool wanted = autonomous(now_ms) &&
+    // While an Improv fresh join's report is armed, its own retries (kImprovRescanGapMs
+    // apart) are the only sweeps: the background schedule on top roughly doubled the
+    // sweep duty (a channel hop every 120 ms) for the whole ~30 s window with the BLE
+    // central connected, and a rig central lost its link mid-window (CI, PR #411).
+    bool wanted = autonomous(now_ms) && !g_improv_scan.armed() &&
                   lm_wifi_scan::scan_wanted(g_creds_ready, st == AUTH, g_leased && st != AUTH,
                                             g_scan_matched, g_authw.waited_ms(now_ms));
     // Improv fresh join: retry the sweep a few seconds apart before reporting the SSID
