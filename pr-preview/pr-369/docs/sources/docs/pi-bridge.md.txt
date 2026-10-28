@@ -124,15 +124,44 @@ After pairing, it shows how many clients are connected. Along the bottom are:
 
 ![HDMI after pairing](img/pi-bridge/hdmi-paired.png)
 
-**OLED HAT**: four pages, which rotate every 8 seconds:
+**OLED HAT**: when the screen service starts it plays a short Splanc logo animation (about two
+seconds, while the bridge itself starts up), then slides to four pages, which rotate every 8
+seconds:
 
 1. **Home**: the state, the pairing code in large letters, the short pairing link, the time left
    and the number of clients.
 2. **Scan to pair**: a QR code of the pairing link.
-3. **Fixtures**: up to four players, with ● for online and × for offline.
+3. **Fixtures**: every player the bridge knows, in a list that scrolls. Each row shows ● for
+   connected, ○ for found but idle, ◐ for reconnecting, or × for unreachable, and on the right
+   the frame rate (or, for an unreachable one, how long ago it was last heard from).
 4. **Network**: the IP address, the relay, the number of clients and the bridge ID.
 
 ![OLED pages](img/pi-bridge/oled-pages.png)
+
+On the **Fixtures** page, move the joystick up and down to pick a fixture and press it to open
+that fixture's details:
+
+- its state (connected, idle, reconnecting or unreachable) and, when unreachable, why;
+- when the bridge last heard from it ("12 s ago");
+- its IP address (link-local addresses are marked "LL"), its ID (MAC address) and firmware
+  version;
+- its room and its LED count. When no channel has a count set, the count comes from the
+  fixture's map, marked "(map)";
+- the running effect, when the bridge knows it;
+- its latest performance numbers: frame rate (and whether the effect is lagging), the share of
+  the frame budget used, overruns, free heap, and how old those numbers are. They come from
+  the last time an agent measured an effect (`measure_effect`) or from the fixture's own
+  reports. "no data yet" means nothing has measured it since the bridge started.
+
+Move the joystick up and down to scroll the details. Push it left, or press it, to go back to the
+list. The details stay open while you look at them, and go back to the list after 5 minutes
+without a press. If the fixture disappears from the bridge's list while it is open, the screen
+goes back to the list.
+
+![The fixture list, a fixture's details, and an unreachable fixture](img/pi-bridge/oled-fixtures.png)
+
+Every change of screen slides: pages slide sideways, a fixture's details slide in over the list
+and back out, and the highlight in the list glides. A press during a slide takes effect at once.
 
 To protect the OLED from burn-in, it behaves as follows:
 
@@ -161,11 +190,15 @@ Any key wakes it. That first press only wakes the screen and does nothing else.
 | **KEY1**                     | Get a new pairing code.                                                                                                                                                    |
 | **KEY2**                     | Identify fixtures (every fixture flashes so you can tell them apart).                                                                                                      |
 | **KEY3**, held for 5 seconds | Revoke all clients. A progress bar fills while you hold. Then a confirm screen appears: press **KEY3** again to confirm. Any other key, or 10 seconds of waiting, cancels. |
-| Joystick right / down        | Next page.                                                                                                                                                                 |
-| Joystick left / up           | Previous page.                                                                                                                                                             |
-| Joystick press               | Back to the home page.                                                                                                                                                     |
+| Joystick right / down        | Next page. On the **Fixtures** page, down picks the next fixture instead.                                                                                                  |
+| Joystick left / up           | Previous page. On the **Fixtures** page, up picks the previous fixture instead.                                                                                            |
+| Joystick press               | Back to the home page. On the **Fixtures** page, it opens the picked fixture.                                                                                              |
+| In a fixture's details       | Up / down scroll. Left or press go back to the list.                                                                                                                       |
 
-After a joystick press, the pages stop rotating for 30 seconds.
+**KEY1** works from every screen: it goes to the home page so you can see the new code.
+
+After a joystick press, the pages stop rotating for 30 seconds. They don't rotate while a
+fixture's details are open.
 
 ![Holding KEY3, the revoke confirm screen, a button result, and the paired home page](img/pi-bridge/oled-overlays.png)
 
@@ -175,9 +208,14 @@ After a joystick press, the pages stop rotating for 30 seconds.
   the Pi checks splanc.io for a new Splanc release. If there is one, it downloads it, checks its
   checksum, switches to it and restarts the bridge. Your pairings are kept. The previous version
   stays on the card too.
-- **The Pi's operating system** is updated by writing the card again with the flasher when a new
-  Splanc bridge release comes out. Writing the card starts fresh, so you pair your agents again
-  afterwards. (An in-place system update is planned.)
+- **The Pi's operating system updates itself too** (cards written with a flasher release that has
+  system updates). It checks a few times a day; a new Splanc bridge system downloads in the
+  background, and once no app is connected through the bridge, the Pi restarts into it (about a
+  minute without the bridge; your fixtures keep playing). Your pairings and Wi-Fi are kept. If the
+  new system doesn't come up healthy within five minutes, the Pi goes back to the previous one by
+  itself. Only updates signed by Splanc are accepted.
+- Writing the card again with the flasher also works, but starts fresh: you pair your agents again
+  afterwards.
 
 ## Changing settings later
 
@@ -193,9 +231,16 @@ boots.
 | `OLED=auto`                | The OLED HAT: `auto`, `spi`, `i2c` or `off`.                          |
 | `OLED_ROTATE=2`            | `0`–`3`, in steps of 90°. Use `0` if the OLED picture is upside down. |
 | `SPLANC_DISPLAY_HDMI=auto` | The HDMI status page: `auto` or `off`.                                |
-| `SPLANC_AUTO_UPDATE=1`     | `0` turns the daily Splanc updates off.                               |
+| `SPLANC_AUTO_UPDATE=1`     | `0` turns the automatic updates (software + system) off.              |
 
-To join a different Wi-Fi network, write the card again with the flasher (and pair again).
+To put the bridge on another Wi-Fi network (a venue, a new router), use the Splanc app on your
+phone, the same way you add a fixture: **Add device over Bluetooth**, choose the network, then
+pick the bridge (it shows up under its name, `splanc-bridge` unless you renamed it) in the
+Bluetooth list. The bridge saves the network next to the ones it already knows and joins it; it
+then joins whichever known network is in range by itself. Sending a network it already knows
+updates that network's password. If the bridge can't join, the app says so and the bridge keeps
+its saved networks as they were. A paired bridge stays paired. You can also write the card again
+with the flasher (that resets the bridge, so you pair again).
 
 ## Troubleshooting
 

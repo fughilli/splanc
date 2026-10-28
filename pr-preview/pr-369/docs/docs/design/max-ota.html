@@ -252,6 +252,7 @@
 <li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
@@ -949,7 +950,7 @@ v1.0.0 unit.</p>
 </table>
 </div>
 <p><strong>HITL gate</strong> (<code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:max_ota_gate</span></code>, a <code class="docutils literal notranslate"><span class="pre">py_binary</span></code> tagged <code class="docutils literal notranslate"><span class="pre">hitl</span></code> +
-<code class="docutils literal notranslate"><span class="pre">manual</span></code>). Its images are Nix-built: <code class="docutils literal notranslate"><span class="pre">pi/hitl/max_ota_images.sh</span> <span class="pre">OUT</span></code> builds A/B/U
+<code class="docutils literal notranslate"><span class="pre">manual</span></code>). Its images are Nix-built: <code class="docutils literal notranslate"><span class="pre">pi/hitl/max_ota_images.sh</span> <span class="pre">OUT</span></code> builds A/B/U/N
 with TEST trust and packs deltas. It runs on rig-1’s <code class="docutils literal notranslate"><span class="pre">pi-ledmapper-1/2</span></code> in one
 reservation:</p>
 <ul class="simple">
@@ -957,9 +958,21 @@ reservation:</p>
 <li><p><strong>upgrade:</strong> A → B;</p></li>
 <li><p><strong>badsig;</strong></p></li>
 <li><p><strong>unhealthy:</strong> U rolls back to B;</p></li>
+<li><p><strong>noboot:</strong> N, a system that never boots (<code class="docutils literal notranslate"><span class="pre">SPLANC_MAX_VARIANT=noboot</span></code>: its stage 1
+is pointed at a missing init with <code class="docutils literal notranslate"><span class="pre">boot.panic_on_fail</span></code>, so it panics before
+userspace), rolls back to B through the <code class="docutils literal notranslate"><span class="pre">panic=10</span></code> reboot;</p></li>
 <li><p><strong>powercut:</strong> B → A with an immediate reset mid-download, then resume;</p></li>
 <li><p><strong>trialcut:</strong> A → B with a reset during the trial; back on A.</p></li>
 </ul>
+<p>Kept state is compared by content: the Wi-Fi profiles (names and contents), the
+hostname, SSH host key and deploy key, and a hash of every file under
+<code class="docutils literal notranslate"><span class="pre">/var/lib/ledmapper</span></code>, where the gate also plants a sentinel (removed at the end).
+The player’s TLS cert is made in memory at each start, so there is none to keep.</p>
+<p><strong>Effects keep running.</strong> Across setup’s plain deploy reboot and the upgrade, the
+gate samples the player’s health file (<code class="docutils literal notranslate"><span class="pre">ticks</span></code>) about once a second. The upgrade
+passes only if the old system rendered through the whole download and staging (no
+gap over 8 s), kept rendering until it went down for the reboot, and the trial’s
+player started no more than 15 s (DUT uptime) later than after the plain reboot.</p>
 <p>The network DUTs have no switchable power. <code class="docutils literal notranslate"><span class="pre">echo</span> <span class="pre">b</span> <span class="pre">&gt;</span> <span class="pre">/proc/sysrq-trigger</span></code> resets
 immediately, with no sync and no unmount, which is what a cut does to the
 filesystem. Journals of the OTA units and the player are saved per phase.</p>
@@ -994,6 +1007,70 @@ as <code class="docutils literal notranslate"><span class="pre">import_failed</s
 </section>
 <section id="hitl-results">
 <h2>HITL results<a class="headerlink" href="#hitl-results" title="Link to this heading">¶</a></h2>
+<section id="pi-ledmapper-2-2026-10-28-rebased-on-main-all-seven-phases">
+<h3>pi-ledmapper-2, 2026-10-28 (rebased on main, all seven phases)<a class="headerlink" href="#pi-ledmapper-2-2026-10-28-rebased-on-main-all-seven-phases" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:max_ota_gate</span></code> on rig-1 / <strong>pi-ledmapper-2</strong> (splanc-max-1: Pi 3
+Model B+ Rev 1.4, no FPGA attached; the player still renders to spidev), in one
+reservation and one run. Images from this tree: A 9.1.0, B 9.2.0, U 9.3.0
+(unhealthy), N 9.4.0 (noboot); deltas of 66 KB (A↔B, B→N) and 3.4 MB (B→U), all
+TEST-signed. <strong>Verdict: PASS, 61 of 61 checks.</strong> The unit ends on A, a working system.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>phase</p></th>
+<th class="head"><p>result</p></th>
+<th class="head"><p>numbers</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>setup</p></td>
+<td><p>PASS</p></td>
+<td><p>A deployed over SSH (from the unit’s pre-OTA Sep-24 system); trial U-Boot in place; sentinel planted</p></td>
+</tr>
+<tr class="row-odd"><td><p>upgrade A→B</p></td>
+<td><p>PASS</p></td>
+<td><p><strong>87 s</strong>: download 4.5 s, installed at 8.5 s, trial up at 62 s, healthy and committed at 86 s</p></td>
+</tr>
+<tr class="row-even"><td><p>effects keep running</p></td>
+<td><p>PASS</p></td>
+<td><p>the old system rendered through download + staging (longest frame gap 2.1 s, = the health file period) and until it went down (0 s); the trial’s player started at uptime 20.7 s vs 19.3 s after a plain reboot</p></td>
+</tr>
+<tr class="row-odd"><td><p>bad signature</p></td>
+<td><p>PASS</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">bad_signature</span></code> before any fetch; dl/ empty; still on B</p></td>
+</tr>
+<tr class="row-even"><td><p>unhealthy (U)</p></td>
+<td><p>PASS</p></td>
+<td><p>trial booted, never healthy, rolled back at the deadline (<code class="docutils literal notranslate"><span class="pre">unhealthy:</span> <span class="pre">no</span> <span class="pre">health</span> <span class="pre">file</span></code>), back on B; 403 s</p></td>
+</tr>
+<tr class="row-odd"><td><p>noboot (N)</p></td>
+<td><p>PASS</p></td>
+<td><p>the trial panicked in stage 1 (no journal from it); the <code class="docutils literal notranslate"><span class="pre">panic=10</span></code> reboot booted B and the boot reconcile reported <code class="docutils literal notranslate"><span class="pre">rolled_back</span></code> (<code class="docutils literal notranslate"><span class="pre">trial_failed</span></code>); 95 s</p></td>
+</tr>
+<tr class="row-even"><td><p>power cut mid-download</p></td>
+<td><p>PASS</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sysrq</span> <span class="pre">b</span></code> at 28,672 / 66,584 B; resumed by HTTP Range after the reset; installed, healthy, committed; on A; 155 s</p></td>
+</tr>
+<tr class="row-odd"><td><p>power cut in the trial</p></td>
+<td><p>PASS</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sysrq</span> <span class="pre">b</span></code> during the unproven trial; back on A (<code class="docutils literal notranslate"><span class="pre">trial_reset</span></code>); 120 s</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Wi-Fi profiles (contents), hostname, SSH host key, deploy key, <code class="docutils literal notranslate"><span class="pre">/var/lib/ledmapper</span></code>
+(content hash) and the sentinel were identical after every phase.</p>
+<p><strong>Found on the way:</strong> an image built in a checkout without
+<code class="docutils literal notranslate"><span class="pre">pi/provisioning/secrets/deploy_key.pub</span></code> gets a freshly minted deploy key (sbc-deploy
+<code class="docutils literal notranslate"><span class="pre">keys_ensure</span></code>), and its first activation persists that key as the unit’s only
+persistent deploy key, locking the real key out. The gate now refuses to deploy an
+image that doesn’t trust its key, and <code class="docutils literal notranslate"><span class="pre">max_ota_images.sh</span></code> refuses to build without
+the public half. Also note: committing an update garbage-collects all but the
+current and previous generation, so a unit’s pre-OTA system is gone after its
+second committed update.</p>
+</section>
+<section id="pi-ledmapper-1-2026-10-23">
+<h3>pi-ledmapper-1, 2026-10-23<a class="headerlink" href="#pi-ledmapper-1-2026-10-23" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:max_ota_gate</span></code> on rig-1 / <strong>pi-ledmapper-1</strong> (splanc-max-2: Pi 3
 Model B+ Rev 1.4 with its Tang Nano 9K), in one reservation, 2026-10-23. The images
 are <code class="docutils literal notranslate"><span class="pre">pi/hitl/max_ota_images.sh</span></code> deltas of 66 KB (A↔B) and 3.4 MB (U), all TEST-signed.</p>
@@ -1061,6 +1138,7 @@ QEMU <code class="docutils literal notranslate"><span class="pre">raspi3b</span>
 <code class="docutils literal notranslate"><span class="pre">0</span> <span class="pre">…</span></code> and an absent flag were left alone.</p>
 </section>
 </section>
+</section>
 
         </article>
       </div>
@@ -1125,7 +1203,11 @@ QEMU <code class="docutils literal notranslate"><span class="pre">raspi3b</span>
 <li><a class="reference internal" href="#testing">Testing</a></li>
 <li><a class="reference internal" href="#what-the-owner-must-do-decisions">What the owner must do (decisions)</a></li>
 <li><a class="reference internal" href="#limitations-and-follow-ups">Limitations and follow-ups</a></li>
-<li><a class="reference internal" href="#hitl-results">HITL results</a></li>
+<li><a class="reference internal" href="#hitl-results">HITL results</a><ul>
+<li><a class="reference internal" href="#pi-ledmapper-2-2026-10-28-rebased-on-main-all-seven-phases">pi-ledmapper-2, 2026-10-28 (rebased on main, all seven phases)</a></li>
+<li><a class="reference internal" href="#pi-ledmapper-1-2026-10-23">pi-ledmapper-1, 2026-10-23</a></li>
+</ul>
+</li>
 </ul>
 </li>
 </ul>

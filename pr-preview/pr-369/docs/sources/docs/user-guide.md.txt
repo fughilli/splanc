@@ -204,10 +204,10 @@ is the LED at output index N. The file is named after the map plus today's date.
 it opens the share sheet; choose **Save to Files**.
 
 - **CSV (TouchDesigner, spreadsheets)** — columns
-  `index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength`. Positions are in
-  **metres**. In TouchDesigner, point a Table DAT's File at the CSV and wire it into a DAT to SOP's
-  Points DAT. You get one point per LED, numbered by `index`, and the other columns become point
-  attributes.
+  `index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength,segment_arclength`.
+  Positions are in **metres**. In TouchDesigner, point a Table DAT's File at the CSV and wire it
+  into a DAT to SOP's Points DAT. You get one point per LED, numbered by `index`, and the other
+  columns become point attributes.
 - **Chromatik fixture (.lxf)** — copy it into the Fixtures folder under your Chromatik home
   directory and add it from the Fixture Chooser. Its points follow output order (one component per
   channel). A **Scale** parameter sets units per metre: the default 100 means centimetres; set 1 for
@@ -217,8 +217,10 @@ it opens the share sheet; choose **Save to Files**.
   device renders them.
 - **Channels** — maps don't store a channel layout. If a connected device's per-channel LED counts
   add up to this map's LED count, the export uses them. Otherwise every LED is on channel 0.
-  `segment` is the topology segment (-1 if none) and `arclength` is the LED's distance along it in
-  metres.
+- **Arclength** — `arclength` is the LED's distance along the strip in metres, counted from the
+  first LED of its channel, so it ends near the strip's length. `segment` is the topology segment
+  (-1 if none) and `segment_arclength` is the LED's distance along that segment. On a coil or tube
+  the topology is the centreline, so `segment_arclength` can be much shorter than the strip.
 - **Axes** — Splanc maps are +Y up, right-handed, which matches TouchDesigner and Chromatik, so
   nothing needs converting. For Z-up tools such as Blender, pick **Z up** before exporting the CSV.
 
@@ -386,6 +388,11 @@ app uses.
 - **Rename** — the display name is reflected to the device itself.
 - A row's ⋮ menu shows the recorded LAN address, MAC, and Bluetooth name, and can **forget** the
   device.
+- **Wi-Fi rejoin** (device settings) picks how a board finds its network again: **Auto** (the
+  default) retries quickly, then once a minute for as long as it takes; **Fixed**, **Manual**, or
+  **Offline** for a unit that will never see its network again. To save airtime when an Auto board's
+  network may be gone for a long time, set **Slow down after unseen for** (hours) to opt in to one
+  scan per **Slowed scan interval** (15 min by default). It is off (0) unless you set it.
 
 ### Flashing firmware
 

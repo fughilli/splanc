@@ -206,18 +206,23 @@ secret**:
   `.github/workflows/release.yaml` has no `environment:`.
 - Format: the raw P-256 **private scalar as 64 lowercase hex characters**, exactly
   the `private` line that keygen prints. Not PEM, not DER.
-- Generate it with:
+- Generate it with keygen, naming the key you are making (the full procedure and
+  the other keys are under "Key names" below):
 
   ```
-  bazel run //firmware/ota:ota_sign -- keygen
+  bazel run //firmware/ota:ota_sign -- keygen --name release
   ```
 
-  The output is two lines:
+  The output names the exact secret and file for that key:
 
   ```
-  private (OTA_SIGNING_KEY secret): <64 hex chars>
-  public  (firmware/ota/keys/release.pub): 04<128 hex chars>
+  key: release (id 0)
+  private (store as the OTA_SIGNING_KEY repository secret, never in the repo): <64 hex chars>
+  public  (commit as firmware/ota/keys/release.pub): 04<128 hex chars>
   ```
+
+  A new release key replaces a trusted one, so follow the rotation runbook below
+  rather than overwriting `release.pub`.
 
 The public half is committed as `firmware/ota/keys/release.pub`: the SEC1
 uncompressed point as 130 hex characters, with optional `#` comment lines. Both
@@ -242,9 +247,59 @@ test-trust loader.
 
 **Dev builds:** sign with the test keys, or keep flashing over USB.
 
+### Key names
+
+Every OTA signing key has a name, a key id and one place its private half lives.
+`ota_sign keygen --name <name>` prints exactly these, so a new key never gets
+another key's labels:
+
+| `--name` | id | Private half | Public half |
+|---|---|---|---|
+| `release` | 0 | the `OTA_SIGNING_KEY` repository secret | `firmware/ota/keys/release.pub` |
+| `backup` | 1 | **offline**, cold storage; never in the repo or CI | `firmware/ota/keys/backup.pub` |
+| `next` | 2 | offline until a planned rotation makes it `OTA_SIGNING_KEY` | `firmware/ota/keys/next.pub` |
+| (reserved) | 3 | none: reserved for a possible future separate Splanc MAX key | none |
+| (reserved) | 4 | none: reserved, as id 3 | none |
+
+The C6 and Splanc MAX share this ring: MAX images are signed with the same
+`release` key (and `backup` / `next` play the same roles). keygen has no name for
+ids 3 and 4.
+
+Without `--name`, keygen prints neutral labels: `private (store as the signing
+secret, never in the repo)` and `public (commit as firmware/ota/keys/<name>.pub)`.
+
+**Procedure** (any key; `next` shown):
+
+1. Generate it and write the public half straight into the repo:
+
+   ```
+   bazel run //firmware/ota:ota_sign -- keygen --name next --pub-out "$PWD/firmware/ota/keys/next.pub"
+   ```
+
+   (Run it from the repo root: `bazel run` executes in its own directory, so
+   `--pub-out` needs an absolute path, which `$PWD` gives.)
+
+   `--pub-out` writes the header comment (key id, purpose) and the hex in the
+   same format as the other `.pub` files. It only fills a missing file or an
+   `UNSET` placeholder; replacing a real key needs `--force`, and a file name that
+   doesn't match `--name` (say `--name next --pub-out …/release.pub`) is refused.
+   Without `--name`, a file name that is a key name (`next.pub`) selects that key.
+   The private half is never written to a file; keygen only prints it.
+2. Copy the `private` line's hex to where its row in the table says: the named
+   repository secret (Settings → Secrets and variables → Actions), or offline
+   storage for `backup` (and for `next` until the rotation). Then clear your terminal scrollback.
+3. Check the pair before committing:
+   `ota_sign pubkey --key-env <SECRET>` (with the private hex in that variable)
+   must equal `ota_sign check-pub --in firmware/ota/keys/<name>.pub`.
+4. Commit only the `.pub` file.
+
+On machines without the repo checked out (an offline machine for a backup key),
+run the `ota_sign` binary directly with the same arguments, then carry only the
+`.pub` file back.
+
 **Signer subcommands** (`bazel run //firmware/ota:ota_sign -- …`):
 
-- `keygen`
+- `keygen [--name N] [--pub-out F.pub] [--force]`
 - `pubkey`
 - `check-pub`
 - `sign --key-id N --security-version S`
@@ -309,8 +364,8 @@ or equal epoch is ignored. Neither value is ever lowered, and an NVS erase (USB
 
 ### Runbook: planned rotation (`release` → `next`)
 
-1. Generate the successor offline: `ota_sign keygen`. Commit its public half as
-   `keys/next.pub`.
+1. Generate the successor offline: `ota_sign keygen --name next --pub-out keys/next.pub`.
+   Commit the public half it wrote.
 2. Ship a firmware release. The next migration (USB), or future loader
    self-update, puts the new keyring on devices. **Today the loader changes only
    over USB**, so in practice step 2 rides on the next USB migration. Until
@@ -337,8 +392,8 @@ or equal epoch is ignored. Neither value is ever lowered, and an NVS erase (USB
    applies it at its next update attempt, and from then on refuses anything
    signed by the stolen key. A device that never gets an update attempt stays
    exposed; push an update to all of them (`update_firmware {players: "all"}`).
-3. **Generate a new release key** (`keygen`). Put its private half in
-   `OTA_SIGNING_KEY` and commit its public half as the new `keys/next.pub`.
+3. **Generate a new release key** (`keygen --name next --pub-out keys/next.pub --force`).
+   Put its private half in `OTA_SIGNING_KEY` and commit the new `keys/next.pub`.
 4. **Bridge releases:**
    - Until loaders carry the new key, sign releases with the **backup** key
      (`ota_sign sign --key-id 1`, by hand on the offline machine), so revoked
@@ -352,8 +407,8 @@ machine and committed only the public half, `firmware/ota/keys/backup.pub`. Ever
 loader built from then on trusts it. Loaders flashed before that have an `UNSET`
 backup slot, so a compromise of `release` can only reach them by a USB re-flash.
 
-To make a replacement backup key, run `bazel run //firmware/ota:ota_sign -- keygen`,
-or use plain `openssl`:
+To make a replacement backup key, run `ota_sign keygen --name backup --pub-out
+keys/backup.pub --force` on the offline machine, or use plain `openssl`:
 
 ```sh
 openssl ecparam -name prime256v1 -genkey -noout -out backup.pem

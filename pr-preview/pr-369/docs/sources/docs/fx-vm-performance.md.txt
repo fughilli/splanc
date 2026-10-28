@@ -26,17 +26,17 @@ held-out programs (`profileValidation.ts`), gated at the same tolerance as
 
 ## esp32c6 — esp32c6
 
-| Field              | Value                                      |
-| ------------------ | ------------------------------------------ |
-| SoC                | esp32c6                                    |
-| Device             | esp32c6                                    |
-| deviceKey          | esp32c6                                    |
-| CPU clock          | 160 MHz (160,000,000 Hz)                   |
-| Programs           | 65 fit + 7 held-out                        |
-| Regression margins | default 10%, sweep16 15%                   |
-| Fit residual       | ±25.0%                                     |
-| Held-out accuracy  | RMS 3.7% · mean 3.0% · max 6.2% · R² 0.994 |
-| Verdict            | PASS (RMS 3.7% vs 13% tolerance)           |
+| Field              | Value                                            |
+| ------------------ | ------------------------------------------------ |
+| SoC                | esp32c6                                          |
+| Device             | esp32c6                                          |
+| deviceKey          | esp32c6                                          |
+| CPU clock          | 160 MHz (160,000,000 Hz)                         |
+| Programs           | 65 fit + 7 held-out                              |
+| Regression margins | default 10%, sweep16 15%, or within 8,000 cycles |
+| Fit residual       | ±25.0%                                           |
+| Held-out accuracy  | RMS 3.7% · mean 3.0% · max 6.2% · R² 0.994       |
+| Verdict            | PASS (RMS 3.7% vs 13% tolerance)                 |
 
 ### Fixed overheads
 
@@ -57,12 +57,14 @@ benchmark actually exercised). Sorted by cost.
 
 | Opcode        | Cycles  | ns       | Fitted |
 | ------------- | ------- | -------- | ------ |
+| SampleTex     | 4300.00 | 26875.00 |        |
 | FloodFrom     | 2000.00 | 12500.00 |        |
 | BinMath:pow   | 1535.69 | 9598.06  | yes    |
 | UnMath:tan    | 967.83  | 6048.93  | yes    |
 | BinMath:atan2 | 953.87  | 5961.72  | yes    |
 | Hsv2Rgb       | 848.99  | 5306.17  | yes    |
 | UnMath:log    | 778.30  | 4864.36  | yes    |
+| @ctxfix       | 700.00  | 4375.00  |        |
 | NormalizeFix  | 700.00  | 4375.00  |        |
 | PowFix        | 650.00  | 4062.50  |        |
 | UnMath:sqrt   | 615.79  | 3848.69  | yes    |
@@ -77,7 +79,6 @@ benchmark actually exercised). Sorted by cost.
 | UnMath:cos    | 438.86  | 2742.86  | yes    |
 | Palette       | 415.90  | 2599.40  | yes    |
 | SqrtFix       | 414.00  | 2587.50  |        |
-| SampleTex     | 400.00  | 2500.00  |        |
 | UnMath:sin    | 367.68  | 2297.99  | yes    |
 | Distance      | 363.99  | 2274.97  | yes    |
 | BinMath:mod   | 363.29  | 2270.53  | yes    |
@@ -192,7 +193,7 @@ in-editor AI is fed, relative to a float multiply (each runs once per LED in
 ```text
 BUILTIN COSTS on this device (esp32c6 @ 160 MHz, measured on your board) — per call, relative to a float multiply. shade() runs each ONCE PER LED, so favor the cheap ones:
   abs 0.4x, sign 0.6x, floor 0.7x, min 0.9x, max 0.9x, step 0.9x, add 1.0x, hash 1.0x, mul 1.0x, sub 1.0x, clamp 1.0x, ceil 1.1x, dot 1.1x, fract 1.1x, mix 2.2x, div 2.4x, length 2.9x, mod 3.4x, distance 3.4x, sin 3.4x, palette0 3.8x, cos 4.1x, normalize 4.7x, cross 5.2x, exp 5.3x, smoothstep 5.3x, sqrt 5.7x, log 7.2x, hsv2rgb 7.8x, atan2 8.8x, tan 8.9x, pow 14x
-Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; swap sin/cos/pow for fixed16/fixed8 (LUT trig, no soft-float) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt).
+Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; do per-LED maths in fixed (fixed() around every literal; sin/cos of a fixed phase in turns is an integer LUT) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt). Every op also pays ~70 cycles of dispatch, so fewer ops is faster.
 ```
 
 ### Estimator accuracy (held-out)
@@ -303,17 +304,17 @@ interpreted. Same calibration corpus and firmware as the interpreter section abo
 differs — so compare per-opcode and per-program costs directly against it to see where the JIT pays
 off.
 
-| Field              | Value                                       |
-| ------------------ | ------------------------------------------- |
-| SoC                | esp32c6                                     |
-| Device             | esp32c6 (JIT)                               |
-| deviceKey          | esp32c6-jit                                 |
-| CPU clock          | 160 MHz (160,000,000 Hz)                    |
-| Programs           | 65 fit + 7 held-out                         |
-| Regression margins | default 10%, sweep16 15%                    |
-| Fit residual       | ±24.4%                                      |
-| Held-out accuracy  | RMS 6.2% · mean 4.6% · max 11.3% · R² 0.971 |
-| Verdict            | PASS (RMS 6.2% vs 13% tolerance)            |
+| Field              | Value                                            |
+| ------------------ | ------------------------------------------------ |
+| SoC                | esp32c6                                          |
+| Device             | esp32c6 (JIT)                                    |
+| deviceKey          | esp32c6-jit                                      |
+| CPU clock          | 160 MHz (160,000,000 Hz)                         |
+| Programs           | 65 fit + 7 held-out                              |
+| Regression margins | default 10%, sweep16 15%, or within 8,000 cycles |
+| Fit residual       | ±24.4%                                           |
+| Held-out accuracy  | RMS 6.2% · mean 4.6% · max 11.3% · R² 0.971      |
+| Verdict            | PASS (RMS 6.2% vs 13% tolerance)                 |
 
 ### Fixed overheads
 
@@ -334,12 +335,14 @@ benchmark actually exercised). Sorted by cost.
 
 | Opcode        | Cycles  | ns       | Fitted |
 | ------------- | ------- | -------- | ------ |
+| SampleTex     | 4300.00 | 26875.00 |        |
 | FloodFrom     | 2000.00 | 12500.00 |        |
 | BinMath:pow   | 1536.12 | 9600.72  | yes    |
 | UnMath:tan    | 967.55  | 6047.19  | yes    |
 | BinMath:atan2 | 953.57  | 5959.82  | yes    |
 | Hsv2Rgb       | 848.70  | 5304.35  | yes    |
 | UnMath:log    | 777.50  | 4859.41  | yes    |
+| @ctxfix       | 700.00  | 4375.00  |        |
 | NormalizeFix  | 700.00  | 4375.00  |        |
 | PowFix        | 650.00  | 4062.50  |        |
 | UnMath:sqrt   | 615.51  | 3846.95  | yes    |
@@ -354,7 +357,6 @@ benchmark actually exercised). Sorted by cost.
 | UnMath:cos    | 438.35  | 2739.67  | yes    |
 | Palette       | 415.86  | 2599.12  | yes    |
 | SqrtFix       | 414.00  | 2587.50  |        |
-| SampleTex     | 400.00  | 2500.00  |        |
 | UnMath:sin    | 367.64  | 2297.77  | yes    |
 | Distance      | 363.83  | 2273.96  | yes    |
 | BinMath:mod   | 363.49  | 2271.82  | yes    |
@@ -469,7 +471,7 @@ in-editor AI is fed, relative to a float multiply (each runs once per LED in
 ```text
 BUILTIN COSTS on this device (esp32c6 @ 160 MHz, measured on your board) — per call, relative to a float multiply. shade() runs each ONCE PER LED, so favor the cheap ones:
   abs 0.4x, sign 0.6x, floor 0.7x, step 0.7x, clamp 0.7x, min 0.9x, max 0.9x, add 1.0x, hash 1.0x, mul 1.0x, sub 1.0x, ceil 1.1x, dot 1.1x, fract 1.1x, mix 2.2x, div 2.4x, length 2.9x, mod 3.4x, distance 3.4x, sin 3.4x, palette0 3.8x, cos 4.1x, normalize 4.7x, cross 5.2x, smoothstep 5.2x, exp 5.3x, sqrt 5.7x, log 7.2x, hsv2rgb 7.9x, atan2 8.8x, tan 9.0x, pow 14x
-Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; swap sin/cos/pow for fixed16/fixed8 (LUT trig, no soft-float) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt).
+Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; do per-LED maths in fixed (fixed() around every literal; sin/cos of a fixed phase in turns is an integer LUT) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt). Every op also pays ~70 cycles of dispatch, so fewer ops is faster.
 ```
 
 ### Estimator accuracy (held-out)
