@@ -199,15 +199,17 @@ fn live_set_fits_the_budget() {
 // FX_LED_POS 12 -> 9 B/LED, FX_LED_ROOM dropped) and the LED frame (render +
 // PARLIO buffers, now a modeled component) 6,152 -> 6,184: worst 164,975 ->
 // 161,479 B (headroom 65,974 B).
+// #400: the 512 B OSC_SHADOW is gone (OSC writes only the components it names):
+// 161,479 -> 160,967 B.
 const PINNED_STATES: usize = 73;
-const PINNED_WORST: usize = 161_479;
+const PINNED_WORST: usize = 160_967;
 
 /// The largest config (1024 + 1024 LEDs): the boot-sized buffers grow with it
 /// and the worst state must still fit the budget; the headroom left there is
 /// the max-config cost (docs/design/ram-budget.md "LED capacity").
-/// 209,287 B: 18,166 B of modeled headroom in the worst state (BLE central +
-/// wss + video + map).
-const PINNED_WORST_AT_MAX: usize = 209_287;
+/// 208,775 B: 18,678 B of modeled headroom in the worst state (BLE central +
+/// wss + video + map); -512 B with #400's OSC_SHADOW removal.
+const PINNED_WORST_AT_MAX: usize = 208_775;
 
 #[test]
 fn the_max_led_config_still_fits_the_budget() {

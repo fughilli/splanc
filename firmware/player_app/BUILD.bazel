@@ -102,8 +102,10 @@ rust_static_library(
     srcs = [
         "driver_ffi.rs",
         "ffi.rs",
+        "fxdbg.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
+        "wifi_ffi.rs",
     ],
     crate_name = "ledmapper_player_ffi",
     crate_root = "ffi.rs",
@@ -144,8 +146,10 @@ rust_library(
     srcs = [
         "driver_ffi.rs",
         "ffi.rs",
+        "fxdbg.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
+        "wifi_ffi.rs",
     ],
     # The host tests never allocate the per-LED store: lm_player_init binds a
     # static one for the whole cap (the firmware sizes its own at boot).
@@ -210,6 +214,20 @@ rust_test(
     ],
 )
 
+# The Wi-Fi rejoin policy (wifi_ffi.rs): validation, the OTA-pending refusal, the NVS
+# record, the console grammar and the protocol arms through the C ABI. Own binary.
+rust_test(
+    name = "wifi_policy_test",
+    srcs = ["tests/wifi_policy.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
 # FX decks + crossfade + uniform keypoints (store hooks, blend, morph, stale
 # recall by name, the shared-arena split) through the C ABI. Own binary.
 rust_test(
@@ -227,6 +245,60 @@ rust_test(
     ],
 )
 
+# #400 wide uniforms (signed vec4 + mat4) through the C ABI: full-width defaults,
+# 16-float set_uniforms / live mailbox / OSC, current values as <= 4-float chunks.
+rust_test(
+    name = "wide_uniforms_test",
+    srcs = ["tests/wide_uniforms.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# Native OSC follows the visible FX deck (#402): crossfade start / complete,
+# rollback, same-effect copies, deploy, and no value carried across decks. Own
+# binary: fresh process-global FFI state.
+rust_test(
+    name = "osc_decks_test",
+    srcs = ["tests/osc_decks.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+        "@crates//:serde_json",
+    ],
+)
+
+# The FX debugger (fxdbg.rs): pause / step / lease, chunked snapshot sections, and
+# a host replay of a paused frame that must match the device bit-exactly
+# (docs/design/fx-debugger.md). Own binary: fresh process-global FFI state.
+rust_test(
+    name = "fx_debug_test",
+    srcs = ["tests/fx_debug.rs"],
+    # The host replay CLI the HITL gate runs, checked here against the same snapshot.
+    data = ["//firmware/fx_vm:fx_replay"],
+    edition = "2021",
+    env = {
+        "FX_REPLAY": "$(rootpath //firmware/fx_vm:fx_replay)",
+        "RUST_MIN_STACK": "100663296",
+    },
+    deps = [
+        ":player_ffi_host",
+        "//firmware/fx_vm",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
 # Multi-fixture room frame (set_fixture_pose -> FX_LED_ROOM -> led.room / room.min /
 # room.max, the unposed fallback) + set_time_base through the C ABI. Own binary.
 rust_test(
@@ -235,6 +307,25 @@ rust_test(
     compile_data = ["//pi/hitl/harness:ab_demo/timeBaseClock.fx"],
     edition = "2021",
     env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# Video present-at scheduling (SetTexture.seq/present_at_ms -> TextureAck, the
+# jitter buffer + lm_tex_present). Own binary: fresh process-global FFI state.
+rust_test(
+    name = "video_present_test",
+    srcs = ["tests/video_present.rs"],
+    edition = "2021",
+    # Process-global FFI state: run the cases one after another.
+    env = {
+        "RUST_MIN_STACK": "100663296",
+        "RUST_TEST_THREADS": "1",
+    },
     deps = [
         ":player_ffi_host",
         "//fx_compiler",
@@ -571,6 +662,12 @@ NETSTACK_VARIANTS = [
         "_ota_unhealthy",
         ["LM_OTA_FAULT=2"],
     ),
+    # Live-control latency trace (docs/design/live-control.md "Measuring the budget"):
+    # per-stage timestamps for every control message and frame, paged out over the WS.
+    (
+        "_ctrltrace",
+        ["LM_CTRL_TRACE=1"],
+    ),
 ]
 
 [cc_binary(
@@ -631,7 +728,8 @@ NETSTACK_VARIANTS = [
         ":device_cert",  # per-device TLS key + cert (first-boot keygen, littlefs-persisted)
         ":improv_ble_netstack",
         ":improv_codec",
-        ":netstack_transport",
+        # The LM_CTRL_TRACE image links the stamping transport twin (see below).
+        ":netstack_transport_ctrltrace" if sfx == "_ctrltrace" else ":netstack_transport",
         ":ota_app",  # OTA handoff + health (docs/design/ota.md)
         ":player_ffi",
         ":ws_codec",
@@ -681,8 +779,11 @@ cc_library(
 # app-specific parts behind the lm_* seam the binary provides. Shared by the player
 # (:player_app_netstack) and the OTA loader (//firmware/loader), which provide that
 # seam differently.
-cc_library(
-    name = "netstack_transport",
+# "_ctrltrace" is the LM_CTRL_TRACE measurement twin (its RX/TLS/reply stamps feed
+# :player_app_netstack_ctrltrace's live-control trace); the shipping player and the OTA
+# loader link the plain one, which compiles the stamps out.
+[cc_library(
+    name = "netstack_transport" + sfx,
     srcs = [
         "ble_address.h",
         "dhcp_reply.h",
@@ -693,6 +794,7 @@ cc_library(
         "sta_mac.h",
         "tls_region.cpp",
         "wifi_creds.h",
+        "wifi_scan.h",
     ],
     hdrs = [
         "improv_ble.h",
@@ -701,7 +803,7 @@ cc_library(
     ],
     copts = ["-fno-rtti"],
     includes = ["."],
-    local_defines = select({
+    local_defines = extra + select({
         "@embedded//platforms:is_esp32c3": ["LM_CHIP_ESP32C3"],
         "//conditions:default": [],
     }),
@@ -719,7 +821,13 @@ cc_library(
         "@embedded//libs/vendor:wifi",
     ],
     alwayslink = True,
-)
+) for sfx, extra in [
+    ("", []),
+    (
+        "_ctrltrace",
+        ["LM_CTRL_TRACE=1"],
+    ),
+]]
 
 # The BLE side of the transport's improv_ble.h seam: Improv provisioning + the BLE player
 # transport on the heapless host (native HCI, no Bluedroid). The player links it; the OTA
@@ -770,6 +878,20 @@ esptool_flash(
 flash_bundle(
     name = "esp32c6_netstack_flashbundle",
     flash = ":flash_esp32c6_netstack",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32c6_netstack_ctrltrace",
+    app = ":esp32c6_netstack_ctrltrace",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+# The measurement image //pi/hitl/harness:ctrl_budget flashes (not shipped).
+flash_bundle(
+    name = "esp32c6_netstack_ctrltrace_flashbundle",
+    flash = ":flash_esp32c6_netstack_ctrltrace",
     tags = ["manual"],
 )
 
@@ -1241,8 +1363,9 @@ cc_test(
     ],
 )
 
-# Persisted WiFi credentials on the netstack build (restore at boot, persist once leased,
-# restart-to-rescan backoff): the pure decisions netstack_transport.cpp drives.
+# Persisted WiFi credentials on the netstack build (restore at boot, persist once leased),
+# and the in-place background rescan that replaced restart-to-rescan (wifi_scan.h): the
+# pure decisions netstack_transport.cpp drives.
 # The netstack's station MAC choice (factory efuse MAC; random per boot only opt-in).
 # Stable-MAC rejoin guards: per-boot 802.11 sequence numbers + the unanswered-auth watch.
 cc_library(
@@ -1283,6 +1406,20 @@ cc_test(
     srcs = ["wifi_creds_test.cc"],
     deps = [
         ":wifi_creds",
+        "@rules_requirements//cc:case",
+    ],
+)
+
+cc_library(
+    name = "wifi_scan",
+    hdrs = ["wifi_scan.h"],
+)
+
+cc_test(
+    name = "wifi_scan_test",
+    srcs = ["wifi_scan_test.cc"],
+    deps = [
+        ":wifi_scan",
         "@rules_requirements//cc:case",
     ],
 )

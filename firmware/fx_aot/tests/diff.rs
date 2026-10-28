@@ -100,7 +100,7 @@ fn differential(name: &str, fxb: &[u8], uniforms: &[(u8, Vec<f32>)]) -> Result<b
         if let Some(uoff) = img.update_off {
             let led0 = Led::default();
             let mut ctx = make_ctx(
-                fxb,
+                &img.op_code,
                 &uarr,
                 &mut nstate,
                 &mut frame_mem,
@@ -112,12 +112,35 @@ fn differential(name: &str, fxb: &[u8], uniforms: &[(u8, Vec<f32>)]) -> Result<b
             counts.instructions += c.instructions;
             counts.helpers += c.helpers;
         }
+        // Per-frame prepare (hoisted shade() work), once per frame after update.
+        if let Some(poff) = img.prep_off {
+            let led0 = Led::default();
+            let mut ctx = make_ctx(
+                &img.op_code,
+                &uarr,
+                &mut nstate,
+                &mut frame_mem,
+                &fr,
+                &led0,
+                &mut nvm,
+            );
+            let c = unsafe { emu::exec_counted(&img.code, poff, &mut ctx) };
+            counts.instructions += c.instructions;
+            counts.helpers += c.helpers;
+        }
         for i in 0..n {
             let led = make_led(i, n);
             let vrgb = vm.run_shade(&prog, &fr, &led);
             let nrgb = {
-                let mut ctx =
-                    make_ctx(fxb, &uarr, &mut nstate, &mut frame_mem, &fr, &led, &mut nvm);
+                let mut ctx = make_ctx(
+                    &img.op_code,
+                    &uarr,
+                    &mut nstate,
+                    &mut frame_mem,
+                    &fr,
+                    &led,
+                    &mut nvm,
+                );
                 let c = unsafe { emu::exec_counted(&img.code, img.shade_off, &mut ctx) };
                 counts.instructions += c.instructions;
                 counts.helpers += c.helpers;
@@ -148,7 +171,7 @@ fn differential(name: &str, fxb: &[u8], uniforms: &[(u8, Vec<f32>)]) -> Result<b
 
 #[allow(clippy::too_many_arguments)]
 fn make_ctx(
-    fxb: &[u8],
+    op_code: &[u8],
     uniforms: &[f32],
     state: &mut [i32],
     frame_mem: &mut [i32],
@@ -156,11 +179,10 @@ fn make_ctx(
     led: &Led,
     vm: &mut Vm,
 ) -> NativeCtx {
-    let p = Program::parse(fxb).unwrap();
     NativeCtx::new(
         ledmapper_fx_aot::aot_win_helper,
-        p.code().as_ptr(),
-        p.code().len(),
+        op_code.as_ptr(),
+        op_code.len(),
         uniforms.as_ptr(),
         state.as_mut_ptr() as *mut f32,
         frame_mem.as_mut_ptr() as *mut f32,
@@ -398,6 +420,17 @@ fn native_matches_vm() {
     );
 }
 
+/// The VM faults on a fixed-point `frac` operand above 30; the lowering must
+/// refuse it (VM fallback) rather than compute a value.
+#[test]
+fn frac_over_30_stays_on_vm() {
+    for op in [fxv::Op::FixToF, fxv::Op::FixFromF] {
+        let bytes = raw_program(&[op as u8, 31], 1, 1, 0);
+        let prog = Program::parse(&bytes).unwrap();
+        assert!(lower(&prog).is_none(), "{op:?} frac 31 must stay on the VM");
+    }
+}
+
 #[test]
 fn direct_helpers_match_raw_vm_words() {
     use fxv::Op;
@@ -452,7 +485,15 @@ fn direct_helpers_match_raw_vm_words() {
                 } else {
                     vm.run_shade(&prog, &fr, &led);
                 }
-                let mut ctx = make_ctx(&bytes, &u, &mut state, &mut frame, &fr, &led, &mut nvm);
+                let mut ctx = make_ctx(
+                    &img.op_code,
+                    &u,
+                    &mut state,
+                    &mut frame,
+                    &fr,
+                    &led,
+                    &mut nvm,
+                );
                 unsafe { emu::exec(&img.code, img.shade_off, &mut ctx) };
                 for i in 0..usize::from(prefix + push) {
                     assert_eq!(

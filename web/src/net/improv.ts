@@ -101,12 +101,29 @@ export function parseRpcResult(packet: Uint8Array, cmd = CMD_WIFI_SETTINGS): str
   return out;
 }
 
+/** The fragment a Splanc bridge (pi/bridge/image, splanc_image/improv.py) puts on
+ * its Improv redirect URL ("http://<ip>/#splanc-bridge"): it joined the network,
+ * but it is not a player to connect to; it pairs with the code on its screen. */
+export const BRIDGE_REDIRECT_FRAGMENT = "#splanc-bridge";
+
+/** The bridge's LAN address when `redirect` came from a Splanc bridge, else null. */
+export function bridgeHostFromRedirect(redirect: string): string | null {
+  try {
+    const u = new URL(redirect);
+    return u.hash === BRIDGE_REDIRECT_FRAGMENT && u.hostname ? u.hostname : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The player's WS endpoint from Improv's redirect URL (the device answers
- * e.g. "http://192.168.1.50/"): ws on the bring-up port until TLS lands. */
+ * e.g. "http://192.168.1.50/"): ws on the bring-up port until TLS lands. Null
+ * for a bridge's redirect (see `bridgeHostFromRedirect`). */
 export function wsUrlFromRedirect(redirect: string): string | null {
   try {
     const u = new URL(redirect);
     if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    if (u.hash === BRIDGE_REDIRECT_FRAGMENT) return null;
     // The player speaks wss on 443 (TLS terminated on-device), so the hosted
     // https app can reach it directly — no mixed-content wall, no relay. Derive
     // that from whatever address the device reported (http://<ip>/ over BLE).

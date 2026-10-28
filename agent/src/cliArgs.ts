@@ -50,6 +50,10 @@ Commands (each is the MCP tool of the same name, dashes for underscores):
   delete-keypoint <name>               (ask the user first: keypoints are theirs)
   read-sensors [--samples n] [--interval ms]   the on-board motion sensor (IMU)
   calibrate-sensors <gyro_bias|level|reset>  (hold the fixture still first)
+  file-bug --title t --description d --severity critical|high|medium|low [--steps "a|b|c"]
+           [--expected e] [--actual a] [--logs-file f] [--file f.fx] [--direct --user-confirmed]
+                                       report a Splanc bug: prints a pre-filled GitHub link (with
+                                       likely duplicates); --direct --user-confirmed files it via the relay
   skill [<file>]                       print the bundled skill (SKILL.md, or a file of it)
   tools                                list every tool + its input schema
   call <tool> '<json>'                 any tool by its MCP name
@@ -112,6 +116,8 @@ const BOOL = new Set([
   "help",
   "quiet",
   "trust-proxy",
+  "direct",
+  "user-confirmed",
 ]);
 
 export function parseArgs(argv: string[]): Parsed {
@@ -373,6 +379,29 @@ export function toCall(p: Parsed): { tool?: string; resource?: string; args: Rec
       const format = flag(p, "format");
       const up = flag(p, "up");
       return { tool: "export_map", args: { ...(format ? { format } : {}), ...(up ? { up } : {}), ...sel } };
+    }
+    case "file-bug": {
+      const logsFile = flag(p, "logs-file");
+      const attachments = {
+        ...(file ? { effect_source: readFileSync(file, "utf8") } : {}),
+        ...(logsFile ? { logs: readFileSync(logsFile, "utf8") } : {}),
+      };
+      const opt = (k: string) => (flag(p, k) !== undefined ? { [k]: flag(p, k) } : {});
+      const steps = flag(p, "steps");
+      return {
+        tool: "file_bug",
+        args: {
+          title: need(flag(p, "title"), "--title"),
+          description: need(flag(p, "description"), "--description"),
+          severity: need(flag(p, "severity"), "--severity"),
+          ...(steps ? { steps_to_reproduce: steps.split("|").map((x) => x.trim()).filter(Boolean) } : {}),
+          ...opt("expected"),
+          ...opt("actual"),
+          ...(Object.keys(attachments).length ? { attachments } : {}),
+          ...(flag(p, "direct") ? { submit: "direct", user_confirmed: flag(p, "user-confirmed") !== undefined } : {}),
+          ...sel,
+        },
+      };
     }
     case "set-device-name":
       return {

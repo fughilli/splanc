@@ -4,7 +4,7 @@
 //! per rAF, and shades the current map's LED positions → colors for MapView.
 //! Running the SAME VM means the preview cannot drift from the device.
 
-use ledmapper_fx_vm::{Frame, Led, Program, Vm};
+use ledmapper_fx_vm::{dbg, Budget, Frame, Led, Program, Vm, MAX_STATE};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -224,4 +224,197 @@ impl FxPreview {
         }
         out
     }
+}
+
+/// Host replay of a device frame for the FX debugger (docs/design/fx-debugger.md,
+/// web/src/fx/fxDebug.ts): the SAME VM, restored to a device snapshot (uniforms,
+/// `state` + the flood field, buffer arena, topology graph) and fed the device's
+/// exact frame context (FX_FRAME_V1) and per-LED inputs (FX_LED_V1 records), so
+/// its output can be diffed against the device's bit for bit.
+#[wasm_bindgen]
+pub struct FxReplay {
+    bytes: Vec<u8>,
+    vm: Vm,
+    frame: Frame,
+    arena: Vec<u8>,
+    budget: u32,
+}
+
+#[wasm_bindgen]
+impl FxReplay {
+    #[wasm_bindgen(constructor)]
+    pub fn new(fxb: &[u8]) -> Result<FxReplay, JsValue> {
+        Program::parse(fxb).map_err(|_| JsValue::from_str("invalid .fxb"))?;
+        Ok(FxReplay {
+            bytes: fxb.to_vec(),
+            vm: Vm::new(),
+            frame: Frame::default(),
+            arena: Vec::new(),
+            budget: ledmapper_fx_vm::DEFAULT_BUDGET,
+        })
+    }
+
+    /// The per-invocation instruction budget (the device's `budget`).
+    pub fn set_budget(&mut self, instructions: u32) {
+        self.budget = if instructions == 0 {
+            ledmapper_fx_vm::DEFAULT_BUDGET
+        } else {
+            instructions
+        };
+    }
+
+    /// Every uniform slot (SECTION_UNIFORMS as f32s).
+    pub fn set_uniforms(&mut self, vals: &[f32]) {
+        for (dst, v) in self.vm.uniforms.iter_mut().zip(vals) {
+            *dst = *v;
+        }
+    }
+
+    /// SECTION_STATE as u32 words: `state` slots, then the flood_from field.
+    pub fn set_state(&mut self, words: &[u32]) {
+        for (dst, w) in self.vm.state.iter_mut().zip(words) {
+            *dst = f32::from_bits(*w);
+        }
+        self.vm
+            .set_flood_words(words.get(MAX_STATE..).unwrap_or(&[]));
+    }
+
+    /// The state in SECTION_STATE's layout (to diff against the device's).
+    pub fn state(&self) -> Vec<u32> {
+        let mut out: Vec<u32> = self.vm.state.iter().map(|v| v.to_bits()).collect();
+        out.extend((0..Vm::FLOOD_WORDS).map(|k| self.vm.flood_word(k)));
+        out
+    }
+
+    /// SECTION_GRAPH: n_seg, then (len f32, node a, node b) per segment, as words.
+    pub fn set_graph_words(&mut self, words: &[u32]) {
+        let n = words.first().copied().unwrap_or(0) as usize;
+        let n = n.min(words.len().saturating_sub(1) / 3);
+        let seg = |k: usize, j: usize| words[1 + 3 * k + j];
+        let len: Vec<f32> = (0..n).map(|k| f32::from_bits(seg(k, 0))).collect();
+        let a: Vec<i32> = (0..n).map(|k| seg(k, 1) as i32).collect();
+        let b: Vec<i32> = (0..n).map(|k| seg(k, 2) as i32).collect();
+        self.vm.set_graph(&len, &a, &b);
+    }
+
+    /// SECTION_ARENA: the deck's buffer arena, raw.
+    pub fn set_arena(&mut self, bytes: &[u8]) {
+        self.arena = bytes.to_vec();
+        self.vm.set_arena(&mut self.arena);
+    }
+
+    pub fn arena(&self) -> Vec<u8> {
+        self.arena.clone()
+    }
+
+    /// FX_FRAME_V1 (fx_debug.state.frame_ctx). False when malformed.
+    pub fn set_frame(&mut self, ctx: &[u8]) -> bool {
+        match dbg::frame_from_ctx(ctx) {
+            Some(f) => {
+                self.frame = f;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Run update() once. Returns the outcome (0 ok, 1 budget, 2 timeout).
+    pub fn update(&mut self) -> u32 {
+        let Ok(prog) = Program::parse(&self.bytes) else {
+            return 1;
+        };
+        self.vm.set_arena(&mut self.arena);
+        self.vm
+            .run_update_bounded(&prog, &self.frame, &Budget::instructions(self.budget))
+            as u32
+    }
+
+    /// Shade LED `idx` from its FX_LED_V1 record: [r, g, b, outcome, has_ctx].
+    /// No map entry -> black (the device holds black too).
+    pub fn shade(&mut self, rec: &[u8], idx: u32) -> Vec<u8> {
+        self.shade_inner(rec, idx, false).0
+    }
+
+    /// Like `shade`, but LED `idx`'s per-LED buffer elements are restored after
+    /// the run (the device's debugger re-runs: no side effect on the state).
+    pub fn shade_isolated(&mut self, rec: &[u8], idx: u32) -> Vec<u8> {
+        let saved = self.save_led(idx);
+        let out = self.shade_inner(rec, idx, false).0;
+        self.restore_led(idx, &saved);
+        out
+    }
+
+    /// The device's debug_fx_led run: isolated (as `shade_isolated`) on zeroed
+    /// scratch. Returns [r, g, b, outcome, has_ctx, instrs (u32 LE), stack_max
+    /// (u16 LE)]; read the locals with `locals()`.
+    pub fn shade_debug(&mut self, rec: &[u8], idx: u32) -> Vec<u8> {
+        let saved = self.save_led(idx);
+        let (mut out, instrs, stack) = self.shade_inner(rec, idx, true);
+        self.restore_led(idx, &saved);
+        out.extend(instrs.to_le_bytes());
+        out.extend(stack.to_le_bytes());
+        out
+    }
+
+    /// The VM locals after the last shade (f32).
+    pub fn locals(&self) -> Vec<f32> {
+        self.vm.locals().to_vec()
+    }
+}
+
+impl FxReplay {
+    /// (offset, bytes) of LED `idx`'s per-LED buffer elements.
+    fn save_led(&self, idx: u32) -> Vec<(usize, Vec<u8>)> {
+        let mut out = Vec::new();
+        if let Ok(prog) = Program::parse(&self.bytes) {
+            dbg::led_elem_ranges(
+                &prog,
+                self.frame.led_count as usize,
+                idx as usize,
+                |o, l| {
+                    if let Some(b) = self.arena.get(o..o + l) {
+                        out.push((o, b.to_vec()));
+                    }
+                },
+            );
+        }
+        out
+    }
+
+    fn restore_led(&mut self, _idx: u32, saved: &[(usize, Vec<u8>)]) {
+        for (o, b) in saved {
+            self.arena[*o..*o + b.len()].copy_from_slice(b);
+        }
+    }
+
+    fn shade_inner(&mut self, rec: &[u8], idx: u32, debug: bool) -> (Vec<u8>, u32, u16) {
+        let Ok(prog) = Program::parse(&self.bytes) else {
+            return (vec![0, 0, 0, 1, 0], 0, 0);
+        };
+        let Some(led) = dbg::led_from_record(rec, idx) else {
+            return (vec![0, 0, 0, 0, 0], 0, 0);
+        };
+        if debug {
+            self.vm.clear_scratch();
+        }
+        self.vm.set_arena(&mut self.arena);
+        let budget = Budget::instructions(self.budget);
+        let ((r, g, b), oc, c) = self.vm.run_shade_counted(&prog, &self.frame, &led, &budget);
+        (vec![r, g, b, oc as u8, 1], c.instrs, c.stack_max)
+    }
+}
+
+/// The device's crossfade blend of two decks' colours (ledmapper_keypoint
+/// blend_rgb8: mode 0 = linear RGB, 1 = HSV shortest hue).
+#[wasm_bindgen]
+pub fn fx_blend_rgb8(a: &[u8], b: &[u8], t: f32, mode: u32) -> Vec<u8> {
+    let g = |s: &[u8]| {
+        (
+            s.first().copied().unwrap_or(0),
+            s.get(1).copied().unwrap_or(0),
+            s.get(2).copied().unwrap_or(0),
+        )
+    };
+    let (r, gg, bl) = ledmapper_keypoint::blend_rgb8(g(a), g(b), t, mode);
+    vec![r, gg, bl]
 }

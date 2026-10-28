@@ -14,15 +14,27 @@
 //!   to a fixed-capacity `name → (slot, width)` table, built ONCE when an effect
 //!   activates so the per-packet path is a short table scan, never a JSON parse.
 //! - [`ingest`] — the orchestration: datagram in, `set(slot, values)` callbacks
-//!   out. A per-slot value shadow lets per-axis vector messages (`/tint/x`)
-//!   patch one component without clobbering the rest.
+//!   out. A message that names some components writes exactly those (`set` at
+//!   the first one's slot), so a per-axis message (`/tint/x`) never clobbers
+//!   the components it doesn't name — they keep whatever the VM holds.
 //!
-//! Address convention (matches the web/TouchDesigner channel naming): a scalar
-//! uniform is its bare name (`/speed`), a vecN component is `/<name>/<axis>`
-//! with axis in `x`/`y`/`z`/`w` (`/tint/x`), and a whole vector can be set in
-//! one message with N float args (`/tint` `,fff` r g b). A configurable prefix
-//! is stripped first. When no manifest is present (or in slot-index mode) an
-//! address of `N`, `sN` or `slotN` drives raw uniform slot `N`.
+//! # Address convention
+//!
+//! Matches the web/TouchDesigner channel naming. A configurable prefix is
+//! stripped first. Every uniform is a run of `width` float components (a
+//! scalar 1, vecN N, mat3 9, mat4 16; matrices column-major, GLSL order):
+//!
+//! | address               | args | writes                                       |
+//! |-----------------------|------|----------------------------------------------|
+//! | `/<name>`             | k    | components `0..k` (k ≤ width): `/speed ,f`, `/plane ,ffff`, `/pose` + 16 floats |
+//! | `/<name>/<axis>`      | k    | from component x=0 / y=1 / z=2 / w=3: `/tint/x ,f` |
+//! | `/<name>/<i>`         | k    | from flat component `i` (0-based): `/pose/12 ,fff` = a mat4's translation |
+//! | `/<name>/<c>/<r>`     | 1    | matrix element column `c`, row `r` (= flat `c*N + r`): `/pose/3/1 ,f` |
+//!
+//! Args past the uniform's width are ignored; a component index past it drops
+//! the message. When no manifest is present (or in slot-index mode) an address
+//! of `N`, `sN` or `slotN` drives raw uniform slots from `N` (and `N/<i>` from
+//! `N + i`) with as many args as the message carries.
 
 #![no_std]
 
@@ -30,9 +42,12 @@
 // OSC wire parsing
 // ---------------------------------------------------------------------------
 
-/// Maximum arguments decoded per message. A uniform needs at most 4 (a vec4);
-/// extra arguments are ignored (their tags still advance the cursor).
-pub const MAX_ARGS: usize = 8;
+/// Maximum arguments decoded per message: a whole `mat4` (16 floats) in one
+/// message. Extra arguments are ignored (their tags still advance the cursor).
+pub const MAX_ARGS: usize = 16;
+
+/// Widest uniform (components): a `mat4`.
+pub const MAX_WIDTH: usize = 16;
 
 /// A single decoded OSC argument. Non-numeric types are represented as
 /// [`OscArg::Other`] so the type tag stays aligned with the data stream; only
@@ -93,6 +108,45 @@ pub fn for_each_message(data: &[u8], f: &mut impl FnMut(&OscMessage)) -> bool {
             }
             None => false,
         },
+        _ => false,
+    }
+}
+
+/// [`for_each_message`] without recursion: a message, or a bundle of messages
+/// (elements that are themselves bundles are skipped). For callers whose stack
+/// must be statically bounded (the firmware's network task).
+pub fn for_each_message_shallow(data: &[u8], f: &mut impl FnMut(&OscMessage)) -> bool {
+    match data.first() {
+        Some(b'/') => match parse_message(data) {
+            Some(m) => {
+                f(&m);
+                true
+            }
+            None => false,
+        },
+        Some(b'#') => {
+            if data.len() < 16 || &data[..8] != b"#bundle\0" {
+                return false;
+            }
+            let mut pos = 16;
+            while pos < data.len() {
+                let Some(size) = read_i32(data, pos) else { return false };
+                pos += 4;
+                let Some(end) = pos.checked_add(size as usize) else { return false };
+                if end > data.len() {
+                    return false;
+                }
+                let elem = &data[pos..end];
+                if elem.first() == Some(&b'/') {
+                    match parse_message(elem) {
+                        Some(m) => f(&m),
+                        None => return false,
+                    }
+                }
+                pos = end;
+            }
+            true
+        }
         _ => false,
     }
 }
@@ -331,7 +385,7 @@ fn parse_object(obj: &[u8], table: &mut PortTable) {
     else {
         return;
     };
-    let width = find_uint_value(obj, b"\"width\"").unwrap_or(1).clamp(1, 4) as u8;
+    let width = find_uint_value(obj, b"\"width\"").unwrap_or(1).clamp(1, MAX_WIDTH as u32) as u8;
     table.push(name, slot as u16, width);
 }
 
@@ -375,39 +429,17 @@ fn find_key(obj: &[u8], key: &[u8]) -> Option<usize> {
 // Ingest orchestration
 // ---------------------------------------------------------------------------
 
-/// Maximum distinct uniform slots the value shadow tracks (slots `0..MAX_SLOTS`).
-pub const MAX_SLOTS: usize = 32;
-
-/// Per-slot last-written values, so a per-axis message (`/tint/x`) can patch one
-/// component and re-send the whole vector without losing the others.
-pub struct Shadow {
-    vals: [[f32; 4]; MAX_SLOTS],
-}
-
-impl Default for Shadow {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Shadow {
-    pub const fn new() -> Self {
-        Shadow { vals: [[0.0; 4]; MAX_SLOTS] }
-    }
-
-    /// Clear all shadow values (call when the active effect changes).
-    pub fn reset(&mut self) {
-        self.vals = [[0.0; 4]; MAX_SLOTS];
-    }
-}
+/// Uniform slots an address may reach (fx_vm::MAX_UNIFORM_SLOTS): a write that
+/// would start past it is dropped.
+pub const MAX_SLOTS: usize = 128;
 
 /// How addresses are resolved to slots.
 pub struct Config<'a> {
     /// OSC address prefix to strip (e.g. `/`).
     pub prefix: &'a str,
     /// `true`: resolve names via the manifest table (fallback to slot index when
-    /// a name isn't found or the table is empty). `false`: slot index only —
-    /// every address is a raw slot number (used to A/B the name-lookup cost).
+    /// the table is empty). `false`: slot index only — every address is a raw
+    /// slot number (used to A/B the name-lookup cost).
     pub by_name: bool,
 }
 
@@ -415,116 +447,347 @@ pub struct Config<'a> {
 /// `(slot, values)` write and invoke `set(slot, &values)`. Returns the number of
 /// uniform writes performed (0 for a dropped/garbage or unmatched datagram).
 ///
-/// `set` is the sink the firmware wires to `lm_fx_set_uniform`; keeping it a
-/// callback lets the whole path be exercised on the host with a recording sink.
-pub fn ingest(
-    data: &[u8],
-    cfg: &Config,
-    table: &PortTable,
-    shadow: &mut Shadow,
-    set: &mut impl FnMut(u16, &[f32]),
-) -> usize {
+/// `set` is the sink the firmware wires to the VM's `set_uniform` (which writes
+/// `values` into consecutive slots from `slot`); keeping it a callback lets the
+/// whole path be exercised on the host with a recording sink.
+pub fn ingest(data: &[u8], cfg: &Config, table: &PortTable, set: &mut impl FnMut(u16, &[f32])) -> usize {
     let mut writes = 0usize;
     for_each_message(data, &mut |msg| {
-        if apply_message(msg, cfg, table, shadow, set) {
+        if apply_message(msg, cfg, table, set) {
             writes += 1;
         }
     });
     writes
 }
 
-fn apply_message(
-    msg: &OscMessage,
-    cfg: &Config,
-    table: &PortTable,
-    shadow: &mut Shadow,
-    set: &mut impl FnMut(u16, &[f32]),
-) -> bool {
+/// The component selector trailing a uniform name in an address.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Comp {
+    /// `/<name>`: from component 0.
+    Whole,
+    /// `/<name>/<axis|i>`: from flat component i.
+    Index(usize),
+    /// `/<name>/<c>/<r>`: one matrix element.
+    Elem(usize, usize),
+}
+
+/// Split an address path (prefix stripped, no leading/trailing '/') into the
+/// uniform name and its component selector.
+fn split_addr(path: &str) -> (&str, Comp) {
+    let Some((head, tail)) = path.rsplit_once('/') else { return (path, Comp::Whole) };
+    let Some(r) = comp_index(tail) else { return (path, Comp::Whole) };
+    if head.is_empty() {
+        return (path, Comp::Whole);
+    }
+    if let Some((name, c)) = head.rsplit_once('/') {
+        if let (false, Some(c)) = (name.is_empty(), digits(c)) {
+            return (name, Comp::Elem(c, r));
+        }
+    }
+    (head, Comp::Index(r))
+}
+
+fn apply_message(msg: &OscMessage, cfg: &Config, table: &PortTable, set: &mut impl FnMut(u16, &[f32])) -> bool {
     let path = msg.addr.strip_prefix(cfg.prefix).unwrap_or(msg.addr).trim_matches('/');
     if path.is_empty() {
         return false;
     }
-    // Split a trailing single-axis component: "tint/x" -> ("tint", Some(0)).
-    let (name, axis) = match path.rsplit_once('/') {
-        Some((head, tail)) if !head.is_empty() => match axis_index(tail) {
-            Some(a) => (head, Some(a)),
-            None => (path, None),
-        },
-        _ => (path, None),
-    };
-
+    let (name, comp) = split_addr(path);
     let by_name = cfg.by_name && !table.is_empty();
-    let (slot, width) = if by_name {
-        match table.resolve(name) {
-            Some(p) => (p.slot, p.width),
-            None => return false, // named mode: unknown name is dropped
+    // (first slot, components the message may write)
+    let (slot, room) = if by_name {
+        let Some(p) = table.resolve(name) else { return false }; // named mode: unknown name is dropped
+        let w = p.width as usize;
+        let off = match comp {
+            Comp::Whole => 0,
+            Comp::Index(i) => i,
+            Comp::Elem(c, r) => {
+                let n = match w {
+                    9 => 3,
+                    16 => 4,
+                    _ => return false, // `/<c>/<r>` addresses a matrix only
+                };
+                if c >= n || r >= n {
+                    return false;
+                }
+                c * n + r
+            }
+        };
+        if off >= w {
+            return false;
         }
+        let room = if matches!(comp, Comp::Elem(..)) { 1 } else { w - off };
+        (p.slot as usize + off, room)
     } else {
-        // Slot-index mode: the address IS the slot number.
-        match parse_slot(name) {
-            Some(s) => (s, msg.numeric_width()),
-            None => return false,
-        }
+        // Slot-index mode: the address IS the slot number; no width is known.
+        let Some(s) = parse_slot(name) else { return false };
+        let off = match comp {
+            Comp::Whole => 0,
+            Comp::Index(i) => i,
+            Comp::Elem(..) => return false,
+        };
+        (s as usize + off, MAX_ARGS)
     };
-    if slot as usize >= MAX_SLOTS {
+    if slot >= MAX_SLOTS {
         return false;
     }
-
-    match axis {
-        Some(a) if by_name => {
-            // One vector component: patch the shadow, re-send the whole vector.
-            if a >= width as usize {
-                return false;
-            }
-            let Some(v) = msg.first_f32() else { return false };
-            shadow.vals[slot as usize][a] = v;
-            set(slot, &shadow.vals[slot as usize][..width as usize]);
-            true
+    let mut vals = [0.0f32; MAX_ARGS];
+    let mut n = 0usize;
+    for v in msg.args().iter().filter_map(OscArg::as_f32) {
+        if n >= room.min(MAX_ARGS) {
+            break;
         }
-        _ => {
-            // Whole uniform: take up to `width` numeric args, remembering them.
-            let mut n = 0usize;
-            for arg in msg.args() {
-                if n >= width as usize {
-                    break;
-                }
-                if let Some(v) = arg.as_f32() {
-                    shadow.vals[slot as usize][n] = v;
-                    n += 1;
-                }
-            }
-            if n == 0 {
-                return false;
-            }
-            let out_len = if by_name { width as usize } else { n };
-            set(slot, &shadow.vals[slot as usize][..out_len]);
-            true
-        }
+        vals[n] = v;
+        n += 1;
     }
+    if n == 0 {
+        return false;
+    }
+    set(slot as u16, &vals[..n]);
+    true
 }
 
-impl OscMessage<'_> {
-    /// The count of numeric args, clamped to `[1, 4]` — the assumed width of a
-    /// slot-index write when no manifest gives one.
-    fn numeric_width(&self) -> u8 {
-        let n = self.args().iter().filter(|a| a.as_f32().is_some()).count();
-        n.clamp(1, 4) as u8
-    }
-}
-
-/// Map an axis suffix (`x`/`y`/`z`/`w`) to a component index.
-fn axis_index(s: &str) -> Option<usize> {
+/// A component selector: an axis letter (`x`/`y`/`z`/`w`) or a decimal index.
+fn comp_index(s: &str) -> Option<usize> {
     match s {
         "x" => Some(0),
         "y" => Some(1),
         "z" => Some(2),
         "w" => Some(3),
-        _ => None,
+        _ => digits(s),
     }
+}
+
+/// A short all-digit decimal (`0`..`999`), else None (so `/tint/x2` is a name).
+fn digits(s: &str) -> Option<usize> {
+    if s.is_empty() || s.len() > 3 || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    s.parse().ok()
 }
 
 /// Parse a slot-index address: `N`, `sN` or `slotN`.
 fn parse_slot(s: &str) -> Option<u16> {
     let digits = s.strip_prefix("slot").or_else(|| s.strip_prefix('s')).unwrap_or(s);
     digits.parse().ok()
+}
+
+/// Where a long message's mailbox chunks are addressed: `(prefix, first index)`.
+/// `/pose` → (`/pose`, 0); `/pose/8` (already a flat index) → (`/pose`, 8).
+fn chunk_base(addr: &str) -> (&[u8], Option<usize>) {
+    if let Some((head, tail)) = addr.rsplit_once('/') {
+        if let (false, Some(i)) = (head.trim_matches('/').is_empty(), comp_index(tail)) {
+            return (head.as_bytes(), Some(i));
+        }
+    }
+    (addr.as_bytes(), Some(0))
+}
+
+/// Write `<prefix>/<index>` into `buf`; its length, or None if it won't fit.
+fn chunk_addr(prefix: &[u8], index: usize, buf: &mut [u8; MAILBOX_ADDR_CAP]) -> Option<usize> {
+    let mut digits = [0u8; 3];
+    let mut nd = 0usize;
+    let mut v = index;
+    loop {
+        if nd == digits.len() {
+            return None;
+        }
+        digits[nd] = b'0' + (v % 10) as u8;
+        nd += 1;
+        v /= 10;
+        if v == 0 {
+            break;
+        }
+    }
+    let len = prefix.len() + 1 + nd;
+    if len > MAILBOX_ADDR_CAP {
+        return None;
+    }
+    buf[..prefix.len()].copy_from_slice(prefix);
+    buf[prefix.len()] = b'/';
+    for k in 0..nd {
+        buf[prefix.len() + 1 + k] = digits[nd - 1 - k];
+    }
+    Some(len)
+}
+
+// ---------------------------------------------------------------------------
+// Latest-wins mailbox (docs/design/live-control.md: OSC on the netstack build)
+// ---------------------------------------------------------------------------
+
+/// Longest OSC address the [`Mailbox`] keeps (a longer one is dropped).
+pub const MAILBOX_ADDR_CAP: usize = 40;
+
+/// One waiting address. All-zero is "empty" (an OSC address is never empty: it
+/// starts with '/'), so a [`Mailbox`] is zero-initialised: as a static it lands
+/// in `.bss`, and the firmware can bind one into a fresh heap block. Arguments
+/// are kept already converted to `f32` — the only form [`apply_message`] reads
+/// (`OscArg::as_f32`) — which keeps an entry at 60 B instead of 112.
+#[derive(Clone, Copy)]
+struct Entry {
+    addr: [u8; MAILBOX_ADDR_CAP],
+    vals: [f32; 4],
+    addr_len: u8,
+    n_args: u8,
+}
+
+const EMPTY_ENTRY: Entry = Entry { addr: [0; MAILBOX_ADDR_CAP], vals: [0.0; 4], addr_len: 0, n_args: 0 };
+
+impl Entry {
+    fn used(&self) -> bool {
+        self.addr_len != 0
+    }
+}
+
+/// Received OSC messages waiting for the next frame, LATEST VALUE PER ADDRESS.
+///
+/// The network side [`post`](Mailbox::post)s every datagram as it arrives (cheap:
+/// parse + a table scan, no VM work); the render side [`drain`](Mailbox::drain)s
+/// once per frame, applying each address's newest value. A controller sending
+/// faster than the device renders therefore never queues: a burst of 50 moves
+/// on `/speed` between two frames costs one uniform write. Fixed capacity `N`;
+/// a new address when full is dropped (counted in `dropped`).
+pub struct Mailbox<const N: usize> {
+    entries: [Entry; N],
+    /// Messages replaced by a newer one for the same address before a drain.
+    pub coalesced: u32,
+    /// Messages dropped (mailbox full, or an address too long).
+    pub dropped: u32,
+}
+
+impl<const N: usize> Default for Mailbox<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const N: usize> Mailbox<N> {
+    pub const fn new() -> Self {
+        Mailbox { entries: [EMPTY_ENTRY; N], coalesced: 0, dropped: 0 }
+    }
+
+    /// Stash every message of one datagram (one bundle level flattened; a
+    /// nested bundle is skipped — the walk is iterative, so it is stack-bounded
+    /// on the network task). Returns the number of messages kept.
+    ///
+    /// An entry holds up to 4 values. A message with more (a whole `mat4`: 16)
+    /// is stored as consecutive 4-component chunks under the flat-index
+    /// addresses `/<name>/<i>` (`/pose` → `/pose/0`, `/pose/4`, `/pose/8`,
+    /// `/pose/12`), which [`drain`](Mailbox::drain) applies exactly as the whole
+    /// message — so the mailbox stays at 60 B/entry. All chunks or none: a
+    /// message that doesn't fit is dropped whole.
+    pub fn post(&mut self, data: &[u8]) -> usize {
+        let mut kept = 0usize;
+        let (entries, coalesced, dropped) = (&mut self.entries, &mut self.coalesced, &mut self.dropped);
+        for_each_message_shallow(data, &mut |m| {
+            let a = m.addr.as_bytes();
+            if a.len() > MAILBOX_ADDR_CAP {
+                *dropped += 1;
+                return;
+            }
+            if a.is_empty() {
+                return; // parse_message only yields '/'-addresses; keep `addr_len != 0` = used
+            }
+            let mut vals = [0.0f32; MAX_ARGS];
+            let mut n = 0usize;
+            for v in m.args().iter().filter_map(OscArg::as_f32) {
+                if n == MAX_ARGS {
+                    break;
+                }
+                vals[n] = v;
+                n += 1;
+            }
+            // (address prefix, first component) of the chunks; one chunk keeps
+            // the address verbatim.
+            let (prefix, base) = if n <= 4 { (a, None) } else { chunk_base(m.addr) };
+            let chunks = n.div_ceil(4).max(1);
+            let mut buf = [0u8; MAILBOX_ADDR_CAP];
+            let mut addr_of = |k: usize, buf: &mut [u8; MAILBOX_ADDR_CAP]| -> Option<usize> {
+                match base {
+                    None => {
+                        buf[..a.len()].copy_from_slice(a);
+                        Some(a.len())
+                    }
+                    Some(b) => chunk_addr(prefix, b + 4 * k, buf),
+                }
+            };
+            // Room check first: every chunk lands, or the message is dropped.
+            let mut fresh = 0usize;
+            for k in 0..chunks {
+                let Some(len) = addr_of(k, &mut buf) else {
+                    *dropped += 1;
+                    return;
+                };
+                if !entries.iter().any(|e| e.used() && e.addr[..e.addr_len as usize] == buf[..len]) {
+                    fresh += 1;
+                }
+            }
+            if fresh > entries.iter().filter(|e| !e.used()).count() {
+                *dropped += 1;
+                return;
+            }
+            for k in 0..chunks {
+                let Some(len) = addr_of(k, &mut buf) else { return };
+                let at = &buf[..len];
+                let i = match entries.iter().position(|e| e.used() && &e.addr[..e.addr_len as usize] == at) {
+                    Some(i) => {
+                        *coalesced += 1;
+                        i
+                    }
+                    None => match entries.iter().position(|e| !e.used()) {
+                        Some(i) => i,
+                        None => return, // unreachable: room was checked
+                    },
+                };
+                let e = &mut entries[i];
+                e.addr[..len].copy_from_slice(at);
+                e.addr_len = len as u8;
+                let part = &vals[(4 * k).min(n)..(4 * k + 4).min(n)];
+                e.vals[..part.len()].copy_from_slice(part);
+                e.n_args = part.len() as u8;
+            }
+            kept += 1;
+        });
+        kept
+    }
+
+    /// Messages waiting.
+    pub fn len(&self) -> usize {
+        self.entries.iter().filter(|e| e.used()).count()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Apply every waiting message (oldest address first) through the same
+    /// resolution as [`ingest`], then empty the mailbox. Returns the writes.
+    pub fn drain(
+        &mut self,
+        cfg: &Config,
+        table: &PortTable,
+        set: &mut impl FnMut(u16, &[f32]),
+    ) -> usize {
+        let mut writes = 0usize;
+        for e in self.entries.iter_mut().filter(|e| e.used()) {
+            let len = e.addr_len as usize;
+            e.addr_len = 0;
+            let Ok(addr) = core::str::from_utf8(&e.addr[..len]) else { continue };
+            let mut msg = OscMessage { addr, args: [OscArg::Other; MAX_ARGS], n_args: e.n_args as usize };
+            for (dst, v) in msg.args.iter_mut().zip(&e.vals[..e.n_args as usize]) {
+                *dst = OscArg::Float(*v);
+            }
+            if apply_message(&msg, cfg, table, set) {
+                writes += 1;
+            }
+        }
+        writes
+    }
+
+    /// Forget everything waiting (the active effect changed).
+    pub fn clear(&mut self) {
+        for e in self.entries.iter_mut() {
+            e.addr_len = 0;
+        }
+    }
 }

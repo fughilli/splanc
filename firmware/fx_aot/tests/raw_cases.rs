@@ -59,7 +59,9 @@ pub fn cases() -> Vec<(Vec<u8>, u8, u8)> {
     for op in [Op::I2F, Op::F2I, Op::Fix2F, Op::F2Fix, Op::Hash1] {
         cases.push((vec![op as u8], 1, 1));
     }
-    for frac in [0, 1, 8, 16, 30, 31] {
+    // frac 31 faults in the VM (and is refused by the lowering): see
+    // `frac_over_30_stays_on_vm` in diff.rs.
+    for frac in [0, 1, 8, 16, 30] {
         for op in [Op::FixToF, Op::FixFromF] {
             cases.push((vec![op as u8, frac], 1, 1));
         }

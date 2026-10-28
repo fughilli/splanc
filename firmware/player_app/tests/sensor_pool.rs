@@ -181,6 +181,12 @@ fn sensor_core_through_the_c_abi() {
     }
     let s = sensors();
     assert_eq!(s.r#calibration_seq, seq0 + 1);
+    // The sensor task persists what it applied (sensor_bus.cpp persist_cal ->
+    // NVS "sens_cal"): the record is handed over exactly once.
+    let mut mount_rec = [0u8; 96];
+    let mount_len = unsafe { lm_sensor_take_cal_record(mount_rec.as_mut_ptr(), mount_rec.len()) };
+    assert!(mount_len > 0, "the extrinsic is handed to NVS");
+    assert_eq!(unsafe { lm_sensor_take_cal_record(mount_rec.as_mut_ptr(), mount_rec.len()) }, 0);
     assert!(s.r#mount_extrinsic && s.r#mount_yaw_resolved);
     assert_eq!((s.r#mount_poses, s.r#mount_calibrated_at_ms), (2, 1_792_000_000_000));
     let q = &s.r#mount_quat;
@@ -236,4 +242,30 @@ fn sensor_core_through_the_c_abi() {
     assert_eq!(unsafe { lm_capture_profile_get(buf.as_mut_ptr(), buf.len()) }, 0);
     let s = sensors();
     assert!(s.r#mount_extrinsic && !s.r#mount_yaw_resolved);
+
+    // -- reboot: main.cpp reads "sens_cal" and hands it to lm_sensor_begin -------
+    // The record persisted right after set_sensor_mount comes back with the
+    // mount, the yaw flag, the pose count and the timestamp the app reads back.
+    let bus2 = Box::leak(Box::new(FakeBus::with(FakeMpu::new(0x68, 0x68))));
+    let ops2 = Box::leak(Box::new(LmI2cOps {
+        ctx: bus2 as *mut FakeBus as *mut c_void,
+        write_read: Some(wr),
+        write: Some(w),
+        cycles: None,
+    }));
+    let st = unsafe { lm_sensor_begin(ops2, 6, 7, 21, 0, mount_rec.as_ptr(), mount_len as usize) };
+    assert_eq!(st, 3);
+    let mut t = 100_000u64;
+    unsafe { lm_sensor_poll(t) };
+    for _ in 0..60 {
+        bus2.dev().produce(up_x, [0; 3], 0);
+        t += 10_000;
+        unsafe { lm_sensor_poll(t) };
+    }
+    let s = sensors();
+    assert_eq!(s.r#status, pb::SensorStatus::Running);
+    assert!(s.r#mount_extrinsic && s.r#mount_yaw_resolved, "extrinsic survives the reboot");
+    assert_eq!((s.r#mount_poses, s.r#mount_calibrated_at_ms), (2, 1_792_000_000_000));
+    let q = &s.r#mount_quat;
+    assert!((q[0].abs() < 1e-3) && (q[1] - h).abs() < 1e-3 && (q[2] - h).abs() < 1e-3, "{q:?}");
 }

@@ -16,7 +16,9 @@ import {
   FxPreview,
   installFxModules,
   type FxCompiled,
+  type FxSymbol,
 } from "../../web/src/fx/preview";
+import type { ReplayVm } from "../../web/src/fx/fxDebug";
 import { parseFxbTextures, type FxbTexture } from "../../web/src/net/fxbTextures";
 import type { MappingBundle } from "../../web/src/net/proto";
 import { encodePng } from "./png";
@@ -105,10 +107,16 @@ async function withToolchain<T>(tc: Toolchain | undefined, fn: () => Promise<T>)
 export interface CompileOutcome {
   ok: boolean;
   diagnostics: { line: number; col: number; msg: string }[];
+  /** Non-fatal lints (1-based line; msg starts "warning: "), e.g. a rate uniform
+   * multiplying `time` inside a phase. Undefined when the toolchain (an older
+   * player's bundle) predates them — {@link lintWarnings} lints with this one. */
+  warnings: { line: number; col: number; msg: string }[] | undefined;
   uniforms: ManifestUniform[];
   bytecodeBytes: number;
   textures: FxbTexture[];
   fxb: Uint8Array;
+  /** The FX debugger's symbol table (absent from older compilers). */
+  symbols?: FxSymbol[];
 }
 
 /** Compile effect source with the host compiler matching this bundle's firmware. */
@@ -116,12 +124,55 @@ export async function compile(source: string, tc?: Toolchain): Promise<CompileOu
   const r: FxCompiled = await withToolchain(tc, () => compileScript(source));
   return {
     ok: r.ok,
-    diagnostics: r.diagnostics,
+    diagnostics: r.ok ? r.diagnostics : [...r.diagnostics, ...(await newerFeatureHint(source, tc))],
+    warnings: r.warnings,
     uniforms: r.uniforms as unknown as ManifestUniform[],
     bytecodeBytes: r.bytecode.length,
     textures: r.ok ? parseFxbTextures(r.bytecode) : [],
     fxb: r.bytecode,
+    ...(r.symbols ? { symbols: r.symbols } : {}),
   };
+}
+
+/** A player's OLDER bundle rejected `source`: if this bundle's own compiler
+ * accepts it, the effect uses language this firmware predates (e.g. mat3/mat4
+ * or ranged/signed-range vector uniforms) — say so instead of leaving only the
+ * old compiler's parse error. Empty when not applicable. */
+async function newerFeatureHint(source: string, tc: Toolchain | undefined): Promise<CompileOutcome["diagnostics"]> {
+  if (tc === undefined) return [];
+  let host: Toolchain;
+  try {
+    host = await hostToolchain();
+  } catch {
+    return [];
+  }
+  if (host === tc) return [];
+  const r = await withToolchain(host, () => compileScript(source));
+  if (!r.ok) return [];
+  return [
+    {
+      line: 0,
+      col: 0,
+      msg:
+        `this effect uses language features newer than firmware ${tc.version} (e.g. mat3/mat4 or ranged vector ` +
+        `uniforms); it compiles with this agent's newer compiler. Update the player's firmware (update_firmware), ` +
+        `or avoid those features.`,
+    },
+  ];
+}
+
+/** The source lints of `source` from this bundle's own compiler (the lints are
+ * source-level, so they apply whatever firmware compiles it). */
+export async function lintWarnings(source: string): Promise<{ line: number; col: number; msg: string }[]> {
+  return (await compile(source)).warnings ?? [];
+}
+
+/** The FX debugger's host replay from a toolchain's VM (the player's
+ * version-matched one when given), or null when that VM build predates it. */
+export async function replayVm(tc?: Toolchain): Promise<ReplayVm | null> {
+  const chosen = tc ?? (await hostToolchain());
+  const vm = chosen.vm as Partial<ReplayVm>;
+  return vm.FxReplay && vm.fx_blend_rgb8 ? { FxReplay: vm.FxReplay, fx_blend_rgb8: vm.fx_blend_rgb8 } : null;
 }
 
 export interface PreviewFrame {

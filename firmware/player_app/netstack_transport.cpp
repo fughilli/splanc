@@ -19,6 +19,7 @@
 #include <esp_event.h>
 #include <esp_heap_caps.h>
 #include <esp_random.h>
+#include <stdlib.h>  // strtoul (console WIFI SCANMISS)
 #include <string.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/x509_crt.h>
@@ -32,16 +33,22 @@
 #include "device_cert.h"        // this device's own TLS key + cert (first-boot generated)
 #include "dhcp_reply.h"
 #include "icmp_echo.h"
-#include "wifi_creds.h"     // persisted WiFi credentials: restore / persist / rescan decisions
-#include "esp_system.h"     // esp_restart / esp_reset_reason (restart-to-rescan)
+#include "wifi_creds.h"     // persisted WiFi credentials: restore / persist decisions
+#include "wifi_scan.h"      // in-place background rescan (never a reboot)
+#include "esp_system.h"     // esp_get_free_heap_size
+#include "esp_log.h"        // esp_log_level_set: silence the vendor "wifi" tag after the hijack
 #include "esp_mac.h"        // esp_read_mac: the factory STA MAC
 #include "sta_mac.h"        // stable (factory) vs opt-in random station MAC
 #include "join_guard.h"     // per-boot 802.11 sequence numbers + the unanswered-auth guard
+#include "serial_log.h"     // Console(): the ordered, lossless log ring (identity lines)
 
 extern "C" {
 void ns_mac_rx_install();
+void ns_mac_rx_stats(uint32_t *out);  // [ring high-water, full-ring polls] (high-water resets)
+void ns_tcp_stats(uint32_t *out);     // [segs, ooo, dup, trunc, zero_wnd, rto, fast_rexmit]
 uint32_t ns_aes_selftest(uint8_t *out); // FIPS-197 AES-128: bit0=enc ok, bit1=dec ok; out=ciphertext
 uint32_t ns_mac_recv(uint8_t *out, uint32_t cap);
+uint32_t ns_mac_rx_pending(void);
 uint32_t ns_mac_send(const uint8_t *frame, uint32_t len, uint32_t queue);
 uint32_t ns_mac_send_sec(const uint8_t *frame, uint32_t len, uint32_t queue); // HW CCMP encrypt
 uint32_t ns_tx_desc_word0(uint32_t idx); // read back TX descriptor word0 (secure-TX diagnostic)
@@ -81,6 +88,7 @@ uint32_t ns_tcp_enqueue(const uint8_t *data, uint32_t len);          // buffer i
 uint32_t ns_tcp_pump_tx(uint32_t now_ms, uint8_t *out, uint32_t cap); // emit next windowed segment
 uint32_t ns_tcp_tx_room(void);                                       // free send-window bytes
 uint32_t ns_tcp_tick(uint32_t now_ms, uint8_t *out, uint32_t cap); // stack RTO: emits a retransmit when it fires
+uint32_t ns_tcp_tx_pending(void);  // send side holds queued/unacked data (RTO + window live)
 uint32_t ns_tcp_window_ack(uint8_t *out, uint32_t cap); // window-update ACK after draining rx
 uint32_t ns_tcp_recv(uint8_t *out, uint32_t cap);
 void ns_tcp_listen(const uint8_t *src, uint16_t sport, uint32_t iss); // passive open (server)
@@ -122,6 +130,23 @@ extern "C" void sta_rx_start_handler(void *req) {
 // stops the vendor from processing/delivering packets, so our ring owns RX.
 void IRAM_ATTR sink(void *, wifi_promiscuous_pkt_type_t) {}
 
+NsRxStamps g_ns_rx_stamps = {};
+void (*g_ns_reply_hook)(int outcome) = nullptr;
+// The stamps are written only by the LM_CTRL_TRACE measurement build (the
+// :netstack_transport_ctrltrace library): the shipping image runs none of these timer
+// reads on the loop task's RX path.
+#if defined(LM_CTRL_TRACE)
+#define NS_TRACE(stmt) \
+  do {                 \
+    stmt;              \
+  } while (0)
+static inline uint32_t ns_now_us() { return (uint32_t)esp_timer_get_time(); }
+#else
+#define NS_TRACE(stmt) \
+  do {                 \
+  } while (0)
+#endif
+
 namespace {
 constexpr uintptr_t WIFI_MAC_INTR_MAP = 0x60010000;
 // No WiFi credentials are baked into the image: they arrive at runtime, over either BLE
@@ -150,8 +175,11 @@ char g_pass[65];
 bool g_creds_ready = false;  // creds committed (BLE Improv, wired PROV, or restored at boot)
 bool g_restore_pending = false;  // restored at boot; the PMK derivation starts on the first loop
 bool g_using_stored = false;     // the active creds are the stored ones (not a fresh provision)
-bool g_scan_matched = false;     // the boot scan saw the active SSID (scan_latch_ap)
+bool g_scan_matched = false;     // the last scan (boot or background) saw the active SSID
+bool g_latch_known = false;      // g_bssid/g_chan are THIS SSID's (scan cache or a sweep),
+                                 // even if the last sweep missed it
 lm_wifi::Persist g_persist;      // whether/when the active creds still need writing to NVS
+lm_wifi::ImprovJoin g_improv_join;  // the last Improv fresh join (re-send coalescing)
 
 // DHCP lease state (DORA).
 uint8_t g_offer_ip[4] = {0}, g_server_id[4] = {0};
@@ -258,8 +286,10 @@ void wifi_scan_cache() {
 }
 
 // Once g_ssid is known, find its cached AP and latch the real BSSID + channel + reprogram
-// the hardware. Keeps the baked default if the SSID wasn't seen in the scan (e.g. rig-3
-// fallback where they already match). Returns whether a scan match was applied.
+// the hardware. Without a match nothing is latched and the join waits for the background
+// rescan (below) to find the AP. Returns whether a scan match was applied.
+void mark_seen();  // the rejoin-policy clock (below): the network was just seen
+
 bool scan_latch_ap() {
   for (uint8_t i = 0; i < g_scan_n; i++) {
     if (strncmp(g_scan[i].ssid, g_ssid, 32) == 0) {
@@ -270,12 +300,107 @@ bool scan_latch_ap() {
       Serial.printf("[t=%lu] [scan] latched \"%s\" -> bssid=%02x:%02x:%02x:%02x:%02x:%02x ch=%u\n", (unsigned long)millis(), g_ssid,
                     g_bssid[0], g_bssid[1], g_bssid[2], g_bssid[3], g_bssid[4], g_bssid[5], g_chan);
       g_scan_matched = true;
+      g_latch_known = true;
+      mark_seen();
       return true;
     }
   }
-  Serial.printf("[scan] no scan match for \"%s\" — keeping baked bssid ch=%u\n", g_ssid, g_chan);
+  Serial.printf("[scan] no scan match for \"%s\" — not joining until the background rescan "
+                "finds it\n", g_ssid);
   g_scan_matched = false;
+  g_latch_known = false;  // g_bssid is whatever the previous network left there
   return false;
+}
+
+// --- Background rescan: find the AP again IN PLACE, never by rebooting (wifi_scan.h) ----
+// The vendor scan above only works before the MAC hijack, so it used to be repeated by
+// esp_restart() — killing the running effect every 20 s while a stored network was absent.
+// Now the netstack sweeps the channels itself from the loop (we already receive every
+// frame in all-frames mode), one non-blocking hop per pass, while render keeps going.
+lm_wifi_scan::ScanSchedule g_scan_sched;
+lm_wifi_scan::ImprovScanReport g_improv_scan;  // Improv: report an SSID no sweep can see
+lm_wifi_scan::ChannelHop g_hop;
+bool g_force_sweep = false;   // console WIFI SCAN: one sweep now
+bool g_sweep_forced = false;  // the running sweep was forced (not scheduled)
+bool g_force_giveup = false;  // console WIFI GIVEUP: take the random-MAC fallback now
+uint32_t g_scan_blind = 0;    // console WIFI SCANMISS n: the next n sweeps hear nothing (HITL)
+
+// --- Rejoin policy (wifi_scan.h Policy; set by the app via netstack_set_wifi_policy) ----
+lm_wifi_scan::Policy g_policy;
+bool g_radio_up = false;         // esp_wifi started + MAC hijacked (never, in offline mode)
+bool g_silent = false;           // offline at runtime: radio initialised but no TX, MAC asleep
+uint32_t g_window_until = 0;     // manual mode: a commanded / provisioned join window (ms)
+bool g_policy_changed = false;   // a provision changed the mode itself (the app persists it)
+bool g_scan_decayed = false;     // auto: the sparse period is in force
+bool g_link_reset_pending = false;  // going offline: drop the join state on the next loop
+bool g_authenticating = true;    // mirror of the loop's join state (st == AUTH), for status
+// Network last seen (a scan match or a lease), as seconds of uptime; unseen time carried
+// over from previous boots (main.cpp persists it, so a nightly power cycle doesn't reset
+// the decay clock).
+uint32_t g_seen_at_s = 0;
+uint32_t g_unseen_base_s = 0;
+
+uint32_t uptime_s() { return (uint32_t)(millis() / 1000u); }
+uint32_t unseen_s() { return g_unseen_base_s + (uptime_s() - g_seen_at_s); }
+bool g_seen_this_boot = false;   // a scan matched / a lease came this boot
+void mark_seen() {
+  g_seen_this_boot = true;
+  g_unseen_base_s = 0;
+  g_seen_at_s = uptime_s();
+}
+// Whether the board may scan / join on its own right now.
+bool autonomous(uint32_t now_ms) {
+  if (!g_radio_up || g_silent) return false;
+  switch (g_policy.mode) {
+    case lm_wifi_scan::kModeAuto:
+    case lm_wifi_scan::kModeFixed:
+      return true;
+    case lm_wifi_scan::kModeManual:
+      return g_window_until != 0 && lm_wifi_scan::at_or_after(g_window_until, now_ms);
+    default:
+      return false;
+  }
+}
+
+// Tune to `ch` and ask for the wanted SSID there (a hidden AP answers a directed probe).
+void bgscan_tune(uint8_t ch) {
+  esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+  uint8_t f[80];
+  size_t n = lm_wifi_scan::build_probe_req(f, sizeof f, OUR_MAC, g_ssid, g_seq.next());
+  if (n) ns_mac_send(f, (uint32_t)n, 0);
+}
+
+// A frame from the RX drain: while a sweep runs, note a beacon / probe response for our SSID.
+void bgscan_on_frame(const uint8_t *rx, uint32_t n) {
+  if (!g_hop.active() || n < 36 || (rx[0] != 0x80 && rx[0] != 0x50)) return;
+  if (g_scan_blind) return;  // HITL: simulate a sweep that can't hear the AP (coex, range)
+  uint8_t bssid[6], ch = 0;
+  if (lm_wifi_scan::bss_for_ssid(rx, n, g_ssid, g_hop.channel(), bssid, &ch)) g_hop.on_match(bssid, ch);
+}
+
+// Remember a background-scan result in the scan cache (so a later re-latch of the same
+// SSID — a repeated PROV / Improv — finds it too).
+void scan_cache_put(const char *ssid, const uint8_t bssid[6], uint8_t ch) {
+  uint8_t i = 0;
+  while (i < g_scan_n && strncmp(g_scan[i].ssid, ssid, 32) != 0) i++;
+  if (i == g_scan_n) {
+    if (g_scan_n < sizeof g_scan / sizeof g_scan[0]) {
+      g_scan_n++;
+    } else {
+      i = g_scan_n - 1;  // full: the newest result replaces the last entry
+    }
+  }
+  strncpy(g_scan[i].ssid, ssid, 32);
+  g_scan[i].ssid[32] = 0;
+  memcpy(g_scan[i].bssid, bssid, 6);
+  g_scan[i].chan = ch;
+}
+
+// Stop a sweep (new credentials, or it finished without a match): back on the join channel.
+void bgscan_cancel() {
+  if (!g_hop.active()) return;
+  g_hop.cancel();
+  esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);
 }
 
 int mgmt_hdr(uint8_t *f, uint8_t fc) {
@@ -495,6 +620,28 @@ uint8_t *tx_ip_slot() { return g_txf + kTxIp; }
 // buffer is copied there first. With HW crypto active (g_hwkey) hand a plaintext QoS MPDU to
 // the vendor ppTxPkt bridge and let the MAC insert the CCMP header + encrypt; otherwise
 // software-encrypt. Returns the enc'd length or the plaintext length. `label` is logged.
+// TX pacing. The direct-submission MAC path gives no completion we can read (the
+// descriptor OWN bit never clears, PLCP0's enable bit never clears, and the queue status
+// block does not reliably change for a large frame), and arming queue 0 while its previous
+// frame is still on air loses that frame: a 1400 + 177 B TCP reply lost its first segment
+// nearly every time, and the RTO's resend of the same pair lost it again (the #358
+// "DEVICE SILENT" trace-dump stall). So never arm before the previous frame's worst-case
+// airtime has passed: 6 Mb/s legacy OFDM (4/3 us per byte) plus preamble, SIFS and the
+// AP's ACK. Bounded at 4 ms; a frame sent after an idle gap pays nothing.
+static uint32_t g_tx_busy_until_us = 0;
+static void tx_pace_before() {
+  const uint32_t now = (uint32_t)esp_timer_get_time();
+  int32_t left = (int32_t)(g_tx_busy_until_us - now);
+  if (left <= 0) return;
+  if (left > 4000) left = 4000;
+  const uint32_t end = now + (uint32_t)left;
+  while ((int32_t)(end - (uint32_t)esp_timer_get_time()) > 0) {
+  }
+}
+static void tx_pace_after(uint32_t frame_len) {
+  g_tx_busy_until_us = (uint32_t)esp_timer_get_time() + 150 + (frame_len * 4) / 3;
+}
+
 uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char *label) {
   if (plen < 0 || plen > (int)(sizeof g_txf - kTxL2)) return 0;
   if (payload != g_txf + kTxL2) memmove(g_txf + kTxL2, payload, plen);
@@ -525,7 +672,9 @@ uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char 
   static uint8_t enc[1700];  // static: off the deep TLS-write stack (encrypt can't run in place)
   uint32_t el = ns_sta_encrypt(qhdr, 26, payload, plen, enc, sizeof(enc));
   if (el > 0) {
+    tx_pace_before();
     ns_mac_send(enc, el, 0);
+    tx_pace_after(el);
     static int dbg = 0;
     if (dbg++ < 4) {
       auto rd = [](uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); };
@@ -641,6 +790,9 @@ void send_ip(const uint8_t *ip, int iplen) { send_ip_l2(ip, iplen, neighbor_mac(
 extern bool g_ws_up;  // the WS session is live (defined with the TLS server below)
 static const uint8_t kMdnsGroup[4] = {224, 0, 0, 251};
 static const uint8_t kMdnsMac[6] = {0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb};
+// Native OSC input (TouchDesigner, Ableton, TouchOSC, …): the same port the vendor
+// build's osc_task binds. Datagrams go to the app's latest-wins mailbox.
+constexpr uint16_t kOscUdpPort = 9000;
 constexpr int kUdpPayloadOff = 20 + 8;  // IPv4 (no options) + UDP, in tx_ip_slot()
 
 // Wrap the `len` bytes already at tx_ip_slot()+kUdpPayloadOff in IPv4+UDP (from our
@@ -895,6 +1047,8 @@ void handle_l3(const uint8_t *pt, int pl) {
   if (pt[7] == 0x06) { handle_arp(pt, pl); return; } // ARP
   if (pt[7] != 0x00) return;            // only IPv4 past here
   const uint8_t *ip = pt + 8;
+  NS_TRACE(g_ns_rx_stamps.l3_reap_us = g_ns_rx_stamps.reap_us;
+           g_ns_rx_stamps.l3_empty_us = g_ns_rx_stamps.empty_poll_us);
   if (pl >= 8 + 20) learn_neighbor(ip + 12);
   // Identify EVERY inbound IPv4 packet (proto + ports) — chasing why the client's TCP
   // data segment never arrives amid a flood of large frames.
@@ -926,6 +1080,10 @@ void handle_l3(const uint8_t *pt, int pl) {
                       (tcp[2] << 8) | tcp[3], tcp[13],
                       (uint32_t)((tcp[4] << 24) | (tcp[5] << 16) | (tcp[6] << 8) | tcp[7]), dlen,
                       ns_tcp_state());
+      NS_TRACE(if (dlen > 0) {
+        g_ns_rx_stamps.data_reap_us = g_ns_rx_stamps.reap_us;
+        g_ns_rx_stamps.data_empty_us = g_ns_rx_stamps.empty_poll_us;
+      });
       uint32_t rl = ns_tcp_on_ip(millis(), ip, iplen, tx_ip_slot(), kTxIpCap);
       if (rl > 0) send_ip(tx_ip_slot(), rl);
     }
@@ -946,6 +1104,10 @@ void handle_l3(const uint8_t *pt, int pl) {
     const int udplen = (udp[4] << 8) | udp[5];
     if (udplen < 8 || udplen > iplen - ihl) return;
     uint16_t sport = (udp[0] << 8) | udp[1], dport = (udp[2] << 8) | udp[3];
+    if (dport == kOscUdpPort && g_leased) { // native OSC (docs/design/live-control.md)
+      lm_netstack_osc_rx(udp + 8, (size_t)(udplen - 8));
+      return;
+    }
     if (dport == 5353 && g_leased) { // mDNS query (multicast group or unicast to us)
       bool unicast = false;
       int n = lm_mdns_reply(udp + 8, (size_t)(udplen - 8), sport, g_offer_ip,
@@ -986,9 +1148,17 @@ void handle_l3(const uint8_t *pt, int pl) {
         g_have_offer = true;
         Serial.printf("[t=%lu] *** DHCP OFFER received — L3 over heapless CCMP link ***\n", (unsigned long)millis());
         send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
+      } else if (mt == 6 && !g_leased && g_have_offer) {
+        // NAK for the address we REQUESTed (the stale one a deauth left in g_offer_ip, or
+        // one the server gave away meanwhile): back to a fresh DISCOVER instead of
+        // re-REQUESTing it forever.
+        g_have_offer = false;
+        Serial.printf("[t=%lu] [dhcp] NAK -> re-DISCOVER\n", (unsigned long)millis());
       } else if (mt == 5) {
         bool first = !g_leased;
         g_leased = true;
+        mark_seen();
+        g_window_until = 0;  // manual: the join window did its job
         g_persist.on_lease((uint32_t)millis());  // proves freshly provisioned creds (wifi_creds.h)
         g_lease_ms = millis(); // (re)start the lease clock for T1 renewal
         memcpy(g_offer_ip, dh + 16, 4); // commit the leased IP
@@ -1169,6 +1339,14 @@ void tls_init() {
 // time_sync, set_device_name, get_hardware_config — all handled inside lm_player_handle.
 constexpr bool PLAYER_MODE = true;
 bool g_ws_up = false;
+// The current wss session is closing: ws_pump returned false (the peer's WS close / TLS
+// close_notify, a torn read, or a reply that couldn't be written) and our close_notify is
+// out, but the slot stays Established — g_ws_up still set — until the peer's FIN lands and
+// the s==4/0 path re-listens. Load-shedding (serving_live) must stay DISARMED for that whole
+// stretch: the client that just closed reconnects at once on a fresh port (the agent
+// bridge's reconnect, the post-WS cert-trust GET, a HITL driver's next session) and must
+// never be RST-refused. Set where the close starts; cleared by the next WS upgrade.
+bool g_ws_closing = false;
 // True once ws_pump has begun writing a RESPONSE on the current slot — the WS 101 upgrade
 // OR the one-shot cert-trust-page GET. Distinguishes an actively-serving connection (which
 // must NOT be killed by the pre-WS 4s wedge gate while it finishes serving + closing) from
@@ -1198,15 +1376,30 @@ size_t g_ws_rxlen = 0;
 // the TLS write spin so the peer's ACK is processed and the stop-and-wait TCP frees its
 // in-flight segment — otherwise a write that spans >1 segment (or follows an unacked one)
 // deadlocks: bio_send returns WANT_WRITE forever because no RX drain runs to clear tx_data.
+// loopTask's link RX scratch, shared by its two receive paths: netstack_loop's drain and
+// pump_link_once (the TLS-write spin). One full MPDU (ns_mac_recv truncates to the cap, and
+// a truncated frame fails CCMP's MIC) plus one software-CCMP plaintext. The paths never
+// nest: pump_link_once runs only under tls_write_all (ws_pump / lm_ws_send, after the
+// drain), and nothing the drain calls (handle_l3, bgscan_on_frame, the EAPOL replies)
+// reaches a TLS write; g_rx_draining turns a violation into a skipped RX instead of a
+// clobbered frame. Static rather than on the drain's frame: those 1.6 KB were the
+// biggest frame on loopTask's deepest path (stack_bound_test). Was four 1.6 KB buffers.
+constexpr uint32_t kRxFrameCap = 1600;
+uint8_t g_rxf[kRxFrameCap];
+uint8_t g_rx_pt[kRxFrameCap];
+bool g_rx_draining = false;
+
 static void pump_link_once() {
-  static uint8_t rxb[1600];
-  uint32_t n = ns_mac_recv(rxb, sizeof(rxb));
-  if (n > 0 && (rxb[0] & 0x0c) == 0x08 && (rxb[1] & 0x40)) {  // protected data frame from the AP
-    static uint8_t pt[1600];  // static: single-threaded, and keeps this off the deep TLS-write stack
+  uint32_t n = g_rx_draining ? 0 : ns_mac_recv(g_rxf, sizeof(g_rxf));
+  NS_TRACE(if (!g_rx_draining) {  // a skipped RX (see g_rx_draining) is not an empty ring
+    if (n == 0) g_ns_rx_stamps.empty_poll_us = ns_now_us();
+    else g_ns_rx_stamps.reap_us = ns_now_us();
+  });
+  if (n > 0 && (g_rxf[0] & 0x0c) == 0x08 && (g_rxf[1] & 0x40)) {  // protected data frame from the AP
     uint32_t pl = 0;
     for (uint32_t trim = 0; trim <= 4 && pl == 0; trim++)
-      if (n > trim + 32) pl = ns_sta_decrypt(rxb, n - trim, pt, sizeof(pt));
-    if (pl) { note_rx_sa(rxb); handle_l3(pt, pl); }
+      if (n > trim + 32) pl = ns_sta_decrypt(g_rxf, n - trim, g_rx_pt, sizeof(g_rx_pt));
+    if (pl) { note_rx_sa(g_rxf); handle_l3(g_rx_pt, pl); }
   }
   // ALWAYS try to stream the send window out — whether or not a frame arrived. During a
   // TLS write-stall (snd_buf full) the only way it drains is ACKs freeing space + the RTO's
@@ -1285,6 +1478,7 @@ static bool ws_pump() {
     if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE) return true;  // drained
     if (r <= 0) return false;  // close_notify or error
     g_ws_rxlen += r;
+    NS_TRACE(g_ns_rx_stamps.decoded_us = ns_now_us());
 
     if (!g_ws_up) {
       // Wait for the full HTTP upgrade request (ends with a blank line), then 101.
@@ -1346,6 +1540,7 @@ static bool ws_pump() {
                        "Connection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", accept);
       if (!tls_write_all((const uint8_t *)resp, n)) return false;
       g_ws_up = true;
+      g_ws_closing = false;
       g_ws_rxlen = 0;  // the request body ends at the blank line; nothing after it yet
       Serial.println("*** WS UPGRADED — LED Mapper protocol over heapless TLS ***");
       continue;  // keep draining: streamed frames may already be buffered behind the upgrade
@@ -1371,9 +1566,24 @@ static bool ws_pump() {
         // connection down (return false) so the poll loop re-listens and frees the slot,
         // rather than silently dropping the reply and holding a dead ESTABLISHED slot.
         // (The reply is the app's writable tx buffer, with headroom — see lm_ws_dispatch.)
+        //
+        // Except a best-effort live-control reply (a ControlAck, or a legacy set_uniforms'
+        // playback_state no client awaits): when the send window can't take it right now,
+        // DROP it, like an unsolicited PerfReport. Blocking in tls_write_all would leave
+        // every frame behind it unread for up to seconds — exactly the input backlog a
+        // knob stream builds (docs/design/live-control.md). A seq'd client whose ack is
+        // dropped times out and sends its next update anyway.
+        int outcome = tn > 0 && reply ? 1 : 0;
+        if (tn > 0 && reply && lm_ws_reply_droppable() &&
+            ns_tcp_tx_room() < (size_t)tn + kWsSendHeadroom + 96) {
+          tn = 0;
+          outcome = 2;
+        }
         if (tn > 0 && reply &&
             !ws_send(WS_OP_BINARY, const_cast<uint8_t *>(reply), (size_t)tn, kWsSendHeadroom))
           return false;
+        NS_TRACE(if (g_ns_reply_hook) g_ns_reply_hook(outcome));
+        (void)outcome;
       } else if (h.opcode == WS_OP_PING) {
         if (!ws_send(WS_OP_PONG, payload, h.payload_len, h.header_len)) return false;
       } else if (h.opcode == WS_OP_CLOSE) {
@@ -1411,19 +1621,6 @@ bool netstack_ws_open() { return netstack_ws_is_open(); }
 bool netstack_creds_ready() { return g_creds_ready; }
 bool netstack_leased() { return g_leased; }
 
-// Restart-to-rescan attempts in a row (wifi_creds.h rescan_due), kept across esp_restart in
-// RTC no-init memory; any other reset (power-on, watchdog, flash) starts the count over.
-static RTC_NOINIT_ATTR uint32_t s_rescan_magic;
-static RTC_NOINIT_ATTR uint32_t s_rescan_attempt;
-static constexpr uint32_t kRescanMagic = 0x52534e31;  // "RSN1"
-static uint32_t rescan_attempt() {
-  if (s_rescan_magic != kRescanMagic || esp_reset_reason() != ESP_RST_SW) {
-    s_rescan_magic = kRescanMagic;
-    s_rescan_attempt = 0;
-  }
-  return s_rescan_attempt;
-}
-
 void netstack_restore_credentials(const char *ssid, const char *pass) {
   if (!lm_wifi::valid(ssid, pass)) {
     Serial.printf("[wifi] no stored credentials — waiting for Improv / wired PROV\n");
@@ -1443,8 +1640,30 @@ void netstack_restore_credentials(const char *ssid, const char *pass) {
 // in this TU): count of AP group-key rekeys serviced, surfaced in the status line.
 uint32_t netstack_rekey_count() { return g_rekey_serviced; }
 
+// Longest gap between two netstack_loop() passes (us) since the last status line: while
+// loopTask is away (render holding the CPU, a long TLS write spin, a flash write) nothing
+// drains the 16-slot RX ring or the TCP window.
+static uint32_t g_loop_gap_max_us = 0;
+static uint32_t g_loop_last_us = 0;
+
+int netstack_net_stats(char *buf, size_t cap) {
+  uint32_t r[2] = {0, 0}, t[7] = {0, 0, 0, 0, 0, 0, 0};
+  ns_mac_rx_stats(r);
+  ns_tcp_stats(t);
+  uint32_t gap = g_loop_gap_max_us;
+  g_loop_gap_max_us = 0;
+  return snprintf(buf, cap,
+                  "segs=%u ooo=%u dup=%u trunc=%u zwnd=%u rto=%u frx=%u ring_hwm=%u ring_full=%u "
+                  "loop_gap_max=%uus",
+                  (unsigned)t[0], (unsigned)t[1], (unsigned)t[2], (unsigned)t[3], (unsigned)t[4],
+                  (unsigned)t[5], (unsigned)t[6], (unsigned)r[0], (unsigned)r[1], (unsigned)gap);
+}
+
 // Bring up the heapless WiFi transport. Call from the app's setup() AFTER the shared player
 // init + improv_ble_begin (BLE must init before we hijack the MAC so our radio setup wins).
+// Weak default for the app's console hook (netstack_transport.h): the loader has none.
+__attribute__((weak)) void netstack_console_hook(const char *, size_t) {}
+
 void netstack_prepare_restart() {
   // OTA-specific (docs/design/ota.md): before a PLANNED restart (the app <-> loader
   // handoff, booting an installed app) say goodbye now — the same sequence-numbered
@@ -1463,6 +1682,8 @@ void netstack_prepare_restart() {
   }
 }
 
+static void radio_bringup(bool at_boot);
+
 void netstack_setup() {
   // NON-BLOCKING serial: on the C6 USB-Serial-JTAG, Serial.write BLOCKS when the TX FIFO
   // fills with no host draining the port, which would wedge loopTask mid-association during
@@ -1474,6 +1695,21 @@ void netstack_setup() {
   uint32_t aes = ns_aes_selftest(aesct);
   Serial.printf("[netstack] AES self-test: enc=%d dec=%d ct=%02x%02x%02x%02x (want 69c4e0d8)\n",
                 aes & 1, (aes >> 1) & 1, aesct[0], aesct[1], aesct[2], aesct[3]);
+  if (g_policy.mode == lm_wifi_scan::kModeOffline) {
+    // Offline mode (a forward-deployed unit with no AP): the Wi-Fi radio is never started
+    // — no scans, no RF, no TLS server heap. BLE + the console stay up; switching the mode
+    // back (or provisioning) brings the radio up in place (radio_bringup from the loop).
+    Serial.printf("[wifi] offline mode: radio off (BLE + console stay up for reconfiguration)\n");
+    return;
+  }
+  radio_bringup(true);
+}
+
+// Start the Wi-Fi radio and hijack the MAC (boot, or later when leaving offline mode).
+// `at_boot`: also run the RX sanity check (a 1.2 s diagnostic that would only stall the
+// loop task when the radio comes up at runtime).
+static void radio_bringup(bool at_boot) {
+  if (g_radio_up) return;
   // The BT controller is already up (the app's improv_ble_begin ran first); hijack the MAC
   // last so our heapless RX/g_bssid/force-awake setup wins the shared radio config.
   //
@@ -1514,8 +1750,14 @@ void netstack_setup() {
   bool factory = lm_sta_mac::choose(factory_mac, lm_sta_mac::random_mac_is_build_default(), rnd,
                                     OUR_MAC);
   g_seq.seed((uint16_t)(rnd[3] | (rnd[0] << 8)));  // a new boot never reuses the last one's
-  Serial.printf("MAC %02x:%02x:%02x:%02x:%02x:%02x (%s)\n", OUR_MAC[0], OUR_MAC[1], OUR_MAC[2],
-                OUR_MAC[3], OUR_MAC[4], OUR_MAC[5], factory ? "factory" : "random per boot");
+  // Through the Log() ring, not a direct Serial.printf: this is the board's identity line
+  // (the stable_identity HITL gate keys on it), and a direct write at the 0 ms TX timeout
+  // set above is dropped whole whenever the boot log burst is still draining (tx lock
+  // held / HWCDC ring full) — every first boot after an erase on #353's main — or lands
+  // spliced inside a half-drained log line. The ring keeps it ordered and delivered.
+  Console().printf("MAC %02x:%02x:%02x:%02x:%02x:%02x (%s)\n", OUR_MAC[0], OUR_MAC[1],
+                   OUR_MAC[2], OUR_MAC[3], OUR_MAC[4], OUR_MAC[5],
+                   factory ? "factory" : "random per boot");
   g_our_mac_ptr = OUR_MAC;
   // Cache every AP in range NOW, while the vendor WiFi RX still works — after the MAC
   // hijack below we own the ring and the vendor scan can't run. scan_latch_ap() (in the
@@ -1572,6 +1814,17 @@ void netstack_setup() {
   // on both a Pi 3 AP (recovers the SYN) and a Pi 5 AP (no regression).
   esp_wifi_set_promiscuous_rx_cb(&sink);
   esp_wifi_set_promiscuous(true);
+  // The vendor driver is a shell from here on (its event loop is gone), so every
+  // esp_wifi_set_channel (the background sweeps) logs "failed to post WiFi event" at
+  // ERROR — 13 lines a sweep through the console, from the WiFi task (priority 23,
+  // above render). Silence the vendor tag; our own [wifi]/[scan] lines say what happens.
+  esp_log_level_set("wifi", ESP_LOG_NONE);
+  g_radio_up = true;
+  if (!at_boot) {
+    tls_init();
+    Serial.printf("[wifi] radio up (left offline mode)\n");
+    return;
+  }
 
   // Sanity: continuous all-frames RX into our ring (promiscuous on; see above).
   uint8_t rx[400];
@@ -1636,6 +1889,12 @@ extern "C" void pm_go_to_sleep();
 static const uint32_t COEX_TICK_US = 4000;  // 4ms
 static void coex_timer_cb(void *) {
   static int mode = 0;  // 0 = MAC force-awake (WiFi), 1 = MAC asleep (BLE owns the slice)
+  // Offline at runtime: the MAC was released to sleep (netstack_set_wifi_policy) — keep
+  // it there (no force-awake), BLE has the radio.
+  if (g_silent) {
+    mode = 1;
+    return;
+  }
   // Normal coex: yield the radio to BLE only around a LIVE connection's events. The
   // vestigial post-provision link that used to steal airtime here is now torn down
   // gracefully the moment a wss client appears (see netstack_loop), so there's no dead
@@ -1667,14 +1926,183 @@ static void coex_timer_cb(void *) {
 
 // Service the transport once per app loop(): RX drain + on_ip + DHCP + BLE-Improv join +
 // TLS handshake + WS pump (dispatched via lm_ws_dispatch). Non-blocking; returns quickly.
+// A provision for a DIFFERENT network (wired PROV / BLE Improv kJoin): the lease, TCP and
+// TLS/WS state belonged to the old network. Without this a board that had leased once kept
+// g_leased set, so on the new network it never ran DHCP (and BLE answered the redirect with
+// the OLD IP) — e.g. re-provisioning a board away from a network that has gone, or from
+// mistyped credentials back to the right ones. Mirrors the deauth re-join reset.
+static void drop_link_for_new_network() {
+  g_leased = false;
+  g_have_offer = false;
+  g_tcp_started = false;
+  if (TLS_SERVER) {
+    tls_session_reset();
+    g_tls_hs = false;
+    g_ws_up = false;
+    g_responding = false;
+    g_ws_rxlen = 0;
+  }
+  g_bio_tx = g_bio_rx = 0;
+}
+
+// New credentials (wired PROV / BLE Improv) are the user's intent to join: an offline
+// board brings its radio up and goes back to auto (the app persists the change); a
+// manual board opens a join window. Credentials themselves are never dropped by a mode.
+static void on_provisioned() {
+  if (g_policy.mode == lm_wifi_scan::kModeOffline) {
+    g_policy.mode = lm_wifi_scan::kModeAuto;
+    g_policy_changed = true;
+    Serial.printf("[wifi] provisioned while offline -> mode auto\n");
+  }
+  if (g_silent) {
+    g_silent = false;
+    pm_go_to_wake();
+  }
+  if (!g_radio_up) radio_bringup(false);
+  if (g_policy.mode == lm_wifi_scan::kModeManual)
+    g_window_until = (uint32_t)millis() + lm_wifi_scan::kJoinWindowMs;
+}
+
+void netstack_set_wifi_policy(const NetstackWifiPolicy *p) {
+  if (!p) return;
+  lm_wifi_scan::Policy np;
+  np.mode = p->mode <= lm_wifi_scan::kModeOffline ? p->mode : lm_wifi_scan::kModeAuto;
+  np.cap_s = p->scan_cap_s;
+  np.interval_s = p->interval_s;
+  np.decay_h = p->decay_after_h;
+  np.sparse_s = p->sparse_interval_s;
+  bool to_offline = np.mode == lm_wifi_scan::kModeOffline && g_policy.mode != np.mode;
+  bool from_offline = g_policy.mode == lm_wifi_scan::kModeOffline && np.mode != g_policy.mode;
+  g_policy = np;
+  g_scan_sched.due(false, 0);  // the next need re-arms under the new rules
+  if (to_offline && g_radio_up) {
+    // Go silent now: say goodbye to the AP, drop the link, stop sweeping, release the
+    // MAC to sleep. The radio is fully off from the next boot (offline is persisted);
+    // the board never reboots for it.
+    netstack_prepare_restart();
+    g_link_reset_pending = true;
+    bgscan_cancel();
+    g_silent = true;
+    pm_go_to_sleep();
+    Serial.printf("[wifi] offline mode: Wi-Fi silent now (no scans, no TX), radio off from the "
+                  "next boot; credentials kept\n");
+  } else if (from_offline && g_radio_up && g_silent) {
+    g_silent = false;
+    pm_go_to_wake();
+    Serial.printf("[wifi] leaving offline mode: rejoining\n");
+  } else if (from_offline && !g_radio_up) {
+    // Booted offline (radio never started): bring it up in place now.
+    Serial.printf("[wifi] leaving offline mode: starting the radio\n");
+    radio_bringup(false);
+  }
+  if (g_policy.mode != lm_wifi_scan::kModeManual) g_window_until = 0;
+}
+
+void netstack_wifi_rejoin() {
+  if (g_policy.mode == lm_wifi_scan::kModeOffline) {
+    Serial.printf("[wifi] rejoin ignored: offline mode (switch the mode first)\n");
+    return;
+  }
+  if (g_policy.mode == lm_wifi_scan::kModeManual)
+    g_window_until = (uint32_t)millis() + lm_wifi_scan::kJoinWindowMs;
+  if (!g_radio_up) radio_bringup(false);
+  g_scan_sched.kick((uint32_t)millis());
+  if (!g_scan_matched) g_force_sweep = true;
+  Serial.printf("[wifi] rejoin requested%s\n",
+                g_policy.mode == lm_wifi_scan::kModeManual ? " (manual: 2 min join window)" : "");
+}
+
+bool netstack_take_policy_change(NetstackWifiPolicy *out) {
+  if (!g_policy_changed || !out) return false;
+  g_policy_changed = false;
+  out->mode = g_policy.mode;
+  out->scan_cap_s = g_policy.cap_s;
+  out->interval_s = g_policy.interval_s;
+  out->decay_after_h = g_policy.decay_h;
+  out->sparse_interval_s = g_policy.sparse_s;
+  return true;
+}
+
+// A network is "expected" only when the policy lets the board join on its own AND the
+// network was actually seen this boot. An AP that is simply absent (a unit moved to the
+// field right after an update) is no evidence against a fresh image, so the OTA health
+// check must not hold the missing lease against it; an AP that IS there but can't be
+// joined is, and still rolls a broken image back.
+bool netstack_wifi_wants_network() { return autonomous((uint32_t)millis()) && g_seen_this_boot; }
+
+bool netstack_service_due() {
+  if (!g_radio_up) return false;
+  bool rx = ns_mac_rx_pending() != 0;
+  // An empty poll here is an empty-ring observation like netstack_loop's own (the trace
+  // attributes a frame's ring wait from the last empty poll before its reap).
+  NS_TRACE(if (!rx) g_ns_rx_stamps.empty_poll_us = ns_now_us());
+  // Data still in the send window: only netstack_loop streams it out and runs its RTO
+  // (a lost ControlAck is resent from ns_tcp_tick), so it must not wait for the frame end.
+  return rx || (g_tcp_started && ns_tcp_tx_pending() != 0);
+}
+
+bool netstack_data_plane_active() {
+  if (!(g_radio_up && !g_silent && g_leased && !g_hop.active() && ns_pmk_ready())) return false;
+  if (g_tls_hs && g_ws_up) return true;  // a live wss session
+  // A client on the :443 slot that isn't streaming yet: mid-accept (SynRcvd), mid-TLS
+  // handshake / WS upgrade (Established), or a one-shot GET being served. A NEW client's
+  // handshake (~0.5 s of ECDHE/ECDSA CPU) must not live on render's leftovers: below
+  // render it only ran in the sleeps between frames, and under a near-budget effect it
+  // never finished inside a client's timeout — no session, so the loop never rose
+  // (1.12.3 field: players stayed unreachable). A stalled handshake is reclaimed after
+  // 4 s without progress (netstack_loop), so this can't pin the loop up.
+  if (!g_tcp_started) return false;
+  uint32_t s = ns_tcp_state();
+  return s == 2 || s == 6 || g_responding;
+}
+
+void netstack_set_unseen_base(uint32_t seconds) { g_unseen_base_s = seconds; }
+
+void netstack_wifi_status(NetstackWifiStatus *o) {
+  if (!o) return;
+  memset(o, 0, sizeof *o);
+  uint32_t now = (uint32_t)millis();
+  bool joined = g_leased && !g_authenticating;
+  if (!g_radio_up || g_silent) o->state = 1;           // OFFLINE
+  else if (!g_creds_ready) o->state = 2;               // UNPROVISIONED
+  else if (joined) o->state = 6;                       // JOINED
+  else if (!autonomous(now)) o->state = 3;             // IDLE (manual, no window)
+  else if (g_scan_matched && !g_hop.active()) o->state = 5;  // JOINING
+  else o->state = 4;                                   // SEARCHING
+  o->radio_on = g_radio_up && !g_silent;
+  o->decayed = g_scan_decayed && !joined;
+  if (o->state == 4 && g_scan_sched.armed() && !g_hop.active()) {
+    int32_t d = (int32_t)(g_scan_sched.next_ms() - now);
+    o->next_scan_s = d > 0 ? (uint32_t)(d + 999) / 1000u : 0;
+  }
+  o->scans = joined ? 0 : g_scan_sched.attempt();
+  o->unseen_s = joined ? 0 : unseen_s();
+  if (g_creds_ready) memcpy(o->ssid, g_ssid, sizeof o->ssid);
+  o->ssid[32] = 0;
+}
+
 void netstack_loop() {
+  {
+    uint32_t now_us = (uint32_t)micros();
+    if (g_loop_last_us != 0 && now_us - g_loop_last_us > g_loop_gap_max_us)
+      g_loop_gap_max_us = now_us - g_loop_last_us;
+    g_loop_last_us = now_us;
+  }
   static St st = AUTH;
   static uint32_t t = 0;
   static bool inited = false;
+  if (g_link_reset_pending) {  // offline at runtime: forget the join (netstack_set_wifi_policy)
+    g_link_reset_pending = false;
+    st = AUTH;
+    inited = false;
+    t = 0;
+    drop_link_for_new_network();
+  }
+  g_authenticating = st == AUTH;
   // Start the high-frequency coex tick once (defined above; the vendor PM lever it calls is only
   // declared after netstack_setup, so arm it here on the first loop rather than in setup).
   static esp_timer_handle_t coex_timer = nullptr;
-  if (!coex_timer) {
+  if (!coex_timer && g_radio_up) {
     esp_timer_create_args_t a = {};
     a.callback = &coex_timer_cb;
     a.dispatch_method = ESP_TIMER_TASK;
@@ -1699,26 +2127,44 @@ void netstack_loop() {
     g_restore_pending = false;
     ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass));
   }
-  if (g_creds_ready && !ns_pmk_ready()) ns_pmk_step(64);
+  // (Only with the radio up: offline mode has no use for it until it joins.)
+  //
+  // Measured on hitl-rig-2 (wifi_cadence, logic analyzer on the strip): when the loop ran
+  // at the render task's priority these ~14 ms PBKDF2 chunks were time-sliced 1:1
+  // against rendering for the ~2 s a derivation takes — a heavy effect's frames
+  // stretched 184 -> 196 ms, a light one's 13 -> 16 ms, on every new provision /
+  // wrong-PSK retry. The player now runs the whole loop below render (main.cpp); the
+  // derivation additionally drops one more level, so it is the first thing to yield.
+  if (g_radio_up && g_creds_ready && !ns_pmk_ready()) {
+    UBaseType_t prio = uxTaskPriorityGet(nullptr);
+    if (prio > tskIDLE_PRIORITY + 1) vTaskPrioritySet(nullptr, prio - 1);
+    ns_pmk_step(64);
+    vTaskPrioritySet(nullptr, prio);
+  }
   // rx must hold a FULL MPDU: ns_mac_recv truncates to cap, and a truncated frame fails
   // CCMP's MIC (silently dropped, no ACK) — which stalled inbound data segments >~360B
   // (e.g. a 410-byte TLS ClientHello -> ~498-byte MPDU) while small control frames passed.
-  uint8_t f[256], rx[1600];
+  // It is the shared static g_rxf (see pump_link_once), not a stack array.
+  uint8_t f[256];
+  uint8_t *const rx = g_rxf;
 
   // Keep own-MAC valid the whole time so hardware auto-ACK stays on (no retransmit
   // storm). Post-link we DISABLE the HW crypto engine (CTRL0=0) so the MAC passes
   // protected unicast to us raw — no HW-decrypt attempt, no drop — for software CCMP
   // decap, while still auto-ACKing. (Set once on entering DONE.)
-  mac_own_bssid();
+  if (g_radio_up) mac_own_bssid();
   // Post-link: HW crypto stays ENABLED (install_hw_key replicated the vendor's
   // connected-STA crypto state) so the MAC hardware-decrypts protected unicast to us
   // and delivers plaintext (handled by the g_hwkey branch).
 
   // Drain up to N frames per loop() so a burst (e.g. dnsmasq's DHCP retransmits) can't
   // fill the fixed RX ring and drop an inbound SYN/data segment before we service it.
-  uint32_t n;
+  uint32_t n = 0;
   int drained = 0;
-  while (drained++ < 32 && (n = ns_mac_recv(rx, sizeof(rx))) > 0) {
+  g_rx_draining = true;
+  while (g_radio_up && drained++ < 32 && (n = ns_mac_recv(rx, kRxFrameCap)) > 0) {
+  NS_TRACE(g_ns_rx_stamps.reap_us = ns_now_us());
+  bgscan_on_frame(rx, n);  // a background sweep listens to every BSS (wifi_scan.h)
   // Broad DONE-state RX trace: what frames actually reach our ring post-link?
   static uint32_t allf = 0;
   if (st == DONE && n >= 10 && allf < 30) {
@@ -1747,6 +2193,7 @@ void netstack_loop() {
     if (rx[0] == 0xb0 && st == AUTH) { // auth resp
       uint16_t status = rx[28] | (rx[29] << 8);
       g_authw.on_auth_response();
+      g_improv_scan.on_ap_answered();  // it's on the air: no Improv not-found report
       if (status == 0) {
         int a = build_assoc(f); ns_mac_send(f, a, 0); st = ASSOC; t = millis();
         Serial.printf("[t=%lu] auth ok -> assoc\n", (unsigned long)millis());
@@ -1839,7 +2286,7 @@ void netstack_loop() {
       // Protected data frame from the AP: CCMP-decrypt and look for a DHCP reply.
       // The RX frame carries a trailing 4-byte FCS that would corrupt CCMP's MIC
       // (it lives in the last 8 bytes), so trim it before decap.
-      static uint8_t pt[1600];  // static: keep the drain's decrypt buffer off the deep stack
+      uint8_t *const pt = g_rx_pt;  // shared with pump_link_once (never nested)
       // The RX MPDU has no trailing FCS here, so decap over the full length; fall
       // back to an FCS-trimmed length in case a driver variant appends one.
       // The RX hardware pads odd-length MPDUs to even (and some paths append a 4-byte
@@ -1848,7 +2295,7 @@ void netstack_loop() {
       // the MIC validates. (Was: only n and n-4, which missed the odd->even +1 pad.)
       uint32_t pl = 0;
       for (uint32_t trim = 0; trim <= 4 && pl == 0; trim++) {
-        if (n > trim + 32) pl = ns_sta_decrypt(rx, n - trim, pt, sizeof(pt));
+        if (n > trim + 32) pl = ns_sta_decrypt(rx, n - trim, pt, kRxFrameCap);
       }
       static uint32_t pf = 0;
       if (pf++ < 8)
@@ -1867,6 +2314,8 @@ void netstack_loop() {
     }
   }
   } // end RX drain loop
+  g_rx_draining = false;
+  NS_TRACE(if (n == 0) g_ns_rx_stamps.empty_poll_us = ns_now_us());
 
   // Commit WiFi credentials before associating. Two runtime provisioning paths, no baked creds:
   //  (1) BLE Improv — the provisioner writes wifi-settings over GATT (handled below); and
@@ -1897,6 +2346,7 @@ void netstack_loop() {
           // its stored creds, then got PROV'd again by a harness) is a no-op: tearing the
           // link down would only re-run auth/4-way/DHCP. The re-received line carries the
           // IP so a provisioner still learns where we are without a fresh lease line.
+          // (Wired PROV only — BLE Improv always starts a fresh join, see below.)
           lm_wifi::Provision pa = lm_wifi::on_provision(g_creds_ready, g_leased, g_ssid, g_pass,
                                                         nssid, npass);
           if (pa == lm_wifi::Provision::kKeepJoined) {
@@ -1914,12 +2364,50 @@ void netstack_loop() {
             g_creds_ready = true;
             g_using_stored = false;
             g_persist.on_committed();  // written to NVS once this network leases
+            g_improv_join.forget();    // the next Improv write is fresh, whatever it carries
+            g_improv_scan.cancel();    // and owes the Improv central no not-found report
             g_ap_latched = false;  // re-latch THIS SSID's BSSID/channel from the scan cache
             st = AUTH;             // restart the join from AUTH (mirrors the BLE take path)
+            inited = false;        // the 4-way re-inits for the new AP / PMK
+            drop_link_for_new_network();
+            on_provisioned();
             ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass,
                          strlen(g_pass));
             Serial.printf("[t=%lu] [wire] PROV received (ssid=%s) -> associating\n",
                           (unsigned long)millis(), g_ssid);
+          }
+        } else if (plen >= 5 && strncmp(pbuf, "WIFI ", 5) == 0) {
+          // Link diagnostics on the console (the HITL wifi_cadence gate drives each
+          // recovery path on demand to time the LED output across it):
+          //   WIFI SCAN    run one background sweep now
+          //   WIFI DHCP    drop the lease and re-DISCOVER (the DHCP retry path)
+          //   WIFI GIVEUP  re-join through the random-MAC fallback (stable-address loss)
+          //   WIFI SCANMISS <n>  the next n sweeps hear nothing (0 clears): the HITL
+          //                improv_fresh_join gate's "AP not seen by the first sweeps"
+          // Anything else goes to the app's console hook (Wi-Fi policy: WIFI MODE …).
+          const char *arg = pbuf + 5;
+          uint32_t nowc = (uint32_t)millis();
+          if (strcmp(arg, "SCAN") == 0) {
+            g_force_sweep = true;
+            Serial.printf("[t=%lu] [wifi] console: sweep requested\n", (unsigned long)nowc);
+          } else if (strcmp(arg, "DHCP") == 0) {
+            drop_link_for_new_network();
+            Serial.printf("[t=%lu] [wifi] console: lease dropped -> re-DISCOVER\n",
+                          (unsigned long)nowc);
+          } else if (strncmp(arg, "SCANMISS ", 9) == 0) {
+            g_scan_blind = (uint32_t)strtoul(arg + 9, nullptr, 10);
+            Serial.printf("[t=%lu] [wifi] console: the next %lu sweep(s) hear nothing\n",
+                          (unsigned long)nowc, (unsigned long)g_scan_blind);
+          } else if (strcmp(arg, "GIVEUP") == 0) {
+            st = AUTH;
+            inited = false;
+            t = 0;
+            drop_link_for_new_network();
+            g_force_giveup = true;
+            Serial.printf("[t=%lu] [wifi] console: re-joining via the random-MAC fallback\n",
+                          (unsigned long)nowc);
+          } else {
+            netstack_console_hook(pbuf, plen);
           }
         }
         plen = 0;
@@ -1947,7 +2435,8 @@ void netstack_loop() {
   // As soon as the SSID is committed, latch the AP's real BSSID + channel from the scan
   // cache (once) BEFORE the first auth — so auth/assoc go out on the right channel to the
   // right BSS on ANY rig, not just the baked rig-3 default.
-  if (g_creds_ready && !g_ap_latched) {
+  if (g_creds_ready && !g_ap_latched && g_radio_up) {
+    bgscan_cancel();  // new credentials: a sweep for the old SSID is moot
     scan_latch_ap();
     g_ap_latched = true;
   }
@@ -1964,31 +2453,128 @@ void netstack_loop() {
       Serial.printf("[t=%lu] [wifi] storing credentials FAILED (ssid=%s) — will retry\n",
                     (unsigned long)millis(), g_ssid);
   }
-  // Stored network missing from the boot scan (e.g. the router still booting after a power
-  // cut): the vendor scan only runs before the MAC hijack, so rescan by restarting, on a
-  // capped backoff, never while a central is connected (it may be re-provisioning us).
-  if (PLAYER_MODE && g_ap_latched) {
-    static const uint32_t attempt = rescan_attempt();
-    static bool attempt_cleared = false;
-    if (g_scan_matched && !attempt_cleared) {
-      attempt_cleared = true;
-      s_rescan_attempt = 0;
+  // The committed network isn't reachable where we last looked: missing from the boot scan
+  // (the router still booting after a power cut), or a latched AP that stopped answering
+  // auth (rebooted onto another channel/BSSID, or gone). Find it again IN PLACE with a
+  // background sweep on a 5 s -> 60 s backoff, forever — never esp_restart: the effect
+  // keeps rendering, BLE Improv + the wired PROV console stay up the whole time, and a
+  // match re-latches the AP and restarts the join, so the board rejoins on its own as soon
+  // as the AP is back (wifi_scan.h). Also in the OTA loader (same transport).
+  if (g_ap_latched) {
+    uint32_t now_ms = (uint32_t)millis();
+    // (A lease only counts once past AUTH: re-authenticating means we hold no link.)
+    // While an Improv fresh join's report is armed, its own retries (kImprovRescanGapMs
+    // apart) are the only sweeps: the background schedule on top roughly doubled the
+    // sweep duty (a channel hop every 120 ms) for the whole ~30 s window with the BLE
+    // central connected, and a rig central lost its link mid-window (CI, PR #411).
+    bool wanted = autonomous(now_ms) && !g_improv_scan.armed() &&
+                  lm_wifi_scan::scan_wanted(g_creds_ready, st == AUTH, g_leased && st != AUTH,
+                                            g_scan_matched, g_authw.waited_ms(now_ms));
+    // Improv fresh join: retry the sweep a few seconds apart before reporting the SSID
+    // not found (a hotspot that beacons slowly), while the join is still waiting on it.
+    if (!g_hop.active() && g_radio_up && !g_silent && st == AUTH && !g_scan_matched &&
+        g_improv_scan.take_retry(now_ms)) {
+      g_force_sweep = true;
+      Serial.printf("[t=%lu] [ble] \"%s\" not seen yet — Improv retry sweep %lu (%lu s into "
+                    "the join; reported unreachable after %lu s)%s\n", (unsigned long)now_ms,
+                    g_ssid, (unsigned long)(g_improv_scan.misses() + 1),
+                    (unsigned long)((now_ms - g_improv_scan.started_ms()) / 1000),
+                    (unsigned long)(lm_wifi_scan::kImprovReportMs / 1000),
+                    g_latch_known ? "; auth to the latched BSSID continues between sweeps" : "");
     }
-    if (lm_wifi::rescan_due(g_using_stored, g_scan_matched, g_leased,
-                            improv_ble_central_connected(), (uint32_t)millis(), attempt)) {
-      Serial.printf("[t=%lu] [wifi] stored network \"%s\" not in the boot scan — restarting to "
-                    "rescan (attempt %u/%u)\n", (unsigned long)millis(), g_ssid,
-                    (unsigned)(attempt + 1), (unsigned)lm_wifi::kRescanMaxAttempts);
-      s_rescan_attempt = attempt + 1;
-      delay(100);  // let the log line drain
-      esp_restart();
+    bool forced = g_force_sweep && !g_hop.active() && g_radio_up && !g_silent;
+    g_force_sweep = false;
+    uint32_t first_gap = lm_wifi_scan::policy_delay_ms(g_policy, 0, unseen_s());
+    if (forced || (!g_hop.active() && g_scan_sched.due(wanted, now_ms, first_gap))) {
+      g_hop.start();
+      g_sweep_forced = forced;
+      // (A forced sweep is the Improv fresh join's live scan, its retries, or the console's
+      // WIFI SCAN — not a verdict on the AP: the old label called the fresh join's first
+      // sweep "not answering auth" before a single auth had gone out.)
+      Serial.printf("[t=%lu] [wifi] \"%s\" %s — background scan %u (effect keeps running)\n",
+                    (unsigned long)now_ms, g_ssid,
+                    forced                 ? "forced sweep"
+                    : g_scan_matched       ? "not answering auth"
+                                           : "not in the last scan",
+                    (unsigned)(g_scan_sched.attempt() + 1));
+    }
+    uint8_t ch = 0;
+    lm_wifi_scan::ChannelHop::Step hs = g_hop.step(now_ms, &ch);
+    if (hs == lm_wifi_scan::ChannelHop::Step::kTune) {
+      bgscan_tune(ch);
+    } else if (hs == lm_wifi_scan::ChannelHop::Step::kDone && g_sweep_forced && st != AUTH) {
+      // A diagnostic sweep while associated: report, change nothing about the link.
+      if (g_scan_blind) g_scan_blind--;
+      Serial.printf("[t=%lu] [wifi] background scan (forced): \"%s\" %s\n", (unsigned long)now_ms,
+                    g_ssid, g_hop.found() ? "seen" : "not seen");
+      esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);
+    } else if (hs == lm_wifi_scan::ChannelHop::Step::kDone) {
+      if (g_scan_blind) g_scan_blind--;
+      if (!g_sweep_forced) {
+        g_scan_sched.on_scan_done(
+            now_ms, lm_wifi_scan::policy_delay_ms(g_policy, g_scan_sched.attempt() + 1, unseen_s(),
+                                                  &g_scan_decayed));
+      }
+      if (g_hop.found()) {
+        const uint8_t *b = g_hop.found_bssid();
+        uint8_t fch = g_hop.found_chan();
+        bool moved = memcmp(b, g_bssid, 6) != 0 || fch != g_chan;
+        scan_cache_put(g_ssid, b, fch);
+        memcpy(g_bssid, b, 6);
+        g_chan = fch;
+        g_scan_matched = true;
+        g_latch_known = true;
+        mark_seen();
+        mac_own_bssid();
+        if (moved) g_authw.reset();  // a new AP/channel: its own unanswered-auth clock
+        Serial.printf("[t=%lu] [wifi] background scan found \"%s\" bssid=%02x:%02x:%02x:%02x:%02x:%02x "
+                      "ch=%u%s — joining\n", (unsigned long)now_ms, g_ssid, g_bssid[0], g_bssid[1],
+                      g_bssid[2], g_bssid[3], g_bssid[4], g_bssid[5], g_chan,
+                      moved ? "" : " (unchanged)");
+      } else {
+        g_scan_matched = false;
+        Serial.printf("[t=%lu] [wifi] background scan: \"%s\" not found; next in %lu s%s (BLE "
+                      "Improv stays up to re-provision)\n", (unsigned long)now_ms, g_ssid,
+                      g_scan_sched.armed()
+                          ? (unsigned long)((g_scan_sched.next_ms() - now_ms) / 1000)
+                          : (unsigned long)(lm_wifi_scan::policy_delay_ms(g_policy, 0, unseen_s()) / 1000),
+                      g_scan_decayed ? " (decayed: network unseen for a long time)" : "");
+      }
+      if (g_improv_scan.on_sweep_done(g_hop.found(), now_ms) ==
+          lm_wifi_scan::ImprovScanReport::Action::kReportNotFound) {
+        // Tell the provisioning app instead of letting it time out on "waiting for the
+        // device to join": Improv error UNABLE_TO_CONNECT (state back to AUTHORIZED, so
+        // it can re-send). The creds stay committed and the background rescan goes on —
+        // the board still joins if the AP appears, and that lease clears the error.
+        improv_ble_set_error(IMPROV_ERROR_UNABLE_TO_CONNECT);
+        g_improv_join.forget();  // the app's retry SendWifi is a fresh join, never a ride
+        Serial.printf("[t=%lu] [ble] \"%s\" not found in %lu sweeps over %lu s (directed probe "
+                      "incl.) — Improv error UNABLE_TO_CONNECT; creds kept, background rescan "
+                      "continues\n", (unsigned long)now_ms, g_ssid,
+                      (unsigned long)g_improv_scan.misses(),
+                      (unsigned long)((now_ms - g_improv_scan.started_ms()) / 1000));
+      }
+      esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);  // back on the join channel
     }
   }
   // Kick the state machine: (re)send auth periodically until associated (once creds committed AND
   // the PMK is derived). Gating on ns_pmk_ready() sequences the ~1.8s PBKDF2 (pure CPU, radio
   // yielded to BLE by coex_update) BEFORE the WiFi-active join, so the join is short + the 4-way's
   // first EAPOL finds the PMK ready (immediate M2) — the link isn't dragged through a long join.
-  if (st == AUTH && g_creds_ready && ns_pmk_ready() && millis() - t > 200) {
+  // Only toward an AP a scan actually saw (g_scan_matched): with no match g_bssid is
+  // whatever the previous network left there — auth to that AP got answered, the assoc for
+  // the new SSID then stalled, and the AUTH<->ASSOC churn kept the background rescan from
+  // ever coming due. The rescan finds the AP and sets the match. Not while a sweep has the
+  // radio on another channel either.
+  // Exception: an Improv fresh join still looking for its AP (g_improv_scan armed) keeps
+  // authenticating toward the BSSID latched for THIS SSID (scan cache / an earlier sweep —
+  // never a previous network's) between its sweeps. A sweep can miss an AP that is there:
+  // on the iOS bench, with the iPhone holding the BLE link, every sweep for ~8 s missed the
+  // AP the board had been leased on a second earlier, the join never sent an auth, and the
+  // app got UNABLE_TO_CONNECT. An auth answer proves the AP and disarms the report.
+  bool auth_target = g_scan_matched || (g_improv_scan.armed() && g_latch_known);
+  if (st == AUTH && g_creds_ready && ns_pmk_ready() && auth_target && !g_hop.active() &&
+      autonomous((uint32_t)millis()) && millis() - t > 200) {
     static bool deauthed = false;  // once per boot, to this AP (see build_deauth)
     uint32_t now_ms = (uint32_t)millis();
     bool stable = !lm_sta_mac::random_mac_is_build_default() && !g_mac_fallback;
@@ -2013,7 +2599,10 @@ void netstack_loop() {
       }
       deauthed = true;
     }
-    if (stable && g_authw.give_up(now_ms, g_mac_fallback)) {
+    // Only when a scan actually saw the AP: an absent AP (powered off, still booting) isn't
+    // ignoring our MAC, so it must not cost the board its stable MAC/IP once it is back.
+    if (stable && g_scan_matched && (g_force_giveup || g_authw.give_up(now_ms, g_mac_fallback))) {
+      g_force_giveup = false;
       // Last resort: this AP won't talk to the factory MAC (it is still holding a stale
       // station for it). Join as a per-boot random MAC instead — a new lease/IP, but online.
       uint8_t rnd[4];
@@ -2064,28 +2653,34 @@ void netstack_loop() {
     static uint32_t redirect_first_ms = 0, redirect_last_ms = 0;
     char s[33], p[65];
     if (improv_ble_take_credentials(s, sizeof s, p, sizeof p)) {
-      // A central that missed our Improv result re-writes wifi-settings — often several times
-      // (the redirect below points at the lease IP, and if the central can't confirm it, its
-      // provisioning flow retries the SendWifi). If those creds match the network we're ALREADY
-      // associated to, tearing the link down (st=AUTH) drops any in-flight client — e.g. a map
-      // upload mid-WSS — and re-runs auth/4-way/TLS for nothing. Treat a duplicate SendWifi for
-      // the current SSID as idempotent: keep the link and just re-answer the redirect.
-      lm_wifi::Provision pa = lm_wifi::on_provision(g_creds_ready, g_leased || st == DONE,
-                                                    g_ssid, g_pass, s, p);
-      if (pa == lm_wifi::Provision::kKeepJoining) {
-        // Already joining this network (from the stored creds): let that join finish and
-        // answer the redirect on its lease, instead of restarting it.
-        ble_creds_pending = true;
-        redirect_first_ms = 0;
-        improv_ble_set_state(IMPROV_STATE_PROVISIONING);
-        Serial.printf("[t=%lu] [ble] wifi-settings received (ssid=%s) — already joining that "
-                      "network, PROVISIONING\n", (unsigned long)millis(), s);
-      } else if (pa == lm_wifi::Provision::kKeepJoined) {
+      // The user's rule: a Wi-Fi join triggered through Improv is ALWAYS fresh — scan and
+      // join right then — even for the network the board is already on, or already joining
+      // from its stored creds. (Waiting on that stored join left the Improv central to time
+      // out: the join runs on the background rescan backoff, 5 s up to 60 s, and may be
+      // aimed at a cached BSSID/channel a phone hotspot has since moved off.) A duplicate
+      // SendWifi therefore drops an in-flight WSS session — the accepted trade-off. The only
+      // exception (wifi_creds.h ImprovJoin): the same creds re-sent within
+      // kImprovCoalesceMs of the fresh join they would restart ride it, so a central that
+      // missed the result and re-sends in a burst can't restart the join forever — that
+      // join still reaches its lease and answers the redirect below.
+      uint32_t now_ms = (uint32_t)millis();
+      bool same_creds = g_creds_ready && lm_wifi::same(g_ssid, g_pass, s, p);
+      lm_wifi::ImprovProvision pa =
+          g_improv_join.on_receive(g_creds_ready, g_ssid, g_pass, s, p, now_ms);
+      if (pa == lm_wifi::ImprovProvision::kRideFreshJoin) {
         redirect_first_ms = 0;  // re-arm the resend window so the central gets another redirect
+        redirect_last_ms = 0;
         ble_creds_pending = true;
-        Serial.printf("[t=%lu] [ble] wifi-settings re-received (ssid=%s) — already associated, "
-                      "re-answering redirect (link kept)\n", (unsigned long)millis(), s);
+        if (!g_leased) improv_ble_set_state(IMPROV_STATE_PROVISIONING);
+        Serial.printf("[t=%lu] [ble] wifi-settings re-received (ssid=%s) — riding the fresh join "
+                      "started %lu ms ago (%s)\n", (unsigned long)now_ms, s,
+                      (unsigned long)(now_ms - g_improv_join.started_ms()),
+                      g_leased ? "leased: re-answering redirect" : "still joining");
       } else {
+        // Tear down the association we hold (or are building): disassoc + deauth to the AP
+        // we're latched to, so it drops us before the new auth (same AP or not).
+        bool was_linked = st != AUTH;
+        if (g_ap_latched && was_linked) netstack_prepare_restart();
         strncpy(g_ssid, s, sizeof g_ssid - 1);
         strncpy(g_pass, p, sizeof g_pass - 1);
         g_ssid[sizeof g_ssid - 1] = 0;
@@ -2100,12 +2695,32 @@ void netstack_loop() {
         // Re-latch the scan cache for THIS SSID and restart the join from AUTH.
         g_ap_latched = false;
         st = AUTH;
-        // Start deriving the PMK NOW (off the hot path), overlapped with auth/assoc, so it's ready
-        // by the 4-way and we never freeze the loop (which would drop the BLE link mid-join).
-        ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass));
+        inited = false;  // the 4-way re-inits for the new AP / PMK
+        drop_link_for_new_network();
+        on_provisioned();
+        // Scan NOW, whatever the cache says: the cached BSSID/channel may be stale (a phone
+        // hotspot picks its channel each time it starts). The forced sweep runs on the next
+        // pass right after the latch, holding the auth until it lands; the reset schedule
+        // means a miss rescans on the backoff's FIRST step (5 s), not wherever the stored
+        // join's backoff had reached (up to 60 s).
+        g_scan_sched.due(false, 0);  // disarm + reset the backoff
+        g_force_sweep = true;
+        g_improv_scan.on_fresh_join(now_ms);  // an SSID no sweep sees is reported (wifi_scan.h)
+        g_authw.reset();  // a fresh join gets a fresh unanswered-auth clock
+        // Start deriving the PMK NOW (off the hot path), overlapped with auth/assoc, so it's
+        // ready by the 4-way and we never freeze the loop (which would drop the BLE link
+        // mid-join). Same creds as committed: the PMK (derived, or deriving) is already theirs.
+        if (!same_creds)
+          ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass,
+                       strlen(g_pass));
         ble_creds_pending = true;
+        redirect_first_ms = 0;  // the redirect goes out on THIS join's lease
+        redirect_last_ms = 0;
         improv_ble_set_state(IMPROV_STATE_PROVISIONING);
-        Serial.printf("[t=%lu] [ble] wifi-settings received (ssid=%s) -> associating + PROVISIONING\n", (unsigned long)millis(), s);
+        Serial.printf("[t=%lu] [ble] wifi-settings received (ssid=%s%s) -> fresh join: %sscan "
+                      "now, associating + PROVISIONING\n", (unsigned long)now_ms, s,
+                      same_creds ? ", same as committed" : "",
+                      was_linked ? "link dropped, " : "");
       }
     }
     // Send the Provisioned redirect on first lease, then RE-SEND it a few times/sec while the
@@ -2116,6 +2731,20 @@ void netstack_loop() {
     // reliable). Re-advertising for a short window gives the central many chances to catch one
     // copy; it stops once the central disconnects (it got it). Harmless on a good link — the
     // provisioner completes on the first copy and drops the link.
+    if (g_leased && g_improv_scan.take_clear_on_lease()) {
+      // The AP showed up after we reported it not found: clear the Improv error. With the
+      // central still connected the redirect below does it (PROVISIONED + result); with
+      // it gone, set the same state now so a central that reconnects reads success.
+      Serial.printf("[t=%lu] [ble] \"%s\" joined after the not-found report — clearing the "
+                    "Improv error\n", (unsigned long)millis(), g_ssid);
+      if (!improv_ble_central_connected()) {
+        char url[40];
+        snprintf(url, sizeof url, "http://%u.%u.%u.%u/", g_offer_ip[0], g_offer_ip[1],
+                 g_offer_ip[2], g_offer_ip[3]);
+        improv_ble_send_redirect(url);
+        improv_ble_set_state(IMPROV_STATE_PROVISIONED);
+      }
+    }
     if (ble_creds_pending && g_leased && improv_ble_central_connected()) {
       uint32_t now = millis();
       if (redirect_first_ms == 0) redirect_first_ms = now;
@@ -2139,11 +2768,24 @@ void netstack_loop() {
   // link mid-DHCP (the remaining rig-2 failure mode). A tight retry recovers a lost packet quickly
   // so the lease lands fast and the redirect goes out while the link is still up.
   uint32_t dhcp_retry = improv_ble_central_connected() ? 350 : 1200;
+  // A deauth keeps the last offer (g_have_offer) so a rejoin REQUESTs its old address
+  // straight away; if the server neither ACKs nor NAKs it within ~8 REQUESTs, start over
+  // with a DISCOVER (a stale offer must never pin the board lease-less).
+  static uint8_t s_req_tries = 0;
   if (st == DONE && !g_leased && millis() - t > dhcp_retry) {
     t = millis();
+    if (g_have_offer && ++s_req_tries > 8) {
+      g_have_offer = false;
+      Serial.printf("[t=%lu] [dhcp] no ACK for the REQUEST -> re-DISCOVER\n",
+                    (unsigned long)millis());
+    }
     if (g_have_offer) send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
-    else send_dhcp(1, nullptr, nullptr, "DISCOVER");
+    else {
+      s_req_tries = 0;
+      send_dhcp(1, nullptr, nullptr, "DISCOVER");
+    }
   }
+  if (g_leased) s_req_tries = 0;
   // DHCP T1 renewal: once leased, renew at half the lease so a short-lease commercial AP
   // never lets our binding lapse — otherwise the AP reclaims the IP and we go silently
   // unreachable a lease-time after provisioning (the CoolerKids drop). Reuse the broadcast
@@ -2217,7 +2859,8 @@ void netstack_loop() {
   // manifest-less paths (mDNS TXT tls=, TlsInfo over BLE) report "generating". Normally
   // the identity was loaded/generated in setup() and this is a no-op; it only does work
   // when that generation failed (e.g. no heap), retrying on the machine's backoff.
-  if (TLS_SERVER && !g_tls_setup) {
+  // (Not in offline mode: no radio, no :443 — radio_bringup runs tls_init when it leaves.)
+  if (TLS_SERVER && !g_tls_setup && g_radio_up) {
     if (!g_identity_installed) {
       if (device_cert_poll((uint32_t)millis()) && tls_install_identity()) tls_setup_session();
     } else {
@@ -2298,7 +2941,12 @@ void netstack_loop() {
     // it either latches a fresh LISTEN or, if the old slot is still closing, is silently
     // dropped and retried (its previous behavior), never RST-refused.
     {
-      bool live = (s == 2) && (TLS_SERVER ? (PLAYER_MODE ? g_ws_up : g_tls_hs) : true);
+      // Not while closing (g_ws_closing): g_ws_up stays set until the peer's FIN, and
+      // re-arming here on every scan of that wait RST-refused the closing client's own
+      // reconnect whenever its FIN was late or lost (heavy_effect_reachability under
+      // contention: "a silent live session was dropped" — reset at connect).
+      bool live = (s == 2) && !g_ws_closing &&
+                  (TLS_SERVER ? (PLAYER_MODE ? g_ws_up : g_tls_hs) : true);
       ns_tcp_set_serving_live(live ? 1u : 0u);
     }
     // Reclaim a wedged half-open connection. A concurrent-handshake burst (the tls_churn
@@ -2393,6 +3041,65 @@ void netstack_loop() {
         txstuck_since = 0;  // idle (nothing unacked) or not up — peer is fine
       }
     }
+    // Idle-session keepalive. A client that gave up mid-connect (its handshake outlasted
+    // its timeout while the loop was starved) or vanished without a FIN/RST that reached us
+    // can still complete the upgrade: the slot then holds a ghost wss session with nothing
+    // in flight, so the peer-gone gate above never arms, and every NEW client's SYN is
+    // RST-refused by load-shedding (serving_live) until a reboot — measured on 1.12.3 under
+    // a heavy effect (heavy_effect_reachability). After 15 s without a byte from the peer,
+    // send a WebSocket ping: a live client's stack ACKs it (and its WS layer pongs), a
+    // closed socket answers with a RST (the slot re-listens), and a vanished host never
+    // ACKs, so the peer-gone gate reclaims the slot 6 s later.
+    {
+      static uint32_t quiet_since = 0;
+      static uint32_t last_rx = 0;
+      if (s == 2 && TLS_SERVER && g_tls_hs && g_ws_up && ns_tcp_tx_room() >= 2048) {
+        uint32_t rx = ns_tcp_rcv_nxt();
+        if (quiet_since == 0 || rx != last_rx) {
+          quiet_since = millis() == 0 ? 1 : millis();
+          last_rx = rx;
+        } else if (millis() - quiet_since > 15000) {
+          uint8_t ping[kWsSendHeadroom + 1];
+          ws_send(WS_OP_PING, ping + kWsSendHeadroom, 0, kWsSendHeadroom);
+          quiet_since = millis() == 0 ? 1 : millis();
+        }
+      } else {
+        quiet_since = 0;
+      }
+    }
+    // Served-and-closing reclaim. A one-shot GET (the agent's /.well-known/splanc.json
+    // manifest, the cert-trust page) sets g_responding, writes its reply + close_notify and
+    // then waits for the client's FIN. If that FIN (or the client's RST) is lost — e.g. the
+    // 16-slot RX ring overflowed while the loop was starved under a heavy effect, or the
+    // client timed out and dropped its socket — nothing else frees the single slot: the
+    // pre-WS gate above exempts g_responding, the peer-gone gate only fires with unacked
+    // data, and TCP has no keepalive. Every later SYN is then dropped at the peer-match gate
+    // (serving_live is 0) while mDNS and ping still answer: the device looks present but
+    // never accepts a client again. So once the reply is fully ACKed and nothing has moved
+    // either way for 8 s (a live client FINs within milliseconds), re-listen.
+    {
+      static uint32_t close_since = 0;
+      static uint32_t last_prog = 0;
+      if (s == 2 && TLS_SERVER && g_responding && !g_ws_up && ns_tcp_tx_room() >= 2048) {
+        uint32_t prog = ns_tcp_snd_una() + ns_tcp_rcv_nxt();
+        if (close_since == 0 || prog != last_prog) {
+          close_since = millis() == 0 ? 1 : millis();
+          last_prog = prog;
+        } else if (millis() - close_since > 8000) {
+          Serial.println("*** SERVER served-and-closing, no FIN 8s — reclaiming ***");
+          static uint32_t ciss = 0x7000;
+          ns_tcp_listen(g_offer_ip, SERVER_PORT, ciss);
+          ciss += 0x1000;
+          tls_session_reset(); g_tls_hs = false; g_ws_up = false; g_responding = false; g_ws_rxlen = 0;
+          g_bio_tx = g_bio_rx = 0;
+          close_since = 0;
+          last_state = 99;
+          s = ns_tcp_state();
+        }
+      } else {
+        close_since = 0;
+      }
+    }
     if (s == 2 && TLS_SERVER) { // Established: drive the TLS handshake, then read+echo
       if (!g_tls_hs) {
         static int last_hstate = -1;
@@ -2426,6 +3133,7 @@ void netstack_loop() {
           // regression). Clearing it here — ahead of the scan-top update next loop — makes the
           // no-reject guarantee hold across the whole transition, not just from the next scan.
           ns_tcp_set_serving_live(0u);
+          g_ws_closing = true;  // ...and keep it disarmed until the re-listen (scan top)
           mbedtls_ssl_close_notify(&g_ssl);
         } else {
           // The WS pump just drained the TCP rx (mbedtls read the record) — if that re-opened

@@ -1,0 +1,39 @@
+{
+  "name": "skill2__sonnet__p07",
+  "variant": "skill2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p07",
+  "prompt": "fireflies blinking at random",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Fireflies blinking at random \u2014 each LED is its own independent firefly.\n// A random phase offset gives each LED its own blink timing; a brief triangle\n// pulse lights it for a small fraction of its personal cycle, dark the rest.\n// Fixed-point per-LED math; three hash calls furnish phase, rate and hue.\n\nuniform float speed   : 0.3 .. 6.0 = 1.5;       // base blinks per second\nuniform float density : 0.02 .. 0.35 = 0.10;     // fraction of cycle spent lit\nuniform float scatter : 0.0 .. 1.0 = 0.50;       // rate variation between fireflies\nuniform vec3  warm    : color = 1.0, 0.92, 0.15;  // warm yellow-green hue\nuniform vec3  cool    : color = 0.45, 0.90, 0.05; // cooler green hue\nuniform float glow    : 0.0 .. 0.08 = 0.004;     // faint always-on ambient\n\n// State computed once per frame in update(); shared by all shade() calls.\nstate fixed kspeed;\nstate fixed khalf_d;   // density / 2\nstate fixed kinv_hd;   // 1 / (density / 2) = 2 / density  (reciprocal avoids per-LED division)\nstate fixed kscatter;\nstate float  ktime;\n\nvoid update() {\n    kspeed   = fixed(speed);\n    khalf_d  = fixed(density) * fixed(0.5);\n    kinv_hd  = fixed(2.0) / fixed(density);   // once per frame \u2014 safe here\n    kscatter = fixed(scatter);\n    ktime    = time;\n}\n\nvec3 shade(Led led) {\n    float f = float(led.idx);\n\n    // Three independent random values: phase offset, rate nudge, hue blend.\n    fixed r_phase = fixed(hash(f));\n    fixed r_rate  = fixed(hash(f * 1.618 + 0.5));\n    float  r_hue  = hash(f * 2.718 + 0.3);\n\n    // Personal blink rate (turns/s): base \u00b1 scatter/2\n    fixed rate = kspeed * (fixed(1.0) + (r_rate - fixed(0.5)) * kscatter);\n\n    // Phase in cycle [0..1); blink peak lives at ph = 0 / 1 (wraps around)\n    fixed ph = fract(fixed(ktime) * rate + r_phase);\n\n    // Shortest angular distance to the peak \u2014 handles the 0/1 seam\n    fixed dist = min(ph, fixed(1.0) - ph);\n\n    // Triangle pulse: 1 at dist = 0, falls linearly to 0 at dist = half_density\n    fixed bright = clamp((khalf_d - dist) * kinv_hd, fixed(0.0), fixed(1.0));\n\n    // Per-LED hue blend; tiny persistent glow keeps the fixture faintly visible\n    vec3 col = mix(warm, cool, r_hue);\n    return col * (float(bright) + glow);\n}\n```",
+      "is_error": false,
+      "session_id": "353f2183-2f01-4bc5-9695-b09ec5d7a5cb",
+      "wall_s": 251.5,
+      "duration_api_ms": 249656,
+      "cost_usd": 0.2585961,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 16812,
+        "cache_read_input_tokens": 11317,
+        "cache_creation_input_tokens": 502
+      },
+      "thinking_tokens": 16007,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1189
+    }
+  ],
+  "started": "2026-10-23T00:29:37",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.2586,
+  "total_wall_s": 251.5,
+  "program": "firmware/fx_perf_bench/agent/skill2__sonnet__p07.fx"
+}

@@ -11,6 +11,13 @@ Environment (systemd reads /etc/splanc-bridge/bridge.env):
 
 Every output is optional and retried: the service runs (and keeps the other
 screen going) with no HDMI attached, no HAT, or no bridge running yet.
+
+Frame pacing (OLED): while something moves (a slide, the list highlight, the
+boot logo) the loop draws at up to MAX_FPS, slowed so that drawing + pushing a
+frame takes at most half of one core (FRAME_CPU_SHARE of the measured cost);
+otherwise it polls every IDLE_TICK and only draws when what's shown changed.
+A button press wakes the loop at once. The unit runs it at Nice=10, so the
+bridge's own work always wins the CPU.
 """
 
 from __future__ import annotations
@@ -24,12 +31,15 @@ import threading
 import time
 from typing import Optional
 
-from . import control, render_hdmi, render_oled
+from . import boot, control, render_hdmi, render_oled
 from .fb import Framebuffer, PngSink
 from .status import StatusWatcher
 from .ui import OledUI
 
-TICK = 0.1  # OLED/UI loop period (s)
+TICK = 0.1  # OLED/UI loop period when nothing moves (s)
+IDLE_TICK = TICK
+MAX_FPS = 30.0  # animation frame-rate cap
+FRAME_CPU_SHARE = 0.5  # at most this much of a core goes to drawing animation frames
 HDMI_RETRY = 15.0
 OLED_RETRY = 60.0
 HDMI_REFRESH = 30.0  # repaint at least this often (clock text, recovery)
@@ -82,6 +92,7 @@ class App:
         button_factory=None,
         vt: int = 8,
         rotate: int = 2,
+        boot_frames="auto",
     ):
         self.clock, self.wall = clock, wall
         self.hdmi_mode, self.oled_mode = hdmi, oled
@@ -90,7 +101,14 @@ class App:
         self.watcher = StatusWatcher(status_path)
         self.done_q: "queue.Queue" = queue.Queue()
         self.ui = OledUI(self._dispatch, clock)
+        self.inputs: "queue.Queue" = queue.Queue()  # (kind, key, at) from the button thread
+        self.wake = threading.Event()
+        self.frames = boot.load() if boot_frames == "auto" else boot_frames
+        self._booted = False
+        self.frame_cost = 0.0  # EWMA seconds to render + push one OLED frame
+        self._oled_key = None
         self.button_factory = button_factory
+        self._sync_fixtures()
         self.stop = threading.Event()
         self.oled = None
         self.oled_kind: Optional[str] = None
@@ -139,21 +157,41 @@ class App:
             except Exception as e:  # luma/spidev/gpio missing or busy
                 log(f"OLED ({kind}) unavailable: {e}")
                 return
+        if not self._booted:
+            self._booted = True
+            if self.frames is not None:
+                self.ui.start_boot(self.frames.duration)  # the logo plays while the bridge starts
         if self.buttons is None and (self.oled_kind != "png" or self.button_factory):
             try:
                 from . import hat
 
                 self.buttons = hat.Buttons(
-                    self.ui.press, self.ui.release, factory=self.button_factory
+                    lambda k: self._input("press", k),
+                    lambda k: self._input("release", k),
+                    factory=self.button_factory,
                 )
             except Exception as e:
                 log(f"HAT buttons unavailable: {e}")
 
-    def _oled_frame(self) -> None:
+    def _sync_fixtures(self) -> None:
+        """Hand the fixture list (and each detail's row count) to the menu."""
+        st, now = self.watcher.status, self.wall()
+        self.ui.set_fixtures(
+            [p.key for p in st.players],
+            lambda k: render_oled.detail_row_count(st.player(k), now),
+        )
+
+    def _input(self, kind: str, key: str) -> None:
+        """A button event (gpiozero's thread): queued for the UI thread, which wakes."""
+        self.inputs.put((kind, key, self.clock()))
+        self.wake.set()
+
+    def _oled_frame(self) -> Optional[object]:
         if self.oled is None:
-            return
+            return None
         st = self.watcher.status
-        self.ui.code_visible = st.active_code(self.wall()) is not None
+        now = self.wall()
+        self.ui.code_visible = st.active_code(now) is not None
         view = self.ui.view()
         try:
             want = (CONTRAST_DIM if view.dimmed else CONTRAST_NORMAL, view.asleep)
@@ -162,17 +200,36 @@ class App:
                 (self.oled.hide if view.asleep else self.oled.show)()
                 self._oled_state = want
             if view.asleep:
-                return
-            img = render_oled.render(st, view, now=self.wall())
+                return view
+            # Idle: draw only when what's shown changed (the clock ticks it once a
+            # second for the countdowns and "12 s ago" texts).
+            key = (st, view, int(now))
+            if not view.animating and key == self._oled_key:
+                return view
+            self._oled_key = key
+            t0 = time.perf_counter()
+            img = render_oled.render(st, view, now=now, frames=self.frames)
             data = img.tobytes()
             if data != self._oled_last:
                 self.oled.display(img)
                 self._oled_last = data
+                cost = time.perf_counter() - t0
+                self.frame_cost = (
+                    cost if self.frame_cost == 0 else 0.8 * self.frame_cost + 0.2 * cost
+                )
+            return view
         except Exception as e:
             log(f"OLED write failed, will retry: {e}")
             self.oled = None
             self._oled_last = None
+            self._oled_key = None
             self._oled_state = (None, None)
+            return None
+
+    def frame_interval(self) -> float:
+        """Seconds between animation frames: the fps cap, or slower when the panel
+        path is slow (render + push within FRAME_CPU_SHARE of a core)."""
+        return max(1.0 / MAX_FPS, self.frame_cost / FRAME_CPU_SHARE)
 
     # --- HDMI ------------------------------------------------------------------
     def _open_hdmi(self) -> None:
@@ -232,9 +289,19 @@ class App:
             self.stop.wait(0.25)
 
     # --- main loop -------------------------------------------------------------
-    def step(self) -> None:
+    def step(self) -> float:
+        """One UI/OLED iteration. Returns how long to wait before the next one."""
+        self.wake.clear()
         if self.watcher.poll():
-            self.ui.activity()
+            if self.watcher.salient_changed:
+                self.ui.activity()  # not for "seen"/perf ticks: those don't wake the screen
+            self._sync_fixtures()
+        while True:
+            try:
+                kind, key, at = self.inputs.get_nowait()
+            except queue.Empty:
+                break
+            (self.ui.press if kind == "press" else self.ui.release)(key, at=at)
         while True:
             try:
                 done, ok, msg = self.done_q.get_nowait()
@@ -243,7 +310,8 @@ class App:
             done(ok, msg)
         self.ui.tick()
         self._open_oled()
-        self._oled_frame()
+        view = self._oled_frame()
+        return self.frame_interval() if view is not None and view.animating else IDLE_TICK
 
     def run(self) -> None:
         t = None
@@ -251,8 +319,13 @@ class App:
             t = threading.Thread(target=self._hdmi_loop, daemon=True)
             t.start()
         while not self.stop.is_set():
-            self.step()
-            self.stop.wait(TICK)
+            t0 = self.clock()
+            wait = self.step()
+            # A press (or stop) cuts the wait short; animation frames are paced
+            # from the start of the last one.
+            self.wake.wait(max(0.0, wait - (self.clock() - t0)))
+            if self.stop.is_set():
+                break
         if t:
             t.join(2)
         self.close()
@@ -280,6 +353,7 @@ def main(argv=None) -> int:
 
     def stop(*_):
         app.stop.set()
+        app.wake.set()
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)

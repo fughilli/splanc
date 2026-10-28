@@ -208,15 +208,19 @@ test("via the relay: player list, deploy + align, uniforms/crossfade/brightness 
     c.control(["all"], { xf: { pos: 0.25 }, bri: 0.5 });
     await until(() => players.every((p) => p.crossfade === 0.25 && p.brightness === 0.5), "xf + brightness");
 
-    // The framerate autoscaler (FUG-82): a step shows in the player list; an abort
-    // (the effect parked) reaches the app at once.
-    const fpsMsgs: { name: string; aborted: boolean }[] = [];
+    // The framerate autoscaler (FUG-82): a step shows in the player list; the
+    // effect starting to lag (still playing, below the floor) reaches the app at once.
+    const fpsMsgs: { name: string; lagging: boolean; achieved_fps: number }[] = [];
     c.events.onFps = (m) => fpsMsgs.push(m);
-    players[1]!.pushFpsState({ targetFps: 0, currentFps: 40, auto: true, aborted: false });
+    players[1]!.pushFpsState({ targetFps: 0, currentFps: 40, auto: true, lagging: false });
     await until(() => c.players.find((p) => p.name === "Hall")?.fps?.current === 40, "fps in the player list", 10_000);
-    players[1]!.pushFpsState({ targetFps: 0, currentFps: 25, auto: true, aborted: true });
-    await until(() => fpsMsgs.some((m) => m.name === "Hall" && m.aborted), "fps abort pushed");
-    await until(() => c.players.find((p) => p.name === "Hall")?.fps?.aborted === true, "parked in the list", 10_000);
+    players[1]!.pushFpsState({ targetFps: 0, currentFps: 17, auto: true, lagging: true, achievedFps: 17 });
+    await until(() => fpsMsgs.some((m) => m.name === "Hall" && m.lagging && m.achieved_fps === 17), "lagging pushed");
+    await until(() => c.players.find((p) => p.name === "Hall")?.fps?.lagging === true, "lagging in the list", 10_000);
+    assert.equal(c.players.find((p) => p.name === "Hall")?.fps?.achieved, 17);
+    // Back on target: one push for the change.
+    players[1]!.pushFpsState({ targetFps: 0, currentFps: 25, auto: true, lagging: false, achievedFps: 25 });
+    await until(() => fpsMsgs.some((m) => m.name === "Hall" && !m.lagging), "lag cleared pushed");
 
     // An unknown uniform is reported (asynchronously), not silently dropped.
     const errs: string[] = [];
@@ -401,6 +405,75 @@ test("latency: ping, device probe and slider -> player, relay vs direct", async 
   } finally {
     relayC.close();
     lanC.close();
+  }
+});
+
+test("group_capture: prepare reads maps, start arms every player on one shared epoch, set_pose stores poses", async () => {
+  const c = liveClient();
+  try {
+    await c.connect();
+    await until(() => c.players.every((p) => p.connected), "players connected");
+    // Different device clocks: the bridge must convert ONE hub epoch per player.
+    players[0]!.clockOffsetMs = 12_345;
+    players[1]!.clockOffsetMs = -7_000;
+    for (const p of players) p.features = [...p.features, "group_capture", "fixture_pose", "stored_map"];
+
+    // A player the previous test dropped may still be re-opening its session.
+    const prep = await until(async () => {
+      const r = await c.query("group_capture", { action: "prepare" }, ["all"]);
+      return r.ok && r.results!.every((x) => x.ok) ? r : null;
+    }, "every player prepared", 20_000);
+    for (const r of prep.results!) {
+      const v = r.result as { map: { leds: unknown[] } | null; led_count: number };
+      assert.ok(r.ok && v.map && v.map.leds.length > 0, JSON.stringify(r));
+      assert.ok(v.led_count > 0);
+    }
+    const ids = prep.results!.map((r) => r.player.id);
+    const n = (prep.results![0]!.result as { led_count: number }).led_count;
+    // Players the earlier tests restarted may still be settling; the start is
+    // idempotent (a restarted pattern), so retry until both take it.
+    let t0 = 0;
+    const start = await until(async () => {
+      t0 = performance.now();
+      const r = await c.query("group_capture", {
+        action: "start",
+        epoch_lead_ms: 1000,
+        members: ids.map((id, i) => ({ to: id, options: { ledCount: n, symbols: 4, bitPeriodMs: 100, codeOffset: i * n, codeSpace: 2 * n } })),
+      });
+      return r.ok && r.results!.every((x) => x.ok) ? r : null;
+    }, "every player armed", 30_000);
+    const d = start.data as { hub_epoch_ms: number; hub_now_ms: number };
+    assert.ok(d.hub_epoch_ms < d.hub_now_ms && d.hub_now_ms - d.hub_epoch_ms < 10_000, JSON.stringify(d));
+    for (const r of start.results!) {
+      const v = r.result as { code_params: { ledCount: number }; skew_bound_ms: number };
+      assert.ok(r.ok, JSON.stringify(r));
+      assert.equal(v.code_params.ledCount, 2 * n);
+    }
+    // Each player got the SAME instant, expressed in its own clock.
+    const inHub = players.map((p) => p.mapping!.epochMs - p.clockOffsetMs);
+    assert.ok(Math.abs(inHub[0]! - inHub[1]!) < 25, `epochs ${inHub}`);
+    assert.ok(Math.abs(inHub[0]! - (t0 - 1000)) < 5_000);
+    assert.deepEqual(
+      players.map((p) => p.mapping!.options["codeOffset"]).sort(),
+      [0, n],
+    );
+
+    const stop = await c.query("group_capture", { action: "stop" }, ["all"]);
+    assert.equal(stop.ok, true, JSON.stringify(stop));
+    assert.ok(players.every((p) => p.mapping === null));
+
+    const pose = { room: "living", translation: [1.5, 0, -0.5], rotation: [0, 0.38268343, 0, 0.92387953], scale: 1.01 };
+    const sp = await c.query("group_capture", { action: "set_pose", poses: [{ to: ids[1], pose }] });
+    assert.equal(sp.ok, true, JSON.stringify(sp));
+    assert.equal(sp.results!.length, 1);
+    // The hub keeps it (the agent's room model); the device too when its session
+    // saw the fixture_pose feature at connect time.
+    assert.deepEqual(hub.pose(ids[1]!)?.translation, [1.5, 0, -0.5]);
+    const target = players.find((p) => p.mac.toUpperCase() === ids[1]!.toUpperCase())!;
+    if ((sp.results![0]!.result as { on_device?: boolean }).on_device) assert.deepEqual(target.pose?.["translation"], [1.5, 0, -0.5]);
+  } finally {
+    for (const p of players) p.clockOffsetMs = 0;
+    c.close();
   }
 });
 

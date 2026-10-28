@@ -1,0 +1,20 @@
+{
+  "name": "app2_est__sonnet__p14",
+  "variant": "app2_est",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p14",
+  "prompt": "a scanner beam sweeping left to right",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [],
+  "started": "2026-10-23T00:49:34",
+  "base_program": "firmware/fx_perf_bench/agent/app2__sonnet__p14.fx",
+  "base_estimate": [20.04, [], []],
+  "est_outcome": "within_budget",
+  "status": "ok",
+  "n_calls": 0,
+  "total_cost_usd": 0,
+  "total_wall_s": 0,
+  "program": "firmware/fx_perf_bench/agent/app2_est__sonnet__p14.fx"
+}

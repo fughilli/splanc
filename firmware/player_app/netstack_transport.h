@@ -49,12 +49,45 @@ void netstack_restore_credentials(const char *ssid, const char *pass);
 // rekey is visible even when it scrolls past the serial-log tail).
 uint32_t netstack_rekey_count(void);
 
+// Diagnostics for the periodic status line: TCP receive/retransmit counters, RX-ring
+// high-water / full polls, and the longest gap between two netstack_loop() passes since the
+// last call (reset on read). Formats one "[net] ..." fragment into `buf`.
+int netstack_net_stats(char *buf, size_t cap);
+
+// Live-control latency stamps (docs/design/live-control.md "Measuring the budget"): the
+// transport's view of the newest inbound frame, in esp_timer microseconds truncated to 32
+// bits. Maintained only in the LM_CTRL_TRACE build (:netstack_transport_ctrltrace, linked by
+// :player_app_netstack_ctrltrace), which copies them into its per-message trace at dispatch;
+// in every other build they stay zero and the reply hook is never called.
+struct NsRxStamps {
+  volatile uint32_t empty_poll_us;  // the last RX-ring poll that found the ring empty
+  volatile uint32_t reap_us;        // the frame being handled now was taken off the ring
+  volatile uint32_t data_reap_us;   // ... the newest frame that carried TCP payload
+  volatile uint32_t data_empty_us;  // empty_poll_us as of that reap (it arrived after this)
+  volatile uint32_t l3_reap_us;     // reap_us / empty_poll_us as of the newest L3 packet
+  volatile uint32_t l3_empty_us;    //   (a UDP datagram: OSC)
+  volatile uint32_t decoded_us;     // mbedtls_ssl_read last returned a record
+};
+extern NsRxStamps g_ns_rx_stamps;
+// Called after each WS message dispatch's reply: 1 = sent, 2 = dropped (best-effort reply
+// on a full send window), 0 = no reply. nullptr = nobody listening (the default).
+extern void (*g_ns_reply_hook)(int outcome);
+
 // PROVIDED BY main.cpp (the shared dispatch seam). Handle one received binary WS message
 // (`in`/`len`): upload-chunk streaming OR lm_player_handle + persistence + poll_after_message,
 // identical to the vendor ws:81 / wss:443 paths. Writes the reply into the app's tx buffer and
 // sets *reply to it (writable, with kWsSendHeadroom bytes before it); returns the reply
 // length (>0), 0 (no reply), or <0 (drop the connection).
 int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply);
+
+// Whether the reply lm_ws_dispatch just returned is a best-effort live-control reply
+// (a ControlAck, or a legacy set_uniforms' playback_state) that the transport may drop
+// when its send window can't take it, instead of blocking RX behind a full window.
+bool lm_ws_reply_droppable(void);
+
+// A UDP datagram for the native OSC port (udp/9000): stash it for the next frame
+// (latest value per address). Called on the network task; must not block.
+void lm_netstack_osc_rx(const uint8_t *data, size_t len);
 
 // PROVIDED BY main.cpp. Persist the active WiFi credentials (NVS "ssid"/"pass", the keys
 // the vendor build uses) — called once a freshly provisioned network has leased. Returns
@@ -79,5 +112,58 @@ void lm_publish_tls_info(const char *state, const char *cert_sha256, bool persis
 // Writes the DNS message into `out`; returns its length, 0 = nothing to send, <0 = error.
 int lm_mdns_reply(const uint8_t *query, size_t qlen, uint16_t src_port, const uint8_t *ip,
                   uint8_t *out, size_t cap, bool *unicast);
+
+// --- Wi-Fi rejoin policy (docs/design/wifi-rejoin-policy.md) -------------------------
+// mode: 0 auto (5 s -> scan_cap_s backoff; opt-in decay to sparse_interval_s after
+// decay_after_h hours unseen, 0 = off), 1 fixed (every interval_s), 2 manual (only in a join
+// window opened by netstack_wifi_rejoin or a new provision), 3 offline (radio off).
+struct NetstackWifiPolicy {
+  uint8_t mode;
+  uint32_t scan_cap_s;
+  uint32_t interval_s;
+  uint32_t decay_after_h;
+  uint32_t sparse_interval_s;
+};
+// Apply a policy. Before netstack_setup() it is the boot policy (offline: the radio is
+// never started); later it takes effect at once (to offline: silent now, radio off from
+// the next boot; from offline: the radio comes up / wakes and rejoins). Never reboots.
+void netstack_set_wifi_policy(const NetstackWifiPolicy *p);
+// Try to (re)join now: an immediate scan (manual: also a 2 min join window).
+void netstack_wifi_rejoin(void);
+// A new provision changed the mode itself (offline -> auto); true once per change.
+bool netstack_take_policy_change(NetstackWifiPolicy *out);
+// Whether a lease is expected right now: the policy lets the board join on its own
+// (not offline; manual only inside a join window) AND the network was seen this boot.
+// The OTA health check only requires a lease when it is — a fresh update never rolls
+// back merely because the AP is gone.
+bool netstack_wifi_wants_network(void);
+// Whether the data plane is busy: a client on the :443 slot (a live wss session, or one
+// mid-accept / mid-TLS-handshake / being served a GET) on a leased link, with no sweep
+// or PMK derivation in flight. The player runs its loop task AT render's priority only
+// then (main.cpp loop()), and one below it for everything else (joins, scans, DHCP).
+bool netstack_data_plane_active(void);
+// Whether netstack_loop() has work right now: a frame in the MAC RX ring it hasn't taken
+// (one descriptor scan, no copy) or data in the TCP send window (its pump + RTO). Loop task
+// only. The player's loop() polls this while a render frame is in progress and runs
+// netstack_loop() only when it is true (main.cpp loop()).
+bool netstack_service_due(void);
+// Seconds the network had already been unseen before this boot (persisted by the app).
+void netstack_set_unseen_base(uint32_t seconds);
+// The live link state (WifiLinkState numbering) for the app / agent / console.
+struct NetstackWifiStatus {
+  uint8_t state;
+  bool radio_on;
+  bool decayed;
+  uint32_t next_scan_s;
+  uint32_t scans;
+  uint32_t unseen_s;
+  char ssid[33];
+};
+void netstack_wifi_status(NetstackWifiStatus *out);
+
+// PROVIDED BY the app (weak no-op default in the transport, so the OTA loader needn't).
+// A console line starting "WIFI " that the transport's own link diagnostics (WIFI SCAN /
+// DHCP / GIVEUP) don't handle — the player parses its Wi-Fi policy commands here.
+void netstack_console_hook(const char *line, size_t len);
 
 #endif  // FIRMWARE_PLAYER_APP_NETSTACK_TRANSPORT_H_

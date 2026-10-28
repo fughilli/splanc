@@ -201,8 +201,71 @@ let
     "--analyzer-channel-map"
     (lib.escapeShellArg analyzerChannelMap)
   ];
+
+  # Concurrency caps (see the hitl.maxConcurrent* options below). Rendered into the
+  # daemon's ExecStart: the host-wide --max-concurrent and one per-class
+  # --max-concurrent-class TYPE=N (class = the unit's catalog type).
+  cfgConc = config.hitl;
+  classCapArgs = lib.mapAttrsToList
+    (cls: n: "--max-concurrent-class ${lib.escapeShellArg "${cls}=${toString n}"}")
+    cfgConc.maxConcurrentPerClass;
+
+  concurrencyOptions = { config, lib, ... }: {
+    # Reservation-concurrency knobs, per rig. Two layers, both enforced by the daemon's
+    # FIFO scheduler (hitl-reserve engine.nextAssignmentLocked):
+    #
+    #  * maxConcurrent — the host-wide ceiling on live reservation environments. It was
+    #    introduced (#170) at 2 fleet-wide because a rig running 4 DUTs' flash/
+    #    provision/TLS at once over ONE shared USB 2.0 bus + a weak SBC CPU flaked the
+    #    "ws never came up" checks. On rig-1 that 2 then counted the two NETWORK Pi DUTs
+    #    (led-mapper-pi: no USB, no flash) against the same budget, so two Pi jobs left
+    #    both USB C6 boards idle while 70+ C6 jobs queued.
+    #  * maxConcurrentPerClass — a cap per unit class (catalog type, e.g. esp32c6 /
+    #    led-mapper-pi), layered under maxConcurrent. It's where the USB-bus protection
+    #    now lives: the esp32c6 class cap bounds concurrent USB flash/monitor/JTAG work
+    #    (rig-1/rig-2 each carry 4 C6s: 2 on the Pi 5's own ports + 2 on a self-powered
+    #    USB 2.0 hub, since the 3 A supply limits the Pi's USB to 600 mA), while network
+    #    DUTs get their own budget. A class at its cap never idles another class's free
+    #    units, and admission stays FIFO (strictly in order within a class; the oldest runnable
+    #    waiter always takes a freed slot, so no class starves).
+    #
+    # The shared RADIO isn't a concurrency-cap concern anymore: airtime-critical phases
+    # take the AP-exclusive flock (/run/hitl-ap-lock, #228) and BLE provisioning the
+    # per-rig adapter lock (/run/hitl-provision), whatever the cap. So on the Pi 5 rigs
+    # the host ceiling is the sum of the class caps (rig-1: 4 C6 + 2 Pi = 6; rig-2: 4)
+    # and the per-class caps do the shaping. If #170's symptoms ("ws never came up",
+    # USB resets) come back at 4 concurrent C6s, drop esp32c6 to 3. Every other host
+    # (the Pi 3 rig-3 with its single USB bus, one-off boxes) keeps the original host-wide 2 and no class caps.
+    options.hitl.maxConcurrent = lib.mkOption {
+      type = lib.types.ints.unsigned;
+      default =
+        if config.networking.hostName == "hitl-rig-1" then 6
+        else if config.networking.hostName == "hitl-rig-2" then 4
+        else 2;
+      description = "Host-wide cap on concurrently-active reservations (0 = unlimited).";
+    };
+    options.hitl.maxConcurrentPerClass = lib.mkOption {
+      type = lib.types.attrsOf lib.types.ints.positive;
+      default =
+        if config.networking.hostName == "hitl-rig-1" then {
+          # All 4 USB ESP32-C6 boards (2 on-board ports + 2 on the powered hub) ...
+          esp32c6 = 4;
+          # ... and the 2 network led-mapper Pis, the "current 2" they used to share.
+          "led-mapper-pi" = 2;
+        } else if config.networking.hostName == "hitl-rig-2" then {
+          esp32c6 = 4; # its 2 analyzer-tapped C6s + 2 more on the powered USB hub
+        } else { };
+      example = { esp32c6 = 2; "led-mapper-pi" = 2; };
+      description = ''
+        Per-unit-class (catalog unit type) concurrency caps, layered under
+        hitl.maxConcurrent. Unlisted classes are bounded only by the host cap.
+      '';
+    };
+  };
 in
 {
+  imports = [ concurrencyOptions ];
+
   # Headless rig: drop the NixOS manual + man-page closure (groff/texinfo/aspell/…),
   # which otherwise dominates the image and deploy download.
   documentation.enable = false;
@@ -277,6 +340,18 @@ in
   # instead of the driver's broken sequencing. Pi-3-only: the Pi 5's RP1 USB relies
   # on this driver, so never blacklist it there.
   boot.blacklistedKernelModules = lib.optionals isPi3 [ "onboard_usb_dev" ];
+
+  # Pi 5 USB current limit. The rigs are powered by a Waveshare PoE HAT (F), which
+  # does no USB-PD negotiation, so the Pi 5 firmware assumes a 3 A supply and caps
+  # total USB current at 600 mA. Four ESP32-C6 DUTs + the RTL8851BU dongle + a
+  # Saleae exceed that: ports trip over-current, DUTs brown out, HITL goes flaky.
+  # usb_max_current_enable=1 lifts the cap to 1.6 A. ASSUMES the PoE+ supply can
+  # really deliver more than 3 A to the Pi. Pi-5-only (a Pi 3 has no such knob);
+  # config.txt is generated, so this must live here, not as a hand edit on the rig.
+  hardware.raspberry-pi.config.all.options.usb_max_current_enable = lib.mkIf (!isPi3) {
+    enable = true;
+    value = true;
+  };
 
   # Dedicated USB AP radio (RTL8851BU / rtw89), only when SBC_AP_DONGLE=1. A
   # post-boot module (not initrd/kernel), so it rides the deploy_live layer — no SD
@@ -623,16 +698,17 @@ in
           "--podman ${pkgs.podman}/bin/podman"
           "--privileged=${lib.boolToString privilegedContainers}"
           "--state-dir /var/lib/hitl"
-          # Host concurrency cap: never run more than 2 reservation environments at
-          # once on a rig, even where more units are free (rig-1 carries 4). A rig's
-          # single shared USB 2.0 bus + the SBC CPU can't sustain N-wide
-          # flash/provision/TLS without flaking under concurrent CI, so bound peak
-          # concurrency fleet-wide; surplus reservations queue (FIFO) and start as
-          # active ones release — throughput is preserved, only simultaneity is
-          # capped. A no-op on the 1-2 unit rigs (rig-2/rig-3, amd-rig). Relax (raise
-          # or drop) once the netstack RX overhead is trimmed and the bench is proven
-          # flake-free at higher concurrency.
-          "--max-concurrent 2"
+          # Concurrency caps: host-wide + per unit class (see the hitl.maxConcurrent*
+          # options at the top of this module for the why). Surplus reservations
+          # queue (FIFO) and start as active ones release.
+          "--max-concurrent ${toString cfgConc.maxConcurrent}"
+        ] ++ classCapArgs ++ [
+          # Per-station AP link stats (`iw station dump`) for a reservation's own DUT
+          # stations: GET/POST /reservation/{id}/wifi (hitl_client.wifi_stations). The
+          # daemon maps a station IP to its current MAC via NM's dnsmasq leases.
+          "--wifi-iface ${apIface}"
+          "--wifi-leases /var/lib/NetworkManager/dnsmasq-${apIface}.leases"
+          "--iw ${pkgs.iw}/bin/iw"
           # Reservation containers reach the daemon's shared-resource brokers (e.g.
           # the logic analyzer at POST /shared/logic-analyzer) over the podman host
           # gateway; keep the port in sync with --addr above ($HITL_BROKER_URL).

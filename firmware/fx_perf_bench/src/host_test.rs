@@ -56,11 +56,7 @@ fn natives_match_vm() {
                         nat.variant,
                         ops as f64 / n as f64
                     );
-                    // sparkle's q16 computes x^8 exactly; the VM's powf goes through a
-                    // logf whose polynomial is off by up to ~0.13 (see the study,
-                    // "VM math accuracy") — so that pair legitimately differs.
-                    let exact_pow = d.name == "sparkle" && nat.variant == "q16";
-                    let ok = if nat.variant == "f32" { mx <= 2 } else { exact_pow || mean < 3.0 };
+                    let ok = if nat.variant == "f32" { mx <= 2 } else { mean < 3.0 };
                     if !ok {
                         failures.push(format!("{} {} n={n} max={mx} mean={mean:.2}", d.name, nat.variant));
                     }

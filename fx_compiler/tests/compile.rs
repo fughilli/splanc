@@ -1282,3 +1282,88 @@ fn ctxfix_flag_gates_per_led_fixed_build() {
     let float = compile("vec3 shade(Led led){ return vec3(led.pos.x, 0.0, 0.0); }").unwrap();
     assert_eq!(float.fxb[5] & 0x02, 0, "all-float program must NOT set FLAG_USES_CTXFIX");
 }
+
+/// clamp(vecN, float, float) — the GLSL idiom agents write — must broadcast its
+/// scalar bounds (it used to emit CLAMP 3 over 5 stack slots and panic the VM).
+#[test]
+fn clamp_vec_with_scalar_bounds() {
+    let led = Led { pos: [-0.5, 0.25, 1.75], ..Default::default() };
+    let frame = Frame::default();
+    let want = run_shade(
+        "vec3 shade(Led led) { return clamp(led.pos, vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0)); }",
+        &[],
+        led,
+        frame,
+    );
+    assert_eq!(want, (0, 63, 255));
+    for src in [
+        "vec3 shade(Led led) { return clamp(led.pos, 0.0, 1.0); }",
+        "vec3 shade(Led led) { return clamp(led.pos, vec3(0.0, 0.0, 0.0), 1.0); }",
+        "vec3 shade(Led led) { return clamp(led.pos, 0.0, vec3(1.0, 1.0, 1.0)); }",
+        "uniform float hi : 0.0 .. 1.0 = 1.0; vec3 shade(Led led) { return clamp(led.pos * 1.0, 0.0, hi); }",
+    ] {
+        assert_eq!(run_shade(src, &[], led, frame), want, "{src}");
+    }
+    let bad = compile("vec3 shade(Led led) { float x = clamp(0.5, vec2(0.0, 0.0), 1.0); return vec3(x, x, x); }");
+    assert!(bad.is_err());
+}
+
+/// The FX debugger's symbol table names each state variable and each local /
+/// parameter by its VM slot, and running shade() leaves the locals where it says
+/// (docs/design/fx-debugger.md: device locals are reported by slot).
+#[test]
+fn debug_symbols_name_state_and_local_slots() {
+    let src = r#"
+state float phase;
+state vec3 acc[2];
+float tri(float x) { float y = abs(fract(x) * 2.0 - 1.0); return y; }
+void update() { phase = fract(phase + dt); }
+vec3 shade(Led led) {
+  float h = fract(led.pos.x + phase);
+  vec3 c = vec3(h, tri(h), 0.25);
+  return c;
+}
+"#;
+    let c = ledmapper_fx_compiler::compile(src).expect("compiles");
+    let find = |n: &str| {
+        c.symbols
+            .iter()
+            .find(|s| s.name == n)
+            .unwrap_or_else(|| panic!("no symbol {n}"))
+    };
+    assert_eq!(
+        (find("phase").kind, find("phase").slot, find("phase").width),
+        ("state", 0, 1)
+    );
+    assert_eq!(
+        (find("acc").kind, find("acc").slot, find("acc").width),
+        ("state", 1, 6)
+    );
+    assert_eq!((find("x").kind, find("x").func.as_str()), ("param", "tri"));
+    assert_eq!(
+        (find("h").kind, find("h").func.as_str(), find("h").width),
+        ("local", "shade", 1)
+    );
+    assert_eq!(find("c").width, 3);
+    let json = ledmapper_fx_compiler::symbols_json(&c.symbols);
+    assert!(
+        json.contains("\"name\":\"h\",\"kind\":\"local\",\"func\":\"shade\""),
+        "{json}"
+    );
+
+    // Run shade() for one LED: the named locals hold what the source computes.
+    let prog = ledmapper_fx_vm::Program::parse(&c.fxb).unwrap();
+    let mut vm = ledmapper_fx_vm::Vm::new();
+    vm.state[0] = 0.25;
+    vm.clear_scratch();
+    let led = ledmapper_fx_vm::Led {
+        pos: [0.5, 0.0, 0.0],
+        ..Default::default()
+    };
+    let f = ledmapper_fx_vm::Frame::default();
+    vm.run_shade(&prog, &f, &led);
+    let h = vm.locals()[find("h").slot as usize];
+    assert_eq!(h, 0.75);
+    // (`c` is stored-then-returned: the optimizer forwards it on the stack, so
+    // its slots may never be written — a named local can legitimately read 0.)
+}

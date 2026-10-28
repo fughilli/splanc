@@ -114,6 +114,13 @@ is reported through `src/progress.ts` (per call, via AsyncLocalStorage): the MCP
 `notifications/progress` when the call carries a `progressToken` and as `notifications/message` log
 lines (it declares the `logging` capability); the CLI prints it to stderr.
 
+## Bug reports
+
+Every surface has `file_bug` (CLI: `splanc-agent file-bug --title … --description … --severity …`):
+a scrubbed report with diagnostics, a duplicate check, and a pre-filled GitHub link; with the
+user's go-ahead it files directly through the relay's `POST /bugs`, which needs the
+`GITHUB_ISSUES_TOKEN` Worker secret ([docs/design/agent-bug-reports.md](../docs/design/agent-bug-reports.md)).
+
 ## Cloud agents: bridge + relay
 
 Hosted agents can't see the LAN. `splanc-agent bridge --relay <url>` runs the hub on an
@@ -144,7 +151,14 @@ the only player, or all of them in one room): `set_brightness`, `list_uniforms`,
 players: one room-frame image per time), `deploy_effect` (fleet budget check via
 `web/src/effects/multiDevice.ts`, refuses an overrun unless `force`; then a shared
 time base), `set_effect`, `rollback_effect`, `estimate_effect` (offline cost
-model, touches nothing), `measure_effect` (windowed on-device perf stream),
+model, touches nothing), `measure_effect` (windowed on-device perf stream;
+effects slower than 25 fps run at whatever rate they achieve — `lagging`,
+`achieved_fps` — the player never parks them),
+the FX debugger `pause_fx` / `resume_fx` / `step_fx` / `snapshot_fx` /
+`compare_with_preview` (feature `fx_debug`: pause the engine, read its state and
+one LED's VM locals, and replay the stepped frame on the host to classify a
+fixture-vs-preview difference as engine / inputs / output stage; design
+[fx-debugger.md](../docs/design/fx-debugger.md)),
 `list_textures`, `stream_texture`, `stop_texture`, the uniform keypoint tools
 `list_keypoints` / `save_keypoint` / `recall_keypoint` / `blend_keypoints` /
 `delete_keypoint` (feature `keypoints`; design
@@ -157,7 +171,8 @@ decks, crossfade position, live deck), `plot_fixture` (a four-view 3D PNG of the
 map or a posed room, pure-TS rasteriser `src/plot.ts`, capped at 512 KB; colour by
 index / confidence / segment / channel / fixture / an effect frame), `read_sensors` /
 `calibrate_sensors` (feature `sensors`: the on-board IMU, design
-[sensor-core.md](../docs/design/sensor-core.md)), `export_map`
+[sensor-core.md](../docs/design/sensor-core.md)), `get_wifi_policy` /
+`set_wifi_policy` (feature `wifi_policy`, see below), `export_map`
 (the stored map as TouchDesigner CSV or a Chromatik `.lxf`, same serializer as
 the app's Export map; see the user guide), a confirm-gated
 `set_device_name` (one player).
@@ -174,6 +189,16 @@ Hub tools: `list_players`, `refresh_players` (`sweep`), `add_player`,
 `align_time`. One player + no selector keeps #274's flat result shape;
 otherwise `{results: [{player, ok, result|error}], summary}`.
 
+Wi-Fi rejoin policy (forward-deployed units): `set_wifi_policy` picks how a
+player rejoins its network — `auto` (backoff rescans, slowing after a long
+absence), `fixed`, `manual` (only on `rejoin_now`) or `offline` (radio off, also
+after reboots, for a venue with no AP; credentials are kept, so `auto` rejoins).
+The intended flow: set the unit up on an AP, confirm any firmware update while it
+is online, then switch it to `offline`. The player refuses `manual` / `offline`
+while an update is unconfirmed (`refused: "ota_pending"`); the tool sends `force`
+only when the caller sets it. An offline unit is out of the bridge's reach —
+switch it back over Bluetooth (the app) or the wired console (`WIFI MODE auto`).
+
 CLI: `splanc-agent <command>` runs one tool (dashes for underscores: `list-players`,
 `set-uniforms k=v`, `ramp-uniforms k=v --seconds 20` (waits), `deploy-effect <id>
 --file f.fx`, `preview-effect --file f.fx --out dir`, `list-keypoints`,
@@ -188,7 +213,11 @@ pass `--host <ip>` (discovery is mDNS + a local /24 sweep).
 Deliberately absent: `set_playback` / `splanc://playback` (native pulse/flood
 was removed; every show is an FX effect), and anything that sends
 SetHardwareConfig, SetLedCount, SetColorCorrection, the mapping arms or SetJit —
-`session.ts` refuses those at the wire (`FORBIDDEN_TYPES`, pinned by a test).
+`session.ts` refuses those at the wire (`FORBIDDEN_TYPES`, pinned by a test). The one
+scoped exemption: the paired app's room localization through the bridge (live
+`group_capture` query) may send `start_mapping` / `stop_mapping` for a group
+capture, inside `DeviceSession.groupCaptureScope`; no MCP tool or CLI command
+enters that scope.
 
 ## Decisions on the spec's open questions
 
@@ -216,6 +245,11 @@ SetHardwareConfig, SetLedCount, SetColorCorrection, the mapping arms or SetJit �
   otherwise). Clock offsets come from TimeSyncPing/Pong; SetTimeBase likewise needs
   `time_base`, else the result says "time base unsupported" and the fan-out still
   happens.
+- **Poses from the app.** A pose the device itself reports (welcome.pose, e.g. from
+  the app's room localization — docs/design/multi-fixture-localization.md) is used
+  when the hub has none of its own, so `splanc://room/…` and `plot_fixture` see it.
+  The bridge's live `group_capture` query (prepare / start / stop / set_pose) is how
+  the app arms a group capture through the bridge.
 - **No LAN auth.** The player has none and the bridge doesn't invent one; anyone
   on the LAN can drive it. Documented in the skill too.
 - **Stream rate.** Ramps stream uncommitted at `--stream-hz` (default 20, capped

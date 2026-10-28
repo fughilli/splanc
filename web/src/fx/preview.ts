@@ -11,12 +11,17 @@
  */
 
 import { assetUrl } from "../assetBase";
+import type { ReplayVm } from "./fxDebug";
 
 export type FxUiKind =
+  // A scalar, or a RANGED vector (vec2..vec4 with a declared range: one slider
+  // per component; min/max may be negative). An unranged vec3/vec4 is "color".
   | { kind: "slider"; min: number; max: number; step: number }
   | { kind: "color" }
   | { kind: "toggle" }
-  | { kind: "dropdown"; options: string[] };
+  | { kind: "dropdown"; options: string[] }
+  // mat3 / mat4 (width 9 / 16), column-major as in GLSL.
+  | { kind: "matrix"; min: number; max: number };
 
 export interface FxUniform {
   name: string;
@@ -24,6 +29,15 @@ export interface FxUniform {
   width: number;
   ui: FxUiKind;
   default: number[];
+  /** Declared range (newer compilers; for a per-component vector range, the
+   * envelope of `mins`/`maxs`). */
+  min?: number | undefined;
+  max?: number | undefined;
+  /** Per-component range of a vector declared `vecN(lo..) .. vecN(hi..)`. */
+  mins?: number[] | undefined;
+  maxs?: number[] | undefined;
+  unit?: string | undefined;
+  doc?: string | undefined;
 }
 
 export interface FxDiagnostic {
@@ -32,11 +46,26 @@ export interface FxDiagnostic {
   msg: string;
 }
 
+/** A named VM slot range (the compiler's FX-debugger symbol table). */
+export interface FxSymbol {
+  name: string;
+  kind: "state" | "local" | "param" | "buffer";
+  /** The function of a local / param ("" for state). */
+  func: string;
+  slot: number;
+  width: number;
+}
+
 export interface FxCompiled {
   ok: boolean;
   bytecode: Uint8Array;
   uniforms: FxUniform[];
   diagnostics: FxDiagnostic[];
+  /** Non-fatal lints (e.g. a rate uniform multiplying `time` in a phase); each
+   * msg starts "warning: ". Undefined from compiler bundles that predate them. */
+  warnings?: FxDiagnostic[] | undefined;
+  /** Absent from compiler builds that predate the FX debugger. */
+  symbols?: FxSymbol[];
 }
 
 interface CompilerResult {
@@ -44,10 +73,16 @@ interface CompilerResult {
   readonly bytecode: Uint8Array;
   readonly manifest: string;
   readonly diagnostics: string;
+  /** JSON warnings (absent in compiler bundles that predate them). */
+  readonly warnings?: string;
+  readonly symbols?: string;
 }
 interface CompilerModule {
   default(wasm: string): Promise<unknown>;
   fx_compile(src: string): CompilerResult;
+  /** Compile with the variance pass (per-frame hoisting + per-LED memo) off.
+   * Optional: older compiler bundles lack it. */
+  fx_compile_no_memo?(src: string): CompilerResult;
 }
 interface FxPreviewWasm {
   set_uniform(slot: number, vals: Float32Array): void;
@@ -61,6 +96,9 @@ interface FxPreviewWasm {
 interface VmModule {
   default(wasm: string): Promise<unknown>;
   FxPreview: new (fxb: Uint8Array) => FxPreviewWasm;
+  // The FX debugger's host replay (fxDebug.ts ReplayVm).
+  FxReplay?: ReplayVm["FxReplay"];
+  fx_blend_rgb8?: ReplayVm["fx_blend_rgb8"];
 }
 
 let compilerMod: Promise<CompilerModule> | null = null;
@@ -70,7 +108,7 @@ let vmMod: Promise<VmModule> | null = null;
  * {@link FxPreview} call into). */
 export interface FxModules {
   compiler?: Pick<CompilerModule, "fx_compile">;
-  vm?: Pick<VmModule, "FxPreview">;
+  vm?: Pick<VmModule, "FxPreview" | "FxReplay" | "fx_blend_rgb8">;
 }
 
 /**
@@ -107,16 +145,68 @@ function loadVm(base = assetUrl("fx-vm")): Promise<VmModule> {
   return vmMod;
 }
 
+/** The VM wasm's FX-debugger replay surface (fxDebug.ts), from the same module
+ * as the preview. Throws on a VM build that predates it. */
+export async function loadReplayVm(): Promise<ReplayVm> {
+  const mod = await loadVm();
+  if (!mod.FxReplay || !mod.fx_blend_rgb8) throw new Error("this VM build has no FX debugger replay");
+  return { FxReplay: mod.FxReplay, fx_blend_rgb8: mod.fx_blend_rgb8 };
+}
+
 /** Compile GLSL-ish effect source to `.fxb` bytecode + a uniform manifest. */
-export async function compileScript(src: string): Promise<FxCompiled> {
+export interface CompileScriptOptions {
+  /** Run the variance pass (hoisting + per-LED memoization). Default true; the
+   * calibration micro-benchmarks turn it off so they measure the raw ops (a
+   * memoized chain would measure a cache load). */
+  memo?: boolean;
+}
+
+export async function compileScript(src: string, opts: CompileScriptOptions = {}): Promise<FxCompiled> {
   const mod = await loadCompiler();
-  const r = mod.fx_compile(src);
+  const r = opts.memo === false && mod.fx_compile_no_memo ? mod.fx_compile_no_memo(src) : mod.fx_compile(src);
+  const syms = r.ok ? r.symbols : undefined;
   return {
     ok: r.ok,
     bytecode: r.bytecode,
     uniforms: r.ok ? (JSON.parse(r.manifest) as FxUniform[]) : [],
     diagnostics: JSON.parse(r.diagnostics) as FxDiagnostic[],
+    // undefined (not []) from a compiler bundle that predates warnings, so a
+    // host can tell "no lints" from "this compiler can't lint" (agent/src/fxhost.ts).
+    warnings: r.warnings === undefined ? undefined : (JSON.parse(r.warnings) as FxDiagnostic[]),
+    ...(typeof syms === "string" ? { symbols: JSON.parse(syms) as FxSymbol[] } : {}),
   };
+}
+
+/** Warnings as text for an AI's compile feedback ("" when there are none). */
+export function formatWarnings(ws: readonly FxDiagnostic[]): string {
+  return ws.map((w) => `line ${w.line}: ${w.msg}`).join("\n");
+}
+
+/** The message prefix of a compiler perf warning (fx_compiler
+ * `PERF_WARNING_PREFIX`); every other warning is a correctness lint. */
+export const PERF_WARNING_PREFIX = "warning: perf: ";
+
+/** A compiler warning's kind: a correctness lint (e.g. a rate uniform
+ * multiplying `time` inside a phase: fix it) or a perf warning (it runs, but
+ * slower than it should: a float literal in fixed maths, `pow(x, 2.0)`, ...). */
+export type FxWarningKind = "correctness" | "perf";
+
+export function warningKind(w: Pick<FxDiagnostic, "msg">): FxWarningKind {
+  return w.msg.startsWith(PERF_WARNING_PREFIX) ? "perf" : "correctness";
+}
+
+/** Compile warnings as feedback for the author (the AI's compile result), each
+ * kind with its own framing: correctness lints "fix these", perf warnings "it
+ * runs, but slower than it should". "" when there are none; else starts with a
+ * newline, to append to a one-line compile summary. */
+export function warningsFeedback(ws: readonly FxDiagnostic[] | undefined): string {
+  const all = ws ?? [];
+  const fix = all.filter((w) => warningKind(w) === "correctness");
+  const perf = all.filter((w) => warningKind(w) === "perf");
+  let out = "";
+  if (fix.length > 0) out += `\nWarnings (fix these):\n${formatWarnings(fix)}`;
+  if (perf.length > 0) out += `\nPerf warnings (it runs, but slower than it should):\n${formatWarnings(perf)}`;
+  return out;
 }
 
 /** Offline preview: the exact device VM run over a map in the browser. */

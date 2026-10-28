@@ -47,9 +47,15 @@ fn is_terminal(op: Op) -> bool {
 }
 
 /// Lower one entry (`update` or `shade`) into `out`, appending its words.
-pub(crate) fn lower_body(prog: &fxv::Program, entry: usize, out: &mut Vec<u32>) -> Option<()> {
-    let code = prog.code();
-
+/// `code` is the defused byte stream ([`crate::defuse`]) and `weight` its
+/// per-op VM budget weight.
+pub(crate) fn lower_body(
+    prog: &fxv::Program,
+    code: &[u8],
+    weight: &BTreeMap<usize, i32>,
+    entry: usize,
+    out: &mut Vec<u32>,
+) -> Option<()> {
     // --- 1. Static depth analysis (worklist over the CFG) --------------------
     let mut depth: BTreeMap<usize, usize> = BTreeMap::new();
     let mut headers: BTreeSet<usize> = BTreeSet::new();
@@ -117,7 +123,7 @@ pub(crate) fn lower_body(prog: &fxv::Program, entry: usize, out: &mut Vec<u32>) 
                 cur_header = Some(pc);
                 count = 0;
             }
-            count += 1;
+            count += *weight.get(&pc)?;
         }
         if let Some(h) = cur_header {
             block_ops.insert(h, count);
@@ -164,6 +170,40 @@ fn operands_in_range(code: &[u8], pc: usize, op: Op) -> bool {
         Op::LoadState | Op::StoreState => b(0) + b(1) <= fxv::MAX_STATE,
         Op::IncLocalI => b(0) < fxv::MAX_LOCALS,
         Op::PushConst => rd_u16(code, pc + 1) * 4 + 4 <= 0x1_0000, // sane const idx
+        // The VM faults on a fixed-point `frac` operand above 30 (main, after
+        // stage 2); refuse it here so the VM keeps that behaviour.
+        Op::PaletteFix => b(1) <= 30,
+        Op::LoadCtxFix => b(2) <= 30,
+        Op::MulFixN
+        | Op::DivFixN
+        | Op::FixToF
+        | Op::FixFromF
+        | Op::SinFix
+        | Op::CosFix
+        | Op::ExpFix
+        | Op::SignI
+        | Op::StepI
+        | Op::FloorFix
+        | Op::CeilFix
+        | Op::FractFix
+        | Op::MixFix
+        | Op::SqrtFix
+        | Op::ScaleFix
+        | Op::DotFix
+        | Op::LengthFix
+        | Op::DistanceFix
+        | Op::NormalizeFix
+        | Op::CrossFix
+        | Op::SmoothstepFix
+        | Op::MixVFix
+        | Op::Hsv2RgbFix
+        | Op::Atan2Fix
+        | Op::LogFix
+        | Op::TanFix
+        | Op::PowFix
+        | Op::HashFix
+        | Op::Hash3Fix
+        | Op::RetRgbFix => b(0) <= 30,
         _ => true,
     }
 }

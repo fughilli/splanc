@@ -27,7 +27,14 @@
  */
 
 import type { OutputMap, Topology } from "@ledmapper/protocol";
-import { FxPreview, deriveLedTopology, type FxUniform, type LedTopology } from "../../fx/preview";
+import {
+  FxPreview,
+  deriveLedTopology,
+  warningsFeedback,
+  type FxCompiled,
+  type FxUniform,
+  type LedTopology,
+} from "../../fx/preview";
 import { MapView } from "../mapview";
 import { generateFixture } from "../../effects/fixtures";
 import { extractTopology } from "../../topology/extract";
@@ -73,11 +80,13 @@ import { registerChatDriver } from "../../net/remoteChat";
 import { mapStore } from "../../store/mapStore";
 import { renderSettings } from "../../store/appearance";
 import { appState } from "../app/state";
-import { Button, IconButton, icon, toast, type IconName } from "../kit";
+import { Button, IconButton, confirmDialog, icon, toast, type IconName } from "../kit";
+import { aiSummary, appFileBugHook, confirmFilingText } from "../../bugs/appBugReport";
 import { mountEffectsTour } from "../guide/effectsTour";
 import { captureDemoPreview, makeDemoProvider } from "../../effects/ai/providers/demo";
 import { FxLayout } from "../../effects/editor/layout";
 import { VideoTexturePanel } from "../../effects/editor/videoTexture";
+import { FxDebugPanel } from "../../effects/editor/fxDebugPanel";
 import { renderMarkdown } from "../markdown";
 import { loadChat, saveChat, clearChat, type ChatTranscriptEntry } from "../../store/chatStore";
 import type { Router, Screen } from "../app/router";
@@ -117,6 +126,17 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   // Per-LED topology (led.seg/s/branch) for the current map, so the preview
   // matches the device. Recomputed async on map change; token guards staleness.
   let currentTopo: LedTopology | null = null;
+  // The map's raw topology (stored or extracted) and the last good compile: the
+  // FX debugger compares the device against the preview's own inputs + names
+  // the VM's slots from the compiler's symbol table.
+  let currentRawTopo: Topology | null = null;
+  let lastCompiled: FxCompiled | null = null;
+  // FX debugger overlay: device colours shown instead of the live preview, LED
+  // rings, the selected LED and the tap handler (applied to each new MapView).
+  let debugColors: Uint8Array | null = null;
+  let debugMarks: Map<number, string> | null = null;
+  let debugSelected: number | null = null;
+  let debugPick: ((index: number) => void) | null = null;
   let topoToken = 0;
   let lastT = 0;
   let frame = 0;
@@ -128,6 +148,8 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   let lastCompileSummary = "not compiled yet";
   let lastDisassembly = "";
   let lastBytecode: Uint8Array | null = null;
+  /** The last clean compile's warnings (the estimate's findings read the perf ones). */
+  let lastWarnings: { line: number; col: number; msg: string }[] = [];
   // The .fxb last successfully pushed to the device — auto-push skips a compile
   // whose bytecode is byte-identical (e.g. a whitespace edit) so it doesn't
   // needlessly re-flash the device.
@@ -553,7 +575,8 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   const panel = new UniformPanel(uniformsHost, (slot, value) => {
     preview?.setUniform(slot, value);
     const c = appState.client;
-    if (c?.isConnected) c.setUniforms([{ slot, value }]);
+    // The live-control channel: latest value wins, paced on the device.
+    if (c?.isConnected) c.live.setUniform(slot, value);
   });
 
   // -- MIDI: route hardware controls into the SAME uniform seam as a manual
@@ -852,6 +875,31 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     void kpStrip.refresh();
   }
 
+  // FX debugger pane (docs/design/fx-debugger.md): pause / step the connected
+  // device, compare its frame with a replay, and inspect a tapped LED.
+  const fxDebugPanel = screenOpts.demo
+    ? null
+    : new FxDebugPanel({
+        client: () => appState.client,
+        bundle: () => (currentMap ? { map: currentMap, topology: currentRawTopo as Topology } : null),
+        compiled: () =>
+          lastCompiled?.ok ? { bytecode: lastCompiled.bytecode, ...(lastCompiled.symbols ? { symbols: lastCompiled.symbols } : {}) } : null,
+        showColors: (c) => {
+          debugColors = c;
+          if (c === null && mapView && currentMap) mapView.setLedColors(new Uint8Array(currentMap.leds.length * 3));
+        },
+        mark: (m, sel) => {
+          debugMarks = m;
+          debugSelected = sel;
+          mapView?.setLedMarks(m);
+          mapView?.setSelectedLed(sel);
+        },
+        setPicker: (cb) => {
+          debugPick = cb;
+          if (mapView) mapView.onLedPick = cb;
+        },
+      });
+
   // Video → device-texture streaming panel (its own pane). It consumes the live
   // client + the latest compiled bytecode (to discover the effect's textures).
   const videoPanel = new VideoTexturePanel();
@@ -863,6 +911,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     hydrateBtn.disabled = !connected;
     if (!connected) devStatus.textContent = "Connect a device (tap the status pill) to send this effect.";
     videoPanel.setSink(connected ? appState.client : null);
+    fxDebugPanel?.refresh();
     // Newly connected → automatically pull whatever effect is running so its
     // uniforms hydrate and any mismatch surfaces without a manual tap.
     if (connected && !prevConnected) void hydrateFromDevice();
@@ -1121,6 +1170,9 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       mapView.showGrid = previewGrid;
       mapView.showTriad = previewTriad;
       mapView.setLedColors(new Uint8Array(map.leds.length * 3));
+      mapView.setLedMarks(debugMarks);
+      mapView.setSelectedLed(debugSelected);
+      mapView.onLedPick = debugPick;
       mapView.start();
     } else {
       mapView.update(map);
@@ -1141,6 +1193,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       topo = await extractTopology(map).catch(() => undefined);
     }
     if (token !== topoToken || disposed || currentMap !== map) return;
+    currentRawTopo = topo ?? null;
     currentTopo = deriveLedTopology(map, topo);
     preview?.setTopology(currentTopo);
   }
@@ -1172,10 +1225,11 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     const r = await worker.compile(src);
     if (seq !== compileSeq || disposed) return; // a newer compile supersedes us
 
-    renderDiagnostics(r.diagnostics);
+    const warnings = r.warnings ?? [];
+    renderDiagnostics([...r.diagnostics, ...warnings]);
     if (!r.ok) {
       const first = r.diagnostics[0];
-      const summary = first ? `line ${first.line + 1}: ${first.msg}` : "compile failed";
+      const summary = first ? `line ${first.line}: ${first.msg}` : "compile failed";
       setStatusErr(summary);
       lastCompileSummary = `ERROR — ${summary}`;
       lastDisassembly = "";
@@ -1186,10 +1240,12 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       return;
     }
     lastBytecode = r.bytecode;
+    lastCompiled = r;
+    lastWarnings = r.warnings ?? [];
     setStatusOk(`compiled · ${r.uniforms.length} uniforms · ${r.bytecode.length} bytes`);
     void updateBudgetBar(r.bytecode);
     videoPanel.setBytecode(r.bytecode);
-    lastCompileSummary = `OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes`;
+    lastCompileSummary = `OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes${warningsFeedback(r.warnings)}`;
     panel.setManifest(r.uniforms);
     if (initialScene && !sceneUniformsApplied) {
       panel.hydrate(sceneUniformValues(r.uniforms, initialScene.uniforms));
@@ -1245,7 +1301,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     diagsEl.replaceChildren();
     for (const d of diags) {
       const li = document.createElement("li");
-      li.textContent = `line ${d.line + 1}, col ${d.col + 1}: ${d.msg}`;
+      li.textContent = `line ${d.line}, col ${d.col}: ${d.msg}`;
       diagsEl.appendChild(li);
     }
   }
@@ -1255,6 +1311,11 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     raf = requestAnimationFrame(tick);
     const dt = lastT === 0 ? 16 : Math.min(100, t - lastT);
     lastT = t;
+    if (mapView !== null && debugColors !== null) {
+      // The FX debugger is showing the DEVICE's frame (or a diff) instead.
+      mapView.setLedColors(debugColors);
+      return;
+    }
     if (preview === null || mapView === null || currentMap === null || positions === null) return;
     const time = (t - startT) / 1000;
     preview.tick(time, dt / 1000, frame++, currentMap.leds.length);
@@ -1353,7 +1414,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     const fallbackLeds = currentMap ? currentMap.leds.length : 256;
     const targets = await resolveFleetTargets(fallbackLeds);
     const fleet = estimateAcrossDevices(lastBytecode, targets);
-    return describeFleet(fleet);
+    return describeFleet(fleet, { bytecode: lastBytecode, source: codeEl.value, warnings: lastWarnings });
   }
 
   /** measure_on_device: run the latest compile on the connected fixture and
@@ -1480,6 +1541,19 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
                 setChatStatus("Measuring on the fixture…");
                 return measureCurrentOnDevice(args);
               },
+            }
+          : {}),
+        // file_bug (docs/design/agent-bug-reports.md): a GitHub link by default;
+        // direct filing asks the user here first.
+        ...(!screenOpts.demo
+          ? {
+              onFileBug: appFileBugHook({
+                surface: "web-editor",
+                source: () => codeEl.value,
+                client: () => appState.client,
+                ai: aiSummary,
+                confirm: (issue) => confirmDialog(confirmFilingText(issue)),
+              }),
             }
           : {}),
         onToolUse: () => undefined,
@@ -1710,6 +1784,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       { id: "chat", title: "AI chat", node: chatBody },
       { id: "midi", title: "MIDI", node: midiPanel.node },
       { id: "video", title: "Video", node: videoPanel.node },
+      ...(fxDebugPanel ? [{ id: "fxdebug", title: "Debugger", node: fxDebugPanel.node }] : []),
     ],
     onRelayout: () => {
       // A resize/relayout changes the canvas box; keep the preview crisp.
@@ -1890,6 +1965,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       midiRouter.detach();
       midiPanel.dispose();
       videoPanel.dispose();
+      fxDebugPanel?.dispose();
       layout.unmount();
       preview?.dispose();
       worker.dispose();

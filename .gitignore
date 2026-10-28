@@ -78,3 +78,5 @@ pi/bridge/image/result*
 
 # --- Cloudflare wrangler (agent/relay) local state ---
 .wrangler/
+# the OLED boot animation is generated (//pi/bridge:boot_frames), never committed
+/pi/bridge/display/splanc_display/boot_frames.bin

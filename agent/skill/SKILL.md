@@ -13,6 +13,17 @@ effect**: a small shader-like program the player runs once per LED per frame. Th
 (mDNS, players remembered from earlier runs, a LAN sweep), opens one connection
 per player on first use, and fans each tool out to the players you pick.
 
+## Authoring rule: rate knobs are integrated, never multiplied by `time`
+
+`fract(led.s - time * speed)` looks fine in a preview, but moving the `speed`
+slider rescales all the elapsed time, so the effect jumps (by Δspeed × time:
+whole cycles after a few minutes of uptime). Keep a `state` phase per rate and
+advance it in `update()`: `ph = fract(ph + dt * speed);`, then use `ph` in
+`shade()`. Details and the oscillator / scroll / fixed-point forms:
+`effect-language.md` § Rate controls. `compile_effect` warns when it sees the
+pattern; fix the warning like an error. Plain `time` (`fract(led.s - time)`,
+`sin(time * 0.7)`) is fine when no knob scales it.
+
 ## Which players
 
 Every device tool takes `players`: a player name, its id (MAC), a room name,
@@ -37,7 +48,11 @@ With several targets the result is one entry per player (`ok`, `result` or
    room", "the shelf")? Ask which fixture is where — `identify_player` blinks one
    so they can tell — then `set_room {room, players}`, and `set_fixture_pose` to
    place each fixture in the room (metres, +Y up; ask, don't guess). Rooms and
-   poses persist in the hub.
+   poses persist in the hub. Better than guessing: the Splanc app's **Room
+   localization** (Maps ▸ Localize room) films several mapped fixtures at once
+   and solves their poses; it writes them to each device (and through a bridge,
+   to the hub). Poses a device reports this way show up here automatically —
+   suggest it when the user has two or more mapped fixtures.
 3. Read `splanc://fixture/summary` (one player) or `splanc://room/<room>` (every
    fixture in the room's shared frame: per-fixture and combined bounding boxes).
    Read `splanc://player/<id>/fixture/map` / `topology` only when an effect needs
@@ -149,10 +164,35 @@ effect:
   `driver_state` shows its live exports and errors; `remove_driver` stops it.
 - An IMU (MPU-6050) is driven natively — don't write a driver for it.
 
+## Wi-Fi rejoin policy / forward-deployed units (feature `wifi_policy`)
+
+- `get_wifi_policy` reports the mode, whether the player is joined or searching
+  (next scan, how long the network has been unseen) and `ota_pending`.
+- `set_wifi_policy {mode}`: `auto` (default; backoff rescans up to `scan_cap_s`,
+  indefinitely; slowing to `sparse_interval_s` after `decay_after_h` hours unseen
+  is opt-in, `0` = off by default), `fixed` (every `interval_s`), `manual` (only on
+  `rejoin_now`), `offline` (no AP at the venue: Wi-Fi radio off, also after
+  reboots; the show keeps playing). Unset fields keep their value.
+- Before `manual` / `offline`: make sure `ota_pending` is false — confirm any
+  pending firmware update first, while the player is online. The player refuses
+  otherwise (`refused: "ota_pending"`); report that. Pass `force: true` only when
+  the user explicitly says to go anyway.
+- `offline` keeps the Wi-Fi credentials (switching back to `auto` rejoins), but
+  this bridge loses the player: changing it back needs Bluetooth (the Splanc
+  app) or the wired console. Confirm with the user before going offline.
+
 ## Writing a new effect
 
 1. Write the source (language: `effect-language.md`; knobs: `uniforms-and-ui.md`;
    using the fixture's shape: `geometry.md`; starting points: `examples/`).
+   Write it cheap from the start: the player has no FPU, every opcode costs
+   ~70 cycles of dispatch, and a float `sin` ~570, `pow` ~1,800, `hsv2rgb`
+   ~1,300, against ~8,000 cycles per LED per frame at 500 LEDs. Do per-LED maths
+   in `fixed` (`fixed()` around every literal), keep phases as `state fixed` in
+   turns advanced in `update()`, and use `sin`/`cos`/`hsv2rgb` on fixed
+   arguments (integer paths). The cost table and rules are under
+   "Performance" in `effect-language.md`; `rainbow_spin.fx`, `plasma_fixed.fx`
+   and `noise_field.fx` show the patterns.
 2. `compile_effect {source}` — fix every diagnostic; check the uniform list. Each
    player compiles with the compiler matching ITS firmware (the hub fetches that
    firmware's bundle when it differs from its own).
@@ -163,21 +203,56 @@ effect:
    room frame, plus per-fixture stats.
 4. `deploy_effect {effect_id, source, description, tags}` — estimates each player's frame cost
    first and deploys nowhere if any would overrun (`force: true` overrides;
-   the estimate is uncalibrated, so still measure), then uploads and activates
+   the estimate is fitted to the C6 but can read low on branchy, buffer or
+   texture effects, so still measure), then uploads and activates
    everywhere. A player holds one effect at a time; the hub remembers the
    previous one per player.
 5. `measure_effect {seconds: 5, rollback_on_overrun: true}` — on-device frame cost
    vs budget (mean/max ms and per-window means) and `current_fps`: the player
-   autoscales each effect between 25 and 80 fps (cheaper = smoother), and parks
-   one it can't run even at 25 fps (`aborted: true`). Over budget → it rolls back;
-   simplify (see "Performance" in `effect-language.md`) and repeat from 2.
+   autoscales each effect between 25 and 80 fps (cheaper = smoother). An effect
+   slower than 25 fps runs at whatever rate it achieves (`lagging: true`,
+   `achieved_fps`); the player never parks it. Over budget → it lags (and
+   `rollback_on_overrun` rolls it back); simplify (see "Performance" in
+   `effect-language.md`) and repeat from 2 if smoothness matters.
    Optimizing: iterate offline with `estimate_effect {source}` (instant, touches
-   nothing), then deploy + `measure_effect` to confirm — when they disagree, trust
-   the measurement.
+   nothing). It returns the frame estimate and the top cost `findings` — what to
+   change and about how many cycles per LED each saves; apply them first. Then
+   deploy + `measure_effect` to confirm — when they disagree, trust the
+   measurement.
 6. Report what you changed and which uniforms the user can now tweak.
 
 `rollback_effect` restores whatever ran before your last deploy;
 `set_effect {effect_id: "off"}` blacks out the effect.
+
+## When the fixture doesn't look like the preview — the FX debugger
+
+Firmware with the `fx_debug` feature lets you pause and inspect the effect engine
+on the device (design: docs/design/fx-debugger.md):
+
+1. `compare_with_preview` — pauses the engine, steps ONE frame and replays it on
+   the host with the same VM, program, uniforms, state, buffers and per-LED
+   inputs, then diffs every LED. Read `verdict` + `findings`:
+   - `engine`: the device computed something else from the same inputs (a
+     VM / JIT / firmware bug) — `locals` shows the first divergent LEDs' VM
+     locals, device vs host, and a `JIT:` finding when the device's JIT and
+     interpreter disagree. Report it as a firmware bug with that evidence.
+   - `inputs`: the preview feeds shade() different LED positions / topology /
+     uv / LED order than the device (e.g. 24-bit stored positions, a sparse map
+     indexed differently). The input-driven `locals` name what the difference
+     moves — fix the effect to be robust to it (avoid floor/step/hash on raw
+     positions) or the map.
+   - `output_stage`: brightness / the colour LUT change the strip's colours;
+     the wire colour order is always listed (swapped hues = the strip's real
+     order differs).
+   - `match`: the engine is faithful — look at the physical side.
+2. Test a hypothesis on the paused frame: `snapshot_fx {led: N}` re-runs one LED
+   and returns its VM locals (named, since you deployed the source this
+   session; else pass `source`), `include: ["inputs", "buffers"]` adds per-LED
+   inputs and buffer values; `step_fx {to_time: T}` renders exactly the frame
+   at effect time T (or `{frames, dt}`) so you can line it up with
+   `preview_effect {times: [T]}`.
+3. `resume_fx` when done. A paused fixture also resumes on its own after
+   `hold_seconds` (default 120) or a few seconds after you disconnect.
 
 ## Changing effect without a hard cut — crossfade
 

@@ -102,7 +102,12 @@ describe("display contract", () => {
     assert.ok(s.pairing!.expires_at > Date.now() / 1000 + 500);
     assert.equal(s.pairing!.url, `${relay}/pair?code=${encodeURIComponent(s.pairing!.code)}`);
     assert.equal(s.clients, 0);
-    assert.deepEqual(s.players, [{ name: "Porch", host: player.host, ok: true }]);
+    // v1's name/host/ok, plus the optional fixture details (bridgestatus.test.ts).
+    assert.equal(s.players.length, 1);
+    assert.deepEqual(
+      { name: s.players[0]!.name, host: s.players[0]!.host, ok: s.players[0]!.ok, id: s.players[0]!.id },
+      { name: "Porch", host: player.host, ok: true, id: "CC:FD:49:00:00:AA" },
+    );
     assert.equal(s.error, null);
     assert.ok(Math.abs(s.updated_at - Date.now() / 1000) < 5);
     // Atomic writes: no temp files left beside it.

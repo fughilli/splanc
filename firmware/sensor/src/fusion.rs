@@ -156,7 +156,15 @@ impl Default for RestDetector {
     fn default() -> RestDetector {
         // 0.05 rad/s ≈ 2.9 °/s: well above MPU-6050 rate noise (0.005 °/s/√Hz
         // -> ~0.1 °/s rms at a 42 Hz DLPF) once the bias is known.
-        RestDetector { gyro_thresh: 0.05, accel_thresh: 0.03, settle: 50, still: 0, anchor: Vec3::ZERO }
+        // |a| within 15% of g: the accel gain is learned in ONE orientation
+        // (the first rest after boot), and the MPU-6050's per-axis zero-g
+        // offsets (±50 mg x/y, ±80 mg z typ.) and ±3% sensitivity move |a| by
+        // up to ~12% in another orientation. A 3% gate never let a tilted
+        // fixture come to rest (the Calibrate IMU flow's 2nd/3rd pose stuck at
+        // "hold the fixture still"). Stillness itself is the anchored-
+        // direction check below (0.02 g ≈ 1.1° over the whole streak), which
+        // also bounds the magnitude drift.
+        RestDetector { gyro_thresh: 0.05, accel_thresh: 0.15, settle: 50, still: 0, anchor: Vec3::ZERO }
     }
 }
 

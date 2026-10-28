@@ -14,7 +14,7 @@
  */
 
 import type { OutputMap, Topology } from "@ledmapper/protocol";
-import { FxPreview, deriveLedTopology, type FxUniform, type LedTopology } from "../../fx/preview";
+import { FxPreview, deriveLedTopology, warningsFeedback, type FxUniform, type LedTopology } from "../../fx/preview";
 import { MapView } from "../mapview";
 import { generateFixture } from "../../effects/fixtures";
 import { extractTopology } from "../../topology/extract";
@@ -47,7 +47,8 @@ import { chatLogStore, newChatLogSessionId } from "../../store/chatLogStore";
 import { registerChatDriver } from "../../net/remoteChat";
 import { mapStore } from "../../store/mapStore";
 import { appState } from "../app/state";
-import { StatusPill, icon, toast, type PillState } from "../kit";
+import { StatusPill, confirmDialog, icon, toast, type PillState } from "../kit";
+import { aiSummary, appFileBugHook, confirmFilingText } from "../../bugs/appBugReport";
 import { installAcidStyles } from "./acidMode.css";
 import { narrateTool } from "../acid/narrate";
 import { createVoice, voiceSupported, type VoiceSession } from "../acid/voice";
@@ -85,6 +86,8 @@ export function AcidModeScreen(router: Router): Screen {
   let currentTopo: LedTopology | null = null;
   let topoToken = 0;
   let lastBytecode: Uint8Array | null = null;
+  /** The last clean compile's warnings (the estimate's findings read the perf ones). */
+  let lastWarnings: { line: number; col: number; msg: string }[] = [];
   /** The program last uploaded to the device (measure_on_device skips re-upload). */
   let uploadedFxb: Uint8Array | null = null;
   let lastUniforms: FxUniform[] = [];
@@ -106,7 +109,7 @@ export function AcidModeScreen(router: Router): Screen {
   const midiRouter = new MidiRouter((u) => {
     preview?.setUniform(u.slot, u.value);
     const c = appState.client;
-    if (c?.isConnected) c.setUniforms([{ slot: u.slot, value: u.value }]);
+    if (c?.isConnected) c.live.setUniform(u.slot, u.value);
   });
   midiRouter.setEffect(ACID_EFFECT_ID);
 
@@ -308,6 +311,13 @@ export function AcidModeScreen(router: Router): Screen {
           ...(canMeasure(perfDeviceFromClient(appState.client))
             ? { onMeasureOnDevice: async (args: MeasureOnDeviceCall) => measureOnFixture(args) }
             : {}),
+          onFileBug: appFileBugHook({
+            surface: "web-acid",
+            source: () => currentSource,
+            client: () => appState.client,
+            ai: aiSummary,
+            confirm: (issue) => confirmDialog({ ...confirmFilingText(issue), trippy: true }),
+          }),
         },
         deviceCosts,
         ACID_SYSTEM,
@@ -344,9 +354,10 @@ export function AcidModeScreen(router: Router): Screen {
     if (!r.ok) {
       const first = r.diagnostics[0];
       lastBytecode = null;
-      return `Compile failed${first ? ` — line ${first.line + 1}: ${first.msg}` : ""}. Fix and retry.`;
+      return `Compile failed${first ? ` — line ${first.line}: ${first.msg}` : ""}. Fix and retry.`;
     }
     lastBytecode = r.bytecode;
+    lastWarnings = r.warnings ?? [];
     lastUniforms = r.uniforms;
     await swapPreview(r.bytecode, r.uniforms);
     midiRouter.setManifest(r.uniforms);
@@ -373,7 +384,7 @@ export function AcidModeScreen(router: Router): Screen {
     } else {
       appendMsg("think", "💡 Wrote it (no device connected)");
     }
-    return `Compiled OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes; ${deviceNote}.`;
+    return `Compiled OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes; ${deviceNote}.${warningsFeedback(r.warnings)}`;
   }
 
   /** Save the acid effect to the library under a stable id (create if new).
@@ -469,7 +480,11 @@ export function AcidModeScreen(router: Router): Screen {
     if (lastBytecode === null) return "Nothing compiles yet — author an effect first.";
     const fallbackLeds = currentMap ? currentMap.leds.length : 256;
     const targets = await resolveFleetTargets(fallbackLeds);
-    return describeFleet(estimateAcrossDevices(lastBytecode, targets));
+    return describeFleet(estimateAcrossDevices(lastBytecode, targets), {
+      bytecode: lastBytecode,
+      source: currentSource,
+      warnings: lastWarnings,
+    });
   }
 
   /** measure_on_device: set_script already uploads, so this usually just

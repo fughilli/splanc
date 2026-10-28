@@ -9,10 +9,13 @@ import tempfile
 
 import pytest
 from fx_bench_core import (
+    DEFAULT_FLOOR_CYCLES,
     assemble_bundle,
     bundle_to_golden,
     compare_to_golden,
     cpu_hz_of,
+    frame_gate_rule,
+    golden_report_lines,
     intended_led_count,
     run_health_failure,
     sample_from,
@@ -207,6 +210,135 @@ def test_golden_margin_override():
     assert res["ok"]
 
 
+# -- absolute floor (fixed per-frame layout cost) ---------------------------- #
+
+# The committed goldens' sweep16 values and margins (device-bench-esp32c6[-jit].json).
+_SWEEP16_GOLDEN = {"interp": 34_496, "jit": 34_774}
+
+
+def _sweep16_golden(build: str, extra=()):
+    return {
+        "fit": _bundle([("sweep16", _SWEEP16_GOLDEN[build], 0), *extra])["fit"],
+        "heldout": [],
+        "fxBenchMargins": {"default": 0.10, "perLabel": {"sweep16": 0.15}, "floorCycles": 8000},
+    }
+
+
+def test_floor_is_8000_cycles_50us_at_160mhz():
+    assert DEFAULT_FLOOR_CYCLES == 8000
+    assert DEFAULT_FLOOR_CYCLES / 160e6 == pytest.approx(50e-6)
+
+
+def test_frame_gate_rule_prefers_margin_then_floor():
+    assert frame_gate_rule(1_050, 1_000, 0.10, 8000) == "margin"
+    assert frame_gate_rule(1_099, 1_000, 0.10, 0) == "margin"
+    assert frame_gate_rule(1_101, 1_000, 0.10, 0) is None
+    assert frame_gate_rule(40_000, 34_000, 0.15, 8000) == "floor"  # +17.6%, +6 K
+    assert frame_gate_rule(42_000, 34_000, 0.15, 8000) == "floor"  # boundary inclusive
+    assert frame_gate_rule(42_001, 34_000, 0.15, 8000) is None
+    assert frame_gate_rule(26_000, 34_000, 0.15, 8000) == "floor"  # symmetric (faster)
+    assert frame_gate_rule(25_999, 34_000, 0.15, 8000) is None
+    assert frame_gate_rule(5, 0, 0.15, 8000) is None
+
+
+@pytest.mark.parametrize("build", ["interp", "jit"])
+@pytest.mark.parametrize("measured", [40_623, 40_800, 41_041])
+def test_pr382_sweep16_layout_shift_passes_by_floor(build, measured):
+    # #382 (lazy netstack rx / OTA buffers) measured sweep16 at 40,623-41,041
+    # cycles: +16.8..+19.0% (failed the 15% margin 3/3) but only +5.8..+6.5 K
+    # cycles, inside the 8 K layout floor.
+    res = compare_to_golden(_bundle([("sweep16", measured, 0)]), _sweep16_golden(build))
+    assert res["ok"], res
+    assert res["byRule"] == {"margin": 0, "floor": 1}
+    (p,) = res["passes"]
+    assert p["rule"] == "floor" and abs(p["ratio"] - 1) > 0.15
+    assert abs(measured - _SWEEP16_GOLDEN[build]) <= 8000
+
+
+def test_pr382_sweep16_would_fail_without_floor():
+    res = compare_to_golden(
+        _bundle([("sweep16", 41_041, 0)]), _sweep16_golden("interp"), floor_cycles=0
+    )
+    assert not res["ok"] and [o["label"] for o in res["offenders"]] == ["sweep16"]
+
+
+def test_real_regression_on_big_effect_still_fails():
+    # A +20% regression on a 500-LED effect (~6 M cycles) is +1.2 M cycles:
+    # 150x the floor, so the floor never rescues it.
+    golden = _sweep16_golden("interp", extra=[("big500", 6_000_000, 0)])
+    res = compare_to_golden(_bundle([("sweep16", 34_496, 0), ("big500", 7_200_000, 0)]), golden)
+    assert not res["ok"]
+    assert [o["label"] for o in res["offenders"]] == ["big500"]
+    assert res["offenders"][0]["floor"] == 8000
+    assert res["byRule"] == {"margin": 1, "floor": 0}
+
+
+def test_sweep16_beyond_floor_still_fails():
+    # sweep16 +9 K cycles (+26%): more than the layout band -> a real regression.
+    res = compare_to_golden(_bundle([("sweep16", 43_500, 0)]), _sweep16_golden("interp"))
+    assert not res["ok"]
+
+
+def test_floor_defaults_when_golden_has_none():
+    # Older goldens without floorCycles get the default floor; the arg overrides.
+    golden = _sweep16_golden("interp")
+    del golden["fxBenchMargins"]["floorCycles"]
+    assert compare_to_golden(_bundle([("sweep16", 41_041, 0)]), golden)["floorCycles"] == 8000
+    res = compare_to_golden(_bundle([("sweep16", 41_041, 0)]), golden, floor_cycles=5000)
+    assert not res["ok"] and res["floorCycles"] == 5000
+
+
+@pytest.mark.parametrize("name", ["device-bench-esp32c6.json", "device-bench-esp32c6-jit.json"])
+def test_committed_goldens_carry_the_floor(name):
+    # The ACTIVE gate is the golden's fxBenchMargins: it carries the floor, and the
+    # percentage margins are unchanged (10% default, sweep16 15%).
+    import json
+
+    from python.runfiles import runfiles
+
+    path = runfiles.Create().Rlocation(f"_main/web/tests/testdata/{name}")
+    with open(path) as f:
+        margins = json.load(f)["fxBenchMargins"]
+    assert margins == {
+        "default": 0.10,
+        "perLabel": {"sweep16": 0.15},
+        "floorCycles": DEFAULT_FLOOR_CYCLES,
+    }
+
+
+def test_report_lines_name_the_rule_and_stay_ingest_parseable():
+    import re
+
+    golden = _sweep16_golden("interp", extra=[("big500", 6_000_000, 0)])
+    res = compare_to_golden(_bundle([("sweep16", 41_041, 0), ("big500", 7_200_000, 0)]), golden)
+    lines = golden_report_lines("web/tests/testdata/device-bench-esp32c6.json", res)
+    text = "\n".join(lines)
+    # Ingest regexes (pi/hitl/observability/fxbench/ingest_fx_bench.py).
+    golden_re = re.compile(
+        r"device-bench-(?P<soc>[a-z0-9]+)(?P<jit>-jit)?\.json: checked (?P<n>\d+) effect"
+    )
+    off_re = re.compile(
+        r"OFF\s+(?P<label>\S+)\s+frame=(?P<measured>\d+) vs golden (?P<golden>\d+) "
+        r"\(([+-][\d.]+)%, margin ±(?P<margin>[\d.]+)%\)"
+    )
+    meas_re = re.compile(r"(?P<label>[A-Za-z0-9_.\-]+): frame=(?P<frame>\d+) show=")
+    assert golden_re.search(lines[0]).group("n") == "2"
+    assert "floor ±8000 cycles" in lines[0]
+    floor_line = next(ln for ln in lines if "FLOOR" in ln)
+    assert "sweep16" in floor_line and "+6545 cycles within ±8000" in floor_line
+    assert not off_re.search(floor_line) and not meas_re.search(floor_line)
+    offs = [m.groupdict() for m in map(off_re.search, lines) if m]
+    assert [(o["label"], o["measured"], o["golden"], o["margin"]) for o in offs] == [
+        ("big500", "7200000", "6000000", "10")
+    ]
+    assert "PASS" not in text
+
+    ok = compare_to_golden(_bundle([("sweep16", 41_041, 0), ("big500", 6_000_000, 0)]), golden)
+    assert golden_report_lines("g.json", ok)[-1] == (
+        "PASS: profiling run matches the golden (1 by margin, 1 by floor)"
+    )
+
+
 def test_bundle_to_golden_roundtrips():
     bundle = assemble_bundle(
         soc="esp32c6",
@@ -217,7 +349,11 @@ def test_bundle_to_golden_roundtrips():
     golden = bundle_to_golden(bundle, default_margin=0.05, per_label_margin={"empty": 0.10})
     # The golden IS the bundle (fxbBase64 kept for the web estimator) + margins.
     assert golden["kind"] == "ledmapper-device-benchmark"
-    assert golden["fxBenchMargins"] == {"default": 0.05, "perLabel": {"empty": 0.10}}
+    assert golden["fxBenchMargins"] == {
+        "default": 0.05,
+        "perLabel": {"empty": 0.10},
+        "floorCycles": DEFAULT_FLOOR_CYCLES,
+    }
     assert golden["fit"][0]["fxbBase64"] == bundle["fit"][0]["fxbBase64"]
     # A bundle round-trips through its own golden with room to spare.
     assert compare_to_golden(bundle, golden)["ok"]

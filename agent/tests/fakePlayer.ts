@@ -28,6 +28,8 @@ type Msg = Record<string, unknown> & { type: string };
 export interface FakeEffect {
   id: string;
   manifest: string;
+  /** The uploaded .fxb. */
+  fxb?: Uint8Array;
   current: { slot: number; value: number[] }[];
   textures?: { index: number; width: number; height: number; elem: number }[];
 }
@@ -48,6 +50,10 @@ export class FakePlayer {
   crossfadeDelayMs = 0;
   /** The last set_time_base epoch (device ms). */
   timeBase: number | null = null;
+  /** The running mapping pattern (start_mapping options + the epoch it used), or null. */
+  mapping: { options: Record<string, unknown>; epochMs: number } | null = null;
+  /** The last set_fixture_pose pose (null = none / cleared). */
+  pose: Record<string, unknown> | null = null;
   bundle: MappingBundle | null = null;
   manifest: unknown | null = null;
   fwVersion = "1.6.0";
@@ -60,14 +66,20 @@ export class FakePlayer {
   refuse = new Map<string, { code: string; message: string }>();
   perf: { budgetCycles: number; frameCyclesMean: number; frameCyclesMax: number; overruns: number; currentFps?: number } =
     { budgetCycles: 5_333_333, frameCyclesMean: 1_000_000, frameCyclesMax: 1_200_000, overruns: 0 };
-  /** FUG-82: push fps_state{aborted} (the autoscaler parked the effect) on the next set_perf. */
-  abortOnNextPerf: { auto: boolean; targetFps: number } | null = null;
+  /** FUG-82: push fps_state{lagging} (the effect can't hold the floor / pin and runs
+   * at `achievedFps`, still playing) on the next set_perf. `oldAbort`: answer like
+   * pre-lag firmware instead, which parked the effect (aborted, no lagging). */
+  lagOnNextPerf: { auto: boolean; targetFps: number; achievedFps: number; oldAbort?: boolean } | null = null;
   /** The fake device clock = this process's performance.now() + this. */
   clockOffsetMs = 0;
   /** Delay before each time_sync_pong (simulated one-way latency). */
   pingDelayMs = 0;
   /** Manifest features (see agentManifest). */
   features: string[] = ["effects", "perf", "textures", "stored_map"];
+  /** hardware_config_state per-channel LED counts (0 = not configured). */
+  hwLedCounts: number[] = [64];
+  /** hardware_config_state.led_capacity (0 = not reported). */
+  ledCapacity = 0;
   /** Also send them in Welcome.features (current firmware does). */
   welcomeFeatures = true;
   /** Every HTTPS GET (the manifest route) and every /ws connection, in order. */
@@ -79,8 +91,26 @@ export class FakePlayer {
   sensor: Record<string, unknown> | null = null;
   /** The loaded sensor driver's driver_state (null = none). */
   driver: Record<string, unknown> | null = null;
+  /** The Wi-Fi rejoin policy (proto3-JSON names; the "wifi_policy" feature).
+   * set_wifi_policy merges the set fields; manual/offline are refused while
+   * `otaPending` unless forced, like the firmware. */
+  wifi: Record<string, unknown> = {
+    mode: "WIFI_MODE_AUTO",
+    scanCapS: 60,
+    intervalS: 300,
+    decayAfterH: 0,
+    sparseIntervalS: 900,
+    state: "WIFI_LINK_JOINED",
+    ssid: "Venue1",
+    radioOn: true,
+  };
+  otaPending = false;
   /** Every blend_keypoints applied (for assertions). */
   blends: Msg[] = [];
+
+  /** Extra request handlers by message type (checked before the built-in ones),
+   * e.g. the FX debugger emulation in fxdebug.test.ts. Return null for no reply. */
+  readonly handlers = new Map<string, (m: Msg) => Msg | null>();
 
   /** Which TLS identity this player serves (2 = cert2.pem: "after a factory reset"). */
   identity: 1 | 2 = 1;
@@ -159,7 +189,7 @@ export class FakePlayer {
   }
 
   /** Push an fps_state (FUG-82) to every connected session, as the autoscaler does. */
-  pushFpsState(st: { targetFps: number; currentFps: number; auto: boolean; aborted: boolean }): void {
+  pushFpsState(st: { targetFps: number; currentFps: number; auto: boolean; lagging: boolean; achievedFps?: number }): void {
     for (const c of this.wss.clients) this.reply(c, { type: "fps_state", minFps: 25, maxFps: 80, ...st });
   }
 
@@ -213,7 +243,7 @@ export class FakePlayer {
     // it back out of the header (manifest length @8, manifest after the 18-B header).
     const mlen = fxb.readUInt16LE(8);
     const manifest = fxb.subarray(18, 18 + mlen).toString("utf8");
-    const e = { id: effectId, manifest, current: [] };
+    const e = { id: effectId, manifest, current: [], fxb: new Uint8Array(fxb) };
     if (deck === 1) {
       this.deckB = e;
       this.deckActive[1] = activate;
@@ -233,6 +263,12 @@ export class FakePlayer {
       this.reply(ws, { type: "error", ...refusal });
       return;
     }
+    const extra = this.handlers.get(m.type);
+    if (extra) {
+      const r = extra(m);
+      if (r) this.reply(ws, r);
+      return;
+    }
     switch (m.type) {
       case "hello":
         return this.reply(ws, this.welcome());
@@ -245,7 +281,14 @@ export class FakePlayer {
       case "get_hardware_config":
         return this.reply(ws, {
           type: "hardware_config_state",
-          channels: [{ channel: 0, gpio: 20, ledType: "ws281x", colorOrder: "GRB", ledCount: 64 }],
+          channels: this.hwLedCounts.map((ledCount, channel) => ({
+            channel,
+            gpio: channel === 0 ? 20 : 14,
+            ledType: "ws281x",
+            colorOrder: "GRB",
+            ledCount,
+          })),
+          ledCapacity: this.ledCapacity,
           board: { board: "ESP32-C6 SuperMini", gpioPins: [], ledModes: [], ledChannels: 2, maxLeds: 512 },
         });
       case "get_effect_uniforms": {
@@ -269,7 +312,10 @@ export class FakePlayer {
             e.current = e.current.filter((c) => c.slot !== v.slot).concat([v]);
           }
         }
-        return;
+        // Like the firmware: a seq'd (live-channel) update gets a ControlAck, a
+        // legacy one its playback_state.
+        if (m["seq"]) return this.reply(ws, { type: "control_ack", seq: m["seq"] });
+        return this.reply(ws, { type: "playback_state", active: false, effect: "off" });
       }
       case "set_effect": {
         const d = (m["deck"] as number) ?? 0;
@@ -298,7 +344,7 @@ export class FakePlayer {
           this.crossfade = Math.min(1, Math.max(0, m["position"] as number));
           this.crossfadeMode = (m["mode"] as number) ?? 0;
           this.crossfades.push({ position: this.crossfade, mode: this.crossfadeMode, at: performance.now() });
-          this.reply(ws, this.welcome());
+          this.reply(ws, m["seq"] ? { type: "control_ack", seq: m["seq"] } : this.welcome());
         };
         if (this.crossfadeDelayMs > 0) setTimeout(apply, this.crossfadeDelayMs);
         else apply();
@@ -306,6 +352,36 @@ export class FakePlayer {
       }
       case "set_time_base":
         this.timeBase = Number(m["epochMs"]);
+        return this.reply(ws, this.welcome());
+      case "start_mapping": {
+        // Group capture (firmware group_capture): code book of codeSpace ids, LED
+        // i transmits i + codeOffset, on the requested epoch (device clock).
+        const o = (m["options"] ?? {}) as Record<string, number>;
+        const space = o["codeSpace"] ?? (o["codeOffset"] ?? 0) + o["ledCount"]!;
+        const epochMs = o["epochMs"] ?? performance.now() + this.clockOffsetMs;
+        this.mapping = { options: o, epochMs };
+        const bits = Math.ceil(Math.log2(space + 1)) + 5;
+        return this.reply(ws, {
+          type: "mapping_started",
+          patternClockEpoch: epochMs,
+          codeParams: {
+            ledCount: space,
+            bits,
+            encoding: "hue",
+            bitPeriodMs: o["bitPeriodMs"] ?? 100,
+            syncPattern: "on_off",
+            cycleFrames: 2 + Math.ceil(bits / ((o["symbols"] ?? 2) === 4 ? 2 : 1)),
+            fec: "secded",
+            symbols: o["symbols"] ?? 2,
+            ...(o["codeOffset"] ? { codeOffset: o["codeOffset"] } : {}),
+          },
+        });
+      }
+      case "stop_mapping":
+        this.mapping = null;
+        return this.reply(ws, { type: "mapping_stopped", detections: 0, imuSamples: 0 });
+      case "set_fixture_pose":
+        this.pose = (m["pose"] as Record<string, unknown>) ?? null;
         return this.reply(ws, this.welcome());
       case "submit_effect":
         return this.reply(
@@ -329,17 +405,18 @@ export class FakePlayer {
       }
       case "set_perf":
       case "get_perf_report":
-        if (m.type === "set_perf" && this.abortOnNextPerf) {
-          const a = this.abortOnNextPerf;
-          this.abortOnNextPerf = null;
+        if (m.type === "set_perf" && this.lagOnNextPerf) {
+          const a = this.lagOnNextPerf;
+          this.lagOnNextPerf = null;
           this.reply(ws, {
             type: "fps_state",
             targetFps: a.targetFps,
-            currentFps: a.auto ? 25 : a.targetFps,
             minFps: 25,
             maxFps: 80,
             auto: a.auto,
-            aborted: true,
+            ...(a.oldAbort
+              ? { currentFps: a.auto ? 25 : a.targetFps, aborted: true }
+              : { currentFps: a.achievedFps, lagging: true, achievedFps: a.achievedFps }),
           });
         }
         return this.reply(ws, {
@@ -387,6 +464,29 @@ export class FakePlayer {
           this.sensor = { ...this.sensor, calibrationSeq: seq + 1, calibrationResult: "ok", calibrated: true };
         }
         return this.reply(ws, reply);
+      }
+      case "get_wifi_policy":
+        return this.reply(ws, { type: "wifi_policy_state", ...this.wifi, otaPending: this.otaPending });
+      case "set_wifi_policy": {
+        const mode = m["mode"] as string | undefined;
+        const leaving = mode === "WIFI_MODE_MANUAL" || mode === "WIFI_MODE_OFFLINE";
+        if (leaving && mode !== this.wifi["mode"] && this.otaPending && m["force"] !== true) {
+          return this.reply(ws, {
+            type: "wifi_policy_state",
+            ...this.wifi,
+            otaPending: true,
+            refused: "ota_pending",
+          });
+        }
+        for (const k of ["mode", "scanCapS", "intervalS", "decayAfterH", "sparseIntervalS"]) {
+          if (m[k] !== undefined) this.wifi[k] = m[k];
+        }
+        if (this.wifi["mode"] === "WIFI_MODE_OFFLINE") {
+          this.wifi = { ...this.wifi, state: "WIFI_LINK_OFFLINE", radioOn: false, nextScanS: 0 };
+        } else if (m["rejoinNow"] === true && this.wifi["state"] !== "WIFI_LINK_JOINED") {
+          this.wifi = { ...this.wifi, state: "WIFI_LINK_SEARCHING", radioOn: true, nextScanS: 0 };
+        }
+        return this.reply(ws, { type: "wifi_policy_state", ...this.wifi, otaPending: this.otaPending });
       }
       case "scan_i2c":
         return this.reply(ws, { type: "i2c_scan_result", addresses: [0x40, 0x68] });

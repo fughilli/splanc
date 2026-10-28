@@ -14,7 +14,8 @@ use ledmapper_netstack::sta::{Out, Sta};
 use ledmapper_netstack::tx::TxRing;
 use ledmapper_netstack::wpa::PmkDeriv;
 
-static mut RX: RxRing<16> = RxRing::new();
+const RX_SLOTS: usize = 16;
+static mut RX: RxRing<RX_SLOTS> = RxRing::new();
 static mut TX: TxRing<4> = TxRing::new();
 
 /// Per-STA 802.11 transmit sequence number (12-bit, mod 4096). IEEE 802.11 §9.2.4.4
@@ -223,6 +224,13 @@ pub extern "C" fn ns_tcp_tx_room() -> u32 {
     unsafe { TCP.as_ref().map(|c| c.tx_room() as u32).unwrap_or(0) }
 }
 
+/// Whether the send side still holds data (queued or unacknowledged): the RTO and the
+/// send window need servicing (`ns_tcp_tick` / `ns_tcp_pump_tx`) until it drains.
+#[no_mangle]
+pub extern "C" fn ns_tcp_tx_pending() -> u32 {
+    unsafe { TCP.as_ref().map(|c| c.tx_pending() as u32).unwrap_or(0) }
+}
+
 /// Oldest unacked send sequence — advances on every peer ACK. The forward-progress
 /// signal the reclaim watchdogs need so they fire only on a truly silent peer, never on
 /// a healthy saturating stream (window full but snd_una climbing).
@@ -299,6 +307,18 @@ pub extern "C" fn ns_tcp_set_serving_live(live: u32) {
         if let Some(c) = TCP.as_mut() {
             c.set_serving_live(live != 0);
         }
+    }
+}
+
+/// Copy the connection's diagnostics counters into `out[0..7]`: rx data segments,
+/// out-of-order (discarded), duplicate, truncated, zero-window ACKs, RTOs, fast
+/// retransmits. Zeros when there is no connection.
+#[no_mangle]
+pub extern "C" fn ns_tcp_stats(out: *mut u32) {
+    unsafe {
+        let s = TCP.as_ref().map(|c| c.stats).unwrap_or_default();
+        let v = [s.rx_segs, s.rx_ooo, s.rx_dup, s.rx_trunc, s.zero_wnd, s.rto, s.fast_rexmit];
+        core::ptr::copy_nonoverlapping(v.as_ptr(), out, v.len());
     }
 }
 
@@ -384,10 +404,50 @@ pub extern "C" fn ns_mac_rx_install() {
 
 /// Reap the RX ring and copy the next completed 802.11 frame (past the 92-byte
 /// hardware RX vector header) into `out`. Returns its length, or 0 if none ready.
+/// RX-ring diagnostics: (high-water of frames waiting in the ring at a poll, polls that
+/// found it completely full). Read + reset by `ns_mac_rx_stats`.
+static mut RX_HWM: u32 = 0;
+static mut RX_FULL: u32 = 0;
+
+/// Copy the RX-ring diagnostics into `out[0..2]` (high-water, full-ring polls) and reset
+/// the high-water. Lets the player log how close the 16-slot ring comes to overflowing.
+#[no_mangle]
+pub extern "C" fn ns_mac_rx_stats(out: *mut u32) {
+    unsafe {
+        *out = RX_HWM;
+        *out.add(1) = RX_FULL;
+        RX_HWM = 0;
+    }
+}
+
+/// Reap newly completed descriptors into the ring (updating the diagnostics).
+unsafe fn rx_reap() {
+    if RX.reap() > 0 {
+        let ready = RX.ready_count() as u32;
+        if ready > RX_HWM {
+            RX_HWM = ready;
+        }
+        if ready as usize >= RX_SLOTS {
+            RX_FULL = RX_FULL.wrapping_add(1);
+        }
+    }
+}
+
+/// Frames waiting in the RX ring (completed by the MAC, not yet taken by
+/// `ns_mac_recv`). One descriptor scan, no copy: lets the caller skip a whole
+/// service pass when nothing arrived. Same task as `ns_mac_recv`.
+#[no_mangle]
+pub extern "C" fn ns_mac_rx_pending() -> u32 {
+    unsafe {
+        rx_reap();
+        RX.ready_count() as u32
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn ns_mac_recv(out: *mut u8, cap: u32) -> u32 {
     unsafe {
-        RX.reap();
+        rx_reap();
         if let Some((idx, buf)) = RX.next_frame() {
             let frame = rx_frame(buf);
             let n = frame.len().min(cap as usize);
@@ -400,24 +460,44 @@ pub extern "C" fn ns_mac_recv(out: *mut u8, cap: u32) -> u32 {
     }
 }
 
+/// Bound on the wait for the queue's previous arm to be taken (`TxRing::arm_pending`),
+/// in MMIO polls (~10 ms at 160 MHz). The MAC takes an armed descriptor within one
+/// frame's airtime unless the medium is busy; past the bound we arm anyway (the old,
+/// unconditional behaviour) rather than wedge loopTask on a stuck queue.
+const ARM_WAIT_POLLS: u32 = 200_000;
+
+/// Submit `frame` on `queue`: the next round-robin slot (never the buffer of a frame that
+/// may still be on air — the MAC DMAs it during transmission and reports no completion we
+/// track), wait for the queue's previous arm to be taken, then arm. Reusing slot 0 for
+/// every frame copied each frame over the one before it while that was still being sent:
+/// the first of two back-to-back frames (a 1400 + 177 B TCP reply) went out corrupt and
+/// was dropped at the AP, every time — the #358 "DEVICE SILENT" trace-dump stall.
+unsafe fn submit(frame: *const u8, len: u32, queue: u32, secure: bool) -> u32 {
+    let f = core::slice::from_raw_parts_mut(frame as *mut u8, len as usize);
+    stamp_tx_seq(f);
+    let q = queue as usize;
+    match TX.load_frame_next(f, q) {
+        Ok(idx) => {
+            let mut polls = 0u32;
+            while TxRing::<4>::arm_pending(q) && polls < ARM_WAIT_POLLS {
+                polls += 1;
+            }
+            if secure {
+                TX.mark_secure(idx);
+            }
+            TX.set_rate(idx);
+            TX.arm(idx);
+            1
+        }
+        Err(_) => 0,
+    }
+}
+
 /// Transmit an 802.11 `frame` on access category `queue` via our TX recipe
-/// (load_frame -> set_rate -> arm). Returns 1 on submit, 0 if the pool is full.
+/// (load_frame_next -> set_rate -> arm). Returns 1 on submit, 0 if the frame is refused.
 #[no_mangle]
 pub extern "C" fn ns_mac_send(frame: *const u8, len: u32, queue: u32) -> u32 {
-    unsafe {
-        let f = core::slice::from_raw_parts_mut(frame as *mut u8, len as usize);
-        stamp_tx_seq(f);
-        match TX.load_frame(f, queue as usize) {
-            Ok(idx) => {
-                TX.set_rate(idx);
-                TX.arm(idx);
-                // A single-frame pool churns fast; free the slot for reuse next call.
-                TX.on_complete(idx);
-                1
-            }
-            Err(_) => 0,
-        }
-    }
+    unsafe { submit(frame, len, queue, false) }
 }
 
 /// Transmit `frame` requesting HARDWARE CCMP encryption (descriptor word0 bit 29). The
@@ -425,20 +505,7 @@ pub extern "C" fn ns_mac_send(frame: *const u8, len: u32, queue: u32) -> u32 {
 /// Protected bit set; the MAC fills the PN + MIC and encrypts, keying off the dest addr.
 #[no_mangle]
 pub extern "C" fn ns_mac_send_sec(frame: *const u8, len: u32, queue: u32) -> u32 {
-    unsafe {
-        let f = core::slice::from_raw_parts_mut(frame as *mut u8, len as usize);
-        stamp_tx_seq(f);
-        match TX.load_frame(f, queue as usize) {
-            Ok(idx) => {
-                TX.mark_secure(idx);
-                TX.set_rate(idx);
-                TX.arm(idx);
-                TX.on_complete(idx);
-                1
-            }
-            Err(_) => 0,
-        }
-    }
+    unsafe { submit(frame, len, queue, true) }
 }
 
 /// Diagnostic: read back TX descriptor `idx`'s word0 after hardware processing

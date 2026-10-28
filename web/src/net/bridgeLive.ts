@@ -43,7 +43,14 @@ export interface LiveSocket {
   onclose: ((ev: { code?: number; reason?: string }) => void) | null;
   onerror: ((ev?: unknown) => void) | null;
   onmessage: ((ev: { data: unknown }) => void) | null;
+  /** WebSocket.bufferedAmount: bytes not yet on the wire (absent: unknown). */
+  readonly bufferedAmount?: number;
 }
+
+/** Hold coalesced controls while the relay socket still has this much queued:
+ * on a slow uplink, sending more only grows the backlog — the pending patch keeps
+ * merging (latest wins) and goes out once the socket drains. */
+const MAX_BUFFERED = 8 * 1024;
 
 export type LiveSocketFactory = (url: string, protocols: string[]) => LiveSocket;
 
@@ -79,7 +86,7 @@ export interface LiveClientEvents {
   onPlayers?: (players: LivePlayer[], rooms: Record<string, string[]>) => void;
   /** An asynchronous failure from the bridge (a control it couldn't apply). */
   onError?: (code: string, message: string, player?: string) => void;
-  /** A player's framerate autoscaler parked the effect (FUG-82 fps_state{aborted}). */
+  /** A player's effect started/stopped lagging below its target fps (FUG-82; advisory). */
   onFps?: (m: FpsMsg) => void;
   /** New LAN ticket/endpoint: persist them. */
   onLan?: (lan: LanInfo | null, lanToken: string | undefined) => void;
@@ -396,6 +403,12 @@ export class BridgeLiveClient {
     if (this.pending.size === 0) return;
     const s = this.sock;
     if (!s || s.readyState !== OPEN) return; // kept: sent once connected
+    if ((s.bufferedAmount ?? 0) > MAX_BUFFERED) {
+      // Backpressure: keep merging, retry next tick.
+      this.lastFlush = this.now();
+      this.kick();
+      return;
+    }
     for (const p of this.pending.values()) {
       const msg: ControlMsg = { t: "c", to: p.to };
       if (Object.keys(p.u).length) {

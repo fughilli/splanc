@@ -103,6 +103,11 @@ message CodeParams {
   optional int32 stride_spacing = 10;
   optional int32 anchor_density = 11;
   optional int32 stride_phase = 12;
+  // Group capture (docs/design/multi-fixture-localization.md): this fixture's
+  // LED i transmits code-book id (i + code_offset); led_count above is then the
+  // SHARED code-book size (every fixture in the group derives the same bits /
+  // cycle_frames from it). Unset = 0 (single-fixture capture).
+  optional int32 code_offset = 13;
 }
 
 // One labeled observation of one LED in one frame (§7.4).
@@ -282,6 +287,25 @@ message StartMappingOptions {
   optional int32 stride_spacing = 5;
   optional int32 anchor_density = 6;
   optional int32 stride_phase = 7;
+  // Group capture (docs/design/multi-fixture-localization.md), on players
+  // advertising the "group_capture" feature. Several fixtures flash DISJOINT
+  // id ranges of one shared code book on one shared clock, so a single phone
+  // capture decodes them all at once:
+  //   - code_offset: this fixture's LED i transmits id (i + code_offset);
+  //   - code_space: the shared code-book size (>= code_offset + led_count),
+  //     from which bits / cycle_frames derive (identical across the group);
+  //   - epoch_ms: the pattern epoch in THIS player's clock (the millis() domain
+  //     time_sync_pong reports), so every fixture's frames line up; a past epoch
+  //     just phase-aligns the running pattern.
+  // The pattern keeps running after the client disconnects (stop_mapping, or
+  // stop_after_ms below, ends it).
+  optional int32 code_offset = 8;
+  optional int32 code_space = 9;
+  optional double epoch_ms = 10;
+  // Auto-stop (group capture): the pattern ends by itself this many ms after
+  // start_mapping, so a phone that dies (or loses its socket) mid-capture
+  // doesn't leave fixtures flashing. Unset/<=0 = run until stop_mapping.
+  optional int32 stop_after_ms = 11;
 }
 
 message StartMapping {
@@ -430,7 +454,11 @@ message UploadChunk {
 // ---------------------------------------------------------------------------
 
 // A single uniform's live value. `slot` indexes the effect's uniform manifest;
-// `value` carries 1..4 floats (scalar or vecN) interpreted per the manifest.
+// `value` carries 1..4 floats (scalar or vecN) interpreted per the manifest,
+// written into consecutive slots from `slot`. A wider uniform (mat3 = 9, mat4 =
+// 16 floats, column-major) travels as consecutive chunks {slot, v[0..4]},
+// {slot+4, v[4..8]}, ... — every sender and the device's replies keep to <= 4
+// floats per value (firmware since #400 also accepts up to 16 in one).
 message UniformValue {
   uint32 slot = 1;
   repeated float value = 2 [packed = true];
@@ -461,7 +489,8 @@ message SetEffect {
 }
 
 // Set live uniform values on the active effect (slider drags). Coalesced and
-// persisted like set_playback. Reply: playback_state.
+// persisted like set_playback. Reply: playback_state, or a ControlAck when
+// `seq` is set (the live-control channel, docs/design/live-control.md).
 message SetUniforms {
   repeated UniformValue values = 1;
   // Persist these values (auto-resume on boot) — true or unset, today's behaviour —
@@ -472,6 +501,12 @@ message SetUniforms {
   // FX deck whose uniforms to set: 0 = A (default), 1 = B. Deck B is never
   // persisted (commit is ignored there).
   uint32 deck = 3;
+  // Live-control sequence number (firmware feature "control_ack"). 0 (unset) keeps
+  // today's playback_state reply. Non-zero: the device replies with a tiny
+  // ControlAck{seq} once the values are applied — the client keeps at most one
+  // live update in flight and paces on it — and, when its send window is full,
+  // may drop that ack rather than stall (the client times out and moves on).
+  uint32 seq = 4;
 }
 
 // Ask for the device's TLS identity state (docs/design/per-device-cert.md). Works over
@@ -485,14 +520,101 @@ message GetTlsInfo {}
 // feature). By default the player autoscales the effect FPS on a 5-fps ladder
 // (25..80) keeping at least 5% of every frame period free; `target_fps` pins an
 // exact rate (snapped to the ladder) and stops autoscaling, 0 returns to
-// autoscale. If the floor (or a pinned rate) can't be held the player parks the
-// effect and pushes fps_state{aborted=true}, unless `no_abort` is set: then it
-// just holds the rung (benchmark/profiling clients that must measure an effect
-// whatever it costs). Both settings are runtime-only and survive effect reloads.
-// Reply: fps_state.
+// autoscale. An effect that can't hold the floor (or a pinned rate) keeps
+// running as fast as it can — the player never parks or blanks an effect for
+// being slow; fps_state reports it `lagging`. The pin is runtime-only and
+// survives effect reloads. Reply: fps_state.
+// -- Wi-Fi rejoin policy (docs/design/wifi-rejoin-policy.md) -----------------------
+// How the player (re)joins its stored network when it isn't on it. Persisted (NVS)
+// and applied without a reboot; settable over wss, the BLE player transport, and the
+// wired console ("WIFI MODE ..."). Firmware advertising the "wifi_policy" feature
+// answers it.
+enum WifiMode {
+  // Background rescans on a 5 s -> scan_cap_s exponential backoff (default).
+  WIFI_MODE_AUTO = 0;
+  // A rescan every interval_s while the network is missing (no backoff).
+  WIFI_MODE_FIXED = 1;
+  // Never scan or join on its own: only on rejoin_now (app / agent / console
+  // "WIFI REJOIN") or a new provision, each of which opens a ~2 min join window.
+  WIFI_MODE_MANUAL = 2;
+  // Forward-deployed, no AP: the Wi-Fi radio stays off (no scans, no RF; it is
+  // never started on boot), the stored show plays, and the board stays
+  // reconfigurable over BLE and the console. Credentials are kept, so switching
+  // back to auto rejoins without re-entering them.
+  WIFI_MODE_OFFLINE = 3;
+}
+
+// Change the policy. Unset fields keep their current value. Going to manual or
+// offline is refused while a freshly installed firmware update is still awaiting
+// confirmation (it would otherwise have no network to prove itself on) unless
+// `force` is set; the reply then carries refused = "ota_pending". Reply:
+// wifi_policy_state.
+message SetWifiPolicy {
+  optional WifiMode mode = 1;
+  // auto: the backoff's cap (10..86400 s; default 60).
+  optional uint32 scan_cap_s = 2;
+  // fixed: the rescan period (10..86400 s; default 300).
+  optional uint32 interval_s = 3;
+  // auto: after this many hours without ever seeing the network, slow the
+  // rescans to sparse_interval_s. Opt-in: 0 = off (the default; older
+  // firmware defaulted to 24).
+  optional uint32 decay_after_h = 4;
+  // The decayed rescan period (60..86400 s; default 900).
+  optional uint32 sparse_interval_s = 5;
+  bool force = 6;
+  // Try to (re)join now (manual: opens a join window; others: an immediate scan).
+  bool rejoin_now = 7;
+}
+
+message GetWifiPolicy {}
+
+enum WifiLinkState {
+  WIFI_LINK_UNKNOWN = 0;
+  // offline mode: the radio is off.
+  WIFI_LINK_OFFLINE = 1;
+  // No credentials stored or provisioned yet.
+  WIFI_LINK_UNPROVISIONED = 2;
+  // manual mode, outside a join window: not trying.
+  WIFI_LINK_IDLE = 3;
+  // Looking for the network (between / during background scans).
+  WIFI_LINK_SEARCHING = 4;
+  // The network was seen: authenticating / 4-way / DHCP.
+  WIFI_LINK_JOINING = 5;
+  // Leased on the network.
+  WIFI_LINK_JOINED = 6;
+}
+
+message WifiPolicyState {
+  WifiMode mode = 1;
+  uint32 scan_cap_s = 2;
+  uint32 interval_s = 3;
+  uint32 decay_after_h = 4;
+  uint32 sparse_interval_s = 5;
+  WifiLinkState state = 6;
+  // Seconds until the next background scan (0 = none scheduled / scanning now).
+  uint32 next_scan_s = 7;
+  // Background scans run since the network went missing.
+  uint32 scans = 8;
+  // The stored / active network name ("" = none).
+  string ssid = 9;
+  // Seconds since the network was last seen (0 = on it / unknown).
+  uint32 unseen_s = 10;
+  // auto: the decay to sparse_interval_s is in force.
+  bool decayed = 11;
+  // A firmware update is installed but not yet confirmed (stay online until it is).
+  bool ota_pending = 12;
+  // Why the last set_wifi_policy was not applied ("" = it was): "ota_pending".
+  string refused = 13;
+  // The Wi-Fi radio is running (false in offline mode, and after switching to
+  // offline at runtime it is silent; fully off from the next boot).
+  bool radio_on = 14;
+}
+
 message SetFps {
   uint32 target_fps = 1;
-  bool no_abort = 2;
+  // Deprecated, ignored: it held off the old "park a slow effect" abort, which
+  // no longer exists (every effect now runs at whatever rate it achieves).
+  bool no_abort = 2 [deprecated = true];
 }
 
 // -- Sensor core (docs/design/sensor-core.md) ---------------------------------
@@ -746,6 +868,9 @@ message SetCrossfade {
   double position = 1;
   // 0 = linear RGB, 1 = linear HSV.
   uint32 mode = 2;
+  // Live-control sequence number, as SetUniforms.seq: non-zero answers with a
+  // ControlAck{seq} instead of the (much larger) welcome.
+  uint32 seq = 3;
 }
 
 // -- Uniform keypoints (docs/design/uniform-keypoints.md) --------------------
@@ -955,7 +1080,213 @@ message ClientMessage {
     OtaAbort ota_abort = 73;
     GetOtaStatus get_ota_status = 74;
     OtaReboot ota_reboot = 75;
+    // 76-79: left free. FX debugger (docs/design/fx-debugger.md).
+    FxDebugControl fx_debug_control = 80;
+    GetFxSnapshot get_fx_snapshot = 81;
+    DebugFxLed debug_fx_led = 82;
+    // 83-89: left free.
+    // Wi-Fi rejoin policy (docs/design/wifi-rejoin-policy.md).
+    SetWifiPolicy set_wifi_policy = 90;
+    GetWifiPolicy get_wifi_policy = 91;
   }
+}
+
+// --- FX debugger (docs/design/fx-debugger.md) --------------------------------
+//
+// Pause the effect engine on the device and inspect it, so a fixture that
+// doesn't match the editor preview can be explained: freeze the frame clock,
+// step frames (or to an exact time), pull the rendered output + the VM's
+// uniforms / state / buffers / per-LED inputs, and re-run one LED with its VM
+// locals. A host replays the same .fxb at the same inputs and diffs per LED
+// (web/src/fx/replay.ts). Player profile: ESP32 FX players (feature
+// "fx_debug"); other players answer error{unsupported}.
+//
+// A pause is a LEASE: it auto-resumes `hold_ms` after the last fx debugger
+// message, or ~5 s after the last session closes, so a fixture never stays
+// frozen. Mapping capture / the counting probe still preempt a paused engine.
+
+// Pause / resume / step the FX engine, or just read its debugger state.
+// Reply: fx_debug.state (or error{no_effect} for pause/step with nothing
+// rendering).
+message FxDebugControl {
+  enum Action {
+    ACTION_STATUS = 0;
+    // Freeze: nothing renders, `time` stops, the strip holds the last frame.
+    ACTION_PAUSE = 1;
+    // Unfreeze: time continues from where it stopped (a time base re-applies).
+    ACTION_RESUME = 2;
+    // Pause (if running), then render `frames` more frames; the reply comes
+    // back at once with steps_pending > 0 — poll ACTION_STATUS until it is 0.
+    ACTION_STEP = 3;
+  }
+  Action action = 1;
+  // STEP: frames to render (0 = 1; at most 600).
+  uint32 frames = 2;
+  // STEP: seconds of effect time per stepped frame (unset = the last frame's
+  // dt). Every stepped frame advances time by exactly this.
+  optional float dt = 3;
+  // STEP: render ONE frame at exactly this effect time (dt = to_time - the
+  // last frame's time, unless `dt` is given). Overrides `frames`.
+  optional float to_time = 4;
+  // The pause lease, ms after the last fx debugger message (0 = 120000; at
+  // most 600000). Every fx debugger message renews it.
+  uint32 hold_ms = 5;
+}
+
+// The FX debugger's reply envelope: `state` answers fx_debug_control,
+// `chunk` get_fx_snapshot, `led` debug_fx_led.
+message FxDebugReply {
+  oneof reply {
+    FxDebugState state = 1;
+    FxSnapshotChunk chunk = 2;
+    FxLedDebug led = 3;
+  }
+}
+
+// The engine as the debugger sees it (fx_debug.state).
+message FxDebugState {
+  bool paused = 1;
+  // Stepped frames still to render (STEP is asynchronous).
+  uint32 steps_pending = 2;
+  // Until the lease auto-resumes (0 while running).
+  uint32 hold_remaining_ms = 3;
+  // The LAST rendered frame: effect time / dt (s), frame counter, LEDs shaded.
+  float time = 4;
+  float dt = 5;
+  uint32 frame = 6;
+  uint32 led_count = 7;
+  repeated FxDeckDebug decks = 8;
+  // The crossfade the last frame blended with (deck B loaded).
+  float crossfade = 9;
+  uint32 crossfade_mode = 10;
+  // Framerate ladder (FUG-82): the rate it runs at, the pinned target (0 = auto).
+  uint32 current_fps = 11;
+  uint32 target_fps = 12;
+  // Output stage: global brightness (0..255, nscale8 after the LUT; 255 =
+  // unscaled), whether a colour LUT is applied (section LUT), the per-channel
+  // wire colour order (6 bytes: channel 0's source permutation, then channel
+  // 1's — wire byte k = output[perm[k]]) and the LEDs on each channel.
+  uint32 brightness = 13;
+  bool lut = 14;
+  bytes color_order = 15;
+  uint32 channel0_leds = 16;
+  uint32 channel1_leds = 17;
+  // The full shade() Frame of the last frame, little-endian (layout
+  // FX_FRAME_V1 in docs/design/fx-debugger.md): what a host replay feeds the VM.
+  bytes frame_ctx = 18;
+  // Last update() bounded-exec outcome (0 ok, 1 budget, 2 timeout) and the
+  // per-invocation instruction budget.
+  uint32 last_update_outcome = 19;
+  uint32 budget = 20;
+  // A shared time base (set_time_base) is driving `time`.
+  bool time_base = 21;
+  // Why the engine last auto-resumed: "" | "timeout" | "disconnect" | "load".
+  string resume_reason = 22;
+  // Snapshot section layout versions this firmware serves (FX_*_V1 = 1).
+  uint32 layout_version = 23;
+}
+
+// One FX deck as the debugger sees it.
+message FxDeckDebug {
+  uint32 deck = 1;
+  string effect_id = 2;
+  // FNV-1a of the loaded .fxb (== perf_report.fxb_hash) and its size.
+  uint32 fxb_hash = 3;
+  uint32 fxb_bytes = 4;
+  // Loaded + active (its update/shade run each frame).
+  bool renders = 5;
+  // The .fxb header flags (FLAG_* in firmware/fx_vm).
+  uint32 flags = 6;
+  // Native JIT blocks the device compiled for it (0 = pure interpreter).
+  uint32 jit_blocks = 7;
+  // Bytes of its buffer arena (section ARENA) and the VM's state / uniform slots.
+  uint32 arena_bytes = 8;
+  uint32 state_slots = 9;
+  uint32 uniform_slots = 10;
+  // A keypoint morph is moving its uniforms.
+  bool morph_running = 11;
+}
+
+// Read a window of one snapshot section: bytes [offset, offset + max_len) of
+// its little-endian dump (layouts in docs/design/fx-debugger.md). Streamed from
+// the live buffers (nothing is copied on the device), so pause first for a
+// consistent read; `frame` in the reply says which frame it came from.
+// Reply: fx_debug.chunk (or error{no_effect}, error{not_paused} for RAW).
+message GetFxSnapshot {
+  enum Section {
+    // Per LED, 3 bytes R,G,B: the frame as the strip shows it (after the colour
+    // LUT and brightness, before the wire colour order).
+    SECTION_OUTPUT = 0;
+    // Per LED, 3 bytes in WIRE order (the channel's colour order applied).
+    SECTION_WIRE = 1;
+    // The deck's VM uniform slots, f32 each.
+    SECTION_UNIFORMS = 2;
+    // The deck's VM `state` slots (statics / state vars), f32 each.
+    SECTION_STATE = 3;
+    // The deck's buffer arena (LED buffers + textures), raw bytes.
+    SECTION_ARENA = 4;
+    // The deck's .fxb, as loaded.
+    SECTION_PROGRAM = 5;
+    // Per LED, the shade() inputs the device builds (FX_LED_V1, 44 bytes).
+    SECTION_LED_CONTEXT = 6;
+    // The colour LUT, 3 x 256 bytes (R, G, B tables); empty when none.
+    SECTION_LUT = 7;
+    // Per LED, 3 bytes: the effect's blended shade() result BEFORE the LUT /
+    // brightness, recomputed by re-running shade() at the paused frame.
+    // Paused only.
+    SECTION_RAW = 8;
+    // The deck's topology graph: u32 n_seg, then per segment f32 length, i32
+    // node a, i32 node b (what the VM's graph intrinsics read).
+    SECTION_GRAPH = 9;
+  }
+  Section section = 1;
+  uint32 deck = 2;
+  uint32 offset = 3;
+  // 0 = 768; at most 1536.
+  uint32 max_len = 4;
+}
+
+message FxSnapshotChunk {
+  GetFxSnapshot.Section section = 1;
+  uint32 deck = 2;
+  uint32 total_len = 3;
+  uint32 offset = 4;
+  bytes data = 5;
+  // The frame counter when this window was read.
+  uint32 frame = 6;
+  bool paused = 7;
+}
+
+// Re-run shade() for ONE LED of a paused frame on the interpreter, keeping its
+// VM locals — the most direct evidence of where a device run departs from a
+// host replay. Reply: fx_debug.led (or error{not_paused} / {no_effect} /
+// {bad_led}).
+message DebugFxLed {
+  uint32 led = 1;
+  uint32 deck = 2;
+  // Locals to return (0 = all 128).
+  uint32 max_locals = 3;
+}
+
+message FxLedDebug {
+  uint32 led = 1;
+  uint32 deck = 2;
+  // The deck's own shade() result (no crossfade), 3 bytes: on the
+  // interpreter (`rgb`) and on the normal path, JIT included (`rgb_jit`).
+  bytes rgb = 3;
+  bytes rgb_jit = 4;
+  // What the strip shows for this LED (section OUTPUT).
+  bytes output = 5;
+  // 0 ok, 1 budget, 2 timeout (the interpreted run).
+  uint32 outcome = 6;
+  // The VM locals after the interpreted run (zeroed first, so a local the
+  // run never wrote reads 0), f32.
+  repeated float locals = 7 [packed = true];
+  // The LED's shade() inputs (one FX_LED_V1 record).
+  bytes led_context = 8;
+  // Opcodes retired + operand-stack high-water of the interpreted run.
+  uint32 instructions = 9;
+  uint32 stack_max = 10;
 }
 
 // --- Firmware update over the air (docs/design/ota.md) ----------------------
@@ -1152,7 +1483,8 @@ message GetColorCorrection {}
 // buffer first), then run-length coded (flags bit1 = RLE, a zero-run scheme:
 // repeated [varint zero_run][varint literal_run][literal bytes...]). `tex_index`
 // selects which declared texture (buffer id, kind=1) in the active effect; the
-// texture's w/h/elem must match. No reply (fire-and-forget for high frame rates).
+// texture's w/h/elem must match. No reply (fire-and-forget for high frame rates)
+// unless `seq` is set (firmware feature "texture_ack").
 message SetTexture {
   uint32 tex_index = 1;
   uint32 format = 2; // 0 RGB888, 1 RGB565, 2 RGB332, 3 GRAY8, 4 INDEXED8
@@ -1161,6 +1493,41 @@ message SetTexture {
   uint32 flags = 5; // bit0 DELTA (XOR vs previous frame), bit1 RLE
   bytes data = 6;
   repeated uint32 palette = 7 [packed = true]; // INDEXED8 only: 0x00RRGGBB entries
+  // Frame sequence number (feature "texture_ack"). Non-zero: the device answers
+  // with a TextureAck{seq} once it has decoded the frame, so a sender can keep a
+  // bounded number of frames in flight (latest-wins) instead of queueing.
+  uint32 seq = 8;
+  // When to show the frame, in ms on the shared effect time base (the
+  // set_time_base epoch: effect time = now - epoch). Fixtures given the same
+  // epoch and the same present_at show the frame at the same instant. The
+  // device holds early frames in a small jitter buffer (as many as fit beside
+  // the delta buffer, up to 4) and shows the newest due frame at each render;
+  // a frame that arrives more than a frame or two late is dropped (still
+  // decoded, so the delta chain holds). 0, or no time base set: show at the
+  // next render, as before.
+  uint32 present_at_ms = 9;
+}
+
+// Reply to a SetTexture with a seq (feature "texture_ack"): the frame with that
+// seq is decoded (and shown or queued). Also carries the presentation telemetry
+// a sender (or a HITL test) needs to see how on-time the stream is.
+message TextureAck {
+  uint32 seq = 1;
+  // The last frame actually shown, and how late it was against its present_at
+  // (ms; negative = early never happens, 0 when it had no present_at).
+  uint32 shown_seq = 2;
+  int32 shown_late_ms = 3;
+  // Frames decoded but never shown: arrived too late, or superseded by a newer
+  // due frame / a full jitter buffer. Cumulative for the effect.
+  uint32 dropped = 4;
+  // Frames waiting in the jitter buffer right now.
+  uint32 queued = 5;
+  // Device effect time (ms, same base as present_at_ms) when shown_seq was shown.
+  uint32 shown_at_ms = 6;
+  // Times the device clock was seen to step backwards (> 1 s); the device shifts
+  // its time base to keep effect time continuous, but a hub should re-send
+  // set_time_base when this changes.
+  uint32 clock_jumps = 7;
 }
 
 // Set the player's display name; it becomes the Bluetooth-advertised name too
@@ -1393,6 +1760,14 @@ message ChunkAck {
   uint32 seq = 2;
 }
 
+// Reply to a live-control update that carried a `seq` (SetUniforms.seq,
+// SetCrossfade.seq): the update with that seq — and everything before it on
+// this connection — has been applied. Deliberately tiny (one short TLS record),
+// so a fader stream costs the device almost nothing to acknowledge.
+message ControlAck {
+  uint32 seq = 1;
+}
+
 message Error {
   string code = 1;
   string message = 2;
@@ -1545,21 +1920,29 @@ message TlsInfo {
 }
 
 // Framerate autoscaler state (FUG-82). Reply to set_fps, and pushed
-// unsolicited when the autoscaler parks an effect it can't run within budget.
+// unsolicited when the effect starts or stops lagging (an advisory).
 // `target_fps` is the pinned rate (0 = autoscaling); `current_fps` the rate the
-// effect runs at now; `min_fps`/`max_fps` the ladder bounds (25/80). `aborted`:
-// the effect (every deck that was rendering) was just parked because even the
-// floor/pinned rate couldn't keep 5% headroom — surface it to the user; the
-// effect stays loaded and set_effect resumes it.
+// effect runs at now (the ladder rung, or what it really achieves while
+// lagging); `min_fps`/`max_fps` the autoscaler's lowest/highest rung for this
+// strip (25/80 for up to 512 LEDs). A slow effect is never parked: below
+// `min_fps` (or a pinned rate) it keeps rendering as fast as it can, with the
+// render task's duty cycle bounded so the network, sensors and control stay
+// responsive.
 message FpsState {
   uint32 target_fps = 1;
   uint32 current_fps = 2;
   uint32 min_fps = 3;
   uint32 max_fps = 4;
   bool auto = 5;
-  bool aborted = 6;
-  // Echo of SetFps.no_abort.
-  bool no_abort = 7;
+  // Deprecated, always false: the player no longer parks a slow effect.
+  bool aborted = 6 [deprecated = true];
+  // Deprecated, always false (SetFps.no_abort is ignored).
+  bool no_abort = 7 [deprecated = true];
+  // The effect can't hold min_fps (or the pinned rate) and is running below it,
+  // as fast as it can (current_fps = achieved_fps). Advisory: nothing stops.
+  bool lagging = 8;
+  // The frame rate the last ~30-frame window really ran at (0 = not measured yet).
+  uint32 achieved_fps = 9;
 }
 
 message ServerMessage {
@@ -1597,5 +1980,17 @@ message ServerMessage {
     // 31: left free for in-flight branches (#325's ramp_state takes 40).
     // Reply to every OTA arm (docs/design/ota.md).
     OtaStatus ota_status = 32;
+    // 33-40: left free for in-flight branches (#325's ramp_state takes 40).
+    // Reply to a live-control update with a seq (SetUniforms / SetCrossfade).
+    ControlAck control_ack = 41;
+    // Reply to a SetTexture carrying a seq.
+    TextureAck texture_ack = 42;
+    // 43-49: left free.
+    // FX debugger (docs/design/fx-debugger.md).
+    // Reply to all three FX debugger arms (one envelope arm: each extra arm
+    // grows every by-value ServerMessage frame in the debug host builds).
+    FxDebugReply fx_debug = 50;
+    // Reply to set_wifi_policy / get_wifi_policy.
+    WifiPolicyState wifi_policy_state = 51;
   }
 }

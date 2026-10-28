@@ -13,7 +13,7 @@
  * with the sibling .wasm, cache the module promise.
  */
 
-import type { FxCompiled, FxDiagnostic, FxUniform } from "../../fx/preview";
+import type { FxCompiled, FxDiagnostic, FxSymbol, FxUniform } from "../../fx/preview";
 import { compilerAssetBase } from "./workerAssets";
 
 /** A compile request (`src`) or a disassemble request (`fxb`). Discriminated by
@@ -31,6 +31,7 @@ interface CompilerResult {
   readonly bytecode: Uint8Array;
   readonly manifest: string;
   readonly diagnostics: string;
+  readonly warnings?: string;
 }
 interface CompilerModule {
   default(wasm: string): Promise<unknown>;
@@ -64,11 +65,16 @@ function loadCompiler(base = fxCompilerBase()): Promise<CompilerModule> {
 }
 
 function toCompiled(r: CompilerResult): FxCompiled {
+  // The FX debugger's symbol table (absent from compilers that predate it).
+  const syms = r.ok ? (r as { symbols?: unknown }).symbols : undefined;
   return {
     ok: r.ok,
     bytecode: r.bytecode,
     uniforms: r.ok ? (JSON.parse(r.manifest) as FxUniform[]) : [],
     diagnostics: JSON.parse(r.diagnostics) as FxDiagnostic[],
+    // (absent in compiler bundles that predate warnings)
+    warnings: r.warnings ? (JSON.parse(r.warnings) as FxDiagnostic[]) : [],
+    ...(typeof syms === "string" ? { symbols: JSON.parse(syms) as FxSymbol[] } : {}),
   };
 }
 
@@ -101,6 +107,7 @@ self.onmessage = (ev: MessageEvent<CompileRequest>): void => {
         diagnostics: [
           { line: 0, col: 0, msg: `compiler error: ${e instanceof Error ? e.message : String(e)}` },
         ] satisfies FxDiagnostic[],
+        warnings: [],
       };
     }
     const resp: CompileResponse = { id: req.id, result };

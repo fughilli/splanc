@@ -15,6 +15,7 @@ fn main() {
         match ledmapper_fx_compiler::compile(&src2) {
             Ok(c) => {
                 print!("{}", ledmapper_fx_compiler::disassemble(&c.fxb));
+                print!("{}", memo_summary(&c.memo));
                 return;
             }
             Err(diags) => {
@@ -27,7 +28,11 @@ fn main() {
     // optimized/unoptimized A/B of the SAME source for on-device (HITL) cycle
     // comparison against one firmware build. Filtered out of the positional args.
     let optimize = !args.iter().any(|a| a == "--no-opt");
-    let args: Vec<String> = args.into_iter().filter(|a| a != "--no-opt").collect();
+    // `--no-memo` keeps the optimizer but skips the variance pass (per-frame
+    // hoisting + per-LED memoization) — the A/B leg for the memo benchmark.
+    let memo = !args.iter().any(|a| a == "--no-memo");
+    let args: Vec<String> =
+        args.into_iter().filter(|a| a != "--no-opt" && a != "--no-memo").collect();
     let src = if args.len() > 1 {
         std::fs::read_to_string(&args[1]).expect("read source file")
     } else {
@@ -35,8 +40,15 @@ fn main() {
         std::io::stdin().read_to_string(&mut s).expect("read stdin");
         s
     };
-    match ledmapper_fx_compiler::compile_opts(&src, optimize) {
+    let opts = ledmapper_fx_compiler::CompileOptions {
+        optimize,
+        memo: memo.then(ledmapper_fx_compiler::MemoConfig::default),
+    };
+    match ledmapper_fx_compiler::compile_with(&src, &opts) {
         Ok(c) => {
+            for w in &c.warnings {
+                eprintln!("{}:{}: {}", w.line, w.col, w.msg);
+            }
             if args.len() > 2 {
                 std::fs::write(&args[2], &c.fxb).expect("write .fxb");
                 eprintln!("wrote {} bytes to {}", c.fxb.len(), args[2]);
@@ -54,4 +66,26 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+/// One-paragraph summary of what the variance pass did (appended to --disasm).
+fn memo_summary(r: &ledmapper_fx_compiler::MemoReport) -> String {
+    let mut s = String::new();
+    if r.hoisted.is_empty() && r.cached.is_empty() {
+        return "; memo: nothing hoisted or cached\n".into();
+    }
+    s.push_str(&format!(
+        "; memo: ~{} C6 cycles/LED/frame saved; LED cache {} word(s)/LED (groups {:?}); state {}\n",
+        r.cycles_saved_per_led, r.led_cache_words, r.led_cache_groups, r.n_state
+    ));
+    for h in &r.hoisted {
+        s.push_str(&format!(";   hoisted -> state[{}..+{}] (~{} cy): {}\n", h.slot, h.words, h.cycles, h.expr));
+    }
+    for c in &r.cached {
+        s.push_str(&format!(";   led-cache word {}..+{} (~{} cy): {}\n", c.slot, c.words, c.cycles, c.expr));
+    }
+    for c in &r.over_budget {
+        s.push_str(&format!(";   over budget (~{} cy): {}\n", c.cycles, c.expr));
+    }
+    s
 }

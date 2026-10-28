@@ -224,6 +224,18 @@ jobs:
   #   3. App Store Connect API key (Users and Access -> Integrations), role
   #      "App Manager". Note the Issuer ID + Key ID, download the .p8.
   #   4. An "Apple Distribution" certificate exported as a .p12 (with a password).
+  #      Create it ONCE (Keychain Access -> Certificate Assistant -> Request a
+  #      Certificate From a CA -> developer.apple.com -> Certificates -> "+" ->
+  #      Apple Distribution -> upload the CSR, download, double-click), then in
+  #      Keychain Access export the cert + private key as .p12. Reuse it; don't
+  #      mint one per machine.
+  #   5. An App Store provisioning profile for `dev.splanc.app` signed by THAT
+  #      certificate: developer.apple.com -> Profiles -> "+" -> Distribution /
+  #      App Store Connect -> App ID dev.splanc.app -> select the step-4 cert ->
+  #      name it (e.g. "Splanc App Store CI") -> download the .mobileprovision.
+  #      It is valid for a year (and dies if the cert is revoked): regenerate it
+  #      and update the secret when it expires. The app has a single signed target
+  #      (no extensions), so one profile is all it needs.
   #
   # GitHub secrets (in the `iOS distribution` environment — Settings ->
   # Environments). Binary/multiline values are base64 so they survive as secrets:
@@ -232,12 +244,20 @@ jobs:
   #   APP_STORE_CONNECT_KEY_P8_BASE64   base64 of the AuthKey_XXXX.p8
   #   APPLE_DIST_CERT_P12_BASE64        base64 of the distribution .p12
   #   APPLE_DIST_CERT_PASSWORD          the .p12 export password
+  #   APPLE_PROVISIONING_PROFILE_BASE64 base64 of the step-5 .mobileprovision
+  #                                     (`base64 -i X.mobileprovision | pbcopy`)
   #   APPLE_TEAM_ID                     the 10-char Developer Team ID
   #
-  # Signing model: automatic signing driven by the API key
-  # (`-allowProvisioningUpdates` creates/downloads the App Store provisioning
-  # profile), with the distribution cert supplied via the .p12 (Xcode won't mint
-  # a distribution cert in CI, and reusing one avoids Apple's cert cap).
+  # Signing model: MANUAL signing with the fixed "Apple Distribution" cert (.p12)
+  # and the fixed App Store profile — tf-signing-prep installs the profile,
+  # tf-archive pins Manual + that profile on the App target only, tf-export uses
+  # signingStyle manual. Nothing is created on Apple's side, so runs can't burn
+  # through Apple's certificate cap. The API key is only used for the upload.
+  # If APPLE_PROVISIONING_PROFILE_BASE64 is unset the tool falls back to Xcode
+  # AUTOMATIC signing (-allowProvisioningUpdates), which on a fresh runner mints a
+  # new "Apple Development" cert every run — that is what failed app-v1.12.1
+  # through 1.12.7 ("maximum number of certificates" / "No profiles for
+  # 'dev.splanc.app'"). The job still runs, but emits a warning annotation.
   # ---------------------------------------------------------------------------
   testflight-check:
     # Ship to TestFlight only on an app-v* release tag (or a manual dev build) —
@@ -252,9 +272,13 @@ jobs:
         env:
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           DIST_CERT_P12: ${{ secrets.APPLE_DIST_CERT_P12_BASE64 }}
+          DIST_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
         run: |
           if [ -n "$ASC_KEY_ID" ] && [ -n "$DIST_CERT_P12" ]; then
             echo "configured=true" >> "$GITHUB_OUTPUT"
+            if [ -z "$DIST_PROFILE" ]; then
+              echo "::warning::APPLE_PROVISIONING_PROFILE_BASE64 is not set — TestFlight will use Xcode automatic signing, which mints a new Apple Development certificate per run (Apple's cert cap). See .github/workflows/macos.yaml."
+            fi
           else
             echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "::notice::TestFlight signing secrets not set — skipping the upload job. See .github/workflows/macos.yaml for setup."
@@ -276,6 +300,7 @@ jobs:
       APP_STORE_CONNECT_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_KEY_P8_BASE64 }}
       APPLE_DIST_CERT_P12_BASE64: ${{ secrets.APPLE_DIST_CERT_P12_BASE64 }}
       APPLE_DIST_CERT_PASSWORD: ${{ secrets.APPLE_DIST_CERT_PASSWORD }}
+      APPLE_PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - name: Setup repository
@@ -362,8 +387,8 @@ jobs:
       # `bazel run //tools:ios_testflight` builds //web:ios_payload (folding in the
       # WASM), stages it, starts ios_build_server as a sidecar on this runner, and
       # runs the `testflight-prebuilt` chain: cap-sync → tf-build-number →
-      # tf-signing-prep (imports the dist .p12 into a throwaway keychain + drops the
-      # ASC key in ~/.private_keys) → tf-archive → tf-export → tf-upload. Every
+      # tf-signing-prep (imports the dist .p12 into a throwaway keychain, installs
+      # the App Store profile, drops the ASC key in ~/.private_keys) → tf-archive → tf-export → tf-upload. Every
       # credential comes from this job's env (above); nothing is passed in a
       # request. --build-number stamps CFBundleVersion from the (monotonic) run
       # number so each upload is a distinct TestFlight build.

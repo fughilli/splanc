@@ -18,7 +18,7 @@ pub type Rgb = (u8, u8, u8);
 /// block's first bytes at load) dispatches to `func`. The VM never allocates or
 /// executes anything itself — it just calls a function pointer the firmware set
 /// up, so it stays `no_std`/no-alloc.
-pub type JitFn = unsafe extern "C" fn(stack: *mut i32, locals: *mut i32, consts: *const i32);
+pub type JitFn = unsafe extern "C" fn(stack: *mut i32, locals: *mut i32, consts: *const i32, state: *mut i32);
 
 /// One JIT block: its native entry, the pc to resume interpreting at, and the net
 /// operand-stack depth change to apply after the call (see `firmware/fx_jit`).
@@ -306,7 +306,40 @@ pub enum Op {
     I2cRead,  // u8 mode: n = mode & 3 (1..2 bytes), bit 7 = sign-extend a 16-bit
               // read. pop reg, addr -> read n bytes big-endian; push int (-1 on
               // failure — and the host counts the failure, see I2cBus)
+    // --- per-LED memoization (LED-invariant expression cache) ---------------
+    // The compiler's variance analysis (fx_compiler::memo) proves a shade()
+    // subexpression depends ONLY on per-LED attributes (pos/uv/idx/seg/s/branch
+    // + constants) and brackets its code:
+    //     LoadLedCache slot,n,skip ; <expr> ; StoreLedCache slot,n
+    // With a cache bound (Vm::set_led_cache) and this LED's slot filled,
+    // LoadLedCache pushes the n cached words and jumps `skip` past the store —
+    // the expression is never evaluated. Otherwise it falls through, the
+    // expression runs, and StoreLedCache records the top n words (WITHOUT
+    // popping) and marks the slot filled. Words are the raw stack bits (f32 or
+    // int/fixed), so a cached result is bit-identical to a computed one, and
+    // with no cache bound both ops are no-ops (the original code runs).
+    LoadLedCache,  // u8 slot, u8 n, i16 skip
+    StoreLedCache, // u8 slot, u8 n
+    // --- operand-fused float arithmetic (fx-perf-study R8) ---------------------
+    // 110..=119 are reserved for other work in flight; `from_u8` rejects the gap.
+    // A scalar float `Add`/`Sub`/`Mul`/`Div` with one or both operands read
+    // straight from the const pool / a local / state / a uniform instead of being
+    // pushed first: 59–67% of retired opcodes were such stack plumbing. Mode byte:
+    // bits 0-1 = the op, bits 2-3 = the first source, bits 4-5 = the second
+    // (0 const, 1 local, 2 state, 3 uniform), bit 6 = the integer family. Float:
+    // add, sub, mul, div (div by 0 = 0); integer: AddI, SubI, MulI (wrapping),
+    // MulFix (Q16.16). Exact fusions: the optimizer emits them for the same ops.
+    BinTop = 120, // u8 mode, u16 i : top = top OP src(i)        (src in bits 2-3)
+    BinPair,      // u8 mode, u16 a, u16 b : push srcA(a) OP srcB(b)
+    // Runs the optimizer collapses (exact: the same pushes / IEEE ops):
+    PushConsts,   // u8 n, n x u16 idx : PushConst idx_0 .. PushConst idx_{n-1}
+    LoadCtxLanes, // u8 id, u8 src, u8 k, u8 m : LoadCtx id ; Swizzle src->m [k..k+m)
+    MulAdd,       // u8 n : a(n) b(n) c(n) -> a + b*c   (Mul n ; Add n)
 }
+
+/// The last opcode below the reserved gap, and the last overall.
+const LAST_LOW_OP: u8 = Op::StoreLedCache as u8;
+pub const LAST_OP: u8 = Op::MulAdd as u8;
 
 /// A register-oriented I2C master for driver programs (FUG-107). The firmware
 /// backs it with the same ESP-IDF bus as the native sensor core; host tests
@@ -337,6 +370,56 @@ pub mod gq {
 }
 
 pub const FIX_ONE: i32 = 1 << 16;
+
+/// `(x * 2^frac) as i32` — truncating toward zero, saturating, NaN to 0 — with
+/// integer ops only, bit-exact with the float expression for `frac <= 31`.
+/// The C6 has no FPU: the float form is a soft `__mulsf3` plus `__fixsfsi`
+/// (~165 cycles); this is ~15. Used for the Q16.16 context mirrors and the
+/// float-to-fixed opcodes. Public so the firmware and native code paths share it.
+#[inline]
+pub fn f32_to_fix(x: f32, frac: u32) -> i32 {
+    let b = x.to_bits();
+    let neg = (b as i32) < 0;
+    let e = ((b >> 23) & 0xff) as i32;
+    if e == 0 {
+        return 0; // zero or subnormal: |x * 2^frac| < 1
+    }
+    if e == 0xff {
+        if b & 0x7f_ffff != 0 {
+            return 0; // NaN
+        }
+        return if neg { i32::MIN } else { i32::MAX };
+    }
+    let m = (b & 0x7f_ffff) | 0x80_0000;
+    // |x * 2^frac| = m * 2^sh, and m >= 2^23.
+    let sh = e - 150 + frac as i32;
+    let mag = if sh >= 8 {
+        return if neg { i32::MIN } else { i32::MAX }; // >= 2^31
+    } else if sh >= 0 {
+        m << sh
+    } else if sh > -32 {
+        m >> -sh
+    } else {
+        0
+    };
+    if neg {
+        (mag as i32).wrapping_neg()
+    } else {
+        mag as i32
+    }
+}
+
+/// `a as f32 / 2^frac`, bit-exact, without the soft-float divide: the int to
+/// float conversion rounds once, and dividing by a power of two only lowers the
+/// exponent (the result stays normal for `frac <= 31`).
+#[inline]
+pub fn fix_to_f32(a: i32, frac: u32) -> f32 {
+    let f = a as f32;
+    if a == 0 {
+        return f;
+    }
+    f32::from_bits(f.to_bits() - (frac << 23))
+}
 
 /// Fraction bits for the narrow fixed formats (FUG-10). `fixed8` is Q1.6
 /// (s1.1.6) and `fixed16` is Q1.14 (s1.1.14); both range [-2, 2). These are the
@@ -393,6 +476,11 @@ pub enum Outcome {
     /// The wall-time deadline flag was raised (hardware timer) — treat as
     /// timeout. The caller holds last/black for the affected LED.
     Timeout,
+    /// The program was malformed at runtime (operand-stack underflow, an
+    /// unknown opcode, an out-of-range operand). The invocation stopped instead
+    /// of panicking; treat it like a timeout (hold last/black). A compiler bug,
+    /// never a property of a well-formed program.
+    Fault,
 }
 
 impl Outcome {
@@ -419,8 +507,9 @@ pub struct Counters {
 impl Op {
     #[inline]
     pub fn from_u8(b: u8) -> Option<Op> {
-        // Op is a contiguous enum 0..=I2cRead; guard the range then transmute.
-        if b <= Op::I2cRead as u8 {
+        // Op is contiguous over 0..=LAST_LOW_OP and 120..=LAST_OP (110..=119 are
+        // reserved); guard both ranges, then transmute.
+        if b <= LAST_LOW_OP || (Op::BinTop as u8..=LAST_OP).contains(&b) {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
         } else {
             None
@@ -495,6 +584,12 @@ pub struct Program<'a> {
     /// The `.fxb` header flags byte (FLAG_*), retained so the host can cheaply
     /// query program capabilities without re-scanning the code.
     pub flags: u8,
+    /// The raw memo trailer (FLAG_MEMO; empty when absent): `prep_entry(u16)
+    /// words(u8) n_groups(u8) group_end(u8) × n_groups`. Held raw and decoded by
+    /// [`Program::prep_entry`] / [`Program::led_cache_words`] on demand, so the
+    /// per-LED `Program::parse` on the firmware's shade path stays as cheap as
+    /// it was (decoding it eagerly cost fx_bench ~300 cycles/LED).
+    memo_trailer: &'a [u8],
 }
 
 /// flags bit: a buffer descriptor table follows `code` in the `.fxb`.
@@ -516,6 +611,43 @@ pub const FLAG_USES_ROOM: u8 = 0x08;
 /// table (`[{"name","slot","width","unit"}]`, slots into `state`). A host must
 /// never shade it; [`Vm::run_poll`] runs it.
 pub const FLAG_DRIVER: u8 = 0x10;
+/// flags bit: a memo trailer follows the buffer table (or the code, when there
+/// are no buffers): `prep_entry(u16) words(u8) n_groups(u8) group_end(u8) ×
+/// n_groups` — the output of the compiler's variance pass (fx_compiler memo.rs):
+///  * `prep_entry`: per-frame-invariant work hoisted out of `shade()`, which the
+///    VM runs once per frame on its own (NO_ENTRY = none);
+///  * the per-LED memo: the program brackets LED-invariant subexpressions with
+///    `LoadLedCache`/`StoreLedCache`; a host that binds a cache
+///    ([`Vm::set_led_cache`]) computes each once per LED instead of once per LED
+///    per frame. Hosts that don't bind one run the original code unchanged.
+/// (0x10 is FUG-107's [`FLAG_DRIVER`].)
+pub const FLAG_MEMO: u8 = 0x20;
+/// Most memo words one program may request per LED (the validity mask is one
+/// bit per word, at most 4 bytes).
+pub const LED_CACHE_MAX_WORDS: usize = 32;
+
+/// Validity-mask bytes per LED record for a cache of `words` words.
+#[inline]
+pub fn led_cache_mask_bytes(words: u8) -> usize {
+    (words as usize).div_ceil(8)
+}
+
+/// Bytes per LED record (validity mask + `words` 4-byte words).
+#[inline]
+pub fn led_cache_stride(words: u8) -> usize {
+    if words == 0 {
+        0
+    } else {
+        led_cache_mask_bytes(words) + 4 * words as usize
+    }
+}
+
+/// Total bytes a cache of `words` memo words for `leds` LEDs needs.
+#[inline]
+pub fn led_cache_bytes(words: u8, leds: usize) -> usize {
+    led_cache_stride(words) * leds
+}
+
 /// Bytes per buffer descriptor: kind(u8) elem(u8) comp(u8) w(u16) h(u16).
 pub const BUF_DESC_LEN: usize = 7;
 
@@ -701,6 +833,13 @@ impl<'a> Program<'a> {
         } else {
             (0, &buf[buf.len()..])
         };
+        // Optional memo trailer (FLAG_MEMO), decoded lazily (see `memo_trailer`).
+        let memo_trailer = if flags & FLAG_MEMO != 0 {
+            let t = o + buffers.len(); // `o` is past the n_buffers byte when present
+            buf.get(t..).unwrap_or(&[])
+        } else {
+            &[]
+        };
         Ok(Program {
             consts,
             code,
@@ -712,7 +851,66 @@ impl<'a> Program<'a> {
             n_buffers,
             buffers,
             flags,
+            memo_trailer,
         })
+    }
+
+    /// The per-frame PREPARE entry (NO_ENTRY if absent): code the compiler
+    /// hoisted out of `shade()` because it is the same for every LED of a frame
+    /// (`sin(time*speed)`, uniform math, …). It stores into extra `state` slots
+    /// that `shade()` then just loads. The VM runs it itself, once per frame,
+    /// right before the first `shade()` (see [`Vm::run_shade_counted`]).
+    #[inline]
+    pub fn prep_entry(&self) -> u16 {
+        match self.memo_trailer {
+            [a, b, ..] => {
+                let e = u16::from_le_bytes([*a, *b]);
+                if (e as usize) < self.code.len() {
+                    e
+                } else {
+                    NO_ENTRY
+                }
+            }
+            _ => NO_ENTRY,
+        }
+    }
+
+    /// Per-LED memo words the program's `LoadLedCache`/`StoreLedCache` slots
+    /// span (0 = no LED cache requested). See [`FLAG_MEMO`].
+    pub fn led_cache_words(&self) -> u8 {
+        let w = self.memo_trailer.get(2).copied().unwrap_or(0);
+        if (w as usize) <= LED_CACHE_MAX_WORDS && self.led_cache_groups().len() == self.memo_trailer.get(3).copied().unwrap_or(0) as usize {
+            w
+        } else {
+            0
+        }
+    }
+
+    /// Cumulative word boundaries of the memo groups, in the compiler's priority
+    /// order (best cycles-saved-per-byte first). A host short on RAM binds the
+    /// largest prefix that fits ([`Program::led_cache_fit`]).
+    fn led_cache_groups(&self) -> &'a [u8] {
+        let ng = self.memo_trailer.get(3).copied().unwrap_or(0) as usize;
+        self.memo_trailer.get(4..4 + ng).unwrap_or(&[])
+    }
+
+    /// The largest memo prefix (in words, at a group boundary so no expression
+    /// is half-cached) whose cache for `leds` LEDs fits in `avail` bytes. 0 when
+    /// the program requests no cache or not even the first group fits — the
+    /// effect then runs uncached, exactly as before.
+    pub fn led_cache_fit(&self, leds: usize, avail: usize) -> u8 {
+        let mut best = 0u8;
+        let words = self.led_cache_words();
+        for &end in self.led_cache_groups() {
+            if end <= words && led_cache_bytes(end, leds) <= avail {
+                best = best.max(end);
+            } else {
+                // Groups are in priority order: stop at the first that doesn't
+                // fit so a cheap low-priority one never displaces a better one.
+                break;
+            }
+        }
+        best
     }
 
     /// The raw code section (borrowed from the `.fxb`). The device JIT scans this
@@ -801,13 +999,12 @@ impl<'a> Program<'a> {
 
     #[inline]
     fn const_f32(&self, idx: usize) -> f32 {
+        // Out-of-range index reads 0.0 (never panics; see `Outcome::Fault`).
         let o = idx * 4;
-        f32::from_le_bytes([
-            self.consts[o],
-            self.consts[o + 1],
-            self.consts[o + 2],
-            self.consts[o + 3],
-        ])
+        match self.consts.get(o..o + 4) {
+            Some(b) => f32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+            None => 0.0,
+        }
     }
 }
 
@@ -918,6 +1115,135 @@ pub struct Vm {
     // Aligned i32 mirror of the const pool for the JIT segments' `a2` base
     // (the .fxb const bytes may be unaligned; the firmware provides this).
     jit_consts: *const i32,
+    // Per-LED memo cache (LoadLedCache/StoreLedCache): host memory bound via
+    // set_led_cache. `led_cache_leds` records of `led_cache_stride(words)` bytes
+    // each: a validity mask (1 bit per word) then the words. Raw ptr so the Vm
+    // needs no lifetime; null/0 = no cache (the memo ops are no-ops).
+    memo_ptr: *mut u8,
+    memo_words: u8,
+    memo_leds: usize,
+    // Per-frame prepare (Program::prep_entry): has it run for the frame/program
+    // identified by `prep_key`, since the last update()/set_uniform/set_graph?
+    prep_valid: bool,
+    prep_key: [u32; PREP_KEY_WORDS],
+}
+
+const PREP_KEY_WORDS: usize = 3;
+
+/// What identifies "this frame" for the hoisted prepare code: the program, the
+/// frame counter and the clock. Kept to three words because it is checked on
+/// EVERY shade() (a 12-word key cost ~90 C6 cycles/LED on fx_bench). Everything
+/// else prep may read changes only with a new frame (imu/room/led_count are
+/// per-frame host inputs) or through `set_uniform` / `run_update` /
+/// `set_graph`, which invalidate it.
+#[inline(always)]
+fn prep_key(prog: &Program, f: &Frame) -> [u32; PREP_KEY_WORDS] {
+    [prog.code.as_ptr() as usize as u32, f.frame, f.time.to_bits()]
+}
+
+/// `LoadLedCache` hit path: push LED `idx`'s `n` cached words for `slot` (at
+/// stack depth `sp`) if filled, returning the new depth (None = miss; the
+/// caller then computes the expression). Takes/returns `sp` BY VALUE: taking
+/// `&mut sp` would force the interpreter's stack pointer out of a register for
+/// the whole dispatch loop (measured ~5% on every fx_bench program).
+#[inline(never)]
+fn memo_load(idx: u32, slot: usize, n: usize, stack: &mut [f32; MAX_STACK], sp: usize) -> Option<usize> {
+    // SAFETY: written only by run_shade_counted while it holds MEMO_LOCK.
+    let memo = unsafe { ACTIVE_MEMO }.filter(|m| m.owner == stack.as_ptr())?;
+    let o = memo.record(idx, slot, n)?;
+    let mem = memo.mem();
+    if mem[o + slot / 8] & (1 << (slot % 8)) == 0 || sp + n > MAX_STACK {
+        return None;
+    }
+    let w = o + led_cache_mask_bytes(memo.words) + slot * 4;
+    for k in 0..n {
+        let b = &mem[w + k * 4..w + k * 4 + 4];
+        stack[sp + k] = f32::from_bits(u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    }
+    Some(sp + n)
+}
+
+/// `StoreLedCache`: record the top `n` stack words into LED `idx`'s `slot`.
+#[inline(never)]
+fn memo_store(idx: u32, slot: usize, n: usize, stack: &[f32; MAX_STACK], sp: usize) {
+    // SAFETY: as in memo_load.
+    let Some(memo) = (unsafe { ACTIVE_MEMO }).filter(|m| m.owner == stack.as_ptr()) else { return };
+    let Some(o) = memo.record(idx, slot, n) else { return };
+    let mem = memo.mem();
+    if sp < n {
+        return;
+    }
+    let w = o + led_cache_mask_bytes(memo.words) + slot * 4;
+    for k in 0..n {
+        let bits = stack[sp - n + k].to_bits().to_le_bytes();
+        mem[w + k * 4..w + k * 4 + 4].copy_from_slice(&bits);
+    }
+    mem[o + slot / 8] |= 1 << (slot % 8);
+}
+
+/// The per-LED memo cache for the shade() invocation in flight: set by
+/// `run_shade_counted` while it holds [`MEMO_LOCK`] (None otherwise), read by
+/// the interpreter's memo ops. A static, not an argument — see the op arms.
+#[derive(Clone, Copy)]
+struct Memo {
+    /// The owning VM's operand stack: a memo op only honours the binding of the
+    /// VM that is executing it (another thread's VM may be mid-invocation).
+    owner: *const f32,
+    ptr: *mut u8,
+    len: usize,
+    words: u8,
+    leds: usize,
+}
+
+
+static mut ACTIVE_MEMO: Option<Memo> = None;
+/// Serializes cache-bound shade() invocations across threads (host tests run
+/// VMs concurrently; the device is single-threaded, so it is never contended).
+static MEMO_LOCK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Holds MEMO_LOCK with ACTIVE_MEMO set; clears + releases on drop (incl. unwind).
+struct MemoGuard;
+
+impl MemoGuard {
+    fn bind(memo: Memo) -> MemoGuard {
+        use core::sync::atomic::Ordering;
+        while MEMO_LOCK
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            core::hint::spin_loop();
+        }
+        // SAFETY: we hold MEMO_LOCK.
+        unsafe { ACTIVE_MEMO = Some(memo) };
+        MemoGuard
+    }
+}
+
+impl Drop for MemoGuard {
+    fn drop(&mut self) {
+        // SAFETY: we hold MEMO_LOCK.
+        unsafe { ACTIVE_MEMO = None };
+        MEMO_LOCK.store(false, core::sync::atomic::Ordering::Release);
+    }
+}
+
+impl Memo {
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn mem(&self) -> &mut [u8] {
+        // SAFETY: set from a set_led_cache binding of at least `len` bytes.
+        unsafe { core::slice::from_raw_parts_mut(self.ptr, self.len) }
+    }
+    /// Byte offset of LED `idx`'s record if `[slot, slot+n)` is cacheable.
+    #[inline]
+    fn record(&self, idx: u32, slot: usize, n: usize) -> Option<usize> {
+        let idx = idx as usize;
+        if idx < self.leds && slot + n <= self.words as usize && n > 0 {
+            Some(idx * led_cache_stride(self.words))
+        } else {
+            None
+        }
+    }
 }
 
 /// Single-source geodesic node-distance field, filled by the `flood_from`
@@ -958,6 +1284,11 @@ impl Default for Vm {
             jit_blocks: core::ptr::null(),
             jit_len: 0,
             jit_consts: core::ptr::null(),
+            memo_ptr: core::ptr::null_mut(),
+            memo_words: 0,
+            memo_leds: 0,
+            prep_valid: false,
+            prep_key: [0; PREP_KEY_WORDS],
         }
     }
 }
@@ -969,6 +1300,7 @@ impl Vm {
 
     /// Set a uniform's value (`vals` length = its slot count).
     pub fn set_uniform(&mut self, slot: usize, vals: &[f32]) {
+        self.prep_valid = false; // hoisted per-frame values may read it
         for (i, v) in vals.iter().enumerate() {
             if slot + i < MAX_UNIFORM_SLOTS {
                 self.uniforms[slot + i] = *v;
@@ -981,6 +1313,7 @@ impl Vm {
     /// build the per-node incident-segment lists. Call whenever the topology
     /// changes; pass empty slices to clear. The graph-query intrinsics read this.
     pub fn set_graph(&mut self, seg_len: &[f32], seg_a: &[i32], seg_b: &[i32]) {
+        self.prep_valid = false;
         let n = seg_len.len().min(seg_a.len()).min(seg_b.len()).min(MAX_SEG);
         self.n_seg = n as u32;
         self.node_deg = [0; MAX_NODE];
@@ -1029,6 +1362,131 @@ impl Vm {
         self.jit_blocks = blocks.as_ptr();
         self.jit_len = blocks.len();
         self.jit_consts = consts;
+    }
+
+    /// Bind the per-LED memo cache: the first `words` memo words (pass
+    /// [`Program::led_cache_fit`]) for LEDs `0..leds`, in `mem` (at least
+    /// [`led_cache_bytes`]`(words, leds)` bytes, else nothing is bound). Every
+    /// slot starts EMPTY (the masks are zeroed), so the next frame computes and
+    /// records each memoized value once per LED. The caller keeps `mem` alive,
+    /// unmoved and otherwise untouched while bound, and must call
+    /// [`Vm::invalidate_led_cache`] (or rebind) whenever an LED's attributes —
+    /// position, uv, topology (seg/s/branch) — change, i.e. on a map/topology
+    /// upload. `idx` must keep naming the same LED between invalidations.
+    pub fn set_led_cache(&mut self, mem: &mut [u8], words: u8, leds: usize) {
+        let words = words.min(LED_CACHE_MAX_WORDS as u8);
+        let need = led_cache_bytes(words, leds);
+        if words == 0 || leds == 0 || mem.len() < need {
+            self.clear_led_cache();
+            return;
+        }
+        self.memo_ptr = mem.as_mut_ptr();
+        self.memo_words = words;
+        self.memo_leds = leds;
+        self.invalidate_led_cache();
+    }
+
+    /// Unbind the per-LED memo cache (the memo ops become no-ops).
+    pub fn clear_led_cache(&mut self) {
+        self.memo_ptr = core::ptr::null_mut();
+        self.memo_words = 0;
+        self.memo_leds = 0;
+    }
+
+    /// Mark every cached slot empty (keeps the binding). Call when the map or
+    /// topology changes; the next frame recomputes each LED's values.
+    pub fn invalidate_led_cache(&mut self) {
+        if self.memo_ptr.is_null() {
+            return;
+        }
+        let stride = led_cache_stride(self.memo_words);
+        let mb = led_cache_mask_bytes(self.memo_words);
+        // SAFETY: bound via set_led_cache with at least stride*leds bytes.
+        let mem = unsafe { core::slice::from_raw_parts_mut(self.memo_ptr, stride * self.memo_leds) };
+        for rec in mem.chunks_exact_mut(stride) {
+            rec[..mb].fill(0);
+        }
+    }
+
+    /// Memo words currently bound (0 = no cache).
+    pub fn led_cache_words_bound(&self) -> u8 {
+        self.memo_words
+    }
+
+    // -- FX debugger seams (docs/design/fx-debugger.md) ------------------------
+    // Cold accessors for the device debugger and the host replay. They read or
+    // write the Vm's persistent/resident fields between runs and never touch
+    // `run` itself (an extra argument there costs every program, see #328).
+
+    /// The resident locals as the LAST run left them (the debugger reads them
+    /// right after one shade() run; see [`Vm::clear_scratch`]).
+    pub fn locals(&self) -> &[f32; MAX_LOCALS] {
+        &self.locals
+    }
+
+    /// Zero the resident scratch (operand stack + locals), so a following run's
+    /// locals read 0 wherever it didn't write — what makes a device run's
+    /// locals comparable slot-for-slot with a host replay's.
+    pub fn clear_scratch(&mut self) {
+        self.stack = [0.0; MAX_STACK];
+        self.locals = [0.0; MAX_LOCALS];
+    }
+
+    /// The installed JIT table as raw parts (blocks, len, consts), to restore it
+    /// with [`Vm::set_jit_raw`] after an interpreted debug run.
+    pub fn jit_raw(&self) -> (*const JitBlock, usize, *const i32) {
+        (self.jit_blocks, self.jit_len, self.jit_consts)
+    }
+
+    /// Re-install a JIT table saved by [`Vm::jit_raw`].
+    ///
+    /// # Safety
+    /// As [`Vm::set_jit`]: the parts must still be valid for the program.
+    pub unsafe fn set_jit_raw(&mut self, parts: (*const JitBlock, usize, *const i32)) {
+        self.jit_blocks = parts.0;
+        self.jit_len = parts.1;
+        self.jit_consts = parts.2;
+    }
+
+    /// Words of the `flood_from` field [`Vm::flood_word`] serializes.
+    pub const FLOOD_WORDS: usize = MAX_NODE + 2;
+
+    /// Word `i` of the persistent `flood_from` field, as raw bits: d[0..MAX_NODE]
+    /// (f32), then max (f32), then set (0/1). Part of the state a host replay
+    /// must restore (update()/shade() may call flood_from).
+    pub fn flood_word(&self, i: usize) -> u32 {
+        match i {
+            _ if i < MAX_NODE => self.dist_src.d[i].to_bits(),
+            _ if i == MAX_NODE => self.dist_src.max.to_bits(),
+            _ if i == MAX_NODE + 1 => self.dist_src.set as u32,
+            _ => 0,
+        }
+    }
+
+    /// Restore the `flood_from` field from [`Vm::flood_word`]s (missing words
+    /// keep the reset value).
+    pub fn set_flood_words(&mut self, w: &[u32]) {
+        let mut d = DistSrc::default();
+        for (i, &v) in w.iter().enumerate().take(Self::FLOOD_WORDS) {
+            match i {
+                _ if i < MAX_NODE => d.d[i] = f32::from_bits(v),
+                _ if i == MAX_NODE => d.max = f32::from_bits(v),
+                _ => d.set = v != 0,
+            }
+        }
+        self.dist_src = d;
+    }
+
+    /// Segments in the topology graph [`Vm::set_graph`] installed.
+    pub fn graph_len(&self) -> usize {
+        self.n_seg as usize
+    }
+
+    /// Segment `i` of the installed graph: (arclength, node a, node b) — the
+    /// inputs to replay [`Vm::set_graph`] on a host.
+    pub fn graph_seg(&self, i: usize) -> Option<(f32, i32, i32)> {
+        (i < self.n_seg as usize)
+            .then(|| (self.seg_len[i], self.seg_node[i][0], self.seg_node[i][1]))
     }
 
     /// Clear the JIT table (back to pure interpretation).
@@ -1192,6 +1650,9 @@ impl Vm {
             node_seg: &self.node_seg,
             node_side: &self.node_side,
         };
+        // update() writes `state` — the hoisted per-frame values derived from it
+        // are recomputed before the next shade().
+        self.prep_valid = false;
         // update() writes `state`/`dist_src` in place — the intended persistence.
         let (_out, _rgb, outcome, counters) = run(
             prog,
@@ -1210,6 +1671,7 @@ impl Vm {
             self.jit_blocks,
             self.jit_len,
             self.jit_consts,
+            // update() never touches the per-LED memo (the compiler only brackets
         );
         (outcome, counters)
     }
@@ -1278,6 +1740,67 @@ impl Vm {
         }
     }
 
+    /// Run the prepare entry if this frame (or a uniform / update()) made it stale.
+    #[cold]
+    #[inline(never)]
+    fn prep_if_stale(&mut self, prog: &Program, frame: &Frame, budget: &Budget) -> Counters {
+        if prog.prep_entry() == NO_ENTRY {
+            return Counters::default();
+        }
+        let key = prep_key(prog, frame);
+        if self.prep_valid && self.prep_key == key {
+            return Counters::default();
+        }
+        self.run_prep(prog, frame, budget)
+    }
+
+    /// Run the program's per-frame prepare entry (hoisted shade() work) into its
+    /// `state` slots. Normally implicit (run_shade does it once per frame); a host
+    /// may call it eagerly right after update() to keep the cost out of the first
+    /// LED. update()-like context: no LED, no memo cache.
+    pub fn run_prep(&mut self, prog: &Program, frame: &Frame, budget: &Budget) -> Counters {
+        let prep_entry = prog.prep_entry();
+        if prep_entry == NO_ENTRY {
+            return Counters::default();
+        }
+        let led = Led::default();
+        let (arena_ptr, arena_len) = (self.arena_ptr, self.arena_len);
+        let arena: &mut [u8] = if arena_ptr.is_null() || arena_len == 0 {
+            &mut []
+        } else {
+            unsafe { core::slice::from_raw_parts_mut(arena_ptr, arena_len) }
+        };
+        let g = GraphRef {
+            n_seg: self.n_seg,
+            seg_len: &self.seg_len,
+            seg_node: &self.seg_node,
+            node_deg: &self.node_deg,
+            node_seg: &self.node_seg,
+            node_side: &self.node_side,
+        };
+        let (_out, _rgb, _outcome, counters) = run(
+            prog,
+            &self.uniforms,
+            &mut self.state,
+            frame,
+            &led,
+            &g,
+            &mut self.dist_src,
+            arena,
+            &mut self.stack,
+            &mut self.locals,
+            &mut self.call_stack,
+            prep_entry as usize,
+            budget,
+            self.jit_blocks,
+            self.jit_len,
+            self.jit_consts,
+        );
+        self.prep_key = prep_key(prog, frame);
+        self.prep_valid = true;
+        counters
+    }
+
     /// Run `shade(led)` → RGB. Does not mutate `state` (read-only in shade).
     /// Uses the default budget.
     pub fn run_shade(&mut self, prog: &Program, frame: &Frame, led: &Led) -> Rgb {
@@ -1307,6 +1830,15 @@ impl Vm {
         led: &Led,
         budget: &Budget,
     ) -> (Rgb, Outcome, Counters) {
+        // Per-frame prepare (hoisted shade() work): once per frame, before the
+        // first LED. Its ops count toward this invocation's counters.
+        // Kept to one flag test on the hot path: shade() runs per LED and fx_bench
+        // measures this framing (an eager check here cost ~300 C6 cycles/LED).
+        let prep_counters = if prog.flags & FLAG_MEMO != 0 {
+            self.prep_if_stale(prog, frame, budget)
+        } else {
+            Counters::default()
+        };
         // shade() is read-only on `state` (the compiler never emits StoreState in
         // shade), so we pass `state`/`dist_src` by mutable ref WITHOUT the old
         // per-LED copy — the values are unchanged on return. This was ~900 B of
@@ -1317,6 +1849,17 @@ impl Vm {
         } else {
             unsafe { core::slice::from_raw_parts_mut(arena_ptr, arena_len) }
         };
+        // The per-LED memo cache, if bound (disjoint host memory, see
+        // set_led_cache), for this invocation's memo ops.
+        let _memo_guard = (!self.memo_ptr.is_null()).then(|| {
+            MemoGuard::bind(Memo {
+                owner: self.stack.as_ptr(),
+                ptr: self.memo_ptr,
+                len: led_cache_bytes(self.memo_words, self.memo_leds),
+                words: self.memo_words,
+                leds: self.memo_leds,
+            })
+        });
         let g = GraphRef {
             n_seg: self.n_seg,
             seg_len: &self.seg_len,
@@ -1343,6 +1886,10 @@ impl Vm {
             self.jit_len,
             self.jit_consts,
         );
+        let counters = Counters {
+            instrs: counters.instrs.saturating_add(prep_counters.instrs),
+            stack_max: counters.stack_max.max(prep_counters.stack_max),
+        };
         if outcome.timed_out() {
             return ((0, 0, 0), outcome, counters);
         }
@@ -1351,14 +1898,49 @@ impl Vm {
         if let Some(rgb) = rgb {
             return (rgb, outcome, counters);
         }
-        let r = clamp01(out[0]);
-        let g = clamp01(out[1]);
-        let b = clamp01(out[2]);
-        (
-            ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8),
-            outcome,
-            counters,
-        )
+        // Integer epilogue: bit-exact `(clamp01(x) * 255.0) as u8`
+        // without the ~6 soft-float calls per channel.
+        ((unit_u8(out[0]), unit_u8(out[1]), unit_u8(out[2])), outcome, counters)
+    }
+}
+
+/// Bit-exact integer twin of `(clamp01(x) * 255.0) as u8` (IEEE round-to-nearest-
+/// even on the product, then truncation), with no soft-float.
+#[inline]
+pub fn unit_u8(x: f32) -> u8 {
+    let b = x.to_bits();
+    if b & 0x8000_0000 != 0 {
+        return 0; // negative, -0.0, or a negative NaN
+    }
+    if b >= 0x3f80_0000 {
+        return if b > 0x7f80_0000 { 0 } else { 255 }; // >= 1.0 / inf ; NaN -> 0
+    }
+    let e = (b >> 23) as i32;
+    if e == 0 {
+        return 0; // zero / subnormal: x*255 < 1
+    }
+    let m = (b & 0x007f_ffff) | 0x0080_0000;
+    let p = m as u64 * 255; // exact, < 2^32
+    let nb = 64 - p.leading_zeros();
+    let pr = if nb > 24 {
+        let sh = nb - 24;
+        let mut q = p >> sh;
+        let rem = p & ((1u64 << sh) - 1);
+        let half = 1u64 << (sh - 1);
+        if rem > half || (rem == half && q & 1 == 1) {
+            q += 1;
+        }
+        q << sh
+    } else {
+        p
+    };
+    // value = pr * 2^(e-150); x < 1 so e <= 126 and the shift is >= 24; pr < 2^33,
+    // so any shift past 40 is 0 (and must not wrap the shift amount).
+    let shift = (150 - e) as u32;
+    if shift >= 40 {
+        0
+    } else {
+        (pr >> shift) as u8
     }
 }
 
@@ -1373,6 +1955,88 @@ pub fn clamp01(x: f32) -> f32 {
     } else {
         x
     }
+}
+
+/// `LoadCtx` body, kept out of line on purpose (see the call site).
+#[inline(never)]
+fn load_ctx(id: u8, frame: &Frame, led: &Led, graph: &GraphRef, dist: &DistSrc, v: &mut [f32; 3]) -> usize {
+    let mut k = 0usize;
+    match id {
+                    C_TIME => { v[k] = frame.time; k += 1; },
+                    C_DT => { v[k] = frame.dt; k += 1; },
+                    C_FRAME => { v[k] = frame.frame as f32; k += 1; },
+                    C_LED_POS => {
+                        { v[k] = led.pos[0]; k += 1; }
+                        { v[k] = led.pos[1]; k += 1; }
+                        { v[k] = led.pos[2]; k += 1; }
+                    }
+                    C_LED_IDX => { v[k] = led.idx as f32; k += 1; },
+                    C_LED_COUNT => { v[k] = frame.led_count as f32; k += 1; },
+                    C_LED_SEG => { v[k] = led.seg as f32; k += 1; },
+                    C_LED_S => { v[k] = led.s; k += 1; },
+                    C_LED_BRANCH => { v[k] = if led.branch { 1.0 } else { 0.0 }; k += 1; },
+                    C_IMU_ACCEL => {
+                        { v[k] = frame.imu_accel[0]; k += 1; }
+                        { v[k] = frame.imu_accel[1]; k += 1; }
+                        { v[k] = frame.imu_accel[2]; k += 1; }
+                    }
+                    C_IMU_GYRO => {
+                        { v[k] = frame.imu_gyro[0]; k += 1; }
+                        { v[k] = frame.imu_gyro[1]; k += 1; }
+                        { v[k] = frame.imu_gyro[2]; k += 1; }
+                    }
+                    C_LED_DIST => {
+                        // With a flood_from source set, report this LED's geodesic
+                        // distance from that source (normalized 0..1); otherwise
+                        // the map-load root field carried in the Led struct.
+                        if dist.set
+                            && led.seg >= 0
+                            && (led.seg as usize) < (graph.n_seg as usize).min(MAX_SEG)
+                        {
+                            let si = led.seg as usize;
+                            let a = graph.seg_node[si][0];
+                            let b = graph.seg_node[si][1];
+                            let l = graph.seg_len[si];
+                            let da = if a >= 0 && (a as usize) < MAX_NODE {
+                                dist.d[a as usize] + led.s * l
+                            } else {
+                                f32::INFINITY
+                            };
+                            let db = if b >= 0 && (b as usize) < MAX_NODE {
+                                dist.d[b as usize] + (1.0 - led.s) * l
+                            } else {
+                                f32::INFINITY
+                            };
+                            let g = if da < db { da } else { db };
+                            v[k] = if g.is_finite() { (g / dist.max).min(1.0) } else { 1.0 };
+                            k += 1;
+                        } else {
+                            { v[k] = led.dist; k += 1; }
+                        }
+                    }
+                    C_LED_UV => {
+                        { v[k] = led.uv[0]; k += 1; }
+                        { v[k] = led.uv[1]; k += 1; }
+                    }
+                    C_LED_ROOM => {
+                        let r = if frame.room_posed { &led.room } else { &led.pos };
+                        { v[k] = r[0]; k += 1; }
+                        { v[k] = r[1]; k += 1; }
+                        { v[k] = r[2]; k += 1; }
+                    }
+                    C_ROOM_MIN => {
+                        { v[k] = frame.room_min[0]; k += 1; }
+                        { v[k] = frame.room_min[1]; k += 1; }
+                        { v[k] = frame.room_min[2]; k += 1; }
+                    }
+                    C_ROOM_MAX => {
+                        { v[k] = frame.room_max[0]; k += 1; }
+                        { v[k] = frame.room_max[1]; k += 1; }
+                        { v[k] = frame.room_max[2]; k += 1; }
+                    }
+                    _ => { v[k] = 0.0; k += 1; },
+                }
+    k
 }
 
 /// A borrow of the VM's topology graph tables, passed to `run()` so the
@@ -1499,73 +2163,125 @@ fn run(
     let mut budget: u32 = guard.instructions; // instructions per invocation
     // Tier-1 counters (perf-monitoring.md): opcodes retired + stack high-water.
     // Cheap-by-construction — one add + one max next to the budget decrement.
-    let mut instrs: u32 = 0;
+    // `instrs` (opcodes retired) is derived from the budget at exit: the loop
+    // decrements `budget` once per opcode, so one counter serves both.
     let mut sp_max: usize = 0;
-    // Poll the wall-time flag every N ops (an atomic load per op would dominate
-    // the tiny opcodes); the instruction budget bounds the slop between polls.
-    const DEADLINE_POLL_MASK: u32 = 0x3FF;
     let mut csp: usize = 0;
     let mut outcome = Outcome::Ok;
 
-    macro_rules! push {
-        ($v:expr) => {{
-            if sp < MAX_STACK {
-                stack[sp] = $v;
-                sp += 1;
-            }
-        }};
-    }
-    macro_rules! pop {
-        () => {{
-            sp = sp.saturating_sub(1);
-            stack[sp]
-        }};
-    }
-    // Integers/fixed ride in the f32 slots bit-for-bit (the compiler types every
-    // op, so the runtime interpretation is unambiguous).
-    macro_rules! popi {
-        () => {{
-            pop!().to_bits() as i32
-        }};
-    }
-    macro_rules! pushi {
-        ($v:expr) => {{
-            let vv: i32 = $v;
-            push!(f32::from_bits(vv as u32));
-        }};
-    }
-
     #[cfg(feature = "profile")]
     let mut prof_prev: usize = usize::MAX;
-    while pc < code.len() {
+    'exec: while pc < code.len() {
+        // (The macros live inside the loop so `break 'exec` resolves: labels are
+        // hygienic at the macro's definition site.)
+        // Never panic (R3): a malformed or miscompiled program (operand-stack
+        // underflow, a truncated operand, an out-of-range count) ends the invocation
+        // with `Outcome::Fault` instead of indexing out of bounds. Operand bytes past
+        // the end of the code read as 0 (the next dispatch then stops at code end).
+        macro_rules! fault {
+            () => {{
+                outcome = Outcome::Fault;
+                break 'exec;
+            }};
+        }
+        // `sp - k`, or Fault on underflow.
+        macro_rules! sub {
+            ($k:expr) => {{
+                match sp.checked_sub($k) {
+                    Some(b) => b,
+                    None => fault!(),
+                }
+            }};
+        }
+        // A fixed-point `frac` operand: the compiler emits 0..=16; anything
+        // past 30 would shift out of range, so it is a malformed program.
+        macro_rules! frac {
+            ($e:expr) => {{
+                let f = $e as u32;
+                if f > 30 {
+                    fault!();
+                }
+                f
+            }};
+        }
+        // Secondary wall-time guard: a hardware timer raises this flag at a
+        // frame-relative deadline. Polled on every taken backward branch and
+        // call (where a long-running invocation must loop or recurse) instead of
+        // every 1024th opcode, which kept two instructions on every dispatch;
+        // straight-line code is bounded by the code length and the budget.
+        macro_rules! poll_deadline {
+            () => {{
+                if let Some(flag) = guard.deadline {
+                    // SAFETY: `flag` points at a live AtomicBool owned by the
+                    // caller for the duration of this call (the C++ FFI holds it
+                    // in a static). Atomic load is sound through a shared ref.
+                    if unsafe { (*flag).load(Ordering::Relaxed) } {
+                        outcome = Outcome::Timeout;
+                        break 'exec;
+                    }
+                }
+            }};
+        }
+        macro_rules! cb {
+            ($o:expr) => {
+                *code.get($o).unwrap_or(&0)
+            };
+        }
+        macro_rules! rd16 {
+            ($o:expr) => {{
+                let o = $o;
+                u16::from_le_bytes([cb!(o), cb!(o + 1)])
+            }};
+        }
+        macro_rules! push {
+            ($v:expr) => {{
+                if sp < MAX_STACK {
+                    stack[sp] = $v;
+                    sp += 1;
+                }
+            }};
+        }
+        macro_rules! pop {
+            () => {{
+                if sp == 0 {
+                    fault!();
+                }
+                sp -= 1;
+                stack[sp]
+            }};
+        }
+        // Integers/fixed ride in the f32 slots bit-for-bit (the compiler types every
+        // op, so the runtime interpretation is unambiguous).
+        macro_rules! popi {
+            () => {{
+                pop!().to_bits() as i32
+            }};
+        }
+        macro_rules! pushi {
+            ($v:expr) => {{
+                let vv: i32 = $v;
+                push!(f32::from_bits(vv as u32));
+            }};
+        }
         if budget == 0 {
             outcome = Outcome::Budget;
             break;
         }
         budget -= 1;
-        instrs += 1;
         // Stack high-water: the sp before this op ran (post-op depth is folded
         // in via the NEXT iteration's read, and the terminal Ret is small).
         if sp > sp_max {
             sp_max = sp;
         }
-        // Secondary wall-time guard: a hardware timer raises this flag at a
-        // frame-relative deadline; polled sparsely so the load isn't hot.
-        if budget & DEADLINE_POLL_MASK == 0 {
-            if let Some(flag) = guard.deadline {
-                // SAFETY: `flag` points at a live AtomicBool owned by the
-                // caller for the duration of this call (the C++ FFI holds it
-                // in a static). Atomic load is sound through a shared ref.
-                if unsafe { (*flag).load(Ordering::Relaxed) } {
-                    outcome = Outcome::Timeout;
-                    break;
-                }
-            }
+        // One compare for the common opcodes, then the jump table
+        // (`Op::from_u8` compiled to a clamp plus a second compare here).
+        let b = code[pc];
+        if b > LAST_LOW_OP && !(Op::BinTop as u8..=LAST_OP).contains(&b) {
+            fault!();
         }
-        let op = match Op::from_u8(code[pc]) {
-            Some(o) => o,
-            None => break,
-        };
+        // SAFETY: `Op` is `repr(u8)` and contiguous over 0..=LAST_LOW_OP and
+        // BinTop..=LAST_OP; the gap between was rejected above.
+        let op = unsafe { core::mem::transmute::<u8, Op>(b) };
         pc += 1;
         #[cfg(feature = "profile")]
         {
@@ -1574,29 +2290,29 @@ fn run(
         }
         match op {
             Op::PushConst => {
-                let idx = rd_u16(code, pc) as usize;
+                let idx = rd16!(pc) as usize;
                 pc += 2;
                 push!(prog.const_f32(idx));
             }
             Op::LoadUniform => {
-                let slot = code[pc] as usize;
-                let n = code[pc + 1] as usize;
+                let slot = cb!(pc) as usize;
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 for i in 0..n {
                     push!(*uniforms.get(slot + i).unwrap_or(&0.0));
                 }
             }
             Op::LoadState => {
-                let slot = code[pc] as usize;
-                let n = code[pc + 1] as usize;
+                let slot = cb!(pc) as usize;
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 for i in 0..n {
                     push!(*state.get(slot + i).unwrap_or(&0.0));
                 }
             }
             Op::StoreState => {
-                let slot = code[pc] as usize;
-                let n = code[pc + 1] as usize;
+                let slot = cb!(pc) as usize;
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 for i in (0..n).rev() {
                     let v = pop!();
@@ -1606,16 +2322,16 @@ fn run(
                 }
             }
             Op::LoadLocal => {
-                let slot = code[pc] as usize;
-                let n = code[pc + 1] as usize;
+                let slot = cb!(pc) as usize;
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 for i in 0..n {
                     push!(*locals.get(slot + i).unwrap_or(&0.0));
                 }
             }
             Op::StoreLocal => {
-                let slot = code[pc] as usize;
-                let n = code[pc + 1] as usize;
+                let slot = cb!(pc) as usize;
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 for i in (0..n).rev() {
                     let v = pop!();
@@ -1625,88 +2341,39 @@ fn run(
                 }
             }
             Op::LoadCtx => {
-                let id = code[pc];
+                let id = cb!(pc);
                 pc += 1;
+                // Out of line on purpose (docs/design/fx-perf-study.md): inlined,
+                // LLVM hoists this arm's loop-invariant soft-float (1.0 - led.s,
+                // int->f32 of idx/seg/frame, ...) into run()'s prologue, so EVERY
+                // invocation paid it whether or not the program reads them.
+                // The hottest ids are plain f32 copies (no conversion LLVM could
+                // hoist), so they stay inline and skip the call.
                 match id {
-                    C_TIME => push!(frame.time),
-                    C_DT => push!(frame.dt),
-                    C_FRAME => push!(frame.frame as f32),
                     C_LED_POS => {
                         push!(led.pos[0]);
                         push!(led.pos[1]);
                         push!(led.pos[2]);
                     }
-                    C_LED_IDX => push!(led.idx as f32),
-                    C_LED_COUNT => push!(frame.led_count as f32),
-                    C_LED_SEG => push!(led.seg as f32),
-                    C_LED_S => push!(led.s),
-                    C_LED_BRANCH => push!(if led.branch { 1.0 } else { 0.0 }),
-                    C_IMU_ACCEL => {
-                        push!(frame.imu_accel[0]);
-                        push!(frame.imu_accel[1]);
-                        push!(frame.imu_accel[2]);
-                    }
-                    C_IMU_GYRO => {
-                        push!(frame.imu_gyro[0]);
-                        push!(frame.imu_gyro[1]);
-                        push!(frame.imu_gyro[2]);
-                    }
-                    C_LED_DIST => {
-                        // With a flood_from source set, report this LED's geodesic
-                        // distance from that source (normalized 0..1); otherwise
-                        // the map-load root field carried in the Led struct.
-                        if dist.set
-                            && led.seg >= 0
-                            && (led.seg as usize) < (graph.n_seg as usize).min(MAX_SEG)
-                        {
-                            let si = led.seg as usize;
-                            let a = graph.seg_node[si][0];
-                            let b = graph.seg_node[si][1];
-                            let l = graph.seg_len[si];
-                            let da = if a >= 0 && (a as usize) < MAX_NODE {
-                                dist.d[a as usize] + led.s * l
-                            } else {
-                                f32::INFINITY
-                            };
-                            let db = if b >= 0 && (b as usize) < MAX_NODE {
-                                dist.d[b as usize] + (1.0 - led.s) * l
-                            } else {
-                                f32::INFINITY
-                            };
-                            let g = if da < db { da } else { db };
-                            push!(if g.is_finite() { (g / dist.max).min(1.0) } else { 1.0 });
-                        } else {
-                            push!(led.dist);
-                        }
-                    }
                     C_LED_UV => {
                         push!(led.uv[0]);
                         push!(led.uv[1]);
                     }
-                    C_LED_ROOM => {
-                        let r = if frame.room_posed { &led.room } else { &led.pos };
-                        push!(r[0]);
-                        push!(r[1]);
-                        push!(r[2]);
+                    C_TIME => push!(frame.time),
+                    _ => {
+                        let mut v = [0.0f32; 3];
+                        let k = load_ctx(id, frame, led, graph, dist, &mut v);
+                        for x in v.iter().take(k) {
+                            push!(*x);
+                        }
                     }
-                    C_ROOM_MIN => {
-                        push!(frame.room_min[0]);
-                        push!(frame.room_min[1]);
-                        push!(frame.room_min[2]);
-                    }
-                    C_ROOM_MAX => {
-                        push!(frame.room_max[0]);
-                        push!(frame.room_max[1]);
-                        push!(frame.room_max[2]);
-                    }
-                    _ => push!(0.0),
                 }
             }
             Op::Add | Op::Sub | Op::Mul | Op::Div => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
                 // stack: a(n) b(n) ; result a op b
-                let base = sp - 2 * n;
+                let base = sub!(2 * n);
                 for i in 0..n {
                     let a = stack[base + i];
                     let b = stack[base + n + i];
@@ -1725,35 +2392,103 @@ fn run(
                 }
                 sp = base + n;
             }
-            Op::Neg => {
-                let n = code[pc] as usize;
+            Op::BinTop => {
+                let mode = cb!(pc);
+                let i = rd16!(pc + 1) as usize;
+                pc += 3;
+                if sp == 0 {
+                    fault!();
+                }
+                let b = bin_src(mode >> 2, i, prog, uniforms, state, locals);
+                stack[sp - 1] = bin_arith(mode, stack[sp - 1], b);
+            }
+            Op::BinPair => {
+                let mode = cb!(pc);
+                let ia = rd16!(pc + 1) as usize;
+                let ib = rd16!(pc + 3) as usize;
+                pc += 5;
+                let a = bin_src(mode >> 2, ia, prog, uniforms, state, locals);
+                let b = bin_src(mode >> 4, ib, prog, uniforms, state, locals);
+                push!(bin_arith(mode, a, b));
+            }
+            Op::PushConsts => {
+                let n = cb!(pc) as usize;
+                for j in 0..n {
+                    push!(prog.const_f32(rd16!(pc + 1 + 2 * j) as usize));
+                }
+                pc += 1 + 2 * n;
+            }
+            Op::LoadCtxLanes => {
+                let id = cb!(pc);
+                let src = cb!(pc + 1) as usize;
+                let k0 = cb!(pc + 2) as usize;
+                let m = cb!(pc + 3) as usize;
+                pc += 4;
+                let mut v = [0.0f32; 3];
+                let k = load_ctx(id, frame, led, graph, dist, &mut v);
+                // As if the k context values were pushed and then swizzled: lane
+                // `ci` of the swizzle window [top - src, top) reads either the
+                // stack below the context values or the values themselves.
+                let top = (sp + k).min(MAX_STACK);
+                let base = match top.checked_sub(src) {
+                    Some(b) => b,
+                    None => fault!(),
+                };
+                if m > 4 || base + m > MAX_STACK {
+                    fault!();
+                }
+                let mut tmp = [0.0f32; 4];
+                for (j, t) in tmp.iter_mut().enumerate().take(m) {
+                    let at = base + k0 + j;
+                    *t = if at >= sp { *v.get(at - sp).unwrap_or(&0.0) } else { stack[at] };
+                }
+                for (j, t) in tmp.iter().enumerate().take(m) {
+                    stack[base + j] = *t;
+                }
+                sp = base + m;
+            }
+            Op::MulAdd => {
+                let n = cb!(pc) as usize;
                 pc += 1;
+                let base = sub!(3 * n);
                 for i in 0..n {
-                    stack[sp - n + i] = -stack[sp - n + i];
+                    let bc = stack[base + n + i] * stack[base + 2 * n + i];
+                    stack[base + i] = stack[base + i] + bc;
+                }
+                sp = base + n;
+            }
+            Op::Neg => {
+                let n = cb!(pc) as usize;
+                pc += 1;
+                let base = sub!(n);
+                for i in 0..n {
+                    stack[base + i] = -stack[base + i];
                 }
             }
             Op::Scale => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
                 let s = pop!();
+                let base = sub!(n);
                 for i in 0..n {
-                    stack[sp - n + i] *= s;
+                    stack[base + i] *= s;
                 }
             }
             Op::UnMath => {
-                let f = code[pc];
-                let n = code[pc + 1] as usize;
+                let f = cb!(pc);
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
+                let base = sub!(n);
                 for i in 0..n {
-                    let x = stack[sp - n + i];
-                    stack[sp - n + i] = un_math(f, x);
+                    let x = stack[base + i];
+                    stack[base + i] = un_math(f, x);
                 }
             }
             Op::BinMath => {
-                let f = code[pc];
-                let n = code[pc + 1] as usize;
+                let f = cb!(pc);
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
-                let base = sp - 2 * n;
+                let base = sub!(2 * n);
                 for i in 0..n {
                     let a = stack[base + i];
                     let b = stack[base + n + i];
@@ -1762,9 +2497,9 @@ fn run(
                 sp = base + n;
             }
             Op::Clamp => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
-                let base = sp - 3 * n;
+                let base = sub!(3 * n);
                 for i in 0..n {
                     let x = stack[base + i];
                     let lo = stack[base + n + i];
@@ -1780,10 +2515,10 @@ fn run(
                 sp = base + n;
             }
             Op::Mix => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
                 let t = pop!(); // scalar t
-                let base = sp - 2 * n;
+                let base = sub!(2 * n);
                 for i in 0..n {
                     let a = stack[base + i];
                     let b = stack[base + n + i];
@@ -1792,9 +2527,9 @@ fn run(
                 sp = base + n;
             }
             Op::Smoothstep => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
-                let base = sp - 3 * n;
+                let base = sub!(3 * n);
                 for i in 0..n {
                     let e0 = stack[base + i];
                     let e1 = stack[base + n + i];
@@ -1805,9 +2540,9 @@ fn run(
                 sp = base + n;
             }
             Op::Dot => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
-                let base = sp - 2 * n;
+                let base = sub!(2 * n);
                 let mut acc = 0.0;
                 for i in 0..n {
                     acc += stack[base + i] * stack[base + n + i];
@@ -1817,7 +2552,7 @@ fn run(
             }
             Op::Cross => {
                 pc += 1; // n operand (always 3), ignore
-                let base = sp - 6;
+                let base = sub!(6);
                 let a = [stack[base], stack[base + 1], stack[base + 2]];
                 let b = [stack[base + 3], stack[base + 4], stack[base + 5]];
                 stack[base] = a[1] * b[2] - a[2] * b[1];
@@ -1826,9 +2561,9 @@ fn run(
                 sp = base + 3;
             }
             Op::Length => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
-                let base = sp - n;
+                let base = sub!(n);
                 let mut acc = 0.0;
                 for i in 0..n {
                     acc += stack[base + i] * stack[base + i];
@@ -1837,9 +2572,9 @@ fn run(
                 push!(sqrtf(acc));
             }
             Op::Distance => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
-                let base = sp - 2 * n;
+                let base = sub!(2 * n);
                 let mut acc = 0.0;
                 for i in 0..n {
                     let d = stack[base + i] - stack[base + n + i];
@@ -1849,9 +2584,9 @@ fn run(
                 push!(sqrtf(acc));
             }
             Op::Normalize => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
-                let base = sp - n;
+                let base = sub!(n);
                 let mut acc = 0.0;
                 for i in 0..n {
                     acc += stack[base + i] * stack[base + i];
@@ -1864,13 +2599,16 @@ fn run(
                 }
             }
             Op::Swizzle => {
-                let src_n = code[pc] as usize;
-                let dst_n = code[pc + 1] as usize;
+                let src_n = cb!(pc) as usize;
+                let dst_n = cb!(pc + 1) as usize;
                 pc += 2;
                 let mut tmp = [0.0f32; 4];
-                let base = sp - src_n;
+                let base = sub!(src_n);
+                if dst_n > 4 || base + dst_n > MAX_STACK {
+                    fault!();
+                }
                 for i in 0..dst_n {
-                    let ci = code[pc + i] as usize;
+                    let ci = cb!(pc + i) as usize;
                     tmp[i] = *stack.get(base + ci).unwrap_or(&0.0);
                 }
                 pc += dst_n;
@@ -1883,7 +2621,7 @@ fn run(
                 sp = base + dst_n;
             }
             Op::Cmp => {
-                let kind = code[pc];
+                let kind = cb!(pc);
                 pc += 1;
                 let b = pop!();
                 let a = pop!();
@@ -1898,7 +2636,7 @@ fn run(
                 push!(if r { 1.0 } else { 0.0 });
             }
             Op::Logic => {
-                let kind = code[pc];
+                let kind = cb!(pc);
                 pc += 1;
                 if kind == 2 {
                     let a = pop!();
@@ -1915,16 +2653,22 @@ fn run(
                 }
             }
             Op::BrFalse => {
-                let rel = i16::from_le_bytes([code[pc], code[pc + 1]]);
+                let rel = rd16!(pc) as i16;
                 pc += 2;
                 let c = pop!();
                 if c == 0.0 {
+                    if rel < 0 {
+                        poll_deadline!();
+                    }
                     pc = (pc as isize + rel as isize) as usize;
                 }
             }
             Op::Jmp => {
-                let rel = i16::from_le_bytes([code[pc], code[pc + 1]]);
+                let rel = rd16!(pc) as i16;
                 pc += 2;
+                if rel < 0 {
+                    poll_deadline!();
+                }
                 pc = (pc as isize + rel as isize) as usize;
             }
             Op::Hash1 => {
@@ -1947,7 +2691,7 @@ fn run(
                 push!(b);
             }
             Op::Palette => {
-                let id = code[pc];
+                let id = cb!(pc);
                 pc += 1;
                 let t = pop!();
                 let (r, g, b) = palette(id, t);
@@ -1956,12 +2700,12 @@ fn run(
                 push!(b);
             }
             Op::Pop => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
                 sp = sp.saturating_sub(n);
             }
             Op::Ret => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 let mut out = [0.0f32; 3];
                 let base = sp.saturating_sub(n);
                 // Perf-golden hot path (fx_bench): keep the scalar copy.
@@ -1972,14 +2716,17 @@ fn run(
                 if sp > sp_max {
                     sp_max = sp;
                 }
-                return (out, None, Outcome::Ok, Counters { instrs, stack_max: sp_max as u16 });
+                return (out, None, Outcome::Ok, Counters { instrs: guard.instructions - budget, stack_max: sp_max as u16 });
             }
             Op::Swap => {
-                let an = code[pc] as usize;
-                let bn = code[pc + 1] as usize;
+                let an = cb!(pc) as usize;
+                let bn = cb!(pc + 1) as usize;
                 pc += 2;
                 // stack: [.. a(an) b(bn)] -> [.. b(bn) a(an)]
-                let base = sp - an - bn;
+                let base = sub!(an + bn);
+                if an > 8 {
+                    fault!();
+                }
                 let mut tmp = [0.0f32; 8];
                 // Perf-golden hot path (fx_bench): keep the scalar shuffle so the
                 // emitted code (and its cycle count) matches the benchmark golden.
@@ -2025,7 +2772,7 @@ fn run(
                 pushi!(a.wrapping_neg());
             }
             Op::CmpI => {
-                let kind = code[pc];
+                let kind = cb!(pc);
                 pc += 1;
                 let b = popi!();
                 let a = popi!();
@@ -2055,15 +2802,15 @@ fn run(
             }
             Op::F2I => {
                 let a = pop!();
-                pushi!(a as i32);
+                pushi!(f2i(a));
             }
             Op::Fix2F => {
                 let a = popi!();
-                push!(a as f32 / FIX_ONE as f32);
+                push!(fix_to_f32(a, 16));
             }
             Op::F2Fix => {
                 let a = pop!();
-                pushi!((a * FIX_ONE as f32) as i32);
+                pushi!(f32_to_fix(a, 16));
             }
             Op::I2Fix => {
                 let a = popi!();
@@ -2074,8 +2821,9 @@ fn run(
                 pushi!(a >> 16);
             }
             Op::Call => {
-                let target = rd_u16(code, pc) as usize;
+                let target = rd16!(pc) as usize;
                 pc += 2;
+                poll_deadline!();
                 if csp < call_stack.len() {
                     call_stack[csp] = pc;
                     csp += 1;
@@ -2092,11 +2840,11 @@ fn run(
             // Indexed load: pop the (int) index, push `n` slots from
             // base + clamp(i,0,count-1)*stride + off.
             Op::LoadStateIdx | Op::LoadLocalIdx => {
-                let base = code[pc] as usize;
-                let stride = code[pc + 1] as usize;
-                let off = code[pc + 2] as usize;
-                let n = code[pc + 3] as usize;
-                let count = code[pc + 4] as usize;
+                let base = cb!(pc) as usize;
+                let stride = cb!(pc + 1) as usize;
+                let off = cb!(pc + 2) as usize;
+                let n = cb!(pc + 3) as usize;
+                let count = cb!(pc + 4) as usize;
                 pc += 5;
                 let i = popi!();
                 let hi = count.saturating_sub(1) as i32;
@@ -2110,11 +2858,11 @@ fn run(
             // Indexed store: the `n` values are on top, the (int) index just
             // below them. Writes to base + clamp(i,0,count-1)*stride + off.
             Op::StoreStateIdx | Op::StoreLocalIdx => {
-                let base = code[pc] as usize;
-                let stride = code[pc + 1] as usize;
-                let off = code[pc + 2] as usize;
-                let n = code[pc + 3] as usize;
-                let count = code[pc + 4] as usize;
+                let base = cb!(pc) as usize;
+                let stride = cb!(pc + 1) as usize;
+                let off = cb!(pc + 2) as usize;
+                let n = cb!(pc + 3) as usize;
+                let count = cb!(pc + 4) as usize;
                 pc += 5;
                 // Perf-golden hot path (fx_bench): keep the literal guard form.
                 #[allow(clippy::int_plus_one)]
@@ -2138,7 +2886,7 @@ fn run(
                 }
             }
             Op::GraphQuery => {
-                let kind = code[pc];
+                let kind = cb!(pc);
                 pc += 1;
                 let (a, b) = match kind {
                     gq::SEG_LEN | gq::NODE_DEG | gq::TERM => (popi!(), 0),
@@ -2151,7 +2899,7 @@ fn run(
                 push!(graph.query(kind, a, b));
             }
             Op::LoadBuf => {
-                let id = code[pc] as usize;
+                let id = cb!(pc) as usize;
                 pc += 1;
                 if let Some(d) = prog.buf_desc(id) {
                     let lc = frame.led_count as usize;
@@ -2169,7 +2917,7 @@ fn run(
                 }
             }
             Op::StoreBuf => {
-                let id = code[pc] as usize;
+                let id = cb!(pc) as usize;
                 pc += 1;
                 if let Some(d) = prog.buf_desc(id) {
                     let lc = frame.led_count as usize;
@@ -2194,7 +2942,7 @@ fn run(
                 }
             }
             Op::SampleTex => {
-                let id = code[pc] as usize;
+                let id = cb!(pc) as usize;
                 pc += 1;
                 let d = prog.buf_desc(id).unwrap_or_default();
                 let elem = d.elem as usize;
@@ -2239,7 +2987,7 @@ fn run(
                 }
             }
             Op::PaintTex => {
-                let id = code[pc] as usize;
+                let id = cb!(pc) as usize;
                 pc += 1;
                 let d = prog.buf_desc(id).unwrap_or_default();
                 let elem = d.elem as usize;
@@ -2317,52 +3065,52 @@ fn run(
             }
             // --- reduced-precision fixed-point (FUG-10) ----------------------
             Op::MulFixN => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let b = popi!() as i64;
                 let a = popi!() as i64;
                 pushi!(((a * b) >> frac) as i32);
             }
             Op::DivFixN => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let b = popi!() as i64;
                 let a = popi!() as i64;
-                pushi!(if b == 0 { 0 } else { ((a << frac) / b) as i32 });
+                pushi!(if b == 0 { 0 } else { a.wrapping_shl(frac).wrapping_div(b) as i32 });
             }
             Op::FixRescale => {
-                let sh = code[pc] as i8;
+                let sh = cb!(pc) as i8;
                 pc += 1;
                 let a = popi!();
-                pushi!(if sh >= 0 { a.wrapping_shl(sh as u32) } else { a >> ((-(sh as i32)) as u32) });
+                pushi!(if sh >= 0 { a.wrapping_shl(sh as u32) } else { a.wrapping_shr((-(sh as i32)) as u32) });
             }
             Op::FixToF => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let a = popi!();
-                push!(a as f32 / (1u32 << frac) as f32);
+                push!(fix_to_f32(a, frac & 31));
             }
             Op::FixFromF => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let a = pop!();
-                pushi!((a * (1u32 << frac) as f32) as i32);
+                pushi!(f32_to_fix(a, frac & 31));
             }
             Op::SinFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let a = popi!();
                 pushi!(sin_fix(a, frac));
             }
             Op::CosFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let a = popi!();
                 // cos(t) = sin(t + quarter turn); one turn = 1<<frac.
-                pushi!(sin_fix(a.wrapping_add(1 << (frac - 2)), frac));
+                pushi!(sin_fix(a.wrapping_add(1i32.wrapping_shl(frac.wrapping_sub(2))), frac));
             }
             Op::ExpFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let a = popi!();
                 pushi!(exp_fix(a, frac));
@@ -2396,7 +3144,7 @@ fn run(
                 });
             }
             Op::SignI => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let x = popi!();
                 let one = 1i32 << frac;
@@ -2414,122 +3162,123 @@ fn run(
                 pushi!(signed);
             }
             Op::StepI => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let x = popi!(); // second arg (top)
                 let edge = popi!(); // first arg
                 pushi!(if x >= edge { 1i32 << frac } else { 0 });
             }
             Op::FloorFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let x = popi!();
                 pushi!((x >> frac) << frac); // arithmetic shift rounds toward -inf
             }
             Op::CeilFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let x = popi!();
                 let fl = (x >> frac) << frac;
                 pushi!(if fl != x { fl.wrapping_add(1i32 << frac) } else { fl });
             }
             Op::FractFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let x = popi!();
                 pushi!(x & ((1i32 << frac) - 1)); // frac 0 -> mask 0 -> 0
             }
             Op::MixFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let t = popi!() as i64;
                 let b = popi!() as i64;
                 let a = popi!() as i64;
-                pushi!((a + (((b - a) * t) >> frac)) as i32);
+                pushi!(a.wrapping_add((b - a).wrapping_mul(t) >> frac) as i32);
             }
             // --- FUG-122: fixed/int variants of the vector, transcendental,
             // colour and I/O opcodes (complete the native-datatype ISA). All read
             // and write the raw scaled integer in the slot word — no soft-float.
             Op::SqrtFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let a = popi!();
                 pushi!(sqrt_fix(a, frac));
             }
             Op::ScaleFix => {
-                let frac = code[pc] as u32;
-                let n = code[pc + 1] as usize;
+                let frac = frac!(cb!(pc));
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 let s = popi!() as i64;
+                let base = sub!(n);
                 for i in 0..n {
-                    let a = stack[sp - n + i].to_bits() as i32 as i64;
-                    stack[sp - n + i] = f32::from_bits((((a * s) >> frac) as i32) as u32);
+                    let a = stack[base + i].to_bits() as i32 as i64;
+                    stack[base + i] = f32::from_bits((a.wrapping_mul(s).wrapping_shr(frac) as i32) as u32);
                 }
             }
             Op::DotFix => {
-                let frac = code[pc] as u32;
-                let n = code[pc + 1] as usize;
+                let frac = frac!(cb!(pc));
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
-                let base = sp - 2 * n;
+                let base = sub!(2 * n);
                 let mut acc: i64 = 0;
                 for i in 0..n {
                     let a = stack[base + i].to_bits() as i32 as i64;
                     let b = stack[base + n + i].to_bits() as i32 as i64;
-                    acc += (a * b) >> frac;
+                    acc = acc.wrapping_add(a.wrapping_mul(b) >> frac);
                 }
                 sp = base;
                 pushi!(acc as i32);
             }
             Op::LengthFix => {
-                let frac = code[pc] as u32;
-                let n = code[pc + 1] as usize;
+                let frac = frac!(cb!(pc));
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
-                let base = sp - n;
+                let base = sub!(n);
                 let mut acc: i64 = 0;
                 for i in 0..n {
                     let a = stack[base + i].to_bits() as i32 as i64;
-                    acc += (a * a) >> frac;
+                    acc = acc.wrapping_add(a.wrapping_mul(a) >> frac);
                 }
                 sp = base;
                 pushi!(sqrt_fix_i64(acc, frac) as i32);
             }
             Op::DistanceFix => {
-                let frac = code[pc] as u32;
-                let n = code[pc + 1] as usize;
+                let frac = frac!(cb!(pc));
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
-                let base = sp - 2 * n;
+                let base = sub!(2 * n);
                 let mut acc: i64 = 0;
                 for i in 0..n {
                     let d = (stack[base + i].to_bits() as i32 as i64)
                         - (stack[base + n + i].to_bits() as i32 as i64);
-                    acc += (d * d) >> frac;
+                    acc = acc.wrapping_add(d.wrapping_mul(d) >> frac);
                 }
                 sp = base;
                 pushi!(sqrt_fix_i64(acc, frac) as i32);
             }
             Op::NormalizeFix => {
-                let frac = code[pc] as u32;
-                let n = code[pc + 1] as usize;
+                let frac = frac!(cb!(pc));
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
-                let base = sp - n;
+                let base = sub!(n);
                 let mut acc: i64 = 0;
                 for i in 0..n {
                     let a = stack[base + i].to_bits() as i32 as i64;
-                    acc += (a * a) >> frac;
+                    acc = acc.wrapping_add(a.wrapping_mul(a) >> frac);
                 }
                 let len = sqrt_fix_i64(acc, frac);
                 if len > 0 {
                     for i in 0..n {
                         let a = stack[base + i].to_bits() as i32 as i64;
-                        let v = ((a << frac) / len) as i32;
+                        let v = (a.wrapping_shl(frac) / len) as i32;
                         stack[base + i] = f32::from_bits(v as u32);
                     }
                 }
             }
             Op::CrossFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1; // n operand (always 3), folded into the fixed math below
-                let base = sp - 6;
+                let base = sub!(6);
                 let a = [
                     stack[base].to_bits() as i32 as i64,
                     stack[base + 1].to_bits() as i32 as i64,
@@ -2540,20 +3289,20 @@ fn run(
                     stack[base + 4].to_bits() as i32 as i64,
                     stack[base + 5].to_bits() as i32 as i64,
                 ];
-                let cx = ((a[1] * b[2] - a[2] * b[1]) >> frac) as i32;
-                let cy = ((a[2] * b[0] - a[0] * b[2]) >> frac) as i32;
-                let cz = ((a[0] * b[1] - a[1] * b[0]) >> frac) as i32;
+                let cx = ((a[1] * b[2]).wrapping_sub(a[2] * b[1]) >> frac) as i32;
+                let cy = ((a[2] * b[0]).wrapping_sub(a[0] * b[2]) >> frac) as i32;
+                let cz = ((a[0] * b[1]).wrapping_sub(a[1] * b[0]) >> frac) as i32;
                 stack[base] = f32::from_bits(cx as u32);
                 stack[base + 1] = f32::from_bits(cy as u32);
                 stack[base + 2] = f32::from_bits(cz as u32);
                 sp = base + 3;
             }
             Op::SmoothstepFix => {
-                let frac = code[pc] as u32;
-                let n = code[pc + 1] as usize;
+                let frac = frac!(cb!(pc));
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 let one = 1i64 << frac;
-                let base = sp - 3 * n;
+                let base = sub!(3 * n);
                 for i in 0..n {
                     let e0 = stack[base + i].to_bits() as i32 as i64;
                     let e1 = stack[base + n + i].to_bits() as i32 as i64;
@@ -2561,18 +3310,18 @@ fn run(
                     let t = if e1 == e0 {
                         0
                     } else {
-                        (((x - e0) << frac) / (e1 - e0)).clamp(0, one)
+                        (x - e0).wrapping_shl(frac).wrapping_div(e1 - e0).clamp(0, one)
                     };
-                    let t2 = (t * t) >> frac;
-                    let val = (t2 * (3 * one - 2 * t)) >> frac; // t²(3−2t)
+                    let t2 = t.wrapping_mul(t) >> frac;
+                    let val = t2.wrapping_mul(3 * one - 2 * t) >> frac; // t²(3−2t)
                     stack[base + i] = f32::from_bits((val as i32) as u32);
                 }
                 sp = base + n;
             }
             Op::ClampVFix => {
-                let n = code[pc] as usize;
+                let n = cb!(pc) as usize;
                 pc += 1;
-                let base = sp - 3 * n;
+                let base = sub!(3 * n);
                 for i in 0..n {
                     let x = stack[base + i].to_bits() as i32;
                     let lo = stack[base + n + i].to_bits() as i32;
@@ -2589,21 +3338,21 @@ fn run(
                 sp = base + n;
             }
             Op::MixVFix => {
-                let frac = code[pc] as u32;
-                let n = code[pc + 1] as usize;
+                let frac = frac!(cb!(pc));
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 let t = popi!() as i64;
-                let base = sp - 2 * n;
+                let base = sub!(2 * n);
                 for i in 0..n {
                     let a = stack[base + i].to_bits() as i32 as i64;
                     let b = stack[base + n + i].to_bits() as i32 as i64;
-                    let v = (a + (((b - a) * t) >> frac)) as i32;
+                    let v = a.wrapping_add((b - a).wrapping_mul(t) >> frac) as i32;
                     stack[base + i] = f32::from_bits(v as u32);
                 }
                 sp = base + n;
             }
             Op::Hsv2RgbFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let v = popi!();
                 let s = popi!();
@@ -2614,8 +3363,8 @@ fn run(
                 pushi!(b);
             }
             Op::PaletteFix => {
-                let id = code[pc];
-                let frac = code[pc + 1] as u32;
+                let id = cb!(pc);
+                let frac = frac!(cb!(pc + 1));
                 pc += 2;
                 let t = popi!();
                 let (r, g, b) = palette_fix(id, t, frac);
@@ -2624,39 +3373,39 @@ fn run(
                 pushi!(b);
             }
             Op::Atan2Fix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let x = popi!();
                 let y = popi!();
                 pushi!(atan2_fix(y, x, frac));
             }
             Op::LogFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let a = popi!();
                 pushi!(log_fix(a, frac));
             }
             Op::TanFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let a = popi!();
                 pushi!(tan_fix(a, frac));
             }
             Op::PowFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let b = popi!();
                 let a = popi!();
                 pushi!(pow_fix(a, b, frac));
             }
             Op::HashFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let x = pop!().to_bits();
                 pushi!(hash_fix(x, frac));
             }
             Op::Hash3Fix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 pc += 1;
                 let z = pop!().to_bits();
                 let y = pop!().to_bits();
@@ -2677,16 +3426,16 @@ fn run(
                     [0.0; 3],
                     Some((r, g, b)),
                     Outcome::Ok,
-                    Counters { instrs, stack_max: sp_max as u16 },
+                    Counters { instrs: guard.instructions - budget, stack_max: sp_max as u16 },
                 );
             }
             Op::RetRgbFix => {
-                let frac = code[pc] as u32;
+                let frac = frac!(cb!(pc));
                 // (returns immediately; no pc advance needed for the frac operand)
                 // top 3 slots are Q1.frac channels in [0,1] — scale to 0..255 in
                 // integer ((v*255)>>frac), no clamp01()*255 soft-float.
                 let base = sp.saturating_sub(3);
-                let to8 = |v: i64| ((v * 255) >> frac).clamp(0, 255) as u8;
+                let to8 = |v: i64| (v.wrapping_mul(255) >> frac).clamp(0, 255) as u8;
                 let r = to8(stack[base].to_bits() as i32 as i64);
                 let g = to8(stack.get(base + 1).map(|s| s.to_bits() as i32 as i64).unwrap_or(0));
                 let b = to8(stack.get(base + 2).map(|s| s.to_bits() as i32 as i64).unwrap_or(0));
@@ -2697,13 +3446,13 @@ fn run(
                     [0.0; 3],
                     Some((r, g, b)),
                     Outcome::Ok,
-                    Counters { instrs, stack_max: sp_max as u16 },
+                    Counters { instrs: guard.instructions - budget, stack_max: sp_max as u16 },
                 );
             }
             Op::LoadCtxFix => {
-                let id = code[pc];
-                let comp = code[pc + 1] as usize;
-                let frac = code[pc + 2] as u32;
+                let id = cb!(pc);
+                let comp = cb!(pc + 1) as usize;
+                let frac = frac!(cb!(pc + 2));
                 pc += 3;
                 // Canonical cache form is Q16.16 for continuous quantities, raw
                 // int (frac 0) for counters/indices; rescale to the shader's frac.
@@ -2731,13 +3480,13 @@ fn run(
                 let v = if sh >= 0 {
                     raw.wrapping_shl(sh as u32)
                 } else {
-                    raw >> ((-sh) as u32)
+                    raw.wrapping_shr((-sh) as u32)
                 };
                 pushi!(v);
             }
             Op::FillLocal => {
-                let slot = code[pc] as usize;
-                let n = code[pc + 1] as usize;
+                let slot = cb!(pc) as usize;
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 for i in 0..n {
                     if slot + i < MAX_LOCALS {
@@ -2749,8 +3498,8 @@ fn run(
             Op::TeeLocal => {
                 // StoreLocal slot,n ; LoadLocal slot,n : write the top n stack
                 // slots to local[slot..] but leave them on the stack.
-                let slot = code[pc] as usize;
-                let n = code[pc + 1] as usize;
+                let slot = cb!(pc) as usize;
+                let n = cb!(pc + 1) as usize;
                 pc += 2;
                 for i in 0..n {
                     if slot + i < MAX_LOCALS && sp >= n {
@@ -2761,8 +3510,8 @@ fn run(
             Op::IncLocalI => {
                 // LoadLocal s,1 ; PushConst k ; AddI ; StoreLocal s,1 : the
                 // integer compound-add idiom `i = i + k` (loop counters, indices).
-                let slot = code[pc] as usize;
-                let idx = rd_u16(code, pc + 1) as usize;
+                let slot = cb!(pc) as usize;
+                let idx = rd16!(pc + 1) as usize;
                 pc += 3;
                 let k = prog.const_f32(idx).to_bits() as i32;
                 if slot < MAX_LOCALS {
@@ -2773,8 +3522,8 @@ fn run(
             Op::BrCmpI => {
                 // CmpI kind ; BrFalse rel : compare two ints and branch when the
                 // comparison is FALSE (BrFalse branched on the 0 that CmpI pushed).
-                let kind = code[pc];
-                let rel = i16::from_le_bytes([code[pc + 1], code[pc + 2]]);
+                let kind = cb!(pc);
+                let rel = rd16!(pc + 1) as i16;
                 pc += 3;
                 let b = popi!();
                 let a = popi!();
@@ -2787,6 +3536,9 @@ fn run(
                     _ => a != b,
                 };
                 if !t {
+                    if rel < 0 {
+                        poll_deadline!();
+                    }
                     pc = (pc as isize + rel as isize) as usize;
                 }
             }
@@ -2797,7 +3549,7 @@ fn run(
                 // a2 = the aligned const pool. Then apply the block's net stack
                 // delta and resume interpreting at its end. Ints ride bit-for-bit
                 // in the f32 slots, so the i32 view is exact.
-                let idx = rd_u16(code, pc) as usize;
+                let idx = rd16!(pc) as usize;
                 pc += 2;
                 // SAFETY: the firmware installed this table via `set_jit` and keeps
                 // both the descriptors and the executable code alive for the
@@ -2810,9 +3562,14 @@ fn run(
                             stack.as_mut_ptr().add(sp) as *mut i32,
                             locals.as_mut_ptr() as *mut i32,
                             jit_consts,
+                            state.as_mut_ptr() as *mut i32,
                         );
                     }
-                    sp = (sp as isize + blk.net_delta as isize) as usize;
+                    let nsp = sp as isize + blk.net_delta as isize;
+                    if nsp < 0 || nsp as usize > MAX_STACK {
+                        fault!();
+                    }
+                    sp = nsp as usize;
                     pc = blk.end as usize;
                 }
             }
@@ -2829,7 +3586,7 @@ fn run(
                 pushi!(ok as i32);
             }
             Op::I2cRead => {
-                let mode = code[pc];
+                let mode = cb!(pc);
                 pc += 1;
                 let n = ((mode & 3) as usize).clamp(1, 2);
                 let reg = popi!();
@@ -2849,9 +3606,69 @@ fn run(
                     u16::from_be_bytes([buf[0], buf[1]]) as i32
                 });
             }
+            // Out-of-line helpers reading the invocation's cache from a static:
+            // anything more (a `run()` argument, a GraphRef field, a combined
+            // arm) measurably raised register pressure across the whole dispatch
+            // loop — fx_bench +3..7% on EVERY program, cached or not.
+            Op::LoadLedCache => {
+                let slot = cb!(pc) as usize;
+                let n = cb!(pc + 1) as usize;
+                let rel = rd16!(pc + 2) as i16;
+                pc += 4;
+                if let Some(nsp) = memo_load(led.idx, slot, n, stack, sp) {
+                    sp = nsp;
+                    pc = (pc as isize + rel as isize) as usize;
+                }
+            }
+            Op::StoreLedCache => {
+                let slot = cb!(pc) as usize;
+                let n = cb!(pc + 1) as usize;
+                pc += 2;
+                memo_store(led.idx, slot, n, stack, sp);
+            }
         }
     }
-    ([0.0, 0.0, 0.0], None, outcome, Counters { instrs, stack_max: sp_max as u16 })
+    ([0.0, 0.0, 0.0], None, outcome, Counters { instrs: guard.instructions - budget, stack_max: sp_max as u16 })
+}
+
+/// Operand source of a `BinTop`/`BinPair` (mode bits): the same reads as
+/// `PushConst` / `LoadLocal` / `LoadState` / `LoadUniform` (out of range = 0.0).
+#[inline(always)]
+fn bin_src(src: u8, i: usize, prog: &Program, uniforms: &[f32], state: &[f32], locals: &[f32]) -> f32 {
+    match src & 3 {
+        0 => prog.const_f32(i),
+        1 => *locals.get(i).unwrap_or(&0.0),
+        2 => *state.get(i).unwrap_or(&0.0),
+        _ => *uniforms.get(i).unwrap_or(&0.0),
+    }
+}
+
+/// The scalar float `Add`/`Sub`/`Mul`/`Div` (div by zero = 0.0), or with mode
+/// bit 6 the integer `AddI`/`SubI`/`MulI`/`MulFix`, exactly as in `run()`.
+#[inline(always)]
+fn bin_arith(mode: u8, a: f32, b: f32) -> f32 {
+    if mode & 0x40 != 0 {
+        let (x, y) = (a.to_bits() as i32, b.to_bits() as i32);
+        let r = match mode & 3 {
+            0 => x.wrapping_add(y),
+            1 => x.wrapping_sub(y),
+            2 => x.wrapping_mul(y),
+            _ => ((x as i64 * y as i64) >> 16) as i32,
+        };
+        return f32::from_bits(r as u32);
+    }
+    match mode & 3 {
+        0 => a + b,
+        1 => a - b,
+        2 => a * b,
+        _ => {
+            if b == 0.0 {
+                0.0
+            } else {
+                a / b
+            }
+        }
+    }
 }
 
 // --- soft-float helpers (no libm dependency; small polynomial approximations
@@ -2862,15 +3679,42 @@ pub fn sqrtf(x: f32) -> f32 {
         return 0.0;
     }
     // Newton from a bit-twiddle seed.
-    let mut y = f32::from_bits(0x5f37_59df - (x.to_bits() >> 1));
+    let mut y = f32::from_bits(0x5f37_59dfu32.wrapping_sub(x.to_bits() >> 1));
     y = y * (1.5 - 0.5 * x * y * y);
     y = y * (1.5 - 0.5 * x * y * y);
     x * y // x * rsqrt(x) = sqrt(x)
 }
 
+/// `x as i32` (truncate toward zero, saturating, NaN to 0) in integer ops,
+/// instead of the soft `__fixsfsi` (~110 cycles on the C6).
+#[inline]
+fn f2i(x: f32) -> i32 {
+    f32_to_fix(x, 0)
+}
+
+/// Floor, bit-exact with the original `t = x as i32 as f32; if t > x { t - 1 }`
+/// (including its saturation at ±2^31 and NaN -> 0), but the truncation is a
+/// mantissa mask instead of two soft conversions and a soft compare. Only a
+/// negative non-integer still pays the soft `t - 1.0`.
 pub fn floorf(x: f32) -> f32 {
-    let t = x as i32 as f32;
-    if t > x {
+    let b = x.to_bits();
+    let e = ((b >> 23) & 0xff) as i32 - 127;
+    let neg = (b as i32) < 0;
+    if e >= 31 {
+        if b & 0x7fff_ffff > 0x7f80_0000 {
+            return 0.0; // NaN
+        }
+        return if neg { -2_147_483_648.0 } else { 2_147_483_648.0 };
+    }
+    let (t, frac) = if e < 0 {
+        (0.0f32, b & 0x7fff_ffff != 0) // |x| < 1 truncates to +0.0
+    } else if e >= 23 {
+        (x, false)
+    } else {
+        let m = 0x007f_ffffu32 >> e;
+        (f32::from_bits(b & !m), b & m != 0)
+    };
+    if neg && frac {
         t - 1.0
     } else {
         t
@@ -2931,12 +3775,56 @@ const SIN_PHASE_SCALE: f32 = 4_294_967_296.0 / TAU;
 /// ~1e-4 (≪ 1/255, invisible on 8-bit LEDs); device + wasm preview share this
 /// code so they can't drift.
 pub fn sinf(x: f32) -> f32 {
-    let phase = (x * SIN_PHASE_SCALE) as i64 as u32;
+    let phase = f32_wrap_u32(x * SIN_PHASE_SCALE);
     let idx = (phase >> 24) as usize; // 0..=255
-    let frac = (phase & 0x00ff_ffff) as f32 * (1.0 / 16_777_216.0);
+    let frac = u24_unit(phase & 0x00ff_ffff);
     let a = SINF_LUT[idx];
     let b = SINF_LUT[idx + 1]; // idx+1 ≤ 256; the wrap entry avoids a branch
     a + (b - a) * frac
+}
+
+/// `v as i64 as u32` (truncate, saturate to i64, keep the low 32 bits) in
+/// integer ops; the soft `__fixsfdi` it replaces costs more than the sine.
+#[inline]
+fn f32_wrap_u32(v: f32) -> u32 {
+    let b = v.to_bits();
+    let neg = (b as i32) < 0;
+    let e = ((b >> 23) & 0xff) as i32 - 127;
+    if e >= 63 {
+        if b & 0x7fff_ffff > 0x7f80_0000 {
+            return 0; // NaN
+        }
+        return if neg { 0 } else { u32::MAX }; // i64::MIN / i64::MAX, low word
+    }
+    if e < 0 {
+        return 0;
+    }
+    let m = (b & 0x007f_ffff) | 0x0080_0000;
+    let sh = e - 23;
+    let mag = if sh >= 32 {
+        0
+    } else if sh >= 0 {
+        m << sh
+    } else {
+        m >> -sh
+    };
+    if neg {
+        mag.wrapping_neg()
+    } else {
+        mag
+    }
+}
+
+/// `f as f32 * 2^-24` for a 24-bit `f`, exact, built from the bits instead of
+/// a soft int-to-float conversion and a soft multiply.
+#[inline]
+fn u24_unit(f: u32) -> f32 {
+    if f == 0 {
+        return 0.0;
+    }
+    let lz = f.leading_zeros(); // 8..=31
+    let p = 31 - lz; // the leading bit
+    f32::from_bits(((p + 103) << 23) | ((f << (23 - p)) & 0x007f_ffff))
 }
 
 pub fn cosf(x: f32) -> f32 {
@@ -2947,8 +3835,10 @@ pub fn expf(x: f32) -> f32 {
     let xln = x * core::f32::consts::LOG2_E; // x / ln2
     let i = floorf(xln);
     let f = xln - i;
-    let poly = 1.0 + f * (core::f32::consts::LN_2 + f * (0.2402265 + f * 0.0555041));
-    let bits = ((i as i32 + 127) as u32) << 23;
+    // 2^f on [0, 1): a minimax cubic (max relative error 8.6e-5). The Taylor
+    // cubic it replaces reached 1.9888 at f -> 1, a 0.56% jump at every integer.
+    let poly = 1.0 + f * (0.695_113_5 + f * (0.227_659_75 + f * 0.077_053_55));
+    let bits = (f2i(i).wrapping_add(127) as u32) << 23;
     f32::from_bits(bits) * poly
 }
 pub fn logf(x: f32) -> f32 {
@@ -2957,9 +3847,31 @@ pub fn logf(x: f32) -> f32 {
     }
     let bits = x.to_bits();
     let e = ((bits >> 23) & 0xff) as i32 - 127;
-    let m = f32::from_bits((bits & 0x007f_ffff) | 0x3f80_0000); // [1,2)
-    let p = -1.7417939 + m * (2.8212026 + m * (-1.4699568 + m * (0.4471623 - m * 0.0821854)));
-    (e as f32) * core::f32::consts::LN_2 + p
+    // ln x = (e + log2 m) * ln 2 for x = m * 2^e, m in [1, 2), with log2(1 + t)
+    // on t = m - 1 in [0, 1) as a degree-5 polynomial through 0 (max error
+    // 1.5e-5). The old version added a log2-shaped polynomial straight to
+    // e * ln 2 without scaling it by ln 2, so it was off by up to 0.13 (ln 1.5
+    // came out 0.276, not 0.405) and pow(x, 8) = exp(8 ln x) by up to 2.8x
+    // (docs/design/fx-perf-study.md).
+    // t is exactly mantissa * 2^-23 and e is a small integer, so both are built
+    // from the bits (bit-identical to `m - 1.0` and `e as f32`) instead of a
+    // soft subtract and a soft int-to-float conversion.
+    let t = u24_unit((bits & 0x007f_ffff) << 1);
+    let p = t * (1.441_966_3 + t * (-0.709_670_9 + t * (0.417_625_8 + t * (-0.196_311_97 + t * 0.046_405_36))));
+    (small_i2f(e) + p) * core::f32::consts::LN_2
+}
+
+/// `v as f32` for `|v| < 2^24` (exact there), in integer ops instead of the
+/// soft `__floatsisf`.
+#[inline]
+fn small_i2f(v: i32) -> f32 {
+    if v == 0 {
+        return 0.0;
+    }
+    let a = v.unsigned_abs();
+    let p = 31 - a.leading_zeros(); // the leading bit, <= 23
+    let sign = (v as u32) & 0x8000_0000;
+    f32::from_bits(sign | ((p + 127) << 23) | ((a << (23 - p)) & 0x007f_ffff))
 }
 pub fn powf(a: f32, b: f32) -> f32 {
     if a <= 0.0 {
@@ -3091,7 +4003,7 @@ pub fn hsv2rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
     let c = v * s;
     let x = c * (1.0 - (fractf(h6 * 0.5) * 2.0 - 1.0).abs());
     let m = v - c;
-    let (r, g, b) = match h6 as i32 {
+    let (r, g, b) = match f2i(h6) {
         0 => (c, x, 0.0),
         1 => (x, c, 0.0),
         2 => (0.0, c, x),
@@ -3353,7 +4265,7 @@ pub fn pow_fix(a: i32, b: i32, frac: u32) -> i32 {
 /// the f32 `hash1`. The top `frac` bits of the mixed value form the fraction.
 pub fn hash_fix(bits: u32, frac: u32) -> i32 {
     let h = mix32(bits ^ 0x9e37_79b9);
-    (h >> (32 - frac)) as i32
+    h.wrapping_shr(32 - frac) as i32
 }
 
 /// 3-input fixed hash -> [0,1) in Q1.`frac` (folds three slot words).
@@ -3361,7 +4273,7 @@ pub fn hash3_fix(x: u32, y: u32, z: u32, frac: u32) -> i32 {
     let mut h = mix32(x ^ 0x9e37_79b9);
     h = mix32(h ^ y.wrapping_add(0x85eb_ca6b));
     h = mix32(h ^ z.wrapping_add(0xc2b2_ae35));
-    (h >> (32 - frac)) as i32
+    h.wrapping_shr(32 - frac) as i32
 }
 
 /// `hsv2rgb` entirely in Q1.`frac`. `h` is in TURNS (wrapped), `s`,`v` in [0,1];
@@ -3408,5 +4320,148 @@ pub fn palette_fix(id: u8, t: i32, frac: u32) -> (i32, i32, i32) {
             let one_i = (1i64 << frac) as i32;
             hsv2rgb_fix(t as i32, one_i, one_i, frac)
         }
+    }
+}
+
+/// The FX debugger's snapshot layouts (docs/design/fx-debugger.md), shared by the
+/// firmware that writes them (player_app fxdbg.rs) and the host replay that reads
+/// them (bin/wasm_lib.rs `FxReplay`). Little-endian throughout.
+pub mod dbg {
+    use super::{Frame, Led, Program};
+
+    /// Bytes of LED `idx`'s element in every per-LED buffer, as (arena offset,
+    /// length) — what one shade() of that LED normally writes (`trail[led.idx]`).
+    /// The debugger saves + restores them around a re-run, so re-running a LED
+    /// (to read its locals, or to compare the JIT with the interpreter) neither
+    /// perturbs the paused state nor sees its own previous write.
+    pub fn led_elem_ranges(
+        prog: &Program,
+        led_count: usize,
+        idx: usize,
+        mut f: impl FnMut(usize, usize),
+    ) {
+        for i in 0..prog.n_buffers as usize {
+            let Some(d) = prog.buf_desc(i) else { continue };
+            if d.kind != 0 || idx >= led_count {
+                continue;
+            }
+            let eb = d.elem_bytes();
+            f(prog.buf_base(i, led_count) + idx * eb, eb);
+        }
+    }
+
+    /// FX_FRAME_V1: the 31 words of a shade() [`Frame`].
+    pub const FRAME_CTX_BYTES: usize = 124;
+    /// FX_LED_V1: one LED's shade() inputs.
+    pub const LED_CTX_BYTES: usize = 44;
+
+    /// Word `k` of FX_FRAME_V1: time, dt, frame, led_count, imu_accel[3],
+    /// imu_gyro[3], time_fix, dt_fix, imu_accel_fix[3], imu_gyro_fix[3],
+    /// room_posed, room_min[3], room_max[3], room_min_fix[3], room_max_fix[3].
+    pub fn frame_word(f: &Frame, k: usize) -> u32 {
+        match k {
+            0 => f.time.to_bits(),
+            1 => f.dt.to_bits(),
+            2 => f.frame,
+            3 => f.led_count,
+            4..=6 => f.imu_accel[k - 4].to_bits(),
+            7..=9 => f.imu_gyro[k - 7].to_bits(),
+            10 => f.time_fix as u32,
+            11 => f.dt_fix as u32,
+            12..=14 => f.imu_accel_fix[k - 12] as u32,
+            15..=17 => f.imu_gyro_fix[k - 15] as u32,
+            18 => f.room_posed as u32,
+            19..=21 => f.room_min[k - 19].to_bits(),
+            22..=24 => f.room_max[k - 22].to_bits(),
+            25..=27 => f.room_min_fix[k - 25] as u32,
+            28..=30 => f.room_max_fix[k - 28] as u32,
+            _ => 0,
+        }
+    }
+
+    /// Parse FX_FRAME_V1 (None when `ctx` is too short).
+    pub fn frame_from_ctx(ctx: &[u8]) -> Option<Frame> {
+        if ctx.len() < FRAME_CTX_BYTES {
+            return None;
+        }
+        let w = |k: usize| {
+            u32::from_le_bytes([ctx[4 * k], ctx[4 * k + 1], ctx[4 * k + 2], ctx[4 * k + 3]])
+        };
+        let f = |k: usize| f32::from_bits(w(k));
+        let i = |k: usize| w(k) as i32;
+        Some(Frame {
+            time: f(0),
+            dt: f(1),
+            frame: w(2),
+            led_count: w(3),
+            imu_accel: [f(4), f(5), f(6)],
+            imu_gyro: [f(7), f(8), f(9)],
+            time_fix: i(10),
+            dt_fix: i(11),
+            imu_accel_fix: [i(12), i(13), i(14)],
+            imu_gyro_fix: [i(15), i(16), i(17)],
+            room_posed: w(18) != 0,
+            room_min: [f(19), f(20), f(21)],
+            room_max: [f(22), f(23), f(24)],
+            room_min_fix: [i(25), i(26), i(27)],
+            room_max_fix: [i(28), i(29), i(30)],
+        })
+    }
+
+    /// Write FX_LED_V1: pos[3], s, dist, uv[2], room[3] (f32), seg (i16), branch
+    /// (u8), flags (bit 0 = the LED has a map entry, bit 1 = measured, not
+    /// interpolated). `None` = no map entry (all zero, seg -1). The Q16.16 mirrors
+    /// aren't carried: they are `(x * 65536.0) as i32` of these.
+    pub fn encode_led(led: Option<&Led>, mapped: bool, rec: &mut [u8; LED_CTX_BYTES]) {
+        *rec = [0; LED_CTX_BYTES];
+        let Some(l) = led else {
+            rec[40..42].copy_from_slice(&(-1i16).to_le_bytes());
+            return;
+        };
+        let f = [
+            l.pos[0], l.pos[1], l.pos[2], l.s, l.dist, l.uv[0], l.uv[1], l.room[0], l.room[1],
+            l.room[2],
+        ];
+        for (k, v) in f.iter().enumerate() {
+            rec[k * 4..k * 4 + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        rec[40..42].copy_from_slice(&(l.seg as i16).to_le_bytes());
+        rec[42] = l.branch as u8;
+        rec[43] = 1 | ((mapped as u8) << 1);
+    }
+
+    /// Parse FX_LED_V1 into the [`Led`] the device handed shade() for LED `idx`
+    /// (fixed mirrors recomputed exactly as the firmware builds them). None when
+    /// the record says the LED had no map entry (it rendered black).
+    pub fn led_from_record(rec: &[u8], idx: u32) -> Option<Led> {
+        if rec.len() < LED_CTX_BYTES || rec[43] & 1 == 0 {
+            return None;
+        }
+        let v = |k: usize| {
+            f32::from_le_bytes([rec[4 * k], rec[4 * k + 1], rec[4 * k + 2], rec[4 * k + 3]])
+        };
+        let q = |x: f32| (x * 65536.0) as i32;
+        let (pos, s, dist, uv, room) = (
+            [v(0), v(1), v(2)],
+            v(3),
+            v(4),
+            [v(5), v(6)],
+            [v(7), v(8), v(9)],
+        );
+        Some(Led {
+            pos,
+            idx,
+            seg: i16::from_le_bytes([rec[40], rec[41]]) as i32,
+            s,
+            branch: rec[42] != 0,
+            dist,
+            uv,
+            pos_fix: [q(pos[0]), q(pos[1]), q(pos[2])],
+            uv_fix: [q(uv[0]), q(uv[1])],
+            s_fix: q(s),
+            dist_fix: q(dist),
+            room,
+            room_fix: [q(room[0]), q(room[1]), q(room[2])],
+        })
     }
 }

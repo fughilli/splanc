@@ -20,6 +20,7 @@ import {
   MappingBundleSchema,
   ServerMessageSchema,
 } from "../gen/ledmapper_pb";
+import { chunkUniformValues } from "./uniformWire";
 
 // Envelope arm names: snake ("type" values, proto field names) <-> camel
 // (proto3 JSON names). Explicit tables — no string munging surprises.
@@ -84,6 +85,11 @@ const CLIENT_ARMS: Record<string, string> = {
   ota_abort: "otaAbort",
   get_ota_status: "getOtaStatus",
   ota_reboot: "otaReboot",
+  fx_debug_control: "fxDebugControl",
+  get_fx_snapshot: "getFxSnapshot",
+  debug_fx_led: "debugFxLed",
+  set_wifi_policy: "setWifiPolicy",
+  get_wifi_policy: "getWifiPolicy",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -116,6 +122,10 @@ const SERVER_ARMS: Record<string, string> = {
   driver_state: "driverState",
   capture_profile: "captureProfile",
   ota_status: "otaStatus",
+  texture_ack: "textureAck",
+  fx_debug: "fxDebug",
+  wifi_policy_state: "wifiPolicyState",
+  control_ack: "controlAck",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -159,7 +169,7 @@ function bytesToB64(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
-function b64ToBytes(b64: string): Uint8Array {
+export function b64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
@@ -251,6 +261,11 @@ export function encodeClient(msg: ClientMessage): Uint8Array {
   const { type, ...rest } = msg as unknown as Json & { type: string };
   const arm = CLIENT_ARMS[type];
   if (arm === undefined) throw new Error(`unknown client message type ${type}`);
+  // A UniformValue carries at most 4 floats on the wire: wider uniforms (mat3 /
+  // mat4) go as consecutive slot chunks, the same write on old and new firmware.
+  if ((type === "set_uniforms" || type === "save_keypoint") && Array.isArray(rest["values"])) {
+    rest["values"] = chunkUniformValues(rest["values"] as UniformValueFlat[]);
+  }
   // bytes -> base64 first: stripNulls would otherwise walk a Uint8Array's
   // numeric indices and destroy the field.
   const inner = trajectoryToProto(stripNulls(bytesToProto(rest)));
@@ -336,6 +351,23 @@ export interface SetTextureMessage {
   flags: number;
   data: Uint8Array;
   palette?: number[];
+  /** Firmware feature "texture_ack": non-zero asks for a TextureAck{seq} reply. */
+  seq?: number;
+  /** When to show the frame, ms on the shared effect time base (set_time_base). */
+  presentAtMs?: number;
+}
+
+/** Reply to a set_texture carrying a seq (proto TextureAck): decode confirmed,
+ * plus presentation telemetry. proto3 drops zero fields, hence the optionals. */
+export interface TextureAckMessage {
+  type: "texture_ack";
+  seq?: number;
+  shownSeq?: number;
+  shownLateMs?: number;
+  dropped?: number;
+  queued?: number;
+  shownAtMs?: number;
+  clockJumps?: number;
 }
 
 /** Select the active effect by id (proto SetEffect). `deck` (FUG-110): 0 = A
@@ -601,21 +633,24 @@ export interface TlsInfoMessage {
 
 // -- framerate autoscaler (FUG-82; the "fps" feature) ------------------------
 // The player runs effects at a consistent rate on a 5-fps ladder (25..80),
-// adapted to each frame's cost with 5% headroom, and parks an effect it can't
-// run within budget (pushing fps_state{aborted}).
+// adapted to each frame's cost with 5% headroom. An effect too heavy for the
+// floor (or a pinned rate) is never parked: it keeps rendering as fast as it can
+// ("lagging"), and the player pushes fps_state when that starts or stops.
 
 /** Override the effect framerate (proto SetFps). `targetFps` 0 = autoscale,
- * otherwise pin that rate (snapped to the ladder). `noAbort` holds the rung
- * instead of parking an effect that can't keep it (benchmarks). Reply: fps_state. */
+ * otherwise pin that rate (snapped to the ladder). Reply: fps_state. */
 export interface SetFpsMessage {
   type: "set_fps";
   targetFps: number;
+  /** @deprecated Ignored by current firmware (nothing is parked any more); old
+   * firmware read it as "hold the rung instead of parking the effect". */
   noAbort?: boolean;
 }
 
 /** Framerate autoscaler state (proto FpsState): the set_fps reply, and pushed
- * unsolicited with `aborted` when the player parked the effect because even the
- * floor / pinned rate couldn't hold. `targetFps` = the pin (0 = auto). */
+ * unsolicited when the effect starts or stops `lagging` (advisory: nothing
+ * stops). `targetFps` = the pin (0 = auto); `currentFps` the rate the effect
+ * really runs at (the rung, or the achieved rate while lagging). */
 export interface FpsStateMessage {
   type: "fps_state";
   targetFps: number;
@@ -623,7 +658,14 @@ export interface FpsStateMessage {
   minFps: number;
   maxFps: number;
   auto: boolean;
+  /** The effect can't hold `minFps` / the pinned rate and runs below it. */
+  lagging: boolean;
+  /** Measured rate of the last ~30-frame window (0 = not measured yet). */
+  achievedFps: number;
+  /** @deprecated Always false on current firmware; firmware before the lag
+   * change set it when it parked (stopped) a slow effect. */
   aborted: boolean;
+  /** @deprecated Always false (echo of the ignored SetFps.noAbort). */
   noAbort: boolean;
 }
 
@@ -636,6 +678,8 @@ export function flatFpsState(m: Partial<FpsStateMessage>): FpsStateMessage {
     minFps: m.minFps ?? 0,
     maxFps: m.maxFps ?? 0,
     auto: m.auto ?? false,
+    lagging: m.lagging ?? false,
+    achievedFps: m.achievedFps ?? 0,
     aborted: m.aborted ?? false,
     noAbort: m.noAbort ?? false,
   };
@@ -667,6 +711,65 @@ export interface OtaStatusFlat {
 
 export interface OtaStatusMessage extends OtaStatusFlat {
   type: "ota_status";
+}
+
+// -- Wi-Fi rejoin policy (the "wifi_policy" feature) --------------------------
+// docs/design/wifi-rejoin-policy.md; the app-side shape + wording live in
+// net/wifiPolicy.ts. Enums ride the JSON boundary as their proto NAMES.
+
+/** proto WifiMode, as its enum name. */
+export type WifiModeName = "WIFI_MODE_AUTO" | "WIFI_MODE_FIXED" | "WIFI_MODE_MANUAL" | "WIFI_MODE_OFFLINE";
+
+/** proto WifiLinkState, as its enum name. */
+export type WifiLinkStateName =
+  | "WIFI_LINK_UNKNOWN"
+  | "WIFI_LINK_OFFLINE"
+  | "WIFI_LINK_UNPROVISIONED"
+  | "WIFI_LINK_IDLE"
+  | "WIFI_LINK_SEARCHING"
+  | "WIFI_LINK_JOINING"
+  | "WIFI_LINK_JOINED";
+
+/** Change the Wi-Fi rejoin policy (proto SetWifiPolicy). Unset fields keep the
+ * device's value. manual / offline are refused while a fresh firmware update is
+ * unconfirmed unless `force`. Reply: wifi_policy_state. */
+export interface SetWifiPolicyMessage {
+  type: "set_wifi_policy";
+  mode?: WifiModeName;
+  scanCapS?: number;
+  intervalS?: number;
+  decayAfterH?: number;
+  sparseIntervalS?: number;
+  force?: boolean;
+  rejoinNow?: boolean;
+}
+
+/** Read the Wi-Fi rejoin policy (proto GetWifiPolicy). Reply: wifi_policy_state. */
+export interface GetWifiPolicyMessage {
+  type: "get_wifi_policy";
+}
+
+/** Reply to set/get_wifi_policy (proto WifiPolicyState). */
+export interface WifiPolicyStateMessage {
+  type: "wifi_policy_state";
+  mode: WifiModeName;
+  scanCapS: number;
+  intervalS: number;
+  decayAfterH: number;
+  sparseIntervalS: number;
+  state: WifiLinkStateName;
+  /** Seconds until the next background scan (0 = none scheduled / scanning). */
+  nextScanS: number;
+  scans: number;
+  ssid: string;
+  /** Seconds since the network was last seen (0 = on it / unknown). */
+  unseenS: number;
+  decayed: boolean;
+  /** A firmware update is installed but not yet confirmed. */
+  otaPending: boolean;
+  /** Why the last set_wifi_policy was not applied ("" = it was): "ota_pending". */
+  refused: string;
+  radioOn: boolean;
 }
 
 /** Motion-sensor status (proto SensorStatus), as its enum NAME (proto3 JSON). */
@@ -823,6 +926,13 @@ export interface ChunkAckMessage {
   seq: number;
 }
 
+/** Reply to a live-control update that carried a `seq` (proto ControlAck,
+ * firmware feature "control_ack"): that update — and all before it — is applied. */
+export interface ControlAckMessage {
+  type: "control_ack";
+  seq: number;
+}
+
 // -- Perf arms (flat shapes) ------------------------------------------------
 // Perf-monitoring instrumentation (docs/design/perf-monitoring.md). Same
 // firmware↔phone drain-on-poll shape as FrameTiming; native integer units
@@ -883,6 +993,132 @@ export interface PerfReportMessage {
   heapMinFree: number;
   heapLargestFree: number;
   ticks: PerfFrameFlat[];
+}
+
+// -- FX debugger (docs/design/fx-debugger.md) --------------------------------
+// Pause / step the device's FX engine and read it back. `bytes` fields arrive as
+// base64 strings (like stored_map_chunk.data); web/src/fx/fxDebug.ts decodes them.
+
+/** FxDebugControl.Action. */
+export const FX_DEBUG_ACTION = { status: 0, pause: 1, resume: 2, step: 3 } as const;
+
+/** Pause / resume / step the FX engine, or read its debugger state. */
+export interface FxDebugControlMessage {
+  type: "fx_debug_control";
+  action: number;
+  frames?: number;
+  dt?: number;
+  toTime?: number;
+  holdMs?: number;
+}
+
+/** GetFxSnapshot.Section. */
+export const FX_SECTION = {
+  output: 0,
+  wire: 1,
+  uniforms: 2,
+  state: 3,
+  arena: 4,
+  program: 5,
+  ledContext: 6,
+  lut: 7,
+  raw: 8,
+  graph: 9,
+} as const;
+export type FxSectionName = keyof typeof FX_SECTION;
+
+/** Read bytes [offset, offset + maxLen) of one snapshot section. */
+export interface GetFxSnapshotMessage {
+  type: "get_fx_snapshot";
+  section: number;
+  deck?: number;
+  offset: number;
+  maxLen?: number;
+}
+
+/** Re-run one LED's shade() on the interpreter and return its VM locals. */
+export interface DebugFxLedMessage {
+  type: "debug_fx_led";
+  led: number;
+  deck?: number;
+  maxLocals?: number;
+}
+
+export interface FxDeckDebugFlat {
+  deck: number;
+  effectId: string;
+  fxbHash: number;
+  fxbBytes: number;
+  renders: boolean;
+  flags: number;
+  jitBlocks: number;
+  arenaBytes: number;
+  stateSlots: number;
+  uniformSlots: number;
+  morphRunning: boolean;
+}
+
+export interface FxDebugStateFlat {
+  paused: boolean;
+  stepsPending: number;
+  holdRemainingMs: number;
+  time: number;
+  dt: number;
+  frame: number;
+  ledCount: number;
+  decks: FxDeckDebugFlat[];
+  crossfade: number;
+  crossfadeMode: number;
+  currentFps: number;
+  targetFps: number;
+  brightness: number;
+  lut: boolean;
+  /** base64: 6 bytes, ch0 then ch1 source permutation. */
+  colorOrder: string;
+  channel0Leds: number;
+  channel1Leds: number;
+  /** base64: FX_FRAME_V1. */
+  frameCtx: string;
+  lastUpdateOutcome: number;
+  budget: number;
+  timeBase: boolean;
+  resumeReason: string;
+  layoutVersion: number;
+}
+
+export interface FxSnapshotChunkFlat {
+  section: string | number;
+  deck: number;
+  totalLen: number;
+  offset: number;
+  /** base64 */
+  data: string;
+  frame: number;
+  paused: boolean;
+}
+
+export interface FxLedDebugFlat {
+  led: number;
+  deck: number;
+  /** base64, 3 bytes each. */
+  rgb: string;
+  rgbJit: string;
+  output: string;
+  outcome: number;
+  /** f32 values (proto3 JSON: NaN / Infinity arrive as strings). */
+  locals: (number | string)[];
+  /** base64: one FX_LED_V1 record. */
+  ledContext: string;
+  instructions: number;
+  stackMax: number;
+}
+
+/** The single reply arm of all three debugger requests. */
+export interface FxDebugMessage {
+  type: "fx_debug";
+  state?: FxDebugStateFlat;
+  chunk?: FxSnapshotChunkFlat;
+  led?: FxLedDebugFlat;
 }
 
 // -- MappingBundle (.binpb file format) -------------------------------------

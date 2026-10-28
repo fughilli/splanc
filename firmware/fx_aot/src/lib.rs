@@ -254,7 +254,16 @@ fn effect(code: &[u8], pc: usize) -> Option<(usize, usize, Kind)> {
         | Op::RetFn
         | Op::JitCall
         | Op::I2cWrite
-        | Op::I2cRead => (0, 0, No),
+        | Op::I2cRead
+        // Fused superinstructions / memo brackets: `lower` expands them to
+        // base ops first (defuse), so they never reach the lowering itself.
+        | Op::LoadLedCache
+        | Op::StoreLedCache
+        | Op::BinTop
+        | Op::BinPair
+        | Op::PushConsts
+        | Op::LoadCtxLanes
+        | Op::MulAdd => (0, 0, No),
     })
 }
 
@@ -277,6 +286,15 @@ pub struct Image {
     pub update_off: Option<usize>,
     /// Word offset of the `shade()` entry.
     pub shade_off: usize,
+    /// Word offset of the per-frame prepare entry (`Program::prep_entry`, the
+    /// compiler's hoisted shade() work; FLAG_MEMO), if any. The host runs it
+    /// once per frame right after `update()` (the VM runs it lazily before the
+    /// first LED of a frame; same values, `update()`-like context).
+    pub prep_off: Option<usize>,
+    /// The opcode bytes the generic helper reads operands from at run time
+    /// (`NativeCtx::code`): the program's code with the fused superinstructions
+    /// expanded ([`defuse`]); identical to `prog.code()` when it has none.
+    pub op_code: Vec<u8>,
 }
 
 #[cfg(feature = "alloc")]
@@ -287,6 +305,7 @@ impl Image {
         self.update_off
             .into_iter()
             .chain([self.shade_off])
+            .chain(self.prep_off)
             .collect()
     }
 
@@ -310,10 +329,12 @@ pub fn lower(prog: &fxv::Program) -> Option<Image> {
     if prog.flags & fxv::FLAG_DRIVER != 0 {
         return None;
     }
+    let d = defuse::defuse(prog.code())?;
     let mut code: Vec<u32> = Vec::new();
     let update_off = if prog.update_entry != fxv::NO_ENTRY {
         let off = code.len();
-        lower_body(prog, prog.update_entry as usize, &mut code)?;
+        let entry = *d.map.get(&(prog.update_entry as usize))?;
+        lower_body(prog, &d.code, &d.weight, entry, &mut code)?;
         Some(off)
     } else {
         None
@@ -322,17 +343,41 @@ pub fn lower(prog: &fxv::Program) -> Option<Image> {
         return None;
     }
     let shade_off = code.len();
-    lower_body(prog, prog.shade_entry as usize, &mut code)?;
+    let entry = *d.map.get(&(prog.shade_entry as usize))?;
+    lower_body(prog, &d.code, &d.weight, entry, &mut code)?;
+    let prep_off = if prog.prep_entry() != fxv::NO_ENTRY {
+        let off = code.len();
+        let entry = *d.map.get(&(prog.prep_entry() as usize))?;
+        lower_body(prog, &d.code, &d.weight, entry, &mut code)?;
+        Some(off)
+    } else {
+        None
+    };
     Some(Image {
         code,
         update_off,
         shade_off,
+        prep_off,
+        op_code: d.code,
     })
 }
+
+/// Native ABI version of the images this crate emits — everything a prebuilt
+/// image hard-codes about the firmware that runs it: the [`NativeCtx`] layout
+/// and baked offsets, the direct-helper table order and the generic helper's
+/// `(ctx, win, op, code_off)` convention, the register/frame layout
+/// ([`FRAME_WORDS`]), the entry calling convention, the budget mirror and the
+/// `op_code` (defused bytes) contract. Bump it whenever any of those change;
+/// a signed `.fxn` carries it (firmware/fx_sig) and a firmware runs only the
+/// ABIs it lists, else the effect stays on the VM. It is deliberately NOT the
+/// firmware version: signatures survive firmware releases that keep the ABI.
+pub const NATIVE_ABI: u16 = 1;
 
 /// Default per-invocation instruction budget mirrored into native code.
 pub const DEFAULT_BUDGET: i32 = fxv::DEFAULT_BUDGET as i32;
 
+#[cfg(feature = "alloc")]
+mod defuse;
 #[cfg(feature = "alloc")]
 mod lowerer;
 #[cfg(feature = "alloc")]

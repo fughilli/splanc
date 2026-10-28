@@ -60,6 +60,16 @@ pub enum Ir {
     MulFix(u8),
     /// Drop the top `n` slots.
     Pop(u8),
+    /// Push `state[slot]` (scalar; `a3` = the state base).
+    LoadState(u8),
+    /// Pop into `state[slot]` (scalar).
+    StoreState(u8),
+    /// The VM's integer `AbsI` (wrapping), `MinI`, `MaxI` and `ClampI`
+    /// (`x < lo ? lo : x > hi ? hi : x`), branch-free.
+    AbsI,
+    MinI,
+    MaxI,
+    ClampI,
 }
 
 // -- RV32IM instruction encoder ----------------------------------------------
@@ -76,6 +86,7 @@ pub mod rv32 {
     pub const A0: u32 = 10; // operand-stack base
     pub const A1: u32 = 11; // locals base
     pub const A2: u32 = 12; // const-pool base
+    pub const A3: u32 = 13; // state base
 
     fn r(funct7: u32, rs2: u32, rs1: u32, funct3: u32, rd: u32, opcode: u32) -> u32 {
         (funct7 << 25) | (rs2 << 20) | (rs1 << 15) | (funct3 << 12) | (rd << 7) | opcode
@@ -105,6 +116,15 @@ pub mod rv32 {
     }
     pub fn or(rd: u32, rs1: u32, rs2: u32) -> u32 {
         r(0x00, rs2, rs1, 0x6, rd, 0x33)
+    }
+    pub fn slt(rd: u32, rs1: u32, rs2: u32) -> u32 {
+        r(0x00, rs2, rs1, 0x2, rd, 0x33)
+    }
+    pub fn xor(rd: u32, rs1: u32, rs2: u32) -> u32 {
+        r(0x00, rs2, rs1, 0x4, rd, 0x33)
+    }
+    pub fn and(rd: u32, rs1: u32, rs2: u32) -> u32 {
+        r(0x00, rs2, rs1, 0x7, rd, 0x33)
     }
     pub fn addi(rd: u32, rs1: u32, imm: i32) -> u32 {
         i(imm, rs1, 0x0, rd, 0x13)
@@ -219,8 +239,23 @@ struct BlockMeta {
     min_depth: i32,
 }
 
+/// Scratch registers the register-cached codegen may hold stack values in: the
+/// caller-saved temporaries plus a4-a7 (a0-a3 are the ABI bases).
+const POOL: [u32; 11] = [5, 6, 7, 28, 29, 30, 31, 14, 15, 16, 17];
+/// Model depths a block can reach: [`MAX_BLOCK_IR`] ops each move it by at most
+/// one slot, except `Pop(n)`, which only lowers it (bounded by the access check).
+const DEPTH_SPAN: i32 = 4 * MAX_BLOCK_IR as i32;
+
 /// The shared codegen: lower `block` into `sink`. Semantics are identical to the
 /// documented `compile`; only the output destination differs.
+///
+/// Stack slots are cached in registers: a value pushed in the block lives in a
+/// scratch register until it is consumed (or spilled when the 12-register pool
+/// runs out, deepest first), and the values still live at the end are written
+/// back to their stack slots before `ret`. Entry operands (below the entry top
+/// of stack) are read from memory when first consumed. The interpreter sees the
+/// same stack and locals as with the old one-load-one-store-per-op code; slots
+/// above the final depth are dead to it either way.
 fn emit_block(block: &[Ir], sink: &mut impl Sink) -> Option<BlockMeta> {
     use rv32::*;
     let mut depth: i32 = 0; // slots relative to the entry top-of-stack
@@ -230,6 +265,15 @@ fn emit_block(block: &[Ir], sink: &mut impl Sink) -> Option<BlockMeta> {
     let stack_off = |k: i32| k * 4;
     let fits = |off: i32| (IMM12_MIN..=IMM12_MAX).contains(&off);
 
+    // `slot[k + DEPTH_SPAN]`: the register caching model-depth k, or 0 (= in
+    // memory). `busy[i]` marks POOL[i] in use.
+    let mut slot = [0u32; (2 * DEPTH_SPAN + 1) as usize];
+    let mut busy = [false; POOL.len()];
+    let idx = |k: i32| -> Option<usize> {
+        let i = k + DEPTH_SPAN;
+        (0..=2 * DEPTH_SPAN).contains(&i).then_some(i as usize)
+    };
+
     macro_rules! emit {
         ($w:expr) => {
             if !sink.emit($w) {
@@ -237,108 +281,253 @@ fn emit_block(block: &[Ir], sink: &mut impl Sink) -> Option<BlockMeta> {
             }
         };
     }
+    macro_rules! free {
+        ($r:expr) => {{
+            let r: u32 = $r;
+            if let Some(i) = POOL.iter().position(|&p| p == r) {
+                busy[i] = false;
+            }
+        }};
+    }
+    // A free scratch register; spills the deepest cached slot when none is.
+    macro_rules! alloc {
+        () => {{
+            let r = match busy.iter().position(|b| !b) {
+                Some(i) => {
+                    busy[i] = true;
+                    POOL[i]
+                }
+                None => {
+                    let mut k = min_depth.min(0) - 1;
+                    let mut found = None;
+                    while k < depth {
+                        k += 1;
+                        if let Some(i) = idx(k) {
+                            if slot[i] != 0 {
+                                found = Some((k, i));
+                                break;
+                            }
+                        }
+                    }
+                    let (k, i) = found?;
+                    let r = slot[i];
+                    let off = stack_off(k);
+                    if !fits(off) {
+                        return None;
+                    }
+                    emit!(sw(r, A0, off));
+                    slot[i] = 0;
+                    r // stays busy: handed to the caller
+                }
+            };
+            r
+        }};
+    }
+    // Pop the top slot into a register the caller owns (load it if in memory).
+    macro_rules! pop_reg {
+        () => {{
+            depth -= 1;
+            let i = idx(depth)?;
+            if slot[i] != 0 {
+                let r = slot[i];
+                slot[i] = 0;
+                r
+            } else {
+                let off = stack_off(depth);
+                if !fits(off) {
+                    return None;
+                }
+                let r = alloc!();
+                emit!(lw(r, A0, off));
+                r
+            }
+        }};
+    }
+    macro_rules! push_reg {
+        ($r:expr) => {{
+            let i = idx(depth)?;
+            slot[i] = $r;
+            depth += 1;
+        }};
+    }
 
     for op in block {
         // Deepest stack slot this op reads/writes (relative to the entry TOS):
         // pushes touch `depth`; a scalar consumer touches `depth-1`; a binary op
         // reaches `depth-2`. Recorded so the VM can gate on the live `sp`.
         let access = match *op {
-            Ir::PushConst(_) | Ir::LoadLocal(_) => depth,
-            Ir::StoreLocal(_) | Ir::NegI | Ir::TeeLocal(_) => depth - 1,
-            Ir::AddI | Ir::SubI | Ir::MulI | Ir::MulFix(_) => depth - 2,
+            Ir::PushConst(_) | Ir::LoadLocal(_) | Ir::LoadState(_) => depth,
+            Ir::StoreLocal(_) | Ir::NegI | Ir::TeeLocal(_) | Ir::StoreState(_) | Ir::AbsI => depth - 1,
+            Ir::AddI | Ir::SubI | Ir::MulI | Ir::MulFix(_) | Ir::MinI | Ir::MaxI => depth - 2,
+            Ir::ClampI => depth - 3,
             Ir::Pop(_) => depth, // touches nothing
         };
         min_depth = min_depth.min(access);
+        if !fits(stack_off(access)) || idx(access).is_none() {
+            return None;
+        }
 
         match *op {
-            Ir::PushConst(idx) => {
-                let coff = idx as i32 * 4;
-                let soff = stack_off(depth);
-                if !fits(coff) || !fits(soff) {
+            Ir::PushConst(cidx) => {
+                let coff = cidx as i32 * 4;
+                if !fits(coff) || !fits(stack_off(depth)) {
                     return None;
                 }
-                emit!(lw(T0, A2, coff));
-                emit!(sw(T0, A0, soff));
-                depth += 1;
+                let r = alloc!();
+                emit!(lw(r, A2, coff));
+                push_reg!(r);
             }
-            Ir::LoadLocal(slot) => {
-                let loff = slot as i32 * 4;
-                let soff = stack_off(depth);
-                if !fits(loff) || !fits(soff) {
+            Ir::LoadLocal(lslot) => {
+                let loff = lslot as i32 * 4;
+                if !fits(loff) || !fits(stack_off(depth)) {
                     return None;
                 }
-                emit!(lw(T0, A1, loff));
-                emit!(sw(T0, A0, soff));
-                depth += 1;
+                let r = alloc!();
+                emit!(lw(r, A1, loff));
+                push_reg!(r);
             }
-            Ir::StoreLocal(slot) => {
-                depth -= 1;
-                let loff = slot as i32 * 4;
-                let soff = stack_off(depth);
-                if !fits(loff) || !fits(soff) {
+            Ir::StoreLocal(lslot) => {
+                let loff = lslot as i32 * 4;
+                if !fits(loff) {
                     return None;
                 }
-                emit!(lw(T0, A0, soff));
-                emit!(sw(T0, A1, loff));
+                let r = pop_reg!();
+                emit!(sw(r, A1, loff));
+                free!(r);
             }
-            Ir::TeeLocal(slot) => {
+            Ir::TeeLocal(lslot) => {
                 // Copy the top of stack to local[slot], leaving it on the stack.
-                let loff = slot as i32 * 4;
-                let soff = stack_off(depth - 1);
-                if !fits(loff) || !fits(soff) {
+                let loff = lslot as i32 * 4;
+                if !fits(loff) {
                     return None;
                 }
-                emit!(lw(T0, A0, soff));
-                emit!(sw(T0, A1, loff));
+                let r = pop_reg!();
+                emit!(sw(r, A1, loff));
+                push_reg!(r);
             }
             Ir::AddI | Ir::SubI | Ir::MulI => {
-                let a = stack_off(depth - 2);
-                let b = stack_off(depth - 1);
-                if !fits(a) || !fits(b) {
-                    return None;
-                }
-                emit!(lw(T0, A0, a));
-                emit!(lw(T1, A0, b));
+                let b = pop_reg!();
+                let a = pop_reg!();
                 emit!(match *op {
-                    Ir::AddI => add(T0, T0, T1),
-                    Ir::SubI => sub(T0, T0, T1),
-                    _ => mul(T0, T0, T1),
+                    Ir::AddI => add(a, a, b),
+                    Ir::SubI => sub(a, a, b),
+                    _ => mul(a, a, b),
                 });
-                emit!(sw(T0, A0, a));
-                depth -= 1;
+                free!(b);
+                push_reg!(a);
             }
             Ir::NegI => {
-                let a = stack_off(depth - 1);
-                if !fits(a) {
-                    return None;
-                }
-                emit!(lw(T0, A0, a));
-                emit!(sub(T0, ZERO, T0));
-                emit!(sw(T0, A0, a));
+                let a = pop_reg!();
+                emit!(sub(a, ZERO, a));
+                push_reg!(a);
             }
             Ir::MulFix(frac) => {
                 if !(1..=31).contains(&frac) {
                     return None;
                 }
-                let a = stack_off(depth - 2);
-                let b = stack_off(depth - 1);
-                if !fits(a) || !fits(b) {
-                    return None;
-                }
                 // (a*b) >> frac, low 32 bits of the 64-bit signed product:
                 //   (low >>u frac) | (high <<u (32-frac)).
-                emit!(lw(T0, A0, a));
-                emit!(lw(T1, A0, b));
-                emit!(mul(T2, T0, T1)); // low 32
-                emit!(mulh(T0, T0, T1)); // high 32 (signed)
-                emit!(srli(T2, T2, frac as u32));
-                emit!(slli(T0, T0, 32 - frac as u32));
-                emit!(or(T0, T2, T0));
-                emit!(sw(T0, A0, a));
-                depth -= 1;
+                let b = pop_reg!();
+                let a = pop_reg!();
+                let lo = alloc!();
+                emit!(mul(lo, a, b)); // low 32
+                emit!(mulh(a, a, b)); // high 32 (signed)
+                emit!(srli(lo, lo, frac as u32));
+                emit!(slli(a, a, 32 - frac as u32));
+                emit!(or(a, lo, a));
+                free!(lo);
+                free!(b);
+                push_reg!(a);
             }
-            Ir::Pop(n) => depth -= n as i32,
+            Ir::LoadState(sslot) => {
+                let off = sslot as i32 * 4;
+                if !fits(off) || !fits(stack_off(depth)) {
+                    return None;
+                }
+                let r = alloc!();
+                emit!(lw(r, A3, off));
+                push_reg!(r);
+            }
+            Ir::StoreState(sslot) => {
+                let off = sslot as i32 * 4;
+                if !fits(off) {
+                    return None;
+                }
+                let r = pop_reg!();
+                emit!(sw(r, A3, off));
+                free!(r);
+            }
+            Ir::AbsI => {
+                // m = a >> 31; (a ^ m) - m  (wrapping: i32::MIN stays MIN)
+                let a = pop_reg!();
+                let m = alloc!();
+                emit!(srai(m, a, 31));
+                emit!(xor(a, a, m));
+                emit!(sub(a, a, m));
+                free!(m);
+                push_reg!(a);
+            }
+            Ir::MinI | Ir::MaxI => {
+                // pick = MinI: a < b, MaxI: b < a; r = b ^ ((a ^ b) & -pick)
+                let b = pop_reg!();
+                let a = pop_reg!();
+                let t = alloc!();
+                emit!(if *op == Ir::MinI { slt(t, a, b) } else { slt(t, b, a) });
+                emit!(sub(t, ZERO, t));
+                emit!(xor(a, a, b));
+                emit!(and(a, a, t));
+                emit!(xor(a, a, b));
+                free!(t);
+                free!(b);
+                push_reg!(a);
+            }
+            Ir::ClampI => {
+                // r1 = x > hi ? hi : x ; x = x < lo ? lo : r1
+                let hi = pop_reg!();
+                let lo = pop_reg!();
+                let x = pop_reg!();
+                let t = alloc!();
+                let r1 = alloc!();
+                emit!(slt(t, hi, x));
+                emit!(sub(t, ZERO, t));
+                emit!(xor(r1, hi, x));
+                emit!(and(r1, r1, t));
+                emit!(xor(r1, r1, x));
+                emit!(slt(t, x, lo));
+                emit!(sub(t, ZERO, t));
+                emit!(xor(x, lo, r1));
+                emit!(and(x, x, t));
+                emit!(xor(x, x, r1));
+                free!(t);
+                free!(r1);
+                free!(lo);
+                free!(hi);
+                push_reg!(x);
+            }
+            Ir::Pop(n) => {
+                for _ in 0..n {
+                    depth -= 1;
+                    let i = idx(depth)?;
+                    if slot[i] != 0 {
+                        free!(slot[i]);
+                        slot[i] = 0;
+                    }
+                }
+            }
         }
+    }
+    // Write back every value still cached in a register below the final depth.
+    let mut k = min_depth.min(0);
+    while k < depth {
+        let i = idx(k)?;
+        if slot[i] != 0 {
+            let off = stack_off(k);
+            if !fits(off) {
+                return None;
+            }
+            emit!(sw(slot[i], A0, off));
+        }
+        k += 1;
     }
     emit!(ret());
     Some(BlockMeta { net_delta: depth, min_depth })
@@ -381,8 +570,13 @@ pub fn op_len(code: &[u8], pc: usize) -> Option<usize> {
         | PowFix | HashFix | Hash3Fix | RetRgbFix | I2cRead => 2,
         PushConst | LoadUniform | LoadState | StoreState | LoadLocal | StoreLocal | UnMath
         | BinMath | BrFalse | Jmp | Swap | Call | ScaleFix | DotFix | LengthFix | DistanceFix
-        | NormalizeFix | SmoothstepFix | MixVFix | PaletteFix | FillLocal | TeeLocal | JitCall => 3,
-        LoadCtxFix | IncLocalI | BrCmpI => 4,
+        | NormalizeFix | SmoothstepFix | MixVFix | PaletteFix | FillLocal | TeeLocal | JitCall
+        | StoreLedCache => 3,
+        LoadCtxFix | IncLocalI | BrCmpI | BinTop => 4,
+        LoadLedCache | LoadCtxLanes => 5,
+        BinPair => 6,
+        MulAdd => 2,
+        PushConsts => 2 + 2 * *code.get(pc + 1).unwrap_or(&0) as usize,
         LoadStateIdx | StoreStateIdx | LoadLocalIdx | StoreLocalIdx => 6,
     })
 }
@@ -404,8 +598,65 @@ fn op_to_ir(code: &[u8], pc: usize) -> Option<(Ir, usize)> {
         Op::MulFix => (Ir::MulFix(16), 1),
         Op::MulFixN => (Ir::MulFix(b(0)), 2),
         Op::Pop => (Ir::Pop(b(0)), 2),
+        Op::LoadState if b(1) == 1 => (Ir::LoadState(b(0)), 3),
+        Op::StoreState if b(1) == 1 => (Ir::StoreState(b(0)), 3),
+        Op::AbsI => (Ir::AbsI, 1),
+        Op::MinI => (Ir::MinI, 1),
+        Op::MaxI => (Ir::MaxI, 1),
+        Op::ClampI => (Ir::ClampI, 1),
         _ => return None,
     })
+}
+
+/// Like [`op_to_ir`], but an opcode may lower to several IR ops: the optimizer's
+/// `PushConsts` run is its `PushConst`s. Writes into `out` (room for 4) and
+/// returns `(ir_count, byte_len)`.
+fn op_to_irs(code: &[u8], pc: usize, out: &mut [Ir]) -> Option<(usize, usize)> {
+    if Op::from_u8(code[pc])? == Op::PushConsts {
+        let n = *code.get(pc + 1)? as usize;
+        if n == 0 || n > out.len() || pc + 2 + 2 * n > code.len() {
+            return None;
+        }
+        for (j, o) in out.iter_mut().enumerate().take(n) {
+            *o = Ir::PushConst(u16::from_le_bytes([code[pc + 2 + 2 * j], code[pc + 3 + 2 * j]]));
+        }
+        return Some((n, 2 + 2 * n));
+    }
+    // An integer-family BinTop/BinPair whose operands are consts/locals is
+    // the PushConst/LoadLocal + AddI/SubI/MulI/MulFix it fused.
+    let op = Op::from_u8(code[pc])?;
+    if matches!(op, Op::BinTop | Op::BinPair) {
+        let mode = *code.get(pc + 1)?;
+        if mode & 0x40 == 0 || out.len() < 3 {
+            return None;
+        }
+        let rd = |at: usize| Some(u16::from_le_bytes([*code.get(at)?, *code.get(at + 1)?]));
+        let src = |s: u8, i: u16| match s & 3 {
+            0 => Some(Ir::PushConst(i)),
+            1 if i <= u8::MAX as u16 => Some(Ir::LoadLocal(i as u8)),
+            2 if i <= u8::MAX as u16 => Some(Ir::LoadState(i as u8)),
+            _ => None,
+        };
+        let arith = match mode & 3 {
+            0 => Ir::AddI,
+            1 => Ir::SubI,
+            2 => Ir::MulI,
+            _ => Ir::MulFix(16),
+        };
+        return if op == Op::BinTop {
+            out[0] = src(mode >> 2, rd(pc + 2)?)?;
+            out[1] = arith;
+            Some((2, 4))
+        } else {
+            out[0] = src(mode >> 2, rd(pc + 2)?)?;
+            out[1] = src(mode >> 4, rd(pc + 4)?)?;
+            out[2] = arith;
+            Some((3, 6))
+        };
+    }
+    let (ir, len) = op_to_ir(code, pc)?;
+    *out.first_mut()? = ir;
+    Some((1, len))
 }
 
 /// The absolute byte target of a branch/call at `code[pc]`, if any (so a block is
@@ -416,6 +667,9 @@ fn branch_target(code: &[u8], pc: usize) -> Option<usize> {
     match op {
         Op::BrFalse | Op::Jmp => Some((pc as isize + 3 + rel16(pc + 1) as isize) as usize),
         Op::BrCmpI => Some((pc as isize + 4 + rel16(pc + 2) as isize) as usize),
+        // The per-LED memo's cache-hit skip lands just past its StoreLedCache, so
+        // a JIT block must never swallow that landing point.
+        Op::LoadLedCache => Some((pc as isize + 5 + rel16(pc + 3) as isize) as usize),
         Op::Call => Some(u16::from_le_bytes([code[pc + 1], code[pc + 2]]) as usize),
         _ => None,
     }
@@ -459,14 +713,15 @@ fn scan_blocks(code: &[u8], is_target: &mut [bool], mut on_block: impl FnMut(usi
             if q > start && is_target[q] {
                 break; // a jump lands here — the block must not swallow it
             }
-            match op_to_ir(code, q) {
-                Some((ir, len)) => {
-                    irs[n] = ir;
-                    n += 1;
+            let mut tmp = [Ir::AddI; 4];
+            match op_to_irs(code, q, &mut tmp) {
+                Some((k, len)) if n + k <= MAX_BLOCK_IR => {
+                    irs[n..n + k].copy_from_slice(&tmp[..k]);
+                    n += k;
                     end = q + len;
                     q += len;
                 }
-                None => break,
+                _ => break,
             }
         }
         if n >= MIN_BLOCK_OPS && end - start >= 3 {
@@ -518,10 +773,27 @@ pub fn plan_blocks_into(
     plans: &mut [PlanOut],
     seg_code: &mut [u32],
 ) -> usize {
+    plan_blocks_into_consts(code, is_target, plans, seg_code, usize::MAX)
+}
+
+/// [`plan_blocks_into`], skipping any block that reads a const-pool index at or
+/// above `n_consts` (the firmware mirrors only the first `n_consts` words for
+/// the segments, so a large pool no longer disables the JIT for the whole
+/// program).
+pub fn plan_blocks_into_consts(
+    code: &[u8],
+    is_target: &mut [bool],
+    plans: &mut [PlanOut],
+    seg_code: &mut [u32],
+    n_consts: usize,
+) -> usize {
     let mut count = 0usize;
     let mut cursor = 0usize;
     scan_blocks(code, is_target, |start, end, irs| {
         if count >= plans.len() {
+            return;
+        }
+        if irs.iter().any(|ir| matches!(*ir, Ir::PushConst(i) if i as usize >= n_consts)) {
             return;
         }
         if let Some(meta) = compile_into(irs, &mut seg_code[cursor..]) {
@@ -546,8 +818,45 @@ pub fn plan_blocks_into(
 /// and a cross-check proves this matches the real `fx_vm`.
 #[cfg(feature = "alloc")]
 pub fn reference(block: &[Ir], stack: &mut Vec<i32>, locals: &mut [i32], consts: &[i32]) {
+    reference_state(block, stack, locals, consts, &mut [])
+}
+
+/// [`reference`] with a `state` array for `LoadState`/`StoreState`.
+#[cfg(feature = "alloc")]
+pub fn reference_state(block: &[Ir], stack: &mut Vec<i32>, locals: &mut [i32], consts: &[i32], state: &mut [i32]) {
     for op in block {
         match *op {
+            Ir::LoadState(s) => stack.push(state[s as usize]),
+            Ir::StoreState(s) => {
+                let v = stack.pop().unwrap();
+                state[s as usize] = v;
+            }
+            Ir::AbsI => {
+                let a = stack.pop().unwrap();
+                stack.push(a.wrapping_abs());
+            }
+            Ir::MinI => {
+                let b = stack.pop().unwrap();
+                let a = stack.pop().unwrap();
+                stack.push(if a < b { a } else { b });
+            }
+            Ir::MaxI => {
+                let b = stack.pop().unwrap();
+                let a = stack.pop().unwrap();
+                stack.push(if a > b { a } else { b });
+            }
+            Ir::ClampI => {
+                let hi = stack.pop().unwrap();
+                let lo = stack.pop().unwrap();
+                let x = stack.pop().unwrap();
+                stack.push(if x < lo {
+                    lo
+                } else if x > hi {
+                    hi
+                } else {
+                    x
+                });
+            }
             Ir::PushConst(idx) => stack.push(consts[idx as usize]),
             Ir::LoadLocal(s) => stack.push(locals[s as usize]),
             Ir::StoreLocal(s) => {
@@ -599,10 +908,16 @@ pub fn reference(block: &[Ir], stack: &mut Vec<i32>, locals: &mut [i32], consts:
 pub mod emu {
     /// `mem` is little-endian byte memory; `a0/a1/a2` are byte addresses into it.
     pub fn run(code: &[u32], a0: u32, a1: u32, a2: u32, mem: &mut [u8]) {
+        run_state(code, a0, a1, a2, 0, mem)
+    }
+
+    /// [`run`] with `a3` = the state base.
+    pub fn run_state(code: &[u32], a0: u32, a1: u32, a2: u32, a3: u32, mem: &mut [u8]) {
         let mut x = [0i32; 32];
         x[10] = a0 as i32;
         x[11] = a1 as i32;
         x[12] = a2 as i32;
+        x[13] = a3 as i32;
         let mut pc = 0usize;
         let lw = |mem: &[u8], addr: i32| -> i32 {
             let a = addr as usize;
@@ -632,6 +947,9 @@ pub mod emu {
                         (0x01, 0x0) => a.wrapping_mul(b),
                         (0x01, 0x1) => ((a as i64 * b as i64) >> 32) as i32, // mulh
                         (0x00, 0x6) => a | b,
+                        (0x00, 0x2) => (a < b) as i32, // slt
+                        (0x00, 0x4) => a ^ b,
+                        (0x00, 0x7) => a & b,
                         _ => panic!("emu: unknown R-type f7={f7:#x} f3={f3}"),
                     };
                     if rd != 0 {
@@ -722,18 +1040,38 @@ mod tests {
             let a = consts_base as usize + i * 4;
             mem[a..a + 4].copy_from_slice(&v.to_le_bytes());
         }
-        emu::run(&seg.code, stack_base + (sp0 as u32) * 4, locals_base, consts_base, &mut mem);
+        // The state array sits in the upper half of the locals region.
+        let state_base = locals_base + 128 * 4;
+        for (i, &v) in STATE_IN.iter().enumerate() {
+            let a = state_base as usize + i * 4;
+            mem[a..a + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        emu::run_state(&seg.code, stack_base + (sp0 as u32) * 4, locals_base, consts_base, state_base, &mut mem);
         let final_len = (sp0 as i32 + seg.net_delta) as usize;
         let stack_out: Vec<i32> = (0..final_len)
             .map(|i| i32::from_le_bytes([mem[i * 4], mem[i * 4 + 1], mem[i * 4 + 2], mem[i * 4 + 3]]))
             .collect();
+        // Locals then the state array (so one comparison covers both).
         let locals_out: Vec<i32> = (0..locals_in.len())
-            .map(|i| {
-                let a = locals_base as usize + i * 4;
-                i32::from_le_bytes([mem[a], mem[a + 1], mem[a + 2], mem[a + 3]])
-            })
+            .map(|i| locals_base as usize + i * 4)
+            .chain((0..STATE_IN.len()).map(|i| state_base as usize + i * 4))
+            .map(|a| i32::from_le_bytes([mem[a], mem[a + 1], mem[a + 2], mem[a + 3]]))
             .collect();
         (stack_out, locals_out)
+    }
+
+    /// The state array every emulated block starts from.
+    const STATE_IN: [i32; 4] = [7, -70_000, i32::MIN, 123_456];
+
+    /// The reference run, with its locals and state concatenated like
+    /// [`run_jit`]'s.
+    fn run_ref(block: &[Ir], stack_in: &[i32], locals_in: &[i32], consts: &[i32]) -> (Vec<i32>, Vec<i32>) {
+        let mut st = stack_in.to_vec();
+        let mut lo = locals_in.to_vec();
+        let mut state = STATE_IN.to_vec();
+        reference_state(block, &mut st, &mut lo, consts, &mut state);
+        lo.extend(state);
+        (st, lo)
     }
 
     /// A cheap deterministic PRNG (no external deps; varies by index).
@@ -746,16 +1084,24 @@ mod tests {
     fn jit_matches_reference_over_random_blocks() {
         let mut rng = 0x1234_5678_9abc_def0u64;
         let consts: Vec<i32> = (0..8).map(|i| (i - 3) * 37).collect();
-        for _ in 0..4000 {
+        for _ in 0..20000 {
             // Build a random VALID straight-line block (tracks depth so ops never
             // underflow), starting from a small random stack.
             let start_depth = (lcg(&mut rng) % 3) as i32;
             let mut depth = start_depth;
             let mut block: Vec<Ir> = Vec::new();
-            let steps = 1 + lcg(&mut rng) % 12;
+            // Up to the planner's block cap, so long blocks exercise the 12-
+            // register pool running out (spills) as well as short ones.
+            let steps = 1 + lcg(&mut rng) % if lcg(&mut rng) % 4 == 0 { MAX_BLOCK_IR as u32 } else { 12 };
             for _ in 0..steps {
-                let choice = lcg(&mut rng) % 10;
+                let choice = lcg(&mut rng) % 16;
                 let ir = match choice {
+                    10 => Ir::LoadState((lcg(&mut rng) % 4) as u8),
+                    11 if depth >= 1 => Ir::StoreState((lcg(&mut rng) % 4) as u8),
+                    12 if depth >= 1 => Ir::AbsI,
+                    13 if depth >= 2 => Ir::MinI,
+                    14 if depth >= 2 => Ir::MaxI,
+                    15 if depth >= 3 => Ir::ClampI,
                     0 => Ir::PushConst((lcg(&mut rng) % consts.len() as u32) as u16),
                     1 => Ir::LoadLocal((lcg(&mut rng) % 4) as u8),
                     2 if depth >= 1 => Ir::StoreLocal((lcg(&mut rng) % 4) as u8),
@@ -770,9 +1116,11 @@ mod tests {
                 };
                 // Update the model depth exactly as compile()/reference() will.
                 depth += match ir {
-                    Ir::PushConst(_) | Ir::LoadLocal(_) => 1,
+                    Ir::PushConst(_) | Ir::LoadLocal(_) | Ir::LoadState(_) => 1,
                     Ir::StoreLocal(_) | Ir::AddI | Ir::SubI | Ir::MulI | Ir::MulFix(_) => -1,
-                    Ir::NegI | Ir::TeeLocal(_) => 0,
+                    Ir::StoreState(_) | Ir::MinI | Ir::MaxI => -1,
+                    Ir::ClampI => -2,
+                    Ir::NegI | Ir::TeeLocal(_) | Ir::AbsI => 0,
                     Ir::Pop(n) => -(n as i32),
                 };
                 block.push(ir);
@@ -782,9 +1130,7 @@ mod tests {
             let locals_in: Vec<i32> = (0..4).map(|_| lcg(&mut rng) as i32).collect();
 
             // Reference.
-            let mut rstack = stack_in.clone();
-            let mut rlocals = locals_in.clone();
-            reference(&block, &mut rstack, &mut rlocals, &consts);
+            let (rstack, rlocals) = run_ref(&block, &stack_in, &locals_in, &consts);
 
             // JIT via emulator.
             let (jstack, jlocals) = run_jit(&block, &stack_in, &locals_in, &consts);
@@ -792,6 +1138,53 @@ mod tests {
             assert_eq!(rstack, jstack, "stack mismatch for block {block:?}");
             assert_eq!(rlocals, jlocals, "locals mismatch for block {block:?}");
         }
+    }
+
+    #[test]
+    fn deep_blocks_spill_and_match_the_reference() {
+        // Push past the 12-register pool, then fold it back down: every push
+        // beyond 12 spills the deepest cached slot; the result must still match.
+        let mut rng = 0x0bad_cafe_u64;
+        let consts: Vec<i32> = (0..8).map(|i| 1000 * i - 3500).collect();
+        for _ in 0..2000 {
+            let start_depth = (lcg(&mut rng) % 4) as i32;
+            let pushes = 13 + lcg(&mut rng) % 18;
+            let mut block = Vec::new();
+            for _ in 0..pushes {
+                block.push(if lcg(&mut rng) % 2 == 0 {
+                    Ir::PushConst((lcg(&mut rng) % 8) as u16)
+                } else {
+                    Ir::LoadLocal((lcg(&mut rng) % 4) as u8)
+                });
+            }
+            let mut depth = start_depth + pushes as i32;
+            while block.len() < MAX_BLOCK_IR && depth >= 2 {
+                block.push(match lcg(&mut rng) % 4 {
+                    0 => Ir::AddI,
+                    1 => Ir::SubI,
+                    2 => Ir::MulI,
+                    _ => Ir::MulFix(1 + (lcg(&mut rng) % 31) as u8),
+                });
+                depth -= 1;
+                if lcg(&mut rng) % 5 == 0 {
+                    block.push(Ir::TeeLocal((lcg(&mut rng) % 4) as u8));
+                }
+            }
+            let stack_in: Vec<i32> = (0..start_depth).map(|_| lcg(&mut rng) as i32).collect();
+            let locals_in: Vec<i32> = (0..4).map(|_| lcg(&mut rng) as i32).collect();
+            let (rstack, rlocals) = run_ref(&block, &stack_in, &locals_in, &consts);
+            let (jstack, jlocals) = run_jit(&block, &stack_in, &locals_in, &consts);
+            assert_eq!(rstack, jstack, "stack mismatch for block {block:?}");
+            assert_eq!(rlocals, jlocals, "locals mismatch for block {block:?}");
+        }
+    }
+
+    #[test]
+    fn register_caching_shrinks_the_code() {
+        // a*b + c over locals: the old codegen did a load+store per op (5 ops,
+        // ~14 words); cached, it is 3 loads, 2 ALU ops, 1 write-back and ret.
+        let s = compile(&[Ir::LoadLocal(0), Ir::LoadLocal(1), Ir::MulI, Ir::LoadLocal(2), Ir::AddI]).unwrap();
+        assert_eq!(s.code.len(), 7, "{:08x?}", s.code);
     }
 
     #[test]
@@ -875,6 +1268,46 @@ mod tests {
         assert_eq!((plans[0].start, plans[0].end), (2, 13));
         assert_eq!(plans[0].net_delta, 1, "5 ops net +1 on the stack");
         assert!(!plans[0].code.is_empty());
+    }
+
+    #[test]
+    fn plan_blocks_lowers_a_push_consts_run() {
+        use ledmapper_fx_vm::Op;
+        // The optimizer's PushConsts (2 consts) stays inside a JIT block, as the
+        // two PushConst it replaced did: LoadLocal; PushConsts c0 c1; MulI; AddI.
+        #[rustfmt::skip]
+        let code = [
+            Op::LoadCtx as u8, 0,                  // 0: non-JIT
+            Op::LoadLocal as u8, 0, 1,             // 2: block start
+            Op::PushConsts as u8, 2, 0, 0, 1, 0,   // 5
+            Op::MulI as u8,                        // 11
+            Op::AddI as u8,                        // 12: block end -> 13
+            Op::Ret as u8, 0,                      // 13
+        ];
+        let plans = plan_blocks(&code);
+        assert_eq!(plans.len(), 1);
+        assert_eq!((plans[0].start, plans[0].end), (2, 13));
+        assert_eq!(plans[0].net_delta, 1);
+    }
+
+    #[test]
+    fn plan_blocks_lowers_integer_bin_ops_and_skips_float_ones() {
+        use ledmapper_fx_vm::Op;
+        // BinPair mulfix(local0, c1) ; BinTop addi(c0) ; BinTop subi(local2) is
+        // JIT-able (+1 net); a float BinTop (mode bit 6 clear) ends the block.
+        #[rustfmt::skip]
+        let code = [
+            Op::LoadCtx as u8, 0,                         // 0
+            Op::BinPair as u8, 0x43 | 1 << 2, 0, 0, 1, 0, // 2: local0 *fix c1
+            Op::BinTop as u8, 0x40, 0, 0,                 // 8: + c0
+            Op::BinTop as u8, 0x41 | 1 << 2, 2, 0,        // 12: - local2 -> 16
+            Op::BinTop as u8, 0x02, 0, 0,                 // 16: float mul (not JIT)
+            Op::Ret as u8, 0,
+        ];
+        let plans = plan_blocks(&code);
+        assert_eq!(plans.len(), 1);
+        assert_eq!((plans[0].start, plans[0].end), (2, 16));
+        assert_eq!(plans[0].net_delta, 1);
     }
 
     #[test]

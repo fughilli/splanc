@@ -57,6 +57,14 @@ DEFAULT_PSK = os.environ.get("HITL_WIFI_PASS") or "amd-rig-provision"
 DEFAULT_JOURNEYS = "connect,config,mapping_capture,mapping_solve"
 
 REMOTE_ROOT = "/tmp/hitl-android"  # where the shipped bundle lands in the env
+# The in-env DUT console capture taken while the journeys run (see _run_journeys).
+REMOTE_DUT_LOG = "/tmp/android-dut.log"
+# Inline DUT console excerpt: first/last lines of a passing run; on a failure the
+# last DUT_FAIL_LINES plus the DUT_FAIL_HEAD boot lines. The whole log always lands
+# in $TEST_UNDECLARED_OUTPUTS_DIR/android_dut_serial.log (CI: hitl-test-outputs).
+DUT_PASS_LINES = 100
+DUT_FAIL_HEAD = 200
+DUT_FAIL_LINES = 5000
 # Launch the app EXPLICITLY in Chrome. The bench phone is debloated (Samsung Internet
 # removed), so it has no default browser for an http VIEW intent — a bare `am start -d
 # <url>` returns "unable to resolve Intent" and the app never loads. phone_target's
@@ -205,23 +213,24 @@ def _run_journeys(
     )
     _log(f"[journeys] running in-env: {journeys} (ble={ble_mode}) against {device_ws}")
     # Read the existing USB serial stream without toggling DTR/RTS (pyserial
-    # would reset the DUT). Keep firmware faults alongside the phone failure.
+    # would reset the DUT). Keep firmware faults alongside the phone failure: the
+    # whole log is fetched afterwards (_fetch_dut_log), also when the run times out.
     cmd = f"""
 stty -F /dev/ttyACM0 115200 raw -echo
-(timeout 590 cat /dev/ttyACM0 > /tmp/android-dut.log) &
+(timeout 590 cat /dev/ttyACM0 > {REMOTE_DUT_LOG}) &
 serial_pid=$!
 {cmd}
 journey_status=$?
 kill "$serial_pid" 2>/dev/null || true
-python3 - <<'PY_SERIAL'
-from pathlib import Path
-lines = Path("/tmp/android-dut.log").read_text(errors="replace").splitlines()
-for line in (lines if len(lines) <= 200 else lines[:100] + ["... serial log truncated ..."] + lines[-100:]):
-    print("[dut] " + line)
-PY_SERIAL
 exit "$journey_status"
 """
-    proc = res.ssh(cmd, capture=True, timeout=600)
+    proc: subprocess.CompletedProcess | None = None
+    try:
+        proc = res.ssh(cmd, capture=True, timeout=600)
+    finally:
+        failed = proc is None or proc.returncode != 0
+        _report_dut_log(_fetch_dut_log(res), failed)
+    assert proc is not None
     out = (proc.stdout or "") + (proc.stderr or "")
     passed: list[str] = []
     for line in out.splitlines():
@@ -233,6 +242,45 @@ exit "$journey_status"
             f"phone_e2e exited {proc.returncode}; journeys passed before failure: {passed}"
         )
     return passed
+
+
+def dut_excerpt(lines: list[str], failed: bool) -> list[str]:
+    """The DUT console lines to print inline. A passing run prints the first and last
+    DUT_PASS_LINES; a failing one prints the last DUT_FAIL_LINES (plus the boot head
+    when that is truncated). The whole log is always saved to the test outputs."""
+    head, tail = (DUT_FAIL_HEAD, DUT_FAIL_LINES) if failed else (DUT_PASS_LINES, DUT_PASS_LINES)
+    if len(lines) <= head + tail:
+        return list(lines)
+    cut = len(lines) - head - tail
+    note = f"... {cut} DUT lines omitted here; the full log is in the test outputs ..."
+    return lines[:head] + [note] + lines[-tail:]
+
+
+def _fetch_dut_log(res) -> str:
+    """The in-env DUT console capture, read back over a fresh ssh (so a journey run
+    that timed out or crashed still yields it)."""
+    try:
+        proc = res.ssh(f"cat {REMOTE_DUT_LOG}", capture=True, timeout=120)
+    except Exception as e:  # noqa: BLE001 — the log is diagnostics, never the verdict
+        _log(f"[dut] could not read {REMOTE_DUT_LOG}: {e!r}")
+        return ""
+    if proc.returncode != 0:
+        _log(f"[dut] could not read {REMOTE_DUT_LOG}: {(proc.stderr or '').strip()}")
+    return proc.stdout or ""
+
+
+def _report_dut_log(text: str, failed: bool) -> None:
+    """Save the whole DUT log to $TEST_UNDECLARED_OUTPUTS_DIR and print an excerpt."""
+    out_dir = os.environ.get("TEST_UNDECLARED_OUTPUTS_DIR")
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, "android_dut_serial.log")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        _log(f"[dut] full DUT console ({len(text)} bytes) saved to {path}")
+    lines = text.splitlines()
+    for line in dut_excerpt(lines, failed):
+        _log(f"[dut] {line}")
 
 
 def main() -> int:

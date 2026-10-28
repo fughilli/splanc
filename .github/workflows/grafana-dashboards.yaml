@@ -43,14 +43,29 @@ jobs:
           shopt -s nullglob
           for f in pi/hitl/observability/dashboards/*.json; do
             echo "==> syncing $f"
+            # Keep a dashboard in the folder it already lives in: posting with the
+            # default folder MOVES it, and a dashboard whose own permissions only
+            # grant access through its folder then locks this service account out
+            # (fx_bench dashboards, 2026-10-26). New dashboards go to the fx_bench
+            # folder for fxbench-*, else GRAFANA_FOLDER_UID (empty = General).
+            uid=$(jq -r '.uid // empty' "$f")
+            folder="${GRAFANA_FOLDER_UID:-}"
+            case "$(basename "$f")" in fxbench-*) folder="fxbench" ;; esac
+            if [ -n "$uid" ]; then
+              existing=$(curl -s -H "Authorization: Bearer ${GRAFANA_TOKEN}" \
+                "${GRAFANA_URL%/}/api/dashboards/uid/${uid}" | jq -r '.meta.folderUid // empty' 2>/dev/null || true)
+              if [ -n "$existing" ]; then folder="$existing"; fi
+            fi
+            echo "folder: ${folder:-General}"
             # Wrap the dashboard model into the /api/dashboards/db payload:
             #   - id:null so Grafana keys on the model's uid (create-or-update),
             #   - overwrite:true so a repeat push updates in place,
-            #   - folderUid places it in the configured folder (empty = General).
-            payload=$(jq \
-              --arg folder "${GRAFANA_FOLDER_UID:-}" \
-              '{dashboard: (.id = null), overwrite: true, folderUid: $folder, message: "synced from repo by CI"}' \
-              "$f")
+            #   - folderUid as resolved above.
+            #   - __GITHUB_REPOSITORY__ becomes this repo (owner/name), for dashboards
+            #     that read release assets (hitl-capacity), so no JSON names the owner.
+            payload=$(sed "s#__GITHUB_REPOSITORY__#${GITHUB_REPOSITORY}#g" "$f" | jq \
+              --arg folder "$folder" \
+              '{dashboard: (.id = null), overwrite: true, folderUid: $folder, message: "synced from repo by CI"}')
             code=$(curl -s -o /tmp/resp.json -w '%{http_code}' \
               -H "Authorization: Bearer ${GRAFANA_TOKEN}" \
               -H "Content-Type: application/json" \

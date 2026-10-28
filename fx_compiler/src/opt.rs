@@ -38,11 +38,11 @@ const NO_ENTRY: u16 = 0xFFFF;
 /// `BrFalse`/`Jmp`/`Call` `target` is the id of the destination and `ops` is
 /// empty; for every other opcode `ops` is the verbatim operand bytes.
 #[derive(Clone)]
-struct Ins {
-    id: u32,
-    op: u8,
-    ops: Vec<u8>,
-    target: u32,
+pub(crate) struct Ins {
+    pub(crate) id: u32,
+    pub(crate) op: u8,
+    pub(crate) ops: Vec<u8>,
+    pub(crate) target: u32,
 }
 
 impl Ins {
@@ -67,7 +67,29 @@ fn branch_prefix(o: u8) -> Option<usize> {
     match o {
         op::BR_FALSE | op::JMP => Some(0),
         op::BR_CMP_I => Some(1), // the compare `kind` byte
+        // The per-LED memo's cache-hit skip (slot, n) — see crate::memo.
+        op::LOAD_LED_CACHE => Some(2),
         _ => None,
+    }
+}
+
+/// The local slot range a plain load reads (`LoadLocal slot,n`), if any.
+pub(crate) fn op_reads_locals(ins: &Ins) -> Option<(u8, u8)> {
+    (ins.op == op::LOAD_LOCAL).then(|| (ins.ops[0], ins.ops[1]))
+}
+
+/// Human-readable mnemonic of one decoded instruction (branch targets shown as
+/// stable ids), via the authoritative disassembler table.
+pub(crate) fn mnemonic(ins: &Ins) -> String {
+    let mut bytes = vec![ins.op];
+    bytes.extend_from_slice(&ins.ops);
+    if is_branch(ins.op) || ins.op == op::CALL {
+        bytes.extend_from_slice(&[0, 0]);
+    }
+    let (text, _) = crate::decode_op(&bytes, 0);
+    match text.find(" -> ") {
+        Some(i) => text[..i].to_string(),
+        None => text,
     }
 }
 
@@ -137,6 +159,13 @@ pub(crate) fn op_len(code: &[u8], pc: usize) -> Option<usize> {
         JIT_CALL => 3,
         I2C_WRITE => 1,
         I2C_READ => 2,
+        LOAD_LED_CACHE => 5,
+        STORE_LED_CACHE => 3,
+        BIN_TOP => 4,
+        BIN_PAIR => 6,
+        PUSH_CONSTS => 2 + 2 * b(0) as usize,
+        LOAD_CTX_LANES => 5,
+        MUL_ADD => 2,
         _ => return None,
     };
     Some(n)
@@ -146,15 +175,21 @@ pub(crate) fn op_len(code: &[u8], pc: usize) -> Option<usize> {
 /// compiler's raw outputs (byte-offset entries). Returns the optimized code with
 /// `update`/`shade` repointed. On any structural surprise it returns the input
 /// untouched — correctness first, optimization best-effort.
+///
+/// After the classic passes it runs the variance pass ([`crate::memo`]) —
+/// per-frame hoisting into `update()` + per-LED memo brackets — when `memo` is
+/// given. Its report is returned only when the transformed program encoded; if
+/// that fails the classic result ships without it (and `n_state` must not grow).
 pub(crate) fn optimize(
     code: &[u8],
     consts: &mut Vec<u32>,
     update: &mut u16,
     shade: &mut u16,
-) -> Vec<u8> {
+    memo: Option<(&crate::memo::MemoConfig, &[crate::memo::BufShape], u8)>,
+) -> (Vec<u8>, Option<crate::memo::MemoReport>) {
     let mut prog = match decode(code, *update, *shade) {
         Some(p) => p,
-        None => return code.to_vec(),
+        None => return (code.to_vec(), None),
     };
 
     // Fixed-point: passes expose opportunities for each other (folding a
@@ -168,43 +203,88 @@ pub(crate) fn optimize(
         changed |= eliminate_dead_locals(&mut prog);
         changed |= remove_unreachable(&mut prog);
         changed |= fuse_superinstructions(&mut prog, consts);
+        changed |= simplify_swizzles(&mut prog);
         if !changed {
             break;
         }
     }
-
     let (u0, s0) = (*update, *shade);
+    if let Some((cfg, bufs, n_state)) = memo {
+        let mut memo_prog = prog.clone();
+        let mut report = crate::memo::run(&mut memo_prog, bufs, n_state, cfg);
+        // Operand fusion runs last, after the variance pass, which reasons
+        // about the plain push/op sequences.
+        fuse_operands(&mut memo_prog);
+        if let Some(bytes) = encode(&memo_prog, update, shade) {
+            report.prep_entry = prep_offset(&memo_prog);
+            return (bytes, Some(report));
+        }
+        *update = u0;
+        *shade = s0;
+    }
+    fuse_operands(&mut prog);
     match encode(&prog, update, shade) {
-        Some(bytes) => bytes,
+        Some(bytes) => (bytes, None),
         None => {
             // Dangling target or an out-of-range branch slipped through: discard
             // the optimized program and ship the original bytes/entries.
             *update = u0;
             *shade = s0;
-            code.to_vec()
+            (code.to_vec(), None)
         }
     }
+}
+
+/// Decode `code` and return the variance classification of shade()'s maximal
+/// non-dynamic value ranges (tests/tools). Runs the classic passes first so the
+/// listing matches what the memo pass sees.
+pub(crate) fn classify(
+    code: &[u8],
+    consts: &mut Vec<u32>,
+    update: u16,
+    shade: u16,
+    bufs: &[crate::memo::BufShape],
+) -> Vec<(String, crate::memo::Variance)> {
+    let Some(mut prog) = decode(code, update, shade) else { return Vec::new() };
+    for _ in 0..8 {
+        let mut changed = false;
+        changed |= fold_constants(&mut prog, consts);
+        changed |= simplify_algebraic(&mut prog, consts);
+        changed |= fold_branches(&mut prog, consts);
+        changed |= eliminate_dead_locals(&mut prog);
+        changed |= remove_unreachable(&mut prog);
+        changed |= fuse_superinstructions(&mut prog, consts);
+        changed |= simplify_swizzles(&mut prog);
+        if !changed {
+            break;
+        }
+    }
+    crate::memo::classify(&prog, bufs)
 }
 
 /// Decoded program: instructions (each with a stable id) plus the two
 /// entry-point ids (`None` = no such entry). `next_id` hands out fresh ids for
 /// instructions the passes synthesize.
-struct Prog {
-    ins: Vec<Ins>,
-    update: Option<u32>,
-    shade: Option<u32>,
+#[derive(Clone)]
+pub(crate) struct Prog {
+    pub(crate) ins: Vec<Ins>,
+    pub(crate) update: Option<u32>,
+    pub(crate) shade: Option<u32>,
+    /// The per-frame prepare entry the memo pass synthesizes (never decoded:
+    /// it only exists after `crate::memo::run`).
+    pub(crate) prep: Option<u32>,
     next_id: u32,
 }
 
 impl Prog {
-    fn fresh_id(&mut self) -> u32 {
+    pub(crate) fn fresh_id(&mut self) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
         id
     }
     /// Ids referenced as a branch/call target or an entry point — an
     /// instruction with such an id must not be deleted or its referent dangles.
-    fn referenced(&self) -> HashSet<u32> {
+    pub(crate) fn referenced(&self) -> HashSet<u32> {
         let mut r: HashSet<u32> = self
             .ins
             .iter()
@@ -213,6 +293,7 @@ impl Prog {
             .collect();
         r.extend(self.update);
         r.extend(self.shade);
+        r.extend(self.prep);
         r
     }
 }
@@ -262,6 +343,7 @@ fn decode(code: &[u8], update: u16, shade: u16) -> Option<Prog> {
         ins,
         update: entry(update)?,
         shade: entry(shade)?,
+        prep: None,
         next_id: offs.len() as u32,
     })
 }
@@ -303,7 +385,24 @@ fn encode(prog: &Prog, update: &mut u16, shade: &mut u16) -> Option<Vec<u8>> {
         Some(id) => u16::try_from(*id_off.get(&id)?).ok()?,
         None => NO_ENTRY,
     };
+    // The prep entry rides in the memo trailer, so it must also be a valid u16.
+    if let Some(id) = prog.prep {
+        u16::try_from(*id_off.get(&id)?).ok()?;
+    }
     Some(out)
+}
+
+/// Byte offset of the prep entry in an encoding of `prog` (NO_ENTRY if none).
+fn prep_offset(prog: &Prog) -> u16 {
+    let Some(pid) = prog.prep else { return NO_ENTRY };
+    let mut p = 0usize;
+    for ii in &prog.ins {
+        if ii.id == pid {
+            return p as u16;
+        }
+        p += ii.enc_len();
+    }
+    NO_ENTRY
 }
 
 // -- const pool helpers -------------------------------------------------------
@@ -542,7 +641,7 @@ fn remove_unreachable(prog: &mut Prog) -> bool {
         prog.ins.iter().enumerate().map(|(p, ii)| (ii.id, p)).collect();
     let mut reachable = vec![false; n];
     let mut stack: Vec<usize> = Vec::new();
-    for e in [prog.update, prog.shade].into_iter().flatten() {
+    for e in [prog.update, prog.shade, prog.prep].into_iter().flatten() {
         if let Some(&p) = pos_of.get(&e) {
             stack.push(p);
         }
@@ -561,7 +660,7 @@ fn remove_unreachable(prog: &mut Prog) -> bool {
         match ii.op {
             op::JMP => goto(ii.target, &mut stack),
             op::RET | op::RET_FN | op::RET_RGB8 | op::RET_RGB_FIX => {}
-            op::BR_FALSE | op::BR_CMP_I | op::CALL => {
+            op::BR_FALSE | op::BR_CMP_I | op::CALL | op::LOAD_LED_CACHE => {
                 goto(ii.target, &mut stack);
                 stack.push(i + 1);
             }
@@ -707,6 +806,200 @@ fn fuse_superinstructions(prog: &mut Prog, consts: &[u32]) -> bool {
                 changed = true;
                 continue;
             }
+        }
+        i += 1;
+    }
+    changed
+}
+
+// -- pass: swizzle simplification (fx-perf-study R8) ----------------------------
+
+/// The load ops whose `slot, n` operands address a contiguous slot range.
+fn is_slot_load(o: u8) -> bool {
+    matches!(o, op::LOAD_LOCAL | op::LOAD_STATE | op::LOAD_UNIFORM)
+}
+
+/// True if `[i+1, i+n)` are not branch/call/entry targets. The first
+/// instruction may be one: a fusion keeps its id, so a jump to it still lands
+/// on the fused instruction.
+fn tail_unreferenced(ins: &[Ins], i: usize, n: usize, refd: &HashSet<u32>) -> bool {
+    ins[i + 1..i + n].iter().all(|x| !refd.contains(&x.id))
+}
+
+/// Two exact rewrites the front-end leaves behind for every component access
+/// and scalar-times-vector:
+///  - `Load{Local,State,Uniform} s,n ; Swizzle src=n dst=m [k, k+1, .., k+m-1]`
+///    -> `Load s+k, m` (read just the lanes, no shuffle);
+///  - `Swizzle src=1 dst=n [0,..,0] ; Mul n` -> `Scale n` (`v * splat(s)` is
+///    `v[i] * s` either way).
+fn simplify_swizzles(prog: &mut Prog) -> bool {
+    let mut changed = false;
+    let mut i = 0usize;
+    while i + 1 < prog.ins.len() {
+        let refd = prog.referenced();
+        if !tail_unreferenced(&prog.ins, i, 2, &refd) {
+            i += 1;
+            continue;
+        }
+        let (a, b) = (&prog.ins[i], &prog.ins[i + 1]);
+        if is_slot_load(a.op) && b.op == op::SWIZZLE && a.ops.len() == 2 && b.ops.len() >= 2 {
+            let (slot, n) = (a.ops[0], a.ops[1]);
+            let (src, dst) = (b.ops[0], b.ops[1]);
+            let idx = &b.ops[2..];
+            if src == n && dst >= 1 && idx.len() == dst as usize {
+                let k = idx[0];
+                let contiguous = idx.iter().enumerate().all(|(j, &c)| c as usize == k as usize + j);
+                if contiguous && k as usize + dst as usize <= n as usize {
+                    if let Some(ns) = slot.checked_add(k) {
+                        let (id, o) = (a.id, a.op);
+                        prog.ins.splice(i..i + 2, [Ins { id, op: o, ops: vec![ns, dst], target: 0 }]);
+                        changed = true;
+                        continue;
+                    }
+                }
+            }
+        }
+        if a.op == op::SWIZZLE && b.op == op::MUL && a.ops.len() >= 2 && b.ops.len() == 1 {
+            let (src, dst) = (a.ops[0], a.ops[1]);
+            if src == 1 && dst >= 2 && b.ops[0] == dst && a.ops[2..].iter().all(|&c| c == 0) {
+                let id = a.id;
+                prog.ins.splice(i..i + 2, [Ins { id, op: op::SCALE, ops: vec![dst], target: 0 }]);
+                changed = true;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    changed
+}
+
+// -- pass: operand fusion (fx-perf-study R8) ----------------------------------
+
+/// The `BinTop`/`BinPair` source code and index of a scalar push, if it is one.
+fn operand_src(ins: &Ins) -> Option<(u8, u16)> {
+    match ins.op {
+        op::PUSH_CONST => Some((0, u16::from_le_bytes([ins.ops[0], ins.ops[1]]))),
+        op::LOAD_LOCAL if ins.ops[1] == 1 => Some((1, ins.ops[0] as u16)),
+        op::LOAD_STATE if ins.ops[1] == 1 => Some((2, ins.ops[0] as u16)),
+        op::LOAD_UNIFORM if ins.ops[1] == 1 => Some((3, ins.ops[0] as u16)),
+        _ => None,
+    }
+}
+
+/// The mode bits of a scalar float `Add`/`Sub`/`Mul`/`Div`, or (bit 6) an
+/// integer `AddI`/`SubI`/`MulI`/`MulFix`.
+fn scalar_arith(ins: &Ins) -> Option<u8> {
+    match ins.op {
+        op::ADD_I => return Some(0x40),
+        op::SUB_I => return Some(0x41),
+        op::MUL_I => return Some(0x42),
+        op::MUL_FIX => return Some(0x43),
+        _ => {}
+    }
+    if ins.ops.first().copied() != Some(1) {
+        return None;
+    }
+    match ins.op {
+        op::ADD => Some(0),
+        op::SUB => Some(1),
+        op::MUL => Some(2),
+        op::DIV => Some(3),
+        _ => None,
+    }
+}
+
+/// `LoadCtx id ; Swizzle src->m [k..k+m)` -> `LoadCtxLanes id src k m`, then
+/// `X a ; Y b ; OP` -> `BinPair OP X a Y b` and `X a ; OP` -> `BinTop OP X a`,
+/// where X/Y push a const, local, state or uniform scalar and OP is a scalar
+/// float add/sub/mul/div. Exact: the VM computes the same IEEE op on the same
+/// two values (and the same div-by-zero = 0), without the push/pop traffic.
+fn fuse_operands(prog: &mut Prog) -> bool {
+    let mut changed = false;
+    let mut i = 0usize;
+    while i + 1 < prog.ins.len() {
+        let refd = prog.referenced();
+        if !tail_unreferenced(&prog.ins, i, 2, &refd) {
+            i += 1;
+            continue;
+        }
+        let (a, b) = (&prog.ins[i], &prog.ins[i + 1]);
+        // `LoadCtx id ; Swizzle src->m [k..k+m)` -> `LoadCtxLanes id src k m`.
+        if a.op == op::LOAD_CTX && b.op == op::SWIZZLE && b.ops.len() >= 2 {
+            let (src, dst) = (b.ops[0], b.ops[1]);
+            let idx = &b.ops[2..];
+            if (1..=4).contains(&dst) && idx.len() == dst as usize {
+                let k = idx[0];
+                let contiguous = idx.iter().enumerate().all(|(j, &c)| c as usize == k as usize + j);
+                if contiguous && k as usize + dst as usize <= src as usize {
+                    let (id, ctx) = (a.id, a.ops[0]);
+                    let ops = vec![ctx, src, k, dst];
+                    prog.ins.splice(i..i + 2, [Ins { id, op: op::LOAD_CTX_LANES, ops, target: 0 }]);
+                    changed = true;
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    let mut i = 0usize;
+    while i + 1 < prog.ins.len() {
+        let refd = prog.referenced();
+        if i + 2 < prog.ins.len() && tail_unreferenced(&prog.ins, i, 3, &refd) {
+            let w = &prog.ins[i..i + 3];
+            if let (Some((sa, a)), Some((sb, b)), Some(k)) = (operand_src(&w[0]), operand_src(&w[1]), scalar_arith(&w[2])) {
+                let id = w[0].id;
+                let mut ops = vec![k | sa << 2 | sb << 4];
+                ops.extend_from_slice(&a.to_le_bytes());
+                ops.extend_from_slice(&b.to_le_bytes());
+                prog.ins.splice(i..i + 3, [Ins { id, op: op::BIN_PAIR, ops, target: 0 }]);
+                changed = true;
+                i += 1;
+                continue;
+            }
+        }
+        if tail_unreferenced(&prog.ins, i, 2, &refd) {
+            let w = &prog.ins[i..i + 2];
+            if let (Some((sa, a)), Some(k)) = (operand_src(&w[0]), scalar_arith(&w[1])) {
+                let id = w[0].id;
+                let mut ops = vec![k | sa << 2];
+                ops.extend_from_slice(&a.to_le_bytes());
+                prog.ins.splice(i..i + 2, [Ins { id, op: op::BIN_TOP, ops, target: 0 }]);
+                changed = true;
+                i += 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    // `Mul n ; Add n` -> `MulAdd n` (a + b*c, the same two roundings).
+    let mut i = 0usize;
+    while i + 1 < prog.ins.len() {
+        let refd = prog.referenced();
+        let (a, b) = (&prog.ins[i], &prog.ins[i + 1]);
+        if a.op == op::MUL && b.op == op::ADD && a.ops == b.ops && tail_unreferenced(&prog.ins, i, 2, &refd) {
+            let (id, ops) = (a.id, a.ops.clone());
+            prog.ins.splice(i..i + 2, [Ins { id, op: op::MUL_ADD, ops, target: 0 }]);
+            changed = true;
+        }
+        i += 1;
+    }
+    // Runs of 2..=4 `PushConst` -> one `PushConsts`.
+    let mut i = 0usize;
+    while i + 1 < prog.ins.len() {
+        let refd = prog.referenced();
+        let mut n = 0usize;
+        while n < 4 && i + n < prog.ins.len() && prog.ins[i + n].op == op::PUSH_CONST && (n == 0 || !refd.contains(&prog.ins[i + n].id)) {
+            n += 1;
+        }
+        if n >= 2 {
+            let id = prog.ins[i].id;
+            let mut ops = vec![n as u8];
+            for k in 0..n {
+                ops.extend_from_slice(&prog.ins[i + k].ops[..2]);
+            }
+            prog.ins.splice(i..i + n, [Ins { id, op: op::PUSH_CONSTS, ops, target: 0 }]);
+            changed = true;
         }
         i += 1;
     }

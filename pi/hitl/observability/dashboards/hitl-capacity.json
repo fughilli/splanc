@@ -1,0 +1,2523 @@
+{
+  "title": "HITL capacity — should I buy boards?",
+  "uid": "hitl-capacity",
+  "tags": ["hitl", "splanc", "capacity"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "editable": true,
+  "refresh": "",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "slo",
+        "label": "Merge-queue p95 wait SLO (min)",
+        "type": "custom",
+        "hide": 0,
+        "query": "5,10,15,20,30,45,60",
+        "current": {
+          "text": "10",
+          "value": "10"
+        },
+        "options": [
+          {
+            "text": "5",
+            "value": "5",
+            "selected": false
+          },
+          {
+            "text": "10",
+            "value": "10",
+            "selected": true
+          },
+          {
+            "text": "15",
+            "value": "15",
+            "selected": false
+          },
+          {
+            "text": "20",
+            "value": "20",
+            "selected": false
+          },
+          {
+            "text": "30",
+            "value": "30",
+            "selected": false
+          },
+          {
+            "text": "45",
+            "value": "45",
+            "selected": false
+          },
+          {
+            "text": "60",
+            "value": "60",
+            "selected": false
+          }
+        ]
+      },
+      {
+        "name": "growth",
+        "label": "Demand growth ×",
+        "type": "custom",
+        "hide": 0,
+        "query": "1,1.5,2,2.5,3,3.5,4",
+        "current": {
+          "text": "1",
+          "value": "1"
+        },
+        "options": [
+          {
+            "text": "1",
+            "value": "1",
+            "selected": true
+          },
+          {
+            "text": "1.5",
+            "value": "1.5",
+            "selected": false
+          },
+          {
+            "text": "2",
+            "value": "2",
+            "selected": false
+          },
+          {
+            "text": "2.5",
+            "value": "2.5",
+            "selected": false
+          },
+          {
+            "text": "3",
+            "value": "3",
+            "selected": false
+          },
+          {
+            "text": "3.5",
+            "value": "3.5",
+            "selected": false
+          },
+          {
+            "text": "4",
+            "value": "4",
+            "selected": false
+          }
+        ]
+      },
+      {
+        "name": "policy",
+        "label": "Scheduling policy",
+        "type": "custom",
+        "hide": 0,
+        "query": "current,fifo,priority",
+        "current": {
+          "text": "current",
+          "value": "current"
+        },
+        "options": [
+          {
+            "text": "current",
+            "value": "current",
+            "selected": true
+          },
+          {
+            "text": "fifo",
+            "value": "fifo",
+            "selected": false
+          },
+          {
+            "text": "priority",
+            "value": "priority",
+            "selected": false
+          }
+        ]
+      },
+      {
+        "name": "vpool",
+        "label": "Validation pool",
+        "type": "custom",
+        "hide": 0,
+        "query": "c6,c6-la,pi,pi-la",
+        "current": {
+          "text": "c6",
+          "value": "c6"
+        },
+        "options": [
+          {
+            "text": "c6",
+            "value": "c6",
+            "selected": true
+          },
+          {
+            "text": "c6-la",
+            "value": "c6-la",
+            "selected": false
+          },
+          {
+            "text": "pi",
+            "value": "pi",
+            "selected": false
+          },
+          {
+            "text": "pi-la",
+            "value": "pi-la",
+            "selected": false
+          }
+        ]
+      },
+      {
+        "name": "variant",
+        "label": "Validation variant",
+        "type": "custom",
+        "hide": 0,
+        "query": "split-mmc,pooled-mmc,split-ac,pooled-ac",
+        "current": {
+          "text": "split-mmc",
+          "value": "split-mmc"
+        },
+        "options": [
+          {
+            "text": "split-mmc",
+            "value": "split-mmc",
+            "selected": true
+          },
+          {
+            "text": "pooled-mmc",
+            "value": "pooled-mmc",
+            "selected": false
+          },
+          {
+            "text": "split-ac",
+            "value": "split-ac",
+            "selected": false
+          },
+          {
+            "text": "pooled-ac",
+            "value": "pooled-ac",
+            "selected": false
+          }
+        ]
+      },
+      {
+        "name": "repo",
+        "label": "repo",
+        "type": "custom",
+        "hide": 2,
+        "query": "__GITHUB_REPOSITORY__",
+        "current": {
+          "text": "__GITHUB_REPOSITORY__",
+          "value": "__GITHUB_REPOSITORY__"
+        },
+        "options": [
+          {
+            "text": "__GITHUB_REPOSITORY__",
+            "value": "__GITHUB_REPOSITORY__",
+            "selected": true
+          }
+        ]
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "text",
+      "title": "How to read this",
+      "options": {
+        "mode": "markdown",
+        "content": "**Board deficit = boards required to meet the wait SLO − healthy boards installed.** Above 0 means buy\nthat many boards of that kind; below 0 is spare capacity. Required boards come from an Erlang-C\n(M/M/c) model of each capability pool: the arrival rate at the **peak** (p90 of the hourly rates over\nthe last 7 days) and the mean hold, sized so that **merge-queue requests wait at most `$slo` min at\np95** (and, under priority scheduling, PR CI stays under its 40 min client timeout).\n\n* **C6 + logic analyzer** is a subset of the C6 boards: buy its deficit as LA-tapped C6s. The\n  **ESP32-C6** number is the plain-board shortfall left after that.\n* **Growth** multiplies today's demand (e.g. ×3 for the Kickstarter). **Headroom** is how far demand\n  can grow before the deficit reaches 0 (below ×1 = already short).\n* **Policy**: `fifo` is today's daemon; `priority` is merge-queue > PR CI > dev scheduling. `current`\n  follows whatever the rigs run. Efficiency (priority scheduling, skipped tests, fewer wasted holds)\n  lowers demand and the requirement; it never counts as extra boards.\n* **Usable** boards are what the daemons' concurrency caps let run at once; healthy − usable is\n  capacity lost to caps (fix the config, not by buying).\n\nModel, data and caveats: `pi/hitl/observability/capacity/README.md`."
+      },
+      "id": 1,
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "id": 1002,
+      "type": "row",
+      "title": "Should I buy boards? (deficit at $growth× demand, p95 wait ≤ $slo min, $policy policy)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      }
+    },
+    {
+      "type": "stat",
+      "title": "ESP32-C6: board deficit",
+      "description": "Boards to buy (> 0) or spare (< 0). Required at peak minus healthy boards; a child pool's (LA) shortfall is bought as that board and not counted again in its parent.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "headline[pool='c6' and slo_min=${slo} and growth=${growth} and ('${policy}'='current' ? current : policy='${policy}')]",
+          "columns": [
+            {
+              "selector": "deficit",
+              "text": "deficit",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 0.0001
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 3,
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 10
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "C6 + logic analyzer: board deficit",
+      "description": "Boards to buy (> 0) or spare (< 0). Required at peak minus healthy boards; a child pool's (LA) shortfall is bought as that board and not counted again in its parent.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "headline[pool='c6-la' and slo_min=${slo} and growth=${growth} and ('${policy}'='current' ? current : policy='${policy}')]",
+          "columns": [
+            {
+              "selector": "deficit",
+              "text": "deficit",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 0.0001
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 4,
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 10
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "led-mapper Pi: board deficit",
+      "description": "Boards to buy (> 0) or spare (< 0). Required at peak minus healthy boards; a child pool's (LA) shortfall is bought as that board and not counted again in its parent.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "headline[pool='pi' and slo_min=${slo} and growth=${growth} and ('${policy}'='current' ? current : policy='${policy}')]",
+          "columns": [
+            {
+              "selector": "deficit",
+              "text": "deficit",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 0.0001
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 5,
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 10
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Data window",
+      "description": "The 7-day window the model ran on, and its end. A stale end means the live Prometheus series are not reaching the workflow (see the README).",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "window",
+          "columns": [
+            {
+              "selector": "end",
+              "text": "window end (UTC)",
+              "type": "string"
+            },
+            {
+              "selector": "hours",
+              "text": "hours with data",
+              "type": "number"
+            },
+            {
+              "selector": "gap_hours",
+              "text": "gap hours",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 6,
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 10
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "ESP32-C6: headroom",
+      "description": "How far demand can grow before the deficit reaches 0 at this SLO (×1.00 = today's peak demand; below ×1 the pool is already short). Capped at ×10.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "headline[pool='c6' and slo_min=${slo} and growth=${growth} and ('${policy}'='current' ? current : policy='${policy}')]",
+          "columns": [
+            {
+              "selector": "headroom",
+              "text": "headroom",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "x",
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 1
+              },
+              {
+                "color": "green",
+                "value": 3
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 7,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 15
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "C6 + logic analyzer: headroom",
+      "description": "How far demand can grow before the deficit reaches 0 at this SLO (×1.00 = today's peak demand; below ×1 the pool is already short). Capped at ×10.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "headline[pool='c6-la' and slo_min=${slo} and growth=${growth} and ('${policy}'='current' ? current : policy='${policy}')]",
+          "columns": [
+            {
+              "selector": "headroom",
+              "text": "headroom",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "x",
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 1
+              },
+              {
+                "color": "green",
+                "value": 3
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 8,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 15
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "led-mapper Pi: headroom",
+      "description": "How far demand can grow before the deficit reaches 0 at this SLO (×1.00 = today's peak demand; below ×1 the pool is already short). Capped at ×10.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "headline[pool='pi' and slo_min=${slo} and growth=${growth} and ('${policy}'='current' ? current : policy='${policy}')]",
+          "columns": [
+            {
+              "selector": "headroom",
+              "text": "headroom",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "x",
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 1
+              },
+              {
+                "color": "green",
+                "value": 3
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 9,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 15
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Policy in effect",
+      "description": "",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "$",
+          "columns": [
+            {
+              "selector": "policy_in_effect",
+              "text": "policy",
+              "type": "string"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "center",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 10,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 15
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Requirement by pool",
+      "description": "Every pool at the selected SLO / growth / policy. pi-la (the FPGA/LA Pi) is the Pi pool's special subset.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "headline[slo_min=${slo} and growth=${growth} and ('${policy}'='current' ? current : policy='${policy}')]",
+          "columns": [
+            {
+              "selector": "label",
+              "text": "pool",
+              "type": "string"
+            },
+            {
+              "selector": "required",
+              "text": "required boards",
+              "type": "number"
+            },
+            {
+              "selector": "healthy",
+              "text": "healthy",
+              "type": "number"
+            },
+            {
+              "selector": "usable",
+              "text": "usable (caps)",
+              "type": "number"
+            },
+            {
+              "selector": "deficit",
+              "text": "deficit",
+              "type": "number"
+            },
+            {
+              "selector": "headroom",
+              "text": "headroom ×",
+              "type": "number"
+            },
+            {
+              "selector": "lam_peak_per_h",
+              "text": "peak arrivals / h",
+              "type": "number"
+            },
+            {
+              "selector": "hold_min",
+              "text": "mean hold (min)",
+              "type": "number"
+            },
+            {
+              "selector": "slo_class_p95_wait_min",
+              "text": "SLO-class p95 wait at peak, boards now (min; empty = unstable)",
+              "type": "number"
+            },
+            {
+              "selector": "cap_loss",
+              "text": "lost to concurrency caps",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "transformations": [],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "deficit"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "#EAB839",
+                      "value": 0.0001
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.5
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "id": 11,
+      "gridPos": {
+        "h": 8,
+        "w": 14,
+        "x": 0,
+        "y": 19
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "type": "barchart",
+      "title": "Deficit vs demand growth",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "headline[pool='c6' and slo_min=${slo} and ('${policy}'='current' ? current : policy='${policy}')]",
+          "columns": [
+            {
+              "selector": "growth",
+              "text": "growth",
+              "type": "number"
+            },
+            {
+              "selector": "deficit",
+              "text": "ESP32-C6",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "headline[pool='c6-la' and slo_min=${slo} and ('${policy}'='current' ? current : policy='${policy}')]",
+          "columns": [
+            {
+              "selector": "growth",
+              "text": "growth",
+              "type": "number"
+            },
+            {
+              "selector": "deficit",
+              "text": "C6 + logic analyzer",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "headline[pool='pi' and slo_min=${slo} and ('${policy}'='current' ? current : policy='${policy}')]",
+          "columns": [
+            {
+              "selector": "growth",
+              "text": "growth",
+              "type": "number"
+            },
+            {
+              "selector": "deficit",
+              "text": "led-mapper Pi",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "growth",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "targetField": "growth",
+                "destinationType": "string"
+              }
+            ]
+          }
+        }
+      ],
+      "options": {
+        "xField": "growth",
+        "orientation": "vertical",
+        "showValue": "auto",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "description": "Boards short at each demand multiple (×1 today … ×4), selected SLO and policy.",
+      "id": 12,
+      "gridPos": {
+        "h": 8,
+        "w": 10,
+        "x": 14,
+        "y": 19
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "id": 1013,
+      "type": "row",
+      "title": "Offered load (demand board-hours ÷ healthy board-hours)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Offered load ρ per day (line) and at the busiest hour (points)",
+      "description": "Demand = served hold time + estimated hold of requests that timed out in the queue and were not retried. ρ ≥ 100% at the peak hour means that hour's work did not fit.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "daily[pool='c6']",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "rho_daily",
+              "text": "ESP32-C6 daily",
+              "type": "number"
+            },
+            {
+              "selector": "rho_peak_hour",
+              "text": "ESP32-C6 peak hour",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "daily[pool='c6-la']",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "rho_daily",
+              "text": "C6 + logic analyzer daily",
+              "type": "number"
+            },
+            {
+              "selector": "rho_peak_hour",
+              "text": "C6 + logic analyzer peak hour",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "daily[pool='pi']",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "rho_daily",
+              "text": "led-mapper Pi daily",
+              "type": "number"
+            },
+            {
+              "selector": "rho_peak_hour",
+              "text": "led-mapper Pi peak hour",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "always",
+            "pointSize": 5,
+            "spanNulls": true,
+            "axisLabel": "ρ",
+            "fillOpacity": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 14,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Offered load ρ per hour (last 7 days)",
+      "description": "",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "hourly[pool='c6']",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "rho",
+              "text": "ESP32-C6",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "hourly[pool='c6-la']",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "rho",
+              "text": "C6 + logic analyzer",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "hourly[pool='pi']",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "rho",
+              "text": "led-mapper Pi",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "always",
+            "pointSize": 5,
+            "spanNulls": true,
+            "axisLabel": "ρ",
+            "fillOpacity": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 15,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Deficit trend (trailing 7-day window, FIFO, SLO from config)",
+      "description": "The headline evaluated each day on the 7 days ending that day.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "daily[pool='c6']",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "deficit_1x",
+              "text": "ESP32-C6 ×1",
+              "type": "number"
+            },
+            {
+              "selector": "deficit_3x",
+              "text": "ESP32-C6 ×3",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "daily[pool='c6-la']",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "deficit_1x",
+              "text": "C6 + logic analyzer ×1",
+              "type": "number"
+            },
+            {
+              "selector": "deficit_3x",
+              "text": "C6 + logic analyzer ×3",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "daily[pool='pi']",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "deficit_1x",
+              "text": "led-mapper Pi ×1",
+              "type": "number"
+            },
+            {
+              "selector": "deficit_3x",
+              "text": "led-mapper Pi ×3",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "always",
+            "pointSize": 5,
+            "spanNulls": true,
+            "axisLabel": "boards",
+            "fillOpacity": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.0001
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 16,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 36
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Pools over the window",
+      "description": "",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "pools",
+          "columns": [
+            {
+              "selector": "label",
+              "text": "pool",
+              "type": "string"
+            },
+            {
+              "selector": "healthy",
+              "text": "healthy (24 h)",
+              "type": "number"
+            },
+            {
+              "selector": "usable",
+              "text": "usable (24 h)",
+              "type": "number"
+            },
+            {
+              "selector": "lam_mean_per_h",
+              "text": "mean arrivals / h",
+              "type": "number"
+            },
+            {
+              "selector": "lam_peak_per_h",
+              "text": "p90 arrivals / h",
+              "type": "number"
+            },
+            {
+              "selector": "hold_min",
+              "text": "mean hold (min)",
+              "type": "number"
+            },
+            {
+              "selector": "rho",
+              "text": "ρ (window)",
+              "type": "number"
+            },
+            {
+              "selector": "rho_peak",
+              "text": "ρ at p90 hour",
+              "type": "number"
+            },
+            {
+              "selector": "arrival_idc",
+              "text": "burstiness (IDC)",
+              "type": "number"
+            },
+            {
+              "selector": "requests",
+              "text": "requests",
+              "type": "number"
+            },
+            {
+              "selector": "served",
+              "text": "served",
+              "type": "number"
+            },
+            {
+              "selector": "timeouts",
+              "text": "timed out",
+              "type": "number"
+            },
+            {
+              "selector": "unserved",
+              "text": "unserved (not retried)",
+              "type": "number"
+            },
+            {
+              "selector": "share_merge-queue",
+              "text": "merge-queue share",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "transformations": [],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "id": 17,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 36
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "id": 1018,
+      "type": "row",
+      "title": "Efficiency (shows up as lower demand)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Board-hours per merged PR",
+      "description": "All HITL demand board-hours (C6 + Pi) divided by PRs merged that day. Test selection and fewer wasted holds push it down.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "daily[pool='_all']",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "board_hours_per_merged_pr",
+              "text": "per day",
+              "type": "number"
+            },
+            {
+              "selector": "board_hours_per_merged_pr_7d",
+              "text": "trailing 7 days",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "always",
+            "pointSize": 5,
+            "spanNulls": true,
+            "axisLabel": "board-hours / PR",
+            "fillOpacity": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 19,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 45
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "HITL tests skipped by selection",
+      "description": "Fraction of HITL tests that bazel-diff selection skipped. Empty until the selection PRs publish their counts (see README).",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "daily[pool='_all']",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "selection_skipped_fraction",
+              "text": "skipped",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "transformations": [],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "always",
+            "pointSize": 5,
+            "spanNulls": true,
+            "axisLabel": "",
+            "fillOpacity": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 20,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 45
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Board-hours by priority class",
+      "description": "",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "busy_by_prio",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "prio_class",
+              "text": "prio_class",
+              "type": "string"
+            },
+            {
+              "selector": "board_hours",
+              "text": "board_hours",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "prio_class",
+            "rowField": "time",
+            "valueField": "board_hours"
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "targetField": "time\\prio_class",
+                "destinationType": "time"
+              }
+            ]
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "showPoints": "always",
+            "pointSize": 5,
+            "spanNulls": true,
+            "axisLabel": "board-hours / day",
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "id": 21,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 53
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Board-hours by outcome (expired / cancelled / infra retry = waste)",
+      "description": "",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "busy_by_outcome",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "outcome",
+              "text": "outcome",
+              "type": "string"
+            },
+            {
+              "selector": "board_hours",
+              "text": "board_hours",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "transformations": [
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "outcome",
+            "rowField": "time",
+            "valueField": "board_hours"
+          }
+        },
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [
+              {
+                "targetField": "time\\outcome",
+                "destinationType": "time"
+              }
+            ]
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 2,
+            "showPoints": "always",
+            "pointSize": 5,
+            "spanNulls": true,
+            "axisLabel": "board-hours / day",
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "expired"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cancelled"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "infra_retry"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "passed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "released"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "id": 22,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 53
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "id": 1023,
+      "type": "row",
+      "title": "Validation: is the model honest? (pool $vpool, variant $variant)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 61
+      }
+    },
+    {
+      "type": "trend",
+      "title": "P(wait > t): measured vs model",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "validation[pool='${vpool}' and variant='${variant}']",
+          "columns": [
+            {
+              "selector": "t_min",
+              "text": "t (min)",
+              "type": "number"
+            },
+            {
+              "selector": "measured",
+              "text": "measured",
+              "type": "number"
+            },
+            {
+              "selector": "predicted",
+              "text": "model",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "options": {
+        "xField": "t (min)",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "always",
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "log",
+              "log": 2
+            },
+            "axisLabel": "share waiting longer than t"
+          }
+        },
+        "overrides": []
+      },
+      "description": "Measured: every request the queue had to serve (activated, or timed out in the queue; requests withdrawn early by cancelled runs excluded). Model: an hour-by-hour Erlang-C mixture at each hour's arrivals on the boards usable that hour. Past the 40 min client timeout the measured curve is censored (waits stop being recorded).",
+      "id": 24,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 62
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Measured vs predicted wait",
+      "description": "SLO here is the model config's (10 min). Variants: pooled = one queue per pool, split = one queue per host; mmc = Poisson, ac = Allen-Cunneen burstiness correction.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "grafanacloud-infinity"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "https://github.com/${repo}/releases/download/hitl-capacity-data/capacity.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "validation_summary",
+          "columns": [
+            {
+              "selector": "pool",
+              "text": "pool",
+              "type": "string"
+            },
+            {
+              "selector": "variant",
+              "text": "variant",
+              "type": "string"
+            },
+            {
+              "selector": "headline_variant",
+              "text": "headline",
+              "type": "boolean"
+            },
+            {
+              "selector": "requests",
+              "text": "requests",
+              "type": "number"
+            },
+            {
+              "selector": "measured_wait_gt_slo",
+              "text": "measured P(wait > SLO)",
+              "type": "number"
+            },
+            {
+              "selector": "predicted_wait_gt_slo",
+              "text": "model P(wait > SLO)",
+              "type": "number"
+            },
+            {
+              "selector": "measured_p50_min",
+              "text": "measured p50 (min)",
+              "type": "number"
+            },
+            {
+              "selector": "predicted_p50_min",
+              "text": "model p50",
+              "type": "number"
+            },
+            {
+              "selector": "measured_p95_min",
+              "text": "measured p95 (min)",
+              "type": "number"
+            },
+            {
+              "selector": "measured_p95_censored",
+              "text": "p95 censored (≥)",
+              "type": "boolean"
+            },
+            {
+              "selector": "predicted_p95_min",
+              "text": "model p95 (empty = unstable peak)",
+              "type": "number"
+            },
+            {
+              "selector": "max_gap",
+              "text": "max |gap| up to 30 min",
+              "type": "number"
+            }
+          ],
+          "filters": []
+        }
+      ],
+      "transformations": [],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "id": 25,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 62
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "grafanacloud-infinity"
+      }
+    }
+  ],
+  "description": "Board deficit per capability pool from an Erlang-C model of HITL reservations (pi/hitl/observability/capacity)."
+}

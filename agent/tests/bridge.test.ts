@@ -282,7 +282,7 @@ describe("effects", () => {
 
   });
 
-  test("measure_effect on autoscaling firmware (FUG-82): live fps, floor verdict, abort", async () => {
+  test("measure_effect on autoscaling firmware (FUG-82): live fps, floor verdict, lagging (never parked)", async () => {
     await session.deployEffect("a", EFFECT, true);
     // 25 ms frames at a 35-fps target: overruns while it settles are the
     // autoscaler's business, not "over budget" (the floor is 25 fps).
@@ -290,24 +290,38 @@ describe("effects", () => {
     const m = await session.measureEffect(1, { sleep: noSleep });
     assert.equal(m["current_fps"], 35);
     assert.match(String(m["verdict"]), /^within budget \(the player runs it at 35 fps\)/);
-    assert.equal(m["aborted"], undefined);
-    // Mean cost over 95% of the 25-fps period: it can't hold the floor.
+    assert.equal(m["lagging"], undefined);
+    // Mean cost over 95% of the 25-fps period: it can't hold the floor, so it lags
+    // (an advisory: it keeps playing).
     player.perf = { budgetCycles: 160_000_000 / 25, frameCyclesMean: 6_200_000, frameCyclesMax: 6_500_000, overruns: 9, currentFps: 25 };
-    assert.match(String((await session.measureEffect(1, { sleep: noSleep }))["verdict"]), /^over budget: it can't keep 5% headroom even at 25 fps/);
-    // The player parks it mid-measure (fps_state{aborted}): over budget + aborted.
-    player.abortOnNextPerf = { auto: true, targetFps: 0 };
+    const m2 = await session.measureEffect(1, { sleep: noSleep });
+    assert.match(String(m2["verdict"]), /^over budget \(advisory\): it runs at ~25 fps on this device, below the 25 fps target/);
+    assert.match(String(m2["verdict"]), /keeps playing/);
+    assert.doesNotMatch(String(m2["verdict"]), /park/);
+    // The player reports it lagging (fps_state{lagging}): the achieved rate is reported.
+    player.perf = { budgetCycles: 160_000_000 / 25, frameCyclesMean: 8_900_000, frameCyclesMax: 9_100_000, overruns: 9, currentFps: 18 };
+    player.lagOnNextPerf = { auto: true, targetFps: 0, achievedFps: 18 };
     const m3 = await session.measureEffect(1, { sleep: noSleep });
-    assert.equal(m3["aborted"], true);
-    assert.match(String(m3["verdict"]), /parked the effect — it can't hold even 25 fps/);
-    // A fresh deploy clears the parked state.
+    assert.equal(m3["lagging"], true);
+    assert.equal(m3["achieved_fps"], 18);
+    assert.equal(m3["aborted"], undefined);
+    assert.match(String(m3["verdict"]), /runs at ~18 fps on this device, below the 25 fps target — it keeps playing/);
+    // A fresh deploy forgets the previous effect's lag report.
     player.perf = { budgetCycles: Math.round(160_000_000 / 60), frameCyclesMean: 900_000, frameCyclesMax: 1_000_000, overruns: 0, currentFps: 60 };
     await session.deployEffect("b", EFFECT, true);
     const m4 = await session.measureEffect(1, { sleep: noSleep });
-    assert.equal(m4["aborted"], undefined);
+    assert.equal(m4["lagging"], undefined);
     assert.match(String(m4["verdict"]), /^within budget/);
-    // Pinned-rate abort names the pin.
-    player.abortOnNextPerf = { auto: false, targetFps: 70 };
-    assert.match(String((await session.measureEffect(1, { sleep: noSleep }))["verdict"]), /the pinned 70 fps/);
+    // A pinned rate it can't hold names the pin.
+    player.lagOnNextPerf = { auto: false, targetFps: 70, achievedFps: 52 };
+    assert.match(String((await session.measureEffect(1, { sleep: noSleep }))["verdict"]), /~52 fps on this device, below the pinned 70 fps target/);
+    // Pre-lag firmware that still parks (aborted): noted, not mistaken for lagging.
+    await session.deployEffect("c", EFFECT, true);
+    player.lagOnNextPerf = { auto: true, targetFps: 0, achievedFps: 0, oldAbort: true };
+    const m5 = await session.measureEffect(1, { sleep: noSleep });
+    assert.equal(m5["aborted"], true);
+    assert.equal(m5["lagging"], undefined);
+    assert.match(String(m5["note"]), /older firmware stopped the effect/);
     player.perf = { budgetCycles: 5_333_333, frameCyclesMean: 1_000_000, frameCyclesMax: 1_200_000, overruns: 0 };
   });
 
@@ -359,7 +373,7 @@ describe("mcp", () => {
       for (const k of ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"] as const) {
         assert.equal(typeof a[k], "boolean", `${t.name}.${k}`);
       }
-      assert.equal(a.openWorldHint, false, t.name);
+      assert.equal(a.openWorldHint, t.name === "file_bug", t.name); // file_bug reaches GitHub
       if (a.readOnlyHint) assert.equal(a.destructiveHint, false, t.name);
     }
     const ro = tools.filter((t) => t.annotations!.readOnlyHint).map((t) => t.name).sort();
@@ -370,6 +384,7 @@ describe("mcp", () => {
       "export_map",
       "get_effect",
       "get_keypoint",
+      "get_wifi_policy",
       "list_decks",
       "list_keypoints",
       "list_players",
@@ -381,9 +396,10 @@ describe("mcp", () => {
       "refresh_players",
       "scan_i2c",
       "search_effects",
+      "snapshot_fx",
     ]);
     const destructive = tools.filter((t) => t.annotations!.destructiveHint).map((t) => t.name);
-    for (const d of ["forget_player", "delete_keypoint", "rollback_effect", "deploy_effect", "crossfade_to", "set_device_name", "trust_player", "delete_effect", "update_effect"]) {
+    for (const d of ["forget_player", "delete_keypoint", "rollback_effect", "deploy_effect", "crossfade_to", "set_device_name", "trust_player", "delete_effect", "update_effect", "set_wifi_policy"]) {
       assert.ok(destructive.includes(d), d);
     }
     // measure_effect can roll back (rollback_on_overrun): not read-only.
@@ -446,6 +462,14 @@ describe("mcp", () => {
     const c = await client.callTool({ name: "compile_effect", arguments: { source: EFFECT } });
     const parsed = JSON.parse((c.content as { text: string }[])[0]!.text);
     assert.equal(parsed.ok, true);
+    assert.deepEqual(parsed.warnings, []);
+    // A rate uniform times `time` in a phase compiles, with a warning naming the line.
+    const cb = await client.callTool({ name: "compile_effect", arguments: { source: EFFECT_B } });
+    const pb = JSON.parse((cb.content as { text: string }[])[0]!.text);
+    assert.equal(pb.ok, true);
+    assert.equal(pb.warnings.length, 1, JSON.stringify(pb.warnings));
+    assert.equal(pb.warnings[0].line, 3);
+    assert.match(pb.warnings[0].msg, /^warning: `time` scaled by the uniform `speed`/);
     // The offline estimate: no device traffic, ms + budget at the player's LED count.
     const before = player.received.length;
     const e = await client.callTool({ name: "estimate_effect", arguments: { source: EFFECT } });
@@ -489,6 +513,56 @@ describe("mcp", () => {
     assert.equal(fx.components[0].coords.length, 30);
     await client.close();
 
+  });
+
+  test("export_map: arclength runs along the strip, segment_arclength along the topology", async () => {
+    const server = createServer(session);
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "0" });
+    await Promise.all([server.connect(a), client.connect(b)]);
+    const r = await client.callTool({ name: "export_map", arguments: {} });
+    const csv = String(JSON.parse((r.content as { text: string }[])[0]!.text)["content"]).split("\n");
+    const header = csv[0]!.split(",");
+    assert.deepEqual(header.slice(-3), ["segment", "arclength", "segment_arclength"]);
+    const s = csv.slice(1).map((l) => Number(l.split(",")[header.indexOf("arclength")]));
+    assert.equal(s[0], 0);
+    for (let i = 1; i < s.length; i++) assert.ok(s[i]! > s[i - 1]!, `monotonic at ${i}: ${s[i - 1]} -> ${s[i]}`);
+    await client.close();
+  });
+
+  test("device: an unconfigured channel count (0) reports the stored map's LEDs it renders (#397)", async () => {
+    const read = async () => {
+      const server = createServer(session);
+      const [a, b] = InMemoryTransport.createLinkedPair();
+      const client = new Client({ name: "test", version: "0" });
+      await Promise.all([server.connect(a), client.connect(b)]);
+      const d = await client.readResource({ uri: "splanc://device" });
+      await client.close();
+      return JSON.parse((d.contents[0] as { text: string }).text) as {
+        channels: { channel: number; ledCount: number; configuredLedCount: number; ledCountSource: string }[];
+      };
+    };
+    player.hwLedCounts = [0, 0];
+    const leds = player.bundle!.map!.ledCount;
+    assert.ok(leds > 0);
+    let d = await read();
+    assert.deepEqual(
+      d.channels.map((c) => [c.channel, c.ledCount, c.configuredLedCount, c.ledCountSource]),
+      [
+        [0, leds, 0, "map"],
+        [1, 0, 0, "unset"],
+      ],
+    );
+    // A configured count is reported as is (and doesn't need the map).
+    player.hwLedCounts = [12, 7];
+    d = await read();
+    assert.deepEqual(
+      d.channels.map((c) => [c.ledCount, c.configuredLedCount, c.ledCountSource]),
+      [
+        [12, 12, "configured"],
+        [7, 7, "configured"],
+      ],
+    );
   });
 
   test("compile_effect reports diagnostics for broken source", async () => {

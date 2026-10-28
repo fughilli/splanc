@@ -14,7 +14,7 @@
 
 import type { FxDiagnostic } from "../../fx/preview";
 import { OUTPUT_SCHEMA, SYSTEM_PROMPT } from "./system-prompt";
-import { DEVICE_PERF_GUIDE, baseChatSystem, selectTools } from "./chatPrompt";
+import { BUG_REPORT_GUIDE, DEVICE_PERF_GUIDE, baseChatSystem, selectTools } from "./chatPrompt";
 import { stripCodeFence } from "./providers/wllamaProtocol";
 import { isMobileUserAgent } from "../../flash/env";
 import {
@@ -129,7 +129,7 @@ export function askTurn(ask: string, currentScript?: string, perfContext?: strin
 /** Build the user turn for an auto-repair round from compiler diagnostics. */
 export function repairTurn(script: string, diagnostics: FxDiagnostic[]): Turn {
   const list = diagnostics
-    .map((d) => `- line ${d.line + 1}, col ${d.col + 1}: ${d.msg}`)
+    .map((d) => `- line ${d.line}, col ${d.col}: ${d.msg}`)
     .join("\n");
   return {
     role: "user",
@@ -373,6 +373,11 @@ export interface ChatHooks {
    * it only while a perf-capable fixture is connected; omitting it withholds the
    * tool (and its prompt guidance) for this turn. */
   onMeasureOnDevice?: (args: MeasureOnDeviceCall) => Promise<string>;
+  /** The model called `file_bug` (web/src/bugs/bugReport.ts) with these raw
+   * arguments. Return the tool result text (the report's link, or the filed
+   * issue). Optional — omit to withhold the tool. Never offered to the tiny
+   * on-device (wllama) models. */
+  onFileBug?: (args: unknown) => Promise<string>;
   /** Streamed assistant text (deltas) for the "thinking…"/live panel. */
   onText?: (delta: string) => void;
   /** Live status label as the response streams — "Thinking…", a fixed tool verb,
@@ -479,6 +484,8 @@ export async function chatTurn(
   // condensed local-model prompt, which already says to use perf tools on ask).
   const devicePerf = hooks.onMeasureOnDevice !== undefined;
   if (devicePerf && provider.id !== "wllama") system += `\n\n${DEVICE_PERF_GUIDE}`;
+  const bugs = hooks.onFileBug !== undefined && provider.id !== "wllama";
+  if (bugs) system += `\n\n${BUG_REPORT_GUIDE}`;
   // Advertise only tools the active provider can fulfill (see selectTools): the
   // vision `capture_preview` is withheld when the model can't see images, the
   // perf/MIDI groups only when the caller supplies their hooks, and nothing at
@@ -487,6 +494,7 @@ export async function chatTurn(
     perf: hooks.onEstimatePerformance !== undefined,
     devicePerf,
     midi: hooks.onListMidi !== undefined && hooks.onSetMidiMapping !== undefined,
+    bugs,
   });
   for (let round = 0; round < MAX_ROUNDS; round++) {
     hooks.onThinking?.(round + 1);
@@ -577,6 +585,13 @@ export async function chatTurn(
           });
         } else if (tu.name === "measure_on_device" && hooks.onMeasureOnDevice) {
           const summary = await hooks.onMeasureOnDevice(parseMeasureCall(tu.input));
+          results.push({
+            type: "tool_result",
+            tool_use_id: tu.id,
+            content: [{ type: "text", text: summary }],
+          });
+        } else if (tu.name === "file_bug" && bugs && hooks.onFileBug) {
+          const summary = await hooks.onFileBug(tu.input);
           results.push({
             type: "tool_result",
             tool_use_id: tu.id,

@@ -12,7 +12,11 @@ use std::fmt::Write as _;
 
 // Bytecode optimizer (FUG-125): decode → peephole/local/CFG passes → re-encode,
 // run over the emitted code just before it is serialized in `finish`.
+mod lint;
+mod memo;
 mod opt;
+
+pub use memo::{MemoConfig, MemoItem, MemoReport, Variance};
 
 // -- types --------------------------------------------------------------------
 
@@ -32,6 +36,12 @@ pub enum Ty {
     Fixed16,
     Bool,
     Void,
+    // Square float matrices, column-major (GLSL conventions): `mat3` is 9 slots
+    // (3 columns of vec3), `mat4` is 16 (4 columns of vec4); `m[c]` is column c.
+    // No VM opcode knows them: every matrix operation is lowered to the existing
+    // vecN ops (`emit_mat_*`), so bytecode using them runs on any shipped VM.
+    Mat3,
+    Mat4,
     // Composite types (aggregate scalar/vec slots). The payload indexes the
     // compiler's `structs` / `arrays` side tables; their slot width comes from
     // `Compiler::ty_width` (NOT `Ty::width`, which only knows the primitives).
@@ -58,6 +68,8 @@ impl Ty {
             Ty::Vec3 => 3,
             Ty::Vec4 => 4,
             Ty::Color(_) => 3, // r, g, b channel slots
+            Ty::Mat3 => 9,
+            Ty::Mat4 => 16,
             Ty::Void | Ty::Struct(_) | Ty::Array(_) => 0,
         }
     }
@@ -69,8 +81,31 @@ impl Ty {
             _ => Ty::Vec4,
         }
     }
+    /// A scalar or vecN (matrices are numeric too, but only the operators and
+    /// builtins that lower them explicitly accept them; see [`Ty::is_mat`]).
     fn is_num(self) -> bool {
-        !matches!(self, Ty::Bool | Ty::Void | Ty::Struct(_) | Ty::Array(_) | Ty::Color(_))
+        !matches!(self, Ty::Bool | Ty::Void | Ty::Struct(_) | Ty::Array(_) | Ty::Color(_) | Ty::Mat3 | Ty::Mat4)
+    }
+    fn is_mat(self) -> bool {
+        matches!(self, Ty::Mat3 | Ty::Mat4)
+    }
+    /// A matrix's dimension (3 or 4); 0 for anything else.
+    fn mat_n(self) -> u8 {
+        match self {
+            Ty::Mat3 => 3,
+            Ty::Mat4 => 4,
+            _ => 0,
+        }
+    }
+    fn mat_of(n: u8) -> Ty {
+        if n == 3 {
+            Ty::Mat3
+        } else {
+            Ty::Mat4
+        }
+    }
+    fn is_vec(self) -> bool {
+        matches!(self, Ty::Vec2 | Ty::Vec3 | Ty::Vec4)
     }
     fn is_scalar(self) -> bool {
         matches!(self, Ty::Float | Ty::Int | Ty::Fixed | Ty::Fixed8 | Ty::Fixed16)
@@ -152,7 +187,15 @@ pub enum UiKind {
     Color,
     Toggle,
     Dropdown(Vec<String>),
+    /// A `mat3`/`mat4` uniform: a numeric grid every component of which lies in
+    /// `min..max` (the declared range, else [`MAT_DEFAULT_RANGE`]). Usually set
+    /// by an API / OSC / tracker stream rather than by hand.
+    Matrix { min: f32, max: f32 },
 }
+
+/// The range of a `mat3`/`mat4` uniform declared without one (`uniform mat4
+/// pose;`): wide enough for a pose in metres, finite so clients can clamp.
+pub const MAT_DEFAULT_RANGE: f32 = 1000.0;
 
 #[derive(Clone, Debug)]
 pub struct UniformInfo {
@@ -167,6 +210,11 @@ pub struct UniformInfo {
     /// Physical unit, from an optional string after the UI annotation
     /// (`uniform float speed : 0..5 "m/s" = 1.0;`). Empty when unstated.
     pub unit: String,
+    /// Per-component range of a vector uniform declared with the per-component
+    /// form (`: vec3(-1,-1,0) .. vec3(1,1,2)`), as (mins, maxs); `None` for a
+    /// scalar range (which applies to every component). The `ui` slider then
+    /// carries the envelope (min of mins .. max of maxs).
+    pub comp_range: Option<(Vec<f32>, Vec<f32>)>,
 }
 
 /// The `.fxb` format version the compiler emits (the header's version byte). Must
@@ -208,6 +256,66 @@ pub struct Compiled {
     pub uniforms: Vec<UniformInfo>,
     /// Driver exports (empty for an effect).
     pub exports: Vec<ExportInfo>,
+    /// What the variance pass hoisted into update() / bracketed with the per-LED
+    /// cache (empty when the optimizer or the pass is off). See `memo.rs`.
+    pub memo: MemoReport,
+    /// Non-fatal warnings, each `msg` prefixed "warning: ". Two kinds, told
+    /// apart by the message prefix (see [`PERF_WARNING_PREFIX`]):
+    /// - correctness lints (`lint.rs`), e.g. a rate uniform multiplying `time`
+    ///   inside a phase — fix these;
+    /// - perf warnings ("warning: perf: ..."): places where the source asks for
+    ///   soft-float the author almost certainly didn't mean (a float literal
+    ///   promoting fixed maths, `pow(x, 2.0)`, ...). Per-LED code only (shade()
+    ///   and helpers), so each one costs cycles on every LED every frame. The
+    ///   program runs, but slower than it should.
+    pub warnings: Vec<Diagnostic>,
+    /// Where each named `state` variable and local / parameter lives in the VM's
+    /// state / locals slots — the FX debugger's symbol table (docs/design/
+    /// fx-debugger.md), to name the slots a device snapshot reports.
+    pub symbols: Vec<DebugSym>,
+}
+
+/// One named VM slot range (see [`Compiled::symbols`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DebugSym {
+    pub name: String,
+    /// "state", "local", "param" or "buffer" (slot = the buffer index).
+    pub kind: &'static str,
+    /// The function a local / param belongs to ("" for state).
+    pub func: String,
+    pub slot: u8,
+    pub width: u8,
+}
+
+/// The symbol table as JSON: [{name, kind, func, slot, width}].
+pub fn symbols_json(syms: &[DebugSym]) -> String {
+    let items: Vec<String> = syms
+        .iter()
+        .map(|d| {
+            format!(
+                "{{\"name\":\"{}\",\"kind\":\"{}\",\"func\":\"{}\",\"slot\":{},\"width\":{}}}",
+                d.name, d.kind, d.func, d.slot, d.width
+            )
+        })
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
+
+/// Compiler knobs (see [`compile_with`]).
+#[derive(Clone, Debug)]
+pub struct CompileOptions {
+    /// Run the bytecode optimizer (FUG-125). Off for differential tests.
+    pub optimize: bool,
+    /// The variance pass (per-frame hoisting + per-LED memoization); only runs
+    /// with `optimize`. `None` disables it (the `--no-memo` A/B leg).
+    pub memo: Option<MemoConfig>,
+}
+
+impl Default for CompileOptions {
+    fn default() -> Self {
+        CompileOptions { optimize: true, memo: Some(MemoConfig::default()) }
+    }
 }
 
 // -- lexer --------------------------------------------------------------------
@@ -400,10 +508,21 @@ pub struct Compiler {
     buffers: Vec<BufferInfo>,
     struct_names: HashMap<String, u16>,
     cur_fn_is_entry: bool,
+    /// The function being compiled: the FX debugger's symbol table names each
+    /// local / param's function with it, and perf warnings are only for per-LED
+    /// code (not update() / poll()).
+    cur_fn: String,
+    /// Non-fatal perf diagnostics ("warning: perf: ..."; see `Compiled::warnings`).
+    perf_warnings: Vec<Diagnostic>,
+    /// For the call being compiled: the float literal each argument was (if it
+    /// was one), set by `call_args` — feeds the mixed fixed/float warning.
+    call_lits: Vec<Option<f32>>,
     uniforms: Vec<UniformInfo>,
     n_uniform_slots: u8,
     n_state: u8,
     n_locals: u8,
+    // FX debugger symbol table (cur_fn above names each entry's function).
+    dbg_syms: Vec<DebugSym>,
     // const pool (raw 32-bit words: f32 bits, or i32/Q16.16 bit patterns)
     consts: Vec<u32>,
     // output code (per function)
@@ -434,6 +553,15 @@ pub struct Compiler {
     // FUG-125: run the bytecode optimizer in `finish`. Off only for the
     // differential test harness / instruction-count measurements.
     optimize: bool,
+    // The variance pass config (None = off); runs inside the optimizer.
+    memo: Option<MemoConfig>,
+    // Source lints (lint.rs): expression taints + the warnings they raised.
+    lint: lint::Lint,
+    /// The current function's matrix-lowering scratch locals (slot, width):
+    /// operands of a lowered matrix op are parked here and read back column by
+    /// column. Live only inside one lowering sequence (which contains no calls
+    /// and no nested lowering), so one region per function is reused by all.
+    mat_scratch: Option<(u8, u8)>,
 }
 
 /// A just-emitted numeric literal, for the constant-cast fold (FUG-122).
@@ -456,6 +584,21 @@ struct CtxProv {
 }
 const CTX_WHOLE: u8 = 0xFF;
 
+/// The message prefix of a perf warning in [`Compiled::warnings`] ("it runs, but
+/// slower than it should"); every other warning is a correctness lint ("fix
+/// these"). Hosts tell the two kinds apart by it.
+pub const PERF_WARNING_PREFIX: &str = "warning: perf: ";
+
+/// A literal as the author would write it (`0.6`, `2.0`, `-0.25`).
+fn fmt_lit(v: f32) -> String {
+    let t = format!("{v}");
+    if t.contains('.') || t.contains('e') || t.contains("inf") || t.contains("NaN") {
+        t
+    } else {
+        format!("{t}.0")
+    }
+}
+
 /// Compile GLSL-ish source to `.fxb` + manifest, or a list of diagnostics.
 /// Runs the bytecode optimizer (FUG-125); see [`compile_opts`] to disable it.
 pub fn compile(src: &str) -> Result<Compiled, Vec<Diagnostic>> {
@@ -467,6 +610,41 @@ pub fn compile(src: &str) -> Result<Compiled, Vec<Diagnostic>> {
 /// prove the fx_vm renders identical RGB) and for measuring the optimizer's
 /// instruction-count win against the golden device profile.
 pub fn compile_opts(src: &str, optimize: bool) -> Result<Compiled, Vec<Diagnostic>> {
+    compile_with(src, &CompileOptions { optimize, ..Default::default() })
+}
+
+/// Variance classification of `shade()`'s maximal non-dynamic value ranges
+/// (mnemonic listing, class) — what the memo pass reasons about, for tests and
+/// tooling. Empty on a compile error.
+pub fn classify_shade(src: &str) -> Vec<(String, Variance)> {
+    let Some(mut c) = parse_program(src, true) else { return Vec::new() };
+    let bufs = c.buf_shapes();
+    opt::classify(&c.code, &mut c.consts, c.update_entry, c.shade_entry, &bufs)
+}
+
+fn parse_program(src: &str, optimize: bool) -> Option<Compiler> {
+    let mut lx = Lexer::new(src);
+    let mut toks = Vec::new();
+    loop {
+        match lx.next() {
+            Ok(t) => {
+                let eof = t.0 == Tok::Eof;
+                toks.push(t);
+                if eof {
+                    break;
+                }
+            }
+            Err(_) => return None,
+        }
+    }
+    let mut c = Compiler::new(toks, std::mem::take(&mut lx.comments), optimize, None);
+    c.program().ok()?;
+    Some(c)
+}
+
+/// Compile with explicit [`CompileOptions`].
+pub fn compile_with(src: &str, opts: &CompileOptions) -> Result<Compiled, Vec<Diagnostic>> {
+    let optimize = opts.optimize;
     let mut lx = Lexer::new(src);
     let mut toks = Vec::new();
     loop {
@@ -481,34 +659,7 @@ pub fn compile_opts(src: &str, optimize: bool) -> Result<Compiled, Vec<Diagnosti
             Err(d) => return Err(vec![d]),
         }
     }
-    let mut c = Compiler {
-        lx_toks: toks,
-        comments: std::mem::take(&mut lx.comments),
-        p: 0,
-        syms: HashMap::new(),
-        funcs: HashMap::new(),
-        structs: Vec::new(),
-        arrays: Vec::new(),
-        buffers: Vec::new(),
-        struct_names: HashMap::new(),
-        cur_fn_is_entry: false,
-        uniforms: Vec::new(),
-        n_uniform_slots: 0,
-        n_state: 0,
-        n_locals: 0,
-        consts: Vec::new(),
-        code: Vec::new(),
-        update_entry: 0xFFFF,
-        shade_entry: 0xFFFF,
-        ctx_prov: None,
-        last_const: None,
-        emitted_ctxfix: false,
-        uses_uv: false,
-        uses_room: false,
-        exports: Vec::new(),
-        poll_entry: NO_ENTRY,
-        optimize,
-    };
+    let mut c = Compiler::new(toks, std::mem::take(&mut lx.comments), optimize, opts.memo.clone());
     match c.program() {
         Ok(()) => Ok(c.finish()),
         Err(d) => Err(vec![d]),
@@ -520,8 +671,82 @@ const NO_ENTRY: u16 = 0xFFFF;
 // compiler rejects programs that would overflow them at runtime.
 const MAX_STATE: usize = 128;
 const MAX_LOCALS: usize = 128;
+/// fx_vm::MAX_UNIFORM_SLOTS: a uniform past it would never be written.
+const MAX_UNIFORM_SLOTS: usize = 128;
+
+/// A column-major n×n identity (a matrix uniform's default).
+fn mat_identity(n: u8) -> Vec<f32> {
+    let n = n as usize;
+    (0..n * n).map(|i| if i / n == i % n { 1.0 } else { 0.0 }).collect()
+}
+
+/// A primitive type's source name (diagnostics).
+fn ty_name(t: Ty) -> &'static str {
+    match t {
+        Ty::Float => "float",
+        Ty::Vec2 => "vec2",
+        Ty::Vec3 => "vec3",
+        Ty::Vec4 => "vec4",
+        Ty::Int => "int",
+        Ty::Fixed => "fixed",
+        Ty::Fixed8 => "fixed8",
+        Ty::Fixed16 => "fixed16",
+        Ty::Bool => "bool",
+        Ty::Mat3 => "mat3",
+        Ty::Mat4 => "mat4",
+        _ => "value",
+    }
+}
 
 impl Compiler {
+    fn new(
+        toks: Vec<(Tok, u32, u32)>,
+        comments: Vec<(u32, bool, String)>,
+        optimize: bool,
+        memo: Option<MemoConfig>,
+    ) -> Compiler {
+        Compiler {
+            lx_toks: toks,
+            comments,
+            p: 0,
+            syms: HashMap::new(),
+            funcs: HashMap::new(),
+            structs: Vec::new(),
+            arrays: Vec::new(),
+            buffers: Vec::new(),
+            struct_names: HashMap::new(),
+            cur_fn_is_entry: false,
+            cur_fn: String::new(),
+            perf_warnings: Vec::new(),
+            call_lits: Vec::new(),
+            uniforms: Vec::new(),
+            n_uniform_slots: 0,
+            n_state: 0,
+            n_locals: 0,
+            dbg_syms: Vec::new(),
+            consts: Vec::new(),
+            code: Vec::new(),
+            update_entry: 0xFFFF,
+            shade_entry: 0xFFFF,
+            ctx_prov: None,
+            last_const: None,
+            emitted_ctxfix: false,
+            uses_uv: false,
+            uses_room: false,
+            exports: Vec::new(),
+            poll_entry: NO_ENTRY,
+            optimize,
+            memo,
+            lint: lint::Lint::default(),
+            mat_scratch: None,
+        }
+    }
+
+    /// Per-buffer element counts (the memo pass's stack model needs them).
+    fn buf_shapes(&self) -> Vec<memo::BufShape> {
+        self.buffers.iter().map(|b| memo::BufShape { elem: b.elem }).collect()
+    }
+
     fn err<T>(&self, msg: impl Into<String>) -> Result<T, Diagnostic> {
         let (_, line, col) = &self.lx_toks[self.p.min(self.lx_toks.len() - 1)];
         Err(Diagnostic {
@@ -589,6 +814,8 @@ impl Compiler {
             "fixed16" => Ty::Fixed16,
             "bool" => Ty::Bool,
             "void" => Ty::Void,
+            "mat3" => Ty::Mat3,
+            "mat4" => Ty::Mat4,
             _ => return None,
         })
     }
@@ -658,6 +885,22 @@ impl Compiler {
         Ok(slot)
     }
 
+    /// Record a named slot range for the FX debugger's symbol table.
+    fn note_sym(&mut self, kind: &'static str, name: &str, slot: u8, width: u8) {
+        let func = if kind == "state" {
+            String::new()
+        } else {
+            self.cur_fn.clone()
+        };
+        self.dbg_syms.push(DebugSym {
+            name: name.to_string(),
+            kind,
+            func,
+            slot,
+            width,
+        });
+    }
+
     /// Emit a `FillLocal` to zero-initialize `w` local slots at `slot` (array /
     /// struct locals; the VM no longer blanket-clears the scratch). `w ≤
     /// MAX_LOCALS ≤ 255`, so one op always suffices.
@@ -722,6 +965,7 @@ impl Compiler {
         }
         self.expect_sym(';')?;
         let slot = self.alloc_state(ty.width())?;
+        self.note_sym("state", &name, slot, ty.width());
         self.syms.insert(name.clone(), Sym { kind: SymKind::State, slot, ty });
         self.exports.push(ExportInfo { name, ty, slot, unit });
         Ok(())
@@ -729,36 +973,51 @@ impl Compiler {
 
     // uniform float speed : 0..5 = 1.0;   uniform vec3 tint : color = vec3(..);
     // uniform bool x = false;   uniform int mode : {"a","b"} = 0;
+    // uniform float x : -2.0 .. 2.0 = 0.0;   uniform vec3 dir : -1..1 = 0, 1, 0;
+    // uniform vec3 p : vec3(-1,-1,0) .. vec3(1,1,2) = vec3(0);   uniform mat4 pose;
     fn uniform_decl(&mut self) -> Result<(), Diagnostic> {
         let first_line = self.lx_toks[self.p].1;
         self.advance(); // 'uniform'
         let tyname = self.eat_ident()?;
         let ty = Self::ty_from_ident(&tyname).ok_or_else(|| self.mkdiag("unknown type"))?;
+        if matches!(ty, Ty::Void) {
+            return self.err("a uniform cannot be void");
+        }
         let name = self.eat_ident()?;
         let mut ui = default_ui(ty);
         let mut unit = String::new();
+        let mut comp_range = None;
         if *self.cur() == Tok::Sym(':') {
             self.advance();
-            ui = self.parse_ui_annotation(ty)?;
+            let (u, cr) = self.parse_ui_annotation(ty)?;
+            ui = u;
+            comp_range = cr;
             // Optional unit string: `: 0..5 "m/s"` (or just `: "m/s"`).
             if let Tok::Str(u) = self.cur().clone() {
                 self.advance();
                 unit = u;
             }
         }
-        // default
-        self.expect_sym('=')?;
-        let default = self.parse_uniform_default(ty)?;
+        // default (optional for a matrix: identity)
+        let default = if ty.is_mat() && *self.cur() == Tok::Sym(';') {
+            mat_identity(ty.mat_n())
+        } else {
+            self.expect_sym('=')?;
+            self.parse_uniform_default(ty)?
+        };
         self.expect_sym(';')?;
         let end_line = self.lx_toks[self.p.saturating_sub(1)].1;
         let doc = self.uniform_doc(first_line, end_line);
         let slot = self.n_uniform_slots;
+        if slot as usize + ty.width() as usize > MAX_UNIFORM_SLOTS {
+            return self.err(format!("too many uniforms (over the VM's {MAX_UNIFORM_SLOTS} uniform slots)"));
+        }
         self.n_uniform_slots += ty.width();
         self.syms.insert(
             name.clone(),
             Sym { kind: SymKind::Uniform, slot, ty },
         );
-        self.uniforms.push(UniformInfo { name, ty, slot, ui, default, doc, unit });
+        self.uniforms.push(UniformInfo { name, ty, slot, ui, default, doc, unit, comp_range });
         Ok(())
     }
 
@@ -781,11 +1040,68 @@ impl Compiler {
         lines.join(" ").trim().to_string()
     }
 
-    fn parse_ui_annotation(&mut self, ty: Ty) -> Result<UiKind, Diagnostic> {
+    /// A numeric literal with an optional leading `-` (range bounds, defaults).
+    fn eat_signed_num(&mut self) -> Option<f32> {
+        let neg = *self.cur() == Tok::Sym('-');
+        let at = if neg { self.p + 1 } else { self.p };
+        match self.lx_toks.get(at).map(|t| &t.0) {
+            Some(Tok::Num(v, _)) => {
+                let v = *v;
+                self.p = at;
+                self.advance();
+                Some(if neg { -v } else { v })
+            }
+            _ => None,
+        }
+    }
+
+    /// `vecN(a, b, ...)` of signed numeric literals (a per-component range bound);
+    /// a single value broadcasts to every component.
+    fn parse_vec_literal(&mut self, ty: Ty) -> Result<Vec<f32>, Diagnostic> {
+        let w = ty.width() as usize;
+        match self.cur().clone() {
+            Tok::Ident(c) if Self::ty_from_ident(&c) == Some(ty) => self.advance(),
+            _ => {
+                let tn = ty_name(ty);
+                return self.err(format!("expected {tn}(...) for a per-component range of a {tn} uniform"));
+            }
+        };
+        self.expect_sym('(')?;
+        let mut vals = Vec::new();
+        loop {
+            match self.eat_signed_num() {
+                Some(v) => vals.push(v),
+                None => return self.err("expected a number in the range bound"),
+            }
+            if *self.cur() == Tok::Sym(',') {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        self.expect_sym(')')?;
+        if vals.len() == 1 {
+            vals = vec![vals[0]; w];
+        }
+        if vals.len() != w {
+            return self.err(format!("range bound needs {w} components, got {}", vals.len()));
+        }
+        Ok(vals)
+    }
+
+    /// The `: ...` UI annotation of a uniform: `color`, a dropdown `{"a","b"}`, or
+    /// a numeric range `lo .. hi` (signed). On a vector a scalar range applies to
+    /// every component; `vecN(..) .. vecN(..)` gives each its own (returned as the
+    /// per-component range beside a slider over the envelope). A ranged vector is
+    /// a numeric slider, never a colour; a ranged matrix is a `Matrix`.
+    fn parse_ui_annotation(&mut self, ty: Ty) -> Result<(UiKind, Option<(Vec<f32>, Vec<f32>)>), Diagnostic> {
         match self.cur().clone() {
             Tok::Ident(k) if k == "color" => {
+                if ty.is_mat() {
+                    return self.err("a matrix uniform cannot be a colour; give it a range (`: -1..1`) or none");
+                }
                 self.advance();
-                Ok(UiKind::Color)
+                Ok((UiKind::Color, None))
             }
             Tok::Sym('{') => {
                 self.advance();
@@ -804,88 +1120,83 @@ impl Compiler {
                     }
                 }
                 self.expect_sym('}')?;
-                Ok(UiKind::Dropdown(opts))
+                Ok((UiKind::Dropdown(opts), None))
             }
-            Tok::Num(lo, _) => {
-                self.advance();
+            Tok::Ident(c) if ty.is_vec() && Self::ty_from_ident(&c).is_some() => {
+                let lo = self.parse_vec_literal(ty)?;
                 if *self.cur() != Tok::Range {
                     return self.err("expected '..' in range");
                 }
                 self.advance();
-                let hi = match self.cur().clone() {
-                    Tok::Num(v, _) => {
-                        self.advance();
-                        v
-                    }
-                    _ => return self.err("expected range max"),
-                };
-                let step = (hi - lo) / 100.0;
-                Ok(UiKind::Slider { min: lo, max: hi, step })
+                let hi = self.parse_vec_literal(ty)?;
+                if lo.iter().zip(&hi).any(|(a, b)| a > b) {
+                    return self.err("range min must not exceed max (per component)");
+                }
+                let mn = lo.iter().cloned().fold(f32::INFINITY, f32::min);
+                let mx = hi.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                Ok((UiKind::Slider { min: mn, max: mx, step: (mx - mn) / 100.0 }, Some((lo, hi))))
             }
-            _ => Ok(default_ui(ty)),
+            Tok::Num(..) | Tok::Sym('-') => {
+                let Some(lo) = self.eat_signed_num() else {
+                    return self.err("expected range min");
+                };
+                if *self.cur() != Tok::Range {
+                    return self.err("expected '..' in range");
+                }
+                self.advance();
+                let Some(hi) = self.eat_signed_num() else {
+                    return self.err("expected range max");
+                };
+                if lo > hi {
+                    return self.err("range min must not exceed max");
+                }
+                if ty.is_mat() {
+                    return Ok((UiKind::Matrix { min: lo, max: hi }, None));
+                }
+                let step = (hi - lo) / 100.0;
+                Ok((UiKind::Slider { min: lo, max: hi, step }, None))
+            }
+            _ => Ok((default_ui(ty), None)),
         }
     }
 
     fn parse_uniform_default(&mut self, ty: Ty) -> Result<Vec<f32>, Diagnostic> {
-        match self.cur().clone() {
+        let w = ty.width() as usize;
+        let vals = match self.cur().clone() {
             Tok::Ident(b) if b == "true" || b == "false" => {
                 self.advance();
-                Ok(vec![if b == "true" { 1.0 } else { 0.0 }])
+                return Ok(vec![if b == "true" { 1.0 } else { 0.0 }]);
             }
-            Tok::Num(v, _) => {
-                self.advance();
-                // A bare number. For a vecN uniform, also accept a comma-list
-                // (`= 0.2, 0.6, 1.0`) or broadcast a lone scalar (`= 0.5`), so
-                // `uniform vec3 tint : color = 0.2, 0.6, 1.0;` works without the
-                // `vec3(...)` wrapper (natural for colors).
+            Tok::Num(..) | Tok::Sym('-') => {
+                // A bare (signed) number. For a vecN/matN uniform, also accept a
+                // comma-list (`= 0.2, 0.6, 1.0`) or broadcast a lone scalar (`=
+                // 0.5`), so `uniform vec3 tint : color = 0.2, 0.6, 1.0;` works
+                // without the `vec3(...)` wrapper (natural for colors). A lone
+                // scalar on a matrix is its diagonal (GLSL `mat4(s)`).
+                let Some(v) = self.eat_signed_num() else {
+                    return self.err("expected default value");
+                };
                 let mut vals = vec![v];
-                if ty.width() > 1 {
+                if w > 1 {
                     while *self.cur() == Tok::Sym(',') {
                         self.advance();
-                        match self.cur().clone() {
-                            Tok::Num(x, _) => {
-                                self.advance();
-                                vals.push(x);
-                            }
-                            Tok::Sym('-') => {
-                                self.advance();
-                                if let Tok::Num(x, _) = self.cur().clone() {
-                                    self.advance();
-                                    vals.push(-x);
-                                } else {
-                                    return self.err("expected number in default");
-                                }
-                            }
-                            _ => return self.err("expected number in default"),
+                        match self.eat_signed_num() {
+                            Some(x) => vals.push(x),
+                            None => return self.err("expected number in default"),
                         }
                     }
-                    if vals.len() == 1 {
-                        return Ok(vec![vals[0]; ty.width() as usize]);
-                    }
                 }
-                Ok(vals)
+                vals
             }
             Tok::Ident(ctor) if Self::ty_from_ident(&ctor).is_some() => {
-                // vecN(a,b,c)
+                // vecN(a,b,c) / matN(...)
                 self.advance();
                 self.expect_sym('(')?;
                 let mut vals = Vec::new();
                 loop {
-                    match self.cur().clone() {
-                        Tok::Num(v, _) => {
-                            self.advance();
-                            vals.push(v);
-                        }
-                        Tok::Sym('-') => {
-                            self.advance();
-                            if let Tok::Num(v, _) = self.cur().clone() {
-                                self.advance();
-                                vals.push(-v);
-                            } else {
-                                return self.err("expected number");
-                            }
-                        }
-                        _ => return self.err("expected number in default"),
+                    match self.eat_signed_num() {
+                        Some(v) => vals.push(v),
+                        None => return self.err("expected number in default"),
                     }
                     if *self.cur() == Tok::Sym(',') {
                         self.advance();
@@ -894,14 +1205,25 @@ impl Compiler {
                     }
                 }
                 self.expect_sym(')')?;
-                if vals.len() == 1 {
-                    Ok(vec![vals[0]; ty.width() as usize])
-                } else {
-                    Ok(vals)
-                }
+                vals
             }
-            _ => self.err("expected default value"),
+            _ => return self.err("expected default value"),
+        };
+        if ty.is_mat() {
+            return match vals.len() {
+                1 => {
+                    let mut m = mat_identity(ty.mat_n());
+                    m.iter_mut().for_each(|x| *x *= vals[0]);
+                    Ok(m)
+                }
+                n if n == w => Ok(vals),
+                n => self.err(format!("a {} default needs 1 (diagonal) or {w} values (column-major), got {n}", ty_name(ty))),
+            };
         }
+        if vals.len() == 1 && w > 1 {
+            return Ok(vec![vals[0]; w]);
+        }
+        Ok(vals)
     }
 
     // struct Agent { float pos; vec3 col; };  (fields: scalar/vec/nested struct)
@@ -963,6 +1285,7 @@ impl Compiler {
         self.expect_sym(';')?;
         let w = self.ty_width(ty);
         let slot = self.alloc_state(w)?;
+        self.note_sym("state", &name, slot, w);
         self.syms.insert(name, Sym { kind: SymKind::State, slot, ty });
         Ok(())
     }
@@ -1026,6 +1349,7 @@ impl Compiler {
         }
         let id = self.buffers.len() as u8;
         self.buffers.push(BufferInfo { kind: 0, elem, comp, w: 0, h: 0 });
+        self.note_sym("buffer", &name, id, 0);
         self.syms.insert(name, Sym { kind: SymKind::Buffer, slot: id, ty: elem_ty });
         Ok(())
     }
@@ -1055,6 +1379,7 @@ impl Compiler {
         }
         let id = self.buffers.len() as u8;
         self.buffers.push(BufferInfo { kind: 1, elem, comp, w: w as u16, h: h as u16 });
+        self.note_sym("buffer", &name, id, 0);
         self.syms.insert(name, Sym { kind: SymKind::Buffer, slot: id, ty: elem_ty });
         Ok(())
     }
@@ -1091,6 +1416,8 @@ impl Compiler {
     fn func_decl(&mut self) -> Result<(), Diagnostic> {
         let ret_ty = Self::ty_from_ident(&self.eat_ident()?).unwrap();
         let name = self.eat_ident()?;
+        self.cur_fn = name.clone();
+        self.mat_scratch = None;
         self.expect_sym('(')?;
         // params: `type name, ...`; the special `Led led` (shade) is the ctx
         // namespace, not a real local.
@@ -1107,6 +1434,7 @@ impl Compiler {
                     let pname = self.eat_ident()?;
                     let slot = self.n_locals;
                     self.n_locals += pty.width();
+                    self.note_sym("param", &pname, slot, pty.width());
                     param_tys.push(pty);
                     param_syms.push((pname, slot, pty));
                 }
@@ -1146,7 +1474,7 @@ impl Compiler {
         } else {
             ret_ty
         };
-        self.cur_fn_is_entry = is_entry;
+        self.cur_fn_is_entry = is_entry; // (cur_fn was set at the top, before the params)
         self.block(want)?;
         if is_entry {
             self.emit(fx_vm_op::RET);
@@ -1158,6 +1486,8 @@ impl Compiler {
         // Scope out this function's locals, but DON'T reuse the slots — disjoint
         // ranges so a callee can't clobber a caller's locals (no recursion).
         self.syms.retain(|_, s| !matches!(s.kind, SymKind::Local));
+        let syms = &self.syms;
+        self.lint.vars.retain(|n, _| syms.contains_key(n));
         match name.as_str() {
             "update" => self.update_entry = entry,
             "shade" => self.shade_entry = entry,
@@ -1253,25 +1583,32 @@ impl Compiler {
             let w = self.ty_width(ty);
             let slot = self.alloc_local(w)?;
             self.fill_local(slot, w);
+            self.lint.vars.insert(name.clone(), lint::Taint::default());
+            self.note_sym("local", &name, slot, w);
             self.syms.insert(name, Sym { kind: SymKind::Local, slot, ty });
             return Ok(());
         }
-        // Struct with no initializer: `Agent a;`
-        if matches!(base_ty, Ty::Struct(_)) && *self.cur() == Tok::Sym(';') {
+        // Struct (or matrix) with no initializer: `Agent a;` / `mat4 m;` (zeros).
+        if matches!(base_ty, Ty::Struct(_) | Ty::Mat3 | Ty::Mat4) && *self.cur() == Tok::Sym(';') {
             self.advance();
             let w = self.ty_width(base_ty);
             let slot = self.alloc_local(w)?;
             self.fill_local(slot, w);
+            self.lint.vars.insert(name.clone(), lint::Taint::default());
+            self.note_sym("local", &name, slot, w);
             self.syms.insert(name, Sym { kind: SymKind::Local, slot, ty: base_ty });
             return Ok(());
         }
         // Initialized: `T name = expr;`
         self.expect_sym('=')?;
         let et = self.expr()?;
+        let taint = std::mem::take(&mut self.lint.taint);
+        self.lint.vars.insert(name.clone(), taint);
         self.coerce(et, base_ty)?;
         self.expect_sym(';')?;
         let w = self.ty_width(base_ty);
         let slot = self.alloc_local(w)?;
+        self.note_sym("local", &name, slot, w);
         self.syms.insert(name, Sym { kind: SymKind::Local, slot, ty: base_ty });
         self.emit(fx_vm_op::STORE_LOCAL);
         self.emit(slot);
@@ -1299,6 +1636,10 @@ impl Compiler {
             }
             self.expect_sym('=')?;
             let et = self.expr()?;
+            // One element/field of a composite: the variable now ALSO depends on it.
+            let taint = std::mem::take(&mut self.lint.taint);
+            let prev = self.lint.vars.remove(&name).unwrap_or_default();
+            self.lint.vars.insert(name.clone(), prev.union(taint));
             self.coerce(et, place.ty)?;
             self.expect_sym(';')?;
             return self.emit_store_place(&place);
@@ -1306,6 +1647,8 @@ impl Compiler {
         // Whole-variable assignment.
         self.expect_sym('=')?;
         let et = self.expr()?;
+        let taint = std::mem::take(&mut self.lint.taint);
+        self.lint.vars.insert(name.clone(), taint);
         self.coerce(et, sym.ty)?;
         self.expect_sym(';')?;
         let opc = match sym.kind {
@@ -1442,6 +1785,8 @@ impl Compiler {
             .ok_or_else(|| self.mkdiag(&format!("unknown identifier '{name}'")))?;
         self.expect_sym('=')?;
         let et = self.expr()?;
+        let taint = std::mem::take(&mut self.lint.taint);
+        self.lint.vars.insert(name.clone(), taint);
         self.coerce(et, sym.ty)?;
         let opc = match sym.kind {
             SymKind::State => fx_vm_op::STORE_STATE,
@@ -1477,11 +1822,20 @@ impl Compiler {
         loop {
             match self.cur().clone() {
                 Tok::Sym('[') => {
-                    let ai = match p.ty {
-                        Ty::Array(i) => i,
+                    // A matrix indexes like an array of its columns (`m[c]` is a
+                    // vecN), and a vector like an array of floats (`v[i]`, so
+                    // `m[c][r]` is one element) — same slot layout.
+                    let info = match p.ty {
+                        Ty::Array(i) => self.arrays[i as usize], // Copy
+                        Ty::Mat3 | Ty::Mat4 => {
+                            let n = p.ty.mat_n();
+                            ArrayInfo { elem: Ty::vec_of(n), elem_w: n, count: n }
+                        }
+                        Ty::Vec2 | Ty::Vec3 | Ty::Vec4 => {
+                            ArrayInfo { elem: Ty::Float, elem_w: 1, count: p.ty.width() }
+                        }
                         _ => return self.err("cannot index a non-array"),
                     };
-                    let info = self.arrays[ai as usize]; // Copy
                     self.advance(); // '['
                     if let Tok::Num(v, true) = self.cur().clone() {
                         // constant index -> fold into the static offset
@@ -1551,7 +1905,9 @@ impl Compiler {
             let opc = match p.kind {
                 SymKind::State => LOAD_STATE_IDX,
                 SymKind::Local => LOAD_LOCAL_IDX,
-                SymKind::Uniform => return self.err("indexed uniforms are not supported"),
+                SymKind::Uniform => {
+                    return self.err("a uniform can only be indexed by a constant; copy it to a local first")
+                }
                 SymKind::Buffer => return self.err("internal: buffers use LoadBuf, not a place"),
             };
             self.emit(opc);
@@ -1622,7 +1978,10 @@ impl Compiler {
     }
 
     fn expr_bp(&mut self, min_bp: u8) -> Result<Ty, Diagnostic> {
+        let l_start = self.code.len();
         let mut lty = self.unary()?;
+        let mut lt = std::mem::take(&mut self.lint.taint);
+        let mut l_lit = self.float_lit_since(l_start);
         loop {
             let (op, bp): (&str, u8) = match self.cur().clone() {
                 Tok::Sym2(['&', '&']) => ("&&", 1),
@@ -1643,11 +2002,86 @@ impl Compiler {
             if bp < min_bp {
                 break;
             }
+            let (_, op_line, op_col) = self.lx_toks[self.p];
             self.advance();
+            let r_start = self.code.len();
             let rty = self.expr_bp(bp + 1)?;
-            lty = self.emit_binop(op, lty, rty)?;
+            let rt = std::mem::take(&mut self.lint.taint);
+            lt = self.lint.binop(op, lt, rt, op_line, op_col);
+            let r_lit = self.float_lit_since(r_start);
+            self.warn_fixed_float_literal(op, &[(lty, l_lit), (rty, r_lit)], op_line, op_col);
+            lty = if lty.is_mat() || rty.is_mat() {
+                self.emit_mat_binop(op, lty, rty, l_start, r_start)?
+            } else {
+                self.emit_binop(op, lty, rty)?
+            };
+            l_lit = None;
         }
+        self.lint.taint = lt;
         Ok(lty)
+    }
+
+    /// The value of the float literal compiled since code offset `start`, if
+    /// that is all that was compiled (`0.6`, `-0.6`, `(0.6)`).
+    fn float_lit_since(&self, start: usize) -> Option<f32> {
+        let k = self.last_const?;
+        if k.is_int || k.pos != start {
+            return None;
+        }
+        let v = f32::from_bits(k.bits);
+        let n = self.code.len() - start;
+        if n == 3 {
+            Some(v)
+        } else if n == 5 && self.code[start + 3] == fx_vm_op::NEG && self.code[start + 4] == 1 {
+            Some(-v)
+        } else {
+            None
+        }
+    }
+
+    /// Per-LED code only: shade() and the helper functions (update()/poll()
+    /// run once per frame, where a conversion is noise).
+    fn in_per_led_code(&self) -> bool {
+        self.cur_fn != "update" && self.cur_fn != "poll"
+    }
+
+    fn warn_at(&mut self, line: u32, col: u32, msg: String) {
+        if self.perf_warnings.len() < 32 && !self.perf_warnings.iter().any(|w| w.line == line && w.msg == msg) {
+            self.perf_warnings.push(Diagnostic { line, col, msg });
+        }
+    }
+
+    /// Warn when a scalar fixed-point operand meets a float LITERAL: scalar
+    /// promotion makes the whole operation soft-float (a fixed→float convert,
+    /// the float op, and usually a float→fixed convert back) when the author
+    /// meant `x * fixed(0.6)`. The study behind this (docs/design/
+    /// fx-perf-study.md, Q2) found it in 8 of 30 in-app agent programs.
+    fn warn_fixed_float_literal(&mut self, what: &str, args: &[(Ty, Option<f32>)], line: u32, col: u32) {
+        if !self.in_per_led_code() {
+            return;
+        }
+        let fixed = args
+            .iter()
+            .find(|(t, _)| matches!(t, Ty::Fixed | Ty::Fixed8 | Ty::Fixed16))
+            .map(|(t, _)| *t);
+        let lit = args.iter().find_map(|(t, l)| if *t == Ty::Float { *l } else { None });
+        if let (Some(ft), Some(v)) = (fixed, lit) {
+            let fname = match ft {
+                Ty::Fixed8 => "fixed8",
+                Ty::Fixed16 => "fixed16",
+                _ => "fixed",
+            };
+            let shown = fmt_lit(v);
+            self.warn_at(
+                line,
+                col,
+                format!(
+                    "{PERF_WARNING_PREFIX}`{what}` mixes a {fname} value with the float literal {shown}, so it runs in \
+                     soft-float (~3x the cycles, with fixed<->float conversions) on every LED; write \
+                     {fname}({shown}) to keep it integer"
+                ),
+            );
+        }
     }
 
     fn emit_binop(&mut self, op: &str, l: Ty, r: Ty) -> Result<Ty, Diagnostic> {
@@ -1799,6 +2233,375 @@ impl Compiler {
         Ok(Ty::vec_of(rw))
     }
 
+    // -- matrices (lowered to vecN ops; no matrix opcode exists) ---------------
+    //
+    // A mat3/mat4 value is 9/16 contiguous float slots, column-major. Every
+    // operation parks its operands in slots (a plain uniform/local operand is
+    // read in place; anything else goes to the function's scratch locals) and
+    // rebuilds the result column by column with Load + Swizzle-broadcast + Mul
+    // + Add (the optimizer fuses broadcast+Mul into Scale), Dot, Neg, Div. So a
+    // matrix program is ordinary bytecode for any shipped VM / JIT / cost model.
+
+    /// Scratch locals for one lowering sequence (`need` slots), reused per function.
+    fn mat_scratch(&mut self, need: u8) -> Result<u8, Diagnostic> {
+        if let Some((slot, w)) = self.mat_scratch {
+            if w >= need {
+                return Ok(slot);
+            }
+        }
+        let slot = self.alloc_local(need)?;
+        self.mat_scratch = Some((slot, need));
+        Ok(slot)
+    }
+
+    /// If `code[start..end]` is exactly one whole-variable load of width `w`
+    /// (LoadUniform/LoadState/LoadLocal), its (opcode, slot).
+    fn lone_load(&self, start: usize, end: usize, w: u8) -> Option<(u8, u8)> {
+        use fx_vm_op::*;
+        if end != start + 3 || end > self.code.len() {
+            return None;
+        }
+        let (op, slot, lw) = (self.code[start], self.code[start + 1], self.code[start + 2]);
+        (matches!(op, LOAD_UNIFORM | LOAD_STATE | LOAD_LOCAL) && lw == w).then_some((op, slot))
+    }
+
+    /// Load `w` slots at offset `off` of an operand source.
+    fn load_src(&mut self, src: (u8, u8), off: u8, w: u8) {
+        self.emit(src.0);
+        self.emit(src.1 + off);
+        self.emit(w);
+    }
+
+    /// Move a binary operator's two operands (left = `code[ls..rs]`, right =
+    /// `code[rs..]`, both already emitted) into slots and return their sources.
+    /// Scalars are converted to float first. A right operand that is a lone
+    /// load is read in place; so is a lone left uniform/local (a state variable
+    /// could be rewritten by a call in the right operand, so it is copied).
+    fn mat_operands(&mut self, l: Ty, r: Ty, ls: usize, rs: usize) -> Result<((u8, u8), (u8, u8)), Diagnostic> {
+        use fx_vm_op::*;
+        let (lw, rw) = (l.width(), r.width());
+        if r.is_scalar() && r != Ty::Float {
+            self.coerce(r, Ty::Float)?;
+        }
+        let r_direct = self.lone_load(rs, self.code.len(), rw);
+        let l_direct = if l.is_scalar() && l != Ty::Float {
+            None
+        } else {
+            self.lone_load(ls, rs, lw).filter(|(op, _)| *op != LOAD_STATE)
+        };
+        let need = if r_direct.is_none() { rw } else { 0 } + if l_direct.is_none() { lw } else { 0 };
+        let t = if need > 0 { self.mat_scratch(need)? } else { 0 };
+        let rsrc = match r_direct {
+            Some(src) => {
+                self.code.truncate(rs);
+                src
+            }
+            None => {
+                self.emit(STORE_LOCAL);
+                self.emit(t);
+                self.emit(rw);
+                (LOAD_LOCAL, t)
+            }
+        };
+        let roff = if r_direct.is_none() { rw } else { 0 };
+        let lsrc = match l_direct {
+            Some(src) => {
+                self.code.drain(ls..ls + 3);
+                src
+            }
+            None => {
+                if l.is_scalar() && l != Ty::Float {
+                    self.coerce(l, Ty::Float)?;
+                }
+                self.emit(STORE_LOCAL);
+                self.emit(t + roff);
+                self.emit(lw);
+                (LOAD_LOCAL, t + roff)
+            }
+        };
+        self.ctx_prov = None;
+        self.last_const = None;
+        Ok((lsrc, rsrc))
+    }
+
+    /// Park the single matrix/vector value emitted since `start` (on top of the
+    /// stack) in slots: in place if it is a lone load, else in scratch.
+    fn mat_operand1(&mut self, ty: Ty, start: usize) -> Result<(u8, u8), Diagnostic> {
+        use fx_vm_op::*;
+        let w = ty.width();
+        if let Some(src) = self.lone_load(start, self.code.len(), w) {
+            self.code.truncate(start);
+            self.ctx_prov = None;
+            self.last_const = None;
+            return Ok(src);
+        }
+        let t = self.mat_scratch(w)?;
+        self.emit(STORE_LOCAL);
+        self.emit(t);
+        self.emit(w);
+        Ok((LOAD_LOCAL, t))
+    }
+
+    /// `a * x` for a matrix `a` (source, n×n) and an n-vector x whose component
+    /// k is at `(x, off + k)`: sum_k col_k(a) * x[k]  (n Mul + (n-1) Add, vecN).
+    fn mat_times_cols(&mut self, a: (u8, u8), n: u8, x: (u8, u8), off: u8) {
+        use fx_vm_op::*;
+        for k in 0..n {
+            self.load_src(a, k * n, n);
+            self.load_src(x, off + k, 1);
+            self.broadcast_top(n);
+            self.emit2(MUL, n);
+            if k > 0 {
+                self.emit2(ADD, n);
+            }
+        }
+    }
+
+    fn emit_mat_binop(&mut self, op: &str, l: Ty, r: Ty, ls: usize, rs: usize) -> Result<Ty, Diagnostic> {
+        use fx_vm_op::*;
+        let (ln, rn) = (l.mat_n(), r.mat_n());
+        let shape = |t: Ty| ty_name(t);
+        // Validate the shape before touching the code.
+        enum K {
+            MatVec(u8),
+            VecMat(u8),
+            MatMat(u8),
+            AddSub(u8, u8),
+            MatScalar(u8, u8),
+            ScalarMat(u8),
+        }
+        let k = match (ln, rn) {
+            (n, m) if n > 0 && m > 0 => {
+                if n != m {
+                    return self.err(format!("{} {op} {}: matrix sizes differ", shape(l), shape(r)));
+                }
+                match op {
+                    "*" => K::MatMat(n),
+                    "+" => K::AddSub(n, ADD),
+                    "-" => K::AddSub(n, SUB),
+                    _ => return self.err(format!("matrix operator '{op}' is not supported (use * + -)")),
+                }
+            }
+            (n, 0) if r.is_vec() => {
+                if op != "*" {
+                    return self.err(format!("{} {op} {}: only * applies a matrix to a vector", shape(l), shape(r)));
+                }
+                if r.width() != n {
+                    let hint = if n == 4 && r == Ty::Vec3 {
+                        "; use transform(m, p) for a point or (m * vec4(d, 0.0)).xyz for a direction"
+                    } else {
+                        ""
+                    };
+                    return self.err(format!("{} * {}: dimension mismatch{hint}", shape(l), shape(r)));
+                }
+                K::MatVec(n)
+            }
+            (0, n) if l.is_vec() => {
+                if op != "*" || l.width() != n {
+                    return self.err(format!("{} {op} {}: only vec{n} * mat{n} is defined", shape(l), shape(r)));
+                }
+                K::VecMat(n)
+            }
+            (n, 0) if r.is_scalar() => match op {
+                "*" => K::MatScalar(n, MUL),
+                "/" => K::MatScalar(n, DIV),
+                _ => return self.err(format!("{} {op} scalar: only * and / scale a matrix", shape(l))),
+            },
+            (0, n) if l.is_scalar() => {
+                if op != "*" {
+                    return self.err(format!("scalar {op} {}: only * scales a matrix", shape(r)));
+                }
+                K::ScalarMat(n)
+            }
+            _ => return self.err(format!("{} {op} {}: unsupported operand types", shape(l), shape(r))),
+        };
+        let (a, b) = self.mat_operands(l, r, ls, rs)?;
+        Ok(match k {
+            K::MatVec(n) => {
+                self.mat_times_cols(a, n, b, 0);
+                Ty::vec_of(n)
+            }
+            K::VecMat(n) => {
+                for c in 0..n {
+                    self.load_src(a, 0, n);
+                    self.load_src(b, c * n, n);
+                    self.emit2(DOT, n);
+                }
+                Ty::vec_of(n)
+            }
+            K::MatMat(n) => {
+                for j in 0..n {
+                    self.mat_times_cols(a, n, b, j * n);
+                }
+                Ty::mat_of(n)
+            }
+            K::AddSub(n, opc) => {
+                for c in 0..n {
+                    self.load_src(a, c * n, n);
+                    self.load_src(b, c * n, n);
+                    self.emit2(opc, n);
+                }
+                Ty::mat_of(n)
+            }
+            K::MatScalar(n, opc) => {
+                for c in 0..n {
+                    self.load_src(a, c * n, n);
+                    self.load_src(b, 0, 1);
+                    self.broadcast_top(n);
+                    self.emit2(opc, n);
+                }
+                Ty::mat_of(n)
+            }
+            K::ScalarMat(n) => {
+                for c in 0..n {
+                    self.load_src(b, c * n, n);
+                    self.load_src(a, 0, 1);
+                    self.broadcast_top(n);
+                    self.emit2(MUL, n);
+                }
+                Ty::mat_of(n)
+            }
+        })
+    }
+
+    /// `-m`: column-wise Neg.
+    fn emit_mat_neg(&mut self, t: Ty, start: usize) -> Result<Ty, Diagnostic> {
+        let n = t.mat_n();
+        let a = self.mat_operand1(t, start)?;
+        for c in 0..n {
+            self.load_src(a, c * n, n);
+            self.emit2(fx_vm_op::NEG, n);
+        }
+        Ok(t)
+    }
+
+    /// `matN(...)` (the `(` consumed): one scalar = that diagonal (`mat4(1.0)` is
+    /// the identity); one matrix = a copy, or mat3(mat4) = its upper-left 3×3,
+    /// mat4(mat3) = it with an identity 4th row/column (GLSL); otherwise N column
+    /// vectors / N×N scalars / any mix totalling N×N components, column-major.
+    fn mat_ctor(&mut self, cty: Ty) -> Result<Ty, Diagnostic> {
+        let n = cty.mat_n();
+        let w = cty.width();
+        let mut args: Vec<(Ty, usize)> = Vec::new();
+        let mut taint = lint::Taint::default();
+        loop {
+            let start = self.code.len();
+            let at = self.expr()?;
+            taint = taint.union(std::mem::take(&mut self.lint.taint));
+            if at.is_scalar() && at != Ty::Float {
+                self.coerce(at, Ty::Float)?;
+            } else if !(at.is_scalar() || at.is_vec() || at.is_mat()) {
+                return self.err(format!("{}() takes scalars, vectors or a matrix", ty_name(cty)));
+            }
+            args.push((if at.is_scalar() { Ty::Float } else { at }, start));
+            if *self.cur() == Tok::Sym(',') {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        self.expect_sym(')')?;
+        self.lint.taint = taint;
+        if args.len() == 1 {
+            let (at, start) = args[0];
+            if at == Ty::Float {
+                let s = self.mat_operand1(Ty::Float, start)?;
+                for c in 0..n {
+                    for r in 0..n {
+                        if r == c {
+                            self.load_src(s, 0, 1);
+                        } else {
+                            self.push_const(0.0f32.to_bits());
+                        }
+                    }
+                }
+                return Ok(cty);
+            }
+            if at.is_mat() {
+                let m = at.mat_n();
+                if m == n {
+                    return Ok(cty);
+                }
+                let a = self.mat_operand1(at, start)?;
+                if n == 3 {
+                    for c in 0..3 {
+                        self.load_src(a, c * 4, 3);
+                    }
+                } else {
+                    for c in 0..3 {
+                        self.load_src(a, c * 3, 3);
+                        self.push_const(0.0f32.to_bits());
+                    }
+                    for v in [0.0f32, 0.0, 0.0, 1.0] {
+                        self.push_const(v.to_bits());
+                    }
+                }
+                return Ok(cty);
+            }
+        }
+        if args.iter().any(|(t, _)| t.is_mat()) {
+            return self.err(format!("{}(m) takes the matrix alone", ty_name(cty)));
+        }
+        let got: u32 = args.iter().map(|(t, _)| t.width() as u32).sum();
+        if got != w as u32 {
+            return self.err(format!(
+                "{}() needs 1 scalar (diagonal), {n} column vec{n}s or {w} scalars (column-major), got {got} components",
+                ty_name(cty)
+            ));
+        }
+        Ok(cty)
+    }
+
+    /// transpose(m) and transform(m, p) — args already on the stack.
+    fn emit_mat_builtin(&mut self, name: &str, args: &[Ty]) -> Result<Ty, Diagnostic> {
+        use fx_vm_op::*;
+        if name == "transpose" {
+            let [m] = args else { return self.err("transpose(m) takes one matrix") };
+            if !m.is_mat() {
+                return self.err("transpose(m) takes a mat3 or mat4");
+            }
+            let n = m.mat_n();
+            let t = self.mat_scratch(m.width())?;
+            self.emit(STORE_LOCAL);
+            self.emit(t);
+            self.emit(m.width());
+            for c in 0..n {
+                for r in 0..n {
+                    self.load_src((LOAD_LOCAL, t), r * n + c, 1);
+                }
+            }
+            return Ok(*m);
+        }
+        // transform(mat4 m, vec3 p) = (m * vec4(p, 1.0)).xyz, the affine point
+        // transform (rotation/scale + translation), without the 4th row:
+        // 9 Mul + 9 Add instead of 16 + 12. transform(mat3, vec2) likewise in 2D.
+        let ok = matches!(args, [Ty::Mat4, Ty::Vec3] | [Ty::Mat3, Ty::Vec2]);
+        if !ok {
+            return self.err("transform(m, p) takes (mat4, vec3) or (mat3, vec2)");
+        }
+        let (n, pw) = (args[0].mat_n(), args[1].width());
+        let t = self.mat_scratch(pw + n * n)?;
+        self.emit(STORE_LOCAL);
+        self.emit(t);
+        self.emit(pw);
+        self.emit(STORE_LOCAL);
+        self.emit(t + pw);
+        self.emit(n * n);
+        let (p, m) = ((LOAD_LOCAL, t), (LOAD_LOCAL, t + pw));
+        for k in 0..pw {
+            self.load_src(m, k * n, pw);
+            self.load_src(p, k, 1);
+            self.broadcast_top(pw);
+            self.emit2(MUL, pw);
+            if k > 0 {
+                self.emit2(ADD, pw);
+            }
+        }
+        self.load_src(m, pw * n, pw);
+        self.emit2(ADD, pw);
+        Ok(Ty::vec_of(pw))
+    }
+
     /// Broadcast the scalar on top of the stack to a width-`n` vector (.xxx).
     fn broadcast_top(&mut self, n: u8) {
         self.emit(fx_vm_op::SWIZZLE);
@@ -1813,7 +2616,11 @@ impl Compiler {
         match self.cur().clone() {
             Tok::Sym('-') => {
                 self.advance();
+                let start = self.code.len();
                 let t = self.unary()?;
+                if t.is_mat() {
+                    return self.emit_mat_neg(t, start);
+                }
                 match t {
                     Ty::Int | Ty::Fixed | Ty::Fixed8 | Ty::Fixed16 => self.emit(fx_vm_op::NEG_I),
                     _ => {
@@ -1888,7 +2695,33 @@ impl Compiler {
         Ok(Ty::vec_of(comps.len() as u8))
     }
 
+    /// [`Self::primary_expr`] + the lint taint of the leaf it parsed (a call or a
+    /// parenthesized expression sets its own while parsing).
     fn primary(&mut self) -> Result<Ty, Diagnostic> {
+        let next_is_call = matches!(self.lx_toks.get(self.p + 1), Some((Tok::Sym('('), _, _)));
+        let leaf = match self.cur() {
+            Tok::Ident(id) if id == "led" || id == "imu" || id == "room" => Some(lint::Taint::default()),
+            Tok::Ident(id) if id == "time" => Some(lint::Taint::time()),
+            Tok::Ident(id) if !next_is_call => Some(match self.syms.get(id) {
+                Some(s) if matches!(s.kind, SymKind::Uniform) && s.ty != Ty::Bool => {
+                    lint::Taint::uniform(id).named(id)
+                }
+                Some(s) if matches!(s.kind, SymKind::State | SymKind::Local) => {
+                    self.lint.vars.get(id).cloned().unwrap_or_default().named(id)
+                }
+                _ => lint::Taint::default(),
+            }),
+            Tok::Num(..) => Some(lint::Taint::default()),
+            _ => None,
+        };
+        let ty = self.primary_expr()?;
+        if let Some(t) = leaf {
+            self.lint.taint = t;
+        }
+        Ok(ty)
+    }
+
+    fn primary_expr(&mut self) -> Result<Ty, Diagnostic> {
         match self.cur().clone() {
             Tok::Num(v, is_int) => {
                 self.advance();
@@ -1999,11 +2832,14 @@ impl Compiler {
         self.expect_sym('(')?;
         // Texture ops take a texture NAME (not a value) as their first argument.
         if name == "sample" || name == "paint" {
-            return self.texture_call(name);
+            let ty = self.texture_call(name)?;
+            self.lint.taint = lint::Taint::default();
+            return Ok(ty);
         }
         // Type constructor: scalar cast (float/int/fixed) or vecN.
         if let Some(cty) = Self::ty_from_ident(name) {
             if cty.is_scalar() {
+                // (the cast keeps its argument's lint taint)
                 let at = self.expr()?;
                 self.expect_sym(')')?;
                 if !at.is_scalar() {
@@ -2012,10 +2848,18 @@ impl Compiler {
                 self.coerce(at, cty)?;
                 return Ok(cty);
             }
+            if cty.is_mat() {
+                return self.mat_ctor(cty);
+            }
             let w = cty.width();
             let mut got = 0u8;
+            let mut taint = lint::Taint::default();
             loop {
                 let at = self.expr()?;
+                if at.is_mat() {
+                    return self.err(format!("{name}() cannot take a matrix; index a column (m[0])"));
+                }
+                taint = taint.union(std::mem::take(&mut self.lint.taint));
                 if at.is_scalar() {
                     // vec components are float
                     if at != Ty::Float {
@@ -2037,25 +2881,32 @@ impl Compiler {
             } else if got != w {
                 return self.err(format!("{name}() needs {w} components, got {got}"));
             }
+            self.lint.taint = taint;
             return Ok(cty);
         }
         // user-defined function (define-before-use)
         if let Some(f) = self.funcs.get(name).cloned() {
+            let mut taint = lint::Taint::default();
             for (i, pty) in f.params.iter().enumerate() {
                 if i > 0 {
                     self.expect_sym(',')?;
                 }
                 let at = self.expr()?;
+                taint = taint.union(std::mem::take(&mut self.lint.taint));
                 self.coerce(at, *pty)?;
             }
             self.expect_sym(')')?;
+            self.lint.taint = taint;
             self.emit(fx_vm_op::CALL);
             self.emit_u16(f.entry);
             return Ok(f.ret);
         }
         // built-in functions
+        let (_, call_line, call_col) = self.lx_toks[self.p.saturating_sub(2)];
         let args = self.call_args()?;
         self.expect_sym(')')?;
+        self.lint.taint = self.lint.builtin(name);
+        self.warn_builtin_call(name, &args, call_line, call_col);
         self.emit_builtin(name, &args)
     }
 
@@ -2097,20 +2948,70 @@ impl Compiler {
         }
     }
 
+    /// Parse a builtin's arguments; their lint taints land in `lint.arg_taints`.
     fn call_args(&mut self) -> Result<Vec<Ty>, Diagnostic> {
         let mut args = Vec::new();
+        let mut taints = Vec::new();
+        self.call_lits.clear();
         if *self.cur() == Tok::Sym(')') {
+            self.lint.arg_taints = taints;
             return Ok(args);
         }
+        let mut lits = Vec::new();
         loop {
+            let start = self.code.len();
             args.push(self.expr()?);
+            taints.push(std::mem::take(&mut self.lint.taint));
+            lits.push(self.float_lit_since(start));
+            self.call_lits = lits.clone();
             if *self.cur() == Tok::Sym(',') {
                 self.advance();
             } else {
                 break;
             }
         }
+        self.lint.arg_taints = taints;
         Ok(args)
+    }
+
+    /// Perf warnings for one built-in call (see `Compiled::warnings`).
+    fn warn_builtin_call(&mut self, name: &str, args: &[Ty], line: u32, col: u32) {
+        if !self.in_per_led_code() {
+            return;
+        }
+        let lits = std::mem::take(&mut self.call_lits);
+        // Builtins with an integer path that a float-literal argument knocks
+        // back onto soft-float (all args must share the fixed type).
+        if matches!(name, "min" | "max" | "clamp" | "mix" | "step" | "mod" | "atan2" | "pow" | "hsv2rgb")
+            && args.iter().all(|a| a.width() == 1)
+        {
+            let pairs: Vec<(Ty, Option<f32>)> =
+                args.iter().zip(lits.iter().chain(std::iter::repeat(&None))).map(|(t, l)| (*t, *l)).collect();
+            self.warn_fixed_float_literal(&format!("{name}()"), &pairs, line, col);
+        }
+        // pow with a small constant exponent: ~1,800 cycles of soft-float for
+        // what a multiply (or a sqrt) does.
+        if name == "pow" && args.len() == 2 && args[0].fixed_frac().is_none() {
+            if let Some(Some(e)) = lits.get(1) {
+                let hint = match *e {
+                    x if x == 2.0 => Some("x * x"),
+                    x if x == 3.0 => Some("x * x * x"),
+                    x if x == 4.0 => Some("(x * x) * (x * x)"),
+                    x if x == 0.5 => Some("sqrt(x)"),
+                    _ => None,
+                };
+                if let Some(h) = hint {
+                    self.warn_at(
+                        line,
+                        col,
+                        format!(
+                            "{PERF_WARNING_PREFIX}pow(x, {}) costs ~1,800 cycles per LED on the FPU-less device; write {h}",
+                            fmt_lit(*e)
+                        ),
+                    );
+                }
+            }
+        }
     }
 
     /// Convert every scalar int/fixed arg already on the stack (in call order,
@@ -2139,6 +3040,34 @@ impl Compiler {
 
     fn emit_builtin(&mut self, name: &str, args: &[Ty]) -> Result<Ty, Diagnostic> {
         use fx_vm_op::*;
+        if matches!(name, "transpose" | "transform") {
+            return self.emit_mat_builtin(name, args);
+        }
+        if args.iter().any(|a| a.is_mat()) {
+            return self.err(format!(
+                "{name}() does not take a matrix (matrices support * + - /, transpose(), transform(), m[c] and m[c][r])"
+            ));
+        }
+        // atan(y) / atan(y, x): GLSL's names. One argument lowers to atan2(y, 1.0)
+        // (= atan(y), the principal value); two are atan2 itself. No new opcode.
+        if name == "atan" {
+            return match args.len() {
+                1 => {
+                    let w = args[0].width();
+                    self.floaten_args(args)?;
+                    self.push_const(1.0f32.to_bits());
+                    if w > 1 {
+                        self.broadcast_top(w);
+                    }
+                    self.emit(BIN_MATH);
+                    self.emit(5);
+                    self.emit(w);
+                    Ok(Ty::vec_of(w))
+                }
+                2 => self.emit_builtin("atan2", args),
+                _ => self.err("atan(y) or atan(y, x)"),
+            };
+        }
         // FUG-122 — strictly-integer/fixed colour output. `rgb`/`rgb8` and
         // `hsv2rgb`/`palette*` on fixed args produce a `Ty::Color` (3 channel
         // slots holding scaled integers) that shade()'s return lowers to
@@ -2367,6 +3296,27 @@ impl Compiler {
                 }
                 // Mixed / float: convert any int/fixed arg to float, never reinterpret.
                 self.floaten_args(args)?;
+                // GLSL's clamp(vecN, float, float) / clamp(vecN, vecN, float): CLAMP n
+                // pops n slots for EACH of x, lo, hi, so a scalar bound must be
+                // broadcast first. Without this the VM popped past the operand stack
+                // (index-out-of-bounds panic = a hung player on the device).
+                let (lw, hw) = (args[1].width(), args[2].width());
+                if lw != w || hw != w {
+                    if w == 1 || !(lw == 1 || lw == w) || !(hw == 1 || hw == w) {
+                        return self.err("clamp(x, lo, hi): lo and hi must be scalars or match x's width");
+                    }
+                    if hw == 1 {
+                        self.broadcast_top(w); // [x, lo(lw), hi(w)]
+                    }
+                    if lw == 1 {
+                        // [x, lo, hi(w)] -> [x, hi(w), lo] -> [x, hi(w), lo(w)] -> [x, lo(w), hi(w)]
+                        self.emit2(SWAP, 1);
+                        self.emit(w);
+                        self.broadcast_top(w);
+                        self.emit2(SWAP, w);
+                        self.emit(w);
+                    }
+                }
                 self.emit(CLAMP);
                 self.emit(w);
                 Ok(Ty::vec_of(w))
@@ -2741,13 +3691,25 @@ impl Compiler {
         if is_driver {
             self.shade_entry = self.poll_entry;
         }
+        let mut report = MemoReport { n_state: self.n_state, prep_entry: NO_ENTRY, ..Default::default() };
         if self.optimize {
-            self.code = opt::optimize(
+            let bufs = self.buf_shapes();
+            let memo_cfg = self.memo.clone();
+            let (code, rep) = opt::optimize(
                 &self.code,
                 &mut self.consts,
                 &mut self.update_entry,
                 &mut self.shade_entry,
+                // A driver's poll() (in the shade slot) runs with no LED and no
+                // per-frame shade sweep: the variance pass never applies to it.
+                memo_cfg.as_ref().filter(|_| !is_driver).map(|m| (m, bufs.as_slice(), self.n_state)),
             );
+            self.code = code;
+            if let Some(r) = rep {
+                // Hoisted per-frame values live in fresh state slots.
+                self.n_state = r.n_state;
+                report = r;
+            }
         }
         let mut b = Vec::new();
         let mut flags = if self.buffers.is_empty() { 0 } else { FLAG_BUFFERS };
@@ -2762,6 +3724,10 @@ impl Compiler {
         }
         if is_driver {
             flags |= FLAG_DRIVER;
+        }
+        let has_memo = report.led_cache_words > 0 || report.prep_entry != NO_ENTRY;
+        if has_memo {
+            flags |= FLAG_MEMO;
         }
         b.extend_from_slice(b"FXB1");
         b.push(FXB_FORMAT_VERSION);
@@ -2803,7 +3769,24 @@ impl Compiler {
                 b.extend_from_slice(&buf.h.to_le_bytes());
             }
         }
-        Compiled { fxb: b, uniforms: self.uniforms, exports: self.exports }
+        // Optional memo trailer (FLAG_MEMO) — mirrors fx_vm::Program::parse:
+        // prep_entry(u16), words, n_groups, cumulative group ends.
+        if has_memo {
+            b.extend_from_slice(&report.prep_entry.to_le_bytes());
+            b.push(report.led_cache_words);
+            b.push(report.led_cache_groups.len() as u8);
+            b.extend_from_slice(&report.led_cache_groups);
+        }
+        let mut warnings = self.lint.warnings;
+        warnings.extend(self.perf_warnings);
+        Compiled {
+            fxb: b,
+            uniforms: self.uniforms,
+            exports: self.exports,
+            memo: report,
+            warnings,
+            symbols: self.dbg_syms,
+        }
     }
 }
 
@@ -2866,12 +3849,31 @@ pub fn disassemble(fxb: &[u8]) -> String {
         return out;
     }
     let code = &fxb[code_off..code_off + code_len];
+    // Memo trailer (FLAG_MEMO): after the optional buffer table.
+    let flags = fxb[5];
+    let mut t = code_off + code_len;
+    if flags & FLAG_BUFFERS != 0 {
+        t += 1 + *fxb.get(t).unwrap_or(&0) as usize * 7;
+    }
+    let mut prep_entry = NO_ENTRY;
+    if flags & FLAG_MEMO != 0 && t + 4 <= fxb.len() {
+        prep_entry = u16::from_le_bytes([fxb[t], fxb[t + 1]]);
+        let _ = writeln!(
+            out,
+            "; memo: prep_entry={}  led_cache_words={}",
+            entry_label(prep_entry),
+            fxb[t + 2]
+        );
+    }
 
     let mut pc = 0usize;
     while pc < code.len() {
         // Label the entry points as the disassembler reaches them.
         if pc == update_entry as usize && update_entry != NO_ENTRY {
             out.push_str("update:\n");
+        }
+        if pc == prep_entry as usize && prep_entry != NO_ENTRY {
+            out.push_str("prep:\n");
         }
         if pc == shade_entry as usize && shade_entry != NO_ENTRY {
             out.push_str("shade:\n");
@@ -3071,7 +4073,48 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
         JIT_CALL => (format!("JIT_CALL block={}", u16at(0)), 3),
         I2C_WRITE => ("I2C_WRITE".into(), 1),
         I2C_READ => (format!("I2C_READ mode=0x{:02x}", b(0)), 2),
+        // Per-LED memo bracket (fx_compiler::memo).
+        LOAD_LED_CACHE => {
+            let next = pc + 5;
+            let tgt = next as isize + i16::from_le_bytes([b(2), b(3)]) as isize;
+            (format!("LOAD_LED_CACHE slot={} n={} hit-> {tgt}", b(0), b(1)), 5)
+        }
+        STORE_LED_CACHE => (format!("STORE_LED_CACHE slot={} n={}", b(0), b(1)), 3),
+        BIN_TOP => (format!("BIN_TOP {} {}", bin_op_name(b(0)), bin_src_name(b(0) >> 2, u16at(1))), 4),
+        PUSH_CONSTS => {
+            let n = b(0) as usize;
+            let idx: Vec<String> = (0..n).map(|j| format!("c{}", u16at(1 + 2 * j))).collect();
+            (format!("PUSH_CONSTS {}", idx.join(" ")), 2 + 2 * n)
+        }
+        LOAD_CTX_LANES => (format!("LOAD_CTX_LANES {} src={} [{}..+{}]", ctx_name(b(0)), b(1), b(2), b(3)), 5),
+        MUL_ADD => (format!("MUL_ADD n={}", b(0)), 2),
+        BIN_PAIR => (
+            format!(
+                "BIN_PAIR {} {} {}",
+                bin_op_name(b(0)),
+                bin_src_name(b(0) >> 2, u16at(1)),
+                bin_src_name(b(0) >> 4, u16at(3))
+            ),
+            6,
+        ),
         other => (format!("?? 0x{other:02x}"), 0),
+    }
+}
+
+fn bin_op_name(mode: u8) -> &'static str {
+    if mode & 0x40 != 0 {
+        ["addi", "subi", "muli", "mulfix"][(mode & 3) as usize]
+    } else {
+        ["add", "sub", "mul", "div"][(mode & 3) as usize]
+    }
+}
+
+fn bin_src_name(src: u8, i: u16) -> String {
+    match src & 3 {
+        0 => format!("c{i}"),
+        1 => format!("local{i}"),
+        2 => format!("state{i}"),
+        _ => format!("uniform{i}"),
     }
 }
 
@@ -3079,6 +4122,7 @@ fn default_ui(ty: Ty) -> UiKind {
     match ty {
         Ty::Bool => UiKind::Toggle,
         Ty::Vec3 | Ty::Vec4 => UiKind::Color,
+        Ty::Mat3 | Ty::Mat4 => UiKind::Matrix { min: -MAT_DEFAULT_RANGE, max: MAT_DEFAULT_RANGE },
         _ => UiKind::Slider { min: 0.0, max: 1.0, step: 0.01 },
     }
 }
@@ -3117,6 +4161,7 @@ pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
             }
             UiKind::Color => "{\"kind\":\"color\"}".to_string(),
             UiKind::Toggle => "{\"kind\":\"toggle\"}".to_string(),
+            UiKind::Matrix { min, max } => format!("{{\"kind\":\"matrix\",\"min\":{min},\"max\":{max}}}"),
             UiKind::Dropdown(o) => {
                 let opts: Vec<String> = o.iter().map(|x| format!("\"{x}\"")).collect();
                 format!("{{\"kind\":\"dropdown\",\"options\":[{}]}}", opts.join(","))
@@ -3126,7 +4171,7 @@ pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
         // Explicit range per uniform, even where the UI kind implies it, so an agent
         // can clamp without knowing the UI vocabulary.
         let (min, max) = match &u.ui {
-            UiKind::Slider { min, max, .. } => (*min, *max),
+            UiKind::Slider { min, max, .. } | UiKind::Matrix { min, max } => (*min, *max),
             UiKind::Color | UiKind::Toggle => (0.0, 1.0),
             UiKind::Dropdown(o) => (0.0, o.len().saturating_sub(1) as f32),
         };
@@ -3138,6 +4183,12 @@ pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
             u.ty.width(),
             def.join(",")
         );
+        // A per-component vector range (`: vec3(-1,-1,0) .. vec3(1,1,2)`): the
+        // scalar min/max above are its envelope (older readers clamp to that).
+        if let Some((lo, hi)) = &u.comp_range {
+            let j = |v: &[f32]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(",");
+            let _ = write!(s, ",\"mins\":[{}],\"maxs\":[{}]", j(lo), j(hi));
+        }
         if !u.unit.is_empty() {
             let _ = write!(s, ",\"unit\":{}", json_str(&u.unit, MAX_UNIFORM_DOC));
         }
@@ -3296,6 +4347,15 @@ mod fx_vm_op {
     // FUG-107 I2C driver intrinsics (mirror fx_vm::Op::I2cWrite / I2cRead).
     pub const I2C_WRITE: u8 = 106;
     pub const I2C_READ: u8 = 107;
+    // Per-LED memoization bracket (emitted by fx_compiler::memo).
+    pub const LOAD_LED_CACHE: u8 = 108;
+    pub const STORE_LED_CACHE: u8 = 109;
+    // fx-perf-study R8 operand-fused float arithmetic (110..=119 reserved).
+    pub const BIN_TOP: u8 = 120;
+    pub const BIN_PAIR: u8 = 121;
+    pub const PUSH_CONSTS: u8 = 122;
+    pub const LOAD_CTX_LANES: u8 = 123;
+    pub const MUL_ADD: u8 = 124;
 }
 
 /// `.fxb` flags bit: a buffer descriptor table follows `code` (mirrors
@@ -3314,6 +4374,10 @@ const FLAG_USES_ROOM: u8 = 0x08;
 /// `.fxb` flags bit (mirrors fx_vm::FLAG_DRIVER): a sensor driver whose poll()
 /// entry sits in the shade slot and whose manifest is the export table.
 const FLAG_DRIVER: u8 = 0x10;
+/// `.fxb` flags bit (mirrors fx_vm::FLAG_MEMO): a memo trailer —
+/// `prep_entry(u16) words(u8) n_groups(u8) group_end(u8) × n_groups` — follows
+/// the buffer table (the variance pass's per-frame prep + per-LED cache).
+const FLAG_MEMO: u8 = 0x20;
 mod fx_ctx {
     pub const TIME: u8 = 0;
     pub const DT: u8 = 1;

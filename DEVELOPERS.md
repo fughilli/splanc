@@ -366,6 +366,11 @@ DUT onto the rig's AP, then exercises its slice over wss:
   inter-fixture skew < 20 ms.
 
 Every HITL failure carries the DUT's serial log (the `hitl-serial-logs` artifact).
+That capture pauses while a test reads the console itself, so each test also saves
+its own console windows and other files to `$TEST_UNDECLARED_OUTPUTS_DIR`. CI
+unpacks every test's `outputs.zip`, failed retry attempts included, into the
+`hitl-test-outputs` artifact (`<package>/<target>/test.outputs/` and
+`.../test_attempts/attempt_N.outputs/`).
 
 ### FX performance benchmark & regression gate
 
@@ -383,9 +388,19 @@ drift:
 - **Golden:** `web/tests/testdata/device-bench-esp32c6.json`
   (`cpuHz: 160_000_000`, 65 fit + 7 held-out programs). Regenerate with
   `fx_bench --emit-golden <path>`.
-- **Gate:** a program is an offender if `abs(measured/golden − 1)` exceeds its
-  margin — default **10%**, `sweep16` **15%**. Only frame cycles are gated; show
-  cycles are noisier and excluded.
+- **Gate:** a program passes if its frame is within its margin of the golden —
+  default **10%**, `sweep16` **15%** — **or** within an absolute floor of
+  **8,000 cycles** (50 µs at 160 MHz), whichever is looser. Only frame cycles are
+  gated; show cycles are noisier and excluded.
+- **Why the floor:** every frame starts with a partly cold flash cache, and that
+  fixed cost moves with code layout alone, by about 7-8 K cycles (never-called
+  padding moved `sweep16` by 13-18%). That is a large percentage of the 16-LED
+  `sweep16` (~34.5 K cycles) but under 1% of a real effect, so the floor only
+  matters for goldens under ~80 K cycles. A `FLOOR` log line names each effect
+  that passed by the floor alone; `OFF` lines are offenders. The values live in
+  the golden's `fxBenchMargins` (`default`, `perLabel`, `floorCycles`), stamped
+  from `fx_bench.py` on `--emit-golden`; `--margin` / `--floor-cycles` override
+  them for a run.
 
 The measured bundle also feeds the browser device-profile fit
 (`web/src/effects/deviceProfile.ts`), whose held-out software estimate is gated at

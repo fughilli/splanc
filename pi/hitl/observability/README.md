@@ -26,6 +26,15 @@ It covers the WHOLE fleet (Pi rigs, `amd-rig`, the Mac) — including hosts not 
 pushing metrics, since the catalog is static. See [`fleet/README.md`](fleet/README.md)
 and the `hitl-fleet` dashboard.
 
+**`capacity/`** answers "should I buy more boards?": a **board deficit per capability
+pool** (C6, C6 + logic analyzer, led-mapper Pi) from an Erlang-C model of reservation
+demand at the peak hour vs healthy boards, with headroom for demand growth, offered
+load, efficiency series (board-hours per merged PR, waste by outcome, by priority
+class) and a validation of the model against measured waits. A scheduled workflow
+(`hitl-capacity.yaml`) computes it from the journal backfill + the hitl-reserved
+capacity series and publishes it on the `hitl-capacity-data` release for the
+`hitl-capacity` dashboard (Infinity). See [`capacity/README.md`](capacity/README.md).
+
 ## Fleet coverage of the metrics push
 
 Every host pushes through the same Alloy pipeline once it has been seeded with the

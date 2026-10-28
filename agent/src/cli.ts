@@ -20,6 +20,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { BridgeIdentity, defaultStateDir } from "./bridge/identity";
+import { bridgeSigner } from "./bugs";
 import { DEFAULT_CONTROL_PATH, LanBridge, controlSocketCandidates } from "./bridge/lanBridge";
 import { RelayLink, relayUrl } from "./bridge/relayLink";
 import { browse } from "./discovery";
@@ -179,6 +180,8 @@ async function runBridge(p: Parsed, root: string): Promise<void> {
     ...(status ? { statusPath: status } : {}),
     ...(control ? { controlPath: control } : {}),
     live: { stateDir: flag(p, "state-dir") ?? defaultStateDir(), ...(livePort !== undefined ? { port: Number(livePort) } : {}) },
+    // file_bug files directly through this bridge's relay, signed as this bridge.
+    bugs: { surface: "bridge", relay, signer: bridgeSigner(identity, relay) },
   });
   if (!relay) {
     // Stay up (a service would only crash-loop) and say what's missing.
@@ -247,6 +250,10 @@ async function runRelay(p: Parsed): Promise<void> {
     dataFile: join(dataDir, "relay.json"),
     trustProxy: flag(p, "trust-proxy") === "true",
     ...(publicUrl ? { publicUrl } : {}),
+    // Direct bug filing (docs/design/agent-bug-reports.md): off unless set.
+    ...(process.env["GITHUB_ISSUES_TOKEN"]
+      ? { bugs: { GITHUB_ISSUES_TOKEN: process.env["GITHUB_ISSUES_TOKEN"], ...(process.env["GITHUB_ISSUES_REPO"] ? { GITHUB_ISSUES_REPO: process.env["GITHUB_ISSUES_REPO"] } : {}) } }
+      : {}),
     log,
   });
   const url = await host.listen();

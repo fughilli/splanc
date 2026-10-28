@@ -32,9 +32,14 @@ pub const MAX_PORTS: usize = 32;
 pub const MAX_UNIFORM_NAME: usize = 24;
 /// Packed floats per keypoint (sum of the tracked uniforms' widths).
 pub const MAX_FLOATS: usize = 64;
+/// Widest uniform a rule / record tracks (components): a `mat4`. A `matrix`
+/// uniform blends component-wise (a lerp of the 16 floats — not a rotation
+/// interpolation), clamped to its range, like a slider.
+pub const MAX_WIDTH: usize = 16;
 /// Keypoints one blend can mix (plus the live snapshot during a morph).
 pub const MAX_BLEND: usize = 4;
-/// Largest encoded record: header + every port at full name length and width 4.
+/// Largest encoded record: header + every port at full name length (the floats
+/// are bounded by MAX_FLOATS in total, whatever the widths).
 pub const RECORD_CAP: usize = 4 + 1 + MAX_NAME + 4 + 1 + MAX_PORTS * (1 + MAX_UNIFORM_NAME + 1) + MAX_FLOATS * 4;
 
 const MAGIC: &[u8; 4] = b"SKP1";
@@ -127,7 +132,7 @@ impl Rules {
         r.floats = 0;
         r.manifest_hash = fnv1a(manifest);
         for_each_uniform(manifest, |u| {
-            let width = u.width.clamp(1, 4);
+            let width = u.width.clamp(1, MAX_WIDTH as u8);
             if (r.len as usize) >= MAX_PORTS || r.floats as usize + width as usize > MAX_FLOATS {
                 return;
             }
@@ -210,6 +215,9 @@ pub struct Uniform<'a> {
     pub min: Option<f32>,
     pub max: Option<f32>,
     pub step: Option<f32>,
+    /// The manifest's `default` (first `n_default` lanes; up to a mat4's 16).
+    pub default: [f32; MAX_WIDTH],
+    pub n_default: u8,
 }
 
 /// Walk the manifest's top-level objects, handing each uniform that has a name
@@ -227,7 +235,17 @@ pub fn for_each_uniform<'a>(json: &'a [u8], mut f: impl FnMut(&Uniform<'a>)) {
         i = skip_ws(json, i);
         match json.get(i) {
             Some(b'{') => {
-                let mut u = Uniform { name: b"", slot: u16::MAX, width: 1, kind: Kind::Other, min: None, max: None, step: None };
+                let mut u = Uniform {
+                    name: b"",
+                    slot: u16::MAX,
+                    width: 1,
+                    kind: Kind::Other,
+                    min: None,
+                    max: None,
+                    step: None,
+                    default: [0.0; MAX_WIDTH],
+                    n_default: 0,
+                };
                 let Some(end) = scan_object(json, i, &mut u) else { return };
                 if !u.name.is_empty() && u.slot != u16::MAX {
                     f(&u);
@@ -393,6 +411,23 @@ fn scan_object<'a>(j: &'a [u8], i: usize, u: &mut Uniform<'a>) -> Option<usize> 
                     b"max" => {
                         u.max = parse_num(j, k);
                         k = skip_value(j, k)?;
+                    }
+                    b"default" if j.get(k) == Some(&b'[') => {
+                        let end = skip_value(j, k)?;
+                        let mut p = k + 1;
+                        while (u.n_default as usize) < MAX_WIDTH {
+                            p = skip_ws(j, p);
+                            match j.get(p) {
+                                Some(b',') => p += 1,
+                                Some(&c) if c == b'-' || c.is_ascii_digit() => {
+                                    u.default[u.n_default as usize] = parse_num(j, p).unwrap_or(0.0);
+                                    u.n_default += 1;
+                                    p = skip_value(j, p)?;
+                                }
+                                _ => break,
+                            }
+                        }
+                        k = end;
                     }
                     _ => k = skip_value(j, k)?,
                 }
@@ -933,9 +968,12 @@ pub fn for_each_value(buf: &[u8], mut f: impl FnMut(&[u8], &[f32])) -> Result<()
         let ul = *buf.get(o).ok_or(RecordError::Corrupt)? as usize;
         let uname = buf.get(o + 1..o + 1 + ul).ok_or(RecordError::Corrupt)?;
         o += 1 + ul;
-        let wd = (*buf.get(o).ok_or(RecordError::Corrupt)? as usize).min(4);
+        let wd = *buf.get(o).ok_or(RecordError::Corrupt)? as usize;
+        if wd > MAX_WIDTH {
+            return Err(RecordError::Corrupt);
+        }
         o += 1;
-        let mut v = [0.0f32; 4];
+        let mut v = [0.0f32; MAX_WIDTH];
         for (k, x) in v.iter_mut().enumerate().take(wd) {
             let b = buf.get(o + 4 * k..o + 4 * k + 4).ok_or(RecordError::Corrupt)?;
             *x = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);

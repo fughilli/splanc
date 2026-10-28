@@ -15,6 +15,7 @@ import { deviceProber } from "../../net/deviceProber";
 import { toast, type PillState } from "../kit";
 import type { FpsStateMessage } from "../../net/proto";
 import { inLoader } from "../../net/otaUpdate";
+import { pushPendingOnConnect } from "../../capture/imuCalReconnect";
 
 export interface ConnStatus {
   state: PillState;
@@ -94,10 +95,14 @@ class AppState {
     // Register as the sole owner of this device's socket so the liveness prober
     // multiplexes onto it instead of opening a parallel (slot-starving) handshake.
     connectionRegistry.register(client);
-    // FUG-82: the player parks an effect it can't render within budget and pushes
-    // fps_state{aborted}; tell the user wherever they are in the app.
+    // FUG-82: an effect too heavy for its target keeps playing, slower; the
+    // player pushes fps_state when it starts/stops lagging. Mention it once per
+    // lagging spell (not an error). Older firmware parked it instead (aborted).
+    let wasLagging = false;
     client.onFpsState((s) => {
       if (s.aborted) toast(fpsAbortMessage(s), { error: true });
+      else if (s.lagging && !wasLagging) toast(fpsLagMessage(s));
+      wasLagging = s.lagging;
     });
     client.events = {
       onConnecting: (attempt, url) =>
@@ -106,8 +111,24 @@ class AppState {
           text: attempt <= 1 ? "connecting…" : `connecting (${attempt})…`,
           error: null,
         }),
-      onConnected: () => this.setStatus({ state: "connecting", text: "syncing clock…", certUrl: null }),
-      onDisconnected: () => this.setStatus({ state: "connecting", text: "reconnecting…" }),
+      onConnected: () => {
+        this.setStatus({ state: "connecting", text: "syncing clock…", certUrl: null });
+        // A Calibrate IMU solve that never reached this device (it dropped
+        // mid-write): push it now, on every (re)connection, until confirmed.
+        void pushPendingOnConnect(client, {
+          delayMs: 1500,
+          isCurrent: () => this.client === client,
+          notify: (t) => toast(t),
+        }).catch(() => undefined);
+      },
+      onDisconnected: () => {
+        this.setStatus({ state: "connecting", text: "reconnecting…" });
+        // The client reconnects by itself (e.g. the device restarting through a
+        // firmware update), but only the initial connect() ran the post-welcome
+        // chain — without this watch the pill sat at "syncing clock…" after the
+        // reconnect, and a device back in its updater wasn't called out.
+        if (this.client === client) this.watchReconnect(dev.id);
+      },
       onServerError: (code, msg) => this.setStatus({ state: "error", text: "error", error: `server ${code}: ${msg}` }),
       // The client gave up auto-retrying because the cert isn't trusted — show
       // the trust affordance and STOP hammering; the user's "Trust & connect"
@@ -222,9 +243,12 @@ class AppState {
    * network) so the pill flips to connected without a page reload. */
   private watchReconnect(devId?: string): void {
     if (this.connTimer !== null) return;
+    // Bound to the client that is current NOW: if the user switches devices, the
+    // next client's welcome must never be folded into this device's record.
+    const owner = this.client;
     this.connTimer = window.setInterval(() => {
       const c = this.client;
-      if (c === null) {
+      if (c === null || c !== owner) {
         this.clearReconnectWatch();
         return;
       }
@@ -240,10 +264,16 @@ class AppState {
             fwVersion: w.fwVersion,
           });
         }
-        this.setStatus({ state: "connected", text: "connected", certUrl: null, error: null });
+        this.setStatus({
+          state: "connected",
+          text: inLoader(w) ? "in updater" : "connected",
+          certUrl: null,
+          error: null,
+        });
         void (async () => {
           if (devId !== undefined) await this.checkCert(c, devId).catch(() => undefined);
-          await c.syncClock().catch(() => undefined);
+          // The updater answers only the update protocol (no clock sync).
+          if (!inLoader(c.welcome)) await c.syncClock().catch(() => undefined);
         })();
       }
     }, 600);
@@ -257,9 +287,12 @@ class AppState {
 
   disconnect(): void {
     this.clearReconnectWatch();
-    if (this.client) connectionRegistry.unregister(this.client);
-    this.client?.close();
+    const old = this.client;
+    // Detach first: closing fires onDisconnected, which must not treat this
+    // deliberate close as a drop to watch for a reconnect.
     this.client = null;
+    if (old) connectionRegistry.unregister(old);
+    old?.close();
     const wasActive = deviceStore.activeId();
     deviceStore.setActive(null);
     this.setStatus({ state: "offline", text: "offline", certUrl: null, error: null });
@@ -331,11 +364,17 @@ class AppState {
   }
 }
 
-/** The user-facing notice for an autoscaler abort (FUG-82). */
+/** The gentle notice when an effect starts lagging (FUG-82): it keeps playing. */
+export function fpsLagMessage(s: FpsStateMessage): string {
+  const rate = s.achievedFps || s.currentFps;
+  const target = s.auto ? s.minFps || 25 : s.targetFps;
+  return `Effect running at ${rate ? `${rate} fps` : "a reduced rate"} (below its ${target} fps target) — it keeps playing. Simplify it for smoother motion.`;
+}
+
+/** Older firmware (before effects lagged instead) parked an effect it couldn't
+ * hold and set fps_state.aborted; current firmware never does. */
 export function fpsAbortMessage(s: FpsStateMessage): string {
-  return s.auto
-    ? `Effect stopped: this device can't render it even at ${s.minFps || 25} fps. Simplify it (fewer ops per LED) and try again.`
-    : `Effect stopped: this device can't hold the pinned ${s.targetFps} fps. Set Framerate to Auto or a lower rate, then restart it.`;
+  return `Effect stopped by the device's older firmware: it couldn't hold ${s.auto ? `${s.minFps || 25}` : `the pinned ${s.targetFps}`} fps. Update the firmware (slow effects then keep playing) or simplify the effect.`;
 }
 
 export const appState = new AppState();

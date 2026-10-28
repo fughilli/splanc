@@ -234,7 +234,7 @@ def test_serial_noise_does_not_destroy_captured_diagnostics(monkeypatch):
                 "-c",
                 "import sys;sys.stdout.buffer.write(b'noise\\xc0\\n[ble] advertising')",
             ],
-            **kw
+            **kw,
         ),
     )
     r = _mk_res()
@@ -242,3 +242,94 @@ def test_serial_noise_does_not_destroy_captured_diagnostics(monkeypatch):
     result = r.ssh("hitl-monitor", capture=True)
     assert "[ble] advertising" in result.stdout
     assert "\ufffd" in result.stdout
+
+
+# --- cordoned hosts + daemon-restart re-queue --------------------------------
+
+
+def test_pick_skips_a_cordoned_host_even_though_its_units_look_free(monkeypatch):
+    # A cordoned (draining) host reports every unit idle; it must not attract new
+    # reservations over a host that can actually activate them.
+    _set_pool(monkeypatch, "h1 h2")
+    monkeypatch.setattr(
+        hitl_client,
+        "_get",
+        _pool_get(
+            {
+                "http://h1:8087": {"cordoned": True, "units": [_unit(), _unit()]},
+                "http://h2:8087": {"units": [_unit(active="busy")]},  # busy, but live
+            }
+        ),
+    )
+    assert Reservation(require_caps=CAPS)._pick_server() == "http://h2:8087"
+
+
+def test_pick_falls_back_to_a_cordoned_host_when_it_is_the_only_match(monkeypatch):
+    _set_pool(monkeypatch, "h1 h2")
+    monkeypatch.setattr(
+        hitl_client,
+        "_get",
+        _pool_get(
+            {
+                "http://h1:8087": {"cordoned": True, "units": [_unit()]},
+                "http://h2:8087": {"units": [_unit(caps=["led-strip"])]},  # non-matching
+            }
+        ),
+    )
+    assert Reservation(require_caps=CAPS)._pick_server() == "http://h1:8087"
+
+
+def _http_404(url):
+    import io
+    import urllib.error
+
+    return urllib.error.HTTPError(url, 404, "nf", {}, io.BytesIO(b'{"error":"not found"}'))
+
+
+def test_await_active_requeues_when_the_daemon_forgets_a_queued_reservation(monkeypatch):
+    # A daemon restart (redeploy) drops its in-memory queue: the waiter's GET 404s.
+    # It must re-reserve on the same host and keep waiting, not fail the attempt.
+    monkeypatch.setattr(hitl_client.time, "sleep", lambda s: None)
+    monkeypatch.setattr(hitl_client, "_wait_port", lambda *a, **k: True)
+    state = {"res-1": ["queued", "gone"], "res-2": ["queued", "active"]}
+
+    def fake_get(url, timeout=10.0):
+        rid = url.rsplit("/", 1)[1]
+        s = state[rid].pop(0) if len(state[rid]) > 1 else state[rid][0]
+        if s == "gone":
+            raise _http_404(url)
+        if s == "active":
+            return {"state": "active", "endpoint": {"port": 2222, "user": "agent"}, "unit": "c6-a"}
+        return {"state": "queued", "position": 3}
+
+    posts = []
+
+    def fake_post(url, body=None, timeout=15.0):
+        posts.append((url, body))
+        return {"id": "res-2", "state": "queued"}
+
+    monkeypatch.setattr(hitl_client, "_get", fake_get)
+    monkeypatch.setattr(hitl_client, "_post", fake_post)
+    r = _mk_res()
+    r._reserve_body = {"owner": "o", "ssh_public_key": "k", "unit_type": "esp32c6"}
+    r._await_active(timeout=100.0)
+    assert r.id == "res-2" and r._unit == "c6-a"
+    assert posts == [("http://hitl-rig-1:8087/reserve", r._reserve_body)]
+
+
+def test_await_active_requeue_is_bounded(monkeypatch):
+    monkeypatch.setattr(hitl_client.time, "sleep", lambda s: None)
+
+    def always_404(url, timeout=10.0):
+        raise _http_404(url)
+
+    n = iter(range(100))
+    monkeypatch.setattr(hitl_client, "_get", always_404)
+    monkeypatch.setattr(hitl_client, "_post", lambda *a, **k: {"id": f"res-x{next(n)}"})
+    r = _mk_res()
+    r._reserve_body = {"owner": "o", "ssh_public_key": "k"}
+    import urllib.error
+
+    with pytest.raises(urllib.error.HTTPError):
+        r._await_active(timeout=100.0)
+    assert r.id == f"res-x{hitl_client._MAX_REQUEUES - 1}"

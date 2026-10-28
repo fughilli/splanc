@@ -22,10 +22,105 @@ import threading
 import time
 
 SAMPLE_PLAYERS = [
-    {"name": "Living room arch", "host": "splanc-arch.local", "ok": True},
-    {"name": "Porch lights", "host": "splanc-porch.local", "ok": True},
-    {"name": "Tree wrap", "host": "192.168.1.57", "ok": False},
+    {
+        "name": "Living room arch",
+        "host": "splanc-arch.local",
+        "ok": True,
+        "id": "02:00:5E:10:00:A1",
+        "fw": "1.8.2",
+        "room": "Living room",
+        "session": "live",
+        "leds": 300,
+        "leds_src": "configured",
+        "effect": "aurora-drift",
+        "perf": {
+            "fps": 42,
+            "budget_used": 0.63,
+            "overruns": 0,
+            "lagging": False,
+            "heap_free": 55500,
+            "at": 0,
+        },
+    },
+    {
+        "name": "Porch lights",
+        "host": "splanc-porch.local",
+        "ok": True,
+        "id": "02:00:5E:10:00:A2",
+        "fw": "1.8.2",
+        "session": "none",
+        "leds": 120,
+        "leds_src": "map",
+    },
+    {
+        "name": "Tree wrap",
+        "host": "192.168.1.57",
+        "ok": False,
+        "id": "02:00:5E:10:00:A3",
+        "fw": "1.7.0",
+        "session": "none",
+        "error": "no reply to two heartbeat pings after 31 s of silence",
+    },
 ]
+
+# Relative times in the samples (seconds before ``now``).
+_SEEN_AGO = {"Living room arch": 2, "Porch lights": 12, "Tree wrap": 340}
+
+
+def _players(now: float) -> list:
+    out = []
+    for p in SAMPLE_PLAYERS:
+        p = dict(p, seen=int(now) - _SEEN_AGO[p["name"]])
+        if "perf" in p:
+            p["perf"] = dict(p["perf"], at=int(now) - 8)
+        out.append(p)
+    return out
+
+
+def many_players(now: float, n: int = 9) -> list:
+    """``n`` made-up fixtures (documentation-range addresses) for list screens."""
+    names = [
+        "Kitchen strip",
+        "Desk halo",
+        "Stair rail",
+        "Window grid",
+        "Hall cove",
+        "Bookshelf",
+        "Bar back",
+        "Garden path",
+        "Ceiling ring",
+        "Studio wall",
+    ]
+    out = []
+    for i in range(n):
+        down = i % 4 == 3
+        out.append(
+            {
+                "name": names[i % len(names)]
+                + (f" {i // len(names) + 1}" if i >= len(names) else ""),
+                "host": f"192.0.2.{20 + i}",
+                "ok": not down,
+                "id": f"02:00:5E:20:00:{i:02X}",
+                "fw": "1.8.2",
+                "session": "none" if down else "live",
+                "seen": int(now) - (400 if down else 3),
+                **(
+                    {"error": "not answering"}
+                    if down
+                    else {
+                        "perf": {
+                            "fps": 60 - 4 * i,
+                            "budget_used": 0.3 + 0.05 * i,
+                            "overruns": 0,
+                            "lagging": False,
+                            "heap_free": 60000,
+                            "at": int(now) - 5,
+                        }
+                    }
+                ),
+            }
+        )
+    return out
 
 
 def sample(state: str, now: float, code: str = "K7QX-M2PD", **over) -> dict:
@@ -43,7 +138,7 @@ def sample(state: str, now: float, code: str = "K7QX-M2PD", **over) -> dict:
         "updated_at": int(now),
     }
     if state in ("unpaired", "pairing", "paired", "offline"):
-        doc["players"] = SAMPLE_PLAYERS
+        doc["players"] = _players(now)
     if state == "pairing":
         doc["pairing"] = {
             "code": code,

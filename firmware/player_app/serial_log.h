@@ -47,23 +47,33 @@ class RingLog : public Print {
     return size;
   }
 
-  // Drain-task body: copy a chunk out under the lock, then blocking-write it to
-  // Serial with NO lock held (so a stalled/disconnected serial never blocks a
-  // logging task). Sleeps briefly when the ring is empty.
+  // Drain-task body: copy a chunk out under the lock, then write it to Serial with
+  // NO lock held (so a stalled/disconnected serial never blocks a logging task).
+  // Sleeps briefly when the ring is empty.
+  //
+  // A SHORT write is kept and retried, never discarded. The netstack build sets the
+  // console's TX timeout to 0 (netstack_setup), so Serial.write returns short whenever
+  // the HWCDC TX ring is momentarily full (a boot burst the host hasn't read yet) or
+  // another task holds the console's tx lock (a direct Serial.printf) — dropping the
+  // remainder lost whole boot lines and spliced others mid-line (the stable_identity
+  // gate's `MAC ... (factory)` line, #353 CI). Retrying only delays THIS low-priority
+  // task; a reader that never comes just leaves the ring overwriting its oldest bytes.
   void drain_once() {
-    uint8_t chunk[256];
-    size_t n = 0;
-    xSemaphoreTake(mux_, portMAX_DELAY);
-    while (n < sizeof(chunk) && tail_ != head_) {
-      chunk[n++] = buf_[tail_];
-      tail_ = (tail_ + 1) & kMask;
+    if (pend_off_ >= pend_n_) {
+      pend_n_ = pend_off_ = 0;
+      xSemaphoreTake(mux_, portMAX_DELAY);
+      while (pend_n_ < sizeof(pend_) && tail_ != head_) {
+        pend_[pend_n_++] = buf_[tail_];
+        tail_ = (tail_ + 1) & kMask;
+      }
+      xSemaphoreGive(mux_);
+      if (pend_n_ == 0) {
+        vTaskDelay(pdMS_TO_TICKS(5));
+        return;
+      }
     }
-    xSemaphoreGive(mux_);
-    if (n > 0) {
-      Serial.write(chunk, n);
-    } else {
-      vTaskDelay(pdMS_TO_TICKS(5));
-    }
+    pend_off_ += Serial.write(pend_ + pend_off_, pend_n_ - pend_off_);
+    if (pend_off_ < pend_n_) vTaskDelay(pdMS_TO_TICKS(2));  // console busy/full: retry
   }
 
  private:
@@ -83,6 +93,11 @@ class RingLog : public Print {
   }
 
   uint8_t buf_[kCap];
+  // The chunk the drain task took out of the ring but Serial hasn't accepted yet
+  // (drain task only, so no lock).
+  uint8_t pend_[256];
+  size_t pend_n_ = 0;
+  size_t pend_off_ = 0;
   volatile size_t head_ = 0;  // producer index
   volatile size_t tail_ = 0;  // consumer index
   SemaphoreHandle_t mux_;
@@ -102,13 +117,27 @@ inline void log_drain_task(void *) {
 // Serial.begin). Priority sits BELOW the render (10) and transmit (11) tasks and
 // the Arduino loop (1) so draining never delays LED output; it runs in the idle
 // gaps, which is ample for the byte rates we log.
-// Static stack + TCB (never the shared heap). Static worst-case bound ~0.7 KB
-// (stack_bound_test); measured ~0.6 KB.
+// Static stack + TCB (never the shared heap). Static worst-case bound ~0.4 KB
+// (stack_bound_test; the gate needs 0.8 KB) but the drain's Serial write is a virtual
+// call the bound can't follow, and the measured high-water is ~0.6 KB: 1.5 KB.
+inline bool &log_drain_running() {
+  static bool running = false;
+  return running;
+}
 inline void log_drain_start() {
-  static StackType_t stack[2048 / sizeof(StackType_t)];
+  static StackType_t stack[1536 / sizeof(StackType_t)];
   static StaticTask_t tcb;
   xTaskCreateStatic(log_drain_task, "logdrain", sizeof stack, nullptr, tskIDLE_PRIORITY + 1,
                     stack, &tcb);
+  log_drain_running() = true;
+}
+
+// The console for code shared with a binary that may not run the drain task (the OTA
+// loader links netstack_transport.cpp but never calls log_drain_start): the ordered,
+// lossless Log() ring when the drain runs, else the raw Serial console.
+inline Print &Console() {
+  if (log_drain_running()) return Log();
+  return Serial;
 }
 
 #endif  // FIRMWARE_PLAYER_APP_SERIAL_LOG_H_

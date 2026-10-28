@@ -116,6 +116,30 @@ test("walkEntry sub-keys UnMath/BinMath by fn id", () => {
   assert.equal(w.max["BinMath"], undefined);
 });
 
+test("walkEntry prices the R8 fused ops as the plain ops they replace", () => {
+  // shade: BinPair mul(local 0, c1) ; BinTop addi(state 2) ; PushConsts c0 c1 c2 ;
+  //        LoadCtxLanes led.uv src=2 [0..+1] ; MulAdd 1 ; Ret 3
+  const code = [
+    CODE["BinPair"]!, 0x02 | (1 << 2), 0, 0, 1, 0,
+    CODE["BinTop"]!, 0x40 | (2 << 2), 2, 0,
+    CODE["PushConsts"]!, 3, 0, 0, 1, 0, 2, 0,
+    CODE["LoadCtxLanes"]!, 13, 2, 0, 1,
+    CODE["MulAdd"]!, 1,
+    CODE["Ret"]!, 3,
+  ];
+  const w = walkEntry(parseFxb(fxb(code, 0xffff, 0)).code, 0);
+  assert.equal(w.max["LoadLocal"], 1);
+  assert.equal(w.max["PushConst"], 1 + 3);
+  assert.equal(w.max["Mul"], 1 + 1);
+  assert.equal(w.max["LoadState"], 1);
+  assert.equal(w.max["AddI"], 1);
+  assert.equal(w.max["LoadCtx"], 1);
+  assert.equal(w.max["Swizzle"], 1);
+  assert.equal(w.max["Add"], 1);
+  // the fused names themselves are not features (fitted tables price parts).
+  for (const n of ["BinTop", "BinPair", "PushConsts", "LoadCtxLanes", "MulAdd"]) assert.equal(w.max[n], undefined);
+});
+
 test("mathFeature maps fn ids to sub-keys and other opcodes to themselves", () => {
   assert.equal(mathFeature("UnMath", 0), "UnMath:sin");
   assert.equal(mathFeature("UnMath", 6), "UnMath:sqrt");
@@ -179,3 +203,67 @@ test("confidenceOf colorizes by fit likelihood", () => {
 });
 
 void ({} as CostTable);
+
+// -- R12 (docs/design/fx-perf-study.md, Q3): user functions, guards, branch odds,
+// texture + fixed-context costs ------------------------------------------------
+
+const rel = (v: number): [number, number] => [v & 0xff, (v >> 8) & 0xff];
+
+test("a user-function call is priced at its call site (the callee's body runs per LED)", () => {
+  // 0: Call -> 8 ; 3: Ret 1 ... 8: UnMath sin ×3 ; RetFn
+  const callee = [CODE["UnMath"]!, 0, 1, CODE["UnMath"]!, 0, 1, CODE["UnMath"]!, 0, 1, CODE["RetFn"]!];
+  const code = [CODE["PushConst"]!, 0, 0, CODE["Call"]!, ...rel(8), CODE["Ret"]!, 1, ...callee];
+  const w = walkEntry(parseFxb(fxb(code, 0xffff, 0)).code, 0);
+  assert.equal(w.max["UnMath:sin"], 3, "the callee's three sines count");
+  assert.equal(w.opsMax, 3 + callee.length - 6, "and their dispatch (PushConst, Call, Ret + 4 callee ops)");
+});
+
+test("an early-return guard (`if (led.seg < 0) return black`) prices the continuation", () => {
+  // LoadCtx seg ; BrFalse -> body (skips the arm) ; arm: 3× PushConst + Ret 3 ; body: sin(led.pos) ; Ret
+  const arm = [CODE["PushConst"]!, 0, 0, CODE["PushConst"]!, 0, 0, CODE["PushConst"]!, 0, 0, CODE["Ret"]!, 3];
+  const body = [CODE["LoadCtx"]!, 3, CODE["UnMath"]!, 0, 3, CODE["Ret"]!, 3];
+  const code = [CODE["LoadCtx"]!, 6, CODE["BrFalse"]!, ...rel(arm.length), ...arm, ...body];
+  const e = estimateFrameTime({ bytecode: fxb(code, 0xffff, 0), ledCount: 100, table: defaultCostTable() });
+  const plain = estimateFrameTime({
+    bytecode: fxb([CODE["LoadCtx"]!, 6, CODE["Pop"]!, 1, ...body], 0xffff, 0),
+    ledCount: 100,
+    table: defaultCostTable(),
+  });
+  // The guarded effect costs what the full effect costs (± the compare), not half.
+  assert.ok(Math.abs(e.phaseSplit.shadeMs / plain.phaseSplit.shadeMs - 1) < 0.05, `${e.phaseSplit.shadeMs} vs ${plain.phaseSplit.shadeMs}`);
+});
+
+test("an equality-guarded arm (`if (i % 16 == slot)`) is weighted as rare in the point estimate", () => {
+  // LoadCtx idx ; PushConst ; CmpI eq ; BrFalse -> skip an expensive arm (pow ×4)
+  const powArm = Array.from({ length: 4 }, () => [CODE["LoadCtx"]!, 7, CODE["LoadCtx"]!, 7, CODE["BinMath"]!, 2, 1, CODE["Pop"]!, 1]).flat();
+  const mk = (kind: number): Uint8Array =>
+    fxb(
+      [CODE["LoadCtx"]!, 4, CODE["PushConst"]!, 0, 0, CODE["CmpI"]!, kind, CODE["BrFalse"]!, ...rel(powArm.length), ...powArm, CODE["PushConst"]!, 0, 0, CODE["Ret"]!, 1],
+      0xffff,
+      0,
+    );
+  const t = defaultCostTable();
+  const eq = estimateFrameTime({ bytecode: mk(4), ledCount: 100, table: t });
+  const lt = estimateFrameTime({ bytecode: mk(0), ledCount: 100, table: t });
+  // Same band (min/max are probability-free), different point estimates.
+  assert.equal(eq.errorBand.highMs, lt.errorBand.highMs);
+  assert.ok(eq.totalMs < lt.totalMs, `${eq.totalMs} < ${lt.totalMs}`);
+  // `<` keeps the 50/50 midpoint of the band (before the residual widening:
+  // 15% + 5% for control flow).
+  const mid = (lt.errorBand.lowMs / (1 - 0.2) + lt.errorBand.highMs / (1 + 0.2)) / 2;
+  assert.ok(Math.abs(lt.totalMs / mid - 1) < 0.01, `${lt.totalMs} vs ${mid}`);
+});
+
+test("texture samples and fixed-context reads carry their measured costs", () => {
+  const t = defaultCostTable();
+  assert.ok(costFor(t.costs, "SampleTex", 0) >= 3000, "a bilinear float sample is ~4k cycles, not a cheap op");
+  // FLAG_USES_CTXFIX (0x02): the per-LED Q16 mirrors.
+  const code = [CODE["LoadCtxFix"]!, 7, 0, 16, CODE["Ret"]!, 1];
+  const a = fxb(code, 0xffff, 0);
+  const b = fxb(code, 0xffff, 0);
+  b[5] = 0x02;
+  const ea = estimateFrameTime({ bytecode: a, ledCount: 100, table: t });
+  const eb = estimateFrameTime({ bytecode: b, ledCount: 100, table: t });
+  const perLed = ((eb.phaseSplit.shadeMs - ea.phaseSplit.shadeMs) / 1000) * t.cpuHz / 100;
+  assert.ok(Math.abs(perLed - costFor(t.costs, "@ctxfix", 0)) < 1, String(perLed));
+});

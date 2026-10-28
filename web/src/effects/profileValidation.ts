@@ -27,6 +27,8 @@ export interface HeldoutSample {
   ledCount: number;
   /** Measured total frame time on real hardware, ms. */
   measuredMs: number;
+  /** Uniform values the program ran with (absent = unknown). */
+  uniforms?: ArrayLike<number>;
 }
 
 /** Per-sample predicted-vs-measured result. */
@@ -68,7 +70,12 @@ export function validateCostModel(
   tolerance = 0.15,
 ): ValidationResult {
   const results: SampleResult[] = samples.map((s) => {
-    const est = estimateFrameTime({ bytecode: s.bytecode, ledCount: s.ledCount, table });
+    const est = estimateFrameTime({
+      bytecode: s.bytecode,
+      ledCount: s.ledCount,
+      table,
+      ...(s.uniforms !== undefined ? { uniforms: s.uniforms } : {}),
+    });
     const predictedMs = est.totalMs;
     const relError = s.measuredMs > 0 ? (predictedMs - s.measuredMs) / s.measuredMs : 0;
     return {

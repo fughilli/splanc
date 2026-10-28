@@ -25,10 +25,13 @@ import { EffectLibrary, LIBRARY_INSTRUCTIONS, deployNoteText, slugEffectId } fro
 import { deployPerf, deploySucceeded } from "../relay/src/mcpLibrary";
 import { estimateAcrossDevices } from "../../web/src/effects/multiDevice";
 import { exportFileName, mapToCsv, mapToLxf } from "../../web/src/geom/mapExport";
+import { findingsToLines, perfFindings } from "../../web/src/effects/perfFindings";
 import { defaultCostTable } from "../../web/src/store/costTableStore";
+import { warningKind } from "../../web/src/fx/preview";
 import type { Pose } from "./config";
-import { renderPng, preview, type CompileOutcome } from "./fxhost";
+import { lintWarnings, renderPng, preview, type CompileOutcome } from "./fxhost";
 import { Hub, shape, type PlayerResult, type Selector } from "./hub";
+import { localBugOptions, registerFileBug, type BugFilingOptions } from "./bugs";
 import { DEPLOY_LIBRARY_SHAPE, registerLibraryTools } from "./libraryLocal";
 import { progress, withProgress, type ProgressSink } from "./progress";
 import { IDENTITY, bbox, normQuat, placeFixtures, summarizeRoom, yaw, type Quat, type Vec3 } from "./room";
@@ -37,6 +40,7 @@ import { buildScene, renderScene, type ColorBy, type SceneFixture } from "./fixt
 import type { RGB } from "./plot";
 import type { UniformInput } from "./uniforms";
 import { canaryRollout, resolvePackage } from "./firmware";
+import { registerFxDebugTools } from "./fxdebug";
 import type { TrustVerdict } from "./trust";
 
 export const VERSION = "0.2.0";
@@ -56,7 +60,14 @@ async function guard<T>(fn: () => Promise<T>) {
   }
 }
 
-const uniformValue = z.union([z.number(), z.boolean(), z.string(), z.array(z.number())]);
+const uniformValue = z
+  .union([z.number(), z.boolean(), z.string(), z.array(z.number()).max(16)])
+  .describe(
+    "A number (scalar; for a vector, every component; for a matrix, that value on the diagonal), a boolean " +
+      "(toggle), a string (dropdown option), or an array of the uniform's `width` numbers: vec2/3/4 = 2/3/4, " +
+      "mat3 = 9 and mat4 = 16 numbers in COLUMN-MAJOR order (GLSL: [col0.x, col0.y, col0.z, col0.w, col1.x, ...]). " +
+      "Ranges may be negative and per component (list_uniforms: min/max, mins/maxs).",
+  );
 const players = z
   .union([z.string(), z.array(z.string())])
   .optional()
@@ -130,6 +141,15 @@ export interface ServerOptions {
    * own (stdio/CLI: libraryLocal.ts). None behind the cloud relay, which holds the
    * library and serves its tools itself. */
   library?: EffectLibrary | null;
+  /** How file_bug files directly (bugs.ts). Default: localBugOptions() (stdio/CLI:
+   * the default relay, signed as this host's bridge if it runs one). */
+  bugs?: BugFilingOptions;
+}
+
+/** Compile warnings tagged with their kind ("correctness": fix these; "perf":
+ * it runs, but slower than it should). */
+function withKinds<W extends { msg: string }>(ws: readonly W[]): (W & { kind: "correctness" | "perf" })[] {
+  return ws.map((w) => ({ ...w, kind: warningKind(w) }));
 }
 
 export function createServer(target: DeviceSession | Hub, opts: ServerOptions = {}): McpServer {
@@ -145,6 +165,7 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
   withCallProgress(server, opts.echo);
   withAnnotations(server);
   if (library) registerLibraryTools(server, library);
+  registerFileBug(server, hub, opts.root ?? "", opts.bugs ?? localBugOptions());
   const json = (uri: URL, obj: unknown) => ({
     contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(obj, null, 2) }],
   });
@@ -321,7 +342,9 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     {
       description:
         "A fixture's LED map as a file for other show software: format csv (default) = TouchDesigner Points DAT " +
-        "(index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength; metres, +y up; load in a " +
+        "(index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength,segment_arclength; metres, " +
+        "+y up; arclength = distance along the strip from the channel's first LED, segment_arclength = along the " +
+        "topology segment; load in a " +
         "Table DAT -> DAT to SOP), or lxf = a Chromatik/LX Studio fixture. One row/point per LED in output order; " +
         "unmapped LEDs are interpolated with mapped=0. up=z rewrites the CSV to +z up. Returns filename + content.",
       inputSchema: { format: z.enum(["csv", "lxf"]).optional(), up: z.enum(["y", "z"]).optional(), players },
@@ -441,7 +464,10 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
   server.registerTool(
     "list_uniforms",
     {
-      description: "The active effect's uniforms: names, widths, UI hints, ranges, defaults, current values.",
+      description:
+        "The active effect's uniforms: names, widths, UI hints, ranges, defaults, current values. A ranged vector " +
+        "(ui slider, width > 1) has a range per component (mins/maxs when they differ; bounds may be negative). " +
+        "A matrix (ui kind matrix, rows/cols 3 or 4) is width 9/16, values column-major.",
       inputSchema: { players },
     },
     ({ players: sel }) => guard(async () => ok(await fan(sel, (s) => s.listUniforms()))),
@@ -451,7 +477,8 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     {
       description:
         "Set uniforms on the active effect by NAME (on every selected player). Values are checked against each " +
-        "uniform's width and range. commit=true persists them across reboots (use sparingly: flash wear).",
+        "uniform's width and (per-component, possibly negative) range; a mat4 is 16 numbers, column-major. " +
+        "commit=true persists them across reboots (use sparingly: flash wear).",
       inputSchema: { values: z.record(z.string(), uniformValue), commit: z.boolean().optional(), players },
     },
     ({ values, commit, players: sel }) =>
@@ -463,7 +490,9 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
       description:
         "Glide uniforms to targets over `seconds` on every selected player at once (the hub interpolates at its " +
         "stream rate, uncommitted, then commits the final values once). The way to change a mood smoothly: e.g. " +
-        "{rain: 0.8} over 20 s. Returns when the ramp is done.",
+        "{rain: 0.8} over 20 s. Returns when the ramp is done. Vectors and matrices are interpolated " +
+        "component-wise (a matrix ramp is element-wise, NOT a rotation interpolation: halfway between two " +
+        "rotations is not a rotation; ramp angles in the effect instead if that matters).",
       inputSchema: { targets: z.record(z.string(), uniformValue), seconds: z.number().min(0).max(600), players },
     },
     ({ targets, seconds, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.rampUniforms(targets, seconds)))),
@@ -524,7 +553,8 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
       description:
         "Blend up to 4 saved keypoints by weight (normalised) — a position between known-good looks, computed on " +
         "the device per uniform: numbers interpolate, colours blend in RGB or HSV (shortest hue), toggles and " +
-        "dropdowns take the heaviest keypoint's value. `seconds` morphs there from the current look.",
+        "dropdowns take the heaviest keypoint's value; vectors and matrices blend component-wise (for a matrix " +
+        "that is NOT a rotation interpolation). `seconds` morphs there from the current look.",
       inputSchema: {
         weights: z.record(z.string(), z.number().min(0)),
         seconds: z.number().min(0).max(600).optional(),
@@ -594,6 +624,75 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     ({ action, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.calibrateSensors(action)))),
   );
 
+  // -- Wi-Fi rejoin policy (docs/design/wifi-rejoin-policy.md) ------------------------------
+  server.registerTool(
+    "get_wifi_policy",
+    {
+      description:
+        "Read the player's Wi-Fi rejoin policy and link state: mode (auto / fixed / manual / offline), its " +
+        "timings, whether it is joined / searching (next scan, how long the network has been unseen), and " +
+        "ota_pending (a firmware update installed but not yet confirmed).",
+      inputSchema: { players },
+    },
+    ({ players: sel }) => guard(async () => ok(await fan(sel, (s) => s.getWifiPolicy()))),
+  );
+  server.registerTool(
+    "set_wifi_policy",
+    {
+      description:
+        "Change how the player rejoins its Wi-Fi network; unset fields keep their value. auto: rescans 5 s " +
+        "doubling to scan_cap_s and holding there; opt-in: slow to sparse_interval_s after decay_after_h hours unseen " +
+        "(0 = off, the default; set it only when the user asks to save airtime/power on a long-absent network). " +
+        "fixed: a rescan every interval_s. manual: never joins on its own (rejoin_now opens a ~2 min join " +
+        "window). offline: for a forward-deployed unit with no AP — the Wi-Fi radio goes silent now and stays " +
+        "off after reboots; Wi-Fi credentials are KEPT, so switching back to auto rejoins. Reconfiguring an " +
+        "offline unit needs Bluetooth (the Splanc app) or the wired console — this bridge loses it. Before " +
+        "manual/offline: get_wifi_policy and make sure ota_pending is false (confirm any pending firmware " +
+        "update first, while the player is online); the player refuses otherwise (refused: ota_pending). Only " +
+        "pass force=true when the user explicitly asks to go anyway. Confirm with the user before offline.",
+      inputSchema: {
+        mode: z.enum(["auto", "fixed", "manual", "offline"]).optional(),
+        scan_cap_s: z.number().int().min(10).max(86400).optional().describe("auto: backoff cap (default 60)"),
+        interval_s: z.number().int().min(10).max(86400).optional().describe("fixed: rescan period (default 300)"),
+        decay_after_h: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe("auto, opt-in: hours unseen before slowing down (0 = off, the default; e.g. 24)"),
+        sparse_interval_s: z
+          .number()
+          .int()
+          .min(60)
+          .max(86400)
+          .optional()
+          .describe("auto: the slowed rescan period (default 900)"),
+        rejoin_now: z.boolean().optional().describe("try to (re)join now (manual: opens a join window)"),
+        force: z
+          .boolean()
+          .optional()
+          .describe("override the unconfirmed-update refusal for manual/offline; only on the user's explicit say-so"),
+        players,
+      },
+    },
+    ({ mode, scan_cap_s, interval_s, decay_after_h, sparse_interval_s, rejoin_now, force, players: sel }) =>
+      guard(async () =>
+        ok(
+          await fan(sel, (s) =>
+            s.setWifiPolicy({
+              mode,
+              scanCapS: scan_cap_s,
+              intervalS: interval_s,
+              decayAfterH: decay_after_h,
+              sparseIntervalS: sparse_interval_s,
+              rejoinNow: rejoin_now === true,
+              force: force === true,
+            }),
+          ),
+        ),
+      ),
+  );
+
   // -- sensor drivers (FUG-107) -----------------------------------------------------------
   server.registerTool(
     "scan_i2c",
@@ -642,13 +741,25 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     ({ players: sel }) => guard(async () => ok(await fan(sel, (s) => s.removeDriver()))),
   );
 
+  /** The source's lints as a tool-result note ("" when clean): deploy_effect
+   * reports them too, for an agent that skipped compile_effect. */
+  async function lintNote(source: string): Promise<string> {
+    const ws = await lintWarnings(source).catch(() => []);
+    if (ws.length === 0) return "";
+    return `Warnings (fix them and deploy again):\n${ws.map((w) => `${w.line}:${w.col}: ${w.msg}`).join("\n")}`;
+  }
+
   // -- effect authoring -------------------------------------------------------------------
   server.registerTool(
     "compile_effect",
     {
       description:
         "Compile effect source with the compiler matching each selected player's firmware (one compile per distinct " +
-        "firmware). Returns diagnostics, the uniform manifest and the bytecode size. Touches nothing on the device.",
+        "firmware). Returns diagnostics, warnings, the uniform manifest and the bytecode size. Each warning has a " +
+        "kind. kind \"correctness\": fix these, e.g. a rate uniform multiplying `time` inside a phase makes the " +
+        "effect jump when the slider moves (integrate it in update()). kind \"perf\" (msg \"warning: perf: …\"): " +
+        "it runs, but slower than it should (e.g. a float literal in fixed maths) — fix them too. Touches nothing " +
+        "on the device.",
       inputSchema: { source: z.string(), effect_id: z.string().optional(), players },
     },
     ({ source, effect_id, players: sel }) =>
@@ -658,6 +769,10 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
           return {
             ok: c.ok,
             diagnostics: c.diagnostics,
+            // Lints are source-level: a player whose (older) compiler can't lint
+            // gets this bundle's. Fix them like errors (see effect-language.md);
+            // perf warnings ("warning: perf: …") run, but slower than they should.
+            warnings: c.ok ? withKinds(c.warnings ?? (await lintWarnings(source))) : [],
             uniforms: c.uniforms,
             bytecode_bytes: c.bytecodeBytes,
             textures: c.textures,
@@ -673,9 +788,11 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     {
       description:
         "OFFLINE frame-cost estimate (the cost model; instant, touches nothing on the device) of effect source on " +
-        "each selected player: estimated frame ms and fraction of the frame budget at that player's LED count, plus " +
-        "the hottest opcodes. Iterate with this, then confirm with deploy_effect + measure_effect (the real numbers; " +
-        "the estimate models the interpreter and is uncalibrated).",
+        "each selected player: estimated frame ms and fraction of the frame budget at that player's LED count, the " +
+        "hottest opcodes, and `findings`: the top cost findings — what to change and about how many cycles per LED " +
+        "each saves (apply them first). Iterate with this, then confirm with deploy_effect + measure_effect (the " +
+        "real numbers; the model is fitted to the C6 interpreter but can read low on branchy, buffer or texture " +
+        "effects).",
       inputSchema: { source: z.string(), players },
     },
     ({ source, players: sel }) =>
@@ -691,13 +808,16 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
           const d = estimateAcrossDevices(c.fxb, [
             { key: p.id, label: p.name, table: defaultCostTable(), ledCount: leds, calibrated: false },
           ]).devices[0]!;
+          const findings = costFindings(c, source, leds);
           return {
             leds,
             estimate_ms: +d.estimate.totalMs.toFixed(2),
             band_ms: [+d.estimate.errorBand.lowMs.toFixed(2), +d.estimate.errorBand.highMs.toFixed(2)],
             budget_used: Number.isFinite(d.budget.fraction) ? +d.budget.fraction.toFixed(2) : null,
             hot_opcodes: d.estimate.hotOpcodes.slice(0, 6).map((h) => `${h.op} ${Math.round(h.fraction * 100)}%`),
-            model: "uncalibrated default (wide error)",
+            ...(findings.length ? { findings } : {}),
+            ...(c.warnings?.length ? { warnings: c.warnings.map((w) => `line ${w.line}: ${w.msg}`) } : {}),
+            model: "C6 default table, fitted on the HITL bench (±15%; reads low on branchy/buffer/texture effects)",
           };
         });
         return ok(shape(out, sel !== undefined));
@@ -779,7 +899,11 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
         if (!source) throw new ToolError("pass `source` (or `library_id`, a library entry from search_effects)");
         effect_id ??= slugEffectId(args.name ?? "", "effect");
         const out = await deploy(effect_id, source, args.activate, args.force, args.players);
-        if (!library || !deploySucceeded(out)) return out;
+        // Lints ride last (after the library note), for an agent that skipped compile_effect.
+        const lint = await lintNote(source);
+        const withLint = <T extends { content: unknown[] }>(r: T): T =>
+          lint ? { ...r, content: [...r.content, { type: "text" as const, text: lint }] } : r;
+        if (!library || !deploySucceeded(out)) return withLint(out);
         const note = await library.noteDeploy({
           source,
           library_id: args.library_id,
@@ -789,7 +913,7 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
           tags: args.tags,
           perf: deployPerf(out),
         });
-        return { ...out, content: [...out.content, { type: "text" as const, text: deployNoteText(note) }] };
+        return withLint({ ...out, content: [...out.content, { type: "text" as const, text: deployNoteText(note) }] });
       }),
   );
   const deploy = (
@@ -831,14 +955,16 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
               leds: b.result!.leds,
               estimate_ms: +b.result!.est.estimate.totalMs.toFixed(2),
               budget_used: Number.isFinite(b.result!.est.budget.fraction) ? +b.result!.est.budget.fraction.toFixed(2) : null,
-              model: "uncalibrated default (wide error; measure_effect after deploying)",
+              model: "C6 default table (±15%; measure_effect after deploying)",
             },
           ]),
         );
         if (over.length && !force) {
+          const b = over[0]!.result!;
           throw new ToolError(
             `nothing deployed: the effect would overrun the frame budget on ${over.map((b) => b.player.name).join(", ")} ` +
-              `(${JSON.stringify(estimates)}). Simplify it, or pass force=true to deploy anyway.`,
+              `(${JSON.stringify(estimates)}). Simplify it, or pass force=true to deploy anyway.` +
+              findingsText(costFindings(b.c, source, b.leds)),
           );
         }
         const compiled = new Map(builds.map((b) => [b.player.id, b.result!.c]));
@@ -929,8 +1055,10 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     {
       description:
         "Measure the running effect for `seconds` on every selected player: frame cycles vs the frame budget, " +
-        "overruns, heap, and the framerate the player autoscaled it to (current_fps, 25..80). Over budget = the " +
-        "player parked it (aborted) or it can't hold 25 fps: roll back and simplify (rollback_on_overrun does it).",
+        "overruns, heap, and the framerate the player autoscaled it to (current_fps, 25..80). Over budget = it " +
+        "can't hold 25 fps (or a pinned rate) and lags: it keeps playing at the rate it achieves (lagging, " +
+        "achieved_fps; the player never stops it). Simplify it if smoothness matters; rollback_on_overrun rolls " +
+        "back an over-budget effect automatically.",
       inputSchema: { seconds: z.number().min(1).max(60), rollback_on_overrun: z.boolean().optional(), players },
     },
     ({ seconds, rollback_on_overrun, players: sel }) =>
@@ -939,12 +1067,7 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
           await fan(sel, async (s) => {
             const m = await s.measureEffect(seconds);
             if (rollback_on_overrun && String(m["verdict"] ?? "").startsWith("over budget")) {
-              // A player that already parked the effect (FUG-82 abort) with nothing
-              // earlier to restore: leave it parked rather than clearing it.
-              m["rollback"] =
-                m["aborted"] && !s.canRestorePrevious
-                  ? { restored: null, note: "the player already parked it; no earlier effect was deployed by this bridge" }
-                  : await s.rollback();
+              m["rollback"] = await s.rollback();
             }
             return m;
           }).then(async (r) => {
@@ -954,6 +1077,9 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
         ),
       ),
   );
+
+  // -- FX debugger (pause / step / snapshot / compare with the preview) ------------------
+  registerFxDebugTools(server, fan, knownSources);
 
   // -- fixture review -------------------------------------------------------------------
   server.registerTool(
@@ -1236,6 +1362,22 @@ async function previewRoom(
 
 // -- crossfade -----------------------------------------------------------------------------
 
+/** The top cost findings (what to change, cycles/LED saved) for a compiled
+ * effect at a player's LED count — estimate_effect's `findings` and the
+ * over-budget refusals. */
+function costFindings(c: CompileOutcome, source: string, leds: number): string[] {
+  const table = defaultCostTable();
+  try {
+    return findingsToLines(perfFindings(c.fxb, { table, source, warnings: c.warnings }), leds, table.cpuHz);
+  } catch {
+    return []; // an analysis bug must never break an estimate or a deploy
+  }
+}
+
+function findingsText(fs: string[]): string {
+  return fs.length ? `\nBiggest savings:\n${fs.map((f) => `- ${f}`).join("\n")}` : "";
+}
+
 interface CrossfadeArgs {
   effect_id: string;
   source?: string | undefined;
@@ -1299,7 +1441,8 @@ async function crossfadeTo(hub: Hub, a: CrossfadeArgs): Promise<unknown> {
     if (over.length && !a.force) {
       throw new ToolError(
         `nothing changed: the effect would overrun the frame budget on ${over.map((b) => b.player.name).join(", ")} ` +
-          `(${JSON.stringify(estimates)}). Simplify it, or pass force=true.`,
+          `(${JSON.stringify(estimates)}). Simplify it, or pass force=true.` +
+          findingsText(costFindings(over[0]!.result!.c, source, over[0]!.result!.leds)),
       );
     }
     compiled = new Map(builds.map((b) => [b.player.id, b.result!.c]));

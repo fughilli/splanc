@@ -33,6 +33,7 @@ import {
   type DriverDecodeStats,
   driverActive,
   registerDriverCapture,
+  driverFixtureScene,
   setDriverCaptureError,
 } from "../../driver/guard";
 import { phaseCount as stridePhaseCount } from "../../code/stride";
@@ -74,7 +75,9 @@ import { recenterToCentroid } from "../../geom/mapTransform";
 import { concatObservations, fuseMaps } from "../../geom/fuseMaps";
 import { liveUnion } from "../../geom/liveUnion";
 import { appState } from "../app/state";
-import { ImuCalSession } from "../../capture/imuCalSession";
+import { ImuCalFlow, POSES_REQUIRED, describeSolve, type FlowStatus } from "../../capture/imuCalSession";
+import type { ExtrinsicSolve } from "../../geom/imuExtrinsic";
+import { deviceKeyOf, imuCalPending, writeAndVerify, type PendingImuCal } from "../../capture/imuCalWriteback";
 import {
   applyProfile,
   buildProfile,
@@ -223,9 +226,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   // observations are loaded at mount.
   const supplementId = routeQuery?.get("supplement") ?? null;
   // "Calibrate IMU" (sensor-core.md §7.3): re-localise against this map with the
-  // code playing and collect still poses — no solve, nothing saved to the map.
+  // code playing and take three still poses hands-free — no map solve; the IMU
+  // extrinsic is solved, written to the device and recorded on the map.
   const calibrateId = supplementId === null ? (routeQuery?.get("calibrate") ?? null) : null;
-  let calSession: ImuCalSession | null = null;
+  let calFlow: ImuCalFlow | null = null;
   let priorMap: OutputMap | null = null;
   // The stored map's capture profile, when this run re-captures a mapped
   // fixture (supplement / IMU re-localisation): reused instead of re-asking or
@@ -390,16 +394,30 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   const calPanel = document.createElement("div");
   calPanel.className = "capture-review";
   calPanel.style.display = "none";
+  // Hands-free: a pose is taken when the map registers and everything holds
+  // still; there is no capture or accept button (sensor-core.md §7.3).
+  const calSteps = document.createElement("div");
+  calSteps.className = "capture-cal-steps";
+  const calDots: HTMLElement[] = [];
+  for (let i = 0; i < POSES_REQUIRED; i++) {
+    const d = document.createElement("span");
+    d.className = "capture-cal-dot";
+    d.textContent = String(i + 1);
+    calDots.push(d);
+    calSteps.append(d);
+  }
+  const calPrompt = document.createElement("div");
+  calPrompt.className = "capture-cal-prompt";
   const calText = document.createElement("div");
   calText.className = "capture-review-text metric";
+  calText.dataset["testid"] = "imucal-status";
   const calBtns = document.createElement("div");
   calBtns.className = "capture-review-btns";
-  const calCaptureBtn = Button({ label: "Capture pose", icon: "camera", onClick: () => calCapture() });
-  const calSaveBtn = Button({ label: "Save calibration", icon: "save", onClick: () => void calSave() });
-  calCaptureBtn.disabled = true;
-  calSaveBtn.disabled = true;
-  calBtns.append(calCaptureBtn, calSaveBtn);
-  calPanel.append(calText, calBtns);
+  const calRetakeBtn = Button({ label: "Retake", icon: "reset", variant: "quiet", onClick: () => calRetake() });
+  const calDoneBtn = Button({ label: "Done", icon: "check", onClick: () => void stopCapture() });
+  calBtns.append(calRetakeBtn, calDoneBtn);
+  calBtns.style.display = "none";
+  calPanel.append(calSteps, calPrompt, calText, calBtns);
 
   overlay.append(
     calPanel,
@@ -526,7 +544,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     calPanel.style.display = "";
     calPanel.classList.add("capture-cal");
     advWrap.style.display = "none"; // its controls moved into the panel
-    calText.textContent = "Starting the mapping code…";
+    calPrompt.textContent = "Starting the mapping code…";
     calSettings.append(calSettingsNote, diffuseBtn, strideSlider.el, modeBtn, brightSlider.el, expSlider.el);
     calPanel.insertBefore(calSettings, calBtns);
   }
@@ -699,78 +717,158 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   }
 
   // -- Calibrate IMU (sensor-core.md §7.3) ------------------------------------------
-  let calTimer: ReturnType<typeof setInterval> | null = null;
-  let calLast: ReturnType<ImuCalSession["readiness"]> | null = null;
-  let calPrior: number[] = [];
+  // Hands-free. The frame loop feeds calFlow every PnP lock (pushFrame), the
+  // IMU tick feeds the phone's gravity, and one get_sensors reader feeds the
+  // fixture's settled up — all on the phone's performance.now() clock. A step
+  // timer evaluates the gates; the step that passes them takes the pose, and the
+  // third pose solves, stores, writes and read-back-verifies the calibration.
+  let calActive = false;
+  /** Bumped per start: a reader from an earlier start (before a Retake) exits. */
+  let calGen = 0;
+  let calStepTimer: ReturnType<typeof setInterval> | null = null;
+  let calReader: Promise<void> | null = null;
+  let calFinishing = false;
+  let calAutoExit: ReturnType<typeof setTimeout> | null = null;
+  const calSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-  /** Poll the fixture IMU + the PnP lock ~5x/s and refresh the guidance. */
+  function stopCalibrationUi(): void {
+    calActive = false;
+    if (calStepTimer !== null) clearInterval(calStepTimer);
+    calStepTimer = null;
+    if (calAutoExit !== null) clearTimeout(calAutoExit);
+    calAutoExit = null;
+  }
+
   function startCalibrationUi(c: NonNullable<ReturnType<typeof client>>): void {
+    stopCalibrationUi();
     calPanel.style.display = "";
-    calTimer = setInterval(() => {
-      void c
-        .getSensors()
-        .then((s) => {
-          if (calSession === null) return;
-          calPrior = s.mountQuat;
-          if (s.status !== "SENSOR_STATUS_RUNNING") {
-            calText.textContent = "This fixture's motion sensor isn't running.";
-            calCaptureBtn.disabled = true;
-            return;
-          }
-          const pose = projOverlay.lockedPose;
-          calLast = calSession.readiness(s, pose ? [...pose.q] : null);
-          const n = calSession.poses.length;
-          const sol = n >= 2 ? calSession.solve(s.mountQuat.length === 4 ? (s.mountQuat as [number, number, number, number]) : undefined) : null;
-          const lines = [
-            `Poses: ${n}${n < 2 ? " (need 2; 3 is better)" : n < 3 ? " (one more is better)" : ""}`,
-            n > 0 ? `Turned ${Math.round(calLast.separationDeg)}° from the nearest pose (want ≥45°, ideally ~90°)` : "",
-            calLast.blockers.length ? calLast.blockers[0]! : "Ready — capture this pose",
-            sol
-              ? `Fit: ${sol.quality}, residual ${sol.residualDeg.toFixed(1)}°, heading ±${sol.predictedYawErrDeg.toFixed(1)}°`
-              : "",
-          ];
-          calText.textContent = lines.filter(Boolean).join(" · ");
-          calCaptureBtn.disabled = !calLast.canCapture;
-          calSaveBtn.disabled = sol === null || !sol.yawResolved;
-        })
-        .catch(() => {});
-    }, 200);
+    calBtns.style.display = "none";
+    calFinishing = false;
+    calActive = true;
+    const gen = ++calGen;
+    const live = () => calActive && gen === calGen;
+    // One get_sensors in flight at a time (never a timer that can overlap),
+    // each reply stamped with its arrival on the phone clock.
+    const reader = (async () => {
+      while (live() && calFlow !== null && !calFlow.done) {
+        try {
+          const s = await c.getSensors();
+          if (!live() || calFlow === null) break;
+          calFlow.pushSensor(s, performance.now());
+        } catch {
+          // A timeout / a dropped link: keep trying while the screen is up.
+          await calSleep(c.isConnected ? 100 : 500);
+        }
+        await calSleep(120);
+      }
+    })();
+    calReader = reader;
+    calStepTimer = setInterval(() => {
+      if (calFlow === null || calFinishing) return;
+      renderCal(calFlow.step(performance.now()));
+    }, 100);
   }
 
-  function calCapture(): void {
-    if (calSession === null || calLast === null || !calLast.canCapture) return;
-    calSession.capture(calLast);
-    toast(`Pose ${calSession.poses.length} captured — now turn the fixture another way`);
+  function renderCal(st: FlowStatus): void {
+    calDots.forEach((d, i) => {
+      d.classList.toggle("capture-cal-dot--done", i < st.taken);
+      d.classList.toggle("capture-cal-dot--next", i === st.taken && st.phase === "collecting");
+    });
+    if (st.captured) {
+      try {
+        navigator.vibrate?.(60);
+      } catch {
+        /* no haptics */
+      }
+      const p = st.captured;
+      const line =
+        `[imucal] pose ${st.taken}: imuUp=${p.imuUp.map((v) => v.toFixed(3)).join(",")} ` +
+        `fixtureUp=${p.fixtureUp.map((v) => v.toFixed(3)).join(",")} sigma=${(p.sigmaDeg ?? 0).toFixed(2)}deg`;
+      console.info(line);
+      nativeLog(line);
+      if (st.phase === "collecting") toast(`Pose ${st.taken} of ${POSES_REQUIRED} captured`);
+    }
+    if (st.phase === "solved" && st.solve !== null) {
+      void finishCalibration(st.solve);
+      return;
+    }
+    calPrompt.textContent = st.prompt;
+    calText.textContent = st.wait ? st.wait.text : "Hold still…";
+    calText.dataset["tone"] = st.wait?.reason === "inconsistent" ? "warn" : "";
   }
 
-  async function calSave(): Promise<void> {
+  /** After the third pose: store on the map, keep it pending for this device,
+   * write it and confirm by read-back (no accept step). */
+  async function finishCalibration(sol: ExtrinsicSolve): Promise<void> {
+    const flow = calFlow;
+    if (calFinishing || flow === null) return;
+    calFinishing = true;
+    stopCalibrationUi();
+    await calReader?.catch(() => undefined);
     const c = client();
-    if (c === null || calSession === null || calibrateId === null) return;
-    const sol = calSession.solve(calPrior.length === 4 ? (calPrior as [number, number, number, number]) : undefined);
-    if (sol === null || !sol.yawResolved) return;
-    if (sol.quality !== "good" && !confirm(`The fit is ${sol.quality} (residual ${sol.residualDeg.toFixed(1)}°). Save anyway?`)) return;
-    await c.setSensorMount(sol.q, {
-      residualDeg: sol.residualDeg,
-      poses: calSession.poses.length,
-      yawResolved: true,
-    });
-    await mapStore.setImuCalibration(calibrateId, {
+    const atMs = Date.now();
+    calPrompt.textContent = "Writing the calibration to the fixture…";
+    calText.textContent = describeSolve(sol);
+    calText.dataset["tone"] = "";
+    console.info(`[imucal] solved: q=${sol.q.map((v) => v.toFixed(4)).join(",")} ${describeSolve(sol)}`);
+    if (calibrateId !== null) {
+      await mapStore
+        .setImuCalibration(calibrateId, {
+          q: sol.q,
+          poses: [...flow.poses],
+          yawResolved: sol.yawResolved,
+          residualDeg: sol.residualDeg,
+          atMs,
+        })
+        .catch(() => undefined);
+    }
+    const pending: PendingImuCal = {
+      deviceKey: deviceKeyOf(c?.welcome?.mac),
+      mapId: priorMap?.mapId ?? "",
       q: sol.q,
-      poses: calSession.poses,
-      yawResolved: true,
       residualDeg: sol.residualDeg,
-      atMs: Date.now(),
-    });
+      poses: flow.poses.length,
+      yawResolved: sol.yawResolved,
+      atMs,
+    };
+    // Pending BEFORE the write: a drop mid-write is pushed on the next connection.
+    imuCalPending.put(pending);
+    const out = c !== null ? await writeAndVerify(c, pending) : ({ kind: "failed", detail: "not connected" } as const);
+    if (out.kind === "confirmed") imuCalPending.clear(pending.deviceKey, atMs);
+    console.info(`[imucal] write-back: ${out.kind}${"detail" in out ? ` (${out.detail})` : ""}`);
     // What worked here becomes the map's capture profile (device + library), so
     // the next calibration / supplement starts from it.
     noteDraft();
-    if (profileDraft !== null && priorMap !== null) {
+    if (c !== null && profileDraft !== null && priorMap !== null && calibrateId !== null) {
       const p = buildProfile(priorMap.mapId, profileDraft.knobs, profileDraft, Date.now());
       await mapStore.setCaptureProfile(calibrateId, p).catch(() => {});
       await c.setCaptureProfile(p).catch(() => {});
     }
-    toast("Motion sensor calibrated to this map");
-    void stopCapture();
+    calDots.forEach((d) => d.classList.add("capture-cal-dot--done"));
+    calBtns.style.display = "";
+    const good = sol.quality === "good";
+    if (out.kind === "confirmed") {
+      calPrompt.textContent = good ? "Motion sensor calibrated ✓" : "Calibrated, but the fit is weak — consider a retake.";
+      calText.textContent = `${describeSolve(sol)} · stored on the fixture`;
+      calText.dataset["tone"] = good ? "ok" : "warn";
+      toast("Motion sensor calibrated to this map");
+      if (good) calAutoExit = setTimeout(() => void stopCapture(), 2500);
+    } else if (out.kind === "failed") {
+      calPrompt.textContent = "Saved on this phone — it will be written to the fixture when it reconnects.";
+      calText.textContent = `${describeSolve(sol)} · not yet on the fixture (${out.detail})`;
+      calText.dataset["tone"] = "warn";
+    } else {
+      calPrompt.textContent = "The fixture didn't confirm the calibration; it will be retried on the next connection.";
+      calText.textContent = `${describeSolve(sol)} · ${out.detail}`;
+      calText.dataset["tone"] = "warn";
+    }
+  }
+
+  function calRetake(): void {
+    const c = client();
+    if (calFlow === null || c === null) return;
+    calFlow.restart();
+    startCalibrationUi(c);
   }
 
   /** After a first map is stored on the device: record its capture profile
@@ -869,8 +967,14 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       projOverlay.supplement = true;
       applyLiveSolve(null); // the stored map alone: registration target
       guideEl.textContent = "Calibrate IMU — point the camera at the fixture.";
-      // Pose 1 from the mapping, if it was recorded (else the first capture here).
-      calSession = new ImuCalSession(rec.imuCalibration?.poses ?? []);
+      // Always three fresh poses: earlier ones (the mapping's pose 1, a previous
+      // run's) are NOT carried in — the diversity gate measured every new pose
+      // against all of them, so the resting pose was "too close" to pose 1 and
+      // each re-run had fewer reachable orientations left. A previous R_fi only
+      // breaks ties in a degenerate solve.
+      const prevQ = rec.imuCalibration?.q;
+      calFlow = new ImuCalFlow(prevQ && prevQ.length === 4 ? (prevQ as [number, number, number, number]) : undefined);
+      calPrompt.textContent = "Starting the mapping code…";
       await loadStoredProfile(c, rec.map.mapId);
       updateCalSettingsNote();
     }
@@ -935,7 +1039,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // HITL app-driver: a hardware-free synthetic scene. Like the native path it
         // ships pre-reduced frames, so the detector skips its GPU pass — give it a
         // throwaway context and a no-op exposure target.
-        const sc = new SyntheticCaptureSource({ ledCount });
+        // The Calibrate-IMU journey renders ITS fixture (tilted on cue) from
+        // a near-still hand-held viewpoint instead of the mapping orbit.
+        const scene = calibrateId !== null ? driverFixtureScene() : null;
+        const sc = new SyntheticCaptureSource(
+          scene ? { leds: scene.leds, fixtureRotAt: (t) => scene.fixtureRotAt(t), still: true } : { ledCount },
+        );
         capture = sc;
         syntheticSource = sc;
         await sc.start();
@@ -1207,6 +1316,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         if (projOverlay.solvedCount > 0) {
           const reg = projOverlay.draw(pipeline.lastBlobStatus, f.K, f.imgW, f.imgH, showSolved);
           updateRegChip(reg);
+          // Calibrate IMU: the registration (the same lock as the chip) is the
+          // capture trigger — every frame, stamped with its capture time.
+          const locked = projOverlay.lockedPose;
+          calFlow?.pushFrame(f.tCaptureMs, locked ? [...locked.q] : null);
         }
         const tOverlaid = performance.now();
 
@@ -1452,9 +1565,11 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           }
           const samples = rec.flush();
           localImu.push(...samples);
-          calSession?.pushPhone(samples);
+          calFlow?.pushPhone(samples);
           if (c.hostSolverBenchMs !== null) c.sendImuBatch(samples);
-        }, 1000);
+          // Calibrate IMU pairs phone gravity with each frame's lock: flush often
+          // so a pose isn't held back a whole second waiting for its samples.
+        }, calibrateId !== null ? 200 : 1000);
       }
 
       // Exposure telemetry + real-time adaptation (unchanged servo logic).
@@ -1703,6 +1818,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   }
 
   async function cancel(): Promise<void> {
+    stopCalibrationUi();
     if (capturing) {
       capturing = false;
       diffuseHook = null;
@@ -1759,8 +1875,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     // Calibrate IMU: nothing to solve or save to the map; end the code playback
     // and go back to the map.
     if (calibrateId !== null) {
-      if (calTimer !== null) clearInterval(calTimer);
-      calTimer = null;
+      stopCalibrationUi();
       calPanel.style.display = "none";
       await c.stopMappingNoSolve().catch(() => undefined);
       stopBtn.disabled = false;
@@ -2297,6 +2412,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       driverSolveResolve = null;
       driverSolveReject = null;
       capturing = false;
+      // The calibration reader/step timer used to outlive the screen (polling
+      // get_sensors at 5 Hz forever, starving every later sensor request).
+      stopCalibrationUi();
       stopTimer();
       imuRecorder?.stop();
       previewVideo?.remove();

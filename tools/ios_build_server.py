@@ -60,8 +60,10 @@ Named tasks:
     list-devices   `xcrun xctrace list devices` — real devices + sims with UDIDs
 
     tf-build-number  stamp CFBundleVersion ($IOS_BUILD_NUMBER, else epoch)
-    tf-signing-prep  place the App Store Connect API key (+ optional dist .p12)
-    tf-archive       `xcodebuild archive` — App-Store-signed (automatic signing)
+    tf-signing-prep  place the App Store Connect API key (+ optional dist .p12,
+                     + optional App Store provisioning profile → manual signing)
+    tf-archive       `xcodebuild archive` — App-Store-signed (manual signing with
+                     the supplied profile; automatic signing fallback)
     tf-export        `xcodebuild -exportArchive` → build/export/*.ipa
     tf-upload        `xcrun altool --upload-app` → App Store Connect / TestFlight
 
@@ -278,6 +280,24 @@ _DEVICE_BUILD_SH = (
 #                                     needed on a machine whose keychain lacks a
 #                                     distribution cert (a fresh CI runner). A dev
 #                                     Mac that already ships device builds has one.
+#   APPLE_PROVISIONING_PROFILE_BASE64 base64 of an App Store distribution
+#                                     .mobileprovision for dev.splanc.app that
+#                                     includes the APPLE_DIST_CERT_* certificate.
+#                                     OPTIONAL but REQUIRED IN CI: when set, the
+#                                     archive + export sign MANUALLY with it (no
+#                                     -allowProvisioningUpdates, nothing created on
+#                                     Apple's side). When unset, Xcode automatic
+#                                     signing is used, which on a fresh runner mints
+#                                     a new "Apple Development" certificate every
+#                                     run and eventually hits Apple's cert cap
+#                                     (app-v1.12.1..1.12.7 failed exactly so).
+#                                     Create it at developer.apple.com → Profiles →
+#                                     "+" → Distribution / App Store Connect → App
+#                                     ID dev.splanc.app → the Apple Distribution
+#                                     cert in the .p12; download, then
+#                                     `base64 -i X.mobileprovision | pbcopy`. It
+#                                     expires after a year (or when that cert is
+#                                     revoked) — regenerate + update the secret.
 #   IOS_BUILD_NUMBER                  CFBundleVersion for this upload (must be
 #                                     unique + increasing per TestFlight build);
 #                                     defaults to the current epoch seconds.
@@ -296,13 +316,23 @@ _TF_BUILD_NUMBER_SH = (
     'echo "[testflight] CFBundleVersion = $bn"'
 )
 
-# Place the App Store Connect API key where xcodebuild + altool look for it, and
-# (only if a .p12 is supplied) import the distribution cert into a throwaway
-# keychain. Reads env; writes nothing that logs a secret.
+# Place the App Store Connect API key where xcodebuild + altool look for it, (only
+# if a .p12 is supplied) import the distribution cert into a throwaway keychain,
+# and (only if APPLE_PROVISIONING_PROFILE_BASE64 is supplied) install the App Store
+# provisioning profile and record what tf-archive/tf-export need to sign MANUALLY.
+# Reads env; writes nothing that logs a secret (the profile's UUID/Name/team/app id
+# are printed — they're identifiers, not secrets: they ship inside every .ipa).
+#
+# The manual-signing hand-off is web/ios/App/build/tf-signing.env (TF_PROFILE_UUID,
+# TF_PROFILE_NAME, TF_TEAM — `printf %q`-quoted, sourced by the later tasks). It's
+# deleted up front on every run, so a stale file can never flip a later run that
+# has no profile into manual mode.
+_TF_SIGNING_ENV = "web/ios/App/build/tf-signing.env"  # relative to the workspace
 _TF_SIGNING_PREP_SH = (
     "set -e; "
     ': "${APP_STORE_CONNECT_KEY_ID:?set APP_STORE_CONNECT_KEY_ID (see /tasks)}"; '
     ': "${APP_STORE_CONNECT_ISSUER_ID:?set APP_STORE_CONNECT_ISSUER_ID}"; '
+    f'sigenv="$PWD/{_TF_SIGNING_ENV}"; mkdir -p "$(dirname "$sigenv")"; rm -f "$sigenv"; '
     'mkdir -p "$HOME/.private_keys"; '
     'p8="$HOME/.private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"; '
     'if [ -n "${APP_STORE_CONNECT_KEY_P8_BASE64:-}" ]; then '
@@ -327,56 +357,147 @@ _TF_SIGNING_PREP_SH = (
     '  others="$(security list-keychains -d user | sed -e "s/\\"//g" -e "s/^ *//" | grep -v -F "$kc" || true)"; '
     '  security list-keychains -d user -s "$kc" $others; '
     '  rm -f "$p12"; echo "[testflight] imported distribution cert into a temp keychain"; '
-    'else echo "[testflight] APPLE_DIST_CERT_P12_BASE64 unset — using a distribution cert from the login keychain"; fi'
+    'else echo "[testflight] APPLE_DIST_CERT_P12_BASE64 unset — using a distribution cert '
+    'from the login keychain"; fi; '
+    # --- Fixed App Store provisioning profile → manual signing. ---
+    'if [ -n "${APPLE_PROVISIONING_PROFILE_BASE64:-}" ]; then '
+    "  pb=/usr/libexec/PlistBuddy; "
+    '  tmpd="$(mktemp -d "${TMPDIR:-/tmp}/splanc-profile.XXXXXX")"; '
+    '  printf %s "$APPLE_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$tmpd/p.mobileprovision"; '
+    # A .mobileprovision is a CMS-signed plist; `security cms -D` strips the envelope.
+    '  security cms -D -i "$tmpd/p.mobileprovision" -o "$tmpd/p.plist"; '
+    '  uuid="$("$pb" -c "Print :UUID" "$tmpd/p.plist")"; '
+    '  pname="$("$pb" -c "Print :Name" "$tmpd/p.plist")"; '
+    '  pteam="$("$pb" -c "Print :TeamIdentifier:0" "$tmpd/p.plist")"; '
+    '  appid="$("$pb" -c "Print :Entitlements:application-identifier" "$tmpd/p.plist")"; '
+    '  pexp="$("$pb" -c "Print :ExpirationDate" "$tmpd/p.plist" 2>/dev/null || echo unknown)"; '
+    '  echo "[testflight] provisioning profile: name=\\"$pname\\" uuid=$uuid team=$pteam app-id=$appid expires=$pexp"; '
+    # App Store profiles list no devices; a development/ad-hoc one does (and an
+    # enterprise one sets ProvisionsAllDevices) — none of those can ship to TestFlight.
+    '  if "$pb" -c "Print :ProvisionedDevices" "$tmpd/p.plist" >/dev/null 2>&1 '
+    '     || "$pb" -c "Print :ProvisionsAllDevices" "$tmpd/p.plist" >/dev/null 2>&1; then '
+    '    echo "[testflight] APPLE_PROVISIONING_PROFILE_BASE64 is a development/ad-hoc/enterprise profile — '
+    'it must be an App Store (Distribution → App Store Connect) profile" >&2; rm -rf "$tmpd"; exit 1; fi; '
+    '  if [ "$appid" != "$pteam.{bundle}" ]; then '
+    '    echo "[testflight] profile app-id $appid does not match $pteam.{bundle}" >&2; rm -rf "$tmpd"; exit 1; fi; '
+    '  if [ -n "${APPLE_TEAM_ID:-}" ] && [ "$APPLE_TEAM_ID" != "$pteam" ]; then '
+    '    echo "[testflight] profile team $pteam != APPLE_TEAM_ID $APPLE_TEAM_ID" >&2; rm -rf "$tmpd"; exit 1; fi; '
+    # Xcode <16 reads ~/Library/MobileDevice/…; Xcode 16+ reads
+    # ~/Library/Developer/Xcode/UserData/…. Install to both so either finds it.
+    '  for d in "$HOME/Library/MobileDevice/Provisioning Profiles" '
+    '           "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do '
+    '    mkdir -p "$d"; cp "$tmpd/p.mobileprovision" "$d/$uuid.mobileprovision"; done; '
+    '  rm -rf "$tmpd"; '
+    '  { printf "TF_PROFILE_UUID=%q\\n" "$uuid"; printf "TF_PROFILE_NAME=%q\\n" "$pname"; '
+    '    printf "TF_TEAM=%q\\n" "$pteam"; } > "$sigenv"; '
+    '  echo "[testflight] installed profile $uuid — MANUAL signing (Apple Distribution + this profile)"; '
+    "else "
+    '  msg="APPLE_PROVISIONING_PROFILE_BASE64 is unset: falling back to Xcode AUTOMATIC signing '
+    "(-allowProvisioningUpdates). On a machine without a cached development cert (every fresh CI "
+    "runner) Xcode MINTS A NEW Apple Development certificate via the API key on every run, which "
+    "eventually hits Apple's certificate cap and fails the build. Set the profile secret to sign manually.\"; "
+    '  echo "[testflight] WARNING: $msg" >&2; '
+    '  if [ "${GITHUB_ACTIONS:-}" = "true" ]; then echo "::warning title=TestFlight automatic signing::$msg"; fi; '
+    "fi"
 )
 
-# Archive an App-Store-signed build. Automatic signing driven by the ASC API key
-# (-allowProvisioningUpdates creates/refreshes the App Store provisioning
-# profile); the distribution cert comes from the keychain (signing-prep).
+# Archive an App-Store-signed build. Two signing modes, picked by signing-prep's
+# hand-off file (build/tf-signing.env):
+#  * MANUAL (profile supplied): web/ios-config/manual_signing.pl pins
+#    CODE_SIGN_STYLE=Manual + "Apple Distribution" + the profile + its team onto the
+#    App target's {configuration} config ONLY (global xcodebuild overrides would
+#    also hit the SPM package targets, which reject provisioning profiles). The
+#    pbxproj is restored afterwards so a dev Mac's project keeps automatic signing.
+#    No -allowProvisioningUpdates and no API key: nothing is created on Apple's side.
+#  * AUTOMATIC (no profile — local dev fallback): the ASC API key +
+#    -allowProvisioningUpdates let Xcode create/refresh the profile, at the cost of
+#    minting an Apple Development cert on a fresh machine (signing-prep warned).
 _TF_ARCHIVE_SH = (
     "set -e; "
     'team="${APPLE_TEAM_ID:-${SPLANC_IOS_TEAM:-D9JWD94AGX}}"; '
     'p8="$HOME/.private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"; '
     'if [ -e App.xcworkspace ]; then C="-workspace App.xcworkspace"; else C="-project App.xcodeproj"; fi; '
-    'echo "[tf-archive] xcodebuild archive (team $team, {configuration})"; '
-    "xcodebuild $C -scheme {scheme} -configuration {configuration} "
-    '-destination "generic/platform=iOS" '
-    '-archivePath "$PWD/build/App.xcarchive" '
-    "-allowProvisioningUpdates "
-    '-authenticationKeyPath "$p8" '
-    '-authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" '
-    '-authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" '
-    'DEVELOPMENT_TEAM="$team" CODE_SIGN_STYLE=Automatic '
-    "archive"
+    "if [ -f build/tf-signing.env ]; then "
+    "  . build/tf-signing.env; "
+    '  pbx="App.xcodeproj/project.pbxproj"; cp "$pbx" build/project.pbxproj.pre-manual; '
+    "  trap 'cp build/project.pbxproj.pre-manual \"$pbx\"' EXIT; "
+    '  TF_BUNDLE="{bundle}" TF_CONFIGURATION="{configuration}" TF_TEAM="$TF_TEAM" '
+    '  TF_PROFILE_SPECIFIER="$TF_PROFILE_UUID" perl ../../ios-config/manual_signing.pl "$pbx"; '
+    '  echo "[tf-archive] xcodebuild archive (MANUAL: Apple Distribution, profile \\"$TF_PROFILE_NAME\\" '
+    '$TF_PROFILE_UUID, team $TF_TEAM, {configuration})"; '
+    "  xcodebuild $C -scheme {scheme} -configuration {configuration} "
+    '  -destination "generic/platform=iOS" '
+    '  -archivePath "$PWD/build/App.xcarchive" '
+    "  archive; "
+    "else "
+    '  echo "[tf-archive] WARNING: AUTOMATIC signing (no provisioning profile) — '
+    'may mint a new Apple Development certificate" >&2; '
+    '  echo "[tf-archive] xcodebuild archive (team $team, {configuration})"; '
+    "  xcodebuild $C -scheme {scheme} -configuration {configuration} "
+    '  -destination "generic/platform=iOS" '
+    '  -archivePath "$PWD/build/App.xcarchive" '
+    "  -allowProvisioningUpdates "
+    '  -authenticationKeyPath "$p8" '
+    '  -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" '
+    '  -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" '
+    '  DEVELOPMENT_TEAM="$team" CODE_SIGN_STYLE=Automatic '
+    "  archive; "
+    "fi"
 )
 
-# Export the archive to a distributable .ipa (App Store Connect method).
+# Export the archive to a distributable .ipa (App Store Connect method). MANUAL
+# mode (profile supplied) writes signingStyle manual + "Apple Distribution" + a
+# provisioningProfiles {bundle id: profile name} map and runs offline; AUTOMATIC
+# mode keeps signingStyle automatic + -allowProvisioningUpdates with the API key.
+# The ASC key is used by tf-upload either way.
 _TF_EXPORT_SH = (
     "set -e; "
     'team="${APPLE_TEAM_ID:-${SPLANC_IOS_TEAM:-D9JWD94AGX}}"; '
     'p8="$HOME/.private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"; '
     'method="${IOS_EXPORT_METHOD:-app-store-connect}"; '
     'mkdir -p "$PWD/build"; plist="$PWD/build/exportOptions.plist"; '
-    # Unquoted heredoc so $method/$team expand; the plist itself has no braces
-    # that _fill could disturb.
+    # XML-escape a value for a <string>.
+    "xml() { printf %s \"$1\" | sed -e 's/&/\\&amp;/g' -e 's/</\\&lt;/g' -e 's/>/\\&gt;/g'; }; "
+    "if [ -f build/tf-signing.env ]; then "
+    '  . build/tf-signing.env; manual=1; team="$TF_TEAM"; '
+    '  signing="<key>signingStyle</key><string>manual</string>\n'
+    "<key>signingCertificate</key><string>Apple Distribution</string>\n"
+    "<key>provisioningProfiles</key><dict>\n"
+    '<key>{bundle}</key><string>$(xml "$TF_PROFILE_NAME")</string>\n'
+    '</dict>"; '
+    "else "
+    '  manual=0; signing="<key>signingStyle</key><string>automatic</string>"; '
+    "fi; "
+    # Unquoted heredoc so $method/$team/$signing expand; the plist itself has no
+    # braces that _fill could disturb (only {bundle} above, deliberately).
     'cat > "$plist" <<PLIST\n'
     '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+    '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
     '<plist version="1.0"><dict>\n'
     "<key>method</key><string>$method</string>\n"
     "<key>teamID</key><string>$team</string>\n"
-    "<key>signingStyle</key><string>automatic</string>\n"
+    "$signing\n"
     "<key>destination</key><string>export</string>\n"
     "</dict></plist>\n"
     "PLIST\n"
-    'echo "[tf-export] xcodebuild -exportArchive (method $method)"; '
-    "xcodebuild -exportArchive "
-    '-archivePath "$PWD/build/App.xcarchive" '
-    '-exportOptionsPlist "$plist" '
-    '-exportPath "$PWD/build/export" '
-    "-allowProvisioningUpdates "
-    '-authenticationKeyPath "$p8" '
-    '-authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" '
-    '-authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID"'
+    'if [ "$manual" = 1 ]; then '
+    '  echo "[tf-export] xcodebuild -exportArchive (method $method, MANUAL signing, profile \\"$TF_PROFILE_NAME\\")"; '
+    "  xcodebuild -exportArchive "
+    '  -archivePath "$PWD/build/App.xcarchive" '
+    '  -exportOptionsPlist "$plist" '
+    '  -exportPath "$PWD/build/export"; '
+    "else "
+    '  echo "[tf-export] xcodebuild -exportArchive (method $method, automatic signing)"; '
+    "  xcodebuild -exportArchive "
+    '  -archivePath "$PWD/build/App.xcarchive" '
+    '  -exportOptionsPlist "$plist" '
+    '  -exportPath "$PWD/build/export" '
+    "  -allowProvisioningUpdates "
+    '  -authenticationKeyPath "$p8" '
+    '  -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" '
+    '  -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID"; '
+    "fi"
 )
 
 # Upload the exported .ipa to App Store Connect / TestFlight. altool finds the
@@ -499,13 +620,15 @@ def _tasks() -> dict:
         "tf-signing-prep": {
             "argv": ["bash", "-c", _TF_SIGNING_PREP_SH],
             "cwd": ".",
-            "desc": "place the ASC API key (+ optional dist cert .p12) for signing/upload (reads env)",
+            "desc": "place the ASC API key (+ optional dist cert .p12 + App Store provisioning "
+            "profile) for signing/upload (reads env)",
         },
         "tf-archive": {
             "argv": ["bash", "-c", _TF_ARCHIVE_SH],
             "cwd": "web/ios/App",
             "needs_ios": True,
-            "desc": "xcodebuild archive — App-Store-signed, automatic signing via the ASC API key",
+            "desc": "xcodebuild archive — App-Store-signed: manual (dist cert + profile) when "
+            "APPLE_PROVISIONING_PROFILE_BASE64 is set, else automatic via the ASC API key",
         },
         "tf-export": {
             "argv": ["bash", "-c", _TF_EXPORT_SH],

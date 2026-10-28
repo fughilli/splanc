@@ -128,6 +128,9 @@ interface PlatformDoc {
 interface FxBenchMargins {
   default: number;
   perLabel: Record<string, number>;
+  /** Absolute floor: an effect within this many frame cycles of its golden passes
+   * whatever the percentage (fx_bench_core.frame_gate_rule). */
+  floorCycles?: number;
 }
 
 function renderPlatform(rawJson: string, jit: boolean): PlatformDoc {
@@ -171,6 +174,9 @@ function renderPlatform(rawJson: string, jit: boolean): PlatformDoc {
         ...Object.entries(margins.perLabel)
           .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
           .map(([k, v]) => `${k} ${pct(v, 0)}`),
+        ...(margins.floorCycles !== undefined
+          ? [`or within ${margins.floorCycles.toLocaleString("en-US")} cycles`]
+          : []),
       ].join(", ")
     : "n/a";
   out.push(

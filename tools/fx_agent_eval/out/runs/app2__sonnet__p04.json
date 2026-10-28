@@ -1,0 +1,39 @@
+{
+  "name": "app2__sonnet__p04",
+  "variant": "app2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p04",
+  "prompt": "a slow rainbow rotating around the lamp (cylindrical)",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```\n// Slow rainbow rotating around a cylindrical lamp.\n// Hue is driven by the azimuth angle around the Y-axis, so the\n// whole spectrum sweeps around the tube.  A vertical twist adds\n// depth and flatters the helix winding.\n\nuniform float speed  : 0.0 .. 2.0 = 0.25;   // rotations per second\nuniform float twist  : 0.0 .. 4.0 = 1.0;    // rainbow cycles over full height\nuniform float sat    : 0.0 .. 1.0 = 1.0;    // saturation\nuniform float val    : 0.0 .. 1.0 = 1.0;    // brightness\n\nstate fixed ph;   // rotation phase in TURNS\nstate fixed s;    // saturation (fixed, ready for hsv2rgb integer path)\nstate fixed v;    // value\nstate fixed k;    // twist coefficient\n\nvoid update() {\n  ph = fract(ph + fixed(dt * speed));\n  s  = fixed(sat);\n  v  = fixed(val);\n  k  = fixed(twist);\n}\n\nvec3 shade(Led led) {\n  // Azimuth angle around vertical axis, in TURNS (0..1).\n  // atan2(fixed,fixed) returns TURNS (-0.5..0.5); +0.5 maps it to 0..1.\n  // The compiler caches this once per LED (depends only on led.pos).\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n\n  // Vertical position: cylinder height 0.30 m \u2192 0..1 range.\n  fixed vy  = fixed(led.pos.y) * fixed(3.3333);\n\n  // Hue = azimuth + vertical spiral + rotating phase.\n  fixed hue = fract(ang + vy * k + ph);\n\n  // All-fixed hsv2rgb takes the integer path (~370 cycles).\n  return hsv2rgb(hue, s, v);\n}\n```\n\n**How it works**\n\n| Piece | Role |\n|---|---|\n| `atan2(fixed(led.pos.z), fixed(led.pos.x))` | Azimuth angle around Y (TURNS, \u22120.5\u20260.5), hoisted and cached once per LED |\n| `+ fixed(0.5)` | Shifts range to 0\u20261 (no float conversion needed) |\n| `vy * k` | Vertical offset so adjacent helix coils show different hues \u2014 controls how many full rainbows span the height |\n| `ph` (state) | Advances once per frame, spinning the whole rainbow in place |\n| `hsv2rgb(fixed, fixed, fixed)` | Integer path, ~370 cycles instead of ~1 300 for the float variant |\n\nPer-LED cost estimate: ~350 cycles (atan2, hoisted) + ~5 \u00d7 130 (fixed adds/muls) + 370 (hsv2rgb) \u2248 **1 370 cycles** \u2014 well under the ~8 000-cycle per-LED budget.",
+      "is_error": false,
+      "session_id": "0befd56c-fb0c-4938-956a-d286035e0945",
+      "wall_s": 73.6,
+      "duration_api_ms": 55029,
+      "cost_usd": 0.0503742,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 3052,
+        "cache_read_input_tokens": 5064,
+        "cache_creation_input_tokens": 511
+      },
+      "thinking_tokens": 2279,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 717
+    }
+  ],
+  "started": "2026-10-23T00:06:55",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0504,
+  "total_wall_s": 73.6,
+  "program": "firmware/fx_perf_bench/agent/app2__sonnet__p04.fx"
+}

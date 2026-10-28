@@ -441,9 +441,10 @@ pub mod cost {
     /// 11,436 (its .fxb 4,096 + VM 5,120 + keypoint blend state ~2.1 K + id) +
     /// JIT (g_jit_region 2,048 + FX_JIT_TARGETS 1,025 + FX_JIT_CONSTS 256 +
     /// FX_JIT_PLANS 80 + FX_JIT_BLOCKS 64) + tex_comp LUT 1,024 + OSC_TABLE 900 +
-    /// OSC_SHADOW 512 + the keypoint record buffer KP_IO 1,130 (nm, fx-keypoints).
+    /// the keypoint record buffer KP_IO 1,130 (nm, fx-keypoints). (The 512 B
+    /// OSC_SHADOW went with #400: OSC now writes only the components it names.)
     pub const EFFECT_STATIC: usize =
-        24_576 + 11_436 + (2_048 + 1_025 + 256 + 80 + 64) + 1_024 + 900 + 512 + 1_130;
+        24_576 + 11_436 + (2_048 + 1_025 + 256 + 80 + 64) + 1_024 + 900 + 1_130;
     /// The aux region FX_AUX (nm): EITHER the set_texture delta buffer (8,192,
     /// live while video streams) OR FX deck B (a whole deck, 11,436) — one
     /// union, so the two cost max(), not sum().

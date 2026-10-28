@@ -13,11 +13,25 @@
 //     that network), never on receipt, so a typo'd passphrase can't strand the board on a
 //     network it can't join. The write waits for the provisioning central to leave (or a
 //     grace window) so a flash write never lands inside the BLE redirect exchange;
-//   - re-provisioning the network the board is already on (or joining) is a no-op, not a
-//     teardown;
+//   - BLE Improv: EVERY wifi-settings write is a fresh join — the current association or
+//     join is torn down, a scan runs right away (backoff reset) and the join restarts —
+//     even for the network the board is already on or still joining from its stored
+//     creds. (A stored join can sit in a 60 s rescan backoff, or on a cached BSSID/channel
+//     a phone hotspot has since moved off, and the Improv central times out waiting.) The
+//     one exception: identical creds re-sent within kImprovCoalesceMs of the fresh join
+//     they would restart ride that join (a central that missed the result re-sends
+//     several times; restarting on each would keep it from ever reaching the lease);
+//   - an Improv fresh join whose SSID no sweep can see (a 5 GHz-only or switched-off
+//     hotspot) is reported to the central as UNABLE_TO_CONNECT — after retry sweeps
+//     over ~30 s (under the app's 45 s timeout), never on a few quick misses, and never
+//     while the AP answers the auth the join keeps sending to the latched BSSID —
+//     instead of leaving the app waiting; the creds stay committed and the background
+//     rescan continues (wifi_scan.h ImprovScanReport);
+//   - wired PROV (the HITL console path) of the network the board is already on (or
+//     joining) is a no-op, not a teardown;
 //   - a stored network that wasn't in the boot scan (the AP still booting after a power
-//     cut) is retried by rescanning — the netstack can only scan at boot, so that is a
-//     restart — on a capped backoff, never while a central is connected.
+//     cut) is found by a background rescan in place, on a capped backoff, while the
+//     player keeps rendering (wifi_scan.h) — never by restarting the board.
 //
 // Credentials are NOT cleared on a failed join (unlike the vendor build's join timeout):
 // an AP that is down for a while must not cost the user their configuration. BLE Improv
@@ -39,13 +53,6 @@ constexpr size_t kMaxPass = 64;  // 8..63 passphrase chars, or 64 hex digits (a 
 // Hold a lease this long with the provisioning central still connected before
 // persisting anyway (it normally takes the redirect and leaves within a few seconds).
 constexpr uint32_t kPersistGraceMs = 15000;
-// Restart-to-rescan backoff for a stored network missing from the boot scan, and how
-// many restarts in a row before giving up until the next power-on (~50 min of retrying
-// covers a router that boots slower than the board after a power cut; past that the
-// board stops restarting and stays re-provisionable over BLE).
-constexpr uint32_t kRescanFirstMs = 20000;
-constexpr uint32_t kRescanMaxMs = 300000;
-constexpr uint32_t kRescanMaxAttempts = 12;
 
 // Bounded strlen (no read past `cap`); returns cap + 1 when no NUL within cap + 1 bytes.
 inline size_t bounded_len(const char *s, size_t cap) {
@@ -69,7 +76,8 @@ inline bool same(const char *ssid_a, const char *pass_a, const char *ssid_b, con
   return strcmp(ssid_a, ssid_b) == 0 && strcmp(pass_a, pass_b) == 0;
 }
 
-// What a newly received provision (BLE Improv or wired PROV) should do to the link.
+// What a newly received WIRED PROV should do to the link. (BLE Improv does not use
+// this: it always starts a fresh join — see ImprovJoin below.)
 enum class Provision {
   kJoin,        // new/different network (or nothing committed yet): restart the join
   kKeepJoined,  // the network we're already on: keep the link, just re-answer
@@ -84,6 +92,46 @@ inline Provision on_provision(bool creds_committed, bool joined, const char *cur
 
 // Wrap-safe "a is at or after b" on a millis() clock.
 inline bool at_or_after(uint32_t a, uint32_t b) { return (int32_t)(a - b) >= 0; }
+
+// A duplicate Improv wifi-settings (same SSID + passphrase) this soon after the fresh
+// join it would restart rides that join instead: the join is the one the user just
+// asked for (scan + auth + 4-way + DHCP is a few seconds), and a central that missed the
+// result can re-send faster than a join completes. Past this window a re-send restarts.
+constexpr uint32_t kImprovCoalesceMs = 10000;
+
+// What a BLE Improv wifi-settings write should do (the user's rule: an Improv join
+// trigger is always fresh — scan and join right then).
+enum class ImprovProvision {
+  kFreshJoin,     // tear down, scan now, join (any creds, any link state)
+  kRideFreshJoin  // a duplicate of the fresh join started < kImprovCoalesceMs ago
+};
+
+// Tracks the last Improv-triggered fresh join so a re-send storm can't restart it forever.
+class ImprovJoin {
+ public:
+  // Credentials `ssid`/`pass` arrived over Improv at `now_ms`; the committed credentials
+  // are `cur_ssid`/`cur_pass` (valid only if `creds_committed`). A kFreshJoin result
+  // records `now_ms` as the start of the new fresh join.
+  ImprovProvision on_receive(bool creds_committed, const char *cur_ssid, const char *cur_pass,
+                             const char *ssid, const char *pass, uint32_t now_ms) {
+    if (started_ && creds_committed && same(cur_ssid, cur_pass, ssid, pass) &&
+        !at_or_after(now_ms, at_ms_ + kImprovCoalesceMs))
+      return ImprovProvision::kRideFreshJoin;
+    started_ = true;
+    at_ms_ = now_ms;
+    return ImprovProvision::kFreshJoin;
+  }
+  // Another provision path (wired PROV) replaced the credentials, or the fresh join was
+  // reported failed to the central (SSID not found, wifi_scan.h ImprovScanReport): the
+  // next Improv write, whatever it carries, is fresh.
+  void forget() { started_ = false; }
+  // When the last fresh join started (valid once one has).
+  uint32_t started_ms() const { return at_ms_; }
+
+ private:
+  bool started_ = false;
+  uint32_t at_ms_ = 0;
+};
 
 // Tracks whether the active credentials still need writing, and when that is allowed.
 // Credentials are written only after they have PROVEN themselves: a DHCP ACK received
@@ -125,22 +173,5 @@ class Persist {
   uint32_t proven_ms_ = 0;
   uint32_t retry_ms_ = 0;
 };
-
-// Restart-to-rescan backoff for attempt `n` (0-based): 20 s, 40 s, 80 s, 160 s, then 300 s.
-inline uint32_t rescan_delay_ms(uint32_t n) {
-  if (n >= 5) return kRescanMaxMs;
-  uint32_t d = kRescanFirstMs << n;
-  return d > kRescanMaxMs ? kRescanMaxMs : d;
-}
-
-// Whether a restart-to-rescan is due: stored credentials are the active ones, the boot
-// scan didn't see that SSID, nothing has leased, no central is mid-(re)provisioning, the
-// attempt budget isn't spent, and this attempt's backoff has elapsed since boot.
-inline bool rescan_due(bool using_stored, bool scan_matched, bool leased, bool central_connected,
-                       uint32_t since_boot_ms, uint32_t attempt) {
-  if (!using_stored || scan_matched || leased || central_connected) return false;
-  if (attempt >= kRescanMaxAttempts) return false;
-  return since_boot_ms >= rescan_delay_ms(attempt);
-}
 
 }  // namespace lm_wifi

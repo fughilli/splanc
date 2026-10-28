@@ -17,6 +17,8 @@ rust_library(
     name = "fx_compiler",
     srcs = [
         "src/lib.rs",
+        "src/lint.rs",
+        "src/memo.rs",
         "src/opt.rs",
     ],
     crate_name = "ledmapper_fx_compiler",
@@ -39,6 +41,14 @@ rust_test(
         ":fx_compiler",
         "//firmware/fx_vm",
     ],
+)
+
+# Perf warnings (float literal in fixed maths, pow(x, 2.0), ...).
+rust_test(
+    name = "warnings_test",
+    srcs = ["tests/warnings.rs"],
+    edition = "2021",
+    deps = [":fx_compiler"],
 )
 
 # FUG-107 sensor drivers: export / poll() / i2c intrinsics, FLAG_DRIVER .fxb,
@@ -69,9 +79,50 @@ rust_test(
 )
 
 # FUG-125: differential + hill-climb harness for the bytecode optimizer.
+# #400 signed/vector uniform ranges + mat3/mat4 (lowered to vecN ops): grammar,
+# manifest, and VM equivalence against hand-written dot forms.
+rust_test(
+    name = "matrix_test",
+    srcs = ["tests/matrix.rs"],
+    compile_data = ["//agent:skill/examples/plane_slice_pose.fx"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+        "//firmware/osc",
+        "@crates//:serde_json",
+    ],
+)
+
 rust_test(
     name = "optimizer_test",
     srcs = ["tests/optimizer.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+    ],
+)
+
+# Variance analysis + per-frame hoisting + per-LED memoization: classification,
+# cache selection under budget, and cached-vs-uncached bit-identity in the VM.
+rust_test(
+    name = "memo_test",
+    srcs = ["tests/memo.rs"],
+    compile_data = ["tests/testdata/rain.fx"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+    ],
+)
+
+# Rate controls: the `time * uniform` phase lint (src/lint.rs) and that the
+# integrator idiom it recommends stays continuous in the VM across a uniform
+# change (memo pass + LED cache on), where `fract(time * speed)` jumps.
+rust_test(
+    name = "integrator_test",
+    srcs = ["tests/integrator.rs"],
     edition = "2021",
     deps = [
         ":fx_compiler",

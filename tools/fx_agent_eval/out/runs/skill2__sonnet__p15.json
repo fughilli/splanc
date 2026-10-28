@@ -1,0 +1,39 @@
+{
+  "name": "skill2__sonnet__p15",
+  "variant": "skill2",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p15",
+  "prompt": "water caustics shimmer",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Water caustics shimmer \u2014 four overlapping traveling waves on the cylinder\n// surface (angle \u00d7 height) interfere to produce wandering bright patches like\n// sunlight refracted through water.  All per-LED maths in fixed point.\nuniform float speed   : 0.0 .. 3.0 = 0.7;\nuniform float density : 0.5 .. 4.0 = 2.0;        // wave spatial frequency\nuniform float focus   : 0.0 .. 1.0 = 0.6;        // 0 = soft wash  1 = tight spots\nuniform vec3  water   : color = 0.0, 0.18, 0.45;  // ambient water colour\nuniform vec3  shimmer : color = 0.45, 0.88, 1.0;  // caustic highlight\nuniform float gain    : 0.0 .. 1.0 = 0.88;        // master brightness\n\nstate fixed p1;\nstate fixed p2;\nstate fixed p3;\nstate fixed p4;\nstate fixed k;\nstate fixed thr;\n\nvoid update() {\n  p1  = fract(p1 + fixed(dt * speed * 0.19));\n  p2  = fract(p2 - fixed(dt * speed * 0.13));\n  p3  = fract(p3 + fixed(dt * speed * 0.23));\n  p4  = fract(p4 - fixed(dt * speed * 0.09));\n  k   = fixed(density);\n  // threshold: focus=0 \u2192 many dim patches, focus=1 \u2192 few tight bright spots\n  thr = fixed(focus) * fixed(0.5);\n}\n\nvec3 shade(Led led) {\n  // Cylinder surface coords: angle in turns (atan2 cached per-LED by compiler)\n  // and normalised height 0..1.\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x));\n  fixed h   = fixed(led.uv.y);\n\n  // Four waves at incommensurate spatial ratios so the interference pattern\n  // never settles into a visible tile.\n  fixed a  = ang * k;\n  fixed b  = h   * k;\n  fixed w1 = sin(a * fixed(2.00)  + b * fixed(0.70)  + p1);\n  fixed w2 = sin(a * fixed(1.40)  - b * fixed(1.20)  + p2);\n  fixed w3 = sin(a * fixed(2.50)  + b * fixed(1.05)  + p3);\n  fixed w4 = sin(b * fixed(1.85)  - a * fixed(0.85)  + p4);\n\n  // Interference sum \u2192 -1..1.\n  fixed v = (w1 + w2 + w3 + w4) * fixed(0.25);\n\n  // Caustic: keep only the constructive-interference peaks above threshold,\n  // then square for narrow, bright spots surrounded by dark water.\n  fixed peak  = max(v - thr, fixed(0.0));\n  fixed t     = min(peak * fixed(2.5), fixed(1.0));\n  fixed bright = t * t;\n\n  return mix(water, shimmer, float(bright)) * gain;\n}\n```",
+      "is_error": false,
+      "session_id": "2092a2c1-beff-4b71-9254-c60123f7d434",
+      "wall_s": 177.4,
+      "duration_api_ms": 176158,
+      "cost_usd": 0.18814110000000003,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 12115,
+        "cache_read_input_tokens": 11317,
+        "cache_creation_input_tokens": 502
+      },
+      "thinking_tokens": 11286,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1413
+    }
+  ],
+  "started": "2026-10-23T00:37:59",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.1881,
+  "total_wall_s": 177.4,
+  "program": "firmware/fx_perf_bench/agent/skill2__sonnet__p15.fx"
+}

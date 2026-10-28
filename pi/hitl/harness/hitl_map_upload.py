@@ -37,7 +37,15 @@ import time
 from typing import Any
 
 import hitl_ws
-from map_upload_core import synth_output_map, synth_topology, window_plan
+from map_upload_core import (
+    BULK_CHUNK_LEN,
+    BULK_DEPTH,
+    BULK_SILENT_S,
+    bulk_readback_verdict,
+    synth_output_map,
+    synth_topology,
+    window_plan,
+)
 
 
 def _log(msg: str) -> None:
@@ -164,7 +172,63 @@ async def _pull_bundle(sock, chunk_len: int = 1024) -> tuple[bytes, bool]:
     return assembled, has_topology
 
 
-async def _run(ws_url: str, n_leds: int, insecure: bool, shape: str = "12,12,20") -> bool:
+async def _bulk_readback(sock, reference: bytes, passes: int) -> bool:
+    """(4) Bulk device->client TX: read the stored bundle back `passes` more times with
+    BULK_DEPTH get_stored_map requests in flight at once, so the device answers with
+    back-to-back ~1 KB replies — two TCP segments on air back to back, request after
+    request (the ctrl_budget trace-dump pattern that went "DEVICE SILENT" on #358+#360).
+    Every reply must arrive within BULK_SILENT_S and match the reference readback; see
+    map_upload_core.bulk_readback_verdict."""
+    from server import proto_wire
+
+    offsets = list(range(0, len(reference), BULK_CHUNK_LEN))
+    latencies: list[float] = []
+    silent = mismatched = 0
+    for p in range(passes):
+        for i in range(0, len(offsets), BULK_DEPTH):
+            want = offsets[i : i + BULK_DEPTH]
+            t0 = time.monotonic()
+            for off in want:
+                await sock.send(
+                    proto_wire.encode_client(
+                        {"type": "get_stored_map", "offset": off, "max_len": BULK_CHUNK_LEN}
+                    )
+                )
+            pending = set(want)
+            deadline = t0 + BULK_SILENT_S
+            while pending:
+                try:
+                    raw = await asyncio.wait_for(sock.recv(), timeout=deadline - time.monotonic())
+                except asyncio.TimeoutError:
+                    silent += len(pending)
+                    _log(f"[bulk] pass {p}: no reply for @{sorted(pending)} in {BULK_SILENT_S:g}s")
+                    break
+                msg = proto_wire.decode_server(raw)
+                if msg.get("type") != "stored_map_chunk":
+                    continue  # unsolicited frames
+                off = int(msg.get("offset", 0))
+                if off not in pending:
+                    continue
+                pending.discard(off)
+                latencies.append(time.monotonic() - t0)
+                data = base64.b64decode(msg.get("data", "") or "")
+                if not data or data != reference[off : off + len(data)]:
+                    mismatched += 1
+            if silent:
+                break
+        if silent:
+            break
+    ok, why = bulk_readback_verdict(latencies, silent, mismatched, passes * len(offsets))
+    _log(
+        f"[bulk] {'PASS' if ok else 'FAIL'}: bulk readback x{passes} "
+        f"({BULK_DEPTH} x {BULK_CHUNK_LEN} B in flight): {why}"
+    )
+    return ok
+
+
+async def _run(
+    ws_url: str, n_leds: int, insecure: bool, shape: str = "12,12,20", bulk_passes: int = 3
+) -> bool:
     """Drive the large-map upload + read-back check; True on PASS. Raises on
     setup failures (test errors, distinct from the assertion failing)."""
     map_id = "__fug74"
@@ -216,6 +280,8 @@ async def _run(ws_url: str, n_leds: int, insecure: bool, shape: str = "12,12,20"
             if ok
             else "FAIL: stored map/topology does not match what was uploaded"
         )
+        if ok and bulk_passes > 0:
+            ok = await _bulk_readback(sock, assembled, bulk_passes)
         return ok
     finally:
         try:
@@ -227,7 +293,9 @@ async def _run(ws_url: str, n_leds: int, insecure: bool, shape: str = "12,12,20"
 def run_on_hardware(args) -> bool:
     # An explicit --device-ws reachable from here skips the rig entirely.
     if args.device_ws:
-        return asyncio.run(_run(args.device_ws, args.led_count, args.insecure, args.topology))
+        return asyncio.run(
+            _run(args.device_ws, args.led_count, args.insecure, args.topology, args.bulk_passes)
+        )
 
     from hitl_client import Reservation
     from provision import dut_target, provision_dut
@@ -263,7 +331,9 @@ def run_on_hardware(args) -> bool:
             # can't starve this transfer under concurrent load. Best-effort: a rig
             # without the lock dir runs unserialized, as today.
             with res.ap_lock("map upload+readback"):
-                return asyncio.run(_run(ws_url, args.led_count, args.insecure, args.topology))
+                return asyncio.run(
+                    _run(ws_url, args.led_count, args.insecure, args.topology, args.bulk_passes)
+                )
     finally:
         res.release()
 
@@ -295,6 +365,13 @@ def main() -> None:
         default="12,12,20",
         help="synthetic topology shape BRANCH_POINTS,SEGMENTS,POINTS_PER_SEGMENT "
         "(e.g. 27,51,4 for a 462-LED field scan)",
+    )
+    ap.add_argument(
+        "--bulk-passes",
+        type=int,
+        default=3,
+        help="extra full readbacks with 2 requests in flight (back-to-back ~1 KB replies = "
+        "back-to-back TCP segments): the bulk device->client TX check; 0 skips it",
     )
     ap.add_argument("--wifi-ssid", default=os.environ.get("HITL_WIFI_SSID"))
     ap.add_argument("--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""))

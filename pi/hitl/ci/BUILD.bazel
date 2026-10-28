@@ -1,0 +1,56 @@
+"""HITL CI lane helpers: which tests a change can affect (select_core + hitl_select),
+the lane's verdict (infra skips, quarantine) and the flake report.
+
+The workflow (.github/workflows/hitl.yaml) runs hitl_select.py and hitl_verdict.py
+with the runner's python3 before/without Bazel's toolchain, so everything here is
+stdlib-only (README.md has the verdict policy). The targets below let
+//pi/hitl/tests unit-test the policies, the override map and the quarantine list.
+"""
+
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "select_core",
+    srcs = ["select_core.py"],
+    imports = ["."],
+)
+
+py_binary(
+    name = "hitl_select",
+    srcs = ["hitl_select.py"],
+    data = ["overrides.toml"],
+    deps = [":select_core"],
+)
+
+py_library(
+    name = "verdict_core",
+    srcs = ["verdict_core.py"],
+    imports = ["."],
+)
+
+py_binary(
+    name = "hitl_verdict",
+    srcs = ["hitl_verdict.py"],
+    data = ["quarantine.toml"],
+    deps = [":verdict_core"],
+)
+
+py_library(
+    name = "flake_report_lib",
+    srcs = ["flake_report.py"],
+    imports = ["."],
+    deps = [":verdict_core"],
+)
+
+py_binary(
+    name = "flake_report",
+    srcs = ["flake_report.py"],
+    deps = [":verdict_core"],
+)
+
+exports_files([
+    "overrides.toml",
+    "quarantine.toml",
+])

@@ -103,12 +103,17 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::SetSensorMount(_)
         | CMsg::SetCaptureProfile(_)
         | CMsg::GetCaptureProfile(_)
+        | CMsg::SetWifiPolicy(_)
+        | CMsg::GetWifiPolicy(_)
         | CMsg::OtaBegin(_)
         | CMsg::OtaChunk(_)
         | CMsg::OtaFinish(_)
         | CMsg::OtaAbort(_)
         | CMsg::GetOtaStatus(_)
         | CMsg::OtaReboot(_)
+        | CMsg::FxDebugControl(_)
+        | CMsg::GetFxSnapshot(_)
+        | CMsg::DebugFxLed(_)
         | CMsg::SetPerf(_)
         | CMsg::GetPerfReport(_) => is_err("unsupported"),
         // Rename, color correction, output brightness, the room pose and the time
@@ -187,12 +192,17 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::SetSensorMount(_) => "set_sensor_mount",
         CMsg::SetCaptureProfile(_) => "set_capture_profile",
         CMsg::GetCaptureProfile(_) => "get_capture_profile",
+        CMsg::SetWifiPolicy(_) => "set_wifi_policy",
+        CMsg::GetWifiPolicy(_) => "get_wifi_policy",
         CMsg::OtaBegin(_) => "ota_begin",
         CMsg::OtaChunk(_) => "ota_chunk",
         CMsg::OtaFinish(_) => "ota_finish",
         CMsg::OtaAbort(_) => "ota_abort",
         CMsg::GetOtaStatus(_) => "get_ota_status",
         CMsg::OtaReboot(_) => "ota_reboot",
+        CMsg::FxDebugControl(_) => "fx_debug_control",
+        CMsg::GetFxSnapshot(_) => "get_fx_snapshot",
+        CMsg::DebugFxLed(_) => "debug_fx_led",
     }
 }
 

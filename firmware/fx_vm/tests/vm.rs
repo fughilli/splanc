@@ -868,6 +868,8 @@ fn classify(op: Op) -> Cov {
         JitCall => TypeAgnostic,
         // FUG-107 I2C driver intrinsics: integer bus I/O, no soft-float.
         I2cWrite | I2cRead => TypeAgnostic,
+        // Per-LED memo bracket (raw-slot cache load/store, any type, no soft-float).
+        LoadLedCache | StoreLedCache => TypeAgnostic,
         // sampling always yields a float colour by design (packed storage detail).
         SampleTex | PaintTex => TypeAgnostic,
 
@@ -887,6 +889,11 @@ fn classify(op: Op) -> Cov {
         Normalize => FloatWithTwin(NormalizeFix),
         Distance => FloatWithTwin(DistanceFix),
         Cmp => FloatWithTwin(CmpI),
+        // R8 operand-fused float arithmetic (fused PushConst/Load + Add..Div).
+        BinTop | BinPair => FloatWithTwin(AddI),
+        MulAdd => FloatWithTwin(AddI),
+        PushConsts => TypeAgnostic,
+        LoadCtxLanes => FloatWithTwin(LoadCtxFix),
         Hash1 => FloatWithTwin(HashFix),
         Hash3 => FloatWithTwin(Hash3Fix),
         Hsv2Rgb => FloatWithTwin(Hsv2RgbFix),
@@ -918,7 +925,7 @@ fn every_opcode_has_a_fixed_or_integer_path() {
     // Walk the whole contiguous opcode space; classify() is exhaustive so this
     // also proves no Op is unaccounted for.
     let mut float_with_twin = 0;
-    for b in 0..=(Op::I2cRead as u8) {
+    for b in (0..=(Op::StoreLedCache as u8)).chain(Op::BinTop as u8..=LAST_OP) {
         let op = Op::from_u8(b).unwrap_or_else(|| panic!("opcode {b} missing from Op"));
         match classify(op) {
             // The completeness guarantee: the twin is itself a fixed/int-native op.
@@ -934,8 +941,8 @@ fn every_opcode_has_a_fixed_or_integer_path() {
     }
     // Every soft-float compute/I-O op is paired; sanity-check we covered them all.
     assert_eq!(
-        float_with_twin, 23,
-        "expected 23 float ops each mapped to a fixed/integer twin"
+        float_with_twin, 27,
+        "expected 27 float ops each mapped to a fixed/integer twin"
     );
 }
 
@@ -974,7 +981,7 @@ fn fill_local_zeros_locals_each_invocation() {
 /// so this Rust `extern "C"` fn exercises the interpreter's JitCall dispatch +
 /// sp/pc bookkeeping with the SAME ABI the generated segment uses. (`fx_jit`'s
 /// own tests separately prove the emitted machine code matches these semantics.)
-unsafe extern "C" fn seg_add_consts(stack: *mut i32, _locals: *mut i32, consts: *const i32) {
+unsafe extern "C" fn seg_add_consts(stack: *mut i32, _locals: *mut i32, consts: *const i32, _state: *mut i32) {
     *stack = (*consts).wrapping_add(*consts.add(1));
 }
 
@@ -1019,6 +1026,314 @@ fn jitcall_renders_identically_to_the_interpreter() {
     // (no crash) rather than asserting a specific colour.
     vm.clear_jit();
     let _ = vm.run_shade(&progj, &Frame::default(), &Led::default());
+}
+
+// --- per-LED memo cache (LoadLedCache / StoreLedCache) -----------------------
+
+/// `.fxb` with a memo trailer (FLAG_MEMO): no prep entry, `words`, then the
+/// group boundaries.
+fn fxb_memo(consts: &[f32], code: &[u8], words: u8, groups: &[u8]) -> Vec<u8> {
+    let mut b = fxb(0, 0, NO_ENTRY, 0, consts, code);
+    b[5] |= FLAG_MEMO;
+    b.extend_from_slice(&NO_ENTRY.to_le_bytes());
+    b.push(words);
+    b.push(groups.len() as u8);
+    b.extend_from_slice(groups);
+    b
+}
+
+/// shade(): red = hash1(led.idx), memoized in slot 0 (one word). Layout:
+///    0: LoadLedCache 0,1,+6  (cached -> push + jump to 11, past the store)
+///    5: LoadCtx idx ; Hash1   (the memoized expression)
+///    8: StoreLedCache 0,1     (records the top word, no pop)
+///   11: g, b = 0 ; Ret 3
+fn memo_prog() -> Vec<u8> {
+    #[rustfmt::skip]
+    let code = vec![
+        Op::LoadLedCache as u8, 0, 1, 6, 0,   // 0: rel +6 from byte 5 -> 11
+        Op::LoadCtx as u8, C_LED_IDX,         // 5
+        Op::Hash1 as u8,                      // 7
+        Op::StoreLedCache as u8, 0, 1,        // 8..10 (ends at 11)
+        Op::PushConst as u8, 0, 0,            // 11: g = 0
+        Op::PushConst as u8, 0, 0,            // 14: b = 0
+        Op::Ret as u8, 3,                     // 17
+    ];
+    code
+}
+
+#[test]
+fn led_cache_parse_and_fit() {
+    let buf = fxb_memo(&[0.0], &memo_prog(), 3, &[1, 3]);
+    let prog = Program::parse(&buf).expect("parse");
+    assert_eq!(prog.led_cache_words(), 3);
+    // record = 1 mask byte + 4*words.
+    assert_eq!(led_cache_stride(1), 5);
+    assert_eq!(led_cache_stride(3), 13);
+    assert_eq!(led_cache_bytes(3, 100), 1300);
+    // Fit picks the largest GROUP boundary that fits, never a split group.
+    assert_eq!(prog.led_cache_fit(100, 1300), 3);
+    assert_eq!(prog.led_cache_fit(100, 1299), 1);
+    assert_eq!(prog.led_cache_fit(100, 499), 0);
+    // No trailer -> no cache.
+    let plain_buf = fxb(0, 0, NO_ENTRY, 0, &[0.0], &memo_prog());
+    let plain = Program::parse(&plain_buf).unwrap();
+    assert_eq!(plain.led_cache_words(), 0);
+    assert_eq!(plain.led_cache_fit(100, 1 << 20), 0);
+}
+
+#[test]
+fn led_cache_is_bit_identical_and_skips_the_body() {
+    let code = memo_prog();
+    let buf = fxb_memo(&[0.0], &code, 1, &[1]);
+    let prog = Program::parse(&buf).expect("parse");
+    let frame = Frame::default();
+    let leds: Vec<Led> = (0..16).map(|i| Led { idx: i, ..Default::default() }).collect();
+    let big = Budget::instructions(10_000);
+
+    // Uncached reference (no cache bound: the bracket ops are no-ops).
+    let mut plain = Vm::new();
+    let want: Vec<(Rgb, u32)> = leds
+        .iter()
+        .map(|l| {
+            let (c, _, k) = plain.run_shade_counted(&prog, &frame, l, &big);
+            (c, k.instrs)
+        })
+        .collect();
+
+    let mut vm = Vm::new();
+    let mut mem = vec![0u8; led_cache_bytes(1, 16)];
+    vm.set_led_cache(&mut mem, 1, 16);
+    assert_eq!(vm.led_cache_words_bound(), 1);
+    for frame_no in 0..3 {
+        for (l, (rgb, ops)) in leds.iter().zip(&want) {
+            let (c, oc, k) = vm.run_shade_counted(&prog, &frame, l, &big);
+            assert_eq!(oc, Outcome::Ok);
+            assert_eq!(c, *rgb, "led {} frame {frame_no}: cached != computed", l.idx);
+            if frame_no == 0 {
+                assert_eq!(k.instrs, *ops, "first visit computes (same op count)");
+            } else {
+                assert_eq!(k.instrs, *ops - 3, "cached visit skips LoadCtx+Hash1+Store");
+            }
+        }
+    }
+    // Invalidate -> recompute once, still identical.
+    vm.invalidate_led_cache();
+    let (c, _, k) = vm.run_shade_counted(&prog, &frame, &leds[3], &big);
+    assert_eq!((c, k.instrs), want[3]);
+    // An idx past the bound LED count just computes (no out-of-bounds).
+    let far = Led { idx: 999, ..Default::default() };
+    let (c, _, _) = vm.run_shade_counted(&prog, &frame, &far, &big);
+    assert_eq!(c, plain.run_shade(&prog, &frame, &far));
+    // Too-small memory binds nothing (graceful fallback).
+    let mut tiny = vec![0u8; 4];
+    vm.set_led_cache(&mut tiny, 1, 16);
+    assert_eq!(vm.led_cache_words_bound(), 0);
+    assert_eq!(vm.run_shade(&prog, &frame, &leds[5]), want[5].0);
+}
+
+#[test]
+fn led_cache_slot_outside_bound_words_falls_through() {
+    // Slot 1 of a 1-word binding is not cached: identical output, no skip.
+    let mut code = memo_prog();
+    code[1] = 1; // LoadLedCache slot 1
+    code[9] = 1; // StoreLedCache slot 1
+    let buf = fxb_memo(&[0.0], &code, 2, &[1, 2]);
+    let prog = Program::parse(&buf).expect("parse");
+    let mut vm = Vm::new();
+    let mut mem = vec![0u8; led_cache_bytes(1, 4)];
+    vm.set_led_cache(&mut mem, 1, 4);
+    let led = Led { idx: 2, ..Default::default() };
+    let big = Budget::instructions(10_000);
+    let a = vm.run_shade_counted(&prog, &Frame::default(), &led, &big);
+    let b = vm.run_shade_counted(&prog, &Frame::default(), &led, &big);
+    assert_eq!(a.0, b.0);
+    assert_eq!(a.2.instrs, b.2.instrs, "never cached -> never skips");
+}
+
+#[test]
+fn prep_entry_runs_once_per_frame_and_on_uniform_change() {
+    // prep (at 11): state[0] = uniform[0] * 2 ; shade (at 0): r = state[0].
+    // The VM runs prep itself before the first shade of a frame, and again only
+    // when the frame, a uniform, or update() changes what it may read.
+    #[rustfmt::skip]
+    let code = [
+        Op::LoadState as u8, 0, 1,     // 0
+        Op::PushConst as u8, 0, 0,     // 3
+        Op::PushConst as u8, 0, 0,     // 6
+        Op::Ret as u8, 3,              // 9
+        Op::LoadUniform as u8, 0, 1,   // 11: prep
+        Op::PushConst as u8, 1, 0,     // 14: 2.0
+        Op::Mul as u8, 1,              // 17
+        Op::StoreState as u8, 0, 1,    // 19
+        Op::Ret as u8, 0,              // 22
+    ];
+    let mut buf = fxb(1, 1, NO_ENTRY, 0, &[0.0, 2.0], &code);
+    buf[5] |= FLAG_MEMO;
+    buf.extend_from_slice(&11u16.to_le_bytes());
+    buf.push(0);
+    buf.push(0);
+    let prog = Program::parse(&buf).expect("parse");
+    assert_eq!(prog.prep_entry(), 11);
+    let mut vm = Vm::new();
+    vm.set_uniform(0, &[0.25]);
+    let big = Budget::instructions(10_000);
+    let f0 = Frame { frame: 0, ..Default::default() };
+    let (c, _, k0) = vm.run_shade_counted(&prog, &f0, &Led::default(), &big);
+    assert_eq!(c, (127, 0, 0), "prep ran before the first shade");
+    let (_, _, k1) = vm.run_shade_counted(&prog, &f0, &Led::default(), &big);
+    assert_eq!(k0.instrs, k1.instrs + 5, "prep runs once per frame, not per LED");
+    vm.set_uniform(0, &[0.5]);
+    assert_eq!(vm.run_shade(&prog, &f0, &Led::default()), (255, 0, 0), "uniform change re-preps");
+    vm.state[0] = 0.0; // a host poking state directly is only seen next frame...
+    assert_eq!(vm.run_shade(&prog, &f0, &Led::default()), (0, 0, 0));
+    let f1 = Frame { frame: 1, ..Default::default() };
+    assert_eq!(vm.run_shade(&prog, &f1, &Led::default()), (255, 0, 0), "...a new frame re-preps");
+}
+
+/// The integer RGB epilogue == the float one, for every f32 in [0, 1.5]
+/// (stride 1) plus specials.
+#[test]
+fn unit_u8_matches_float_epilogue() {
+    use ledmapper_fx_vm::{clamp01, unit_u8};
+    let f = |x: f32| (clamp01(x) * 255.0) as u8;
+    let lo = 0u32;
+    let hi = 0x3fc0_0000u32; // 1.5
+    let mut bad = 0u64;
+    let mut b = lo;
+    while b <= hi {
+        let x = f32::from_bits(b);
+        if unit_u8(x) != f(x) {
+            bad += 1;
+        }
+        b += 1;
+    }
+    for x in [-0.0f32, -1e-30, -0.5, f32::NAN, -f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 1.0, 2.0e30] {
+        assert_eq!(unit_u8(x), f(x), "{x}");
+    }
+    assert_eq!(bad, 0);
+}
+
+/// The integer float<->fixed conversions are bit-exact with the float forms
+/// they replace (`(x * 2^frac) as i32`, `a as f32 / 2^frac`) for every frac the
+/// VM can see. Strided over all f32 bit patterns plus every exponent edge.
+#[test]
+fn fix_conversions_match_float_forms() {
+    let check = |b: u32| {
+        let x = f32::from_bits(b);
+        for frac in [0u32, 6, 14, 16, 24, 30, 31] {
+            let want = (x * (1u32 << frac) as f32) as i32;
+            assert_eq!(f32_to_fix(x, frac), want, "f32_to_fix({x:e} = {b:#x}, {frac})");
+        }
+    };
+    let mut b: u32 = 0;
+    loop {
+        check(b);
+        match b.checked_add(4099) {
+            Some(n) => b = n,
+            None => break,
+        }
+    }
+    for e in 0u32..256 {
+        for m in [0u32, 1, 2, 0x3f_ffff, 0x40_0000, 0x7f_fffe, 0x7f_ffff] {
+            check((e << 23) | m);
+            check(0x8000_0000 | (e << 23) | m);
+        }
+    }
+    let mut a: i32 = i32::MIN;
+    loop {
+        for frac in [0u32, 6, 14, 16, 24, 30, 31] {
+            let want = a as f32 / (1u32 << frac) as f32;
+            assert_eq!(fix_to_f32(a, frac).to_bits(), want.to_bits(), "fix_to_f32({a}, {frac})");
+        }
+        match a.checked_add(65_521) {
+            Some(n) => a = n,
+            None => break,
+        }
+    }
+    for a in [-1, 0, 1, i32::MAX, i32::MIN + 1, 1 << 24, (1 << 24) + 1, -(1 << 24) - 1] {
+        assert_eq!(fix_to_f32(a, 16).to_bits(), (a as f32 / 65536.0).to_bits());
+    }
+}
+
+/// The bit-level floorf is bit-exact with the float form it replaced
+/// (`t = x as i32 as f32; if t > x { t - 1.0 } else { t }`), saturation and
+/// NaN included. Strided here; checked exhaustively over all 2^32 inputs when
+/// it was written (as were sinf, fractf, expf and hsv2rgb against the old VM).
+#[test]
+fn floorf_matches_float_form() {
+    let old = |x: f32| {
+        let t = x as i32 as f32;
+        if t > x {
+            t - 1.0
+        } else {
+            t
+        }
+    };
+    let mut b: u32 = 0;
+    loop {
+        let x = f32::from_bits(b);
+        assert_eq!(floorf(x).to_bits(), old(x).to_bits(), "floorf({x:e} = {b:#x})");
+        match b.checked_add(997) {
+            Some(n) => b = n,
+            None => break,
+        }
+    }
+    for x in [-0.0f32, 0.0, -0.5, 0.5, -1.0, 1.0, -1.5, 2147483520.0, 2147483648.0, -2147483648.0, -2147483904.0, f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+        assert_eq!(floorf(x).to_bits(), old(x).to_bits(), "floorf({x:e})");
+    }
+}
+
+/// `logf` builds `t = m - 1` and `e as f32` from the bits; both are exact, so it
+/// is bit-identical to the float form (checked exhaustively when written).
+#[test]
+fn logf_matches_float_form() {
+    let old = |x: f32| {
+        if x <= 0.0 {
+            return -87.0;
+        }
+        let bits = x.to_bits();
+        let e = ((bits >> 23) & 0xff) as i32 - 127;
+        let t = f32::from_bits((bits & 0x007f_ffff) | 0x3f80_0000) - 1.0;
+        let p = t * (1.441_966_3 + t * (-0.709_670_9 + t * (0.417_625_8 + t * (-0.196_311_97 + t * 0.046_405_36))));
+        ((e as f32) + p) * core::f32::consts::LN_2
+    };
+    let mut b: u32 = 0;
+    loop {
+        let x = f32::from_bits(b);
+        assert_eq!(logf(x).to_bits(), old(x).to_bits(), "logf({x:e} = {b:#x})");
+        match b.checked_add(997) {
+            Some(n) => b = n,
+            None => break,
+        }
+    }
+}
+
+/// `logf` is ln, not "log2-ish + e*ln2" (fx-perf-study: ln 1.5 came out 0.276
+/// and pow(x, 8) was off by up to 2.8x). Bounds: |logf - ln| < 2e-5 over the
+/// whole normal range, expf within 1e-4 relative, and pow(x, 8) within 0.2% on
+/// [0.05, 2] (8x logf's error through expf).
+#[test]
+fn logf_and_powf_are_accurate() {
+    let mut x = 1.0e-30f32;
+    while x < 1.0e30 {
+        let err = (logf(x) as f64 - (x as f64).ln()).abs();
+        assert!(err < 2e-5, "logf({x:e}) = {} vs {}", logf(x), (x as f64).ln());
+        x *= 1.013;
+    }
+    assert!((logf(1.5) - 0.405_465).abs() < 2e-5);
+    let mut a = 0.05f32;
+    while a < 2.0 {
+        let want = (a as f64).powi(8);
+        let got = powf(a, 8.0) as f64;
+        assert!((got / want - 1.0).abs() < 2e-3, "pow({a}, 8) = {got} vs {want}");
+        a += 0.0137;
+    }
+    let mut x = -80.0f32;
+    while x < 80.0 {
+        let rel = (expf(x) as f64 / (x as f64).exp() - 1.0).abs();
+        assert!(rel < 1e-4, "expf({x}) = {} vs {}", expf(x), (x as f64).exp());
+        x += 0.0173;
+    }
 }
 
 /// `Vm::flood_from` / `Vm::led_dist` / `Vm::graph_query` (the native-code

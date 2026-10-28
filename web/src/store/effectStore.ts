@@ -63,11 +63,13 @@ function normTags(tags: string[]): string[] {
 export const BLANK_EFFECT_SOURCE = `uniform float speed : 0.0 .. 5.0 = 1.0;
 uniform float width : 0.02 .. 0.5 = 0.12;
 uniform vec3 tint : color = 0.2, 0.6, 1.0;
+state float head;
 
-void update() {}
+// A rate knob is integrated here, never time * speed (that jumps when it moves).
+void update() { head = fract(head + dt * speed); }
 
 vec3 shade(Led led) {
-  float phase = fract(led.s - time * speed);
+  float phase = fract(led.s - head);
   float band = smoothstep(width, 0.0, abs(phase - 0.5));
   return tint * band;
 }

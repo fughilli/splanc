@@ -1,6 +1,7 @@
 # On-hardware HITL test suite (FUG-33).
 #
-# Runs on every (same-repo) PR and on demand: it needs a live rig on the tailnet
+# Runs on same-repo PRs that carry the `hitl` label, post-merge on main, and on
+# demand (see "When HITL runs" below): it needs a live rig on the tailnet
 # and a real ESP32-C6. It joins the tailnet with an ephemeral Tailscale auth key
 # and runs the WHOLE //pi/hitl/harness on-hardware suite against the runner pool —
 # e2e (flash + improv + time-sync + rename), map_upload (wss sharding), the
@@ -22,13 +23,43 @@
 #   secrets.HITL_WIFI_PASS   provisioned onto. Unset by default: the DUT is
 #                            provisioned onto the rig's OWN AP (creds served by
 #                            the daemon), so no external WiFi is needed.
+#
+# When HITL runs. The rigs are a scarce shared bench (queues ran 70+ deep when every
+# PR push ran the full suite), so on pull_request it runs ONLY for a PR labelled
+# `hitl` — in practice the merge-queue head: the queue runner adds the label when a
+# PR reaches the head (unless it's queued `nohitl`), and the PR's full HITL then runs
+# at the commit that is about to merge. Adding the label (`labeled`) starts a run;
+# later pushes to a labelled PR re-run it. An unlabelled PR gets a skipped
+# hitl_tests plus a ~5 s "HITL not requested" marker check — not a pass, just
+# "nobody asked"; add the `hitl` label to request a run. push to main and workflow_dispatch
+# (the Mac's 6h periodic + manual runs) always run the full suite. hitl_tests is not
+# a required status check (main has no branch protection), so the skip never blocks
+# a merge by itself; the merge queue enforces HITL-green for non-`nohitl` PRs.
+#
+# What fails the job (pi/hitl/ci/README.md). An infra outcome — the reservation
+# never activated (deadline, stalled queue, unhealthy rig), no rig had a matching
+# unit, the rig's ssh/tunnel failed, the test was killed while still queued — is not
+# a test failure: such a test is re-queued once and then SKIPPED with a warning. A
+# test in pi/hitl/ci/quarantine.toml runs and reports but doesn't gate. Every other
+# failure gates.
+#
+# Which tests run. push to main and workflow_dispatch run the whole pool. A
+# pull_request or merge_group runs only the pool tests its diff can affect
+# (pi/hitl/ci/hitl_select.py): Target Determinator compares the -c opt configured
+# Bazel graph of the HITL tests at the base and head revisions, and a small reviewed
+# map (pi/hitl/ci/overrides.toml) adds what Bazel can't see (this workflow, the rig
+# catalogs, the path-selected phone and web-OTA lanes). If anything is unsure — no
+# diff, Target Determinator fails, the map doesn't parse — every test runs. A diff
+# that can't reach any HITL test runs none, and the job passes without touching the
+# bench. The step summary lists every test with why it ran or didn't.
 name: HITL tests
 on:
-  # Runs on PRs (full flash + improv + ws against a real rig), post-merge on main,
-  # and on demand. The job below is guarded to same-repo events only — fork PRs
-  # can't read the HITL environment's secrets, and the tailnet join would fail.
+  # Runs on `hitl`-labelled PRs (full flash + improv + ws against a real rig),
+  # post-merge on main, and on demand. The job below is guarded to same-repo events
+  # only — fork PRs can't read the HITL environment's secrets, and the tailnet join
+  # would fail. `labeled` so adding the `hitl` label starts a run.
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, labeled]
   # Post-merge run against main so there's an authoritative "latest HITL run
   # against main" (FUG-129): the README's HITL badge pins to
   # ?branch=main&event=push, so it reflects THIS run — not whatever PR branch
@@ -38,6 +69,11 @@ on:
   push:
     branches:
       - main
+  # GitHub's native merge queue: each merge group runs, at the exact commit that will
+  # land, the tests its union diff (the group's head vs its base) can affect; see
+  # "Which tests run" above. Harmless until the merge queue is enabled.
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
     inputs:
       server:
@@ -69,19 +105,28 @@ concurrency:
   # Periodic/manual dispatch runs (the Mac 6h cron drives these now) get their own
   # group so they never cancel — or get canceled by — an authoritative push/PR run
   # on the same ref.
-  group: hitl-tests-${{ github.event_name == 'workflow_dispatch' && 'scheduled' || github.event.pull_request.number || github.ref }}
+  #
+  # A pull_request event that WON'T run HITL (an unlabelled PR, or an unrelated label
+  # added to a labelled one) gets a throwaway per-run group, so its instant skip can
+  # never cancel a real in-flight HITL run for the same PR. The condition is the
+  # job-level `if` below, repeated (Actions has no shared expressions).
+  group: hitl-tests-${{ !(github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'hitl') && (github.event.action != 'labeled' || contains(fromJSON('["hitl", "hitl-android", "hitl-ios"]'), github.event.label.name)))) && format('noop-{0}', github.run_id) || github.event_name == 'workflow_dispatch' && 'scheduled' || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   hitl_tests:
-    # Skip on fork PRs (no access to the HITL environment secrets / tailnet).
     # push (post-merge on main) and workflow_dispatch (the Mac 6h periodic run +
-    # manual runs) only fire on this repo, so they're always allowed; PRs are gated
-    # to same-repo head.
+    # manual runs) only fire on this repo, so they always run. A pull_request runs
+    # only for a same-repo PR (fork PRs have no access to the HITL environment
+    # secrets / tailnet) labelled `hitl`; on a `labeled` event only when the label
+    # added is `hitl` (or the hitl-android/-ios lane opt-ins, which re-run the suite
+    # with those lanes on), so tagging an unrelated label doesn't re-run the bench.
     if: >-
-      github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'hitl') && (github.event.action != 'labeled' || contains(fromJSON('["hitl", "hitl-android", "hitl-ios"]'), github.event.label.name)))
     runs-on: ubuntu-latest
+    # The hard ceiling for the whole run (GitHub's maximum). Reservation waits are
+    # progress-driven (see HITL_DEADLINE / HITL_HOLD_MAX below), so this — not a fixed
+    # per-reservation timeout — is what bounds a run in a burst.
+    timeout-minutes: 360
     # Opt into the "HITL" environment so its TS_AUTHKEY secret + HITL_SERVERS
     # variable (and the HITL_WIFI_* secrets, if set) are visible to this job.
     environment: HITL
@@ -112,6 +157,19 @@ jobs:
       HITL_IOS_FLASH_C6: ${{ vars.HITL_IOS_FLASH_C6 || '' }}
       # `server` input only exists on workflow_dispatch; empty on pull_request.
       SERVER: ${{ github.event.inputs.server }}
+      # Reservation scheduling class on the rigs (hitl-reserve priority classes;
+      # reservations QUEUE and never preempt — a class only reorders the queue).
+      # merge-critical = the merge queue's merge_group runs and the post-merge run on
+      # main; everything else CI (labelled PRs, the Mac's periodic dispatch) = pr-ci.
+      # Humans/agents outside CI default to dev. Older rig daemons ignore it (FIFO).
+      HITL_PRIORITY: ${{ (github.event_name == 'merge_group' || github.event_name == 'push') && 'merge-queue' || 'pr-ci' }}
+      # Max time ONE test may HOLD a unit once active (the harness SIGTERMs itself and
+      # releases). Replaces the old per-test 3600 s Bazel bound on the hold, now that
+      # the Bazel timeout is raised to let tests wait in a progressing queue.
+      HITL_HOLD_MAX: '3600'
+      # Minutes after the suite starts by which a test must have gotten its unit
+      # (HITL_DEADLINE below); leaves the rest of the 360 min job for the body.
+      HITL_QUEUE_BUDGET_MIN: '240'
       # Optional Grafana Cloud Loki push of the run's pass/fail (FUG-117). Unset
       # in the HITL environment = the push step no-ops; see
       # pi/hitl/observability/README.md ("Reporting from GitHub").
@@ -121,98 +179,42 @@ jobs:
     steps:
       - name: Setup repository
         uses: actions/checkout@v4
+        with:
+          # pull_request checks out the PR merge commit: its first parent is the base
+          # the diff is taken against.
+          fetch-depth: 2
 
-      # Decide whether this run exercises the Android phone-HITL journeys
-      # (//pi/hitl/phone:android_journeys, the `hitl_android`-tagged lane). There is
-      # exactly ONE Android unit (amd-rig's `android-phone`), so running it on every PR
-      # would bottleneck the whole fleet behind it. Policy:
-      #   * workflow_dispatch (the Mac 6h cron + manual) → ALWAYS run — this is where the
-      #     regular Android reps come from.
-      #   * pull_request / push → OPT-IN only, when the change plausibly affects the
-      #     phone/BLE/Android path. Opt in three ways (any one triggers it):
-      #       - add the `hitl-android` LABEL to the PR, OR
-      #       - put a `[hitl-android]` tag in the PR body or the head commit message, OR
-      #       - touch an Android-affecting path (auto; globs below).
-      # CONVENTION: if you judge your change may have impacted the phone / BLE / Improv /
-      # netstack-BLE / Capacitor path and the path globs wouldn't catch it, REQUEST a run
-      # by adding the `hitl-android` label (or the `[hitl-android]` tag). See
-      # pi/hitl/phone/README.md "Automated CI reps".
-      - name: Decide whether to run the Android journeys
-        id: android_gate
+      # The paths this run's change touched, for the test selection and the phone-lane
+      # gates. pull_request: the merge commit vs its first parent (the base branch tip
+      # it merged onto). merge_group: the group's head vs its base_sha — the union of
+      # every PR in the group. push: before..sha. No list (e.g. a new branch, a failed
+      # fetch) makes the selection fail safe and run everything.
+      - name: Changed files
+        id: changes
         env:
-          GH_TOKEN: ${{ github.token }}
-          # Pass attacker-influenceable text through the environment (NOT interpolated
-          # into the script), so a crafted PR body / commit message / label can't break
-          # the shell quoting or inject commands.
-          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          EVENT: ${{ github.event_name }}
+          MG_BASE: ${{ github.event.merge_group.base_sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
-          run=false
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            run=true
-          else
-            # 1) opt-in label on the PR
-            if printf '%s' "$PR_LABELS" | grep -q '"hitl-android"'; then run=true; fi
-            # 2) [hitl-android] tag in the PR body or the head commit message
-            if printf '%s\n%s' "$PR_BODY" "$COMMIT_MSG" | grep -qiF '[hitl-android]'; then
-              run=true
-            fi
-            # 3) path filter — did the change touch Android-affecting code? Use the API
-            #    (no full git history needed on the shallow checkout).
-            if [ "${{ github.event_name }}" = "pull_request" ]; then
-              files=$(gh api --paginate \
-                "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
-                -q '.[].filename' 2>/dev/null || true)
-            else
-              files=$(gh api \
-                "repos/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.sha }}" \
-                -q '.files[].filename' 2>/dev/null || true)
-            fi
-            if printf '%s\n' "$files" | grep -Eq \
-              '^(pi/hitl/phone/|pi/hitl/reserve/catalog-phone\.json|pi/hitl/nix/hitl-(phone-daemon|amd-ap)\.nix|firmware/player_app/|firmware/netstack/|firmware/blehost/|web/src/net/|web/src/driver/|web/src/ui/screens/(deviceSheet|addDevice)\.ts)'; then
-              run=true
-            fi
+          out="$RUNNER_TEMP/hitl-changed.txt"
+          base=""
+          case "$EVENT" in
+            pull_request) base=$(git rev-parse HEAD^1 2>/dev/null || true) ;;
+            merge_group) base="$MG_BASE" ;;
+            push) base="$PUSH_BEFORE" ;;
+          esac
+          if [ -n "$base" ] && ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$base" || base=""
           fi
-          echo "run_android=$run" >> "$GITHUB_OUTPUT"
-          echo "Android phone-HITL journeys will run this execution: $run"
-
-      # Same policy for the iOS phone-HITL journeys (//pi/hitl/phone:ios_journeys, the
-      # `hitl_ios`-tagged lane on the Mac mini's single `ios-phone` unit): ALWAYS on the
-      # periodic workflow_dispatch runs; opt-in on PR/push via the `hitl-ios` LABEL, a
-      # `[hitl-ios]` tag in the PR body / head commit message, or an iOS-affecting path.
-      - name: Decide whether to run the iOS journeys
-        id: ios_gate
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
-        run: |
-          run=false
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            run=true
+          if [ -n "$base" ] && git diff --no-renames --name-only "$base" HEAD > "$out"; then
+            echo "base=$base" >> "$GITHUB_OUTPUT"
+            echo "files=$out" >> "$GITHUB_OUTPUT"
+            echo "$(wc -l < "$out") changed files vs $base"
           else
-            if printf '%s' "$PR_LABELS" | grep -q '"hitl-ios"'; then run=true; fi
-            if printf '%s\n%s' "$PR_BODY" "$COMMIT_MSG" | grep -qiF '[hitl-ios]'; then
-              run=true
-            fi
-            if [ "${{ github.event_name }}" = "pull_request" ]; then
-              files=$(gh api --paginate \
-                "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
-                -q '.[].filename' 2>/dev/null || true)
-            else
-              files=$(gh api \
-                "repos/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.sha }}" \
-                -q '.files[].filename' 2>/dev/null || true)
-            fi
-            if printf '%s\n' "$files" | grep -Eq \
-              '^(pi/hitl/phone/(ios_|phone_e2e|phone_target|driver_server|journey_runner|launcher|journeys/)|pi/hitl/reserve/catalog-mac\.json|pi/hitl/nix/hitl-darwin\.nix|tools/ios_build_server\.py|web/ios-config/|web/capacitor\.config\.ts|web/native-plugins/|web/src/driver/|web/src/net/capacitorImprov\.ts)'; then
-              run=true
-            fi
+            echo "base=" >> "$GITHUB_OUTPUT"
+            echo "files=" >> "$GITHUB_OUTPUT"
+            echo "no changed-file list for this $EVENT event"
           fi
-          echo "run_ios=$run" >> "$GITHUB_OUTPUT"
-          echo "iOS phone-HITL journeys will run this execution: $run"
 
       # Free ~20-30GB of runner disk before the heavy Nix/Bazel build (FUG-76):
       # ubuntu-latest gives only ~14GB free on /, but the flash-bundle build pulls
@@ -222,14 +224,6 @@ jobs:
       # are untouched. Same step as the test.yaml jobs.
       - name: Free runner disk space
         uses: justinthelaw/maximize-github-runner-space@v0.10.0
-
-      # Reach the rigs over the tailnet. Ephemeral so the node self-reaps after
-      # the run; the rigs only accept tailnet peers (DESIGN.md "Security").
-      - name: Join the tailnet
-        uses: tailscale/github-action@v3
-        with:
-          authkey: ${{ secrets.TS_AUTHKEY }}
-          args: --accept-routes
 
       # Same Nix + Bazel toolchain and caching as the firmware job — the
       # flash-bundle pulls in the esp32c6 image (mbedtls + Arduino core from
@@ -258,6 +252,163 @@ jobs:
           path: ~/.cache/bazel-disk
           key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
           restore-keys: bazel-disk-${{ runner.os }}-
+
+      # Target Determinator's per-revision results (the hashed configured graph of the
+      # HITL tests). push runs save main's, so a PR or merge group based on a recent
+      # main commit only has to analyse its own head.
+      - name: Restore target-determinator cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/target-determinator/results
+          key: td-results-${{ steps.changes.outputs.base }}
+          restore-keys: td-results-
+
+      # Which HITL tests can this change affect? See "Which tests run" at the top and
+      # pi/hitl/ci/hitl_select.py. Never fails the job: any error runs everything.
+      - name: Select affected HITL tests
+        id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ steps.changes.outputs.base }}
+          CHANGED: ${{ steps.changes.outputs.files }}
+          TD_VERSION: v0.34.0
+          TD_SHA256: 115e1c63d39e2cd0d0b011c9fadc80f059f021176a4ae0de2232cdd83b1f8011
+        run: |
+          t="$RUNNER_TEMP"
+          # Discover the on-hardware pool exactly as before: the `hitl` tag over tests(//...).
+          bazel query 'attr(tags, "\bhitl\b", tests(//...))' > "$t/hitl-pool.txt"
+          echo "collected HITL tests:"; cat "$t/hitl-pool.txt"
+          if [ ! -s "$t/hitl-pool.txt" ]; then echo "no HITL-tagged tests found"; exit 1; fi
+          # Target Determinator analyses this universe (every pool test lives under the
+          # harness; one outside it is kept by the selector, unexamined).
+          universe='attr(tags, "\bhitl\b", tests(//pi/hitl/harness/...))'
+          bazel query "$universe" > "$t/hitl-universe.txt" || : > "$t/hitl-universe.txt"
+          force=""
+          case "$EVENT" in
+            push) force="push to main: the full suite" ;;
+            workflow_dispatch) force="workflow_dispatch: the full suite" ;;
+          esac
+          rm -f "$t/td.err"
+          if [ -n "$BASE" ]; then
+            # push runs it too (result unused) so main's per-commit results get cached.
+            td="$t/target-determinator"
+            if curl -fsSL -o "$td" "https://github.com/bazel-contrib/target-determinator/releases/download/$TD_VERSION/target-determinator.linux.amd64" \
+                && echo "$TD_SHA256  $td" | sha256sum -c - && chmod +x "$td"; then
+              # The same flags the suite builds with: -c opt, and FUG-84's serialized
+              # repo fetching (Target Determinator's cquery fetches the Nix toolchains).
+              start=$(date +%s)
+              if ! timeout 1500 "$td" -targets "$universe" \
+                  -bazel-opts=-c -bazel-opts=opt \
+                  -bazel-opts=--experimental_worker_for_repo_fetching=off \
+                  -bazel-opts=--loading_phase_threads=1 \
+                  -ignore-file=MODULE.bazel.lock \
+                  "$BASE" > "$t/td.txt" 2> "$t/td.log"; then
+                { echo "target-determinator failed:"; tail -n 20 "$t/td.log"; } > "$t/td.err"
+              fi
+              echo "target-determinator took $(( $(date +%s) - start ))s"
+            else
+              echo "could not fetch target-determinator $TD_VERSION" > "$t/td.err"
+            fi
+          else
+            echo "no base revision" > "$t/td.err"
+          fi
+          python3 pi/hitl/ci/hitl_select.py \
+            --pool "$t/hitl-pool.txt" \
+            ${CHANGED:+--changed-files "$CHANGED"} \
+            --impacted "$t/td.txt" --impact-error "$t/td.err" \
+            --impact-universe "$t/hitl-universe.txt" \
+            --force-all "$force" --base "$BASE" --head "$GITHUB_SHA" \
+            --out-json "$t/hitl-selection.json" --out-pool "$t/hitl-selected.txt" \
+            --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the HITL test selection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hitl-test-selection
+          path: ${{ runner.temp }}/hitl-selection.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      # Decide whether this run exercises the Android phone-HITL journeys
+      # (//pi/hitl/phone:android_journeys, the `hitl_android`-tagged lane). There is
+      # exactly ONE Android unit (amd-rig's `android-phone`), so running it on every PR
+      # would bottleneck the whole fleet behind it. Policy:
+      #   * workflow_dispatch (the Mac 6h cron + manual) → ALWAYS run — this is where the
+      #     regular Android reps come from.
+      #   * pull_request / push → OPT-IN only, when the change plausibly affects the
+      #     phone/BLE/Android path. Opt in three ways (any one triggers it):
+      #       - add the `hitl-android` LABEL to the PR, OR
+      #       - put a `[hitl-android]` tag in the PR body or the head commit message, OR
+      #       - touch an Android-affecting path (auto; globs in pi/hitl/ci/overrides.toml).
+      # CONVENTION: if you judge your change may have impacted the phone / BLE / Improv /
+      # netstack-BLE / Capacitor path and the path globs wouldn't catch it, REQUEST a run
+      # by adding the `hitl-android` label (or the `[hitl-android]` tag). See
+      # pi/hitl/phone/README.md "Automated CI reps".
+      - name: Decide whether to run the Android journeys
+        id: android_gate
+        env:
+          # Pass attacker-influenceable text through the environment (NOT interpolated
+          # into the script), so a crafted PR body / commit message / label can't break
+          # the shell quoting or inject commands.
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          run=false
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            run=true
+          else
+            # 1) opt-in label on the PR
+            if printf '%s' "$PR_LABELS" | grep -q '"hitl-android"'; then run=true; fi
+            # 2) [hitl-android] tag in the PR body or the head commit message
+            if printf '%s\n%s' "$PR_BODY" "$COMMIT_MSG" | grep -qiF '[hitl-android]'; then
+              run=true
+            fi
+            # 3) path filter: did the change touch an Android-affecting path? The
+            #    globs live in pi/hitl/ci/overrides.toml (rule android-phone); the
+            #    selection step evaluated them (and runs the lane when it is unsure).
+            if [ "${{ steps.select.outputs.run_android }}" = "true" ]; then run=true; fi
+          fi
+          echo "run_android=$run" >> "$GITHUB_OUTPUT"
+          echo "Android phone-HITL journeys will run this execution: $run"
+
+      # Same policy for the iOS phone-HITL journeys (//pi/hitl/phone:ios_journeys, the
+      # `hitl_ios`-tagged lane on the Mac mini's single `ios-phone` unit): ALWAYS on the
+      # periodic workflow_dispatch runs; opt-in on PR/push via the `hitl-ios` LABEL, a
+      # `[hitl-ios]` tag in the PR body / head commit message, or an iOS-affecting path.
+      - name: Decide whether to run the iOS journeys
+        id: ios_gate
+        env:
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          run=false
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            run=true
+          else
+            if printf '%s' "$PR_LABELS" | grep -q '"hitl-ios"'; then run=true; fi
+            if printf '%s\n%s' "$PR_BODY" "$COMMIT_MSG" | grep -qiF '[hitl-ios]'; then
+              run=true
+            fi
+            # iOS-affecting paths: rule ios-phone in pi/hitl/ci/overrides.toml.
+            if [ "${{ steps.select.outputs.run_ios }}" = "true" ]; then run=true; fi
+          fi
+          echo "run_ios=$run" >> "$GITHUB_OUTPUT"
+          echo "iOS phone-HITL journeys will run this execution: $run"
+
+      # Reach the rigs over the tailnet. Ephemeral so the node self-reaps after
+      # the run; the rigs only accept tailnet peers (DESIGN.md "Security").
+      # Skipped when nothing is selected: such a run never touches the bench.
+      - name: Join the tailnet
+        if: >-
+          steps.select.outputs.pool_count != '0' || steps.select.outputs.web_tests != '' ||
+          steps.android_gate.outputs.run_android == 'true' || steps.ios_gate.outputs.run_ios == 'true'
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          args: --accept-routes
 
       # Discover the on-hardware suite the same way the unit lane once did — query
       # the `hitl` tag over tests(//...) — and `bazel test` the set. The targets
@@ -295,9 +446,10 @@ jobs:
         # the (fast, no-compile) loading/fetch phase is serialized; the firmware
         # *compile* still runs in parallel (execution phase, --jobs=3).
         run: |
-          all=$(bazel query 'attr(tags, "\bhitl\b", tests(//...))')
-          echo "collected HITL tests:"; echo "$all"
-          if [ -z "$all" ]; then echo "no HITL-tagged tests found"; exit 1; fi
+          # The selected pool tests (the select step discovered the `hitl`-tagged set and
+          # kept those this change can affect; push/dispatch keep all of them).
+          all=$(cat "$RUNNER_TEMP/hitl-selected.txt")
+          echo "selected HITL tests (${{ steps.select.outputs.mode }}):"; echo "$all"
           # Every HITL-tagged test GATES CI and they run together in ONE pass — no
           # name-based lane split. (The old netstack-vs-vendor grep split existed only
           # to keep the ALLOW-FAIL vendor lane separate from the gating netstack lane;
@@ -314,6 +466,11 @@ jobs:
             n=$(echo "$t" | wc -w)
             if [ "$n" -eq 0 ]; then echo "(no targets in this set)"; return 0; fi
             echo "running $n HITL tests in parallel (queued on the bench)"
+            # Queue waits are progress-driven, not fixed: hitl_client waits while the
+            # rig queue drains and gives up only on a stall / unhealthy rig / the
+            # HITL_DEADLINE ceiling. So the per-test (eternal) Bazel timeout is raised
+            # from 3600 s to 5 h — the queue wait counts against it — while
+            # HITL_HOLD_MAX keeps a hung test from holding a board past an hour.
             # --flaky_test_attempts=3: reservations QUEUE (never preempt) — a test holds
             # its DUT until it releases — but a DUT's own bring-up can still flake per
             # boot (e.g. the netstack WSS/TLS server occasionally not accepting a
@@ -330,6 +487,10 @@ jobs:
               --jobs="$n" \
               --local_test_jobs="$n" \
               --flaky_test_attempts=3 \
+              --test_timeout=-1,-1,-1,18000 \
+              --test_env=HITL_PRIORITY \
+              --test_env=HITL_DEADLINE \
+              --test_env=HITL_HOLD_MAX \
               --test_env=HITL_SERVERS \
               --test_env=HITL_WIFI_SSID \
               --test_env=HITL_WIFI_PASS \
@@ -337,6 +498,7 @@ jobs:
               --test_env=HITL_SERIAL_LOG_DIR \
               --test_env=HITL_EXCLUDE_HOSTS \
               --test_env=GITHUB_SHA \
+              --build_event_json_file="$BEP" \
               "${server_arg[@]}"
           }
           # rig-3 is fenced fleet-wide (HITL_EXCLUDE_HOSTS): its Pi 3 onboard AP drops the
@@ -351,10 +513,54 @@ jobs:
           # Each lane records its failure instead of exiting, so one lane failing never
           # hides the others' results (the periodic run reports pool + Android + iOS);
           # the step still fails at the end if any lane failed.
+          # The CI job's ceiling for getting a unit: every test (and flaky retry)
+          # gives up queueing at this epoch, so a burst can't run the job into its
+          # 360 min timeout with nothing reported.
+          export HITL_DEADLINE=$(( $(date +%s) + HITL_QUEUE_BUDGET_MIN * 60 ))
+          echo "HITL class=$HITL_PRIORITY; reservation deadline $(date -u -d @"$HITL_DEADLINE" +%H:%MZ)"
           rc=0
+          # The verdict (pi/hitl/ci/hitl_verdict.py) reads the run's build events and
+          # each failing attempt's log: a test whose every failing attempt was infra
+          # (reservation never activated, no rig with a matching unit, rig ssh/tunnel
+          # failure, killed while still queued) is re-queued ONCE, and if it is still
+          # infra it is SKIPPED with a warning instead of failing the job. A test listed
+          # in pi/hitl/ci/quarantine.toml runs and reports but never fails the job. Any
+          # other failure gates, exactly as before. See pi/hitl/ci/README.md.
           echo "::group::HITL tests (GATING)"
-          HITL_EXCLUDE_HOSTS="hitl-rig-3" run_hitl_set "$all" || rc=1
+          t="$RUNNER_TEMP"
+          if [ -n "$all" ]; then
+            echo "$all" | tr ' ' '\n' | sed '/^$/d' > "$t/hitl-targets.txt"
+            BEP="$t/hitl-bep-1.json" HITL_EXCLUDE_HOSTS="hitl-rig-3" run_hitl_set "$all" && e1=0 || e1=$?
+            verdict_args=(--targets "$t/hitl-targets.txt" --bep "$t/hitl-bep-1.json" --bazel-exit "$e1")
+            python3 pi/hitl/ci/hitl_verdict.py "${verdict_args[@]}" \
+              --requeue-out "$t/hitl-requeue.txt" > /dev/null || true
+            # (Not past HITL_DEADLINE: a re-queued test would give up at once.)
+            if [ -s "$t/hitl-requeue.txt" ] && [ "$(date +%s)" -lt "$HITL_DEADLINE" ]; then
+              echo "re-queueing the infra-only failures once:"; cat "$t/hitl-requeue.txt"
+              BEP="$t/hitl-bep-2.json" HITL_EXCLUDE_HOSTS="hitl-rig-3" \
+                run_hitl_set "$(cat "$t/hitl-requeue.txt")" && e2=0 || e2=$?
+              verdict_args+=(--bep "$t/hitl-bep-2.json" --bazel-exit "$e2")
+            fi
+          else
+            echo "No pool test can be affected by this change: none run (see the step summary)."
+          fi
           echo "::endgroup::"
+          if [ -n "$all" ]; then
+            python3 pi/hitl/ci/hitl_verdict.py "${verdict_args[@]}" \
+              --json-out "$t/hitl-verdict.json" --summary "$GITHUB_STEP_SUMMARY" || rc=1
+          fi
+
+          # The web-OTA journey (//pi/hitl/harness:web_ota_journey, tagged `hitl_web`):
+          # the update driven through the real web app in headless Chromium. Runs only
+          # when the selection's override map picks it (rule web-ota-journey). REPORT-ONLY
+          # for now — it has no CI history yet, so a failure warns instead of gating.
+          web="${{ steps.select.outputs.web_tests }}"
+          if [ -n "$web" ]; then
+            echo "::group::web-OTA journey (REPORT-ONLY)"
+            BEP="$t/hitl-bep-web.json" HITL_EXCLUDE_HOSTS="hitl-rig-3" run_hitl_set "$web" \
+              || echo "::warning title=web-OTA journey failed (report-only)::$web"
+            echo "::endgroup::"
+          fi
 
           # The Android phone-HITL journeys (amd-rig's `android-phone` unit, the :8088
           # phone daemon). Separate from the pool run above: it reserves ONE named unit
@@ -383,6 +589,7 @@ jobs:
               --flaky_test_attempts=2 \
               --test_env=HITL_ANDROID_SERVER \
               --test_env=HITL_ANDROID_PIN \
+              --test_env=HITL_PRIORITY \
               --test_env=HITL_OWNER \
               --test_env=HITL_SERIAL_LOG_DIR \
               --test_env=GITHUB_SHA || rc=1
@@ -415,6 +622,7 @@ jobs:
               --test_env=HITL_IOS_JOURNEYS \
               --test_env=HITL_IOS_BLE_MODE \
               --test_env=HITL_IOS_FLASH_C6 \
+              --test_env=HITL_PRIORITY \
               --test_env=HITL_OWNER \
               --test_env=HITL_SERIAL_LOG_DIR \
               --test_env=GITHUB_SHA || rc=1
@@ -434,13 +642,76 @@ jobs:
         run: |
           testlogs="$(readlink -f bazel-testlogs || true)"
           if [ -z "$testlogs" ] || [ ! -d "$testlogs" ]; then
-            echo "::warning::no bazel-testlogs: the HITL suite did not run"
+            if [ "${{ steps.select.outputs.pool_count }}" = "0" ]; then
+              echo "no bazel-testlogs: the selection ran no HITL test"
+            else
+              echo "::warning::no bazel-testlogs: the HITL suite did not run"
+            fi
             exit 0
           fi
           echo "HITL_TESTLOGS=$testlogs" >> "$GITHUB_ENV"
           cd "$testlogs"
           find . -name test.xml -exec install -D -m 0644 {} "$GITHUB_WORKSPACE/hitl-traceability-evidence/{}" \;
           echo "collected $(find "$GITHUB_WORKSPACE/hitl-traceability-evidence" -name test.xml 2>/dev/null | wc -l) test.xml from $testlogs"
+
+      # Every HITL test's undeclared outputs ($TEST_UNDECLARED_OUTPUTS_DIR: the DUT
+      # console windows heavy_effect_reachability saves, android_journeys' whole DUT
+      # log, fx_bench's bundle, ...). Bazel zips them into <target>/test.outputs/
+      # outputs.zip, and a --flaky_test_attempts retry moves a failed attempt's to
+      # <target>/test_attempts/attempt_N.outputs/outputs.zip. Each zip is unpacked to
+      # hitl-test-outputs/<package>/<target>/<test|test_attempts/attempt_N>.outputs/.
+      # The hitl-serial-logs capture pauses while a test holds the console itself, so
+      # these files are the only copy of those windows. Every test's outputs go up while
+      # the zips total under HITL_OUTPUTS_MAX_MB; past that only the tests that failed an
+      # attempt (failed, or passed on a retry) keep theirs.
+      - name: Collect HITL test outputs
+        if: always() && env.HITL_TESTLOGS != ''
+        env:
+          HITL_OUTPUTS_MAX_MB: '300'
+        run: |
+          dest="$GITHUB_WORKSPACE/hitl-test-outputs"
+          list="$RUNNER_TEMP/hitl-outputs.txt"
+          cd "$HITL_TESTLOGS"
+          find . -path '*.outputs/outputs.zip' -printf '%s %P\n' | sort -k2 > "$list"
+          total=$(awk '{ s += $1 } END { print s + 0 }' "$list")
+          echo "$(wc -l < "$list") outputs.zip, $(( total / 1048576 )) MB in all"
+          only_failed=0
+          if [ "$total" -gt $(( HITL_OUTPUTS_MAX_MB * 1048576 )) ]; then
+            only_failed=1
+            echo "::warning::HITL test outputs exceed ${HITL_OUTPUTS_MAX_MB} MB: keeping only tests that failed an attempt"
+          fi
+          kept=0
+          while read -r _size zip; do
+            rel="${zip%/outputs.zip}"            # <pkg>/<target>/test.outputs or .../attempt_N.outputs
+            target="${rel%/test.outputs}"
+            target="${target%/test_attempts/*}"  # <pkg>/<target>
+            if [ "$only_failed" = 1 ] && [ ! -d "$target/test_attempts" ] \
+                && ! grep -qs -e '<failure' -e '<error' "$target/test.xml"; then
+              continue
+            fi
+            mkdir -p "$dest/$rel"
+            unzip -q -o "$zip" -d "$dest/$rel" || echo "::warning::could not unpack $zip"
+            kept=$(( kept + 1 ))
+          done < "$list"
+          echo "unpacked $kept outputs.zip into hitl-test-outputs"
+
+      - name: Upload HITL test outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hitl-test-outputs
+          path: hitl-test-outputs
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload the HITL verdict
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hitl-verdict
+          path: ${{ runner.temp }}/hitl-verdict.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Upload DUT serial logs
         if: always()
@@ -506,3 +777,39 @@ jobs:
             --job hitl-suite \
             --pr "${{ github.event.pull_request.number }}" \
             --commit "${{ github.sha }}"
+
+      # Keep main's Target Determinator results for the PRs and merge groups based on
+      # this commit (restored by key above). Entries older than a few days are dropped
+      # so the cache stays small; a miss only costs re-analysing the base.
+      - name: Prune target-determinator cache
+        if: always() && github.event_name == 'push'
+        continue-on-error: true
+        run: |
+          d=~/.cache/target-determinator/results
+          [ -d "$d" ] && find "$d" -type f -mtime +4 -delete || true
+      - name: Save target-determinator cache
+        if: always() && github.event_name == 'push'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/target-determinator/results
+          key: td-results-${{ github.sha }}
+
+  # (Kept AFTER hitl_tests: test_ci_orchestration parses the first job's steps.)
+  # An unlabelled PR's marker: a ~5 s job whose check is named "HITL not requested",
+  # so the PR's checks say plainly that HITL was skipped because nobody asked (the
+  # hitl_tests job itself just shows "skipped" — GitHub doesn't evaluate a skipped
+  # job's name). It is NOT a HITL result; the merge queue ignores it.
+  hitl_not_requested:
+    name: HITL not requested
+    if: >-
+      github.event_name == 'pull_request' &&
+      !contains(github.event.pull_request.labels.*.name, 'hitl')
+    runs-on: ubuntu-latest
+    steps:
+      - name: HITL not requested
+        run: |
+          msg="HITL not requested: this PR has no 'hitl' label, so the on-hardware suite was skipped. Add the 'hitl' label to run it (the merge queue does this when the PR reaches the head)."
+          echo "::notice title=HITL not requested::$msg"
+          echo "### HITL not requested" >> "$GITHUB_STEP_SUMMARY"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"

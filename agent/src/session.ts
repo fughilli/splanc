@@ -33,28 +33,40 @@ import {
   type UniformValueFlat,
 } from "../../web/src/net/proto";
 import { TextureStreamer, type TextureFormat } from "../../web/src/net/textureCodec";
+import { chunkUniformValues, reassembleUniformValues } from "../../web/src/net/uniformWire";
+import {
+  formatWifiStatus,
+  OTA_PENDING_WARNING,
+  type WifiPolicy,
+  type WifiPolicyRequest,
+} from "../../web/src/net/wifiPolicy";
 import { OtaError, updateFirmware, type OtaPhase, type OtaProgress } from "../../web/src/net/otaUpdate";
+import { renderedChannels } from "./channels";
 import type { Pose } from "./config";
+import { FxDebugger } from "../../web/src/fx/fxDebug";
 import { compile, type CompileOutcome, type Toolchain } from "./fxhost";
 import { progress } from "./progress";
 import type { ClockSync } from "./timesync";
 import {
+  currentByName,
   describe,
   lerpValues,
   parseManifest,
   resolve,
+  resolveFull,
   type ManifestUniform,
   type UniformInput,
 } from "./uniforms";
 
-/** The framerate autoscaler's abort floor (FUG-82; firmware/fps MIN_FPS) for a
- * strip of up to FPS_FLOOR_REF_LEDS LEDs. */
+/** The framerate autoscaler's lowest rung (FUG-82; firmware/fps MIN_FPS) for a
+ * strip of up to FPS_FLOOR_REF_LEDS LEDs. An effect too heavy for it lags (runs
+ * slower); the player never parks it. */
 const FPS_FLOOR = 25;
 const FPS_FLOOR_REF_LEDS = 512;
 
-/** The abort floor for a strip of `leds` (firmware/fps `floor_fps_for`): 25 fps
+/** The autoscaler floor for a strip of `leds` (firmware/fps `floor_fps_for`): 25 fps
  * up to 512 LEDs, then the 5-fps rung (rounded down, >= 5) that keeps the same
- * shaded LEDs per second — a long strip runs heavy effects slower, not parked. */
+ * shaded LEDs per second — a long strip runs heavy effects slower. */
 export function fpsFloorFor(leds: number): number {
   if (leds <= FPS_FLOOR_REF_LEDS) return FPS_FLOOR;
   const f = Math.floor((FPS_FLOOR * FPS_FLOOR_REF_LEDS) / leds);
@@ -75,6 +87,13 @@ export const FORBIDDEN_TYPES = new Set([
   "set_jit",
 ]);
 
+/** The ONE exemption from FORBIDDEN_TYPES: the app's room localization through
+ * the bridge (live `group_capture`, docs/design/multi-fixture-localization.md)
+ * starts/stops the group mapping pattern — only inside {@link
+ * DeviceSession.groupCaptureScope}, which only the live mux's group_capture
+ * query (a paired, human-operated app) enters. No MCP tool or CLI path can. */
+export const GROUP_CAPTURE_TYPES = new Set(["start_mapping", "stop_mapping"]);
+
 /** Device features the bridge can use when the firmware advertises them
  * (Welcome.features or the discovery manifest's protocol.features). */
 export type Feature =
@@ -91,6 +110,7 @@ export type Feature =
   | "fps"
   | "sensors"
   | "drivers"
+  | "wifi_policy"
   | (string & {});
 
 export type Deck = 0 | 1;
@@ -182,8 +202,15 @@ interface Deployed {
   /** The effect's declared uniforms (slot + default), from its compile. */
   uniforms: ManifestUniform[];
   /** Last-known value per slot: the defaults sent on activation, then every
-   * set this session sent while it was active (restored by rollback). */
+   * set this session sent while it was active (restored by rollback). Kept as
+   * ≤4-float wire chunks (see noteChunks) so a mat4 set whole and one set in
+   * chunks never mix stale components. */
   values: Map<number, number[]>;
+}
+
+/** Record `values` into a slot-keyed map as ≤4-float wire chunks. */
+function noteChunks(into: Map<number, number[]>, values: readonly UniformValueFlat[]): void {
+  for (const c of chunkUniformValues(values)) into.set(c.slot, c.value);
 }
 
 interface TextureStream {
@@ -215,17 +242,25 @@ export class DeviceSession {
   toolchain: Toolchain | undefined;
   /** The last clock sync against this player. */
   clock: ClockSync | null = null;
-  /** The framerate autoscaler's last abort (FUG-82): the player parked the
-   * running effect because it couldn't hold even the floor / a pinned rate.
-   * Cleared when this session activates an effect. */
-  private parked: (FpsStateMessage & { at: number }) | null = null;
   /** The player's last-reported effect framerate (FUG-82 autoscaler; 0 = unknown).
    * Ramps never stream uniforms faster than the player renders. */
   private playerFps = 0;
   /** The player's last fps_state (FUG-82), and who wants each one (the live mux
    * forwards them to app sessions). */
   private lastFps: FpsStateMessage | null = null;
+  /** When lastFps arrived, and when this session last (de)activated an effect: a
+   * lagging report from before the switch was about the previous effect. */
+  private lastFpsAt = 0;
+  private activatedAt = 0;
   private readonly fpsSubs = new Set<(st: FpsStateMessage) => void>();
+  /** Wall-clock (Date.now) of the last fps_state, for the bridge display's perf age. */
+  private lastFpsWall = 0;
+  /** The last perf report that measured frames (whoever turned perf on: measure_effect,
+   * the app) and when it arrived (Date.now) — the bridge display shows it. */
+  private lastPerf: { r: PerfReportMessage; at: number } | null = null;
+  /** The hardware config's channel counts + capacity, once {@link loadLedInfo} read them. */
+  private hwLeds: { channels: { channel: number; ledCount: number }[]; capacity: number } | null = null;
+  private ledInfoLoad: Promise<void> | null = null;
   /**
    * A live performer's show lock (docs/design/live-vj-relay.md, "Arbitration"):
    * while set, every mutating method refuses with a ToolError naming the holder,
@@ -236,6 +271,8 @@ export class DeviceSession {
   /** Bumped whenever an effect is (de)activated through this session, so caches
    * of the active effect's uniform manifest (the live mux's) know to re-read it. */
   effectGen = 0;
+  /** >0 while {@link groupCaptureScope} runs (permits GROUP_CAPTURE_TYPES). */
+  private groupScope = 0;
 
   constructor(private readonly opts: SessionOptions) {
     this.extraFeatures = opts.features ?? [];
@@ -249,7 +286,7 @@ export class DeviceSession {
         // ones (belt and braces under the tool layer, which never builds them).
         const t = sniffType(data);
         if (t !== null) {
-          if (FORBIDDEN_TYPES.has(t)) {
+          if (FORBIDDEN_TYPES.has(t) && !(this.groupScope > 0 && GROUP_CAPTURE_TYPES.has(t))) {
             this.blockedTypes.push(t);
             throw new ToolError(`the bridge never sends ${t}`);
           }
@@ -269,13 +306,15 @@ export class DeviceSession {
       schedule: (fn, ms) => void setTimeout(fn, ms).unref(),
     });
     this.client.onFpsState((st) => {
-      if (st.aborted) this.parked = { ...st, at: performance.now() };
       if (st.currentFps > 0) this.playerFps = st.currentFps;
       this.lastFps = st;
+      this.lastFpsAt = performance.now();
+      this.lastFpsWall = Date.now();
       for (const fn of this.fpsSubs) fn(st);
     });
     this.client.onPerfReport((r) => {
       if ((r.currentFps ?? 0) > 0) this.playerFps = r.currentFps!;
+      if (r.frameCyclesMax > 0 || r.frameCyclesMean > 0) this.lastPerf = { r, at: Date.now() };
     });
   }
 
@@ -289,7 +328,74 @@ export class DeviceSession {
     return this.lastFps;
   }
 
-  /** Every fps_state the player pushes (autoscaler steps, aborts); returns unsubscribe. */
+  /** Read what the bridge display needs to count this fixture's LEDs, once per
+   * session: the hardware config, plus the stored map's LED count only when no
+   * channel is configured (channels.ts: then the map is what it renders). Never
+   * throws; older firmware without the hardware-config arm just has no count. */
+  loadLedInfo(): Promise<void> {
+    this.ledInfoLoad ??= (async () => {
+      try {
+        const hw = await this.run(() => this.client.getHardwareConfig());
+        this.hwLeds = {
+          channels: (hw.channels ?? []).map((c) => ({ channel: c.channel, ledCount: c.ledCount })),
+          capacity: hw.ledCapacity ?? 0,
+        };
+      } catch {
+        return; // no hardware-config arm, or the connection dropped
+      }
+      if (this.hwLeds.channels.some((c) => (c.ledCount | 0) > 0)) return;
+      await this.mappingBundle().catch(() => undefined); // no stored map: no count
+    })();
+    return this.ledInfoLoad;
+  }
+
+  /** LEDs this player renders (channels.ts), from what this session already read;
+   * null when unknown. Synchronous: the bridge's status file is built from it. */
+  ledTotal(): { leds: number; source: "configured" | "map" } | null {
+    const map = this.fixture?.bundle.map;
+    const mapLeds = map ? map.ledCount || map.leds?.length || 0 : 0;
+    if (!this.hwLeds) return null;
+    const ch = renderedChannels(this.hwLeds.channels, mapLeds, this.hwLeds.capacity);
+    const leds = ch.reduce((n, c) => n + c.ledCount, 0);
+    if (leds <= 0) return null;
+    return { leds, source: ch.some((c) => c.ledCountSource === "configured") ? "configured" : "map" };
+  }
+
+  /** The running effect's id as far as this session knows it: the one it deployed,
+   * else the one the last perf report named. */
+  get knownEffect(): string | null {
+    return this.current?.effectId || this.lastPerf?.r.effectId || null;
+  }
+
+  /** The latest performance numbers this session holds (no device round trip):
+   * the last perf report (budget used, overruns, heap) and fps_state (rate, lag).
+   * null when it has neither. `at` is Date.now() ms of the newest. */
+  perfSnapshot(): {
+    fps?: number;
+    budget_used?: number;
+    overruns?: number;
+    lagging?: boolean;
+    heap_free?: number;
+    at: number;
+  } | null {
+    const p = this.lastPerf;
+    const st = this.lastFps;
+    if (!p && !st) return null;
+    const out: { fps?: number; budget_used?: number; overruns?: number; lagging?: boolean; heap_free?: number; at: number } = {
+      at: Math.max(p?.at ?? 0, st ? this.lastFpsWall : 0),
+    };
+    const fps = st?.lagging && st.achievedFps > 0 ? st.achievedFps : this.playerFps;
+    if (fps > 0) out.fps = Math.round(fps * 10) / 10;
+    if (p) {
+      if (p.r.budgetCycles > 0) out.budget_used = +(p.r.frameCyclesMean / p.r.budgetCycles).toFixed(3);
+      out.overruns = p.r.overruns;
+      if (p.r.heapFree > 0) out.heap_free = p.r.heapFree;
+    }
+    if (st) out.lagging = st.lagging;
+    return out;
+  }
+
+  /** Every fps_state the player pushes (set_fps replies, lagging changes); returns unsubscribe. */
   onFps(fn: (st: FpsStateMessage) => void): () => void {
     this.fpsSubs.add(fn);
     return () => this.fpsSubs.delete(fn);
@@ -393,12 +499,24 @@ export class DeviceSession {
     } catch {
       hw = null; // older firmware: no hardware-config arm
     }
+    // A channel count of 0 is "not configured", not "no LEDs": a map-sized
+    // fixture renders the stored map's LEDs (#397). Only pull the map for that.
+    const hwChannels = hw?.channels ?? [];
+    let mapLeds = 0;
+    if (hwChannels.length && hwChannels.every((c) => (c.ledCount | 0) <= 0)) {
+      try {
+        const m = (await this.mappingBundle()).map;
+        mapLeds = m?.ledCount || m?.leds?.length || 0;
+      } catch {
+        mapLeds = 0; // no stored map
+      }
+    }
     return {
       name: w.deviceName,
       id: w.mac,
       firmware: { version: w.fwVersion, commit: w.fwGitCommit, dirty: w.fwGitDirty },
       board: hw?.board?.board ?? null,
-      channels: hw?.channels ?? [],
+      channels: renderedChannels(hwChannels, mapLeds, hw?.ledCapacity ?? 0),
       max_leds: hw?.board?.maxLeds ?? null,
       brightness: (w as unknown as { brightness?: number }).brightness ?? 1,
       features: [...this.features()].sort(),
@@ -436,12 +554,8 @@ export class DeviceSession {
       this.live = 0;
     }
     const uniforms = parseManifest(raw.manifest ?? new Uint8Array(0));
-    const bySlot = new Map((raw.current ?? []).map((c) => [c.slot, c.value]));
-    const current = new Map<string, number[]>();
-    for (const u of uniforms) {
-      const v = bySlot.get(u.slot);
-      if (v) current.set(u.name, v);
-    }
+    // A mat3/mat4 arrives as consecutive ≤4-float slot chunks: reassemble.
+    const current = currentByName(uniforms, raw.current ?? []);
     const textures = (raw as unknown as { textures?: { index: number; width: number; height: number; elem: number }[] })
       .textures ?? [];
     return { effectId: raw.effectId ?? "", uniforms, current, textures, raw };
@@ -485,6 +599,71 @@ export class DeviceSession {
       throw new ToolError(`the player's firmware (${this.fwVersion}) doesn't store uniform keypoints`);
     }
     if (!KEYPOINTS_IN_PROTO) throw new ToolError("this agent bundle predates uniform keypoints; update it");
+  }
+
+  // -- Wi-Fi rejoin policy (docs/design/wifi-rejoin-policy.md) --------------------
+  // How the player rejoins its stored network. `force` is sent ONLY when the
+  // caller set it: the firmware refuses manual/offline while a fresh update is
+  // unconfirmed, and that refusal is reported, never silently overridden.
+
+  private requireWifiPolicy(): void {
+    if (!this.has("wifi_policy")) {
+      throw new ToolError(`the player's firmware (${this.fwVersion}) has no configurable Wi-Fi rejoin policy`);
+    }
+    if (!WIFI_POLICY_IN_PROTO) throw new ToolError("this agent bundle predates the Wi-Fi rejoin policy; update it");
+  }
+
+  async getWifiPolicy(): Promise<Record<string, unknown>> {
+    this.requireWifiPolicy();
+    return DeviceSession.wifiView(await this.run(() => this.client.getWifiPolicy()));
+  }
+
+  async setWifiPolicy(req: WifiPolicyRequest): Promise<Record<string, unknown>> {
+    this.requireWifiPolicy();
+    const clean: WifiPolicyRequest = {};
+    for (const k of ["mode", "scanCapS", "intervalS", "decayAfterH", "sparseIntervalS"] as const) {
+      if (req[k] !== undefined) (clean as Record<string, unknown>)[k] = req[k];
+    }
+    if (req.rejoinNow === true) clean.rejoinNow = true;
+    if (req.force === true) clean.force = true;
+    return DeviceSession.wifiView(await this.run(() => this.client.setWifiPolicy(clean)));
+  }
+
+  private static wifiView(p: WifiPolicy): Record<string, unknown> {
+    const out: Record<string, unknown> = {
+      status: formatWifiStatus(p).replace(/^Wi-Fi: /, ""),
+      mode: p.mode,
+      state: p.state,
+      ssid: p.ssid,
+      radio_on: p.radioOn,
+      scan_cap_s: p.scanCapS,
+      interval_s: p.intervalS,
+      decay_after_h: p.decayAfterH,
+      sparse_interval_s: p.sparseIntervalS,
+      next_scan_s: p.nextScanS,
+      scans: p.scans,
+      unseen_s: p.unseenS,
+      decayed: p.decayed,
+      ota_pending: p.otaPending,
+    };
+    if (p.refused) {
+      out["refused"] = p.refused;
+      out["applied"] = false;
+      out["note"] =
+        p.refused === "ota_pending"
+          ? "NOT applied: a firmware update is installed but not yet confirmed. Keep the player online until " +
+            "the update is confirmed, then retry. Only pass force=true if the user explicitly accepts going " +
+            "manual/offline with an unconfirmed update."
+          : `NOT applied: ${p.refused}`;
+    } else if (p.otaPending) {
+      out["note"] = OTA_PENDING_WARNING;
+    }
+    if (p.mode === "offline" && !p.refused) {
+      out["offline_note"] =
+        "Offline: the Wi-Fi radio is off (no scans, also after reboot); credentials are kept. This bridge " +
+        "loses the player; switch it back to auto over Bluetooth (the app) or the wired console (`WIFI MODE auto`).";
+    }
+    return out;
   }
 
   // -- motion sensor (docs/design/sensor-core.md) ---------------------------------
@@ -774,13 +953,29 @@ export class DeviceSession {
     return wire;
   }
 
-  /** Live uniform push (the live mux; slider drags): fire-and-forget, in order
-   * with this session's other traffic, on `deck` (default: the live deck).
-   * `commit` persists them where the firmware understands it (false while
-   * dragging, true on release). */
+  /** Live uniform push (the live mux, ramps; slider drags) on `deck` (default:
+   * the live deck), in order with this session's other traffic. Rides the
+   * client's live-control channel (docs/design/live-control.md): it resolves once
+   * the player has acknowledged the values (or the channel's ack deadline passed),
+   * so a caller that awaits it never has more than one update queued on the
+   * device — a C6 fed fire-and-forget sets falls seconds behind under a heavy
+   * effect. `commit` persists them where the firmware understands it (false while
+   * dragging, true on release; the channel also commits on its own once idle). */
   async sendLiveUniforms(values: UniformValueFlat[], commit: boolean, deck?: Deck): Promise<void> {
     this.assertUnlocked();
-    await this.run(async () => this.sendUniforms(values, commit, deck ?? this.liveDeck()));
+    await this.run(async () => {
+      const d = deck ?? this.liveDeck();
+      if (!this.client.isConnected) throw new ToolError("the player connection is down");
+      this.client.live.setUniforms(values, { deck: d, commit });
+      this.noteSent(values, d);
+      await this.client.live.settled();
+    });
+  }
+
+  /** Track values sent to `deck` on whichever deployed effect is there. */
+  private noteSent(values: UniformValueFlat[], deck: Deck): void {
+    const target = this.current?.deck === deck ? this.current : this.previous?.deck === deck && this.previous.onDevice ? this.previous : null;
+    if (target) noteChunks(target.values, values);
   }
 
   /** `deck` default: the live deck. Deck B is never persisted (commit ignored). */
@@ -796,8 +991,8 @@ export class DeviceSession {
     if (deck !== 0) msg["deck"] = deck;
     const ok = (this.client as unknown as { send(m: unknown): boolean }).send(msg);
     if (!ok) throw new ToolError("the player connection is down");
-    const target = this.current?.deck === deck ? this.current : this.previous?.deck === deck && this.previous.onDevice ? this.previous : null;
-    if (target) for (const v of values) target.values.set(v.slot, v.value);
+    this.client.live.noteValues(values, deck);
+    this.noteSent(values, deck);
   }
 
   /** The firmware VM starts every uniform at 0 (it ignores the manifest's
@@ -805,7 +1000,13 @@ export class DeviceSession {
    * them. Send each declared uniform's value — its default, or `known` — right
    * after the submit, uncommitted (as the web app does after its own submit). */
   private async sendActivationValues(d: Deployed, known?: Map<number, number[]>): Promise<void> {
-    const values = d.uniforms.map((u) => ({ slot: u.slot, value: known?.get(u.slot) ?? u.default }));
+    const held = new Map(
+      reassembleUniformValues(
+        [...(known ?? [])].map(([slot, value]) => ({ slot, value })),
+        d.uniforms,
+      ).map((v) => [v.slot, v.value]),
+    );
+    const values = d.uniforms.map((u) => ({ slot: u.slot, value: held.get(u.slot) ?? u.default }));
     if (values.length === 0) return;
     await this.run(async () => this.sendUniforms(values, false, d.deck));
   }
@@ -821,7 +1022,9 @@ export class DeviceSession {
     if (!(seconds >= 0 && seconds <= 600)) throw new ToolError("seconds must be within 0..600");
     const a = await this.activeEffect();
     if (!a.effectId) throw new ToolError("no effect is loaded; deploy one first");
-    const final = resolve(a.uniforms, targets);
+    // One full-width value per named uniform (the interpolation is per uniform;
+    // the wire chunks mat3/mat4 itself).
+    const final = resolveFull(a.uniforms, targets);
     const byName = new Map(a.uniforms.map((u) => [u.name, u]));
     // Never faster than the player renders (its autoscaled rate, once a perf
     // report or fps_state has told us), nor 60 Hz.
@@ -840,7 +1043,8 @@ export class DeviceSession {
         slot: byName.get(n)!.slot,
         value: lerpValues(byName.get(n)!, from[k]!, final[k]!.value, t),
       }));
-      await this.run(async () => this.sendUniforms(vals, false));
+      // Paced on the player's ack (live channel), so a slow player is never flooded.
+      await this.sendLiveUniforms(vals, false);
       await sleep(1000 / hz);
     }
     await this.run(async () => this.sendUniforms(final, true));
@@ -877,7 +1081,7 @@ export class DeviceSession {
     const wasLive = activate ? this.liveDeck() : 0;
     await this.run(() => this.client.submitEffect(effectId, c.fxb, activate));
     if (activate) {
-      this.parked = null;
+      this.activatedAt = performance.now();
       this.effectGen++;
       const outgoing = this.current ?? (wasLive === 1 ? await this.deviceHeld(1) : null);
       // Deck A was just overwritten; an outgoing effect on deck B is still there.
@@ -897,7 +1101,7 @@ export class DeviceSession {
     this.assertUnlocked();
     this.effectGen++;
     const id = effectId === "off" ? "" : effectId;
-    this.parked = null;
+    this.activatedAt = performance.now();
     if (id === "") {
       if (this.current) {
         this.previous = { ...this.current, onDevice: false };
@@ -934,7 +1138,7 @@ export class DeviceSession {
     this.assertUnlocked();
     this.effectGen++;
     const prev = this.previous;
-    this.parked = null;
+    this.activatedAt = performance.now();
     if (prev?.onDevice && this.decksUsable()) {
       await this.run(() => this.client.setEffect(prev.effectId, prev.deck));
       await this.fadeCrossfade(prev.deck === 1 ? 1 : 0, seconds, { curve: "ease" });
@@ -1044,7 +1248,7 @@ export class DeviceSession {
       const values = new Map<number, number[]>();
       for (const u of a.uniforms) {
         const v = a.current.get(u.name);
-        if (v) values.set(u.slot, v);
+        if (v) noteChunks(values, [{ slot: u.slot, value: v }]);
       }
       return { effectId: a.effectId, fxb: undefined, deck, uniforms: a.uniforms, values, onDevice: true };
     } catch {
@@ -1133,7 +1337,7 @@ export class DeviceSession {
       const a = await this.activeEffect(to);
       const wire = resolve(a.uniforms, uniforms);
       await this.run(async () => this.sendUniforms(wire, false, to));
-      for (const v of wire) incoming.values.set(v.slot, v.value);
+      noteChunks(incoming.values, wire);
     }
     // The outgoing effect is the rollback target, still loaded on its deck.
     this.previous = outgoing ? { ...outgoing, onDevice: true } : this.previous?.deck === from ? this.previous : null;
@@ -1162,7 +1366,16 @@ export class DeviceSession {
     this.assertUnlocked();
     if (!this.decksUsable()) return false;
     const before = this.liveDeck();
-    await this.snapCrossfade(position, mode);
+    // The live-control channel: the newest position wins, paced on the player's
+    // ack (a tiny ControlAck instead of a full welcome on firmware with it).
+    const m = mode ?? this.crossfadeMode();
+    await this.run(async () => {
+      if (!this.client.isConnected) throw new ToolError("the player connection is down");
+      this.client.live.setCrossfade(position, m);
+      await this.client.live.settled();
+    });
+    this.xf = Math.min(1, Math.max(0, position));
+    this.xfMode = m;
     const now: Deck = this.crossfadePosition() >= 0.5 ? 1 : 0;
     this.live = now;
     if (now !== before) this.swapIfParked(now);
@@ -1273,22 +1486,58 @@ export class DeviceSession {
     return { from: +from.toFixed(3), to: target, seconds, steps: steps + 1 };
   }
 
+  // -- FX debugger (docs/design/fx-debugger.md) ---------------------------------
+
+  private fxdbg: FxDebugger | null = null;
+
+  /** The device-side FX debugger over this session's request queue. Throws a
+   * clear error on firmware without the "fx_debug" feature. */
+  fxDebugger(): FxDebugger {
+    if (!this.has("fx_debug")) {
+      throw new ToolError(
+        `the player's firmware (${this.fwVersion}) has no FX debugger (the "fx_debug" feature); update_firmware first`,
+      );
+    }
+    this.fxdbg ??= new FxDebugger({
+      fxDebugControl: (m) => this.run(() => this.client.fxDebugControl(m)),
+      getFxSnapshot: (m) => this.run(() => this.client.getFxSnapshot(m)),
+      debugFxLed: (m) => this.run(() => this.client.debugFxLed(m)),
+    });
+    return this.fxdbg;
+  }
+
+  /** The source this session deployed for an effect id (to name VM slots). */
+  sourceOf(effectId: string): string | undefined {
+    for (const d of [this.current, this.previous]) if (d?.effectId === effectId && d.source) return d.source;
+    return undefined;
+  }
+
   /** BASIC perf for `seconds`: frame cost vs budget, overruns, heap.
    *
    * On firmware with the framerate autoscaler (the "fps" feature, FUG-82) the
    * budget is the live target (cpu_hz / current_fps) and an overrun above the
    * 25-fps floor is just the autoscaler stepping down, so the verdict is "over
-   * budget" only when the player PARKED the effect (fps_state{aborted}) or its
-   * mean frame cost can't keep 5% headroom even at the floor. */
+   * budget" only when the effect LAGS: the player reports fps_state{lagging} or
+   * its mean frame cost can't keep 5% headroom even at the floor. A lagging
+   * effect keeps playing at whatever rate it achieves (the player never parks
+   * it), so the verdict is an advisory: simplify it if smoothness matters. */
   async measureEffect(
     seconds: number,
     opts: { sleep?: (ms: number) => Promise<void> } = {},
   ): Promise<Record<string, unknown>> {
     if (!(seconds > 0 && seconds <= 60)) throw new ToolError("seconds must be within (0, 60]");
     progress(`measuring for ${seconds} s…`);
-    const t0 = performance.now();
     const reports: PerfReportMessage[] = [];
     const unsub = this.client.onPerfReport((r) => reports.push(r));
+    // Lagging as of the measurement: the last fps_state before it, then any during.
+    let lag: FpsStateMessage | null =
+      this.lastFps?.lagging && this.lastFpsAt >= this.activatedAt ? this.lastFps : null;
+    // Pre-lag firmware parked (stopped) an effect it couldn't hold: aborted.
+    let oldAbort: FpsStateMessage | null = null;
+    const unsubFps = this.onFps((st) => {
+      lag = st.lagging ? st : null;
+      if (st.aborted) oldAbort = st;
+    });
     const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
     try {
       await this.run(() => this.client.setPerf("BASIC", 1000));
@@ -1296,22 +1545,22 @@ export class DeviceSession {
       await this.run(() => this.client.getPerfReport());
     } finally {
       unsub();
+      unsubFps();
       await this.run(() => this.client.setPerf("OFF", 0)).catch(() => undefined);
     }
     const live = reports.filter((r) => r.frameCyclesMax > 0 || r.frameCyclesMean > 0);
-    // The abort counts if it landed during this measurement, or before it with
-    // nothing rendering since (an effect that is running again isn't parked).
-    const parked = this.parked && (this.parked.at >= t0 || live.length === 0) ? this.parked : null;
-    const parkedNote = parked
+    const lagSt = lag as FpsStateMessage | null;
+    const abortSt = oldAbort as FpsStateMessage | null;
+    const oldAbortNote = abortSt
       ? {
           aborted: true,
-          verdict:
-            `over budget: the player parked the effect — it can't hold ${parked.auto ? `even ${parked.minFps || 25} fps` : `the pinned ${parked.targetFps} fps`} ` +
-            "with 5% headroom. Roll back (rollback_effect) and simplify it.",
+          note:
+            `this player's older firmware stopped the effect: it couldn't hold ${abortSt.auto ? `${abortSt.minFps || 25} fps` : `the pinned ${abortSt.targetFps} fps`}. ` +
+            "Current firmware keeps a slow effect playing (lagging) instead; update it, or simplify the effect.",
         }
       : {};
     if (live.length === 0) {
-      return { reports: 0, note: "no frames were measured (is an effect active?)", ...parkedNote };
+      return { reports: 0, note: "no frames were measured (is an effect active?)", ...oldAbortNote };
     }
     const last = live[live.length - 1]!;
     const meanCycles = live.reduce((s, r) => s + r.frameCyclesMean, 0) / live.length;
@@ -1326,11 +1575,16 @@ export class DeviceSession {
     const fx = this.fixture?.bundle.map;
     const floorFps = fpsFloorFor(fx?.ledCount ?? fx?.leds?.length ?? 0);
     const floorCycles = currentFps > 0 && last.cpuHz > 0 ? (last.cpuHz / floorFps) * 0.95 : 0;
+    // The rate it really runs at: the player's measured rate while lagging, else
+    // the rung (current_fps is the achieved rate on lag-aware firmware too).
+    const achieved = lagSt?.achievedFps || currentFps;
     let verdict: string;
     if (currentFps > 0) {
+      const target = lagSt && !lagSt.auto && lagSt.targetFps > 0 ? `the pinned ${lagSt.targetFps}` : `the ${floorFps}`;
       verdict =
-        meanCycles > floorCycles
-          ? `over budget: it can't keep 5% headroom even at ${floorFps} fps — the player will park it. Roll back and simplify.`
+        lagSt || meanCycles > floorCycles
+          ? `over budget (advisory): it runs at ~${achieved} fps on this device, below ${target} fps target — it keeps ` +
+            "playing but will lag; simplify it if smoothness matters (rollback_effect restores the previous effect)."
           : `within budget (the player runs it at ${currentFps} fps)`;
     } else {
       verdict =
@@ -1344,6 +1598,8 @@ export class DeviceSession {
       budget_cycles: budget,
       // The autoscaler's live target (FUG-82); absent on fixed-30-fps firmware.
       ...(currentFps > 0 ? { current_fps: currentFps, fps_per_window: live.map((r) => r.currentFps ?? 0) } : {}),
+      // The player's own lag report (fps_state): below its target, still playing.
+      ...(lagSt ? { lagging: true, achieved_fps: lagSt.achievedFps || currentFps } : {}),
       frame_cycles_mean: Math.round(meanCycles),
       frame_cycles_max: maxCycles,
       // The same numbers in ms, and per window (one per ~1 s report), so stability
@@ -1356,11 +1612,25 @@ export class DeviceSession {
       heap_free: last.heapFree,
       heap_min_free: Math.min(...live.map((r) => r.heapMinFree)),
       verdict,
-      ...parkedNote,
+      ...oldAbortNote,
     };
   }
 
   // -- room ------------------------------------------------------------------------
+
+  /** Run `fn` (serialized like every call) with the group-capture exemption:
+   * start_mapping / stop_mapping may go out for its duration. Only the live
+   * mux's `group_capture` query calls this. `fn` uses `this.client` directly. */
+  groupCaptureScope<T>(fn: () => Promise<T>): Promise<T> {
+    return this.run(async () => {
+      this.groupScope++;
+      try {
+        return await fn();
+      } finally {
+        this.groupScope--;
+      }
+    });
+  }
 
   /** Estimate this player's clock offset (TimeSyncPing/Pong, min-RTT of `rounds`). */
   async syncClock(rounds = 6): Promise<ClockSync> {
@@ -1637,6 +1907,7 @@ export const DECKS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === 
 export const KEYPOINTS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "blend_keypoints");
 export const SENSORS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "get_sensors");
 export const DRIVERS_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "submit_driver");
+export const WIFI_POLICY_IN_PROTO = ClientMessageSchema.fields.some((f) => f.name === "set_wifi_policy");
 
 interface DriverStateReply {
   running?: boolean;

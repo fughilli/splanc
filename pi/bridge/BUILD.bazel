@@ -15,6 +15,10 @@ Targets:
                     screen to the test's undeclared outputs
   :installer_test   install.sh into a fake root (install/upgrade/refusals/uninstall)
   :render_gallery   `bazel run //pi/bridge:render_gallery -- <dir>`: review PNGs
+  :boot_frames      the OLED boot animation, pre-rendered from the Splanc logo
+                    (web/public/icons/splanc.svg) by tools/gen_boot_frames.py with
+                    only Pillow: generated here (and in the NixOS image's
+                    splancPy), never committed
   :bundle_files     what //agent:bundle packs as pi-bridge/
 """
 
@@ -26,9 +30,31 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files(["install.sh"])
 
+py_binary(
+    name = "gen_boot_frames",
+    srcs = ["tools/gen_boot_frames.py"],
+    deps = [requirement("pillow")],
+)
+
+py_library(
+    name = "gen_boot_frames_lib",
+    srcs = ["tools/gen_boot_frames.py"],
+    imports = ["tools"],
+    deps = [requirement("pillow")],
+)
+
+genrule(
+    name = "boot_frames",
+    srcs = ["//web:public/icons/splanc.svg"],
+    outs = ["display/splanc_display/boot_frames.bin"],
+    cmd = "$(location :gen_boot_frames) --svg $< --out $@",
+    tools = [":gen_boot_frames"],
+)
+
 py_library(
     name = "splanc_display",
     srcs = glob(["display/splanc_display/*.py"]),
+    data = [":boot_frames"],
     imports = ["display"],
     deps = [
         requirement("pillow"),
@@ -40,10 +66,12 @@ py_test(
     name = "display_test",
     size = "small",
     srcs = glob(["tests/*.py"]),
+    data = ["//web:public/icons/splanc.svg"],
     imports = ["."],
     legacy_create_init = False,
     main = "tests/pytest_main.py",
     deps = [
+        ":gen_boot_frames_lib",
         ":splanc_display",
         "@rules_requirements//python",
         requirement("pytest"),
@@ -61,6 +89,7 @@ filegroup(
     srcs = [
         "display/requirements.lock",
         "install.sh",
+        ":boot_frames",
     ] + glob([
         "bin/*",
         "display/splanc_display/*.py",

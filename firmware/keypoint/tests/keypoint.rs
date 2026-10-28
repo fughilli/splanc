@@ -240,3 +240,64 @@ fn blend_hsv_grey_end_borrows_the_other_hue() {
     let (r, g, b) = blend_rgb8((255, 255, 255), (0, 255, 0), 0.5, 1);
     assert!(g == 255 && r == b && r > 100, "white->green = {r},{g},{b}");
 }
+
+#[test]
+fn manifest_defaults_are_scanned() {
+    // fx_compiler's manifest shape: scalar + vec3 defaults, plus a doc string
+    // that mentions "default" (must not confuse the key-position scanner).
+    let m = br#"[{"name":"speed","slot":0,"width":1,"ui":{"kind":"slider","min":0,"max":4},"default":[1.25],"doc":"\"default\":[9]"},
+{"name":"tint","slot":1,"width":3,"ui":{"kind":"color"},"default":[0.2, 0.6, -1e-1]},
+{"name":"waves","slot":4,"width":1,"default":[]}]"#;
+    let mut seen = Vec::new();
+    ledmapper_keypoint::for_each_uniform(m, |u| seen.push((u.slot, u.default[..u.n_default as usize].to_vec())));
+    assert_eq!(seen, vec![(0, vec![1.25]), (1, vec![0.2, 0.6, -0.1]), (4, vec![])]);
+}
+
+// --- mat3/mat4 + signed ranged vectors (#400) ---------------------------------
+
+const WIDE: &[u8] = br#"[{"name":"plane","slot":0,"width":4,"ui":{"kind":"slider","min":-5,"max":5,"step":0.1},"default":[0,1,0,-2.5],"min":-5,"max":5},{"name":"pose","slot":4,"width":16,"ui":{"kind":"matrix","min":-10,"max":10},"default":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"min":-10,"max":10}]"#;
+
+#[test]
+fn matrix_uniforms_are_tracked_whole() {
+    let r = Rules::parse(WIDE);
+    let rs = r.rules();
+    assert_eq!((rs[1].slot, rs[1].width, rs[1].off, rs[1].kind), (4, 16, 4, Kind::Other));
+    assert_eq!((rs[1].min, rs[1].max), (-10.0, 10.0));
+    assert_eq!(r.floats(), 20);
+    // The device starts a matrix at its full 16-lane default (the identity).
+    let mut seen = Vec::new();
+    for_each_uniform(WIDE, |u| seen.push(u.default[..u.n_default as usize].to_vec()));
+    assert_eq!(seen[0], vec![0.0, 1.0, 0.0, -2.5]);
+    assert_eq!(seen[1].len(), 16);
+    assert_eq!(seen[1][15], 1.0);
+}
+
+#[test]
+fn matrix_blends_component_wise_and_clamps() {
+    let r = Rules::parse(WIDE);
+    let mut a = UNSET;
+    let mut b = UNSET;
+    for i in 0..20 {
+        a[i] = -1.0;
+        b[i] = if i == 19 { 30.0 } else { 3.0 };
+    }
+    let mut out = UNSET;
+    blend(&r, &[&a, &b], &[0.5, 0.5], &UNSET, COLOR_RGB, &mut out);
+    assert!((out[0] - 1.0).abs() < 0.051, "slider snaps to its 0.1 step: {}", out[0]);
+    assert_eq!(out[5], 1.0, "plain lerp of a matrix component");
+    assert_eq!(out[19], 10.0, "clamped to the matrix range");
+}
+
+#[test]
+fn matrix_record_round_trip() {
+    let r = Rules::parse(WIDE);
+    let vals: Vec<f32> = (0..20).map(|i| i as f32 * 0.25 - 2.0).collect();
+    let mut buf = [0u8; RECORD_CAP];
+    let n = encode_record(b"slice", WIDE, &r, &packed(&vals), &mut buf).unwrap();
+    let mut out = UNSET;
+    decode_record(&buf[..n], &r, &mut out).unwrap();
+    assert_eq!(&out[..20], &vals[..]);
+    let mut widths = Vec::new();
+    for_each_value(&buf[..n], |_, v| widths.push(v.len())).unwrap();
+    assert_eq!(widths, vec![4, 16]);
+}

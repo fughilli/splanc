@@ -70,9 +70,27 @@ bool lm_fixture_pose_commit(void);
 // Shared effect-time epoch (set_time_base), device-clock ms: true + *epoch_ms when
 // set. The render loop derives effect time = (now - epoch) / 1000.
 bool lm_time_base(int64_t *epoch_ms);
+// Video jitter buffer: show the newest queued set_texture frame whose present time
+// (SetTexture.present_at_ms on the shared time base) has come. Once per effect
+// frame, under the player mutex, before lm_fx_update. `now_ms` = millis().
+void lm_tex_present(uint32_t now_ms);
+// Device-clock step guard, every render frame under the player mutex: a millis() step
+// back > 1 s shifts the time base + queued video times by it. Returns the shift (0 = none).
+int64_t lm_clock_observe(int64_t now_ms);
+// Lock-free video ingest (network task, under the texture-queue lock only): decode +
+// queue a set_texture for lm_tex_present. Returns the TextureAck length in `out`
+// (0 = none), -2 = not a set_texture, -3 = can't be queued (dispatch it normally).
+int32_t lm_tex_ingest(const uint8_t *data, size_t len, int64_t now_ms, uint8_t *out,
+                      size_t out_cap);
 // Whether the set_uniforms just handled asked to be persisted (SetUniforms.commit,
 // unset = true). A commit=false update is applied live but not saved.
 bool lm_set_uniforms_commit(void);
+// Live-control channel (docs/design/live-control.md). After lm_player_handle: whether
+// the frame was a live-control update (set_uniforms / set_crossfade / blend_keypoints),
+// and — for one carrying a non-zero seq — replace the reply with its tiny ControlAck
+// (written to out; returns its length, 0 = keep the legacy reply).
+bool lm_last_was_live_control(void);
+int32_t lm_take_control_ack(uint8_t *out, size_t out_cap);
 // FX decks (docs/design/uniform-keypoints.md): the deck the effect arm just
 // handled targeted (0 = A, 1 = B). Only deck A's frames are persisted.
 uint32_t lm_fx_last_deck(void);
@@ -207,6 +225,9 @@ int32_t lm_decode_upload_stream(int32_t arm, LmRefill refill, LmRewind rewind,
 // integer so the loop touches no f64 (the C6 RISC-V FPU is single-precision
 // only): absolute frame index at player-clock ms `t` is
 // ((t - epoch_ms) * 1000) / bit_period_us.
+// Auto-stop: ends the mapping pattern once start_mapping's stop_after_ms has
+// elapsed (player-clock ms). Call under the player lock before lm_pattern_timing.
+bool lm_pattern_expire(int64_t now_ms);
 bool lm_pattern_timing(int64_t *epoch_ms, uint32_t *bit_period_us,
                        uint32_t *cycle_frames, uint32_t *led_count);
 bool lm_pattern_color(uint32_t led, uint32_t frame_index, uint8_t rgb[3]);
@@ -307,6 +328,22 @@ void lm_fx_set_uniform(uint32_t slot, const float *vals, size_t n);
 // effect is active, the datagram isn't OSC, or nothing matched). Non-blocking,
 // no allocation. Call under the same lock as lm_fx_set_uniform.
 uint32_t lm_osc_ingest(const uint8_t *data, size_t len);
+// Netstack OSC: stash a datagram (latest value per address; network task) and apply
+// what's waiting at a frame boundary (render task, under player_mutex). The caller
+// serializes the two with a short critical section.
+// The mailbox is bound lazily to a heap block of lm_osc_mailbox_bytes() (4-aligned,
+// never freed; once only) — before that, lm_osc_post keeps nothing.
+size_t lm_osc_mailbox_bytes(void);
+bool lm_osc_mailbox_bind(uint8_t *mem);
+bool lm_osc_mailbox_bound(void);
+uint32_t lm_osc_post(const uint8_t *data, size_t len);
+uint32_t lm_osc_drain(void);
+// Live-control mailbox (docs/design/live-control.md): lm_live_post stashes a seq'd,
+// uncommitted set_uniforms for the next frame and arms its ControlAck (returns the seq;
+// 0 = not a live move, dispatch normally); lm_live_drain applies the waiting moves at a
+// frame boundary, under the player lock. Serialize the two with a critical section.
+uint32_t lm_live_post(const uint8_t *data, size_t len);
+uint32_t lm_live_drain(void);
 // Select OSC addressing: true (default) resolves uniform names via the active
 // effect's manifest (unknown names fall back to slot index); false treats every
 // address as a raw slot number.
@@ -371,29 +408,74 @@ int32_t lm_perf_build_report(uint8_t *out, size_t out_cap);
 
 // -- Framerate autoscaler (FUG-82; docs/design/perf-monitoring.md) ------------
 // Effects run at a CONSISTENT rate picked from a 5-fps ladder (25..80) and
-// adapted to each frame's measured cost with >=5% headroom; when even the floor
-// (or an app-pinned rate, set_fps) can't hold, the effect is parked and the app
-// notified. Call under player_mutex.
+// adapted to each frame's measured cost with >=5% headroom. An effect that can't
+// hold even the floor (or an app-pinned rate, set_fps) is NEVER parked: it runs
+// as fast as it can ("lagging"), and the app gets an advisory. Call under
+// player_mutex.
 
 // Account for one effect frame whose cost (max of update+shade over every
 // rendering deck and the strip transmit) was cost_us; returns the ms to sleep
-// before the next frame (period - work, >= the minimum yield). Parks the effect
-// + latches an app-notify if the target is unachievable.
+// before the next frame (period - work, >= the minimum yield; after a frame that
+// overran its period, >= max(4 ms, 25% of its cost) so the render task takes at
+// most 80% of the CPU and the network loop, sensors and TLS stay serviced).
 // `wire_leds` LEDs of that frame clocked out one after another (the longest
 // channel; the two go out in parallel): their WS2812 wire time (28.8 us per LED
 // + the latch) caps the ladder at what the wire can carry. The `leds` it shaded
-// set the abort floor (25 fps up to 512 LEDs, proportionally lower past it, so a
-// long strip slows a heavy effect down instead of parking it).
-uint32_t lm_fps_on_frame(uint32_t cost_us, uint32_t wire_leds, uint32_t leds);
-// The autoscaler's current target FPS.
+// set the floor (25 fps up to 512 LEDs, proportionally lower past it, so a long
+// strip gets a steady slower rung for a heavy effect). `cpu_us` is the frame's
+// render COMPUTE (update + shade + blend; 0 = unknown): every frame then sleeps
+// >= lm_fps_net_share_ms(cpu_us), and a rung that can't hold the compute plus that
+// share is a miss — the network's guaranteed share (the loop runs below render).
+uint32_t lm_fps_on_frame(uint32_t cost_us, uint32_t cpu_us, uint32_t wire_leds, uint32_t leds);
+// The sleep (ms) a frame owes the lower-priority tasks after cpu_us of render
+// compute: >= 25% of it (render <= 80% of the wall clock) and >= 1 ms.
+uint32_t lm_fps_net_share_ms(uint32_t cpu_us);
+// The rate the effect runs at now (the rung, or what it achieves while lagging).
 uint32_t lm_fps_current_fps(void);
-// Per-frame overrun budget in CPU cycles for the current target (cpu_hz / fps).
+// Per-frame overrun budget in CPU cycles for the current rung (cpu_hz / fps).
 uint32_t lm_fps_budget_cycles(void);
-// Read + clear the abort-notify latch (loop() pushes fps_state{aborted=true}).
-bool lm_fps_take_abort_notify(void);
-// Encode an FpsState frame (aborted as given) into out. Returns the length,
-// -1 bad args, -2 out_cap too small.
-int32_t lm_fps_build_state(uint8_t *out, size_t out_cap, bool aborted);
+// Whether the lag state changed since last reported (read + update); *lagging
+// (may be NULL) gets the new state. loop() then pushes one fps_state advisory.
+bool lm_fps_take_lag_notify(bool *lagging);
+// Encode the live FpsState into out. Returns the length, -1 bad args, -2
+// out_cap too small.
+int32_t lm_fps_build_state(uint8_t *out, size_t out_cap);
+// -- Wi-Fi rejoin policy (wifi_ffi.rs, docs/design/wifi-rejoin-policy.md) ------
+// The config + protocol side (set_wifi_policy / get_wifi_policy / console "WIFI ...");
+// main.cpp applies it to the transport and persists it. Loop task only.
+typedef struct {
+  uint8_t mode;  // 0 auto, 1 fixed, 2 manual, 3 offline
+  uint32_t scan_cap_s;
+  uint32_t interval_s;
+  uint32_t decay_after_h;
+  uint32_t sparse_interval_s;
+} LmWifiPolicy;
+typedef struct {
+  uint8_t state;  // WifiLinkState
+  bool radio_on;
+  bool decayed;
+  uint32_t next_scan_s;
+  uint32_t scans;
+  uint32_t unseen_s;
+  uint8_t ssid[33];
+} LmWifiStatus;
+// Boot: the persisted record (null/invalid = defaults); the applied policy into *out.
+void lm_wifi_policy_seed(const uint8_t *rec, size_t len, LmWifiPolicy *out);
+// Bumped by every applied change (re-apply + persist when it moves).
+uint32_t lm_wifi_policy_gen(void);
+// The live policy, and its 18-byte NVS record into rec (may be NULL). Returns 18.
+size_t lm_wifi_policy_get(LmWifiPolicy *out, uint8_t *rec);
+// The transport changed the mode itself (a provision while offline): adopt it.
+void lm_wifi_policy_adopt(const LmWifiPolicy *p);
+// Read + clear a rejoin request (rejoin_now / console WIFI REJOIN).
+bool lm_wifi_take_rejoin(void);
+// The transport's live link state.
+void lm_wifi_report(const LmWifiStatus *s);
+// A fresh firmware update awaits confirmation (manual/offline are refused until then).
+void lm_wifi_set_ota_pending(bool pending);
+// A console line after "WIFI " (MODE / REJOIN / STATUS): a one-line reply into out
+// (NUL-terminated); returns its length, or -1 when the line isn't one of these.
+int32_t lm_wifi_console(const uint8_t *line, size_t len, uint8_t *out, size_t cap);
 // -- Sensor core (sensor_ffi.rs, docs/design/sensor-core.md) -------------------
 // I2C callbacks the Rust driver calls: 0 = done, 1 = address NACK, 2 = other error.
 typedef struct {
@@ -436,6 +518,20 @@ typedef struct {
 void lm_drv_set_host(const LmDrvHost *host);
 // Run the loaded driver's poll() if due (loop task, player mutex held).
 void lm_drv_poll(uint64_t now_us);
+
+// -- FX debugger (fxdbg.rs, docs/design/fx-debugger.md) --------------------------
+// Boot: the output stage snapshots read back (the `leds` frame buffer of `cap`
+// RGB triples, &g_lut, &g_brightness).
+void lm_fxdbg_bind_output(const uint8_t *leds, uint32_t cap, const uint8_t *const *lut,
+                          const uint8_t *brightness);
+// Render task, before the effect branch: true = paused, render nothing.
+bool lm_fxdbg_hold(uint32_t now_ms);
+// Effect branch, after the frame clock: a pending step overrides time/dt; true =
+// this frame is a debugger step (skip the autoscaler).
+bool lm_fxdbg_step(float *time_s, float *dt_s);
+bool lm_fxdbg_paused(void);
+// Loop task: lapse a pause whose client went away (no session open).
+void lm_fxdbg_poll(uint32_t now_ms, bool session_open);
 
 #ifdef __cplusplus
 }  // extern "C"

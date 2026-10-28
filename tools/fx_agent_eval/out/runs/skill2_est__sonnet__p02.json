@@ -1,0 +1,77 @@
+{
+  "name": "skill2_est__sonnet__p02",
+  "variant": "skill2_est",
+  "model": "claude-sonnet-4-6",
+  "model_short": "sonnet",
+  "prompt_id": "p02",
+  "prompt": "campfire embers with occasional sparks",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Campfire embers with rising sparks \u2014 optimised.\n//\n// Key changes that bring the frame cost within budget:\n//   \u2022 Spark slots cut 8 \u2192 4 (halves loop iterations per LED).\n//   \u2022 Spark colour precomputed once on spawn in update() using the all-fixed\n//     hsv2rgb integer path; stored as three fixed state arrays (sp_r/g/b), so\n//     shade() never calls hsv2rgb.\n//   \u2022 Loop body guarded by an inexpensive height check (one fixed subtract +\n//     compare) before the costlier angular proximity work; dead sparks pay\n//     only a load + compare.\n//   \u2022 All per-LED arithmetic stays in fixed throughout; float appears only in\n//     the col_hot/col_cool mix (vec3 uniforms require it) and the final spark\n//     contribution.\n//   \u2022 fw1/fw2 hoisted to update() (unchanged from original).\n//   \u2022 All uniforms from the original are preserved.\n\nuniform float speed      : 0.1 .. 4.0 = 1.0;\nuniform float intensity  : 0.0 .. 1.0 = 0.85;\nuniform float spark_rate : 0.0 .. 3.0 = 0.8;\nuniform vec3  col_hot    : color = 1.0, 0.55, 0.05;\nuniform vec3  col_cool   : color = 0.55, 0.03, 0.0;\n\n// Four spark slots\nstate fixed sp_y[4];\nstate fixed sp_ang[4];\nstate fixed sp_life[4];\nstate fixed sp_seed[4];\n// Base colour precomputed on spawn (fixed 0..1) \u2014 eliminates per-LED hsv2rgb\nstate fixed sp_r[4];\nstate fixed sp_g[4];\nstate fixed sp_b[4];\n\n// Flicker waves hoisted out of shade()\nstate fixed fw1;\nstate fixed fw2;\n\n// Countdown to next spawn (seconds)\nstate float stimer;\n\nvoid update() {\n  fw1 = sin(fixed(time * speed * 1.3));\n  fw2 = sin(fixed(time * speed * 2.5 + 1.1));\n\n  fixed drise = fixed(dt) * fixed(0.45);\n  fixed ddead = fixed(dt * 1.1);\n\n  for (int i = 0; i < 4; i = i + 1) {\n    if (sp_life[i] > fixed(0.0)) {\n      sp_y[i]    = sp_y[i] + drise + sp_seed[i] * fixed(dt) * fixed(0.2);\n      sp_life[i] = sp_life[i] - ddead;\n      if (sp_y[i] > fixed(1.05) || sp_life[i] < fixed(0.0)) {\n        sp_life[i] = fixed(0.0);\n      }\n    }\n  }\n\n  if (spark_rate > 0.0) {\n    stimer = stimer - dt;\n    if (stimer <= 0.0) {\n      stimer = 1.0 / spark_rate;\n      float s = fract(time * 13.7);\n      for (int j = 0; j < 4; j = j + 1) {\n        if (sp_life[j] <= fixed(0.0)) {\n          sp_y[j]    = fixed(hash(s)           * 0.10);\n          sp_ang[j]  = fixed(hash(s + 0.11));\n          sp_life[j] = fixed(0.4 + hash(s + 0.22) * 0.6);\n          sp_seed[j] = fixed(hash(s + 0.33));\n          // All-fixed args \u2192 integer hsv2rgb LUT; runs once at spawn, not per LED\n          fixed sh   = fixed(0.09) + sp_seed[j] * fixed(0.05);\n          vec3  sc   = hsv2rgb(sh, fixed(0.6), fixed(1.0));\n          sp_r[j]    = fixed(sc.r);\n          sp_g[j]    = fixed(sc.g);\n          sp_b[j]    = fixed(sc.b);\n          j = 4; // fill one slot per tick\n        }\n      }\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  // --- ember base ---------------------------------------------------------\n  fixed fy  = fixed(led.uv.y);\n  // Compiler caches hash(float(led.idx)) once per LED; both ph reads are cheap.\n  fixed ph  = fixed(hash(float(led.idx)));\n  fixed ph2 = fixed(hash(float(led.idx) * 1.618));\n\n  fixed omy     = fixed(1.0) - fy;\n  fixed env     = omy * omy;                         // quadratic height fall-off\n\n  fixed flicker = sin(ph  * fixed(5.1) + fw1) * fixed(0.45)\n                + sin(ph2 * fixed(3.7) + fw2) * fixed(0.35);\n  flicker = flicker * fixed(0.5) + fixed(0.5);\n\n  fixed val = clamp(env * (flicker * fixed(0.6) + fixed(0.4)), fixed(0.0), fixed(1.0));\n\n  // col_hot / col_cool are vec3 uniforms; float mix is unavoidable here\n  vec3 col = mix(col_cool, col_hot, float(val)) * (float(val) * intensity);\n\n  // --- sparks -------------------------------------------------------------\n  // Compiler caches atan2(fixed(led.pos.z), fixed(led.pos.x)) once per LED.\n  fixed led_ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n\n  for (int i = 0; i < 4; i = i + 1) {\n    if (sp_life[i] > fixed(0.0)) {\n      // Height-range guard: prox is zero when dy >= 0.04 even at dang=0,\n      // so skip the angular work for any LED outside this narrow band.\n      fixed dy = abs(fy - sp_y[i]);\n      if (dy < fixed(0.045)) {\n        fixed dang = abs(fract(led_ang - sp_ang[i] + fixed(0.5)) - fixed(0.5));\n        fixed prox = max(fixed(0.0),\n                         fixed(1.0) - dy * fixed(25.0) - dang * fixed(12.5));\n        if (prox > fixed(0.0)) {\n          // Fixed multiply keeps sv in fixed; three conversions build the vec3\n          fixed sv = prox * sp_life[i];\n          col = col + vec3(float(sp_r[i] * sv),\n                           float(sp_g[i] * sv),\n                           float(sp_b[i] * sv));\n        }\n      }\n    }\n  }\n\n  return clamp(col, vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0));\n}\n```",
+      "is_error": false,
+      "session_id": "e8438d21-ac5e-440e-8203-39a859cc2fa3",
+      "wall_s": 259.3,
+      "duration_api_ms": 257733,
+      "cost_usd": 0.24135510000000002,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 14885,
+        "cache_read_input_tokens": 11317,
+        "cache_creation_input_tokens": 2446
+      },
+      "thinking_tokens": 13071,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 70,
+          "col": 59,
+          "msg": "a fixed colour (rgb()/rgb8()/hsv2rgb()/palette on fixed args) must be returned directly from shade()"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "The compiler forbids storing a fixed-colour `hsv2rgb` result into a local variable \u2014 it must be returned directly from `shade()`. The fix is minimal: convert the arguments to float for the `update()` call so the float path is used instead (runs once per spawn, not per LED, so cost is irrelevant).\n\n```glsl\n// Campfire embers with rising sparks \u2014 optimised.\n//\n// Key changes that bring the frame cost within budget:\n//   \u2022 Spark slots cut 8 \u2192 4 (halves loop iterations per LED).\n//   \u2022 Spark colour precomputed once on spawn in update() using the all-fixed\n//     hsv2rgb integer path; stored as three fixed state arrays (sp_r/g/b), so\n//     shade() never calls hsv2rgb.\n//   \u2022 Loop body guarded by an inexpensive height check (one fixed subtract +\n//     compare) before the costlier angular proximity work; dead sparks pay\n//     only a load + compare.\n//   \u2022 All per-LED arithmetic stays in fixed throughout; float appears only in\n//     the col_hot/col_cool mix (vec3 uniforms require it) and the final spark\n//     contribution.\n//   \u2022 fw1/fw2 hoisted to update() (unchanged from original).\n//   \u2022 All uniforms from the original are preserved.\n\nuniform float speed      : 0.1 .. 4.0 = 1.0;\nuniform float intensity  : 0.0 .. 1.0 = 0.85;\nuniform float spark_rate : 0.0 .. 3.0 = 0.8;\nuniform vec3  col_hot    : color = 1.0, 0.55, 0.05;\nuniform vec3  col_cool   : color = 0.55, 0.03, 0.0;\n\n// Four spark slots\nstate fixed sp_y[4];\nstate fixed sp_ang[4];\nstate fixed sp_life[4];\nstate fixed sp_seed[4];\n// Base colour precomputed on spawn (fixed 0..1) \u2014 eliminates per-LED hsv2rgb\nstate fixed sp_r[4];\nstate fixed sp_g[4];\nstate fixed sp_b[4];\n\n// Flicker waves hoisted out of shade()\nstate fixed fw1;\nstate fixed fw2;\n\n// Countdown to next spawn (seconds)\nstate float stimer;\n\nvoid update() {\n  fw1 = sin(fixed(time * speed * 1.3));\n  fw2 = sin(fixed(time * speed * 2.5 + 1.1));\n\n  fixed drise = fixed(dt) * fixed(0.45);\n  fixed ddead = fixed(dt * 1.1);\n\n  for (int i = 0; i < 4; i = i + 1) {\n    if (sp_life[i] > fixed(0.0)) {\n      sp_y[i]    = sp_y[i] + drise + sp_seed[i] * fixed(dt) * fixed(0.2);\n      sp_life[i] = sp_life[i] - ddead;\n      if (sp_y[i] > fixed(1.05) || sp_life[i] < fixed(0.0)) {\n        sp_life[i] = fixed(0.0);\n      }\n    }\n  }\n\n  if (spark_rate > 0.0) {\n    stimer = stimer - dt;\n    if (stimer <= 0.0) {\n      stimer = 1.0 / spark_rate;\n      float s = fract(time * 13.7);\n      for (int j = 0; j < 4; j = j + 1) {\n        if (sp_life[j] <= fixed(0.0)) {\n          sp_y[j]    = fixed(hash(s)           * 0.10);\n          sp_ang[j]  = fixed(hash(s + 0.11));\n          sp_life[j] = fixed(0.4 + hash(s + 0.22) * 0.6);\n          sp_seed[j] = fixed(hash(s + 0.33));\n          // Float-path hsv2rgb: fixed-path result cannot be stored in a local\n          // outside shade(); float path is fine here \u2014 runs once per spawn only.\n          fixed sh   = fixed(0.09) + sp_seed[j] * fixed(0.05);\n          vec3  sc   = hsv2rgb(float(sh), 0.6, 1.0);\n          sp_r[j]    = fixed(sc.r);\n          sp_g[j]    = fixed(sc.g);\n          sp_b[j]    = fixed(sc.b);\n          j = 4; // fill one slot per tick\n        }\n      }\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  // --- ember base ---------------------------------------------------------\n  fixed fy  = fixed(led.uv.y);\n  // Compiler caches hash(float(led.idx)) once per LED; both ph reads are cheap.\n  fixed ph  = fixed(hash(float(led.idx)));\n  fixed ph2 = fixed(hash(float(led.idx) * 1.618));\n\n  fixed omy     = fixed(1.0) - fy;\n  fixed env     = omy * omy;                         // quadratic height fall-off\n\n  fixed flicker = sin(ph  * fixed(5.1) + fw1) * fixed(0.45)\n                + sin(ph2 * fixed(3.7) + fw2) * fixed(0.35);\n  flicker = flicker * fixed(0.5) + fixed(0.5);\n\n  fixed val = clamp(env * (flicker * fixed(0.6) + fixed(0.4)), fixed(0.0), fixed(1.0));\n\n  // col_hot / col_cool are vec3 uniforms; float mix is unavoidable here\n  vec3 col = mix(col_cool, col_hot, float(val)) * (float(val) * intensity);\n\n  // --- sparks -------------------------------------------------------------\n  // Compiler caches atan2(fixed(led.pos.z), fixed(led.pos.x)) once per LED.\n  fixed led_ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n\n  for (int i = 0; i < 4; i = i + 1) {\n    if (sp_life[i] > fixed(0.0)) {\n      // Height-range guard: prox is zero when dy >= 0.04 even at dang=0,\n      // so skip the angular work for any LED outside this narrow band.\n      fixed dy = abs(fy - sp_y[i]);\n      if (dy < fixed(0.045)) {\n        fixed dang = abs(fract(led_ang - sp_ang[i] + fixed(0.5)) - fixed(0.5));\n        fixed prox = max(fixed(0.0),\n                         fixed(1.0) - dy * fixed(25.0) - dang * fixed(12.5));\n        if (prox > fixed(0.0)) {\n          // Fixed multiply keeps sv in fixed; three conversions build the vec3\n          fixed sv = prox * sp_life[i];\n          col = col + vec3(float(sp_r[i] * sv),\n                           float(sp_g[i] * sv),\n                           float(sp_b[i] * sv));\n        }\n      }\n    }\n  }\n\n  return clamp(col, vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 1.0));\n}\n```",
+      "is_error": false,
+      "session_id": "e8438d21-ac5e-440e-8203-39a859cc2fa3",
+      "wall_s": 38.6,
+      "duration_api_ms": 293366,
+      "cost_usd": 0.380784,
+      "models_used": ["claude-sonnet-4-6"],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 2305,
+        "cache_read_input_tokens": 13763,
+        "cache_creation_input_tokens": 16786
+      },
+      "thinking_tokens": 403,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1674
+    }
+  ],
+  "started": "2026-10-23T00:53:45",
+  "base_program": "firmware/fx_perf_bench/agent/skill2__sonnet__p02.fx",
+  "base_estimate": [
+    154.8,
+    [
+      "a loop runs 8 times per LED (~69,224 cycles): precompute per-item data in update(), skip items far from the LED early, or cut the count (line 89) \u2014 saves up to ~34,612 cycles/LED (~108.2 ms at 500 LEDs)",
+      "float hsv2rgb() \u00d78 per LED (~1,311 cycles each): pass three args of the same fixed type (hsv2rgb(h, fixed(0.9), fixed(1.0))) for the integer path and return it from shade(), or precompute a colour table (line 103) \u2014 saves up to ~7,536 cycles/LED (~23.6 ms at 500 LEDs)",
+      "26 int/fixed\u2194float conversions per LED (~318 cycles each): keep a value in one type end to end (all-fixed maths, fixed() context reads) \u2014 saves up to ~4,961 cycles/LED (~15.5 ms at 500 LEDs)"
+    ],
+    []
+  ],
+  "est_outcome": "revised",
+  "status": "ok",
+  "n_calls": 2,
+  "total_cost_usd": 0.6221,
+  "total_wall_s": 297.9,
+  "program": "firmware/fx_perf_bench/agent/skill2_est__sonnet__p02.fx"
+}

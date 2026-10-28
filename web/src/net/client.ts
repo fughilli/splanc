@@ -66,11 +66,17 @@ import {
   type I2cScanResultMessage,
   type DriverStateMessage,
   type UniformValueFlat,
+  type DebugFxLedMessage,
+  type FxDebugControlMessage,
+  type FxDebugMessage,
+  type GetFxSnapshotMessage,
 } from "./proto";
 import type { ColorBlock } from "@ledmapper/protocol";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
 import { decodeServer, encodeClient } from "./proto";
+import { LiveControl } from "./liveControl";
 import type { CaptureProfileFlat } from "../capture/captureProfile";
+import { normalizeWifiPolicy, wifiPolicyMessage, type WifiPolicy, type WifiPolicyRequest } from "./wifiPolicy";
 
 /** The subset of the WebSocket API the client uses (fakeable in tests). */
 export interface SocketLike {
@@ -82,11 +88,20 @@ export interface SocketLike {
   onclose: ((ev?: unknown) => void) | null;
   onerror: ((ev?: unknown) => void) | null;
   onmessage: ((ev: { data: unknown }) => void) | null;
+  /** Bytes queued but not yet handed to the network (WebSocket.bufferedAmount);
+   * absent when the transport can't tell. Paces the live-control channel. */
+  readonly bufferedAmount?: number;
 }
 
 export type SocketFactory = (url: string) => SocketLike;
 
 const SOCKET_OPEN = 1; // WebSocket.OPEN
+const SOCKET_CLOSED = 3; // WebSocket.CLOSED
+
+/** Backoff cap while a caller waits for the device to come back (waitForWelcome):
+ * short, so a device that just finished rebooting is picked up within ~2 s. Each
+ * attempt is still bounded by connectTimeoutMs, so this can't storm the device. */
+export const AWAITED_RECONNECT_MAX_MS = 2000;
 
 // Byte-window size for sharded uploads (submit_map / submit_topology). Kept
 // well under a TLS record so the player's mbedtls allocates a small (~this-big)
@@ -101,6 +116,9 @@ const CHUNK_BYTES = 4096;
  * pass NO timeout and keep the wait-forever behavior. Sized to comfortably clear
  * a heap-tight C6's worst-case post-welcome round trip. */
 const REQUEST_TIMEOUT_MS = 8000;
+
+/** Deadline for an OTA begin/chunk reply (see otaChunk). */
+export const OTA_TRANSFER_TIMEOUT_MS = 30_000;
 
 /** A {@link LedMapperClient} request that opted into a deadline got no reply in
  * time. Distinct from a generic failure so callers (e.g. Hardware Setup) can
@@ -247,6 +265,11 @@ export class LedMapperClient {
   // complete without the user — the cert was never trusted (cold) OR it rotated
   // under us (warm; e.g. a rename regenerates the device's self-signed cert).
   private failsSinceWelcome = 0;
+  // Set when onclose stopped auto-retrying (cert-trust give-up); cleared by connect().
+  private gaveUp = false;
+  // A backoff reconnect is already scheduled (never stack two).
+  private reconnectScheduled = false;
+  private reconnectGen = 0;
   private readonly needsTrust: boolean;
   private readonly coldRetryLimit: number;
   private readonly warmRetryLimit: number;
@@ -273,7 +296,7 @@ export class LedMapperClient {
   private perfSubs = new Set<(r: PerfReportMessage) => void>();
 
   // fps_state subscribers (FUG-82): fps_state is both the set_fps reply AND an
-  // unsolicited push when the player parks an effect it can't run within budget,
+  // unsolicited push when the effect starts or stops lagging (below its target),
   // so — like perf_report — it fans out rather than going to a single waiter.
   private fpsSubs = new Set<(s: FpsStateMessage) => void>();
 
@@ -286,6 +309,18 @@ export class LedMapperClient {
   stopPending = false;
   readonly clock: ServerClock;
   events: ClientEvents = {};
+
+  /** The device's render rate as last reported (fps_state / perf_report; 0 = unknown). */
+  private renderFps_ = 0;
+
+  /**
+   * The real-time control channel (docs/design/live-control.md). EVERY live
+   * control — sliders, MIDI, faders, the agent's live mux — goes through it:
+   * latest value wins per uniform, at most one update in flight (paced on the
+   * device's ack) and never faster than the device renders, so a knob stream of
+   * any length never builds a backlog on the device.
+   */
+  readonly live: LiveControl;
 
   constructor(readonly url: string, opts: ClientOptions = {}) {
     this.factory = opts.socketFactory ?? ((u) => new WebSocket(u) as unknown as SocketLike);
@@ -306,10 +341,26 @@ export class LedMapperClient {
     this.appVersion = opts.appVersion ?? "0.1.0";
     this.clientName = opts.clientName ?? "android-web";
     this.clock = new ServerClock({ offsetMs: 0, rttMs: Infinity }, this.now);
+    this.live = new LiveControl(
+      {
+        sendFlat: (m) => this.send(m as unknown as ClientMessage),
+        features: () => this.welcome_?.features ?? [],
+        renderFps: () => this.renderFps_,
+        bufferedAmount: () => this.bufferedAmount,
+      },
+      { now: this.now, schedule: this.schedule },
+    );
   }
 
   get welcome(): WelcomeMessage | null {
     return this.welcome_;
+  }
+
+  /** Bytes the socket hasn't put on the wire yet (0 when closed or unknown): the
+   * per-connection backpressure signal the live-control channel gates on — reuse
+   * it (with LatestWinsSender) for other paced streams. */
+  get bufferedAmount(): number {
+    return this.sock?.bufferedAmount ?? 0;
   }
 
   get isConnected(): boolean {
@@ -319,6 +370,9 @@ export class LedMapperClient {
   /** Open the socket and complete the hello/welcome handshake. */
   connect(): Promise<WelcomeMessage> {
     this.closed = false;
+    this.gaveUp = false;
+    this.reconnectScheduled = false;
+    this.reconnectGen++; // cancels a backoff reconnect still pending
     this.events.onConnecting?.(++this.attempt, this.url);
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -382,6 +436,7 @@ export class LedMapperClient {
       sock.onclose = () => {
         const hadWelcome = this.welcome_ !== null;
         this.welcome_ = null;
+        this.live.onDisconnect();
         this.failWaiters(new Error("socket closed"));
         if (hadWelcome) this.events.onDisconnected?.();
         if (!this.closed) {
@@ -399,15 +454,25 @@ export class LedMapperClient {
           // but an ordinary reboot brings the SAME cert back, so allow more
           // attempts (warmRetryLimit) to reconnect within the backoff before we
           // conclude the cert changed and ask the user to re-trust.
+          //
+          // EXCEPT while someone is waiting for this device to come back
+          // (waitForWelcome — an OTA handoff, resume, install or health check). The
+          // device told us it is restarting, with the SAME identity and cert, and an
+          // app -> loader handoff takes a reboot + Wi-Fi join (scan, auth, DHCP) + TLS
+          // identity load: easily longer than the warm budget, and a give-up there
+          // stranded the update at "Restarting into the updater…" with nothing left
+          // reconnecting. So keep retrying the same target until the waiter's own
+          // deadline, at a short capped backoff so the device is picked up promptly.
           const limit = this.everWelcomed ? this.warmRetryLimit : this.coldRetryLimit;
-          const certGiveUp = this.needsTrust && ++this.failsSinceWelcome >= limit;
+          const awaited = this.welcomeListeners.size > 0;
+          const certGiveUp = this.needsTrust && ++this.failsSinceWelcome >= limit && !awaited;
           if (certGiveUp) {
+            this.gaveUp = true;
             this.events.onCertTrustNeeded?.(this.url);
           } else {
-            const delay = this.backoffMs[Math.min(this.backoffIdx++, this.backoffMs.length - 1)]!;
-            this.schedule(() => {
-              if (!this.closed) void this.connect().catch(() => undefined);
-            }, delay);
+            let delay = this.backoffMs[Math.min(this.backoffIdx++, this.backoffMs.length - 1)]!;
+            if (awaited) delay = Math.min(delay, AWAITED_RECONNECT_MAX_MS);
+            this.scheduleReconnect(delay);
           }
         }
         if (!settled) {
@@ -416,6 +481,38 @@ export class LedMapperClient {
         }
       };
     });
+  }
+
+  /** Schedule one backoff reconnect (at most one outstanding). */
+  private scheduleReconnect(delay: number): void {
+    if (this.reconnectScheduled) return;
+    this.reconnectScheduled = true;
+    const gen = this.reconnectGen;
+    this.schedule(() => {
+      if (gen !== this.reconnectGen) return; // superseded by an explicit connect()
+      this.reconnectScheduled = false;
+      if (!this.closed) void this.connect().catch(() => undefined);
+    }, delay);
+  }
+
+  /**
+   * The device said it is about to restart (an OTA handoff into its loader, or the
+   * loader booting a just-installed app). A restart sends no TCP FIN/RST, so the
+   * socket would sit half-open — nothing closes it until TCP keepalive probes the
+   * new boot (Chromium: 45 s idle, then 45 s apart), which is longer than the restart
+   * itself. Drop it now so the reconnect path runs; pair with
+   * {@link waitForWelcome}, which keeps that path retrying until the device is back.
+   * Also the recovery for a link that stopped answering (a request timed out).
+   */
+  expectRestart(): void {
+    const sock = this.sock;
+    if (this.closed) return;
+    if (sock !== null && sock.readyState !== SOCKET_CLOSED) {
+      this.abandonSocket(sock);
+      return;
+    }
+    // No live socket: make sure something is reconnecting (e.g. after a give-up).
+    if (this.gaveUp) this.scheduleReconnect(0);
   }
 
   close(): void {
@@ -543,11 +640,27 @@ export class LedMapperClient {
   private recycleStalledSocket(): void {
     const sock = this.sock;
     if (sock === null || sock.readyState !== SOCKET_OPEN) return;
+    this.abandonSocket(sock);
+  }
+
+  /** Close `sock` and run its close path NOW. A browser's close() starts the
+   * closing handshake and only fires onclose once the peer answers it — a peer
+   * that restarted or stalled never does, so Chrome sat in CLOSING for ~60 s
+   * before any reconnect could start (measured on the HITL rig, web OTA
+   * handoff). Detach its handlers, close it in the background, and run onclose
+   * (fail the waiters, schedule the reconnect) ourselves. */
+  private abandonSocket(sock: SocketLike): void {
+    const onclose = sock.onclose;
+    sock.onclose = null;
+    sock.onmessage = null;
+    sock.onerror = null;
+    sock.onopen = null;
     try {
       sock.close();
     } catch {
-      // already closing — onclose will still run
+      // already closing
     }
+    onclose?.();
   }
 
   /** After a (re)welcome: deliver a stop the device never acknowledged. */
@@ -597,6 +710,7 @@ export class LedMapperClient {
     // Sharded like submit_map: a compiled effect can exceed one window, and on
     // the BLE transport a whole-frame send would blow the small per-frame cap.
     // Small effects still take the single-window fast path inside sendChunked.
+    this.live.resetDeck(deck);
     return this.sendChunked("EFFECT", {
       type: "submit_effect",
       effectId,
@@ -609,6 +723,7 @@ export class LedMapperClient {
   /** Select the active effect by id ("" or "off" clears it). `deck` (FUG-110)
    * targets deck A (0, default) or B (1). Reply: playback_state. */
   async setEffect(effectId: string, deck = 0): Promise<PlaybackStateMessage> {
+    this.live.resetDeck(deck);
     return (await this.request(
       { type: "set_effect", effectId, deck } as unknown as ClientMessage,
       "playback_state",
@@ -631,6 +746,9 @@ export class LedMapperClient {
     // `commit: false` applies the values live without persisting them (honoured by
     // firmware advertising "uniform_commit"; omitted = persist, today's behaviour).
     // `deck` targets FX deck A (0, default) or B (1) on firmware advertising "decks".
+    // One-shot sets only (an effect's defaults after a submit): a STREAM of moves
+    // (drag, MIDI) goes through {@link live}, which paces itself on the device.
+    this.live.noteValues(values, deck);
     const msg: Record<string, unknown> = { type: "set_uniforms", values };
     if (commit !== undefined) msg.commit = commit;
     if (deck) msg.deck = deck;
@@ -649,11 +767,13 @@ export class LedMapperClient {
     )) as unknown as WelcomeMessage;
   }
 
-  /** Fire-and-forget crossfade (a fader drag at MIDI rate: no single-flight
-   * request, the last one wins — like setUniforms). */
+  /** Live crossfade (a fader drag at MIDI rate): through the {@link live}
+   * channel — the last position wins, paced on the device. False when not
+   * connected. */
   sendCrossfade(position: number, mode = 0): boolean {
-    const p = Math.min(1, Math.max(0, position));
-    return this.send({ type: "set_crossfade", position: p, mode } as unknown as ClientMessage);
+    if (!this.isConnected) return false;
+    this.live.setCrossfade(position, mode);
+    return true;
   }
 
   // -- Uniform keypoints (docs/design/uniform-keypoints.md) ------------------
@@ -709,14 +829,10 @@ export class LedMapperClient {
    * `seconds` > 0 morphs there; 0 applies at once. Fire-and-forget (the fader /
    * MIDI path: the last one wins); errors arrive as an `error` message. */
   blendKeypoints(weights: KeypointWeightFlat[], opts: BlendOptions = {}): boolean {
-    return this.send({
-      type: "blend_keypoints",
-      weights,
-      deck: opts.deck ?? 0,
-      seconds: opts.seconds ?? 0,
-      colorMode: opts.colorMode ?? 0,
-      ...(opts.commit ? { commit: true } : {}),
-    } as unknown as ClientMessage);
+    // Through the live channel: the last blend per deck wins, paced on the device.
+    if (!this.isConnected) return false;
+    this.live.blendKeypoints(weights, opts);
+    return true;
   }
 
   /** Rename the player: sets its display name, which becomes the Bluetooth-
@@ -862,6 +978,9 @@ export class LedMapperClient {
         resolve(w);
       };
       this.welcomeListeners.add(done);
+      // While anyone waits, the client keeps reconnecting (see onclose). If it had
+      // already given up (cert-trust budget spent before this wait began), restart it.
+      if (this.gaveUp && !this.closed) this.scheduleReconnect(0);
       this.schedule(() => {
         if (!this.welcomeListeners.delete(done)) return;
         reject(new RequestTimeoutError("welcome", timeoutMs));
@@ -899,11 +1018,18 @@ export class LedMapperClient {
   /** Offer a signed image (its 108-byte manifest). The app answers STATE_REBOOTING
    * (it restarts into the loader); the loader answers STATE_RECEIVING + the offset. */
   otaBegin(manifest: Uint8Array, allowDowngrade = false, keyEpoch?: Uint8Array): Promise<OtaStatusMessage> {
-    return this.ota({ type: "ota_begin", manifest, allowDowngrade, ...(keyEpoch ? { keyEpoch } : {}) });
+    return this.ota(
+      { type: "ota_begin", manifest, allowDowngrade, ...(keyEpoch ? { keyEpoch } : {}) },
+      Math.max(this.requestTimeoutMs, OTA_TRANSFER_TIMEOUT_MS),
+    );
   }
 
+  /** One stop-and-wait chunk. Its deadline is the transfer's, not the 8 s short-RPC
+   * one: on a lossy Wi-Fi a 4 KB chunk can ride out several TCP retransmits (and the
+   * loader a flash erase), and giving up early costs a fresh TLS handshake + resume
+   * for a link that was about to deliver (the Python client waits 30 s too). */
   otaChunk(offset: number, data: Uint8Array): Promise<OtaStatusMessage> {
-    return this.ota({ type: "ota_chunk", offset, data });
+    return this.ota({ type: "ota_chunk", offset, data }, Math.max(this.requestTimeoutMs, OTA_TRANSFER_TIMEOUT_MS));
   }
 
   /** Verify (a SHA-256 read-back of ~2 MB) and select the new app. */
@@ -920,15 +1046,46 @@ export class LedMapperClient {
     return this.ota({ type: "ota_reboot", target });
   }
 
+  // -- Wi-Fi rejoin policy (docs/design/wifi-rejoin-policy.md; net/wifiPolicy.ts) --
+
+  /** The device's Wi-Fi rejoin policy + link state. Needs the "wifi_policy"
+   * feature; answers over BLE too (the only way to reach an offline unit). */
+  async getWifiPolicy(): Promise<WifiPolicy> {
+    const r = await this.request({ type: "get_wifi_policy" } as unknown as ClientMessage, "wifi_policy_state");
+    return normalizeWifiPolicy(r as unknown as Record<string, unknown>);
+  }
+
+  /** Change the rejoin policy (unset fields keep their value). Going to manual /
+   * offline while a fresh update is unconfirmed comes back `refused:
+   * "ota_pending"` (nothing applied) unless `force`. Reply: the resulting state. */
+  async setWifiPolicy(req: WifiPolicyRequest): Promise<WifiPolicy> {
+    const r = await this.request(wifiPolicyMessage(req) as unknown as ClientMessage, "wifi_policy_state");
+    return normalizeWifiPolicy(r as unknown as Record<string, unknown>);
+  }
+
   /** The motion sensor's live state (docs/design/sensor-core.md). Needs the
    * "sensors" feature. */
   async getSensors(): Promise<SensorStateMessage> {
-    const r = (await this.request(
-      { type: "get_sensors" } as unknown as ClientMessage,
-      "sensor_state",
-    )) as unknown as Partial<SensorStateMessage>;
+    const r = (await this.sensorRequest({ type: "get_sensors" } as unknown as ClientMessage)) as unknown as
+      Partial<SensorStateMessage>;
     return normalizeSensorState(r);
   }
+
+  /** get_sensors / calibrate_sensors / set_sensor_mount all answer
+   * sensor_state, and request() is single-flight per reply type: a poll in
+   * flight made a concurrent set_sensor_mount reject ("request already
+   * pending") before it was ever sent — the Calibrate IMU save was silently
+   * lost that way. Queue them instead, each with a deadline so one lost reply
+   * can't wedge every later sensor request. */
+  private sensorRequest(msg: ClientMessage): Promise<ServerMessage> {
+    const run = this.sensorChain.then(() => this.request(msg, "sensor_state", this.requestTimeoutMs));
+    this.sensorChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+  private sensorChain: Promise<void> = Promise.resolve();
 
   /** Run a sensor calibration action. Applied by the device's sensor task at its
    * next poll: the reply is the state BEFORE it ran — poll getSensors until
@@ -939,10 +1096,10 @@ export class LedMapperClient {
       level: "ACTION_LEVEL",
       reset: "ACTION_RESET",
     };
-    const r = (await this.request(
-      { type: "calibrate_sensors", action: actions[action] } as unknown as ClientMessage,
-      "sensor_state",
-    )) as unknown as Partial<SensorStateMessage>;
+    const r = (await this.sensorRequest({
+      type: "calibrate_sensors",
+      action: actions[action],
+    } as unknown as ClientMessage)) as unknown as Partial<SensorStateMessage>;
     return normalizeSensorState(r);
   }
 
@@ -953,17 +1110,14 @@ export class LedMapperClient {
     quat: number[],
     meta: { residualDeg: number; poses: number; yawResolved: boolean; atMs?: number },
   ): Promise<SensorStateMessage> {
-    const r = (await this.request(
-      {
-        type: "set_sensor_mount",
-        quat,
-        residualDeg: meta.residualDeg,
-        poses: meta.poses,
-        yawResolved: meta.yawResolved,
-        calibratedAtMs: String(meta.atMs ?? Date.now()),
-      } as unknown as ClientMessage,
-      "sensor_state",
-    )) as unknown as Partial<SensorStateMessage>;
+    const r = (await this.sensorRequest({
+      type: "set_sensor_mount",
+      quat,
+      residualDeg: meta.residualDeg,
+      poses: meta.poses,
+      yawResolved: meta.yawResolved,
+      calibratedAtMs: String(meta.atMs ?? Date.now()),
+    } as unknown as ClientMessage)) as unknown as Partial<SensorStateMessage>;
     return normalizeSensorState(r);
   }
 
@@ -982,9 +1136,12 @@ export class LedMapperClient {
 
   /** The stored map's capture profile (mapId "" = none stored). */
   async getCaptureProfile(): Promise<CaptureProfileFlat> {
+    // Deadline: the Calibrate IMU screen awaits this before starting the code,
+    // so a device that never answers must not leave it stuck.
     const r = (await this.request(
       { type: "get_capture_profile" } as unknown as ClientMessage,
       "capture_profile",
+      this.requestTimeoutMs,
     )) as unknown as Partial<CaptureProfileFlat>;
     return normalizeProfile(r);
   }
@@ -1121,6 +1278,41 @@ export class LedMapperClient {
     )) as unknown as PerfReportMessage;
   }
 
+  /** FX debugger (docs/design/fx-debugger.md): pause / resume / step the FX
+   * engine, or read its state (`action` = FX_DEBUG_ACTION.*). Reply: fx_debug
+   * with `state`. Needs the "fx_debug" feature. */
+  async fxDebugControl(
+    msg: Omit<FxDebugControlMessage, "type">,
+    timeoutMs = 10_000,
+  ): Promise<FxDebugMessage> {
+    return (await this.request(
+      { type: "fx_debug_control", ...msg } as unknown as ClientMessage,
+      "fx_debug",
+      timeoutMs,
+    )) as unknown as FxDebugMessage;
+  }
+
+  /** One window of an FX debugger snapshot section. Reply: fx_debug with `chunk`. */
+  async getFxSnapshot(
+    msg: Omit<GetFxSnapshotMessage, "type">,
+    timeoutMs = 10_000,
+  ): Promise<FxDebugMessage> {
+    return (await this.request(
+      { type: "get_fx_snapshot", ...msg } as unknown as ClientMessage,
+      "fx_debug",
+      timeoutMs,
+    )) as unknown as FxDebugMessage;
+  }
+
+  /** Re-run one LED of a paused frame with its VM locals. Reply: fx_debug with `led`. */
+  async debugFxLed(msg: Omit<DebugFxLedMessage, "type">, timeoutMs = 10_000): Promise<FxDebugMessage> {
+    return (await this.request(
+      { type: "debug_fx_led", ...msg } as unknown as ClientMessage,
+      "fx_debug",
+      timeoutMs,
+    )) as unknown as FxDebugMessage;
+  }
+
   /** Subscribe to perf_report frames — both replies and unsolicited pushes.
    * Returns an unsubscribe fn. The perf panel drives its live graph from here. */
   onPerfReport(fn: (r: PerfReportMessage) => void): () => void {
@@ -1130,15 +1322,15 @@ export class LedMapperClient {
 
   /** Override the effect framerate (FUG-82; the "fps" feature). `targetFps` 0
    * returns to autoscale, any other value pins that rate (snapped to the 5-fps
-   * ladder); `noAbort` holds the rung instead of parking an effect that can't
-   * keep it. Reply: the adopted fps_state. */
-  async setFps(targetFps: number, noAbort = false): Promise<FpsStateMessage> {
-    const r = await this.request({ type: "set_fps", targetFps, noAbort } as unknown as ClientMessage, "fps_state");
+   * ladder). An effect that can't hold the rate keeps running, slower (fps_state
+   * `lagging`); the player never parks it. Reply: the adopted fps_state. */
+  async setFps(targetFps: number): Promise<FpsStateMessage> {
+    const r = await this.request({ type: "set_fps", targetFps } as unknown as ClientMessage, "fps_state");
     return flatFpsState(r as unknown as Partial<FpsStateMessage>);
   }
 
   /** Subscribe to fps_state frames: set_fps replies and the unsolicited
-   * `aborted` push. Returns an unsubscribe fn. */
+   * `lagging` change push. Returns an unsubscribe fn. */
   onFpsState(fn: (s: FpsStateMessage) => void): () => void {
     this.fpsSubs.add(fn);
     return () => this.fpsSubs.delete(fn);
@@ -1270,6 +1462,8 @@ export class LedMapperClient {
   }
 
   private dispatch(msg: ServerMessage): void {
+    // The live-control channel paces on acks + legacy replies (consumes only acks).
+    if (this.live.onServerMessage(msg as unknown as { type: string } & Record<string, unknown>)) return;
     if (msg.type === "time_sync_pong") {
       const w = this.pingWaiters.get(msg.t0);
       if (w) {
@@ -1282,6 +1476,7 @@ export class LedMapperClient {
       // Fan out to subscribers (live panel) first, then resolve any pending
       // set_perf/get_perf_report waiter — the same frame satisfies both.
       const report = msg as unknown as PerfReportMessage;
+      if ((report.currentFps ?? 0) > 0) this.renderFps_ = report.currentFps!;
       for (const fn of this.perfSubs) fn(report);
       const pw = this.waiters.get("perf_report");
       if (pw) {
@@ -1294,6 +1489,7 @@ export class LedMapperClient {
       // Subscribers (live readout + the abort notice) first, then any pending
       // set_fps waiter — one frame satisfies both (FUG-82).
       const state = flatFpsState(msg as unknown as Partial<FpsStateMessage>);
+      if (state.currentFps > 0) this.renderFps_ = state.currentFps;
       for (const fn of this.fpsSubs) fn(state);
       const fw = this.waiters.get("fps_state");
       if (fw) {

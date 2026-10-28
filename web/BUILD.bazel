@@ -42,6 +42,9 @@ build_info_file(
 # the pattern goldens pin the firmware hue-code generator
 # (//firmware/pattern) to what the phone decoder is tested against.
 exports_files([
+    # The logo the Pi bridge's OLED boot animation is rendered from
+    # (//pi/bridge:boot_frames).
+    "public/icons/splanc.svg",
     "tests/golden_proto_frames.json",
     "tests/golden_secded16.json",
     "tests/golden_secded16_sym4.json",
@@ -68,6 +71,9 @@ copy_to_bin(
     name = "agent_reuse_srcs",
     srcs = [
         "src/assetBase.ts",
+        # file_bug's shared core (docs/design/agent-bug-reports.md): the hub's tool,
+        # the relay's POST /bugs and its offline file_bug.
+        "src/bugs/bugReport.ts",
         # Capture profile + IMU extrinsic solve (types used by net/client.ts).
         "src/capture/captureProfile.ts",
         "src/geom/imuExtrinsic.ts",
@@ -76,6 +82,12 @@ copy_to_bin(
         "src/effects/budget.ts",
         "src/effects/costModel.ts",
         "src/effects/multiDevice.ts",
+        "src/effects/perfFindings.ts",  # estimate_effect's cost findings
+        # The in-app AI prompt + its language tables (agent tests compile and
+        # budget-check the prompt's examples).
+        "src/effects/ai/system-prompt.ts",
+        "src/effects/editor/lang-spec.ts",
+        "src/fx/fxDebug.ts",  # the FX debugger (pause/step/snapshot/replay/compare)
         "src/fx/preview.ts",
         "src/gen/ledmapper_pb.ts",
         "src/geom/mapExport.ts",  # export_map (TouchDesigner CSV / Chromatik .lxf)
@@ -83,10 +95,14 @@ copy_to_bin(
         "src/net/client.ts",
         "src/net/clocksync.ts",
         "src/net/fxbTextures.ts",
-        "src/net/liveProtocol.ts",  # the live (VJ) protocol, shared with the bridge
+        "src/net/liveControl.ts",  # the client's real-time control channel
+        "src/net/liveProtocol.ts",
+        "src/net/liveSender.ts",  # the live (VJ) protocol, shared with the bridge
         "src/net/otaUpdate.ts",  # update_firmware (the over-the-air driver)
         "src/net/proto.ts",
         "src/net/textureCodec.ts",
+        "src/net/uniformWire.ts",  # wide (mat3/mat4) uniforms: wire chunking + reassembly
+        "src/net/wifiPolicy.ts",  # Wi-Fi rejoin policy (get/set_wifi_policy)
         "src/store/costTableStore.ts",  # defaultCostTable (IndexedDB only inside methods)
         "tsconfig.json",  # rolldown resolves these modules' tsconfig in the bin tree
     ],

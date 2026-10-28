@@ -24,6 +24,9 @@ import {
 import { bleRediscover, connectOverBle, openAddDevice } from "./addDevice";
 import { appendGrouped, openFolderPicker } from "./folders";
 import { deviceImuReady } from "../../store/deviceMap";
+import { inLoader } from "../../net/otaUpdate";
+import { formatWifiStatus } from "../../net/wifiPolicy";
+import { WifiPolicySection } from "./wifiPolicySection";
 
 let openHandle: { close: () => void } | null = null;
 
@@ -229,6 +232,24 @@ function render(): HTMLElement {
     { scope: "devices" },
   );
 
+  // -- the connected device's own firmware update (over Wi-Fi). Shown whenever the
+  // active device can take one (welcome feature "ota") or sits in its updater; the
+  // flash sheet then checks for the legacy layout that needs a one-time USB update.
+  const w = appState.client?.welcome;
+  if (w && ((w.features ?? []).includes("ota") || inLoader(w))) {
+    const name = deviceStore.get(activeId ?? "")?.label || w.deviceName || "this device";
+    const upd = Button({
+      label: inLoader(w) ? `Update firmware — ${name} is in its updater` : "Update firmware",
+      icon: "chip",
+      ...(inLoader(w) ? { variant: "primary" as const } : {}),
+      block: true,
+      onClick: () => void import("./flashSheet").then((m) => m.openFlashSheet()),
+    });
+    upd.classList.add("device-update-fw");
+    upd.title = `Update ${name}'s firmware over Wi-Fi`;
+    wrap.append(upd);
+  }
+
   // -- add-device section (compact icon buttons under a labelled divider).
   const addSection = document.createElement("div");
   addSection.className = "device-add";
@@ -256,7 +277,7 @@ function render(): HTMLElement {
     // Flash a new/blank board over USB (WebSerial). The whole flasher — esptool-js
     // and the USB code — is loaded lazily so it never weighs on the main bundle.
     IconButton("chip", {
-      title: "Flash firmware (USB)",
+      title: "Flash a new board (USB)",
       onClick: () => void import("./flashSheet").then((m) => m.openFlashSheet()),
     }),
   );
@@ -582,6 +603,23 @@ function openDeviceDetail(dev: KnownDevice): void {
     buildRowFor("Firmware build", fwFields),
     rowFor("Folder", cur.folder || "Ungrouped"),
   );
+
+  // -- Wi-Fi rejoin policy (firmware advertising "wifi_policy"): a status line on
+  // the card and the settings section. Over BLE too — an offline unit is only
+  // reachable that way, and this is how it is switched back.
+  if (isActive && client && (client.welcome?.features ?? []).includes("wifi_policy")) {
+    const wifiLine = document.createElement("div");
+    wifiLine.className = "device-detail-wifi";
+    wifiLine.textContent = "Wi-Fi: …";
+    const section = WifiPolicySection(client, (p) => {
+      wifiLine.textContent = formatWifiStatus(p);
+      wifiLine.dataset["state"] = p.mode === "offline" ? "offline" : p.state;
+      wifiLine.dataset["otaPending"] = String(p.otaPending);
+    });
+    const wifiDivider = document.createElement("hr");
+    wifiDivider.className = "device-detail-divider";
+    sheet.body.append(wifiLine, wifiDivider, section);
+  }
 }
 
 /**

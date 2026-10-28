@@ -3,7 +3,10 @@
 //! (JSON) + diagnostics (JSON) so the editor can show inline errors, build the
 //! uniform panel, and feed the `.fxb` to the preview VM (fx_vm_web).
 
-use ledmapper_fx_compiler::{compile, disassemble, exports_manifest_json, manifest_json};
+use ledmapper_fx_compiler::{
+    compile, compile_with, disassemble, exports_manifest_json, manifest_json, symbols_json, CompileOptions,
+    Compiled, Diagnostic,
+};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -13,7 +16,12 @@ pub struct CompileResult {
     manifest: String,
     /// Driver export table JSON (FUG-107); "[]" for an effect.
     exports: String,
+    /// The FX debugger's symbol table JSON: [{name, kind, func, slot, width}].
+    symbols: String,
     diagnostics: String,
+    /// Non-fatal warnings (JSON, same shape as diagnostics; "[]" when none): lints
+    /// and perf warnings ("warning: perf: ..."), each msg prefixed "warning: ".
+    warnings: String,
 }
 
 #[wasm_bindgen]
@@ -35,42 +43,61 @@ impl CompileResult {
         self.exports.clone()
     }
     #[wasm_bindgen(getter)]
+    pub fn symbols(&self) -> String {
+        self.symbols.clone()
+    }
+    #[wasm_bindgen(getter)]
     pub fn diagnostics(&self) -> String {
         self.diagnostics.clone()
+    }
+    #[wasm_bindgen(getter)]
+    pub fn warnings(&self) -> String {
+        self.warnings.clone()
     }
 }
 
 #[wasm_bindgen]
 pub fn fx_compile(src: &str) -> CompileResult {
-    match compile(src) {
+    result(compile(src))
+}
+
+/// Like [`fx_compile`] but with the variance pass (per-frame hoisting + per-LED
+/// memoization) off — for the calibration micro-benchmarks, which must measure
+/// raw opcodes rather than a cache hit.
+#[wasm_bindgen]
+pub fn fx_compile_no_memo(src: &str) -> CompileResult {
+    result(compile_with(src, &CompileOptions { optimize: true, memo: None }))
+}
+
+fn result(r: Result<Compiled, Vec<Diagnostic>>) -> CompileResult {
+    match r {
         Ok(c) => CompileResult {
             ok: true,
             bytecode: c.fxb,
             manifest: manifest_json(&c.uniforms),
             exports: exports_manifest_json(&c.exports),
+            symbols: symbols_json(&c.symbols),
             diagnostics: "[]".into(),
+            warnings: diags_json(&c.warnings),
         },
-        Err(ds) => {
-            let items: Vec<String> = ds
-                .iter()
-                .map(|d| {
-                    format!(
-                        "{{\"line\":{},\"col\":{},\"msg\":{}}}",
-                        d.line,
-                        d.col,
-                        json_str(&d.msg)
-                    )
-                })
-                .collect();
-            CompileResult {
-                ok: false,
-                bytecode: vec![],
-                manifest: "[]".into(),
-                exports: "[]".into(),
-                diagnostics: format!("[{}]", items.join(",")),
-            }
-        }
+        Err(ds) => CompileResult {
+            ok: false,
+            bytecode: vec![],
+            manifest: "[]".into(),
+            exports: "[]".into(),
+            symbols: "[]".into(),
+            diagnostics: diags_json(&ds),
+            warnings: "[]".into(),
+        },
     }
+}
+
+fn diags_json(ds: &[Diagnostic]) -> String {
+    let items: Vec<String> = ds
+        .iter()
+        .map(|d| format!("{{\"line\":{},\"col\":{},\"msg\":{}}}", d.line, d.col, json_str(&d.msg)))
+        .collect();
+    format!("[{}]", items.join(","))
 }
 
 /// Disassemble compiled `.fxb` bytecode to a readable op listing (offsets +

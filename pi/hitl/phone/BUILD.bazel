@@ -58,6 +58,25 @@ py_binary(
     ],
 )
 
+# The same runner for the device-free lanes only (--mock-device, synthetic
+# camera): no firmware bundle or solver in its runfiles, so it builds in
+# seconds. e.g. the hands-free Calibrate IMU smoke:
+#   bazel run //pi/hitl/phone:phone_e2e_mock -- --browser --mock-device --journeys imu_calibrate
+py_binary(
+    name = "phone_e2e_mock",
+    srcs = ["phone_e2e.py"],
+    data = ["//web:dist"],
+    imports = ["."],
+    main = "phone_e2e.py",
+    tags = ["manual"],
+    deps = [
+        ":phone",
+        "@rules_python//python/runfiles",
+        requirement("playwright"),
+        requirement("websockets"),
+    ],
+)
+
 # Reservation-driven iOS journey runner: reserve `ios-phone` on the Mac from the
 # container, ship the harness into the reserved session, and run phone_e2e ON THE
 # MAC (where the iPhone can reach the station + the launchd ios-build-server). The
@@ -179,6 +198,18 @@ py_test(
     srcs = ["phone_target_test.py"],
     imports = ["."],
     deps = [":phone"],
+)
+
+# Offline tests for the Android CI rep's DUT console handling (the whole log saved to
+# the test outputs, a longer excerpt printed on failure), without a reservation.
+py_test(
+    name = "android_journeys_test",
+    srcs = [
+        "android_journeys.py",
+        "android_journeys_test.py",
+    ],
+    imports = ["."],
+    main = "android_journeys_test.py",
 )
 
 # Dry-run tests for the reservation-driven iOS runner: payload manifest + the remote

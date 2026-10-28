@@ -15,6 +15,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import { LIBRARY_TOOLS } from "../relay/src/library";
+import { SEED_EFFECTS } from "../relay/src/librarySeed";
 import { mergeTools, parseSingle, rewriteReply } from "../relay/src/mcpLibrary";
 import type { RelayFrame, ReqFrame, StateFrame } from "../relay/src/protocol";
 import { RelayLink } from "../src/bridge/relayLink";
@@ -174,6 +175,9 @@ describe("pure", () => {
     assert.equal(names.filter((n) => n === "search_effects").length, 1);
     assert.notEqual(t.find((x) => x["name"] === "search_effects")!["description"], "BRIDGE'S OWN");
     for (const d of LIBRARY_TOOLS) assert.ok(names.includes(d.name), d.name);
+    // The bridge has no file_bug: the relay's is listed (once).
+    assert.equal(names.filter((n) => n === "file_bug").length, 1);
+    assert.equal(mergeTools([...BRIDGE_TOOLS, { name: "file_bug", description: "BRIDGE'S OWN" }]).filter((x) => x["name"] === "file_bug")[0]!["description"], "BRIDGE'S OWN");
     const dep = t.find((x) => x["name"] === "deploy_effect")!["inputSchema"] as { properties: object; required: string[] };
     assert.ok("library_id" in dep.properties && "description" in dep.properties);
     assert.deepEqual(dep.required, []);
@@ -212,7 +216,7 @@ describe("relay-served library", () => {
       const before = fb.reqs.length;
       const seeded = await call(token, "search_effects", {});
       assert.equal(seeded.isError, false);
-      assert.equal(seeded.json.total, 5, "a new library starts with the examples");
+      assert.equal(seeded.json.total, SEED_EFFECTS.length, "a new library starts with the examples");
       const saved = await call(token, "save_effect", OCEAN);
       assert.equal(saved.json.status, "created");
       assert.deepEqual(saved.json.uniforms, ["speed"]);
@@ -300,7 +304,7 @@ describe("relay-served library", () => {
     const list = await rpc(await mcpPost(relay, token, { jsonrpc: "2.0", id: 2, method: "tools/list" }, { "mcp-session-id": "bridge-session-1" }), 2);
     assert.deepEqual(
       (list.result.tools as { name: string }[]).map((t) => t.name),
-      LIBRARY_TOOLS.map((t) => t.name),
+      [...LIBRARY_TOOLS.map((t) => t.name), "file_bug"], // + the relay's file_bug (relay/src/bugs.ts)
     );
     assert.equal((await call(token, "get_effect", { id }, { "mcp-session-id": "bridge-session-1" })).json.id, id);
     const dev = await mcpPost(relay, token, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "set_brightness", arguments: { level: 1 } } });
@@ -322,7 +326,7 @@ describe("relay-served library", () => {
     assert.equal(c.getServerVersion()?.name, "splanc-relay");
     assert.deepEqual(
       (await c.listTools()).tools.map((t) => t.name),
-      LIBRARY_TOOLS.map((t) => t.name),
+      [...LIBRARY_TOOLS.map((t) => t.name), "file_bug"], // + the relay's file_bug (relay/src/bugs.ts)
     );
     const r = (await c.callTool({ name: "search_effects", arguments: { query: "ocean" } })) as { content: { text: string }[] };
     assert.equal(JSON.parse(r.content[0]!.text).results[0].id, id);

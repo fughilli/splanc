@@ -766,6 +766,14 @@ body.is-locked {
   font-size: var(--f-caption);
   text-align: right;
 }
+/* mat3/mat4: an N×N grid of number fields spanning the control + value columns
+ * (columns set inline from N). */
+.upanel-mat {
+  grid-column: 2 / span 2;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
 .upanel-num::-webkit-outer-spin-button,
 .upanel-num::-webkit-inner-spin-button {
   appearance: none;
@@ -2745,6 +2753,45 @@ body.is-locked {
 .capture-cal-settings .k-slider-val {
   color: #d5d5dd;
 }
+/* Calibrate IMU: hands-free pose progress (no capture / accept buttons). */
+.capture-cal-steps {
+  display: flex;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+.capture-cal-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #a8a8b4;
+  border: 1.5px solid rgba(255, 255, 255, 0.3);
+}
+.capture-cal-dot--next {
+  color: #fff;
+  border-color: var(--accent);
+}
+.capture-cal-dot--done {
+  color: #0a0a0e;
+  background: #4cd07d;
+  border-color: #4cd07d;
+}
+.capture-cal-prompt {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  margin-bottom: var(--sp-2);
+}
+.capture-review-text[data-tone="warn"] {
+  color: #ffd27a;
+}
+.capture-review-text[data-tone="ok"] {
+  color: #8ee6ac;
+}
 
 /* --- device sheet --- */
 .device-row {
@@ -2835,6 +2882,28 @@ input.device-name-input {
   border: 0;
   border-top: 1px solid var(--border);
   margin: var(--sp-1) 0;
+}
+/* Wi-Fi rejoin policy: the card's status line + the settings section. */
+.device-detail-wifi {
+  color: var(--text);
+}
+.device-detail-wifi[data-state="offline"],
+.device-detail-wifi[data-ota-pending="true"] {
+  color: var(--warn);
+}
+.wifi-policy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.wifi-policy-title {
+  font-weight: 600;
+}
+.wifi-policy-modes,
+.wifi-policy-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
 }
 .device-info {
   flex: 1;

@@ -206,6 +206,12 @@ impl Improv {
             return Action::None;
         }
         self.state = State::Provisioning;
+        // A new SendWifi starts a new join: drop the previous join's result (its redirect
+        // URL) and any earlier error. Left in place, the stale result was notified with this
+        // write's state change and a central took it as "joined" — e.g. an Improv to a
+        // network that isn't on the air reported success with the OLD network's URL.
+        self.result.clear();
+        self.error = ErrorState::None;
         Action::Provision(creds)
     }
 
@@ -517,6 +523,29 @@ mod tests {
         assert_eq!(r[0], Command::SendWifi as u8);
         let sum = r[..r.len() - 1].iter().fold(0u8, |a, &b| a.wrapping_add(b));
         assert_eq!(sum, r[r.len() - 1]); // checksum valid
+    }
+
+    #[test]
+    fn a_new_send_wifi_drops_the_previous_result_and_error() {
+        let mut im = Improv::new();
+        let mut data: Buf<64> = Buf::new();
+        data.extend(&[3]).unwrap();
+        data.extend(b"net").unwrap();
+        data.extend(&[6]).unwrap();
+        data.extend(b"secret").unwrap();
+        let pkt = rpc(Command::SendWifi as u8, data.as_slice());
+        assert!(matches!(im.on_rpc(pkt.as_slice()), Action::Provision(_)));
+        im.provisioning_result(true, &["http://192.168.1.5"]);
+        assert!(!im.rpc_result().is_empty());
+        // Re-provision: the old redirect must not be readable/notified as this join's.
+        assert!(matches!(im.on_rpc(pkt.as_slice()), Action::Provision(_)));
+        assert!(im.rpc_result().is_empty());
+        assert_eq!(im.state, State::Provisioning);
+        // A failed join, then a retry: the error is cleared by the new attempt.
+        im.provisioning_result(false, &[]);
+        assert_eq!(im.error, ErrorState::UnableToConnect);
+        assert!(matches!(im.on_rpc(pkt.as_slice()), Action::Provision(_)));
+        assert_eq!(im.error, ErrorState::None);
     }
 
     #[test]

@@ -22,6 +22,11 @@ bazel run //pi/hitl/phone:phone_e2e -- --browser --mock-device --journeys smoke,
 # real decoder (mapping_capture), plus the real VIO solve with synthetic IMU (mapping_solve)
 bazel run //pi/hitl/phone:phone_e2e -- --browser --mock-device --journeys mapping_capture,mapping_solve
 
+# Hands-free Calibrate IMU: a synthetic tilting fixture + fake IMU through the real
+# capture screen, registration, auto-capture and write-back (+ the drop-mid-write
+# variant: pending on the phone, pushed on the automatic reconnect). Device-free.
+bazel run //pi/hitl/phone:phone_e2e_mock -- --browser --mock-device --journeys imu_calibrate,imu_calibrate_reconnect
+
 # Connect + config against a REAL ESP32-C6 on the rig (reserve+flash+provision+forward)
 HITL_OWNER=you bazel run //pi/hitl/phone:phone_e2e -- \
     --browser --reservation --hitl-server http://hitl-rig-2:8087 --journeys config

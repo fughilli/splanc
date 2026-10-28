@@ -28,13 +28,13 @@ use core::sync::atomic::AtomicBool;
 
 use ledmapper_arena::Arena;
 use ledmapper_fps::{FpsController, MAX_FPS};
-use ledmapper_fx_jit::{plan_blocks_into, PlanOut};
+use ledmapper_fx_jit::{plan_blocks_into_consts, PlanOut};
 use ledmapper_fx_vm::{
     Budget, Counters as FxCounters, Frame as FxFrame, JitBlock, JitFn, Led as FxLed, Outcome,
     Program, Rgb as Rgb8, Vm as FxVm,
 };
 use ledmapper_keypoint::{self as kp, Morph};
-use ledmapper_osc::{self as osc, Config as OscConfig, PortTable, Shadow};
+use ledmapper_osc::{self as osc, Config as OscConfig, PortTable};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player::{upload_malformed, upload_too_large, Player};
 use ledmapper_view::ledmapper::v1 as pv;
@@ -56,6 +56,12 @@ mod uniform_pool;
 // The driver VM host (FUG-107): one `.fxb` I2C driver, exports into the pool.
 mod driver_ffi;
 pub use driver_ffi::*;
+// The Wi-Fi rejoin policy (auto / fixed / manual / offline): config + protocol arms.
+mod wifi_ffi;
+pub use wifi_ffi::*;
+// The FX debugger (docs/design/fx-debugger.md): pause / step / snapshot.
+mod fxdbg;
+pub use fxdbg::*;
 
 /// The frame's `ClientMessage` arm, read IN PLACE (pbview: no by-value
 /// envelope, no capacity profile). None when the frame isn't a valid encoding.
@@ -106,21 +112,27 @@ const FX_MAX_BYTES: usize = 4 * 1024;
 // -- FX decks (docs/design/uniform-keypoints.md) -----------------------------
 // Two effects run at once — deck A (0) and deck B (1) — and lm_fx_shade blends
 // their per-LED output by the global crossfade. Deck A is resident and is the
-// only persisted deck (boot resumes it); the JIT and OSC are deck-A only. Deck B
-// lives in FX_AUX, a union with the video-texture delta buffer: loading deck B
-// evicts a video stream, and set_texture is dropped while deck B is loaded, so
-// the two cost max(), not sum() (the mutex is explicit in the type).
+// only persisted deck (boot resumes it); the JIT is deck-A only, and OSC drives
+// the visible deck (#402). Deck B lives in FX_AUX, a union with the video-texture
+// delta buffer: loading deck B evicts a video stream, and set_texture is dropped
+// while deck B is loaded, so the two cost max(), not sum() (the mutex is explicit
+// in the type).
 
 const N_DECKS: usize = 2;
 const DECK_A_IDX: usize = 0;
 const DECK_B_IDX: usize = 1;
 
-/// One deck's loaded effect: the `.fxb` (the parsed Program borrows it fresh each
-/// call), its VM, which context mirrors it reads, its identity and its keypoint
+/// One deck's loaded effect: the `.fxb` and its parsed Program (cached at load),
+/// its VM, which context mirrors it reads, its identity and its keypoint
 /// blend state.
 struct DeckState {
     bytes: [u8; FX_MAX_BYTES],
     len: usize,
+    /// `bytes[..len]` parsed once at load (after the JIT patch), so the per-LED
+    /// shade and per-frame update don't re-parse the header on every call. It
+    /// borrows `bytes` (static storage): fx_load clears it before rewriting the
+    /// bytes and fx_clear drops it.
+    prog: Option<Program<'static>>,
     vm: Option<FxVm>,
     /// ACTIVE = the render loop drives it. An upload with `activate=false` parks
     /// the effect (loaded, validated) without taking over rendering.
@@ -155,6 +167,7 @@ impl DeckState {
     const EMPTY: DeckState = DeckState {
         bytes: [0; FX_MAX_BYTES],
         len: 0,
+        prog: None,
         vm: None,
         active: false,
         uses_ctxfix: false,
@@ -189,19 +202,20 @@ static mut DECK_A: DeckState = DeckState::EMPTY;
 // The render loop measures every effect frame's cost (update + shade of BOTH
 // decks + the crossfade blend, or the strip transmit if that is longer) and
 // feeds it to one `FpsController` (//firmware/fps), which picks the target FPS
-// on a 5-fps ladder (25..80) keeping 5% headroom, and asks for an abort when even
-// the floor (or an app-pinned rate) can't hold. The search restarts whenever what
-// renders changes (a load, clear or (de)activation on either deck; FPS_GEN), so
-// each program — or deck pairing — finds its own rung; the app's pin and no-abort
-// hold survive that. All under the player_mutex, like the perf ring.
+// on a 5-fps ladder (25..80) keeping 5% headroom. An effect (or deck pairing)
+// that can't hold even the floor or an app-pinned rate is never parked: it keeps
+// rendering as fast as it can and fps_state reports it `lagging`. The search
+// restarts whenever what renders changes (a load, clear or (de)activation on
+// either deck; FPS_GEN), so each program — or deck pairing — finds its own rung;
+// the app's pin survives that. All under the player_mutex, like the perf ring.
 static mut FPS: FpsController = FpsController::new();
 /// Bumped by every change to what renders (fx_load / fx_clear / fx_set_active);
 /// the render side resets the controller when it differs from FPS_SEEN_GEN.
 static mut FPS_GEN: u32 = 0;
 static mut FPS_SEEN_GEN: u32 = 0;
-/// Set when the autoscaler just parked the effect; drained by loop()
-/// (lm_fps_take_abort_notify) to push fps_state{aborted=true}.
-static mut FPS_NOTIFY_ABORT: bool = false;
+/// The lag state last reported: a change is pushed to the app once
+/// (lm_fps_take_lag_notify -> an unsolicited fps_state), as an advisory.
+static mut FPS_LAG_REPORTED: bool = false;
 
 /// What renders changed: restart the autoscaler's search on the next frame.
 unsafe fn fps_invalidate() {
@@ -252,10 +266,13 @@ static mut FX_JIT_PLANS: [PlanOut; MAX_JIT_BLOCKS] = [PlanOut {
     code_len: 0,
 }; MAX_JIT_BLOCKS];
 static mut FX_JIT_TARGETS: [bool; JIT_MAX_CODE + 1] = [false; JIT_MAX_CODE + 1];
+/// Per installed block: its offset in DECK_A.bytes + the 3 bytes the JitCall
+/// patch replaced (fxdbg.rs restores them; 24 B).
+static mut FX_JIT_ORIG: [(u16, [u8; 3]); MAX_JIT_BLOCKS] = [(0, [0; 3]); MAX_JIT_BLOCKS];
 
 /// Placeholder segment for the never-called table slots (a real segment always
 /// overwrites the slots we install). Must be a valid function, not null.
-unsafe extern "C" fn jit_noop(_stack: *mut i32, _locals: *mut i32, _consts: *const i32) {}
+unsafe extern "C" fn jit_noop(_stack: *mut i32, _locals: *mut i32, _consts: *const i32, _state: *mut i32) {}
 
 // Executable-memory primitives, provided by the C++ firmware: a fixed 2 KB
 // static region the Rust side compiles segments straight into, made RWX by a
@@ -308,10 +325,9 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
 
     // Aligned i32 mirror of the const pool (the segments' `a2` base).
     let craw = prog.consts_raw();
-    let n_consts = craw.len() / 4;
-    if n_consts > MAX_JIT_CONSTS {
-        return;
-    }
+    // Mirror at most MAX_JIT_CONSTS words; blocks that read past them are
+    // skipped by the planner instead of the whole program going uncompiled.
+    let n_consts = (craw.len() / 4).min(MAX_JIT_CONSTS);
     let consts = &mut *addr_of_mut!(FX_JIT_CONSTS);
     for i in 0..n_consts {
         consts[i] = i32::from_le_bytes([craw[i * 4], craw[i * 4 + 1], craw[i * 4 + 2], craw[i * 4 + 3]]);
@@ -332,7 +348,7 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
         for t in targets.iter_mut() {
             *t = false;
         }
-        plan_blocks_into(code, targets, &mut *addr_of_mut!(FX_JIT_PLANS), region)
+        plan_blocks_into_consts(code, targets, &mut *addr_of_mut!(FX_JIT_PLANS), region, n_consts)
     };
     FX_JIT_DIAG_PLANS = n as u32;
     if n == 0 {
@@ -357,6 +373,9 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
         let func: JitFn = core::mem::transmute::<*mut u32, JitFn>(region_ptr.add(p.code_off as usize));
         blocks[installed] = JitBlock { func, end: p.end, net_delta: p.net_delta };
         let at = code_off + p.start as usize;
+        // Keep the bytes the patch overwrites: the FX debugger un-patches them to
+        // serve the .fxb as uploaded and to run the deck on the interpreter.
+        (*addr_of_mut!(FX_JIT_ORIG))[installed] = (at as u16, [fxb[at], fxb[at + 1], fxb[at + 2]]);
         fxb[at] = ledmapper_fx_vm::Op::JitCall as u8;
         fxb[at + 1] = (installed & 0xff) as u8;
         fxb[at + 2] = ((installed >> 8) & 0xff) as u8;
@@ -369,16 +388,128 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
     vm.set_jit(&blocks[..installed], consts.as_ptr());
 }
 
-/// Native OSC control (FUG-121). The active effect's uniform manifest reduced to
-/// a `name -> (slot, width)` table, rebuilt once per `lm_fx_load` so the UDP
-/// task's per-packet path is a table scan, not a JSON parse. `OSC_SHADOW` retains
-/// each slot's last values so per-axis vector messages (`/tint/x`) patch one
-/// component without clobbering the others. `OSC_BY_NAME` toggles name
+/// Native OSC control (FUG-121). The VISIBLE deck's uniform manifest reduced to
+/// a `name -> (slot, width)` table, so the per-packet path is a table scan, not a
+/// JSON parse. It is built from deck `OSC_TABLE_DECK`: eagerly when that deck
+/// loads, else lazily (once) when the visible deck changes (#402 — after a
+/// crossfade to deck B, OSC follows B). A per-axis / per-element message
+/// (`/tint/x`, `/pose/12`) writes only the components it names, into the deck(s)
+/// `osc_targets` picks, so the others keep THAT deck's VM values — nothing is
+/// carried from one deck's slots to the other's. `OSC_BY_NAME` toggles name
 /// resolution vs raw slot-index addressing (`false` = the slot-only fallback /
 /// the A-B benchmark leg).
 static mut OSC_TABLE: PortTable = PortTable::empty();
-static mut OSC_SHADOW: Shadow = Shadow::new();
 static mut OSC_BY_NAME: bool = true;
+/// The deck `OSC_TABLE` was built for.
+static mut OSC_TABLE_DECK: usize = DECK_A_IDX;
+/// `OSC_TABLE` no longer matches `OSC_TABLE_DECK`'s program (it was cleared, or
+/// nothing has built it yet): the next OSC rebuilds it.
+static mut OSC_TABLE_STALE: bool = true;
+/// The deck a crossfade in progress is heading to (the INCOMING deck): the last
+/// deck activated, then the direction the crossfade position last moved.
+static mut OSC_XF_TOWARD: usize = DECK_A_IDX;
+/// OSC received on the netstack build's UDP :9000, latest value per address,
+/// applied at the next frame boundary (lm_osc_post / lm_osc_drain). The ~730 B
+/// mailbox is NOT a static: the firmware heap-allocates it on the first OSC
+/// datagram (lm_osc_mailbox_bytes / lm_osc_mailbox_bind), so a board that never
+/// sees OSC pays nothing and the boot-time LED sizing (board.max_leds, derived
+/// from the heap left after the image's .data/.bss) is untouched.
+type OscMailbox = osc::Mailbox<12>;
+static mut OSC_MAILBOX: *mut OscMailbox = core::ptr::null_mut();
+
+/// The OSC mailbox, if one has been bound.
+unsafe fn osc_mailbox() -> Option<&'static mut OscMailbox> {
+    (*addr_of!(OSC_MAILBOX)).as_mut()
+}
+
+/// The deck OSC drives (#402): the one the crossfade fully shows, or mid-fade the
+/// INCOMING one (`toward`). `a` / `b`: whether deck A / B renders (loaded and
+/// active) — a lone rendering deck shows at full whatever the position; at an
+/// endpoint only that deck shades (lm_fx_shade). None: nothing renders. Pure, so
+/// the host test pins the rule.
+pub fn osc_visible_deck(a: bool, b: bool, pos: f32, toward: usize) -> Option<usize> {
+    match (a, b) {
+        (false, false) => None,
+        (true, false) => Some(DECK_A_IDX),
+        (false, true) => Some(DECK_B_IDX),
+        (true, true) if pos <= 0.0 => Some(DECK_A_IDX),
+        (true, true) if pos >= 1.0 => Some(DECK_B_IDX),
+        (true, true) => Some(if toward == DECK_B_IDX { DECK_B_IDX } else { DECK_A_IDX }),
+    }
+}
+
+/// Where a crossfade moving from `cur` to `new` is heading (`toward` when it
+/// doesn't move): up = deck B incoming, down = deck A. Pure (host-tested).
+pub fn osc_xf_toward(cur: f32, new: f32, toward: usize) -> usize {
+    if new > cur {
+        DECK_B_IDX
+    } else if new < cur {
+        DECK_A_IDX
+    } else {
+        toward
+    }
+}
+
+/// Whether both decks hold the same effect: the same non-empty id and the same
+/// uniform manifest (so one name table addresses both).
+unsafe fn osc_decks_same_effect() -> bool {
+    let (Some(pa), Some(pb)) = (deck(DECK_A_IDX), deck(DECK_B_IDX)) else { return false };
+    if !(*pa).loaded() || !(*pb).loaded() || (*pa).id_len == 0 {
+        return false;
+    }
+    if (*pa).id[..(*pa).id_len] != (*pb).id[..(*pb).id_len] {
+        return false;
+    }
+    match ((*pa).prog.as_ref(), (*pb).prog.as_ref()) {
+        (Some(x), Some(y)) => x.manifest == y.manifest,
+        _ => false,
+    }
+}
+
+/// (Re)build the OSC table for deck `d`'s program.
+unsafe fn osc_bind_deck(d: usize) {
+    *addr_of_mut!(OSC_TABLE) = match deck(d).and_then(|p| (*p).prog.as_ref()) {
+        Some(prog) => osc::parse_manifest(prog.manifest),
+        None => PortTable::empty(),
+    };
+    OSC_TABLE_DECK = d;
+    OSC_TABLE_STALE = false;
+}
+
+/// The decks an OSC write lands on (bit `d` = deck `d`; 0 = none): the visible
+/// deck, plus the other one when both hold the same effect (a crossfade between
+/// two copies stays in sync). Points `OSC_TABLE` at the visible deck first.
+unsafe fn osc_targets() -> u8 {
+    let a = deck_renders(DECK_A_IDX);
+    let b = deck_renders(DECK_B_IDX);
+    let pos = if b { player().crossfade() } else { 0.0 };
+    let Some(v) = osc_visible_deck(a, b, pos, OSC_XF_TOWARD) else { return 0 };
+    let same = b && osc_decks_same_effect();
+    if OSC_TABLE_STALE || (v != OSC_TABLE_DECK && !same) {
+        osc_bind_deck(v);
+    } else if v != OSC_TABLE_DECK {
+        // A copy of the same effect shares the table: switching between the two
+        // keeps it as is.
+        OSC_TABLE_DECK = v;
+    }
+    let mut mask = 1u8 << v;
+    if same {
+        mask |= 1u8 << (1 - v);
+    }
+    mask
+}
+
+/// The OSC sink: `vals` into `slot` on every deck in `mask`.
+unsafe fn osc_write(mask: u8, slot: u16, vals: &[f32]) {
+    for d in 0..N_DECKS {
+        if mask & (1u8 << d) == 0 {
+            continue;
+        }
+        if let Some(vm) = deck(d).and_then(|p| (*p).vm.as_mut()) {
+            vm.set_uniform(slot as usize, vals);
+        }
+    }
+}
 /// Hidden-buffer/texture arena for the fx VM (LoadBuf/StoreBuf). 24 KB, now
 /// BYTE-addressed (FUG-10 packed storage) so narrow elements pack tightly — a
 /// fixed8 vec4 trail on 256 LEDs is 1 KB, an f32 one 4 KB; the VM clamps a
@@ -387,6 +518,20 @@ static mut OSC_BY_NAME: bool = true;
 /// semantics) and is zeroed on (re)load for a clean start.
 const FX_ARENA_BYTES: usize = 24 * 1024; // 24 KB
 static mut FX_ARENA: [u8; FX_ARENA_BYTES] = [0; FX_ARENA_BYTES];
+
+// -- per-LED memo cache (fx_compiler::memo / fx_vm LoadLedCache) --------------
+// An effect's LED-invariant subexpressions (atan2(pos.x,pos.z), hash(idx), …)
+// are cached per LED in the SPARE tail of the deck's FX_ARENA slice, after its
+// buffers — no new RAM: a deck binds only the best prefix of the compiler's
+// priority-ordered groups that fits (Program::led_cache_fit), and nothing at all
+// when the arena is full (the effect then runs uncached, exactly as before).
+// The cache is keyed by LED index for the CURRENT map, so it is invalidated
+// (re-bound) whenever the map/topology changes or the LED count does.
+/// LED count the deck caches are bound for (the last lm_fx_update's count).
+static mut FX_MEMO_LEDS: usize = 0;
+/// A map/topology upload changed the per-LED attributes: re-bind (= invalidate)
+/// every deck's cache before the next shade sweep.
+static mut FX_MEMO_DIRTY: bool = false;
 
 /// Previous quantized video-texture frame, for set_texture DELTA (XOR) decoding.
 /// One buffer — video streams target a single texture at a time. A frame whose
@@ -430,11 +575,229 @@ unsafe fn deck_b_claim() -> *mut DeckState {
     if FX_AUX_OWNER != AuxOwner::DeckB {
         core::ptr::write_bytes(p as *mut u8, 0, core::mem::size_of::<DeckState>());
         addr_of_mut!((*p).vm).write(None);
+        addr_of_mut!((*p).prog).write(None);
         addr_of_mut!((*p).shade_led).write(None);
         (*p).morph.clear();
         FX_AUX_OWNER = AuxOwner::DeckB;
+        tex_queue_reset();
     }
     p
+}
+
+/// Video jitter buffer (SetTexture.present_at_ms): decoded frames waiting for
+/// their present time, stored as packed snapshots in the aux region right after
+/// the delta buffer (`FX_AUX.video[total * (1 + i)..]`), so it costs no RAM beyond
+/// the 8 KB the delta buffer already owns. Slot count = what fits, up to 4.
+const TEX_Q_MAX: usize = 4;
+/// A frame that arrives more than this past its present time is dropped
+/// (~2 frames at 30 fps): showing it would put this fixture out of step.
+const TEX_LATE_DROP_MS: i64 = 66;
+/// ...unless nothing has been shown for this long (a stream that is late
+/// everywhere, e.g. a sender with a wrong offset, still plays, just late).
+const TEX_STALE_SHOW_MS: i64 = 250;
+
+#[derive(Clone, Copy)]
+struct TexSlot {
+    seq: u32,
+    due: i64,
+    tex_index: u64,
+    format: u64,
+    width: u64,
+    height: u64,
+}
+
+struct TexQueue {
+    slots: [TexSlot; TEX_Q_MAX],
+    head: usize,
+    len: usize,
+    total: usize, // packed frame size the slots were laid out for
+}
+
+static mut TEX_Q: TexQueue = TexQueue {
+    slots: [TexSlot { seq: 0, due: 0, tex_index: 0, format: 0, width: 0, height: 0 }; TEX_Q_MAX],
+    head: 0,
+    len: 0,
+    total: 0,
+};
+
+/// Presentation telemetry for TextureAck.
+struct TexStats {
+    shown_seq: u32,
+    shown_late_ms: i32,
+    shown_at_dev: i64, // device ms (millis) of the last show
+    dropped: u32,
+    clock_jumps: u32, // device-clock steps back corrected (lm_clock_observe)
+}
+static mut TEX_STATS: TexStats = TexStats {
+    shown_seq: 0,
+    shown_late_ms: 0,
+    shown_at_dev: i64::MIN / 2,
+    dropped: 0,
+    clock_jumps: 0,
+};
+
+/// Slots that fit beside a `total`-byte delta buffer.
+fn tex_q_cap(total: usize) -> usize {
+    if total == 0 {
+        0
+    } else {
+        (FX_TEX_PREV_MAX / total).saturating_sub(1).min(TEX_Q_MAX)
+    }
+}
+
+/// Forget queued frames + telemetry (a new effect / the aux region changed hands).
+unsafe fn tex_queue_reset() {
+    TEX_Q.len = 0;
+    TEX_Q.head = 0;
+    let jumps = TEX_STATS.clock_jumps; // device-lifetime, not per effect
+    TEX_STATS = TexStats {
+        shown_seq: 0,
+        shown_late_ms: 0,
+        shown_at_dev: i64::MIN / 2,
+        dropped: 0,
+        clock_jumps: jumps,
+    };
+}
+
+/// Queue a copy of the just-decoded frame (`prev[..total]`) until `due`. A full
+/// queue drops its oldest frame (counted).
+#[allow(clippy::too_many_arguments)]
+unsafe fn tex_queue_push(
+    prev: &[u8],
+    total: usize,
+    seq: u32,
+    due: i64,
+    tex_index: u64,
+    format: u64,
+    width: u64,
+    height: u64,
+) {
+    let cap = tex_q_cap(total);
+    if TEX_Q.total != total {
+        TEX_STATS.dropped = TEX_STATS.dropped.wrapping_add(TEX_Q.len as u32);
+        TEX_Q.len = 0;
+        TEX_Q.head = 0;
+        TEX_Q.total = total;
+    }
+    if cap == 0 {
+        return;
+    }
+    if TEX_Q.len == cap {
+        TEX_Q.head = (TEX_Q.head + 1) % cap;
+        TEX_Q.len -= 1;
+        TEX_STATS.dropped = TEX_STATS.dropped.wrapping_add(1);
+    }
+    let i = (TEX_Q.head + TEX_Q.len) % cap;
+    let base = addr_of_mut!(FX_AUX.video) as *mut u8;
+    core::ptr::copy_nonoverlapping(prev.as_ptr(), base.add(total * (1 + i)), total);
+    TEX_Q.slots[i] = TexSlot { seq, due, tex_index, format, width, height };
+    TEX_Q.len += 1;
+}
+
+unsafe fn tex_note_shown(seq: u32, late_ms: i64, now_ms: i64) {
+    TEX_STATS.shown_seq = seq;
+    TEX_STATS.shown_late_ms = late_ms.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+    TEX_STATS.shown_at_dev = now_ms;
+}
+
+fn texture_ack(seq: u32, queued: u32) -> pb::ServerMessage {
+    // SAFETY: single firmware thread under the player mutex (the arm handlers).
+    let (shown_seq, shown_late_ms, dropped, shown_at, clock_jumps) = unsafe {
+        let shown_at = player()
+            .time_base_ms()
+            .map_or(TEX_STATS.shown_at_dev, |e| TEX_STATS.shown_at_dev - e);
+        (
+            TEX_STATS.shown_seq,
+            TEX_STATS.shown_late_ms,
+            TEX_STATS.dropped,
+            shown_at,
+            TEX_STATS.clock_jumps,
+        )
+    };
+    let m = pb::TextureAck {
+        r#seq: seq,
+        r#shown_seq: shown_seq,
+        r#shown_late_ms: shown_late_ms,
+        r#dropped: dropped,
+        r#queued: queued,
+        r#shown_at_ms: shown_at.max(0) as u32,
+        r#clock_jumps: clock_jumps,
+    };
+    pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::TextureAck(m)) }
+}
+
+/// Device-clock discontinuity guard. On a c6 the millis() clock was seen to step
+/// BACK ~230 s mid-stream (root cause unknown; esp_timer/systimer). Every
+/// absolute device time held here — the shared time-base epoch and the queued
+/// video present times — would then sit minutes in the future: video freezes and
+/// effects lose step. The render task calls this every frame with millis(); a step
+/// back of more than 1 s shifts the epoch and the queue by the step (less the
+/// expected frame advance), keeping effect time continuous. Returns the shift
+/// applied (0 = none). Counted in TextureAck.clock_jumps so a hub can re-sync.
+static mut CLOCK_LAST: i64 = 0;
+static mut CLOCK_LAST_DT: i64 = 33;
+
+/// # Safety
+/// Render task, under the player mutex AND the texture-queue lock (it moves the
+/// queued present times the network task's lm_tex_ingest also touches).
+#[no_mangle]
+pub unsafe extern "C" fn lm_clock_observe(now_ms: i64) -> i64 {
+    let last = CLOCK_LAST;
+    CLOCK_LAST = now_ms;
+    if last == 0 {
+        return 0;
+    }
+    let dt = now_ms - last;
+    if dt < -1000 {
+        let shift = dt - CLOCK_LAST_DT;
+        player().shift_time_base(shift);
+        let cap = tex_q_cap(TEX_Q.total);
+        for k in 0..TEX_Q.len {
+            let i = (TEX_Q.head + k) % cap.max(1);
+            TEX_Q.slots[i].due += shift;
+        }
+        TEX_STATS.shown_at_dev += shift;
+        TEX_STATS.clock_jumps = TEX_STATS.clock_jumps.wrapping_add(1);
+        return shift;
+    }
+    if (0..1000).contains(&dt) {
+        CLOCK_LAST_DT = dt.max(1);
+    }
+    0
+}
+
+/// Render hook (once per effect frame, under the player mutex, before update):
+/// show the newest queued video frame whose present time has come; older due
+/// frames are superseded (dropped). `now_ms` is the device clock (millis).
+///
+/// # Safety
+/// Single firmware thread under the player mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_tex_present(now_ms: u32) {
+    if TEX_Q.len == 0 || FX_AUX_OWNER != AuxOwner::Video {
+        return;
+    }
+    // millis() is a u32 that wraps at ~49.7 days; the queued due times were taken
+    // from the same clock widened to i64, so compare in that domain.
+    let now = now_ms as i64;
+    let cap = tex_q_cap(TEX_Q.total);
+    let mut newest: Option<usize> = None;
+    while TEX_Q.len > 0 && TEX_Q.slots[TEX_Q.head].due <= now {
+        if newest.is_some() {
+            TEX_STATS.dropped = TEX_STATS.dropped.wrapping_add(1);
+        }
+        newest = Some(TEX_Q.head);
+        TEX_Q.head = (TEX_Q.head + 1) % cap;
+        TEX_Q.len -= 1;
+    }
+    if let Some(i) = newest {
+        let s = TEX_Q.slots[i];
+        let total = TEX_Q.total;
+        let base = addr_of!(FX_AUX.video) as *const u8;
+        let frame = core::slice::from_raw_parts(base.add(total * (1 + i)), total);
+        tex_store(s.tex_index, s.format, s.width, s.height, frame, &[0u32; TEX_PAL_MAX]);
+        tex_note_shown(s.seq, now - s.due, now);
+    }
 }
 
 /// The video delta buffer, claimed from the aux region; None while deck B owns
@@ -445,6 +808,7 @@ unsafe fn tex_prev() -> Option<&'static mut [u8; FX_TEX_PREV_MAX]> {
         AuxOwner::Free => {
             FX_AUX.video = [0; FX_TEX_PREV_MAX];
             FX_AUX_OWNER = AuxOwner::Video;
+            tex_queue_reset();
             Some(&mut *addr_of_mut!(FX_AUX.video))
         }
         AuxOwner::Video => Some(&mut *addr_of_mut!(FX_AUX.video)),
@@ -598,7 +962,9 @@ fn mm_sat(m: f32) -> i16 {
 /// when the loaded effect reads them), so this never grows the resident cache.
 #[inline]
 fn q16_16(x: f32) -> i32 {
-    (x * 65536.0) as i32
+    // Bit-exact with `(x * 65536.0) as i32`, in integer ops (~15 cycles instead
+    // of a soft mul + f32->i32, ~165): the per-LED fixed mirrors take seven.
+    ledmapper_fx_vm::f32_to_fix(x, 16)
 }
 
 // -- the per-LED store: sized at boot for the CONFIGURED strip -----------------
@@ -988,10 +1354,33 @@ fn fxb_hash(bytes: &[u8]) -> u32 {
 // bring their own.
 #[cfg(all(not(test), target_os = "none"))]
 #[panic_handler]
-fn panic(_: &core::panic::PanicInfo) -> ! {
-    // The player contract is bounded errors, never panics; reaching this is
-    // a firmware bug. Halt where a debugger can see it.
-    loop {}
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    // The player contract is bounded errors, never panics; reaching this is a
+    // firmware bug. Say where on the console, then abort(): ESP-IDF's panic
+    // path reboots with reset reason PANIC, which the OTA crash-loop guard
+    // (ota_app.cpp) counts, so a crash-looping image falls back to the loader
+    // instead of the old `loop {}` that left the fixture dark until power-cycled.
+    extern "C" {
+        fn esp_rom_printf(fmt: *const u8, ...) -> i32;
+        fn abort() -> !;
+    }
+    unsafe {
+        match info.location() {
+            Some(l) => {
+                let f = l.file();
+                esp_rom_printf(
+                    b"[rust] panic at %.*s:%u\n\0".as_ptr(),
+                    f.len() as i32,
+                    f.as_ptr(),
+                    l.line(),
+                );
+            }
+            None => {
+                esp_rom_printf(b"[rust] panic\n\0".as_ptr());
+            }
+        }
+        abort()
+    }
 }
 
 unsafe fn player() -> &'static mut Player {
@@ -1529,6 +1918,7 @@ pub unsafe extern "C" fn lm_player_handle(
         return -1;
     }
     let frame = core::slice::from_raw_parts(data, len);
+    note_live_control(frame);
     let reply = match envelope_arm(frame) {
         Some(ARM_SUBMIT_MAP) => handle_map_upload(frame, frame.len()),
         Some(ARM_SUBMIT_TOPOLOGY) => handle_topology_upload(frame, |r: &mut &[u8]| *r = frame, frame.len()),
@@ -1564,6 +1954,13 @@ pub unsafe extern "C" fn lm_player_handle(
         Some(ARM_SET_SENSOR_MOUNT) => return sensor_ffi::handle_set_sensor_mount(frame, out, out_cap),
         Some(ARM_SET_CAPTURE_PROFILE) => return sensor_ffi::handle_set_capture_profile(frame, out, out_cap),
         Some(ARM_GET_CAPTURE_PROFILE) => return sensor_ffi::handle_get_capture_profile(out, out_cap),
+        // Wi-Fi rejoin policy (wifi_ffi.rs): zero-copy replies into `out`.
+        Some(ARM_SET_WIFI_POLICY) => return wifi_ffi::handle_set_wifi_policy(frame, out, out_cap),
+        Some(ARM_GET_WIFI_POLICY) => return wifi_ffi::handle_get_wifi_policy(out, out_cap),
+        // FX debugger: pause / step, and snapshots streamed zero-copy into `out`.
+        Some(fxdbg::ARM_FX_DEBUG_CONTROL) => return fxdbg::handle_control(frame, recv_ms, out, out_cap),
+        Some(fxdbg::ARM_GET_FX_SNAPSHOT) => return fxdbg::handle_snapshot(frame, recv_ms, out, out_cap),
+        Some(fxdbg::ARM_DEBUG_FX_LED) => return fxdbg::handle_debug_led(frame, recv_ms, out, out_cap),
         // Uniform keypoints: stored per effect on littlefs (via the C++ hooks),
         // replies encoded zero-copy into `out`; blend runs on the deck's VM.
         Some(ARM_SAVE_KEYPOINT) => return handle_save_keypoint(frame, out, out_cap),
@@ -1585,9 +1982,12 @@ pub unsafe extern "C" fn lm_player_handle(
         // Fire-and-forget (no reply) so high frame rates aren't gated on a round
         // trip — a malformed/oversized frame is silently dropped.
         Some(ARM_SET_TEXTURE) => {
-            handle_set_texture(frame);
+            let ack = handle_set_texture(frame, recv_ms, false).unwrap_or(None);
             LAST_TEXTURE_MS = Some(recv_ms);
-            return 0;
+            match ack {
+                Some(reply) => reply,
+                None => return 0,
+            }
         }
         // Everything else is read IN PLACE from the frame (pbview): no
         // by-value ClientMessage on this stack, and no capacity truncation.
@@ -1599,9 +1999,225 @@ pub unsafe extern "C" fn lm_player_handle(
     encode_reply(&reply, out, out_cap)
 }
 
+// -- live-control mailbox (docs/design/live-control.md "Applying live moves") --
+// A seq'd, uncommitted set_uniforms (the live channel's moves) is not handled under
+// the player lock: the network task stashes it here (latest value per deck+slot) and
+// acks at once, and the render task applies what is waiting right before the next
+// frame's update() — the earliest instant any path could have applied it. The network
+// task never waits behind a whole render frame for the lock, so the ack (the client's
+// pacing signal) and every message behind it go through at network speed.
+
+/// Distinct (deck, slot) pairs that can wait for one frame; a move that would overflow
+/// falls back to the locked path (which applies the waiting ones first).
+const LIVE_SLOTS: usize = 16;
+
+#[derive(Clone, Copy)]
+struct LiveVal {
+    deck: u8,
+    slot: u8,
+    n: u8,
+    vals: [f32; 4],
+}
+
+struct LiveMailbox {
+    e: [LiveVal; LIVE_SLOTS],
+    len: usize,
+}
+
+impl LiveMailbox {
+    const fn new() -> Self {
+        LiveMailbox { e: [LiveVal { deck: 0, slot: 0, n: 0, vals: [0.0; 4] }; LIVE_SLOTS], len: 0 }
+    }
+    fn clear(&mut self) {
+        self.len = 0;
+    }
+    fn find(&self, deck: u8, slot: u8) -> Option<usize> {
+        self.e[..self.len].iter().position(|v| v.deck == deck && v.slot == slot)
+    }
+}
+
+static mut LIVE_MAILBOX: LiveMailbox = LiveMailbox::new();
+
+/// Network task: stash a live move for the next frame. A set_uniforms with a non-zero
+/// `seq` and `commit: false` (the live channel) is taken — its values replace any older
+/// ones for the same deck+slot, the ControlAck is armed (lm_take_control_ack) and its
+/// seq returned. Anything else returns 0: dispatch it normally.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes; the caller serializes this with
+/// [`lm_live_drain`] (a short critical section). Loop task only.
+#[no_mangle]
+pub unsafe extern "C" fn lm_live_post(data: *const u8, len: usize) -> u32 {
+    if data.is_null() || len == 0 {
+        return 0;
+    }
+    let frame = core::slice::from_raw_parts(data, len);
+    let Some(CArm::SetUniforms(m)) = client_arm(frame) else {
+        return 0;
+    };
+    if m.seq() == 0 || m.commit() != Some(false) {
+        return 0;
+    }
+    let d = deck_index(m.deck()) as u8;
+    let mb = &mut *addr_of_mut!(LIVE_MAILBOX);
+    // A value wider than 4 floats (a mat3/mat4 uniform) waits as consecutive
+    // 4-slot chunks keyed (slot, slot+4, ...): applying them is exactly the
+    // whole write, and an entry stays 4 floats.
+    let chunks = |n: usize| n.div_ceil(4).max(1);
+    // All or nothing: count the new keys first, so a move is never half-applied.
+    let mut fresh = 0;
+    for uv in m.values() {
+        let n = uv.value().count();
+        if n > osc::MAX_WIDTH || uv.slot() as usize + n > u8::MAX as usize {
+            return 0;
+        }
+        for k in 0..chunks(n) {
+            if mb.find(d, (uv.slot() as usize + 4 * k) as u8).is_none() {
+                fresh += 1;
+            }
+        }
+    }
+    if mb.len + fresh > LIVE_SLOTS {
+        return 0;
+    }
+    for uv in m.values() {
+        let mut all = [0.0f32; osc::MAX_WIDTH];
+        let mut n = 0usize;
+        for (dst, x) in all.iter_mut().zip(uv.value()) {
+            *dst = x;
+            n += 1;
+        }
+        if n == 0 {
+            continue;
+        }
+        for k in 0..chunks(n) {
+            let part = &all[4 * k..(4 * k + 4).min(n)];
+            let mut v = LiveVal { deck: d, slot: (uv.slot() as usize + 4 * k) as u8, n: part.len() as u8, vals: [0.0; 4] };
+            v.vals[..part.len()].copy_from_slice(part);
+            match mb.find(d, v.slot) {
+                Some(i) => mb.e[i] = v,
+                None => {
+                    mb.e[mb.len] = v;
+                    mb.len += 1;
+                }
+            }
+        }
+    }
+    LIVE_CONTROL = true;
+    CONTROL_ACK_SEQ = m.seq();
+    m.seq()
+}
+
+/// Apply (and empty) the waiting live moves. Under the player lock.
+unsafe fn live_apply() -> u32 {
+    let mb = &mut *addr_of_mut!(LIVE_MAILBOX);
+    let n = mb.len;
+    for v in &mb.e[..n] {
+        if let Some(p) = deck(v.deck as usize) {
+            (*p).morph.cancel();
+        }
+        fx_set_uniform(v.deck as usize, v.slot as u32, &v.vals[..v.n as usize]);
+    }
+    mb.clear();
+    n as u32
+}
+
+/// Render task, at a frame boundary before update(): apply the live moves that arrived
+/// since the last frame. Returns the uniform writes.
+///
+/// # Safety
+/// Under the player lock; serialized with [`lm_live_post`] (a short critical section).
+#[no_mangle]
+pub unsafe extern "C" fn lm_live_drain() -> u32 {
+    live_apply()
+}
+
+// -- live-control acks (docs/design/live-control.md) ------------------------
+// A live update (set_uniforms / set_crossfade) carrying a non-zero `seq` is
+// answered with a tiny ControlAck{seq} instead of its legacy reply (playback_state
+// / welcome). The handler still computes the legacy reply — main.cpp's persist
+// logic keys on it — and the transport then swaps it for the ack via
+// lm_take_control_ack. Single firmware thread (the loop task), like UNIFORMS_COMMIT.
+
+/// The seq of the live update just handled (0: none, or a legacy update).
+static mut CONTROL_ACK_SEQ: u32 = 0;
+/// Whether the frame just handled was a live-control update (set_uniforms,
+/// set_crossfade, blend_keypoints), seq'd or not: main.cpp holds a pending
+/// flash save off while a control stream is moving.
+static mut LIVE_CONTROL: bool = false;
+
+/// ServerMessage.control_ack's field number.
+const SMSG_CONTROL_ACK: u32 = 41;
+
+unsafe fn note_live_control(frame: &[u8]) {
+    CONTROL_ACK_SEQ = 0;
+    LIVE_CONTROL = false;
+    match client_arm(frame) {
+        Some(CArm::SetUniforms(m)) => {
+            LIVE_CONTROL = true;
+            CONTROL_ACK_SEQ = m.seq();
+        }
+        Some(CArm::SetCrossfade(m)) => {
+            LIVE_CONTROL = true;
+            CONTROL_ACK_SEQ = m.seq();
+            // Before the session core applies it: which way the fade moves picks
+            // the deck OSC drives mid-fade (the incoming one, #402).
+            let pos = m.position();
+            let new = if pos.is_finite() { (pos as f32).clamp(0.0, 1.0) } else { 0.0 };
+            OSC_XF_TOWARD = osc_xf_toward(player().crossfade(), new, OSC_XF_TOWARD);
+        }
+        Some(CArm::BlendKeypoints(_)) => LIVE_CONTROL = true,
+        _ => {}
+    }
+}
+
+/// Encode `ServerMessage{control_ack{seq}}` into `out`; its length (<= 8 bytes),
+/// or None when `out` is too small.
+pub fn encode_control_ack(seq: u32, out: &mut [u8]) -> Option<usize> {
+    let mut inner = PbOut { buf: None, n: 0, ok: true };
+    inner.uint(1, seq as u64);
+    let mut o = PbOut { buf: Some(out), n: 0, ok: true };
+    o.key(SMSG_CONTROL_ACK, 2);
+    o.varint(inner.n as u64);
+    o.uint(1, seq as u64);
+    if o.ok {
+        Some(o.n)
+    } else {
+        None
+    }
+}
+
+/// If the frame lm_player_handle just handled was a seq'd live update, replace
+/// the reply with its ControlAck: writes it to `out` and returns its length; 0
+/// leaves the reply as it is (a legacy client, or not a live update). Call after
+/// the reply's persistence has been decided.
+///
+/// # Safety
+/// `out` must point to `out_cap` writable bytes; loop task only.
+#[no_mangle]
+pub unsafe extern "C" fn lm_take_control_ack(out: *mut u8, out_cap: usize) -> i32 {
+    let seq = CONTROL_ACK_SEQ;
+    CONTROL_ACK_SEQ = 0;
+    if seq == 0 || out.is_null() {
+        return 0;
+    }
+    let out = core::slice::from_raw_parts_mut(out, out_cap);
+    encode_control_ack(seq, out).map_or(0, |n| n as i32)
+}
+
+/// Whether the frame lm_player_handle just handled was a live-control update.
+///
+/// # Safety
+/// Loop task only, after `lm_player_handle`.
+#[no_mangle]
+pub unsafe extern "C" fn lm_last_was_live_control() -> bool {
+    LIVE_CONTROL
+}
+
 /// Drop the resident topology (geometry + per-LED cache). The geometry
 /// borrows the arena, so this must run before the arena is reset.
 unsafe fn reset_topo_cache() {
+    FX_MEMO_DIRTY = true; // led.seg/s/branch (and, via a map upload, pos/uv) change
     *addr_of_mut!(GEOM) = None;
     for e in topo_store().iter_mut() {
         *e = FxLedTopo::NONE;
@@ -2045,6 +2661,8 @@ const ARM_GET_DRIVER_STATE: u32 = 53;
 const ARM_SET_SENSOR_MOUNT: u32 = 54;
 const ARM_SET_CAPTURE_PROFILE: u32 = 55;
 const ARM_GET_CAPTURE_PROFILE: u32 = 56;
+const ARM_SET_WIFI_POLICY: u32 = 90;
+const ARM_GET_WIFI_POLICY: u32 = 91;
 
 /// The protocol features this firmware serves: welcome.features and the agent
 /// manifest's protocol.features (/.well-known/splanc.json), so a client needn't
@@ -2069,6 +2687,15 @@ pub const FEATURES: &[&str] =
         "imu_extrinsic",
         "capture_profile",
         "ota",
+        "group_capture",
+        "texture_ack",
+        "wifi_policy",
+        "control_ack",
+        "fx_debug",
+        // Live moves (seq'd, commit:false set_uniforms) are acked without waiting
+        // for the render frame and applied at the next frame boundary
+        // (lm_live_post): a client may keep more than one batch in flight.
+        "live_mailbox",
     ];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
@@ -2240,10 +2867,21 @@ fn dequant_at(prev: &[u8], t: usize, format: u64, palette: &[u32]) -> (f32, f32,
 /// (palette TODO). The payload is applied as an XOR delta into the kept previous
 /// frame (a keyframe zeroes it first), optionally RLE'd (zero-run scheme), then
 /// dequantized into the texture's arena slots. Silently drops on any mismatch.
-unsafe fn handle_set_texture(frame: &[u8]) {
+/// `queue_all`: the lock-free ingest path (lm_tex_ingest) — never touch the arena,
+/// queue every frame (due now when it has no present time) for the render task to
+/// show at its next frame boundary. Err(()) when a frame can't be queued (indexed8,
+/// or too big for a slot beside the delta buffer): the caller retries under the
+/// player mutex with `queue_all` false (shown on arrival, as before).
+unsafe fn handle_set_texture(
+    frame: &[u8],
+    now_ms: i64,
+    queue_all: bool,
+) -> Result<Option<pb::ServerMessage>, ()> {
     let Some(CArm::SetTexture(t)) = client_arm(frame) else {
-        return;
+        return Ok(None);
     };
+    let (seq, present_at) = (t.seq(), t.present_at_ms());
+    let ack = |queued: u32| (seq != 0).then(|| texture_ack(seq, queued));
     let (tex_index, format, width, height, flags) = (
         u64::from(t.tex_index()),
         u64::from(t.format()),
@@ -2259,23 +2897,23 @@ unsafe fn handle_set_texture(frame: &[u8]) {
     // Resolve the target texture in deck A's program (video drives deck A).
     let bytes = &(*addr_of!(DECK_A.bytes))[..DECK_A.len];
     let Ok(prog) = Program::parse(bytes) else {
-        return;
+        return Ok(ack(TEX_Q.len as u32));
     };
     let Some(d) = prog.buf_desc(tex_index as usize) else {
-        return;
+        return Ok(ack(TEX_Q.len as u32));
     };
     if d.kind != 1 || d.w as u64 != width || d.h as u64 != height {
-        return; // not a texture, or dimensions don't match the declared texture
+        return Ok(ack(TEX_Q.len as u32)); // not a texture, or dimensions don't match
     }
     let n_texels = (width * height) as usize;
     let total = tex_packed_len(format, n_texels);
     if total == 0 || total > FX_TEX_PREV_MAX {
-        return;
+        return Ok(ack(TEX_Q.len as u32));
     }
     // The delta buffer shares the aux region with deck B: dropped while deck B
     // is loaded (the mutex is explicit — see FxAux).
     let Some(prev) = tex_prev() else {
-        return;
+        return Ok(ack(TEX_Q.len as u32));
     };
     let prev = &mut prev[..total];
     if flags & 0x01 == 0 {
@@ -2306,6 +2944,99 @@ unsafe fn handle_set_texture(frame: &[u8]) {
         for j in 0..data.len().min(total) {
             prev[j] ^= data[j];
         }
+    }
+    // Show now, or hold for the frame's present time (TEX_Q).
+    let due = match (present_at, player().time_base_ms()) {
+        (p, Some(epoch)) if p != 0 => Some(epoch + p as i64),
+        _ => None,
+    };
+    let queueable = format != TEX_INDEXED8 && tex_q_cap(total) > 0;
+    if queue_all && !queueable {
+        return Err(());
+    }
+    let late = due.map_or(0, |d| now_ms - d);
+    if late > TEX_LATE_DROP_MS && now_ms - TEX_STATS.shown_at_dev < TEX_STALE_SHOW_MS {
+        // Too late to be in step with the other fixtures; decoded (the delta chain
+        // holds) but not shown. Anything older still queued is stale too.
+        TEX_STATS.dropped = TEX_STATS.dropped.wrapping_add(1 + TEX_Q.len as u32);
+        TEX_Q.len = 0;
+    } else if queueable && (queue_all || late < 0) {
+        // Shown by the render task at a frame boundary (lm_tex_present): at its
+        // present time, or at the next frame when it has none / is already due.
+        tex_queue_push(prev, total, seq, due.unwrap_or(now_ms), tex_index, format, width, height);
+    } else {
+        TEX_STATS.dropped = TEX_STATS.dropped.wrapping_add(TEX_Q.len as u32);
+        TEX_Q.len = 0;
+        tex_store(tex_index, format, width, height, &prev[..total], &palette);
+        tex_note_shown(seq, late, now_ms);
+    }
+    Ok(ack(TEX_Q.len as u32))
+}
+
+/// Lock-free video ingest (the netstack loop task, WITHOUT the player mutex): decode
+/// a set_texture frame into the delta buffer and queue it for the render task,
+/// which shows it at its next frame boundary (or at its present time). Waiting
+/// for the player mutex, which render holds across update+shade, used to stall
+/// the network loop 10+ ms per frame (and leave the RX ring undrained).
+/// Returns the TextureAck length written to `out` (0 = no reply), -2 when the
+/// frame is not a set_texture, or -3 when it can't be queued: the caller then
+/// dispatches it the normal way under the player mutex.
+///
+/// # Safety
+/// Loop task only, holding the texture-queue lock that `lm_tex_present`'s caller
+/// also holds. Reads deck A's program, which only this task writes (set_effect /
+/// submit_effect run on it, under the player mutex the render task honours).
+#[no_mangle]
+pub unsafe extern "C" fn lm_tex_ingest(
+    data: *const u8,
+    len: usize,
+    now_ms: i64,
+    out: *mut u8,
+    out_cap: usize,
+) -> i32 {
+    if data.is_null() || out.is_null() || len == 0 {
+        return -2;
+    }
+    let frame = core::slice::from_raw_parts(data, len);
+    if !matches!(client_arm(frame), Some(CArm::SetTexture(_))) {
+        return -2;
+    }
+    match handle_set_texture(frame, now_ms, true) {
+        Err(()) => -3,
+        Ok(r) => {
+            LAST_TEXTURE_MS = Some(now_ms);
+            match r {
+                Some(reply) => encode_reply(&reply, out, out_cap),
+                None => 0,
+            }
+        }
+    }
+}
+
+/// Dequantize one packed frame (`prev`, the XOR-applied quantized texels) into
+/// the texture's arena region of deck A's program.
+unsafe fn tex_store(
+    tex_index: u64,
+    format: u64,
+    width: u64,
+    height: u64,
+    prev: &[u8],
+    palette: &[u32; TEX_PAL_MAX],
+) {
+    let palette = *palette;
+    let bytes = &(*addr_of!(DECK_A.bytes))[..DECK_A.len];
+    let Ok(prog) = Program::parse(bytes) else {
+        return;
+    };
+    let Some(d) = prog.buf_desc(tex_index as usize) else {
+        return;
+    };
+    if d.kind != 1 || d.w as u64 != width || d.h as u64 != height {
+        return;
+    }
+    let n_texels = (width * height) as usize;
+    if prev.len() < tex_packed_len(format, n_texels) {
+        return;
     }
     // Dequantize prev -> the texture's arena region, PACKED at the texture's
     // declared component precision (FUG-10) so a narrow texture compresses the
@@ -2513,6 +3244,9 @@ pub unsafe extern "C" fn lm_set_uniforms_commit() -> bool {
 /// running keypoint morph on that deck stops where it is — the slider wins).
 /// Reply: playback_state.
 unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
+    // Live moves still waiting for the next frame are OLDER than this set: apply them
+    // first so this one wins (loop task, under the player lock: no drain can race).
+    live_apply();
     UNIFORMS_COMMIT = true;
     FX_LAST_DECK = 0;
     if let Some(CArm::SetUniforms(m)) = client_arm(frame) {
@@ -2525,8 +3259,9 @@ unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
             (*p).morph.cancel();
         }
         for uv in m.values() {
-            // UniformValue { slot, repeated float value } — packed or not.
-            let mut vals = [0.0f32; 4];
+            // UniformValue { slot, repeated float value } — packed or not; up
+            // to a whole mat4 (16 floats) into consecutive slots from `slot`.
+            let mut vals = [0.0f32; osc::MAX_WIDTH];
             let mut n = 0;
             for (dst, v) in vals.iter_mut().zip(uv.value()) {
                 *dst = v;
@@ -2573,6 +3308,13 @@ impl PbOut<'_> {
     fn key(&mut self, field: u32, wire: u8) {
         self.varint(((field as u64) << 3) | wire as u64);
     }
+    /// A 32-bit fixed field (wire type 5): a `float` as its bits, or fixed32.
+    fn fixed32(&mut self, field: u32, v: u32) {
+        self.key(field, 5);
+        for b in v.to_le_bytes() {
+            self.byte(b);
+        }
+    }
     fn uint(&mut self, field: u32, v: u64) {
         self.key(field, 0);
         self.varint(v);
@@ -2605,6 +3347,18 @@ impl PbOut<'_> {
             for b in v.to_le_bytes() {
                 self.byte(b);
             }
+        }
+    }
+}
+
+impl PbOut<'_> {
+    /// Slot-keyed values (UniformValue) of one uniform, as consecutive chunks of
+    /// at most 4 floats at `slot`, `slot + 4`, ... — every UniformValue on the
+    /// wire stays a scalar..vec4, so readers built for 4-float values (and the
+    /// host protocol types' 4-float cap) keep decoding a mat3/mat4 uniform.
+    fn value_msgs(&mut self, field: u32, slot: u32, vals: &[f32]) {
+        for (k, part) in vals.chunks(4).enumerate() {
+            self.value_msg(field, ValueKey::Slot(slot + 4 * k as u32), part);
         }
     }
 }
@@ -2649,15 +3403,15 @@ unsafe fn write_effect_uniforms(w: &mut PbOut, d: usize, p: *mut DeckState, prog
     }
     w.bytes(2, prog.manifest);
     // current = 3: each manifest uniform's live value, read back from the VM.
-    // Deck A walks the OSC table (every uniform it can drive); deck B its blend
-    // rules (the same uniforms, within the keypoint bounds).
+    // The deck OSC drives walks its table (every uniform it can drive); the other
+    // deck its blend rules (the same uniforms, within the keypoint bounds).
     if let Some(vm) = (*p).vm.as_ref() {
         let mut put = |slot: usize, width: usize| {
             if let Some(vals) = vm.uniforms.get(slot..slot + width) {
-                w.value_msg(3, ValueKey::Slot(slot as u32), vals);
+                w.value_msgs(3, slot as u32, vals);
             }
         };
-        if d == DECK_A_IDX {
+        if d == OSC_TABLE_DECK && !OSC_TABLE_STALE {
             for port in (*addr_of!(OSC_TABLE)).ports() {
                 put(port.slot as usize, port.width as usize);
             }
@@ -2709,35 +3463,38 @@ unsafe fn handle_get_effect_uniforms(frame: &[u8], out: *mut u8, out_cap: usize)
 }
 
 /// set_fps: pin the effect framerate to `target_fps` (snapped to the 5-fps
-/// ladder; 0 = autoscale) and set the no-abort hold. Reply: fps_state, so the
-/// app's control reflects what the player actually adopted.
+/// ladder; 0 = autoscale). The deprecated `no_abort` is ignored: the player
+/// never parks a slow effect, so there is nothing to hold off. Reply:
+/// fps_state, so the app's control reflects what the player actually adopted.
 unsafe fn handle_set_fps(frame: &[u8]) -> pb::ServerMessage {
-    let (target, no_abort) = match client_arm(frame) {
-        Some(CArm::SetFps(m)) => (m.target_fps(), m.no_abort()),
-        _ => (0, false),
+    let target = match client_arm(frame) {
+        Some(CArm::SetFps(m)) => m.target_fps(),
+        _ => 0,
     };
     let c = &mut *addr_of_mut!(FPS);
     // set_target snaps onto the ladder (held to the strip's floor and wire
     // ceiling); cap first so a wild value can't overflow the snap arithmetic.
+    // (A mode change that clears the lag is pushed by the next lag-notify check.)
     c.set_target(target.min(MAX_FPS));
-    c.set_abort_enabled(!no_abort);
-    build_fps_state(false)
+    build_fps_state()
 }
 
-/// An FpsState from the live autoscaler; `aborted` flags the unsolicited push
-/// sent when the effect was parked because its target couldn't be held.
-unsafe fn build_fps_state(aborted: bool) -> pb::ServerMessage {
+/// An FpsState from the live autoscaler. `aborted` / `no_abort` are deprecated
+/// and always false: a slow effect lags (`lagging`, `current_fps` = what it
+/// achieves), it is never parked.
+unsafe fn build_fps_state() -> pb::ServerMessage {
     let c = &*addr_of!(FPS);
     let mut s = pb::FpsState::default();
     s.r#target_fps = c.pinned_fps();
     s.r#current_fps = c.current_fps();
-    // The abort floor for this strip (25 fps up to 512 LEDs, lower past it).
+    // The autoscaler's lowest rung for this strip (25 fps up to 512 LEDs, lower
+    // past it); an effect slower than it runs as fast as it can.
     s.r#min_fps = c.min_fps();
     // The ladder's top as the strip's wire allows it (MAX_FPS when unbounded).
     s.r#max_fps = c.max_fps();
     s.r#auto = !c.is_pinned();
-    s.r#aborted = aborted;
-    s.r#no_abort = !c.abort_enabled();
+    s.r#lagging = c.lagging();
+    s.r#achieved_fps = c.achieved_fps();
     pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::FpsState(s)) }
 }
 
@@ -3054,7 +3811,7 @@ unsafe fn kp_keypoint_reply(
             let _ = kp::for_each_value(rec, |uname, v| {
                 if let Some(rule) = r.by_name(uname) {
                     if rule.width as usize == v.len() {
-                        w.value_msg(6, ValueKey::Slot(rule.slot as u32), v);
+                        w.value_msgs(6, rule.slot as u32, v);
                     }
                 }
             });
@@ -3142,7 +3899,7 @@ pub unsafe extern "C" fn lm_kp_commit_frame(out: *mut u8, cap: usize) -> i32 {
     let target = (*p).morph.target();
     let rules = &(*p).morph.rules;
     write_arm(out, cap, ARM_SET_UNIFORMS, |w| {
-        rules.unpack(&target, |slot, vals| w.value_msg(1, ValueKey::Slot(slot as u32), vals));
+        rules.unpack(&target, |slot, vals| w.value_msgs(1, slot as u32, vals));
     })
 }
 
@@ -3223,14 +3980,15 @@ unsafe fn build_perf_report() -> pb::ServerMessage {
     let w = perf_rollup(&window_buf[..wn]);
 
     let id = core::str::from_utf8(&(*addr_of!(DECK_A.id))[..DECK_A.id_len]).unwrap_or("");
-    // FUG-82: headroom is against the rate the effect actually runs at.
-    let fps = (*addr_of!(FPS)).current_fps();
+    // FUG-82: headroom is against the rung the autoscaler targets; current_fps
+    // is the rate the effect really runs at (below the rung while it lags).
+    let c = &*addr_of!(FPS);
     let mut r = pb::PerfReport {
         // Identity.
         r#fxb_hash: DECK_A.hash,
         r#cpu_hz: PERF_CPU_HZ,
-        r#budget_cycles: PERF_CPU_HZ / fps.max(1),
-        r#current_fps: fps,
+        r#budget_cycles: PERF_CPU_HZ / c.rung_fps().max(1),
+        r#current_fps: c.current_fps(),
         // Rolling window.
         r#frame_cycles_min: w.frame_min,
         r#frame_cycles_mean: w.frame_mean,
@@ -3316,6 +4074,14 @@ pub unsafe extern "C" fn lm_pattern_timing(
         }
         None => false,
     }
+}
+
+/// End the active mapping pattern if its auto-stop deadline (start_mapping's
+/// stop_after_ms) has passed; the frame loop calls this, under the player
+/// lock, before lm_pattern_timing. True when it just stopped.
+#[no_mangle]
+pub unsafe extern "C" fn lm_pattern_expire(now_ms: i64) -> bool {
+    player().expire_pattern(now_ms)
 }
 
 /// Record that the frame loop just pushed mapping-pattern frame `seq` (the
@@ -3875,13 +4641,56 @@ fn arena_need(prog: &Program) -> usize {
     (prog.arena_bytes(unsafe { fx_arena_leds() }) + 3) & !3
 }
 
-/// Bind deck `p`'s VM to its slice of FX_ARENA (no zeroing).
+/// Bind deck `p`'s VM to its slice of FX_ARENA (no zeroing). The per-LED memo
+/// cache takes the largest group prefix (for FX_MEMO_LEDS LEDs) that fits in
+/// what the buffers' need leaves free, carved from the END of the slice; the
+/// buffers keep everything in front of it (all of the slice when there is no
+/// cache, exactly as before). (Re)binding the cache empties it.
 unsafe fn bind_arena(p: *mut DeckState) {
     let (o, n) = ((*p).arena_off, (*p).arena_len);
     let arena = &mut *addr_of_mut!(FX_ARENA);
+    let bytes = &(*p).bytes[..(*p).len];
+    let (need, words) = match Program::parse(bytes) {
+        Ok(pr) => {
+            let need = arena_need(&pr).min(n);
+            (need, pr.led_cache_fit(FX_MEMO_LEDS, n - need))
+        }
+        Err(_) => (n, 0),
+    };
+    let m = ledmapper_fx_vm::led_cache_bytes(words, FX_MEMO_LEDS).min(n - need);
     if let Some(vm) = (*p).vm.as_mut() {
-        vm.set_arena(&mut arena[o..o + n]);
+        // Disjoint sub-slices: the VM never sees the cache as buffer memory.
+        let (bufs, tail) = arena[o..o + n].split_at_mut(n - m);
+        vm.set_arena(bufs);
+        vm.set_led_cache(tail, words, FX_MEMO_LEDS);
     }
+}
+
+/// Re-bind every loaded deck's memo cache for `leds` LEDs (empties them). Cold:
+/// runs once per map/topology/LED-count change, off the per-LED path.
+#[cold]
+#[inline(never)]
+unsafe fn fx_memo_rebind(leds: usize) {
+    FX_MEMO_LEDS = leds.min(FX_TOPO_CAP);
+    FX_MEMO_DIRTY = false;
+    for d in 0..N_DECKS {
+        if let Some(p) = deck(d) {
+            if (*p).loaded() {
+                bind_arena(p);
+            }
+        }
+    }
+}
+
+/// Memo words bound on deck `d` (0 = uncached) — diagnostics / tests.
+///
+/// # Safety
+/// Single firmware thread; the player must be initialized.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_led_cache_words(d: u32) -> u32 {
+    deck(deck_index(d))
+        .and_then(|p| (*p).vm.as_ref())
+        .map_or(0, |vm| vm.led_cache_words_bound() as u32)
 }
 
 /// Load (parse + hold) a `.fxb` onto deck `d`, copying it into the deck's
@@ -3900,6 +4709,10 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
     // A sensor driver (FUG-107) is not an effect: its "shade" slot is poll().
     if prog.flags & ledmapper_fx_vm::FLAG_DRIVER != 0 {
         return Err(FxLoadError::Bad);
+    }
+    if d == DECK_A_IDX {
+        // Video queued for the previous effect's texture is stale now.
+        tex_queue_reset();
     }
     let need = arena_need(&prog);
     let b_reserve = match deck(DECK_B_IDX) {
@@ -3920,16 +4733,27 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
         if a_need + need > FX_ARENA_BYTES {
             return Err(FxLoadError::ArenaFull);
         }
-        (FX_ARENA_BYTES - need, need)
+        // Deck B also takes up to half the spare arena for its per-LED memo
+        // cache (deck A keeps the rest of the spare for its own).
+        let spare = FX_ARENA_BYTES - a_need - need;
+        let words = prog.led_cache_fit(FX_MEMO_LEDS, spare / 2);
+        let cache = (ledmapper_fx_vm::led_cache_bytes(words, FX_MEMO_LEDS) + 3) & !3;
+        (FX_ARENA_BYTES - need - cache, need + cache)
     };
     let p = if d == DECK_A_IDX { addr_of_mut!(DECK_A) } else { deck_b_claim() };
-    if d == DECK_A_IDX {
-        // Build the OSC name->slot table for the fresh effect (once, off the
-        // render path) and clear the per-slot value shadow so no stale vector
-        // component leaks across a hot-reload. OSC drives deck A only.
+    if d == OSC_TABLE_DECK {
+        // OSC drives this deck: build the name->slot table for the fresh effect
+        // (once, off the render path); datagrams waiting for the old effect go
+        // too. (A load onto the other deck — a crossfade cue — leaves both
+        // alone; the table follows when that deck becomes visible.)
         *addr_of_mut!(OSC_TABLE) = osc::parse_manifest(prog.manifest);
-        (*addr_of_mut!(OSC_SHADOW)).reset();
+        OSC_TABLE_STALE = false;
+        if let Some(mb) = osc_mailbox() {
+            mb.clear();
+        }
     }
+    // Live moves queued for the old effect: its slot numbers mean nothing now.
+    (*addr_of_mut!(LIVE_MAILBOX)).clear();
     // Only build the per-LED fixed context mirrors / uv projection / room read
     // on the hot path when the program actually reads them (FUG-122).
     (*p).uses_ctxfix = prog.uses_ctxfix();
@@ -3940,9 +4764,21 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
     uniform_pool::bind(d, prog.manifest);
     (*p).shade_led = None;
     *addr_of_mut!(FX_SHADE_FRAME) = None;
+    (*p).prog = None;
     (*p).bytes[..src.len()].copy_from_slice(src);
     (*p).len = src.len();
     (*p).vm = Some(FxVm::new());
+    // Start every uniform at its manifest default (fx-perf-study R7). Clients
+    // that send set_uniforms after a deploy still override it; before this, an
+    // effect nobody configured ran with every uniform at 0 (fx_bench's
+    // lavalamp never entered its wave loop).
+    if let Some(vm) = (*p).vm.as_mut() {
+        kp::for_each_uniform(prog.manifest, |u| {
+            if u.n_default > 0 {
+                vm.set_uniform(u.slot as usize, &u.default[..u.n_default as usize]);
+            }
+        });
+    }
     // Bind + zero this deck's arena slice (buffers start clean each load; the
     // static memory's pointer is stable so one bind holds).
     (*p).arena_off = off;
@@ -3978,6 +4814,9 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
             fx_push_graph(vm);
         }
     }
+    // Parse the resident copy once, after the JIT patch (the bytes don't change
+    // again until the next load or clear).
+    (*p).prog = Program::parse(core::slice::from_raw_parts((*p).bytes.as_ptr(), (*p).len)).ok();
     FX_ROOM_READY = false;
     FX_DEADLINE.store(false, core::sync::atomic::Ordering::Relaxed);
     fps_invalidate();
@@ -4001,21 +4840,31 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
 /// back (a video stream can claim it) and deck A the whole arena.
 unsafe fn fx_clear(d: usize) {
     fps_invalidate();
+    if d == OSC_TABLE_DECK {
+        // OSC loses its deck: drop the table and waiting datagrams; the
+        // next OSC rebinds to whichever deck is visible then.
+        *addr_of_mut!(OSC_TABLE) = PortTable::empty();
+        OSC_TABLE_STALE = true;
+        if let Some(mb) = osc_mailbox() {
+            mb.clear();
+        }
+    }
     if d == DECK_A_IDX {
+        DECK_A.prog = None;
         DECK_A.len = 0;
         DECK_A.active = false;
         *addr_of_mut!(DECK_A.vm) = None;
         DECK_A.hash = 0;
         DECK_A.id_len = 0;
         (*addr_of_mut!(DECK_A)).morph.clear();
-        *addr_of_mut!(OSC_TABLE) = PortTable::empty();
-        (*addr_of_mut!(OSC_SHADOW)).reset();
+        (*addr_of_mut!(LIVE_MAILBOX)).clear();
         // Drop the JIT table (the exec region is a fixed static, reused on next
         // load; the VM was just cleared above, so the installed table goes too).
         FX_JIT_N = 0;
         perf_reset_ring();
     } else if let Some(p) = deck(DECK_B_IDX) {
         (*p).vm = None;
+        (*p).prog = None;
         (*p).len = 0;
         FX_AUX_OWNER = AuxOwner::Free;
         DECK_A.arena_off = 0;
@@ -4113,6 +4962,11 @@ unsafe fn fx_set_active(d: usize, active: bool) {
                 fps_invalidate();
             }
             (*p).active = active;
+            if active {
+                // The deck just started: the incoming side of a crossfade (cue),
+                // until the position moves (note_live_control).
+                OSC_XF_TOWARD = d;
+            }
         }
     }
 }
@@ -4153,7 +5007,8 @@ pub extern "C" fn lm_fx_set_deadline(hit: bool) {
 }
 
 /// Last update() bounded-exec outcome: 0=Ok, 1=budget exceeded, 2=wall-time
-/// timeout. For the rate-limited `[fx]` diagnostic log in the render loop.
+/// timeout, 3=fault (a malformed program stopped instead of panicking). For
+/// the rate-limited `[fx]` diagnostic log in the render loop.
 ///
 /// # Safety
 /// The global player must have been initialized by [`lm_player_init`] and
@@ -4172,7 +5027,7 @@ unsafe fn fx_set_uniform(d: usize, slot: u32, vals: &[f32]) {
     }
 }
 
-/// Apply a uniform value (`vals` = its slot count, 1..4) to deck A's VM.
+/// Apply a uniform value (`vals` = its slot count, 1..16) to deck A's VM.
 ///
 /// # Safety
 /// `vals` must point to `n` readable f32.
@@ -4197,7 +5052,8 @@ pub unsafe extern "C" fn lm_osc_set_by_name(by_name: bool) {
     OSC_BY_NAME = by_name;
 }
 
-/// Ingest one OSC datagram and drive the active effect's uniforms from it.
+/// Ingest one OSC datagram and drive the visible deck's uniforms from it (see
+/// `osc_targets`).
 /// Returns the number of uniform writes applied (0 if no effect is active, the
 /// datagram isn't valid OSC, or nothing matched). Meant to be called from the
 /// UDP receive task — it never blocks and never allocates.
@@ -4210,14 +5066,83 @@ pub unsafe extern "C" fn lm_osc_ingest(data: *const u8, len: usize) -> u32 {
         return 0;
     }
     let bytes = core::slice::from_raw_parts(data, len);
+    let mask = osc_targets();
     let cfg = OscConfig { prefix: "/", by_name: OSC_BY_NAME };
     let table = &*addr_of!(OSC_TABLE);
-    let shadow = &mut *addr_of_mut!(OSC_SHADOW);
-    osc::ingest(bytes, &cfg, table, shadow, &mut |slot, vals| {
-        if let Some(vm) = (*addr_of_mut!(DECK_A.vm)).as_mut() {
-            vm.set_uniform(slot as usize, vals);
-        }
-    }) as u32
+    osc::ingest(bytes, &cfg, table, &mut |slot, vals| osc_write(mask, slot, vals)) as u32
+}
+
+/// Heap bytes [`lm_osc_mailbox_bind`] needs (4-byte aligned).
+#[no_mangle]
+pub extern "C" fn lm_osc_mailbox_bytes() -> usize {
+    core::mem::size_of::<OscMailbox>()
+}
+
+/// Whether [`lm_osc_mailbox_bind`] has run.
+#[no_mangle]
+pub unsafe extern "C" fn lm_osc_mailbox_bound() -> bool {
+    !(*addr_of!(OSC_MAILBOX)).is_null()
+}
+
+/// Bind the OSC mailbox to `mem` (at least [`lm_osc_mailbox_bytes`], 4-aligned,
+/// living for the process), emptied. Once only: a second bind is refused.
+/// Returns whether `mem` is now the mailbox.
+///
+/// # Safety
+/// `mem` must be valid for that many writes and never used elsewhere; serialized
+/// with [`lm_osc_post`] / [`lm_osc_drain`] (the same critical section).
+#[no_mangle]
+pub unsafe extern "C" fn lm_osc_mailbox_bind(mem: *mut u8) -> bool {
+    if mem.is_null()
+        || (mem as usize) % core::mem::align_of::<OscMailbox>() != 0
+        || !(*addr_of!(OSC_MAILBOX)).is_null()
+    {
+        return false;
+    }
+    let mb = mem as *mut OscMailbox;
+    mb.write(OscMailbox::new());
+    *addr_of_mut!(OSC_MAILBOX) = mb;
+    true
+}
+
+/// Stash one OSC datagram for the next frame (netstack build: the UDP receive
+/// path calls this from the network task). Latest value per address wins — a
+/// controller faster than the render rate never queues. Returns the messages
+/// kept (0 before [`lm_osc_mailbox_bind`]). Never blocks, never allocates.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes; the caller serializes this with
+/// [`lm_osc_drain`] (a short critical section).
+#[no_mangle]
+pub unsafe extern "C" fn lm_osc_post(data: *const u8, len: usize) -> u32 {
+    if data.is_null() || len == 0 {
+        return 0;
+    }
+    match osc_mailbox() {
+        Some(mb) => mb.post(core::slice::from_raw_parts(data, len)) as u32,
+        None => 0,
+    }
+}
+
+/// Apply the OSC waiting in the mailbox to the visible deck's uniforms (at a frame
+/// boundary, before update()). Returns the uniform writes.
+///
+/// # Safety
+/// Render task, under the player lock; serialized with [`lm_osc_post`].
+#[no_mangle]
+pub unsafe extern "C" fn lm_osc_drain() -> u32 {
+    let Some(mb) = osc_mailbox() else { return 0 };
+    if mb.is_empty() {
+        return 0;
+    }
+    if !lm_fx_active() {
+        mb.clear();
+        return 0;
+    }
+    let mask = osc_targets();
+    let cfg = OscConfig { prefix: "/", by_name: OSC_BY_NAME };
+    let table = &*addr_of!(OSC_TABLE);
+    mb.drain(&cfg, table, &mut |slot, vals| osc_write(mask, slot, vals)) as u32
 }
 
 /// The global crossfade (Player::set_crossfade), latched once per frame by
@@ -4291,6 +5216,11 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
         fx_rebuild_topo();
         fx_push_graph_all();
     }
+    // Per-LED memo caches follow the map: a map/topology upload (dirty) or a new
+    // LED count re-binds them (empty) before this frame's shade sweep refills.
+    if FX_MEMO_DIRTY || FX_MEMO_LEDS != (led_count as usize).min(FX_TOPO_CAP) {
+        fx_memo_rebind(led_count as usize);
+    }
     // A new frame: reset the per-frame Tier-1 accumulators (they sum over both
     // decks' update + the coming per-LED sweep).
     FX_INSTR_UPDATE = 0;
@@ -4328,8 +5258,7 @@ unsafe fn fx_update_deck(p: *mut DeckState, f: &FxFrame, dt_s: f32) -> Option<Ou
     if !(*p).renders() {
         return None;
     }
-    let bytes = &(*p).bytes[..(*p).len];
-    let prog = Program::parse(bytes).ok()?;
+    let prog = (*p).prog.as_ref()?;
     let vm = (*p).vm.as_mut()?;
     // A keypoint morph moves the uniforms first, so this frame's update and
     // shade see the same in-between position (out of line: rarely running).
@@ -4338,13 +5267,13 @@ unsafe fn fx_update_deck(p: *mut DeckState, f: &FxFrame, dt_s: f32) -> Option<Ou
     }
     Some(if PERF_MODE == PERF_FULL {
         // FULL: pay the counted VM path so instr_update / stack_max are real.
-        let (oc, c) = vm.run_update_counted(&prog, f, &fx_budget());
+        let (oc, c) = vm.run_update_counted(prog, f, &fx_budget());
         FX_INSTR_UPDATE = FX_INSTR_UPDATE.saturating_add(c.instrs);
         FX_STACK_MAX = FX_STACK_MAX.max(c.stack_max);
         oc
     } else {
         // BASIC/OFF: the plain path — no per-opcode counting overhead.
-        vm.run_update_bounded(&prog, f, &fx_budget())
+        vm.run_update_bounded(prog, f, &fx_budget())
     })
 }
 
@@ -4363,11 +5292,11 @@ unsafe fn fx_advance_morph(p: *mut DeckState, dt_s: f32) {
 // second hot code block per LED cost several percent through the flash cache).
 #[inline(always)]
 unsafe fn fx_shade_one(p: *mut DeckState, idx: u32, x: f32, y: f32, z: f32) -> Option<Rgb8> {
-    let bytes = &(*p).bytes[..(*p).len];
     // &mut: run_shade writes the VM's resident scratch (stack/locals) in place
     // instead of allocating per LED (FUG-122 framing hill-climb).
     let vm = (*p).vm.as_mut()?;
-    let prog = Program::parse(bytes).ok()?;
+    // Parsed once at load (DeckState::prog), not per LED.
+    let prog = (*p).prog.as_ref()?;
     // Borrow the frame context lm_fx_update built for this frame (shared by both
     // decks), so `time`/`dt`/`frame` are the same as update() and nothing
     // frame-wide is rebuilt per LED. Before the first update() of a fresh
@@ -4425,14 +5354,14 @@ unsafe fn fx_shade_one(p: *mut DeckState, idx: u32, x: f32, y: f32, z: f32) -> O
         // FULL: count this LED's opcodes into the per-frame shade accumulator
         // and lift the stack high-water. This is the hottest path, so the
         // counting is gated behind FULL exactly as perf-monitoring.md requires.
-        let (c, outcome, k): (Rgb8, Outcome, FxCounters) = vm.run_shade_counted(&prog, f, led, &fx_budget());
+        let (c, outcome, k): (Rgb8, Outcome, FxCounters) = vm.run_shade_counted(prog, f, led, &fx_budget());
         FX_INSTR_SHADE = FX_INSTR_SHADE.saturating_add(k.instrs);
         if k.stack_max > FX_STACK_MAX {
             FX_STACK_MAX = k.stack_max;
         }
         (c, outcome)
     } else {
-        vm.run_shade_bounded(&prog, f, led, &fx_budget())
+        vm.run_shade_bounded(prog, f, led, &fx_budget())
     };
     (outcome == Outcome::Ok).then_some(c)
 }
@@ -4798,22 +5727,35 @@ pub unsafe extern "C" fn lm_mode_event(event: u32) -> i32 {
 /// (update + shade of every rendering deck incl. the crossfade blend, or the
 /// strip transmit if longer — they overlap). Returns how many ms the render task
 /// sleeps before the next frame (period − work, never less than the controller's
-/// minimum yield). If the effect can't hold its floor / pinned rate this parks
-/// every rendering deck (they stay loaded; set_effect resumes) and latches a
-/// notify-the-app request for loop(). Restarts the search first when what renders
-/// changed since the last frame.
+/// minimum yield; after an overrunning frame, the bounded-duty-cycle slice that
+/// keeps the network, sensors and TLS serviced). An effect that can't hold its
+/// floor / pinned rate keeps rendering — never parked — and its lag state is
+/// pushed to the app once as an advisory. Restarts the search first when what
+/// renders changed since the last frame.
 ///
 /// The strip comes with it: `wire_leds` LEDs clocked out one after another (the
 /// longest channel — both go out in parallel), whose WS2812 wire time
 /// (`ledmapper_fps::wire_frame_us`) caps the ladder at what the wire can carry,
-/// and the `leds` the frame shaded set the abort floor
-/// (`ledmapper_fps::floor_fps_for`: past 512 LEDs a heavy effect runs slower
-/// instead of being parked).
+/// and the `leds` the frame shaded set the floor
+/// (`ledmapper_fps::floor_fps_for`: past 512 LEDs a heavy effect steps down to a
+/// steady slower rung).
+///
+/// `cpu_us` is the frame's render COMPUTE (update + shade + blend, no waits, no
+/// transmit; 0 = unknown): the frame then sleeps at least the network's share of
+/// it (`ledmapper_fps::net_share_ms`), and a rung that can't hold the compute plus
+/// that share is a miss, so the effect steps down rather than starving the
+/// netstack loop that runs below render (1.12.3: near-budget effects left it
+/// 1-3 ms a frame and new clients could no longer connect).
 ///
 /// # Safety
 /// Render task, under the player_mutex (single-threaded player state).
 #[no_mangle]
-pub unsafe extern "C" fn lm_fps_on_frame(cost_us: u32, wire_leds: u32, leds: u32) -> u32 {
+pub unsafe extern "C" fn lm_fps_on_frame(
+    cost_us: u32,
+    cpu_us: u32,
+    wire_leds: u32,
+    leds: u32,
+) -> u32 {
     let c = &mut *addr_of_mut!(FPS);
     if FPS_SEEN_GEN != FPS_GEN {
         FPS_SEEN_GEN = FPS_GEN;
@@ -4821,21 +5763,19 @@ pub unsafe extern "C" fn lm_fps_on_frame(cost_us: u32, wire_leds: u32, leds: u32
     }
     c.set_wire_us(ledmapper_fps::wire_frame_us(wire_leds));
     c.set_leds(leds);
-    let d = c.on_frame(cost_us);
-    if d.abort {
-        c.take_abort();
-        for k in 0..N_DECKS {
-            fx_set_active(k, false);
-        }
-        // Parking is ours, not a new search: don't let it reset the rung the
-        // fps_state{aborted} reports.
-        FPS_SEEN_GEN = FPS_GEN;
-        FPS_NOTIFY_ABORT = true;
-    }
-    d.delay_ms
+    c.on_frame_cpu(cost_us, cpu_us).delay_ms
 }
 
-/// The autoscaler's current target FPS (the rate the effect runs at now).
+/// The sleep (ms) a frame owes the lower-priority tasks after `cpu_us` of render
+/// compute (`ledmapper_fps::net_share_ms`): main.cpp floors its wall-clock
+/// re-pacing with it.
+#[no_mangle]
+pub extern "C" fn lm_fps_net_share_ms(cpu_us: u32) -> u32 {
+    ledmapper_fps::net_share_ms(cpu_us)
+}
+
+/// The rate the effect runs at now: the autoscaler's rung, or the rate it
+/// really achieves while lagging below it.
 ///
 /// # Safety
 /// Under the player_mutex.
@@ -4844,36 +5784,44 @@ pub unsafe extern "C" fn lm_fps_current_fps() -> u32 {
     (*addr_of!(FPS)).current_fps()
 }
 
-/// Per-frame overrun budget in CPU cycles for the current target (cpu_hz /
-/// current_fps); the render loop flags a perf-ring overrun against it.
+/// Per-frame overrun budget in CPU cycles for the current target rung (cpu_hz /
+/// rung fps); the render loop flags a perf-ring overrun against it.
 ///
 /// # Safety
 /// Under the player_mutex.
 #[no_mangle]
 pub unsafe extern "C" fn lm_fps_budget_cycles() -> u32 {
-    PERF_CPU_HZ / (*addr_of!(FPS)).current_fps().max(1)
+    PERF_CPU_HZ / (*addr_of!(FPS)).rung_fps().max(1)
 }
 
-/// Read + clear the abort-notify latch; loop() pushes fps_state{aborted=true}.
+/// Whether the effect's lag state changed since it was last reported (read +
+/// update): loop() then pushes one unsolicited fps_state — an advisory ("this
+/// effect runs below its target"), never a stop. `*lagging` gets the new state.
 ///
 /// # Safety
-/// Under the player_mutex.
+/// Under the player_mutex; `lagging` may be null.
 #[no_mangle]
-pub unsafe extern "C" fn lm_fps_take_abort_notify() -> bool {
-    let n = FPS_NOTIFY_ABORT;
-    FPS_NOTIFY_ABORT = false;
-    n
+pub unsafe extern "C" fn lm_fps_take_lag_notify(lagging: *mut bool) -> bool {
+    let now = (*addr_of!(FPS)).lagging();
+    if !lagging.is_null() {
+        *lagging = now;
+    }
+    if now == FPS_LAG_REPORTED {
+        return false;
+    }
+    FPS_LAG_REPORTED = now;
+    true
 }
 
-/// Encode an FpsState frame (`aborted` as given) into `out`: the unsolicited
-/// abort push. Returns the encoded length, -1 bad args, -2 out_cap too small.
+/// Encode the live FpsState into `out` (the unsolicited lag-change push).
+/// Returns the encoded length, -1 bad args, -2 out_cap too small.
 ///
 /// # Safety
 /// `out` must point to `out_cap` writable bytes; under the player_mutex.
 #[no_mangle]
-pub unsafe extern "C" fn lm_fps_build_state(out: *mut u8, out_cap: usize, aborted: bool) -> i32 {
+pub unsafe extern "C" fn lm_fps_build_state(out: *mut u8, out_cap: usize) -> i32 {
     if out.is_null() {
         return -1;
     }
-    encode_reply(&build_fps_state(aborted), out, out_cap)
+    encode_reply(&build_fps_state(), out, out_cap)
 }

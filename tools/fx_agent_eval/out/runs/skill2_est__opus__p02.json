@@ -1,0 +1,96 @@
+{
+  "name": "skill2_est__opus__p02",
+  "variant": "skill2_est",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p02",
+  "prompt": "campfire embers with occasional sparks",
+  "system_prompt_sha256": "d849901467bf6e19",
+  "system_prompt_chars": 35308,
+  "attempts": [
+    {
+      "text": "```glsl\n// Campfire embers with occasional sparks, for a cylindrical helix lamp.\n// The ember bed is drifting value noise wrapped around the cylinder (angle x\n// height), hottest at the bottom and cooling as it rises. Sparks spawn low,\n// spiral up the helix and fade out. Everything per LED is fixed point.\n// Height comes from led.idx / led.count, because the helix climbs with index\n// and led.uv is a top-down projection, so it carries no height on a cylinder.\n// The angle comes from atan2 of fixed arguments, which returns turns.\n//\n// Budget version: the per-LED lattice coordinates (angle * 8, height * 3) are\n// computed once on the first frame and cached in buffers. The noise lattice is\n// stored unrolled (17 x 12, period 8) so no per-LED mod() is needed. Sparks\n// only do their maths for the few LEDs inside each spark's window.\n\nuniform float heat    : 0.0 .. 1.0 = 0.65;   // how hot / tall the bed glows\nuniform float speed   : 0.0 .. 2.0 = 0.5;    // ember drift speed\nuniform float flicker : 0.0 .. 1.0 = 0.5;    // overall flame flicker\nuniform float sparks  : 0.0 .. 1.0 = 0.4;    // how often sparks fly\nuniform float warmth  : 0.0 .. 1.0 = 0.5;    // 0 = deep red, 1 = golden\n\nbuffer fixed bx;     // per-LED angle * 8   (0..8)\nbuffer fixed by;     // per-LED height * 3  (0..3)\n\nstate fixed lat[204]; // 17 columns x 12 rows, values repeat with period 8\nstate bool  seeded;\nstate bool  built;\nstate bool  ready;\nstate fixed ox;\nstate fixed oyn;\nstate fixed gain;\nstate fixed fall3;\nstate fixed hue_k;\nstate fixed fl_ph;\nstate fixed fl;\n\nstate fixed sp[3];   // spark position, in LED index units (<0 = inactive)\nstate fixed sb[3];   // spark brightness 0..1\nstate fixed sv[3];   // spark speed, in LEDs per second\nstate fixed slo[3];  // spark window low edge (LED units)\nstate fixed shi[3];  // spark window high edge\n\nvoid update() {\n  if (!seeded) {\n    for (int i = 0; i < 204; i = i + 1) {\n      int c = (i % 17) % 8;\n      int r = (i / 17) % 8;\n      lat[i] = fixed(hash(float(r * 8 + c) * 1.37 + 0.5));\n    }\n    for (int j = 0; j < 3; j = j + 1) {\n      sp[j] = fixed(-100.0);\n      sb[j] = fixed(0.0);\n      slo[j] = fixed(-200.0);\n      shi[j] = fixed(-200.0);\n    }\n    seeded = true;\n  }\n  // Buffers are filled by shade() on the first frame; read them afterwards.\n  ready = built;\n  built = true;\n\n  // Embers creep around the lamp and drift upward.\n  ox = mod(ox + fixed(dt * speed * 0.15), fixed(8.0));\n  oyn = mod(oyn - fixed(dt * speed * 0.6) + fixed(8.0), fixed(8.0));\n\n  // Flicker: two incommensurate wobbles.\n  fl_ph = fract(fl_ph + fixed(dt * 1.7));\n  fixed w = sin(fl_ph) * fixed(0.6) + sin(fl_ph * fixed(3.0) + fixed(0.3)) * fixed(0.4);\n  fl = fixed(1.0) - fixed(flicker * 0.18) + w * fixed(flicker * 0.12);\n\n  gain  = fixed(1.0 + heat * 1.2) * fl;\n  fall3 = fixed((1.25 - heat * 0.6) / 3.0);\n  hue_k = fixed(0.06 + warmth * 0.07);\n\n  // Sparks: spawn low on the helix, spiral up, fade.\n  for (int j = 0; j < 3; j = j + 1) {\n    if (sp[j] < fixed(0.0)) {\n      float r = hash(time * 13.17 + float(j) * 7.71);\n      if (r < sparks * dt * 0.9) {\n        float q = hash(time * 5.31 + float(j) * 3.3);\n        sp[j] = fixed(q * 140.0 + 10.0);\n        sv[j] = fixed(70.0 + q * 90.0);\n        sb[j] = fixed(1.0);\n      }\n    } else {\n      sp[j] = sp[j] + sv[j] * fixed(dt);\n      sb[j] = sb[j] - fixed(dt * 0.55);\n      if (sb[j] <= fixed(0.0) || sp[j] > fixed(500.0)) {\n        sp[j] = fixed(-100.0);\n        sb[j] = fixed(0.0);\n      }\n    }\n    if (sp[j] < fixed(0.0)) {\n      slo[j] = fixed(-200.0);\n      shi[j] = fixed(-200.0);\n    } else {\n      slo[j] = sp[j] - fixed(2.25);\n      shi[j] = sp[j] + fixed(2.25);\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  fixed fi = fixed(led.idx);\n  fixed ax;\n  fixed hy;\n  if (ready) {\n    ax = bx[led.idx];\n    hy = by[led.idx];\n  } else {\n    fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n    ax = ang * fixed(8.0);\n    if (ax >= fixed(8.0)) {\n      ax = ax - fixed(8.0);\n    }\n    hy = fi * fixed(3.0) / fixed(led.count);\n    bx[led.idx] = ax;\n    by[led.idx] = hy;\n  }\n\n  // Wrapped value noise: 8 cells around, ~3 cells up (lattice is unrolled).\n  fixed x = ax + ox;\n  fixed y = hy + oyn;\n  int i = int(x) + int(y) * 17;\n  fixed fx = fract(x);\n  fixed a = mix(lat[i], lat[i + 1], fx);\n  fixed b = mix(lat[i + 17], lat[i + 18], fx);\n  fixed n = mix(a, b, fract(y));\n\n  // Ember heat: noisy, strongest at the bottom.\n  fixed v = clamp(n * gain - hy * fall3, fixed(0.0), fixed(1.0));\n\n  // Sparks: a short bright blob around each spark position.\n  fixed s = fixed(0.0);\n  if (fi > slo[0] && fi < shi[0]) {\n    s = (fixed(1.0) - abs(fi - sp[0]) * fixed(0.45)) * sb[0];\n  }\n  if (fi > slo[1] && fi < shi[1]) {\n    s = max(s, (fixed(1.0) - abs(fi - sp[1]) * fixed(0.45)) * sb[1]);\n  }\n  if (fi > slo[2] && fi < shi[2]) {\n    s = max(s, (fixed(1.0) - abs(fi - sp[2]) * fixed(0.45)) * sb[2]);\n  }\n\n  fixed hue = v * hue_k + s * fixed(0.05);\n  fixed sat = fixed(1.0) - v * fixed(0.15) - s * fixed(0.55);\n  fixed val = max(v * v, s);\n  return hsv2rgb(hue, sat, val);\n}\n```",
+      "is_error": false,
+      "session_id": "1f3181d9-de20-40b5-8459-b82e034d1162",
+      "wall_s": 49.4,
+      "duration_api_ms": 47280,
+      "cost_usd": 0.127728,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 5172,
+        "cache_read_input_tokens": 14560,
+        "cache_creation_input_tokens": 2671
+      },
+      "thinking_tokens": 2527,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 24,
+          "col": 1,
+          "msg": "too many state variables (over the state slot budget)"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "```glsl\n// Campfire embers with occasional sparks, for a cylindrical helix lamp.\n// The ember bed is drifting value noise wrapped around the cylinder (angle x\n// height), hottest at the bottom and cooling as it rises. Sparks spawn low,\n// spiral up the helix and fade out. Everything per LED is fixed point.\n// Height comes from led.idx / led.count, because the helix climbs with index\n// and led.uv is a top-down projection, so it carries no height on a cylinder.\n// The angle comes from atan2 of fixed arguments, which returns turns.\n//\n// Budget version: the per-LED lattice coordinates (angle * 8, height * 3) are\n// computed once on the first frame and cached in buffers. Lattice wrapping uses\n// a conditional subtract instead of mod(). Sparks only do their maths for the\n// few LEDs inside each spark's window.\n\nuniform float heat    : 0.0 .. 1.0 = 0.65;   // how hot / tall the bed glows\nuniform float speed   : 0.0 .. 2.0 = 0.5;    // ember drift speed\nuniform float flicker : 0.0 .. 1.0 = 0.5;    // overall flame flicker\nuniform float sparks  : 0.0 .. 1.0 = 0.4;    // how often sparks fly\nuniform float warmth  : 0.0 .. 1.0 = 0.5;    // 0 = deep red, 1 = golden\n\nbuffer fixed bx;     // per-LED angle * 8   (0..8)\nbuffer fixed by;     // per-LED height * 3  (0..3)\n\nstate fixed lat[81]; // 9 x 9, values repeat with period 8\nstate bool  seeded;\nstate bool  ready;\nstate fixed ox;\nstate fixed oyn;\nstate fixed gain;\nstate fixed fall3;\nstate fixed hue_k;\nstate fixed fl_ph;\n\nstate fixed sp[3];   // spark position, in LED index units (<0 = inactive)\nstate fixed sb[3];   // spark brightness 0..1\nstate fixed sv[3];   // spark speed, in LEDs per second\n\nvoid update() {\n  // Buffers are filled by shade() on the first frame; read them afterwards.\n  ready = seeded;\n  if (!seeded) {\n    for (int i = 0; i < 81; i = i + 1) {\n      int c = (i % 9) % 8;\n      int r = (i / 9) % 8;\n      lat[i] = fixed(hash(float(r * 8 + c) * 1.37 + 0.5));\n    }\n    for (int j = 0; j < 3; j = j + 1) {\n      sp[j] = fixed(-100.0);\n      sb[j] = fixed(0.0);\n    }\n    seeded = true;\n  }\n\n  // Embers creep around the lamp and drift upward.\n  ox = mod(ox + fixed(dt * speed * 0.15), fixed(8.0));\n  oyn = mod(oyn - fixed(dt * speed * 0.6) + fixed(8.0), fixed(8.0));\n\n  // Flicker: two incommensurate wobbles.\n  fl_ph = fract(fl_ph + fixed(dt * 1.7));\n  fixed w = sin(fl_ph) * fixed(0.6) + sin(fl_ph * fixed(3.0) + fixed(0.3)) * fixed(0.4);\n  fixed fl = fixed(1.0) - fixed(flicker * 0.18) + w * fixed(flicker * 0.12);\n\n  gain  = fixed(1.0 + heat * 1.2) * fl;\n  fall3 = fixed((1.25 - heat * 0.6) / 3.0);\n  hue_k = fixed(0.06 + warmth * 0.07);\n\n  // Sparks: spawn low on the helix, spiral up, fade.\n  for (int j = 0; j < 3; j = j + 1) {\n    if (sp[j] < fixed(0.0)) {\n      float r = hash(time * 13.17 + float(j) * 7.71);\n      if (r < sparks * dt * 0.9) {\n        float q = hash(time * 5.31 + float(j) * 3.3);\n        sp[j] = fixed(q * 140.0 + 10.0);\n        sv[j] = fixed(70.0 + q * 90.0);\n        sb[j] = fixed(1.0);\n      }\n    } else {\n      sp[j] = sp[j] + sv[j] * fixed(dt);\n      sb[j] = sb[j] - fixed(dt * 0.55);\n      if (sb[j] <= fixed(0.0) || sp[j] > fixed(500.0)) {\n        sp[j] = fixed(-100.0);\n        sb[j] = fixed(0.0);\n      }\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  fixed fi = fixed(led.idx);\n  fixed ax;\n  fixed hy;\n  if (ready) {\n    ax = bx[led.idx];\n    hy = by[led.idx];\n  } else {\n    fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n    ax = ang * fixed(8.0);\n    if (ax >= fixed(8.0)) {\n      ax = ax - fixed(8.0);\n    }\n    hy = fi * fixed(3.0) / fixed(led.count);\n    bx[led.idx] = ax;\n    by[led.idx] = hy;\n  }\n\n  // Wrapped value noise: 8 cells around, ~3 cells up.\n  fixed x = ax + ox;\n  if (x >= fixed(8.0)) {\n    x = x - fixed(8.0);\n  }\n  fixed y = hy + oyn;\n  if (y >= fixed(8.0)) {\n    y = y - fixed(8.0);\n  }\n  int i = int(x) + int(y) * 9;\n  fixed fx = fract(x);\n  fixed a = mix(lat[i], lat[i + 1], fx);\n  fixed b = mix(lat[i + 9], lat[i + 10], fx);\n  fixed n = mix(a, b, fract(y));\n\n  // Ember heat: noisy, strongest at the bottom.\n  fixed v = clamp(n * gain - hy * fall3, fixed(0.0), fixed(1.0));\n\n  // Sparks: a short bright blob around each spark position.\n  fixed s = fixed(0.0);\n  fixed d0 = abs(fi - sp[0]);\n  if (d0 < fixed(2.25)) {\n    s = (fixed(1.0) - d0 * fixed(0.45)) * sb[0];\n  }\n  fixed d1 = abs(fi - sp[1]);\n  if (d1 < fixed(2.25)) {\n    s = max(s, (fixed(1.0) - d1 * fixed(0.45)) * sb[1]);\n  }\n  fixed d2 = abs(fi - sp[2]);\n  if (d2 < fixed(2.25)) {\n    s = max(s, (fixed(1.0) - d2 * fixed(0.45)) * sb[2]);\n  }\n\n  fixed hue = v * hue_k + s * fixed(0.05);\n  fixed sat = fixed(1.0) - v * fixed(0.15) - s * fixed(0.55);\n  fixed val = max(v * v, s);\n  return hsv2rgb(hue, sat, val);\n}\n```",
+      "is_error": false,
+      "session_id": "1f3181d9-de20-40b5-8459-b82e034d1162",
+      "wall_s": 28.8,
+      "duration_api_ms": 74132,
+      "cost_usd": 0.2625262,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 3408,
+        "cache_read_input_tokens": 17231,
+        "cache_creation_input_tokens": 7898
+      },
+      "thinking_tokens": 898,
+      "round": 1,
+      "kind": "repair",
+      "compile_ok": false,
+      "diagnostics": [
+        {
+          "line": 89,
+          "col": 11,
+          "msg": "expected '='"
+        }
+      ],
+      "fxb_bytes": null
+    },
+    {
+      "text": "```glsl\n// Campfire embers with occasional sparks, for a cylindrical helix lamp.\n// The ember bed is drifting value noise wrapped around the cylinder (angle x\n// height), hottest at the bottom and cooling as it rises. Sparks spawn low,\n// spiral up the helix and fade out. Everything per LED is fixed point.\n// Height comes from led.idx / led.count, because the helix climbs with index\n// and led.uv is a top-down projection, so it carries no height on a cylinder.\n// The angle comes from atan2 of fixed arguments, which returns turns.\n//\n// Budget version: the per-LED lattice coordinates (angle * 8, height * 3) are\n// computed once on the first frame and cached in buffers. Lattice wrapping uses\n// a conditional subtract instead of mod(). Sparks only do their maths for the\n// few LEDs inside each spark's window.\n\nuniform float heat    : 0.0 .. 1.0 = 0.65;   // how hot / tall the bed glows\nuniform float speed   : 0.0 .. 2.0 = 0.5;    // ember drift speed\nuniform float flicker : 0.0 .. 1.0 = 0.5;    // overall flame flicker\nuniform float sparks  : 0.0 .. 1.0 = 0.4;    // how often sparks fly\nuniform float warmth  : 0.0 .. 1.0 = 0.5;    // 0 = deep red, 1 = golden\n\nbuffer fixed bx;     // per-LED angle * 8   (0..8)\nbuffer fixed by;     // per-LED height * 3  (0..3)\n\nstate fixed lat[81]; // 9 x 9, values repeat with period 8\nstate bool  seeded;\nstate bool  ready;\nstate fixed ox;\nstate fixed oyn;\nstate fixed gain;\nstate fixed fall3;\nstate fixed hue_k;\nstate fixed fl_ph;\n\nstate fixed sp[3];   // spark position, in LED index units (<0 = inactive)\nstate fixed sb[3];   // spark brightness 0..1\nstate fixed sv[3];   // spark speed, in LEDs per second\n\nvoid update() {\n  // Buffers are filled by shade() on the first frame; read them afterwards.\n  ready = seeded;\n  if (!seeded) {\n    for (int i = 0; i < 81; i = i + 1) {\n      int c = (i % 9) % 8;\n      int r = (i / 9) % 8;\n      lat[i] = fixed(hash(float(r * 8 + c) * 1.37 + 0.5));\n    }\n    for (int j = 0; j < 3; j = j + 1) {\n      sp[j] = fixed(-100.0);\n      sb[j] = fixed(0.0);\n    }\n    seeded = true;\n  }\n\n  // Embers creep around the lamp and drift upward.\n  ox = mod(ox + fixed(dt * speed * 0.15), fixed(8.0));\n  oyn = mod(oyn - fixed(dt * speed * 0.6) + fixed(8.0), fixed(8.0));\n\n  // Flicker: two incommensurate wobbles.\n  fl_ph = fract(fl_ph + fixed(dt * 1.7));\n  fixed w = sin(fl_ph) * fixed(0.6) + sin(fl_ph * fixed(3.0) + fixed(0.3)) * fixed(0.4);\n  fixed fl = fixed(1.0) - fixed(flicker * 0.18) + w * fixed(flicker * 0.12);\n\n  gain  = fixed(1.0 + heat * 1.2) * fl;\n  fall3 = fixed((1.25 - heat * 0.6) / 3.0);\n  hue_k = fixed(0.06 + warmth * 0.07);\n\n  // Sparks: spawn low on the helix, spiral up, fade.\n  for (int j = 0; j < 3; j = j + 1) {\n    if (sp[j] < fixed(0.0)) {\n      float r = hash(time * 13.17 + float(j) * 7.71);\n      if (r < sparks * dt * 0.9) {\n        float q = hash(time * 5.31 + float(j) * 3.3);\n        sp[j] = fixed(q * 140.0 + 10.0);\n        sv[j] = fixed(70.0 + q * 90.0);\n        sb[j] = fixed(1.0);\n      }\n    } else {\n      sp[j] = sp[j] + sv[j] * fixed(dt);\n      sb[j] = sb[j] - fixed(dt * 0.55);\n      if (sb[j] <= fixed(0.0) || sp[j] > fixed(500.0)) {\n        sp[j] = fixed(-100.0);\n        sb[j] = fixed(0.0);\n      }\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  fixed fi = fixed(led.idx);\n  fixed ax = fixed(0.0);\n  fixed hy = fixed(0.0);\n  if (ready) {\n    ax = bx[led.idx];\n    hy = by[led.idx];\n  } else {\n    fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n    ax = ang * fixed(8.0);\n    if (ax >= fixed(8.0)) {\n      ax = ax - fixed(8.0);\n    }\n    hy = fi * fixed(3.0) / fixed(led.count);\n    bx[led.idx] = ax;\n    by[led.idx] = hy;\n  }\n\n  // Wrapped value noise: 8 cells around, ~3 cells up.\n  fixed x = ax + ox;\n  if (x >= fixed(8.0)) {\n    x = x - fixed(8.0);\n  }\n  fixed y = hy + oyn;\n  if (y >= fixed(8.0)) {\n    y = y - fixed(8.0);\n  }\n  int i = int(x) + int(y) * 9;\n  fixed fx = fract(x);\n  fixed a = mix(lat[i], lat[i + 1], fx);\n  fixed b = mix(lat[i + 9], lat[i + 10], fx);\n  fixed n = mix(a, b, fract(y));\n\n  // Ember heat: noisy, strongest at the bottom.\n  fixed v = clamp(n * gain - hy * fall3, fixed(0.0), fixed(1.0));\n\n  // Sparks: a short bright blob around each spark position.\n  fixed s = fixed(0.0);\n  fixed d0 = abs(fi - sp[0]);\n  if (d0 < fixed(2.25)) {\n    s = (fixed(1.0) - d0 * fixed(0.45)) * sb[0];\n  }\n  fixed d1 = abs(fi - sp[1]);\n  if (d1 < fixed(2.25)) {\n    s = max(s, (fixed(1.0) - d1 * fixed(0.45)) * sb[1]);\n  }\n  fixed d2 = abs(fi - sp[2]);\n  if (d2 < fixed(2.25)) {\n    s = max(s, (fixed(1.0) - d2 * fixed(0.45)) * sb[2]);\n  }\n\n  fixed hue = v * hue_k + s * fixed(0.05);\n  fixed sat = fixed(1.0) - v * fixed(0.15) - s * fixed(0.55);\n  fixed val = max(v * v, s);\n  return hsv2rgb(hue, sat, val);\n}\n```",
+      "is_error": false,
+      "session_id": "1f3181d9-de20-40b5-8459-b82e034d1162",
+      "wall_s": 18.7,
+      "duration_api_ms": 91436,
+      "cost_usd": 0.366952,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2574,
+        "cache_read_input_tokens": 25129,
+        "cache_creation_input_tokens": 5989
+      },
+      "thinking_tokens": 48,
+      "round": 2,
+      "kind": "repair",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 2126
+    }
+  ],
+  "started": "2026-10-23T00:49:34",
+  "base_program": "firmware/fx_perf_bench/agent/skill2__opus__p02.fx",
+  "base_estimate": [47.98, [], []],
+  "est_outcome": "revised",
+  "status": "ok",
+  "n_calls": 3,
+  "total_cost_usd": 0.7572,
+  "total_wall_s": 96.9,
+  "program": "firmware/fx_perf_bench/agent/skill2_est__opus__p02.fx"
+}

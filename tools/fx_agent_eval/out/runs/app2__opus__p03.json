@@ -1,0 +1,39 @@
+{
+  "name": "app2__opus__p03",
+  "variant": "app2",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p03",
+  "prompt": "aurora curtains drifting slowly",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```\nuniform float speed      : 0.0 .. 2.0 = 0.35;\nuniform float folds      : 2.0 .. 9.0 = 4.0;\nuniform float sharpness  : 1.0 .. 3.0 = 2.0;\nuniform float brightness : 0.0 .. 1.0 = 0.9;\nuniform float hue_low    : 0.0 .. 1.0 = 0.36;\nuniform float hue_high   : 0.0 .. 1.0 = 0.82;\n\nstate fixed ph1;\nstate fixed ph2;\nstate fixed ph3;\nstate fixed ph4;\nstate fixed k1;\nstate fixed k2;\nstate fixed k3;\nstate fixed sharpK;\nstate fixed bri;\nstate fixed hLo;\nstate fixed hSpan;\n\nvoid update() {\n  // slow phases in TURNS\n  ph1 = fract(ph1 + fixed(dt * speed * 0.050));\n  ph2 = fract(ph2 + fixed(dt * speed * 0.031));\n  ph3 = fract(ph3 + fixed(dt * speed * 0.023));\n  ph4 = fract(ph4 + fixed(dt * speed * 0.400));\n  // integer fold counts so the curtain wraps seamlessly around the cylinder\n  k1 = fixed(floor(folds));\n  k2 = fixed(floor(folds * 0.5) + 1.0);\n  k3 = fixed(floor(folds) + 1.0);\n  sharpK = fixed(sharpness);\n  bri = fixed(brightness);\n  hLo = fixed(hue_low);\n  hSpan = fixed(hue_high - hue_low);\n}\n\nvec3 shade(Led led) {\n  // angle around the vertical axis in turns (cached per LED by the compiler)\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x));\n  // normalised height 0..1 over the 0.30 m lamp\n  fixed h = clamp(fixed(led.pos.y) * fixed(3.333), fixed(0.0), fixed(1.0));\n\n  // folded, drifting curtain: domain-warped angular wave\n  fixed warp = sin(ang * k2 + ph2) * fixed(0.14) + sin(ang * k3 - ph3) * fixed(0.07);\n  fixed c = sin(ang * k1 + ph1 + warp) * fixed(0.5) + fixed(0.5);\n  fixed curtain = clamp((c - fixed(0.5)) * sharpK + fixed(0.5), fixed(0.0), fixed(1.0));\n  curtain = curtain * curtain;\n\n  // wavy lower hem of the curtain\n  fixed edge = fixed(0.22) + sin(ang * k2 - ph1 + warp) * fixed(0.10);\n  fixed above = h - edge;\n  fixed hem = clamp(above * fixed(10.0), fixed(0.0), fixed(1.0));\n  fixed fade = clamp(fixed(1.0) - above * fixed(1.3), fixed(0.0), fixed(1.0));\n\n  // faint vertical rays shimmering upward\n  fixed ray = sin(ang * k3 * fixed(3.0) + warp + ph4) * fixed(0.2) + fixed(0.8);\n\n  fixed v = curtain * hem * fade * ray * bri;\n  v = v * (fixed(2.0) - v);   // gentle lift of the glow\n\n  // green at the hem, shifting toward violet/pink as it rises\n  fixed hue = fract(hLo + hSpan * clamp(above * fixed(1.4), fixed(0.0), fixed(1.0)));\n  return hsv2rgb(hue, fixed(0.85), v);\n}\n```",
+      "is_error": false,
+      "session_id": "aeb27430-bff5-4792-928e-2363e003ec91",
+      "wall_s": 23.1,
+      "duration_api_ms": 21584,
+      "cost_usd": 0.102436,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 2253,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 7171
+      },
+      "thinking_tokens": 978,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1371
+    }
+  ],
+  "started": "2026-10-23T00:04:33",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.1024,
+  "total_wall_s": 23.1,
+  "program": "firmware/fx_perf_bench/agent/app2__opus__p03.fx"
+}

@@ -12,18 +12,22 @@
  *   /bridge/connect?id=          the bridge's outbound WebSocket (signed)
  *   /live                        an app's live (VJ) WebSocket, passed through to
  *                                the bridge (docs/design/live-vj-relay.md)
+ *   /bugs                        an agent files a bug on the Splanc repo with the
+ *                                Worker's GITHUB_ISSUES_TOKEN secret (bugs.ts;
+ *                                docs/design/agent-bug-reports.md)
  *
  * The Worker itself is a thin router (the free plan gives it 10 ms CPU per
  * request); signatures, tokens and the tunnel live in the Durable Objects.
  */
 
 import { BridgeObject, liveToken, parseToken, rpcError, wwwAuthenticate } from "./bridgeObject";
+import { bugsEndpoint } from "./bugs";
 import { BRIDGE_ID_RE, ed25519Verify, normalizePairingCode, randomBridgeId } from "./crypto";
 import { Directory } from "./directory";
 import { SCOPES_SUPPORTED, checkClientSecret, dir, redirectAllowed, register, resolveClient, type OAuthClient } from "./oauth";
 import { consent, landing, oauthErrorPage, pairForm, tokenPage } from "./pages";
 import { now, type Env } from "./platform";
-import { SIGNATURE_WINDOW_S, registerMessage } from "./protocol";
+import { BUG_AUTH_HEADER, SIGNATURE_WINDOW_S, registerMessage } from "./protocol";
 
 export { BridgeObject, Directory };
 
@@ -31,7 +35,7 @@ const CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
   "access-control-allow-headers":
-    "authorization, content-type, accept, mcp-session-id, mcp-protocol-version, mcp-method, mcp-name, last-event-id",
+    `authorization, content-type, accept, mcp-session-id, mcp-protocol-version, mcp-method, mcp-name, last-event-id, ${BUG_AUTH_HEADER}`,
   "access-control-expose-headers": "mcp-session-id, mcp-protocol-version, www-authenticate",
   "access-control-max-age": "86400",
 };
@@ -96,6 +100,15 @@ export default {
           return mcp(req, env, origin);
         case "/live":
           return live(req, env, origin);
+        case "/bugs":
+          return bugsEndpoint(req, env, {
+            json,
+            clientIp: clientIp(req),
+            verify: async (bid, headers) => {
+              const r = await toBridge(env, bid, origin, "/bugs/verify", { method: "POST", headers });
+              return r.ok && ((await r.json()) as { ok?: boolean }).ok === true;
+            },
+          });
         case "/.well-known/oauth-protected-resource":
         case "/.well-known/oauth-protected-resource/mcp":
           return json(

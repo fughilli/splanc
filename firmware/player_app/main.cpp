@@ -29,6 +29,7 @@
 #include <esp_heap_caps.h>
 #include <esp_memory_utils.h>  // esp_ptr_executable — validate scanned stack words are code
 #include <esp_system.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -84,31 +85,46 @@
 // ships esp-idf as precompiled libs whose memory protection leaves the data heap
 // non-executable and code IRAM non-writable — no RWX anywhere — and a custom
 // sdkconfig would need a full IDF-from-source build. Instead we carve out one
-// small static region and make just IT read+write+execute using a spare RISC-V
-// PMP entry. The runtime PMP dump showed entries 3/4 free + UNLOCKED and, being
+// small static region and make just IT read+write+execute using two spare RISC-V
+// PMP entries. The runtime PMP dump showed entries 3/4 free + UNLOCKED and, being
 // lower-index than the SRAM data-region entries (PMP is lowest-index-wins), an
 // RWX entry there overrides the default NX for this range only. W^X stays
-// enforced everywhere else. Power-of-2 size + alignment for NAPOT encoding.
+// enforced everywhere else.
+//
+// TOR, not NAPOT: entry 3 (A=OFF) holds the base and entry 4 (A=TOR, RWX) the
+// top, so the region needs no power-of-two alignment. NAPOT needed the region
+// aligned to its own 2 KB size, which made the whole .dram0.bss output section
+// 2048-aligned and cost ~1.8 KB of padding (432 B in front of .bss + 1,416 B
+// inside it), all taken straight off the boot heap that sizes max_leds. The C6
+// PMP granularity is 4 bytes (IDF's own IRAM/DRAM split is a TOR entry at the
+// 4-byte-aligned _iram_text_end). IDF's esp_cpu_configure_region_protection
+// leaves entries 3 and 4 unset; entry 5 is an A=OFF base marker for its TOR
+// entry 6, so it does not read pmpaddr4 and the spec's lock rule (a locked TOR
+// entry i freezes pmpaddr i-1) doesn't apply. Same 2 KB RWX window, same
+// lowest-index-wins override of the RW SRAM entry 7.
 // This device is heap-critically-tight (mbedtls needs ~28 KB for a TLS session),
 // so the region is SMALL and the Rust side compiles its RV32 segments DIRECTLY
 // into it (no separate scratch buffer, no copy) — the whole JIT static footprint
 // on the firmware is just this 2 KB.
 namespace {
-constexpr uint32_t kJitRegionSize = 2048;  // power of two (NAPOT); 512 RV32 words
-alignas(kJitRegionSize) uint8_t g_jit_region[kJitRegionSize];
+constexpr uint32_t kJitRegionSize = 2048;  // 512 RV32 words; any multiple of 4
+alignas(4) uint8_t g_jit_region[kJitRegionSize];
 bool g_jit_armed = false;
 
 void jit_arm_exec_region() {
   uintptr_t base = (uintptr_t)g_jit_region;  // C6 SRAM data addr == physical
-  // NAPOT: pmpaddr = (base>>2) | ((size>>3) - 1); base is size-aligned.
-  uintptr_t pmpaddr = (base >> 2) | ((kJitRegionSize >> 3) - 1);
-  asm volatile("csrw 0x3b3, %0" ::"r"(pmpaddr));  // pmpaddr3
-  // pmpcfg0 byte 3 = entry 3 = A=NAPOT(3)<<3 | X | W | R = 0x1f (unlocked). The
-  // locked low entries (0-2) ignore the write per the PMP spec, so preserve them.
-  uint32_t cfg0;
-  asm volatile("csrr %0, 0x3a0" : "=r"(cfg0));
-  cfg0 = (cfg0 & 0x00ffffffu) | (0x1fu << 24);
-  asm volatile("csrw 0x3a0, %0" ::"r"(cfg0));
+  asm volatile("csrw 0x3b3, %0" ::"r"(base >> 2));                     // pmpaddr3
+  asm volatile("csrw 0x3b4, %0" ::"r"((base + kJitRegionSize) >> 2));  // pmpaddr4
+  // pmpcfg0 byte 3 = entry 3 = A=OFF (0): just the TOR base. pmpcfg1 byte 0 =
+  // entry 4 = A=TOR(1)<<3 | X | W | R = 0x0f (unlocked). The locked entries
+  // (0-2, 5-7) ignore the write per the PMP spec; preserve them anyway.
+  uint32_t cfg;
+  asm volatile("csrr %0, 0x3a0" : "=r"(cfg));
+  cfg &= 0x00ffffffu;
+  asm volatile("csrw 0x3a0, %0" ::"r"(cfg));
+  asm volatile("csrr %0, 0x3a1" : "=r"(cfg));
+  cfg = (cfg & 0xffffff00u) | 0x0fu;
+  asm volatile("csrw 0x3a1, %0" ::"r"(cfg));
   asm volatile("fence.i" ::: "memory");
   g_jit_armed = true;
 }
@@ -145,10 +161,14 @@ extern "C" __attribute__((weak)) void lm_heap_freeze(void) {}
 // ~4 KiB board-capabilities catalog (lm_player_handle ~10 KB + hardware_config_state
 // ~10 KB frames). With the descriptor spliced in at encode time (Player::encode_reply) the
 // static worst-case bound over the ELF call graph (direct calls + the mbedtls bio/RNG
-// callbacks) is ~9.7 KB (stack_bound_test, which gates every task's stack against its
-// bound: the protocol-handler path; the netstack's TX layers build one in-place frame, no
-// per-layer stack buffer). Measured high-water on the ram_audit worst case: 4.8 KB.
-SET_LOOP_TASK_STACK_SIZE(14 * 1024);
+// callbacks + the mask-ROM frames) is ~9.4 KB (stack_bound_test, which gates every task's
+// stack against its bound x 1.25 + ISR context = 11.7 KB). The deepest path is an FX
+// debugger snapshot shading through a sensor driver's I2C bus recovery, whose Log().printf
+// runs ROM vsnprintf (~1.5 KB, uncounted before the bound learned ROM frames). The
+// netstack's TX layers build one in-place frame, and its RX frame is a shared static.
+// Measured high-water: 4.8 KB (ram_audit worst case), ~4.3 KB (Android phone journeys,
+// `[stack]` status line).
+SET_LOOP_TASK_STACK_SIZE(12 * 1024);
 #else
 SET_LOOP_TASK_STACK_SIZE(24 * 1024);
 #endif
@@ -279,8 +299,13 @@ static TaskHandle_t xmit_task_handle = nullptr;
 // Given when a transmit completes (and once at boot); the render task takes it
 // before staging the next frame, so a snapshot never races an in-flight push.
 static SemaphoreHandle_t xmit_done = nullptr;
-// Latest transmit span (cycles), written by the transmit task, read for perf.
-static volatile uint32_t g_show_c = 0;
+// Latest transmit span (wall µs), written by the transmit task: the autoscaler's wire
+// cost and (×160) the perf ring's show cycles. Wall time, not the CPU cycle counter:
+// the counter pauses while the core idles in WFI during the DMA transmit, so it read
+// ~3 ms for a 7.5 ms wire frame when idle but the full 7.5 ms when other work kept the
+// core busy — the pacing then shifted with background load (wifi_cadence: a 77 fps
+// effect ran at 125 fps while PBKDF2 kept the CPU busy).
+static volatile uint32_t g_show_us = 0;
 static volatile bool g_show_timed = false;
 // The staged frame carries, per channel, the ACTIVE strip length (not the whole
 // render buffer): channel 0 drives leds[0..len0), channel 1 leds[len0..len0+len1)
@@ -302,15 +327,27 @@ static void led_show_async(bool timed, uint32_t count0, uint32_t count1,
 // handler take it in turn. Priority sits above the Arduino loopTask (1) but
 // well below the WiFi/BLE stacks (~23) so networking still preempts rendering.
 static SemaphoreHandle_t player_mutex = nullptr;
+// True while render_once holds player_mutex for a frame (render task writes, the loop task
+// reads). The netstack loop then only services arrivals (loop()): see "loopTask during a
+// render frame" there.
+static volatile bool g_render_in_frame = false;
+// How often loop() polls the RX ring while a render frame is in progress (see loop()).
+static constexpr uint32_t kMidFramePollMs = 4;
+// Guards only the video jitter queue (lm_tex_ingest on the network task vs
+// lm_tex_present on the render task), so a streamed set_texture never waits for
+// the player mutex the render task holds across a whole update+shade. Never
+// taken while waiting for player_mutex (render takes it INSIDE player_mutex).
+static SemaphoreHandle_t tex_mutex = nullptr;
 static const UBaseType_t kRenderTaskPrio = 10;   // tune on-device if needed
-// render: static bound ~3.3 KB (stack_bound_test; render_once -> lm_fx_update -> fx_rebuild_topo's
-// ~2.5 KB one-shot topology scratch; the FX VM's other indirect sites are its own
-// jump tables + ROM soft-float leaves, and JIT segments use no machine stack), so
-// 5 KB is ~1.5x. The measured high-water (~0.8 KB) is NOT a sizing basis.
+// render: static bound ~3.8 KB (stack_bound_test; render_once -> the FX VM -> a sensor
+// driver's I2C bus recovery, whose Log().printf runs ROM vsnprintf, ~1.5 KB on its own;
+// JIT segments use no machine stack), so 5 KB is what the gate's x1.25 + ISR context
+// needs. The measured high-water (~0.8 KB, `[stack]` status line) is NOT a sizing basis.
 static const uint32_t kRenderTaskStack = 5120;
-// xmit: just stages/sends the LED frame; static bound ~0.9 KB (stack_bound_test),
-// measured ~0.5 KB.
-static const uint32_t kXmitTaskStack = 2048;
+// xmit: just stages/sends the LED frame; static bound ~0.9 KB (stack_bound_test; the gate
+// needs 1.4 KB), measured ~0.5 KB. It must never format a log line (ROM vsnprintf is
+// ~1.5 KB): its outcomes are handed to loop() to log (g_hw_reconfig_result).
+static const uint32_t kXmitTaskStack = 1536;
 
 // Largest inbound protocol message: a full submit_map for kMaxLeds (~96 B/LED,
 // so 256 LEDs ≈ 25 KB; 32 KB leaves headroom). Sized to the LED cap rather than
@@ -324,17 +361,25 @@ static const uint32_t kXmitTaskStack = 2048;
 // wss TLS handshake needs. Shared by the ws:81 and wss:443 paths.
 //
 // The netstack build never receives into rx: its transports (WS reassembly in
-// g_ws_rx, the BLE frame ring) dispatch every message in place. rx only stages
-// the two whole frames read back off flash — a persisted control/effect frame at
-// boot (fs_replay) and a reassembled sharded effect upload — and an effect frame
-// is bounded by the VM's 4 KiB bytecode cap (ffi.rs FX_MAX_BYTES) plus its
-// envelope, so 4.5 KiB covers it (a larger effect is refused either way).
+// g_ws_rx, the BLE frame ring) dispatch every message in place. The only whole
+// frames it stages are the two read back off flash — a persisted control/effect
+// frame at boot (fs_replay) and a reassembled sharded effect upload — and an
+// effect frame is bounded by the VM's 4 KiB bytecode cap (ffi.rs FX_MAX_BYTES)
+// plus its envelope, so 4.5 KiB covers it (a larger effect is refused either
+// way). Both are rare, one-shot and run on loopTask, so on that build the stage
+// is a heap block of the frame's exact size for the duration of the dispatch
+// (rx_stage_get/put) instead of 4.5 KiB of .bss held for the whole process — the
+// boot heap that sizes max_leds (led_store_begin runs before the boot replay).
 #if defined(LM_NETSTACK)
 static const size_t kRxCap = 4608;
+static uint8_t *rx_stage_get(size_t n) { return static_cast<uint8_t *>(malloc(n ? n : 1)); }
+static void rx_stage_put(uint8_t *p) { free(p); }
 #else
 static const size_t kRxCap = 12288;
-#endif
 static uint8_t rx[kRxCap];      // one whole (non-sharded) message
+static uint8_t *rx_stage_get(size_t) { return rx; }
+static void rx_stage_put(uint8_t *) {}
+#endif
 static size_t rx_len = 0;
 // Encoded reply frames are control-sized. The 16 bytes in front are headroom for a WS
 // frame header, written in place by the netstack transport (kWsSendHeadroom) so it needn't
@@ -346,6 +391,133 @@ static struct {
 static uint8_t (&tx)[2048] = g_tx.data;
 #if defined(LM_NETSTACK)
 static_assert(sizeof g_tx.ws_headroom >= kWsSendHeadroom, "tx needs WS header headroom");
+#endif
+
+// -- Live-control latency trace (LM_CTRL_TRACE builds only) -----------------------------
+// docs/design/live-control.md "Measuring the budget". A measurement build that stamps every
+// stage a control value passes through, in esp_timer microseconds (32-bit):
+//   per received WS message / OSC /probe datagram: the last empty RX-ring poll before its
+//   frame was reaped, the reap, the TLS record decode, dispatch entry, player_mutex
+//   acquired, handled, reply sent;
+//   per effect frame: start (uniforms read: OSC drain + update()), shade end, LED transmit
+//   start and wire done.
+// The rig-side probe (pi/hitl/harness/ctrl_budget_probe.py) arms, stops and pages the rings
+// out over the live WS with three in-band messages that start with 0xFF (never a valid
+// protobuf key, so they cannot collide with the protocol): "\xFFCTR" + 'R' (reset + arm),
+// 'S' (stop), 'D' + u32le offset (one page of the dump). Not in the shipping image.
+#if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
+struct TrRx {
+  uint32_t idx;  // WS: messages dispatched since the reset (1-based); OSC: the /probe value
+  uint8_t kind;  // 1 = WS message, 2 = OSC /probe datagram
+  uint8_t flags;  // bit0 live control, bit1 reply sent, bit2 reply dropped
+  uint16_t len;
+  uint32_t empty_us, reap_us, decoded_us, enter_us, locked_us, handled_us, reply_us;
+};
+struct TrFrame {
+  uint32_t seq, fs_us, fe_us, xs_us, wd_us;
+};
+static constexpr uint32_t kTrRx = 256, kTrFrames = 512;  // powers of two (ring masks)
+static TrRx g_tr_rx[kTrRx];
+static TrFrame g_tr_fr[kTrFrames];
+static volatile uint32_t g_tr_rx_n = 0, g_tr_fr_n = 0;  // entries recorded (rings wrap)
+static volatile bool g_tr_on = false;
+static uint32_t g_tr_idx = 0;
+static TrRx *g_tr_cur = nullptr;  // the WS message being dispatched (loopTask only)
+static volatile uint32_t g_tr_staged_seq = 0;  // frame seq handed to the transmit task
+static portMUX_TYPE g_tr_mux = portMUX_INITIALIZER_UNLOCKED;
+static inline uint32_t tr_now() { return (uint32_t)esp_timer_get_time(); }
+
+static TrRx *tr_rx_new(uint8_t kind) {
+  if (!g_tr_on) return nullptr;
+  TrRx *e = &g_tr_rx[g_tr_rx_n & (kTrRx - 1)];
+  g_tr_rx_n = g_tr_rx_n + 1;
+  memset(e, 0, sizeof *e);
+  e->kind = kind;
+  return e;
+}
+
+static void tr_reply_hook(int outcome) {
+  if (g_tr_cur == nullptr) return;
+  if (outcome == 1) g_tr_cur->flags |= 2;
+  if (outcome == 2) g_tr_cur->flags |= 4;
+  g_tr_cur->reply_us = tr_now();
+  g_tr_cur = nullptr;
+}
+
+static void tr_frame_start(uint32_t seq) {
+  if (!g_tr_on) return;
+  TrFrame *f = &g_tr_fr[seq & (kTrFrames - 1)];
+  taskENTER_CRITICAL(&g_tr_mux);
+  f->seq = seq;
+  f->fs_us = tr_now();
+  f->fe_us = f->xs_us = f->wd_us = 0;
+  g_tr_fr_n = g_tr_fr_n + 1;
+  taskEXIT_CRITICAL(&g_tr_mux);
+}
+
+static void tr_frame_end(uint32_t seq) {
+  TrFrame *f = &g_tr_fr[seq & (kTrFrames - 1)];
+  if (g_tr_on && f->seq == seq) f->fe_us = tr_now();
+}
+
+static void tr_xmit(uint32_t seq, bool done) {
+  TrFrame *f = &g_tr_fr[seq & (kTrFrames - 1)];
+  if (!g_tr_on || f->seq != seq) return;
+  if (done) f->wd_us = tr_now();
+  else f->xs_us = tr_now();
+}
+
+// An in-band trace command (see above); fills tx and returns the reply length, or -1 when
+// `in` isn't one. Dump layout: header "CTR1", u32 now_us, u32 rx_n, u32 fr_n, u32 kTrRx,
+// u32 kTrFrames, u32 sizeof(TrRx), u32 sizeof(TrFrame), then the two rings verbatim; each
+// 'D' page returns u32 total_len, u32 offset, then up to 1536 bytes of that image.
+static int tr_command(const uint8_t *in, size_t len) {
+  if (len < 5 || in[0] != 0xFF || in[1] != 'C' || in[2] != 'T' || in[3] != 'R') return -1;
+  const char op = (char)in[4];
+  if (op == 'R') {
+    g_tr_on = false;
+    g_tr_rx_n = g_tr_fr_n = 0;
+    g_tr_idx = 0;
+    g_tr_cur = nullptr;
+    g_ns_reply_hook = tr_reply_hook;
+    g_tr_on = true;
+  } else if (op == 'S') {
+    g_tr_on = false;
+  } else if (op == 'D' && len >= 9) {
+    g_tr_on = false;
+    uint32_t off;
+    memcpy(&off, in + 5, 4);
+    static uint8_t hdr[32];
+    uint32_t h[8] = {0x31525443u /* "CTR1" */, tr_now(), g_tr_rx_n, g_tr_fr_n, kTrRx,
+                     kTrFrames, (uint32_t)sizeof(TrRx), (uint32_t)sizeof(TrFrame)};
+    memcpy(hdr, h, sizeof hdr);
+    const uint32_t total = sizeof hdr + sizeof g_tr_rx + sizeof g_tr_fr;
+    uint32_t n = 0;
+    memcpy(tx, &total, 4);
+    memcpy(tx + 4, &off, 4);
+    while (off < total && n < 1536) {
+      const uint8_t *src;
+      uint32_t avail;
+      if (off < sizeof hdr) {
+        src = hdr + off;
+        avail = sizeof hdr - off;
+      } else if (off < sizeof hdr + sizeof g_tr_rx) {
+        src = reinterpret_cast<const uint8_t *>(g_tr_rx) + (off - sizeof hdr);
+        avail = sizeof hdr + sizeof g_tr_rx - off;
+      } else {
+        src = reinterpret_cast<const uint8_t *>(g_tr_fr) + (off - sizeof hdr - sizeof g_tr_rx);
+        avail = total - off;
+      }
+      uint32_t k = avail < 1536 - n ? avail : 1536 - n;
+      memcpy(tx + 8 + n, src, k);
+      n += k;
+      off += k;
+    }
+    return (int)(8 + n);
+  }
+  memcpy(tx, "CTRok", 5);
+  return 5;
+}
 #endif
 
 // Sharded upload (proto UploadChunk): each window's payload is appended to this
@@ -419,6 +591,16 @@ static size_t pending_fx_sel_len = 0;
 static bool fx_sel_dirty = false;
 static uint32_t fx_sel_dirty_at = 0;
 static const uint32_t kFxSelSaveQuietMs = 1500;
+// When the last live-control update (set_uniforms / set_crossfade / blend, committed
+// or not) arrived. The coalesced save is held off until the controls have ALSO been
+// quiet for kFxSelSaveQuietMs: a littlefs write blocks this (network) task for tens of
+// ms, so it must never land in the middle of a knob turn — only once the performer
+// lets go (docs/design/live-control.md).
+static uint32_t fx_live_at = 0;
+// Whether the reply dispatch_plain just produced is a best-effort live-control reply
+// (lm_ws_reply_droppable): the transport may drop it instead of blocking on a full
+// send window.
+static bool g_reply_droppable = false;
 
 // STA join in progress: reports success (Improv redirect) / failure.
 static bool sta_joining = false;
@@ -589,6 +771,11 @@ static int g_hw_gpio1 = LED_DATA_PIN_2;
 static volatile int g_hw_req_gpio0 = LED_DATA_PIN;
 static volatile int g_hw_req_gpio1 = LED_DATA_PIN_2;
 static volatile bool g_hw_reconfig_req = false;
+// The reconfigure's outcome, for loop() to log (1 = ok, -1 = failed; written last by
+// the transmit task). The transmit task never formats a log line itself: ROM
+// vsnprintf alone needs ~1.5 KB, three times what its stack is sized for.
+static volatile int g_hw_reconfig_done_gpio0 = 0, g_hw_reconfig_done_gpio1 = 0;
+static volatile int8_t g_hw_reconfig_result = 0;
 
 static uint32_t lut_crc(const LutRecord *r) {
   return esp_rom_crc32_le(0, reinterpret_cast<const uint8_t *>(r),
@@ -859,6 +1046,7 @@ static void queue_fx_sel_save(const uint8_t *data, size_t len) {
 // Called from loop(); one flash write per settled edit, not per slider tick.
 static void flush_fx_sel_save() {
   if (!fx_sel_dirty || millis() - fx_sel_dirty_at < kFxSelSaveQuietMs) return;
+  if (millis() - fx_live_at < kFxSelSaveQuietMs) return;  // controls still moving
   fs_write_file(kEffectSelPath, pending_fx_sel, pending_fx_sel_len);
   fx_sel_dirty = false;
 }
@@ -926,7 +1114,7 @@ static void upload_rewind(void *ctx) { fseek(static_cast<FILE *>(ctx), 0, SEEK_S
 // Replay a persisted frame through the session core on boot — the SAME decode a
 // live upload takes. map/topology can be big, so they stream off flash block by
 // block (no whole-frame buffer); everything else (effect, selection, uniforms)
-// is control-sized and decodes in one pass through rx.
+// is control-sized and decodes in one pass through a staged copy (rx_stage_get).
 static void fs_replay(const char *path) {
   FILE *f = fs_open(path, "rb");
   if (f == nullptr) return;
@@ -946,11 +1134,15 @@ static void fs_replay(const char *path) {
     lm_decode_upload_stream(arm, upload_refill, upload_rewind, f, (size_t)n, tx, sizeof tx);  // reply discarded
     Log().printf("littlefs: restored %s (%ld B, streamed)\n", path, n);
   } else if ((size_t)n <= kRxCap) {
-    size_t got = fread(rx, 1, (size_t)n, f);
+    uint8_t *buf = rx_stage_get((size_t)n);
+    size_t got = buf ? fread(buf, 1, (size_t)n, f) : 0;
     if (got == (size_t)n) {
-      lm_player_handle(rx, got, now, now, tx, sizeof tx);  // reply discarded
+      lm_player_handle(buf, got, now, now, tx, sizeof tx);  // reply discarded
       Log().printf("littlefs: restored %s (%ld B)\n", path, n);
+    } else if (buf == nullptr) {
+      Log().printf("littlefs: no heap to restore %s (%ld B)\n", path, n);
     }
+    rx_stage_put(buf);
   }
   fclose(f);
   rx_len = 0;
@@ -1118,13 +1310,62 @@ static void poll_after_message() {
 // persist it if it's a state-changing upload (map/topology/effect/selection), and run the
 // post-message hw pollers. Shared by ws_compute_reply and the EFFECT-upload final step (a
 // reassembled submit_effect frame is a normal message). Returns the reply length, 0, or -1.
+// Diagnostics for the status line: the longest wait for player_mutex (the render task
+// holds it across update+shade) and the longest lm_player_handle call, in us, since the
+// last status line.
+static uint32_t g_mtx_wait_max_us = 0;
+static uint32_t g_handle_max_us = 0;
+
 static int dispatch_plain(const uint8_t *msg, size_t len) {
   int64_t now = (int64_t)millis();
+  // Video frames (ClientMessage field 28 = set_texture: tag bytes E2 01) take the
+  // lock-free ingest path: decoded + queued for the render task's next frame
+  // boundary without waiting for player_mutex. -2/-3: not one / can't queue it ->
+  // the normal locked dispatch below.
+  if (tex_mutex != nullptr && len >= 2 && msg[0] == 0xE2 && msg[1] == 0x01) {
+    xSemaphoreTake(tex_mutex, portMAX_DELAY);
+    int32_t n = lm_tex_ingest(msg, len, now, tx, sizeof tx);
+    xSemaphoreGive(tex_mutex);
+    if (n >= 0) return (int)n;
+  }
+  uint32_t t0 = (uint32_t)micros();
   xSemaphoreTake(player_mutex, portMAX_DELAY);
+  uint32_t t1 = (uint32_t)micros();
+#if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
+  if (g_tr_cur) g_tr_cur->locked_us = tr_now();
+#endif
   int32_t n = lm_player_handle(msg, len, now, now, tx, sizeof tx);
+  uint32_t t2 = (uint32_t)micros();
   xSemaphoreGive(player_mutex);
+  if (t1 - t0 > g_mtx_wait_max_us) g_mtx_wait_max_us = t1 - t0;
+  if (t2 - t1 > g_handle_max_us) g_handle_max_us = t2 - t1;
+#if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
+  if (g_tr_cur) {
+    g_tr_cur->handled_us = tr_now();
+    if (lm_last_was_live_control()) g_tr_cur->flags |= 1;
+  }
+#endif
   if (n > 0) persist_if_upload(msg, len, tx, (size_t)n);
   poll_after_message();
+  g_reply_droppable = false;
+  if (lm_last_was_live_control()) {
+    fx_live_at = millis();
+    // A seq'd live update (the live-control channel): answer with the tiny ControlAck
+    // instead of the legacy playback_state / welcome (persistence above already keyed
+    // on the legacy reply). The ack — and a legacy set_uniforms' playback_state, which
+    // no client awaits — may be dropped by the transport when its send window is full
+    // rather than stall the receive path behind a blocking write.
+    const bool legacy_uniforms = lm_envelope_arm(msg, len) == kArmSetUniforms;
+    if (n > 0) {
+      int32_t a = lm_take_control_ack(tx, sizeof tx);
+      if (a > 0) {
+        n = a;
+        g_reply_droppable = true;
+      } else {
+        g_reply_droppable = legacy_uniforms;
+      }
+    }
+  }
   return (int)n;
 }
 
@@ -1176,11 +1417,11 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
   upload_active = false;
 
   // EFFECT (kind 2): the reassembled frame is an ordinary submit_effect message,
-  // not a stream-decode-to-file target like map/topology. Load it back into rx
+  // not a stream-decode-to-file target like map/topology. Load it back into one buffer
   // and dispatch it in-memory through the shared handler, which validates it and
   // (via persist_if_upload) writes the raw .fxb to kEffectPath. Sharding it this
   // way is purely a TRANSPORT concern — it lets a large effect fit the BLE
-  // frame cap; the handler still needs the whole frame (<= kRxCap) in rx.
+  // frame cap; the handler still needs the whole frame (<= kRxCap) in one buffer.
   if (upload_kind == 2) {
     if (upload_total > kRxCap) {
       remove(kUploadTmp);
@@ -1188,11 +1429,16 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
     }
     FILE *ef = fs_open(kUploadTmp, "rb");
     if (ef == nullptr) return -1;
-    size_t rn = fread(rx, 1, upload_total, ef);
+    uint8_t *buf = rx_stage_get(upload_total);
+    size_t rn = buf ? fread(buf, 1, upload_total, ef) : 0;
     fclose(ef);
     remove(kUploadTmp);
-    if (rn != upload_total) return -1;
-    return dispatch_plain(rx, rn);
+    // dispatch_plain persists the frame (persist_if_upload) before returning,
+    // so the stage is free to go after it.
+    int32_t r = rn == upload_total ? dispatch_plain(buf, rn) : -1;
+    if (buf == nullptr) Log().printf("[upload] no heap to stage the %u B effect\n", (unsigned)upload_total);
+    rx_stage_put(buf);
+    return r;
   }
 
   // Map/topology: decode the reassembled frame straight off flash, then persist
@@ -1269,11 +1515,53 @@ int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
 // The netstack transport's WS pump calls this: dispatch the received message IN PLACE in
 // the transport's reassembly buffer (g_ws_rx / the BLE frame — never copied into rx),
 // compute the reply into the shared tx, and hand back a pointer to it.
+static bool live_post(const uint8_t *in, size_t len);  // the live-move mailbox (below)
+
 int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
+  g_reply_droppable = false;
+#if defined(LM_CTRL_TRACE)
+  {
+    int t = tr_command(in, len);
+    if (t >= 0) {
+      *reply = tx;
+      return t;
+    }
+    g_tr_idx++;
+    g_tr_cur = tr_rx_new(1);
+    if (g_tr_cur) {
+      g_tr_cur->idx = g_tr_idx;
+      g_tr_cur->len = (uint16_t)(len > 0xffff ? 0xffff : len);
+      g_tr_cur->empty_us = g_ns_rx_stamps.data_empty_us;
+      g_tr_cur->reap_us = g_ns_rx_stamps.data_reap_us;
+      g_tr_cur->decoded_us = g_ns_rx_stamps.decoded_us;
+      g_tr_cur->enter_us = tr_now();
+    }
+  }
+#endif
+  // A live move (seq'd, uncommitted set_uniforms): stash it for the next frame and ack
+  // now — never wait behind a render frame for the player mutex (lm_live_post).
+  if (live_post(in, len)) {
+    fx_live_at = millis();
+    int a = lm_take_control_ack(tx, sizeof tx);
+#if defined(LM_CTRL_TRACE)
+    if (g_tr_cur) {
+      g_tr_cur->handled_us = tr_now();
+      g_tr_cur->flags |= 1;
+    }
+#endif
+    if (a > 0) {
+      g_reply_droppable = true;
+      *reply = tx;
+      return a;
+    }
+    return 0;
+  }
   int n = ws_compute_reply(in, len);
   *reply = tx;
   return n;
 }
+
+bool lm_ws_reply_droppable() { return g_reply_droppable; }
 
 // Player-protocol BLE transport bridge (improv_ble_netstack.cpp's player_ble_poll
 // calls this): identical contract to lm_ws_dispatch — one received frame in, the
@@ -1462,6 +1750,12 @@ static void ws_poll() {
 // Poll cadence for the two STATIC modes (counting probe, idle heartbeat):
 // they don't chase a frame clock, so a slow tick keeps CPU/DMA use low.
 static const uint32_t kStaticPollMs = 100;
+// Poll cadence while the FX debugger holds the engine paused.
+static const uint32_t kFxDbgHoldPollMs = 20;
+
+#if defined(LM_NETSTACK)
+static void osc_drain_frame();  // native OSC on the netstack build (below)
+#endif
 
 // Compute + push (at most) one frame. Player reads happen under player_mutex
 // (the core is single-threaded); the long RMT strip transmit runs OUTSIDE the
@@ -1469,6 +1763,34 @@ static const uint32_t kStaticPollMs = 100;
 // how long the render task should sleep before the next wake — for the mapping
 // pattern that's the time to the NEXT frame boundary, so frames land on the
 // pattern clock regardless of loop() load.
+// -- Frame cadence telemetry (the "[fx] … ft=" fields; HITL wifi_cadence gate) --
+// Per ~1 s window: the interval between consecutive effect-frame render starts and
+// between consecutive strip transmit (wire-out) starts, in µs, plus the largest
+// effect time step. Written by the render / transmit tasks (single core, plain
+// stores; a torn read of a stat costs one window's accuracy, nothing else), read +
+// cleared by the render task when it prints the [fx] line. Lets a test see a render
+// or wire stall from the device side; the logic analyzer sees the wire itself.
+struct CadenceWin {
+  uint32_t n, min_us, max_us;
+  uint64_t sum_us;
+  void add(uint32_t us) {
+    if (n == 0 || us < min_us) min_us = us;
+    if (us > max_us) max_us = us;
+    sum_us += us;
+    n++;
+  }
+  void clear() { n = min_us = max_us = 0, sum_us = 0; }
+  uint32_t mean() const { return n ? (uint32_t)(sum_us / n) : 0; }
+};
+static CadenceWin g_cad_render, g_cad_wire;
+static int64_t g_wire_last_us = 0;   // last effect-frame transmit start (xmit task)
+static uint32_t g_fx_dt_max_ms = 0;  // largest effect time step this window
+static uint32_t g_fx_delay_min = 0xffffffffu, g_fx_delay_max = 0;  // render sleeps this window
+// Last effect frame's render-start time, 0 when the previous frame wasn't an effect
+// frame (so the next one starts its time base fresh instead of seeing a "gap").
+static uint32_t s_fx_last_ms = 0;
+static int64_t s_fx_frame_start_us = 0;  // this effect frame's render start (pacing)
+
 static uint32_t render_once() {
   static uint32_t last_shown_frame = 0xffffffff;
   static bool was_active = false;
@@ -1511,10 +1833,22 @@ static uint32_t render_once() {
   // negligible: perf-monitoring.md). The built-in patterns aren't autoscaled.
   bool perf_on = lm_perf_mode() != 0;
   bool fx_frame_rendered = false;
+  bool fx_dbg_step = false;  // this frame is an FX debugger step
   uint32_t perf_seq = 0, perf_update_c = 0, perf_shade_c = 0, perf_frame_c = 0;
   uint32_t perf_led_count = 0;
 
   xSemaphoreTake(player_mutex, portMAX_DELAY);
+  g_render_in_frame = true;
+  {
+    // millis() was seen to step back ~230 s on a c6 mid-stream; keep the shared time
+    // base and the queued video present times continuous across such a step.
+    if (tex_mutex != nullptr) xSemaphoreTake(tex_mutex, portMAX_DELAY);
+    int64_t clock_step = lm_clock_observe((int64_t)millis());
+    if (tex_mutex != nullptr) xSemaphoreGive(tex_mutex);
+    if (clock_step != 0)
+      Log().printf("[clock] millis() stepped %lld ms; time base + video queue shifted\n",
+                   (long long)clock_step);
+  }
   // An active mapping capture (the gray-code flashing) and the counting probe
   // are deliberate, transient device takeovers for the phone's camera, so they
   // MUST preempt whatever show is playing. A persisted effect resumed on boot
@@ -1522,6 +1856,9 @@ static uint32_t render_once() {
   // mapping pattern, so "start mapping" never visibly flashed the strip
   // (FUG-62). Check them first; when neither is active they fall through to the
   // effect / idle branches below.
+  // A group-capture pattern with stop_after_ms ends by itself (a phone that
+  // died mid-capture must not leave the fixture flashing).
+  lm_pattern_expire((int64_t)millis());
   if (lm_pattern_timing(&epoch_ms, &bit_period_us, &cycle_frames, &led_count)) {
     // Integer pattern clock — no f64. Elapsed ms since the epoch, then frames =
     // elapsed_us / period_us (64-bit product so it can't overflow).
@@ -1602,17 +1939,33 @@ static uint32_t render_once() {
     show = true;
     was_active = true;
     last_shown_frame = 0xffffffff;
+  } else if (lm_fx_active() && lm_fxdbg_hold(millis())) {
+    // FX debugger pause (fx_debug_control): the frame clock is frozen and nothing
+    // renders or transmits — the strip latches the last frame. Re-check soon for
+    // a step / resume / lease expiry.
+    next_delay_ms = kFxDbgHoldPollMs;
   } else if (lm_fx_active()) {
     // User effect (.fxb shader): run update() once, then shade() per LED over the
     // stored map position. Bounded execution guards each invocation (instruction budget + wall-time
-    // deadline flag); a cancelled shade holds black for that LED. ~30 fps.
+    // deadline flag) — a correctness guard against a runaway program, never a speed limit: a
+    // cancelled shade keeps that LED's previous colour (no black flash). The frame rate is
+    // whatever the autoscaler picks, or as fast as the effect can go (never parked for speed).
     static uint32_t fx_frame = 0;
-    static uint32_t fx_last_ms = 0;
     static float fx_time_s = 0.0f;
+    static int64_t fx_last_us = 0;
     uint32_t now = millis();
-    uint32_t dt_ms = now - fx_last_ms;
-    if (fx_last_ms == 0 || dt_ms > 200) dt_ms = 33;  // fresh entry / long gap
-    fx_last_ms = now;
+    int64_t now_us = esp_timer_get_time();
+    // Effect time follows the wall clock frame to frame — whatever the interval
+    // (a lagging effect, a late frame) — so it never jumps or slips. It used to
+    // substitute 33 ms for any gap over 200 ms, which slowed a < 5 fps effect's
+    // animation and made a stalled frame lose time. Only a fresh entry (the
+    // previous frame wasn't an effect frame) starts with a nominal 33 ms step.
+    uint32_t dt_ms = s_fx_last_ms == 0 ? 33 : now - s_fx_last_ms;
+    if (s_fx_last_ms != 0 && fx_last_us != 0) g_cad_render.add((uint32_t)(now_us - fx_last_us));
+    s_fx_last_ms = now == 0 ? 1 : now;
+    fx_last_us = now_us;
+    s_fx_frame_start_us = now_us;
+    if (dt_ms > g_fx_dt_max_ms) g_fx_dt_max_ms = dt_ms;
     float dt_s = (float)dt_ms / 1000.0f;
     fx_time_s += dt_s;
     // A shared time base (set_time_base, multi-fixture) pins effect time to a
@@ -1628,10 +1981,28 @@ static uint32_t render_once() {
     // polls that flag and unwinds to a timeout branch. lm_fx_update clears the
     // flag at the start of each frame. The instruction budget is the primary
     // guard and is fully effective without the timer.
+    // A debugger step (paused engine) renders at the step's exact time / dt.
+    fx_dbg_step = lm_fxdbg_step(&fx_time_s, &dt_s);
     uint32_t n = lm_map_len();
     if (n > g_led_cap) n = g_led_cap;
     if (n > 0) xmit_len = n;  // drive exactly the mapped LEDs
     uint32_t this_seq = fx_frame++;
+    // Video frames scheduled for a present time (SetTexture.present_at_ms) land
+    // in the texture now, at a frame boundary, before update()/shade() read it.
+    if (tex_mutex != nullptr) xSemaphoreTake(tex_mutex, portMAX_DELAY);
+    lm_tex_present(now);
+    if (tex_mutex != nullptr) xSemaphoreGive(tex_mutex);
+    bool ft_due = false;
+#if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
+    tr_frame_start(this_seq);
+#endif
+#if defined(LM_NETSTACK)
+    // Control input that arrived since the last frame (OSC: newest value per address; the
+    // WS live channel's mailbox), applied at the frame boundary before update() reads the
+    // uniforms. Outside the cycle span below: it is input handling, not the effect's
+    // compute, and it runs mailbox code the effect never touches (cold in the flash cache).
+    osc_drain_frame();
+#endif
     // Cycle-counter span around update() (perf-monitoring.md: two CSR reads,
     // negligible against the per-frame float ops).
     uint32_t c_frame_start = esp_cpu_get_cycle_count();
@@ -1650,7 +2021,8 @@ static uint32_t render_once() {
           if (lm_fx_shade(i, xyz[0], xyz[1], xyz[2], rgb)) {
             leds[i] = cc_apply(rgb);
           } else {
-            leds[i] = Rgb::Black;  // a cancelled/timed-out shade
+            // A cancelled/timed-out shade (the bounded-exec guard cut a runaway
+            // invocation short): keep the LED's previous colour rather than blanking it.
             shade_bad++;
           }
         } else {
@@ -1667,23 +2039,46 @@ static uint32_t render_once() {
       static uint32_t fx_log_ms = 0;
       if (now - fx_log_ms >= 1000) {
         fx_log_ms = now;
-        static const char *kOc[] = {"ok", "budget", "timeout"};
+        static const char *kOc[] = {"ok", "budget", "timeout", "fault"};
         uint32_t oc = lm_fx_last_update_outcome();
         Log().printf("[fx] t=%.2f frame=%u update=%s shade_cancelled=%u/%u\n",
-                     fx_time_s, this_seq, kOc[oc <= 2 ? oc : 0], shade_bad, n);
+                     fx_time_s, this_seq, kOc[oc <= 3 ? oc : 0], shade_bad, n);
+        ft_due = true;  // the cadence line goes out after the timed span (below)
       }
     } else {
-      // Effect active but not runnable (shouldn't happen) — hold black.
-      fill_rgb(leds, g_led_cap, Rgb::Black);
+      // Effect active but no deck loaded (shouldn't happen): hold the last frame.
     }
     {
       uint32_t c_frame_end = esp_cpu_get_cycle_count();
+#if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
+      tr_frame_end(this_seq);
+      g_tr_staged_seq = this_seq;
+#endif
       // Wrap-safe deltas (the cycle counter is free-running 32-bit; unsigned
       // subtraction handles the ~27 s wrap at 160 MHz for one frame's span).
       perf_seq = this_seq;
       perf_update_c = c_update_end - c_update_start;
       perf_shade_c = c_frame_end - c_update_end;   // shade + buffer writeout
       perf_frame_c = c_frame_end - c_frame_start;  // update + shade (excl show)
+      if (ft_due) {
+        // Cadence telemetry (the HITL wifi_cadence gate), OUTSIDE the timed span so
+        // fx_bench's frame cycles are unchanged: render-start and wire-out-start
+        // interval count:min/mean/max (µs) over the window, the largest effect time
+        // step (ms), the live rate, and the render sleeps (ms) the window used.
+        Log().printf("[ft] r%u:%u/%u/%u w%u:%u/%u/%u dt%u fps=%u sl=%u-%u\n",
+                     (unsigned)g_cad_render.n, (unsigned)g_cad_render.min_us,
+                     (unsigned)g_cad_render.mean(), (unsigned)g_cad_render.max_us,
+                     (unsigned)g_cad_wire.n, (unsigned)g_cad_wire.min_us,
+                     (unsigned)g_cad_wire.mean(), (unsigned)g_cad_wire.max_us,
+                     (unsigned)g_fx_dt_max_ms, (unsigned)lm_fps_current_fps(),
+                     (unsigned)(g_fx_delay_min == 0xffffffffu ? 0 : g_fx_delay_min),
+                     (unsigned)g_fx_delay_max);
+        g_fx_delay_min = 0xffffffffu;
+        g_fx_delay_max = 0;
+        g_cad_render.clear();
+        g_cad_wire.clear();
+        g_fx_dt_max_ms = 0;
+      }
       perf_led_count = n;
       fx_frame_rendered = true;
     }
@@ -1712,6 +2107,8 @@ static uint32_t render_once() {
       }
     }
   }
+  if (!fx_frame_rendered) s_fx_last_ms = 0;  // the next effect frame starts fresh
+  g_render_in_frame = false;
   xSemaphoreGive(player_mutex);
 
   // Hand the frame to the async transmit task (see led_show_async): the render
@@ -1738,27 +2135,65 @@ static uint32_t render_once() {
     // longer channel is the wire time — see led_store_begin.)
     wire_leds = count0 > count1 ? count0 : count1;
     led_show_async(fx_frame_rendered, count0, count1, use_frame_order ? frame_order : nullptr);
-    if (fx_frame_rendered) show_c = g_show_c;
+    if (fx_frame_rendered) show_c = g_show_us * (160000000u / 1000000u);
   }
 
   // An effect frame: feed its cost to the framerate autoscaler (FUG-82) for the
   // next sleep, and — only while a perf mode is active — push the Tier-0 sample
   // into the perf ring (drained by the phone via get_perf_report).
-  if (fx_frame_rendered) {
+  if (fx_dbg_step) {
+    // A debugger step isn't a show frame: keep it out of the autoscaler / perf
+    // ring and come straight back for the next step (or the hold).
+    next_delay_ms = 1;
+  } else if (fx_frame_rendered) {
     // Render and transmit OVERLAP (async show), so the frame-rate limiter is
     // whichever is longer, not their sum. perf_frame_c already spans BOTH decks'
     // update + shade and the crossfade blend (lm_fx_update / lm_fx_shade drive
     // every rendering deck), so a two-deck show is costed as one frame.
     uint32_t period_c = perf_frame_c > show_c ? perf_frame_c : show_c;
-    uint32_t cost_us = period_c / (160000000u / 1000000u);  // 160 cycles/us
+    // The pacing cost is WALL time since this frame started (update + shade + staging,
+    // incl. any wait for the previous transmit and any preemption) or the transmit
+    // span, whichever is longer: sleep = period − that lands the next frame start one
+    // period after this one, whatever else the core did meanwhile. (CPU-cycle spans
+    // miss the waits, so frame starts drifted with background load.)
+    int64_t fx_elapsed_us = esp_timer_get_time() - s_fx_frame_start_us;
+    uint32_t show_us = g_show_us;
+    uint32_t cost_us = fx_elapsed_us > (int64_t)show_us ? (uint32_t)fx_elapsed_us : show_us;
     xSemaphoreTake(player_mutex, portMAX_DELAY);
     // Sleep = target period − work (≥ the controller's minimum yield), so frame
-    // starts land one period apart. Also parks the effect + latches an
-    // app-notify if the floor / pinned rate proved unachievable.
+    // starts land one period apart. An effect that can't hold the floor / pinned
+    // rate is never parked: it runs as fast as it can, and after an overrunning
+    // frame the sleep is the bounded-duty-cycle slice (≥ 4 ms, ≥ 20% of the wall
+    // clock) so loopTask (netstack + control), the IMU sampler and TLS stay serviced.
     // With the strip: its wire floor (28.8 us per LED of the longest channel +
     // the latch) caps the ladder at what the wire can carry, and its length
-    // lowers the abort floor past 512 LEDs (heavy effects run slower, not parked).
-    next_delay_ms = lm_fps_on_frame(cost_us, wire_leds, perf_led_count);
+    // lowers the autoscaler floor past 512 LEDs (a steady slower rung).
+    //
+    // The frame's render COMPUTE (update + shade + blend) buys the network its
+    // guaranteed share: every frame sleeps >= 25% of it (render <= 80% of the
+    // CPU), and a rung that can't hold compute + share steps down (lm_fps_on_frame).
+    // The netstack loop runs one priority below render and only gets these sleeps:
+    // with just the 1-3 ms a near-budget frame left of its period, a NEW client's
+    // TLS handshake, DHCP and the Wi-Fi join starved (1.12.3 field: players stayed
+    // unreachable under such an effect, at every boot too since it persists).
+    uint32_t cpu_us = perf_frame_c / (160000000u / 1000000u);
+    uint32_t share_ms = lm_fps_net_share_ms(cpu_us);
+    next_delay_ms = lm_fps_on_frame(cost_us, cpu_us, wire_leds, perf_led_count);
+    {
+      // The autoscaler picked the rung (and, for a frame that overran its period, the
+      // bounded-duty-cycle sleep). Within the period, sleep to the next frame START:
+      // period − the wall time this frame has already taken — but never less than the
+      // network's share of this frame's compute. The transmit overlaps the next frame's
+      // render (the next stage waits for it), so it shortens nothing here.
+      uint32_t period_us = lm_fps_budget_cycles() / (160000000u / 1000000u);
+      if (cost_us <= period_us && fx_elapsed_us >= 0 && (uint64_t)fx_elapsed_us < period_us) {
+        uint32_t want_us = period_us - (uint32_t)fx_elapsed_us;
+        next_delay_ms = (want_us + 500) / 1000;
+        if (next_delay_ms < share_ms) next_delay_ms = share_ms;
+      }
+    }
+    if (next_delay_ms < g_fx_delay_min) g_fx_delay_min = next_delay_ms;
+    if (next_delay_ms > g_fx_delay_max) g_fx_delay_max = next_delay_ms;
     if (perf_on) {
       // Overrun = missed the LIVE target's budget (cpu_hz / current_fps).
       bool overran = period_c > lm_fps_budget_cycles();
@@ -1820,10 +2255,78 @@ static void osc_task(void *) {
   }
 }
 #else
-// TODO(netstack-osc): the heapless stack has no UDP receive path yet, so native OSC input
-// (uniform_bench / video_stream) is disabled on this build and setup() doesn't start the
-// task. Add a ns UDP listener + feed lm_osc_ingest to re-enable. Everything else (WS
-// player, effects, render) is unaffected.
+// Netstack build: no sockets or task — the heapless stack's UDP receive path hands every
+// datagram for udp/9000 to lm_netstack_osc_rx (netstack_transport.cpp), on the network
+// task. It is only STASHED (lm_osc_post: parse + latest value per address, no VM work);
+// the render task applies what's waiting at the next frame boundary (osc_drain_frame), so
+// a controller sending faster than the device renders never builds a queue
+// (docs/design/live-control.md). The two meet in a short critical section.
+// The mailbox itself (~730 B) is heap-allocated on the FIRST datagram, not static:
+// static RAM comes straight out of the boot heap that sizes the LED buffers
+// (led_store_begin -> board.max_leds), so OSC must not cost a byte until it is used.
+static portMUX_TYPE g_osc_mux = portMUX_INITIALIZER_UNLOCKED;
+
+void lm_netstack_osc_rx(const uint8_t *data, size_t len) {
+  if (len == 0 || len > kOscRxCap) return;
+  if (!lm_osc_mailbox_bound()) {  // only this (network) task binds it
+    const size_t bytes = lm_osc_mailbox_bytes();
+    void *mem = heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!mem) return;  // heap exhausted right now: drop this datagram, retry on the next
+    taskENTER_CRITICAL(&g_osc_mux);
+    const bool bound = lm_osc_mailbox_bind(static_cast<uint8_t *>(mem));
+    taskEXIT_CRITICAL(&g_osc_mux);
+    if (!bound) {
+      free(mem);
+      return;
+    }
+    Log().printf("[osc] first datagram on udp/%u (mailbox %u B)\n", kOscPort, (unsigned)bytes);
+  }
+#if defined(LM_CTRL_TRACE)
+  // The budget probe's counter: "/probe\0\0" ",f\0\0" <float32 BE>, one message per datagram.
+  TrRx *e = nullptr;
+  if (len == 16 && memcmp(data, "/probe\0\0,f\0\0", 12) == 0 && (e = tr_rx_new(2)) != nullptr) {
+    uint32_t b = (uint32_t)data[12] << 24 | (uint32_t)data[13] << 16 | (uint32_t)data[14] << 8 |
+                 data[15];
+    float v;
+    memcpy(&v, &b, 4);
+    e->idx = (uint32_t)v;
+    e->len = (uint16_t)len;
+    e->empty_us = g_ns_rx_stamps.l3_empty_us;
+    e->reap_us = g_ns_rx_stamps.l3_reap_us;
+    e->enter_us = tr_now();
+  }
+#endif
+  taskENTER_CRITICAL(&g_osc_mux);
+  lm_osc_post(data, len);
+  taskEXIT_CRITICAL(&g_osc_mux);
+#if defined(LM_CTRL_TRACE)
+  if (e) e->handled_us = tr_now();
+#endif
+}
+
+// Set (under g_osc_mux) when lm_live_post stashed a move; the frame boundary only calls
+// into the mailbox then, so an idle knob costs every frame one flag test, not a call into
+// cold mailbox code. (A stale true — the locked path or an effect load already emptied the
+// mailbox — costs one empty drain.)
+static bool g_live_waiting = false;
+
+static void osc_drain_frame() {
+  taskENTER_CRITICAL(&g_osc_mux);
+  lm_osc_drain();
+  if (g_live_waiting) {
+    g_live_waiting = false;
+    lm_live_drain();  // the WS live channel's moves (lm_live_post), same boundary
+  }
+  taskEXIT_CRITICAL(&g_osc_mux);
+}
+
+static bool live_post(const uint8_t *in, size_t len) {
+  taskENTER_CRITICAL(&g_osc_mux);
+  uint32_t seq = lm_live_post(in, len);
+  if (seq != 0) g_live_waiting = true;
+  taskEXIT_CRITICAL(&g_osc_mux);
+  return seq != 0;
+}
 #endif
 
 // The render task: forever, render one frame then sleep until the next is due.
@@ -1841,17 +2344,32 @@ static void xmit_task(void *) {
     if (g_hw_reconfig_req) {
       int ng0 = g_hw_req_gpio0, ng1 = g_hw_req_gpio1;
       g_hw_reconfig_req = false;
-      if (ws2812_reconfigure(ng0, ng1)) {
+      const bool ok = ws2812_reconfigure(ng0, ng1);
+      if (ok) {
         g_hw_gpio0 = ng0;
         g_hw_gpio1 = ng1;
-        Log().printf("[hw] RMT reconfigured to gpio=%d/%d\n", ng0, ng1);
-      } else {
-        Log().printf("[hw] RMT reconfigure to gpio=%d/%d FAILED\n", ng0, ng1);
       }
+      g_hw_reconfig_done_gpio0 = ng0;
+      g_hw_reconfig_done_gpio1 = ng1;
+      g_hw_reconfig_result = ok ? 1 : -1;  // logged by loop(), see the global's note
     }
-    uint32_t c0 = g_show_timed ? esp_cpu_get_cycle_count() : 0;
+    int64_t t0 = g_show_timed ? esp_timer_get_time() : 0;
+    if (g_show_timed) {  // an effect frame: its wire-out start feeds the cadence stats
+      int64_t w = esp_timer_get_time();
+      if (g_wire_last_us != 0) g_cad_wire.add((uint32_t)(w - g_wire_last_us));
+      g_wire_last_us = w;
+    } else {
+      g_wire_last_us = 0;
+    }
+#if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
+    const uint32_t tr_seq = g_tr_staged_seq;
+    if (g_show_timed) tr_xmit(tr_seq, false);
+#endif
     ws2812_send();
-    if (g_show_timed) g_show_c = esp_cpu_get_cycle_count() - c0;
+    if (g_show_timed) g_show_us = (uint32_t)(esp_timer_get_time() - t0);
+#if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
+    if (g_show_timed) tr_xmit(tr_seq, true);
+#endif
     xSemaphoreGive(xmit_done);
   }
 }
@@ -1918,10 +2436,12 @@ static void render_task(void *) {
 // wss falls back to polling get_perf_report. TODO(hw): validate the push cadence
 // on-device and, if wss push is wanted, stash the httpd req/fd for async send.
 static void emit_perf_report_if_due() {
-  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  // Plain word reads (written by the loop task's own set_perf dispatch): no lock. This
+  // runs every loop pass, and a blocking take here parked loopTask for the rest of every
+  // render frame — the RX ring went unpolled for a whole frame (docs/design/live-control.md
+  // "Measuring the budget": ~50 ms of every control message's latency under a heavy effect).
   uint32_t mode = lm_perf_mode();
   uint32_t interval = lm_perf_interval_ms();
-  xSemaphoreGive(player_mutex);
   if (mode == 0 || interval == 0) return;  // OFF or poll-only
 #if defined(LM_NETSTACK)
   if (!netstack_ws_open()) return;  // push over the active TLS/WS
@@ -1932,9 +2452,10 @@ static void emit_perf_report_if_due() {
   static uint32_t last_push = 0;
   uint32_t nowm = millis();
   if (nowm - last_push < interval) return;
+  // Try-lock, never a wait: a render frame in progress just defers the push to a later
+  // loop pass (the interval clock only restarts once it went out).
+  if (xSemaphoreTake(player_mutex, 0) != pdTRUE) return;
   last_push = nowm;
-
-  xSemaphoreTake(player_mutex, portMAX_DELAY);
   int32_t n = lm_perf_build_report(tx, sizeof tx);
   xSemaphoreGive(player_mutex);
 #if defined(LM_NETSTACK)
@@ -1944,20 +2465,42 @@ static void emit_perf_report_if_due() {
 #endif
 }
 
-// -- fps autoscaler: unsolicited abort notification (FUG-82) ------------------
-// When the autoscaler can't hold even 25 fps (or an app-pinned rate) it parks the
-// effect on the render task and latches a notify; ship fps_state{aborted=true}
-// over the open session so the app can tell the user. Same push path as the perf
-// report (netstack: the TLS/WS session; vendor: the plain ws:81 socket). A client
-// that misses it sees the effect inactive in the next playback_state.
-static void emit_fps_abort_if_pending() {
+// -- FX debugger lease (fxdbg.rs) ----------------------------------------------
+// A paused engine auto-resumes when its client goes away: with no session open,
+// the pause lapses a few seconds after the last debugger message (the hold lease
+// covers every other case), so a fixture never stays frozen.
+static void poll_fx_debugger() {
+#if defined(LM_NETSTACK)
+  bool open = netstack_ws_open();
+#else
+  bool open = ws_state == WsState::kOpen;
+#endif
   xSemaphoreTake(player_mutex, portMAX_DELAY);
-  bool pending = lm_fps_take_abort_notify();
-  uint32_t fps = pending ? lm_fps_current_fps() : 0;
-  int32_t n = pending ? lm_fps_build_state(tx, sizeof tx, /*aborted=*/true) : 0;
+  lm_fxdbg_poll(millis(), open);
   xSemaphoreGive(player_mutex);
-  if (!pending) return;
-  Log().printf("[fps] effect parked: can't hold %u fps with 5%% headroom\n", (unsigned)fps);
+}
+
+// -- fps autoscaler: unsolicited lag advisory (FUG-82) -------------------------
+// An effect that can't hold even the floor (or an app-pinned rate) is NOT parked:
+// it keeps rendering as fast as it can. When it starts (or stops) lagging, ship one
+// fps_state{lagging, current_fps = achieved} over the open session so the app can
+// show the real rate — an advisory, nothing is stopped. Same push path as the perf
+// report (netstack: the TLS/WS session; vendor: the plain ws:81 socket).
+static void emit_fps_lag_if_changed() {
+  // Every loop pass: try-lock, never a wait (see emit_perf_report_if_due). The notify is
+  // latched, so a busy render frame just defers it to a later pass.
+  if (xSemaphoreTake(player_mutex, 0) != pdTRUE) return;
+  bool lagging = false;
+  bool changed = lm_fps_take_lag_notify(&lagging);
+  uint32_t fps = changed ? lm_fps_current_fps() : 0;
+  int32_t n = changed ? lm_fps_build_state(tx, sizeof tx) : 0;
+  xSemaphoreGive(player_mutex);
+  if (!changed) return;
+  if (lagging)
+    Log().printf("[fps] effect lagging: running at %u fps, below its target (still playing)\n",
+                 (unsigned)fps);
+  else
+    Log().printf("[fps] effect back on its target rate (%u fps)\n", (unsigned)fps);
 #if defined(LM_NETSTACK)
   if (n > 0 && netstack_ws_open()) netstack_ws_send(tx, (size_t)n);
 #else
@@ -2510,6 +3053,114 @@ static void led_store_begin() {
                (unsigned)led_buffer_bytes(cap, dma), (unsigned)heap, (unsigned)g_led_max_heap);
 }
 
+#if defined(LM_NETSTACK)
+// -- Wi-Fi rejoin policy glue (wifi_ffi.rs <-> netstack_transport) ------------------
+static NetstackWifiPolicy to_ns(const LmWifiPolicy &p) {
+  return NetstackWifiPolicy{p.mode, p.scan_cap_s, p.interval_s, p.decay_after_h,
+                            p.sparse_interval_s};
+}
+static uint32_t g_wifi_pol_gen = 0;
+static uint32_t g_wifi_unseen_saved = 0;
+
+static void wifi_policy_begin() {
+  uint8_t rec[18];
+  size_t n = prefs.getBytesLength("wifi_pol") == sizeof rec ? prefs.getBytes("wifi_pol", rec, sizeof rec) : 0;
+  LmWifiPolicy p;
+  lm_wifi_policy_seed(n ? rec : nullptr, n, &p);
+  g_wifi_pol_gen = lm_wifi_policy_gen();
+  NetstackWifiPolicy np = to_ns(p);
+  netstack_set_wifi_policy(&np);
+  g_wifi_unseen_saved = prefs.getUInt("wifi_unseen", 0);
+  netstack_set_unseen_base(g_wifi_unseen_saved);
+  static const char *kModes[] = {"auto", "fixed", "manual", "offline"};
+  Log().printf("[wifi] policy %s (cap %us, every %us, decay %uh -> %us)%s\n",
+               kModes[p.mode <= 3 ? p.mode : 0], (unsigned)p.scan_cap_s, (unsigned)p.interval_s,
+               (unsigned)p.decay_after_h, (unsigned)p.sparse_interval_s,
+               g_wifi_unseen_saved ? " network unseen across reboots" : "");
+}
+
+// Every loop: apply + persist a policy change (protocol, console, or a provision that
+// left offline), forward a rejoin request, publish the live link state + whether an
+// update awaits confirmation, and persist the unseen-network clock (hourly).
+static void poll_wifi_policy() {
+  NetstackWifiPolicy np;
+  if (netstack_take_policy_change(&np)) {
+    LmWifiPolicy p = {np.mode, np.scan_cap_s, np.interval_s, np.decay_after_h,
+                      np.sparse_interval_s};
+    lm_wifi_policy_adopt(&p);
+  }
+  uint32_t gen = lm_wifi_policy_gen();
+  if (gen != g_wifi_pol_gen) {
+    g_wifi_pol_gen = gen;
+    LmWifiPolicy p;
+    uint8_t rec[18];
+    lm_wifi_policy_get(&p, rec);
+    np = to_ns(p);
+    netstack_set_wifi_policy(&np);
+    prefs.putBytes("wifi_pol", rec, sizeof rec);
+    static const char *kModes[] = {"auto", "fixed", "manual", "offline"};
+    Log().printf("[wifi] policy -> %s (saved)\n", kModes[p.mode <= 3 ? p.mode : 0]);
+  }
+  if (lm_wifi_take_rejoin()) netstack_wifi_rejoin();
+  NetstackWifiStatus st;
+  netstack_wifi_status(&st);
+  LmWifiStatus ls;
+  ls.state = st.state;
+  ls.radio_on = st.radio_on;
+  ls.decayed = st.decayed;
+  ls.next_scan_s = st.next_scan_s;
+  ls.scans = st.scans;
+  ls.unseen_s = st.unseen_s;
+  memcpy(ls.ssid, st.ssid, sizeof ls.ssid);
+  lm_wifi_report(&ls);
+  lm_wifi_set_ota_pending(ota_app_pending());
+  // The decay clock: hourly while the network is missing, and back to 0 once seen.
+  uint32_t u = st.unseen_s;
+  if ((u == 0 && g_wifi_unseen_saved != 0) || u >= g_wifi_unseen_saved + 3600u) {
+    g_wifi_unseen_saved = u;
+    prefs.putUInt("wifi_unseen", u);
+  }
+}
+
+// The loop task's priority, re-decided every loop. One below render whenever the link is
+// joining / scanning / leasing / deriving a PMK / idle: none of that may delay a frame
+// (wifi_cadence: zero late frames across every rejoin path); render leaves it at least
+// the network's share of every frame (lm_fps_net_share_ms: >= 25% of its compute). AT
+// render's priority while a client is on a settled link — a wss session up, or a new
+// client mid-accept / mid-TLS-handshake (netstack_data_plane_active): the two then
+// round-robin, so the client gets about half of a busy CPU instead of only render's
+// sleeps — what the network had before #371, what a 30 fps texture stream needs, and
+// what lets a new client's handshake finish inside its timeout under a heavy effect.
+// (Measured on hitl-rig-2, video_latency_netstack 30 fps / 120 s: see
+// docs/design/wifi-rejoin-policy.md "Loop priority".) The loop sleeps 1 tick per pass,
+// so an idle session costs render almost nothing; a rejoin always drops the session
+// first (link reset clears it), so the rejoin path itself is never at render's level.
+static void loop_priority_follow_data_plane() {
+  static UBaseType_t s_prio = kRenderTaskPrio - 1;
+  UBaseType_t want = netstack_data_plane_active() ? kRenderTaskPrio : kRenderTaskPrio - 1;
+  if (want != s_prio) {
+    s_prio = want;
+    vTaskPrioritySet(nullptr, want);
+  }
+}
+
+// Console lines "WIFI MODE …" / "WIFI REJOIN" / "WIFI STATUS" (the transport handles its
+// own link diagnostics first and passes the rest here).
+void netstack_console_hook(const char *line, size_t len) {
+  if (len < 5) return;
+  char reply[200];
+  int32_t n = lm_wifi_console(reinterpret_cast<const uint8_t *>(line) + 5, len - 5,
+                              reinterpret_cast<uint8_t *>(reply), sizeof reply);
+  if (n < 0) {
+    Serial.printf("[wifi] console: WIFI MODE <auto|fixed|manual|offline> [cap=S] [every=S] "
+                  "[decay=H] [sparse=S] [force] | WIFI REJOIN | WIFI STATUS | WIFI SCAN | "
+                  "WIFI DHCP | WIFI GIVEUP | WIFI SCANMISS <n>\n");
+    return;
+  }
+  Serial.printf("%s\n", reply);
+}
+#endif
+
 void setup() {
   Serial.begin(115200);
   // Logging is async (serial_log.h): Log() only appends to an in-RAM ring, and
@@ -2557,6 +3208,9 @@ void setup() {
   // Frames are staged into its own buffer (the transmit snapshot), so the async
   // transmit task never reads `leds` while the render task fills it.
   led_store_begin();
+  // FX debugger (fxdbg.rs): the output stage its snapshots read back.
+  lm_fxdbg_bind_output(reinterpret_cast<const uint8_t *>(leds), g_led_cap,
+                       reinterpret_cast<const uint8_t *const *>(&g_lut), &g_brightness);
   if (!ws2812_init(LED_DATA_PIN, LED_DATA_PIN_2, g_led_dma)) {
     Log().printf("[led] ws2812 RMT init FAILED (backend=%s)\n", ws2812_backend());
   }
@@ -2592,6 +3246,7 @@ void setup() {
   // Guards every call into the single-threaded Rust core; must exist before
   // either the message handler or the render task can touch it.
   player_mutex = xSemaphoreCreateMutex();
+  tex_mutex = xSemaphoreCreateMutex();
   lm_player_init(g_led_cap);
   lm_set_led_limits(g_led_cap, g_led_max_heap);
   // Install this board's static capability descriptor (GPIO safety catalog + LED
@@ -2741,6 +3396,10 @@ void setup() {
   // network leased): rejoin on our own after a reboot or a firmware update. Before this the
   // netstack kept them in RAM only, so every update/power cut needed a re-provision.
   netstack_restore_credentials(ssid.c_str(), prefs.getString("pass", "").c_str());
+  // The Wi-Fi rejoin policy (wifi_ffi.rs): applied before the transport starts, so an
+  // offline-mode unit never starts its radio. Plus how long the network had already gone
+  // unseen before this boot (the auto policy's decay clock survives power cycles).
+  wifi_policy_begin();
   // Heapless transport: our own MAC/WPA2/CCMP/DHCP/TCP + the per-device TLS server on :443.
   netstack_setup();
 #endif
@@ -2766,14 +3425,22 @@ void setup() {
 #endif
 #if defined(LM_NETSTACK)
   // The heapless netstack is serviced on THIS (Arduino loop) task; the vendor build
-  // uses IDF net tasks. Left at the default priority 1 it's starved by the priority-10
-  // render task under a heavy FULL-perf sweep — the network can't service RX/ACK/
-  // retransmit and the control connection resets mid-measurement. Run it at render's
-  // priority so the two round-robin and the network keeps a fair share; observed as
-  // the most reliable (fewest mid-sweep drops) of the options tried. (The remaining
-  // unmeasurable effect, sweep256, fails on its ~4.6KB fixture-map record — the
-  // netstack's large-record limit — not on scheduling.)
-  vTaskPrioritySet(nullptr, kRenderTaskPrio);
+  // uses IDF net tasks. It runs ONE priority below render: whatever the netstack does
+  // (PBKDF2, the join, EAPOL, TLS, sweeps) can never delay a frame, and render always
+  // leaves it time — every frame sleeps to the next frame start, and a frame that
+  // overran its period sleeps >= max(4 ms, 25% of its cost) (firmware/fps). It used to
+  // run AT render's priority (when a FULL-perf sweep rendered back-to-back with a
+  // 1-tick yield and a priority-1 loop was starved); time-sliced 1:1 with render, its
+  // CPU work stretched frames whenever both were runnable (wifi_cadence on hitl-rig-2:
+  // a heavy effect's frames 184 -> 196 ms during PBKDF2, a light one's 12 -> 15 ms
+  // around 4-way retries). Sensors (5) stay below both.
+  //
+  // EXCEPT while a wss session is streaming (loop_priority_follow_data_plane, every
+  // loop): then the loop shares render's priority again. Below render the loop only ran
+  // in render's sleeps — under a light effect at 80 fps that is ~25 % of the CPU, and a
+  // 30 fps texture stream outran it (video_latency_netstack on hitl-rig-2: loop gaps of
+  // 135-145 ms, the receive window advertised zero 300+ times, the session closed).
+  vTaskPrioritySet(nullptr, kRenderTaskPrio - 1);
 #endif
   // Boot is done: from here on every heap allocation is attributed to its call site
   // (heap_census.cpp; read over JTAG, never reported by the DUT).
@@ -2890,6 +3557,13 @@ static void mode_observe() {
 void loop() {
   // loop() now only services the network stacks; the LEDs are driven by
   // render_task (started in setup), decoupled from this cooperative cycle.
+  if (g_hw_reconfig_result != 0) {
+    const int8_t r = g_hw_reconfig_result;
+    g_hw_reconfig_result = 0;
+    Log().printf(r > 0 ? "[hw] RMT reconfigured to gpio=%d/%d\n"
+                       : "[hw] RMT reconfigure to gpio=%d/%d FAILED\n",
+                 g_hw_reconfig_done_gpio0, g_hw_reconfig_done_gpio1);
+  }
   if (g_reboot_at_ms && (int32_t)(millis() - g_reboot_at_ms) >= 0) {
     Log().printf("[led] restarting to resize the LED buffers\n");
     delay(50);  // let the log drain
@@ -2926,7 +3600,30 @@ void loop() {
     reissue_cert_for_lan();
   }
 #else
+  // loopTask during a render frame. While a wss client is up the loop runs AT render's
+  // priority and the two round-robin on every tick, and loop() never parks on the render
+  // mutex (live control: a message must not wait in the RX ring for a whole frame). But a
+  // full pass every tick inside the frame — policy, OTA, BLE, status, the netstack timers
+  // — evicted the effect's code from the flash cache and stretched every frame (fx_bench
+  // +11..+22 % frame cycles; rig-1 absfM 1.557 -> 1.90 M). Mid-frame, run the netstack only
+  // when it has work (netstack_service_due: a frame in the RX ring — decode, dispatch, live
+  // mailbox, ack — or data in the TCP send window, whose pump and RTO resend a lost ack);
+  // everything else waits for the frame to end, as before the try-locks, when the loop sat
+  // on the mutex for the rest of the frame.
+  if (g_render_in_frame) {
+    if (netstack_service_due()) netstack_loop();
+    // Sleep until the frame ends (render gives the mutex: the full pass runs at once, as
+    // when the loop blocked on it) or the next RX poll is due. Polling on every tick still
+    // cost +4 % frame cycles on a 10 ms frame (each wake is a context switch plus
+    // flash-cache refills for the effect); every kMidFramePollMs it is ~1 %, and a message
+    // waits at most that long in the RX ring.
+    if (xSemaphoreTake(player_mutex, pdMS_TO_TICKS(kMidFramePollMs)) == pdTRUE)
+      xSemaphoreGive(player_mutex);
+    return;
+  }
   netstack_loop();  // RX drain + DHCP + BLE-Improv join + TLS/WS pump (dispatched shared)
+  poll_wifi_policy();
+  loop_priority_follow_data_plane();
   mode_observe();
 #if defined(LM_SENSORS)
   // Driver VM (FUG-107): a submitted I2C driver's poll(), when due. Try-lock: a
@@ -2948,7 +3645,12 @@ void loop() {
     }
     bool render_alive = seen_at != 0 && now_ms - seen_at < 2000;
 #if defined(LM_NETSTACK)
-    ota_app_poll(render_alive, device_cert_ready(), netstack_leased());
+    // Offline / manual (outside a join window): the board isn't supposed to reach a
+    // network, so a fresh update's health is judged on rendering alone — it must never
+    // roll back merely because the AP is gone (wifi-rejoin-policy.md "OTA").
+    bool wants_net = netstack_wifi_wants_network();
+    ota_app_poll(render_alive, device_cert_ready() || !wants_net,
+                 netstack_leased() || !wants_net);
 #else
     ota_app_poll(render_alive, true, WiFi.status() == WL_CONNECTED);
 #endif
@@ -2957,12 +3659,12 @@ void loop() {
     flush_fx_sel_save();
   }
   emit_perf_report_if_due();
-  emit_fps_abort_if_pending();
+  emit_fps_lag_if_changed();
+  poll_fx_debugger();
 
   static uint32_t last_report = 0;
-  if (millis() - last_report > 5000) {
+  if (millis() - last_report > 5000 && xSemaphoreTake(player_mutex, 0) == pdTRUE) {
     last_report = millis();
-    xSemaphoreTake(player_mutex, portMAX_DELAY);
     unsigned long map_leds = (unsigned long)lm_map_len();
     xSemaphoreGive(player_mutex);
 #if !defined(LM_NETSTACK)
@@ -2996,6 +3698,21 @@ void loop() {
                  (unsigned)tls.slots, (unsigned)tls.largest_request, (unsigned)tls.fallbacks,
                  (unsigned)LM_MODE.state, (unsigned)LM_MODE.accepted, (unsigned)LM_MODE.refused,
                  (unsigned)LM_MODE.unmodeled);
+    char net[200];
+    netstack_net_stats(net, sizeof net);
+    Log().printf("[net] t=%lu %s mtx_wait_max=%uus handle_max=%uus\n", (unsigned long)millis(),
+                 net, (unsigned)g_mtx_wait_max_us, (unsigned)g_handle_max_us);
+    g_mtx_wait_max_us = 0;
+    g_handle_max_us = 0;
+    // Each task's stack high-water: the fewest bytes ever left free (FreeRTOS fills
+    // stacks with 0xa5). The static bound (stack_bound_test) can't see ROM printf
+    // frames or other indirect calls, so this is the field check behind it.
+    auto stk_free = [](const char *name) -> unsigned {
+      TaskHandle_t h = xTaskGetHandle(name);
+      return h ? (unsigned)uxTaskGetStackHighWaterMark(h) : 0u;
+    };
+    Log().printf("[stack] free loopTask=%u render=%u xmit=%u logdrain=%u\n", stk_free("loopTask"),
+                 stk_free("render"), stk_free("xmit"), stk_free("logdrain"));
 #endif
 #if defined(LM_SENSORS)
     sensor_log_status();

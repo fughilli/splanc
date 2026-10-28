@@ -27,8 +27,11 @@
 import { grantedScope } from "./oauth";
 import { b64url, ed25519Verify, randomSecret, sha256b64url, sha256hex } from "./crypto";
 import { EffectLibrary, LIBRARY_TOOL_NAMES, callLibraryTool, deployNoteText, slugEffectId, type EffectMeta, type LibraryStore } from "./library";
+import { BUG_TOOL_NAME } from "../../../web/src/bugs/bugReport";
+import { relayFileBug } from "./bugs";
 import {
   RELAY_SESSION_PREFIX,
+  bridgeHasFileBug,
   deployPerf,
   deploySucceeded,
   mergeTools,
@@ -48,6 +51,8 @@ import {
 import { now, upgrade, autoResponse, type DOState, type DOStorage, type Env, type HSocket } from "./platform";
 import {
   BRIDGE_AUTH_HEADER,
+  BUG_AUTH_HEADER,
+  bugReportMessage,
   CLOSE_PROTOCOL,
   LIVE_BEARER_PREFIX,
   LIVE_CLOSE_BRIDGE,
@@ -263,6 +268,8 @@ export class BridgeObject {
         return json({ ok: true });
       case "/pair/token":
         return this.personalToken((await body())["label"] ?? "", bid, origin);
+      case "/bugs/verify":
+        return json({ ok: await this.verifyBugCaller(req, bid, origin) });
       default:
         return json({ error: "not found" }, 404);
     }
@@ -488,6 +495,20 @@ export class BridgeObject {
     }
   }
 
+  // -- bug reports (POST /bugs: relay/src/bugs.ts) -------------------------------------
+
+  /** Is this credential this bridge's: one of its relay tokens (the MCP resource's),
+   * or its Ed25519 signature over the report (BUG_AUTH_HEADER)? */
+  private async verifyBugCaller(req: Request, bid: string, origin: string): Promise<boolean> {
+    if (req.headers.get("authorization")) return (await this.authorize(req, bid, origin)) === null;
+    const [sigBid, ts, sig] = (req.headers.get(BUG_AUTH_HEADER) ?? "").split(".");
+    const t = Number(ts);
+    if (sigBid !== bid || !Number.isFinite(t) || Math.abs(this.nowS() - t) > SIGNATURE_WINDOW_S) return false;
+    const meta = await this.state.storage.get<Meta>("meta");
+    if (!meta) return false;
+    return ed25519Verify(meta.pub, bugReportMessage(bid, t, req.headers.get("x-bug-body-sha256") ?? ""), sig ?? "");
+  }
+
   // -- the MCP tunnel ------------------------------------------------------------------
 
   private async authorize(req: Request, bid: string, origin: string): Promise<Response | null> {
@@ -533,6 +554,14 @@ export class BridgeObject {
       if (typeof name === "string" && LIBRARY_TOOL_NAMES.has(name) && msg.id !== undefined) {
         return rpcResult(msg.id, await callLibraryTool(await this.library(), name, msg.params?.["arguments"]));
       }
+      // file_bug: the bridge's own (it adds device diagnostics) when it has one and
+      // is online; else the relay's (relay/src/bugs.ts).
+      if (name === BUG_TOOL_NAME && msg.id !== undefined && (!ws || relaySession || !(await this.bridgeFileBug()))) {
+        return rpcResult(
+          msg.id,
+          await relayFileBug(this.env, bid, msg.params?.["arguments"], { bridgeOnline: !!ws, version: String(WIRE_VERSION) }),
+        );
+      }
       if (relaySession && ws) return sessionGone(); // the bridge is back: initialize again
       if (relaySession || !ws) {
         const offline = this.offlineMcp(msg, relaySession);
@@ -558,10 +587,12 @@ export class BridgeObject {
       if (ws && msg.id !== undefined && (msg.method === "tools/list" || msg.method === "initialize")) {
         const method = msg.method;
         const first = !msg.params?.["cursor"];
-        return rewriteReply(await this.forward(ws, req, body), msg.id, (m) => {
+        return rewriteReply(await this.forward(ws, req, body), msg.id, async (m) => {
           if (!m.result) return m;
           if (method === "initialize") return { ...m, result: { ...m.result, instructions: withLibraryInstructions(m.result["instructions"]) } };
-          return first ? { ...m, result: { ...m.result, tools: mergeTools(m.result["tools"]) } } : m;
+          if (!first) return m;
+          await this.setBridgeFileBug(bridgeHasFileBug(m.result["tools"]));
+          return { ...m, result: { ...m.result, tools: mergeTools(m.result["tools"]) } };
         });
       }
     } else if (relaySession && req.method === "POST") {
@@ -601,6 +632,21 @@ export class BridgeObject {
         return tool ? json(toolFailure(msg.id, tool, why)) : rpcErrorFor(msg.id, -32000, why);
       }
     }
+  }
+
+  /** Whether the bridge's last tools/list offered file_bug (kept in storage:
+   * hibernation drops memory). Unknown = no: the relay's file_bug still works. */
+  private fileBugFlag: boolean | undefined;
+
+  private async bridgeFileBug(): Promise<boolean> {
+    this.fileBugFlag ??= (await this.state.storage.get<boolean>("bridgeFileBug")) ?? false;
+    return this.fileBugFlag;
+  }
+
+  private async setBridgeFileBug(v: boolean): Promise<void> {
+    if ((await this.bridgeFileBug()) === v) return;
+    this.fileBugFlag = v;
+    await this.state.storage.put("bridgeFileBug", v);
   }
 
   private lib: EffectLibrary | null = null;

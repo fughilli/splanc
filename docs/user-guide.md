@@ -127,9 +127,13 @@ _Tell a fixture with an IMU which way its LED map is up, so tilt effects follow 
 ![Calibrating a fixture's motion sensor — Splanc app screen](user-guide/img/calibrate-imu.png)
 
 A fixture with a motion sensor (an MPU-6050 on its I2C pins) learns its tilt automatically when you
-map it. To also fix its heading, open the map and tap Calibrate IMU: the LEDs play the mapping code,
-the camera locks onto the known map, and you capture two or three still poses, tipping the fixture
-at least 45° between them. Save when the fit says good.
+map it. To also fix its heading, open the map and tap Calibrate IMU: the LEDs play the mapping code
+and the camera locks onto the known map. There are no buttons to press. Each time the map registers
+and the fixture and phone hold still, a pose is taken, and the screen asks for the next one: first
+the normal position, then tilted about 45° to one side, then about 45° toward or away from you. A
+pose too close to an earlier one is refused, and the screen says how far to tilt. After the third
+pose the fit is solved and written to the fixture, then read back to confirm it. If the fixture
+disconnects first, the phone keeps the calibration and sends it on the next connection.
 
 The panel also holds the capture settings — diffuse on/off, the LED stride, manual camera exposure
 and LED brightness — so you can make the LEDs readable in your lighting. If the map has no saved
@@ -200,10 +204,10 @@ is the LED at output index N. The file is named after the map plus today's date.
 it opens the share sheet; choose **Save to Files**.
 
 - **CSV (TouchDesigner, spreadsheets)** — columns
-  `index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength`. Positions are in
-  **metres**. In TouchDesigner, point a Table DAT's File at the CSV and wire it into a DAT to SOP's
-  Points DAT. You get one point per LED, numbered by `index`, and the other columns become point
-  attributes.
+  `index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength,segment_arclength`.
+  Positions are in **metres**. In TouchDesigner, point a Table DAT's File at the CSV and wire it
+  into a DAT to SOP's Points DAT. You get one point per LED, numbered by `index`, and the other
+  columns become point attributes.
 - **Chromatik fixture (.lxf)** — copy it into the Fixtures folder under your Chromatik home
   directory and add it from the Fixture Chooser. Its points follow output order (one component per
   channel). A **Scale** parameter sets units per metre: the default 100 means centimetres; set 1 for
@@ -213,8 +217,10 @@ it opens the share sheet; choose **Save to Files**.
   device renders them.
 - **Channels** — maps don't store a channel layout. If a connected device's per-channel LED counts
   add up to this map's LED count, the export uses them. Otherwise every LED is on channel 0.
-  `segment` is the topology segment (-1 if none) and `arclength` is the LED's distance along it in
-  metres.
+- **Arclength** — `arclength` is the LED's distance along the strip in metres, counted from the
+  first LED of its channel, so it ends near the strip's length. `segment` is the topology segment
+  (-1 if none) and `segment_arclength` is the LED's distance along that segment. On a coil or tube
+  the topology is the centreline, so `segment_arclength` can be much shorter than the strip.
 - **Axes** — Splanc maps are +Y up, right-handed, which matches TouchDesigner and Chromatik, so
   nothing needs converting. For Z-up tools such as Blender, pick **Z up** before exporting the CSV.
 
@@ -382,6 +388,11 @@ app uses.
 - **Rename** — the display name is reflected to the device itself.
 - A row's ⋮ menu shows the recorded LAN address, MAC, and Bluetooth name, and can **forget** the
   device.
+- **Wi-Fi rejoin** (device settings) picks how a board finds its network again: **Auto** (the
+  default) retries quickly, then once a minute for as long as it takes; **Fixed**, **Manual**, or
+  **Offline** for a unit that will never see its network again. To save airtime when an Auto board's
+  network may be gone for a long time, set **Slow down after unseen for** (hours) to opt in to one
+  scan per **Slowed scan interval** (15 min by default). It is off (0) unless you set it.
 
 ### Flashing firmware
 

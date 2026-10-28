@@ -1,0 +1,39 @@
+{
+  "name": "app2__opus__p11",
+  "variant": "app2",
+  "model": "claude-opus-5-5",
+  "model_short": "opus",
+  "prompt_id": "p11",
+  "prompt": "police lights spinning red/blue",
+  "system_prompt_sha256": "ce6ae9d5de4624e9",
+  "system_prompt_chars": 14478,
+  "attempts": [
+    {
+      "text": "```\n// Police beacon: a red and a blue beam rotate around the cylinder on opposite sides.\n// An optional strobe overlays the classic alternating double-blink.\nuniform float speed      : 0.0 .. 4.0 = 1.5;     // rotations per second\nuniform float width      : 0.05 .. 0.45 = 0.2;   // beam half-width in turns\nuniform float strobe     : 0.0 .. 1.0 = 0.0;     // 0 = pure spin, 1 = full strobe\nuniform float flash_rate : 0.2 .. 4.0 = 1.5;     // strobe cycles per second\nuniform float brightness : 0.0 .. 1.0 = 1.0;\nuniform vec3 red  : color = 1.0, 0.0, 0.0;\nuniform vec3 blue : color = 0.0, 0.1, 1.0;\n\nstate fixed ph;\nstate fixed inv;\nstate fixed rr;\nstate fixed rg;\nstate fixed rb;\nstate fixed br;\nstate fixed bg;\nstate fixed bb;\n\nvoid update() {\n  ph = fract(ph + fixed(dt * speed));\n  inv = fixed(1.0 / width);\n\n  // Strobe pattern: red double-blinks in the first half of the cycle, blue in the second.\n  float sp = fract(time * flash_rate);\n  float blink = 0.0;\n  if (fract(sp * 4.0) < 0.5) { blink = 1.0; }\n  float rOn = 0.0;\n  float bOn = 0.0;\n  if (sp < 0.5) { rOn = blink; } else { bOn = blink; }\n  float gr = mix(1.0, rOn, strobe) * brightness;\n  float gb = mix(1.0, bOn, strobe) * brightness;\n\n  rr = fixed(red.x * gr);\n  rg = fixed(red.y * gr);\n  rb = fixed(red.z * gr);\n  br = fixed(blue.x * gb);\n  bg = fixed(blue.y * gb);\n  bb = fixed(blue.z * gb);\n}\n\nvec3 shade(Led led) {\n  // Angle around the vertical axis in TURNS; it depends only on led.*, so it is cached per LED.\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x));\n  // Angular distance from the red beam, 0..0.5 turns; the blue beam sits opposite (0.5 - d).\n  fixed d = abs(fract(ang - ph + fixed(0.5)) - fixed(0.5));\n  fixed a = clamp(fixed(1.0) - d * inv, fixed(0.0), fixed(1.0));\n  fixed b = clamp(fixed(1.0) - (fixed(0.5) - d) * inv, fixed(0.0), fixed(1.0));\n  a = a * a;\n  b = b * b;\n  return vec3(float(a * rr + b * br), float(a * rg + b * bg), float(a * rb + b * bb));\n}\n```",
+      "is_error": false,
+      "session_id": "19e3897f-e461-4d92-904d-7a70b15a0972",
+      "wall_s": 28.2,
+      "duration_api_ms": 18717,
+      "cost_usd": 0.045682999999999994,
+      "models_used": ["claude-opus-5-5"],
+      "usage": {
+        "input_tokens": 2,
+        "output_tokens": 1973,
+        "cache_read_input_tokens": 6555,
+        "cache_creation_input_tokens": 613
+      },
+      "thinking_tokens": 955,
+      "round": 0,
+      "kind": "ask",
+      "compile_ok": true,
+      "diagnostics": [],
+      "fxb_bytes": 1391
+    }
+  ],
+  "started": "2026-10-23T00:05:30",
+  "status": "ok",
+  "n_calls": 1,
+  "total_cost_usd": 0.0457,
+  "total_wall_s": 28.2,
+  "program": "firmware/fx_perf_bench/agent/app2__opus__p11.fx"
+}

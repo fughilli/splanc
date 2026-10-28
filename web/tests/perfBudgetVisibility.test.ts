@@ -261,11 +261,34 @@ test("under Auto an overrun above the floor is the autoscaler's cue, not a toast
     minFps: 25,
     maxFps: 80,
     auto: false,
+    lagging: false,
+    achievedFps: 0,
     aborted: false,
     noAbort: false,
   });
   client.push(perfReport({ updateMs: 1, shadeMs: 20, showMs: 3, currentFps: 45 }));
   assert.equal(toastsSaying("Effect overruns the 45 fps budget"), before45 + 1);
+});
+
+test("a lagging effect shows its achieved rate and 'lagging', with no overrun error (it keeps playing)", async (t) => {
+  const client = new PerfClient(perfReport({ updateMs: 1, shadeMs: 60, showMs: 3, currentFps: 15 }));
+  const { el } = await mountPanel(t, client);
+  client.pushFps({
+    type: "fps_state",
+    targetFps: 0,
+    currentFps: 15,
+    minFps: 25,
+    maxFps: 80,
+    auto: true,
+    lagging: true,
+    achievedFps: 15,
+    aborted: false,
+    noAbort: false,
+  });
+  const before = toastsSaying("Effect overruns the 15 fps budget");
+  client.push(perfReport({ updateMs: 1, shadeMs: 60, showMs: 3, currentFps: 15 }));
+  assert.equal(textOf(el.querySelector(".perf-fps-now")), "auto · 15 fps · lagging");
+  assert.equal(toastsSaying("Effect overruns the 15 fps budget"), before, "lagging: no error toast");
 });
 
 test("headroom is measured against the device's own frame budget, not a fixed 33 ms [rr:PR-18]", async (t) => {
@@ -409,10 +432,14 @@ test("a fleet estimate names every device's budget share and flags the one that 
   );
   assert.match(
     text,
-    /- Stage \(esp32c3 @ 80 MHz, 512 LEDs, uncalibrated \(default model — wide error\)\): [0-9.]+ ms, \d+% of FX budget \[red\] ← binding/,
+    /- Stage \(esp32c3 @ 80 MHz, 512 LEDs, default model \(fitted on a bench C6, ±15%\)\): [0-9.]+ ms, \d+% of FX budget \[red\] ← binding/,
   );
   assert.match(text, /Hottest opcodes on the binding device \(Stage\): BinMath:pow \(\d+%\)/);
   assert.match(text, /Optimize for the binding device first/);
+  // Given the program, the report ends with what to change on the binding device.
+  const withFindings = describeFleet(fleet, { bytecode: fxb });
+  assert.match(withFindings, /Top cost findings on Stage \(apply these first\):\n- pow\(\) ×60 per LED depends only on led\.\*/);
+  assert.match(withFindings, /saves up to ~[\d,]+ cycles\/LED \(~[\d.]+ ms at 512 LEDs\)/);
 
   // Shrink the expensive target until everything fits: the report says so.
   const ok = describeFleet(estimateAcrossDevices(fxb, [targets[0]!, { ...targets[1]!, ledCount: 8 }]));

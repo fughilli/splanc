@@ -12,6 +12,10 @@
  */
 
 import { bundleBytes, type CaptureBundle } from "../solver/captureBundle";
+import type { LocalizeBundle } from "../solver/localizeBundle";
+
+/** Mapping capture bundles and room-localization bundles share the store. */
+export type StoredBundle = CaptureBundle | LocalizeBundle;
 
 const DB_NAME = "ledmapper-capturebundles";
 const DB_VERSION = 1;
@@ -23,7 +27,8 @@ export const MAX_TOTAL_BYTES = 150 * 1024 * 1024;
 export interface CaptureBundleMeta {
   id: string;
   createdAt: string;
-  outcome: CaptureBundle["outcome"];
+  /** The run's outcome (capture bundles: RunOutcome; localization bundles: LocalizeOutcome). */
+  outcome: string;
   summary: string;
   ledCount: number;
   bytes: number;
@@ -75,7 +80,7 @@ class CaptureBundleStore {
   }
 
   /** Persist a bundle (then prune). Returns its metadata, or null on failure. */
-  async save(bundle: CaptureBundle): Promise<CaptureBundleMeta | null> {
+  async save(bundle: StoredBundle): Promise<CaptureBundleMeta | null> {
     try {
       const meta: CaptureBundleMeta = {
         id: bundle.id,
@@ -104,8 +109,8 @@ class CaptureBundleStore {
     return all.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  async get(id: string): Promise<CaptureBundle | undefined> {
-    return this.tx("readonly", (_m, b) => req(b.get(id) as IDBRequest<CaptureBundle | undefined>));
+  async get(id: string): Promise<StoredBundle | undefined> {
+    return this.tx("readonly", (_m, b) => req(b.get(id) as IDBRequest<StoredBundle | undefined>));
   }
 
   async delete(id: string): Promise<void> {

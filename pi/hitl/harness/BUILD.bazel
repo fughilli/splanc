@@ -92,20 +92,29 @@ py_library(
     name = "harness",
     srcs = [
         "board_caps.py",
+        "ctrl_budget_core.py",
+        "ctrl_budget_probe.py",
         "device_cert_core.py",
         "e2e_phases.py",
         "fx_bench_core.py",
+        "fx_debug_core.py",
         "hardware_config_pattern.py",
         "heap_census.py",
+        "heavy_effect_reachability_core.py",
         "hitl_client.py",
         "hitl_improv.py",
         "hitl_ws.py",
         "improv.py",
+        "improv_fresh_join_core.py",
         "jit_soak_core.py",
+        "lan_relay.py",
         "led_pattern.py",
+        "live_latency_core.py",
         "loaded_tls_core.py",
         "map_upload_core.py",
         "mapping_trigger_core.py",
+        "no_reboot_no_park_core.py",
+        "osc_deck_follow_core.py",
         "ota_core.py",
         "provision.py",
         "rejoin_loop_core.py",
@@ -119,6 +128,8 @@ py_library(
         "uniform_bench_core.py",
         "upgrade_keeps_wifi_core.py",
         "video_bench_core.py",
+        "video_latency_core.py",
+        "wifi_cadence_core.py",
     ],
     imports = ["."],
     # board_caps parses the BoardCapabilities textproto via the generated py proto.
@@ -527,6 +538,65 @@ py_test(
     ],
 )
 
+# The FX debugger (docs/design/fx-debugger.md) on a real C6: pause, step one frame,
+# and replay it on the host VM (//firmware/fx_vm:fx_replay) from the device's own
+# snapshot — output, state and buffers must match BIT-EXACTLY (JIT on), one LED's
+# re-run locals must match the host's, and a paused engine must auto-resume on a
+# lapsed hold and on a disconnect. Pure verdict: fx_debug_core.
+genrule(
+    name = "fxdebug_fxbs",
+    srcs = [
+        "ab_demo/dbgFixed.fx",
+        "ab_demo/dbgHue.fx",
+        "ab_demo/dbgLoop.fx",
+        "ab_demo/dbgTrail.fx",
+    ],
+    outs = [
+        "dbgFixed.fxb",
+        "dbgHue.fxb",
+        "dbgLoop.fxb",
+        "dbgTrail.fxb",
+    ],
+    cmd = " && ".join([
+        "$(execpath //fx_compiler:fx_compile) $(location ab_demo/%s.fx) $(location %s.fxb)" % (n, n)
+        for n in [
+            "dbgFixed",
+            "dbgHue",
+            "dbgLoop",
+            "dbgTrail",
+        ]
+    ]),
+    tools = ["//fx_compiler:fx_compile"],
+)
+
+py_test(
+    name = "fx_debug_netstack",
+    timeout = "eternal",
+    srcs = ["hitl_fx_debug.py"],
+    data = [
+        ":fxdebug_fxbs",
+        "//firmware/fx_vm:fx_replay",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_fx_debug.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # Reboot-loop rejoin: a provisioned DUT is reset N times and must reach a DHCP lease on
 # its own every time (stable factory MAC + persisted credentials), within a window and
 # a p95 bound. Pure logic: rejoin_loop_core.
@@ -611,6 +681,183 @@ py_test(
     ],
 )
 
+# A Wi-Fi join triggered through BLE Improv is always fresh (the user's rule): reset a
+# provisioned netstack board so it rejoins from its stored creds, then Improv the SAME
+# creds — while it joins, once it is joined, and again straight away (a central
+# re-sending after a missed result) — and require PROVISIONED + the redirect inside the
+# Improv join budget every time, with the firmware logging a fresh join (never the old
+# "already joining/associated" short-circuit). Pure logic: improv_fresh_join_core.
+py_test(
+    name = "improv_fresh_join",
+    timeout = "eternal",
+    srcs = ["hitl_improv_fresh_join.py"],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_improv_fresh_join.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "@rules_python//python/runfiles",
+    ],
+)
+
+# A slow effect lags (never parked) and the board never reboots for WiFi (the PixieLamp
+# field report): a deliberately slow effect keeps advancing frames for 75 s while control
+# commands are answered within budget; then credentials for an SSID that doesn't exist:
+# no reset for 100 s (no boot banner, frame counter + effect time keep climbing), the
+# effect keeps running, the background rescan runs; then the rig AP's creds lease again.
+# Pure logic: no_reboot_no_park_core (tests/test_no_reboot_no_park_core.py).
+genrule(
+    name = "slow_lag_fxb",
+    srcs = ["ab_demo/slowLag.fx"],
+    outs = ["slowLag.fxb"],
+    cmd = "$(execpath //fx_compiler:fx_compile) $< $@",
+    tools = ["//fx_compiler:fx_compile"],
+)
+
+py_test(
+    name = "no_reboot_no_park",
+    timeout = "eternal",
+    srcs = [
+        "hitl_map_upload.py",
+        "hitl_no_reboot_no_park.py",
+    ],
+    data = [
+        ":slow_lag_fxb",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # netstack: chunk the map into 1 KB windows (one TLS record each).
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+        "NO_PARK_FXB_RUNFILE": "_main/pi/hitl/harness/slowLag.fxb",
+    },
+    imports = ["."],
+    main = "hitl_no_reboot_no_park.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# A board playing a heavy effect stays reachable for NEW clients (1.12.3 field
+# regression: a near-budget effect starved the netstack loop below render priority, so no
+# TLS handshake / rejoin / DHCP completed, and the persisted effect re-locked it on every
+# boot). A Swirl-like effect sized to ~93 % of the 25 fps floor's period; then new
+# connections after 30 s with no session, a forced rejoin and a reboot with the effect
+# persisted must each connect in time. Pure logic: heavy_effect_reachability_core.
+genrule(
+    name = "swirl_heavy_fxb",
+    srcs = ["ab_demo/swirlHeavy.fx"],
+    outs = ["swirlHeavy.fxb"],
+    cmd = "$(execpath //fx_compiler:fx_compile) $< $@",
+    tools = ["//fx_compiler:fx_compile"],
+)
+
+# The session phase's effect: hash value noise + sin terms + hsv2rgb, sized to ~1.4x
+# the floor (the 1.12.7 PixieLamp field case: an agent's live session went unanswered).
+genrule(
+    name = "heavy_session_fxb",
+    srcs = ["ab_demo/heavySession.fx"],
+    outs = ["heavySession.fxb"],
+    cmd = "$(execpath //fx_compiler:fx_compile) $< $@",
+    tools = ["//fx_compiler:fx_compile"],
+)
+
+py_test(
+    name = "heavy_effect_reachability",
+    timeout = "eternal",
+    srcs = [
+        "hitl_heavy_effect_reachability.py",
+        "hitl_map_upload.py",
+    ],
+    data = [
+        ":heavy_session_fxb",
+        ":swirl_heavy_fxb",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HEAVY_FXB_RUNFILE": "_main/pi/hitl/harness/swirlHeavy.fxb",
+        "SESSION_FXB_RUNFILE": "_main/pi/hitl/harness/heavySession.fxb",
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # netstack: chunk the map into 1 KB windows (one TLS record each).
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_heavy_effect_reachability.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Wi-Fi recovery vs LED cadence: drive every scan / join / DHCP / fallback path on the
+# console while a light and a heavy effect play, and time the LED output across each from
+# the logic analyzer (wire frame intervals + damage) and the firmware's [fx] ft= cadence
+# fields. Gates (exit 1) on any excursion past the steady phase's spread; infra = SKIP.
+# Needs an analyzer-tapped C6 (hitl-rig-2). Pure logic: wifi_cadence_core.
+py_test(
+    name = "wifi_cadence",
+    timeout = "eternal",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_led_timing.py",
+        "hitl_wifi_cadence.py",
+    ],
+    args = ["--gate"],
+    data = [
+        ":plasma_hue_fixed_fxb",
+        ":slow_lag_fxb",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "CADENCE_HEAVY_FXB_RUNFILE": "_main/pi/hitl/harness/slowLag.fxb",
+        "CADENCE_LIGHT_FXB_RUNFILE": "_main/pi/hitl/harness/plasmaHueFixed.fxb",
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_wifi_cadence.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # OTA gate (docs/design/ota.md "Testing"): in ONE reservation — the one-time USB
 # migration from the legacy layout keeping Wi-Fi/map/TLS identity, A->B over the air,
 # a crash-at-boot and a never-healthy image each rolled back and recovered over the air,
@@ -655,6 +902,49 @@ py_test(
         ":harness",
         "//pi/server",
         "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Web OTA journey: the over-the-air update driven through the REAL web app (headless
+# Chromium + the built //web:dist), not the Python client — the handoff into the
+# loader, the transfer, the boot into the new firmware and the health check, with
+# every reconnect made by net/client.ts. The browser reaches the DUT through
+# lan_relay.py (in the reservation container), which reproduces a phone's LAN socket
+# semantics (half-open after a restart, found by a 45 s keepalive) and can emulate a
+# slow Wi-Fi rejoin (--restart-blackout) or a mid-transfer stall (--stall).
+# Tagged `hitl_web`, NOT `hitl`: it needs Playwright's Chromium on the runner, so it
+# is opt-in (`bazel test //pi/hitl/harness:web_ota_journey`) rather than in the pool.
+py_test(
+    name = "web_ota_journey",
+    timeout = "eternal",
+    srcs = ["hitl_web_ota.py"],
+    args = [
+        "--restart-blackout=75",
+        "--stall=12",
+    ],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_ota_b_testsigned",
+        "//firmware/player_app:esp32c6_ota_testkey_flashbundle",
+        "//web:dist",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_OTA_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_ota_testkey_flashbundle.tar",
+        "HITL_OTA_B_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_ota_b_testsigned.ota",
+        "HITL_WEB_DIST_RUNFILE": "_main/web/dist",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_web_ota.py",
+    tags = [
+        "hitl_web",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "@rules_python//python/runfiles",
+        requirement("playwright"),
         requirement("websockets"),
     ],
 )
@@ -731,6 +1021,147 @@ py_test(
     ],
 )
 
+# Live-control latency gate (docs/design/live-control.md): MIDI-like uniform moves
+# (4 knobs x 100 Hz) for several minutes at a netstack C6 running a heavy effect; a
+# get_effect_uniforms echo measures input-to-applied lag. Asserts p50/p99 within
+# budget over the base RTT and NO growth between the first and the last minute.
+# --sender naive replays the pre-fix app (one set_uniforms per event) for the A/B.
+# Pure verdict + the sender port live in live_latency_core (unit-tested in
+# //pi/hitl/tests). --device-ws hits a reachable board directly.
+py_test(
+    name = "live_latency_netstack",
+    timeout = "eternal",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_live_latency.py",
+    ],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//fx_compiler:fx_compile",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # esp32c6-only reservation (skip rig-3's esp32c3 DUT); see :e2e_netstack.
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_live_latency.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# #400 wide uniforms on a real netstack C6: plane_slice_pose.fx (mat4 pose +
+# signed vec4 plane); its identity default, set_uniforms (chunked + one 16-float
+# value) and OSC (/plane, /pose, /pose/12, /pose/0/1) all land; still rendering.
+py_test(
+    name = "wide_uniforms_netstack",
+    timeout = "eternal",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_wide_uniforms.py",
+    ],
+    data = [
+        "//agent:skill/examples/plane_slice_pose.fx",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//fx_compiler:fx_compile",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # esp32c6-only reservation (skip rig-3's esp32c3 DUT); see :e2e_netstack.
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_wide_uniforms.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Native OSC follows the visible FX deck (#402): deck A alone, a crossfade to a
+# deck B with a different uniform layout (mid-fade + complete, incl. a mat4 /pose
+# and /pose/12), a rollback fade back, and the tracker's /plane ,ffff after a
+# deploy; OSC is sent from the rig to udp/9000 and read back per deck with
+# get_effect_uniforms. Gate: SKIP when the deck-A baseline never lands (bench),
+# FAIL on any deck-follow miss. Pure verdict in osc_deck_follow_core (unit-tested
+# in //pi/hitl/tests).
+#   bazel run //pi/hitl/harness:osc_deck_follow -- --server http://hitl-rig-2:8087
+py_test(
+    name = "osc_deck_follow",
+    timeout = "eternal",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_osc_deck_follow.py",
+    ],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//fx_compiler:fx_compile",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # esp32c6-only reservation (skip rig-3's esp32c3 DUT); see :e2e_netstack.
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_osc_deck_follow.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# On-LAN live-control latency budget (docs/design/live-control.md "Measuring the
+# budget"): flashes the LM_CTRL_TRACE measurement image and runs the stdlib probe
+# (ctrl_budget_probe.py) inside the reservation, straight to the DUT over the rig AP; the
+# pure attribution (ctrl_budget_core) is unit-tested in //pi/hitl/tests. Reports a budget
+# table (heavy/light effect x wss/OSC x quiet/+400 pps); not a gate.
+py_binary(
+    name = "ctrl_budget_netstack",
+    srcs = [
+        "hitl_ctrl_budget.py",
+        "hitl_led_capture.py",
+        "hitl_live_latency.py",
+    ],
+    data = [
+        "ctrl_budget_probe.py",
+        "//firmware/player_app:esp32c6_netstack_ctrltrace_flashbundle",
+        "//fx_compiler:fx_compile",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_ctrl_budget.py",
+    tags = ["manual"],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # Video streaming against the heapless esp32c6_netstack drop-in — over the wss (TLS)
 # transport ONLY, since the netstack serves no plaintext ws:81 (and TLS is the phone's
 # camera-streaming path anyway). stream_bench speaks plain ws, so the harness drives it
@@ -758,6 +1189,45 @@ py_test(
     },
     imports = ["."],
     main = "hitl_video_stream.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Long-run video latency / jitter / burst measurement over the netstack wss: paced
+# 30 fps frames for minutes, per-frame device-side apply timestamps (an in-order
+# TimeSyncPing after each frame), stalls attributed from the sender's TCP_INFO. The
+# probe (wss_video_latency.py) runs in the reservation container, network-local to the
+# DUT, under the AP lock. Gate thresholds start loose (stream must survive + apply
+# >= 90% of frames); see video_latency_core.Policy.
+py_test(
+    name = "video_latency_netstack",
+    timeout = "eternal",
+    # hitl_video_stream.py: the shared effect/map setup helpers (_setup_effect).
+    srcs = [
+        "hitl_video_latency.py",
+        "hitl_video_stream.py",
+    ],
+    data = [
+        "wss_video_latency.py",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//fx_compiler:fx_compile",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_video_latency.py",
     tags = [
         "hitl",
         "manual",

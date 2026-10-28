@@ -879,3 +879,199 @@ test("a reply before the deadline resolves; the later timeout fires harmlessly",
   // no second rejection.
   scheduled[scheduled.length - 1]!();
 });
+
+test("sensor_state RPCs queue instead of rejecting: a set_sensor_mount during a get_sensors poll is sent", async () => {
+  // Regression (Calibrate IMU "accepted but not calibrated"): the screen polled
+  // get_sensors at 5 Hz, and request() is single-flight per reply type, so a
+  // set_sensor_mount issued while a poll was in flight rejected with "request
+  // already pending for sensor_state" BEFORE it was sent — the save was lost.
+  const { client, sockets } = makeClient();
+  void client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+
+  const poll = client.getSensors();
+  const write = client.setSensorMount([1, 0, 0, 0], { residualDeg: 0.5, poses: 3, yawResolved: true, atMs: 5000 });
+  await Promise.resolve();
+  assert.deepEqual(
+    s.allSent().filter((m) => m.type !== "hello").map((m) => m.type),
+    ["get_sensors"],
+    "one at a time",
+  );
+  s.receive({ type: "sensor_state", status: "SENSOR_STATUS_RUNNING" });
+  await poll;
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  assert.equal(s.lastSent().type, "set_sensor_mount", "the write goes out after the poll's reply");
+  s.receive({ type: "sensor_state", status: "SENSOR_STATUS_RUNNING", calibrationSeq: 1 });
+  const st = await write;
+  assert.equal(st.calibrationSeq, 1);
+});
+
+test("a lost sensor_state reply times out instead of wedging every later sensor request", async () => {
+  const { client, sockets, scheduled } = makeClient();
+  void client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+  const n0 = scheduled.length;
+  const lost = client.getSensors();
+  lost.catch(() => undefined);
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  assert.equal(s.lastSent().type, "get_sensors");
+  assert.ok(scheduled.length > n0, "the sensor request scheduled a deadline");
+  // The reply never comes: fire the request deadline (the latest callback).
+  scheduled[scheduled.length - 1]!();
+  await assert.rejects(lost, (e: unknown) => e instanceof RequestTimeoutError);
+  const next = client.getSensors();
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  assert.equal(s.allSent().filter((m) => m.type === "get_sensors").length, 2, "the next poll is sent");
+  s.receive({ type: "sensor_state", status: "SENSOR_STATUS_RUNNING" });
+  assert.equal((await next).status, "SENSOR_STATUS_RUNNING");
+});
+
+// -- reconnecting while a caller waits for the device (OTA handoff / install) ----------
+
+/** A warm cert-trust client (cross-origin wss) with recorded backoff delays. */
+function trustClient(warmRetryLimit = 4) {
+  const sockets: FakeSocket[] = [];
+  const scheduled: Array<{ fn: () => void; ms: number }> = [];
+  const events = { trustNeeded: 0 };
+  const client = new LedMapperClient("wss://device.test/ws", {
+    socketFactory: () => {
+      const s = new FakeSocket();
+      sockets.push(s);
+      return s;
+    },
+    now: () => 1000,
+    schedule: (fn, ms) => {
+      scheduled.push({ fn, ms });
+    },
+    warmRetryLimit,
+  });
+  client.events = { onCertTrustNeeded: () => void events.trustNeeded++ };
+  return { client, sockets, scheduled, events };
+}
+
+const LOADER_WELCOME = {
+  type: "welcome",
+  sessionId: "loader",
+  codeParams: CODE_PARAMS,
+  solverBenchMs: null,
+  ota: { mode: "MODE_LOADER" },
+};
+
+async function withLocation(fn: () => Promise<void>): Promise<void> {
+  const saved = (globalThis as unknown as { location?: unknown }).location;
+  (globalThis as unknown as { location: unknown }).location = { host: "app.test" };
+  try {
+    await fn();
+  } finally {
+    (globalThis as unknown as { location?: unknown }).location = saved;
+  }
+}
+
+test("while a caller waits for the device, a warm cert-trust client never gives up", async () => {
+  // The web OTA bug: the app -> loader handoff (reboot + Wi-Fi join + TLS load) took
+  // longer than the warm budget (4 failed reconnects), the client fell into the
+  // cert-trust give-up, and nothing reconnected again — "Restarting into the
+  // updater…" forever. While waitForWelcome is pending it must keep retrying, at a
+  // short capped backoff, and pick the device up when it's back.
+  await withLocation(async () => {
+    const { client, sockets, scheduled, events } = trustClient(4);
+    const p = client.connect();
+    sockets[0]!.open();
+    sockets[0]!.receive({ type: "welcome", sessionId: "app", codeParams: CODE_PARAMS, solverBenchMs: null });
+    await p;
+    const back = client.waitForWelcome((w) => (w as unknown as { ota?: { mode?: string } }).ota?.mode === "MODE_LOADER", 180_000);
+    client.expectRestart(); // the device answered REBOOTING: drop the soon-half-open socket
+    // 12 failed reconnects (3x the warm budget): each = backoff, then open-timeout.
+    for (let i = 0; i < 12; i++) {
+      const backoff = scheduled[scheduled.length - 1]!;
+      assert.ok(backoff.ms <= 2000, `awaited backoff is capped (${backoff.ms} ms)`);
+      backoff.fn(); // -> connect(): a new socket + its open-timeout
+      scheduled[scheduled.length - 1]!.fn(); // open-timeout closes it unwelcomed
+    }
+    assert.equal(events.trustNeeded, 0, "no cert-trust give-up while awaited");
+    scheduled[scheduled.length - 1]!.fn(); // one more backoff -> the loader is up
+    const s = sockets[sockets.length - 1]!;
+    s.open();
+    s.receive(LOADER_WELCOME);
+    const w = await back;
+    assert.equal((w as unknown as { ota: { mode: string } }).ota.mode, "MODE_LOADER");
+    assert.ok(client.isConnected);
+  });
+});
+
+test("once nobody waits, the cert-trust give-up applies again", async () => {
+  await withLocation(async () => {
+    const { client, sockets, scheduled, events } = trustClient(3);
+    const p = client.connect();
+    sockets[0]!.open();
+    sockets[0]!.receive({ type: "welcome", sessionId: "app", codeParams: CODE_PARAMS, solverBenchMs: null });
+    await p;
+    sockets[0]!.close(); // fail #1 (no waiter)
+    for (let i = 0; i < 2; i++) {
+      scheduled[scheduled.length - 1]!.fn();
+      scheduled[scheduled.length - 1]!.fn();
+    }
+    assert.equal(events.trustNeeded, 1, "the rotated-cert give-up still works");
+  });
+});
+
+test("waitForWelcome restarts a client that had already given up", async () => {
+  await withLocation(async () => {
+    const { client, sockets, scheduled, events } = trustClient(2);
+    const p = client.connect();
+    sockets[0]!.open();
+    sockets[0]!.receive({ type: "welcome", sessionId: "app", codeParams: CODE_PARAMS, solverBenchMs: null });
+    await p;
+    sockets[0]!.close();
+    scheduled[scheduled.length - 1]!.fn();
+    scheduled[scheduled.length - 1]!.fn(); // fail #2 -> give up
+    assert.equal(events.trustNeeded, 1);
+    const n = sockets.length;
+    const back = client.waitForWelcome(() => true, 60_000);
+    const kick = scheduled.find((x, i) => i >= scheduled.length - 2 && x.ms === 0);
+    assert.ok(kick, "an immediate reconnect is scheduled");
+    kick.fn();
+    assert.equal(sockets.length, n + 1);
+    sockets[n]!.open();
+    sockets[n]!.receive(LOADER_WELCOME);
+    await back;
+  });
+});
+
+test("expectRestart drops a socket that looks open so the reconnect starts now", async () => {
+  const { client, sockets, scheduled } = makeClient();
+  const p = client.connect();
+  sockets[0]!.open();
+  sockets[0]!.receive({ type: "welcome", sessionId: "s", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await p;
+  const before = scheduled.length;
+  client.expectRestart();
+  assert.equal(sockets[0]!.readyState, 3, "closed");
+  assert.equal(client.isConnected, false);
+  assert.equal(scheduled.length, before + 1, "a backoff reconnect is scheduled");
+});
+
+test("an explicit connect() cancels a pending backoff reconnect (no duplicate socket)", async () => {
+  const { client, sockets, scheduled } = makeClient();
+  const p = client.connect();
+  sockets[0]!.open();
+  sockets[0]!.receive({ type: "welcome", sessionId: "s", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await p;
+  sockets[0]!.close(); // schedules a backoff reconnect
+  const backoff = scheduled[scheduled.length - 1]!;
+  void client.connect().catch(() => undefined); // the user reconnects by hand
+  const n = sockets.length;
+  backoff(); // the stale backoff fires
+  assert.equal(sockets.length, n, "no second socket");
+});
+
+test("a waitForWelcome that times out rejects with RequestTimeoutError", async () => {
+  const { client, scheduled } = makeClient();
+  const p = client.waitForWelcome(() => true, 5000);
+  scheduled[scheduled.length - 1]!();
+  await assert.rejects(p, (e: unknown) => e instanceof RequestTimeoutError);
+});

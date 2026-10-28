@@ -113,9 +113,9 @@ fn the_agent_surface() {
     let m: serde_json::Value = serde_json::from_slice(&eu.r#manifest).unwrap();
     assert_eq!(m[0]["doc"], "How heavy the rain is, 0 = dry.");
     let cur: Vec<(u32, Vec<f32>)> = eu.r#current.iter().map(|v| (v.r#slot, v.r#value.to_vec())).collect();
-    // The VM's live values: the device doesn't seed manifest defaults (the client
-    // pushes them), so an untouched uniform reads back as what the VM holds.
-    assert_eq!(cur, vec![(0, vec![0.75]), (1, vec![0.0, 0.0, 0.0])]);
+    // The VM's live values: the load seeds every uniform with its manifest
+    // default (R7), so the untouched tint reads back as its default.
+    assert_eq!(cur, vec![(0, vec![0.75]), (1, vec![0.2, 0.6, 1.0])]);
 
     // set_uniforms.commit: unset or true persists, false is live-only.
     set_uniform(0, &[0.5], None);
@@ -169,6 +169,7 @@ fn the_agent_surface() {
     let mf: serde_json::Value = serde_json::from_slice(&buf[..n as usize]).unwrap();
     assert_eq!(mf["tls"], serde_json::json!({"cert_sha256": sha, "state": "ready", "persisted": true}));
     assert!(FEATURES.contains(&"tls_info"));
+    assert!(FEATURES.contains(&"group_capture"));
 
     // mDNS: the service carries the player's live identity.
     let ip = [192u8, 168, 4, 23];

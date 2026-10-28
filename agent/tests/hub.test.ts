@@ -274,6 +274,22 @@ describe("fan-out", () => {
     }
   });
 
+  test("deploy reports a rate-uniform-times-time lint as a trailing warning note", async () => {
+    const src = "uniform float speed : 0.0 .. 4.0 = 1.0;\nvec3 shade(Led led) { return vec3(fract(led.s - time * speed), 0.0, 0.0); }\n";
+    const r = (await c.callTool({ name: "deploy_effect", arguments: { effect_id: "jumpy", source: src, players: "all" } })) as {
+      isError?: boolean;
+      content: Text[];
+    };
+    assert.notEqual(r.isError, true);
+    const last = r.content[r.content.length - 1]!.text ?? "";
+    assert.match(last, /^Warnings \(fix them and deploy again\):\n2:\d+: warning: `time` scaled by the uniform `speed`/);
+    // A clean source gets no note.
+    const ok = (await c.callTool({ name: "deploy_effect", arguments: { effect_id: "mood", source: EFFECT, players: "all" } })) as {
+      content: Text[];
+    };
+    assert.ok(ok.content.every((x) => !(x.text ?? "").startsWith("Warnings")));
+  });
+
   test("an effect that doesn't compile deploys nowhere", async () => {
     const before = ps.map((p) => p.effect?.id);
     const r = await call(c, "deploy_effect", { effect_id: "bad", source: "vec3 shade(Led led) { return oops; }", players: "all" });

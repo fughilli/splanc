@@ -70,7 +70,10 @@ export type QueryOp =
   | "align" // shared time base
   | "lock" // {on: boolean}: the Show Mode lock
   | "probe" // per player device round trip, through the same queue as controls
-  | "identify";
+  | "identify"
+  // Multi-fixture localization (docs/design/multi-fixture-localization.md §4):
+  // {action: "prepare"|"start"|"stop"|"set_pose", ...} — see web/src/net/groupCapture.ts.
+  | "group_capture";
 
 export interface QueryMsg {
   t: "q";
@@ -108,9 +111,10 @@ export interface LivePlayer {
   /** Deck A's active effect id as last seen by the bridge (null = none/unknown). */
   effect: string | null;
   /** The framerate autoscaler (FUG-82) as last reported: the rate the player renders
-   * at now (0 = unknown), and whether it parked the effect (couldn't hold the floor
-   * or a pinned rate). Absent on firmware without it. */
-  fps?: { current: number; target: number; auto: boolean; aborted: boolean };
+   * at now (0 = unknown), and whether the effect is `lagging` (too heavy for the
+   * floor or a pinned rate: it keeps playing, slower — never parked) with the rate
+   * it `achieved` (0 = not measured). Absent on firmware without it. */
+  fps?: { current: number; target: number; auto: boolean; lagging: boolean; achieved: number };
 }
 
 export interface LanInfo {
@@ -172,8 +176,9 @@ export interface ErrMsg {
   player?: string;
 }
 
-/** A player's framerate autoscaler gave up (fps_state{aborted}, FUG-82): the effect
- * is parked (not rendering). Pushed at once; the steady fps rides `players`. */
+/** A player's effect started or stopped lagging (fps_state{lagging}, FUG-82): it
+ * can't hold the floor / pinned rate and runs at `achieved_fps` instead — it keeps
+ * playing (advisory). Pushed at once on a change; the steady fps rides `players`. */
 export interface FpsMsg {
   t: "fps";
   player: string;
@@ -182,7 +187,8 @@ export interface FpsMsg {
   target_fps: number;
   min_fps: number;
   auto: boolean;
-  aborted: boolean;
+  lagging: boolean;
+  achieved_fps: number;
 }
 
 /** From the relay itself (not the bridge). */
