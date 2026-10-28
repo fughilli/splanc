@@ -18,9 +18,20 @@ The gate, in ONE reservation:
      board ("joined" phase) — same requirement;
   4. right away, Improv the same creds once more ("resend" phase: a central re-sending
      after a missed result) — must still get its redirect within the budget;
-  5. Improv an SSID that is not on the air ("absent" phase: a 5 GHz-only or switched-off
-     hotspot) — must get Improv error UNABLE_TO_CONNECT within the budget, not hang;
-  6. Improv the rig AP again ("recover" phase) — must PROVISION within the budget.
+  5. past the coalesce window, make the board's channel sweeps deaf (console
+     `WIFI SCANMISS n`) and Improv the same creds on the joined board ("blind" phase) —
+     must still PROVISION within the budget. This is the iOS-bench regression after #401:
+     with the iPhone holding the BLE link every sweep missed the Mac AP for ~8 s, the
+     fresh join never sent an auth (it waited on a sweep match) and the app got
+     UNABLE_TO_CONNECT for the network the board had just been leased on. The join must
+     authenticate toward the BSSID latched for that SSID between its sweeps;
+  6. reset, make the sweeps deaf straight away and Improv the same creds at once
+     ("stored_blind": the boot-time stored-creds join in flight or just done, and the
+     fresh join's sweeps can't see the AP) — same requirement;
+  7. Improv an SSID that is not on the air ("absent" phase: a 5 GHz-only or switched-off
+     hotspot) — must get Improv error UNABLE_TO_CONNECT within the absent budget (the
+     app's 45 s join timeout), not hang;
+  8. Improv the rig AP again ("recover" phase) — must PROVISION within the budget.
 Serial: every same-creds phase that the firmware saw must print a fresh join (or, for
 the resend, ride the fresh join just started), and NEVER the old short-circuit lines.
 
@@ -44,6 +55,10 @@ OLD_KEEP_RE = re.compile(
     r"(?:joining that network|associated)"
 )
 NOT_FOUND_RE = re.compile(r"\[ble\] \"[^\"]*\" not found in \d+ sweeps.*UNABLE_TO_CONNECT")
+# A sweep that finished without hearing the SSID (the blind phases must show some).
+SWEEP_MISS_RE = re.compile(r"\[wifi\] background scan: \"[^\"]*\" not found")
+# The console ack of `WIFI SCANMISS n` (n > 0).
+BLIND_ACK_RE = re.compile(r"\[wifi\] console: the next ([1-9]\d*) sweep\(s\) hear nothing")
 REDIRECT_RE = re.compile(r"\[ble\] PROVISIONED -> redirect (\S+)")
 LEASE_RE = re.compile(r"DHCP LEASE ACQUIRED.*?IP\s+(\d{1,3}(?:\.\d{1,3}){3})")
 RESTORED_RE = re.compile(r"\[wifi\] restored stored credentials \(ssid=([^)]*)\)")
@@ -53,12 +68,18 @@ CRASH_RE = re.compile(
 
 # Provisioner errors that are the bench's, not the firmware's: the BLE scan/connect
 # never reached the DUT, so the firmware never saw the creds.
-INFRA_ERRORS = ("no Improv device found", "BLE transport failed", "provisioner gave no JSON")
+INFRA_ERRORS = (
+    "no Improv device found",
+    "BLE transport failed",
+    "provisioner gave no JSON",
+    "no SCANMISS ack",  # the console never took WIFI SCANMISS (bench, not firmware)
+)
 JOIN_TIMEOUT = "timed out waiting for the player to join"
 UNABLE = "unable_to_connect"
 
 # The same-creds phases, in run order; then the absent-SSID report and the recovery.
-PHASES = ("stored", "joined", "resend")
+BLIND_PHASES = ("blind", "stored_blind")
+PHASES = ("stored", "joined", "resend") + BLIND_PHASES
 ABSENT = "absent"
 RECOVER = "recover"
 ALL_PHASES = PHASES + (ABSENT, RECOVER)
@@ -73,6 +94,8 @@ def parse_serial(log: str) -> dict:
         "ride": len(RIDE_RE.findall(log)),
         "old_keep": len(OLD_KEEP_RE.findall(log)),
         "not_found": len(NOT_FOUND_RE.findall(log)),
+        "sweep_miss": len(SWEEP_MISS_RE.findall(log)),
+        "blind_ack": len(BLIND_ACK_RE.findall(log)),
         "redirects": len(REDIRECT_RE.findall(log)),
         "leases": len(LEASE_RE.findall(log)),
         "restored": RESTORED_RE.search(log) is not None,
@@ -92,15 +115,24 @@ def classify(result: dict | None) -> str:
     return "fail"
 
 
-def grade(setup: dict | None, phases: dict, serial: dict | None, budget_s: float) -> dict:
+def grade(
+    setup: dict | None,
+    phases: dict,
+    serial: dict | None,
+    budget_s: float,
+    absent_budget_s: float | None = None,
+) -> dict:
     """Grade a run.
 
     setup: the first provision's result ({"ok": ...} or None if it never ran);
     phases: {name: {"ok", "error", "join_s"} | None} for PHASES; serial: parse_serial()
     of the reservation's serial capture (None when no capture was available);
-    budget_s: the Improv join timeout every same-creds phase must beat.
+    budget_s: the Improv join timeout every same-creds phase must beat;
+    absent_budget_s: the budget the absent SSID's UNABLE_TO_CONNECT must beat (default
+    budget_s; the firmware waits ~30 s before reporting, under the app's 45 s).
     Returns {"verdict": PASS|FAIL|SKIP, "problems": [...], "skip": reason|None}.
     """
+    absent_budget_s = budget_s if absent_budget_s is None else absent_budget_s
     if classify(setup) != "ok":
         return {"verdict": "SKIP", "problems": [], "skip": "setup provision never joined (infra)"}
     problems: list[str] = []
@@ -138,7 +170,7 @@ def grade(setup: dict | None, phases: dict, serial: dict | None, budget_s: float
             problems.append(f"{ABSENT}: an SSID that is not on the air reported PROVISIONED")
         elif JOIN_TIMEOUT in err:
             problems.append(
-                f"{ABSENT}: no Improv error within the {budget_s:g}s budget (the app hangs)"
+                f"{ABSENT}: no Improv error within the {absent_budget_s:g}s budget (the app hangs)"
             )
         elif UNABLE not in err:
             problems.append(f"{ABSENT}: want error {UNABLE}, got {err}")
@@ -152,10 +184,19 @@ def grade(setup: dict | None, phases: dict, serial: dict | None, budget_s: float
             )
         if serial["crashed"]:
             problems.append("serial: the DUT crashed")
-        # stored + joined must each be a fresh join of the committed creds; the resend may
-        # ride the join just started (inside the coalesce window) or be fresh itself.
+        blind_ran = [n for n in BLIND_PHASES if classify(phases.get(n)) in ("ok", "fail")]
+        if blind_ran and not serial["sweep_miss"]:
+            problems.append(
+                "serial: no sweep missed the AP in the blind phase(s) — WIFI SCANMISS had no "
+                "effect, so the 'AP not seen by the first sweeps' case was not exercised"
+            )
+        # stored + joined (+ the blind phases, each past the coalesce window) must each be
+        # a fresh join of the committed creds; the resend may ride the join just started
+        # (inside the coalesce window) or be fresh itself.
         want_fresh = sum(
-            1 for n in ("stored", "joined") if classify(phases.get(n)) in ("ok", "fail")
+            1
+            for n in ("stored", "joined") + BLIND_PHASES
+            if classify(phases.get(n)) in ("ok", "fail")
         )
         if serial["fresh_same"] < want_fresh:
             problems.append(

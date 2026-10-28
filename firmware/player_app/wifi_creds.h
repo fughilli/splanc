@@ -22,7 +22,9 @@
 //     they would restart ride that join (a central that missed the result re-sends
 //     several times; restarting on each would keep it from ever reaching the lease);
 //   - an Improv fresh join whose SSID no sweep can see (a 5 GHz-only or switched-off
-//     hotspot) is reported to the central as UNABLE_TO_CONNECT after a few retry sweeps
+//     hotspot) is reported to the central as UNABLE_TO_CONNECT — after retry sweeps
+//     over ~30 s (under the app's 45 s timeout), never on a few quick misses, and never
+//     while the AP answers the auth the join keeps sending to the latched BSSID —
 //     instead of leaving the app waiting; the creds stay committed and the background
 //     rescan continues (wifi_scan.h ImprovScanReport);
 //   - wired PROV (the HITL console path) of the network the board is already on (or

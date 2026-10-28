@@ -14,8 +14,16 @@ ONE reservation (the phases + grading live in improv_fresh_join_core):
   joined  past the re-send coalesce window, Improv the same creds on the joined board;
   resend  straight after, the same creds again (a central re-sending after a missed
           result): must still get PROVISIONED + redirect;
+  blind   past the re-send window, deafen the board's channel sweeps (console
+          `WIFI SCANMISS n`) and Improv the same creds on the joined board: must still
+          PROVISION (the iOS-bench regression: sweeps that missed a present AP under BLE
+          coex made the fresh join never auth and report UNABLE_TO_CONNECT in ~8 s);
+  stored_blind
+          reset, deafen the sweeps at once and Improv the same creds straight away (the
+          boot-time stored join in flight or just done): must PROVISION;
   absent  an SSID that is not on the air (a 5 GHz-only / switched-off hotspot): must get
-          Improv error UNABLE_TO_CONNECT inside the budget instead of hanging the app;
+          Improv error UNABLE_TO_CONNECT inside --absent-budget (the app's 45 s timeout)
+          instead of hanging the app;
   recover the rig AP again: must PROVISION.
 
 Each same-creds phase must reach PROVISIONED + the redirect within --join-budget (the
@@ -32,6 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import sys
 import time
 
@@ -52,6 +61,32 @@ def default_flashbundle() -> str | None:
         return runfiles.Create().Rlocation(rel)
     except Exception:
         return None
+
+
+def _console(res, line: str, seconds: float = 2.0) -> str:
+    """Write one line to the DUT's USB-serial console and capture its answer (the
+    hitl_wifi_cadence recipe: attach the reader first, then write)."""
+    write = "printf '%s\\n' {} > /dev/ttyACM0".format(shlex.quote(line))
+    cmd = (
+        "stty -F /dev/ttyACM0 raw -echo 115200 2>/dev/null; "
+        + f"timeout {seconds:g} cat /dev/ttyACM0 & sleep 0.5; "
+        + write
+        + "; wait"
+    )
+    proc = res.ssh_serialized(cmd, capture=True, timeout=seconds + 60)
+    return (proc.stdout or "") + (proc.stderr or "")
+
+
+def _scanmiss(res, n: int) -> bool:
+    """Console `WIFI SCANMISS n`: the board's next n channel sweeps hear nothing. True once
+    the firmware acknowledged it (one retry: the ack can race the reader attaching)."""
+    for _ in (1, 2):
+        out = _console(res, f"WIFI SCANMISS {n}")
+        if f"the next {n} sweep(s) hear nothing" in out:
+            _log(f"  WIFI SCANMISS {n}: acknowledged")
+            return True
+    _log(f"  WIFI SCANMISS {n}: NOT acknowledged")
+    return False
 
 
 def _improv(res, ssid: str, password: str, budget: float, address: str | None) -> dict:
@@ -124,9 +159,28 @@ def run(args) -> int:
             _log("[resend] the same creds again straight away (a central that missed the result)")
             phases["resend"] = _improv(res, ssid, password, args.join_budget, address)
 
+            # The AP is on the air but the fresh join's sweeps can't hear it (the iPhone's
+            # BLE link vs the sweep on the iOS bench): it must still join, via auth toward
+            # the BSSID latched for this SSID, not report UNABLE_TO_CONNECT.
+            _log(f"[blind] wait {args.coalesce_wait:g}s; deafen the sweeps; Improv the same creds")
+            time.sleep(args.coalesce_wait)
+            if _scanmiss(res, args.blind_sweeps):
+                phases["blind"] = _improv(res, ssid, password, args.join_budget, address)
+            else:
+                phases["blind"] = {"ok": False, "error": "console: no SCANMISS ack"}
+            _scanmiss(res, 0)
+
+            _log("[stored_blind] reset; deafen the sweeps at once; Improv the same creds")
+            res.ssh_serialized("hitl-monitor --reset --seconds 1", capture=True, timeout=45)
+            if _scanmiss(res, args.blind_sweeps):
+                phases["stored_blind"] = _improv(res, ssid, password, args.join_budget, address)
+            else:
+                phases["stored_blind"] = {"ok": False, "error": "console: no SCANMISS ack"}
+            _scanmiss(res, 0)
+
             absent = f"hitl-absent-{os.getpid() % 100000}"
             _log(f"[absent] Improv {absent!r} (not on the air): want UNABLE_TO_CONNECT, not a hang")
-            phases["absent"] = _improv(res, absent, "password1", args.join_budget, address)
+            phases["absent"] = _improv(res, absent, "password1", args.absent_budget, address)
 
             _log("[recover] Improv the rig AP again")
             phases["recover"] = _improv(res, ssid, password, args.join_budget, address)
@@ -135,7 +189,7 @@ def run(args) -> int:
 
     log = "\n".join(res.serial_logs.values()) if res.serial_logs else ""
     serial = core.parse_serial(log) if log else None
-    g = core.grade(setup, phases, serial, args.join_budget)
+    g = core.grade(setup, phases, serial, args.join_budget, args.absent_budget)
     if g["verdict"] == "FAIL" and log:
         _log("----- DUT serial log (tail) -----")
         _log(log[-12000:])
@@ -165,6 +219,19 @@ def main() -> None:
         type=float,
         default=20.0,
         help="SendWifi -> PROVISIONED budget per same-creds phase (the Improv client timeout)",
+    )
+    ap.add_argument(
+        "--absent-budget",
+        type=float,
+        default=45.0,
+        help="SendWifi -> UNABLE_TO_CONNECT budget for the absent SSID (the app's join "
+        "timeout, web/src/net/improv.ts; the firmware reports after ~30 s of sweeps)",
+    )
+    ap.add_argument(
+        "--blind-sweeps",
+        type=int,
+        default=40,
+        help="sweeps the blind phases deafen (WIFI SCANMISS n); cleared after each phase",
     )
     ap.add_argument("--persist-wait", type=float, default=20.0)
     ap.add_argument(
