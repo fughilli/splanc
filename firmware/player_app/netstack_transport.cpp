@@ -2535,9 +2535,11 @@ void netstack_loop() {
         // the board still joins if the AP appears, and that lease clears the error.
         improv_ble_set_error(IMPROV_ERROR_UNABLE_TO_CONNECT);
         g_improv_join.forget();  // the app's retry SendWifi is a fresh join, never a ride
-        Serial.printf("[t=%lu] [ble] \"%s\" not found in %lu sweeps (directed probe incl.) — Improv "
-                      "error UNABLE_TO_CONNECT; creds kept, background rescan continues\n",
-                      (unsigned long)now_ms, g_ssid, (unsigned long)lm_wifi_scan::kImprovSweeps);
+        Serial.printf("[t=%lu] [ble] \"%s\" not found in %lu sweeps over %lu s (directed probe "
+                      "incl.) — Improv error UNABLE_TO_CONNECT; creds kept, background rescan "
+                      "continues\n", (unsigned long)now_ms, g_ssid,
+                      (unsigned long)g_improv_scan.misses(),
+                      (unsigned long)((now_ms - g_improv_scan.started_ms()) / 1000));
       }
       esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);  // back on the join channel
     }
