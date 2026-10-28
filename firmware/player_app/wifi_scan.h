@@ -260,4 +260,75 @@ inline size_t build_probe_req(uint8_t *f, size_t cap, const uint8_t mac[6], cons
   return k;
 }
 
+// --- Improv: report an SSID the fresh join can't see (instead of hanging the app) ------
+// A BLE Improv write starts a fresh join with a forced sweep (wifi_creds.h ImprovJoin).
+// When the network isn't on the air where the C6 can hear it — a phone hotspot on 5 GHz
+// only, or switched off — the old firmware just kept rescanning in the background and
+// the provisioning app sat at "waiting for the device to join" until its own timeout.
+// Now: kImprovSweeps sweeps (the fresh one + retries kImprovRescanGapMs apart, so a
+// hotspot that beacons slowly still gets caught) that all miss the SSID report
+// UNABLE_TO_CONNECT over Improv, so the app shows a failure. The credentials stay
+// committed and the background rescan keeps going: if the AP shows up later the board
+// still joins, and the error is cleared (PROVISIONED + redirect) on that lease. Every
+// sweep sends a directed Probe Request for the SSID (bgscan_tune), so a hidden SSID
+// answers too.
+constexpr uint32_t kImprovSweeps = 3;
+constexpr uint32_t kImprovRescanGapMs = 3000;
+
+class ImprovScanReport {
+ public:
+  enum class Action { kNone, kReportNotFound };
+  // An Improv fresh join started (its first sweep is already requested by the caller).
+  void on_fresh_join() {
+    armed_ = true;
+    sweeping_ = true;
+    misses_ = 0;
+    reported_ = false;
+  }
+  // Another path (wired PROV) replaced the credentials: nothing to report for Improv.
+  void cancel() {
+    armed_ = false;
+    sweeping_ = false;
+    reported_ = false;
+  }
+  // Polled while no sweep is running: whether to start the next retry sweep now.
+  bool take_retry(uint32_t now) {
+    if (!armed_ || sweeping_ || misses_ == 0 || !at_or_after(now, last_ms_ + kImprovRescanGapMs))
+      return false;
+    sweeping_ = true;
+    return true;
+  }
+  // A sweep (an Improv retry or the background schedule's) finished at `now`.
+  Action on_sweep_done(bool found, uint32_t now) {
+    if (!armed_) return Action::kNone;
+    sweeping_ = false;
+    if (found) {
+      armed_ = false;
+      return Action::kNone;
+    }
+    misses_++;
+    last_ms_ = now;
+    if (misses_ < kImprovSweeps) return Action::kNone;
+    armed_ = false;
+    reported_ = true;
+    return Action::kReportNotFound;
+  }
+  // The link leased: true once after a not-found report (clear the Improv error).
+  bool take_clear_on_lease() {
+    if (!reported_) return false;
+    reported_ = false;
+    return true;
+  }
+  bool armed() const { return armed_; }
+  bool reported() const { return reported_; }
+  uint32_t misses() const { return misses_; }
+
+ private:
+  bool armed_ = false;
+  bool sweeping_ = false;
+  bool reported_ = false;
+  uint32_t misses_ = 0;
+  uint32_t last_ms_ = 0;
+};
+
 }  // namespace lm_wifi_scan

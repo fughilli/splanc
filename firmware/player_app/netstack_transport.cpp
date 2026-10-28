@@ -176,6 +176,7 @@ bool g_restore_pending = false;  // restored at boot; the PMK derivation starts 
 bool g_using_stored = false;     // the active creds are the stored ones (not a fresh provision)
 bool g_scan_matched = false;     // the last scan (boot or background) saw the active SSID
 lm_wifi::Persist g_persist;      // whether/when the active creds still need writing to NVS
+lm_wifi::ImprovJoin g_improv_join;  // the last Improv fresh join (re-send coalescing)
 
 // DHCP lease state (DORA).
 uint8_t g_offer_ip[4] = {0}, g_server_id[4] = {0};
@@ -312,6 +313,7 @@ bool scan_latch_ap() {
 // Now the netstack sweeps the channels itself from the loop (we already receive every
 // frame in all-frames mode), one non-blocking hop per pass, while render keeps going.
 lm_wifi_scan::ScanSchedule g_scan_sched;
+lm_wifi_scan::ImprovScanReport g_improv_scan;  // Improv: report an SSID no sweep can see
 lm_wifi_scan::ChannelHop g_hop;
 bool g_force_sweep = false;   // console WIFI SCAN: one sweep now
 bool g_sweep_forced = false;  // the running sweep was forced (not scheduled)
@@ -2327,6 +2329,7 @@ void netstack_loop() {
           // its stored creds, then got PROV'd again by a harness) is a no-op: tearing the
           // link down would only re-run auth/4-way/DHCP. The re-received line carries the
           // IP so a provisioner still learns where we are without a fresh lease line.
+          // (Wired PROV only — BLE Improv always starts a fresh join, see below.)
           lm_wifi::Provision pa = lm_wifi::on_provision(g_creds_ready, g_leased, g_ssid, g_pass,
                                                         nssid, npass);
           if (pa == lm_wifi::Provision::kKeepJoined) {
@@ -2344,6 +2347,8 @@ void netstack_loop() {
             g_creds_ready = true;
             g_using_stored = false;
             g_persist.on_committed();  // written to NVS once this network leases
+            g_improv_join.forget();    // the next Improv write is fresh, whatever it carries
+            g_improv_scan.cancel();    // and owes the Improv central no not-found report
             g_ap_latched = false;  // re-latch THIS SSID's BSSID/channel from the scan cache
             st = AUTH;             // restart the join from AUTH (mirrors the BLE take path)
             inited = false;        // the 4-way re-inits for the new AP / PMK
@@ -2438,6 +2443,15 @@ void netstack_loop() {
     bool wanted = autonomous(now_ms) &&
                   lm_wifi_scan::scan_wanted(g_creds_ready, st == AUTH, g_leased && st != AUTH,
                                             g_scan_matched, g_authw.waited_ms(now_ms));
+    // Improv fresh join: retry the sweep a few seconds apart before reporting the SSID
+    // not found (a hotspot that beacons slowly), while the join is still waiting on it.
+    if (!g_hop.active() && g_radio_up && !g_silent && st == AUTH && !g_scan_matched &&
+        g_improv_scan.take_retry(now_ms)) {
+      g_force_sweep = true;
+      Serial.printf("[t=%lu] [ble] \"%s\" not seen yet — Improv retry sweep %lu/%lu\n",
+                    (unsigned long)now_ms, g_ssid, (unsigned long)(g_improv_scan.misses() + 1),
+                    (unsigned long)lm_wifi_scan::kImprovSweeps);
+    }
     bool forced = g_force_sweep && !g_hop.active() && g_radio_up && !g_silent;
     g_force_sweep = false;
     uint32_t first_gap = lm_wifi_scan::policy_delay_ms(g_policy, 0, unseen_s());
@@ -2483,8 +2497,22 @@ void netstack_loop() {
         g_scan_matched = false;
         Serial.printf("[t=%lu] [wifi] background scan: \"%s\" not found; next in %lu s%s (BLE "
                       "Improv stays up to re-provision)\n", (unsigned long)now_ms, g_ssid,
-                      (unsigned long)((g_scan_sched.next_ms() - now_ms) / 1000),
+                      g_scan_sched.armed()
+                          ? (unsigned long)((g_scan_sched.next_ms() - now_ms) / 1000)
+                          : (unsigned long)(lm_wifi_scan::policy_delay_ms(g_policy, 0, unseen_s()) / 1000),
                       g_scan_decayed ? " (decayed: network unseen for a long time)" : "");
+      }
+      if (g_improv_scan.on_sweep_done(g_hop.found(), now_ms) ==
+          lm_wifi_scan::ImprovScanReport::Action::kReportNotFound) {
+        // Tell the provisioning app instead of letting it time out on "waiting for the
+        // device to join": Improv error UNABLE_TO_CONNECT (state back to AUTHORIZED, so
+        // it can re-send). The creds stay committed and the background rescan goes on —
+        // the board still joins if the AP appears, and that lease clears the error.
+        improv_ble_set_error(IMPROV_ERROR_UNABLE_TO_CONNECT);
+        g_improv_join.forget();  // the app's retry SendWifi is a fresh join, never a ride
+        Serial.printf("[t=%lu] [ble] \"%s\" not found in %lu sweeps (directed probe incl.) — Improv "
+                      "error UNABLE_TO_CONNECT; creds kept, background rescan continues\n",
+                      (unsigned long)now_ms, g_ssid, (unsigned long)lm_wifi_scan::kImprovSweeps);
       }
       esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);  // back on the join channel
     }
@@ -2578,28 +2606,34 @@ void netstack_loop() {
     static uint32_t redirect_first_ms = 0, redirect_last_ms = 0;
     char s[33], p[65];
     if (improv_ble_take_credentials(s, sizeof s, p, sizeof p)) {
-      // A central that missed our Improv result re-writes wifi-settings — often several times
-      // (the redirect below points at the lease IP, and if the central can't confirm it, its
-      // provisioning flow retries the SendWifi). If those creds match the network we're ALREADY
-      // associated to, tearing the link down (st=AUTH) drops any in-flight client — e.g. a map
-      // upload mid-WSS — and re-runs auth/4-way/TLS for nothing. Treat a duplicate SendWifi for
-      // the current SSID as idempotent: keep the link and just re-answer the redirect.
-      lm_wifi::Provision pa = lm_wifi::on_provision(g_creds_ready, g_leased || st == DONE,
-                                                    g_ssid, g_pass, s, p);
-      if (pa == lm_wifi::Provision::kKeepJoining) {
-        // Already joining this network (from the stored creds): let that join finish and
-        // answer the redirect on its lease, instead of restarting it.
-        ble_creds_pending = true;
-        redirect_first_ms = 0;
-        improv_ble_set_state(IMPROV_STATE_PROVISIONING);
-        Serial.printf("[t=%lu] [ble] wifi-settings received (ssid=%s) — already joining that "
-                      "network, PROVISIONING\n", (unsigned long)millis(), s);
-      } else if (pa == lm_wifi::Provision::kKeepJoined) {
+      // The user's rule: a Wi-Fi join triggered through Improv is ALWAYS fresh — scan and
+      // join right then — even for the network the board is already on, or already joining
+      // from its stored creds. (Waiting on that stored join left the Improv central to time
+      // out: the join runs on the background rescan backoff, 5 s up to 60 s, and may be
+      // aimed at a cached BSSID/channel a phone hotspot has since moved off.) A duplicate
+      // SendWifi therefore drops an in-flight WSS session — the accepted trade-off. The only
+      // exception (wifi_creds.h ImprovJoin): the same creds re-sent within
+      // kImprovCoalesceMs of the fresh join they would restart ride it, so a central that
+      // missed the result and re-sends in a burst can't restart the join forever — that
+      // join still reaches its lease and answers the redirect below.
+      uint32_t now_ms = (uint32_t)millis();
+      bool same_creds = g_creds_ready && lm_wifi::same(g_ssid, g_pass, s, p);
+      lm_wifi::ImprovProvision pa =
+          g_improv_join.on_receive(g_creds_ready, g_ssid, g_pass, s, p, now_ms);
+      if (pa == lm_wifi::ImprovProvision::kRideFreshJoin) {
         redirect_first_ms = 0;  // re-arm the resend window so the central gets another redirect
+        redirect_last_ms = 0;
         ble_creds_pending = true;
-        Serial.printf("[t=%lu] [ble] wifi-settings re-received (ssid=%s) — already associated, "
-                      "re-answering redirect (link kept)\n", (unsigned long)millis(), s);
+        if (!g_leased) improv_ble_set_state(IMPROV_STATE_PROVISIONING);
+        Serial.printf("[t=%lu] [ble] wifi-settings re-received (ssid=%s) — riding the fresh join "
+                      "started %lu ms ago (%s)\n", (unsigned long)now_ms, s,
+                      (unsigned long)(now_ms - g_improv_join.started_ms()),
+                      g_leased ? "leased: re-answering redirect" : "still joining");
       } else {
+        // Tear down the association we hold (or are building): disassoc + deauth to the AP
+        // we're latched to, so it drops us before the new auth (same AP or not).
+        bool was_linked = st != AUTH;
+        if (g_ap_latched && was_linked) netstack_prepare_restart();
         strncpy(g_ssid, s, sizeof g_ssid - 1);
         strncpy(g_pass, p, sizeof g_pass - 1);
         g_ssid[sizeof g_ssid - 1] = 0;
@@ -2617,12 +2651,29 @@ void netstack_loop() {
         inited = false;  // the 4-way re-inits for the new AP / PMK
         drop_link_for_new_network();
         on_provisioned();
-        // Start deriving the PMK NOW (off the hot path), overlapped with auth/assoc, so it's ready
-        // by the 4-way and we never freeze the loop (which would drop the BLE link mid-join).
-        ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass));
+        // Scan NOW, whatever the cache says: the cached BSSID/channel may be stale (a phone
+        // hotspot picks its channel each time it starts). The forced sweep runs on the next
+        // pass right after the latch, holding the auth until it lands; the reset schedule
+        // means a miss rescans on the backoff's FIRST step (5 s), not wherever the stored
+        // join's backoff had reached (up to 60 s).
+        g_scan_sched.due(false, 0);  // disarm + reset the backoff
+        g_force_sweep = true;
+        g_improv_scan.on_fresh_join();  // an SSID no sweep sees is reported (wifi_scan.h)
+        g_authw.reset();  // a fresh join gets a fresh unanswered-auth clock
+        // Start deriving the PMK NOW (off the hot path), overlapped with auth/assoc, so it's
+        // ready by the 4-way and we never freeze the loop (which would drop the BLE link
+        // mid-join). Same creds as committed: the PMK (derived, or deriving) is already theirs.
+        if (!same_creds)
+          ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass,
+                       strlen(g_pass));
         ble_creds_pending = true;
+        redirect_first_ms = 0;  // the redirect goes out on THIS join's lease
+        redirect_last_ms = 0;
         improv_ble_set_state(IMPROV_STATE_PROVISIONING);
-        Serial.printf("[t=%lu] [ble] wifi-settings received (ssid=%s) -> associating + PROVISIONING\n", (unsigned long)millis(), s);
+        Serial.printf("[t=%lu] [ble] wifi-settings received (ssid=%s%s) -> fresh join: %sscan "
+                      "now, associating + PROVISIONING\n", (unsigned long)now_ms, s,
+                      same_creds ? ", same as committed" : "",
+                      was_linked ? "link dropped, " : "");
       }
     }
     // Send the Provisioned redirect on first lease, then RE-SEND it a few times/sec while the
@@ -2633,6 +2684,20 @@ void netstack_loop() {
     // reliable). Re-advertising for a short window gives the central many chances to catch one
     // copy; it stops once the central disconnects (it got it). Harmless on a good link — the
     // provisioner completes on the first copy and drops the link.
+    if (g_leased && g_improv_scan.take_clear_on_lease()) {
+      // The AP showed up after we reported it not found: clear the Improv error. With the
+      // central still connected the redirect below does it (PROVISIONED + result); with
+      // it gone, set the same state now so a central that reconnects reads success.
+      Serial.printf("[t=%lu] [ble] \"%s\" joined after the not-found report — clearing the "
+                    "Improv error\n", (unsigned long)millis(), g_ssid);
+      if (!improv_ble_central_connected()) {
+        char url[40];
+        snprintf(url, sizeof url, "http://%u.%u.%u.%u/", g_offer_ip[0], g_offer_ip[1],
+                 g_offer_ip[2], g_offer_ip[3]);
+        improv_ble_send_redirect(url);
+        improv_ble_set_state(IMPROV_STATE_PROVISIONED);
+      }
+    }
     if (ble_creds_pending && g_leased && improv_ble_central_connected()) {
       uint32_t now = millis();
       if (redirect_first_ms == 0) redirect_first_ms = now;
