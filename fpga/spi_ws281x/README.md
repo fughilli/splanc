@@ -163,8 +163,10 @@ silk-labelled with the FPGA pin number):
 | `frame_done` | pin **28**         | pin **15** (GPIO 22) | optional 330 Ω series resistor |
 | ground       | any header **GND** | pin **14** (or 20)   | run it beside the signal wire  |
 
-The Pi requests the line with its pull-down, so an unwired or unconfigured pin
-reads LOW and never produces an edge.
+The Pi requests the line with its pull-down, so an unwired GPIO 22 reads LOW
+and never produces an edge. A wired Tang running gateware without `frame_done`
+(the 8-port top) holds pin 28 HIGH (measured 2026-10-28). The gate then always
+reads HIGH, which is effectively timed pacing.
 
 ### Pi side (`pi/player_rs`, pacing.rs / gpio_cdev.rs / rt.rs)
 
@@ -315,6 +317,68 @@ Findings:
 3. On an analyzer, put pin 28 and CS on two channels (24 MS/s = 42 ns resolution).
    The interval from the rising frame-done edge to the next falling CS is the
    true edge → CS latency, which the Pi-side estimate above stands in for.
+
+## Measured frame-done edge pacing (rig-1, `pi-ledmapper-1`, 2026-10-28)
+
+**Bench:**
+
+- `pi-ledmapper-1` (splanc-max-2, Pi 3B+, 6.12.87, `spidev.bufsiz` 65536, #369
+  image). The wire is fitted: Tang pin 28 → GPIO 22, plus GND.
+- The 20-port top was loaded into the Tang's **SRAM** for the run, then the
+  deployed bitstream was restored. The service was stopped for the run.
+- Player at `-c opt`, `--rt on`, spi0 pump at FIFO 46.
+- Load is the same mix as the 2026-10-26 runs. µs, as min / p50 / p99 / max.
+- The rig FX2 taps `frame_done` on **D7** and CS on **D1**.
+
+| run                                  | load   | gates high / edge / timeout / timed | `edge_to_wake`        | frame period (min / p50 / p99 / max) |
+| ------------------------------------ | ------ | ----------------------------------- | --------------------- | ------------------------------------ |
+| 20 × 260 @ 120, edge                 | idle   | 6488 / 712 / 0 / 0                  | 21 / 27 / 49 / 73     | 7941 / 10362 / 11402 / 11889         |
+| 20 × 260 @ 120, edge                 | loaded | 6440 / 760 / 0 / 0                  | 50 / 135 / 342 / 529  | 8005 / 10666 / 11350 / 12080         |
+| 20 × 260 @ 120, timed (`none`)       | loaded | n/a                                 | n/a                   | 6815 / 10643 / 11198 / 14789         |
+| 2 × 660 @ 60, every frame on an edge | idle   | 1 / 3599 / 0 / 0                    | 21 / 62 / 105 / 147   | 19909 / 19956 / 20015 / 20114        |
+| 2 × 660 @ 60, every frame on an edge | loaded | 1 / 3599 / 0 / 0                    | 62 / 159 / 377 / 1281 | 19979 / 20111 / 20454 / 21210        |
+| 20 × 66 @ 120, edge                  | idle   | 3600 / 0 / 0 / 0                    | n/a (never waits)     | 8108 / 8333 / 8352 / 8529            |
+| 20 × 66 @ 120, edge                  | loaded | 3600 / 0 / 0 / 0                    | n/a (never waits)     | 7894 / 8335 / 8548 / 8762            |
+
+The timed-mode reference is the 2026-10-26 loaded RT row: period 8334 / 8470 /
+8887, timer wake 83 / 236 / 622.
+
+**Logic analyzer**, `frame_done` rise → the next CS fall (that frame's
+CSR + STREAM message):
+
+- **2 × 660 @ 60, 200 frames:** 130 / 142 / 168 / 171 µs (min / p50 / p99 /
+  max), all under 200 µs. One `frame_done` rise per frame, period 20.00 ms. That
+  is the pure edge → wake → ioctl → CS chain.
+- **20 × 260 @ 120, 293 frames:** p50 2.5 ms. This is render time, not wake
+  latency: the next frame is still rendering when the edge arrives (below).
+- **Inside the FPGA:** CS fall → `frame_done` fall takes 14–18 µs. `frame_done`
+  is LOW for 7.866 ms at 260 LEDs (780 × 9.963 µs + the 80 µs latch), as
+  modelled.
+
+Findings:
+
+- **The wire works and the fallback never fires:** 0 timeouts and 0 timed
+  frames in every wired run. Edge → userspace is 27 µs p50 and 73 µs worst
+  idle, and 135 / 342 / 529 µs loaded. Only the forced run, which waited on
+  every one of 3,600 edges under load, saw a 1.28 ms worst case.
+- **Overruns:** no period goes over 1.5× the nominal in any run at 20 × 66 or
+  2 × 660.
+- **20 × 260 @ 120 doesn't reach 120 fps on the Pi 3. The cap is the output
+  thread, not the FPGA or the wire.** It runs at ~96 fps (10.4 ms) edge or
+  timed, because the thread is serial:
+  - render: 4.6 ms (mapping pattern, 5,200 LEDs);
+  - SPI: 5.7 ms (15,601 B at 24 MHz);
+  - together 10.3 ms, against the 8.33 ms period.
+    The FPGA finishes in 7.87 ms. Moving render off the output thread (the
+    render thread / GPU tier, #368 §11) leaves 5.7 ms of SPI per 8.33 ms frame,
+    which fits.
+- **Gate cost when wired:** the drain and level read take 13–31 µs p50 per
+  frame, against < 2 µs unwired. That is small next to the slack.
+- **An old (8-port) bitstream holds pin 28 HIGH.** The pin is unused there, and
+  GPIO 22 reads HIGH even with the Pi's pull-down. On D7 it stays HIGH. So a
+  wired board running the old gateware gates "high" every frame, which is
+  effectively timed pacing with no fallback log line. That's harmless, but
+  "unconfigured reads LOW" above holds only for an unwired GPIO 22.
 
 ## Measured Pi 3 SPI continuity (rig-1, `pi-ledmapper-1`, #369 image)
 
