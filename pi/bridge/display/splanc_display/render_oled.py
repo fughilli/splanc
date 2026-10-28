@@ -19,8 +19,10 @@ from . import fonts
 from .anim import Scene, SlideView
 from .status import (
     WAITING,
+    Client,
     Player,
     Status,
+    fmt_age,
     fmt_ago,
     fmt_bytes,
     fmt_remaining,
@@ -306,14 +308,11 @@ def _scrollbar(
     dr.rectangle([W - 3, ty, W - 1, ty + th - 1], fill=ON)
 
 
-def _players(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v: View) -> None:
-    _header(dr, "Fixtures", f"{s.players_ok}/{len(s.players)} ok")
+def _list(img: Image.Image, dr: ImageDraw.ImageDraw, rows: list, top: float, pos: float) -> None:
+    """A selectable list under the header: rows of (glyph condition, name, hint),
+    scrolled by ``top`` rows, with the highlight bar at row ``pos``."""
     small = F("small")
-    if not s.players:
-        _center(dr, 26, "None found yet", small)
-        _center(dr, 40, "searching the LAN…", small)
-        return
-    n = len(s.players)
+    n = len(rows)
     scrolls = n > LIST_ROWS
     right = W - (5 if scrolls else 1)
     body_y = _body_y()
@@ -321,27 +320,102 @@ def _players(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v
     body = Image.new("1", (W, body_h), OFF)
     bd = ImageDraw.Draw(body)
     bd.fontmode = "1"
-    top = v.list_top
     dy = _row_dy(small)
     first = max(0, int(top))
     for i in range(first, min(n, first + LIST_ROWS + 1)):
-        p = s.players[i]
+        cond, name, hint = rows[i]
         y = round((i - top) * ROW_H)
-        _glyph(bd, M + 1, y + 3, p.condition)
-        hint = _row_hint(p, now)
+        _glyph(bd, M + 1, y + 3, cond)
         hw = d.text_size(bd, hint, small)[0] if hint else 0
         if hint:
             d.text(bd, (right - 2 - hw, y + dy), hint, small, ON)
         name_w = right - (M + 11) - (hw + 6 if hint else 2)
-        d.text(bd, (M + 11, y + dy), d.ellipsize(bd, p.name, small, name_w), small, ON)
+        d.text(bd, (M + 11, y + dy), d.ellipsize(bd, name, small, name_w), small, ON)
     # The highlight: an inverted bar that glides between rows.
-    hy = round((v.list_pos - top) * ROW_H)
+    hy = round((pos - top) * ROW_H)
     bar = Image.new("1", (W, body_h), OFF)
     ImageDraw.Draw(bar).rounded_rectangle([0, hy, right, hy + ROW_H - 1], radius=2, fill=ON)
     body = ImageChops.logical_xor(body, bar)
     img.paste(body, (0, body_y))
     if scrolls:
         _scrollbar(dr, top, n, LIST_ROWS, body_y + 1, body_h - 2)
+
+
+def _players(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v: View) -> None:
+    _header(dr, "Fixtures", f"{s.players_ok}/{len(s.players)} ok")
+    small = F("small")
+    if not s.players:
+        _center(dr, 26, "None found yet", small)
+        _center(dr, 40, "searching the LAN…", small)
+        return
+    rows = [(p.condition, p.name, _row_hint(p, now)) for p in s.players]
+    _list(img, dr, rows, v.list_top, v.list_pos)
+
+
+# --- paired clients ----------------------------------------------------------------
+
+
+def _client_hint(c: Client, now: float) -> str:
+    """A client row's right-hand note: how long since it was last used."""
+    return fmt_age(None if c.last_used_at is None else max(0.0, now - c.last_used_at))
+
+
+def _clients(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v: View) -> None:
+    n = len(s.paired)
+    if s.clients_state == "offline" and n:
+        badge = "offline"
+    else:
+        badge = f"{s.clients_live}/{n} on" if n else ""
+    _header(dr, "Clients", badge)
+    small = F("small")
+    if not n:
+        if s.clients_state == "relay_outdated":
+            lines = ["Client list needs", "a relay update"]
+        elif s.clients_state in ("ok", "offline"):
+            lines = ["No paired clients", "KEY1: pairing code"]
+        elif s.clients_state == "":
+            lines = ["Client list needs", "a bridge update"]
+        else:
+            lines = ["Client list not", "loaded yet"]
+        if d.is_bitmap(small):
+            _stack(dr, _body_y(), H, [(t, small) for t in lines])
+        else:
+            _center(dr, 26, lines[0], small)
+            _center(dr, 40, lines[1], small)
+        return
+    rows = [("connected" if c.live else "idle", c.label, _client_hint(c, now)) for c in s.paired]
+    _list(img, dr, rows, v.client_top, v.client_pos)
+
+
+CLIENT_LABELS = ("Name", "Kind", "Used", "Added", "Live", "ID")
+
+
+def client_rows(c: Optional[Client], now: float, fs: Optional[fonts.FontSet] = None) -> list:
+    """(label, value) rows of a client's detail screen. A label too long for the
+    title is spelled out (wrapped) first; the last row (label None) is how to revoke it."""
+    if c is None:
+        return [("", "Client is gone")]
+    f = (fs or fonts.active()).get("small")
+    probe = ImageDraw.Draw(Image.new("1", (1, 1)))
+    rows = []
+    tf = (fs or fonts.active()).get("title")
+    if d.text_size(probe, c.label, tf)[0] > W - 2 * M - 12:
+        vx = VALUE_X
+        if d.is_bitmap(f):
+            vx = max(VALUE_X, M + max(f.width(k) for k in CLIENT_LABELS) + 5)
+        lines = _wrap(probe, c.label, f, W - vx - 6, 2)
+        rows += [("Name" if i == 0 else "", ln) for i, ln in enumerate(lines)]
+    rows.append(("Kind", c.kind_label))
+    rows.append(("Used", fmt_ago(None if c.last_used_at is None else now - c.last_used_at)))
+    rows.append(("Added", fmt_ago(None if c.created_at is None else now - c.created_at)))
+    rows.append(("Live", "yes" if c.live else "no"))
+    rows.append(("ID", c.id))
+    rows.append((None, "Hold KEY3: revoke"))
+    return rows
+
+
+def client_row_count(c: Optional[Client], now: float) -> int:
+    return len(client_rows(c, now))
 
 
 def detail_rows(p: Optional[Player], now: float, fs: Optional[fonts.FontSet] = None) -> list:
@@ -400,13 +474,29 @@ VALUE_X = 40
 
 def _detail(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v: View) -> None:
     p = s.player(v.key)
-    small = F("small")
     title = p.name if p else "Fixture"
     ink = _header(dr, d.ellipsize(dr, title, F("title"), W - 2 * M - 12))
     if p:
         gy = (_rule_y() + 1 - 7) // 2 if ink == OFF else max(1, _rule_y() - 10)
         _glyph(dr, W - M - 7, gy, p.condition, fill=ink)
-    rows = detail_rows(p, now, _fs)
+    _rows(img, dr, detail_rows(p, now, _fs), v.detail_scroll, DETAIL_LABELS)
+
+
+def _client(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v: View) -> None:
+    c = s.client(v.key)
+    title = c.label if c else "Client"
+    ink = _header(dr, d.ellipsize(dr, title, F("title"), W - 2 * M - 12))
+    if c:
+        gy = (_rule_y() + 1 - 7) // 2 if ink == OFF else max(1, _rule_y() - 10)
+        _glyph(dr, W - M - 7, gy, "connected" if c.live else "idle", fill=ink)
+    _rows(img, dr, client_rows(c, now, _fs), v.client_scroll, CLIENT_LABELS)
+
+
+def _rows(img: Image.Image, dr: ImageDraw.ImageDraw, rows: list, top: float, labels) -> None:
+    """A detail screen's (label, value) rows under the header, scrolled by ``top``.
+    A row labelled "" after the first continues the value column (a wrapped
+    value); one labelled None is a note across the whole row."""
+    small = F("small")
     scrolls = len(rows) > DETAIL_ROWS
     right = W - (5 if scrolls else 1)
     body_y = _body_y()
@@ -414,8 +504,7 @@ def _detail(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v:
     body = Image.new("1", (W, body_h), OFF)
     bd = ImageDraw.Draw(body)
     bd.fontmode = "1"
-    top = v.detail_scroll
-    vx = _value_x(bd, DETAIL_LABELS)
+    vx = _value_x(bd, labels)
     dy = _row_dy(small)
     first = max(0, int(top))
     for i in range(first, min(len(rows), first + DETAIL_ROWS + 1)):
@@ -423,7 +512,7 @@ def _detail(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v:
         y = round((i - top) * ROW_H)
         if label:
             d.text(bd, (M, y + dy), label, small, ON)
-        x = vx if label or i > 0 else M
+        x = M if label is None else vx if label or i > 0 else M
         vf = _fit(bd, value, "value", right - x - 1)
         if vf is small:
             vy = y + dy
@@ -455,7 +544,8 @@ def _network(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
 
 
 PAGE_RENDERERS = {"home": _home, "qr": _qr, "network": _network}
-LIST_RENDERERS = {"players": _players, "detail": _detail}
+LIST_RENDERERS = {"players": _players, "detail": _detail, "clients": _clients, "client": _client}
+DETAIL_PAGES = ("detail", "client")
 
 
 def _boot(img: Image.Image, dr: ImageDraw.ImageDraw, t: Optional[float], frames) -> None:
@@ -479,6 +569,10 @@ def _scene_key(status: Status, scene: Scene, view: View, now: float, frames):
         extra = (view.sel, view.list_pos, view.list_top)
     elif scene.page == "detail":
         extra = (view.detail_scroll,)
+    elif scene.page == "clients":
+        extra = (view.client_sel, view.client_pos, view.client_top)
+    elif scene.page == "client":
+        extra = (view.client_scroll,)
     else:
         extra = ()
     return (scene, status, extra, int(now), _fs.name)
@@ -505,7 +599,11 @@ def _draw_scene(status: Status, scene: Scene, view: View, now: float, frames) ->
     if scene.page == "boot":
         _boot(img, dr, view.boot_t, frames)
     elif scene.page in LIST_RENDERERS:
-        v = view if scene.key == view.key or scene.page != "detail" else _with_key(view, scene.key)
+        v = (
+            view
+            if scene.key == view.key or scene.page not in DETAIL_PAGES
+            else _with_key(view, scene.key)
+        )
         LIST_RENDERERS[scene.page](img, dr, status, now, v)
     else:
         PAGE_RENDERERS.get(scene.page, _home)(dr, status, now)
@@ -551,12 +649,17 @@ def _compose(src: Image.Image, dst: Image.Image, sv: SlideView) -> Image.Image:
     return out
 
 
-def _overlay(img: Image.Image, dr: ImageDraw.ImageDraw, v: View) -> None:
+def _overlay(
+    img: Image.Image, dr: ImageDraw.ImageDraw, v: View, s: Optional[Status] = None
+) -> None:
     small = F("small")
     title = F("title")
+    # Revoking one client (KEY3 in its detail) names it; else it's all of them.
+    one = s.client(v.revoke) if s is not None and v.revoke else None
+    who = one.label if one else "this client"
     if v.overlay == "hold":
         dr.rectangle([0, 0, W - 1, H - 1], fill=OFF)
-        _header(dr, "Revoke all clients")
+        _header(dr, "Revoke " + who if v.revoke else "Revoke all clients")
         _center(dr, 17, "Keep holding KEY3", small)
         frac = max(0.0, min(1.0, 1 - v.overlay_seconds / 5.0))
         dr.rectangle([8, 33, W - 9, 42], outline=ON)
@@ -568,12 +671,13 @@ def _overlay(img: Image.Image, dr: ImageDraw.ImageDraw, v: View) -> None:
         _center(
             dr,
             max(0, (14 - d.line_height(dr, title)) // 2) if d.is_bitmap(title) else 1,
-            "REVOKE ALL?",
+            "REVOKE CLIENT?" if v.revoke else "REVOKE ALL?",
             title,
             OFF,
         )
+        first = d.ellipsize(dr, who, small, W - 2 * M) if v.revoke else "Unpairs every client."
         lines = [
-            ("Unpairs every client.", small),
+            (first, small),
             ("KEY3 = yes", title),
             ("any other key = no", small),
             (f"cancels in {max(0, v.overlay_seconds):.0f} s", small),
@@ -639,7 +743,7 @@ def _render(status: Status, view: View, now: Optional[float], frames) -> Image.I
         ).copy()  # cached: draw on a copy
     dr = ImageDraw.Draw(img)
     dr.fontmode = "1"
-    _overlay(img, dr, view)
+    _overlay(img, dr, view, status)
     dx, dy = view.shift
     if dx or dy:
         shifted = Image.new("1", (W, H), OFF)

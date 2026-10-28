@@ -507,7 +507,8 @@ export async function pairWithCode(relay: string, code: string, label: string, f
   const r = await fetchFn(`${relay.replace(/\/+$/, "")}/pair`, {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify({ pairing_code: code, label }),
+    // client: the bridge lists this credential as the app (an older relay ignores it).
+    body: JSON.stringify({ pairing_code: code, label, client: "app" }),
   });
   const j = (await r.json().catch(() => ({}))) as { token?: string; error_description?: string; error?: string };
   if (!r.ok || !j.token) throw new Error(j.error_description ?? j.error ?? `pairing failed (HTTP ${r.status})`);

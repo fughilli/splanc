@@ -60,14 +60,14 @@ let
   cli = pkgs.writeShellScriptBin "splanc-bridge" ''
     set -eu
     case "''${1:-status}" in
-      status | new-code | identify | revoke-all)
+      status | new-code | identify | revoke-all | clients | revoke)
         SPLANC_BRIDGE_STATUS=${statusFile} SPLANC_BRIDGE_CONTROL=${controlSock} \
           PYTHONPATH=${bp.splancPy} exec ${bp.pyEnv}/bin/python3 -m splanc_display.ctl "$@" ;;
       logs) shift; exec journalctl -u splanc-bridge -u splanc-display -u splanc-agent-update -u splanc-flash-config --no-pager -n 200 "$@" ;;
       update) exec systemctl start splanc-agent-update.service ;;
       restart) exec systemctl restart splanc-bridge.service splanc-display.service ;;
       version) cat /etc/splanc-bridge/image.json; echo; readlink ${agentState}/current || echo "agent: baked ${bp.agentBundle.version}" ;;
-      *) echo "usage: splanc-bridge [status|new-code|identify|revoke-all|logs|update|restart|version]" >&2; exit 2 ;;
+      *) echo "usage: splanc-bridge [status|new-code|identify|revoke-all|clients|revoke <id>|logs|update|restart|version]" >&2; exit 2 ;;
     esac
   '';
 

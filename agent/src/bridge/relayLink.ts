@@ -18,6 +18,7 @@ import {
   connectMessage,
   registerMessage,
   type BridgeFrame,
+  type GrantInfo,
   type HelloFrame,
   type Pairing,
   type RelayFrame,
@@ -70,6 +71,12 @@ export class RelayLink {
   hello: HelloFrame | null = null;
   credentials = 0;
   pairing: Pairing | null = null;
+  /** The paired clients, as the relay last sent them (kept while offline); null =
+   * not heard yet, or the relay predates per-client management. */
+  grants: GrantInfo[] | null = null;
+  /** Whether the relay last connected to keeps a client list (its hello carried
+   * one); null = not connected yet. */
+  grantsSupported: boolean | null = null;
   /** Reconnect attempts since the last good connection. */
   attempts = 0;
   /** Successful connections so far (tests). */
@@ -222,6 +229,8 @@ export class RelayLink {
         this.hello = f;
         this.credentials = f.credentials;
         this.pairing = f.pairing;
+        this.grantsSupported = Array.isArray(f.grants);
+        this.grants = Array.isArray(f.grants) ? f.grants : null;
         this.attempts = 0;
         this.connects++;
         this.set("online", null);
@@ -229,6 +238,10 @@ export class RelayLink {
       } else if (f.t === "state") {
         this.credentials = f.credentials;
         this.pairing = f.pairing;
+        this.onChange();
+      } else if (f.t === "grants" && Array.isArray(f.grants)) {
+        this.grants = f.grants;
+        this.grantsSupported = true;
         this.onChange();
       }
       this.onFrame(f);

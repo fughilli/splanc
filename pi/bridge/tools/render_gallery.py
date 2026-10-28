@@ -11,7 +11,8 @@ fixture menu + boot animation: oled-fixtures-list.png (scrolled),
 oled-fixture-detail-*.png (healthy, scrolled, unreachable), oled-boot-sheet.png
 (every 3rd boot frame), and the animations oled-boot.gif (logo -> first screen)
 and oled-fixture-nav.gif (into a fixture's detail and back), simulated with the
-real UI state machine on a fake clock at ANIM_FPS.
+real UI state machine on a fake clock at ANIM_FPS; the Clients page:
+oled-clients-*.png (list, a client's detail, revoking one, none, outdated relay).
 
     --font-set NAME        draw the OLED screens with that font set (fonts.SETS)
     --font-sets PATH.png   instead: one comparison sheet, a row per font set and
@@ -158,6 +159,8 @@ def menu(out: str) -> list:
         "oled-fixture-detail-idle": (small, View(page="detail", key=porch)),
         "oled-fixture-detail-unreachable": (small, View(page="detail", key=tree)),
     }
+    for name, (s, v) in client_views().items():
+        shots["oled-clients-" + name] = (s, v)
     tiles = []
     for name, (s, v) in shots.items():
         o = oled_preview(render_oled.render(s, v, now=NOW))
@@ -180,6 +183,36 @@ def menu(out: str) -> list:
     return tiles
 
 
+def client_views() -> dict:
+    """The Clients page's screens: name -> (status, view)."""
+    small = parse(fake_bridge.sample("paired", NOW))
+    many = parse(fake_bridge.sample("paired", NOW, paired_clients=fake_bridge.many_clients(NOW, 9)))
+    claude = small.paired[0].key
+    return {
+        "list": (small, View(page="clients", client_sel=1, client_pos=1)),
+        "list-many": (many, View(page="clients", client_sel=5, client_pos=5, client_top=2)),
+        "detail": (small, View(page="client", key=claude)),
+        "detail-scrolled": (small, View(page="client", key=claude, client_scroll=2)),
+        "hold": (
+            small,
+            View(page="client", key=claude, overlay="hold", overlay_seconds=2.2, revoke=claude),
+        ),
+        "confirm": (
+            small,
+            View(page="client", key=claude, overlay="confirm", overlay_seconds=8.0, revoke=claude),
+        ),
+        "none": (parse(fake_bridge.sample("paired", NOW, paired_clients=[])), View(page="clients")),
+        "relay-outdated": (
+            parse(
+                fake_bridge.sample(
+                    "paired", NOW, paired_clients=[], paired_clients_state="relay_outdated"
+                )
+            ),
+            View(page="clients"),
+        ),
+    }
+
+
 def docs(out: str) -> int:
     """The few images docs/pi-bridge.md embeds (smaller, fixed names)."""
     os.makedirs(out, exist_ok=True)
@@ -189,7 +222,12 @@ def docs(out: str) -> int:
             (960, 540), Image.LANCZOS
         ).save(os.path.join(out, f"hdmi-{name}.png"), optimize=True)
     pages = [
-        oled_preview(render_oled.render(st["pairing"], View(page=p), now=NOW), scale=3)
+        oled_preview(
+            render_oled.render(
+                st["paired" if p == "clients" else "pairing"], View(page=p), now=NOW
+            ),
+            scale=3,
+        )
         for p in PAGES
     ]
     over = [
@@ -202,7 +240,7 @@ def docs(out: str) -> int:
         )
     ]
     over[3] = oled_preview(render_oled.render(st["paired"], View(page="home"), now=NOW), scale=3)
-    sheet(pages, 4, labels=["home", "scan to pair", "fixtures", "network"]).save(
+    sheet(pages, 5, labels=["home", "scan to pair", "fixtures", "network", "clients"]).save(
         os.path.join(out, "oled-pages.png"), optimize=True
     )
     sheet(over, 4, labels=["holding KEY3", "revoke confirm", "after KEY2", "paired"]).save(
@@ -211,6 +249,18 @@ def docs(out: str) -> int:
     tiles = menu_tiles_for_docs()
     sheet([t for _, t in tiles], 3, labels=[n for n, _ in tiles]).save(
         os.path.join(out, "oled-fixtures.png"), optimize=True
+    )
+    cv = client_views()
+    tiles = [
+        (label, oled_preview(render_oled.render(*cv[k], now=NOW), scale=3))
+        for label, k in (
+            ("client list", "list"),
+            ("a client", "detail"),
+            ("revoke it", "confirm"),
+        )
+    ]
+    sheet([t for _, t in tiles], 3, labels=[n for n, _ in tiles]).save(
+        os.path.join(out, "oled-clients.png"), optimize=True
     )
     print(f"wrote doc images to {out}")
     return 0
@@ -242,6 +292,11 @@ def font_set_views():
         ("detail", pairing, View(page="detail", key=pairing.players[0].key)),
         ("detail (unreachable)", pairing, View(page="detail", key=down.key)),
         ("network", pairing, View(page="network")),
+        *(
+            (f"clients / {k}", s, v)
+            for k, (s, v) in client_views().items()
+            if k in ("list", "detail", "confirm")
+        ),
         ("error", st["error"], View(page="home")),
         ("offline", st["offline"], View(page="home")),
         ("revoke confirm", pairing, View(page="home", overlay="confirm", overlay_seconds=8.0)),

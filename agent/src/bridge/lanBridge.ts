@@ -10,7 +10,8 @@
  *
  * For the display (and anything else local) it keeps the fixed contract:
  * an atomically written status file and a unix-socket control channel
- * (newline-delimited JSON): new_pairing_code, revoke_all, identify, status.
+ * (newline-delimited JSON): new_pairing_code, revoke_all, identify, status, live,
+ * clients, revoke.
  */
 
 import { randomUUID } from "node:crypto";
@@ -23,7 +24,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
 import { toolCalls, toolFailure } from "../../relay/src/mcpLibrary";
-import type { Pairing, RelayFrame, ReqFrame, ResFrame } from "../../relay/src/protocol";
+import type { GrantKind, Pairing, RelayFrame, ReqFrame, ResFrame } from "../../relay/src/protocol";
 import type { Hub } from "../hub";
 import type { PlayerRecord } from "../registry";
 import type { DeviceSession } from "../session";
@@ -68,6 +69,23 @@ export interface BridgePlayer {
   perf?: { fps?: number; budget_used?: number; overruns?: number; lagging?: boolean; heap_free?: number; at: number };
 }
 
+/** One paired client (a relay grant) in the status file. No secrets: the id is the
+ * grant's opaque id, never a token. */
+export interface BridgeClient {
+  id: string;
+  label: string;
+  kind: GrantKind;
+  created_at: number;
+  last_used_at: number | null;
+  /** A live (app) session is open, or it was used through the relay in the last 10 min. */
+  live: boolean;
+}
+
+/** Whether `paired_clients` is the relay's list: `ok`; `offline` = the last list
+ * heard (the relay is unreachable now); `relay_outdated` = the relay doesn't keep
+ * one (it needs an update); `unknown` = not connected yet. */
+export type ClientsState = "ok" | "offline" | "relay_outdated" | "unknown";
+
 /** The status file (contract v1; docs/design/cloud-relay.md "Display contract"). */
 export interface BridgeStatus {
   v: 1;
@@ -76,6 +94,9 @@ export interface BridgeStatus {
   bridge_id: string;
   pairing: Pairing | null;
   clients: number;
+  /** Every paired client, oldest first (optional in contract v1: added later). */
+  paired_clients: BridgeClient[];
+  paired_clients_state: ClientsState;
   players: BridgePlayer[];
   lan_ip: string;
   error: string | null;
@@ -116,6 +137,9 @@ interface Session {
   transport: WebStandardStreamableHTTPServerTransport;
   last: number;
 }
+
+/** What the display and bridge-ctl say when the relay keeps no client list. */
+export const RELAY_OUTDATED = "the client list needs a relay update (this relay predates per-client management)";
 
 /** A session counts as a connected cloud client while active this recently. */
 const CLIENT_WINDOW_MS = 10 * 60_000;
@@ -274,11 +298,33 @@ export class LanBridge {
       bridge_id: l.bridgeId ?? "",
       pairing,
       clients: [...this.sessions.values()].filter((s) => nowMs - s.last < CLIENT_WINDOW_MS).length,
+      paired_clients: this.pairedClients(nowMs),
+      paired_clients_state: this.clientsState(),
       players: this.opts.hub.registry.list().map((p) => this.playerStatus(p, nowMs)),
       lan_ip: lanIp(),
       error: this.fatal ?? (this.stopping ? "bridge stopped" : state === "offline" ? l.lastError : null),
       updated_at: Math.floor(nowMs / 1000),
     };
+  }
+
+  /** The relay's grant list, marked live from this bridge's own sessions. */
+  private pairedClients(nowMs: number): BridgeClient[] {
+    const live = this.live.grants;
+    return (this.link.grants ?? []).map((g) => ({
+      id: g.id,
+      label: g.label,
+      kind: g.kind,
+      created_at: g.created_at,
+      last_used_at: g.last_used_at,
+      live: live.has(g.id) || (g.last_used_at !== null && nowMs - g.last_used_at * 1000 < CLIENT_WINDOW_MS),
+    }));
+  }
+
+  private clientsState(): ClientsState {
+    const l = this.link;
+    if (l.grantsSupported === false) return "relay_outdated";
+    if (l.grantsSupported === null || l.grants === null) return "unknown";
+    return l.online && !this.stopping ? "ok" : "offline";
   }
 
   /** One fixture's entry: the registry record, plus what its open session already
@@ -436,6 +482,41 @@ export class LanBridge {
     return f ? { ok: true, revoked: before } : { ok: false, error: "the relay didn't confirm" };
   }
 
+  /** The paired clients (the control socket's `clients`). */
+  clients(): Record<string, unknown> {
+    const state = this.clientsState();
+    const out: Record<string, unknown> = { ok: true, state, clients: this.pairedClients(Date.now()) };
+    if (state === "relay_outdated") out["note"] = RELAY_OUTDATED;
+    return out;
+  }
+
+  /** Revoke one paired client by its id (or a unique prefix of it, >= 4 chars):
+   * the relay drops its tokens and live sessions; its `revoked` frame ends the
+   * client's live sessions and LAN tickets here. */
+  async revokeClient(id: unknown): Promise<Record<string, unknown>> {
+    if (typeof id !== "string" || !id) return { ok: false, error: "revoke: which client? pass {grant: <id>}" };
+    if (this.link.grantsSupported === false) return { ok: false, error: RELAY_OUTDATED };
+    if (!this.link.online) return { ok: false, error: `relay offline: ${this.link.lastError ?? "not connected"}` };
+    const list = this.link.grants ?? [];
+    let target = list.find((g) => g.id === id);
+    if (!target && id.length >= 4) {
+      const hits = list.filter((g) => g.id.startsWith(id));
+      if (hits.length > 1) return { ok: false, error: `"${id}" matches ${hits.length} clients; give more of the id` };
+      target = hits[0];
+    }
+    const grant = target?.id ?? id;
+    const wait = this.waitFor(
+      (f) => (f.t === "revoked" && f.grants.includes(grant)) || (f.t === "error" && f.for === "revoke_grant" && f.grant === grant),
+      10_000,
+    );
+    if (!this.link.send({ t: "revoke_grant", grant })) return { ok: false, error: `relay offline: ${this.link.lastError ?? "not connected"}` };
+    const f = await wait;
+    if (!f) return { ok: false, error: "the relay didn't confirm" };
+    if (f.t === "error") return { ok: false, error: f.message };
+    this.writeStatus(true);
+    return { ok: true, revoked: grant, ...(target ? { label: target.label } : {}) };
+  }
+
   async identify(): Promise<Record<string, unknown>> {
     const players = this.opts.hub.registry.list();
     if (players.length === 0) return { ok: true, players: 0, note: "no players found yet" };
@@ -446,9 +527,9 @@ export class LanBridge {
   // -- control socket -------------------------------------------------------------------
 
   async command(line: string): Promise<Record<string, unknown>> {
-    let cmd: { cmd?: string };
+    let cmd: { cmd?: string; grant?: unknown };
     try {
-      cmd = JSON.parse(line) as { cmd?: string };
+      cmd = JSON.parse(line) as { cmd?: string; grant?: unknown };
     } catch {
       return { ok: false, error: "expected a JSON object per line" };
     }
@@ -464,8 +545,15 @@ export class LanBridge {
       case "live":
         // Live (VJ) sessions; kept out of status.json, whose display contract is fixed.
         return { ok: true, clients: this.live.clients, lan: this.lan?.info() ?? null, tickets: this.tickets?.count ?? 0 };
+      case "clients":
+        return this.clients();
+      case "revoke":
+        return this.revokeClient(cmd.grant);
       default:
-        return { ok: false, error: `unknown cmd ${JSON.stringify(cmd.cmd)} (new_pairing_code, revoke_all, identify, status, live)` };
+        return {
+          ok: false,
+          error: `unknown cmd ${JSON.stringify(cmd.cmd)} (new_pairing_code, revoke_all, identify, status, live, clients, revoke)`,
+        };
     }
   }
 
@@ -557,7 +645,8 @@ export class LanBridge {
     if (f.t === "hello") {
       // Tell the relay we speak the live protocol (it re-opens any live sessions).
       this.live.detachVia("relay");
-      this.link.send({ t: "caps", live: 1 });
+      // ...and keep the paired-client list (it sends `grants` frames).
+      this.link.send({ t: "caps", live: 1, grants: 1 });
     } else if (f.t === "live_open") this.live.attach(this.relayConn(f.c, f.label, f.grant));
     else if (f.t === "live") void this.live.message(f.c, f.d).catch((e: Error) => this.log(`live: ${e.message}`));
     else if (f.t === "live_close") this.live.detach(f.c);

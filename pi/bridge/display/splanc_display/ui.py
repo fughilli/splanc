@@ -4,16 +4,19 @@ overlays, transitions, dimming.
 Pure and clock-injected (``clock`` returns seconds) so it is tested with fakes;
 ``main`` feeds it button events and status updates and ticks it from the render loop.
 
-Screens: four top-level pages (home, qr, players = the fixture list, network)
-and, under the list, one fixture's detail. Button map (Waveshare 1.3" OLED HAT):
+Screens: five top-level pages (home, qr, players = the fixture list, network,
+clients = the paired-client list) and, under each list, one item's detail
+(``detail`` = a fixture, ``client`` = a paired client). Button map (Waveshare
+1.3" OLED HAT):
 
     KEY1            new pairing code (from anywhere; goes to the home page to show it)
     KEY2            identify fixtures (flash every player)
-    KEY3 hold >=5 s revoke all paired clients -> confirm screen -> KEY3 again
+    KEY3 hold >=5 s revoke all paired clients -> confirm screen -> KEY3 again;
+                    in a client's detail: revoke THAT client (same hold + confirm)
     joystick        left/right = previous/next page; up/down = previous/next page,
-                    except on the fixture list where they move the selection;
-                    press = open the selected fixture (list) or go home (other pages)
-    in a fixture    up/down scroll its details; left or press = back to the list
+                    except on a list (fixtures, clients) where they move the selection;
+                    press = open the selected item (list) or go home (other pages)
+    in a detail     up/down scroll it; left or press = back to its list
 
 Any key wakes a sleeping screen (that press does nothing else). Every screen
 change slides (anim.py); a press during a slide retargets it at once.
@@ -27,7 +30,9 @@ from typing import Callable, Optional
 from . import anim
 from .anim import Scene, SlideView, Tween
 
-PAGES = ("home", "qr", "players", "network")
+PAGES = ("home", "qr", "players", "network", "clients")
+# Each list page and the scene that shows one of its items.
+LIST_DETAIL = {"players": "detail", "clients": "client"}
 
 HOLD_SECONDS = 5.0  # KEY3 hold before the revoke confirm appears
 CONFIRM_SECONDS = 10.0  # confirm screen auto-cancels after this
@@ -47,34 +52,68 @@ SHIFTS = ((0, 0), (1, 0), (1, 1), (0, 1))
 
 KEYS = ("key1", "key2", "key3", "up", "down", "left", "right", "press")
 
-# dispatch(cmd, done) runs a control command off the UI thread and calls
-# done(ok: bool, message: str) when it finishes.
-Dispatch = Callable[[str, Callable[[bool, str], None]], None]
+# dispatch(cmd, done, **args) runs a control command off the UI thread and calls
+# done(ok: bool, message: str) when it finishes (args only for commands that take
+# some: revoke's grant).
+Dispatch = Callable[..., None]
 
 DONE_TEXT = {
     "new_pairing_code": "New code requested",
     "identify": "Identifying fixtures",
     "revoke_all": "All clients revoked",
+    "revoke": "Client revoked",
 }
 
 
 @dataclass(frozen=True)
 class View:
-    page: str  # a PAGES entry, "detail", or "boot"
+    page: str  # a PAGES entry, "detail", "client", or "boot"
     overlay: Optional[str] = None  # None | "hold" | "confirm" | "toast"
     overlay_text: str = ""
     overlay_seconds: float = 0.0  # countdown for hold/confirm
     shift: tuple = (0, 0)
     dimmed: bool = False
     asleep: bool = False
-    key: str = ""  # the fixture shown by "detail"
+    key: str = ""  # the item shown by "detail" (a fixture) or "client" (a grant id)
     slide: Optional[SlideView] = None  # a screen change in progress
     sel: int = 0  # the fixture list's selected row
     list_pos: float = 0.0  # its highlight, in rows (animated)
     list_top: float = 0.0  # its scroll offset, in rows (animated)
-    detail_scroll: float = 0.0  # the detail's scroll offset, in rows (animated)
+    detail_scroll: float = 0.0  # the fixture detail's scroll offset, in rows (animated)
+    client_sel: int = 0  # the same three for the client list
+    client_pos: float = 0.0
+    client_top: float = 0.0
+    client_scroll: float = 0.0  # the client detail's scroll offset
+    revoke: str = ""  # hold/confirm: the client (grant id) being revoked; "" = all
     boot_t: Optional[float] = None  # seconds into the boot animation (while it shows)
     animating: bool = False  # something is moving: draw at the animation frame rate
+
+
+class _Menu:
+    """One list page and its detail: the items' keys, the selection (kept on the
+    same item as the list changes), which item is open, and their animations."""
+
+    def __init__(self, page: str, detail_page: str, gone_text: str, now: float):
+        self.page = page
+        self.detail_page = detail_page
+        self.gone_text = gone_text
+        self.keys: tuple = ()
+        self.sel_key: Optional[str] = None
+        self.open: Optional[str] = None  # the open item's key
+        self.since = now
+        self.rows_of: Callable[[str], int] = lambda key: DETAIL_ROWS
+        self.pos = Tween(0, anim.LIST_SECONDS)
+        self.top = Tween(0, anim.SCROLL_SECONDS)
+        self.scroll = Tween(0, anim.SCROLL_SECONDS)
+
+    @property
+    def sel(self) -> int:
+        if self.sel_key is None or self.sel_key not in self.keys:
+            return 0
+        return self.keys.index(self.sel_key)
+
+    def moving(self, now: float) -> bool:
+        return self.pos.moving(now) or self.top.moving(now) or self.scroll.moving(now)
 
 
 class OledUI:
@@ -89,19 +128,16 @@ class OledUI:
         self._last_activity = now
         self._hold_start: Optional[float] = None
         self._confirm_until: Optional[float] = None
+        self._revoke = ""  # the hold/confirm's client ("" = revoke all)
         self._toast = ""
         self._toast_until = 0.0
         self._busy: Optional[str] = None
         self.code_visible = False  # set by main from the status (gates sleep)
-        # The fixture menu.
-        self._keys: tuple = ()
-        self._sel_key: Optional[str] = None
-        self._detail: Optional[str] = None  # the open fixture's key
-        self._detail_since = now
-        self._rows_of: Callable[[str], int] = lambda key: DETAIL_ROWS
-        self._list_pos = Tween(0, anim.LIST_SECONDS)
-        self._list_top = Tween(0, anim.SCROLL_SECONDS)
-        self._detail_scroll = Tween(0, anim.SCROLL_SECONDS)
+        # The fixture menu and the client menu; at most one item open at a time.
+        self._fx = _Menu("players", "detail", "Fixture is gone", now)
+        self._cl = _Menu("clients", "client", "Client is gone", now)
+        self._menus = {m.page: m for m in (self._fx, self._cl)}
+        self._open: Optional[_Menu] = None
         # Screen changes + the boot animation.
         self._slide: Optional[anim.Slide] = None
         self._boot_t0: Optional[float] = None
@@ -112,15 +148,13 @@ class OledUI:
     def scene(self) -> Scene:
         if self._boot_until is not None:
             return Scene("boot")
-        if self._detail is not None:
-            return Scene("detail", self._detail)
+        if self._open is not None:
+            return Scene(self._open.detail_page, self._open.open)
         return Scene(self.pages[self.page])
 
     @property
     def sel(self) -> int:
-        if self._sel_key is None or self._sel_key not in self._keys:
-            return 0
-        return self._keys.index(self._sel_key)
+        return self._fx.sel
 
     def _change(
         self,
@@ -150,34 +184,46 @@ class OledUI:
         """The fixture list changed (or was refreshed). Keeps the selection on the
         same fixture; one that disappeared hands it to its neighbour, and an open
         detail of a vanished fixture slides back to the list."""
+        self._set_items(self._fx, keys, rows_of)
+
+    def set_clients(self, keys, rows_of: Optional[Callable[[str], int]] = None) -> None:
+        """The paired-client list changed: as set_fixtures, for the Clients page."""
+        self._set_items(self._cl, keys, rows_of)
+
+    def _set_items(self, m: _Menu, keys, rows_of) -> None:
         now = self.clock()
         keys = tuple(keys)
         if rows_of is not None:
-            self._rows_of = rows_of
-        old_sel = self.sel
-        self._keys = keys
-        if self._sel_key is not None and self._sel_key in keys:
-            new = keys.index(self._sel_key)
+            m.rows_of = rows_of
+        old_sel = m.sel
+        m.keys = keys
+        if m.sel_key is not None and m.sel_key in keys:
+            new = keys.index(m.sel_key)
             if new != old_sel:  # something was inserted/removed above it: stay on it
-                self._list_pos.shift(new - old_sel)
-                self._list_top.snap(self._top_for(new, self._list_top.target + (new - old_sel)))
+                m.pos.shift(new - old_sel)
+                m.top.snap(self._top_for(new, m.top.target + (new - old_sel)))
         elif keys:
             idx = min(old_sel, len(keys) - 1)
-            self._sel_key = keys[idx]
-            self._list_pos.snap(idx)
-            self._list_top.snap(self._top_for(idx, self._list_top.target))
+            m.sel_key = keys[idx]
+            m.pos.snap(idx)
+            m.top.snap(self._top_for(idx, m.top.target))
         else:
-            self._sel_key = None
-            self._list_pos.snap(0)
-            self._list_top.snap(0)
-        if self._detail is not None and self._detail not in keys:
-            before = self.scene
-            self._detail = None
-            self._page_to("players")
-            self._change(before, now, "right", "push", anim.PUSH_SECONDS)
-            self._show_toast("Fixture is gone", now)
-        elif self._detail is not None:
-            self._clamp_detail(now)
+            m.sel_key = None
+            m.pos.snap(0)
+            m.top.snap(0)
+        if m.open is not None and m.open not in keys:
+            if self._revoke == m.open:  # a hold/confirm for a client that is gone
+                self._hold_start = self._confirm_until = None
+                self._revoke = ""
+            m.open = None
+            if self._open is m:
+                before = self.scene
+                self._open = None
+                self._page_to(m.page)
+                self._change(before, now, "right", "push", anim.PUSH_SECONDS)
+                self._show_toast(m.gone_text, now)
+        elif m.open is not None:
+            self._clamp_detail(m, now)
 
     def press(self, key: str, at: Optional[float] = None) -> None:
         """A key went down (``at``: when, if it waited in a queue; default now)."""
@@ -188,10 +234,13 @@ class OledUI:
         self._last_activity = now
         if self._confirm_until is not None:
             self._confirm_until = None
-            if key == "key3":
-                self._run("revoke_all", now)
-            else:
+            target, self._revoke = self._revoke, ""
+            if key != "key3":
                 self._show_toast("Cancelled", now)
+            elif target:
+                self._run("revoke", now, grant=target)
+            else:
+                self._run("revoke_all", now)
             return
         if was_asleep:
             return  # the wake-up press does nothing else
@@ -204,10 +253,16 @@ class OledUI:
             self._run("identify", now)
         elif key == "key3":
             self._hold_start = now
-        elif self._detail is not None:
-            self._detail_key(key, now)
-        elif self.pages[self.page] == "players" and self._keys and key in ("up", "down", "press"):
-            self._list_key(key, now)
+            # In a client's detail KEY3 revokes that client; anywhere else, all of them.
+            self._revoke = self._cl.open if self._open is self._cl and self._cl.open else ""
+        elif self._open is not None:
+            self._detail_key(self._open, key, now)
+        elif (
+            self.pages[self.page] in self._menus
+            and self._menus[self.pages[self.page]].keys
+            and key in ("up", "down", "press")
+        ):
+            self._list_key(self._menus[self.pages[self.page]], key, now)
         elif key in ("right", "down"):
             self._goto(self.page + 1, now, manual=True)
         elif key in ("left", "up"):
@@ -222,6 +277,7 @@ class OledUI:
         held = now - self._hold_start
         self._hold_start = None
         if held < HOLD_SECONDS:
+            self._revoke = ""
             self._show_toast("Hold KEY3 5 s to revoke", now)
 
     def tick(self) -> None:
@@ -238,11 +294,16 @@ class OledUI:
             self._last_activity = now
         if self._confirm_until is not None and now >= self._confirm_until:
             self._confirm_until = None
+            self._revoke = ""
             self._show_toast("Cancelled", now)
-        if self._detail is not None:
-            if now - self._detail_since >= DETAIL_IDLE_SECONDS:
+        if self._open is not None:
+            if (
+                now - self._open.since >= DETAIL_IDLE_SECONDS
+                and self._hold_start is None
+                and self._confirm_until is None
+            ):
                 self._back_to_list(now)
-            return  # no auto-cycling out of a fixture someone opened
+            return  # no auto-cycling out of an item someone opened
         if (
             self._hold_start is None
             and self._confirm_until is None
@@ -268,9 +329,8 @@ class OledUI:
         animating = (
             slide is not None
             or scene.page == "boot"
-            or self._list_pos.moving(now)
-            or self._list_top.moving(now)
-            or self._detail_scroll.moving(now)
+            or self._fx.moving(now)
+            or self._cl.moving(now)
         )
         base = dict(
             page=scene.page,
@@ -279,10 +339,14 @@ class OledUI:
             dimmed=idle >= DIM_AFTER_SECONDS,
             asleep=self._asleep(now),
             slide=slide,
-            sel=self.sel,
-            list_pos=self._list_pos.value(now),
-            list_top=self._list_top.value(now),
-            detail_scroll=self._detail_scroll.value(now),
+            sel=self._fx.sel,
+            list_pos=self._fx.pos.value(now),
+            list_top=self._fx.top.value(now),
+            detail_scroll=self._fx.scroll.value(now),
+            client_sel=self._cl.sel,
+            client_pos=self._cl.pos.value(now),
+            client_top=self._cl.top.value(now),
+            client_scroll=self._cl.scroll.value(now),
             boot_t=boot_t,
             animating=animating,
         )
@@ -290,12 +354,14 @@ class OledUI:
             return View(
                 overlay="confirm",
                 overlay_seconds=self._confirm_until - now,
+                revoke=self._revoke,
                 **dict(base, dimmed=False),
             )
         if self._hold_start is not None:
             return View(
                 overlay="hold",
                 overlay_seconds=HOLD_SECONDS - (now - self._hold_start),
+                revoke=self._revoke,
                 **dict(base, dimmed=False),
             )
         if self._busy is not None:
@@ -333,10 +399,12 @@ class OledUI:
         self._change(before, now, direction)
 
     def _go_home_for_code(self, now: float) -> None:
-        if self._detail is None and self.pages[self.page] in ("home", "qr"):
+        if self._open is None and self.pages[self.page] in ("home", "qr"):
             return
         before = self.scene
-        self._detail = None
+        if self._open is not None:
+            self._open.open = None
+            self._open = None
         self.page = 0
         self._page_since = now
         self._manual_until = now + MANUAL_HOLD_SECONDS
@@ -352,44 +420,50 @@ class OledUI:
             return sel - LIST_ROWS + 1
         return top
 
-    def _list_key(self, key: str, now: float) -> None:
+    def _list_key(self, m: _Menu, key: str, now: float) -> None:
         self._manual_until = now + MANUAL_HOLD_SECONDS
         self._page_since = now
-        idx = self.sel
+        idx = m.sel
         if key == "press":
             before = self.scene
-            self._detail = self._keys[idx]
-            self._detail_since = now
-            self._detail_scroll.snap(0)
+            m.open = m.keys[idx]
+            m.since = now
+            m.scroll.snap(0)
+            self._open = m
             self._change(before, now, "left", "push", anim.PUSH_SECONDS)
             return
-        new = max(0, min(len(self._keys) - 1, idx + (1 if key == "down" else -1)))
+        new = max(0, min(len(m.keys) - 1, idx + (1 if key == "down" else -1)))
         if new == idx:
             return
-        self._sel_key = self._keys[new]
-        self._list_pos.set(new, now)
-        self._list_top.set(self._top_for(new, self._list_top.target), now)
+        m.sel_key = m.keys[new]
+        m.pos.set(new, now)
+        m.top.set(self._top_for(new, m.top.target), now)
 
-    def _detail_key(self, key: str, now: float) -> None:
-        self._detail_since = now
+    def _detail_key(self, m: _Menu, key: str, now: float) -> None:
+        m.since = now
         if key in ("left", "press"):
             self._back_to_list(now)
         elif key in ("up", "down"):
             step = 1 if key == "down" else -1
-            self._detail_scroll.set(self._detail_limit(self._detail_scroll.target + step), now)
+            m.scroll.set(self._detail_limit(m, m.scroll.target + step), now)
 
-    def _detail_limit(self, t: float) -> float:
-        most = max(0, self._rows_of(self._detail) - DETAIL_ROWS) if self._detail else 0
+    @staticmethod
+    def _detail_limit(m: _Menu, t: float) -> float:
+        most = max(0, m.rows_of(m.open) - DETAIL_ROWS) if m.open else 0
         return max(0, min(most, t))
 
-    def _clamp_detail(self, now: float) -> None:
+    def _clamp_detail(self, m: _Menu, now: float) -> None:
         """The detail got shorter (an error cleared): keep the scroll in range."""
-        self._detail_scroll.set(self._detail_limit(self._detail_scroll.target), now)
+        m.scroll.set(self._detail_limit(m, m.scroll.target), now)
 
     def _back_to_list(self, now: float) -> None:
+        m = self._open
+        if m is None:
+            return
         before = self.scene
-        self._detail = None
-        self._page_to("players")
+        m.open = None
+        self._open = None
+        self._page_to(m.page)
         self._page_since = now
         self._manual_until = now + MANUAL_HOLD_SECONDS
         self._change(before, now, "right", "push", anim.PUSH_SECONDS)
@@ -398,7 +472,8 @@ class OledUI:
         self._toast = text
         self._toast_until = now + TOAST_SECONDS
 
-    def _run(self, cmd: str, now: float) -> None:
+    def _run(self, cmd: str, now: float, **args) -> None:
+        """Send ``cmd`` (with ``args``, e.g. revoke's ``grant``) to the bridge."""
         if self._busy is not None:
             self._show_toast("Busy, try again", now)
             return
@@ -407,7 +482,17 @@ class OledUI:
         def done(ok: bool, message: str) -> None:
             t = self.clock()
             self._busy = None
+            if (
+                ok
+                and cmd == "revoke"
+                and self._open is self._cl
+                and self._cl.open == args.get("grant")
+            ):
+                self._back_to_list(t)  # it's gone: back to the list (no "is gone" toast)
             self._show_toast(DONE_TEXT.get(cmd, "Done") if ok else (message or "Failed"), t)
             self._last_activity = t
 
-        self.dispatch(cmd, done)
+        if args:
+            self.dispatch(cmd, done, **args)
+        else:
+            self.dispatch(cmd, done)

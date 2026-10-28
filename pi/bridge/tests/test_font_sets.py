@@ -92,7 +92,29 @@ def _statuses():
         )
     ]
     long["clients"] = 12
+    long["paired_clients"] = fake_bridge.many_clients(NOW, 9) + [
+        fake_bridge.make_client(5, NOW, used_ago=None),  # the very long name
+        dict(
+            fake_bridge.make_client(1, NOW, used_ago=90 * 86400, live=True),
+            id="W" * 40,  # an id far wider than the screen
+            label="Küche – Bücherregal, ein sehr langer Name",
+        ),
+    ]
     out["long"] = parse(long)
+    # The Clients page's other states: none paired, an outdated relay, an older
+    # bridge (no list in the file), not loaded yet, offline with the last list.
+    out["clients-none"] = parse(fake_bridge.sample("paired", NOW, paired_clients=[]))
+    out["clients-outdated"] = parse(
+        fake_bridge.sample("paired", NOW, paired_clients=[], paired_clients_state="relay_outdated")
+    )
+    older = fake_bridge.sample("paired", NOW)
+    del older["paired_clients"], older["paired_clients_state"]
+    out["clients-older-bridge"] = parse(older)
+    out["clients-unknown"] = parse(
+        fake_bridge.sample("starting", NOW, paired_clients_state="unknown")
+    )
+    one = fake_bridge.sample("paired", NOW, paired_clients=[fake_bridge.make_client(5, NOW)])
+    out["clients-one-long"] = parse(one)
     out["error-long"] = parse(
         fake_bridge.sample(
             "error",
@@ -121,6 +143,16 @@ def _views(s):
         rows = render_oled.detail_row_count(p, NOW)
         for scroll in range(0, max(1, rows - 3)):
             yield f"detail-{p.key}-{scroll}", View(page="detail", key=p.key, detail_scroll=scroll)
+    n = len(s.paired)
+    yield "clients", View(page="clients")
+    for sel in range(n):
+        top = max(0, min(sel - LIST_ROWS + 1, n - LIST_ROWS)) if n > LIST_ROWS else 0
+        yield f"clients-{sel}", View(page="clients", client_sel=sel, client_pos=sel, client_top=top)
+    for c in s.paired:
+        rows = render_oled.client_row_count(c, NOW)
+        for scroll in range(0, max(1, rows - 3)):
+            yield f"client-{c.key}-{scroll}", View(page="client", key=c.key, client_scroll=scroll)
+    yield "client-gone", View(page="client", key="no-such-client")
 
 
 def _overlaps(a, b):
@@ -171,18 +203,29 @@ def test_every_screen_fits(name):
 def test_overlays_fit(name):
     fonts.set_active(name)
     render_oled.render(parse(fake_bridge.sample("pairing", NOW)), View(page="home"), now=NOW)
+    long = fake_bridge.make_client(5, NOW)
+    s = parse(
+        fake_bridge.sample("paired", NOW, paired_clients=fake_bridge.sample_clients(NOW) + [long])
+    )
+    short = s.paired[0].key
     for v in (
         View(page="home", overlay="hold", overlay_seconds=4.0),
         View(page="home", overlay="confirm", overlay_seconds=9.0),
         View(page="home", overlay="toast", overlay_text="Working…"),
         View(page="home", overlay="toast", overlay_text="Hold KEY3 5 s to revoke all clients"),
+        View(page="client", key=short, overlay="hold", overlay_seconds=4.0, revoke=short),
+        View(page="client", key=short, overlay="confirm", overlay_seconds=9.0, revoke=short),
+        View(page="client", overlay="hold", overlay_seconds=2.0, revoke=long["id"]),
+        View(page="client", overlay="confirm", overlay_seconds=3.0, revoke=long["id"]),
+        View(page="client", overlay="confirm", overlay_seconds=3.0, revoke="gone"),
+        View(page="clients", overlay="toast", overlay_text="Client revoked"),
     ):
         img = Image.new("1", (W, H))
         dr = ImageDraw.Draw(img)
         dr.fontmode = "1"
         draw.TRACE = []
-        render_oled._overlay(img, dr, v)
-        _check(draw.TRACE, img, f"{name}/overlay-{v.overlay}")
+        render_oled._overlay(img, dr, v, s)
+        _check(draw.TRACE, img, f"{name}/overlay-{v.overlay}-{v.revoke[:6]}")
 
 
 def test_tracking_widens_measure_draw_and_ellipsis_alike():

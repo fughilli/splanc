@@ -138,7 +138,7 @@ td.n { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowr
         <div class="row"><label>Paired</label>
           <button class="b" data-a="paired" data-v="true">yes</button>
           <button class="b" data-a="paired" data-v="false">no</button>
-          <label style="min-width:0">clients</label>
+          <label style="min-width:0">sessions</label>
           <button class="b" data-a="clients" data-v="-1">−</button><span id="clients">0</span>
           <button class="b" data-a="clients" data-v="+1">+</button></div>
         <div class="row"><label>Commands</label>
@@ -152,6 +152,13 @@ td.n { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowr
           <button class="b" data-a="fixtures" data-v="many">12</button>
           <button class="b" data-a="fixtures" data-v="none">none</button></div>
         <table id="players"></table>
+        <div class="row"><label>Paired clients</label>
+          <button class="b" data-a="client_add">add</button>
+          <button class="b" data-a="client_list" data-v="sample">3 samples</button>
+          <button class="b" data-a="client_list" data-v="many">12</button>
+          <button class="b" data-a="client_list" data-v="none">none</button>
+          <button class="b" data-a="client_list" data-v="outdated" id="outdated">relay outdated</button></div>
+        <table id="pclients"></table>
       </div>
       <div id="breal" hidden>
         <div class="row"><label>Relay</label>
@@ -264,6 +271,15 @@ function showInfo() {
       `${p.ok ? "take offline" : "bring online"}</button></td>` +
       `<td><button class="b" data-a="remove" data-v="${esc(p.key)}">remove</button></td></tr>`).join("");
     if ($("players").dataset.rows !== rows) { $("players").innerHTML = rows; $("players").dataset.rows = rows; }
+    $("outdated").classList.toggle("on", !!b.relay_outdated);
+    const crows = (b.paired_clients || []).map((c) =>
+      `<tr><td class="n"><span class="dot" style="background:var(${c.live ? "--good" : "--muted"})"></span>` +
+      `${esc(c.label)} <span class="mono">${esc(c.kind)} · ${esc(c.id.slice(0, 8))}</span></td>` +
+      `<td><button class="b" data-a="client_live" data-v="${esc(c.id)}">` +
+      `${c.live ? "go idle" : "use now"}</button></td>` +
+      `<td><button class="b" data-a="client_remove" data-v="${esc(c.id)}">` +
+      `revoke (elsewhere)</button></td></tr>`).join("");
+    if ($("pclients").dataset.rows !== crows) { $("pclients").innerHTML = crows; $("pclients").dataset.rows = crows; }
   } else {
     mark("relay", String(b.relay_up));
     $("relayurl").textContent = b.relay + (b.bridge_running ? "" : " · bridge exited");

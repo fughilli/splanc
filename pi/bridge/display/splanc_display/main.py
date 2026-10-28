@@ -129,10 +129,10 @@ class App:
         self._hdmi_was_visible = False
 
     # --- control commands (run off-thread, finish on the UI thread) -------------
-    def _dispatch(self, cmd: str, done) -> None:
+    def _dispatch(self, cmd: str, done, **args) -> None:
         def work():
             try:
-                control.send(cmd, path=self.control_path)
+                control.send(cmd, path=self.control_path, **args)
                 self.done_q.put((done, True, ""))
             except control.ControlError as e:
                 log(f"{cmd}: {e}")
@@ -182,11 +182,15 @@ class App:
                 log(f"HAT buttons unavailable: {e}")
 
     def _sync_fixtures(self) -> None:
-        """Hand the fixture list (and each detail's row count) to the menu."""
+        """Hand the fixture and client lists (and each detail's row count) to the menu."""
         st, now = self.watcher.status, self.wall()
         self.ui.set_fixtures(
             [p.key for p in st.players],
             lambda k: render_oled.detail_row_count(st.player(k), now),
+        )
+        self.ui.set_clients(
+            [c.key for c in st.paired],
+            lambda k: render_oled.client_row_count(st.client(k), now),
         )
 
     def _input(self, kind: str, key: str) -> None:

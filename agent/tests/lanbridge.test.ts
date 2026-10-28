@@ -1,19 +1,23 @@
 /**
  * `splanc-agent bridge` (src/bridge/lanBridge.ts) against the in-process relay
  * and a fake player: the display contract (status.json fields + states,
- * atomic writes, the control socket's commands) and reconnecting (dropped
- * socket, relay down -> offline -> back, with credentials kept across a relay
- * restart).
+ * atomic writes, the control socket's commands), the paired-client list and
+ * revoking one client (also against an older relay that keeps no list), and
+ * reconnecting (dropped socket, relay down -> offline -> back, with credentials
+ * kept across a relay restart).
  */
 
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { createServer, type Server } from "node:http";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 
-import { LanBridge, type BridgeStatus } from "../src/bridge/lanBridge";
+import { WebSocketServer } from "ws";
+
+import { LanBridge, RELAY_OUTDATED, type BridgeClient, type BridgeStatus } from "../src/bridge/lanBridge";
 import { DEFAULT_RELAY_URL, RelayLink, relayUrl } from "../src/bridge/relayLink";
 import { Hub } from "../src/hub";
 import { RelayHost } from "../src/relayHost";
@@ -38,9 +42,9 @@ let bridge: LanBridge;
 
 const readStatus = (): BridgeStatus => JSON.parse(readFileSync(STATUS, "utf8")) as BridgeStatus;
 
-function ctl(cmd: string): Promise<Record<string, unknown>> {
+function ctl(cmd: string, args: Record<string, unknown> = {}, path = CONTROL): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    const c = net.connect(CONTROL, () => c.write(`${JSON.stringify({ cmd })}\n`));
+    const c = net.connect(path, () => c.write(`${JSON.stringify({ ...args, cmd })}\n`));
     let buf = "";
     c.setEncoding("utf8");
     c.on("data", (d: string) => {
@@ -94,7 +98,12 @@ describe("display contract", () => {
       const x = readStatus();
       return x.state === "pairing" && x.players.length === 1 ? x : null;
     }, "pairing state with the player listed");
-    assert.deepEqual(Object.keys(s).sort(), ["bridge_id", "clients", "error", "lan_ip", "pairing", "players", "relay", "state", "updated_at", "v"].sort());
+    assert.deepEqual(
+      Object.keys(s).sort(),
+      ["bridge_id", "clients", "error", "lan_ip", "pairing", "paired_clients", "paired_clients_state", "players", "relay", "state", "updated_at", "v"].sort(),
+    );
+    assert.deepEqual(s.paired_clients, []);
+    assert.equal(s.paired_clients_state, "ok");
     assert.equal(s.v, 1);
     assert.equal(s.relay, relay);
     assert.match(s.bridge_id, /^[a-z2-7]{20}$/);
@@ -148,6 +157,120 @@ describe("display contract", () => {
     // No credentials left: unpaired (or already showing a fresh code).
     await until(() => ["unpaired", "pairing"].includes(readStatus().state), "unpaired after revoke");
     assert.equal(link.credentials, 0);
+    await until(() => readStatus().paired_clients.length === 0, "list emptied");
+  });
+
+  test("clients + revoke: the list in status.json and over the socket; revoke one by id or prefix", async () => {
+    const pair = async (body: Record<string, string>) => {
+      const n = await ctl("new_pairing_code");
+      const r = await fetch(`${relay}/pair`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ pairing_code: (n["pairing"] as { code: string }).code, ...body }),
+      });
+      assert.equal(r.status, 200);
+      return ((await r.json()) as { token: string }).token;
+    };
+    const phoneTok = await pair({ label: "Kevin's phone", client: "app" });
+    const curlTok = await pair({ label: "curl" });
+    const s = await until(() => {
+      const x = readStatus();
+      return x.paired_clients.length === 2 ? x : null;
+    }, "two clients in status.json");
+    const phone = s.paired_clients.find((c) => c.label === "Kevin's phone")!;
+    assert.deepEqual(Object.keys(phone).sort(), ["created_at", "id", "kind", "label", "last_used_at", "live"]);
+    assert.equal(phone.kind, "app");
+    assert.equal(phone.live, false);
+    assert.equal(phone.last_used_at, null);
+    assert.equal(s.paired_clients.find((c) => c.label === "curl")!.kind, "token");
+    const listed = await ctl("clients");
+    assert.equal(listed["ok"], true);
+    assert.equal(listed["state"], "ok");
+    assert.equal((listed["clients"] as BridgeClient[]).length, 2);
+
+    // A use through the relay shows up as last used, and live (within 10 min).
+    const used = await fetch(`${relay}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${curlTok}` },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+    });
+    await used.text();
+    await until(() => readStatus().paired_clients.find((c) => c.label === "curl")?.live, "curl live after a call");
+
+    // Revoke by a prefix of the id: gone from the list, its token refused.
+    const rv = await ctl("revoke", { grant: phone.id.slice(0, 6) });
+    assert.equal(rv["ok"], true, JSON.stringify(rv));
+    assert.equal(rv["revoked"], phone.id);
+    assert.equal(rv["label"], "Kevin's phone");
+    await until(() => readStatus().paired_clients.length === 1, "one left");
+    const after = await fetch(`${relay}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${phoneTok}` },
+      body: "{}",
+    });
+    assert.equal(after.status, 401);
+    // Unknown id, or none at all: refused with a reason.
+    const bad = await ctl("revoke", { grant: "zzzzzzzz" });
+    assert.equal(bad["ok"], false);
+    assert.match(String(bad["error"]), /no paired client/);
+    assert.equal((await ctl("revoke"))["ok"], false);
+    // Leave nothing paired for the tests after this one.
+    assert.equal((await ctl("revoke_all"))["ok"], true);
+    await until(() => readStatus().paired_clients.length === 0, "cleared");
+  });
+});
+
+describe("an older relay (no client list)", () => {
+  test("the bridge connects, says the list needs a relay update, and revoke explains instead of failing", async () => {
+    // A minimal relay of the previous protocol: register, then a hello without grants.
+    const got: Record<string, unknown>[] = [];
+    const server: Server = createServer((req, res) => {
+      if (req.url === "/bridge/register") {
+        req.resume();
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ bridge_id: "a".repeat(20) }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    });
+    const wss = new WebSocketServer({ server });
+    wss.on("connection", (ws) => {
+      ws.on("message", (d) => {
+        const t = d.toString();
+        if (t !== "ping") got.push(JSON.parse(t) as Record<string, unknown>);
+      });
+      ws.send(JSON.stringify({ t: "hello", v: 1, bridge_id: "a".repeat(20), relay: "old", mcp_url: "old/mcp", credentials: 2, pairing: null }));
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const oldRelay = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+    const dir = mkdtempSync(join(tmpdir(), "splanc-oldrelay-"));
+    const statusPath = join(dir, "status.json");
+    const control = join(dir, "c.sock");
+    const { identity } = tempIdentity();
+    const l = new RelayLink({ relay: oldRelay, identity, backoff: { baseMs: 50, maxMs: 400 } });
+    const b = new LanBridge({ link: l, hub, statusPath, controlPath: control, refreshMs: 0, autoPairMs: 0 });
+    const st = () => JSON.parse(readFileSync(statusPath, "utf8")) as BridgeStatus;
+    await b.start();
+    try {
+      const s = await until(() => (st().state === "paired" ? st() : null), "paired via the old relay");
+      assert.equal(s.paired_clients_state, "relay_outdated");
+      assert.deepEqual(s.paired_clients, []);
+      await until(() => got.some((f) => f["t"] === "caps"), "caps sent");
+      assert.deepEqual(got.find((f) => f["t"] === "caps"), { t: "caps", live: 1, grants: 1 });
+      const c = await ctl("clients", {}, control);
+      assert.equal(c["ok"], true);
+      assert.equal(c["state"], "relay_outdated");
+      assert.equal(c["note"], RELAY_OUTDATED);
+      const rv = await ctl("revoke", { grant: "abcdef" }, control);
+      assert.equal(rv["ok"], false);
+      assert.match(String(rv["error"]), /needs a relay update/);
+      assert.ok(!got.some((f) => f["t"] === "revoke_grant"), "nothing sent the old relay can't read");
+    } finally {
+      await b.stop();
+      wss.close();
+      server.close();
+    }
   });
 });
 
