@@ -112,10 +112,11 @@ const FX_MAX_BYTES: usize = 4 * 1024;
 // -- FX decks (docs/design/uniform-keypoints.md) -----------------------------
 // Two effects run at once — deck A (0) and deck B (1) — and lm_fx_shade blends
 // their per-LED output by the global crossfade. Deck A is resident and is the
-// only persisted deck (boot resumes it); the JIT and OSC are deck-A only. Deck B
-// lives in FX_AUX, a union with the video-texture delta buffer: loading deck B
-// evicts a video stream, and set_texture is dropped while deck B is loaded, so
-// the two cost max(), not sum() (the mutex is explicit in the type).
+// only persisted deck (boot resumes it); the JIT is deck-A only, and OSC drives
+// the visible deck (#402). Deck B lives in FX_AUX, a union with the video-texture
+// delta buffer: loading deck B evicts a video stream, and set_texture is dropped
+// while deck B is loaded, so the two cost max(), not sum() (the mutex is explicit
+// in the type).
 
 const N_DECKS: usize = 2;
 const DECK_A_IDX: usize = 0;
@@ -387,15 +388,26 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
     vm.set_jit(&blocks[..installed], consts.as_ptr());
 }
 
-/// Native OSC control (FUG-121). The active effect's uniform manifest reduced to
-/// a `name -> (slot, width)` table, rebuilt once per `lm_fx_load` so the UDP
-/// task's per-packet path is a table scan, not a JSON parse. A per-axis /
-/// per-element message (`/tint/x`, `/pose/12`) writes only the components it
-/// names, so the others keep their VM values. `OSC_BY_NAME` toggles name
+/// Native OSC control (FUG-121). The VISIBLE deck's uniform manifest reduced to
+/// a `name -> (slot, width)` table, so the per-packet path is a table scan, not a
+/// JSON parse. It is built from deck `OSC_TABLE_DECK`: eagerly when that deck
+/// loads, else lazily (once) when the visible deck changes (#402 — after a
+/// crossfade to deck B, OSC follows B). A per-axis / per-element message
+/// (`/tint/x`, `/pose/12`) writes only the components it names, into the deck(s)
+/// `osc_targets` picks, so the others keep THAT deck's VM values — nothing is
+/// carried from one deck's slots to the other's. `OSC_BY_NAME` toggles name
 /// resolution vs raw slot-index addressing (`false` = the slot-only fallback /
 /// the A-B benchmark leg).
 static mut OSC_TABLE: PortTable = PortTable::empty();
 static mut OSC_BY_NAME: bool = true;
+/// The deck `OSC_TABLE` was built for.
+static mut OSC_TABLE_DECK: usize = DECK_A_IDX;
+/// `OSC_TABLE` no longer matches `OSC_TABLE_DECK`'s program (it was cleared, or
+/// nothing has built it yet): the next OSC rebuilds it.
+static mut OSC_TABLE_STALE: bool = true;
+/// The deck a crossfade in progress is heading to (the INCOMING deck): the last
+/// deck activated, then the direction the crossfade position last moved.
+static mut OSC_XF_TOWARD: usize = DECK_A_IDX;
 /// OSC received on the netstack build's UDP :9000, latest value per address,
 /// applied at the next frame boundary (lm_osc_post / lm_osc_drain). The ~730 B
 /// mailbox is NOT a static: the firmware heap-allocates it on the first OSC
@@ -408,6 +420,95 @@ static mut OSC_MAILBOX: *mut OscMailbox = core::ptr::null_mut();
 /// The OSC mailbox, if one has been bound.
 unsafe fn osc_mailbox() -> Option<&'static mut OscMailbox> {
     (*addr_of!(OSC_MAILBOX)).as_mut()
+}
+
+/// The deck OSC drives (#402): the one the crossfade fully shows, or mid-fade the
+/// INCOMING one (`toward`). `a` / `b`: whether deck A / B renders (loaded and
+/// active) — a lone rendering deck shows at full whatever the position; at an
+/// endpoint only that deck shades (lm_fx_shade). None: nothing renders. Pure, so
+/// the host test pins the rule.
+pub fn osc_visible_deck(a: bool, b: bool, pos: f32, toward: usize) -> Option<usize> {
+    match (a, b) {
+        (false, false) => None,
+        (true, false) => Some(DECK_A_IDX),
+        (false, true) => Some(DECK_B_IDX),
+        (true, true) if pos <= 0.0 => Some(DECK_A_IDX),
+        (true, true) if pos >= 1.0 => Some(DECK_B_IDX),
+        (true, true) => Some(if toward == DECK_B_IDX { DECK_B_IDX } else { DECK_A_IDX }),
+    }
+}
+
+/// Where a crossfade moving from `cur` to `new` is heading (`toward` when it
+/// doesn't move): up = deck B incoming, down = deck A. Pure (host-tested).
+pub fn osc_xf_toward(cur: f32, new: f32, toward: usize) -> usize {
+    if new > cur {
+        DECK_B_IDX
+    } else if new < cur {
+        DECK_A_IDX
+    } else {
+        toward
+    }
+}
+
+/// Whether both decks hold the same effect: the same non-empty id and the same
+/// uniform manifest (so one name table addresses both).
+unsafe fn osc_decks_same_effect() -> bool {
+    let (Some(pa), Some(pb)) = (deck(DECK_A_IDX), deck(DECK_B_IDX)) else { return false };
+    if !(*pa).loaded() || !(*pb).loaded() || (*pa).id_len == 0 {
+        return false;
+    }
+    if (*pa).id[..(*pa).id_len] != (*pb).id[..(*pb).id_len] {
+        return false;
+    }
+    match ((*pa).prog.as_ref(), (*pb).prog.as_ref()) {
+        (Some(x), Some(y)) => x.manifest == y.manifest,
+        _ => false,
+    }
+}
+
+/// (Re)build the OSC table for deck `d`'s program.
+unsafe fn osc_bind_deck(d: usize) {
+    *addr_of_mut!(OSC_TABLE) = match deck(d).and_then(|p| (*p).prog.as_ref()) {
+        Some(prog) => osc::parse_manifest(prog.manifest),
+        None => PortTable::empty(),
+    };
+    OSC_TABLE_DECK = d;
+    OSC_TABLE_STALE = false;
+}
+
+/// The decks an OSC write lands on (bit `d` = deck `d`; 0 = none): the visible
+/// deck, plus the other one when both hold the same effect (a crossfade between
+/// two copies stays in sync). Points `OSC_TABLE` at the visible deck first.
+unsafe fn osc_targets() -> u8 {
+    let a = deck_renders(DECK_A_IDX);
+    let b = deck_renders(DECK_B_IDX);
+    let pos = if b { player().crossfade() } else { 0.0 };
+    let Some(v) = osc_visible_deck(a, b, pos, OSC_XF_TOWARD) else { return 0 };
+    let same = b && osc_decks_same_effect();
+    if OSC_TABLE_STALE || (v != OSC_TABLE_DECK && !same) {
+        osc_bind_deck(v);
+    } else if v != OSC_TABLE_DECK {
+        // A copy of the same effect shares the table: switching between the two
+        // keeps it as is.
+        OSC_TABLE_DECK = v;
+    }
+    let mut mask = 1u8 << v;
+    if same {
+        mask |= 1u8 << (1 - v);
+    }
+    mask
+}
+
+/// The OSC sink: `vals` into `slot` on every deck in `mask`.
+unsafe fn osc_write(mask: u8, slot: u16, vals: &[f32]) {
+    for d in 0..N_DECKS {
+        if mask & (1u8 << d) == 0 {
+            continue;
+        }
+        if let Some(vm) = deck(d).and_then(|p| (*p).vm.as_mut()) {
+            vm.set_uniform(slot as usize, vals);
+        }
+    }
 }
 /// Hidden-buffer/texture arena for the fx VM (LoadBuf/StoreBuf). 24 KB, now
 /// BYTE-addressed (FUG-10 packed storage) so narrow elements pack tightly — a
@@ -2059,6 +2160,11 @@ unsafe fn note_live_control(frame: &[u8]) {
         Some(CArm::SetCrossfade(m)) => {
             LIVE_CONTROL = true;
             CONTROL_ACK_SEQ = m.seq();
+            // Before the session core applies it: which way the fade moves picks
+            // the deck OSC drives mid-fade (the incoming one, #402).
+            let pos = m.position();
+            let new = if pos.is_finite() { (pos as f32).clamp(0.0, 1.0) } else { 0.0 };
+            OSC_XF_TOWARD = osc_xf_toward(player().crossfade(), new, OSC_XF_TOWARD);
         }
         Some(CArm::BlendKeypoints(_)) => LIVE_CONTROL = true,
         _ => {}
@@ -3297,15 +3403,15 @@ unsafe fn write_effect_uniforms(w: &mut PbOut, d: usize, p: *mut DeckState, prog
     }
     w.bytes(2, prog.manifest);
     // current = 3: each manifest uniform's live value, read back from the VM.
-    // Deck A walks the OSC table (every uniform it can drive); deck B its blend
-    // rules (the same uniforms, within the keypoint bounds).
+    // The deck OSC drives walks its table (every uniform it can drive); the other
+    // deck its blend rules (the same uniforms, within the keypoint bounds).
     if let Some(vm) = (*p).vm.as_ref() {
         let mut put = |slot: usize, width: usize| {
             if let Some(vals) = vm.uniforms.get(slot..slot + width) {
                 w.value_msgs(3, slot as u32, vals);
             }
         };
-        if d == DECK_A_IDX {
+        if d == OSC_TABLE_DECK && !OSC_TABLE_STALE {
             for port in (*addr_of!(OSC_TABLE)).ports() {
                 put(port.slot as usize, port.width as usize);
             }
@@ -4635,10 +4741,13 @@ unsafe fn fx_load(d: usize, src: &[u8]) -> Result<(), FxLoadError> {
         (FX_ARENA_BYTES - need - cache, need + cache)
     };
     let p = if d == DECK_A_IDX { addr_of_mut!(DECK_A) } else { deck_b_claim() };
-    if d == DECK_A_IDX {
-        // Build the OSC name->slot table for the fresh effect (once, off the
-        // render path). OSC drives deck A only.
+    if d == OSC_TABLE_DECK {
+        // OSC drives this deck: build the name->slot table for the fresh effect
+        // (once, off the render path); datagrams waiting for the old effect go
+        // too. (A load onto the other deck — a crossfade cue — leaves both
+        // alone; the table follows when that deck becomes visible.)
         *addr_of_mut!(OSC_TABLE) = osc::parse_manifest(prog.manifest);
+        OSC_TABLE_STALE = false;
         if let Some(mb) = osc_mailbox() {
             mb.clear();
         }
@@ -4731,6 +4840,15 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
 /// back (a video stream can claim it) and deck A the whole arena.
 unsafe fn fx_clear(d: usize) {
     fps_invalidate();
+    if d == OSC_TABLE_DECK {
+        // OSC loses its deck: drop the table and waiting datagrams; the
+        // next OSC rebinds to whichever deck is visible then.
+        *addr_of_mut!(OSC_TABLE) = PortTable::empty();
+        OSC_TABLE_STALE = true;
+        if let Some(mb) = osc_mailbox() {
+            mb.clear();
+        }
+    }
     if d == DECK_A_IDX {
         DECK_A.prog = None;
         DECK_A.len = 0;
@@ -4739,10 +4857,6 @@ unsafe fn fx_clear(d: usize) {
         DECK_A.hash = 0;
         DECK_A.id_len = 0;
         (*addr_of_mut!(DECK_A)).morph.clear();
-        *addr_of_mut!(OSC_TABLE) = PortTable::empty();
-        if let Some(mb) = osc_mailbox() {
-            mb.clear();
-        }
         (*addr_of_mut!(LIVE_MAILBOX)).clear();
         // Drop the JIT table (the exec region is a fixed static, reused on next
         // load; the VM was just cleared above, so the installed table goes too).
@@ -4848,6 +4962,11 @@ unsafe fn fx_set_active(d: usize, active: bool) {
                 fps_invalidate();
             }
             (*p).active = active;
+            if active {
+                // The deck just started: the incoming side of a crossfade (cue),
+                // until the position moves (note_live_control).
+                OSC_XF_TOWARD = d;
+            }
         }
     }
 }
@@ -4933,7 +5052,8 @@ pub unsafe extern "C" fn lm_osc_set_by_name(by_name: bool) {
     OSC_BY_NAME = by_name;
 }
 
-/// Ingest one OSC datagram and drive the active effect's uniforms from it.
+/// Ingest one OSC datagram and drive the visible deck's uniforms from it (see
+/// `osc_targets`).
 /// Returns the number of uniform writes applied (0 if no effect is active, the
 /// datagram isn't valid OSC, or nothing matched). Meant to be called from the
 /// UDP receive task — it never blocks and never allocates.
@@ -4946,13 +5066,10 @@ pub unsafe extern "C" fn lm_osc_ingest(data: *const u8, len: usize) -> u32 {
         return 0;
     }
     let bytes = core::slice::from_raw_parts(data, len);
+    let mask = osc_targets();
     let cfg = OscConfig { prefix: "/", by_name: OSC_BY_NAME };
     let table = &*addr_of!(OSC_TABLE);
-    osc::ingest(bytes, &cfg, table, &mut |slot, vals| {
-        if let Some(vm) = (*addr_of_mut!(DECK_A.vm)).as_mut() {
-            vm.set_uniform(slot as usize, vals);
-        }
-    }) as u32
+    osc::ingest(bytes, &cfg, table, &mut |slot, vals| osc_write(mask, slot, vals)) as u32
 }
 
 /// Heap bytes [`lm_osc_mailbox_bind`] needs (4-byte aligned).
@@ -5007,7 +5124,7 @@ pub unsafe extern "C" fn lm_osc_post(data: *const u8, len: usize) -> u32 {
     }
 }
 
-/// Apply the OSC waiting in the mailbox to deck A's uniforms (at a frame
+/// Apply the OSC waiting in the mailbox to the visible deck's uniforms (at a frame
 /// boundary, before update()). Returns the uniform writes.
 ///
 /// # Safety
@@ -5022,13 +5139,10 @@ pub unsafe extern "C" fn lm_osc_drain() -> u32 {
         mb.clear();
         return 0;
     }
+    let mask = osc_targets();
     let cfg = OscConfig { prefix: "/", by_name: OSC_BY_NAME };
     let table = &*addr_of!(OSC_TABLE);
-    mb.drain(&cfg, table, &mut |slot, vals| {
-        if let Some(vm) = (*addr_of_mut!(DECK_A.vm)).as_mut() {
-            vm.set_uniform(slot as usize, vals);
-        }
-    }) as u32
+    mb.drain(&cfg, table, &mut |slot, vals| osc_write(mask, slot, vals)) as u32
 }
 
 /// The global crossfade (Player::set_crossfade), latched once per frame by
