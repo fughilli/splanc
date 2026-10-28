@@ -57,6 +57,7 @@
       bridgeModules = [
         ./nix/bridge.nix
         ./nix/flash-config.nix
+        ./nix/improv.nix
         ./nix/lean.nix
         { splancBridge.imageRev = rev; }
       ];

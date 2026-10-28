@@ -118,8 +118,18 @@ def _comment_safe(s: str) -> str:
     return "".join(c if c.isprintable() else "?" for c in s)
 
 
-def render_nmconnection(wifi: Wifi, *, conn_uuid: Optional[str] = None) -> str:
-    """A NetworkManager keyfile for one WiFi network (WPA-PSK, or open)."""
+def render_nmconnection(
+    wifi: Wifi, *, conn_uuid: Optional[str] = None, conn_id: str = "splanc-wifi"
+) -> str:
+    """A NetworkManager keyfile for one WiFi network (WPA-PSK, or open).
+
+    Also the bridge's Improv-over-BLE path (pi/bridge/image/splanc_image/
+    wifi_profiles.py) renders through here, so a network sent from the phone app
+    is stored exactly like one written at flash time; it passes ``conn_id`` (and
+    the file name) for the networks it adds next to ``splanc-wifi``.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", conn_id):
+        raise InvalidSetting(f"bad connection id {conn_id!r}")
     check_ssid(wifi.ssid)
     check_psk(wifi.psk)
     ssid_bytes = ";".join(str(b) for b in wifi.ssid.encode("utf-8")) + ";"
@@ -128,7 +138,7 @@ def render_nmconnection(wifi: Wifi, *, conn_uuid: Optional[str] = None) -> str:
         "# (written by the Splanc Bridge Flasher; the Pi moves it into NetworkManager",
         "# on boot and deletes it from this card)",
         "[connection]",
-        "id=splanc-wifi",
+        f"id={conn_id}",
         f"uuid={conn_uuid or uuid.uuid4()}",
         "type=wifi",
         "autoconnect=true",

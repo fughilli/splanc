@@ -22,6 +22,11 @@ provisioned by the **same** clients as an ESP32:
   own the org.bluez objects and drive NetworkManager over D-Bus). Wired into the
   flake via `appModules`.
 
+The Splanc bridge SD image (`pi/bridge/image/nix/improv.nix`) runs this same GATT
+service with its own join (`pi/bridge/image/splanc_image/improv.py`: networks stored
+as the flasher's NetworkManager keyfiles, added alongside and deduplicated by SSID).
+`BUILD.bazel` exposes the codec to its tests.
+
 ## Test the codec locally
 
     python3 pi/provisioning/nix/improv/improv_codec_test.py

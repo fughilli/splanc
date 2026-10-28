@@ -16,7 +16,10 @@
 #      second time; the bridge user can't modify the updated code;
 #   4. NetworkManager reads a WiFi profile rendered by the flasher's own code for
 #      an SSID/PSK full of keyfile-hostile characters back exactly (nmcli);
-#   5. the display renders the HDMI page (PNG sink; copied out as hdmi.png) and
+#   5. Improv (no BT/WiFi hardware in the VM): a network from the phone app is
+#      stored like the flasher's, deduplicated by SSID, read back exactly by
+#      NetworkManager; a failed join (real nmcli) rolls the store back;
+#   6. the display renders the HDMI page (PNG sink; copied out as hdmi.png) and
 #      `splanc-bridge status` shows the pairing code.
 { pkgs, bridgeModules }:
 let
@@ -149,14 +152,39 @@ pkgs.testers.runNixOSTest {
         machine.succeed("systemctl restart splanc-flash-config.service")
         machine.succeed("nmcli connection reload")
 
-        def nm_field(field):
+        def nm_field(field, con="splanc-wifi"):
             # terse output backslash-escapes ':' and '\'
-            v = machine.succeed(f"nmcli -s -t -g {field} connection show splanc-wifi")
+            v = machine.succeed(f"nmcli -s -t -g {field} connection show {con}")
             return re.sub(r"\\(.)", r"\1", v.rstrip("\n"))
 
         assert nm_field("802-11-wireless.ssid") == expect["ssid"], nm_field("802-11-wireless.ssid")
         assert nm_field("802-11-wireless-security.psk") == expect["psk"], nm_field("802-11-wireless-security.psk")
         assert nm_field("802-11-wireless.hidden") == "yes"
+
+    with subtest("Improv: networks from the phone app are stored like the flasher's"):
+        # No Bluetooth adapter in the VM: the service waits for bluetooth.target.
+        machine.fail("systemctl is-active splanc-improv.service")
+        env = machine.succeed("systemctl show -p Environment splanc-improv.service")
+        m = re.search(r"PYTHONPATH=(\S+)", env)
+        assert m, env
+        improv_py = m.group(1)
+        improv = f"PYTHONPATH={improv_py} ${pkgs.python3}/bin/python3 ${./improv_vm.py}"
+        nmdir = "/etc/NetworkManager/system-connections"
+        out = machine.succeed(f"{improv} store ${trickyWifi}/expect.json")
+        # same SSID: replaced in place; a new SSID: added next to it
+        assert f"splanc-wifi {nmdir}/splanc-wifi.nmconnection replaced" in out, out
+        assert f"splanc-wifi-2 {nmdir}/splanc-wifi-2.nmconnection added" in out, out
+        assert nm_field("802-11-wireless.ssid") == expect["ssid"]
+        assert nm_field("802-11-wireless-security.psk") == "n3w " + expect["psk"]
+        assert nm_field("802-11-wireless.ssid", "splanc-wifi-2") == "Venue Wi-Fi"
+        assert nm_field("802-11-wireless-security.psk", "splanc-wifi-2") == "venue-pass"
+        assert machine.succeed(f"stat -c '%a %U' {nmdir}/splanc-wifi-2.nmconnection").strip() == "600 root"
+        # A full join with the real nmcli: no WiFi device here, so it fails and
+        # leaves the saved networks exactly as they were.
+        snap = f"sha256sum {nmdir}/*; nmcli -t -f NAME,UUID connection show | sort"
+        before = machine.succeed(snap)
+        assert machine.succeed(f"{improv} join Elsewhere password1").strip() == "None"
+        assert machine.succeed(snap) == before
 
     with subtest("screens + CLI"):
         machine.wait_for_unit("splanc-display.service")

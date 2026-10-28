@@ -6,7 +6,12 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildWifiSettings, parseRpcResult, wsUrlFromRedirect } from "../src/net/improv";
+import {
+  bridgeHostFromRedirect,
+  buildWifiSettings,
+  parseRpcResult,
+  wsUrlFromRedirect,
+} from "../src/net/improv";
 
 test("wifi settings packet: layout + checksum", () => {
   const pkt = buildWifiSettings("net", "pw");
@@ -58,6 +63,15 @@ test("player WS endpoint from the redirect URL (wss on 443)", () => {
   assert.equal(wsUrlFromRedirect("https://player.local/"), "wss://player.local/ws");
   assert.equal(wsUrlFromRedirect("not a url"), null);
   assert.equal(wsUrlFromRedirect("ftp://x/"), null);
+});
+
+test("a Splanc bridge's redirect is recognised and is not a player endpoint", () => {
+  // pi/bridge/image/splanc_image/improv.py answers http://<wifi ip>/#splanc-bridge.
+  assert.equal(bridgeHostFromRedirect("http://192.168.4.23/#splanc-bridge"), "192.168.4.23");
+  assert.equal(wsUrlFromRedirect("http://192.168.4.23/#splanc-bridge"), null);
+  assert.equal(bridgeHostFromRedirect("http://192.168.1.50/"), null);
+  assert.equal(bridgeHostFromRedirect("http://192.168.1.50/#other"), null);
+  assert.equal(bridgeHostFromRedirect("not a url"), null);
 });
 
 test("retryGatt returns after transient failures without sleeping for real", async () => {
