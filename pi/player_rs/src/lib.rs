@@ -10,9 +10,14 @@
 //! `pi/led_driver/led_driver/{fpga_spi,spi}.py` it replaces, pinned by the same
 //! encoder vectors.
 
+pub mod gpio_cdev;
+pub mod pacing;
+pub mod pipeline;
 pub mod render;
+pub mod rt;
 pub mod server;
 pub mod session;
+pub mod triple;
 pub mod wire;
 
 pub use render::{render_fpga, tick_fpga, RecordingSink, Sink};

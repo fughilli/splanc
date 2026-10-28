@@ -156,6 +156,51 @@ pub fn matched_speed_hz(num_ports: u32) -> u32 {
     (f64::from(num_ports) * 8.0 * 1_000_000.0 / WS_BYTE_US) as u32
 }
 
+// ---------------------------------------------------------------------------
+// Frame-rate ladder for the FPGA path (Splanc MAX).
+//
+// All ports drive in parallel, so the frame rate depends only on the LEDs per
+// port L and the latch: the wire needs `3 * L * 9.963 us` (the core's 1.2407 us
+// bit at 54 MHz) + ~40 us of start-of-frame prefill + the latch (80 us
+// classic WS2812B, 300 us WS2812B-V5/SK6812 class). At 120 fps (8.333 ms) the
+// theoretical limit is 274 LEDs/port at 80 us and 267 at 300 us.
+//
+// The 120 fps mode caps L at 260 (owner decision): 260 LEDs take 7.771 ms, so
+// even at the 300 us latch the frame is done (prefill + emission + latch) at
+// ~8.11 ms, leaving ~220 us per period for the host (frame-done GPIO wake-up,
+// CSR write, scheduling jitter); ~440 us at the 80 us latch. Verified in Verilator: frame-done paced at 260
+// LEDs with a 100 us host wake-up gives 7.99 / 8.21 ms periods
+// (fpga/spi_ws281x:spi_ws281x_120fps_sim, phase E).
+// ---------------------------------------------------------------------------
+
+/// Highest frame rate the FPGA path supports.
+pub const MAX_FPS: f64 = 120.0;
+/// Rates above this run in the "120 fps mode", where the strip-length cap applies.
+pub const FPS_120_MODE_ABOVE: f64 = 60.0;
+/// Max LEDs per port in the 120 fps mode (theoretical 267/274; margin for the
+/// host's frame-done wake-up and jitter, see above).
+pub const MAX_LEDS_PER_PORT_120FPS: usize = 260;
+
+/// LEDs on the longest port when `total` pixels are split evenly over `ports`
+/// (the [`split_ports`] default).
+pub fn leds_per_port(total: usize, ports: usize) -> usize {
+    total.div_ceil(ports.max(1))
+}
+
+/// Validate a frame rate against the strip length on each FPGA port.
+pub fn check_frame_rate(fps: f64, leds_per_port: usize) -> Result<(), String> {
+    if !(fps > 0.0 && fps <= MAX_FPS) {
+        return Err(format!("fps {fps} out of range (0, {MAX_FPS}]"));
+    }
+    if fps > FPS_120_MODE_ABOVE && leds_per_port > MAX_LEDS_PER_PORT_120FPS {
+        return Err(format!(
+            "{leds_per_port} LEDs/port at {fps} fps: the 120 fps mode (> {FPS_120_MODE_ABOVE} fps) \
+             allows at most {MAX_LEDS_PER_PORT_120FPS} LEDs per port"
+        ));
+    }
+    Ok(())
+}
+
 /// Encodes the driver's per-frame colours into `spi_ws281x` transactions.
 ///
 /// Reused across frames: [`configure`](FpgaCodec::configure) (the CSR write) is
@@ -209,6 +254,66 @@ impl FpgaCodec {
     /// A STREAM transaction with every LED off.
     pub fn dark(&self, n: usize) -> Vec<u8> {
         self.frame(&vec![[0, 0, 0]; n])
+    }
+
+    /// Pixels on port `p` for an `n`-LED frame, as [`split_ports`] cuts them:
+    /// `(start, len)` into the flat list, clipped to `n`.
+    fn port_span(&self, p: usize, n: usize) -> (usize, usize) {
+        let (start, count) = match self.port_counts.as_deref() {
+            Some(pc) => (pc[..p].iter().sum::<usize>(), pc[p]),
+            None => {
+                let (base, extra) = (n / self.num_ports, n % self.num_ports);
+                (p * base + p.min(extra), base + usize::from(p < extra))
+            }
+        };
+        let start = start.min(n);
+        (start, (start + count).min(n) - start)
+    }
+
+    /// Byte length of the STREAM for an `n`-LED frame.
+    pub fn stream_len(&self, n: usize) -> usize {
+        let width = (0..self.num_ports)
+            .map(|p| self.port_span(p, n).1)
+            .max()
+            .unwrap_or(0);
+        1 + 3 * width * self.num_ports
+    }
+
+    /// [`frame`](Self::frame) with colour order `order`, written into `out`
+    /// (cleared first). Byte-identical to `frame`, but it encodes in place with
+    /// no per-port vectors, so a reused `out` never allocates once its capacity
+    /// covers the frame: the render thread's per-frame path.
+    pub fn frame_into(&self, colors: &[Rgb], order: [u8; 3], out: &mut Vec<u8>) {
+        let n = colors.len();
+        let ports = self.num_ports;
+        out.clear();
+        out.resize(self.stream_len(n), 0);
+        out[0] = OP_STREAM;
+        for p in 0..ports {
+            let (start, len) = self.port_span(p, n);
+            // Port p's wire byte k sits at 1 + k * ports + p.
+            let mut i = 1 + p;
+            for &px in &colors[start..start + len] {
+                let w = to_wire(px, order);
+                out[i] = w[0];
+                out[i + ports] = w[1];
+                out[i + 2 * ports] = w[2];
+                i += 3 * ports;
+            }
+        }
+    }
+
+    /// [`dark`](Self::dark) into `out` (cleared first), allocation-free.
+    pub fn dark_into(&self, n: usize, out: &mut Vec<u8>) {
+        out.clear();
+        out.resize(self.stream_len(n), 0);
+        out[0] = OP_STREAM;
+    }
+
+    /// [`configure`](Self::configure) into `out` (cleared first).
+    pub fn configure_into(&self, out: &mut Vec<u8>) {
+        out.clear();
+        out.extend_from_slice(&[OP_WRITE_CSR, CSR_NUM_PORTS, self.num_ports as u8]);
     }
 }
 
@@ -333,6 +438,49 @@ mod tests {
     }
 
     #[test]
+    fn frame_into_matches_frame() {
+        let colors: Vec<Rgb> = (0..53u32)
+            .map(|i| [(i * 7) as u8, (i * 13 + 1) as u8, (i * 29 + 2) as u8])
+            .collect();
+        let mut out = Vec::new();
+        for ports in [1usize, 2, 3, 7, 20] {
+            let codec = FpgaCodec::new(ports, GRB, None).unwrap();
+            for n in [0usize, 1, 5, 19, 20, 21, 53] {
+                for order in [GRB, RGB_ORDER, [2, 1, 0]] {
+                    let probe = FpgaCodec { order, ..codec.clone() };
+                    codec.frame_into(&colors[..n], order, &mut out);
+                    assert_eq!(out, probe.frame(&colors[..n]), "ports={ports} n={n}");
+                    assert_eq!(out.len(), codec.stream_len(n));
+                }
+                codec.dark_into(n, &mut out);
+                assert_eq!(out, codec.dark(n), "dark ports={ports} n={n}");
+            }
+            codec.configure_into(&mut out);
+            assert_eq!(out, codec.configure());
+        }
+        // Topology split, including counts past the end of the frame.
+        let codec = FpgaCodec::new(3, GRB, Some(vec![10, 30, 5])).unwrap();
+        for n in [0usize, 4, 12, 40, 45, 53] {
+            codec.frame_into(&colors[..n], GRB, &mut out);
+            assert_eq!(out, codec.frame(&colors[..n]), "topology n={n}");
+        }
+    }
+
+    #[test]
+    fn frame_into_reuses_capacity() {
+        let codec = FpgaCodec::new(20, GRB, None).unwrap();
+        let colors = vec![[1, 2, 3]; 5200];
+        let mut out = Vec::with_capacity(codec.stream_len(5200));
+        let ptr = out.as_ptr();
+        for _ in 0..3 {
+            codec.frame_into(&colors, GRB, &mut out);
+            codec.dark_into(5200, &mut out);
+        }
+        assert_eq!(out.as_ptr(), ptr, "no reallocation once sized");
+        assert_eq!(out.len(), 1 + 5200 * 3);
+    }
+
+    #[test]
     fn split_ports_even_and_topology() {
         let colors: Vec<Rgb> = (0..5).map(|i| [i, i, i]).collect();
         // 5 across 2 ports -> [3, 2] (remainder to earliest)
@@ -360,6 +508,24 @@ mod tests {
         assert!(dark[1..].iter().all(|&b| b == 0));
         assert_eq!(dark.len(), 1 + 3 * 2); // 3 bytes/px * 1 px/port * 2 ports
         assert!(FpgaCodec::new(0, GRB, None).is_err());
+    }
+
+    #[test]
+    fn frame_rate_ladder() {
+        assert_eq!(leds_per_port(5200, 20), 260);
+        assert_eq!(leds_per_port(5201, 20), 261);
+        assert_eq!(leds_per_port(7, 0), 7);
+        // 120 fps mode: cap is 260 LEDs/port.
+        assert!(check_frame_rate(120.0, 260).is_ok());
+        assert!(check_frame_rate(120.0, 261).is_err());
+        assert!(check_frame_rate(61.0, 261).is_err());
+        // At or below 60 fps the cap doesn't apply.
+        assert!(check_frame_rate(60.0, 553).is_ok());
+        assert!(check_frame_rate(10.0, 1024).is_ok());
+        // Out of range.
+        assert!(check_frame_rate(121.0, 10).is_err());
+        assert!(check_frame_rate(0.0, 10).is_err());
+        assert!(check_frame_rate(f64::NAN, 10).is_err());
     }
 
     #[test]

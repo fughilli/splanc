@@ -66,3 +66,64 @@ fpga_flash(
     name = "spi_ws281x_tangnano9k_flash",
     bitstream = ":spi_ws281x_tangnano9k",
 )
+
+# ---- 20-port MAX variant (pinned: tangnano9k_20p.cst) -------------------------
+# 20 ports x 1024 LEDs, one 2048-byte BSRAM FIFO per port, 54 MHz core, plus the
+# frame_done pacing output. Ports 0-7 on the 8-port top's pins 70-77, ports 8-19
+# on 40 35 41 42 51 53 54 55 56 57 68 69, frame_done on 28 (provisional). Pins
+# 53-57 are Gowin dual-purpose configuration pins, so the bitstream enables them
+# as user I/O (the *_as_gpio flags). Utilisation / fmax sweep: scaling_report.sh.
+# Full path at MAX scale with an async SCK:
+verilog_sim(
+    name = "spi_ws281x_20p_sim",
+    size = "medium",
+    tb = "spi_ws281x_20p_tb.v",
+    top = "spi_ws281x_20p_tb",
+    deps = [":spi_ws281x_lib"],
+)
+
+# 120 fps cadence: 20 ports x 270 LEDs (80 us latch) and x 266 (300 us latch,
+# led_type 1), a sub-PREFILL frame, frame-done pacing at the 260-LED cap (both
+# latches, 100 us modelled host wake-up), STATS, and the too-early-frame failure
+# mode. Checks the frame_done invariants on every cycle.
+verilog_sim(
+    name = "spi_ws281x_120fps_sim",
+    size = "medium",
+    # ~10 M core cycles: a VCD of even the tb scope is hundreds of MB.
+    format = "fst",
+    tb = "spi_ws281x_120fps_tb.v",
+    top = "spi_ws281x_120fps_tb",
+    deps = [":spi_ws281x_lib"],
+)
+
+verilog_top(
+    name = "tangnano9k_20p_top",
+    srcs = ["tangnano9k_20p_top.v"],
+    top = "tangnano9k_20p_top",
+    deps = [":spi_ws281x_lib"],
+)
+
+# Dual-purpose pins as GPIO: 53 (DOUT/WE_N), 54 (DIN/CLKHOLD_N), 55 (SSPI_CS_N/D0),
+# 56 (SO/D1) and 57 (FASTRD_N/D3) belong to the SSPI, CPU and MSPI configuration
+# interfaces. The Tang Nano 9K configures from its flash over MSPI (59-62); the
+# design leaves those pins unconstrained.
+synthesizable_bitstream(
+    name = "spi_ws281x_tangnano9k_20p",
+    constraints = "tangnano9k_20p.cst",
+    nextpnr_opts = [
+        "--vopt",
+        "sspi_as_gpio",
+    ],
+    packer_opts = [
+        "--sspi_as_gpio",
+        "--cpu_as_gpio",
+        "--mspi_as_gpio",
+    ],
+    platform = "@rules_fpga//fpga/platforms:tangnano9k",
+    top = ":tangnano9k_20p_top",
+)
+
+fpga_flash(
+    name = "spi_ws281x_tangnano9k_20p_flash",
+    bitstream = ":spi_ws281x_tangnano9k_20p",
+)

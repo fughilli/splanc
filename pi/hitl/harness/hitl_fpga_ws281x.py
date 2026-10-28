@@ -363,9 +363,11 @@ def main(argv=None) -> int:
     # One WS frame = leds*24 bits * 1.25us; size samples to span it + reset. At
     # 24 MHz, 550 LEDs (~16.5ms) needs ~400k; default scales with leds below.
     ap.add_argument("--samples", type=int, default=0, help="0 = auto from leds-per-port")
-    # rig-1 wiring (pins 70..73 -> D0,D2,D4,D6; SPI clk=D3,mosi=D1,cs=D5).
+    # rig-1 wiring (pins 70..73 -> D0,D2,D4,D6; SPI clk=D3,mosi=D5,cs=D1).
     ap.add_argument("--ws-channels", default="D0,D2,D4,D6", help="one channel per WS output")
-    ap.add_argument("--spi-channels", default="D3,D1,D5", help="clk,mosi,cs")
+    # CS is D1 and MOSI D5 on rig-1 (verified by spi_continuity --probe; the station
+    # doc had them swapped, which alone would garble the spi-raw decode).
+    ap.add_argument("--spi-channels", default="D3,D5,D1", help="clk,mosi,cs")
     # OFF by default: the FX2 LA can't cleanly decode the 6.4 MHz SPI (3.75
     # samples/bit), and the check is redundant with the ws2812 capture. See run().
     ap.add_argument(
