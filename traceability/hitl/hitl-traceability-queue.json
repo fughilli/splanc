@@ -273,26 +273,8 @@
     },
     {
       "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:live_latency_netstack",
-      "message": "//pi/hitl/harness:live_latency_netstack pi/hitl/harness/live_latency_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:map_upload_netstack",
-      "message": "//pi/hitl/harness:map_upload_netstack pi/hitl/harness/map_upload_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:video_latency_netstack",
-      "message": "//pi/hitl/harness:video_latency_netstack pi/hitl/harness/video_latency_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:wifi_cadence",
-      "message": "//pi/hitl/harness:wifi_cadence pi/hitl/harness/wifi_cadence error and traces to no requirement",
+      "entity": "//pi/hitl/phone:ios_journeys",
+      "message": "//pi/hitl/phone:ios_journeys pi/hitl/phone/ios_journeys error and traces to no requirement",
       "route": "autonomous"
     },
     {
