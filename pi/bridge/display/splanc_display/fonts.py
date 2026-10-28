@@ -34,7 +34,7 @@ from PIL import Image, ImageFont
 
 FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 
-DEFAULT_SET = "dejavu"  # the one-line switch
+DEFAULT_SET = "terminus-inverse"  # the one-line switch
 
 ROLES = ("title", "small", "big", "code", "code_qr", "value", "boot")
 

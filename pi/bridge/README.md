@@ -417,13 +417,13 @@ glyphs, and the layout adapts to them: header rule, row centring, value column a
 `test_font_sets.py` renders every page and state in every set and fails on text that leaves
 its box or touches other text.
 
-| Set                | Sizes                                                              | Licence                        |
-| ------------------ | ------------------------------------------------------------------ | ------------------------------ |
-| `dejavu` (default) | DejaVu Sans 9-10 px, 14 px status, Mono Bold code (TrueType)       | Bitstream Vera / public domain |
-| `spleen`           | 6x12 (titles double-struck), 8x16 status, 12x24 code, 5x8 fallback | BSD-2-Clause                   |
-| `terminus`         | 6x12 (titles double-struck), 8x16 bold status, 12x24 bold code     | OFL-1.1                        |
-| `misc-fixed`       | X11 6x12, 6x13B titles, 9x15B status, 10x20 code                   | public domain                  |
-| `cozette`          | 6x13 (titles double-struck), code at 2x                            | MIT                            |
+| Set          | Sizes                                                              | Licence                        |
+| ------------ | ------------------------------------------------------------------ | ------------------------------ |
+| `dejavu`     | DejaVu Sans 9-10 px, 14 px status, Mono Bold code (TrueType)       | Bitstream Vera / public domain |
+| `spleen`     | 6x12 (titles double-struck), 8x16 status, 12x24 code, 5x8 fallback | BSD-2-Clause                   |
+| `terminus`   | 6x12 (titles double-struck), 8x16 bold status, 12x24 bold code     | OFL-1.1                        |
+| `misc-fixed` | X11 6x12, 6x13B titles, 9x15B status, 10x20 code                   | public domain                  |
+| `cozette`    | 6x13 (titles double-struck), code at 2x                            | MIT                            |
 
 Title variants of the two favourites (the rest of each set unchanged). A set's `title_style` is
 `bold` (a bold face, real or double-struck), `tracked` (double-struck with extra spacing) or
@@ -433,7 +433,7 @@ Title variants of the two favourites (the rest of each set unchanged). A set's `
 | -------------------- | ----------------------------------------------------------------- |
 | `terminus-tracked`   | 6x12 double-struck with +1 px tracking, so letters keep their gap |
 | `terminus-14b`       | the real bold 8x14 (header 2 px taller; long titles ellipsize)    |
-| `terminus-inverse`   | regular 6x12 on a lit bar                                         |
+| `terminus-inverse`   | regular 6x12 on a lit bar (**the default**)                       |
 | `misc-fixed-7x13b`   | the real bold 7x13B                                               |
 | `misc-fixed-inverse` | regular 6x12 on a lit bar                                         |
 
