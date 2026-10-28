@@ -11,13 +11,15 @@
 #            splanc-bridge-<board>-X.Y.Z.img.zst (+ .sha256)   board: pi5 pi4 pi3 zero2w
 #            Splanc-Bridge-Flasher-X.Y.Z-{mac-arm64,mac-x64}.dmg, -win-x64.exe,
 #            -linux-x86_64.AppImage
-#          + the full-system OTA (pi/bridge/README.md, "System updates"), when the
-#          secret BRIDGE_NIX_SIGNING_KEY is set: each board's system closure as a
-#          signed binary cache, flattened into the prerelease pi-bridge-ota-vX.Y.Z
-#          (one asset per NAR + bridge-system-<board>-X.Y.Z.json), and the
-#          channel pointers bridge-system-<board>.json in the prerelease
-#          `pi-bridge-ota` re-pointed at it (what bridges poll). No secret: the
-#          OTA assets are built unsigned as a dry run and nothing is published.
+#          + the full-system OTA (pi/bridge/README.md, "System updates"): the
+#          build jobs make each board's system closure an UNSIGNED file://
+#          binary cache; `ota-sign` (tag pushes only, environment `Bridge
+#          release`, the only job that sees BRIDGE_NIX_SIGNING_KEY) signs it and
+#          flattens it into release assets; `ota-publish` puts them in the
+#          prerelease pi-bridge-ota-vX.Y.Z (one asset per NAR +
+#          bridge-system-<board>-X.Y.Z.json) and re-points the channel pointers
+#          bridge-system-<board>.json in the prerelease `pi-bridge-ota` (what
+#          bridges poll). No secret: nothing is signed or published, nothing fails.
 #   workflow_dispatch
 #       -> the same builds on any branch, as run artifacts (pick boards; the
 #          flasher and VM test are optional). Give `tag` to attach to that
@@ -163,58 +165,39 @@ jobs:
             nix path-info -r --json ./result-top | python3 pi/bridge/image/closure_top.py 25 --markdown
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
-      # Full-system OTA (splanc_image/sysrelease.py, nixcache.py): the closure as
-      # a file:// binary cache, signed with BRIDGE_NIX_SIGNING_KEY (must match a
-      # key in pi/bridge/image/ota-public-keys.txt, which the image trusts),
-      # flattened into release assets. Without the secret: built unsigned and
-      # summarized (a dry run of the pipeline), never published.
-      - name: OTA system release assets
-        id: ota
+      # Full-system OTA, unsigned half (splanc_image/sysrelease.py): the closure
+      # as a file:// binary cache. Every run flattens it once as a dry run (step
+      # summary: asset count + MB); tag pushes hand the cache to `ota-sign`,
+      # which alone holds the signing key. This job never sees the key.
+      - name: OTA system cache (unsigned) + dry run
         env:
-          BRIDGE_NIX_SIGNING_KEY: ${{ secrets.BRIDGE_NIX_SIGNING_KEY }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           top="$(readlink -f result-top)"
-          base="https://github.com/$REPO/releases/download/pi-bridge-ota-v$VERSION"
           nix copy --to "file://$PWD/syscache?compression=zstd&parallel-compression=true" "$top"
-          pubs="$(sed -e 's/#.*//' -e 's/[[:space:]]//g' pi/bridge/image/ota-public-keys.txt | sed '/^$/d')"
-          keyname=""
-          if [ -z "${BRIDGE_NIX_SIGNING_KEY:-}" ]; then
-            echo "::notice::BRIDGE_NIX_SIGNING_KEY is not set: OTA assets built unsigned (dry run), not published"
-          elif [ -z "$pubs" ]; then
-            echo "::warning::BRIDGE_NIX_SIGNING_KEY is set but pi/bridge/image/ota-public-keys.txt is empty (images from this commit accept no updates): OTA not published"
-          else
-            kf="$RUNNER_TEMP/bridge-ota.sk"
-            (umask 077 && printf '%s\n' "$BRIDGE_NIX_SIGNING_KEY" >"$kf")
-            pub="$(nix key convert-secret-to-public <"$kf")"
-            if printf '%s\n' "$pubs" | grep -qxF "$pub"; then
-              nix store sign --store "file://$PWD/syscache" --key-file "$kf" --recursive "$top"
-              keyname="${pub%%:*}"
-            else
-              echo "::error::BRIDGE_NIX_SIGNING_KEY's public key ($pub) is not in pi/bridge/image/ota-public-keys.txt: OTA not published"
-            fi
-            rm -f "$kf"
-          fi
+          printf '%s\n' "$top" >syscache/toplevel
+          dry="$RUNNER_TEMP/ota-dry"
           {
-            echo "#### OTA system release ($BOARD)"
+            echo "#### OTA system release ($BOARD, unsigned dry run)"
             echo
             PYTHONPATH=pi/bridge/image python3 -m splanc_image.sysrelease manifest --cache syscache \
-              --toplevel "$top" --board "$BOARD" --version "$VERSION" --nar-base-url "$base" \
-              ${keyname:+--require-key "$keyname"} --out out-ota
+              --toplevel "$top" --board "$BOARD" --version "$VERSION" \
+              --nar-base-url "https://github.com/$REPO/releases/download/pi-bridge-ota-v$VERSION" --out "$dry"
             echo
-            echo "$(ls out-ota | wc -l) assets; $(du -sm out-ota | cut -f1) MB; signed: ${keyname:-no}"
+            echo "$(find "$dry" -type f | wc -l) assets; $(du -sm "$dry" | cut -f1) MB"
           } | tee -a "$GITHUB_STEP_SUMMARY"
-          rm -rf syscache
-          echo "signed=$([ -n "$keyname" ] && echo true || echo false)" >>"$GITHUB_OUTPUT"
+          rm -rf "$dry"
 
-      - name: Upload OTA assets (run artifact, for the publish job)
-        if: needs.setup.outputs.publish == 'true' && steps.ota.outputs.signed == 'true'
-        uses: actions/upload-artifact@v4
+      # ~480 MB per board, only on tag pushes, kept one day: just long enough
+      # for ota-sign in this same run.
+      - name: Upload the unsigned OTA cache (for ota-sign)
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ota-${{ matrix.board }}
-          path: out-ota/*
-          retention-days: 3
+          name: syscache-${{ matrix.board }}
+          path: syscache
+          retention-days: 1
           compression-level: 0 # NARs are zstd already
 
       - name: Compress + checksum
@@ -363,21 +346,101 @@ jobs:
             done
           done
 
+  # The ONLY job that sees the OTA signing key: tag pushes only, in the GitHub
+  # environment `Bridge release` (whose deployment rule admits only
+  # pi-bridge-v* tags; pi/bridge/README.md has the setup). No repo build: it
+  # takes the build jobs' unsigned caches (artifacts of this run), checks the
+  # key's public half is one the image trusts (ota-public-keys.txt), signs every
+  # path of each board's closure (`nix store sign` against the file:// cache),
+  # and flattens them into release assets (sysrelease, which refuses an unsigned
+  # path). Output: the `ota-signed` artifact, for ota-publish. No key: nothing
+  # signed, nothing published, the job succeeds.
+  ota-sign:
+    needs: [setup, image]
+    if: >-
+      always() && github.event_name == 'push' && github.ref_type == 'tag' &&
+      needs.image.result == 'success'
+    runs-on: ubuntu-latest
+    environment: Bridge release
+    permissions:
+      contents: read
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+    env:
+      HAVE_KEY: ${{ secrets.BRIDGE_NIX_SIGNING_KEY != '' }}
+    steps:
+      - name: No signing key
+        if: env.HAVE_KEY != 'true'
+        run: |
+          echo "::notice::BRIDGE_NIX_SIGNING_KEY is not set in environment 'Bridge release': OTA not signed or published"
+      - if: env.HAVE_KEY == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          sparse-checkout: |
+            pi/bridge/image/splanc_image
+            pi/bridge/image/ota-public-keys.txt
+          sparse-checkout-cone-mode: false
+      - if: env.HAVE_KEY == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { path: syscache, pattern: 'syscache-*' }
+      - if: env.HAVE_KEY == 'true'
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - name: Sign + flatten into release assets
+        id: sign
+        if: env.HAVE_KEY == 'true'
+        env:
+          BRIDGE_NIX_SIGNING_KEY: ${{ secrets.BRIDGE_NIX_SIGNING_KEY }}
+          VERSION: ${{ needs.setup.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          nixc() { nix --extra-experimental-features nix-command "$@"; }
+          kf="$RUNNER_TEMP/bridge-ota.sk"
+          trap 'rm -f "$kf"' EXIT
+          (umask 077 && printf '%s\n' "$BRIDGE_NIX_SIGNING_KEY" >"$kf")
+          unset BRIDGE_NIX_SIGNING_KEY
+          pub="$(nixc key convert-secret-to-public <"$kf")"
+          pubs="$(sed -e 's/#.*//' -e 's/[[:space:]]//g' pi/bridge/image/ota-public-keys.txt | sed '/^$/d')"
+          if ! printf '%s\n' "$pubs" | grep -qxF "$pub"; then
+            echo "::error::the signing key's public half ($pub) is not in pi/bridge/image/ota-public-keys.txt: OTA not published"
+            echo "signed=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          base="https://github.com/$REPO/releases/download/pi-bridge-ota-v$VERSION"
+          for d in syscache/syscache-*; do
+            board="${d##*/syscache-}"
+            top="$(cat "$d/toplevel")"
+            nixc store sign --store "file://$PWD/$d" --key-file "$kf" --recursive "$top"
+            PYTHONPATH=pi/bridge/image python3 -m splanc_image.sysrelease manifest --cache "$d" \
+              --toplevel "$top" --board "$board" --version "$VERSION" --nar-base-url "$base" \
+              --require-key "${pub%%:*}" --out out-ota | tee -a "$GITHUB_STEP_SUMMARY"
+            rm -rf "$d"
+          done
+          echo "signed=true" >>"$GITHUB_OUTPUT"
+      - if: steps.sign.outputs.signed == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ota-signed
+          path: out-ota
+          retention-days: 1
+          compression-level: 0
+
   # The full-system OTA (pi/bridge/README.md, "System updates"): every board's
   # signed NARs (deduplicated: they're named by content hash) + manifests into
   # the prerelease pi-bridge-ota-vX.Y.Z, then the channel pointers in
   # `pi-bridge-ota` (which bridges poll) re-pointed at them. Only after the
   # image release itself is out, and only for boards whose OTA was signed.
   ota-publish:
-    needs: [setup, image, publish]
+    needs: [setup, ota-sign, publish]
     if: >-
-      always() && needs.setup.outputs.publish == 'true' && needs.image.result == 'success' &&
-      needs.publish.result == 'success'
+      always() && needs.ota-sign.outputs.signed == 'true' && needs.publish.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with: { path: ota, merge-multiple: true, pattern: 'ota-*' }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          sparse-checkout: pi/bridge/image/splanc_image
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with: { path: ota, pattern: ota-signed, merge-multiple: true }
       - name: Publish the OTA release + re-point the channel
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -389,10 +452,10 @@ jobs:
           shopt -s nullglob
           manifests=(ota/bridge-system-*-"$VERSION".json)
           if [ ${#manifests[@]} -eq 0 ]; then
-            echo "::notice::no signed OTA assets (BRIDGE_NIX_SIGNING_KEY not set?): nothing to publish"
+            echo "::notice::no signed OTA assets (no BRIDGE_NIX_SIGNING_KEY in environment 'Bridge release'?): nothing to publish"
             exit 0
           fi
-          n=$(ls ota | wc -l)
+          n=$(find ota -type f | wc -l)
           echo "OTA: $n assets, $(du -sm ota | cut -f1) MB, boards: ${manifests[*]}" | tee -a "$GITHUB_STEP_SUMMARY"
           # GitHub: at most 1000 assets per release (2 GiB each).
           if [ "$n" -gt 990 ]; then echo "::error::$n OTA assets: over GitHub's 1000-per-release limit"; exit 1; fi

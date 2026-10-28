@@ -195,9 +195,25 @@ service) updates over the air as a whole NixOS generation, the way `nixos-rebuil
 would. The agent bundle keeps its own faster path (above): it ships more often than images, needs
 no reboot, and a system update doesn't touch `/var/lib/splanc-agent`.
 
-**Release (CI, `pi-bridge-v*` tag).** Each board's system closure is copied into a `file://`
-binary cache, signed with `nix store sign` using the `BRIDGE_NIX_SIGNING_KEY` secret, and
-flattened by `splanc_image/sysrelease.py` into release assets with no other infrastructure:
+**Release (CI).** Three steps in `.github/workflows/pi-bridge-image.yml`, so that only one small
+job ever sees the signing key:
+
+1. `image` (every run, per board, environment `CI`): copies the system closure into an
+   **unsigned** `file://` binary cache and flattens it once as a dry run (the step summary shows
+   asset count and MB). On a `pi-bridge-v*` tag push it uploads the cache as a run artifact
+   (`syscache-<board>`, ~480 MB, kept 1 day). It never has the key.
+2. `ota-sign` (only `pi-bridge-v*` tag pushes; environment **`Bridge release`**, the only place
+   `BRIDGE_NIX_SIGNING_KEY` exists): no repo build, just a sparse checkout of
+   `splanc_image/` + `ota-public-keys.txt`, Nix, and the artifacts. It refuses a key whose public
+   half isn't in `ota-public-keys.txt`, signs every path of each closure with `nix store sign`
+   (against the `file://` cache, `--recursive` from the toplevel) and flattens them with
+   `sysrelease.py --require-key` (which refuses any unsigned path) into the `ota-signed` artifact.
+3. `ota-publish` (after the image release is out): uploads only that signed output.
+
+The signer takes the build's own artifacts rather than re-fetching the closures from Cachix: it
+signs exactly the bytes this run built, needs no aarch64 runner or Cachix access, and doesn't
+extend the key's trust to whatever else can push to the cache. The result, with no other
+infrastructure:
 
 ```text
 pi-bridge-ota-vX.Y.Z (prerelease)   <filehash>.nar.zst  one per store path, shared between boards
@@ -212,7 +228,8 @@ A plain HTTP binary cache needs a `.narinfo` per store path, and a GitHub releas
 unpacked), all four boards together ~650 NARs. So the narinfos travel together in the manifest
 (~0.5 MB) and only the NARs are separate assets (each well under the 2 GiB asset limit; the
 largest, the Pi 5 kernel, is 116 MB). CI fails the OTA publish (not the image release) above 990
-assets. Without the secret, the assets are built unsigned as a dry run and nothing is published.
+assets. Without the secret (or on anything but a tag push) nothing is signed or published, and no
+job fails.
 
 **Device (`splanc-system-update.timer`, every 15 min; checks the channel every ~6 h).**
 
@@ -255,8 +272,20 @@ fixtures keep playing (they don't depend on the bridge), only remote control pau
   U-Boot console, or reflash).
 
 **Signing key.** `ota-public-keys.txt` (committed) is baked into the image; the secret key lives
-only in the `BRIDGE_NIX_SIGNING_KEY` secret. CI checks the secret matches a listed public key
-before signing. Whoever controls the `pi-bridge-ota` channel can point bridges at any release
+only in the `BRIDGE_NIX_SIGNING_KEY` secret of the GitHub environment `Bridge release`, which only
+`pi-bridge-v*` tags may deploy to. Setup (repo **Settings → Environments**):
+
+1. **New environment** → name `Bridge release` → **Configure environment**.
+2. **Deployment branches and tags** → **Selected branches and tags** → **Add deployment branch
+   or tag rule** → Ref type **Tag**, name pattern `pi-bridge-v*` → **Add rule**. (Optionally also
+   **Required reviewers**, to approve each release's signing by hand.)
+3. **Environment secrets** → **Add environment secret** → name `BRIDGE_NIX_SIGNING_KEY`, value =
+   the whole secret key file (`splanc-bridge-1:...`).
+4. **Environments → `CI`** → delete `BRIDGE_NIX_SIGNING_KEY` there if it was added (also check
+   **Secrets and variables → Actions** for a repository-level copy, and delete that too).
+
+`ota-sign` refuses to sign if the key's public half isn't listed in `ota-public-keys.txt`.
+Whoever controls the `pi-bridge-ota` channel can point bridges at any release
 signed with the key, including an older one; re-pointing is also how a bad release is rolled back:
 
 ```sh

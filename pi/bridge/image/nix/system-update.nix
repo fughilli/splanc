@@ -15,7 +15,8 @@
 # which still swaps the Node bundle in /var/lib/splanc-agent without a reboot.
 #
 # Trust: only store paths signed by a key in ../ota-public-keys.txt are
-# accepted (CI signs releases with the matching secret, BRIDGE_NIX_SIGNING_KEY).
+# accepted (CI's ota-sign job signs releases with the matching secret,
+# BRIDGE_NIX_SIGNING_KEY in the `Bridge release` environment).
 # With no key in that file the updater is installed but reports "disabled".
 { config, lib, pkgs, ... }:
 let
