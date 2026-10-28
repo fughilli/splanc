@@ -25,6 +25,10 @@ use tokio_tungstenite::tungstenite::Message;
 /// The Player shared between the WS handler and the render loop.
 pub type SharedPlayer = Arc<Mutex<Player>>;
 
+/// The OTA arms' handler (docs/design/max-ota.md), set once at startup on a Pi.
+/// Unset (tests, a dev host): OTA arms reach the core, which answers "unsupported".
+pub static OTA: std::sync::OnceLock<crate::ota::Ota> = std::sync::OnceLock::new();
+
 /// The player's monotonic clock: whole milliseconds since a shared epoch. The WS
 /// task stamps recv/send with it (so a start_mapping's pattern epoch is on this
 /// clock) and the render loop derives its frame index from the SAME epoch, so
@@ -93,6 +97,13 @@ pub fn handle_frame(
     if ClientMessageView::parse(frame).is_err() {
         return Err("decode");
     }
+    // OTA arms: answered here from the MAX updater's state (crate::ota), not by the
+    // shared core (which has no updater).
+    if let Some(ota) = OTA.get() {
+        if crate::ota::Ota::is_ota_frame(frame) {
+            return Ok(ota.handle(frame));
+        }
+    }
     let mut p = player.lock().expect("player mutex poisoned");
     let Some(reply) = p.handle_frame(frame, recv_ms, send_ms) else {
         return Ok(None);
@@ -129,6 +140,7 @@ pub async fn serve_on(
 ) -> std::io::Result<()> {
     let acceptor = TlsAcceptor::from(Arc::new(config));
     eprintln!("player_rs: WSS listening on {}", listener.local_addr()?);
+    crate::health::LISTENING.store(true, std::sync::atomic::Ordering::Relaxed);
     loop {
         let (tcp, peer) = listener.accept().await?;
         let acceptor = acceptor.clone();

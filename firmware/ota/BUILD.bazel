@@ -13,7 +13,7 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_python//python:defs.bzl", "py_binary")
 load("@rules_requirements//rr:defs.bzl", "rr_rust_test")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
-load(":ring.bzl", "ring_cmd")
+load(":ring.bzl", "RELEASE_RING", "TEST_RING", "ring_cmd")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -117,17 +117,6 @@ py_binary(
     name = "gen_key_header",
     srcs = ["gen_key_header.py"],
 )
-
-RELEASE_RING = {
-    "0": "keys/release.pub",
-    "1": "keys/backup.pub",
-    "2": "keys/next.pub",
-}
-
-TEST_RING = {
-    "0": "keys/test.pub",
-    "1": "keys/test_backup.pub",
-}
 
 genrule(
     name = "ota_key_h",

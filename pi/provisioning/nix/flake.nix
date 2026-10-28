@@ -21,12 +21,30 @@
   inputs.sbc-deploy.url = "github:fughilli/sbc-deploy/build-data?dir=nix";
 
   outputs = { self, sbc-deploy, ... }:
-    sbc-deploy.lib.mkSbcProject {
-      hostName = "ledmapper";
-      board = "raspberry-pi-5"; # or "raspberry-pi-4"
-      appModules = [ ./apps.nix ./improv.nix ./fpga.nix ];
-      # Baked into BOTH the base and full images: hardware SPI (SK9822/APA102)
-      # for the driver. WiFi can be added here too (sbcDeploy.wifi.networks).
-      systemModules = [ sbc-deploy.nixosModules.spi ];
+    let
+      project = sbc-deploy.lib.mkSbcProject {
+        hostName = "ledmapper";
+        board = "raspberry-pi-5"; # or "raspberry-pi-4"
+        # ota.nix: over-the-air updates (docs/design/max-ota.md).
+        appModules = [ ./apps.nix ./improv.nix ./fpga.nix ./ota.nix ];
+        # Baked into BOTH the base and full images: hardware SPI (SK9822/APA102)
+        # for the driver. WiFi can be added here too (sbcDeploy.wifi.networks).
+        systemModules = [ sbc-deploy.nixosModules.spi ];
+      };
+      system = project.nixosConfigurations.ledmapper;
+    in
+    project // {
+      images = project.images // {
+        # The OTA unit: the full system's toplevel, for tools/max_ota_release.py.
+        # Built like an image (`ledmapper_pi3.image_sd -- --no-write --attr
+        # images.maxOtaSystem`) so the same Bazel launcher seams (board, build_data,
+        # deploy key) apply; `toplevel.img` is a text file naming the store path (the
+        # launcher reports the first *.img it finds), and `system` keeps it rooted.
+        maxOtaSystem = system.pkgs.runCommand "splanc-max-ota-system" { } ''
+          mkdir -p "$out"
+          ln -s ${system.config.system.build.toplevel} "$out/system"
+          echo ${system.config.system.build.toplevel} > "$out/toplevel.img"
+        '';
+      };
     };
 }

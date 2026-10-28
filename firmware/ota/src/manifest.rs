@@ -9,7 +9,9 @@
 //! | 0   | 4    | version   | u32 LE, monotonic                             |
 //! | 4   | 4    | size      | u32 LE, image bytes                           |
 //! | 8   | 32   | sha256    | of the image                                  |
-//! | 40  | 4    | flags     | u32 LE; bit 0 = loader image (reserved)       |
+//! | 40  | 4    | flags     | u32 LE; bit 0 = loader image (reserved),      |
+//! |     |      |           | 8..15 key id, 16..23 security version,        |
+//! |     |      |           | 24..31 board (0 = a C6 app; else Splanc MAX)  |
 //! | 44  | 64   | signature | ECDSA P-256 r‖s over SHA-256 of bytes 0..44   |
 //!
 //! The signature is checked by the caller (mbedtls on the device, the `p256`
@@ -24,6 +26,19 @@ pub const ENCODED_LEN: usize = SIGNED_LEN + SIGNATURE_LEN;
 /// Reserved (as in the swarm): the image is a loader, not an app. Splanc's
 /// loader refuses such images until loader self-update has its own safety story.
 pub const FLAG_LOADER: u32 = 1 << 0;
+
+/// The board an image is for, in flags bits 24..31 (signed, so it can't be
+/// swapped): 0 = a C6 app image; 1.. = a Splanc MAX board (pi/max_ota `Board`,
+/// docs/design/max-ota.md). The C6 and the MAX trust the SAME signing keys, so
+/// this field is what keeps each from installing the other's images: the C6
+/// refuses any board but 0, the MAX refuses 0 and any board but its own.
+pub const BOARD_SHIFT: u32 = 24;
+pub const BOARD_C6: u8 = 0;
+
+/// The board id in `flags` (bits 24..31).
+pub fn board(flags: u32) -> u8 {
+    (flags >> BOARD_SHIFT) as u8
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Manifest {

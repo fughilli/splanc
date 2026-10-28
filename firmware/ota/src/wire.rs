@@ -47,6 +47,8 @@ pub enum State {
     /// Verified and selected: the device restarts into the new app.
     Installed = 4,
     Failed = 5,
+    /// A pull device (Splanc MAX, docs/design/max-ota.md) fetching its image itself.
+    Downloading = 6,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,7 +66,8 @@ pub enum ClientArm<'a> {
     /// sequence — hello, tls_info, clock sync — completes).
     TimeSyncPing { t0: f64 },
     GetTlsInfo,
-    OtaBegin { manifest: &'a [u8], allow_downgrade: bool, key_epoch: &'a [u8] },
+    /// `source_url` (field 4) is for pull devices (a Splanc MAX); the C6 ignores it.
+    OtaBegin { manifest: &'a [u8], allow_downgrade: bool, key_epoch: &'a [u8], source_url: &'a [u8] },
     OtaChunk { offset: u32, data: &'a [u8] },
     OtaFinish,
     OtaAbort,
@@ -183,16 +186,18 @@ pub fn decode_client(frame: &[u8]) -> Result<ClientArm<'_>, Malformed> {
             }
             CM_OTA_BEGIN => {
                 let mut s = Reader { b: submessage(v)?, o: 0 };
-                let (mut manifest, mut allow_downgrade, mut key_epoch): (&[u8], bool, &[u8]) = (&[], false, &[]);
+                let (mut manifest, mut allow_downgrade, mut key_epoch, mut source_url): (&[u8], bool, &[u8], &[u8]) =
+                    (&[], false, &[], &[]);
                 while let Some((n, v)) = s.field()? {
                     match (n, v) {
                         (1, Value::Bytes(b)) => manifest = b,
                         (2, Value::Varint(x)) => allow_downgrade = x != 0,
                         (3, Value::Bytes(b)) => key_epoch = b,
+                        (4, Value::Bytes(b)) => source_url = b,
                         _ => {}
                     }
                 }
-                ClientArm::OtaBegin { manifest, allow_downgrade, key_epoch }
+                ClientArm::OtaBegin { manifest, allow_downgrade, key_epoch, source_url }
             }
             CM_OTA_CHUNK => {
                 let mut s = Reader { b: submessage(v)?, o: 0 };
@@ -377,6 +382,8 @@ pub struct Status<'a> {
     pub key_epoch: u32,
     pub revoked_keys: u32,
     pub security_floor: u32,
+    /// Pull devices: the board their images are built for ("pi3", …); "" on a C6.
+    pub board: &'a str,
 }
 
 impl Status<'_> {
@@ -397,6 +404,7 @@ impl Status<'_> {
         w.uint(14, self.key_epoch as u64);
         w.uint(15, self.revoked_keys as u64);
         w.uint(16, self.security_floor as u64);
+        w.bytes(17, self.board.as_bytes());
     }
 }
 

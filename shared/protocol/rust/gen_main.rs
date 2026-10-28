@@ -245,6 +245,16 @@ fn main() -> std::io::Result<()> {
         ".ledmapper.v1.OtaBegin.key_epoch",
         Config::new().max_bytes(if firmware { 1 } else { 80 }),
     );
+    // Splanc MAX (docs/design/max-ota.md): the player decodes OTA arms with the host
+    // profile; the C6 never reads source_url and never sends board.
+    g.configure(
+        ".ledmapper.v1.OtaBegin.source_url",
+        Config::new().max_bytes(if firmware { 1 } else { 1024 }),
+    );
+    g.configure(
+        ".ledmapper.v1.OtaStatus.board",
+        Config::new().max_bytes(if firmware { 1 } else { 16 }),
+    );
     g.configure(
         ".ledmapper.v1.OtaChunk.data",
         Config::new().max_bytes(if firmware { 1 } else { 4096 }),
