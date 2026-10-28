@@ -1,0 +1,7 @@
+# Nix public keys a bridge system update must be signed with (one per line,
+# `name:base64`). Baked into the image (nix/system-update.nix); CI signs each
+# pi-bridge-v* release's system closure with the matching secret key
+# (repository/environment secret BRIDGE_NIX_SIGNING_KEY) and refuses to publish
+# if the two don't match. Empty = system updates are off in images built from
+# this commit. Rotating: add the new key here, release, wait for bridges to
+# update, then switch the secret and drop the old key.

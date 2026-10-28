@@ -7,7 +7,9 @@ tags. Bazel covers the on-device Python the image runs:
   :splanc_image     bootconfig (apply the flasher's boot-partition settings),
                     selfupdate (verified agent bundle updates), improv +
                     wifi_profiles (Improv-over-BLE WiFi provisioning; the
-                    BLE GATT side needs bless and only runs on the Pi)
+                    BLE GATT side needs bless and only runs on the Pi),
+                    sysupdate + nixcache (full-system OTA) and sysrelease
+                    (CI: OTA release assets)
   :image_py_test    their unit tests
 """
 
