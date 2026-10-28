@@ -252,6 +252,7 @@
 <li class="toctree-l2"><a class="reference internal" href="docs/design/effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
@@ -260,6 +261,7 @@
 <li class="toctree-l2"><a class="reference internal" href="docs/design/heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/app-ux-overhaul.html">App UX overhaul</a></li>
@@ -423,9 +425,27 @@ opcode):</p>
 <span class="k">uniform</span><span class="w"> </span><span class="kt">vec3</span><span class="w">  </span><span class="n">tint</span><span class="w">  </span><span class="o">:</span><span class="w"> </span><span class="n">color</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="mf">0.2</span><span class="p">,</span><span class="w"> </span><span class="mf">0.6</span><span class="p">,</span><span class="w"> </span><span class="mf">1.0</span><span class="p">;</span><span class="w">   </span><span class="c1">// color picker</span>
 <span class="k">uniform</span><span class="w"> </span><span class="kt">int</span><span class="w">   </span><span class="n">mode</span><span class="w">  </span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="err">&quot;</span><span class="n">fire</span><span class="err">&quot;</span><span class="p">,</span><span class="err">&quot;</span><span class="n">ice</span><span class="err">&quot;</span><span class="p">}</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mo">0</span><span class="p">;</span><span class="w">    </span><span class="c1">// dropdown</span>
 <span class="k">uniform</span><span class="w"> </span><span class="kt">bool</span><span class="w">  </span><span class="n">invert</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="p">;</span><span class="w">                </span><span class="c1">// toggle</span>
+<span class="k">uniform</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">tilt</span><span class="w">  </span><span class="o">:</span><span class="w"> </span><span class="o">-</span><span class="mf">1.0</span><span class="w"> </span><span class="p">..</span><span class="w"> </span><span class="mf">1.0</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">-</span><span class="mf">0.2</span><span class="p">;</span><span class="w">    </span><span class="c1">// signed range</span>
+<span class="k">uniform</span><span class="w"> </span><span class="kt">vec4</span><span class="w">  </span><span class="n">plane</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="o">-</span><span class="mi">5</span><span class="w"> </span><span class="p">..</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mo">0</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mo">0</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w">  </span><span class="c1">// ranged vector: numeric, not a colour</span>
+<span class="k">uniform</span><span class="w"> </span><span class="kt">vec3</span><span class="w">  </span><span class="n">p</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="kt">vec3</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="mo">0</span><span class="p">)</span><span class="w"> </span><span class="p">..</span><span class="w"> </span><span class="kt">vec3</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kt">vec3</span><span class="p">(</span><span class="mf">0.0</span><span class="p">);</span><span class="w">  </span><span class="c1">// per-component range</span>
+<span class="k">uniform</span><span class="w"> </span><span class="kt">mat4</span><span class="w">  </span><span class="n">pose</span><span class="p">;</span><span class="w">                          </span><span class="c1">// matrix, identity default (`: lo .. hi` optional)</span>
 </pre></div>
 </div>
+<p>A <code class="docutils literal notranslate"><span class="pre">vec3</span></code>/<code class="docutils literal notranslate"><span class="pre">vec4</span></code> without a range is a colour (<code class="docutils literal notranslate"><span class="pre">ui.kind:</span> <span class="pre">color</span></code>, 0..1); with a
+range it is a numeric slider vector (<code class="docutils literal notranslate"><span class="pre">ui.kind:</span> <span class="pre">slider</span></code>; the per-component form
+adds <code class="docutils literal notranslate"><span class="pre">mins</span></code>/<code class="docutils literal notranslate"><span class="pre">maxs</span></code> to the manifest, <code class="docutils literal notranslate"><span class="pre">min</span></code>/<code class="docutils literal notranslate"><span class="pre">max</span></code> being their envelope). A
+<code class="docutils literal notranslate"><span class="pre">mat3</span></code>/<code class="docutils literal notranslate"><span class="pre">mat4</span></code> is <code class="docutils literal notranslate"><span class="pre">ui.kind:</span> <span class="pre">matrix</span></code>, width 9/16, column-major, range ±1000
+unless declared.</p>
 </li>
+<li><p><strong>Matrices</strong> — <code class="docutils literal notranslate"><span class="pre">mat3</span></code>/<code class="docutils literal notranslate"><span class="pre">mat4</span></code> (column-major, GLSL): <code class="docutils literal notranslate"><span class="pre">m[c]</span></code> column, <code class="docutils literal notranslate"><span class="pre">m[c][r]</span></code>
+element, constructors (diagonal scalar, N columns, N×N scalars, <code class="docutils literal notranslate"><span class="pre">mat3(m4)</span></code>,
+<code class="docutils literal notranslate"><span class="pre">mat4(m3)</span></code>), <code class="docutils literal notranslate"><span class="pre">m*v</span> <span class="pre">v*m</span> <span class="pre">m*m</span> <span class="pre">m*s</span> <span class="pre">m/s</span> <span class="pre">m+m</span> <span class="pre">m-m</span> <span class="pre">-m</span></code>, <code class="docutils literal notranslate"><span class="pre">transpose(m)</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">transform(m,</span> <span class="pre">p)</span></code> = <code class="docutils literal notranslate"><span class="pre">(m</span> <span class="pre">*</span> <span class="pre">vec4(p,</span> <span class="pre">1.0)).xyz</span></code>. No VM opcode knows matrices:
+the compiler lowers every operation to the vecN ops (Load / Swizzle-broadcast
+/ Mul / Add / Dot), parking operands in per-function scratch locals, so
+matrix programs are ordinary bytecode for every shipped VM, JIT and cost
+model. Per LED a <code class="docutils literal notranslate"><span class="pre">mat4</span> <span class="pre">*</span> <span class="pre">vec4</span></code> is 16 multiplies + 12 adds: pre-multiply in
+<code class="docutils literal notranslate"><span class="pre">update()</span></code> where you can.</p></li>
 <li><p><strong>State</strong> — <code class="docutils literal notranslate"><span class="pre">state</span></code> variables persist across frames; written by <code class="docutils literal notranslate"><span class="pre">update()</span></code>,
 read-only in <code class="docutils literal notranslate"><span class="pre">shade()</span></code>. Good for phases/integrators.</p></li>
 <li><p><strong>Buffers</strong> — <code class="docutils literal notranslate"><span class="pre">buffer</span> <span class="pre">vec3</span> <span class="pre">trail;</span></code> is a hidden per-LED buffer (one element per
@@ -448,9 +468,13 @@ and topology graph queries (<code class="docutils literal notranslate"><span cla
 <p>On <code class="docutils literal notranslate"><span class="pre">int</span></code> and fixed-point (<code class="docutils literal notranslate"><span class="pre">fixed</span></code>/<code class="docutils literal notranslate"><span class="pre">fixed16</span></code>/<code class="docutils literal notranslate"><span class="pre">fixed8</span></code>) arguments, the arithmetic
 builtins run <strong>natively</strong> — <code class="docutils literal notranslate"><span class="pre">min</span> <span class="pre">max</span> <span class="pre">abs</span> <span class="pre">clamp</span> <span class="pre">mod</span> <span class="pre">sign</span> <span class="pre">step</span> <span class="pre">floor</span> <span class="pre">ceil</span> <span class="pre">fract</span> <span class="pre">mix</span></code>
 each have integer/fixed opcodes, and <code class="docutils literal notranslate"><span class="pre">sin</span></code>/<code class="docutils literal notranslate"><span class="pre">cos</span></code>/<code class="docutils literal notranslate"><span class="pre">exp</span></code> use a compile-time LUT
-(angle in <strong>turns</strong>) — instead of coercing to soft-float. Everything that stays
-float-valued converts its int/fixed args (never reinterpreting the bits). This is
-the main lever for keeping hot paths off the FPU-less C6’s soft-float.</p>
+(angle in <strong>turns</strong>; <code class="docutils literal notranslate"><span class="pre">exp</span></code> covers only -2..0.69) — instead of coercing to
+soft-float. <code class="docutils literal notranslate"><span class="pre">sqrt</span> <span class="pre">tan</span> <span class="pre">log</span></code> on a fixed argument, and <code class="docutils literal notranslate"><span class="pre">atan2</span> <span class="pre">pow</span></code> / <code class="docutils literal notranslate"><span class="pre">hsv2rgb</span></code> when
+every argument is the same fixed type, take integer opcodes too (<code class="docutils literal notranslate"><span class="pre">atan2</span></code> then
+returns turns). <code class="docutils literal notranslate"><span class="pre">smoothstep</span> <span class="pre">hash</span> <span class="pre">dot</span> <span class="pre">length</span> <span class="pre">distance</span> <span class="pre">normalize</span> <span class="pre">cross</span></code> are always
+float. Everything that stays float-valued converts its int/fixed args (never
+reinterpreting the bits; ~320 cycles each). This is the main lever for keeping
+hot paths off the FPU-less C6’s soft-float.</p>
 </section>
 <section id="example">
 <h3>Example<a class="headerlink" href="#example" title="Link to this heading">¶</a></h3>
@@ -463,7 +487,7 @@ the main lever for keeping hot paths off the FPU-less C6’s soft-float.</p>
 <span class="k">buffer</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">trail</span><span class="p">;</span>
 <span class="n">state</span><span class="w">  </span><span class="kt">float</span><span class="w"> </span><span class="n">head</span><span class="p">;</span>
 
-<span class="kt">void</span><span class="w"> </span><span class="n">update</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">head</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fract</span><span class="p">(</span><span class="n">time</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">speed</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">0.2</span><span class="p">);</span><span class="w"> </span><span class="p">}</span>
+<span class="kt">void</span><span class="w"> </span><span class="n">update</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">head</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fract</span><span class="p">(</span><span class="n">head</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">dt</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">speed</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">0.2</span><span class="p">);</span><span class="w"> </span><span class="p">}</span>
 
 <span class="kt">vec3</span><span class="w"> </span><span class="n">shade</span><span class="p">(</span><span class="n">Led</span><span class="w"> </span><span class="n">led</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">  </span><span class="kt">float</span><span class="w"> </span><span class="n">spark</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">smoothstep</span><span class="p">(</span><span class="n">width</span><span class="p">,</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="n">abs</span><span class="p">(</span><span class="n">led</span><span class="p">.</span><span class="n">dist</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">head</span><span class="p">));</span>
@@ -475,8 +499,25 @@ the main lever for keeping hot paths off the FPU-less C6’s soft-float.</p>
 <span class="p">}</span>
 </pre></div>
 </div>
+</section>
+<section id="rate-controls-integrate-never-time-speed">
+<h3>Rate controls: integrate, never <code class="docutils literal notranslate"><span class="pre">time</span> <span class="pre">*</span> <span class="pre">speed</span></code><a class="headerlink" href="#rate-controls-integrate-never-time-speed" title="Link to this heading">¶</a></h3>
+<p>The example advances <code class="docutils literal notranslate"><span class="pre">head</span></code> by <code class="docutils literal notranslate"><span class="pre">dt</span> <span class="pre">*</span> <span class="pre">speed</span></code> each frame instead of computing
+<code class="docutils literal notranslate"><span class="pre">fract(time</span> <span class="pre">*</span> <span class="pre">speed</span> <span class="pre">*</span> <span class="pre">0.2)</span></code>. That is deliberate: <code class="docutils literal notranslate"><span class="pre">time</span> <span class="pre">*</span> <span class="pre">speed</span></code> rescales the
+whole elapsed time, so moving the <code class="docutils literal notranslate"><span class="pre">speed</span></code> slider jumps the phase by
+Δspeed × time (whole cycles after a few minutes) and the effect stutters while
+the knob moves. Keep one <code class="docutils literal notranslate"><span class="pre">state</span></code> phase per rate uniform, advance it in
+<code class="docutils literal notranslate"><span class="pre">update()</span></code> with <code class="docutils literal notranslate"><span class="pre">ph</span> <span class="pre">=</span> <span class="pre">fract(ph</span> <span class="pre">+</span> <span class="pre">dt</span> <span class="pre">*</span> <span class="pre">speed);</span></code> (the <code class="docutils literal notranslate"><span class="pre">fract</span></code> bounds float
+precision; integrate non-periodic offsets such as a noise scroll without it),
+and use <code class="docutils literal notranslate"><span class="pre">ph</span></code> in <code class="docutils literal notranslate"><span class="pre">shade()</span></code> — <code class="docutils literal notranslate"><span class="pre">fract(led.s</span> <span class="pre">-</span> <span class="pre">ph)</span></code>, <code class="docutils literal notranslate"><span class="pre">sin(ph</span> <span class="pre">*</span> <span class="pre">6.2832)</span></code>. In fixed
+point: <code class="docutils literal notranslate"><span class="pre">ph</span> <span class="pre">=</span> <span class="pre">fract(ph</span> <span class="pre">+</span> <span class="pre">fixed(dt)</span> <span class="pre">*</span> <span class="pre">fixed(speed));</span></code> and <code class="docutils literal notranslate"><span class="pre">sin(fixed16(ph))</span></code>
+(turns). <code class="docutils literal notranslate"><span class="pre">time</span></code> alone, or times a literal, is fine. The compiler warns when a
+value it can trace to <code class="docutils literal notranslate"><span class="pre">time</span></code> × a uniform reaches a phase builtin (<code class="docutils literal notranslate"><span class="pre">fract</span></code>,
+<code class="docutils literal notranslate"><span class="pre">sin</span></code>/<code class="docutils literal notranslate"><span class="pre">cos</span></code>, <code class="docutils literal notranslate"><span class="pre">mod</span></code>/<code class="docutils literal notranslate"><span class="pre">%</span></code>, <code class="docutils literal notranslate"><span class="pre">floor</span></code>/<code class="docutils literal notranslate"><span class="pre">ceil</span></code>, <code class="docutils literal notranslate"><span class="pre">hash</span></code>, <code class="docutils literal notranslate"><span class="pre">hsv2rgb</span></code>, <code class="docutils literal notranslate"><span class="pre">palette*</span></code>):
+<code class="docutils literal notranslate"><span class="pre">Compiled::warnings</span></code> (<code class="docutils literal notranslate"><span class="pre">fx_compiler/src/lint.rs</span></code>), surfaced by the editor, its
+AI and the agent’s <code class="docutils literal notranslate"><span class="pre">compile_effect</span></code> / <code class="docutils literal notranslate"><span class="pre">deploy_effect</span></code>.</p>
 <p>The compiler entry point is <code class="docutils literal notranslate"><span class="pre">compile(src)</span> <span class="pre">-&gt;</span> <span class="pre">Result&lt;Compiled,</span> <span class="pre">Vec&lt;Diagnostic&gt;&gt;</span></code>
-where <code class="docutils literal notranslate"><span class="pre">Compiled</span> <span class="pre">{</span> <span class="pre">fxb:</span> <span class="pre">Vec&lt;u8&gt;,</span> <span class="pre">uniforms:</span> <span class="pre">Vec&lt;UniformInfo&gt;</span> <span class="pre">}</span></code>; <code class="docutils literal notranslate"><span class="pre">disassemble(fxb)</span></code>
+where <code class="docutils literal notranslate"><span class="pre">Compiled</span> <span class="pre">{</span> <span class="pre">fxb:</span> <span class="pre">Vec&lt;u8&gt;,</span> <span class="pre">uniforms:</span> <span class="pre">Vec&lt;UniformInfo&gt;,</span> <span class="pre">warnings,</span> <span class="pre">..</span> <span class="pre">}</span></code>; <code class="docutils literal notranslate"><span class="pre">disassemble(fxb)</span></code>
 produces a readable op listing (exposed to the editor as <code class="docutils literal notranslate"><span class="pre">fx_disassemble</span></code>).</p>
 </section>
 </section>
@@ -836,6 +877,12 @@ via <code class="docutils literal notranslate"><span class="pre">LoadUniform</sp
 <li><p><strong>Firmware:</strong> a <code class="docutils literal notranslate"><span class="pre">SetUniforms</span></code> control message carries <code class="docutils literal notranslate"><span class="pre">UniformValue</span> <span class="pre">{</span> <span class="pre">slot,</span> <span class="pre">repeated</span> <span class="pre">float</span> <span class="pre">value</span> <span class="pre">}</span></code> records; <code class="docutils literal notranslate"><span class="pre">firmware/player_app/ffi.rs</span></code> decodes them and
 calls <code class="docutils literal notranslate"><span class="pre">lm_fx_set_uniform(slot,</span> <span class="pre">vals,</span> <span class="pre">n)</span></code>. <code class="docutils literal notranslate"><span class="pre">get_effect_uniforms</span></code> returns the
 manifest bytes to the app.</p></li>
+<li><p><strong>Wide uniforms (mat3/mat4):</strong> on the wire a <code class="docutils literal notranslate"><span class="pre">UniformValue</span></code> carries at most 4
+floats; clients send a wider uniform as consecutive chunks <code class="docutils literal notranslate"><span class="pre">{slot,</span> <span class="pre">v[0..4]}</span></code>,
+<code class="docutils literal notranslate"><span class="pre">{slot+4,</span> <span class="pre">v[4..8]}</span></code>, … (exactly a whole write, on any firmware), and the
+device reports current values the same way. Firmware since #400 also accepts
+up to 16 floats in one value. OSC addresses: see <code class="docutils literal notranslate"><span class="pre">firmware/osc</span></code> (<code class="docutils literal notranslate"><span class="pre">/pose</span></code> + 16
+floats, <code class="docutils literal notranslate"><span class="pre">/pose/&lt;i&gt;</span></code> flat component, <code class="docutils literal notranslate"><span class="pre">/pose/&lt;c&gt;/&lt;r&gt;</span></code> element).</p></li>
 </ul>
 </section>
 <section id="textures-and-video-texture-streaming">
@@ -904,8 +951,11 @@ for how to run it.</p>
 held-out). Regenerate with <code class="docutils literal notranslate"><span class="pre">fx_bench</span> <span class="pre">--emit-golden</span> <span class="pre">&lt;path&gt;</span></code>.</p></li>
 <li><p><strong>Regression gate:</strong> a program fails if <code class="docutils literal notranslate"><span class="pre">abs(measured/golden</span> <span class="pre">−</span> <span class="pre">1)</span></code> exceeds its
 margin — default <strong>10%</strong>, with <code class="docutils literal notranslate"><span class="pre">sweep16</span></code> at 15% (a deliberately safe band until
-per-effect run-to-run variance is characterized). <strong>Only frame cycles are
-gated</strong>; show cycles (transmit) are noisier and excluded.</p></li>
+per-effect run-to-run variance is characterized) — <strong>and</strong> it is more than
+<strong>8,000 cycles</strong> (50 µs) off the golden. The absolute floor absorbs the fixed
+per-frame flash-cache cost that moves with code layout; it only matters for
+tiny programs like <code class="docutils literal notranslate"><span class="pre">sweep16</span></code>. <strong>Only frame cycles are gated</strong>; show cycles
+(transmit) are noisier and excluded.</p></li>
 </ul>
 <p>Representative measured frame-cycle costs at 160 MHz (full set in the golden):</p>
 <div class="table-wrapper colwidths-auto docutils container">
@@ -931,7 +981,7 @@ gated</strong>; show cycles (transmit) are noisier and excluded.</p></li>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sinM</span></code> / <code class="docutils literal notranslate"><span class="pre">cosM</span></code> / <code class="docutils literal notranslate"><span class="pre">tanM</span></code></p></td>
 <td><p>~3.9 M / ~4.1 M / ~6.8 M</p></td>
-<td><p>LUT sin/cos (see the hill-climb)</p></td>
+<td><p>float sin/cos ≈ 570 cy per call</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">expfM</span></code> / <code class="docutils literal notranslate"><span class="pre">powfM</span></code></p></td>
 <td><p>~6.2 M / ~9.1 M</p></td>
@@ -939,7 +989,7 @@ gated</strong>; show cycles (transmit) are noisier and excluded.</p></li>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">hash12M</span></code> / <code class="docutils literal notranslate"><span class="pre">hash32M</span></code></p></td>
 <td><p>~2.9 M / ~4.2 M</p></td>
-<td><p>integer bit-mix hash</p></td>
+<td><p>hash ≈ 185 cy per call</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">smoothstep32M</span></code> / <code class="docutils literal notranslate"><span class="pre">distance32M</span></code></p></td>
 <td><p>~21.4 M / ~14.4 M</p></td>
@@ -970,12 +1020,34 @@ held-out predicted-vs-measured accuracy, and every raw measured benchmark — ar
 auto-generated from the goldens into
 <a class="reference internal" href="docs/fx-vm-performance.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/fx-vm-performance.md</span></code></span></a> and pinned by a CI freshness
 gate (<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//web:gen_fx_vm_perf_doc</span></code> to regenerate).</p>
-<p>These costs are the target of an ongoing FX-VM hill-climb (see <code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code>):
-sin/cos are now compile-time LUTs and <code class="docutils literal notranslate"><span class="pre">hash</span></code> is an integer bit-mix, which is why
-they land far below the other transcendentals. A practical consequence of the
-FPU-less C6: hoist per-frame constants out of the per-LED <code class="docutils literal notranslate"><span class="pre">shade()</span></code> into
-<code class="docutils literal notranslate"><span class="pre">update()</span></code>/uniforms, and prefer int/fixed types (<code class="docutils literal notranslate"><span class="pre">fixed8</span></code>/<code class="docutils literal notranslate"><span class="pre">fixed16</span></code>) on hot paths
-so the arithmetic builtins take their native opcodes instead of soft-float.</p>
+<p>These costs are the target of an ongoing FX-VM hill-climb (see <code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code>).
+Float <code class="docutils literal notranslate"><span class="pre">sin</span></code>/<code class="docutils literal notranslate"><span class="pre">cos</span></code> use a table internally but still cost ~570–650 cycles per call
+(range reduction + interpolation in soft-float), and <code class="docutils literal notranslate"><span class="pre">hash</span></code> ~185 — cheaper than
+<code class="docutils literal notranslate"><span class="pre">exp</span></code>/<code class="docutils literal notranslate"><span class="pre">pow</span></code>, not cheap: every opcode also pays ~70 cycles of dispatch. The
+cheap forms on the FPU-less C6 are the integer ones: per-LED maths in <code class="docutils literal notranslate"><span class="pre">fixed</span></code>
+(Q16.16) with <code class="docutils literal notranslate"><span class="pre">fixed()</span></code> around every literal (<code class="docutils literal notranslate"><span class="pre">x</span> <span class="pre">*</span> <span class="pre">0.6</span></code> promotes a fixed <code class="docutils literal notranslate"><span class="pre">x</span></code> to
+soft-float — the compiler warns), <code class="docutils literal notranslate"><span class="pre">sin</span></code>/<code class="docutils literal notranslate"><span class="pre">cos</span></code> of a fixed angle in TURNS
+(~150), and <code class="docutils literal notranslate"><span class="pre">hsv2rgb</span></code>/<code class="docutils literal notranslate"><span class="pre">atan2</span></code>/<code class="docutils literal notranslate"><span class="pre">sqrt</span></code> with all-fixed arguments. The measured
+per-op-class table the authoring agents are given is <code class="docutils literal notranslate"><span class="pre">PERF_GUIDE</span></code> in
+<code class="docutils literal notranslate"><span class="pre">web/src/effects/ai/system-prompt.ts</span></code> (and “Performance” in
+<code class="docutils literal notranslate"><span class="pre">agent/skill/effect-language.md</span></code>); <code class="docutils literal notranslate"><span class="pre">estimate_effect</span></code> / <code class="docutils literal notranslate"><span class="pre">estimate_performance</span></code>
+return the top cost findings for a program (<code class="docutils literal notranslate"><span class="pre">web/src/effects/perfFindings.ts</span></code>).</p>
+<p>The compiler now does the classic hoisting for you
+(<a class="reference internal" href="docs/design/fx-memoization.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/design/fx-memoization.md</span></code></span></a>):</p>
+<ul class="simple">
+<li><p><strong>Per-frame values</strong> in <code class="docutils literal notranslate"><span class="pre">shade()</span></code> (<code class="docutils literal notranslate"><span class="pre">sin(time</span> <span class="pre">*</span> <span class="pre">2.0)</span></code>, uniform math, <code class="docutils literal notranslate"><span class="pre">state</span></code>
+reads) are computed <strong>once per frame</strong> in a prepare entry the VM runs before
+the first LED.</p></li>
+<li><p><strong>Per-LED-invariant values</strong> (<code class="docutils literal notranslate"><span class="pre">atan2(led.pos.x,</span> <span class="pre">led.pos.z)</span></code>,
+<code class="docutils literal notranslate"><span class="pre">length(led.pos.xz)</span></code>, <code class="docutils literal notranslate"><span class="pre">hash(float(led.idx))</span></code>, anything built only from
+<code class="docutils literal notranslate"><span class="pre">led.pos/uv/idx/seg/s/branch</span></code>) are computed <strong>once per LED per map</strong> and then
+read from a per-LED cache in the spare fx arena. A cached value is
+bit-identical to recomputing it.</p></li>
+</ul>
+<p>So write the natural expression in <code class="docutils literal notranslate"><span class="pre">shade()</span></code>, and keep a value in a single
+<code class="docutils literal notranslate"><span class="pre">let</span></code>-style local (assigned once) so the pass can see that it is invariant.
+<code class="docutils literal notranslate"><span class="pre">fx_compile</span> <span class="pre">--disasm</span></code> lists what was hoisted and cached; <code class="docutils literal notranslate"><span class="pre">--no-memo</span></code> turns the
+pass off.</p>
 <section id="long-strips-what-sets-the-frame-rate">
 <h3>Long strips: what sets the frame rate<a class="headerlink" href="#long-strips-what-sets-the-frame-rate" title="Link to this heading">¶</a></h3>
 <p>The C6 drives up to <strong>1024 LEDs on each of its two channels</strong> (2048 total;
@@ -1035,10 +1107,12 @@ at the full cap every effect is CPU-bound near 20 fps (measured: <code class="do
 ~49 ms period; the plasma 7.25 M cycles, 20 fps, 10–15 fps during TLS
 reconnects). Up to ~1000 LEDs in total the wire is the limit for light effects.</p></li>
 </ul>
-<p>The autoscaler’s abort floor scales with the strip, so a long strip runs a heavy
-effect slower instead of having it parked: 25 fps up to 512 shaded LEDs, then the
-rung that keeps 25 × 512 = 12,800 shaded LEDs/s (rounded down, never below 5):
-20 fps at 600, 10 fps at 1024, 5 fps at 2048. <code class="docutils literal notranslate"><span class="pre">FpsState.min_fps</span></code> reports it.</p>
+<p>The autoscaler’s floor (its lowest rung) scales with the strip: 25 fps up to 512
+shaded LEDs, then the rung that keeps 25 × 512 = 12,800 shaded LEDs/s (rounded
+down, never below 5): 20 fps at 600, 10 fps at 1024, 5 fps at 2048.
+<code class="docutils literal notranslate"><span class="pre">FpsState.min_fps</span></code> reports it. An effect too heavy even for the floor is never
+parked: it keeps playing at whatever rate it achieves (<code class="docutils literal notranslate"><span class="pre">FpsState.lagging</span></code>,
+<code class="docutils literal notranslate"><span class="pre">achieved_fps</span></code>).</p>
 <p>LED-arity <code class="docutils literal notranslate"><span class="pre">buffer</span></code> arrays are sized for the stored map / configured strip (at
 least 512 LEDs), not the 2048 cap, and both decks share the 24 KB <code class="docutils literal notranslate"><span class="pre">FX_ARENA</span></code>:
 a <code class="docutils literal notranslate"><span class="pre">buffer</span> <span class="pre">vec4</span></code> costs 16 B per LED (32 KB at 2048 — it doesn’t fit); declare it
@@ -1201,6 +1275,7 @@ mode: bytes 1..2, bit 7 signed) are inert outside <code class="docutils literal 
 <li><a class="reference internal" href="#declarations">Declarations</a></li>
 <li><a class="reference internal" href="#built-in-functions">Built-in functions</a></li>
 <li><a class="reference internal" href="#example">Example</a></li>
+<li><a class="reference internal" href="#rate-controls-integrate-never-time-speed">Rate controls: integrate, never <code class="docutils literal notranslate"><span class="pre">time</span> <span class="pre">*</span> <span class="pre">speed</span></code></a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#execution-model">Execution model</a></li>

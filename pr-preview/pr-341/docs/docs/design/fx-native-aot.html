@@ -252,6 +252,7 @@
 <li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
 <li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
 <li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
@@ -260,6 +261,7 @@
 <li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
 <li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
 <li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
 <li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
@@ -318,8 +320,11 @@
         <article role="main" id="furo-main-content">
           <section id="native-aot-effect-execution-on-the-esp32-c6">
 <h1>Native (AOT) effect execution on the ESP32-C6<a class="headerlink" href="#native-aot-effect-execution-on-the-esp32-c6" title="Link to this heading">¶</a></h1>
-<p>Status: <strong>design + stages 1–2 in progress</strong> (this PR). Stage 3 (signing and an
-on-device loader) waits on the trust decision below. Background numbers:
+<p>Status: <strong>design + stages 1–2, rebased onto main (#350 fused ops, #328 memo),
+plus the signature-checking infrastructure</strong> (this PR). The trust model is
+decided (2026-10-28, “Trust” below): unsigned on-device lowering, and
+user-key HMAC signatures for prebuilt images, with a public dev key on every
+device for now. Stage 3 (wiring both into <code class="docutils literal notranslate"><span class="pre">player_app</span></code>) remains. Background numbers:
 <a class="reference internal" href="fx-perf-study.html"><span class="std std-doc">fx-perf-study.md</span></a>, “Q1 — the native ceiling” and “A native
 AOT path: feasibility”.</p>
 <section id="why">
@@ -352,6 +357,21 @@ slot operand is in range;</p></li>
 <li><p>no opcode outside the supported set appears. <code class="docutils literal notranslate"><span class="pre">JitCall</span></code> and the I2C intrinsics
 are always refused; drivers (<code class="docutils literal notranslate"><span class="pre">FLAG_DRIVER</span></code>) stay on the VM.</p></li>
 </ul>
+<p><strong>Fused superinstructions and the memo cache (main, #350/#328).</strong> Before
+lowering, <code class="docutils literal notranslate"><span class="pre">fx_aot::defuse</span></code> expands <code class="docutils literal notranslate"><span class="pre">BinTop</span></code>, <code class="docutils literal notranslate"><span class="pre">BinPair</span></code>, <code class="docutils literal notranslate"><span class="pre">PushConsts</span></code>,
+<code class="docutils literal notranslate"><span class="pre">LoadCtxLanes</span></code> and <code class="docutils literal notranslate"><span class="pre">MulAdd</span></code> into the base opcodes they fuse (each fusion is
+exact in <code class="docutils literal notranslate"><span class="pre">fx_vm</span></code>), and turns the per-LED memo brackets
+<code class="docutils literal notranslate"><span class="pre">LoadLedCache</span></code>/<code class="docutils literal notranslate"><span class="pre">StoreLedCache</span></code> into no-ops. Native code binds no memo cache,
+which the VM defines as running the original code. Branches are re-targeted.
+Each expansion carries a budget weight (1 on its first op, 0 on the rest), so
+the native per-block budget decrement still counts a fused op once, as the
+VM does. The generic helper reads operand bytes from the <em>expanded</em> stream,
+so an image ships them as <code class="docutils literal notranslate"><span class="pre">Image::op_code</span></code> (and a <code class="docutils literal notranslate"><span class="pre">.fxn</span></code> carries them). The
+memo pass’s per-frame <strong>prepare entry</strong> (<code class="docutils literal notranslate"><span class="pre">Program::prep_entry</span></code>) is lowered as
+a third entry (<code class="docutils literal notranslate"><span class="pre">Image::prep_off</span></code>); the host runs it once per frame after
+<code class="docutils literal notranslate"><span class="pre">update()</span></code>, where the VM runs it lazily before the first LED. A fixed-point
+<code class="docutils literal notranslate"><span class="pre">frac</span></code> operand above 30, which the VM now faults on, keeps the effect on the
+VM.</p>
 <p>Because depth is static, <strong>every operand-stack slot has a fixed home at compile
 time</strong>, and no runtime stack pointer is needed:</p>
 <ul class="simple">
@@ -420,35 +440,115 @@ Stage 2 measures it on a real C6.</p>
 <section id="sandbox-applies-to-every-native-image-signed-or-not">
 <h2>Sandbox (applies to every native image, signed or not)<a class="headerlink" href="#sandbox-applies-to-every-native-image-signed-or-not" title="Link to this heading">¶</a></h2>
 <p>The lowering emits a deliberately narrow instruction grammar. A separate
-<strong>instruction-stream verifier</strong> (also in <code class="docutils literal notranslate"><span class="pre">fx_aot</span></code>, run on the device after
-lowering or after signature checks) re-checks it independently:</p>
+<strong>instruction-stream verifier</strong> (<code class="docutils literal notranslate"><span class="pre">fx_aot::verify</span></code>, run on the device after
+lowering or after signature checks) re-checks it independently. It decides
+from three inputs only: the words, the declared entry offsets, and a
+<code class="docutils literal notranslate"><span class="pre">VerifyLimits</span> <span class="pre">{</span> <span class="pre">frame_bytes,</span> <span class="pre">state_bytes,</span> <span class="pre">budget</span> <span class="pre">}</span></code>. The lowerer/arena that
+allocates the buffers supplies the limits; nothing is inferred from the image.
+<code class="docutils literal notranslate"><span class="pre">Image::verify()</span></code> uses <code class="docutils literal notranslate"><span class="pre">VerifyLimits::DEFAULT</span></code>: a <code class="docutils literal notranslate"><span class="pre">FRAME_WORDS</span></code> frame,
+<code class="docutils literal notranslate"><span class="pre">MAX_STATE</span></code> state words, and the VM’s default budget. A rejected image stays on
+the VM.</p>
+<section id="verifier-rules">
+<h3>Verifier rules<a class="headerlink" href="#verifier-rules" title="Link to this heading">¶</a></h3>
+<p>An image is a sequence of <em>fixed sequences</em> and <em>body</em> words. The fixed
+sequences are byte-exact copies of <code class="docutils literal notranslate"><span class="pre">prologue_words(budget)</span></code>,
+<code class="docutils literal notranslate"><span class="pre">epilogue_words()</span></code> and <code class="docutils literal notranslate"><span class="pre">exit_stub_words()</span></code> in <code class="docutils literal notranslate"><span class="pre">verify.rs</span></code>. The lowerer emits
+those same functions, so the two can’t drift.</p>
+<ul>
+<li><p><strong>R1 Entries and fallthrough.</strong> Each declared entry holds the exact prologue:
+<code class="docutils literal notranslate"><span class="pre">addi</span> <span class="pre">sp,sp,-64</span></code>, save <code class="docutils literal notranslate"><span class="pre">ra,s0..s11</span></code> to <code class="docutils literal notranslate"><span class="pre">0..48(sp)</span></code>, then <code class="docutils literal notranslate"><span class="pre">s0=a0</span></code>, <code class="docutils literal notranslate"><span class="pre">s1=a1</span></code>,
+<code class="docutils literal notranslate"><span class="pre">s11=a2</span></code>, and <code class="docutils literal notranslate"><span class="pre">li</span> <span class="pre">s10,</span> <span class="pre">budget</span></code>. Each entry is word 0 or follows an
+unconditional transfer (<code class="docutils literal notranslate"><span class="pre">ret</span></code> / <code class="docutils literal notranslate"><span class="pre">jal</span> <span class="pre">x0</span></code>). A prologue anywhere else is
+rejected. The image’s last word must be unconditional, so nothing falls off
+the end. The caller calls only declared entries, with <code class="docutils literal notranslate"><span class="pre">a0</span></code> = its
+<code class="docutils literal notranslate"><span class="pre">NativeCtx</span></code>, <code class="docutils literal notranslate"><span class="pre">a1</span></code> = a <code class="docutils literal notranslate"><span class="pre">frame_bytes</span></code> frame, and <code class="docutils literal notranslate"><span class="pre">a2</span></code> = a <code class="docutils literal notranslate"><span class="pre">state_bytes</span></code> state
+array.</p></li>
+<li><p><strong>R2 Reserved registers.</strong> A body instruction may write only <code class="docutils literal notranslate"><span class="pre">x0</span></code>,
+<code class="docutils literal notranslate"><span class="pre">t0..t6</span></code>, <code class="docutils literal notranslate"><span class="pre">a0..a7</span></code> and <code class="docutils literal notranslate"><span class="pre">s2..s9</span></code>. <code class="docutils literal notranslate"><span class="pre">ra</span></code>, <code class="docutils literal notranslate"><span class="pre">sp</span></code>, <code class="docutils literal notranslate"><span class="pre">gp</span></code>, <code class="docutils literal notranslate"><span class="pre">tp</span></code>, <code class="docutils literal notranslate"><span class="pre">s0</span></code>, <code class="docutils literal notranslate"><span class="pre">s1</span></code>, <code class="docutils literal notranslate"><span class="pre">s10</span></code>
+and <code class="docutils literal notranslate"><span class="pre">s11</span></code> are written only by the fixed sequences. There are two
+exceptions: the helper call (<code class="docutils literal notranslate"><span class="pre">jalr</span> <span class="pre">ra,</span> <span class="pre">0(t0)</span></code>) writes <code class="docutils literal notranslate"><span class="pre">ra</span></code>, and the
+canonical budget decrement (R7) writes <code class="docutils literal notranslate"><span class="pre">s10</span></code>. This also covers loads: a
+<code class="docutils literal notranslate"><span class="pre">lw</span></code> into any of those registers is rejected outside the epilogue.</p></li>
+<li><p><strong>R3 Return.</strong> <code class="docutils literal notranslate"><span class="pre">ret</span></code> (<code class="docutils literal notranslate"><span class="pre">jalr</span> <span class="pre">x0,</span> <span class="pre">0(ra)</span></code>) is legal only as the last word of an
+exact epilogue. The epilogue reloads <code class="docutils literal notranslate"><span class="pre">ra,s0..s11</span></code> from the prologue’s save
+slots, then runs <code class="docutils literal notranslate"><span class="pre">addi</span> <span class="pre">sp,sp,64</span></code> and <code class="docutils literal notranslate"><span class="pre">ret</span></code>. The body can’t address <code class="docutils literal notranslate"><span class="pre">sp</span></code>
+(R4), <code class="docutils literal notranslate"><span class="pre">sp</span></code> is never written outside the fixed sequences, and no branch may
+enter an epilogue past its first word (R6). So every <code class="docutils literal notranslate"><span class="pre">ret</span></code> returns to the
+caller’s own <code class="docutils literal notranslate"><span class="pre">ra</span></code> with the caller’s callee-saved registers restored. <code class="docutils literal notranslate"><span class="pre">ra</span></code>
+values written by helper calls are dead.</p></li>
+<li><p><strong>R4 Memory.</strong> Only <code class="docutils literal notranslate"><span class="pre">lw</span></code>/<code class="docutils literal notranslate"><span class="pre">sw</span></code>, word-aligned, with these bases:</p>
 <ul class="simple">
-<li><p><strong>Memory:</strong></p>
-<ul>
-<li><p>Loads and stores use only <code class="docutils literal notranslate"><span class="pre">s0</span></code>, <code class="docutils literal notranslate"><span class="pre">s1</span></code>, <code class="docutils literal notranslate"><span class="pre">s11</span></code> or <code class="docutils literal notranslate"><span class="pre">sp</span></code> as the base, with an
-immediate offset inside that region’s size.</p></li>
-<li><p>A region pointer loaded from <code class="docutils literal notranslate"><span class="pre">NativeCtx</span></code> into the reserved <code class="docutils literal notranslate"><span class="pre">t6</span></code> may be used
-only by the very next instruction, with an offset inside that region. That
-instruction must not be a branch target.</p></li>
-<li><p>There is no computed address in native code. Every dynamic index (arrays,
-buffers, textures) goes through a Rust helper that clamps it, exactly like
-the VM.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">s1</span></code>: offset in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">frame_bytes)</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">s11</span></code>: offset in <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">state_bytes)</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">s0</span></code> stores: only the <code class="docutils literal notranslate"><span class="pre">NativeCtx</span></code> output words (<code class="docutils literal notranslate"><span class="pre">out[0..3]</span></code>, <code class="docutils literal notranslate"><span class="pre">ret_kind</span></code>,
+<code class="docutils literal notranslate"><span class="pre">ret_frac</span></code>, offsets 0..=16). The helper pointer and table are never
+writable.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">s0</span></code> loads: only <code class="docutils literal notranslate"><span class="pre">lw</span> <span class="pre">t0,</span> <span class="pre">E(s0)</span></code> for an exact, aligned helper-table entry
+<code class="docutils literal notranslate"><span class="pre">E</span></code> (the generic helper at 24, or a direct entry at <code class="docutils literal notranslate"><span class="pre">32</span> <span class="pre">+</span> <span class="pre">8·i</span></code>,
+<code class="docutils literal notranslate"><span class="pre">i</span> <span class="pre">&lt;</span> <span class="pre">COUNT</span></code>).</p></li>
+</ul>
+<p>No other base is allowed, <code class="docutils literal notranslate"><span class="pre">sp</span></code> included (it appears only in the fixed
+sequences), and there are no computed addresses. Every dynamic index goes
+through a Rust helper that clamps it, exactly like the VM. Region pointers
+in <code class="docutils literal notranslate"><span class="pre">t6</span></code> are planned for buffers but not allowed yet.</p>
+</li>
+<li><p><strong>R5 Helper calls.</strong> The only <code class="docutils literal notranslate"><span class="pre">jalr</span></code> in a body is <code class="docutils literal notranslate"><span class="pre">jalr</span> <span class="pre">ra,</span> <span class="pre">0(t0)</span></code>, with
+funct3 = 0 and offset = 0. It must directly follow an R4 table load.
+Pointer arguments are pinned by fixed instructions right before the call:</p>
+<ul class="simple">
+<li><p>Generic helper: <code class="docutils literal notranslate"><span class="pre">addi</span> <span class="pre">a0,s0,0;</span> <span class="pre">addi</span> <span class="pre">a1,s1,WIN;</span> <span class="pre">lui/addi</span> <span class="pre">a2;</span> <span class="pre">lui/addi</span> <span class="pre">a3;</span> <span class="pre">lw</span> <span class="pre">t0,24(s0);</span> <span class="pre">jalr</span></code>. So <code class="docutils literal notranslate"><span class="pre">ctx</span></code> is the real context and the window is the
+frame’s helper window. The verifier also requires
+<code class="docutils literal notranslate"><span class="pre">frame_bytes</span> <span class="pre">&gt;=</span> <span class="pre">(WIN_OFF+WIN_WORDS)·4</span></code>.</p></li>
+<li><p>HSV/palette: <code class="docutils literal notranslate"><span class="pre">addi</span> <span class="pre">a3,s1,WIN;</span> <span class="pre">lw</span> <span class="pre">t0,E(s0);</span> <span class="pre">jalr</span></code>. <code class="docutils literal notranslate"><span class="pre">a3</span></code> is the blue output
+pointer.</p></li>
+<li><p>Scalar direct helpers take only scalar words.</p></li>
 </ul>
 </li>
-<li><p><strong>Control flow:</strong></p>
-<ul>
-<li><p>Branch and <code class="docutils literal notranslate"><span class="pre">jal</span></code> targets must be inside the image and on an instruction
-boundary.</p></li>
-<li><p>The only <code class="docutils literal notranslate"><span class="pre">jalr</span></code> forms allowed are <code class="docutils literal notranslate"><span class="pre">ret</span></code> and <code class="docutils literal notranslate"><span class="pre">jalr</span> <span class="pre">ra,</span> <span class="pre">0(t0)</span></code> immediately
-after <code class="docutils literal notranslate"><span class="pre">lw</span> <span class="pre">t0,</span> <span class="pre">H(s0)</span></code> with <code class="docutils literal notranslate"><span class="pre">H</span></code> inside the helper table.</p></li>
-<li><p>No <code class="docutils literal notranslate"><span class="pre">ecall</span></code>, <code class="docutils literal notranslate"><span class="pre">ebreak</span></code>, CSR, <code class="docutils literal notranslate"><span class="pre">fence.i</span></code>, or writes to <code class="docutils literal notranslate"><span class="pre">s0</span></code>/<code class="docutils literal notranslate"><span class="pre">s1</span></code>/<code class="docutils literal notranslate"><span class="pre">s11</span></code>/<code class="docutils literal notranslate"><span class="pre">sp</span></code>
-outside the fixed prologue and epilogue.</p></li>
+<li><p><strong>R6 Control flow.</strong> <code class="docutils literal notranslate"><span class="pre">jal</span></code> must have <code class="docutils literal notranslate"><span class="pre">rd</span> <span class="pre">=</span> <span class="pre">x0</span></code>. Branch funct3 must be one of
+the six real branches. Every branch and <code class="docutils literal notranslate"><span class="pre">jal</span></code> target must be word-aligned,
+inside the image, and outside these places:</p>
+<ul class="simple">
+<li><p>any prologue;</p></li>
+<li><p>an epilogue past its first word;</p></li>
+<li><p>a helper call’s protected window. For the generic helper that is the
+words after its <code class="docutils literal notranslate"><span class="pre">a1</span></code> pin through the call. For a colour helper it is the
+table load and the call. For a scalar helper it is the call.</p></li>
 </ul>
 </li>
-<li><p><strong>Time:</strong> every basic block subtracts its VM op count from <code class="docutils literal notranslate"><span class="pre">s10</span></code> on entry
-and exits with <code class="docutils literal notranslate"><span class="pre">Outcome::Budget</span></code> when it goes negative. That is the VM’s
-deterministic instruction budget, counted per block. Loop headers also poll
-the wall-time deadline flag. The existing watchdog stays the backstop.</p></li>
+<li><p><strong>R7 Budget.</strong> Any branch or <code class="docutils literal notranslate"><span class="pre">jal</span></code> whose target is at or before its own pc
+(every back edge and loop header) must land on a canonical budget check:
+<code class="docutils literal notranslate"><span class="pre">addi</span> <span class="pre">s10,s10,-n</span></code> (with <code class="docutils literal notranslate"><span class="pre">1</span> <span class="pre">≤</span> <span class="pre">n</span> <span class="pre">≤</span> <span class="pre">2048</span></code>), <code class="docutils literal notranslate"><span class="pre">bge</span> <span class="pre">s10,x0,+8</span></code>, <code class="docutils literal notranslate"><span class="pre">jal</span> <span class="pre">x0,STUB</span></code>.
+<code class="docutils literal notranslate"><span class="pre">STUB</span></code> is the exact exit stub (<code class="docutils literal notranslate"><span class="pre">out</span> <span class="pre">=</span> <span class="pre">0</span></code>, <code class="docutils literal notranslate"><span class="pre">ret_kind</span> <span class="pre">=</span> <span class="pre">RET_RET</span></code>), and the
+exact epilogue follows it directly. <code class="docutils literal notranslate"><span class="pre">s10</span></code> is callee-saved across helpers and
+written nowhere else (R2). Every other transfer moves strictly forward, and
+helpers return to pc+4, so every cycle passes through a decrement of at
+least 1. Once <code class="docutils literal notranslate"><span class="pre">s10</span> <span class="pre">&lt;</span> <span class="pre">0</span></code>, the next back edge takes the straight-line
+stub → epilogue → <code class="docutils literal notranslate"><span class="pre">ret</span></code>. A cycle can’t skip the decrement by entering the
+middle of a check, because that target isn’t a check, and helper-call return
+points are not checks either. The lowerer puts a check at the head of every
+basic block (each branch target is a block header). It refuses a block with
+more than 2048 ops, which would leave the native budget and the VM’s out of
+step.</p></li>
+<li><p><strong>R8 Nothing else.</strong> <code class="docutils literal notranslate"><span class="pre">lui</span></code>, OP-IMM and OP (base and M; reserved
+funct7/shift encodings rejected) are allowed. <code class="docutils literal notranslate"><span class="pre">auipc</span></code>,
+<code class="docutils literal notranslate"><span class="pre">ecall</span></code>/<code class="docutils literal notranslate"><span class="pre">ebreak</span></code>/CSR, <code class="docutils literal notranslate"><span class="pre">fence</span></code>/<code class="docutils literal notranslate"><span class="pre">fence.i</span></code>, AMOs, and all other opcodes are
+rejected.</p></li>
+</ul>
+<p>Not covered by the verifier, and not an escape: the generic helper’s <code class="docutils literal notranslate"><span class="pre">a2</span></code>
+(opcode) and <code class="docutils literal notranslate"><span class="pre">a3</span></code> (operand offset) are image-chosen. The helper reads operands
+through <code class="docutils literal notranslate"><span class="pre">ctx.code.get()</span></code> and a <code class="docutils literal notranslate"><span class="pre">WIN_WORDS</span></code> slice. A crafted pair can make it
+panic, which is a crash and not a write outside its slices. Images lowered on
+the device always pass the real pair. Wall-time deadline polling at loop
+headers is still planned. The instruction budget above is the deterministic
+bound, and the watchdog stays the backstop.</p>
+<p><code class="docutils literal notranslate"><span class="pre">firmware/fx_aot/src/verify_tests.rs</span></code> pins each rule with negative tests. That
+includes the four sandbox escapes the #351 review found (<code class="docutils literal notranslate"><span class="pre">ra</span></code>, reserved
+bases, unbounded base offsets, unbudgeted loops), each as the original PoC
+plus variants, and unpinned helper pointer arguments. The positive side has
+three parts: <code class="docutils literal notranslate"><span class="pre">fx_aot_diff_test</span></code> verifies every image it lowers before the
+bit-exact comparison, <code class="docutils literal notranslate"><span class="pre">native_vs_vm_test</span></code> verifies every image embedded in the
+C6 bench, and the bench generator refuses to embed an image that fails.</p>
+<ul class="simple">
 <li><p><strong>Execution region (W^X):</strong> the image is copied into its region while the
 region is plain data memory, then it is made <strong>R+X without W</strong> for the run and
 restored to writable when the effect is swapped out. See “Where native code
@@ -457,6 +557,7 @@ lives” for how that is enforced in machine mode.</p></li>
 <p>The sandbox doesn’t depend on who produced the code. That matters for the
 trust options below: option (a) relies on it entirely, and options (b) and (c)
 use it as defence in depth.</p>
+</section>
 </section>
 <section id="where-native-code-lives">
 <h2>Where native code lives<a class="headerlink" href="#where-native-code-lives" title="Link to this heading">¶</a></h2>
@@ -574,136 +675,461 @@ leave room — <code class="docutils literal notranslate"><span class="pre">plan
 </section>
 <section id="trust-who-may-produce-native-code-the-device-runs">
 <h2>Trust: who may produce native code the device runs?<a class="headerlink" href="#trust-who-may-produce-native-code-the-device-runs" title="Link to this heading">¶</a></h2>
-<p>Native code is machine code arriving over the network. Devices can’t trust the
-user’s browser, and effects are written by users and agents at runtime. The
-45-effect library is agent-written, not first-party. So “signed by our CI”
-alone would leave most of the effects that matter on the VM.</p>
-<section id="a-device-side-lowering-no-signature-for-user-agent-effects">
-<h3>(a) Device-side lowering: no signature for user/agent effects<a class="headerlink" href="#a-device-side-lowering-no-signature-for-user-agent-effects" title="Link to this heading">¶</a></h3>
-<p>The device runs <code class="docutils literal notranslate"><span class="pre">fx_aot</span></code> on the <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> it already accepts, then the verifier,
-then installs the result. The only code involved is the lowering crate inside
-the OTA-signed firmware, so nothing new needs to be trusted and no key exists
-to steal.</p>
+<p><strong>Owner decision (2026-10-28).</strong> “Users should be able to sign effects for
+their own fixtures — we need an efficient way to check those signatures. 4
+bytes of an HMAC computed against a user’s provisioned key would be sufficient
+as a signature. We don’t currently have a provisioning scheme that allows users
+to ‘pair’ their fixtures so that only their authenticated commands can run, so
+for now let’s just provision a dev key and get the signature checking infra
+brought up.” Follow-up the same day: don’t bind a signature to the firmware
+build (that would invalidate every user’s signed effects on each release).
+Bind a small <strong>native ABI</strong> version and a non-downgrade <strong>minimum firmware</strong>
+instead, and retire old blobs by <strong>key epoch / key revocation</strong>.</p>
+<p>This replaces the earlier recommendation (“(a) everywhere + a CI-held P-256
+native key; per-owner keys rejected”). The reasoning that changed is in
+“Threat model” below: every image passes the sandbox verifier and runs under
+arena W^X whoever signed it, so a stolen user key yields sandboxed native
+code, not arbitrary machine code.</p>
+<section id="the-three-paths-and-how-they-relate">
+<h3>The three paths and how they relate<a class="headerlink" href="#the-three-paths-and-how-they-relate" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>path</p></th>
+<th class="head"><p>who produces the code</p></th>
+<th class="head"><p>signature</p></th>
+<th class="head"><p>status</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>(a) on-device lowering</strong></p></td>
+<td><p>the firmware’s own <code class="docutils literal notranslate"><span class="pre">fx_aot</span></code>, from the <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> it already accepted</p></td>
+<td><p><strong>none needed</strong>: the only code involved is inside the OTA-signed firmware</p></td>
+<td><p>lowering + verifier exist; <code class="docutils literal notranslate"><span class="pre">player_app</span></code> wiring is stage 3</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>(b) user-signed prebuilt <code class="docutils literal notranslate"><span class="pre">.fxn</span></code></strong></p></td>
+<td><p>the user’s tools (<code class="docutils literal notranslate"><span class="pre">fx_sign</span></code>, later the app/agent)</p></td>
+<td><p><strong>4-byte HMAC-SHA256</strong> under a key the device holds: the public <strong>dev key</strong> on every device today, a per-user paired key later</p></td>
+<td><p><strong>built</strong> (<code class="docutils literal notranslate"><span class="pre">firmware/fx_sig</span></code>), wired into the bench load path</p></td>
+</tr>
+<tr class="row-even"><td><p>(c) first-party P-256-signed prebuilt</p></td>
+<td><p>CI</p></td>
+<td><p>ECDSA under a dedicated <code class="docutils literal notranslate"><span class="pre">native</span></code> key id</p></td>
+<td><p><strong>not built</strong>; see below</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>For one effect the device prefers, in order: a valid <code class="docutils literal notranslate"><span class="pre">.fxn</span></code> for exactly that
+<code class="docutils literal notranslate"><span class="pre">.fxb</span></code> (b) → lowering it itself (a) → the VM. Any failure at any step falls
+through to the next, and the VM always works: <strong>an effect never refuses to
+play</strong> because of a signature. What (a) and (b) share, and what the signature
+never bypasses:</p>
 <ul class="simple">
-<li><p><strong>Cost:</strong></p>
+<li><p>the instruction-stream <strong>verifier</strong> (<code class="docutils literal notranslate"><span class="pre">fx_aot::verify</span></code>) on every image;</p></li>
+<li><p>placement <strong>only in the FX arena</strong> (no fit → VM), executed under PMP X +
+PMA no-W;</p></li>
+<li><p>the instruction budget mirrored into native code.</p></li>
+</ul>
+<p>The signature only decides whether a prebuilt image is <em>considered</em>. (b)
+exists for code the device can’t or shouldn’t produce itself: a heavier host
+optimiser, hand-tuned images, or skipping on-device lowering time and transient
+heap at load.</p>
+<p><strong>(c) P-256 first-party images: not needed now.</strong> The HMAC path already
+carries prebuilt images, and there is no first-party native library yet. If one
+appears that must run on devices sharing no symmetric key with CI, add it as an
+asymmetric variant of the same container (format version 2 or a flag bit: the
+header has both) under a key id that is never in the loader ring and never an
+epoch signer. The earlier role-separation argument for that key still holds.
+The relay compile-and-sign option stays rejected: an online signing oracle
+proves nothing that (a) doesn’t.</p>
+</section>
+<section id="signature-format-firmware-fx-sig">
+<h3>Signature format (<code class="docutils literal notranslate"><span class="pre">firmware/fx_sig</span></code>)<a class="headerlink" href="#signature-format-firmware-fx-sig" title="Link to this heading">¶</a></h3>
+<p>A <code class="docutils literal notranslate"><span class="pre">.fxn</span></code> is a 40-byte header, the RV32 code words, and the operand bytes the
+image’s generic helper reads (<code class="docutils literal notranslate"><span class="pre">fx_aot::Image::op_code</span></code>: the <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> code with the
+fused superinstructions expanded). All integers are little-endian.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head text-right"><p>off</p></th>
+<th class="head text-right"><p>size</p></th>
+<th class="head"><p>field</p></th>
+<th class="head"><p>notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td class="text-right"><p>0</p></td>
+<td class="text-right"><p>4</p></td>
+<td><p>magic <code class="docutils literal notranslate"><span class="pre">FXN1</span></code></p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>4</p></td>
+<td class="text-right"><p>1</p></td>
+<td><p>format version</p></td>
+<td><p>1</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>5</p></td>
+<td class="text-right"><p>1</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">key_id</span></code></p></td>
+<td><p>0 = dev key; 1.. = user keys</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>6</p></td>
+<td class="text-right"><p>2</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">key_epoch</span></code></p></td>
+<td><p>must be ≥ the device’s <code class="docutils literal notranslate"><span class="pre">min_epoch</span></code></p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>8</p></td>
+<td class="text-right"><p>2</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">abi</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">fx_aot::NATIVE_ABI</span></code>; must be one the firmware lists</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>10</p></td>
+<td class="text-right"><p>2</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">flags</span></code></p></td>
+<td><p>0 (reserved for an asymmetric variant)</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>12</p></td>
+<td class="text-right"><p>4</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">min_fw</span></code></p></td>
+<td><p>firmware must be ≥ this (see below)</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>16</p></td>
+<td class="text-right"><p>8</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">scope</span></code></p></td>
+<td><p>all-zero = fleet (any device with the key), else a device id (MAC, zero-padded)</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>24</p></td>
+<td class="text-right"><p>2</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">code_words</span></code></p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>26</p></td>
+<td class="text-right"><p>2</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">op_code_len</span></code></p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>28</p></td>
+<td class="text-right"><p>2</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">update_off</span></code></p></td>
+<td><p>word offset, <code class="docutils literal notranslate"><span class="pre">0xFFFF</span></code> = none</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>30</p></td>
+<td class="text-right"><p>2</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">shade_off</span></code></p></td>
+<td><p>word offset</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>32</p></td>
+<td class="text-right"><p>2</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">prep_off</span></code></p></td>
+<td><p>per-frame prepare entry, <code class="docutils literal notranslate"><span class="pre">0xFFFF</span></code> = none</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>34</p></td>
+<td class="text-right"><p>2</p></td>
+<td><p>reserved</p></td>
+<td><p>must be 0</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>36</p></td>
+<td class="text-right"><p>4</p></td>
+<td><p><strong>tag</strong></p></td>
+<td><p></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>digest = SHA-256(code bytes || op_code || the .fxb it was lowered from)
+tag    = HMAC-SHA256(key, &quot;splanc-fx-sig-v1&quot; || header[0..36] || digest)[0..4]
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><strong>Domain separation</strong>: the 16-byte prefix <code class="docutils literal notranslate"><span class="pre">splanc-fx-sig-v1</span></code> and the magic and
+format version inside <code class="docutils literal notranslate"><span class="pre">header[0..36]</span></code>. A tag for anything else under the same
+key can’t be replayed here.</p></li>
+<li><p><strong>Everything is bound</strong>: every header field (key id, epoch, ABI, <code class="docutils literal notranslate"><span class="pre">min_fw</span></code>,
+scope, sizes, entry offsets), the code, the operand bytes, and the exact
+<code class="docutils literal notranslate"><span class="pre">.fxb</span></code>. The device already holds the <code class="docutils literal notranslate"><span class="pre">.fxb</span></code>, so it is hashed, not shipped
+twice. A blob checked against any other bytecode fails. <code class="docutils literal notranslate"><span class="pre">abi</span></code> and <code class="docutils literal notranslate"><span class="pre">min_fw</span></code>
+sit in the header <strong>and</strong> in the MAC’d message, so they can’t be relabelled.</p></li>
+<li><p><strong>Not bound</strong>: the firmware build. A blob stays valid on every firmware ≥
+<code class="docutils literal notranslate"><span class="pre">min_fw</span></code> that lists its <code class="docutils literal notranslate"><span class="pre">abi</span></code>.</p></li>
+<li><p>Comparison is constant-time (XOR-fold, no early exit).</p></li>
+<li><p>Host signer: <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//firmware/fx_sig:fx_sign</span> <span class="pre">--</span> <span class="pre">sign</span> <span class="pre">--fxb</span> <span class="pre">e.fxb</span> <span class="pre">--out</span> <span class="pre">e.fxn</span> <span class="pre">[--key-file</span> <span class="pre">K</span> <span class="pre">--key-id</span> <span class="pre">N]</span> <span class="pre">[--epoch</span> <span class="pre">E]</span> <span class="pre">[--min-fw</span> <span class="pre">X.Y.Z]</span> <span class="pre">[--scope</span> <span class="pre">fleet|aa:bb:..]</span></code>.
+It lowers with <code class="docutils literal notranslate"><span class="pre">fx_aot</span></code>, runs the verifier, then signs. With no
+<code class="docutils literal notranslate"><span class="pre">--key-file</span></code> it signs with the dev key. <code class="docutils literal notranslate"><span class="pre">fx_sign</span> <span class="pre">verify</span></code> checks a blob. The
+bench generator (<code class="docutils literal notranslate"><span class="pre">firmware/fx_perf_bench/gen_effects.rs</span></code>, the place this PR
+produces prebuilt images) signs every embedded image with the dev key
+automatically.</p></li>
+</ul>
+<p><strong>Firmware version</strong> (<code class="docutils literal notranslate"><span class="pre">min_fw</span></code>): the OTA manifest’s monotonic packing,
+<code class="docutils literal notranslate"><span class="pre">major</span> <span class="pre">*</span> <span class="pre">1_000_000</span> <span class="pre">+</span> <span class="pre">minor</span> <span class="pre">*</span> <span class="pre">1_000</span> <span class="pre">+</span> <span class="pre">patch</span></code> (1.6.0 → 1006000), parsed from the
+build’s <code class="docutils literal notranslate"><span class="pre">firmware-v*</span></code> version (<code class="docutils literal notranslate"><span class="pre">fx_sig::parse_fw_version</span></code>, the same function
+as <code class="docutils literal notranslate"><span class="pre">ota_parse_version</span></code>). Untagged development builds report 0, so they run
+only <code class="docutils literal notranslate"><span class="pre">min_fw</span> <span class="pre">=</span> <span class="pre">0</span></code> blobs. Firmware older than <code class="docutils literal notranslate"><span class="pre">min_fw</span></code> keeps the effect on the
+VM.</p>
+<p><strong>Native ABI</strong> (<code class="docutils literal notranslate"><span class="pre">abi</span></code>, <code class="docutils literal notranslate"><span class="pre">fx_aot::NATIVE_ABI</span></code>, currently 1) covers everything a
+prebuilt image hard-codes about the firmware that runs it:</p>
+<ul class="simple">
+<li><p>the <code class="docutils literal notranslate"><span class="pre">NativeCtx</span></code> layout and its baked offsets;</p></li>
+<li><p>the direct-helper table order and the generic helper’s
+<code class="docutils literal notranslate"><span class="pre">(ctx,</span> <span class="pre">win,</span> <span class="pre">op,</span> <span class="pre">code_off)</span></code> convention;</p></li>
+<li><p>the register/frame layout and the entry calling convention;</p></li>
+<li><p>the budget mirror;</p></li>
+<li><p>the <code class="docutils literal notranslate"><span class="pre">op_code</span></code> contract.</p></li>
+</ul>
+<p>Bump it when any of those change. A firmware lists the ABIs it can run; any
+other ABI keeps the effect on the VM. Retiring an ABI is also a blunt
+revocation lever (every blob of that ABI drops to the VM or on-device
+lowering).</p>
+<p><strong>What the client sees on a fallback.</strong> The device reports a stable reason
+token (<code class="docutils literal notranslate"><span class="pre">malformed</span></code>, <code class="docutils literal notranslate"><span class="pre">unknown_key</span></code>, <code class="docutils literal notranslate"><span class="pre">revoked_key</span></code>, <code class="docutils literal notranslate"><span class="pre">old_epoch</span></code>, <code class="docutils literal notranslate"><span class="pre">wrong_scope</span></code>,
+<code class="docutils literal notranslate"><span class="pre">abi_unsupported</span></code>, <code class="docutils literal notranslate"><span class="pre">fw_too_old</span></code>, <code class="docutils literal notranslate"><span class="pre">rate_limited</span></code>, <code class="docutils literal notranslate"><span class="pre">bad_tag</span></code>) together with its
+running <code class="docutils literal notranslate"><span class="pre">fw</span></code> version and native <code class="docutils literal notranslate"><span class="pre">abi</span></code>. The bench logs
+<code class="docutils literal notranslate"><span class="pre">aot</span> <span class="pre">&lt;effect&gt;</span> <span class="pre">...</span> <span class="pre">ok=0</span> <span class="pre">reason=sig:&lt;token&gt;</span> <span class="pre">fw=&lt;n&gt;</span> <span class="pre">abi=&lt;n&gt;</span> <span class="pre">vm=1</span></code>. In
+<code class="docutils literal notranslate"><span class="pre">player_app</span></code> this becomes a field of the effect-load reply (stage 3).</p>
+</section>
+<section id="why-a-32-bit-tag-is-enough-and-what-makes-it-so">
+<h3>Why a 32-bit tag is enough, and what makes it so<a class="headerlink" href="#why-a-32-bit-tag-is-enough-and-what-makes-it-so" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>HMAC-SHA256 is a PRF. Without the key, the tag of a new message is
+unpredictable, so a forgery is a <strong>guess</strong>: success probability 2^-32 per
+attempt. Seeing any number of valid tags doesn’t help forge one for
+different code.</p></li>
+<li><p>Guesses can only be checked <strong>online</strong>, against a device. So the device
+bounds the rate (<code class="docutils literal notranslate"><span class="pre">fx_sig::Limiter</span></code>):</p>
 <ul>
-<li><p>flash for the lowering and verifier. Estimate ~25–40 KB; the app slot has
-~197 KB headroom (2,359,296-byte slot, 2,157,392-byte image);</p></li>
-<li><p>lowering time at load (estimate a few ms for a 4 KB <code class="docutils literal notranslate"><span class="pre">.fxb</span></code>, measured in
-stage 2);</p></li>
-<li><p>transient heap while lowering (the code buffer plus a per-instruction
-depth table, ~2 bytes per bytecode byte).</p></li>
+<li><p>the first 3 consecutive bad tags are free (developer mistakes);</p></li>
+<li><p>after that each attempt waits 0.5 s, doubling, capped at <strong>60 s</strong>.</p></li>
+<li><p>At the cap that is one guess a minute: an expected 2^31 minutes (about
+4,000 years) per forgery, about 8 years for a 1-in-500 chance.</p></li>
 </ul>
 </li>
-<li><p><strong>Security property:</strong> the lowering must be sound for <em>every</em> input. That’s
-the same bar the VM already meets: it never reads or writes outside its slot
-arrays for any <code class="docutils literal notranslate"><span class="pre">.fxb</span></code>. The verifier and PMP back it up independently.</p></li>
-<li><p><strong>Limits:</strong></p>
+<li><p>The limiter is <strong>device-wide</strong>, not per connection, so new sessions don’t
+reset it.</p></li>
+<li><p>Its consecutive-failure count is <strong>persisted in NVS</strong> and re-armed at boot,
+so a reboot doesn’t reset it either. Writes happen once per failure (bounded
+by the backoff) and once on the next success.</p></li>
+<li><p>Structural refusals (ABI, <code class="docutils literal notranslate"><span class="pre">min_fw</span></code>, key, epoch, scope) happen before the
+limiter and the MAC. They are about public header fields and reveal nothing
+about the key.</p></li>
+<li><p>The limiter runs <em>before</em> the MAC, so during a backoff even a valid blob is
+held off (<code class="docutils literal notranslate"><span class="pre">rate_limited</span></code>) and timing reveals nothing.</p></li>
+<li><p>Every failure is logged (<code class="docutils literal notranslate"><span class="pre">sig</span> <span class="pre">reject</span> <span class="pre">reason=…</span> <span class="pre">boot_fails=…</span></code>).</p></li>
+<li><p>Cost of a device-wide limiter: anyone flooding bad tags delays legitimate
+native loads by up to a minute. Those effects keep running on the VM, so
+this degrades speed, not function.</p></li>
+<li><p>Birthday bounds don’t apply: an attacker can’t evaluate tags offline.</p></li>
+<li><p>A valid blob replayed later is the same code its signer authorised. Retire
+old blobs with the epoch or key revocation (below), not with a version
+field. Device-scoped blobs can’t be replayed onto other devices.</p></li>
+</ul>
+</section>
+<section id="threat-model">
+<h3>Threat model<a class="headerlink" href="#threat-model" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Today (dev key everywhere): the signature authenticates nothing.</strong> The dev
+key (<code class="docutils literal notranslate"><span class="pre">fx_sig::DEV_KEY</span></code>, key id 0, the ASCII string
+<code class="docutils literal notranslate"><span class="pre">splanc-fx-dev-key-NOT-SECRET-v1!</span></code>) is in the repository. Anyone can sign
+anything. What stands between a malicious <code class="docutils literal notranslate"><span class="pre">.fxn</span></code> and the device is the
+sandbox: the verifier’s narrow instruction grammar, calls only through the
+trusted helper table, loads and stores only to the frame/state/output
+words, the budget, and arena placement under W^X. That is the same bar
+on-device lowering (a) has to meet. The infrastructure exists so the
+user-key future is a provisioning change, not a format change.</p></li>
+<li><p><strong>With per-user keys:</strong></p>
 <ul>
-<li><p>code quality is what this compiler produces, the same on host and device
-because it’s the same crate;</p></li>
-<li><p>code a host could build but the device can’t (LLVM-optimised Rust/C
-effects, or a heavier register-allocating compiler) isn’t covered;</p></li>
-<li><p>pure offline installs work.</p></li>
+<li><p>An attacker on the LAN without the key can submit blobs but faces 2^-32
+per guess under the backoff above.</p></li>
+<li><p>An attacker <strong>with</strong> a user’s key can sign native code for that user’s
+devices. The key might come from XSS in the app, a malicious MCP client
+or a compromised agent host. That code is still confined to the sandbox
+above. So a stolen key yields “whatever the verifier admits”, the same
+class of risk as a bug in on-device lowering. It does not yield
+arbitrary code execution, firmware replacement (OTA has its own P-256
+ring that this key is never part of), or access outside the effect’s
+arena region.</p></li>
+<li><p>Recovery: revoke the key id or raise <code class="docutils literal notranslate"><span class="pre">min_epoch</span></code>. The affected effects
+keep playing on the VM.</p></li>
+</ul>
+</li>
+<li><p><strong>Not covered:</strong></p>
+<ul>
+<li><p>confidentiality of effects;</p></li>
+<li><p>authenticating the <em>commands</em> that deliver a blob, which is the pairing
+work below;</p></li>
+<li><p>side channels in the soft SHA. The software path isn’t constant-time
+with respect to the payload, which is public anyway. The key-dependent
+part is the precomputed HMAC pads.</p></li>
 </ul>
 </li>
 </ul>
 </section>
-<section id="b-dedicated-native-key-id-prebuilt-first-party-code">
-<h3>(b) Dedicated native key id: prebuilt first-party code<a class="headerlink" href="#b-dedicated-native-key-id-prebuilt-first-party-code" title="Link to this heading">¶</a></h3>
-<p>A new key, <strong>id 3 <code class="docutils literal notranslate"><span class="pre">native</span></code></strong> (plus id 4 <code class="docutils literal notranslate"><span class="pre">native_next</span></code> for rotation), signs
-prebuilt native images in CI. These are images the device couldn’t produce
-itself: hand-tuned or LLVM-compiled first-party library effects, and static
-installations.</p>
-<ul class="simple">
-<li><p><strong>Role separation:</strong></p>
+<section id="keys-revocation-and-the-provisioning-seam">
+<h3>Keys, revocation and the provisioning seam<a class="headerlink" href="#keys-revocation-and-the-provisioning-seam" title="Link to this heading">¶</a></h3>
 <ul>
-<li><p>The native key is <strong>never in the loader’s ring</strong>, so it can never sign a
-firmware image.</p></li>
-<li><p>It is <strong>never accepted as an epoch signer</strong>, so a stolen native key can’t
-revoke the release key.</p></li>
-<li><p>It shares the keyring’s id space, so the existing epoch mechanism revokes
-it: a <code class="docutils literal notranslate"><span class="pre">release</span></code> or <code class="docutils literal notranslate"><span class="pre">backup</span></code>-signed epoch with bit 3 set.</p></li>
+<li><p><strong>Key ring</strong> (<code class="docutils literal notranslate"><span class="pre">fx_sig::KeyRing</span></code>): up to 4 keys, each stored as its
+precomputed HMAC inner/outer SHA-256 states, so a verify skips the pad
+compressions. Key id 0 is the dev key, compiled in and installed on every
+device by default. User keys use ids 1..31.</p></li>
+<li><p><strong>Device policy</strong> (<code class="docutils literal notranslate"><span class="pre">fx_sig::Policy</span></code>, persisted, never lowered, like the OTA
+keyring’s <code class="docutils literal notranslate"><span class="pre">kepoch</span></code>/<code class="docutils literal notranslate"><span class="pre">krevoked</span></code>):</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">min_epoch</span></code> (u16): blobs signed under a lower <code class="docutils literal notranslate"><span class="pre">key_epoch</span></code> are refused.
+Raising it retires every older blob at once.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">revoked</span></code> (u32): one bit per key id 0..31. Setting bit 0 retires every
+dev-signed blob once user keys exist.</p></li>
 </ul>
 </li>
-<li><p><strong>Why not the release key:</strong> CI would then sign machine code built from
-library sources with the same key that authorises firmware. A compiler or
-workflow bug, or a malicious library PR, would yield a release-key
-signature. A separate role confines that.</p></li>
-<li><p><strong>Binding:</strong> a <code class="docutils literal notranslate"><span class="pre">.fxn</span></code> image carries the SHA-256 of the <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> it implements,
-plus the helper-ABI version, inside the signed bytes. The device runs it
-only next to that exact bytecode. The VM stays available, and the effect’s
-uniforms and manifest still come from the <code class="docutils literal notranslate"><span class="pre">.fxb</span></code>.</p></li>
-<li><p><strong>Cost:</strong></p>
-<ul>
-<li><p>one more CI secret (<code class="docutils literal notranslate"><span class="pre">FX_NATIVE_SIGNING_KEY</span></code>) and a keygen, done by the
-owner;</p></li>
-<li><p>the app gains a native keyring header and a P-256 verify. mbedtls and the
-C6’s ECDSA accelerator are already linked for TLS;</p></li>
-<li><p>the app reads the loader’s persisted <code class="docutils literal notranslate"><span class="pre">kepoch</span></code>/<code class="docutils literal notranslate"><span class="pre">krevoked</span></code> from NVS;</p></li>
-<li><p>the signed images still go through the verifier.</p></li>
+<li><p><strong>NVS</strong> (namespace <code class="docutils literal notranslate"><span class="pre">splanc_fxsig</span></code>):</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">k1</span></code>..<code class="docutils literal notranslate"><span class="pre">k3</span></code>: 32-byte user keys;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">minep</span></code>, <code class="docutils literal notranslate"><span class="pre">revoked</span></code>: the policy;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fails</span></code>: the persisted backoff.</p></li>
 </ul>
+<p>The bench image reads and writes exactly these. An erased NVS falls back to
+dev key only, policy 0, no backoff.</p>
+</li>
+<li><p><strong>Provisioning seam (placeholder, not implemented).</strong> Pairing must deliver a
+key over an authenticated channel, never in clear over the LAN. One
+candidate is ECDH during BLE Improv provisioning, confirmed by physical
+presence (a button press or a code shown on the fixture). Proposed protocol
+shape, reusing the Rust API that exists now (<code class="docutils literal notranslate"><span class="pre">KeyRing::install</span></code>/<code class="docutils literal notranslate"><span class="pre">remove</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Policy::raise_min_epoch</span></code>/<code class="docutils literal notranslate"><span class="pre">revoke</span></code>):</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">fx_key_status</span></code> → <code class="docutils literal notranslate"><span class="pre">{key_ids,</span> <span class="pre">min_epoch,</span> <span class="pre">revoked,</span> <span class="pre">fw_version,</span> <span class="pre">abis,</span> <span class="pre">sig_fails,</span> <span class="pre">retry_ms}</span></code>. Unauthenticated, public facts only.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fx_key_provision{key_id,</span> <span class="pre">key_epoch,</span> <span class="pre">wrapped_key,</span> <span class="pre">proof}</span></code>: install or
+replace a user key. <code class="docutils literal notranslate"><span class="pre">wrapped_key</span></code> is encrypted to the pairing session.
+<code class="docutils literal notranslate"><span class="pre">proof</span></code> is the pairing transcript’s MAC.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fx_key_revoke{key_id</span> <span class="pre">|</span> <span class="pre">min_epoch,</span> <span class="pre">auth}</span></code>: <code class="docutils literal notranslate"><span class="pre">auth</span></code> is an HMAC under a
+currently valid user key (or physical presence), over the request and a
+device nonce.</p></li>
+<li><p>A load-reply field <code class="docutils literal notranslate"><span class="pre">native:</span> <span class="pre">{ok,</span> <span class="pre">reason,</span> <span class="pre">fw_version,</span> <span class="pre">abi,</span> <span class="pre">retry_ms}</span></code> for
+the fallback report above.</p></li>
+</ul>
+<p>Migration off the dev key: pair (install key id 1), re-sign the user’s
+blobs, then revoke id 0. Dev-signed blobs then run on the VM or on-device
+lowering; they never fail to play.</p>
 </li>
 </ul>
 </section>
-<section id="c-relay-compile-and-sign">
-<h3>(c) Relay compile-and-sign<a class="headerlink" href="#c-relay-compile-and-sign" title="Link to this heading">¶</a></h3>
-<p>The relay (Cloudflare Worker) would compile user source with the pinned
-compiler and sign the native output with an online key.</p>
+<section id="device-cost-measured">
+<h3>Device cost (measured)<a class="headerlink" href="#device-cost-measured" title="Link to this heading">¶</a></h3>
+<p>Rig-1 C6 (<code class="docutils literal notranslate"><span class="pre">c6-123170</span></code>, 2026-10-28), <code class="docutils literal notranslate"><span class="pre">fxpb</span> <span class="pre">sig</span></code> lines from the bench image’s
+signature pass (<code class="docutils literal notranslate"><span class="pre">firmware/fx_perf_bench</span></code>, <code class="docutils literal notranslate"><span class="pre">sig_pass</span></code> in <code class="docutils literal notranslate"><span class="pre">src/device.rs</span></code>). One
+verify is one SHA-256 over code + op_code + <code class="docutils literal notranslate"><span class="pre">.fxb</span></code>, plus one HMAC from the
+ring’s precomputed pad states (three software compressions). Best of 3:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>image</p></th>
+<th class="head text-right"><p>payload bytes</p></th>
+<th class="head text-right"><p>software SHA µs</p></th>
+<th class="head text-right"><p>hardware SHA µs</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>sparkle</p></td>
+<td class="text-right"><p>1,552</p></td>
+<td class="text-right"><p>939</p></td>
+<td class="text-right"><p>269</p></td>
+</tr>
+<tr class="row-odd"><td><p>solid</p></td>
+<td class="text-right"><p>1,569</p></td>
+<td class="text-right"><p>939</p></td>
+<td class="text-right"><p>269</p></td>
+</tr>
+<tr class="row-even"><td><p>sweep</p></td>
+<td class="text-right"><p>1,662</p></td>
+<td class="text-right"><p>1,005</p></td>
+<td class="text-right"><p>291</p></td>
+</tr>
+<tr class="row-odd"><td><p>cylinder</p></td>
+<td class="text-right"><p>2,112</p></td>
+<td class="text-right"><p>1,231</p></td>
+<td class="text-right"><p>307</p></td>
+</tr>
+<tr class="row-even"><td><p>pulses</p></td>
+<td class="text-right"><p>2,234</p></td>
+<td class="text-right"><p>1,295</p></td>
+<td class="text-right"><p>332</p></td>
+</tr>
+<tr class="row-odd"><td><p>gradient</p></td>
+<td class="text-right"><p>2,277</p></td>
+<td class="text-right"><p>1,295</p></td>
+<td class="text-right"><p>309</p></td>
+</tr>
+<tr class="row-even"><td><p>plasma</p></td>
+<td class="text-right"><p>2,556</p></td>
+<td class="text-right"><p>1,464</p></td>
+<td class="text-right"><p>340</p></td>
+</tr>
+<tr class="row-odd"><td><p>noise</p></td>
+<td class="text-right"><p>4,910</p></td>
+<td class="text-right"><p>2,632</p></td>
+<td class="text-right"><p>475</p></td>
+</tr>
+<tr class="row-even"><td><p>particles</p></td>
+<td class="text-right"><p>5,136</p></td>
+<td class="text-right"><p>2,767</p></td>
+<td class="text-right"><p>484</p></td>
+</tr>
+<tr class="row-odd"><td><p>rain_naive</p></td>
+<td class="text-right"><p>9,376</p></td>
+<td class="text-right"><p>4,921</p></td>
+<td class="text-right"><p>747</p></td>
+</tr>
+</tbody>
+</table>
+</div>
 <ul class="simple">
-<li><p><strong>Cost:</strong></p>
+<li><p><strong>About 0.3–0.75 ms per load with the C6’s SHA accelerator</strong> (mbedtls,
+already linked in <code class="docutils literal notranslate"><span class="pre">player_app</span></code> for TLS and OTA). The software SHA costs
+about 0.6 µs per byte (0.9–4.9 ms). It is a once-per-load cost, never
+per frame.</p></li>
+<li><p><strong>RAM:</strong></p>
 <ul>
-<li><p><strong>The relay has no compiler today</strong> (<code class="docutils literal notranslate"><span class="pre">agent/relay/src/library.ts</span></code>: “the
-relay has no compiler”). Shipping fx_compiler and the lowering as WASM to
-a free-tier Worker hits bundle-size and CPU-time limits.</p></li>
-<li><p><strong>The key is online and signs anything submitted.</strong> Anyone who can reach
-the endpoint (rate-limited, authenticated or not) gets machine code
-signed. The signature then proves only “our compiler made this from some
-source”, which is exactly the property (a) gets with no key at all.</p></li>
-<li><p>Every native deploy depends on the relay being available, and offline
-installs get nothing.</p></li>
-<li><p>A Worker secret is a weaker place for a code-signing key than a CI secret.</p></li>
+<li><p>the device state (4-slot key ring with precomputed pads, policy,
+backoff, device id) is <strong>1,000 bytes static</strong>;</p></li>
+<li><p><strong>no heap</strong>;</p></li>
+<li><p>a verify uses a few hundred bytes of stack (two cloned SHA states and
+the digest).</p></li>
 </ul>
 </li>
-<li><p><strong>Benefit over (a):</strong> none for code from this compiler. It would help only if
-the relay ran a much heavier optimiser than the device can.</p></li>
-</ul>
-</section>
-<section id="rejected-per-owner-key-provisioned-at-setup">
-<h3>Rejected: per-owner key provisioned at setup<a class="headerlink" href="#rejected-per-owner-key-provisioned-at-setup" title="Link to this heading">¶</a></h3>
-<p>The owner’s app or agent would sign and the device would trust the owner’s
-key, enrolled over BLE. The key would live in a browser or on an agent host,
-so any XSS, malicious MCP client or compromised agent host could sign
-arbitrary machine code for all of that owner’s devices. It also needs
-multi-client enrolment and recovery UX. It adds risk without improving on (a).</p>
-</section>
-<section id="recommendation">
-<h3>Recommendation<a class="headerlink" href="#recommendation" title="Link to this heading">¶</a></h3>
-<p><strong>(a) as the default for every user and agent effect, plus (b) for prebuilt
-first-party images. Don’t build (c).</strong></p>
-<ul class="simple">
-<li><p>(a) removes the trust problem rather than managing it: no key, no online
-signer, works offline. Its security bar (a sound lowering, re-checked by a
-verifier and PMP) is the same one the VM already has to meet.</p></li>
-<li><p>(b) covers the one thing (a) can’t: code the device can’t produce. It keeps
-native signing out of the firmware trust root, and it is revocable with the
-machinery that already exists.</p></li>
-<li><p>(c) costs an online signing oracle and a new relay dependency, and buys
-nothing (a) doesn’t.</p></li>
+<li><p><strong>Flash:</strong> about 3.5 KB of code for <code class="docutils literal notranslate"><span class="pre">fx_sig</span></code> plus the SHA (bench ELF
+symbols).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">player_app</span></code> doesn’t link <code class="docutils literal notranslate"><span class="pre">fx_sig</span></code> yet (stage 3), so the netstack image’s
+static RAM/IRAM is unchanged by this PR (<code class="docutils literal notranslate"><span class="pre">esp32c6_netstack</span></code>: <code class="docutils literal notranslate"><span class="pre">.bss</span></code> and
+<code class="docutils literal notranslate"><span class="pre">.data</span></code> identical; flash +26 bytes from the <code class="docutils literal notranslate"><span class="pre">fx_vm</span></code> merge).</p></li>
+<li><p>All 11 signature cases gave the expected reason on the device: good →
+<code class="docutils literal notranslate"><span class="pre">ok</span></code>; tampered code, op_code or tag → <code class="docutils literal notranslate"><span class="pre">bad_tag</span></code>; validly signed for
+firmware 99.0.0 → <code class="docutils literal notranslate"><span class="pre">fw_too_old</span></code>; for ABI 2 → <code class="docutils literal notranslate"><span class="pre">abi_unsupported</span></code>; the
+<code class="docutils literal notranslate"><span class="pre">min_fw</span></code> or epoch relabelled to an accepted value → <code class="docutils literal notranslate"><span class="pre">bad_tag</span></code>; wrong key →
+<code class="docutils literal notranslate"><span class="pre">bad_tag</span></code>; unknown key id → <code class="docutils literal notranslate"><span class="pre">unknown_key</span></code>; the right blob against another
+effect’s <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> → <code class="docutils literal notranslate"><span class="pre">bad_tag</span></code>.</p></li>
+<li><p>Backoff on the device: <code class="docutils literal notranslate"><span class="pre">bad_tag</span> <span class="pre">×3</span></code>, then <code class="docutils literal notranslate"><span class="pre">rate_limited</span></code>, with the good blob
+held off during the window and accepted after it.</p></li>
+<li><p>End to end on the device-wide path: the tampered <code class="docutils literal notranslate"><span class="pre">cylinder</span></code> blob logged
+<code class="docutils literal notranslate"><span class="pre">aot</span> <span class="pre">cylinder</span> <span class="pre">helix</span> <span class="pre">n=500</span> <span class="pre">ok=0</span> <span class="pre">reason=sig:bad_tag</span> <span class="pre">fw=0</span> <span class="pre">abi=1</span> <span class="pre">vm=1</span></code> (the VM
+frame stands); the good blob ran native with <code class="docutils literal notranslate"><span class="pre">maxdiff=0</span> <span class="pre">off2=0</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tools/fx_perf/run_bench.py</span></code> now fails the run unless this whole pass holds.</p></li>
 </ul>
 </section>
 </section>
 <section id="decisions-needed-from-the-owner-before-production">
 <h2>Decisions needed from the owner before production<a class="headerlink" href="#decisions-needed-from-the-owner-before-production" title="Link to this heading">¶</a></h2>
 <ol class="arabic simple">
-<li><p><strong>Trust option(s):</strong> (a) default + (b) as recommended, (a) only, or
-something else. Production native execution stays off until this is
-decided.</p></li>
-<li><p><strong>If (b):</strong> generate the <code class="docutils literal notranslate"><span class="pre">native</span></code> key (<code class="docutils literal notranslate"><span class="pre">ota_sign</span> <span class="pre">keygen</span></code>) and add the
-<code class="docutils literal notranslate"><span class="pre">FX_NATIVE_SIGNING_KEY</span></code> CI secret. Keep it separate from
-<code class="docutils literal notranslate"><span class="pre">OTA_SIGNING_KEY</span></code>. Agree that it is never valid for images or epochs.</p></li>
-<li><p><strong>Code placement:</strong> DECIDED (2026-10-23) — the FX arena, never general heap;
+<li><p><strong>Pairing scheme</strong> for per-user keys: which channel delivers the key (BLE
+Improv ECDH + physical presence is the proposal), and whether one key per
+user covers all their fixtures (fleet scope) or per-device keys are wanted.</p></li>
+<li><p><strong>Whether to revoke the dev key in release firmware</strong> once pairing exists
+(recommended: release builds ship <code class="docutils literal notranslate"><span class="pre">revoked</span></code> bit 0 set; dev builds don’t).</p></li>
+<li><p><strong>Backoff parameters</strong>: 3 free failures, 0.5 s doubling, 60 s cap,
+device-wide. Accept, or prefer per-session limits plus a lower global cap.</p></li>
+<li><p><strong>(c) P-256 first-party images</strong>: confirm they stay unbuilt until a
+first-party native library exists.</p></li>
+<li><p><strong>Code placement:</strong> DECIDED (2026-10-23): the FX arena, never general heap;
 no flash partition; littlefs stores only. See “Where native code lives”.</p></li>
+<li><p><strong>Trust model:</strong> DECIDED (2026-10-28): user-key HMAC (dev key for now) +
+unsigned on-device lowering.</p></li>
 </ol>
 </section>
 <section id="plan">
@@ -731,13 +1157,20 @@ region, unsigned);</p></li>
 so helpers call the interpreter’s exact functions.</p></li>
 </ul>
 </li>
-<li><p><strong>Stage 3 (after the decision):</strong></p>
+<li><p><strong>Signature infrastructure (this PR):</strong> <code class="docutils literal notranslate"><span class="pre">firmware/fx_sig</span></code> (the <code class="docutils literal notranslate"><span class="pre">.fxn</span></code>
+container, 4-byte HMAC tag, key ring + policy, backoff), the <code class="docutils literal notranslate"><span class="pre">fx_sign</span></code> host
+tool, dev-key signing in the bench generator, and the bench’s
+authenticate-then-load path with NVS keys and a persisted backoff.</p></li>
+<li><p><strong>Stage 3:</strong></p>
 <ul class="simple">
 <li><p>for (a), on-device lowering in <code class="docutils literal notranslate"><span class="pre">player_app</span></code>, carving the arena sub-region
 and programming PMP+PMA per “Netstack wiring” (the allocation math and the
 W^X mechanism already exist);</p></li>
-<li><p>for (b), the <code class="docutils literal notranslate"><span class="pre">.fxn</span></code> container, a signer, the app-side keyring and verify,
-and the test-key variant (mirrors OTA’s <code class="docutils literal notranslate"><span class="pre">_testkey</span></code>/<code class="docutils literal notranslate"><span class="pre">--trust=test</span></code>).</p></li>
+<li><p>for (b), the same <code class="docutils literal notranslate"><span class="pre">authenticate</span></code> step in <code class="docutils literal notranslate"><span class="pre">player_app</span></code>’s effect load
+(prefer a valid <code class="docutils literal notranslate"><span class="pre">.fxn</span></code>, else lower, else VM) with the hardware SHA
+(mbedtls is already linked), the <code class="docutils literal notranslate"><span class="pre">splanc_fxsig</span></code> NVS namespace, and the
+fallback reason in the load reply;</p></li>
+<li><p>pairing / per-user key provisioning per “Provisioning seam”.</p></li>
 </ul>
 </li>
 <li><p><strong>Stage 4:</strong> a Thumb-2 backend for future boards.</p></li>
@@ -749,19 +1182,428 @@ and the test-key variant (mirrors OTA’s <code class="docutils literal notransl
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">firmware/fx_aot</span></code> lowers verified <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> to position-independent RV32IM: static
 CFG depth analysis, slots 0–7 in <code class="docutils literal notranslate"><span class="pre">s2..s9</span></code> and deeper slots in a frame, inline
-integer/fixed/control codegen, one generic helper for the float / transcendental
-/ colour / vector / convert / context / uniform / indexed ops (reusing <code class="docutils literal notranslate"><span class="pre">fx_vm</span></code>’s
-own now-<code class="docutils literal notranslate"><span class="pre">pub</span></code> maths), a per-block budget decrement, and a VM fallback for any
+integer/fixed/control codegen, dedicated helpers for scalar/lane float maths,
+comparisons, conversions and colour, plus the generic helper for remaining
+operations (reusing <code class="docutils literal notranslate"><span class="pre">fx_vm</span></code>’s own now-<code class="docutils literal notranslate"><span class="pre">pub</span></code> maths), a per-block budget decrement, and a VM fallback for any
 unsupported opcode. Buffers, textures, graph queries, flood, I2C, the JIT op and
 <strong>user functions</strong> are not yet lowered (they fall back to the VM); user-function
 cloning per entry depth is the main stage-2 follow-up.</p></li>
 <li><p>The instruction-stream <strong>verifier</strong> re-checks every emitted image.</p></li>
 <li><p>A <strong>differential test</strong> (<code class="docutils literal notranslate"><span class="pre">fx_aot_diff_test</span></code>) proves native output equals the VM
 <strong>bit-for-bit</strong> over the compiler corpus + embedded study/agent effects, 64 LED
-positions × 3 frames. 24 effects lower and match; 5 fall back. The bench’s
+positions × 3 frames, including raw state checks. The current 36-effect
+corpus has 28 effects lowering and matching and 8 falling back (unchanged by
+the dedicated-helper follow-up). The bench’s
 on-C6 <code class="docutils literal notranslate"><span class="pre">aot</span></code> pass cross-checks every LED against the VM on the real helix.</p></li>
 <li><p>The <strong>arena W^X scheme is hardware-confirmed</strong> (the PMA probe above).</p></li>
 </ul>
+<section id="dedicated-helper-follow-up-351">
+<h3>Dedicated helper follow-up (#351)<a class="headerlink" href="#dedicated-helper-follow-up-351" title="Link to this heading">¶</a></h3>
+<p>Compared with <code class="docutils literal notranslate"><span class="pre">agent/fx-aot</span></code> at <code class="docutils literal notranslate"><span class="pre">f6caeca9b618038204e5f2fa3f06825c1fc5e773</span></code>:</p>
+<ul class="simple">
+<li><p>Float Add/Sub/Mul/Div/Neg, unary and binary maths, Clamp/Smoothstep,
+comparisons/logic, hash, conversions, HSV and palette use per-operation
+helper entries. Scalar operands move directly from their callee-saved homes
+into <code class="docutils literal notranslate"><span class="pre">a0..a3</span></code>; scalar results return in <code class="docutils literal notranslate"><span class="pre">a0</span></code>. HSV/palette return red/green in
+<code class="docutils literal notranslate"><span class="pre">a0/a1</span></code>; blue alone uses one fixed output word because RV32’s C ABI returns
+at most two words in registers.</p></li>
+<li><p>The fixed-stride table is embedded in <code class="docutils literal notranslate"><span class="pre">NativeCtx</span></code>, initialized outside the
+bench timer. On RV32 Add/Sub/Mul/I2F point directly at the compiler-builtins
+used by the VM (<code class="docutils literal notranslate"><span class="pre">__addsf3</span></code>, <code class="docutils literal notranslate"><span class="pre">__subsf3</span></code>, <code class="docutils literal notranslate"><span class="pre">__mulsf3</span></code>, <code class="docutils literal notranslate"><span class="pre">__floatsisf</span></code>). Div,
+comparisons and float-to-int retain small semantic wrappers for zero
+divisors, float booleans and Rust’s saturating casts. No ROM addresses are
+baked into images. The context grows by 344 bytes on the host and 348 bytes on RV32
+(including alignment padding; 408 bytes total on RV32).</p></li>
+<li><p><strong>Scale and Mix deliberately retain the generic helper.</strong> Dedicated versions
+changed NaN payload selection after optimization. Vector reductions and
+cross/normalize, fixed-point complex operations, context/uniform/indexed
+operations also retain it. Buffer/texture/graph/flood/user-function support
+remains follow-up work; I2C and JIT calls still fall back to the VM.</p></li>
+<li><p>Verifier additions (since tightened into the “Verifier rules” above): calls must follow an exact aligned table-entry word
+load; no branch/jump may enter a helper call after its load; branch/jump
+offsets must be word-aligned; <code class="docutils literal notranslate"><span class="pre">jalr</span></code> must have funct3/offset zero; context
+stores may address only the five output words, never the helper table.
+Negative tests cover table bounds/padding, load width, call offsets,
+bypassing loads and writes into the table. Arena/PMP/PMA policy is unchanged.</p></li>
+<li><p>The host emulator now clobbers caller-saved registers at calls and reports
+emitted instruction/helper-call counts. Counts exclude helper bodies,
+soft-float routines and hardware timing. More lane helpers can mean <strong>more
+calls despite fewer emitted instructions</strong>; this is not a C6 speed claim.</p></li>
+<li><p>The new raw-word host differential tests signed zeros, subnormals,
+infinities, quiet/signaling NaN payloads, conversion boundaries, lane widths
+1–4 and live stack prefixes at depths 0/7/8/13: <strong>492,096 comparisons in opt</strong>.
+Debug mode skips only inputs where the baseline VM itself panics (existing
+overflowing sqrtf/expf arithmetic); returning inputs still compare exactly.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tests/run_rv32.sh</span></code> runs the actual RV32 VM and helper machine code plus
+emitted images under QEMU user-mode, with Rust 1.85.0 and the
+<code class="docutils literal notranslate"><span class="pre">riscv32imac-unknown-none-elf</span></code> target. <strong>521,920 raw comparisons pass</strong>, also
+covering the retained Scale/Mix path. It needs an installed Rust target and
+<code class="docutils literal notranslate"><span class="pre">qemu-riscv32</span></code>; it downloads nothing and accesses no rig. This verifies the
+integer register ABI and target soft-float, not C6 timings or peripherals.</p></li>
+</ul>
+<p>Both AOT Bazel tests, <code class="docutils literal notranslate"><span class="pre">native_vs_vm_test</span></code>, the host <code class="docutils literal notranslate"><span class="pre">fx_aot_nostd</span></code> build and
+<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">build</span> <span class="pre">-c</span> <span class="pre">opt</span> <span class="pre">//firmware/fx_perf_bench:fx_perf_bench_flashbundle</span></code> pass.
+The RV32 no_std crate links and executes in the QEMU test.</p>
+<p><strong>#351 on a real C6</strong> (rig-2, helix, <code class="docutils literal notranslate"><span class="pre">fxpb</span> <span class="pre">aot</span></code> vs <code class="docutils literal notranslate"><span class="pre">fxpb</span> <span class="pre">vm</span></code>, ms/frame at 500
+LEDs; the full table is in the #351 verification comment). Every lowered effect matched the VM
+on every LED (<code class="docutils literal notranslate"><span class="pre">maxdiff=0</span></code>, <code class="docutils literal notranslate"><span class="pre">off2=0</span></code>) at 500 and 2048 LEDs:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>effect</p></th>
+<th class="head text-right"><p>VM ms</p></th>
+<th class="head text-right"><p>AOT ms</p></th>
+<th class="head text-right"><p>speedup (#351)</p></th>
+<th class="head text-right"><p>speedup before (#341)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>solid</p></td>
+<td class="text-right"><p>7.3</p></td>
+<td class="text-right"><p>3.5</p></td>
+<td class="text-right"><p>2.09x</p></td>
+<td class="text-right"><p>1.80x</p></td>
+</tr>
+<tr class="row-odd"><td><p>sweep</p></td>
+<td class="text-right"><p>16.7</p></td>
+<td class="text-right"><p>9.7</p></td>
+<td class="text-right"><p>1.72x</p></td>
+<td class="text-right"><p>1.33x</p></td>
+</tr>
+<tr class="row-even"><td><p>gradient</p></td>
+<td class="text-right"><p>23.2</p></td>
+<td class="text-right"><p>13.2</p></td>
+<td class="text-right"><p>1.76x</p></td>
+<td class="text-right"><p>1.30x</p></td>
+</tr>
+<tr class="row-odd"><td><p>pulses</p></td>
+<td class="text-right"><p>26.7</p></td>
+<td class="text-right"><p>17.1</p></td>
+<td class="text-right"><p>1.56x</p></td>
+<td class="text-right"><p>1.26x</p></td>
+</tr>
+<tr class="row-even"><td><p>sparkle</p></td>
+<td class="text-right"><p>25.2</p></td>
+<td class="text-right"><p>13.7</p></td>
+<td class="text-right"><p>1.84x</p></td>
+<td class="text-right"><p>1.33x</p></td>
+</tr>
+<tr class="row-odd"><td><p>cylinder</p></td>
+<td class="text-right"><p>32.0</p></td>
+<td class="text-right"><p>18.9</p></td>
+<td class="text-right"><p>1.69x</p></td>
+<td class="text-right"><p>1.32x</p></td>
+</tr>
+<tr class="row-even"><td><p>plasma</p></td>
+<td class="text-right"><p>48.3</p></td>
+<td class="text-right"><p>23.1</p></td>
+<td class="text-right"><p>2.09x</p></td>
+<td class="text-right"><p>1.35x</p></td>
+</tr>
+<tr class="row-odd"><td><p>noise</p></td>
+<td class="text-right"><p>67.2</p></td>
+<td class="text-right"><p>30.7</p></td>
+<td class="text-right"><p>2.19x</p></td>
+<td class="text-right"><p>1.61x</p></td>
+</tr>
+<tr class="row-even"><td><p>particles</p></td>
+<td class="text-right"><p>84.3</p></td>
+<td class="text-right"><p>37.6</p></td>
+<td class="text-right"><p>2.24x</p></td>
+<td class="text-right"><p>1.64x</p></td>
+</tr>
+<tr class="row-odd"><td><p>rain_naive</p></td>
+<td class="text-right"><p>111.8</p></td>
+<td class="text-right"><p>39.6</p></td>
+<td class="text-right"><p>2.82x</p></td>
+<td class="text-right"><p>n/a (too big)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>flood, rain and texture still fall back to the VM.</p>
+<p><strong>Verifier hardening (follow-up to #351).</strong> The rules above replaced a
+verifier that checked reserved registers only in the prologue, accepted any
+<code class="docutils literal notranslate"><span class="pre">sp</span></code>/<code class="docutils literal notranslate"><span class="pre">s1</span></code>/<code class="docutils literal notranslate"><span class="pre">s11</span></code> offset, and required only one budget check somewhere. It
+leaves the emitted code unchanged: the C6 bench firmware built from it is
+byte-identical to #351’s apart from the build timestamp and image hashes. The
+diff tests, 78 embedded bench images and 521,920 QEMU RV32 comparisons all
+pass. No new hardware run was needed.</p>
+<p><strong>Rebased onto main (2026-10-28).</strong> main (#350 VM perf stack, #328 memo
+cache, #344 logf/expf, #357 debugger) is merged in. The fused opcodes and memo
+brackets are expanded before lowering (<code class="docutils literal notranslate"><span class="pre">defuse</span></code>, see “What gets lowered”),
+the prepare entry is lowered, and <code class="docutils literal notranslate"><span class="pre">frac</span> <span class="pre">&gt;</span> <span class="pre">30</span></code> stays on the VM. On the host
+corpus <strong>29 of 36 effects lower and match the VM bit for bit; 7 fall back</strong>
+(study rain/flood/texture, opt fire_helix/rainbow2, agent app perf opus
+p02/p09). agent skill opus p11 now lowers. The bench’s on-device JIT
+stub was also updated to the 4-argument <code class="docutils literal notranslate"><span class="pre">JitFn</span></code> from #350; the bench image
+hadn’t been rebuilt on main since then and no longer compiled.
+Merging main also made the bench’s JIT (#381: TOR over PMP entries 3+4) and
+AOT region (entry 4 NAPOT) clobber each other, giving an instruction access
+fault. Both are now re-armed on every use.</p>
+<p><strong>On a real C6 after the rebase</strong> (rig-1 <code class="docutils literal notranslate"><span class="pre">c6-123170</span></code>, 2026-10-28, ms/frame at
+500 LEDs on the helix). Every lowered study effect ran native from its
+dev-signed <code class="docutils literal notranslate"><span class="pre">.fxn</span></code> and matched the VM on every LED (<code class="docutils literal notranslate"><span class="pre">maxdiff=0</span></code>, <code class="docutils literal notranslate"><span class="pre">off2=0</span></code>) at
+500 and 2048 LEDs:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>effect</p></th>
+<th class="head text-right"><p>VM ms</p></th>
+<th class="head text-right"><p>AOT ms</p></th>
+<th class="head text-right"><p>speedup</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>solid</p></td>
+<td class="text-right"><p>3.0</p></td>
+<td class="text-right"><p>2.5</p></td>
+<td class="text-right"><p>1.18x</p></td>
+</tr>
+<tr class="row-odd"><td><p>sweep</p></td>
+<td class="text-right"><p>11.3</p></td>
+<td class="text-right"><p>8.0</p></td>
+<td class="text-right"><p>1.41x</p></td>
+</tr>
+<tr class="row-even"><td><p>gradient</p></td>
+<td class="text-right"><p>17.0</p></td>
+<td class="text-right"><p>10.6</p></td>
+<td class="text-right"><p>1.60x</p></td>
+</tr>
+<tr class="row-odd"><td><p>pulses</p></td>
+<td class="text-right"><p>19.7</p></td>
+<td class="text-right"><p>13.8</p></td>
+<td class="text-right"><p>1.43x</p></td>
+</tr>
+<tr class="row-even"><td><p>sparkle</p></td>
+<td class="text-right"><p>19.8</p></td>
+<td class="text-right"><p>12.2</p></td>
+<td class="text-right"><p>1.62x</p></td>
+</tr>
+<tr class="row-odd"><td><p>cylinder</p></td>
+<td class="text-right"><p>22.1</p></td>
+<td class="text-right"><p>14.0</p></td>
+<td class="text-right"><p>1.58x</p></td>
+</tr>
+<tr class="row-even"><td><p>plasma</p></td>
+<td class="text-right"><p>31.2</p></td>
+<td class="text-right"><p>18.7</p></td>
+<td class="text-right"><p>1.68x</p></td>
+</tr>
+<tr class="row-odd"><td><p>noise</p></td>
+<td class="text-right"><p>52.0</p></td>
+<td class="text-right"><p>26.1</p></td>
+<td class="text-right"><p>1.99x</p></td>
+</tr>
+<tr class="row-even"><td><p>particles</p></td>
+<td class="text-right"><p>74.3</p></td>
+<td class="text-right"><p>36.9</p></td>
+<td class="text-right"><p>2.01x</p></td>
+</tr>
+<tr class="row-odd"><td><p>rain_naive</p></td>
+<td class="text-right"><p>62.9</p></td>
+<td class="text-right"><p>25.9</p></td>
+<td class="text-right"><p>2.42x</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The <em>VM</em> got 1.3–2.4x faster on main (#350’s fused ops and JIT register
+caching). The AOT now expands those fused ops back into base ops, so its
+margin over the VM shrank. Lowering the fused forms directly (one helper call
+per <code class="docutils literal notranslate"><span class="pre">BinTop</span></code>/<code class="docutils literal notranslate"><span class="pre">MulAdd</span></code> instead of two) is the obvious next lever.</p>
+<p>Same compiler, default uniforms, 64 LEDs × 3 frames, update plus shade,
+original/current code-generation counts (not timings):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Effect</p></th>
+<th class="head text-right"><p>Bytes before</p></th>
+<th class="head text-right"><p>Bytes after</p></th>
+<th class="head text-right"><p>Emitted instructions before</p></th>
+<th class="head text-right"><p>After</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>band</p></td>
+<td class="text-right"><p>1,036</p></td>
+<td class="text-right"><p>848</p></td>
+<td class="text-right"><p>39,480</p></td>
+<td class="text-right"><p>30,456</p></td>
+</tr>
+<tr class="row-odd"><td><p>hue_gradient</p></td>
+<td class="text-right"><p>856</p></td>
+<td class="text-right"><p>716</p></td>
+<td class="text-right"><p>30,840</p></td>
+<td class="text-right"><p>24,120</p></td>
+</tr>
+<tr class="row-even"><td><p>breathing</p></td>
+<td class="text-right"><p>848</p></td>
+<td class="text-right"><p>716</p></td>
+<td class="text-right"><p>16,848</p></td>
+<td class="text-right"><p>15,804</p></td>
+</tr>
+<tr class="row-odd"><td><p>plasma_c</p></td>
+<td class="text-right"><p>1,648</p></td>
+<td class="text-right"><p>1,172</p></td>
+<td class="text-right"><p>68,856</p></td>
+<td class="text-right"><p>46,008</p></td>
+</tr>
+<tr class="row-even"><td><p>const_math</p></td>
+<td class="text-right"><p>584</p></td>
+<td class="text-right"><p>444</p></td>
+<td class="text-right"><p>26,688</p></td>
+<td class="text-right"><p>19,968</p></td>
+</tr>
+<tr class="row-odd"><td><p>fixed16_grad</p></td>
+<td class="text-right"><p>640</p></td>
+<td class="text-right"><p>600</p></td>
+<td class="text-right"><p>20,472</p></td>
+<td class="text-right"><p>18,552</p></td>
+</tr>
+<tr class="row-even"><td><p>loopy</p></td>
+<td class="text-right"><p>992</p></td>
+<td class="text-right"><p>768</p></td>
+<td class="text-right"><p>132,216</p></td>
+<td class="text-right"><p>87,864</p></td>
+</tr>
+<tr class="row-odd"><td><p>study_solid</p></td>
+<td class="text-right"><p>992</p></td>
+<td class="text-right"><p>804</p></td>
+<td class="text-right"><p>16,956</p></td>
+<td class="text-right"><p>15,870</p></td>
+</tr>
+<tr class="row-even"><td><p>study_sweep</p></td>
+<td class="text-right"><p>968</p></td>
+<td class="text-right"><p>784</p></td>
+<td class="text-right"><p>45,120</p></td>
+<td class="text-right"><p>36,288</p></td>
+</tr>
+<tr class="row-odd"><td><p>study_gradient</p></td>
+<td class="text-right"><p>1,460</p></td>
+<td class="text-right"><p>1,092</p></td>
+<td class="text-right"><p>68,736</p></td>
+<td class="text-right"><p>51,072</p></td>
+</tr>
+<tr class="row-even"><td><p>study_pulses</p></td>
+<td class="text-right"><p>1,388</p></td>
+<td class="text-right"><p>1,060</p></td>
+<td class="text-right"><p>65,280</p></td>
+<td class="text-right"><p>49,536</p></td>
+</tr>
+<tr class="row-odd"><td><p>study_sparkle</p></td>
+<td class="text-right"><p>1,496</p></td>
+<td class="text-right"><p>1,020</p></td>
+<td class="text-right"><p>52,677</p></td>
+<td class="text-right"><p>32,475</p></td>
+</tr>
+<tr class="row-even"><td><p>study_plasma</p></td>
+<td class="text-right"><p>2,532</p></td>
+<td class="text-right"><p>1,588</p></td>
+<td class="text-right"><p>120,192</p></td>
+<td class="text-right"><p>74,880</p></td>
+</tr>
+<tr class="row-odd"><td><p>study_noise</p></td>
+<td class="text-right"><p>4,328</p></td>
+<td class="text-right"><p>3,624</p></td>
+<td class="text-right"><p>191,259</p></td>
+<td class="text-right"><p>158,790</p></td>
+</tr>
+<tr class="row-even"><td><p>study_particles</p></td>
+<td class="text-right"><p>4,784</p></td>
+<td class="text-right"><p>3,664</p></td>
+<td class="text-right"><p>257,322</p></td>
+<td class="text-right"><p>210,645</p></td>
+</tr>
+<tr class="row-odd"><td><p>study_cylinder</p></td>
+<td class="text-right"><p>1,480</p></td>
+<td class="text-right"><p>1,060</p></td>
+<td class="text-right"><p>69,696</p></td>
+<td class="text-right"><p>49,536</p></td>
+</tr>
+<tr class="row-even"><td><p>study_rain_naive</p></td>
+<td class="text-right"><p>9,108</p></td>
+<td class="text-right"><p>5,720</p></td>
+<td class="text-right"><p>335,848</p></td>
+<td class="text-right"><p>211,498</p></td>
+</tr>
+<tr class="row-odd"><td><p>opt_rainforest</p></td>
+<td class="text-right"><p>5,644</p></td>
+<td class="text-right"><p>4,220</p></td>
+<td class="text-right"><p>125,511</p></td>
+<td class="text-right"><p>113,514</p></td>
+</tr>
+<tr class="row-even"><td><p>opt_metaballs</p></td>
+<td class="text-right"><p>7,760</p></td>
+<td class="text-right"><p>5,472</p></td>
+<td class="text-right"><p>146,472</p></td>
+<td class="text-right"><p>133,758</p></td>
+</tr>
+<tr class="row-odd"><td><p>agent_app_opus_p01</p></td>
+<td class="text-right"><p>3,552</p></td>
+<td class="text-right"><p>2,832</p></td>
+<td class="text-right"><p>64,236</p></td>
+<td class="text-right"><p>58,971</p></td>
+</tr>
+<tr class="row-even"><td><p>agent_app_opus_p05</p></td>
+<td class="text-right"><p>4,520</p></td>
+<td class="text-right"><p>2,960</p></td>
+<td class="text-right"><p>103,584</p></td>
+<td class="text-right"><p>69,927</p></td>
+</tr>
+<tr class="row-odd"><td><p>agent_app_opus_p12</p></td>
+<td class="text-right"><p>3,472</p></td>
+<td class="text-right"><p>2,508</p></td>
+<td class="text-right"><p>36,531</p></td>
+<td class="text-right"><p>29,655</p></td>
+</tr>
+<tr class="row-even"><td><p>agent_app_sonnet_p03</p></td>
+<td class="text-right"><p>5,536</p></td>
+<td class="text-right"><p>4,484</p></td>
+<td class="text-right"><p>139,623</p></td>
+<td class="text-right"><p>125,982</p></td>
+</tr>
+<tr class="row-odd"><td><p>agent_app_sonnet_p08</p></td>
+<td class="text-right"><p>5,384</p></td>
+<td class="text-right"><p>4,120</p></td>
+<td class="text-right"><p>436,896</p></td>
+<td class="text-right"><p>396,755</p></td>
+</tr>
+<tr class="row-even"><td><p>agent_app_lint_opus_p06</p></td>
+<td class="text-right"><p>8,440</p></td>
+<td class="text-right"><p>5,968</p></td>
+<td class="text-right"><p>131,172</p></td>
+<td class="text-right"><p>124,110</p></td>
+</tr>
+<tr class="row-odd"><td><p>agent_skill_opus_p04</p></td>
+<td class="text-right"><p>2,512</p></td>
+<td class="text-right"><p>1,884</p></td>
+<td class="text-right"><p>60,033</p></td>
+<td class="text-right"><p>42,363</p></td>
+</tr>
+<tr class="row-even"><td><p>agent_skill_sonnet_p02</p></td>
+<td class="text-right"><p>8,772</p></td>
+<td class="text-right"><p>6,316</p></td>
+<td class="text-right"><p>807,552</p></td>
+<td class="text-right"><p>516,288</p></td>
+</tr>
+<tr class="row-odd"><td><p>agent_skill_sonnet_p13</p></td>
+<td class="text-right"><p>2,956</p></td>
+<td class="text-right"><p>1,992</p></td>
+<td class="text-right"><p>116,364</p></td>
+<td class="text-right"><p>77,862</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Noise’s emitted instruction count falls 17.0%; particles falls 18.1%.
+<code class="docutils literal notranslate"><span class="pre">rain_naive</span></code> shrinks from 9,108 to 5,720 bytes and now fits the existing 8 KB
+bench region without increasing its allocation. The eight corpus fallbacks
+are study rain/flood/texture, opt fire_helix/rainbow2, agent app perf opus
+p02/p09, and agent skill opus p11.</p>
+</section>
+<section id="original-stage-2-hardware-baseline-unchanged">
+<h3>Original stage 2 hardware baseline (unchanged)<a class="headerlink" href="#original-stage-2-hardware-baseline-unchanged" title="Link to this heading">¶</a></h3>
 <p><strong>Measured on a real C6 (helix fixture, cycles/LED, min of 3 frames):</strong></p>
 <p>Rig-2 C6 (<code class="docutils literal notranslate"><span class="pre">c6-*</span></code>, 2026-10-23), <code class="docutils literal notranslate"><span class="pre">firmware/fx_perf_bench</span></code> <code class="docutils literal notranslate"><span class="pre">fxpb</span> <span class="pre">aot</span></code> vs <code class="docutils literal notranslate"><span class="pre">fxpb</span> <span class="pre">vm</span></code>
 lines. Cycles/LED and ms/frame include update() and the per-LED framing
@@ -877,13 +1719,15 @@ ops (neg/abs/compare/select), and lowering user functions and buffers so more
 effects qualify.</p>
 <p><strong>Not verified / out of scope here:</strong></p>
 <ul class="simple">
-<li><p>No on-device lowering or signing yet (stage 3): the bench embeds <strong>host</strong>-lowered
-images and runs them unsigned from a static RWX region. The netstack arena +
+<li><p>No on-device lowering yet (stage 3): the bench embeds <strong>host</strong>-lowered (and
+host-verified) images, now as dev-key-signed <code class="docutils literal notranslate"><span class="pre">.fxn</span></code>s that it authenticates
+before running them from a static RWX region. The netstack arena +
 PMP/PMA path is implemented as allocation math + a hardware-proven mechanism but
 not yet wired into <code class="docutils literal notranslate"><span class="pre">ffi.rs</span></code>.</p></li>
 <li><p>User functions, buffers/textures, graph/flood and I2C drivers stay on the VM.</p></li>
 <li><p>The bench region is RWX (no radios); W^X applies to the netstack arena path.</p></li>
 </ul>
+</section>
 </section>
 </section>
 
@@ -927,7 +1771,10 @@ not yet wired into <code class="docutils literal notranslate"><span class="pre">
 <li><a class="reference internal" href="#">Native (AOT) effect execution on the ESP32-C6</a><ul>
 <li><a class="reference internal" href="#why">Why</a></li>
 <li><a class="reference internal" href="#what-gets-lowered">What gets lowered</a></li>
-<li><a class="reference internal" href="#sandbox-applies-to-every-native-image-signed-or-not">Sandbox (applies to every native image, signed or not)</a></li>
+<li><a class="reference internal" href="#sandbox-applies-to-every-native-image-signed-or-not">Sandbox (applies to every native image, signed or not)</a><ul>
+<li><a class="reference internal" href="#verifier-rules">Verifier rules</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#where-native-code-lives">Where native code lives</a><ul>
 <li><a class="reference internal" href="#making-arena-memory-executable-and-non-writable-w-x-in-machine-mode">Making arena memory executable and non-writable (W^X), in machine mode</a></li>
 <li><a class="reference internal" href="#placement-options-considered">Placement options considered</a></li>
@@ -935,16 +1782,21 @@ not yet wired into <code class="docutils literal notranslate"><span class="pre">
 </ul>
 </li>
 <li><a class="reference internal" href="#trust-who-may-produce-native-code-the-device-runs">Trust: who may produce native code the device runs?</a><ul>
-<li><a class="reference internal" href="#a-device-side-lowering-no-signature-for-user-agent-effects">(a) Device-side lowering: no signature for user/agent effects</a></li>
-<li><a class="reference internal" href="#b-dedicated-native-key-id-prebuilt-first-party-code">(b) Dedicated native key id: prebuilt first-party code</a></li>
-<li><a class="reference internal" href="#c-relay-compile-and-sign">(c) Relay compile-and-sign</a></li>
-<li><a class="reference internal" href="#rejected-per-owner-key-provisioned-at-setup">Rejected: per-owner key provisioned at setup</a></li>
-<li><a class="reference internal" href="#recommendation">Recommendation</a></li>
+<li><a class="reference internal" href="#the-three-paths-and-how-they-relate">The three paths and how they relate</a></li>
+<li><a class="reference internal" href="#signature-format-firmware-fx-sig">Signature format (<code class="docutils literal notranslate"><span class="pre">firmware/fx_sig</span></code>)</a></li>
+<li><a class="reference internal" href="#why-a-32-bit-tag-is-enough-and-what-makes-it-so">Why a 32-bit tag is enough, and what makes it so</a></li>
+<li><a class="reference internal" href="#threat-model">Threat model</a></li>
+<li><a class="reference internal" href="#keys-revocation-and-the-provisioning-seam">Keys, revocation and the provisioning seam</a></li>
+<li><a class="reference internal" href="#device-cost-measured">Device cost (measured)</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#decisions-needed-from-the-owner-before-production">Decisions needed from the owner before production</a></li>
 <li><a class="reference internal" href="#plan">Plan</a></li>
-<li><a class="reference internal" href="#status-measured-numbers-and-what-is-not-verified">Status, measured numbers, and what is not verified</a></li>
+<li><a class="reference internal" href="#status-measured-numbers-and-what-is-not-verified">Status, measured numbers, and what is not verified</a><ul>
+<li><a class="reference internal" href="#dedicated-helper-follow-up-351">Dedicated helper follow-up (#351)</a></li>
+<li><a class="reference internal" href="#original-stage-2-hardware-baseline-unchanged">Original stage 2 hardware baseline (unchanged)</a></li>
+</ul>
+</li>
 </ul>
 </li>
 </ul>
