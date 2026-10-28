@@ -342,6 +342,8 @@ fn pipelined_output_loop(
             if f.n > 0 {
                 stats.render.push(f.done_ns - f.started_ns);
                 stats.lock.push(f.lock_ns);
+                stats.render_wake.push(f.wake_late_ns);
+                stats.render_wait.push(f.wait_ns);
             }
         } else {
             n_repeat += 1;
@@ -417,6 +419,10 @@ fn pipelined_output_loop(
     }
 }
 
+/// How often a render that is ready early re-checks that the output has
+/// taken the previous frame.
+const CONSUME_POLL_NS: u64 = 100_000;
+
 /// The render thread: one frame ahead of the output on its deadline grid
 /// (pipeline::RenderClock). Samples the player for the frame's deadline under
 /// the lock, encodes outside it into the triple buffer's back slot, publishes.
@@ -455,7 +461,18 @@ fn render_loop(
     let mut n = 0u64;
     loop {
         let target = clock.next_target(mono_ns(), shared.out_next.load(Ordering::Acquire));
-        sleep_until_ns(clock.start_at(target));
+        let start_at = clock.start_at(target);
+        sleep_until_ns(start_at);
+        let woke = mono_ns();
+        // The render for D+P starts at D, the same instant the output wakes to
+        // send D's frame. If the output is late (load, an edge wait), let it
+        // take D's frame first: publishing D+P's over it would send D+P's
+        // content at D and leave nothing new for D+P (a skip, then a repeat).
+        // Bounded, so a stalled output can't stall the render.
+        let give_up = start_at + clock.period_ns / 2;
+        while frames_out.pending() && mono_ns() < give_up {
+            sleep_until_ns(mono_ns() + CONSUME_POLL_NS);
+        }
         let started = mono_ns();
         let now_us = (target.saturating_sub(epoch_mono) / 1000) as i64;
         let (sampled, lock_ns) = {
@@ -474,6 +491,8 @@ fn render_loop(
         slot.target_ns = target;
         slot.started_ns = started;
         slot.lock_ns = lock_ns;
+        slot.wake_late_ns = woke.saturating_sub(start_at);
+        slot.wait_ns = started - woke;
         slot.done_ns = mono_ns();
         if frames_out.publish() {
             shared.skipped.fetch_add(1, Ordering::Relaxed);

@@ -40,6 +40,10 @@ pub struct FrameSlot {
     pub done_ns: u64,
     /// Time holding the player lock, ns.
     pub lock_ns: u64,
+    /// Render thread timer wake-up lateness past its start time, ns.
+    pub wake_late_ns: u64,
+    /// Time waiting for the output to take the previous frame, ns.
+    pub wait_ns: u64,
     /// Monotonic render number (1 = first).
     pub n: u64,
 }

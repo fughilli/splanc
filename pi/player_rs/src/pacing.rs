@@ -333,6 +333,10 @@ pub struct PaceStats {
     /// Pipelined only: player sampled (render start) -> SPI ioctl entry, i.e.
     /// the input -> light latency the pipeline adds to (every send).
     pub sample_to_spi: Vec<u64>,
+    /// Pipelined only: render thread timer wake lateness (fresh frames).
+    pub render_wake: Vec<u64>,
+    /// Pipelined only: render waiting for the output to take the last frame.
+    pub render_wait: Vec<u64>,
 }
 
 impl PaceStats {
@@ -354,7 +358,13 @@ impl PaceStats {
         .into_iter()
         .chain(
             // Pipelined-only fields, omitted from the serial report.
-            [("lock", &mut self.lock), ("age", &mut self.age), ("sample_to_spi", &mut self.sample_to_spi)]
+            [
+                ("lock", &mut self.lock),
+                ("age", &mut self.age),
+                ("sample_to_spi", &mut self.sample_to_spi),
+                ("render_wake", &mut self.render_wake),
+                ("render_wait", &mut self.render_wait),
+            ]
                 .into_iter()
                 .filter(|(_, v)| !v.is_empty())
                 .map(|(name, v)| summarize(v).fmt_us(name)),
