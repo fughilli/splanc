@@ -43,8 +43,9 @@ test("CSV: TouchDesigner Points DAT header, one row per LED in output order", ()
   assert.deepEqual(header, [...CSV_COLUMNS]);
   assert.deepEqual(header.slice(0, 4), ["index", "P(0)", "P(1)", "P(2)"]);
   assert.equal(rows.length, 3);
-  assert.deepEqual(rows[0], ["0", "0", "0", "0", "1", "0.5", "0", "0", "-1", "0"]);
-  assert.deepEqual(rows[1], ["1", "0.1", "0.2", "0.3", "1", "0.9", "0", "1", "-1", "0"]);
+  assert.deepEqual(rows[0], ["0", "0", "0", "0", "1", "0.5", "0", "0", "-1", "0", "0"]);
+  // arclength = |(0.1, 0.2, 0.3)| along the strip; no topology → segment -1.
+  assert.deepEqual(rows[1], ["1", "0.1", "0.2", "0.3", "1", "0.9", "0", "1", "-1", "0.37417", "0"]);
   assert.deepEqual(rows[2]!.slice(0, 4), ["2", "1.23457", "-2", "0"]);
   // No trailing newline (a Table DAT would load an empty row) and no comments.
   assert.ok(!csv.endsWith("\n"));
@@ -104,7 +105,7 @@ test("multi-channel: channel + channel_index from a covering layout; mismatched 
   assert.deepEqual(channelLayoutFor(5, [0, 5]), [0, 5]);
 });
 
-test("topology associations fill segment + arclength", () => {
+test("topology associations fill segment + segment_arclength", () => {
   const map = mapOf([led(0, [0, 0, 0]), led(1, [1, 0, 0])], 2);
   const topology: Topology = {
     mapId: "m1",
@@ -113,8 +114,80 @@ test("topology associations fill segment + arclength", () => {
     associations: [{ ledId: 1, segmentId: 7, footArclength: 0.25, dPerp: 0.01 }],
   };
   const { rows } = parseCsv(mapToCsv(map, { topology }));
-  assert.deepEqual(rows[0]!.slice(8), ["-1", "0"]);
-  assert.deepEqual(rows[1]!.slice(8), ["7", "0.25"]);
+  assert.deepEqual(rows[0]!.slice(8), ["-1", "0", "0"]);
+  assert.deepEqual(rows[1]!.slice(8), ["7", "1", "0.25"]);
+});
+
+// #396: a ~4 m strip wound as a coil (a lamp) whose stored topology is ONE short
+// centreline segment (the tube extractor's axis): every LED projects onto 7 cm,
+// so the foot arclength clamps to 0 / 0.07 over most of the strip. `arclength`
+// must still run the length of the strip.
+test("arclength runs along the strip, monotonic, even on a single short tube-axis segment", () => {
+  const n = 250;
+  const r = 0.08;
+  const turns = 8;
+  const height = 0.23;
+  const leds = Array.from({ length: n }, (_, i) => {
+    const t = i / (n - 1);
+    const a = 2 * Math.PI * turns * t;
+    return led(i, [r * Math.cos(a), height / 2 - height * t, r * Math.sin(a)]);
+  });
+  // The helix's length: sqrt((2πr·turns)² + height²).
+  const physical = Math.hypot(2 * Math.PI * r * turns, height);
+  const axisLen = 0.0703;
+  const topology: Topology = {
+    mapId: "m1",
+    branchPoints: [],
+    segments: [
+      {
+        id: 0,
+        a: -1,
+        b: -1,
+        polyline: [
+          [0, axisLen / 2, 0],
+          [0, -axisLen / 2, 0],
+        ],
+        length: axisLen,
+      },
+    ],
+    associations: leds.map((l) => ({
+      ledId: l.id,
+      segmentId: 0,
+      footArclength: Math.min(axisLen, Math.max(0, axisLen / 2 - l.xyz[1])),
+      dPerp: r,
+    })),
+  };
+  const rows = exportRows(mapOf(leds, n), { topology, channels: [0, 0] });
+  assert.equal(rows[0]!.arclength, 0);
+  for (let i = 1; i < n; i++) assert.ok(rows[i]!.arclength > rows[i - 1]!.arclength, `monotonic at ${i}`);
+  const end = rows[n - 1]!.arclength;
+  assert.ok(Math.abs(end - physical) < 0.01 * physical, `ends at ${end}, strip is ${physical}`);
+  assert.ok(end > 3.5 && end < 4.5);
+  // The topology's coordinate is kept, in its own column.
+  assert.ok(rows.every((x) => x.segment === 0));
+  assert.equal(rows[0]!.segmentArclength, 0);
+  assert.ok(Math.abs(rows[n - 1]!.segmentArclength - axisLen) < 1e-9);
+  const csv = parseCsv(mapToCsv(mapOf(leds, n), { topology }));
+  const col = csv.header.indexOf("arclength");
+  assert.equal(csv.header[col + 1], "segment_arclength");
+  assert.ok(Math.abs(Number(csv.rows[n - 1]![col]) - physical) < 0.01 * physical);
+});
+
+test("arclength restarts at 0 on each channel and spans interpolated LEDs", () => {
+  // Channel 0: ids 0..2 along x, id 1 unmapped (interpolated at x=0.5).
+  // Channel 1: ids 3..4, a separate strip.
+  const map = mapOf([led(0, [0, 0, 0]), led(2, [1, 0, 0]), led(3, [5, 5, 5]), led(4, [5, 7, 5])], 5, [1]);
+  const rows = exportRows(map, { channels: [3, 2] });
+  assert.deepEqual(
+    rows.map((x) => [x.channel, x.arclength]),
+    [
+      [0, 0],
+      [0, 0.5],
+      [0, 1],
+      [1, 0],
+      [1, 2],
+    ],
+  );
 });
 
 test("up axis: default keeps Splanc's +Y up; z rewrites (x, y, z) → (x, -z, y)", () => {

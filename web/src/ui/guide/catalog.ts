@@ -438,7 +438,8 @@ export const GUIDE_TOPICS: GuideTopic[] = [
         ],
         bullets: [
           "**CSV (TouchDesigner, spreadsheets)** — columns " +
-            "`index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength`. " +
+            "`index,P(0),P(1),P(2),mapped,confidence,channel,channel_index,segment,arclength," +
+            "segment_arclength`. " +
             "Positions are in **metres**. " +
             "In TouchDesigner, point a Table DAT's File at the CSV and wire it into a DAT to SOP's " +
             "Points DAT. You get one point per LED, numbered by `index`, and the other columns " +
@@ -452,8 +453,12 @@ export const GUIDE_TOPICS: GuideTopic[] = [
             "ends), the same place the device renders them.",
           "**Channels** — maps don't store a channel layout. If a connected device's per-channel " +
             "LED counts add up to this map's LED count, the export uses them. Otherwise every LED " +
-            "is on channel 0. `segment` is the topology segment (-1 if none) and `arclength` is " +
-            "the LED's distance along it in metres.",
+            "is on channel 0.",
+          "**Arclength** — `arclength` is the LED's distance along the strip in metres, counted " +
+            "from the first LED of its channel, so it ends near the strip's length. `segment` is " +
+            "the topology segment (-1 if none) and `segment_arclength` is the LED's distance along " +
+            "that segment. On a coil or tube the topology is the centreline, so " +
+            "`segment_arclength` can be much shorter than the strip.",
           "**Axes** — Splanc maps are +Y up, right-handed, which matches TouchDesigner and " +
             "Chromatik, so nothing needs converting. For Z-up tools such as Blender, pick " +
             "**Z up** before exporting the CSV.",
