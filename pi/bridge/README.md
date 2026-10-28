@@ -358,9 +358,43 @@ python3 -m splanc_display.fake_bridge --dir /tmp/fb --cycle 5 &
 SPLANC_BRIDGE_STATUS=/tmp/fb/status.json SPLANC_BRIDGE_CONTROL=/tmp/fb/control.sock \
   python3 -m splanc_display.main --hdmi png:/tmp/fb/hdmi.png --oled png:/tmp/fb/oled.png
 
+# Interactive simulator: the same, with the HAT's keys in a browser (below)
+bazel run //pi/bridge:sim                                  # open http://127.0.0.1:8737/
+
 # On a Pi, before a release carries pi-bridge/: the published agent + this checkout's display
 sudo sh pi/bridge/install.sh --source pi/bridge
 ```
+
+### Display simulator (no Pi needed)
+
+`splanc_display/sim.py` runs the real display service (`main.App`: the menu, slides and list
+animations at their real frame pacing, the boot logo, the status watcher and the control client)
+with only the hardware mocked at its seams: a 128x64 1-bit OLED device in place of luma's SH1106,
+gpiozero-shaped buttons in place of the HAT's keys (press and release, so KEY3's 5 s hold works),
+and an in-memory HDMI framebuffer. A local web page shows the panel scaled up next to the HDMI
+page, streams each frame as the service draws it, and has the HAT's joystick and KEY1–3 as
+buttons and on the keyboard (arrows, Enter/Space, 1/2/3; `R` restarts the service so the boot
+logo plays again). A clock-rate menu slows everything down (0.25x) to inspect transitions.
+
+![The display simulator: the OLED HAT with its keys, the HDMI page, and the fake bridge's knobs](../../docs/img/pi-bridge/display-sim.png)
+
+On a Mac without Bazel (Python 3.9+; Pillow and segno are the only dependencies, and the boot
+logo is rendered from `web/public/icons/splanc.svg` on the fly):
+
+```sh
+python3 -m venv /tmp/splanc-sim && /tmp/splanc-sim/bin/pip install pillow segno==1.6.6
+cd pi/bridge/display && /tmp/splanc-sim/bin/python -m splanc_display.sim   # http://127.0.0.1:8737/
+```
+
+`--bridge fake` (the default) drives `fake_bridge` through a model of the real bridge's state
+(phase, relay connected/disconnected, pairing code incl. one about to expire, paired clients,
+commands failing or slow, fixtures added/removed/taken offline); every knob is on the page, so
+every screen and state is reachable. `--bridge real` runs the actual `splanc-agent bridge`
+against a local `splanc-agent relay` it starts (no account needed; fixtures are whatever it
+discovers on your LAN, and "stop relay" shows the offline path). It needs the agent built:
+`bazel build //agent:mcp`, or `--agent path/to/splanc-agent.mjs`. Other flags: `--push-ms 15`
+adds per-frame cost (a slow Pi's SPI push: the service then lowers its frame rate as it would
+there), `--speed 0.25`, `--hdmi-size 1280x720`, `--host 0.0.0.0` to open it from a phone.
 
 `tests/test_luma_gpiozero.py` exercises the real luma.oled and gpiozero (mock pins). It is skipped
 under Bazel, which has neither; run it in a venv that has the lockfile plus `gpiozero`, as below.
