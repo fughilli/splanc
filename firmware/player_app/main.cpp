@@ -3154,7 +3154,7 @@ void netstack_console_hook(const char *line, size_t len) {
   if (n < 0) {
     Serial.printf("[wifi] console: WIFI MODE <auto|fixed|manual|offline> [cap=S] [every=S] "
                   "[decay=H] [sparse=S] [force] | WIFI REJOIN | WIFI STATUS | WIFI SCAN | "
-                  "WIFI DHCP | WIFI GIVEUP\n");
+                  "WIFI DHCP | WIFI GIVEUP | WIFI SCANMISS <n>\n");
     return;
   }
   Serial.printf("%s\n", reply);

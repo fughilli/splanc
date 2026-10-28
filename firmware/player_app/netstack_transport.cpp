@@ -19,6 +19,7 @@
 #include <esp_event.h>
 #include <esp_heap_caps.h>
 #include <esp_random.h>
+#include <stdlib.h>  // strtoul (console WIFI SCANMISS)
 #include <string.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/x509_crt.h>
@@ -175,6 +176,8 @@ bool g_creds_ready = false;  // creds committed (BLE Improv, wired PROV, or rest
 bool g_restore_pending = false;  // restored at boot; the PMK derivation starts on the first loop
 bool g_using_stored = false;     // the active creds are the stored ones (not a fresh provision)
 bool g_scan_matched = false;     // the last scan (boot or background) saw the active SSID
+bool g_latch_known = false;      // g_bssid/g_chan are THIS SSID's (scan cache or a sweep),
+                                 // even if the last sweep missed it
 lm_wifi::Persist g_persist;      // whether/when the active creds still need writing to NVS
 lm_wifi::ImprovJoin g_improv_join;  // the last Improv fresh join (re-send coalescing)
 
@@ -297,6 +300,7 @@ bool scan_latch_ap() {
       Serial.printf("[t=%lu] [scan] latched \"%s\" -> bssid=%02x:%02x:%02x:%02x:%02x:%02x ch=%u\n", (unsigned long)millis(), g_ssid,
                     g_bssid[0], g_bssid[1], g_bssid[2], g_bssid[3], g_bssid[4], g_bssid[5], g_chan);
       g_scan_matched = true;
+      g_latch_known = true;
       mark_seen();
       return true;
     }
@@ -304,6 +308,7 @@ bool scan_latch_ap() {
   Serial.printf("[scan] no scan match for \"%s\" — not joining until the background rescan "
                 "finds it\n", g_ssid);
   g_scan_matched = false;
+  g_latch_known = false;  // g_bssid is whatever the previous network left there
   return false;
 }
 
@@ -318,6 +323,7 @@ lm_wifi_scan::ChannelHop g_hop;
 bool g_force_sweep = false;   // console WIFI SCAN: one sweep now
 bool g_sweep_forced = false;  // the running sweep was forced (not scheduled)
 bool g_force_giveup = false;  // console WIFI GIVEUP: take the random-MAC fallback now
+uint32_t g_scan_blind = 0;    // console WIFI SCANMISS n: the next n sweeps hear nothing (HITL)
 
 // --- Rejoin policy (wifi_scan.h Policy; set by the app via netstack_set_wifi_policy) ----
 lm_wifi_scan::Policy g_policy;
@@ -367,6 +373,7 @@ void bgscan_tune(uint8_t ch) {
 // A frame from the RX drain: while a sweep runs, note a beacon / probe response for our SSID.
 void bgscan_on_frame(const uint8_t *rx, uint32_t n) {
   if (!g_hop.active() || n < 36 || (rx[0] != 0x80 && rx[0] != 0x50)) return;
+  if (g_scan_blind) return;  // HITL: simulate a sweep that can't hear the AP (coex, range)
   uint8_t bssid[6], ch = 0;
   if (lm_wifi_scan::bss_for_ssid(rx, n, g_ssid, g_hop.channel(), bssid, &ch)) g_hop.on_match(bssid, ch);
 }
@@ -2177,6 +2184,7 @@ void netstack_loop() {
     if (rx[0] == 0xb0 && st == AUTH) { // auth resp
       uint16_t status = rx[28] | (rx[29] << 8);
       g_authw.on_auth_response();
+      g_improv_scan.on_ap_answered();  // it's on the air: no Improv not-found report
       if (status == 0) {
         int a = build_assoc(f); ns_mac_send(f, a, 0); st = ASSOC; t = millis();
         Serial.printf("[t=%lu] auth ok -> assoc\n", (unsigned long)millis());
@@ -2365,6 +2373,8 @@ void netstack_loop() {
           //   WIFI SCAN    run one background sweep now
           //   WIFI DHCP    drop the lease and re-DISCOVER (the DHCP retry path)
           //   WIFI GIVEUP  re-join through the random-MAC fallback (stable-address loss)
+          //   WIFI SCANMISS <n>  the next n sweeps hear nothing (0 clears): the HITL
+          //                improv_fresh_join gate's "AP not seen by the first sweeps"
           // Anything else goes to the app's console hook (Wi-Fi policy: WIFI MODE …).
           const char *arg = pbuf + 5;
           uint32_t nowc = (uint32_t)millis();
@@ -2375,6 +2385,10 @@ void netstack_loop() {
             drop_link_for_new_network();
             Serial.printf("[t=%lu] [wifi] console: lease dropped -> re-DISCOVER\n",
                           (unsigned long)nowc);
+          } else if (strncmp(arg, "SCANMISS ", 9) == 0) {
+            g_scan_blind = (uint32_t)strtoul(arg + 9, nullptr, 10);
+            Serial.printf("[t=%lu] [wifi] console: the next %lu sweep(s) hear nothing\n",
+                          (unsigned long)nowc, (unsigned long)g_scan_blind);
           } else if (strcmp(arg, "GIVEUP") == 0) {
             st = AUTH;
             inited = false;
@@ -2440,7 +2454,11 @@ void netstack_loop() {
   if (g_ap_latched) {
     uint32_t now_ms = (uint32_t)millis();
     // (A lease only counts once past AUTH: re-authenticating means we hold no link.)
-    bool wanted = autonomous(now_ms) &&
+    // While an Improv fresh join's report is armed, its own retries (kImprovRescanGapMs
+    // apart) are the only sweeps: the background schedule on top roughly doubled the
+    // sweep duty (a channel hop every 120 ms) for the whole ~30 s window with the BLE
+    // central connected, and a rig central lost its link mid-window (CI, PR #411).
+    bool wanted = autonomous(now_ms) && !g_improv_scan.armed() &&
                   lm_wifi_scan::scan_wanted(g_creds_ready, st == AUTH, g_leased && st != AUTH,
                                             g_scan_matched, g_authw.waited_ms(now_ms));
     // Improv fresh join: retry the sweep a few seconds apart before reporting the SSID
@@ -2448,9 +2466,12 @@ void netstack_loop() {
     if (!g_hop.active() && g_radio_up && !g_silent && st == AUTH && !g_scan_matched &&
         g_improv_scan.take_retry(now_ms)) {
       g_force_sweep = true;
-      Serial.printf("[t=%lu] [ble] \"%s\" not seen yet — Improv retry sweep %lu/%lu\n",
-                    (unsigned long)now_ms, g_ssid, (unsigned long)(g_improv_scan.misses() + 1),
-                    (unsigned long)lm_wifi_scan::kImprovSweeps);
+      Serial.printf("[t=%lu] [ble] \"%s\" not seen yet — Improv retry sweep %lu (%lu s into "
+                    "the join; reported unreachable after %lu s)%s\n", (unsigned long)now_ms,
+                    g_ssid, (unsigned long)(g_improv_scan.misses() + 1),
+                    (unsigned long)((now_ms - g_improv_scan.started_ms()) / 1000),
+                    (unsigned long)(lm_wifi_scan::kImprovReportMs / 1000),
+                    g_latch_known ? "; auth to the latched BSSID continues between sweeps" : "");
     }
     bool forced = g_force_sweep && !g_hop.active() && g_radio_up && !g_silent;
     g_force_sweep = false;
@@ -2458,9 +2479,14 @@ void netstack_loop() {
     if (forced || (!g_hop.active() && g_scan_sched.due(wanted, now_ms, first_gap))) {
       g_hop.start();
       g_sweep_forced = forced;
+      // (A forced sweep is the Improv fresh join's live scan, its retries, or the console's
+      // WIFI SCAN — not a verdict on the AP: the old label called the fresh join's first
+      // sweep "not answering auth" before a single auth had gone out.)
       Serial.printf("[t=%lu] [wifi] \"%s\" %s — background scan %u (effect keeps running)\n",
                     (unsigned long)now_ms, g_ssid,
-                    g_scan_matched ? "not answering auth" : "not in the last scan",
+                    forced                 ? "forced sweep"
+                    : g_scan_matched       ? "not answering auth"
+                                           : "not in the last scan",
                     (unsigned)(g_scan_sched.attempt() + 1));
     }
     uint8_t ch = 0;
@@ -2469,10 +2495,12 @@ void netstack_loop() {
       bgscan_tune(ch);
     } else if (hs == lm_wifi_scan::ChannelHop::Step::kDone && g_sweep_forced && st != AUTH) {
       // A diagnostic sweep while associated: report, change nothing about the link.
+      if (g_scan_blind) g_scan_blind--;
       Serial.printf("[t=%lu] [wifi] background scan (forced): \"%s\" %s\n", (unsigned long)now_ms,
                     g_ssid, g_hop.found() ? "seen" : "not seen");
       esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);
     } else if (hs == lm_wifi_scan::ChannelHop::Step::kDone) {
+      if (g_scan_blind) g_scan_blind--;
       if (!g_sweep_forced) {
         g_scan_sched.on_scan_done(
             now_ms, lm_wifi_scan::policy_delay_ms(g_policy, g_scan_sched.attempt() + 1, unseen_s(),
@@ -2486,6 +2514,7 @@ void netstack_loop() {
         memcpy(g_bssid, b, 6);
         g_chan = fch;
         g_scan_matched = true;
+        g_latch_known = true;
         mark_seen();
         mac_own_bssid();
         if (moved) g_authw.reset();  // a new AP/channel: its own unanswered-auth clock
@@ -2510,9 +2539,11 @@ void netstack_loop() {
         // the board still joins if the AP appears, and that lease clears the error.
         improv_ble_set_error(IMPROV_ERROR_UNABLE_TO_CONNECT);
         g_improv_join.forget();  // the app's retry SendWifi is a fresh join, never a ride
-        Serial.printf("[t=%lu] [ble] \"%s\" not found in %lu sweeps (directed probe incl.) — Improv "
-                      "error UNABLE_TO_CONNECT; creds kept, background rescan continues\n",
-                      (unsigned long)now_ms, g_ssid, (unsigned long)lm_wifi_scan::kImprovSweeps);
+        Serial.printf("[t=%lu] [ble] \"%s\" not found in %lu sweeps over %lu s (directed probe "
+                      "incl.) — Improv error UNABLE_TO_CONNECT; creds kept, background rescan "
+                      "continues\n", (unsigned long)now_ms, g_ssid,
+                      (unsigned long)g_improv_scan.misses(),
+                      (unsigned long)((now_ms - g_improv_scan.started_ms()) / 1000));
       }
       esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);  // back on the join channel
     }
@@ -2526,7 +2557,14 @@ void netstack_loop() {
   // the new SSID then stalled, and the AUTH<->ASSOC churn kept the background rescan from
   // ever coming due. The rescan finds the AP and sets the match. Not while a sweep has the
   // radio on another channel either.
-  if (st == AUTH && g_creds_ready && ns_pmk_ready() && g_scan_matched && !g_hop.active() &&
+  // Exception: an Improv fresh join still looking for its AP (g_improv_scan armed) keeps
+  // authenticating toward the BSSID latched for THIS SSID (scan cache / an earlier sweep —
+  // never a previous network's) between its sweeps. A sweep can miss an AP that is there:
+  // on the iOS bench, with the iPhone holding the BLE link, every sweep for ~8 s missed the
+  // AP the board had been leased on a second earlier, the join never sent an auth, and the
+  // app got UNABLE_TO_CONNECT. An auth answer proves the AP and disarms the report.
+  bool auth_target = g_scan_matched || (g_improv_scan.armed() && g_latch_known);
+  if (st == AUTH && g_creds_ready && ns_pmk_ready() && auth_target && !g_hop.active() &&
       autonomous((uint32_t)millis()) && millis() - t > 200) {
     static bool deauthed = false;  // once per boot, to this AP (see build_deauth)
     uint32_t now_ms = (uint32_t)millis();
@@ -2658,7 +2696,7 @@ void netstack_loop() {
         // join's backoff had reached (up to 60 s).
         g_scan_sched.due(false, 0);  // disarm + reset the backoff
         g_force_sweep = true;
-        g_improv_scan.on_fresh_join();  // an SSID no sweep sees is reported (wifi_scan.h)
+        g_improv_scan.on_fresh_join(now_ms);  // an SSID no sweep sees is reported (wifi_scan.h)
         g_authw.reset();  // a fresh join gets a fresh unanswered-auth clock
         // Start deriving the PMK NOW (off the hot path), overlapped with auth/assoc, so it's
         // ready by the 4-way and we never freeze the loop (which would drop the BLE link

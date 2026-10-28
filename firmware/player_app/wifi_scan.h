@@ -265,31 +265,52 @@ inline size_t build_probe_req(uint8_t *f, size_t cap, const uint8_t mac[6], cons
 // When the network isn't on the air where the C6 can hear it — a phone hotspot on 5 GHz
 // only, or switched off — the old firmware just kept rescanning in the background and
 // the provisioning app sat at "waiting for the device to join" until its own timeout.
-// Now: kImprovSweeps sweeps (the fresh one + retries kImprovRescanGapMs apart, so a
-// hotspot that beacons slowly still gets caught) that all miss the SSID report
-// UNABLE_TO_CONNECT over Improv, so the app shows a failure. The credentials stay
+// Now the SSID is reported UNABLE_TO_CONNECT over Improv, so the app shows a failure,
+// once BOTH: at least kImprovSweeps sweeps (the fresh one + retries kImprovRescanGapMs
+// apart) missed it, AND the join has had kImprovReportMs to find it. The credentials stay
 // committed and the background rescan keeps going: if the AP shows up later the board
 // still joins, and the error is cleared (PROVISIONED + redirect) on that lease. Every
 // sweep sends a directed Probe Request for the SSID (bgscan_tune), so a hidden SSID
 // answers too.
+//
+// Why a time floor and not just the sweep count: a sweep can miss an AP that IS there.
+// On the iOS bench (a Mac Internet Sharing AP, an iPhone holding the BLE link) three
+// back-to-back sweeps in ~8 s all missed the AP the board had been leased on a moment
+// before — coex hands most of the radio to the phone's connection events, so a 120 ms
+// dwell rarely overlaps a beacon/probe response — and the app got UNABLE_TO_CONNECT for
+// a network that was right there (the next background scan, after the phone let go,
+// found it). While the report is armed the join also keeps authenticating toward the
+// latched BSSID between sweeps (armed() — netstack_transport.cpp), and an AP that
+// answers auth is on the air by definition (on_ap_answered disarms). The floor sits
+// well under the app's own 45 s join timeout (web/src/net/improv.ts), so a genuinely
+// absent SSID is still reported, not left to time out.
 constexpr uint32_t kImprovSweeps = 3;
 constexpr uint32_t kImprovRescanGapMs = 3000;
+constexpr uint32_t kImprovReportMs = 30000;
 
 class ImprovScanReport {
  public:
   enum class Action { kNone, kReportNotFound };
-  // An Improv fresh join started (its first sweep is already requested by the caller).
-  void on_fresh_join() {
+  // An Improv fresh join started at `now` (its first sweep is already requested by the
+  // caller).
+  void on_fresh_join(uint32_t now) {
     armed_ = true;
     sweeping_ = true;
     misses_ = 0;
     reported_ = false;
+    start_ms_ = now;
   }
   // Another path (wired PROV) replaced the credentials: nothing to report for Improv.
   void cancel() {
     armed_ = false;
     sweeping_ = false;
     reported_ = false;
+  }
+  // The AP answered our authentication: it is on the air, whatever the sweeps heard —
+  // the join goes on and there is nothing to report.
+  void on_ap_answered() {
+    armed_ = false;
+    sweeping_ = false;
   }
   // Polled while no sweep is running: whether to start the next retry sweep now.
   bool take_retry(uint32_t now) {
@@ -308,7 +329,8 @@ class ImprovScanReport {
     }
     misses_++;
     last_ms_ = now;
-    if (misses_ < kImprovSweeps) return Action::kNone;
+    if (misses_ < kImprovSweeps || !at_or_after(now, start_ms_ + kImprovReportMs))
+      return Action::kNone;
     armed_ = false;
     reported_ = true;
     return Action::kReportNotFound;
@@ -319,9 +341,12 @@ class ImprovScanReport {
     reported_ = false;
     return true;
   }
+  // The fresh join is still looking for its AP (not found, not answered, not reported).
   bool armed() const { return armed_; }
   bool reported() const { return reported_; }
   uint32_t misses() const { return misses_; }
+  // When the fresh join started (valid while armed).
+  uint32_t started_ms() const { return start_ms_; }
 
  private:
   bool armed_ = false;
@@ -329,6 +354,7 @@ class ImprovScanReport {
   bool reported_ = false;
   uint32_t misses_ = 0;
   uint32_t last_ms_ = 0;
+  uint32_t start_ms_ = 0;
 };
 
 }  // namespace lm_wifi_scan

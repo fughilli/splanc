@@ -234,21 +234,34 @@ static void test_kick_scans_now_and_restarts_the_backoff() {
 static void test_improv_reports_an_ssid_no_sweep_finds() {
   using R = lm_wifi_scan::ImprovScanReport;
   R r;
-  r.on_fresh_join();
-  assert(!r.take_retry(0));  // the fresh sweep is running
-  assert(r.on_sweep_done(false, 1000) == R::Action::kNone);
+  const uint32_t t0 = 1000;
+  r.on_fresh_join(t0);
+  assert(!r.take_retry(t0));  // the fresh sweep is running
+  uint32_t t = t0 + 1600;
+  assert(r.on_sweep_done(false, t) == R::Action::kNone);
   // Retries wait the gap (a slow hotspot beacon), one at a time.
-  assert(!r.take_retry(1000 + lm_wifi_scan::kImprovRescanGapMs - 1));
-  assert(r.take_retry(1000 + lm_wifi_scan::kImprovRescanGapMs));
-  assert(!r.take_retry(1000 + lm_wifi_scan::kImprovRescanGapMs + 10));  // already sweeping
-  uint32_t t = 1000 + lm_wifi_scan::kImprovRescanGapMs + 1600;
-  for (uint32_t i = 2; i < lm_wifi_scan::kImprovSweeps; i++) {
-    assert(r.on_sweep_done(false, t) == R::Action::kNone);
+  assert(!r.take_retry(t + lm_wifi_scan::kImprovRescanGapMs - 1));
+  assert(r.take_retry(t + lm_wifi_scan::kImprovRescanGapMs));
+  assert(!r.take_retry(t + lm_wifi_scan::kImprovRescanGapMs + 10));  // already sweeping
+  t += lm_wifi_scan::kImprovRescanGapMs + 1600;
+  // Sweep after sweep misses, but nothing is reported before the time floor.
+  uint32_t sweeps = 1;
+  R::Action a = R::Action::kNone;
+  while (true) {
+    a = r.on_sweep_done(false, t);
+    sweeps++;
+    if (a != R::Action::kNone) break;
+    assert(r.armed());
+    assert(t - t0 < lm_wifi_scan::kImprovReportMs);  // only the floor holds it back
     t += lm_wifi_scan::kImprovRescanGapMs;
     assert(r.take_retry(t));
     t += 1600;
   }
-  assert(r.on_sweep_done(false, t) == R::Action::kReportNotFound);
+  assert(a == R::Action::kReportNotFound);
+  assert(sweeps >= lm_wifi_scan::kImprovSweeps);
+  assert(t - t0 >= lm_wifi_scan::kImprovReportMs);
+  // ... and well inside the app's 45 s join timeout (web/src/net/improv.ts).
+  assert(t - t0 <= 40000);
   assert(r.reported() && !r.armed());
   // Reported once; later background sweeps report nothing more and retry nothing.
   assert(r.on_sweep_done(false, t + 60000) == R::Action::kNone);
@@ -258,34 +271,64 @@ static void test_improv_reports_an_ssid_no_sweep_finds() {
   assert(!r.take_clear_on_lease());
 }
 
+static void test_improv_three_quick_misses_are_not_enough() {
+  // The iOS-bench regression: three sweeps missed the AP inside ~8 s (coex with the
+  // phone's BLE link) and the app got UNABLE_TO_CONNECT for a network that was there.
+  using R = lm_wifi_scan::ImprovScanReport;
+  R r;
+  r.on_fresh_join(21604);
+  assert(r.on_sweep_done(false, 23164) == R::Action::kNone);
+  assert(r.take_retry(26164));
+  assert(r.on_sweep_done(false, 27724) == R::Action::kNone);
+  assert(r.on_sweep_done(false, 29728) == R::Action::kNone);  // a background sweep
+  assert(r.armed() && !r.reported() && r.misses() == 3);
+  // The AP answers the auth sent toward the latched BSSID between sweeps: it is there.
+  r.on_ap_answered();
+  assert(!r.armed() && !r.take_retry(40000));
+  assert(r.on_sweep_done(false, 60000) == R::Action::kNone && !r.reported());
+}
+
 static void test_improv_found_or_cancelled_never_reports() {
   using R = lm_wifi_scan::ImprovScanReport;
   R r;
-  r.on_fresh_join();
+  r.on_fresh_join(0);
   assert(r.on_sweep_done(true, 1000) == R::Action::kNone);  // first sweep found it
   assert(!r.armed() && !r.take_retry(100000) && !r.take_clear_on_lease());
-  r.on_fresh_join();
+  r.on_fresh_join(0);
   assert(r.on_sweep_done(false, 1000) == R::Action::kNone);
   assert(r.take_retry(1000 + lm_wifi_scan::kImprovRescanGapMs));
   assert(r.on_sweep_done(true, 6000) == R::Action::kNone);  // a retry found the hotspot
   assert(!r.reported());
-  r.on_fresh_join();
+  r.on_fresh_join(0);
   r.cancel();  // a wired PROV replaced the creds
   assert(r.on_sweep_done(false, 1000) == R::Action::kNone && !r.take_retry(99999));
   // A new fresh join re-arms (and forgets an earlier report).
-  r.on_fresh_join();
+  r.on_fresh_join(0);
   assert(!r.reported() && r.armed());
 }
 
 static void test_improv_background_sweeps_count_as_misses() {
-  // The background schedule's own sweeps (not just the retries) count, so the report
-  // comes after kImprovSweeps sweeps however they were started.
+  // The background schedule's own sweeps (not just the retries) count, so once the
+  // time floor has passed the report comes after kImprovSweeps sweeps however they
+  // were started.
   using R = lm_wifi_scan::ImprovScanReport;
   R r;
-  r.on_fresh_join();
+  r.on_fresh_join(1000);
   R::Action a = R::Action::kNone;
-  for (uint32_t i = 0; i < lm_wifi_scan::kImprovSweeps; i++) a = r.on_sweep_done(false, 1000 + i);
+  uint32_t t = 1000 + lm_wifi_scan::kImprovReportMs;
+  for (uint32_t i = 0; i < lm_wifi_scan::kImprovSweeps; i++) a = r.on_sweep_done(false, t + i);
   assert(a == R::Action::kReportNotFound);
+}
+
+static void test_improv_report_floor_is_wrap_safe() {
+  using R = lm_wifi_scan::ImprovScanReport;
+  R r;
+  const uint32_t t0 = 0xFFFFF000u;  // millis() about to wrap
+  r.on_fresh_join(t0);
+  for (uint32_t i = 1; i <= lm_wifi_scan::kImprovSweeps; i++)
+    assert(r.on_sweep_done(false, t0 + i * 2000) == R::Action::kNone);
+  assert(r.on_sweep_done(false, t0 + lm_wifi_scan::kImprovReportMs) ==
+         R::Action::kReportNotFound);
 }
 
 int main(int argc, char **argv) {
@@ -293,6 +336,9 @@ int main(int argc, char **argv) {
       argc, argv, "wifi_scan",
       {
           {"improv_reports_an_ssid_no_sweep_finds", test_improv_reports_an_ssid_no_sweep_finds},
+          {"improv_three_quick_misses_are_not_enough",
+           test_improv_three_quick_misses_are_not_enough},
+          {"improv_report_floor_is_wrap_safe", test_improv_report_floor_is_wrap_safe},
           {"improv_found_or_cancelled_never_reports",
            test_improv_found_or_cancelled_never_reports},
           {"improv_background_sweeps_count_as_misses",

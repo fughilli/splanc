@@ -39,6 +39,15 @@ NOT_FOUND = (
 )
 NO_DEVICE = {"ok": False, "error": "ImprovBLE provisioning failed: no Improv device found in scan"}
 
+SWEEP_MISS = (
+    '[t=23164] [wifi] background scan: "hitl-rig-1" not found; next in 5 s (BLE Improv '
+    "stays up to re-provision)\n"
+)
+BLIND_ACK = "[t=22000] [wifi] console: the next 40 sweep(s) hear nothing\n"
+# A fixed run's same-creds fresh joins: stored, joined, blind, stored_blind (the resend
+# rides), with the blind phases' deafened sweeps missing the AP.
+FIXED_SAME = FRESH_SAME * 4 + RIDE + BLIND_ACK + SWEEP_MISS
+
 
 def _all(r, absent=UNABLE):
     return {**{n: r for n in core.PHASES + (core.RECOVER,)}, core.ABSENT: absent}
@@ -53,7 +62,7 @@ def test_parse_counts_fresh_ride_and_old_lines():
 
 
 def test_fixed_firmware_passes():
-    s = core.parse_serial(SETUP + FRESH_SAME + FRESH_SAME + RIDE + NOT_FOUND)
+    s = core.parse_serial(SETUP + FIXED_SAME + NOT_FOUND)
     g = core.grade(OK, _all(OK), s, 20.0)
     assert g["verdict"] == "PASS", g
 
@@ -100,7 +109,7 @@ def test_crash_fails():
 
 
 def test_absent_ssid_must_report_not_hang():
-    s = core.parse_serial(SETUP + FRESH_SAME + FRESH_SAME + NOT_FOUND)
+    s = core.parse_serial(SETUP + FIXED_SAME + NOT_FOUND)
     assert s["not_found"] == 1
     assert core.grade(OK, _all(OK), s, 20.0)["verdict"] == "PASS"
     # The pre-fix firmware: the app waits until its own timeout.
@@ -113,9 +122,52 @@ def test_absent_ssid_must_report_not_hang():
 
 
 def test_absent_ble_infra_is_skip_and_recover_failure_fails():
-    s = core.parse_serial(SETUP + FRESH_SAME * 2)
+    s = core.parse_serial(SETUP + FIXED_SAME)
     assert core.grade(OK, _all(OK, absent=NO_DEVICE), s, 20.0)["verdict"] == "SKIP"
     ph = _all(OK)
     ph[core.RECOVER] = TIMEOUT
     g = core.grade(OK, ph, core.parse_serial(SETUP + FRESH_SAME * 2 + NOT_FOUND), 20.0)
     assert g["verdict"] == "FAIL" and g["problems"][0].startswith("recover:")
+
+
+def test_parse_counts_sweep_misses_and_blind_acks():
+    s = core.parse_serial(BLIND_ACK + SWEEP_MISS * 2 + "[wifi] console: the next 0 sweep(s)")
+    assert s["sweep_miss"] == 2 and s["blind_ack"] == 1
+
+
+def test_blind_phase_unable_to_connect_fails():
+    # The iOS-bench regression: sweeps that can't hear a present AP ended the fresh join
+    # in UNABLE_TO_CONNECT (the join never authenticated toward the latched BSSID).
+    s = core.parse_serial(SETUP + FRESH_SAME * 4 + BLIND_ACK + SWEEP_MISS + NOT_FOUND * 2)
+    ph = _all(OK)
+    ph["blind"] = UNABLE
+    g = core.grade(OK, ph, s, 20.0, 45.0)
+    assert g["verdict"] == "FAIL"
+    assert g["problems"] == ["blind: provisioning failed: " + UNABLE["error"]]
+
+
+def test_blind_phases_pass_when_the_join_rides_the_latch():
+    s = core.parse_serial(SETUP + FIXED_SAME + NOT_FOUND)
+    assert core.grade(OK, _all(OK), s, 20.0, 45.0)["verdict"] == "PASS"
+
+
+def test_blind_phase_that_never_missed_a_sweep_fails():
+    # SCANMISS acknowledged but no sweep ever missed: the case wasn't exercised.
+    s = core.parse_serial(SETUP + FRESH_SAME * 4 + BLIND_ACK + NOT_FOUND)
+    g = core.grade(OK, _all(OK), s, 20.0, 45.0)
+    assert g["verdict"] == "FAIL"
+    assert any("WIFI SCANMISS had no effect" in p for p in g["problems"])
+
+
+def test_no_scanmiss_ack_is_infra():
+    s = core.parse_serial(SETUP + FRESH_SAME * 2 + NOT_FOUND)
+    ph = _all(OK)
+    for n in core.BLIND_PHASES:
+        ph[n] = {"ok": False, "error": "console: no SCANMISS ack"}
+    g = core.grade(OK, ph, s, 20.0, 45.0)
+    assert g["verdict"] == "SKIP" and "SCANMISS" in g["skip"]
+
+
+def test_absent_budget_is_reported_in_the_hang_problem():
+    hang = core.grade(OK, _all(OK, absent=TIMEOUT), None, 20.0, 45.0)
+    assert any("45s budget (the app hangs)" in p for p in hang["problems"])
