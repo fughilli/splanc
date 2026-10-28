@@ -5,3 +5,4 @@
 # if the two don't match. Empty = system updates are off in images built from
 # this commit. Rotating: add the new key here, release, wait for bridges to
 # update, then switch the secret and drop the old key.
+splanc-bridge-1:iRkX7LqVEkRVnje2XTp30K2r+sykkMB6eaRPuzoIQAw=
