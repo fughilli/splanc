@@ -1122,13 +1122,15 @@ py_test(
 
 # Kiosk mode (docs/design/kiosk-mode.md): enable + attract capture, the lock gate's
 # refusals (kiosk_locked), a visitor effect that is never persisted (reboot -> the
-# attract show), the idle revert + its push, owner unlock, and the console "kiosk off".
+# attract show), the idle revert + its push, the BLE player transport (refusals, a
+# visitor effect, the push) + Improv refused, owner unlock, and the console "kiosk off".
 # Gate: SKIP on bench failures, FAIL on any assertion on a reached DUT (kiosk_core).
 #   bazel run //pi/hitl/harness:kiosk_netstack -- --server http://hitl-rig-2:8087
 py_test(
     name = "kiosk_netstack",
     timeout = "eternal",
     srcs = [
+        "hitl_ble_player.py",
         "hitl_kiosk.py",
         "hitl_led_capture.py",
     ],

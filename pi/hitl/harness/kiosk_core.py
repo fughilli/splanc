@@ -13,7 +13,18 @@ PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 
 # Phases in run order. "setup" failing before kiosk is enabled is a bench/infra
 # problem only when the DUT never answered; a setup assertion that ran is graded.
-PHASES = ("setup", "enable", "refuse", "visitor", "reboot", "revert", "unlock", "console")
+PHASES = (
+    "setup",
+    "enable",
+    "refuse",
+    "visitor",
+    "reboot",
+    "revert",
+    "ble",
+    "unlock",
+    "console",
+    "driver",
+)
 
 # What every refused op must come back as.
 LOCKED = "kiosk_locked"

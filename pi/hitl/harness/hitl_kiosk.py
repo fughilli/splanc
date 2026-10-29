@@ -12,12 +12,11 @@
    visitor effect was never persisted) at the attract brightness;
 7. revert: a visitor effect again, then no activity for idle_timeout_s -> a
    kiosk_status push (KIOSK_EVENT_REVERTED) and the attract show is back;
-8. unlock: a wrong secret is refused (kiosk_bad_secret), the right one unlocks
+8. ble: over the BLE player transport (rig bleak driver): refusals, a visitor effect +
+   brightness, the ACTIVITY push to the BLE central; Improv provisioning refused;
+9. unlock: a wrong secret is refused (kiosk_bad_secret), the right one unlocks
    this connection: rename then works; disable the kiosk;
-9. console: re-enable, then the USB console's "kiosk off" disables it.
-
-Over wss (the same main.cpp handler and gate serve the BLE player transport; the
-connection source only selects which unlock applies).
+10. console: re-enable, then the USB console's "kiosk off" disables it.
 
 Verdict (kiosk_core): PASS / FAIL (an assertion on a reached DUT) / SKIP (bench:
 no DUT, flash / provisioning failure, a reboot that never reconnects). DUT serial
@@ -32,6 +31,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import json
 import os
 import shlex
 import ssl
@@ -176,6 +176,8 @@ async def phase_main(
     leds: int,
     reboot: Callable[[], str] | None,
     console: Callable[[str], str] | None,
+    ble: Callable[[list[bytes]], dict] | None = None,
+    improv: Callable[[], dict] | None = None,
 ) -> str | None:
     c = await connect(url, hitl_ws.CONNECT_SETTLE)
     fw = None
@@ -327,6 +329,80 @@ async def phase_main(
             P, "attract_active", s.get("attractActive") and not s.get("idleRemainingS"), str(s)
         )
 
+        # -- BLE: the visitor transport (its own connection source + push path) ----
+        if ble is not None:
+            P = "ble"
+            await c.close()
+            enc = c.pw.encode_client
+            frames = [
+                enc({"type": "hello", "client": "kiosk-ble", "app_version": "1"}),
+                enc({"type": "set_device_name", "name": "KioskPwned"}),
+                enc({"type": "set_wifi_policy"}),
+                enc({"type": "set_kiosk_config", "enabled": False}),
+                enc(
+                    {
+                        "type": "submit_effect",
+                        "effect_id": "__ble",
+                        "fxb": _b64(visitor),
+                        "activate": True,
+                    }
+                ),
+                enc({"type": "set_brightness", "brightness": 0.6}),
+            ] + [enc({"type": "get_kiosk_status"})] * 3
+            res = await asyncio.to_thread(ble, frames)
+            if not res.get("ok"):
+                run.skip(P, f"ble transport ({res.get('error')})")
+            else:
+                replies = [c.pw.decode_server(base64.b64decode(r)) for r in res["replies_b64"]]
+
+                def is_push(m: dict) -> bool:
+                    return (
+                        m.get("type") == "kiosk_status"
+                        and m.get("event", "KIOSK_EVENT_NONE") != "KIOSK_EVENT_NONE"
+                    )
+
+                real = [m for m in replies if not is_push(m)]
+                pushes = [m.get("event") for m in replies if is_push(m)]
+                _log(f"[kiosk] ble replies: {[m.get('type') for m in real]} pushes={pushes}")
+                want = [
+                    "welcome",
+                    "error",
+                    "error",
+                    "error",
+                    "result_ready",
+                    "welcome",
+                    "kiosk_status",
+                ]
+                got = [m.get("type") for m in real[: len(want)]]
+                run.check(P, "reply_sequence", got == want, f"{got}")
+                if got == want:
+                    for i, label in [(1, "rename"), (2, "wifi_policy"), (3, "kiosk_config")]:
+                        run.check(P, f"refused_{label}", core.refused(real[i]), str(real[i]))
+                    br = real[5].get("brightness")
+                    run.check(P, "brightness", core.near(br, 0.6), str(br))
+                    st = real[6]
+                    run.check(
+                        P,
+                        "status_locked",
+                        st.get("enabled")
+                        and not st.get("ownerUnlocked")
+                        and not st.get("attractActive"),
+                        str(st),
+                    )
+                run.check(P, "activity_push", "KIOSK_EVENT_ACTIVITY" in pushes, str(pushes))
+            if improv is not None:
+                ir = await asyncio.to_thread(improv)
+                err = str(ir.get("error") or "")
+                if "no " in err and "found" in err or "transport" in err:
+                    run.skip(P, f"improv transport ({err[:80]})")
+                else:
+                    run.check(P, "improv_refused", not ir.get("ok"), str(ir)[:300])
+            try:
+                c = await connect(url, hitl_ws.RECONNECT_SETTLE)
+            except Exception as e:  # noqa: BLE001
+                run.skip(P, f"no wss reconnect after BLE ({type(e).__name__})")
+                return fw
+
         # -- owner unlock --------------------------------------------------------
         P = "unlock"
         r = await c.call({"type": "kiosk_unlock", "secret": "wrong"}, "kiosk_status")
@@ -383,7 +459,14 @@ def run(args) -> int:
         return run_device(args, attract, visitor)
 
     from hitl_client import Reservation, ReserveError
-    from provision import HarnessError, dut_target, provision_dut, wire_provision_dut
+    from provision import (
+        _BLE_MAC_RE,
+        _IDENTITY_MAC_RE,
+        HarnessError,
+        dut_target,
+        provision_dut,
+        wire_provision_dut,
+    )
 
     r = Reservation(server=args.server, owner=args.owner, device=args.unit)
     try:
@@ -419,11 +502,48 @@ def run(args) -> int:
                 return 0
         host, port = dut_target(redirect, "wss")
 
+        dut: dict[str, str] = {}
+
         def reboot() -> str:
             p = r.ssh_serialized("hitl-monitor --reset --seconds 25", capture=True, timeout=120)
             out = (p.stdout or "") + (p.stderr or "")
             _log("[kiosk] reboot log tail:\n" + out[-1500:])
+            m = _BLE_MAC_RE.search(out) or _IDENTITY_MAC_RE.search(out)
+            if m:
+                dut["mac"] = m.group(1).lower()
             return out
+
+        here = os.path.dirname(os.path.abspath(__file__))
+        r.scp_to(
+            [os.path.join(here, f) for f in ("hitl_ble_player.py", "hitl_improv.py", "improv.py")],
+            "/tmp/",
+        )
+
+        def _rig_json(cmd: str, timeout: float) -> dict:
+            if "mac" not in dut:
+                return {"ok": False, "error": "transport: no DUT BLE MAC from the boot log"}
+            p = r.ssh(f"{cmd} --address {dut['mac']}", capture=True, timeout=timeout)
+            out = (p.stdout or "").strip()
+            _log(f"[kiosk] rig: {(p.stderr or '')[-600:]}")
+            try:
+                return json.loads(out.splitlines()[-1])
+            except (ValueError, IndexError):
+                return {"ok": False, "error": f"transport: no JSON ({out[-200:]!r})"}
+
+        def ble(frames: list[bytes]) -> dict:
+            b64 = ",".join(base64.b64encode(f).decode("ascii") for f in frames)
+            return _rig_json(
+                "PYTHONPATH=/tmp python3 /tmp/hitl_ble_player.py exchange "
+                f"--frames-b64 {b64} --timeout 20",
+                300,
+            )
+
+        def improv() -> dict:
+            return _rig_json(
+                f"PYTHONPATH=/tmp python3 /tmp/hitl_improv.py provision --ssid {shlex.quote(ssid)} "
+                f"--pass {shlex.quote(pw or '')} --timeout 30",
+                200,
+            )
 
         def console(line: str) -> str:
             cmd = (
@@ -439,7 +559,15 @@ def run(args) -> int:
         with r.forward(host, port) as lp:
             fw = asyncio.run(
                 phase_main(
-                    run_, f"wss://localhost:{lp}/ws", attract, visitor, args.leds, reboot, console
+                    run_,
+                    f"wss://localhost:{lp}/ws",
+                    attract,
+                    visitor,
+                    args.leds,
+                    reboot,
+                    console,
+                    ble,
+                    improv,
                 )
             )
     except Exception as e:  # noqa: BLE001
