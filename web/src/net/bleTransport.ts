@@ -96,13 +96,39 @@ export function bleAvailable(): boolean {
   return typeof navigator !== "undefined" && "bluetooth" in navigator;
 }
 
+/** Narrow the chooser to devices by advertised name (Halloween play mode:
+ * `SpookySplanc1`, or every `SpookySplanc*`). Exact `name` wins over `namePrefix`. */
+export interface BleNameFilter {
+  name?: string;
+  namePrefix?: string;
+}
+
+/** The `requestDevice` options for an optional name filter (pure; unit-tested).
+ * No filter = every splanc device (they all advertise the Improv service). With
+ * a name filter the Improv service may not be in the advertisement packet
+ * alongside the name, so match on the name alone and list BOTH services as
+ * optional so the GATT player socket (and Improv) are usable after connecting. */
+export function bleRequestOptions(filter?: BleNameFilter): {
+  filters: Record<string, unknown>[];
+  optionalServices: string[];
+} {
+  if (filter?.name) {
+    return { filters: [{ name: filter.name }], optionalServices: [PLAYER_SERVICE_UUID, IMPROV_SERVICE] };
+  }
+  if (filter?.namePrefix) {
+    return { filters: [{ namePrefix: filter.namePrefix }], optionalServices: [PLAYER_SERVICE_UUID, IMPROV_SERVICE] };
+  }
+  return { filters: [{ services: [IMPROV_SERVICE] }], optionalServices: [PLAYER_SERVICE_UUID] };
+}
+
 /**
  * Show the Bluetooth chooser and return the picked device. MUST be the first
  * async call in a click handler — `requestDevice` demands an unconsumed user
- * gesture. We filter on the Improv service (every splanc device advertises it)
- * and list the player service as optional so we may use it after connecting.
+ * gesture. Without a filter we match the Improv service (every splanc device
+ * advertises it) and list the player service as optional so we may use it after
+ * connecting; `filter` narrows the chooser by advertised name instead.
  */
-export async function requestBleDevice(): Promise<BleDevice> {
+export async function requestBleDevice(filter?: BleNameFilter): Promise<BleDevice> {
   // HITL app-driver (virtual-BLE mode): substitute a virtual player peripheral (no
   // real radio). Real-BLE mode falls through to Web Bluetooth (emulator lane).
   if (driverUsesVirtualBle()) {
@@ -115,10 +141,7 @@ export async function requestBleDevice(): Promise<BleDevice> {
     }
   ).bluetooth;
   if (!bt) throw new Error("Web Bluetooth is unavailable in this browser");
-  return (await bt.requestDevice({
-    filters: [{ services: [IMPROV_SERVICE] }],
-    optionalServices: [PLAYER_SERVICE_UUID],
-  })) as BleDevice;
+  return (await bt.requestDevice(bleRequestOptions(filter))) as BleDevice;
 }
 
 /**

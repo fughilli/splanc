@@ -193,6 +193,8 @@ ts_project(
             # Show mode (FUG-110) statically imports the worker compiler too
             # (cueing compiles effects to .fxb); reached only via app/main.
             "src/ui/screens/showMode.ts",
+            # Halloween play mode compiles its preset tiles with the worker too.
+            "src/ui/screens/playMode.ts",
             "src/ui/app/main.ts",
             "src/ui/main.ts",
             # The JIT fx-bench golden lives here only for the shared

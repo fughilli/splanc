@@ -19,6 +19,10 @@
  *                sensor, no saved capture settings, and answers the capture
  *                requests, so `#/capture?calibrate=__demo__` (the first library
  *                map) renders the Calibrate-IMU screen with its controls.
+ *   play / play-revert / play-nomap / play-off — Halloween play mode: a
+ *                connected "SpookySplanc1" in kiosk mode (countdown 1:42) with a
+ *                stored map; `play-revert` fires an idle revert after 2.5 s;
+ *                `play-nomap` has no stored map; `play-off` is not connected.
  *
  * These are genuine seams into the real stores/clients — no production path
  * calls them. Each scenario is independent so a shot can combine them
@@ -43,6 +47,88 @@ export function initDemoMode(scenarios: Set<string>): void {
   if (scenarios.has("effect")) setupEffectEditor();
   if (scenarios.has("flash")) setupFlashDemo();
   if (scenarios.has("imu")) setupImuDemo();
+  const play = [...scenarios].find((s) => s === "play" || s.startsWith("play-"));
+  if (play) void setupPlayDemo(play);
+}
+
+/** The compiler wasm isn't served by the static screenshot server: answer the
+ * play screen's compiles with the scalar uniforms declared in the source (enough
+ * for the tiles' sliders). */
+function stubPresetCompiler(): void {
+  const Orig = globalThis.Worker;
+  if (!Orig) return;
+  const compile = (src: string): unknown => {
+    const uniforms = [...src.matchAll(/uniform\s+float\s+(\w+)\s*:\s*([-\d.]+)\s*\.\.\s*([-\d.]+)\s*=\s*([-\d.]+)/g)].map(
+      (m, i) => ({
+        name: m[1],
+        slot: i,
+        width: 1,
+        ui: { kind: "slider", min: Number(m[2]), max: Number(m[3]), step: 0.01 },
+        default: [Number(m[4])],
+      }),
+    );
+    return { ok: true, bytecode: new Uint8Array([0x46, 0x58, 0x42, 0x31]), uniforms, diagnostics: [] };
+  };
+  globalThis.Worker = function (this: unknown, url: string | URL, opts?: WorkerOptions): Worker {
+    if (!String(url).includes("compile-worker")) return new Orig(url, opts);
+    const w = {
+      onmessage: null as ((ev: { data: unknown }) => void) | null,
+      postMessage(req: { id: number; src: string }) {
+        setTimeout(() => w.onmessage?.({ data: { id: req.id, kind: "compile", result: compile(req.src) } }), 20);
+      },
+      terminate() {},
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    return w as unknown as Worker;
+  } as unknown as typeof Worker;
+}
+
+/** Halloween play mode with a kiosk-mode fixture (see the header). */
+async function setupPlayDemo(kind: string): Promise<void> {
+  setupWebBluetooth();
+  if (kind === "play-off") return;
+  const dev = deviceStore.upsert("ble:demo-spooky-1", "SpookySplanc1");
+  deviceStore.setActive(dev.id);
+  const client = new LedMapperClient(dev.wssUrl);
+  Object.defineProperty(client, "isConnected", { configurable: true, get: () => true });
+  appState.setDemoConnection(client, { state: "connected", text: "connected", certUrl: null, error: null });
+  setupDeviceMap(kind === "play-nomap" ? "none" : "saved");
+  const kiosk = {
+    enabled: true,
+    idleTimeoutS: 120,
+    idleRemainingS: 102,
+    attractActive: false,
+    hasAttract: true,
+    attractName: "boo-pumpkin-glow",
+    attractBrightness: 0.6,
+    ownerUnlocked: false,
+    hasSecret: true,
+    event: "KIOSK_EVENT_NONE",
+  };
+  const welcome = {
+    type: "welcome",
+    sessionId: "demo",
+    deviceName: "SpookySplanc1",
+    mac: "AA:BB:CC:00:0B:01",
+    features: ["effects", "stored_map", "decks", "kiosk", "uniform_commit"],
+    codeParams: { ledCount: 64 },
+    kiosk,
+  };
+  Object.defineProperty(client, "welcome", { configurable: true, get: () => welcome });
+  const c = client as unknown as Record<string, unknown>;
+  c["submitEffect"] = async (effectId: string) => ({ type: "result_ready", id: effectId });
+  c["setUniforms"] = () => true;
+  c["getKioskStatus"] = async () => ({ type: "kiosk_status", ...kiosk });
+  stubPresetCompiler();
+  const { kioskStore } = await import("../halloween/kioskStore");
+  const { normalizeKioskStatus } = await import("../net/kiosk");
+  kioskStore.start();
+  kioskStore.apply(normalizeKioskStatus(kiosk)!);
+  if (kind === "play-revert") {
+    const reverted = { ...kiosk, idleRemainingS: 0, attractActive: true, event: "KIOSK_EVENT_REVERTED" };
+    setTimeout(() => kioskStore.apply(normalizeKioskStatus(reverted)!), 2500);
+  }
 }
 
 /** The Calibrate-IMU screen without hardware (sensor-core.md §7.3): stub the
