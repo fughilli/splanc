@@ -6,8 +6,8 @@ The image is built and published by CI (.github/workflows/pi-bridge-image.yml) o
 its own release track: tags ``pi-bridge-v<X.Y.Z>`` in fughilli/splanc, each with
 ``splanc-bridge-<board>-<X.Y.Z>.img.zst`` + ``.img.zst.sha256`` per board. The
 repo's other releases (firmware-v*, app-v*, pi-v*) are ignored, so GitHub's
-"latest release" can't be used: we list releases and pick the newest
-pi-bridge-v* by version.
+"latest release" can't be used: we list releases and sort pi-bridge-v* by
+version. The newest final release is the default; the user can pick an older one.
 
 Before anything is written to a card the download must match BOTH the published
 ``.sha256`` file and, when GitHub reports one, the asset's own sha256 digest.
@@ -104,6 +104,7 @@ class Release:
     published_at: str
     images: dict  # board -> Image
     url: str = ""
+    prerelease: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -111,6 +112,7 @@ class Release:
             "version": self.version,
             "published_at": self.published_at,
             "url": self.url,
+            "prerelease": self.prerelease,
             "boards": [self.images[b].to_dict() for b in BOARDS if b in self.images],
         }
 
@@ -158,18 +160,30 @@ def parse_releases(data, repo: str = REPO) -> list:
                     published_at=r.get("published_at") or "",
                     images=images,
                     url=r.get("html_url") or "",
+                    prerelease=bool(r.get("prerelease")),
                 )
             )
     out.sort(key=lambda rel: _version_key(rel.version), reverse=True)
     return out
 
 
+def list_releases(repo: str = REPO) -> list:
+    """Every published pi-bridge release with images, newest first (pre-releases too)."""
+    return parse_releases(
+        json.loads(_get(API.format(repo=repo), accept="application/vnd.github+json")), repo
+    )
+
+
+def default_release(rels: list) -> Optional[Release]:
+    """The one to offer first: the newest final release, else the newest pre-release."""
+    return next((r for r in rels if not r.prerelease), rels[0] if rels else None)
+
+
 def latest_release(repo: str = REPO, include_prerelease: bool = False) -> Optional[Release]:
-    data = json.loads(_get(API.format(repo=repo), accept="application/vnd.github+json"))
-    if not include_prerelease:
-        data = [r for r in data if not r.get("prerelease")]
-    rels = parse_releases(data, repo)
-    return rels[0] if rels else None
+    rels = list_releases(repo)
+    if include_prerelease:
+        return rels[0] if rels else None
+    return next((r for r in rels if not r.prerelease), None)
 
 
 def expected_sha256(img: Image, fetch: Callable[[str], bytes] = _get) -> str:

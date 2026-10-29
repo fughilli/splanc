@@ -30,6 +30,12 @@
       <section class="pane" id="pane-board">
         <h2>Which Raspberry Pi is this for?</h2>
         <p class="dim" id="release-line">Looking for the latest Splanc bridge image…</p>
+        <div class="version-row hidden" id="version-row">
+          <label for="version">Splanc bridge version</label>
+          <select id="version"></select>
+          <span class="dim small" id="version-date"></span>
+        </div>
+        <p class="hint hidden" id="version-note"></p>
         <div class="cards" id="boards"></div>
         <div class="notice err hidden" id="release-error">
           <p id="release-error-text"></p>
@@ -111,6 +117,7 @@
       <!-- 3. card -->
       <section class="pane hidden" id="pane-card">
         <h2>Pick the SD card</h2>
+        <p class="summary" id="card-summary"></p>
         <p class="dim">Insert a microSD card (4 GB or larger). Only removable disks are shown. <b>Everything on it will be erased.</b></p>
         <div class="disks" id="disks"></div>
         <footer class="actions">
@@ -122,10 +129,11 @@
       <!-- 4. progress -->
       <section class="pane hidden" id="pane-write">
         <h2 id="write-title">Writing the card…</h2>
+        <p class="summary" id="write-summary"></p>
         <p class="dim" id="write-message">Starting…</p>
         <div class="bar"><div id="bar-fill"></div></div>
         <ul class="stages" id="stages">
-          <li data-stage="download">Download the image</li>
+          <li data-stage="download" id="stage-download">Download the image</li>
           <li data-stage="verify">Check the download</li>
           <li data-stage="unpack">Unpack</li>
           <li data-stage="write">Write the card</li>
@@ -141,7 +149,7 @@
       <!-- 5. done -->
       <section class="pane hidden" id="pane-done">
         <div class="done-mark" aria-hidden="true">✓</div>
-        <h2>Your Splanc bridge card is ready</h2>
+        <h2 id="done-title">Your Splanc bridge card is ready</h2>
         <ol class="howto">
           <li>Take the card out and put it in your Raspberry Pi.</li>
           <li>Connect an HDMI screen or the 1.3″ OLED HAT (either works), then plug in power.</li>

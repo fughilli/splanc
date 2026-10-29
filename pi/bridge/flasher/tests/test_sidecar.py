@@ -57,3 +57,24 @@ def test_protocol_over_stdio():
     assert {"type": "pong"} in events
     v = next(e for e in events if e["type"] == "validation")
     assert "psk" in v["errors"]
+
+
+def test_flash_picks_the_chosen_version(monkeypatch):
+    from splanc_flasher import releases as rl
+
+    def rel(version, prerelease=False):
+        name = f"splanc-bridge-pi3-{version}.img.zst"
+        img = rl.Image("pi3", version, f"pi-bridge-v{version}", rl.Asset(name, "u", 1), None)
+        return rl.Release(f"pi-bridge-v{version}", version, "", {"pi3": img}, prerelease=prerelease)
+
+    rels = [rel("1.2.0", prerelease=True), rel("1.1.0"), rel("1.0.0")]
+    monkeypatch.setattr(rl, "list_releases", lambda repo=rl.REPO: rels)
+    sc = sidecar.Sidecar()
+    assert sc.pick_release(None).version == "1.1.0"
+    assert sc.pick_release("pi-bridge-v1.0.0").version == "1.0.0"
+    try:
+        sc.pick_release("pi-bridge-v0.9.0")
+    except ValueError as e:
+        assert "0.9.0" in str(e)
+    else:
+        raise AssertionError("an unknown tag must not fall back to another version")

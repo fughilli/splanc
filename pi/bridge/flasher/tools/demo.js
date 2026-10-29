@@ -18,6 +18,13 @@
       { board: 'zero2w', board_name: 'Raspberry Pi Zero 2 W', size: 434e6 },
     ],
   };
+  const older = {
+    ...release,
+    tag: 'pi-bridge-v0.9.0',
+    version: '0.9.0',
+    published_at: '2026-10-02T00:00:00Z',
+    boards: release.boards.slice(0, 3),
+  };
   const disks = [
     { id: '/dev/rdisk4', name: 'SanDisk Ultra microSD', size: 31914983424, size_gb: 31.9, bus: 'USB', large: false },
     { id: '/dev/rdisk6', name: 'Backup Drive', size: 2000398934016, size_gb: 2000.4, bus: 'USB', large: true },
@@ -30,7 +37,7 @@
     pickImage: async () => null,
     openLink: async () => {},
     send: (msg) => {
-      if (msg.cmd === 'release') emit({ type: 'release', release });
+      if (msg.cmd === 'release') emit({ type: 'release', release, releases: [release, older] });
       if (msg.cmd === 'list_disks') emit({ type: 'disks', disks });
       if (msg.cmd === 'validate') {
         const f = msg.form;
@@ -72,7 +79,7 @@
         emit({ type: 'progress', stage, frac, overall, message: 'Writing: 1292 of 2085 MB' });
       }
     } else if (reach === 4) {
-      emit({ type: 'flash_done', hostname: 'living-room', disk: disks[0], board: 'pi5' });
+      emit({ type: 'flash_done', hostname: 'living-room', disk: disks[0], board: 'pi5', version: '1.0.0' });
     } else {
       emit({
         type: 'flash_error',
