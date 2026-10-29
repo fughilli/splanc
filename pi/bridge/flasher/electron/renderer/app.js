@@ -11,7 +11,9 @@
   const ORDER = ['board', 'wifi', 'card', 'write'];
 
   const state = {
-    release: null,
+    release: null, // the selected release
+    releases: [],
+    latestTag: null, // the default (newest final) release
     board: null,
     localImage: null,
     disks: [],
@@ -34,6 +36,7 @@
     });
     clearInterval(state.diskTimer);
     if (name === 'card') {
+      $('card-summary').textContent = summary();
       api.send({ cmd: 'list_disks' });
       state.diskTimer = setInterval(() => api.send({ cmd: 'list_disks' }), 2500);
     }
@@ -44,6 +47,17 @@
     if (cls) e.className = cls;
     if (text != null) e.textContent = text;
     return e;
+  }
+
+  const fmtDate = (iso) => (iso ? iso.slice(0, 10) : '');
+
+  // What will be written, e.g. "Splanc bridge 1.1.0 · Raspberry Pi 3 (B, B+, A+)".
+  function summary() {
+    if (state.localImage) return `Image file · ${state.localImage}`;
+    const rel = state.release;
+    if (!rel) return '';
+    const b = rel.boards.find((x) => x.board === state.board);
+    return `Splanc bridge ${rel.version}${b ? ` · ${b.board_name}` : ''}`;
   }
 
   const fmtSize = (bytes) =>
@@ -64,7 +78,9 @@
       const c = el('button', 'card');
       c.type = 'button';
       c.append(el('div', 'name', b.board_name));
-      c.append(el('div', 'meta', b.size ? `${fmtSize(b.size)} download` : state.localImage));
+      c.append(
+        el('div', 'meta', b.size ? `v${state.release.version} · ${fmtSize(b.size)} download` : state.localImage),
+      );
       if (state.board === b.board) c.classList.add('selected');
       c.addEventListener('click', () => {
         state.board = b.board;
@@ -80,14 +96,53 @@
     $('board-next').disabled = !state.board;
   }
 
+  function versionLabel(r) {
+    if (r.tag === state.latestTag) return `${r.version} (latest)`;
+    return r.prerelease ? `${r.version} (pre-release)` : r.version;
+  }
+
+  function selectRelease(tag) {
+    const rel = state.releases.find((r) => r.tag === tag);
+    if (!rel) return;
+    state.release = rel;
+    $('version').value = tag;
+    $('version-date').textContent = rel.published_at ? `Published ${fmtDate(rel.published_at)}` : '';
+    const note = $('version-note');
+    const older = tag !== state.latestTag;
+    note.classList.toggle('hidden', !older);
+    note.textContent = older
+      ? rel.prerelease
+        ? 'A pre-release: newer than the latest release, but less tested.'
+        : 'An older version. The bridge will offer newer versions on its screen; nothing is installed until you confirm.'
+      : '';
+    // Older releases may not have been built for every board.
+    if (state.board && state.board !== 'local' && !rel.boards.some((b) => b.board === state.board)) {
+      state.board = null;
+    }
+    renderBoards();
+  }
+
   function onRelease(evt) {
     if (evt.release) {
-      state.release = evt.release;
-      const when = evt.release.published_at ? ` · ${evt.release.published_at.slice(0, 10)}` : '';
-      $('release-line').textContent = `Splanc bridge ${evt.release.version}${when}`;
+      state.releases = evt.releases && evt.releases.length ? evt.releases : [evt.release];
+      state.latestTag = evt.release.tag;
+      const sel = $('version');
+      sel.textContent = '';
+      for (const r of state.releases) {
+        const o = document.createElement('option');
+        o.value = r.tag;
+        o.textContent = versionLabel(r);
+        sel.append(o);
+      }
+      $('release-line').classList.add('hidden');
+      $('version-row').classList.remove('hidden');
       $('release-error').classList.add('hidden');
+      selectRelease(evt.release.tag);
+      return;
     } else {
       $('release-line').textContent = '';
+      $('release-line').classList.remove('hidden');
+      $('version-row').classList.add('hidden');
       $('release-error-text').textContent =
         evt.error || 'No Splanc bridge image has been published yet. Check back soon.';
       $('release-error').classList.remove('hidden');
@@ -229,12 +284,16 @@
     }
     $('bar-fill').style.width = '0%';
     $('write-title').textContent = 'Writing the card…';
+    $('write-summary').textContent = summary();
+    $('stage-download').textContent =
+      state.release && !state.localImage ? `Download Splanc bridge ${state.release.version}` : 'Download the image';
     $('write-message').textContent = 'Starting…';
     $('cancel').disabled = false;
     show('write');
     api.send({
       cmd: 'flash',
       board: state.board,
+      tag: state.localImage || !state.release ? null : state.release.tag,
       disk_id: d.id,
       local_image: state.localImage,
       form: form(),
@@ -258,6 +317,9 @@
 
   function onDone(evt) {
     state.writing = false;
+    $('done-title').textContent = evt.version
+      ? `Your Splanc bridge ${evt.version} card is ready`
+      : 'Your Splanc bridge card is ready';
     $('done-host').textContent = `It will be on your network as ${evt.hostname}.local.`;
     $('done-win-note').textContent =
       api.platform === 'win32'
@@ -315,9 +377,11 @@
   });
 
   $('board-next').addEventListener('click', () => show('wifi'));
+  $('version').addEventListener('change', (e) => selectRelease(e.target.value));
   $('retry-release').addEventListener('click', () => {
     $('release-error').classList.add('hidden');
     $('release-line').textContent = 'Looking for the latest Splanc bridge image…';
+    $('release-line').classList.remove('hidden');
     state.release = null;
     renderBoards();
     api.send({ cmd: 'release' });

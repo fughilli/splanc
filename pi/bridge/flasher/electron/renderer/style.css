@@ -226,7 +226,8 @@ main {
 }
 
 input,
-textarea {
+textarea,
+select {
   font: inherit;
   color: var(--text);
   background: var(--surface);
@@ -238,7 +239,8 @@ textarea {
 }
 
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
 }
@@ -542,4 +544,35 @@ textarea:focus {
   .grid2 {
     grid-template-columns: 1fr;
   }
+}
+
+/* --- version picker --- */
+.version-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+}
+
+.version-row label {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.version-row select {
+  width: auto;
+  min-width: 12rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#version-note {
+  margin: -6px 0 12px;
+}
+
+.summary {
+  margin: 0 0 8px;
+  font-weight: 600;
+  color: var(--text);
 }

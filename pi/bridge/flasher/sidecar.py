@@ -5,22 +5,24 @@ Adapted from td-deploy Studio's sidecar (app/sidecar.py, MIT): newline-delimited
 JSON, one command per line on stdin, events on stdout.
 
 Commands:
-  {"cmd":"release"}                     newest pi-bridge-v* release -> "release"
+  {"cmd":"release"}                     pi-bridge-v* releases -> "release"
   {"cmd":"list_disks"}                  removable disks -> "disks"
   {"cmd":"validate","form":{...}}       -> "validation" {errors:{field:msg}, hostname}
-  {"cmd":"flash","board":"pi5","disk_id":"/dev/rdisk4","form":{...},
-       "local_image":null}             download/verify/unpack + write + settings
+  {"cmd":"flash","board":"pi5","tag":"pi-bridge-v1.1.0","disk_id":"/dev/rdisk4",
+       "form":{...},"local_image":null} download/verify/unpack + write + settings
+                                        (no tag: the default release)
   {"cmd":"cancel"}                      stop a flash before the write starts
   form = {ssid, psk, hidden, ethernet_only, country, device_name, relay, ssh_key}
 
 Events:
   {"type":"ready","version":..}
-  {"type":"release","release":{tag,version,boards:[{board,board_name,size,..}]}|null,"error":..}
+  {"type":"release","release":{tag,version,prerelease,boards:[{board,board_name,size,..}]}|null,
+       "releases":[release, ..] (newest first; "release" is the default pick),"error":..}
   {"type":"disks","disks":[{id,name,size,size_gb,bus,large}]}
   {"type":"validation","errors":{..},"hostname":"splanc-bridge"}
   {"type":"progress","stage":"download|verify|unpack|write|check|configure",
        "frac":0..1,"overall":0..1,"message":".."}
-  {"type":"flash_done","disk":{..},"hostname":"..","board":".."}
+  {"type":"flash_done","disk":{..},"hostname":"..","board":"..","version":"1.1.0"|null}
   {"type":"flash_error","message":".."}
   {"type":"log","line":".."}
 
@@ -127,7 +129,8 @@ def validate(form: dict) -> tuple:
 
 class Sidecar:
     def __init__(self) -> None:
-        self.release = None
+        self.release = None  # the default pick
+        self.releases = []
         self.cancel = threading.Event()
         self.busy = False
 
@@ -138,10 +141,38 @@ class Sidecar:
         from splanc_flasher import releases
 
         try:
-            self.release = releases.latest_release()
-            emit({"type": "release", "release": self.release.to_dict() if self.release else None})
+            self.releases = releases.list_releases()
+            self.release = releases.default_release(self.releases)
+            emit(
+                {
+                    "type": "release",
+                    "release": self.release.to_dict() if self.release else None,
+                    "releases": [r.to_dict() for r in self.releases],
+                }
+            )
         except Exception as e:  # noqa: BLE001 - offline etc.: the UI shows it + retry
-            emit({"type": "release", "release": None, "error": f"Couldn't reach GitHub: {e}"})
+            emit(
+                {
+                    "type": "release",
+                    "release": None,
+                    "releases": [],
+                    "error": f"Couldn't reach GitHub: {e}",
+                }
+            )
+
+    def pick_release(self, tag):
+        """The release the user chose (by tag), else the default one."""
+        from splanc_flasher import releases
+
+        if not self.releases:
+            self.releases = releases.list_releases()
+            self.release = releases.default_release(self.releases)
+        if tag:
+            hit = next((r for r in self.releases if r.tag == tag), None)
+            if hit is None:
+                raise ValueError(f"Splanc bridge release {tag} isn't published (any more).")
+            return hit
+        return self.release
 
     def list_disks(self) -> None:
         from splanc_flasher import disks
@@ -170,16 +201,18 @@ class Sidecar:
             if errors:
                 raise ValueError(next(iter(errors.values())))
             local = msg.get("local_image")
+            version = None
             if local:
                 image = releases.local_image(local, progress)
             else:
                 board = msg.get("board")
-                if self.release is None:
-                    self.release = releases.latest_release()
-                if self.release is None or board not in self.release.images:
-                    raise ValueError(f"No published Splanc bridge image for {board}.")
+                rel = self.pick_release(msg.get("tag"))
+                if rel is None or board not in rel.images:
+                    which = f" {rel.version}" if rel else ""
+                    raise ValueError(f"No published Splanc bridge{which} image for {board}.")
+                version = rel.version
                 image = releases.fetch_image(
-                    self.release.images[board], on_progress=progress, cancelled=self.cancel.is_set
+                    rel.images[board], on_progress=progress, cancelled=self.cancel.is_set
                 )
             if self.cancel.is_set():
                 raise InterruptedError("cancelled")
@@ -196,6 +229,7 @@ class Sidecar:
                     "disk": disk.to_dict(),
                     "hostname": hostname,
                     "board": msg.get("board"),
+                    "version": version,
                 }
             )
         except InterruptedError:

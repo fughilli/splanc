@@ -67,6 +67,21 @@ def test_latest_release_skips_prereleases(monkeypatch):
     assert rl.latest_release(include_prerelease=True).version == "2.0.0"
 
 
+def test_list_releases_offers_every_version_with_the_final_one_as_default(monkeypatch):
+    data = [
+        release("pi-bridge-v1.0.0", [asset("splanc-bridge-pi4-1.0.0.img.zst")]),
+        release("pi-bridge-v2.0.0", [asset("splanc-bridge-pi4-2.0.0.img.zst")], prerelease=True),
+        release("pi-bridge-v1.1.0", [asset("splanc-bridge-pi4-1.1.0.img.zst")]),
+    ]
+    monkeypatch.setattr(rl, "_get", lambda url, accept=None: json.dumps(data).encode())
+    rels = rl.list_releases()
+    assert [r.version for r in rels] == ["2.0.0", "1.1.0", "1.0.0"]
+    assert [r.to_dict()["prerelease"] for r in rels] == [True, False, False]
+    assert rl.default_release(rels).version == "1.1.0"
+    assert rl.default_release(rels[:1]).version == "2.0.0"  # only pre-releases
+    assert rl.default_release([]) is None
+
+
 def image(data, sha_text=None, digest=None):
     name = "splanc-bridge-pi4-1.0.0.img.zst"
     img = rl.Asset(name, f"https://dl.example/{name}", len(data), digest)
