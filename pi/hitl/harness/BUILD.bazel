@@ -111,6 +111,10 @@ py_test(
     env = {
         "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
     },
+    # 4/5 on the rigs: one unexplained BLE link drop just after the stage-2
+    # configure (ATT 0x0e, DUT `[ble] link state=6`). Open follow-up in the
+    # Halloween CLEANUP list; retry so it can't wedge main's merge queue.
+    flaky = True,
     imports = ["."],
     main = "hitl_ble_capture_e2e.py",
     tags = [
