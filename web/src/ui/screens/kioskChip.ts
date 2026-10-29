@@ -30,6 +30,7 @@ export function installKioskChip(): void {
   const render = (): void => {
     const on = kioskStore.active && appState.status.state === "connected" && !onPlay();
     chip.hidden = !on;
+    chip.classList.toggle("kiosk-chip--top", location.hash.replace(/^#/, "").split("?")[0] === "/acid");
     if (on) chip.textContent = `⏳ ${countdownLine(kioskStore.remaining(), kioskStore.status)}`;
   };
   kioskStore.subscribe(render);

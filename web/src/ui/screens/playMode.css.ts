@@ -37,13 +37,15 @@ const CSS = `
   margin: 0 auto;
   animation: none;
 }
+/* Author display rules would otherwise beat the [hidden] attribute. */
+.screen--play [hidden] { display: none !important; }
 .play-top {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 .play-title {
-  font-size: 1.375rem;
+  font-size: 1.25rem;
   font-weight: 800;
   margin: 0;
   flex: 1;
@@ -60,7 +62,7 @@ const CSS = `
   font-size: 0.9375rem;
   font-weight: 600;
   white-space: nowrap;
-  max-width: 60vw;
+  max-width: 55vw;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -243,12 +245,19 @@ const CSS = `
   color: #fff4e8;
   font-size: 0.875rem;
   font-weight: 600;
-  white-space: nowrap;
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+  text-align: center;
   pointer-events: none;
   font-variant-numeric: tabular-nums;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 .kiosk-chip[hidden] { display: none; }
+/* Acid Mode owns the bottom (its big mic): sit under its top bar instead. */
+.kiosk-chip--top {
+  bottom: auto;
+  top: calc(max(12px, env(safe-area-inset-top)) + 56px);
+}
 
 /* The pumpkin entry button (onboarding + device sheet). */
 .pumpkin-btn {

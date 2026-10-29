@@ -21,7 +21,7 @@
  *                map) renders the Calibrate-IMU screen with its controls.
  *   play / play-revert / play-nomap / play-off — Halloween play mode: a
  *                connected "SpookySplanc1" in kiosk mode (countdown 1:42) with a
- *                stored map; `play-revert` fires an idle revert after 2.5 s;
+ *                stored map; `play-revert` fires an idle revert after 5 s;
  *                `play-nomap` has no stored map; `play-off` is not connected.
  *
  * These are genuine seams into the real stores/clients — no production path
@@ -127,7 +127,7 @@ async function setupPlayDemo(kind: string): Promise<void> {
   kioskStore.apply(normalizeKioskStatus(kiosk)!);
   if (kind === "play-revert") {
     const reverted = { ...kiosk, idleRemainingS: 0, attractActive: true, event: "KIOSK_EVENT_REVERTED" };
-    setTimeout(() => kioskStore.apply(normalizeKioskStatus(reverted)!), 2500);
+    setTimeout(() => kioskStore.apply(normalizeKioskStatus(reverted)!), 5000);
   }
 }
 

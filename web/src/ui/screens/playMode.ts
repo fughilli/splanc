@@ -199,7 +199,7 @@ export function PlayModeScreen(router: Router, query: URLSearchParams): Screen {
     const s = appState.status;
     const a = connectAttempt();
     let state = "offline";
-    let text = fixture ? `${fixture} · not connected` : "Not connected";
+    let text = fixture ?? "Not connected";
     if (connected()) {
       state = "connected";
       text = fixtureLabel();
