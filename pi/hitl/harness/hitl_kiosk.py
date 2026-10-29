@@ -60,6 +60,24 @@ vec3 shade(Led led) { return vec3(0.0, pulse, 0.2); }
 """
 
 
+# Rig-side: is the DUT (argv --address) advertising the Improv service UUID?
+ADV_SCAN = """
+import asyncio, json, sys
+from bleak import BleakScanner
+from hitl_improv import SVC, _adapter_kwargs
+want = sys.argv[sys.argv.index("--address") + 1].lower()
+async def main():
+    for _ in range(3):
+        found = await BleakScanner.discover(timeout=6, return_adv=True, **_adapter_kwargs())
+        for addr, (dev, a) in found.items():
+            if addr.lower() == want:
+                u = [x.lower() for x in (a.service_uuids or [])]
+                return {"ok": True, "seen": True, "improv": SVC.lower() in u, "uuids": u, "name": dev.name}
+    return {"ok": False, "seen": False, "error": "DUT not seen in 3 scans"}
+print(json.dumps(asyncio.run(main())))
+"""
+
+
 def _log(msg: str) -> None:
     print(msg, flush=True)
 
@@ -178,6 +196,7 @@ async def phase_main(
     console: Callable[[str], str] | None,
     ble: Callable[[list[bytes]], dict] | None = None,
     improv: Callable[[], dict] | None = None,
+    adv: Callable[[], dict] | None = None,
 ) -> str | None:
     c = await connect(url, hitl_ws.CONNECT_SETTLE)
     fw = None
@@ -349,6 +368,15 @@ async def phase_main(
                 ),
                 enc({"type": "set_brightness", "brightness": 0.6}),
             ] + [enc({"type": "get_kiosk_status"})] * 3
+            if adv is not None:
+                # Phones find SpookySplanc* by the Improv service UUID in the primary
+                # advertisement (iOS gets the name only from the scan response): a
+                # locked kiosk must keep advertising it.
+                a = await asyncio.to_thread(adv)
+                if not a.get("seen"):
+                    run.skip(P, f"adv scan ({a.get('error')})")
+                else:
+                    run.check(P, "improv_uuid_advertised", a.get("improv"), str(a))
             res = await asyncio.to_thread(ble, frames)
             if not res.get("ok"):
                 run.skip(P, f"ble transport ({res.get('error')})")
@@ -538,6 +566,9 @@ def run(args) -> int:
                 300,
             )
 
+        def adv() -> dict:
+            return _rig_json("PYTHONPATH=/tmp python3 -c " + shlex.quote(ADV_SCAN), 120)
+
         def improv() -> dict:
             return _rig_json(
                 f"PYTHONPATH=/tmp python3 /tmp/hitl_improv.py provision --ssid {shlex.quote(ssid)} "
@@ -568,6 +599,7 @@ def run(args) -> int:
                     console,
                     ble,
                     improv,
+                    adv,
                 )
             )
     except Exception as e:  # noqa: BLE001
