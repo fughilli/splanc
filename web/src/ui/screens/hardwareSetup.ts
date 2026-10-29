@@ -50,6 +50,7 @@ import {
 import type { ColorBlock } from "@ledmapper/protocol";
 import { installHardwareSetupStyles } from "./hardwareSetup.css";
 import { wireFpsCeiling } from "../../net/ledWire";
+import { openCurtainLayoutSheet } from "../../halloween/layoutSheet";
 
 // Output-capable C6 GPIOs for LED data, grouped by how safe they are to use.
 // Categories + caveats follow the ESP32-C6 SuperMini pinout published at
@@ -596,6 +597,16 @@ export function HardwareSetupScreen(_router: Router): Screen {
         : "Set each channel's LED count so mapping covers every channel. " +
           "Channels are numbered in order: channel 0's LEDs first, then channel 1's.";
     g.append(note);
+    // Fallback for a curtain (CH0) + rope (CH1) fixture that can't be camera-mapped.
+    const ledsOn = (ch: number): number =>
+      Math.max(0, channels.find((x) => x.channel === ch)?.ledCount ?? 0);
+    g.append(
+      Button({
+        label: "Generate a curtain + rope map…",
+        variant: "quiet",
+        onClick: () => openCurtainLayoutSheet(ledsOn(0), ledsOn(1)),
+      }),
+    );
     return g;
   }
 
