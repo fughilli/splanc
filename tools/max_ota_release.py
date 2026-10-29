@@ -139,13 +139,15 @@ def main():
     a = ap.parse_args()
 
     toplevel = a.toplevel
-    if os.path.isfile(toplevel) and not toplevel.startswith("/nix/store/"):
+    # A system toplevel is a directory, so a regular file (even one in the store,
+    # like the release job's toplevel.img) is a file holding the path.
+    if os.path.isfile(toplevel):
         toplevel = open(toplevel).read().strip()
     toplevel = os.path.realpath(toplevel) if not STORE_RE.match(toplevel) else toplevel
     if not STORE_RE.match(toplevel):
         sys.exit(f"max_ota_release: --toplevel {toplevel!r} isn't a store path")
     base_top = a.base_toplevel
-    if base_top and os.path.isfile(base_top) and not base_top.startswith("/nix/store/"):
+    if base_top and os.path.isfile(base_top):
         base_top = open(base_top).read().strip()
 
     want = read_pub(a.pubkey)
