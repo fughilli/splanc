@@ -4,6 +4,9 @@
 
 Environment (systemd reads /etc/splanc-bridge/bridge.env):
     SPLANC_BRIDGE_STATUS / SPLANC_BRIDGE_CONTROL   bridge status file / control socket
+    SPLANC_SYSTEM_UPDATE_STATUS / SPLANC_AGENT_UPDATE_STATUS / SPLANC_UPDATE_REQUEST
+                                      the updaters' status files and the request
+                                      directory (updates.py)
     SPLANC_DISPLAY_HDMI=auto|off      default auto (draw on /dev/fb0 when it exists)
     SPLANC_DISPLAY_VT=8               the VT taken over for the HDMI page
     OLED=auto|spi|i2c|off             default auto (see hat.detect)
@@ -23,6 +26,7 @@ bridge's own work always wins the CPU.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import os
 import queue
 import signal
@@ -31,10 +35,10 @@ import threading
 import time
 from typing import Optional
 
-from . import boot, control, render_hdmi, render_oled
+from . import boot, control, render_hdmi, render_oled, updates
 from .fb import Framebuffer, PngSink
-from .status import StatusWatcher
-from .ui import OledUI
+from .status import Status, StatusWatcher
+from .ui import CHECK_KEY, OledUI
 
 TICK = 0.1  # OLED/UI loop period when nothing moves (s)
 IDLE_TICK = TICK
@@ -95,12 +99,19 @@ class App:
         boot_frames="auto",
         oled_device=None,
         hdmi_device=None,
+        system_update_status: Optional[str] = None,
+        agent_update_status: Optional[str] = None,
+        update_request: Optional[str] = None,
     ):
         self.clock, self.wall = clock, wall
         self.hdmi_mode, self.oled_mode = hdmi, oled
         self.control_path = control_path
         self.vt, self.rotate = vt, rotate
         self.watcher = StatusWatcher(status_path)
+        self.updates = updates.UpdatesWatcher(
+            system_update_status, agent_update_status, update_request, wall=wall
+        )
+        self.status = self._merge()
         self.done_q: "queue.Queue" = queue.Queue()
         self.ui = OledUI(self._dispatch, clock)
         self.inputs: "queue.Queue" = queue.Queue()  # (kind, key, at) from the button thread
@@ -128,17 +139,68 @@ class App:
         self._hdmi_last_at = -1e9
         self._hdmi_was_visible = False
 
+    def _merge(self) -> Status:
+        """The bridge's status with the updaters' merged in (what the screens draw)."""
+        return dataclasses.replace(self.watcher.status, updates=self.updates.info)
+
     # --- control commands (run off-thread, finish on the UI thread) -------------
     def _dispatch(self, cmd: str, done, **args) -> None:
         def work():
             try:
-                control.send(cmd, path=self.control_path, **args)
-                self.done_q.put((done, True, ""))
-            except control.ControlError as e:
+                if cmd == "install_update":
+                    updates.request("install-" + args["component"], self.updates.request_path)
+                    msg = ""
+                elif cmd == "check_updates":
+                    msg = self._check_updates()
+                else:
+                    control.send(cmd, path=self.control_path, **args)
+                    msg = ""
+                self.done_q.put((done, True, msg))
+            except (control.ControlError, updates.RequestError) as e:
                 log(f"{cmd}: {e}")
                 self.done_q.put((done, False, str(e)))
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _check_updates(self) -> str:
+        """Ask both updaters to look now; wait (this worker thread) until each has
+        reported since, then summarise. The UI thread keeps polling the files."""
+        t0 = self.wall()
+        updates.request("check", self.updates.request_path)
+        deadline = time.monotonic() + updates.CHECK_TIMEOUT
+        while time.monotonic() < deadline and not self.stop.is_set():
+            info = self.updates.info
+            done = [
+                c.updated_at is not None and c.updated_at > t0 and c.state != "checking"
+                for c in info.components
+            ]
+            if done and all(done):
+                break
+            self.stop.wait(0.5)
+        return updates.check_result(self.updates.info)
+
+    def _sync_updates(self) -> None:
+        """The Updates page's rows, and what KEY3 may do in each update's detail."""
+        info, now = self.updates.info, self.wall()
+        kinds = [c.kind for c in info.components]
+        self.ui.set_updates(
+            kinds + ([CHECK_KEY] if info.can_request else []),
+            lambda k: render_oled.update_row_count(info.get(k), now),
+        )
+        installable, note = {}, {}
+        for c in info.components:
+            installable[c.kind] = info.can_request and c.installable
+            if c.installable and not info.can_request:
+                note[c.kind] = "Update over SSH"
+            elif c.busy:
+                note[c.kind] = "Update in progress"
+            elif c.state == "disabled":
+                note[c.kind] = "Updates are off"
+            elif c.state == "unknown" and not c.available:
+                note[c.kind] = "Not checked yet"
+            else:
+                note[c.kind] = "Up to date"
+        self.ui.installable, self.ui.install_note = installable, note
 
     # --- OLED ------------------------------------------------------------------
     def _open_oled(self) -> None:
@@ -184,6 +246,7 @@ class App:
     def _sync_fixtures(self) -> None:
         """Hand the fixture and client lists (and each detail's row count) to the menu."""
         st, now = self.watcher.status, self.wall()
+        self._sync_updates()
         self.ui.set_fixtures(
             [p.key for p in st.players],
             lambda k: render_oled.detail_row_count(st.player(k), now),
@@ -201,7 +264,7 @@ class App:
     def _oled_frame(self) -> Optional[object]:
         if self.oled is None:
             return None
-        st = self.watcher.status
+        st = self.status
         now = self.wall()
         self.ui.code_visible = st.active_code(now) is not None
         view = self.ui.view()
@@ -275,7 +338,7 @@ class App:
         self._hdmi_was_visible = visible
         if not visible:
             return
-        st = self.watcher.status
+        st = self.status
         now = self.wall()
         # Content key: changes when anything shown changes (the countdown ticks
         # once a second while a code is up).
@@ -307,9 +370,15 @@ class App:
     def step(self) -> float:
         """One UI/OLED iteration. Returns how long to wait before the next one."""
         self.wake.clear()
-        if self.watcher.poll():
-            if self.watcher.salient_changed:
+        bridge_changed = self.watcher.poll()
+        before = self.updates.info.summary()
+        updates_changed = self.updates.poll()
+        if bridge_changed or updates_changed:
+            if (bridge_changed and self.watcher.salient_changed) or (
+                updates_changed and self.updates.info.summary() != before
+            ):
                 self.ui.activity()  # not for "seen"/perf ticks: those don't wake the screen
+            self.status = self._merge()
             self._sync_fixtures()
         while True:
             try:

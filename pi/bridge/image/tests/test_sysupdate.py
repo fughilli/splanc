@@ -169,6 +169,11 @@ class FakeHost(su.Host):
             os.symlink(argv[-1], argv[2])
             return ""
         if argv[:2] == ["nix-store", "--gc"]:
+            try:
+                with open(os.path.join(self.tmp, "run", "sysupdate-status.json")) as f:
+                    self.status_at_gc = json.load(f)
+            except OSError:
+                pass
             return ""
         if argv[0] == "nix-env":
             prof = argv[2]
@@ -254,6 +259,8 @@ class Bench:
             bridge_status=self.bridge_status,
             status_out=os.path.join(self.run_dir, "sysupdate-status.json"),
             store=nc.STORE_DIR,
+            image_json=os.path.join(self.tmp, "image.json"),
+            auto_check=su.auto_check_enabled(os.path.join(self.tmp, "bridge.env")),
         )
 
     def publish(self, name="nixos-system-b", **kw):
@@ -264,6 +271,10 @@ class Bench:
 
     def profile_target(self):
         return os.path.realpath(os.path.join(self.prof, "system"))
+
+    def status(self):
+        with open(os.path.join(self.run_dir, "sysupdate-status.json")) as f:
+            return json.load(f)
 
     def busy(self, clients):
         with open(self.bridge_status, "w") as f:
@@ -389,43 +400,133 @@ def test_disabled_without_a_key(tmp_path):
     b = Bench(os.path.realpath(tmp_path), keys=())
     b.publish()
     assert b.updater().run() == 0
+    assert b.updater().install() == 0
     assert b.host.calls == []  # never even looked at the channel
+    assert b.status()["state"] == "disabled"
 
 
-def test_stages_only_missing_paths_then_applies_when_idle(bench):
+def test_timer_only_discovers_never_downloads_or_installs(bench):
     rel = bench.publish()
-    bench.busy(2)
     u = bench.updater()
     assert u.run() == 0
     st = u.load_state()
-    assert st["staged"]["toplevel"] == rel.top
-    assert (st["staged"]["fetched_paths"], st["staged"]["total_paths"]) == (2, 3)
+    # Found and sized (pointer + manifest), but not a single NAR fetched.
+    assert st["available"]["toplevel"] == rel.top and st["available"]["version"] == "1.3.0"
+    assert (st["available"]["paths"], st["available"]["total_paths"]) == (2, 3)
+    assert st["available"]["download_bytes"] == sum(
+        len(d) for p, (_, d) in rel.closure.items() if p != bench.shared
+    )
+    assert bench.host.downloads == [] and st["staged"] is None
+    assert not [c for c in bench.host.calls if c[0] in ("nix", "nix-env")]
+    assert bench.host.rebooted is None and bench.profile_target() == bench.a
+    s = bench.status()
+    assert s["state"] == "available" and s["available"]["version"] == "1.3.0"
+    assert s["checked_at"] == bench.host.clock and s["auto_check"] is True
+    # Days later, still idle, still not installed: there is no forced apply any more.
+    for _ in range(20):
+        bench.host.clock += 86400
+        assert u.run() == 0
+    assert bench.host.downloads == [] and bench.host.rebooted is None
+    # The manifest is fetched once per release, not on every check.
+    murl = next(x for x in rel.files if x.endswith("-1.3.0.json"))
+    assert sum(1 for c in bench.host.calls if c == ("fetch", murl)) == 1
+
+
+def test_scan_reports_up_to_date_and_learns_the_running_version(bench):
+    rel = bench.publish()
+    bench.boot_into(rel.top)
+    bench.host.valid.add(rel.top)
+    u = bench.updater()
+    assert u.scan_now() == 0
+    s = bench.status()
+    assert s["state"] == "idle" and s["message"] == "up to date (1.3.0)"
+    assert s["current_version"] == "1.3.0" and s["available"] is None
+    assert bench.host.downloads == []
+
+
+def test_confirmed_install_downloads_verifies_and_applies(bench):
+    rel = bench.publish()
+    bench.busy(2)  # an app is connected: the confirmation is what counts
+    u = bench.updater()
+    assert u.run() == 0 and bench.host.downloads == []
+    assert u.install() == 0
     # glibc is already there: its NAR was never downloaded.
     shared = rel.infos[nc.hash_part(bench.shared)].nar_file
     assert (
-        all(not u.endswith(shared) for u in bench.host.downloads) and len(bench.host.downloads) == 2
+        all(not x.endswith(shared) for x in bench.host.downloads) and len(bench.host.downloads) == 2
     )
-    assert bench.host.rebooted is None and bench.profile_target() == bench.a
-    assert not os.path.exists(os.path.join(bench.tmp, "state", "cache"))  # cleaned up
-    # Still busy on the next timer run: no network, no reboot.
-    n = len(bench.host.calls)
-    assert u.run() == 0 and bench.host.rebooted is None
-    assert not [c for c in bench.host.calls[n:] if c[0] == "fetch"]
-    bench.busy(0)
-    assert u.run() == 0
     assert bench.host.rebooted == "reboot"
     assert bench.profile_target() == rel.top
     assert (rel.top + "/bin/switch-to-configuration", "boot") in bench.host.calls
+    assert not os.path.exists(os.path.join(bench.tmp, "state", "cache"))  # cleaned up
     st = u.load_state()
     assert st["pending"]["old"] == bench.a and st["pending"]["new"] == rel.top
     assert st["pending"]["old_gen"] == 1 and st["pending"]["new_gen"] == 2
+    assert bench.status()["state"] == "rebooting"
+
+
+def test_cli_check_stages_while_busy_and_waits_for_a_confirmation(bench):
+    rel = bench.publish()
+    bench.busy(1)
+    u = bench.updater()
+    assert u.install(when_idle=True) == 0
+    st = u.load_state()
+    assert st["staged"]["toplevel"] == rel.top and st["pending"] is None
+    assert (st["staged"]["fetched_paths"], st["staged"]["total_paths"]) == (2, 3)
+    assert bench.host.rebooted is None and bench.profile_target() == bench.a
+    s = bench.status()
+    assert s["state"] == "staged" and s["staged"] == {"version": "1.3.0"}
+    # The app disconnects; the timer still never applies it (no confirmation yet).
+    bench.busy(0)
+    bench.host.clock += 7 * 86400
+    n = len(bench.host.downloads)
+    assert u.run() == 0
+    assert bench.host.rebooted is None and len(bench.host.downloads) == n
+    assert bench.status()["state"] == "staged"
+    # Booting again: the screens see the staged update from the saved state.
+    os.unlink(os.path.join(bench.run_dir, "sysupdate-status.json"))
+    assert bench.updater().publish() == 0
+    assert bench.status()["state"] == "staged"
+    # The confirmation installs it without downloading anything again.
+    assert u.install() == 0
+    assert bench.host.rebooted == "reboot" and len(bench.host.downloads) == n
+
+
+def test_a_second_run_waits_for_the_lock(bench):
+    bench.publish()
+    u = bench.updater()
+    with u.locked():
+        assert bench.updater().run() == 0  # the timer skips
+        assert bench.updater().install() == 1  # gave up after its wait
+    assert bench.host.downloads == []
+
+
+def test_auto_update_off_still_allows_a_manual_scan(bench, monkeypatch):
+    bench.publish()
+    monkeypatch.setenv("SPLANC_AUTO_UPDATE", "0")
+    assert su.auto_check_enabled("/nonexistent") is False
+    u = bench.updater()
+    assert u.auto_check is False
+    assert u.scan_now() == 0
+    assert bench.status()["available"]["version"] == "1.3.0"
+    assert bench.status()["auto_check"] is False
+
+
+def test_auto_update_setting_from_the_flash_env_file(tmp_path, monkeypatch):
+    monkeypatch.delenv("SPLANC_AUTO_UPDATE", raising=False)
+    env = tmp_path / "bridge.env"
+    env.write_text("SPLANC_RELAY=wss://x\nSPLANC_AUTO_UPDATE=0\n")
+    assert su.auto_check_enabled(str(env)) is False
+    env.write_text("SPLANC_AUTO_UPDATE=1\n")
+    assert su.auto_check_enabled(str(env)) is True
+    assert su.auto_check_enabled(str(tmp_path / "missing")) is True
 
 
 def test_signature_failure_imports_nothing(bench):
     bench.publish()
     bench.host.verify_ok = False
     u = bench.updater()
-    assert u.run() == 1
+    assert u.install() == 1
     st = u.load_state()
     assert "not signed by a trusted key" in st["last_result"]["message"]
     assert not [c for c in bench.host.calls if c[0] == "nix" and "copy" in c]
@@ -434,7 +535,12 @@ def test_signature_failure_imports_nothing(bench):
     # The keys passed to Nix are exactly the image's.
     verify = next(c for c in bench.host.calls if c[0] == "nix" and "verify" in c)
     assert verify[verify.index("trusted-public-keys") + 1] == KEY
-    # Retried after retry_interval, not every 15 minutes.
+    # Never a narinfo Nix remembered from an earlier release at the same cache URL.
+    assert verify[verify.index("narinfo-cache-positive-ttl") + 1] == "0"
+    assert bench.status()["state"] == "failed"
+    # A failed background check is retried after retry_interval, not every 15 minutes.
+    bench.host.files.clear()
+    assert u.run() == 1
     n = len(bench.host.calls)
     u.run()
     assert len(bench.host.calls) == n
@@ -444,7 +550,7 @@ def test_tampered_nar_is_rejected(bench):
     rel = bench.publish()
     nar = next(u for u in rel.files if u.endswith(".nar.zst") and "dep-" not in u)
     bench.host.files[nar] = b"evil"
-    assert bench.updater().run() == 1
+    assert bench.updater().install() == 1
     assert bench.profile_target() == bench.a
     assert not [c for c in bench.host.calls if c[0] == "nix"]
 
@@ -455,16 +561,17 @@ def test_manifest_hash_and_board_are_checked(bench):
     bench.host.files[murl] += b" "
     u = bench.updater()
     assert u.run() == 1 and "sha256" in u.load_state()["last_result"]["message"]
+    assert u.install() == 1 and "sha256" in u.load_state()["last_result"]["message"]
     b2 = Bench(os.path.join(bench.tmp, "other"))
     b2.publish(board="pi4")
-    assert b2.updater().run() == 1
+    assert b2.updater().scan_now() == 1
     assert "board" in b2.updater().load_state()["last_result"]["message"]
 
 
 def test_imported_system_for_another_board_is_not_applied(bench):
     bench.publish()
     bench.host.import_board = "pi4"
-    assert bench.updater().run() == 1
+    assert bench.updater().install() == 1
     assert bench.profile_target() == bench.a and bench.host.rebooted is None
 
 
@@ -474,14 +581,16 @@ def test_up_to_date_and_known_bad(bench):
     st = u.load_state()
     st["bad"] = [rel.top]
     u.save_state(st)
-    assert u.run(check_now=True) == 0
+    assert u.install() == 0 and u.scan_now() == 0
     assert bench.host.downloads == [] and bench.host.rebooted is None
+    assert u.load_state()["available"] is None
+    assert "failed on this bridge before" in bench.status()["message"]
 
 
 def test_low_space_drops_old_generations_first(bench):
     bench.publish()
     bench.host.free = 1
-    assert bench.updater().run() == 1
+    assert bench.updater().install() == 1
     assert ("nix-store", "--gc") in bench.host.calls
     assert "not enough space" in bench.updater().load_state()["last_result"]["message"]
 
@@ -493,7 +602,7 @@ def test_apply_failure_restores_the_old_system(bench):
     rel = bench.publish()
     bench.host.fail_boot_for.add(rel.top)
     u = bench.updater()
-    assert u.run() == 1
+    assert u.install() == 1
     st = u.load_state()
     assert bench.profile_target() == bench.a and sorted(os.listdir(bench.prof)) == [
         "system",
@@ -507,7 +616,7 @@ def test_apply_failure_restores_the_old_system(bench):
 def test_tryboot_apply_keeps_the_old_default(tmp_path):
     b = Bench(os.path.realpath(tmp_path), mode="tryboot")
     rel = b.publish()
-    assert b.updater().run() == 0
+    assert b.updater().install() == 0
     assert b.host.rebooted == "tryboot"
     # The OLD system's installer ran (default entry + config.txt stay old) ...
     assert (b.a + "/bin/switch-to-configuration", "boot") in b.host.calls
@@ -524,7 +633,7 @@ def test_tryboot_apply_keeps_the_old_default(tmp_path):
 def applied(bench, mode="reboot"):
     rel = bench.publish()
     u = bench.updater()
-    assert u.run() == 0 and bench.host.rebooted
+    assert u.install() == 0 and bench.host.rebooted
     bench.host.rebooted = None
     bench.boot_into(rel.top)
     return rel, u
@@ -538,6 +647,9 @@ def test_healthy_new_system_is_committed(bench):
     st = u.load_state()
     assert st["pending"] is None and st["last_result"]["result"] == "committed"
     assert st["last_result"]["fetched_paths"] == 2
+    s = bench.status()
+    assert s["state"] == "idle" and s["current_version"] == "1.3.0" and s["available"] is None
+    assert bench.host.status_at_gc["state"] == "idle"  # already before the (slow) GC
     assert sorted(os.listdir(bench.prof)) == ["system", "system-1-link", "system-2-link"]
     assert bench.profile_target() == rel.top and bench.host.rebooted is None
     assert ("nix-store", "--gc") in bench.host.calls
@@ -553,7 +665,7 @@ def test_unhealthy_new_system_rolls_back(bench):
     assert bench.host.rebooted == "reboot"
     assert bench.profile_target() == bench.a
     assert sorted(os.listdir(bench.prof)) == ["system", "system-1-link"]
-    assert rel.top in st["bad"] and st["pending"] is None
+    assert rel.top in st["bad"] and st["pending"] is None and st["available"] is None
     assert "splanc-display.service not up" in st["last_result"]["message"]
     assert (bench.a + "/bin/switch-to-configuration", "boot") in bench.host.calls
     # waited the whole health timeout before giving up
@@ -582,7 +694,7 @@ def test_booting_the_old_system_with_an_update_pending_rolls_back_quietly(tmp_pa
     b = Bench(os.path.realpath(tmp_path), mode="tryboot")
     rel = b.publish()
     u = b.updater()
-    u.run()
+    u.install()
     b.host.rebooted = None
     # tryboot fell back: the firmware booted config.txt = the old system.
     assert u.confirm() == 1
@@ -613,7 +725,7 @@ def test_crash_before_the_generation_was_recorded(bench):
     rel = bench.publish()
     u = bench.updater()
     bench.busy(1)
-    u.run()
+    u.install(when_idle=True)
     st = u.load_state()
     # apply() got as far as `nix-env --set`, then the power went.
     st["pending"] = {

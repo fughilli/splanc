@@ -127,7 +127,7 @@ After pairing, it shows how many clients are connected. Along the bottom are:
 ![HDMI after pairing](img/pi-bridge/hdmi-paired.png)
 
 **OLED HAT**: when the screen service starts it plays a short Splanc logo animation (about two
-seconds, while the bridge itself starts up), then slides to five pages, which rotate every 8
+seconds, while the bridge itself starts up), then slides to six pages, which rotate every 8
 seconds:
 
 1. **Home**: the state, the pairing code in large letters, the short pairing link, the time left
@@ -142,6 +142,8 @@ seconds:
    live session open, or a call in the last 10 minutes) or ○ when it isn't, and on the right how
    long ago it was last used: `now`, `40s`, `5m`, `2h`, `3d` or `never`. The title shows how many
    are in use out of how many are paired.
+6. **Updates**: the system and the Splanc software, each with its version and `new` when an
+   update is available, and **Check for updates**. See [Updates](#updates).
 
 ![OLED pages](img/pi-bridge/oled-pages.png)
 
@@ -233,18 +235,48 @@ fixture's or client's details are open.
 
 ## Updates
 
-- **The Splanc software updates itself.** About two minutes after it boots and then once a day,
-  the Pi checks splanc.io for a new Splanc release. If there is one, it downloads it, checks its
-  checksum, switches to it and restarts the bridge. Your pairings are kept. The previous version
-  stays on the card too.
-- **The Pi's operating system updates itself too** (cards written with a flasher release that has
-  system updates). It checks a few times a day; a new Splanc bridge system downloads in the
-  background, and once no app is connected through the bridge, the Pi restarts into it (about a
-  minute without the bridge; your fixtures keep playing). Your pairings and Wi-Fi are kept. If the
-  new system doesn't come up healthy within five minutes, the Pi goes back to the previous one by
-  itself. Only updates signed by Splanc are accepted.
-- Writing the card again with the flasher also works, but starts fresh: you pair your agents again
-  afterwards.
+The bridge never updates itself without asking. It looks for updates on its own (the Splanc
+software about two minutes after it boots and then daily, the system every few hours) and only
+tells you when one is available: the HDMI page shows **Update available** in its title bar, with
+the new version, the one running now, what it is and what installing it involves, and the OLED's
+**Updates** page shows `new` next to it. Nothing is downloaded until you confirm.
+
+There are two kinds of update, installed separately:
+
+- **System**: the Pi's operating system, the screens and everything else on the card. A few
+  hundred MB at most (often much less: only what changed is downloaded). Installing it restarts
+  the Pi: about two minutes without the bridge; your fixtures keep playing. If the new system
+  doesn't come up healthy within five minutes, the Pi goes back to the previous one by itself.
+  Only updates signed by Splanc are accepted.
+- **Agent**: the Splanc bridge software. About 1 MB, checked against its published checksum.
+  Installing it restarts the bridge (a few seconds); the previous version stays on the card.
+
+Your pairings and Wi-Fi networks are kept either way.
+
+**To check now**: on the OLED, go to **Updates** (joystick left from the home page), pick
+**Check for updates** and press the joystick. After a few seconds the screen says **Up to date**
+or which update is new.
+
+**To install**: on the **Updates** page, pick **System** or **Agent** and press the joystick. The
+details show the version running now, the new one, its download size, what installing it does
+and when the bridge last checked. Press **KEY3**: the screen asks **INSTALL UPDATE?**; press
+**KEY3** again to install, or any other key to cancel (it also cancels by itself after 10
+seconds). The screen then shows the progress: downloading (with a percentage), verifying,
+installing and, for a system update, restarting and the health check afterwards. The bridge
+keeps working while an update downloads; only the final restart interrupts it.
+
+If an install fails (a lost connection, a download that doesn't check out), the screen says what
+went wrong and **KEY3** retries it. An update that was already downloaded and checked installs
+straight away. Over SSH: `splanc-bridge updates` shows the same, `splanc-bridge check-updates`
+checks now, `sudo splanc-bridge update` installs the agent update and `sudo splanc-system-update
+apply` the system update (see [For power users](#for-power-users)).
+
+![The Updates page, an update's details, the confirm screen and a download in progress](img/pi-bridge/oled-updates.png)
+
+![The HDMI page with updates available](img/pi-bridge/hdmi-update-available.png)
+
+Writing the card again with the flasher also works, but starts fresh: you pair your agents again
+afterwards.
 
 ## Changing settings later
 
@@ -260,7 +292,7 @@ boots.
 | `OLED=auto`                | The OLED HAT: `auto`, `spi`, `i2c` or `off`.                          |
 | `OLED_ROTATE=2`            | `0`–`3`, in steps of 90°. Use `0` if the OLED picture is upside down. |
 | `SPLANC_DISPLAY_HDMI=auto` | The HDMI status page: `auto` or `off`.                                |
-| `SPLANC_AUTO_UPDATE=1`     | `0` turns the automatic updates (software + system) off.              |
+| `SPLANC_AUTO_UPDATE=1`     | `0` stops the background checks for updates (checking by hand works). |
 
 To put the bridge on another Wi-Fi network (a venue, a new router), use the Splanc app on your
 phone, the same way you add a fixture: **Add device over Bluetooth**, choose the network, then
@@ -298,9 +330,10 @@ the Pi booted (or reboot it with the screen connected).
 for an upside-down picture set `OLED_ROTATE=0` in `splanc-bridge.conf`. If you changed the HAT's
 resistors to I2C, set `OLED=i2c`.
 
-**The screen says "has no bridge yet. Checking for an update…"**: the card has a Splanc release
-from before the cloud bridge existed. Leave the Pi connected to the internet: it updates itself
-within a few minutes, then shows a pairing code.
+**The screen says "has no bridge yet. Install the agent update"**: the card has a Splanc release
+from before the cloud bridge existed. Connect the Pi to the internet, then on the OLED go to
+**Updates**, open **Agent** and press **KEY3** twice (or run `sudo splanc-bridge update` over SSH).
+It then shows a pairing code.
 
 **No fixtures found**: the Pi must be on the same network as the fixtures. Guest Wi-Fi networks
 often isolate devices from each other, and some mesh systems block the multicast traffic that
@@ -313,8 +346,11 @@ discovery uses. Try Ethernet, or put the Pi and the fixtures on the main network
 The bridge image has no password login at all. To log in, paste your SSH public key into the
 flasher's **Advanced ▸ SSH public key** box (or put it in `authorized_keys` on the card's boot
 partition). Then `ssh root@splanc-bridge.local` works, and `splanc-bridge status`, `new-code`,
-`identify`, `revoke-all`, `clients`, `revoke`, `logs`, `update`, `restart` and `version` are
-available.
+`identify`, `revoke-all`, `clients`, `revoke`, `logs`, `updates`, `check-updates`, `update`,
+`restart` and `version` are available, plus `splanc-system-update status|scan|check|apply|logs`
+for system updates. Running `update` or `splanc-system-update apply` installs right away: that is
+your confirmation. (`splanc-system-update check` downloads and installs too, but waits for a
+confirmation if an app is connected through the bridge.)
 
 ### Install on Raspberry Pi OS instead
 
@@ -354,7 +390,8 @@ sudo splanc-bridge config       # edit settings, then restart
 sudo splanc-bridge uninstall    # remove it (add --purge to also delete settings and pairing data)
 ```
 
-Updates are automatic (daily, sha256-checked; `SPLANC_AUTO_UPDATE=0` turns them off). Settings
+On Raspberry Pi OS, updates are still automatic (daily, sha256-checked; `SPLANC_AUTO_UPDATE=0` turns
+them off), unlike the SD image, which asks first. Settings
 are in `/etc/splanc-bridge/bridge.env` (the same keys as `splanc-bridge.conf` above) and your
 pairing data in `/var/lib/splanc-bridge`. The installer writes:
 
