@@ -113,7 +113,7 @@
     note.textContent = older
       ? rel.prerelease
         ? 'A pre-release: newer than the latest release, but less tested.'
-        : 'An older version. Once online, the bridge updates itself daily to the latest release.'
+        : 'An older version. The bridge will offer newer versions on its screen; nothing is installed until you confirm.'
       : '';
     // Older releases may not have been built for every board.
     if (state.board && state.board !== 'local' && !rel.boards.some((b) => b.board === state.board)) {
