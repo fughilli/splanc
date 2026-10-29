@@ -123,9 +123,11 @@ set_str NSCameraUsageDescription \
 set_str NSMotionUsageDescription \
   "Splanc reads device motion to steady the camera pose while it maps your LEDs."
 # Bluetooth: native Improv provisioning to send Wi-Fi credentials to the device
-# (net/capacitorImprov.ts — restores what iOS Safari can't do).
+# (net/capacitorImprov.ts), AND controlling a light directly over Bluetooth with
+# no Wi-Fi (net/nativeBlePlayer.ts — the Halloween installs / "Connect over
+# Bluetooth"). Foreground only: no UIBackgroundModes bluetooth-central needed.
 set_str NSBluetoothAlwaysUsageDescription \
-  "Splanc uses Bluetooth to hand your Wi-Fi details to a new Splanc device so it can join your network."
+  "Splanc uses Bluetooth to connect to nearby Splanc lights so you can control them, and to hand your Wi-Fi details to a new Splanc device."
 set_str NSBluetoothPeripheralUsageDescription \
   "Splanc uses Bluetooth to set up a new Splanc device."
 # Local network: reaching the device's wss:// control plane on the LAN (iOS 14+

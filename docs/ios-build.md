@@ -183,7 +183,9 @@ Params: `--sim NAME`, `--configuration Debug|Release`, `--scheme App`.
 
 - **Committed:** `web/capacitor.config.ts`, `web/ios-config/` (the hand-maintained
   native config, re-applied by `ios-config`), the TS seams
-  (`net/native.ts`, `net/capacitorImprov.ts`), the build server + `iosctl`.
+  (`net/native.ts`, `net/capacitorImprov.ts`, `net/nativeBlePlayer.ts` — the
+  player protocol over native BLE, reusing `bleTransport.ts`'s `BleSocket`), the
+  build server + `iosctl`.
 - **Generated, gitignored (`web/ios/`):** the whole native Xcode project. Recreate
   it any time with `tools/iosctl bootstrap`. Never hand-edit it — put durable
   native changes in `web/ios-config/` so they survive a regenerate.
