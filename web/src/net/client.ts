@@ -242,6 +242,20 @@ export function certApprovalUrl(
   }
 }
 
+/** Messages that count as visitor activity in kiosk mode (each restarts the
+ * device's idle timer; firmware kiosk.md): effect deploys/switches, uniforms
+ * (live included), brightness, crossfade, keypoint blends, textures, playback. */
+const KIOSK_ACTIVITY_TYPES = new Set([
+  "submit_effect",
+  "set_effect",
+  "set_uniforms",
+  "set_brightness",
+  "blend_keypoints",
+  "set_crossfade",
+  "set_texture",
+  "set_playback",
+]);
+
 export class LedMapperClient {
   private sock: SocketLike | null = null;
   private readonly factory: SocketFactory;
@@ -299,6 +313,8 @@ export class LedMapperClient {
   // unsolicited push when the effect starts or stops lagging (below its target),
   // so — like perf_report — it fans out rather than going to a single waiter.
   private fpsSubs = new Set<(s: FpsStateMessage) => void>();
+  // Kiosk mode: visitor activity this client sends (the countdown restarts on it).
+  private activitySubs = new Set<() => void>();
   private kioskSubs = new Set<(s: KioskStatusMessage) => void>();
 
   /**
@@ -712,6 +728,8 @@ export class LedMapperClient {
     // the BLE transport a whole-frame send would blow the small per-frame cap.
     // Small effects still take the single-window fast path inside sendChunked.
     this.live.resetDeck(deck);
+    // A sharded upload goes out as upload_chunk frames: count it as activity here.
+    for (const fn of this.activitySubs) fn();
     return this.sendChunked("EFFECT", {
       type: "submit_effect",
       effectId,
@@ -1376,6 +1394,13 @@ export class LedMapperClient {
     return () => this.fpsSubs.delete(fn);
   }
 
+  /** Subscribe to visitor activity sent on this client (effect deploys, uniform
+   * and brightness changes) — the kiosk idle timer restarts on each. */
+  onActivity(fn: () => void): () => void {
+    this.activitySubs.add(fn);
+    return () => this.activitySubs.delete(fn);
+  }
+
   /** Pull the player's stored map+topology back off the device — streamed in
    * chunks and decoded as a MappingBundle. Rejects if the player has nothing
    * stored (server error `no_map`). `onProgress(done, total)` tracks assembly. */
@@ -1487,6 +1512,7 @@ export class LedMapperClient {
     if (this.sock === null || this.sock.readyState !== SOCKET_OPEN) return false;
     try {
       this.sock.send(encodeClient(msg));
+      if (KIOSK_ACTIVITY_TYPES.has(msg.type as string)) for (const fn of this.activitySubs) fn();
       return true;
     } catch {
       return false;

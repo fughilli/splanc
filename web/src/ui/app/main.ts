@@ -42,6 +42,9 @@ import { AboutScreen } from "../screens/about";
 import { AiSettingsScreen } from "../screens/aiSettings";
 import { warmActiveProvider } from "../../effects/ai/generate";
 import { AcidModeScreen } from "../screens/acidMode";
+import { PlayModeScreen } from "../screens/playMode";
+import { installKioskChip } from "../screens/kioskChip";
+import { isPlayHash } from "../../halloween/playSession";
 import { installShakeToEnter } from "../acid/shake";
 import { shakeConfirmLine, SHAKE_CONFIRM_LINES } from "../acid/narrate";
 import { confirmDialog } from "../kit";
@@ -55,9 +58,13 @@ async function main(): Promise<void> {
   // so there's no flash of the default palette.
   initAppearance();
 
+  // Halloween play mode (`#/play?f=…` from a QR code): a visitor goes straight to
+  // the effects — no splash, no onboarding, no tour hint.
+  const startedInPlay = isPlayHash(location.hash);
+
   // First-run welcome splash (no-op after the first launch). Shown over the
   // shell as it boots behind it, then fades itself out.
-  maybeShowSplash();
+  if (!startedInPlay) maybeShowSplash();
 
   installIconSprite();
 
@@ -195,6 +202,11 @@ async function main(): Promise<void> {
       shell.setChrome({ title: "About", back: true, tabs: true });
       return AboutScreen(router, m.query.get("tab") === "docs" ? "docs" : "about");
     })
+    .add("/play", (m) => {
+      // Halloween play mode: the screen owns the viewport (no tabs, no ⋯ menu).
+      shell.setChrome({ title: "Play", tabs: false, overlay: true });
+      return PlayModeScreen(router, m.query);
+    })
     .add("/acid", () => {
       // Overlay chrome: the mode owns the whole viewport (its own pill + exit).
       shell.setChrome({ title: "Acid mode", tabs: false, overlay: true });
@@ -244,7 +256,11 @@ async function main(): Promise<void> {
   // recallable from Settings ▸ Help & tutorial.
   const effectsDemo = router.path().startsWith("/effects/edit/") &&
     new URLSearchParams(location.hash.split("?")[1]).get("workspace") === "demo";
-  if (!effectsDemo) maybeShowFirstRunHint(router);
+  if (!effectsDemo && !startedInPlay && !isPlayHash(location.hash)) maybeShowFirstRunHint(router);
+
+  // Kiosk countdown chip on every screen but play mode (effects workspace, Acid
+  // Mode…) while the connected device is in kiosk mode.
+  installKioskChip();
 
   // Shake-to-enter Acid Mode (FUG-106): a vigorous side-to-side shake pops a
   // (humorous) confirmation; on OK we drop into the hands-free mode. Guarded so
