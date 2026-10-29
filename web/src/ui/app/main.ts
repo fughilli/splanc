@@ -207,10 +207,11 @@ async function main(): Promise<void> {
       shell.setChrome({ title: "Play", tabs: false, overlay: true });
       return PlayModeScreen(router, m.query);
     })
-    .add("/acid", () => {
+    .add("/acid", (m) => {
       // Overlay chrome: the mode owns the whole viewport (its own pill + exit).
+      // `play=1` comes from the kiosk play mode (minimal chrome, free AI).
       shell.setChrome({ title: "Acid mode", tabs: false, overlay: true });
-      return AcidModeScreen(router);
+      return AcidModeScreen(router, { play: m.query.get("play") === "1" });
     })
     .setFallback(() => {
       // First run with no device and no maps → onboarding; else → maps.

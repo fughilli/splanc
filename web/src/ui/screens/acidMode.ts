@@ -26,8 +26,19 @@ import {
   type MidiMappingCall,
   type MeasureOnDeviceCall,
 } from "../../effects/ai/generate";
-import { isAiConfigured } from "../../effects/ai/provider";
-import { resolveFleetTargets } from "../../effects/fleet";
+import { isAiConfigured, type AiProvider } from "../../effects/ai/provider";
+import { captureDemoPreview, isDemoAiBusy, makeDemoProvider, DEMO_AI_ENDPOINT } from "../../effects/ai/providers/demo";
+import {
+  ACID_FREE_TIMEOUT_MS,
+  ACID_PLAY_BUDGET_LEDS,
+  ACID_PLAY_EXAMPLES,
+  ACID_PLAY_MAX_BUDGET_FRACTION,
+  ACID_PLAY_SYSTEM,
+  ACID_PLAY_TURN,
+  ACID_SYSTEM,
+  scriptAccepted,
+} from "../../effects/ai/acidPersona";
+import { fallbackTarget, resolveFleetTargets } from "../../effects/fleet";
 import { estimateAcrossDevices, describeFleet } from "../../effects/multiDevice";
 import { costTableStore } from "../../store/costTableStore";
 import { builtinCostsToPrompt } from "../../effects/perfContext";
@@ -52,6 +63,8 @@ import { aiSummary, appFileBugHook, confirmFilingText } from "../../bugs/appBugR
 import { installAcidStyles } from "./acidMode.css";
 import { narrateTool } from "../acid/narrate";
 import { createVoice, voiceSupported, type VoiceSession } from "../acid/voice";
+import { guardVerdict } from "../acid/playGuard";
+import { createAcidKioskCountdown, type AcidPlayExtra } from "../acid/playExtras";
 import type { Router, Screen } from "../app/router";
 
 // Stable id the acid-mode effect is stored + uploaded under, so a session can
@@ -59,23 +72,36 @@ import type { Router, Screen } from "../app/router";
 const ACID_EFFECT_ID = "acid-mode";
 const ACID_EFFECT_NAME = "Acid Mode";
 
-// Persona appended to the agent's system prompt (see generate.chatTurn's
-// systemExtra): the user is hands-off, so be proactive and narrate plainly.
-const ACID_SYSTEM = `You are now driving "Acid Mode": a hands-free, voice-only surface. The user cannot see or use the normal editor UI right now — they just talk to you and watch a live preview of their LEDs. So:
-- Be decisive and PROACTIVE. When they describe a vibe ("something chill and blue", "make it pulse to the beat"), just author it with set_script and send it — don't ask which map or open a dialog. Pick sensible defaults.
-- After set_script, the effect is uploaded to their device automatically; a quick capture_preview to confirm it looks right is welcome when visuals matter.
-- If they mention knobs/MIDI/controllers, wire them with list_midi_controls + set_midi_mapping.
-- Keep spoken replies SHORT, warm, and jargon-free — one or two sentences a zonked human can follow. No code in your replies; the code lives in set_script.`;
+// Personas live in effects/ai/acidPersona.ts (pure, unit-tested): ACID_SYSTEM for
+// the owner's hands-free mode, ACID_PLAY_SYSTEM for a Halloween visitor.
 
 function msg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-export function AcidModeScreen(router: Router): Screen {
+export interface AcidModeOptions {
+  /** `#/acid?play=1`: a visitor at a kiosk install — minimal chrome, a Halloween
+   * persona, the free AI with a one-request turn budget, and guarded uploads. */
+  play?: boolean;
+}
+
+export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Screen {
   installAcidStyles();
+  const play = opts.play === true;
 
   const el = document.createElement("div");
-  el.className = "screen screen--acid";
+  el.className = play ? "screen screen--acid acid--play" : "screen screen--acid";
+  el.dataset["state"] = "idle";
+
+  // No provider configured → the free hosted demo AI (docs/design/effects-demo.md):
+  // zero setup for a stranger. Play mode skips vision (each capture is another
+  // request on the shared quota, and the backdrop is not their fixture anyway).
+  const demoProvider = makeDemoProvider(DEMO_AI_ENDPOINT, {
+    timeoutMs: ACID_FREE_TIMEOUT_MS,
+    vision: !play,
+    ...(play ? { maxTokens: ACID_PLAY_TURN.maxTokens } : {}),
+  });
+  const freeAi = (): AiProvider | undefined => (isAiConfigured() ? undefined : demoProvider);
 
   // -- live preview state (mirrors the editor's headless preview path) --------
   const worker = new FxCompilerWorker();
@@ -92,6 +118,8 @@ export function AcidModeScreen(router: Router): Screen {
   let uploadedFxb: Uint8Array | null = null;
   let lastUniforms: FxUniform[] = [];
   let currentSource = "";
+  /** The last source that compiled AND passed the guard (what the fixture plays). */
+  let lastGoodSource = "";
   let startT = 0;
   let frame = 0;
   let lastT = 0;
@@ -124,9 +152,19 @@ export function AcidModeScreen(router: Router): Screen {
   const exitBtn = document.createElement("button");
   exitBtn.type = "button";
   exitBtn.className = "acid-exit";
-  exitBtn.textContent = "I'm good ✕";
+  exitBtn.textContent = play ? "← Back to the show" : "I'm good ✕";
   exitBtn.addEventListener("click", () => router.back());
-  top.append(pill.el, exitBtn);
+  top.append(pill.el);
+  // Kiosk idle countdown, supplied by play mode (see acid/playExtras.ts).
+  let kioskExtra: AcidPlayExtra | null = null;
+  if (play) {
+    kioskExtra = createAcidKioskCountdown();
+    if (kioskExtra) {
+      kioskExtra.el.classList.add("acid-kiosk");
+      top.append(kioskExtra.el);
+    }
+  }
+  top.append(exitBtn);
 
   const syncPill = (): void => {
     const s = appState.status;
@@ -137,10 +175,54 @@ export function AcidModeScreen(router: Router): Screen {
 
   const title = document.createElement("h1");
   title.className = "acid-title";
-  title.textContent = "Acid Mode";
+  title.textContent = play ? "🎤 Acid Mode" : "Acid Mode";
   const sub = document.createElement("p");
   sub.className = "acid-sub";
-  sub.textContent = "Tap the mic and just tell me what you want your lights to do.";
+  sub.textContent = play
+    ? "Tap the mic and tell the lights what to do. Try:"
+    : "Tap the mic and just tell me what you want your lights to do.";
+
+  // Play mode: three tappable example prompts (also the no-mic path).
+  const examples = document.createElement("div");
+  examples.className = "acid-examples";
+  if (play) {
+    for (const ex of ACID_PLAY_EXAMPLES) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "acid-example";
+      chip.textContent = `“${ex}”`;
+      chip.addEventListener("click", () => void ask(ex));
+      examples.appendChild(chip);
+    }
+  }
+
+  // "AI is busy" card: the shared free quota ran out or every model is down.
+  const busyCard = document.createElement("div");
+  busyCard.className = "acid-busy";
+  busyCard.hidden = true;
+  const busyText = document.createElement("p");
+  busyText.textContent = play
+    ? "The AI is busy right now — try one of the spooky presets!"
+    : "The free AI is busy right now. Try again in a minute, or set up your own AI provider.";
+  const busyBtn = document.createElement("button");
+  busyBtn.type = "button";
+  busyBtn.className = "acid-busy-btn";
+  busyBtn.textContent = play ? "🎃 Spooky presets" : "AI settings";
+  busyBtn.addEventListener("click", () => {
+    if (play) router.back();
+    else location.hash = "#/settings/ai";
+  });
+  busyCard.append(busyText, busyBtn);
+
+  // Small free-AI disclosure (only shown while the free demo AI is in use).
+  const freeNote = document.createElement("details");
+  freeNote.className = "acid-free-note";
+  const freeSummary = document.createElement("summary");
+  freeSummary.textContent = "Free AI · shared & limited";
+  const freeText = document.createElement("p");
+  freeText.textContent =
+    "Your words and the effect code go to OpenRouter and its free model providers, which may use them for model improvement. Don’t share private or personal information.";
+  freeNote.append(freeSummary, freeText);
 
   // -- stream-of-consciousness feed ------------------------------------------
   const feed = document.createElement("div");
@@ -196,10 +278,32 @@ export function AcidModeScreen(router: Router): Screen {
 
   let busy = false;
   let voice: VoiceSession | null = null;
+  /** Set by a recognition error so the following end/final doesn't overwrite it. */
+  let voiceError: string | null = null;
+  let doneTimer: ReturnType<typeof setTimeout> | undefined;
 
+  /** One visible state for the whole surface: idle → listening → thinking → done. */
+  type AcidState = "idle" | "listening" | "thinking" | "done" | "busy";
+  function setState(state: AcidState, hint?: string): void {
+    el.dataset["state"] = state;
+    if (doneTimer !== undefined) clearTimeout(doneTimer);
+    micBtn.classList.toggle("acid-mic--listening", state === "listening");
+    micBtn.classList.toggle("acid-mic--thinking", state === "thinking");
+    micBtn.setAttribute("aria-label", state === "listening" ? "Stop listening" : "Tap to talk");
+    micHint.textContent =
+      hint ??
+      (state === "listening"
+        ? "Listening… tap when you're done"
+        : state === "thinking"
+          ? "✨ Making it…"
+          : state === "done"
+            ? "✓ Done! Tap to try another"
+            : "Tap to talk");
+    // "Done" relaxes back to idle so the next visitor sees a plain prompt.
+    if (state === "done") doneTimer = setTimeout(() => setState("idle"), 8000);
+  }
   function setMicListening(on: boolean): void {
-    micBtn.classList.toggle("acid-mic--listening", on);
-    micHint.textContent = on ? "Listening… tap to stop" : busy ? "Working…" : "Tap to talk";
+    setState(on ? "listening" : busy ? "thinking" : "idle");
   }
 
   if (voiceSupported()) {
@@ -208,20 +312,34 @@ export function AcidModeScreen(router: Router): Screen {
         micHint.textContent = t || "Listening…";
       },
       onFinal: (t) => {
-        setMicListening(false);
         const said = t.trim();
-        if (said) void ask(said);
+        if (said) {
+          voiceError = null;
+          void ask(said);
+          return;
+        }
+        // Keep an error's hint (web fires onerror THEN onend → onFinal("")).
+        if (voiceError !== null) setState("idle", voiceError);
+        else setState("idle", "Didn't hear anything — tap and talk");
       },
       onError: (e) => {
-        setMicListening(false);
-        micHint.textContent = e === "not-allowed" ? "Mic permission denied" : "Didn't catch that";
+        if (e === "not-allowed" || e === "service-not-allowed") {
+          voiceError = "Mic is blocked — type it below instead";
+          fallback.style.display = ""; // reveal the text box
+        } else if (e === "no-speech") voiceError = "Didn't hear anything — tap and talk";
+        else if (e === "aborted") voiceError = null;
+        else voiceError = "Didn't catch that — tap to try again";
+        setState("idle", voiceError ?? undefined);
       },
     });
+    // The first tap starts listening (the browser asks for the mic once, here,
+    // inside the gesture); a second tap ends the utterance.
     micBtn.addEventListener("click", () => {
       if (busy) return;
       if (voice!.listening) voice!.stop();
       else {
-        setMicListening(true);
+        voiceError = null;
+        setState("listening");
         voice!.start();
       }
     });
@@ -247,10 +365,14 @@ export function AcidModeScreen(router: Router): Screen {
     fallback.style.display = "none";
   } else {
     micBtn.style.display = "none";
-    micHint.textContent = "Type below — voice input isn't supported in this browser.";
+    micHint.textContent = play
+      ? "Tap an idea above, or type your own below."
+      : "Type below — voice input isn't supported in this browser.";
   }
 
-  overlay.append(top, title, sub, feed, micBtn, micHint, fallback);
+  overlay.append(top, title, sub);
+  if (play) overlay.append(examples);
+  overlay.append(feed, busyCard, micBtn, micHint, fallback, freeNote);
   el.append(canvas, scrim, overlay);
 
   // -- the agent turn ---------------------------------------------------------
@@ -262,34 +384,43 @@ export function AcidModeScreen(router: Router): Screen {
 
   async function ask(text: string): Promise<void> {
     if (busy) return;
-    if (!isAiConfigured()) {
-      appendMsg("agent", "I need an AI provider set up first — pick one and try again.");
-      location.hash = "#/settings/ai";
-      return;
-    }
+    const provider = freeAi();
+    freeNote.hidden = provider === undefined;
+    busyCard.hidden = true;
     appendMsg("you", text);
 
     // Ground the turn in the current effect (if any) so refinements build on it.
+    // Play mode sends only this turn (no history) with the last GOOD effect: each
+    // request stays small on the shared quota, and a broken attempt never leaks
+    // into the next visitor's ask.
+    const groundSource = play ? lastGoodSource : currentSource;
     const ctx = editorContext({
-      source: currentSource || "(no effect yet)",
-      compileSummary: lastBytecode
-        ? `OK — ${lastUniforms.length} uniforms, ${lastBytecode.length} bytes`
-        : "nothing compiled yet",
+      source: groundSource || "(no effect yet)",
+      compileSummary: play
+        ? groundSource ? "OK (playing now)" : "nothing playing yet"
+        : lastBytecode
+          ? `OK — ${lastUniforms.length} uniforms, ${lastBytecode.length} bytes`
+          : "nothing compiled yet",
     });
+    if (play) chatHistory.length = 0;
     chatHistory.push({ role: "user", content: `${ctx}\n\nUser (spoken): ${text}` });
 
     busy = true;
     micBtn.disabled = true;
+    setState("thinking");
     chatTurns += 1;
     let turnError: string | undefined;
+    const goodBefore = lastGoodSource;
     showThinking("Thinking");
 
     let deviceCosts: string | undefined;
-    try {
-      const { table, stored } = await costTableStore.resolveTable();
-      deviceCosts = builtinCostsToPrompt(table, stored !== null);
-    } catch {
-      deviceCosts = undefined;
+    if (!play) {
+      try {
+        const { table, stored } = await costTableStore.resolveTable();
+        deviceCosts = builtinCostsToPrompt(table, stored !== null);
+      } catch {
+        deviceCosts = undefined;
+      }
     }
 
     try {
@@ -304,34 +435,62 @@ export function AcidModeScreen(router: Router): Screen {
             appendMsg("think", narrateTool(name));
           },
           onSetScript: (source) => onSetScript(source),
-          onCapturePreview: async () => capturePreviewPng(),
-          onListMidi: async () => midiListSummary(),
-          onSetMidiMapping: async (mappings) => applyMidiMappings(mappings),
-          onEstimatePerformance: async () => estimateFleetReport(),
-          ...(canMeasure(perfDeviceFromClient(appState.client))
+          onCapturePreview: async () => capturePreviewPng(provider !== undefined),
+          // Tool groups. The free relay allows only set_script, capture_preview,
+          // estimate_performance and the two MIDI tools, so measure_on_device and
+          // file_bug are configured-provider only (an anonymous visitor must not
+          // file GitHub issues). Play mode keeps just set_script: the guard runs
+          // the estimate itself, and every extra tool round is another request.
+          ...(play
+            ? {}
+            : {
+                onListMidi: async () => midiListSummary(),
+                onSetMidiMapping: async (mappings: MidiMappingCall[]) => applyMidiMappings(mappings),
+                onEstimatePerformance: async () => estimateFleetReport(),
+              }),
+          ...(provider === undefined && canMeasure(perfDeviceFromClient(appState.client))
             ? { onMeasureOnDevice: async (args: MeasureOnDeviceCall) => measureOnFixture(args) }
             : {}),
-          onFileBug: appFileBugHook({
-            surface: "web-acid",
-            source: () => currentSource,
-            client: () => appState.client,
-            ai: aiSummary,
-            confirm: (issue) => confirmDialog({ ...confirmFilingText(issue), trippy: true }),
-          }),
+          ...(provider === undefined
+            ? {
+                onFileBug: appFileBugHook({
+                  surface: "web-acid",
+                  source: () => currentSource,
+                  client: () => appState.client,
+                  ai: aiSummary,
+                  confirm: (issue) => confirmDialog({ ...confirmFilingText(issue), trippy: true }),
+                }),
+              }
+            : {}),
         },
         deviceCosts,
-        ACID_SYSTEM,
+        play ? ACID_PLAY_SYSTEM : ACID_SYSTEM,
+        provider,
+        play ? { ...ACID_PLAY_TURN, finishAfterScript: scriptAccepted } : {},
       );
       clearThinking();
-      appendMsg("agent", finalText || "Done.");
+      if (play && lastGoodSource === goodBefore) {
+        // Nothing new reached the lights (compile error / guard): say so kindly.
+        appendMsg("agent", "That one didn't come out right, so the lights kept the last effect. Try saying it another way!");
+        setState("idle");
+      } else {
+        appendMsg("agent", finalText || "Done.");
+        setState("done");
+      }
     } catch (e) {
       clearThinking();
       turnError = msg(e);
-      appendMsg("agent", `Hmm, that didn't work: ${turnError}`);
+      if (isDemoAiBusy(e)) {
+        // Quota / rate limit / every model down or slow: point at the presets.
+        busyCard.hidden = false;
+        setState("busy", e.retryAfterS ? `Try again in ${Math.ceil(e.retryAfterS)}s` : "Try again in a minute");
+      } else {
+        appendMsg("agent", play ? "Hmm, that didn't work — try again, or pick a preset!" : `Hmm, that didn't work: ${turnError}`);
+        setState("idle");
+      }
     } finally {
       busy = false;
       micBtn.disabled = false;
-      setMicListening(false);
       scrollFeed();
       // Snapshot the transcript for off-device debugging. Best-effort.
       void chatLogStore.record({
@@ -356,15 +515,26 @@ export function AcidModeScreen(router: Router): Screen {
       lastBytecode = null;
       return `Compile failed${first ? ` — line ${first.line}: ${first.msg}` : ""}. Fix and retry.`;
     }
+    // Play mode: refuse a dark or hopelessly slow effect before it touches the
+    // preview or the fixture, so the last good effect keeps playing.
+    if (play) {
+      const refused = await playGuard(r.bytecode, r.uniforms);
+      if (refused !== null) {
+        appendMsg("think", "🔁 Not quite right — trying again");
+        return refused;
+      }
+    }
     lastBytecode = r.bytecode;
     lastWarnings = r.warnings ?? [];
     lastUniforms = r.uniforms;
+    lastGoodSource = source;
     await swapPreview(r.bytecode, r.uniforms);
     midiRouter.setManifest(r.uniforms);
     midiStore.autoBind(ACID_EFFECT_ID, r.uniforms.filter(isDrivable).map((u) => u.name));
 
-    // Persist so the effect survives the session + is findable in the library.
-    void persistSource(source);
+    // Persist so the effect survives the session + is findable in the library
+    // (not for a kiosk visitor: their phone's library is not the owner's).
+    if (!play) void persistSource(source);
 
     // Upload to the device (with default uniform values), if connected.
     let deviceNote = "not connected — wrote it but can't send it to a device yet";
@@ -385,6 +555,40 @@ export function AcidModeScreen(router: Router): Screen {
       appendMsg("think", "💡 Wrote it (no device connected)");
     }
     return `Compiled OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes; ${deviceNote}.${warningsFeedback(r.warnings)}`;
+  }
+
+  /** Run a candidate on a throwaway preview: sample a few frames for darkness and
+   * estimate its C6 cost for an unmapped curtain + rope (playGuard.ts). */
+  async function playGuard(bytecode: Uint8Array, uniforms: FxUniform[]): Promise<string | null> {
+    const frames: Uint8Array[] = [];
+    if (currentMap !== null && positions !== null) {
+      let probe: FxPreview | null = null;
+      try {
+        probe = await FxPreview.create(bytecode);
+        for (const u of uniforms) probe.setUniform(u.slot, u.default);
+        if (currentTopo !== null) probe.setTopology(currentTopo);
+        const n = currentMap.leds.length;
+        // Advance ~2 s at 30 fps, sampling a few frames (fade-ins start dark).
+        for (let f = 0; f <= 60; f++) {
+          probe.tick(f / 30, 1 / 30, f, n);
+          if (f === 1 || f === 20 || f === 40 || f === 60) frames.push(probe.shadeAll(positions).slice());
+        }
+      } catch {
+        // A preview failure is not proof of darkness; let the estimate decide.
+      } finally {
+        probe?.dispose();
+      }
+    }
+    let fraction = Number.NaN;
+    try {
+      const { table, stored } = await costTableStore.resolveTable();
+      const leds = Math.max(currentMap?.leds.length ?? 0, ACID_PLAY_BUDGET_LEDS);
+      const est = estimateAcrossDevices(bytecode, [fallbackTarget(table, leds, stored !== null)]);
+      fraction = est.binding?.budget.fraction ?? Number.NaN;
+    } catch {
+      fraction = 0; // no cost model available: don't block on it
+    }
+    return guardVerdict({ frames, budgetFraction: fraction, maxBudgetFraction: ACID_PLAY_MAX_BUDGET_FRACTION });
   }
 
   /** Save the acid effect to the library under a stable id (create if new).
@@ -423,14 +627,15 @@ export function AcidModeScreen(router: Router): Screen {
     frame = 0;
   }
 
-  /** Render the live preview to a PNG data URL for the vision tool. */
-  function capturePreviewPng(): string {
+  /** Render the live preview to a PNG data URL for the vision tool (a bounded
+   * JPEG for the free relay, which caps request size). */
+  function capturePreviewPng(bounded = false): string {
     if (preview !== null && mapView !== null && currentMap !== null && positions !== null) {
       const time = (performance.now() - startT) / 1000;
       preview.tick(time, 1 / 60, frame++, currentMap.leds.length);
       mapView.setLedColors(preview.shadeAll(positions));
     }
-    return canvas.toDataURL("image/png");
+    return bounded ? captureDemoPreview(canvas) : canvas.toDataURL("image/png");
   }
 
   function midiListSummary(): string {
@@ -559,6 +764,12 @@ export function AcidModeScreen(router: Router): Screen {
 
   // Pick the most-recent map for the backdrop, else a sample fixture.
   async function initMap(): Promise<void> {
+    // Play mode: a visitor's phone has no map of the install; a serpentine grid
+    // reads like the curtain and doubles as the darkness probe's positions.
+    if (play) {
+      loadMap(generateFixture("grid", { count: 240, seed: 31, jitterFrac: 0.04 }));
+      return;
+    }
     try {
       const id = appState.selectedMapId ?? (await mapStore.list({ sort: "updated" }))[0]?.id ?? null;
       const rec = id ? await mapStore.get(id) : undefined;
@@ -581,16 +792,16 @@ export function AcidModeScreen(router: Router): Screen {
       midiRouter.attach();
       // Remote chat drive (repro-on-device): feed queued prompts into ask().
       unregisterChatDriver = registerChatDriver((text) => ask(text));
-      if (!isAiConfigured()) {
-        appendMsg(
-          "agent",
-          "Heads up: set up an AI provider (⋯ → AI settings) and I can start making lights for you.",
-        );
+      freeNote.hidden = isAiConfigured();
+      if (!play && !isAiConfigured()) {
+        appendMsg("agent", "Using the free AI — no setup needed. (Add your own in ⋯ → AI settings for more.)");
       }
     },
     onUnmount: () => {
       disposed = true;
       unregisterChatDriver?.();
+      kioskExtra?.dispose?.();
+      if (doneTimer !== undefined) clearTimeout(doneTimer);
       cancelAnimationFrame(raf);
       unsubPill();
       midiRouter.detach();

@@ -41,35 +41,95 @@ export function captureDemoPreview(source: HTMLCanvasElement): string {
   throw new Error("The preview could not be reduced to the demo image limit.");
 }
 
-export function makeDemoProvider(endpoint = DEMO_AI_ENDPOINT): AiProvider {
+/** Why a free-demo request failed, so a caller can offer a friendly fallback
+ * (Acid play mode points visitors at the presets) instead of a raw error. */
+export type DemoAiFailure = "busy" | "unavailable" | "size" | "timeout" | "other";
+
+export class DemoAiError extends Error {
+  constructor(message: string, readonly kind: DemoAiFailure, readonly retryAfterS?: number) {
+    super(message);
+    this.name = "DemoAiError";
+  }
+}
+
+/** The free demo is out of capacity for now (quota, rate limit, every model down
+ * or too slow): the visitor should try a preset rather than keep asking. */
+export function isDemoAiBusy(e: unknown): e is DemoAiError {
+  return e instanceof DemoAiError && (e.kind === "busy" || e.kind === "unavailable" || e.kind === "timeout");
+}
+
+export interface DemoProviderOptions {
+  /** Client-side deadline per request (ms). The relay has its own deadline; this
+   * one bounds how long a visitor stares at "thinking" on a bad cellular link. */
+  timeoutMs?: number;
+  /** Cap on output tokens (the relay caps at 4000). */
+  maxTokens?: number;
+  /** Advertise vision (capture_preview). Play mode turns it off: each capture is
+   * an extra request against the shared quota. */
+  vision?: boolean;
+}
+
+const SIZE_MESSAGE = "This conversation has reached the free demo’s size limit. Start a new chat to continue; your effect is saved.";
+
+export function makeDemoProvider(endpoint = DEMO_AI_ENDPOINT, options: DemoProviderOptions = {}): AiProvider {
+  const cap = Math.min(options.maxTokens ?? 4000, 4000);
   return {
     id: "openai",
-    capabilities: { tools: true, vision: true },
+    capabilities: { tools: true, vision: options.vision ?? true },
     async send(messages, opts) {
       const body = JSON.stringify({
         messages: latestDemoPreview(toOpenAiMessages(opts.system, messages)),
         tools: toOpenAiTools(opts.tools),
-        max_tokens: Math.min(opts.maxTokens ?? 4000, 4000),
+        max_tokens: Math.min(opts.maxTokens ?? cap, cap),
       });
       if (new TextEncoder().encode(body).byteLength > DEMO_REQUEST_BYTES) {
-        throw new Error("This conversation has reached the free demo’s size limit. Start a new chat to continue; your effect is saved.");
+        throw new DemoAiError(SIZE_MESSAGE, "size");
       }
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        signal: opts.signal ?? null,
-        body,
-      });
-      if (!response.ok) {
-        if (response.status === 413) throw new Error("This conversation has reached the free demo’s size limit. Start a new chat to continue; your effect is saved.");
-        if (response.status === 429) throw new Error("The free demo is busy or has reached its shared allowance. Please try again later, or use your own provider in Settings.");
-        if (response.status === 503) throw new Error("Free demo AI is temporarily unavailable. You can still edit Code and Uniforms, or choose your own provider in Settings.");
-        throw new Error(`The demo assistant could not complete this request (${response.status}). Please try again.`);
+      // Combine the caller's cancel with our own deadline (AbortSignal.any is
+      // missing on older Safari, so wire it by hand).
+      const ctl = new AbortController();
+      const outer = opts.signal;
+      const onAbort = (): void => ctl.abort();
+      if (outer?.aborted) ctl.abort();
+      else outer?.addEventListener("abort", onAbort, { once: true });
+      let timedOut = false;
+      const timer = options.timeoutMs !== undefined
+        ? setTimeout(() => { timedOut = true; ctl.abort(); }, options.timeoutMs) : undefined;
+      try {
+        let response: Response;
+        try {
+          response = await fetch(endpoint, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal: ctl.signal,
+            body,
+          });
+        } catch (e) {
+          if (timedOut) throw new DemoAiError("The free AI took too long to answer.", "timeout");
+          if (outer?.aborted) throw e;
+          throw new DemoAiError("Couldn’t reach the free AI — check your connection and try again.", "unavailable");
+        }
+        if (!response.ok) {
+          const retry = Number(response.headers.get("retry-after"));
+          const retryAfterS = Number.isFinite(retry) && retry > 0 ? retry : undefined;
+          if (response.status === 413) throw new DemoAiError(SIZE_MESSAGE, "size");
+          if (response.status === 429) throw new DemoAiError("The free demo is busy or has reached its shared allowance. Please try again later, or use your own provider in Settings.", "busy", retryAfterS);
+          if (response.status === 503) throw new DemoAiError("Free demo AI is temporarily unavailable. You can still edit Code and Uniforms, or choose your own provider in Settings.", "unavailable", retryAfterS);
+          if (response.status === 504) throw new DemoAiError("The free AI took too long to answer.", "timeout");
+          throw new DemoAiError(`The demo assistant could not complete this request (${response.status}). Please try again.`, "other");
+        }
+        let json: { choices?: { message?: unknown; finish_reason?: string }[]; error?: unknown };
+        try { json = await response.json(); } catch (e) {
+          if (timedOut) throw new DemoAiError("The free AI took too long to answer.", "timeout");
+          throw e;
+        }
+        const choice = json.choices?.[0];
+        if (!choice?.message || json.error) throw new DemoAiError("The demo assistant returned an incomplete response. Please try again.", "other");
+        return { content: fromOpenAiMessage(choice.message as OaiMessage), stop_reason: finishReasonToStop(choice.finish_reason ?? "stop") };
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+        outer?.removeEventListener("abort", onAbort);
       }
-      const json = await response.json();
-      const choice = json.choices?.[0];
-      if (!choice?.message || json.error) throw new Error("The demo assistant returned an incomplete response. Please try again.");
-      return { content: fromOpenAiMessage(choice.message), stop_reason: finishReasonToStop(choice.finish_reason ?? "stop") };
     },
   };
 }
