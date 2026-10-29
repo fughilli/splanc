@@ -256,7 +256,10 @@ const CSS = `
 /* Acid Mode owns the bottom (its big mic): sit under its top bar instead. */
 .kiosk-chip--top {
   bottom: auto;
-  top: calc(max(12px, env(safe-area-inset-top)) + 56px);
+  top: calc(max(12px, env(safe-area-inset-top)) + 6px);
+  padding: 6px 10px;
+  font-size: 0.8125rem;
+  white-space: nowrap;
 }
 
 /* The pumpkin entry button (onboarding + device sheet). */

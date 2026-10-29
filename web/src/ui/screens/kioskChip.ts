@@ -8,7 +8,7 @@
 
 import { kioskStore } from "../../halloween/kioskStore";
 import { PLAY_PATH } from "../../halloween/playSession";
-import { countdownLine } from "../../net/kiosk";
+import { countdownLine, countdownTicking, formatCountdown } from "../../net/kiosk";
 import { attractDisplayName } from "../../halloween/playLogic";
 import { appState } from "../app/state";
 import { toast } from "../kit";
@@ -30,8 +30,15 @@ export function installKioskChip(): void {
   const render = (): void => {
     const on = kioskStore.active && appState.status.state === "connected" && !onPlay();
     chip.hidden = !on;
-    chip.classList.toggle("kiosk-chip--top", location.hash.replace(/^#/, "").split("?")[0] === "/acid");
-    if (on) chip.textContent = `⏳ ${countdownLine(kioskStore.remaining(), kioskStore.status)}`;
+    // Acid Mode owns the bottom (its mic): a compact chip between its pill and exit.
+    const top = location.hash.replace(/^#/, "").split("?")[0] === "/acid";
+    chip.classList.toggle("kiosk-chip--top", top);
+    if (!on) return;
+    const st = kioskStore.status;
+    chip.textContent =
+      top && countdownTicking(st)
+        ? `⏳ Show in ${formatCountdown(kioskStore.remaining())}`
+        : `⏳ ${top && st?.attractActive ? "Show is on" : countdownLine(kioskStore.remaining(), st)}`;
   };
   kioskStore.subscribe(render);
   kioskStore.onRevert((s) => {
