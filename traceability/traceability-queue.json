@@ -197,12 +197,6 @@
       "provided_level": "simulation"
     },
     {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:rejoin_loop",
-      "message": "//pi/hitl/harness:rejoin_loop pi/hitl/harness/rejoin_loop error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
       "kind": "high-risk-open",
       "entity": "RISK-2",
       "message": "high risk; mitigation is PARTIAL",
