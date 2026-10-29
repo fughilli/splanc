@@ -24,6 +24,7 @@ import { prefs, type WifiCreds } from "../../store/prefs";
 import { deviceStore, type KnownDevice } from "../../store/deviceStore";
 import { appState } from "../app/state";
 import { isNativePlatform } from "../../net/native";
+import type { BleDevice } from "../../net/bleTransport";
 
 /** Get an Improv device to provision: the browser's Web Bluetooth chooser, or —
  * in the native wrapper — our own named scan+picker (the plugin's built-in
@@ -255,7 +256,12 @@ export function connectOverBle(onDone?: () => void): void {
     );
     let device;
     try {
-      device = await requestBleDevice(); // FIRST — preserve the user gesture
+      // Native wrapper (iOS has no Web Bluetooth): our own scan-and-pick sheet over
+      // CoreBluetooth, adapted to the same BleDevice seam, so the shared BleSocket
+      // runs the protocol unchanged (net/nativeBlePlayer.ts).
+      device = isNativePlatform()
+        ? await pickPlayerDeviceNative()
+        : await requestBleDevice(); // FIRST — preserve the user gesture
     } catch (e) {
       if (!isCancel(e)) toast(`Bluetooth: ${msg(e)}`, { error: true });
       return;
@@ -276,6 +282,20 @@ export function connectOverBle(onDone?: () => void): void {
     if (device.id) deviceStore.setBleId(url, device.id);
     onDone?.();
   })();
+}
+
+/** Native scan-and-pick for the player transport (the Web Bluetooth chooser's
+ * stand-in inside the Capacitor app). */
+async function pickPlayerDeviceNative(): Promise<BleDevice> {
+  const [{ loadNativeBle, nativeBleDevice }, { pickNativeBleDevice }] = await Promise.all([
+    import("../../net/nativeBlePlayer"),
+    import("./blePicker"),
+  ]);
+  const ble = await loadNativeBle();
+  return pickNativeBleDevice(async (id, name) => nativeBleDevice(ble, id, name), {
+    title: "Connect over Bluetooth",
+    prompt: "Tap the device to connect:",
+  });
 }
 
 function promptManualAddress(): void {

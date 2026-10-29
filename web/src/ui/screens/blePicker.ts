@@ -24,8 +24,25 @@ import type { ImprovDevice } from "../../net/improv";
 /** Scan + let the user pick an Improv device. Rejects with an AbortError
  * DOMException when dismissed (so addDevice's isCancel() stays silent). */
 export function pickImprovDeviceNative(): Promise<ImprovDevice> {
-  return new Promise<ImprovDevice>((resolve, reject) => {
-    const sheet = Sheet("Add device over Bluetooth", {
+  return pickNativeBleDevice(improvDeviceById);
+}
+
+/** Labels for the picker sheet (defaults: the Improv "add device" wording). */
+export interface NativePickerText {
+  title?: string;
+  prompt?: string;
+}
+
+/** The scan-and-pick sheet, generic over what a picked device becomes: an
+ * `ImprovDevice` for provisioning, or a player `BleDevice` for the offline
+ * "Connect over Bluetooth" (net/nativeBlePlayer.ts `nativeBleDevice`). Every
+ * splanc board advertises the Improv service, so the same scan finds both. */
+export function pickNativeBleDevice<T>(
+  toDevice: (deviceId: string, name?: string) => Promise<T>,
+  text: NativePickerText = {},
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const sheet = Sheet(text.title ?? "Add device over Bluetooth", {
       onClose: () => finish({ err: new DOMException("cancelled", "AbortError") }),
     });
 
@@ -56,7 +73,7 @@ export function pickImprovDeviceNative(): Promise<ImprovDevice> {
       }
     }
 
-    function finish(outcome: { device?: ImprovDevice; err?: unknown }): void {
+    function finish(outcome: { device?: T; err?: unknown }): void {
       if (settled) return;
       settled = true;
       void stopScan();
@@ -104,14 +121,14 @@ export function pickImprovDeviceNative(): Promise<ImprovDevice> {
         if (!names.has(hit.deviceId)) resolveNameOverGatt(hit.deviceId);
         return;
       }
-      hint.textContent = "Tap your device to set it up:";
+      hint.textContent = text.prompt ?? "Tap your device to set it up:";
       const btn = Button({
         label,
         block: true,
         onClick: () => {
           void (async () => {
             try {
-              const device = await improvDeviceById(hit.deviceId, names.get(hit.deviceId));
+              const device = await toDevice(hit.deviceId, names.get(hit.deviceId));
               finish({ device });
               sheet.close(); // settled already, so onClose's finish() is a no-op
             } catch (e) {
