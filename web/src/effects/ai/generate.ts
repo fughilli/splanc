@@ -14,7 +14,7 @@
 
 import type { FxDiagnostic } from "../../fx/preview";
 import { OUTPUT_SCHEMA, SYSTEM_PROMPT } from "./system-prompt";
-import { BUG_REPORT_GUIDE, DEVICE_PERF_GUIDE, baseChatSystem, selectTools } from "./chatPrompt";
+import { BUG_REPORT_GUIDE, CHAT_SYSTEM_COMPACT, DEVICE_PERF_GUIDE, baseChatSystem, selectTools } from "./chatPrompt";
 import { stripCodeFence } from "./providers/wllamaProtocol";
 import { isMobileUserAgent } from "../../flash/env";
 import {
@@ -466,9 +466,12 @@ export async function chatTurn(
   deviceCosts?: string,
   systemExtra?: string,
   providerOverride?: AiProvider,
+  turnOpts: ChatTurnOptions = {},
 ): Promise<string> {
   let finalText = "";
-  const MAX_ROUNDS = 8; // hard cap so a misbehaving loop can't run forever
+  // Hard cap so a misbehaving loop can't run forever (callers on a shared quota
+  // cap lower: every round is one request).
+  const MAX_ROUNDS = turnOpts.maxRounds ?? 8;
   const provider = providerOverride ?? activeProvider();
   const caps = provider.capabilities;
   // Assemble the system prompt once: the frozen chat spec, then the per-device
@@ -477,7 +480,7 @@ export async function chatTurn(
   // token, so they get the condensed DSL spec; every other provider gets the full
   // prompt. Kept as one string so the provider carries it verbatim (and wllama's
   // cache_prompt reuses this constant prefix across turns).
-  let system = baseChatSystem(provider.id);
+  let system = turnOpts.compactSystem ? CHAT_SYSTEM_COMPACT : baseChatSystem(provider.id);
   if (deviceCosts) system += `\n\n${deviceCosts}`;
   if (systemExtra) system += `\n\n${systemExtra}`;
   // The on-fixture tool's guidance rides only with the tool (and never on the
@@ -507,6 +510,7 @@ export async function chatTurn(
       system,
       tools,
       signal: hooks.signal,
+      ...(turnOpts.maxTokens !== undefined ? { maxTokens: turnOpts.maxTokens } : {}),
       // Live progress as the response streams (providers that can't stream just
       // ignore this and return the whole turn at once). Deltas also feed the
       // debug transcript as tokens stream OUT.
@@ -552,6 +556,10 @@ export async function chatTurn(
 
     // Fulfill every tool call locally, then feed the results back in one user turn.
     const results: ContentBlock[] = [];
+    // finishAfterScript: the set_script summaries (and whether every set_script
+    // this round was accepted), to end the turn without a closing request.
+    let scriptSummary = "";
+    let scriptsAccepted = toolUses.length > 0;
     for (const tu of toolUses) {
       hooks.onToolUse?.(tu.name);
       hooks.onTrace?.({ kind: "tool_call", name: tu.name, input: tu.input });
@@ -561,6 +569,8 @@ export async function chatTurn(
           const source = stripCodeFence(String(input.source ?? ""));
           const note = typeof input.summary === "string" ? input.summary : undefined;
           const compileResult = await hooks.onSetScript(source, note);
+          if (note) scriptSummary = note;
+          if (!turnOpts.finishAfterScript?.(compileResult)) scriptsAccepted = false;
           results.push({
             type: "tool_result",
             tool_use_id: tu.id,
@@ -637,6 +647,27 @@ export async function chatTurn(
       }
     }
     history.push({ role: "user", content: results });
+    // One-request turns: when every call this round was an accepted set_script,
+    // the model's own summary is the reply — skip the "say what you did" round.
+    // A closing assistant message keeps the history well-formed for a follow-up.
+    if (turnOpts.finishAfterScript && scriptsAccepted && toolUses.every((t) => t.name === "set_script")) {
+      finalText = scriptSummary || finalText || "Done.";
+      history.push({ role: "assistant", content: [{ type: "text", text: finalText }] });
+      break;
+    }
   }
   return finalText;
+}
+
+/** Per-turn knobs for chatTurn (defaults = the editor's behaviour). */
+export interface ChatTurnOptions {
+  /** Max model requests this turn (default 8). */
+  maxRounds?: number;
+  /** Use the condensed DSL spec (~1/3 the tokens) instead of the full one. */
+  compactSystem?: boolean;
+  /** Output-token cap per request. */
+  maxTokens?: number;
+  /** Given a set_script result, true when it was accepted (compiled + sent):
+   * the turn then ends with the script's summary as the reply, saving a request. */
+  finishAfterScript?: (result: string) => boolean;
 }

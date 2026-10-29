@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { createDemoRelay, FREE_DEMO_MODELS, RELAY_PATHS } from '../_worker.js';
+import worker, { clientKey, createDemoRelay, DEMO_LIMITS, DEMO_TOOLS, FREE_DEMO_MODELS, RELAY_PATHS } from '../_worker.js';
 const url = 'https://splanc.pages.dev/api/demo-ai/chat/completions';
 const env = { OPENROUTER_API_KEY: 'unit-test-secret' };
 const tool = { type: 'function', function: { name: 'set_script', description: 'Edit an effect', parameters: { type: 'object' } } };
@@ -52,7 +52,8 @@ test('locks upstream/model/price/output and preserves tool/image history', async
 });
 
 test('rejects request overrides, arbitrary tools, remote image URLs, malformed JSON and oversized bytes', async () => {
-  const relay = createDemoRelay({ fetchImpl: () => assert.fail('invalid input must not reach provider') });
+  const relay = createDemoRelay({ limits: { ...DEMO_LIMITS, clientPerMinute: 100, clientPerHour: 100 },
+    fetchImpl: () => assert.fail('invalid input must not reach provider') });
   for (const payload of [
     { ...body, model: 'paid' }, { ...body, provider: {} }, { ...body, stream: true },
     { ...body, max_tokens: -1 }, { ...body, messages: [] },
@@ -137,14 +138,66 @@ test('attempt deadline falls back; total deadline and cancellation stop the chai
 test('rate budgets recover after the window; optional edge limiter fails closed', async () => {
   let now = 100000;
   const relay = createDemoRelay({ now: () => now, fetchImpl: async () => success() });
-  for (let i = 0; i < 24; i++) assert.equal((await relay(req(), env)).status, 200);
-  assert.equal((await relay(req(), env)).status, 429);
+  for (let i = 0; i < DEMO_LIMITS.clientPerMinute; i++) assert.equal((await relay(req(), env)).status, 200);
+  const limited1 = await relay(req(), env);
+  assert.equal(limited1.status, 429);
+  assert.equal((await limited1.json()).error.code, 'client_rate_limited');
+  assert.ok(Number(limited1.headers.get('retry-after')) <= 60);
   now += 60001;
   assert.equal((await relay(req(), env)).status, 200);
   const limited = { ...env, AI_RATE_LIMITER: { limit: async () => ({ success: false }) } };
   assert.equal((await relay(req(), limited)).status, 429);
   limited.AI_RATE_LIMITER.limit = async () => { throw Error('offline'); };
   assert.equal((await relay(req(), limited)).status, 503);
+});
+
+test('sized for a ~1000/day shared key: per-client hourly cap, global per-minute cap', async () => {
+  let now = 100000;
+  const relay = createDemoRelay({ now: () => now, fetchImpl: async () => success() });
+  const from = ip => req(body, { headers: { origin: 'https://splanc.io', 'content-type': 'application/json', 'cf-connecting-ip': ip } });
+  // One visitor: 30 requests in an hour (6/minute), then told to wait for the hour.
+  let ok = 0;
+  for (let minute = 0; minute < 10; minute++, now += 60001) {
+    for (let i = 0; i < DEMO_LIMITS.clientPerMinute; i++) if ((await relay(from('9.9.9.9'), env)).status === 200) ok++;
+  }
+  assert.equal(ok, DEMO_LIMITS.clientPerHour);
+  const hourly = await relay(from('9.9.9.9'), env);
+  assert.equal(hourly.status, 429);
+  assert.equal((await hourly.json()).error.code, 'client_hourly_limit');
+  assert.ok(Number(hourly.headers.get('retry-after')) > 60);
+  now += 3600001;
+  assert.equal((await relay(from('9.9.9.9'), env)).status, 200);
+  // A crowd: the isolate stops at the upstream free per-minute cap, as demo_busy.
+  now += 60001;
+  let crowd = 0;
+  for (let i = 0; i < 40; i++) if ((await relay(from(`10.0.0.${i}`), env)).status === 200) crowd++;
+  assert.equal(crowd, DEMO_LIMITS.perMinute);
+  const busy = await relay(from('10.0.1.1'), env);
+  assert.equal(busy.status, 429);
+  assert.equal((await busy.json()).error.code, 'demo_busy');
+});
+
+test('IPv6 visitors are keyed by /64 so rotating privacy addresses share one budget', async () => {
+  assert.equal(clientKey('2001:db8:aa:bb:1:2:3:4'), '2001:db8:aa:bb::/64');
+  assert.equal(clientKey('2001:DB8:AA:BB::9'), '2001:db8:aa:bb::/64');
+  assert.equal(clientKey('2001:db8::1'), '2001:db8:0:0::/64');
+  assert.equal(clientKey('1.2.3.4'), '1.2.3.4');
+  assert.equal(clientKey(null), 'unknown');
+  const relay = createDemoRelay({ fetchImpl: async () => success() });
+  const from = ip => req(body, { headers: { origin: 'https://splanc.io', 'content-type': 'application/json', 'cf-connecting-ip': ip } });
+  for (let i = 0; i < DEMO_LIMITS.clientPerMinute; i++) assert.equal((await relay(from(`2001:db8:aa:bb::${i + 1}`), env)).status, 200);
+  assert.equal((await relay(from('2001:db8:aa:bb:ffff::1'), env)).status, 429);
+  assert.equal((await relay(from('2001:db8:aa:cc::1'), env)).status, 200);
+});
+
+test('the iOS app origin is allowed; lookalikes are not', async () => {
+  const relay = createDemoRelay({ fetchImpl: async () => success() });
+  const ok = await relay(req(body, { headers: { origin: 'capacitor://localhost', 'content-type': 'application/json' } }), env);
+  assert.equal(ok.status, 200);
+  assert.equal(ok.headers.get('access-control-allow-origin'), 'capacitor://localhost');
+  for (const origin of ['capacitor://evil', 'http://localhost', 'capacitor://localhost.evil.example']) {
+    assert.equal((await relay(req(body, { headers: { origin, 'content-type': 'application/json' } }), env)).status, 403, origin);
+  }
 });
 
 test('static assets and existing worker routes remain separate', async () => {
@@ -266,7 +319,7 @@ test('interactive reasoning policy survives fallback without raising token or pr
   const sent=[];
   const relay=createDemoRelay({fetchImpl:async(_,init)=>{sent.push(JSON.parse(init.body));return failure(503,{});}});
   assert.equal((await relay(req(),env)).status,503);
-  assert.deepEqual(sent.map(x=>x.reasoning),[{effort:'low'},{enabled:false},{enabled:false}]);
+  assert.deepEqual(sent.map(x=>x.reasoning),[{enabled:false},{effort:'low'},{enabled:false}]);
   assert(sent.every(x=>x.max_tokens===4000));
   assert(sent.every(x=>Object.values(x.provider.max_price).every(price=>price===0)));
 });
@@ -308,4 +361,9 @@ test('splanc.pages.dev forwards the cloud relay paths to the RELAY binding, URL 
   // A missing binding is a clear 503, not the app.
   const unbound = await worker.fetch(new Request('https://splanc.pages.dev/mcp'), { ASSETS: env.ASSETS });
   assert.equal(unbound.status, 503);
+});
+
+test('tool allowlist is exactly the five effect tools (acidFreeAi.test.ts pins the app side)', () => {
+  assert.deepEqual([...DEMO_TOOLS].sort(), ['capture_preview', 'estimate_performance', 'list_midi_controls', 'set_midi_mapping', 'set_script']);
+  assert.ok(!DEMO_TOOLS.has('file_bug') && !DEMO_TOOLS.has('measure_on_device'));
 });

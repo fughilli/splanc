@@ -198,6 +198,105 @@ const CSS = `
   gap: var(--sp-2);
   margin-top: var(--sp-2);
 }
+/* Thinking: the mic breathes slowly while the AI works. */
+.acid-mic--thinking {
+  background: radial-gradient(circle at 50% 35%, #37e0ff, #1d6f9e);
+  animation: acid-breathe 1.6s var(--ease) infinite;
+}
+@keyframes acid-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(0.92); }
+}
+.screen--acid[data-state="done"] .acid-mic-hint { color: #7dffb0; }
+.screen--acid[data-state="busy"] .acid-mic-hint { color: #ffb347; }
+
+/* Kiosk idle countdown slot (play mode; component from the play screen). */
+.acid-kiosk {
+  flex: 1;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+}
+
+/* "AI is busy" fallback card. */
+.acid-busy {
+  width: 100%;
+  max-width: 560px;
+  margin-bottom: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-card);
+  background: rgba(40,20,0,0.82);
+  border: 1px solid #ff8c1a;
+  color: #ffd9a8;
+  text-align: center;
+}
+.acid-busy[hidden] { display: none; }
+.acid-busy p { margin: 0 0 var(--sp-2); font-size: var(--f-body); }
+.acid-busy-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 20px;
+  font: inherit;
+  font-weight: 700;
+  color: #1a0d00;
+  background: #ff8c1a;
+  cursor: pointer;
+}
+
+/* Free-AI disclosure: tiny, at the bottom. */
+.acid-free-note {
+  margin-top: var(--sp-2);
+  max-width: 560px;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-align: center;
+}
+.acid-free-note[hidden] { display: none; }
+.acid-free-note summary { cursor: pointer; }
+.acid-free-note p { margin: var(--sp-1) 0 0; }
+
+/* ---- Play mode (#/acid?play=1): a Halloween stoop, phone in one hand. ---- */
+.acid--play .acid-title {
+  margin-top: var(--sp-4);
+  background: linear-gradient(90deg, #ff8c1a, #b04dff, #6dff6d);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+.acid--play .acid-sub { font-size: var(--f-body); color: var(--text); }
+.acid-examples {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+  max-width: 560px;
+}
+.acid-example {
+  border: 1px solid rgba(255,140,26,0.6);
+  background: rgba(30,12,0,0.7);
+  color: #ffd9a8;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font: inherit;
+  font-size: var(--f-caption);
+  cursor: pointer;
+}
+.acid--play .acid-feed { max-height: 32vh; }
+.acid--play .acid-mic {
+  width: 148px;
+  height: 148px;
+  background: radial-gradient(circle at 50% 35%, #ff8c1a, #a33d00);
+  box-shadow: 0 10px 48px rgba(255,140,26,0.5);
+}
+.acid--play .acid-mic svg { width: 60px; height: 60px; }
+.acid--play .acid-mic--listening {
+  background: radial-gradient(circle at 50% 35%, #b04dff, #5a1a99);
+}
+.acid--play .acid-mic--thinking {
+  background: radial-gradient(circle at 50% 35%, #6dff6d, #1f7a1f);
+}
+.acid--play .acid-mic-hint { font-size: var(--f-body); color: var(--text); }
+
 .acid-fallback input {
   flex: 1;
   background: rgba(20,20,30,0.72);
