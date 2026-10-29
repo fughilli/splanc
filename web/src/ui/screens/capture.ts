@@ -37,6 +37,14 @@ import {
   setDriverCaptureError,
 } from "../../driver/guard";
 import { phaseCount as stridePhaseCount } from "../../code/stride";
+import {
+  fillChannelGaps,
+  planChannelCapture,
+  shouldAdvanceStage,
+  stageCoverage,
+  stageLabel,
+  type ChannelCapturePlan,
+} from "../../capture/channelCapture";
 import { CaptureUnsupportedError } from "../../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../../xr/imu";
 import { MediaStreamCaptureSource } from "../../xr/mediaStreamCapture";
@@ -125,10 +133,11 @@ interface CaptureEngineConfig {
  * (per-device stride from the active device; the rest from Behavior Settings)
  * with the URL params overriding on top. Recomputed per capture so a settings
  * change takes effect on the next map without a reload. */
-function resolveCaptureConfig(): CaptureEngineConfig {
+function resolveCaptureConfig(forceDiffuse?: boolean): CaptureEngineConfig {
   const bp = prefs.getDiffuseParams();
-  // Diffuse mode: ?diffuse=1 forces it on; otherwise the persisted toggle.
-  const diffuse = qs.get("diffuse") === "1" || prefs.getDiffuseEnabled();
+  // Diffuse mode: ?diffuse=1 forces it on; otherwise the persisted toggle. A
+  // per-channel capture stage (capture/channelCapture.ts) decides it outright.
+  const diffuse = forceDiffuse ?? (qs.get("diffuse") === "1" || prefs.getDiffuseEnabled());
   const forcedThreshold = qs.get("threshold") !== null;
   // Stride is per-device (Hardware Setup); URL ?stride= overrides, else default.
   const activeId = deviceStore.activeId();
@@ -148,6 +157,33 @@ function resolveCaptureConfig(): CaptureEngineConfig {
   };
   return { diffuse, forcedThreshold, strideSpacing, anchorDensity, detectorOpts };
 }
+/**
+ * The per-channel capture plan for the active device (a dense curtain on one
+ * channel + a strided rope on another, capture/channelCapture.ts), or null to
+ * capture exactly as today: no per-channel profile set on Hardware Setup, or
+ * the device's channel layout can't be read.
+ */
+async function resolveChannelPlan(c: {
+  getHardwareConfig(): Promise<{ channels: { channel: number; ledCount: number }[] }>;
+}): Promise<ChannelCapturePlan | null> {
+  const id = deviceStore.activeId();
+  const profiles = id ? deviceStore.getChannelCaptures(id) : undefined;
+  if (!profiles) return null;
+  try {
+    const st = await c.getHardwareConfig();
+    const counts: number[] = [];
+    for (const ch of st.channels) {
+      if (ch.channel >= 0 && ch.channel < 64) counts[ch.channel] = Math.max(0, ch.ledCount || 0);
+    }
+    for (let i = 0; i < counts.length; i++) counts[i] ??= 0;
+    return planChannelCapture(counts, profiles);
+  } catch (e) {
+    nativeLog(`[capture] channel layout unavailable (${e instanceof Error ? e.message : String(e)})`);
+    toast("Couldn't read the channel layout — capturing every LED as one strip", { error: true });
+    return null;
+  }
+}
+
 const imuMapping = parseImuMapping(qs.get("imumap") ?? "") ?? DEFAULT_IMU_MAPPING;
 const forcedFx = ((): number | null => {
   const v = parseFloat(qs.get("fx") ?? "");
@@ -173,9 +209,13 @@ const liveSolveEnabled = qs.get("livesolve") !== "0";
  * The strip prior (Settings ▸ Capture) is off for the interim live solves:
  * they drive the overlay, and their LED sets are too partial to estimate a
  * pitch from. `?stripprior=0|1` overrides the setting for one session. */
-function finalSolveOptions(): NonNullable<SolveProblem["options"]> {
+function finalSolveOptions(perChannel = false): NonNullable<SolveProblem["options"]> {
   const forced = qs.get("stripprior");
-  const on = forced === null ? prefs.getStripPrior() : forced === "1";
+  // A per-channel capture mixes fixtures with different LED pitches (curtain vs
+  // rope) in one index space; the strip prior estimates ONE pitch and chains
+  // across the channel boundary, so it is off there unless forced (the gaps
+  // are filled per channel after the solve instead).
+  const on = forced === null ? prefs.getStripPrior() && !perChannel : forced === "1";
   return on ? { stripPrior: true } : {};
 }
 const forcedExposure = ((): number | null => {
@@ -376,6 +416,15 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
 
   const stopBtn = Button({ label: "Stop & finish", icon: "camera", onClick: () => void stopCapture() });
   stopBtn.classList.add("capture-stop");
+  // Per-channel capture: skip ahead from the regular stage (e.g. the curtain)
+  // to the strided one (the rope) without waiting for the auto hand-over.
+  let nextStageHook: (() => void) | null = null;
+  // This run's per-channel plan (null = a plain capture); the solved map is
+  // gap-filled per channel with it before it is pushed / saved.
+  let runChannelPlan: ChannelCapturePlan | null = null;
+  const nextStageBtn = Button({ label: "Next channel ▶", variant: "quiet", onClick: () => nextStageHook?.() });
+  nextStageBtn.classList.add("capture-next-stage");
+  nextStageBtn.style.display = "none";
 
   // Solve progress (shown on Stop; interim map renders in the live inset).
   const progWrap = document.createElement("div");
@@ -433,6 +482,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     reviewPanel,
     progWrap,
     stopBtn,
+    nextStageBtn,
   );
   el.append(overlay);
 
@@ -1011,7 +1061,23 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       applyLiveSolve(null); // base map alone until the live solve registers
       guideEl.textContent = "Supplemental scan — cover the gaps and low-confidence LEDs.";
     }
-    const ledCount = Math.max(
+    // Per-channel capture (fresh maps only; supplements / IMU re-localisation
+    // keep the per-device settings): the plan fixes the LED count to the whole
+    // fixture's hardware layout.
+    const channelPlan = supplementId === null && calibrateId === null ? await resolveChannelPlan(c) : null;
+    runChannelPlan = channelPlan;
+    if (channelPlan !== null) {
+      const st0 = channelPlan.stages[0]!;
+      const strided = channelPlan.stages.find((x) => x.kind === "strided");
+      ({ diffuse, forcedThreshold, anchorDensity, detectorOpts } = resolveCaptureConfig(st0.kind === "strided"));
+      strideSpacing = strided ? strided.strideSpacing : strideSpacing;
+      strideLocked = true;
+      nativeLog(
+        `[capture] per-channel plan: ${channelPlan.spans.map((x) => `CH${x.channel}=${x.count}`).join(" ")} · ` +
+          channelPlan.stages.map((_, i) => stageLabel(channelPlan, i)).join(" → "),
+      );
+    }
+    const ledCount = channelPlan !== null ? channelPlan.total : Math.max(
       1,
       priorObs?.ledCount ||
         routeLeds ||
@@ -1155,14 +1221,31 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // Diffuse mode: start on phase 0 of the stride schedule; the tick below
         // rotates the phase. Firmware masks all but the phase's sparse subset.
         ...(diffuse ? { strideSpacing, anchorDensity, stridePhase: 0 } : {}),
+        // Per-channel capture: the code book covers the WHOLE fixture from the
+        // start, so ids + code timing never change between stages.
+        ...(channelPlan !== null ? { codeSpace: channelPlan.total } : {}),
       };
 
       await c.syncClock(4);
-      const started = await c.startMapping(ledCount, config);
+      // Per-channel capture whose first stage codes only a prefix (the curtain):
+      // the device transmits just [0, ledCount) while capturing, so a channel
+      // past it would freeze on whatever the effect last showed. Start dark over
+      // every LED for a few frames (latching black on every channel), then
+      // narrow to the first stage at the real brightness.
+      const stage0 = channelPlan?.stages[0];
+      const blankFirst = channelPlan !== null && stage0 !== undefined && stage0.ledCount < channelPlan.total;
+      const started = await c.startMapping(ledCount, blankFirst ? { ...config, brightness: 0 } : config);
       mappingStarted = true;
       if (calibrateId !== null) startCalibrationUi(c);
       let params: CodeParams = started.codeParams;
       let epoch: number = started.patternClockEpoch;
+      if (blankFirst && stage0 !== undefined) {
+        await new Promise((r) => setTimeout(r, Math.max(300, 3 * params.bitPeriodMs)));
+        const ps = await c.configure({ ledCount: stage0.ledCount, brightness: config.brightness ?? 1 });
+        if (!ps.active || ps.patternClockEpoch === null) throw new Error("the device dropped the capture pattern");
+        params = ps.codeParams;
+        epoch = ps.patternClockEpoch;
+      }
       profileDraft = {
         knobs: {
           diffuse,
@@ -1180,9 +1263,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       if (initialExposure !== null) {
         void exposureTarget.setExposure(initialExposure, params.bitPeriodMs / 2);
       }
+      // Every LED id decoded so far this run (drives the per-channel stage switch).
+      const decodedIds = new Set<number>();
       const makePipeline = (p: CodeParams, e: number): CvPipeline => {
         const pl = new CvPipeline(p, e, (t) => c.clock.toServerTime(t), { denseRecords: true });
         pl.onDetections((records: DetectionRecord[]) => {
+          for (const r of records) decodedIds.add(r.ledId);
           // Embedded players discard capture telemetry and have no host solver.
           // Keep their observations local rather than filling the TLS receive
           // buffers with data that only the phone's solver can use.
@@ -1202,6 +1288,13 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       guideEl.textContent = diffuse
         ? `diffuse: phase 1/${phaseTotal} (stride ${strideSpacing}) · ${params.symbols} symbols`
         : `code: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame`;
+      // Per-channel stage state (capture/channelCapture.ts).
+      let stageIdx = 0;
+      let stageStartedAt = performance.now();
+      if (channelPlan !== null) {
+        guideEl.textContent = `${stageLabel(channelPlan, 0)} · ${guideEl.textContent}`;
+        nextStageBtn.style.display = channelPlan.stages.length > 1 ? "" : "none";
+      }
 
       capturing = true;
       startedAt = performance.now();
@@ -1234,7 +1327,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           codeParams: params,
           lastExposure: servoExposure || initialExposure !== null ? servoedExposure : null,
           lastBrightness: params.brightness ?? null,
-          stripPrior: finalSolveOptions().stripPrior === true,
+          stripPrior: finalSolveOptions(runChannelPlan !== null).stripPrior === true,
           liveSolve: liveSolveEnabled,
           placement: c.hostSolverBenchMs === null ? "phone" : "host",
           captureSource,
@@ -1579,6 +1672,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       let renegotiating = false;
       const applyReconfigure = (
         opts: {
+          ledCount?: number;
           bitPeriodMs?: number;
           symbols?: 2 | 4;
           brightness?: number;
@@ -1691,6 +1785,55 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         applyDiffuseSwitch();
       };
 
+      // Per-channel capture: hand over to the next stage (regular curtain ->
+      // strided rope). Same configure/epoch-rebuild path as the diffuse switch;
+      // the code book is unchanged (codeSpace pinned), so decoded ids fuse.
+      let wantNextStage = false;
+      const maybeAdvanceStage = (): void => {
+        if (channelPlan === null || renegotiating) return;
+        if (stageIdx >= channelPlan.stages.length - 1) return;
+        const cur = channelPlan.stages[stageIdx]!;
+        const coverage = stageCoverage(cur, channelPlan.spans, decodedIds);
+        const due =
+          wantNextStage ||
+          shouldAdvanceStage({ elapsedMs: performance.now() - stageStartedAt, coverage, isLast: false });
+        if (!due) return;
+        const next = channelPlan.stages[stageIdx + 1]!;
+        const target = next.strideSpacing > 1;
+        const bp = prefs.getDiffuseParams();
+        const threshold = numParam("threshold", target ? bp.threshold : 0.6);
+        const gain = target ? numParam("lcgain", bp.lcGain) : 0;
+        applyReconfigure(
+          {
+            ledCount: next.ledCount,
+            ...(target ? { strideSpacing: next.strideSpacing, anchorDensity, stridePhase: 0 } : { strideSpacing: 0 }),
+          },
+          () => {
+            stageIdx++;
+            stageStartedAt = performance.now();
+            wantNextStage = false;
+            diffuse = target;
+            wantDiffuse = target;
+            if (target) strideSpacing = next.strideSpacing;
+            phaseTotal = target ? stridePhaseCount({ spacing: strideSpacing, anchorDensity }) : 1;
+            phaseIdx = 0;
+            lastPhaseAt = performance.now();
+            if (!forcedThreshold) detector.threshold = threshold;
+            detector.setLocalContrast(gain);
+            nativeSource?.setDetectParams({ threshold: detector.threshold });
+            nextStageBtn.style.display = stageIdx < channelPlan.stages.length - 1 ? "" : "none";
+            const line = `${stageLabel(channelPlan, stageIdx)} (prev ${Math.round(coverage * 100)}% decoded)`;
+            nativeLog(`[capture] ${line}`);
+            toast(`Now ${line.replace(/^stage \d+\/\d+: /, "")} — keep sweeping`);
+            noteDraft();
+          },
+        );
+      };
+      nextStageHook = () => {
+        wantNextStage = true;
+        maybeAdvanceStage();
+      };
+
       const exposureTick = setInterval(() => {
         if (!capturing) {
           clearInterval(exposureTick);
@@ -1770,13 +1913,16 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // cycles per phase; skip if a servo reconfig just fired (they share the
         // configure/epoch-rebuild path via applyReconfigure + `renegotiating`).
         applyDiffuseSwitch();
+        maybeAdvanceStage();
         if (diffuse && wantDiffuse && !renegotiating) {
           const dwellMs = Math.max(3000, 4 * params.cycleFrames * params.bitPeriodMs);
           if (performance.now() - lastPhaseAt > dwellMs) {
             phaseIdx = (phaseIdx + 1) % phaseTotal;
             lastPhaseAt = performance.now();
             applyReconfigure({ stridePhase: phaseIdx });
-            guideEl.textContent = `diffuse: phase ${phaseIdx + 1}/${phaseTotal} (stride ${strideSpacing})`;
+            guideEl.textContent =
+              (channelPlan !== null ? `${stageLabel(channelPlan, stageIdx)} · ` : "") +
+              `diffuse: phase ${phaseIdx + 1}/${phaseTotal} (stride ${strideSpacing})`;
           }
         }
       }, 2000);
@@ -1844,6 +1990,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     manualHooks = null;
     diffuseHook = null;
     strideHook = null;
+    nextStageHook = null;
+    nextStageBtn.style.display = "none";
     stopBtn.disabled = true;
     stopTimer();
     imuRecorder?.stop();
@@ -1967,7 +2115,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         ledCount: lastLedCount,
         mapId: crypto.randomUUID(),
         createdAt: new Date().toISOString(),
-        options: { ...finalSolveOptions(), ...(warmStart ? { warmStart } : {}) },
+        options: { ...finalSolveOptions(runChannelPlan !== null), ...(warmStart ? { warmStart } : {}) },
       };
       runProblem = problem;
       // Persist the exact solver input on iOS so a failed solve can be replayed
@@ -2197,9 +2345,22 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         createdAt: new Date().toISOString(),
         stats: { ...preview.map.stats, warnings: [...(preview.map.stats.warnings ?? []), warning] },
       };
-      return recenterToCentroid(kept).map;
+      return channelFill(recenterToCentroid(kept).map);
     }
-    return recenterToCentroid(final!).map;
+    return channelFill(recenterToCentroid(final!).map);
+  }
+
+  /** Per-channel capture: place the LEDs the solve didn't (the rope's in-between
+   * LEDs) by index within their OWN channel, so neither the app nor the
+   * firmware's whole-strip fill ever interpolates across the channel boundary. */
+  function channelFill(map: OutputMap): OutputMap {
+    if (runChannelPlan === null) return map;
+    const filled = fillChannelGaps(map, runChannelPlan.spans);
+    nativeLog(
+      `[solve] per-channel fill: ${map.leds.length} -> ${filled.leds.length} LEDs, ` +
+        `${filled.unmapped.length} still unmapped`,
+    );
+    return filled;
   }
 
   /** Debug mode: persist this run's reproduction bundle when it failed, came

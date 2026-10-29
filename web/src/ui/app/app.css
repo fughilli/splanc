@@ -2597,6 +2597,15 @@ body.is-locked {
   bottom: calc(env(safe-area-inset-bottom, 0px) + 1.2rem);
   background: var(--err);
 }
+/* Per-channel capture: skip to the next (strided) channel, above Stop. */
+.capture-next-stage {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 4.6rem);
+  background: rgba(10, 10, 14, 0.72);
+  color: #fff;
+}
 .capture-solveprog {
   position: absolute;
   left: var(--sp-4);
