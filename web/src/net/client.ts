@@ -73,7 +73,7 @@ import {
 } from "./proto";
 import type { ColorBlock } from "@ledmapper/protocol";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
-import { decodeServer, encodeClient } from "./proto";
+import { decodeServer, encodeClient, type KioskStatusMessage, type SetKioskConfigMessage } from "./proto";
 import { LiveControl } from "./liveControl";
 import type { CaptureProfileFlat } from "../capture/captureProfile";
 import { normalizeWifiPolicy, wifiPolicyMessage, type WifiPolicy, type WifiPolicyRequest } from "./wifiPolicy";
@@ -299,6 +299,7 @@ export class LedMapperClient {
   // unsolicited push when the effect starts or stops lagging (below its target),
   // so — like perf_report — it fans out rather than going to a single waiter.
   private fpsSubs = new Set<(s: FpsStateMessage) => void>();
+  private kioskSubs = new Set<(s: KioskStatusMessage) => void>();
 
   /**
    * A stop_mapping(solveOnHost=false) the device has not acknowledged (it timed
@@ -1072,6 +1073,36 @@ export class LedMapperClient {
     return normalizeWifiPolicy(r as unknown as Record<string, unknown>);
   }
 
+  // -- Kiosk mode (docs/design/kiosk-mode.md; the "kiosk" feature) --------------
+
+  /** The kiosk state (send right after hello when welcome.features has "kiosk"). */
+  async getKioskStatus(timeoutMs = 5000): Promise<KioskStatusMessage> {
+    const r = await this.request({ type: "get_kiosk_status" } as unknown as ClientMessage, "kiosk_status", timeoutMs);
+    return r as unknown as KioskStatusMessage;
+  }
+
+  /** Owner configuration (unset fields keep their value). Rejects with a
+   * ServerErrorReply "kiosk_locked" unless the kiosk is disabled or this
+   * connection is owner-unlocked. */
+  async setKioskConfig(cfg: Omit<SetKioskConfigMessage, "type">, timeoutMs = 5000): Promise<KioskStatusMessage> {
+    const msg = { type: "set_kiosk_config", ...cfg } as unknown as ClientMessage;
+    return (await this.request(msg, "kiosk_status", timeoutMs)) as unknown as KioskStatusMessage;
+  }
+
+  /** Owner-unlock this connection until it drops. Rejects with a ServerErrorReply
+   * "kiosk_bad_secret" on a wrong secret. */
+  async kioskUnlock(secret: string, timeoutMs = 5000): Promise<KioskStatusMessage> {
+    const msg = { type: "kiosk_unlock", secret } as unknown as ClientMessage;
+    return (await this.request(msg, "kiosk_status", timeoutMs)) as unknown as KioskStatusMessage;
+  }
+
+  /** Subscribe to kiosk_status frames: replies AND the unsolicited pushes (idle
+   * revert, first activity after a revert, config change). Returns an unsubscribe fn. */
+  onKioskStatus(fn: (s: KioskStatusMessage) => void): () => void {
+    this.kioskSubs.add(fn);
+    return () => this.kioskSubs.delete(fn);
+  }
+
   /** The motion sensor's live state (docs/design/sensor-core.md). Needs the
    * "sensors" feature. */
   async getSensors(): Promise<SensorStateMessage> {
@@ -1506,6 +1537,10 @@ export class LedMapperClient {
         fw.resolve(msg);
       }
       return;
+    }
+    if ((msg.type as string) === "kiosk_status") {
+      // Subscribers see every kiosk_status (pushes included), then any waiter.
+      for (const fn of this.kioskSubs) fn(msg as unknown as KioskStatusMessage);
     }
     const w = this.waiters.get(msg.type);
     if (w) {

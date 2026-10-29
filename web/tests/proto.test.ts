@@ -297,6 +297,41 @@ test("set/get_wifi_policy / wifi_policy_state round-trip (wifi_policy arms)", ()
   assert.deepEqual(decodeServer(encodeServer(state as unknown as SMsg)), state);
 });
 
+test("kiosk arms round-trip (get_kiosk_status / set_kiosk_config / kiosk_unlock / kiosk_status)", () => {
+  type CMsg = Parameters<typeof encodeClient>[0];
+  type SMsg = Parameters<typeof encodeServer>[0];
+  const cfg = {
+    type: "set_kiosk_config",
+    enabled: true,
+    idleTimeoutS: 120,
+    captureAttractFromCurrent: true,
+    ownerSecret: "boo",
+  } as const;
+  assert.deepEqual(decodeClient(encodeClient(cfg as unknown as CMsg)), cfg);
+  // An explicit enabled=false survives (explicit presence).
+  const off = { type: "set_kiosk_config", enabled: false, captureAttractFromCurrent: false } as const;
+  assert.deepEqual(decodeClient(encodeClient(off as unknown as CMsg)), off);
+  assert.deepEqual(decodeClient(encodeClient({ type: "get_kiosk_status" } as unknown as CMsg)), {
+    type: "get_kiosk_status",
+  });
+  const unlock = { type: "kiosk_unlock", secret: "boo" } as const;
+  assert.deepEqual(decodeClient(encodeClient(unlock as unknown as CMsg)), unlock);
+  const st = {
+    type: "kiosk_status",
+    enabled: true,
+    idleTimeoutS: 120,
+    idleRemainingS: 101,
+    attractActive: false,
+    hasAttract: true,
+    attractName: "pumpkin-glow",
+    attractBrightness: 0.5,
+    ownerUnlocked: false,
+    hasSecret: true,
+    event: "KIOSK_EVENT_ACTIVITY",
+  } as const;
+  assert.deepEqual(decodeServer(encodeServer(st as unknown as SMsg)), st);
+});
+
 test("TS re-encode of every golden decodes back to the same object", () => {
   for (const f of frames) {
     if (f.direction === "client") {

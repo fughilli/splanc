@@ -610,6 +610,83 @@ message WifiPolicyState {
   bool radio_on = 14;
 }
 
+// -- Kiosk mode (docs/design/kiosk-mode.md) -----------------------------------
+// A public, locked-down mode for unattended installs. While the kiosk is
+// enabled and this connection is not owner-unlocked, visitors may only play:
+// deploy / switch effects, set uniforms (live too), crossfade, blend keypoints,
+// stream textures, set brightness, and read-only queries. Everything else
+// (rename, hardware / Wi-Fi / colour config, map / topology / pose uploads,
+// keypoint writes, sensors / drivers, OTA, the FX debugger, kiosk config) is
+// refused with Error{code: "kiosk_locked"}, and Improv Wi-Fi provisioning over
+// BLE is disabled. Nothing a visitor does is persisted: after idle_timeout_s
+// without visitor activity the device reverts to the owner's attract snapshot
+// (effect + uniforms + brightness), which is also what it boots into.
+// Advertised as the "kiosk" feature in welcome.features; a client sends
+// get_kiosk_status right after hello.
+
+// Read the kiosk state. Reply: kiosk_status.
+message GetKioskStatus {}
+
+// Owner configuration. Allowed while the kiosk is disabled, or on an
+// owner-unlocked connection (kiosk_unlock); refused with "kiosk_locked"
+// otherwise. Unset fields keep their value. Persisted to flash.
+// Reply: kiosk_status, or Error "kiosk_secret_required" (enabling with no
+// secret stored or given), "kiosk_no_effect" (capturing with no deck-A
+// effect loaded), "kiosk_bad_config" (a secret over 32 bytes).
+message SetKioskConfig {
+  optional bool enabled = 1;
+  // Idle seconds before the revert to the attract show (10..86400; default 120).
+  optional uint32 idle_timeout_s = 2;
+  // Capture the CURRENT deck-A effect + its live uniforms + the output
+  // brightness as the attract snapshot. Enabling with no snapshot stored
+  // captures implicitly.
+  bool capture_attract_from_current = 3;
+  // Set / replace the owner secret (1..32 bytes; the app stores it locally).
+  optional string owner_secret = 4;
+}
+
+// Unlock this connection (the BLE link or the wss session that sends it) for
+// owner use until it disconnects. Reply: kiosk_status (owner_unlocked = true),
+// or Error "kiosk_bad_secret" (wrong secret; attempts are rate limited).
+message KioskUnlock {
+  string secret = 1;
+}
+
+// Why a kiosk_status was sent.
+enum KioskEvent {
+  // A reply to get_kiosk_status / set_kiosk_config / kiosk_unlock.
+  KIOSK_EVENT_NONE = 0;
+  // Pushed: the idle timer ran out and the attract show is back.
+  KIOSK_EVENT_REVERTED = 1;
+  // Pushed: the first visitor activity after the attract show (timer started).
+  KIOSK_EVENT_ACTIVITY = 2;
+  // Pushed: the configuration changed (owner, or the console "kiosk off").
+  KIOSK_EVENT_CONFIG = 3;
+}
+
+message KioskStatus {
+  bool enabled = 1;
+  uint32 idle_timeout_s = 2;
+  // Seconds until the revert, counted from the last visitor activity (0 while
+  // the attract show is running, or when the kiosk is disabled). The app counts
+  // down locally and re-syncs on each push; every allowed visitor op (effect,
+  // uniforms, brightness, crossfade, ...) restarts the device's timer at
+  // idle_timeout_s, so the app restarts its countdown when it sends one.
+  uint32 idle_remaining_s = 3;
+  // The attract snapshot is what is showing (no visitor changes since).
+  bool attract_active = 4;
+  // An attract snapshot is stored, its effect id and its default brightness.
+  bool has_attract = 5;
+  string attract_name = 6;
+  float attract_brightness = 7;
+  // This connection is owner-unlocked (kiosk_unlock). While any connection is,
+  // the idle timer is paused.
+  bool owner_unlocked = 8;
+  // An owner secret is stored.
+  bool has_secret = 9;
+  KioskEvent event = 10;
+}
+
 message SetFps {
   uint32 target_fps = 1;
   // Deprecated, ignored: it held off the old "park a slow effect" abort, which
@@ -1088,6 +1165,10 @@ message ClientMessage {
     // Wi-Fi rejoin policy (docs/design/wifi-rejoin-policy.md).
     SetWifiPolicy set_wifi_policy = 90;
     GetWifiPolicy get_wifi_policy = 91;
+    // Kiosk mode (docs/design/kiosk-mode.md).
+    GetKioskStatus get_kiosk_status = 92;
+    SetKioskConfig set_kiosk_config = 93;
+    KioskUnlock kiosk_unlock = 94;
   }
 }
 
@@ -2014,5 +2095,8 @@ message ServerMessage {
     FxDebugReply fx_debug = 50;
     // Reply to set_wifi_policy / get_wifi_policy.
     WifiPolicyState wifi_policy_state = 51;
+    // Reply to get_kiosk_status / set_kiosk_config / kiosk_unlock, and pushed
+    // unsolicited when the kiosk state changes (KioskStatus.event says why).
+    KioskStatus kiosk_status = 52;
   }
 }

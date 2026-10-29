@@ -666,6 +666,10 @@ impl Player {
             | CMsg::OtaReboot(_)
             | CMsg::SetWifiPolicy(_)
             | CMsg::GetWifiPolicy(_)
+            // Kiosk mode lives in the firmware (player_app kiosk_ffi.rs).
+            | CMsg::GetKioskStatus(_)
+            | CMsg::SetKioskConfig(_)
+            | CMsg::KioskUnlock(_)
             // The FX debugger lives in the fx layer (player_app ffi) too.
             | CMsg::FxDebugControl(_)
             | CMsg::GetFxSnapshot(_)
