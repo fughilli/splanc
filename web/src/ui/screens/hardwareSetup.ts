@@ -563,6 +563,68 @@ export function HardwareSetupScreen(_router: Router): Screen {
     return g;
   }
 
+  /** Per-channel capture mode (capture/channelCapture.ts): "Default" keeps the
+   * device-wide behaviour below (Diffuse capture + Behavior Settings); Regular
+   * codes every LED of this channel at once; Strided lights every Nth with the
+   * diffuse detector. A fixture with a dense curtain on one channel and a
+   * diffused rope on another sets one of each and maps both in one capture.
+   * Stored in the app with this device (not on the device). */
+  function captureModeRow(channel: number): HTMLElement | null {
+    if (!deviceId) return null;
+    const cur = deviceStore.getChannelCaptures(deviceId)?.[channel] ?? null;
+    const wrap = document.createElement("div");
+    wrap.className = "hw-capture-mode";
+    wrap.style.display = "flex";
+    wrap.style.gap = "6px";
+    wrap.style.alignItems = "center";
+    const strideIn = document.createElement("input");
+    strideIn.type = "number";
+    strideIn.className = "hw-select";
+    strideIn.min = "2";
+    strideIn.max = String(MAX_CAPTURE_STRIDE);
+    strideIn.step = "1";
+    strideIn.style.width = "4.5em";
+    strideIn.title = "Stride: light every Nth LED per phase";
+    strideIn.value = String(cur?.mode === "strided" ? cur.stride : (deviceStore.getCaptureStride(deviceId) ?? DEFAULT_CAPTURE_STRIDE));
+    strideIn.style.display = cur?.mode === "strided" ? "" : "none";
+    const save = (mode: string): void => {
+      if (mode === "regular") deviceStore.setChannelCapture(deviceId, channel, { mode: "regular", stride: 1 });
+      else if (mode === "strided") {
+        const v = Math.max(2, clampCaptureStride(strideIn.value) ?? DEFAULT_CAPTURE_STRIDE);
+        strideIn.value = String(v);
+        deviceStore.setChannelCapture(deviceId, channel, { mode: "strided", stride: v });
+      } else deviceStore.setChannelCapture(deviceId, channel, undefined);
+      strideIn.style.display = mode === "strided" ? "" : "none";
+    };
+    const modeSel = select(
+      [
+        { value: "", label: "Default" },
+        { value: "regular", label: "Regular" },
+        { value: "strided", label: "Strided" },
+      ],
+      cur?.mode ?? "",
+      (v) => {
+        save(v);
+        toast(
+          v === ""
+            ? `Channel ${channel}: device-wide capture settings`
+            : v === "regular"
+              ? `Channel ${channel}: regular capture (every LED)`
+              : `Channel ${channel}: strided capture, every ${strideIn.value}th LED`,
+        );
+      },
+    );
+    strideIn.addEventListener("change", () => save("strided"));
+    wrap.append(modeSel, strideIn);
+    return row(
+      "Capture",
+      "How mapping codes this channel: Regular lights every LED (dense strings, curtains); " +
+        "Strided lights every Nth so diffused spots (rope light) don't blur, and the LEDs " +
+        "between are interpolated along this channel. Default = the device-wide setting.",
+      wrap,
+    );
+  }
+
   /** How the channels' LEDs combine into the one strip mapping + effects use. */
   function layoutGroup(): HTMLElement {
     const g = group("LED layout");
@@ -667,6 +729,8 @@ export function HardwareSetupScreen(_router: Router): Screen {
         ),
       ),
     );
+    const cap = captureModeRow(cfg.channel);
+    if (cap) g.append(cap);
 
     // Color order: current value + the test/confirm flow.
     const orderRow = document.createElement("div");

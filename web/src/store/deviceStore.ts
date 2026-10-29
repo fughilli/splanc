@@ -40,9 +40,42 @@ export interface KnownDevice {
    * diffuser, so it's persisted with the device and reused on every re-map.
    * Set on the Hardware Setup page; absent = the capture default. */
   captureStride?: number;
+  /** Per-output-channel capture profile (index = hardware channel): `regular`
+   * (every LED coded, dense) or `strided` (stride N, diffuse detector). A mixed
+   * fixture (a dense LED curtain on CH0 + a diffused rope on CH1) needs both in
+   * one map. Absent / all-null = today's per-device behaviour (captureStride +
+   * the global diffuse toggle) — see capture/channelCapture.ts. */
+  captureChannels?: (ChannelCaptureProfile | null)[];
   /** ISO timestamp of the last successful connection. */
   lastSeen: string;
 }
+
+/** How one output channel is captured (see KnownDevice.captureChannels). */
+export type ChannelCaptureMode = "regular" | "strided";
+export interface ChannelCaptureProfile {
+  mode: ChannelCaptureMode;
+  /** Stride spacing for `strided` (clamped like captureStride); ignored for
+   * `regular`. */
+  stride: number;
+}
+
+/** A stored per-channel entry, validated (anything malformed reads as unset). */
+export function sanitizeChannelCapture(p: unknown): ChannelCaptureProfile | null {
+  if (!p || typeof p !== "object") return null;
+  const o = p as { mode?: unknown; stride?: unknown };
+  if (o.mode !== "regular" && o.mode !== "strided") return null;
+  return { mode: o.mode, stride: clampCaptureStride(o.stride) ?? DEFAULT_CAPTURE_STRIDE };
+}
+
+function sanitizeChannelCaptures(v: unknown): (ChannelCaptureProfile | null)[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out = v.slice(0, MAX_CAPTURE_CHANNELS).map(sanitizeChannelCapture);
+  while (out.length > 0 && out[out.length - 1] === null) out.pop();
+  return out.length > 0 ? out : undefined;
+}
+
+/** Output channels a per-channel capture profile can describe. */
+export const MAX_CAPTURE_CHANNELS = 16;
 
 /** Bounds for the per-device diffuse-capture stride (matches capture.ts). */
 export const MIN_CAPTURE_STRIDE = 1;
@@ -82,6 +115,10 @@ function normalize(d: Partial<KnownDevice> & { id: string; wssUrl: string }): Kn
     ...(d.fwGitDirty !== undefined ? { fwGitDirty: d.fwGitDirty } : {}),
     ...(d.fwVersion !== undefined ? { fwVersion: d.fwVersion } : {}),
     ...(d.captureStride !== undefined ? { captureStride: d.captureStride } : {}),
+    ...((): Pick<KnownDevice, "captureChannels"> => {
+      const cc = sanitizeChannelCaptures(d.captureChannels);
+      return cc ? { captureChannels: cc } : {};
+    })(),
     lastSeen: d.lastSeen ?? new Date(0).toISOString(),
   };
 }
@@ -238,6 +275,10 @@ class DeviceStore {
       if (!d.folder && dup.folder) d.folder = dup.folder;
       if (!d.bleId && dup.bleId) d.bleId = dup.bleId;
       if (!d.pendingName && dup.pendingName) d.pendingName = dup.pendingName;
+      // Capture settings set while reached over another path (e.g. LAN at home,
+      // then BLE on site) belong to the same physical fixture.
+      if (d.captureStride === undefined && dup.captureStride !== undefined) d.captureStride = dup.captureStride;
+      if (!d.captureChannels && dup.captureChannels) d.captureChannels = dup.captureChannels;
       if (!d.named && dup.named) {
         d.label = dup.label;
         d.named = true;
@@ -299,6 +340,27 @@ class DeviceStore {
     this.mutate(id, (d) => {
       if (v === undefined) delete d.captureStride;
       else d.captureStride = v;
+    });
+  }
+
+  /** The per-channel capture profiles for a device (index = channel; null =
+   * unset), or undefined when none is set (= today's per-device behaviour). */
+  getChannelCaptures(id: string): (ChannelCaptureProfile | null)[] | undefined {
+    return this.get(id)?.captureChannels;
+  }
+
+  /** Set (or clear, with undefined) one channel's capture profile. Clearing the
+   * last one removes the field, so the device is back to today's behaviour. */
+  setChannelCapture(id: string, channel: number, p: ChannelCaptureProfile | undefined): void {
+    if (!Number.isInteger(channel) || channel < 0 || channel >= MAX_CAPTURE_CHANNELS) return;
+    const v = p === undefined ? null : sanitizeChannelCapture(p);
+    this.mutate(id, (d) => {
+      const arr = [...(d.captureChannels ?? [])];
+      while (arr.length <= channel) arr.push(null);
+      arr[channel] = v;
+      const clean = sanitizeChannelCaptures(arr);
+      if (clean) d.captureChannels = clean;
+      else delete d.captureChannels;
     });
   }
 

@@ -31,6 +31,7 @@ import json
 import os
 import struct
 import sys
+import time
 
 # The container has no /var/run/dbus; point dbus-fast at the mounted host socket
 # (matches container.nix) before importing bleak.
@@ -80,7 +81,14 @@ class Reassembler:
 
 
 async def exchange(
-    frames, address, name_filter, scan_seconds, timeout, connect_tries, connect_timeout
+    frames,
+    address,
+    name_filter,
+    scan_seconds,
+    timeout,
+    connect_tries,
+    connect_timeout,
+    gap_ms=0.0,
 ):
     """Send each (already protobuf-encoded) frame in order, awaiting one reply per
     frame — the player protocol is strictly request/reply, so a multi-frame
@@ -106,7 +114,13 @@ async def exchange(
         # Subscribe to TX BEFORE writing so the reply is never missed.
         await client.start_notify(PLAYER_TX, on_tx)
         replies = []
+        rtts_ms = []
         for i, payload in enumerate(frames):
+            if i > 0 and gap_ms > 0:
+                # Paced sequences (e.g. a capture's phase rotation) — the device
+                # keeps rendering between requests, as it does for the app.
+                await asyncio.sleep(gap_ms / 1000.0)
+            t0 = time.monotonic()
             wire = frame_with_length(payload)
             log(
                 f"[ble-player] -> frame {i + 1}/{len(frames)} {len(wire)}B ({len(payload)}B payload)"
@@ -116,8 +130,9 @@ async def exchange(
                     PLAYER_RX, wire[off : off + WRITE_CHUNK], response=True
                 )
             reply = await asyncio.wait_for(got.get(), timeout=timeout)
+            rtts_ms.append(round((time.monotonic() - t0) * 1000.0, 1))
             replies.append(base64.b64encode(reply).decode("ascii"))
-        return {"ok": True, "replies_b64": replies, "device": device}
+        return {"ok": True, "replies_b64": replies, "rtts_ms": rtts_ms, "device": device}
     except asyncio.TimeoutError:
         return {"ok": False, "error": "timed out waiting for a reply over BLE", "device": device}
     except _TRANSPORT_ERRORS as e:
@@ -149,6 +164,7 @@ def main() -> int:
     ex.add_argument("--timeout", type=float, default=30.0)
     ex.add_argument("--connect-tries", type=int, default=5)
     ex.add_argument("--connect-timeout", type=float, default=12.0)
+    ex.add_argument("--gap-ms", type=float, default=0.0, help="pause between frames")
     a = ap.parse_args()
     try:
         frames = [base64.b64decode(f) for f in a.frames_b64.split(",") if f]
@@ -161,6 +177,7 @@ def main() -> int:
                 a.timeout,
                 a.connect_tries,
                 a.connect_timeout,
+                a.gap_ms,
             )
         )
     except Exception as e:  # noqa: BLE001 — report to the harness as a failed result
