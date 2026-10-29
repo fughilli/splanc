@@ -105,6 +105,9 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::GetCaptureProfile(_)
         | CMsg::SetWifiPolicy(_)
         | CMsg::GetWifiPolicy(_)
+        | CMsg::GetKioskStatus(_)
+        | CMsg::SetKioskConfig(_)
+        | CMsg::KioskUnlock(_)
         | CMsg::OtaBegin(_)
         | CMsg::OtaChunk(_)
         | CMsg::OtaFinish(_)
@@ -194,6 +197,9 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::GetCaptureProfile(_) => "get_capture_profile",
         CMsg::SetWifiPolicy(_) => "set_wifi_policy",
         CMsg::GetWifiPolicy(_) => "get_wifi_policy",
+        CMsg::GetKioskStatus(_) => "get_kiosk_status",
+        CMsg::SetKioskConfig(_) => "set_kiosk_config",
+        CMsg::KioskUnlock(_) => "kiosk_unlock",
         CMsg::OtaBegin(_) => "ota_begin",
         CMsg::OtaChunk(_) => "ota_chunk",
         CMsg::OtaFinish(_) => "ota_finish",

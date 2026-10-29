@@ -90,6 +90,9 @@ const CLIENT_ARMS: Record<string, string> = {
   debug_fx_led: "debugFxLed",
   set_wifi_policy: "setWifiPolicy",
   get_wifi_policy: "getWifiPolicy",
+  get_kiosk_status: "getKioskStatus",
+  set_kiosk_config: "setKioskConfig",
+  kiosk_unlock: "kioskUnlock",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -126,6 +129,7 @@ const SERVER_ARMS: Record<string, string> = {
   fx_debug: "fxDebug",
   wifi_policy_state: "wifiPolicyState",
   control_ack: "controlAck",
+  kiosk_status: "kioskStatus",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -773,6 +777,59 @@ export interface WifiPolicyStateMessage {
   /** Why the last set_wifi_policy was not applied ("" = it was): "ota_pending". */
   refused: string;
   radioOn: boolean;
+}
+
+// -- Kiosk mode (docs/design/kiosk-mode.md; the "kiosk" feature) -------------
+
+/** Read the kiosk state (proto GetKioskStatus). Reply: kiosk_status. */
+export interface GetKioskStatusMessage {
+  type: "get_kiosk_status";
+}
+
+/** Owner kiosk configuration (proto SetKioskConfig). Unset fields keep the
+ * device's value. Allowed while the kiosk is disabled or on an owner-unlocked
+ * connection, else error "kiosk_locked". Reply: kiosk_status, or error
+ * "kiosk_secret_required" / "kiosk_no_effect" / "kiosk_bad_config". */
+export interface SetKioskConfigMessage {
+  type: "set_kiosk_config";
+  enabled?: boolean;
+  /** 10..86400 s (default 120). */
+  idleTimeoutS?: number;
+  /** Capture the current deck-A effect + uniforms + brightness as the attract show. */
+  captureAttractFromCurrent?: boolean;
+  /** Set / replace the owner secret (1..32 bytes). */
+  ownerSecret?: string;
+}
+
+/** Owner-unlock this connection until it drops (proto KioskUnlock). Reply:
+ * kiosk_status (ownerUnlocked = true), or error "kiosk_bad_secret". */
+export interface KioskUnlockMessage {
+  type: "kiosk_unlock";
+  secret: string;
+}
+
+/** proto KioskEvent, as its enum name (why a kiosk_status was sent). */
+export type KioskEventName =
+  | "KIOSK_EVENT_NONE"
+  | "KIOSK_EVENT_REVERTED"
+  | "KIOSK_EVENT_ACTIVITY"
+  | "KIOSK_EVENT_CONFIG";
+
+/** Reply to the kiosk arms, also pushed unsolicited (proto KioskStatus).
+ * proto3 JSON drops false / zero fields, so treat every field as optional. */
+export interface KioskStatusMessage {
+  type: "kiosk_status";
+  enabled?: boolean;
+  idleTimeoutS?: number;
+  /** Seconds until the revert to the attract show (0 while it is showing). */
+  idleRemainingS?: number;
+  attractActive?: boolean;
+  hasAttract?: boolean;
+  attractName?: string;
+  attractBrightness?: number;
+  ownerUnlocked?: boolean;
+  hasSecret?: boolean;
+  event?: KioskEventName;
 }
 
 /** Motion-sensor status (proto SensorStatus), as its enum NAME (proto3 JSON). */
