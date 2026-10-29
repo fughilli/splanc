@@ -248,7 +248,7 @@ const CSS = `
   margin-top: var(--sp-2);
   max-width: 560px;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: var(--f-caption);
   text-align: center;
 }
 .acid-free-note[hidden] { display: none; }
