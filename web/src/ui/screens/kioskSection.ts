@@ -17,7 +17,7 @@ import {
   type KioskStatus,
 } from "../../net/kiosk";
 import type { KioskStatusMessage, SetKioskConfigMessage } from "../../net/proto";
-import { attractDisplayName } from "../../halloween/presets";
+import { attractDisplayName } from "../../halloween/playLogic";
 import { ensureKioskSecret, kioskSecretFor, setKioskSecret } from "../../halloween/kioskSecrets";
 import { kioskStore } from "../../halloween/kioskStore";
 import { installPlayStyles } from "./playMode.css";

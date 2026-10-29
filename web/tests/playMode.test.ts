@@ -9,8 +9,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { FxUniform } from "../src/fx/preview";
-import { presetUniformValues, ropeStartFromChannels, sliderSpecs } from "../src/halloween/playLogic";
-import { HALLOWEEN_PRESETS, attractPreset, presetEffectId } from "../src/halloween/presets";
+import {
+  attractDisplayName,
+  attractPreset,
+  presetEffectId,
+  presetUniformValues,
+  sliderSpecs,
+} from "../src/halloween/playLogic";
+import { HALLOWEEN_PRESETS, presetUniforms, ropeStartFor } from "../src/halloween/presets";
 import { bleRequestOptions, PLAYER_SERVICE_UUID } from "../src/net/bleTransport";
 import { IMPROV_SERVICE } from "../src/net/improv";
 import { HALLOWEEN_NAME_PREFIX, parseFixtureName } from "../src/net/halloweenConnect";
@@ -53,18 +59,20 @@ test("presetUniformValues: defaults, overrides (width-checked), visitor sliders"
   ]);
 });
 
-test("rope_start: CH0's LED count when CH1 drives a rope, else 0; applied after preset overrides", () => {
-  assert.equal(ropeStartFromChannels([{ channel: 0, ledCount: 300 }, { channel: 1, ledCount: 120 }]), 300);
-  assert.equal(ropeStartFromChannels([{ channel: 0, ledCount: 300 }, { channel: 1, ledCount: 0 }]), 0);
-  assert.equal(ropeStartFromChannels([{ channel: 0, ledCount: 300 }]), 0);
-  assert.equal(ropeStartFromChannels([]), 0);
+test("rope_start: CH0's LED count when CH1 drives a rope, else 0; set on every preset deploy", () => {
+  assert.equal(ropeStartFor([{ channel: 0, ledCount: 300 }, { channel: 1, ledCount: 120 }]), 300);
+  assert.equal(ropeStartFor([{ channel: 0, ledCount: 300 }, { channel: 1, ledCount: 0 }]), 0);
+  assert.equal(ropeStartFor([]), 0);
   const withRope: FxUniform[] = [
     ...U,
     { name: "rope_start", slot: 6, width: 1, ui: { kind: "slider", min: 0, max: 2048, step: 1 }, default: [0] },
   ];
-  const vals = presetUniformValues({ uniforms: { rope_start: 5 } }, withRope, {}, { rope_start: 300, nope: 1 });
+  const preset = { ...HALLOWEEN_PRESETS[0]!, uniforms: { speed: 1 } };
+  const vals = presetUniformValues({ uniforms: presetUniforms(preset, 300) }, withRope);
   assert.deepEqual(vals.find((v) => v.slot === 6), { slot: 6, value: [300] });
   assert.equal(vals.length, withRope.length);
+  // Every preset declares rope_start (the content contract).
+  for (const p of HALLOWEEN_PRESETS) assert.match(p.source, /uniform\s+float\s+rope_start\b/, p.id);
 });
 
 test("parseFixtureName: QR f= values", () => {
@@ -111,9 +119,13 @@ test("HALLOWEEN_PRESETS shape", () => {
     assert.ok(p.name && p.emoji && p.source.includes("shade"), p.id);
     assert.ok(p.sliders.length <= 2, `${p.id}: at most two sliders`);
     for (const s of p.sliders) assert.match(p.source, new RegExp(`uniform\\s+\\w+\\s+${s}\\b`), `${p.id}: ${s}`);
-    // Rate knobs integrate in update(); never time * speed (CONTRACT/RULES).
-    assert.doesNotMatch(p.source, /\btime\s*\*/, `${p.id}: no time*rate`);
+    // Rate knobs integrate in update(); never time * <uniform> (CONTRACT/RULES).
+    for (const m of p.source.matchAll(/uniform\s+\w+\s+(\w+)/g)) {
+      assert.doesNotMatch(p.source, new RegExp(`\\btime\\s*\\*\\s*${m[1]}\\b`), `${p.id}: time*${m[1]}`);
+    }
   }
   assert.ok(attractPreset());
   assert.equal(presetEffectId({ id: "x" }), "boo-x");
+  assert.equal(attractDisplayName("boo-haunted-glow").endsWith("Haunted Glow"), true);
+  assert.equal(attractDisplayName("something-else"), "something-else");
 });

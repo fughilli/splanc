@@ -100,7 +100,7 @@ async function setupPlayDemo(kind: string): Promise<void> {
     idleRemainingS: 102,
     attractActive: false,
     hasAttract: true,
-    attractName: "boo-pumpkin-glow",
+    attractName: "boo-haunted-glow",
     attractBrightness: 0.6,
     ownerUnlocked: false,
     hasSecret: true,

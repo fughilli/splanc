@@ -5,7 +5,7 @@
 
 import type { FxUniform } from "../fx/preview";
 import type { UniformValueFlat } from "../net/proto";
-import type { HalloweenPreset } from "./presets";
+import { HALLOWEEN_PRESETS, type HalloweenPreset } from "./presets";
 
 export interface PlaySliderSpec {
   name: string;
@@ -42,34 +42,38 @@ export function sliderSpecs(
   return out;
 }
 
-/** The device-derived uniform every Halloween preset declares: the first LED
- * of channel 1 (the rope), i.e. channel 0's LED count; 0 = no rope. */
-export const ROPE_START_UNIFORM = "rope_start";
-
-/** `rope_start` for a device's hardware config (0 when CH1 is unused). */
-export function ropeStartFromChannels(channels: ReadonlyArray<{ channel: number; ledCount: number }>): number {
-  const n = (ch: number): number => Math.max(0, channels.find((c) => c.channel === ch)?.ledCount ?? 0);
-  return n(1) > 0 ? n(0) : 0;
-}
-
 /** The values to push right after deploying a preset: every declared default,
- * the preset's overrides on top, then device-derived values (`device`, e.g.
- * rope_start), then the visitor's slider positions. Unknown names and width
- * mismatches are skipped. */
+ * the preset's uniforms on top (pass `presetUniforms(p, ropeStart)` so the
+ * device's rope_start is in them), then the visitor's slider positions. Unknown
+ * names and width mismatches are skipped. */
 export function presetUniformValues(
   preset: Pick<HalloweenPreset, "uniforms">,
   uniforms: FxUniform[],
   current: Record<string, number> = {},
-  device: Record<string, number> = {},
 ): UniformValueFlat[] {
   return uniforms.map((u) => {
     let value = u.default.slice();
     const o = preset.uniforms[u.name];
     if (o !== undefined && asArray(o).length === u.width) value = asArray(o).slice();
-    const d = device[u.name];
-    if (d !== undefined && u.width === 1) value = [d];
     const c = current[u.name];
     if (c !== undefined && u.width === 1) value = [c];
     return { slot: u.slot, value };
   });
+}
+
+/** The preset the owner most likely wants as the attract show. */
+export function attractPreset(list: HalloweenPreset[] = HALLOWEEN_PRESETS): HalloweenPreset | undefined {
+  return list.find((p) => p.attract) ?? list[0];
+}
+
+/** Device effect id for a preset. */
+export function presetEffectId(p: Pick<HalloweenPreset, "id">): string {
+  return `boo-${p.id}`;
+}
+
+/** A friendly name for the device's attract effect id (a preset's tile name
+ * when it is one of ours). */
+export function attractDisplayName(effectId: string, list: HalloweenPreset[] = HALLOWEEN_PRESETS): string {
+  const p = list.find((x) => presetEffectId(x) === effectId || x.id === effectId);
+  return p ? `${p.emoji} ${p.name}` : effectId;
 }

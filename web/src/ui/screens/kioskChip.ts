@@ -9,7 +9,7 @@
 import { kioskStore } from "../../halloween/kioskStore";
 import { PLAY_PATH } from "../../halloween/playSession";
 import { countdownLine } from "../../net/kiosk";
-import { attractDisplayName } from "../../halloween/presets";
+import { attractDisplayName } from "../../halloween/playLogic";
 import { appState } from "../app/state";
 import { toast } from "../kit";
 import { installPlayStyles } from "./playMode.css";

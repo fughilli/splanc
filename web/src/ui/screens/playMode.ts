@@ -26,8 +26,8 @@ import { toast } from "../kit";
 import { deviceStore } from "../../store/deviceStore";
 import { mapStore } from "../../store/mapStore";
 import { deviceMaps } from "./deviceMapCard";
-import { HALLOWEEN_PRESETS, attractDisplayName, presetEffectId, type HalloweenPreset } from "../../halloween/presets";
-import { ROPE_START_UNIFORM, presetUniformValues, ropeStartFromChannels, sliderSpecs } from "../../halloween/playLogic";
+import { HALLOWEEN_PRESETS, presetUniforms, ropeStartFor, type HalloweenPreset } from "../../halloween/presets";
+import { attractDisplayName, presetEffectId, presetUniformValues, sliderSpecs } from "../../halloween/playLogic";
 import type { LedMapperClient } from "../../net/client";
 import { kioskStore } from "../../halloween/kioskStore";
 import { countdownLine, formatCountdown } from "../../net/kiosk";
@@ -73,18 +73,24 @@ export function PlayModeScreen(router: Router, query: URLSearchParams): Screen {
   let everConnected = false;
   let mapState: MapState = { kind: "unknown" };
   let mapClient: unknown = null;
-  // Device-derived uniforms (rope_start = CH0's LED count), read once per connection.
-  let deviceVals: { client: LedMapperClient; vals: Promise<Record<string, number>> } | null = null;
-  const deviceUniforms = (c: LedMapperClient): Promise<Record<string, number>> => {
-    if (deviceVals?.client !== c) {
-      const vals = c
+  // rope_start (the first CH1 LED = CH0's LED count), read once per connection.
+  // get_hardware_config is a read, allowed while the kiosk is locked; 0 = no rope.
+  let ropeStart: { client: LedMapperClient; n: Promise<number> } | null = null;
+  const ropeStartOf = (c: LedMapperClient): Promise<number> => {
+    if (ropeStart?.client !== c) {
+      const n = c
         .getHardwareConfig()
-        .then((h) => ({ [ROPE_START_UNIFORM]: ropeStartFromChannels(h.channels ?? []) }))
-        .catch(() => ({ [ROPE_START_UNIFORM]: 0 }));
-      deviceVals = { client: c, vals };
+        .then((h) => ropeStartFor(h.channels ?? []))
+        .catch(() => 0);
+      ropeStart = { client: c, n };
     }
-    return deviceVals.vals;
+    return ropeStart.n;
   };
+  /** The preset with this device's rope_start filled in. */
+  const forDevice = async (c: LedMapperClient, p: HalloweenPreset): Promise<HalloweenPreset> => ({
+    ...p,
+    uniforms: presetUniforms(p, await ropeStartOf(c)),
+  });
   let disposed = false;
 
   const compile = (p: HalloweenPreset): Promise<FxCompiled> => {
@@ -359,11 +365,11 @@ export function PlayModeScreen(router: Router, query: URLSearchParams): Screen {
       const r = await compile(p);
       if (!r.ok) throw new Error(r.diagnostics[0]?.msg ?? "effect didn't compile");
       void swapPreview(r);
-      const dev = await deviceUniforms(c);
+      const dp = await forDevice(c, p);
       await withDeviceLock(() => c.submitEffect(presetEffectId(p), r.bytecode, true, 0));
       if (selected === p) {
         // Visitor values are live-only (kiosk firmware never persists them anyway).
-        c.setUniforms(presetUniformValues(p, r.uniforms, sliderValues.get(p.id), dev), false);
+        c.setUniforms(presetUniformValues(dp, r.uniforms, sliderValues.get(p.id)), false);
       }
     } catch (e) {
       toast(`Couldn't start ${p.name}: ${msg(e)}`, { error: true });
