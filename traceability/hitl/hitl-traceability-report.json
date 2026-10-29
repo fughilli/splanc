@@ -18,8 +18,8 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 31,
-    "gaps": 43
+    "test_cases": 30,
+    "gaps": 42
   },
   "levels": [
     {
@@ -1584,12 +1584,6 @@
       "message": "no test evidence",
       "route": "human-gate",
       "demanded_level": "hitl"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:web_ota_journey",
-      "message": "//pi/hitl/harness:web_ota_journey pi/hitl/harness/web_ota_journey error and traces to no requirement",
-      "route": "autonomous"
     },
     {
       "kind": "high-risk-open",
