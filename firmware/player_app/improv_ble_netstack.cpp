@@ -280,9 +280,30 @@ void player_ble_poll() {
   }
 }
 
+void player_ble_push(const uint8_t *data, size_t len) {
+  if (!improv_ble_central_connected() || data == nullptr || len == 0) return;
+  ns_ble_player_notify(data, (uint32_t)len);
+  uint8_t out[256];
+  uint32_t m;
+  while ((m = ns_ble_player_poll_notify(out, sizeof out)) > 0) hci_send(out, m);
+}
+
+extern "C" bool lm_kiosk_enabled(void);  // kiosk_ffi.rs
+
 bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t pass_cap) {
-  return ns_ble_take_wifi(reinterpret_cast<uint8_t *>(ssid), (uint32_t)ssid_cap,
-                          reinterpret_cast<uint8_t *>(pass), (uint32_t)pass_cap) != 0;
+  bool got = ns_ble_take_wifi(reinterpret_cast<uint8_t *>(ssid), (uint32_t)ssid_cap,
+                              reinterpret_cast<uint8_t *>(pass), (uint32_t)pass_cap) != 0;
+  if (got && lm_kiosk_enabled()) {
+    // Kiosk mode (docs/design/kiosk-mode.md): a public install never takes Wi-Fi
+    // credentials over Improv. Drop them and fail the RPC (the owner disables the
+    // kiosk first, or uses the console "kiosk off").
+    memset(pass, 0, pass_cap);
+    memset(ssid, 0, ssid_cap);
+    ns_ble_provision_result(0, nullptr, 0);
+    Log().printf("[kiosk] Improv provisioning refused (kiosk enabled)\n");
+    return false;
+  }
+  return got;
 }
 
 bool improv_ble_central_connected() { return ns_ble_state() == 7; }

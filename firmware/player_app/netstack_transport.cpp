@@ -21,6 +21,7 @@
 #include <esp_random.h>
 #include <stdlib.h>  // strtoul (console WIFI SCANMISS)
 #include <string.h>
+#include <strings.h>  // strncasecmp (the console "kiosk" command)
 #include <mbedtls/ssl.h>
 #include <mbedtls/x509_crt.h>
 #include <mbedtls/pk.h>
@@ -2376,6 +2377,9 @@ void netstack_loop() {
             Serial.printf("[t=%lu] [wire] PROV received (ssid=%s) -> associating\n",
                           (unsigned long)millis(), g_ssid);
           }
+        } else if (plen >= 5 && strncasecmp(pbuf, "kiosk", 5) == 0) {
+          // Kiosk mode (kiosk_ffi.rs): "kiosk off" (the recovery path) / "kiosk status".
+          netstack_console_hook(pbuf, plen);
         } else if (plen >= 5 && strncmp(pbuf, "WIFI ", 5) == 0) {
           // Link diagnostics on the console (the HITL wifi_cadence gate drives each
           // recovery path on demand to time the LED output across it):

@@ -76,6 +76,11 @@ void improv_ble_send_redirect(const char *url);
 // task; this runs the player handler + notify on the Arduino task for pacing).
 void player_ble_poll();
 
+// Push one unsolicited player-protocol frame (e.g. a kiosk_status) to the connected
+// central, framed + chunked like a reply. No-op without a central. Loop task, between
+// player_ble_poll replies (one frame in flight at a time).
+void player_ble_push(const uint8_t *data, size_t len);
+
 // Compute the reply for one player-protocol frame — the transport-agnostic handler
 // (upload-chunk streaming + lm_player_handle + persistence + device-side polling),
 // defined in main.cpp and shared with the ws:81/wss:443 paths. Copies `in` into the

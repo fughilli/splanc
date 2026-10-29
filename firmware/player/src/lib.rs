@@ -1169,6 +1169,15 @@ impl Player {
         self.output_brightness
     }
 
+    /// Kiosk attract restore (player_app kiosk_ffi.rs): the snapshot's output
+    /// brightness (bumping the gen the firmware polls) and the crossfade back on
+    /// deck A — what a set_brightness + set_crossfade(0) would do, without a reply.
+    pub fn kiosk_restore(&mut self, brightness: f32) {
+        self.output_brightness = if brightness.is_finite() { brightness.clamp(0.0, 1.0) } else { 1.0 };
+        self.output_brightness_gen = self.output_brightness_gen.wrapping_add(1);
+        self.crossfade = 0.0;
+    }
+
     fn welcome(&self) -> pb::ServerMessage {
         let mut w = pb::Welcome {
             r#session_id: self.session_id.clone(),

@@ -533,6 +533,44 @@ bool lm_fxdbg_paused(void);
 // Loop task: lapse a pause whose client went away (no session open).
 void lm_fxdbg_poll(uint32_t now_ms, bool session_open);
 
+// -- Kiosk mode (kiosk_ffi.rs, docs/design/kiosk-mode.md) ----------------------
+// Loop task only (the gate + handler run under the player mutex, the pollers after).
+#define LM_KIOSK_SRC_INTERNAL 0
+#define LM_KIOSK_SRC_WSS 1
+#define LM_KIOSK_SRC_BLE 2
+#define LM_KIOSK_RECORD_LEN 112
+#define LM_KIOSK_TICK_REVERT 1u
+#define LM_KIOSK_TICK_PUSH 2u
+// The gate, before ANY handler: 0 = handle it, >0 = the kiosk_locked error reply's
+// length (written to out; send it instead), -1 = bad args.
+int32_t lm_kiosk_gate(uint8_t src, const uint8_t *data, size_t len, uint32_t now_ms,
+                      uint8_t *out, size_t cap);
+// The message just gated came in on a locked connection: persist nothing for it.
+bool lm_kiosk_msg_locked(void);
+// The kiosk is enabled (Improv provisioning is refused).
+bool lm_kiosk_enabled(void);
+// Boot: the /lfs/kiosk.cfg record (null/invalid = defaults). True = boot into the
+// attract snapshot (/lfs/kiosk_fx.pb + kiosk_un.pb) instead of fx.pb / fx_sel.pb.
+bool lm_kiosk_seed(const uint8_t *rec, size_t len);
+// Bumped by every config change; persist lm_kiosk_record when it moves.
+uint32_t lm_kiosk_gen(void);
+size_t lm_kiosk_record(uint8_t *rec);
+// Read + clear a capture request: write the attract frames BEFORE the record.
+bool lm_kiosk_take_capture(void);
+// which 0 = the deck-A effect (submit_effect frame), 1 = its uniforms (set_uniforms
+// frame). Length, -1 no effect, -2 too small. Under the player mutex.
+int32_t lm_kiosk_encode_attract(uint32_t which, uint8_t *out, size_t cap);
+// After replaying the attract frames: park deck B, crossfade to A, the snapshot's
+// brightness. Under the player mutex.
+void lm_kiosk_apply_runtime(void);
+// Every loop pass: LM_KIOSK_TICK_* bits.
+uint32_t lm_kiosk_tick(uint32_t now_ms, bool wss_open, bool ble_connected);
+void lm_kiosk_reverted(uint32_t now_ms);
+int32_t lm_kiosk_build_push(uint8_t src, uint32_t now_ms, uint8_t *out, size_t cap);
+void lm_kiosk_push_done(void);
+// Console "kiosk off|status" (the text after "kiosk "): a one-line reply, -1 unknown.
+int32_t lm_kiosk_console(const uint8_t *line, size_t len, uint8_t *out, size_t cap);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif
