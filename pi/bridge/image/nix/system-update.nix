@@ -2,14 +2,26 @@
 # mechanism; pi/bridge/README.md "System updates" the overview).
 #
 #   splanc-system-update.timer      every 15 min (first: 10 min after boot). The
-#                                   service checks the channel every ~6 h, stages
-#                                   (download + signature check + import) a new
-#                                   system, and applies it (profile + boot entry
-#                                   + reboot) once no app is connected.
+#                                   service looks at the channel every ~6 h and
+#                                   records what is available (pointer + manifest,
+#                                   no store paths). It never downloads or installs
+#                                   a system: SPLANC_AUTO_UPDATE=0 turns even the
+#                                   looking off.
+#   splanc-system-update-scan       "Check for updates" on the screen: look now.
+#   splanc-system-update-install    the screen's confirmed "Install": download,
+#                                   verify, stage, apply (profile + boot entry +
+#                                   reboot). The bridge keeps serving until the
+#                                   reboot.
+#   (both started only through splanc-update-request, nix/bridge.nix: the
+#   unprivileged display drops a request file, root starts the fixed unit)
+#   splanc-system-update-status     every boot: the screens' status file from the
+#                                   saved state (what's available/staged, the
+#                                   last result).
 #   splanc-system-update-confirm    every boot: a pending update's health check
 #                                   -> commit, or roll back to the previous
 #                                   generation and reboot.
-#   splanc-system-update            CLI: status | check | apply
+#   splanc-system-update            CLI: status | scan | check | apply | logs
+#                                   (check/apply: an SSH user's explicit go-ahead)
 #
 # Separate from the agent-bundle fast path (splanc-agent-update in bridge.nix),
 # which still swaps the Node bundle in /var/lib/splanc-agent without a reboot.
@@ -42,16 +54,42 @@ let
   };
   path = [ nix config.systemd.package pkgs.coreutils ];
 
+  # The updater's runs (root: nix-env, switch-to-configuration, /boot/firmware,
+  # but not more than that needs).
+  updaterService = { description, args }: {
+    inherit description path;
+    wants = [ "network-online.target" ];
+    after = [ "network-online.target" "time-sync.target" "splanc-flash-config.service" "splanc-system-update-confirm.service" ];
+    environment = env;
+    # Never a stop job of its own: the install ends in a reboot.
+    restartIfChanged = false;
+    unitConfig.ConditionPathExists = "/etc/splanc-bridge/system-update.json";
+    serviceConfig = {
+      Type = "oneshot";
+      EnvironmentFile = "-/run/splanc-flash/bridge.env";
+      StateDirectory = "splanc-system-update";
+      StateDirectoryMode = "0700";
+      ExecStart = lib.escapeShellArgs (py ++ args);
+      ProtectHome = true;
+      PrivateTmp = true;
+      NoNewPrivileges = true;
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+      # Below the bridge: downloading and importing never starve it.
+      Nice = 10;
+      IOSchedulingClass = "idle";
+    };
+  };
+
   cli = pkgs.writeShellScriptBin "splanc-system-update" ''
     export PYTHONPATH=${bp.splancPy} PYTHONDONTWRITEBYTECODE=1
     export PATH=${lib.makeBinPath path}:$PATH
     case "''${1:-status}" in
       status) exec ${lib.escapeShellArgs py} status ;;
-      check | apply)
+      scan | check | apply)
         [ "$(id -u)" = 0 ] || { echo "splanc-system-update $1: run as root" >&2; exit 1; }
         exec ${lib.escapeShellArgs py} "$@" ;;
-      logs) shift; exec journalctl -u splanc-system-update -u splanc-system-update-confirm --no-pager -n 200 "$@" ;;
-      *) echo "usage: splanc-system-update [status|check|apply|logs]" >&2; exit 2 ;;
+      logs) shift; exec journalctl -u 'splanc-system-update*' -u splanc-update-request --no-pager -n 200 "$@" ;;
+      *) echo "usage: splanc-system-update [status|scan|check|apply|logs]" >&2; exit 2 ;;
     esac
   '';
 in
@@ -137,60 +175,72 @@ in
 
     systemd.tmpfiles.rules = [ "d /run/splanc-system-update 0755 root root -" ];
 
-    systemd.services.splanc-system-update = {
-      description = "Splanc bridge system update (check, stage, apply when idle)";
-      wants = [ "network-online.target" ];
-      after = [ "network-online.target" "time-sync.target" "splanc-flash-config.service" "splanc-system-update-confirm.service" ];
-      inherit path;
-      environment = env;
-      # Never a stop job of its own: the apply step ends in a reboot.
-      restartIfChanged = false;
-      unitConfig.ConditionPathExists = "/etc/splanc-bridge/system-update.json";
-      serviceConfig = {
-        Type = "oneshot";
-        EnvironmentFile = "-/run/splanc-flash/bridge.env";
-        StateDirectory = "splanc-system-update";
-        StateDirectoryMode = "0700";
-        ExecStart = lib.escapeShellArgs (py ++ [ "run" "--auto" ]);
-        # Root (nix-env, switch-to-configuration, /boot/firmware), but not more
-        # than that needs.
-        ProtectHome = true;
-        PrivateTmp = true;
-        NoNewPrivileges = true;
-        RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
-        Nice = 10;
-        IOSchedulingClass = "idle";
+    systemd.services = {
+      # The timer's background check: discovery only.
+      splanc-system-update = updaterService {
+        description = "Look for a Splanc bridge system update (downloads nothing)";
+        args = [ "run" "--auto" ];
+      };
+      # The screen's "Check for updates" (and `splanc-bridge check-updates`).
+      splanc-system-update-scan = updaterService {
+        description = "Look for a Splanc bridge system update now";
+        args = [ "scan" ];
+      };
+      # The screen's confirmed install: download + verify + apply + reboot.
+      splanc-system-update-install = updaterService {
+        description = "Install the Splanc bridge system update (confirmed on the screen)";
+        args = [ "apply" ];
+      };
+      splanc-system-update-status = {
+        description = "Splanc bridge system update status for the screens";
+        wantedBy = [ "multi-user.target" ];
+        before = [ "splanc-display.service" "splanc-system-update-confirm.service" ];
+        after = [ "local-fs.target" "splanc-flash-config.service" ];
+        inherit path;
+        environment = env;
+        restartIfChanged = false;
+        unitConfig.ConditionPathExists = "/etc/splanc-bridge/system-update.json";
+        serviceConfig = {
+          Type = "oneshot";
+          EnvironmentFile = "-/run/splanc-flash/bridge.env";
+          StateDirectory = "splanc-system-update";
+          StateDirectoryMode = "0700";
+          ExecStart = lib.escapeShellArgs (py ++ [ "publish" ]);
+          ProtectHome = true;
+          PrivateTmp = true;
+          PrivateNetwork = true;
+          NoNewPrivileges = true;
+        };
+      };
+      splanc-system-update-confirm = {
+        description = "Health-check a just-installed Splanc bridge system (commit or roll back)";
+        wantedBy = [ "multi-user.target" ];
+        after = [ "splanc-bridge.service" "splanc-display.service" "NetworkManager.service" "local-fs.target" ];
+        inherit path;
+        environment = env;
+        restartIfChanged = false;
+        unitConfig.ConditionPathExists = "/var/lib/splanc-system-update/state.json";
+        serviceConfig = {
+          # Not a oneshot: the health check takes minutes and must not hold up
+          # multi-user.target (or "is-system-running" -- one of the checks).
+          Type = "exec";
+          StateDirectory = "splanc-system-update";
+          StateDirectoryMode = "0700";
+          ExecStart = lib.escapeShellArgs (py ++ [ "confirm" ]);
+          ProtectHome = true;
+          PrivateTmp = true;
+          NoNewPrivileges = true;
+          RestrictAddressFamilies = [ "AF_UNIX" ];
+        };
       };
     };
 
     systemd.timers.splanc-system-update = {
-      description = "Check for a Splanc bridge system update";
+      description = "Look for a Splanc bridge system update";
       wantedBy = [ "timers.target" ];
       timerConfig = {
         OnBootSec = "10min";
         OnUnitActiveSec = "15min";
-      };
-    };
-
-    systemd.services.splanc-system-update-confirm = {
-      description = "Health-check a just-installed Splanc bridge system (commit or roll back)";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "splanc-bridge.service" "splanc-display.service" "NetworkManager.service" "local-fs.target" ];
-      inherit path;
-      environment = env;
-      restartIfChanged = false;
-      unitConfig.ConditionPathExists = "/var/lib/splanc-system-update/state.json";
-      serviceConfig = {
-        # Not a oneshot: the health check takes minutes and must not hold up
-        # multi-user.target (or "is-system-running" -- one of the checks).
-        Type = "exec";
-        StateDirectory = "splanc-system-update";
-        StateDirectoryMode = "0700";
-        ExecStart = lib.escapeShellArgs (py ++ [ "confirm" ]);
-        ProtectHome = true;
-        PrivateTmp = true;
-        NoNewPrivileges = true;
-        RestrictAddressFamilies = [ "AF_UNIX" ];
       };
     };
   };

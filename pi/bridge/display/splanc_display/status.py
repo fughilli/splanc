@@ -33,6 +33,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import urlsplit
 
+from .updates import Updates
+
 DEFAULT_STATUS_PATH = "/run/splanc-bridge/status.json"
 DEFAULT_CONTROL_PATH = "/run/splanc-bridge/control.sock"
 
@@ -160,6 +162,8 @@ class Status:
     paired: tuple = field(default_factory=tuple)  # Client, oldest first
     # ok | offline (the last list heard) | relay_outdated | unknown | "" (older bridge)
     clients_state: str = ""
+    # Not in the bridge's file: the updaters' state (updates.py), merged in by main.
+    updates: Optional[Updates] = None
 
     @property
     def label(self) -> str:
@@ -203,6 +207,7 @@ class Status:
             tuple((p.key, p.name, p.ok, p.condition) for p in self.players),
             self.clients_state,
             tuple((c.id, c.label, c.live) for c in self.paired),
+            self.updates.summary() if self.updates is not None else (),
         )
 
 
