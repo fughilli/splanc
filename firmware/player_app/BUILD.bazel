@@ -103,6 +103,7 @@ rust_static_library(
         "driver_ffi.rs",
         "ffi.rs",
         "fxdbg.rs",
+        "kiosk_ffi.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
         "wifi_ffi.rs",
@@ -147,6 +148,7 @@ rust_library(
         "driver_ffi.rs",
         "ffi.rs",
         "fxdbg.rs",
+        "kiosk_ffi.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
         "wifi_ffi.rs",
@@ -223,6 +225,21 @@ rust_test(
     env = {"RUST_MIN_STACK": "100663296"},
     deps = [
         ":player_ffi_host",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# Kiosk mode (kiosk_ffi.rs): the lock gate's arm table, the persisted record, the
+# owner config / unlock / idle revert / pushes through the C ABI. Own binary.
+rust_test(
+    name = "kiosk_test",
+    srcs = ["tests/kiosk.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
     ],

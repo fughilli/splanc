@@ -251,9 +251,18 @@ bool improv_ble_central_connected() { return g_central_connected; }
 // Bluedroid runs its own Bluetooth task; nothing to pump from the app loop.
 void improv_ble_poll() {}
 
+extern "C" bool lm_kiosk_enabled(void);  // kiosk_ffi.rs
+
 bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t pass_cap) {
   if (!g_have_creds) return false;
   g_have_creds = false;
+  if (lm_kiosk_enabled()) {
+    // Kiosk mode: a public install never takes Wi-Fi credentials over Improv.
+    memset(g_pass, 0, sizeof g_pass);
+    improv_ble_set_error(0x04);  // not authorized
+    Log().printf("[kiosk] Improv provisioning refused (kiosk enabled)\n");
+    return false;
+  }
   snprintf(ssid, ssid_cap, "%s", g_ssid);
   snprintf(pass, pass_cap, "%s", g_pass);
   return true;
@@ -326,4 +335,9 @@ void player_ble_poll() {
   g_ble_frame_ready = false;  // release the slot for the next inbound frame
   if (n > 0 && reply) player_ble_notify(reply, (size_t)n);
   // n == 0: fire-and-forget (no reply). n < 0: bad frame — drop silently.
+}
+
+void player_ble_push(const uint8_t *data, size_t len) {
+  if (!improv_ble_central_connected() || data == nullptr || len == 0) return;
+  player_ble_notify(data, len);
 }

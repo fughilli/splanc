@@ -107,6 +107,7 @@ py_library(
         "improv.py",
         "improv_fresh_join_core.py",
         "jit_soak_core.py",
+        "kiosk_core.py",
         "lan_relay.py",
         "led_pattern.py",
         "live_latency_core.py",
@@ -1107,6 +1108,44 @@ py_test(
     },
     imports = ["."],
     main = "hitl_wide_uniforms.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Kiosk mode (docs/design/kiosk-mode.md): enable + attract capture, the lock gate's
+# refusals (kiosk_locked), a visitor effect that is never persisted (reboot -> the
+# attract show), the idle revert + its push, the BLE player transport (refusals, a
+# visitor effect, the push) + Improv refused, owner unlock, and the console "kiosk off".
+# Gate: SKIP on bench failures, FAIL on any assertion on a reached DUT (kiosk_core).
+#   bazel run //pi/hitl/harness:kiosk_netstack -- --server http://hitl-rig-2:8087
+py_test(
+    name = "kiosk_netstack",
+    timeout = "eternal",
+    srcs = [
+        "hitl_ble_player.py",
+        "hitl_kiosk.py",
+        "hitl_led_capture.py",
+    ],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//fx_compiler:fx_compile",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # esp32c6-only reservation (skip rig-3's esp32c3 DUT); see :e2e_netstack.
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_kiosk.py",
     tags = [
         "hitl",
         "manual",

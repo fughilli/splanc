@@ -666,6 +666,10 @@ impl Player {
             | CMsg::OtaReboot(_)
             | CMsg::SetWifiPolicy(_)
             | CMsg::GetWifiPolicy(_)
+            // Kiosk mode lives in the firmware (player_app kiosk_ffi.rs).
+            | CMsg::GetKioskStatus(_)
+            | CMsg::SetKioskConfig(_)
+            | CMsg::KioskUnlock(_)
             // The FX debugger lives in the fx layer (player_app ffi) too.
             | CMsg::FxDebugControl(_)
             | CMsg::GetFxSnapshot(_)
@@ -1163,6 +1167,15 @@ impl Player {
 
     pub fn output_brightness(&self) -> f32 {
         self.output_brightness
+    }
+
+    /// Kiosk attract restore (player_app kiosk_ffi.rs): the snapshot's output
+    /// brightness (bumping the gen the firmware polls) and the crossfade back on
+    /// deck A — what a set_brightness + set_crossfade(0) would do, without a reply.
+    pub fn kiosk_restore(&mut self, brightness: f32) {
+        self.output_brightness = if brightness.is_finite() { brightness.clamp(0.0, 1.0) } else { 1.0 };
+        self.output_brightness_gen = self.output_brightness_gen.wrapping_add(1);
+        self.crossfade = 0.0;
     }
 
     fn welcome(&self) -> pb::ServerMessage {
