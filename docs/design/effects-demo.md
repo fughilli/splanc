@@ -188,6 +188,14 @@ stranger at a kiosk install can tap the mic and speak with zero setup.
 (`web/src/effects/ai/acidPersona.ts`) for a fixture with an LED curtain on CH0
 and a rope on CH1, with unknown counts and possibly no map.
 
+**Paid models first (2026-10-30).** The owner found the free models' effects poor
+and topped up the key to pay for a good demo. The relay now tries
+`anthropic/claude-sonnet-5.5`, then `anthropic/claude-haiku-5.5`, then the free
+models. Each request carries its model's list price as `max_price`. When the key
+runs out of credit (402), the relay skips to the free models instead of failing.
+The OpenRouter key's own credit limit is the hard spending cap; the per-client
+limits below bound what one phone can spend.
+
 **Quota sizing.** The key has OpenRouter credit, so free models allow about 1000
 requests/day and about 20/minute, shared by every visitor at both stoops.
 - Per isolate: 20 requests/minute, the upstream per-minute cap.
