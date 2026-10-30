@@ -23,10 +23,18 @@
 #      stored like the flasher's, deduplicated by SSID, read back exactly by
 #      NetworkManager; a failed join (real nmcli) rolls the store back;
 #   6. the display renders the HDMI page (PNG sink; copied out as hdmi.png) and
-#      `splanc-bridge status` shows the pairing code.
+#      `splanc-bridge status` shows the pairing code;
+#   7. the boot splash (nix/splash.nix; no OLED or HDMI here, so it paces and
+#      composes frames for nothing) started in stage 1, lived through the
+#      switch to the real root, followed the boot stages and handed over to
+#      splanc-display before its first frame; the boot timeline (first splash
+#      frame vs splanc-display's first frame) and frame-timing stats under CPU
+#      load (the splash at SCHED_FIFO vs the Python animation at Nice=10) are
+#      copied out as splash-timing.txt.
 { pkgs, bridgeModules }:
 let
   stubVersion = "9.9.9";
+  bp = pkgs.callPackage ./packages.nix { };
 
   flasherSrc = pkgs.lib.fileset.toSource {
     root = ../../flasher;
@@ -84,8 +92,15 @@ pkgs.testers.runNixOSTest {
     splancBridge.updaterExtraArgs = [ "--allow-http" ];
     networking.networkmanager.enable = true;
     virtualisation.memorySize = 1024;
+    virtualisation.cores = 4; # like the Pi 3/4/Zero 2 W (the splash pins itself to the last core)
     # No framebuffer in the VM: the display writes the HDMI page to a PNG.
-    systemd.services.splanc-display.environment.SPLANC_DISPLAY_HDMI = "png:/run/splanc-display/hdmi.png";
+    systemd.services.splanc-display.environment = {
+      SPLANC_DISPLAY_HDMI = "png:/run/splanc-display/hdmi.png";
+      SPLANC_DISPLAY_FRAME_STATS = "1";
+      # TCG is slow and never quiet: don't hold the screens back the full 30 s.
+      SPLANC_DISPLAY_QUIET_MAX = "15";
+    };
+    boot.kernelParams = [ "splanc.splash_stats=1" ];
     # The release pointer, served locally.
     systemd.services.stub-splanc-io = {
       wantedBy = [ "multi-user.target" ];
@@ -209,5 +224,74 @@ pkgs.testers.runNixOSTest {
         assert "TEST-CODE" in out, out
         out = machine.succeed("splanc-bridge version")
         assert '"board":"vm"' in out and "agent/9.9.9" in out, out
+
+    with subtest("boot splash: stage 1 -> switch_root -> hand-off to splanc-display"):
+        def kmsg_time(pattern):
+            out = machine.succeed(f"dmesg | grep -m1 -- {pattern!r} || true").strip()
+            m = re.match(r"\[\s*([0-9.]+)\]", out)
+            return float(m.group(1)) if m else None
+
+        machine.wait_until_succeeds("dmesg | grep -q 'splanc-splash: handed over'", timeout=120)
+        klog = machine.succeed("dmesg | grep splanc-splash")
+        print(klog)
+        started = kmsg_time("splanc-splash: started (boot)")
+        switched = kmsg_time("splanc-splash: root switched")
+        handed = kmsg_time("splanc-splash: handed over")
+        stage2 = kmsg_time("stage-2-init")
+        assert started is not None and switched is not None and handed is not None, klog
+        # It started in stage 1 (before the root switch) and ran on through it.
+        assert started < switched < handed, (started, switched, handed)
+        assert "stage 1: Loading system" in klog and "frames:" in klog, klog
+        machine.fail("pgrep -f '^@splanc-splash'")  # gone after the hand-off
+        jr = machine.succeed("journalctl -b -u splanc-display -o cat")
+        assert "took over from the boot splash" in jr, jr
+        m = re.search(r"first HDMI frame at ([0-9.]+) s since boot", jr)
+        assert m, jr
+        first_ui = float(m.group(1))
+        assert handed <= first_ui, (handed, first_ui)  # never both drawing
+        timeline = (
+            f"splash started (stage 1): {started:.2f} s\n"
+            f"root switched:            {switched:.2f} s\n"
+            f"stage-2-init:             {stage2 if stage2 is not None else float('nan'):.2f} s\n"
+            f"splash handed over:       {handed:.2f} s\n"
+            f"splanc-display 1st frame: {first_ui:.2f} s\n"
+        )
+        timeline += "".join(ln + "\n" for ln in klog.splitlines() if "frames:" in ln or "stage " in ln)
+        timeline += "".join(ln + "\n" for ln in jr.splitlines() if "took over" in ln or "frames:" in ln)
+        timeline += machine.succeed("systemd-analyze || true")
+        timeline += machine.succeed(
+            "systemd-analyze critical-chain splanc-display.service --no-pager || true"
+        )
+
+    with subtest("frame timing: the splash (RT) vs the Python animation (Nice=10), idle and under load"):
+        py_bench = (
+            "cd /tmp && SPLANC_DISPLAY_SPLASH=off SPLANC_DISPLAY_FRAME_STATS=1 "
+            "SPLANC_BRIDGE_STATUS=/nonexistent PYTHONPATH=${bp.splancPy} "
+            "timeout 120 nice -n 10 ${bp.pyEnv}/bin/python3 -m splanc_display.main "
+            "--oled null --hdmi off 2>&1 | grep -m1 'frames:' || echo 'no frame within 120 s (starved)'"
+        )
+        py_idle = machine.succeed(py_bench).strip()
+        rt_idle = machine.succeed("splanc-splash bench 6 2>&1 | grep bench:").strip()
+        ncpu = int(machine.succeed("nproc").strip())
+        machine.succeed(
+            f"for i in $(seq {ncpu}); do sh -c 'while :; do :; done' >/dev/null 2>&1 & "
+            "echo $! >>/tmp/busy.pids; done"
+        )
+        rt = machine.succeed("splanc-splash bench 6 2>&1 | grep bench:").strip()
+        nort = machine.succeed("splanc-splash bench 6 --no-rt 2>&1 | grep bench:").strip()
+        py = machine.succeed(py_bench).strip()
+        machine.succeed("kill $(cat /tmp/busy.pids)")
+        timing = (
+            timeline
+            + "\nidle:\n"
+            + f"  splash SCHED_FIFO: {rt_idle}\n  Python Nice=10:    {py_idle}\n"
+            + f"under load ({ncpu} busy loops at nice 0):\n"
+            + f"  splash SCHED_FIFO: {rt}\n  splash no RT:      {nort}\n"
+            + f"  Python Nice=10:    {py}\n"
+        )
+        print(timing)
+        machine.succeed(f"cat > /tmp/splash-timing.txt <<'EOF'\n{timing}\nEOF")
+        machine.copy_from_vm("/tmp/splash-timing.txt", "")
+        assert "bench:" in rt and "skipped" in rt, rt
   '';
 }

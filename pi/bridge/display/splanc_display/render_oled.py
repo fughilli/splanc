@@ -16,6 +16,7 @@ from PIL import Image, ImageChops, ImageDraw
 from . import boot as boot_mod
 from . import draw as d
 from . import fonts
+from . import splash as splash_mod
 from . import updates as upd
 from .anim import Scene, SlideView
 from .status import (
@@ -743,9 +744,13 @@ LIST_RENDERERS = {
 DETAIL_PAGES = ("detail", "client", "update")
 
 
-def _boot(img: Image.Image, dr: ImageDraw.ImageDraw, t: Optional[float], frames) -> None:
+def _boot(
+    img: Image.Image, dr: ImageDraw.ImageDraw, t: Optional[float], frames, text: str = ""
+) -> None:
     if frames is not None:
         img.paste(frames.at(t or 0.0), (0, 0))
+        if text and (t or 0.0) >= frames.duration and frames.loop_start is not None:
+            splash_mod.draw_stage(img, text)  # as the boot splash draws it (its hand-off)
         return
     f = F("boot")
     _center(dr, (H - d.line_height(dr, f)) // 2, "Splanc", f)  # no pre-rendered frames
@@ -796,7 +801,7 @@ def _draw_scene(status: Status, scene: Scene, view: View, now: float, frames) ->
     dr = ImageDraw.Draw(img)
     dr.fontmode = "1"  # no anti-aliasing: crisp 1-bit glyphs
     if scene.page == "boot":
-        _boot(img, dr, view.boot_t, frames)
+        _boot(img, dr, view.boot_t, frames, view.boot_text)
     elif scene.page in LIST_RENDERERS:
         v = (
             view

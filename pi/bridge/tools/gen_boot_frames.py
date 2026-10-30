@@ -10,13 +10,20 @@ network. The output is the panel's own format, 1-bit 128x64 frames, so the Pi
 only unpacks bytes at boot (splanc_display/boot.py reads it).
 
 File format (little endian):
-    b"SPLB" | u8 version=1 | u8 fps | u8 width | u8 height | u16 frames
+    b"SPLB" | u8 version=2 | u8 fps | u8 width | u8 height | u16 frames
+    | u16 loop_start (v2 only)
     | zlib(frames * (width*height/8) bytes, each a PIL mode "1" tobytes())
 
-The animation (2 s at 30 fps): the splash mark opens out of a ring at the
+Version 1 (no loop_start) is still read: it holds its last frame.
+
+The intro (2 s at 30 fps): the splash mark opens out of a ring at the
 centre, glides to its place as the wordmark is wiped out of it behind a scan line, a row of
-"LEDs" chases on underneath, and a glint crosses the logo. The display holds the
-last frame until it hands off (a slide) to the first status screen.
+"LEDs" chases on underneath, and a glint crosses the logo. Then the "loading" loop
+(frames loop_start.., 1.2 s, repeated until the screens are ready): a brighter
+head runs along the LED row with a short dark gap behind it, then the row rests.
+The early boot splash (pi/bridge/splash, from the initrd) plays the very same
+frames, and splanc-display continues them from where the splash was
+(splanc_display/splash.py), then hands off (a slide) to the first status screen.
 """
 
 from __future__ import annotations
@@ -36,7 +43,10 @@ W, H = 128, 64
 FPS = 30
 SECONDS = 2.0
 SS = 4  # supersampling for the logo's edges
-VERSION = 1
+VERSION = 2
+LOOP_SECONDS = 1.2  # one "loading" cycle
+LOOP_DOT_SECONDS = 0.06  # the head's time on each LED (15 LEDs: 0.9 s, then a 0.3 s rest)
+LOOP_GAP = 2  # dark LEDs trailing the head
 
 LOGO_W = 120  # the full logo's width on the panel
 LOGO_Y = 8  # its top
@@ -341,9 +351,57 @@ def build_frames(svg_path: str):
     return frames
 
 
-def pack(frames, fps: int = FPS) -> bytes:
-    body = b"".join(f.tobytes() for f in frames)
-    return b"SPLB" + struct.pack("<BBBBH", VERSION, fps, W, H, len(frames)) + zlib.compress(body, 9)
+def _dot_positions(svg_path: str):
+    """The LED row's dot centres, as build_frames places them."""
+    shapes = logo_shapes(svg_path)
+    x0, y0, x1, y1 = bbox(shapes["mark"] + shapes["word"])
+    scale = LOGO_W / (x1 - x0)
+    lx = (W - LOGO_W) // 2
+    ox, oy = lx - x0 * scale, LOGO_Y - y0 * scale
+    mark = raster(shapes["mark"], scale, ox, oy, (W, H))
+    word = raster(shapes["word"], scale, ox, oy, (W, H))
+    mx0, _, mx1, _ = mark.getbbox()
+    wx0, _, wx1, _ = word.getbbox()
+    left, right = min(mx0, wx0), max(mx1, wx1)
+    dot_pitch = (right - 1 - left) / (DOTS - 1)
+    return [(round(left + 1 + i * dot_pitch), DOTS_Y) for i in range(DOTS)]
+
+
+def build_loop(svg_path: str, last: Image.Image):
+    """The "loading" loop that follows the intro's ``last`` frame: the logo stays,
+    a head runs along the LED row (a dark gap behind it), then the row rests with
+    every LED on, which is exactly ``last`` (so intro -> loop -> loop is seamless)."""
+    dots = _dot_positions(svg_path)
+    base = last.copy()
+    ImageDraw.Draw(base).rectangle([0, DOTS_Y, W - 1, DOTS_Y + 1], fill=0)
+    frames = []
+    for f in range(int(round(LOOP_SECONDS * FPS))):
+        t = f / FPS
+        img = base.copy()
+        dr = ImageDraw.Draw(img)
+        head = int(t / LOOP_DOT_SECONDS) if t < DOTS * LOOP_DOT_SECONDS else None
+        for i, (px, py) in enumerate(dots):
+            if head is not None and i == head:
+                dr.rectangle([px - 2, py, px + 1, py + 1], fill=1)
+            elif head is not None and 0 < head - i <= LOOP_GAP:
+                continue
+            else:
+                dr.rectangle([px - 1, py, px, py + 1], fill=1)
+        frames.append(img)
+    return frames
+
+
+def pack(frames, fps: int = FPS, loop=None) -> bytes:
+    """``frames`` (the intro), plus ``loop`` frames played after it, repeated (v2).
+    Without a loop: the version 1 format, which holds the last frame."""
+    if not loop:
+        body = b"".join(f.tobytes() for f in frames)
+        head = struct.pack("<BBBBH", 1, fps, W, H, len(frames))
+        return b"SPLB" + head + zlib.compress(body, 9)
+    allf = list(frames) + list(loop)
+    body = b"".join(f.tobytes() for f in allf)
+    head = struct.pack("<BBBBHH", VERSION, fps, W, H, len(allf), len(frames))
+    return b"SPLB" + head + zlib.compress(body, 9)
 
 
 def main(argv=None) -> int:
@@ -353,16 +411,17 @@ def main(argv=None) -> int:
     ap.add_argument("--png-dir", help="also write every frame as a PNG (review)")
     a = ap.parse_args(argv)
     frames = build_frames(a.svg)
-    data = pack(frames)
+    loop = build_loop(a.svg, frames[-1])
+    data = pack(frames, loop=loop)
     tmp = a.out + ".tmp"
     with open(tmp, "wb") as f:
         f.write(data)
     os.replace(tmp, a.out)
     if a.png_dir:
         os.makedirs(a.png_dir, exist_ok=True)
-        for i, fr in enumerate(frames):
+        for i, fr in enumerate(frames + loop):
             fr.save(os.path.join(a.png_dir, f"boot-{i:02d}.png"))
-    print(f"{a.out}: {len(frames)} frames, {len(data)} bytes", file=sys.stderr)
+    print(f"{a.out}: {len(frames)} + {len(loop)} loop frames, {len(data)} bytes", file=sys.stderr)
     return 0
 
 

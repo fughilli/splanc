@@ -68,3 +68,21 @@ def test_gpiozero_buttons_with_pull_ups(mock_pins):
     pin.drive_high()
     b.close()
     assert got == ["key2", "-key2"]
+
+
+def test_takeover_from_the_boot_splash_sends_nothing_until_the_first_frame():
+    """open_device(takeover=fd): no reset, no init, no clear (the splash set the
+    panel up exactly like luma); DC toggles through the splash's line request."""
+    import struct
+
+    calls = []
+    gpio = hat.LineFdGpio(-1, ioctl=lambda fd, req, arg: calls.append(struct.unpack("<QQ", arg)))
+    dev = FakeSpidev()
+    oled = hat.open_device("spi", rotate=2, gpio=gpio, takeover=-1, spi_dev=dev)
+    assert dev.written == [] and calls == []
+    img = render_oled.render(parse(fake_bridge.sample("pairing", 1e9)), View(page="home"), now=1e9)
+    oled.display(img)
+    assert len(b"".join(dev.written)) == 8 * (3 + 128)
+    assert all(bits & 0b10 for bits, _ in calls)  # RST never pulled low
+    assert {bits & 1 for bits, _ in calls} == {0, 1}  # DC: commands and data
+    gpio.fd = None  # not a real descriptor: nothing to close at exit

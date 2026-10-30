@@ -92,9 +92,11 @@ the Pi's system partition, which Windows can't read.
 ## 3. Boot the Pi
 
 With the Pi unplugged, fit the OLED HAT onto its header if you have one, and plug in the HDMI
-screen if you use one. Insert the card and connect power. In about a minute the screens show
-**Ready to pair** with a code like `ABCD-EFGH`. (The first boot takes a little longer: the Pi
-grows its file system to fill the card.)
+screen if you use one. Insert the card and connect power. Within a few seconds the screens show
+the Splanc logo with a moving "loading" row of lights and what the Pi is doing (Starting…,
+Connecting…, Starting bridge…). In about a minute they show **Ready to pair** with a code like
+`ABCD-EFGH`. (The first boot takes a little longer: the Pi grows its file system to fill the
+card.)
 
 The bridge starts by itself every time the Pi powers on. It finds your fixtures on the network by
 itself.
@@ -126,8 +128,9 @@ After pairing, it shows how many clients are connected. Along the bottom are:
 
 ![HDMI after pairing](img/pi-bridge/hdmi-paired.png)
 
-**OLED HAT**: when the screen service starts it plays a short Splanc logo animation (about two
-seconds, while the bridge itself starts up), then slides to six pages, which rotate every 8
+**OLED HAT**: from power-on it shows the Splanc logo animation and the loading progress
+(on the SD image; on Raspberry Pi OS a two-second logo when the screen service starts), then
+slides to six pages, which rotate every 8
 seconds:
 
 1. **Home**: the state, the pairing code in large letters, the short pairing link, the time left

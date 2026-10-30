@@ -59,6 +59,7 @@
         ./nix/flash-config.nix
         ./nix/improv.nix
         ./nix/lean.nix
+        ./nix/splash.nix
         ./nix/system-update.nix
         { splancBridge.imageRev = rev; }
       ];
@@ -87,7 +88,7 @@
         lib.mapAttrs' (k: v: lib.nameValuePair "image-${k}" v.config.system.build.sdImage) systems
         // lib.mapAttrs' (k: v: lib.nameValuePair "toplevel-${k}" v.config.system.build.toplevel) systems
         // {
-          inherit (bridgePkgs) agentBundle pyEnv splancPy lgpio luma-core luma-oled;
+          inherit (bridgePkgs) agentBundle pyEnv splancPy splash lgpio luma-core luma-oled;
           default = systems.pi5.config.system.build.sdImage;
         };
 
@@ -99,6 +100,8 @@
         # Full-system OTA: signed delta update A -> B, a rejected unsigned /
         # wrong-key release, and a B that fails its health check rolling back.
         vm-ota = import ./nix/vm-test-ota.nix { inherit pkgs bridgeModules; };
+        # The boot splash binary, checked against luma.oled's SH1106 bytes.
+        splash = bridgePkgs.splash;
       };
     };
 }

@@ -7,6 +7,11 @@
 #   * /dev/gpiochip* for the `gpio` group (lgpio drives the HAT's DC/RST + keys).
 #   * The SD image: named after the board, uncompressed (CI compresses it with
 #     zstd -19 for the release), with a smaller FAT firmware partition.
+#   * Boot time (the boot splash, nix/splash.nix, can only start with the
+#     initrd): U-Boot's extlinux menu waits 1 s instead of 5 (Pi 3/4/Zero 2 W;
+#     the menu still works on a serial console), and the kernel logs warnings
+#     and worse to the consoles instead of everything (115200-baud serial output
+#     stalls the boot; dmesg/the journal still have all of it).
 { config, lib, ... }:
 {
   hardware.raspberry-pi.config.all = {
@@ -20,6 +25,9 @@
     };
   };
   hardware.i2c.enable = true;
+
+  boot.loader.timeout = 1;
+  boot.consoleLogLevel = 4;
 
   services.udev.extraRules = ''
     SUBSYSTEM=="gpio", KERNEL=="gpiochip*", GROUP="gpio", MODE="0660"

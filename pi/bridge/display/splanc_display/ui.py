@@ -101,6 +101,7 @@ class View:
     update_scroll: float = 0.0
     checking: bool = False  # a requested "Check for updates" is running
     boot_t: Optional[float] = None  # seconds into the boot animation (while it shows)
+    boot_text: str = ""  # the boot splash's stage hint, continued after its hand-off
     animating: bool = False  # something is moving: draw at the animation frame rate
 
 
@@ -164,6 +165,7 @@ class OledUI:
         self._slide: Optional[anim.Slide] = None
         self._boot_t0: Optional[float] = None
         self._boot_until: Optional[float] = None
+        self._boot_text = ""
 
     # --- the scene shown (when no slide is running) ---------------------------------
     @property
@@ -196,11 +198,14 @@ class OledUI:
         """Something worth looking at changed (status update): wake + undim."""
         self._last_activity = self.clock()
 
-    def start_boot(self, seconds: float) -> None:
-        """Show the boot animation for ``seconds``, then slide to the first page."""
+    def start_boot(self, seconds: float, t0: Optional[float] = None, text: str = "") -> None:
+        """Show the boot animation for ``seconds``, then slide to the first page.
+        ``t0``/``text``: continue the early boot splash's animation (started at
+        ``t0`` on this clock, showing ``text``) instead of starting it over."""
         now = self.clock()
-        self._boot_t0 = now
+        self._boot_t0 = now if t0 is None else t0
         self._boot_until = now + seconds
+        self._boot_text = text
 
     def set_fixtures(self, keys, rows_of: Optional[Callable[[str], int]] = None) -> None:
         """The fixture list changed (or was refreshed). Keeps the selection on the
@@ -359,6 +364,7 @@ class OledUI:
             scene.page == "boot" or (slide and "boot" in (slide.src.page, slide.dst.page))
         ):
             boot_t = now - self._boot_t0
+            shift = (0, 0)  # pixel for pixel where the boot splash drew it
         animating = (
             slide is not None
             or scene.page == "boot"
@@ -387,6 +393,7 @@ class OledUI:
             update_scroll=self._up.scroll.value(now),
             checking=self._checking,
             boot_t=boot_t,
+            boot_text=self._boot_text if boot_t is not None else "",
             animating=animating,
         )
         if self._confirm_until is not None:
