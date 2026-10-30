@@ -24,7 +24,15 @@ on:
     tags:
       - 'app-v*' # a release tag ships the iOS build to TestFlight (testflight job below)
   # Manual "ship a dev build to TestFlight" trigger (the testflight job below).
+  # Set marketing_version to re-ship an already-reviewed version (e.g. 1.13.0) with
+  # a new build number: TestFlight usually skips Beta App Review for later builds of
+  # a version that already passed it, which a new app-v* tag (new version) doesn't.
   workflow_dispatch:
+    inputs:
+      marketing_version:
+        description: "CFBundleShortVersionString for this build (e.g. 1.13.0); empty keeps the plist's"
+        required: false
+        default: ''
 
 # macOS runner minutes are ~10× Linux — cancel superseded runs on the same ref.
 concurrency:
@@ -378,9 +386,12 @@ jobs:
       # (--build-number → tf-build-number, tf-signing-prep, cap-sync). On a manual
       # dev build (no app-v tag) the plist value is left as-is.
       - name: Set marketing version from tag
-        if: startsWith(github.ref, 'refs/tags/app-v')
+        if: startsWith(github.ref, 'refs/tags/app-v') || inputs.marketing_version != ''
+        env:
+          INPUT_VER: ${{ inputs.marketing_version }}
         run: |
-          VER="${GITHUB_REF_NAME#app-v}"
+          VER="${INPUT_VER:-${GITHUB_REF_NAME#app-v}}"
+          echo "${VER}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::bad marketing version '${VER}'"; exit 1; }
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VER}" web/ios/App/App/Info.plist
 
       # The whole build → archive → export → upload is the single local target.

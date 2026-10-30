@@ -9,7 +9,11 @@ test("demo assistant carries tool history, images and abort signal without clien
   globalThis.fetch = async (url, init) => {
     calls++;
     assert.equal(url, "https://demo.invalid/chat");
-    assert.equal(init?.signal, controller.signal);
+    // The provider combines the caller's signal with its own deadline: a caller
+    // abort must still cancel the request.
+    assert.equal(init?.signal?.aborted, false);
+    controller.abort();
+    assert.equal(init?.signal?.aborted, true);
     assert.equal(new Headers(init?.headers).has("authorization"), false);
     const body = JSON.parse(String(init?.body));
     assert.equal(body.model, undefined);

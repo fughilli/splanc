@@ -42,6 +42,9 @@ build_info_file(
 # the pattern goldens pin the firmware hue-code generator
 # (//firmware/pattern) to what the phone decoder is tested against.
 exports_files([
+    # The Halloween effect pack, compiled + rendered by
+    # //fx_compiler:halloween_presets_test.
+    "src/halloween/presets.ts",
     # The logo the Pi bridge's OLED boot animation is rendered from
     # (//pi/bridge:boot_frames).
     "public/icons/splanc.svg",
@@ -193,6 +196,8 @@ ts_project(
             # Show mode (FUG-110) statically imports the worker compiler too
             # (cueing compiles effects to .fxb); reached only via app/main.
             "src/ui/screens/showMode.ts",
+            # Halloween play mode compiles its preset tiles with the worker too.
+            "src/ui/screens/playMode.ts",
             "src/ui/app/main.ts",
             "src/ui/main.ts",
             # The JIT fx-bench golden lives here only for the shared

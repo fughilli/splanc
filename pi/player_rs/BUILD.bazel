@@ -82,5 +82,5 @@ rust_test(
     edition = "2021",
     # Envelope structs carry inline heapless storage (see //shared/protocol/rust)
     # and land on the test thread's stack — same bump the firmware player tests use.
-    env = {"RUST_MIN_STACK": "16777216"},
+    env = {"RUST_MIN_STACK": "33554432"},
 )

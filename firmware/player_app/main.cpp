@@ -37,6 +37,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>  // strncasecmp (the console "kiosk" command)
 #include <unistd.h>  // fsync — flush a persisted file to flash before rename
 #if defined(LM_NETSTACK)
 // The heapless-WiFi transport variant: our own MAC/WPA2/CCMP/DHCP/TCP/TLS/WS replaces vendor
@@ -567,6 +568,15 @@ static const char *kEffectSelPath = "/lfs/fx_sel.pb";
 // The fixture's room pose: the raw set_fixture_pose frame (multi-fixture), replayed
 // after the map so the room-frame cache derives from the restored positions.
 static const char *kPosePath = "/lfs/pose.pb";
+// Kiosk mode (kiosk_ffi.rs, docs/design/kiosk-mode.md): the config record and the
+// attract snapshot (a submit_effect frame + a set_uniforms frame), all written
+// atomically (fs_write_file). Boot and the idle revert replay the two frames.
+static const char *kKioskCfgPath = "/lfs/kiosk.cfg";
+static const char *kKioskFxPath = "/lfs/kiosk_fx.pb";
+static const char *kKioskUnPath = "/lfs/kiosk_un.pb";
+// The connection the message being dispatched came in on (unlock is per connection):
+// BLE while lm_player_ble_reply runs, else the wss / ws session.
+static uint8_t g_kiosk_src = LM_KIOSK_SRC_WSS;
 static bool fs_ok = false;
 // Protobuf envelope arm numbers (ledmapper.proto oneofs) used to classify
 // frames for persistence — see lm_envelope_arm.
@@ -1064,6 +1074,9 @@ static void persist_if_upload(const uint8_t *req, size_t req_len,
   if (reply_arm == kArmResultReady && req_arm == kArmSubmitMap) lm_map_replaced();
 #endif
   if (!fs_ok) return;
+  // A locked kiosk persists nothing a visitor does: their effects / uniforms are
+  // RAM-only and the idle revert (or a reboot) brings the attract snapshot back.
+  if (lm_kiosk_msg_locked()) return;
   if (reply_arm == kArmResultReady && req_arm == kArmSubmitMap) {
     fs_write_file(kMapPath, req, req_len);
     remove(kTopoPath);  // the previous topology no longer matches this map
@@ -1155,6 +1168,24 @@ static int32_t kp_fs_read(const uint8_t *name, size_t len, uint8_t *buf, size_t 
 static bool kp_fs_write(const uint8_t *name, size_t len, const uint8_t *buf, size_t n);
 static void kp_fs_remove(const uint8_t *name, size_t len);
 
+// Kiosk config from littlefs: true when the device should boot into the attract
+// snapshot (enabled, a snapshot recorded, and its effect frame present).
+static bool kiosk_boot_attract() {
+  uint8_t rec[LM_KIOSK_RECORD_LEN];
+  size_t n = 0;
+  FILE *f = fs_open(kKioskCfgPath, "rb");
+  if (f != nullptr) {
+    n = fread(rec, 1, sizeof rec, f);
+    fclose(f);
+  }
+  bool attract = lm_kiosk_seed(n == sizeof rec ? rec : nullptr, n);
+  if (!attract) return false;
+  FILE *fx = fs_open(kKioskFxPath, "rb");
+  if (fx == nullptr) return false;
+  fclose(fx);
+  return true;
+}
+
 // Mount the LittleFS store and restore a previously-mapped fixture: the map
 // first (sets the stored id), then its topology (validated against that id).
 // Runs in setup() before the render task starts, so no player_mutex is needed.
@@ -1177,8 +1208,17 @@ static void fs_begin_and_restore() {
   // (submit_effect, activate flag replayed as-sent), then its last selection +
   // live uniforms (set_effect / set_uniforms). The render task picks it up via
   // lm_fx_active once these replay through the same decode path.
-  fs_replay(kEffectPath);
-  fs_replay(kEffectSelPath);
+  // A kiosk boots into its attract snapshot (never a visitor's effect).
+  if (kiosk_boot_attract()) {
+    fs_replay(kKioskFxPath);
+    fs_replay(kKioskUnPath);
+    lm_kiosk_apply_runtime();
+    poll_brightness();
+    Log().printf("[kiosk] enabled: booted into the attract show\n");
+  } else {
+    fs_replay(kEffectPath);
+    fs_replay(kEffectSelPath);
+  }
   fs_replay(kPosePath);
 }
 
@@ -1295,7 +1335,45 @@ static void poll_device_rename() {
 // hw pollers, so set_color_correction / set_brightness / set_hardware_config were
 // silently dropped over wss (the app's normal transport): the core state + gen
 // updated, but g_lut / g_brightness / the RMT color order never followed.
+// Kiosk config (kiosk_ffi.rs): after a set_kiosk_config / console "kiosk off", write
+// the attract snapshot (when one was captured) and THEN the record, each atomically,
+// so a power cut never leaves a record pointing at a missing / torn snapshot.
+static uint32_t g_kiosk_gen = 0;
+static void poll_kiosk_config() {
+  uint32_t gen = lm_kiosk_gen();
+  if (gen == g_kiosk_gen) return;
+  g_kiosk_gen = gen;
+  if (!fs_ok) return;
+  if (lm_kiosk_take_capture()) {
+    // A submit_effect frame of up to the 4 KB .fxb + its id; heap-staged (rare).
+    const size_t cap = 4096 + 256;
+    uint8_t *buf = static_cast<uint8_t *>(malloc(cap));
+    if (buf == nullptr) {
+      Log().printf("[kiosk] no heap to capture the attract snapshot\n");
+    } else {
+      for (uint32_t which = 0; which < 2; which++) {
+        xSemaphoreTake(player_mutex, portMAX_DELAY);
+        int32_t n = lm_kiosk_encode_attract(which, buf, cap);
+        xSemaphoreGive(player_mutex);
+        const char *path = which == 0 ? kKioskFxPath : kKioskUnPath;
+        if (n > 0) {
+          fs_write_file(path, buf, (size_t)n);
+        } else {
+          remove(path);
+        }
+        Log().printf("[kiosk] attract %s: %d B\n", which == 0 ? "effect" : "uniforms", (int)n);
+      }
+      free(buf);
+    }
+  }
+  uint8_t rec[LM_KIOSK_RECORD_LEN];
+  size_t n = lm_kiosk_record(rec);
+  fs_write_file(kKioskCfgPath, rec, n);
+  Log().printf("[kiosk] config saved (%s)\n", lm_kiosk_enabled() ? "enabled" : "disabled");
+}
+
 static void poll_after_message() {
+  poll_kiosk_config();
   poll_device_rename();
   poll_color_correction();
   poll_brightness();
@@ -1477,7 +1555,7 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
 // out-of-order upload window → the transport should drop the connection). Shared verbatim by
 // the ws:81, wss:443 and netstack transports — upload-chunk streaming + lm_player_handle +
 // persistence + device-side polling all live here, so a message behaves identically on each.
-static int ws_compute_reply(const uint8_t *msg, size_t len) {
+static int ws_compute_reply_body(const uint8_t *msg, size_t len) {
   // Firmware update arms (ota_app.cpp): answered here, never by the player core.
   int ota = ota_app_dispatch(msg, len, tx, sizeof tx);
   if (ota != 0) return ota;
@@ -1490,7 +1568,20 @@ static int ws_compute_reply(const uint8_t *msg, size_t len) {
   return dispatch_plain(msg, len);
 }
 
+// The kiosk lock gate (kiosk_ffi.rs), ahead of EVERY handler (OTA and sharded uploads
+// included): 0 = handle the message, >0 = a kiosk_locked error reply is in tx.
+static int kiosk_gate(const uint8_t *msg, size_t len) {
+  int32_t g = lm_kiosk_gate(g_kiosk_src, msg, len, (uint32_t)millis(), tx, sizeof tx);
+  return g > 0 ? (int)g : 0;
+}
+
 #if !defined(LM_NETSTACK)
+static int ws_compute_reply(const uint8_t *msg, size_t len) {
+  int g = kiosk_gate(msg, len);
+  if (g > 0) return g;
+  return ws_compute_reply_body(msg, len);
+}
+
 static void ws_dispatch_message() {
   int n = ws_compute_reply(rx, rx_len);
   if (n > 0) {
@@ -1507,7 +1598,9 @@ static void ws_dispatch_message() {
 // lm_ws_dispatch for the vendor build's BLE path so a message behaves identically over
 // BLE, ws:81, and wss:443.
 int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
+  g_kiosk_src = LM_KIOSK_SRC_BLE;
   int n = ws_compute_reply(in, len);
+  g_kiosk_src = LM_KIOSK_SRC_WSS;
   *reply = tx;
   return n;
 }
@@ -1538,6 +1631,14 @@ int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
     }
   }
 #endif
+  // The kiosk lock gate first: a refused message never reaches a handler.
+  {
+    int g = kiosk_gate(in, len);
+    if (g > 0) {
+      *reply = tx;
+      return g;
+    }
+  }
   // A live move (seq'd, uncommitted set_uniforms): stash it for the next frame and ack
   // now — never wait behind a render frame for the player mutex (lm_live_post).
   if (live_post(in, len)) {
@@ -1556,7 +1657,7 @@ int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
     }
     return 0;
   }
-  int n = ws_compute_reply(in, len);
+  int n = ws_compute_reply_body(in, len);
   *reply = tx;
   return n;
 }
@@ -1568,7 +1669,10 @@ bool lm_ws_reply_droppable() { return g_reply_droppable; }
 // shared handler's reply out — so a message behaves the same over BLE and the
 // heapless WS on the netstack build.
 int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
-  return lm_ws_dispatch(in, len, reply);
+  g_kiosk_src = LM_KIOSK_SRC_BLE;
+  int n = lm_ws_dispatch(in, len, reply);
+  g_kiosk_src = LM_KIOSK_SRC_WSS;
+  return n;
 }
 
 // GET /.well-known/splanc.json (netstack_transport.cpp serves it): the agent discovery
@@ -2480,6 +2584,52 @@ static void poll_fx_debugger() {
   xSemaphoreGive(player_mutex);
 }
 
+// -- Kiosk mode: idle revert + kiosk_status pushes (kiosk_ffi.rs) ---------------
+// After idle_timeout_s without visitor activity, replay the attract snapshot through
+// the same decode a boot takes (effect, then its uniforms), then park deck B, fade
+// back to deck A and restore the snapshot's brightness. Pushes go to every open
+// connection (the wss / ws session and the BLE central), each with its own unlock.
+static void kiosk_push_all(uint32_t now) {
+#if defined(LM_NETSTACK)
+  if (netstack_ws_open()) {
+    int32_t n = lm_kiosk_build_push(LM_KIOSK_SRC_WSS, now, tx, sizeof tx);
+    if (n > 0) netstack_ws_send(tx, (size_t)n);
+  }
+#else
+  if (ws_state == WsState::kOpen) {
+    int32_t n = lm_kiosk_build_push(LM_KIOSK_SRC_WSS, now, tx, sizeof tx);
+    if (n > 0) ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
+  }
+#endif
+  if (improv_ble_central_connected()) {
+    int32_t n = lm_kiosk_build_push(LM_KIOSK_SRC_BLE, now, tx, sizeof tx);
+    if (n > 0) player_ble_push(tx, (size_t)n);
+  }
+  lm_kiosk_push_done();
+}
+
+static void poll_kiosk() {
+  uint32_t now = millis();
+#if defined(LM_NETSTACK)
+  bool ws_open = netstack_ws_open();
+#else
+  bool ws_open = ws_state == WsState::kOpen;
+#endif
+  uint32_t bits = lm_kiosk_tick(now, ws_open, improv_ble_central_connected());
+  if (bits & LM_KIOSK_TICK_REVERT) {
+    xSemaphoreTake(player_mutex, portMAX_DELAY);
+    fs_replay(kKioskFxPath);
+    fs_replay(kKioskUnPath);
+    lm_kiosk_apply_runtime();
+    xSemaphoreGive(player_mutex);
+    poll_after_message();  // the restored brightness
+    lm_kiosk_reverted(now);
+    Log().printf("[kiosk] idle: reverted to the attract show\n");
+    bits |= LM_KIOSK_TICK_PUSH;
+  }
+  if (bits & LM_KIOSK_TICK_PUSH) kiosk_push_all(now);
+}
+
 // -- fps autoscaler: unsolicited lag advisory (FUG-82) -------------------------
 // An effect that can't hold even the floor (or an app-pinned rate) is NOT parked:
 // it keeps rendering as fast as it can. When it starts (or stops) lagging, ship one
@@ -2573,6 +2723,17 @@ static esp_err_t wss_ws_handler(httpd_req_t *req) {
 
   // Sharded upload window? Stream it to flash — ack each window, and on the last
   // decode straight off flash + persist by rename (shared with the ws:81 path).
+  {
+    int g = kiosk_gate(rx, frame.len);  // kiosk lock gate (kiosk_ffi.rs)
+    if (g > 0) {
+      httpd_ws_frame_t out = {};
+      out.type = HTTPD_WS_TYPE_BINARY;
+      out.payload = tx;
+      out.len = (size_t)g;
+      httpd_ws_send_frame(req, &out);
+      return ESP_OK;
+    }
+  }
   LmUploadChunk ch;
   if (lm_parse_upload_chunk(rx, frame.len, &ch) == 1) {
     int32_t n = process_upload_chunk(&ch, rx + ch.payload_off);
@@ -3147,6 +3308,19 @@ static void loop_priority_follow_data_plane() {
 // Console lines "WIFI MODE …" / "WIFI REJOIN" / "WIFI STATUS" (the transport handles its
 // own link diagnostics first and passes the rest here).
 void netstack_console_hook(const char *line, size_t len) {
+  // "kiosk off" / "kiosk status" (kiosk_ffi.rs): the USB recovery path.
+  if (len >= 5 && strncasecmp(line, "kiosk", 5) == 0) {
+    char kr[160];
+    int32_t k = lm_kiosk_console(reinterpret_cast<const uint8_t *>(line) + 5, len - 5,
+                                 reinterpret_cast<uint8_t *>(kr), sizeof kr);
+    if (k < 0) {
+      Serial.printf("[kiosk] console: kiosk off | kiosk status\n");
+      return;
+    }
+    Serial.printf("%s\n", kr);
+    poll_kiosk_config();  // persist an "off" now
+    return;
+  }
   if (len < 5) return;
   char reply[200];
   int32_t n = lm_wifi_console(reinterpret_cast<const uint8_t *>(line) + 5, len - 5,
@@ -3661,6 +3835,7 @@ void loop() {
   emit_perf_report_if_due();
   emit_fps_lag_if_changed();
   poll_fx_debugger();
+  poll_kiosk();
 
   static uint32_t last_report = 0;
   if (millis() - last_report > 5000 && xSemaphoreTake(player_mutex, 0) == pdTRUE) {

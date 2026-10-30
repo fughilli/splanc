@@ -19,6 +19,7 @@ import { Button, Card, IconButton } from "../kit";
 import { bleAvailable } from "../../net/improv";
 import { appState } from "../app/state";
 import { openAddDevice } from "./addDevice";
+import { PumpkinButton } from "./pumpkinButton";
 import type { Router, Screen } from "../app/router";
 
 export function OnboardingScreen(router: Router): Screen {
@@ -81,7 +82,9 @@ export function OnboardingScreen(router: Router): Screen {
   renderCta();
   const unsub = appState.subscribe(renderCta);
 
-  el.append(headline("Set up your device"), intro, Card(card), ctaWrap);
+  // Halloween play mode (public installs): straight to the effects, skipping
+  // setup, mapping and the tour.
+  el.append(PumpkinButton(), headline("Set up your device"), intro, Card(card), ctaWrap);
   return { el, onUnmount: unsub };
 }
 

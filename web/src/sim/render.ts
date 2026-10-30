@@ -59,6 +59,9 @@ export interface RenderOptions {
    */
   stride?: StrideParams | undefined;
   phase?: number | undefined;
+  /** Arbitrary lit mask (e.g. a per-channel capture stage, capture/channelCapture
+   * stageLit); applied on top of `stride`. Omit ⇒ no extra masking. */
+  lit?: ((id: number) => boolean) | undefined;
   /** Deterministic noise source (0..1); required when `noise`/jitter is set. */
   rng?: (() => number) | undefined;
 }
@@ -134,6 +137,7 @@ export function renderFrame(
 
   for (let id = 0; id < leds.length; id++) {
     if (opts.stride && !strideLit(id, opts.phase ?? 0, opts.stride)) continue;
+    if (opts.lit && !opts.lit(id)) continue;
     const xc = worldToCam(pose, leds[id]!);
     const depth = -xc[2];
     if (depth <= 1e-6) continue; // behind the camera

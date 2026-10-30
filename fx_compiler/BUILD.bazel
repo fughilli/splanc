@@ -130,6 +130,19 @@ rust_test(
     ],
 )
 
+# The Halloween play-mode effect pack (web/src/halloween/presets.ts): every
+# preset compiles warning-free and renders (never all-black) on the real VM.
+rust_test(
+    name = "halloween_presets_test",
+    srcs = ["tests/halloween_presets.rs"],
+    compile_data = ["//web:src/halloween/presets.ts"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+    ],
+)
+
 # Browser: compile scripts live in the editor.
 rust_shared_library(
     name = "fx_compiler_wasm",

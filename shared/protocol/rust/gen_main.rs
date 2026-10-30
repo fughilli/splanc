@@ -197,7 +197,7 @@ fn main() -> std::io::Result<()> {
     } else {
         g.configure(
             ".ledmapper.v1.Welcome.features",
-            Config::new().max_len(24).max_bytes(32),
+            Config::new().max_len(32).max_bytes(32),
         );
     }
 

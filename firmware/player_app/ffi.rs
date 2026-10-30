@@ -62,6 +62,9 @@ pub use wifi_ffi::*;
 // The FX debugger (docs/design/fx-debugger.md): pause / step / snapshot.
 mod fxdbg;
 pub use fxdbg::*;
+// Kiosk mode (docs/design/kiosk-mode.md): the lock gate, idle revert, owner unlock.
+// A public module (not glob re-exported: its pure helpers share names with wifi_ffi's).
+pub mod kiosk_ffi;
 
 /// The frame's `ClientMessage` arm, read IN PLACE (pbview: no by-value
 /// envelope, no capacity profile). None when the frame isn't a valid encoding.
@@ -1957,6 +1960,12 @@ pub unsafe extern "C" fn lm_player_handle(
         // Wi-Fi rejoin policy (wifi_ffi.rs): zero-copy replies into `out`.
         Some(ARM_SET_WIFI_POLICY) => return wifi_ffi::handle_set_wifi_policy(frame, out, out_cap),
         Some(ARM_GET_WIFI_POLICY) => return wifi_ffi::handle_get_wifi_policy(out, out_cap),
+        // Kiosk mode (kiosk_ffi.rs): zero-copy replies into `out`.
+        Some(kiosk_ffi::ARM_GET_KIOSK_STATUS) => return kiosk_ffi::handle_get(recv_ms as u32, out, out_cap),
+        Some(kiosk_ffi::ARM_SET_KIOSK_CONFIG) => {
+            return kiosk_ffi::handle_set_config(frame, recv_ms as u32, out, out_cap)
+        }
+        Some(kiosk_ffi::ARM_KIOSK_UNLOCK) => return kiosk_ffi::handle_unlock(frame, recv_ms as u32, out, out_cap),
         // FX debugger: pause / step, and snapshots streamed zero-copy into `out`.
         Some(fxdbg::ARM_FX_DEBUG_CONTROL) => return fxdbg::handle_control(frame, recv_ms, out, out_cap),
         Some(fxdbg::ARM_GET_FX_SNAPSHOT) => return fxdbg::handle_snapshot(frame, recv_ms, out, out_cap),
@@ -2696,6 +2705,9 @@ pub const FEATURES: &[&str] =
         // for the render frame and applied at the next frame boundary
         // (lm_live_post): a client may keep more than one batch in flight.
         "live_mailbox",
+        // Kiosk mode (get_kiosk_status / set_kiosk_config / kiosk_unlock, the
+        // kiosk_status push, Error "kiosk_locked"): docs/design/kiosk-mode.md.
+        "kiosk",
     ];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
