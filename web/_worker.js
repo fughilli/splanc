@@ -7,7 +7,7 @@
 // fetches it server-side (no CORS there) and re-serves it with
 // Access-Control-Allow-Origin. Locked to this repo's release URLs — not an open proxy.
 //
-// The effects demo endpoint below relays only approved free models. The cloud relay's
+// The effects demo endpoint below relays only an approved model list. The cloud relay's
 // public paths (RELAY_PATHS, below) are forwarded to the splanc-relay Worker. On
 // splanc.pages.dev every other request 301s to https://splanc.io/app (retiredOrigin,
 // below); on other hosts (ledmapper.pages.dev) it passes through to the static site
@@ -57,14 +57,23 @@ async function ghAsset(request) {
 }
 
 // Public effects-demo relay. Credentials never enter a browser or static asset.
-// Order = fallback order. Nemotron leads: in the 2026-10-29 live check it answered
-// every Acid Mode request (1.7-2.5 s, plus one 19 s cold start) while MiniMax
-// (low reasoning) never did, so it is the faster first try for a waiting crowd.
-export const FREE_DEMO_MODELS = Object.freeze([
-  "nvidia/nemotron-3.5-super-vl:free",
-  "minimax/minimax-m3.1-flash:free",
-  "google/gemma-4-31b-it:free",
+// Order = fallback order. Claude leads (owner, 2026-10-30: the free models wrote
+// poor effects; the OpenRouter key is topped up to pay for a good demo). Each
+// paid model is capped at its own list price (USD per million tokens), so a
+// provider price change can't silently cost more. When the key's credit runs out
+// (402) the relay falls through to the zero-priced models instead of failing.
+// Nemotron leads the free tail: in the 2026-10-29 live check it answered every
+// Acid Mode request (1.7-2.5 s) while MiniMax (low reasoning) never did.
+const FREE = Object.freeze({ prompt: 0, completion: 0, request: 0, image: 0 });
+const DEMO_MODEL_SPECS = Object.freeze([
+  { id: "anthropic/claude-sonnet-5.5", maxPrice: { prompt: 2, completion: 10, request: 0, image: 0 } },
+  { id: "anthropic/claude-haiku-5.5", maxPrice: { prompt: 0.1, completion: 0.5, request: 0, image: 0 } },
+  { id: "nvidia/nemotron-3.5-super-vl:free", maxPrice: FREE },
+  // MiniMax defaults to max reasoning; this is an interactive editor.
+  { id: "minimax/minimax-m3.1-flash:free", maxPrice: FREE, reasoning: { effort: "low" } },
+  { id: "google/gemma-4-31b-it:free", maxPrice: FREE },
 ]);
+export const DEMO_MODELS = Object.freeze(DEMO_MODEL_SPECS.map(m => m.id));
 const DEMO_PATH = "/api/demo-ai/chat/completions";
 const DEMO_ORIGINS = new Set([
   "https://splanc.io", "https://www.splanc.io", "https://splanc.pages.dev",
@@ -162,7 +171,7 @@ function completion(json, tools) {
 
 // The isolate budget is a coarse burst guard, not globally coordinated abuse
 // prevention. Operators can bind AI_RATE_LIMITER for Cloudflare edge enforcement.
-// Every upstream request is additionally constrained to zero-priced models.
+// Every upstream request is additionally capped at its model's list price.
 //
 // Sizing (2026-10-29): the key has credit, so OpenRouter allows ~1000 free-model
 // requests/day and ~20/minute. A crowd at a Halloween stoop shares that, and an
@@ -207,7 +216,7 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
     const error = (status, code, extra) => reply(status, { error: { code } }, extra);
     if (!allowed) return error(403, "origin_not_allowed");
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
-    if (request.method === "GET") return reply(200, { configured: Boolean(env.OPENROUTER_API_KEY), models: FREE_DEMO_MODELS });
+    if (request.method === "GET") return reply(200, { configured: Boolean(env.OPENROUTER_API_KEY), models: DEMO_MODELS });
     if (request.method !== "POST") return error(405, "method_not_allowed", { allow: "POST, GET, OPTIONS" });
     if (!env.OPENROUTER_API_KEY) return error(503, "not_configured");
     if (!(request.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) return error(415, "json_required");
@@ -254,7 +263,7 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
       }
       if (!validPayload(body)) return error(400, "invalid_request");
       const attempts = [];
-      for (const model of FREE_DEMO_MODELS) {
+      for (const { id: model, maxPrice, reasoning } of DEMO_MODEL_SPECS) {
         if (total.signal.aborted) break;
         const diagnostic = { model, outcome: "pending" };
         attempts.push(diagnostic);
@@ -271,11 +280,10 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
               "HTTP-Referer": "https://splanc.io", "X-OpenRouter-Title": "Splanc effects playground" },
             body: JSON.stringify({ model, messages: body.messages, stream: false,
               max_tokens: Math.min(body.max_tokens ?? 4000, 4000),
-              // MiniMax defaults to max reasoning; this is an interactive editor.
-              // The other two models support disabling optional reasoning.
-              reasoning: model === "minimax/minimax-m3.1-flash:free" ? { effort: "low" } : { enabled: false },
+              // Optional reasoning off (latency) unless the model needs a setting.
+              reasoning: reasoning ?? { enabled: false },
               ...(body.tools?.length ? { tools: body.tools, tool_choice: "auto" } : {}),
-              provider: { max_price: { prompt: 0, completion: 0, request: 0, image: 0 }, require_parameters: true },
+              provider: { max_price: maxPrice, require_parameters: true },
             }),
           });
           if (result.status >= 300 && result.status < 400) {
@@ -314,6 +322,8 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
             }
             continue;
           }
+          // Out of credit: the paid models can't run, the zero-priced ones still can.
+          if (status === 402 && maxPrice !== FREE) continue;
           if ([401, 402, 403].includes(status)) return error(503, "provider_unavailable");
           if ([404, 408].includes(status) || status >= 500) continue;
           if (status >= 400) return error(400, "upstream_rejected_request");
@@ -329,7 +339,7 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
           if (parsed) return reply(200, { ...parsed, model });
         } catch {
           diagnostic.outcome = attempt.signal.aborted ? "timeout" : "transport_error";
-          // Network failures/attempt deadlines may try the next free model.
+          // Network failures/attempt deadlines may try the next model.
           // A visitor cancellation or overall deadline exits below.
         } finally {
           clearTimeout(timer);

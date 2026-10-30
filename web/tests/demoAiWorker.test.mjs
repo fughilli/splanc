@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { clientKey, createDemoRelay, DEMO_LIMITS, DEMO_TOOLS, FREE_DEMO_MODELS, RELAY_PATHS } from '../_worker.js';
+import worker, { clientKey, createDemoRelay, DEMO_LIMITS, DEMO_TOOLS, DEMO_MODELS, RELAY_PATHS } from '../_worker.js';
 const url = 'https://splanc.pages.dev/api/demo-ai/chat/completions';
 const env = { OPENROUTER_API_KEY: 'unit-test-secret' };
 const tool = { type: 'function', function: { name: 'set_script', description: 'Edit an effect', parameters: { type: 'object' } } };
@@ -23,7 +23,7 @@ test('only approved origins, methods and headers; GET reports no credentials', a
   assert.equal(options.status, 204);
   assert.equal(options.headers.get('access-control-allow-origin'), 'https://splanc.io');
   const status = await relay(new Request(url, { headers: { origin: 'https://splanc.io' } }), env);
-  assert.deepEqual(await status.json(), { configured: true, models: FREE_DEMO_MODELS });
+  assert.deepEqual(await status.json(), { configured: true, models: DEMO_MODELS });
   assert.equal((await relay(req(body, { method: 'PUT' }), env)).status, 405);
   assert.equal((await relay(req(), {})).status, 503);
 });
@@ -42,9 +42,11 @@ test('locks upstream/model/price/output and preserves tool/image history', async
   assert.equal(sent.target, 'https://openrouter.ai/api/v1/chat/completions');
   assert.equal(sent.init.headers.authorization, 'Bearer unit-test-secret');
   assert.equal(sent.init.redirect, 'manual');
-  assert.equal(sent.body.model, FREE_DEMO_MODELS[0]);
+  assert.equal(sent.body.model, DEMO_MODELS[0]);
   assert.equal(sent.body.max_tokens, 4000);
-  assert.deepEqual(sent.body.provider.max_price, { prompt: 0, completion: 0, request: 0, image: 0 });
+  // Claude leads, capped at its list price (USD per million tokens).
+  assert.equal(sent.body.model, 'anthropic/claude-sonnet-5.5');
+  assert.deepEqual(sent.body.provider.max_price, { prompt: 2, completion: 10, request: 0, image: 0 });
   assert.deepEqual(sent.body.messages, payload.messages);
   assert.equal(sent.body.stream, false);
   assert.equal(result.headers.get('cache-control'), 'no-store');
@@ -65,14 +67,14 @@ test('rejects request overrides, arbitrary tools, remote image URLs, malformed J
   assert.equal((await relay(req(body, { headers: { origin: 'https://splanc.io', 'content-type': 'text/plain' } }), env)).status, 415);
 });
 
-test('availability failures fall through all three free models in order', async () => {
+test('availability failures fall through every model in order', async () => {
   const models = [];
   const relay = createDemoRelay({ fetchImpl: async (_, init) => {
     models.push(JSON.parse(init.body).model);
-    return models.length === 3 ? success() : failure(models.length === 1 ? 503 : 404);
+    return models.length === DEMO_MODELS.length ? success() : failure(models.length === 1 ? 503 : 404);
   } });
   assert.equal((await relay(req(), env)).status, 200);
-  assert.deepEqual(models, FREE_DEMO_MODELS);
+  assert.deepEqual(models, DEMO_MODELS);
 });
 
 test('identified provider 429 falls back, platform/ambiguous quotas stop and preserve retry guidance', async () => {
@@ -88,7 +90,7 @@ test('identified provider 429 falls back, platform/ambiguous quotas stop and pre
 });
 
 test('auth, payment, input failures and refusal are not retried; upstream errors are not leaked', async () => {
-  for (const status of [400, 401, 402, 403, 422]) {
+  for (const status of [400, 401, 403, 422]) {
     let calls = 0;
     const relay = createDemoRelay({ fetchImpl: async () => { calls++; return failure(status, { raw: 'unit-test-secret' }); } });
     const r = await relay(req(), env);
@@ -107,7 +109,7 @@ test('HTTP200 errors, empty/malformed/truncated/unknown tool outputs cannot beco
   ]) {
     let calls = 0;
     const relay = createDemoRelay({ fetchImpl: async () => { calls++; return Response.json(json); } });
-    assert.equal((await relay(req(), env)).status, 503); assert.equal(calls, 3);
+    assert.equal((await relay(req(), env)).status, 503); assert.equal(calls, DEMO_MODELS.length);
   }
   const relay = createDemoRelay({ fetchImpl: async () => Response.json({ error: { code: 429 } }) });
   assert.equal((await relay(req(), env)).status, 429);
@@ -294,7 +296,7 @@ test('exhausted fallback diagnostics expose only fixed models, status and safe o
   const relay=createDemoRelay({fetchImpl:async()=>failure(503,{raw:'private upstream payload'})});
   const response=await relay(req(),env);
   const body=await response.json();
-  assert.deepEqual(body,{error:{code:'models_unavailable'},attempts:FREE_DEMO_MODELS.map(model=>({model,outcome:'upstream_error',status:503}))});
+  assert.deepEqual(body,{error:{code:'models_unavailable'},attempts:DEMO_MODELS.map(model=>({model,outcome:'upstream_error',status:503}))});
   assert(!JSON.stringify(body).includes('private upstream payload'));
   assert(!JSON.stringify(body).includes(env.OPENROUTER_API_KEY));
 });
@@ -319,9 +321,11 @@ test('interactive reasoning policy survives fallback without raising token or pr
   const sent=[];
   const relay=createDemoRelay({fetchImpl:async(_,init)=>{sent.push(JSON.parse(init.body));return failure(503,{});}});
   assert.equal((await relay(req(),env)).status,503);
-  assert.deepEqual(sent.map(x=>x.reasoning),[{enabled:false},{effort:'low'},{enabled:false}]);
+  assert.deepEqual(sent.map(x=>x.reasoning),[{enabled:false},{enabled:false},{enabled:false},{effort:'low'},{enabled:false}]);
   assert(sent.every(x=>x.max_tokens===4000));
-  assert(sent.every(x=>Object.values(x.provider.max_price).every(price=>price===0)));
+  // Paid models never above their list price; every free fallback stays zero-priced.
+  assert.deepEqual(sent.slice(0,2).map(x=>x.provider.max_price),[{prompt:2,completion:10,request:0,image:0},{prompt:0.1,completion:0.5,request:0,image:0}]);
+  assert(sent.slice(2).every(x=>x.model.endsWith(':free')&&Object.values(x.provider.max_price).every(price=>price===0)));
 });
 
 test('200 headers followed by a stalled body report timeout and cancel each stream', async () => {
@@ -331,9 +335,9 @@ test('200 headers followed by a stalled body report timeout and cancel each stre
   }),{headers:{'content-type':'application/json'}})});
   const response=await relay(req(),env);
   assert.equal(response.status,503);
-  assert.equal(cancelled,3);
+  assert.equal(cancelled,DEMO_MODELS.length);
   const result=await response.json();
-  assert.deepEqual(result.attempts,FREE_DEMO_MODELS.map(model=>({model,outcome:'timeout'})));
+  assert.deepEqual(result.attempts,DEMO_MODELS.map(model=>({model,outcome:'timeout'})));
 });
 
 test('splanc.pages.dev forwards the cloud relay paths to the RELAY binding, URL unchanged', async () => {
@@ -366,4 +370,18 @@ test('splanc.pages.dev forwards the cloud relay paths to the RELAY binding, URL 
 test('tool allowlist is exactly the five effect tools (acidFreeAi.test.ts pins the app side)', () => {
   assert.deepEqual([...DEMO_TOOLS].sort(), ['capture_preview', 'estimate_performance', 'list_midi_controls', 'set_midi_mapping', 'set_script']);
   assert.ok(!DEMO_TOOLS.has('file_bug') && !DEMO_TOOLS.has('measure_on_device'));
+});
+
+test('out of credit (402) on the paid models falls through to the free ones; 402 on a free model stops', async () => {
+  const tried=[];
+  const relay=createDemoRelay({fetchImpl:async(_,init)=>{const {model}=JSON.parse(init.body);tried.push(model);
+    return model.endsWith(':free')?Response.json({choices:[{finish_reason:'stop',message:{role:'assistant',content:'Done'}}]}):failure(402,{});}});
+  const r=await relay(req(),env);
+  assert.equal(r.status,200);
+  assert.equal((await r.json()).model,'nvidia/nemotron-3.5-super-vl:free');
+  assert.deepEqual(tried,['anthropic/claude-sonnet-5.5','anthropic/claude-haiku-5.5','nvidia/nemotron-3.5-super-vl:free']);
+  let calls=0;
+  const broke=createDemoRelay({fetchImpl:async(_,init)=>{calls++;return failure(402,{});}});
+  assert.equal((await broke(req(),env)).status,503);
+  assert.equal(calls,3,'paid models skipped, then the first free model\'s 402 is terminal');
 });
