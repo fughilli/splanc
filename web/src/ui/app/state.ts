@@ -9,6 +9,7 @@ import type { WelcomeMessage } from "@ledmapper/protocol";
 import { certApprovalUrl, LedMapperClient, type ClientOptions, type SocketFactory } from "../../net/client";
 import { connectionRegistry } from "../../net/connectionRegistry";
 import { nativeSocketFactory } from "../../net/nativeSocket";
+import { isBleUrl } from "../../net/bleTransport";
 import { deviceStore } from "../../store/deviceStore";
 import { certChangedMessage, certPins } from "../../net/deviceTrust";
 import { deviceProber } from "../../net/deviceProber";
@@ -65,6 +66,14 @@ class AppState {
     opts?: { coldRetryLimit?: number; socketFactory?: SocketFactory; uploadChunkBytes?: number },
   ): void {
     this.disconnect();
+    // A Bluetooth device is only reachable through its BLE socket factory (made by
+    // the connect flow from a live GATT device). Without one, the fallback below
+    // would hand `ble:<id>` to the native WssBridge, which crashes iOS. Keep it
+    // offline instead; the user reconnects through the Bluetooth flow.
+    if (isBleUrl(wssUrl) && !opts?.socketFactory) {
+      this.setStatus({ state: "offline", text: "offline", certUrl: null, error: "Reconnect over Bluetooth" });
+      return;
+    }
     const dev = deviceStore.upsert(wssUrl, label);
     deviceStore.setActive(dev.id);
     // coldRetryLimit defaults to 1 (give up fast on an untrusted cert so we don't
@@ -324,7 +333,9 @@ class AppState {
       return;
     }
     const active = deviceStore.active();
-    if (active) this.connect(active.wssUrl, undefined, { coldRetryLimit: 6 });
+    // A Bluetooth device can't be reopened from its stored key alone (it needs a
+    // fresh GATT pick/scan), so don't auto-restore it on boot.
+    if (active && !isBleUrl(active.wssUrl)) this.connect(active.wssUrl, undefined, { coldRetryLimit: 6 });
   }
 
   setSelectedMap(id: string | null): void {

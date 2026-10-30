@@ -89,6 +89,14 @@ export function bleDeviceUrl(device: Pick<BleDevice, "id" | "name">): string {
   return `ble:${device.id || "unknown"}`;
 }
 
+/** True for a Bluetooth device's store key (`ble:<id>`, from bleDeviceUrl or the
+ * native Halloween connect). Such a key is NOT a socket URL: it can only be
+ * reached through a BLE SocketFactory, never a WebSocket or the native WssBridge
+ * (on iOS, handing it to URLSession's webSocketTask aborts the app). */
+export function isBleUrl(url: string): boolean {
+  return url.startsWith("ble:");
+}
+
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** True if this browser exposes Web Bluetooth. */

@@ -43,6 +43,12 @@ public class WssBridge: CAPPlugin, CAPBridgedPlugin {
             call.reject("connect: missing/invalid 'url'")
             return
         }
+        // webSocketTask(with:) raises an NSException (uncatchable in Swift: the app
+        // aborts) for any scheme but ws/wss, e.g. a Bluetooth device's `ble:` key.
+        guard let scheme = url.scheme?.lowercased(), scheme == "ws" || scheme == "wss" else {
+            call.reject("connect: not a ws/wss URL")
+            return
+        }
         let id = UUID().uuidString
         let conn = WssConnection(id: id, url: url) { [weak self] payload in
             self?.notifyListeners("wssEvent", data: payload)
