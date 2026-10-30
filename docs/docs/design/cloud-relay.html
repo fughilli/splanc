@@ -321,8 +321,8 @@
           <section id="cloud-relay-lan-bridge">
 <h1>Cloud relay + LAN bridge<a class="headerlink" href="#cloud-relay-lan-bridge" title="Link to this heading">¶</a></h1>
 <p>Status: implemented (relay Worker <code class="docutils literal notranslate"><span class="pre">agent/relay/</span></code>, bridge <code class="docutils literal notranslate"><span class="pre">agent/src/bridge/</span></code>, Node host
-<code class="docutils literal notranslate"><span class="pre">agent/src/relayHost.ts</span></code>). Tests: <code class="docutils literal notranslate"><span class="pre">//agent:relay_test</span></code>, <code class="docutils literal notranslate"><span class="pre">//agent:lanbridge_test</span></code>,
-<code class="docutils literal notranslate"><span class="pre">//agent:relay_e2e_test</span></code>.</p>
+<code class="docutils literal notranslate"><span class="pre">agent/src/relayHost.ts</span></code>). Tests: <code class="docutils literal notranslate"><span class="pre">//agent:relay_test</span></code>, <code class="docutils literal notranslate"><span class="pre">//agent:relay_clients_test</span></code>,
+<code class="docutils literal notranslate"><span class="pre">//agent:lanbridge_test</span></code>, <code class="docutils literal notranslate"><span class="pre">//agent:relay_e2e_test</span></code>.</p>
 <section id="problem">
 <h2>Problem<a class="headerlink" href="#problem" title="Link to this heading">¶</a></h2>
 <p>Hosted agents (claude.ai, ChatGPT, Claude Code on the web, other cloud agent products) run in
@@ -468,8 +468,8 @@ possession). The relay picks a random 20-character base32 bridge id.</p>
 </thead>
 <tbody>
 <tr class="row-even"><td><p>relay → bridge</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;hello&quot;,&quot;v&quot;:1,&quot;bridge_id&quot;,&quot;relay&quot;,&quot;mcp_url&quot;,&quot;credentials&quot;,&quot;pairing&quot;}</span></code></p></td>
-<td><p>Sent on connect.</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;hello&quot;,&quot;v&quot;:1,&quot;bridge_id&quot;,&quot;relay&quot;,&quot;mcp_url&quot;,&quot;credentials&quot;,&quot;pairing&quot;,&quot;grants&quot;}</span></code></p></td>
+<td><p>Sent on connect. <code class="docutils literal notranslate"><span class="pre">grants</span></code> (the <a class="reference internal" href="#paired-clients">paired clients</a>) is absent from an older relay.</p></td>
 </tr>
 <tr class="row-odd"><td><p>relay → bridge</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;state&quot;,&quot;credentials&quot;,&quot;pairing&quot;,&quot;reason&quot;}</span></code></p></td>
@@ -484,8 +484,8 @@ possession). The relay picks a random 20-character base32 bridge id.</p>
 <td><p>The client went away (or the 10 min timeout hit).</p></td>
 </tr>
 <tr class="row-even"><td><p>relay → bridge</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;error&quot;,&quot;for&quot;,&quot;message&quot;}</span></code></p></td>
-<td><p>A bridge request failed (e.g. <code class="docutils literal notranslate"><span class="pre">new_code</span></code> rate-limited).</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;error&quot;,&quot;for&quot;,&quot;grant&quot;?,&quot;message&quot;}</span></code></p></td>
+<td><p>A bridge request failed (e.g. <code class="docutils literal notranslate"><span class="pre">new_code</span></code> rate-limited; <code class="docutils literal notranslate"><span class="pre">revoke_grant</span></code> of an unknown id, with that <code class="docutils literal notranslate"><span class="pre">grant</span></code>).</p></td>
 </tr>
 <tr class="row-odd"><td><p>bridge → relay</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;res&quot;,&quot;id&quot;,&quot;status&quot;,&quot;headers&quot;,&quot;body&quot;,&quot;end&quot;:true}</span></code></p></td>
@@ -504,8 +504,16 @@ possession). The relay picks a random 20-character base32 bridge id.</p>
 <td><p>Liveness fallback; auto-answered <code class="docutils literal notranslate"><span class="pre">pong</span></code> without waking the object.</p></td>
 </tr>
 <tr class="row-odd"><td><p>bridge → relay</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;caps&quot;,&quot;live&quot;:1}</span></code></p></td>
-<td><p>After <code class="docutils literal notranslate"><span class="pre">hello</span></code>: this bridge speaks the live protocol (else <code class="docutils literal notranslate"><span class="pre">/live</span></code> answers <code class="docutils literal notranslate"><span class="pre">501</span></code>).</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;caps&quot;,&quot;live&quot;:1,&quot;grants&quot;:1}</span></code></p></td>
+<td><p>After <code class="docutils literal notranslate"><span class="pre">hello</span></code>: this bridge speaks the live protocol (else <code class="docutils literal notranslate"><span class="pre">/live</span></code> answers <code class="docutils literal notranslate"><span class="pre">501</span></code>); <code class="docutils literal notranslate"><span class="pre">grants</span></code>: it keeps the client list (send it <code class="docutils literal notranslate"><span class="pre">grants</span></code> frames).</p></td>
+</tr>
+<tr class="row-even"><td><p>bridge → relay</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;list_grants&quot;}</span></code> / <code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;revoke_grant&quot;,&quot;grant&quot;}</span></code></p></td>
+<td><p>Send the client list now / revoke one paired client (<a class="reference internal" href="#paired-clients">Paired clients</a>).</p></td>
+</tr>
+<tr class="row-odd"><td><p>relay → bridge</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;grants&quot;,&quot;grants&quot;:[…],&quot;reason&quot;?}</span></code></p></td>
+<td><p>The client list: after <code class="docutils literal notranslate"><span class="pre">caps</span></code> with <code class="docutils literal notranslate"><span class="pre">grants</span></code>, on <code class="docutils literal notranslate"><span class="pre">list_grants</span></code>, and on every change (pairing, revoke, a last-used write). Only to a bridge whose <code class="docutils literal notranslate"><span class="pre">caps</span></code> asked.</p></td>
 </tr>
 <tr class="row-even"><td><p>both</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;live&quot;,&quot;c&quot;,&quot;d&quot;}</span></code> / <code class="docutils literal notranslate"><span class="pre">{&quot;t&quot;:&quot;live_close&quot;,&quot;c&quot;,…}</span></code></p></td>
@@ -571,10 +579,68 @@ single use). The relay stores only <code class="docutils literal notranslate"><s
 request to the right Durable Object; the hash is checked there.</p></li>
 <li><p><strong>Refresh reuse detection</strong>: a rotated-out refresh token is remembered (as a hash); if it is
 ever presented again, the whole grant is revoked (someone holds a copy).</p></li>
-<li><p><strong>Revocation</strong>: <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/revoke</span></code> (one grant), or <code class="docutils literal notranslate"><span class="pre">revoke_all</span></code> from the bridge (every credential
-for that bridge; the display’s “revoke all” button). Live MCP sessions on the bridge are
-dropped too.</p></li>
+<li><p><strong>Revocation</strong>: <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/revoke</span></code> (one grant, by its token holder), <code class="docutils literal notranslate"><span class="pre">revoke_grant</span></code> from the bridge
+(one grant by id: the display’s Clients page, <code class="docutils literal notranslate"><span class="pre">splanc-bridge</span> <span class="pre">revoke</span> <span class="pre">&lt;id&gt;</span></code>), or <code class="docutils literal notranslate"><span class="pre">revoke_all</span></code>
+from the bridge (every credential for that bridge; the display’s “revoke all” button). Live MCP
+sessions on the bridge are dropped too.</p></li>
 </ul>
+</section>
+<section id="paired-clients">
+<h2>Paired clients<a class="headerlink" href="#paired-clients" title="Link to this heading">¶</a></h2>
+<p>Every credential belongs to a <strong>grant</strong> (one pairing: an OAuth connector’s access + refresh
+tokens, rotated together, or one personal token). The relay keeps a little metadata per grant so
+the bridge can list its clients and revoke them one at a time.</p>
+<p><strong>Record</strong>: <code class="docutils literal notranslate"><span class="pre">grant:&lt;id&gt;</span></code> in the bridge’s <code class="docutils literal notranslate"><span class="pre">BridgeObject</span></code> storage (a new key in the existing class:
+no Durable Object migration), <code class="docutils literal notranslate"><span class="pre">{kind,</span> <span class="pre">label,</span> <span class="pre">created,</span> <span class="pre">last_used}</span></code>:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Meaning</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>id</p></td>
+<td><p>The grant id (the tokens’ <code class="docutils literal notranslate"><span class="pre">fam</span></code>): 12 random bytes, base64url. Opaque, not a credential.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">kind</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">connector</span></code> (OAuth), <code class="docutils literal notranslate"><span class="pre">app</span></code> (the Splanc app: its <code class="docutils literal notranslate"><span class="pre">/pair</span></code> says <code class="docutils literal notranslate"><span class="pre">client:</span> <span class="pre">&quot;app&quot;</span></code>, or the grant opened a live session, which only the app does), <code class="docutils literal notranslate"><span class="pre">token</span></code> (any other personal token).</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">label</span></code></p></td>
+<td><p>The OAuth client’s name (from its registration, passed with the authorization code), the app’s device name, or the personal token’s <code class="docutils literal notranslate"><span class="pre">label</span></code>; else “Personal token” / the client’s host.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">created</span></code></p></td>
+<td><p>Unix seconds of the pairing.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">last_used</span></code></p></td>
+<td><p>Unix seconds of the last MCP request, live session or refresh; <code class="docutils literal notranslate"><span class="pre">null</span></code> until then.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>A grant from before these records is listed from its tokens (label, <code class="docutils literal notranslate"><span class="pre">connector</span></code>/<code class="docutils literal notranslate"><span class="pre">token</span></code>, the
+oldest token’s time, never used) and gets a record when it is next used. Records whose tokens are
+all gone (expired, revoked) are purged with the tokens, so the list and <code class="docutils literal notranslate"><span class="pre">credentials</span></code> agree.</p>
+<p><strong>Last used</strong> is written at most once per <code class="docutils literal notranslate"><span class="pre">LAST_USED_WRITE_S</span></code> (60 s) per grant: the first use in
+a wake period reads the record (one row), and writes it only if the stored time is a minute old;
+later uses in the same minute touch nothing. Each write also pushes a <code class="docutils literal notranslate"><span class="pre">grants</span></code> frame to the
+bridge (outgoing messages are free).</p>
+<p><strong>Frames</strong>: the list rides in <code class="docutils literal notranslate"><span class="pre">hello</span></code> (every bridge gets it; an older bridge ignores the field)
+and in <code class="docutils literal notranslate"><span class="pre">grants</span></code> frames, which only a bridge whose <code class="docutils literal notranslate"><span class="pre">caps</span></code> said <code class="docutils literal notranslate"><span class="pre">grants:</span> <span class="pre">1</span></code> receives.
+<code class="docutils literal notranslate"><span class="pre">revoke_grant</span> <span class="pre">{grant}</span></code> runs the same path as <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/revoke</span></code>: every token of the grant is deleted
+(access, refresh, personal; a later refresh with it is <code class="docutils literal notranslate"><span class="pre">invalid_grant</span></code>), its live sockets close
+with <code class="docutils literal notranslate"><span class="pre">4003</span></code>, the bridge gets <code class="docutils literal notranslate"><span class="pre">revoked</span> <span class="pre">{grants:</span> <span class="pre">[id]}</span></code> (it ends that grant’s live sessions and LAN
+tickets), then <code class="docutils literal notranslate"><span class="pre">state</span></code> and <code class="docutils literal notranslate"><span class="pre">grants</span></code>. An unknown id gets <code class="docutils literal notranslate"><span class="pre">error</span> <span class="pre">{for:</span> <span class="pre">&quot;revoke_grant&quot;,</span> <span class="pre">grant}</span></code>.</p>
+<p><strong>Authorization</strong>: listing and revoking are bridge-socket frames, so only the bridge’s own
+signed connection can send them, and they act on that bridge’s Durable Object only (another
+bridge naming the id gets “unknown”). A live (app) socket’s messages are passed through verbatim
+as <code class="docutils literal notranslate"><span class="pre">live</span></code> frames and never interpreted as control frames.</p>
+<p><strong>Compatibility</strong>: an old bridge on a new relay gets <code class="docutils literal notranslate"><span class="pre">grants</span></code> only inside <code class="docutils literal notranslate"><span class="pre">hello</span></code> (ignored). A new
+bridge on an old relay sends <code class="docutils literal notranslate"><span class="pre">caps</span></code> with <code class="docutils literal notranslate"><span class="pre">grants:</span> <span class="pre">1</span></code> (ignored), sees no <code class="docutils literal notranslate"><span class="pre">grants</span></code> in <code class="docutils literal notranslate"><span class="pre">hello</span></code>, and
+reports <code class="docutils literal notranslate"><span class="pre">paired_clients_state:</span> <span class="pre">&quot;relay_outdated&quot;</span></code>: the display says the client list needs a relay
+update, and <code class="docutils literal notranslate"><span class="pre">revoke</span></code> explains that instead of sending a frame the relay can’t read. Old apps keep
+working: <code class="docutils literal notranslate"><span class="pre">/pair</span></code> without <code class="docutils literal notranslate"><span class="pre">client</span></code> makes a <code class="docutils literal notranslate"><span class="pre">token</span></code> grant, which becomes <code class="docutils literal notranslate"><span class="pre">app</span></code> on its first live
+session.</p>
 <p>Client registration is stateless: a DCR client id is
 <code class="docutils literal notranslate"><span class="pre">dcr.&lt;b64url</span> <span class="pre">{redirect_uris,</span> <span class="pre">name,</span> <span class="pre">auth</span> <span class="pre">method}&gt;.&lt;HMAC&gt;</span></code>; a confidential client’s secret is an
 HMAC of its id. Registration spam costs no storage. A <code class="docutils literal notranslate"><span class="pre">client_id</span></code> that is an https URL is
@@ -595,6 +661,8 @@ can treat a status older than ~90 s as “bridge not running”).</p></li>
 <div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span><span class="nt">&quot;v&quot;</span><span class="p">:</span><span class="mi">1</span><span class="p">,</span><span class="nt">&quot;state&quot;</span><span class="p">:</span><span class="s2">&quot;starting|offline|unpaired|pairing|paired|error&quot;</span><span class="p">,</span><span class="nt">&quot;relay&quot;</span><span class="p">:</span><span class="s2">&quot;&lt;url&gt;&quot;</span><span class="p">,</span><span class="nt">&quot;bridge_id&quot;</span><span class="p">:</span><span class="s2">&quot;…&quot;</span><span class="p">,</span>
 <span class="w"> </span><span class="nt">&quot;pairing&quot;</span><span class="p">:{</span><span class="nt">&quot;code&quot;</span><span class="p">:</span><span class="s2">&quot;ABCD-EFGH&quot;</span><span class="p">,</span><span class="nt">&quot;expires_at&quot;</span><span class="p">:</span><span class="err">&lt;u</span><span class="kc">n</span><span class="err">ix</span><span class="w"> </span><span class="err">s&gt;</span><span class="p">,</span><span class="nt">&quot;url&quot;</span><span class="p">:</span><span class="s2">&quot;&lt;redeem url&gt;&quot;</span><span class="p">}</span><span class="err">|</span><span class="kc">null</span><span class="p">,</span>
 <span class="w"> </span><span class="nt">&quot;clients&quot;</span><span class="p">:</span><span class="err">&lt;i</span><span class="kc">nt</span><span class="w"> </span><span class="err">co</span><span class="kc">nne</span><span class="err">c</span><span class="kc">te</span><span class="err">d</span><span class="w"> </span><span class="err">cloud</span><span class="w"> </span><span class="err">sessio</span><span class="kc">ns</span><span class="err">&gt;</span><span class="p">,</span><span class="nt">&quot;players&quot;</span><span class="p">:[{</span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="s2">&quot;…&quot;</span><span class="p">,</span><span class="nt">&quot;host&quot;</span><span class="p">:</span><span class="s2">&quot;…&quot;</span><span class="p">,</span><span class="nt">&quot;ok&quot;</span><span class="p">:</span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="err">…de</span><span class="kc">ta</span><span class="err">ils</span><span class="p">}],</span>
+<span class="w"> </span><span class="nt">&quot;paired_clients&quot;</span><span class="p">:[{</span><span class="s2">&quot;id&quot;</span><span class="p">,</span><span class="s2">&quot;label&quot;</span><span class="p">,</span><span class="s2">&quot;kind&quot;</span><span class="p">,</span><span class="s2">&quot;created_at&quot;</span><span class="p">,</span><span class="s2">&quot;last_used_at&quot;</span><span class="p">,</span><span class="s2">&quot;live&quot;</span><span class="p">}],</span>
+<span class="w"> </span><span class="nt">&quot;paired_clients_state&quot;</span><span class="p">:</span><span class="s2">&quot;ok|offline|relay_outdated|unknown&quot;</span><span class="p">,</span>
 <span class="w"> </span><span class="nt">&quot;lan_ip&quot;</span><span class="p">:</span><span class="s2">&quot;…&quot;</span><span class="p">,</span><span class="nt">&quot;error&quot;</span><span class="p">:</span><span class="s2">&quot;…&quot;</span><span class="err">|</span><span class="kc">null</span><span class="p">,</span><span class="nt">&quot;updated_at&quot;</span><span class="p">:</span><span class="err">&lt;u</span><span class="kc">n</span><span class="err">ix</span><span class="w"> </span><span class="err">s&gt;</span><span class="p">}</span>
 </pre></div>
 </div>
@@ -626,6 +694,12 @@ can treat a status older than ~90 s as “bridge not running”).</p></li>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">players[]</span></code> details</p></td>
 <td><p>Optional, omitted when unknown (still contract v1; the OLED’s fixture screens read them): <code class="docutils literal notranslate"><span class="pre">id</span></code> (MAC), <code class="docutils literal notranslate"><span class="pre">fw</span></code>, <code class="docutils literal notranslate"><span class="pre">room</span></code>, <code class="docutils literal notranslate"><span class="pre">seen</span></code> (unix s of the last message or discovery answer), <code class="docutils literal notranslate"><span class="pre">session</span></code> (<code class="docutils literal notranslate"><span class="pre">live</span></code>, <code class="docutils literal notranslate"><span class="pre">reconnecting</span></code>, <code class="docutils literal notranslate"><span class="pre">none</span></code>), <code class="docutils literal notranslate"><span class="pre">error</span></code> (why it’s unreachable or refused), <code class="docutils literal notranslate"><span class="pre">leds</span></code> + <code class="docutils literal notranslate"><span class="pre">leds_src</span></code> (<code class="docutils literal notranslate"><span class="pre">configured</span></code>, or <code class="docutils literal notranslate"><span class="pre">map</span></code> when no channel count is set: the stored map’s count, as <code class="docutils literal notranslate"><span class="pre">agent/src/channels.ts</span></code>), <code class="docutils literal notranslate"><span class="pre">effect</span></code> (the running effect’s id when the bridge knows it), <code class="docutils literal notranslate"><span class="pre">perf</span></code> (<code class="docutils literal notranslate"><span class="pre">fps</span></code>, <code class="docutils literal notranslate"><span class="pre">budget_used</span></code>, <code class="docutils literal notranslate"><span class="pre">overruns</span></code>, <code class="docutils literal notranslate"><span class="pre">lagging</span></code>, <code class="docutils literal notranslate"><span class="pre">heap_free</span></code>, <code class="docutils literal notranslate"><span class="pre">at</span></code>: the newest perf report / fps_state the bridge holds, from <code class="docutils literal notranslate"><span class="pre">measure_effect</span></code> or the player’s own pushes). The bridge reads each player’s hardware config once per session for <code class="docutils literal notranslate"><span class="pre">leds</span></code> (plus its stored map only when no channel is configured); everything else is what it already holds. No certificate pins or tokens.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">paired_clients</span></code></p></td>
+<td><p>Optional in contract v1 (added later; a display treats it as absent on an older bridge). Every paired client (<a class="reference internal" href="#paired-clients">Paired clients</a>), oldest first: <code class="docutils literal notranslate"><span class="pre">id</span></code> (grant id), <code class="docutils literal notranslate"><span class="pre">label</span></code>, <code class="docutils literal notranslate"><span class="pre">kind</span></code> (<code class="docutils literal notranslate"><span class="pre">connector</span></code>, <code class="docutils literal notranslate"><span class="pre">app</span></code>, <code class="docutils literal notranslate"><span class="pre">token</span></code>), <code class="docutils literal notranslate"><span class="pre">created_at</span></code>, <code class="docutils literal notranslate"><span class="pre">last_used_at</span></code> (unix s or <code class="docutils literal notranslate"><span class="pre">null</span></code>), <code class="docutils literal notranslate"><span class="pre">live</span></code> (a live session is open, or it was used through the relay in the last 10 min). No tokens.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">paired_clients_state</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ok</span></code>: the relay’s current list. <code class="docutils literal notranslate"><span class="pre">offline</span></code>: the last list it sent (the relay is unreachable). <code class="docutils literal notranslate"><span class="pre">relay_outdated</span></code>: the relay keeps no list (the list stays empty). <code class="docutils literal notranslate"><span class="pre">unknown</span></code>: not connected yet.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">lan_ip</span></code></p></td>
 <td><p>The bridge’s first non-loopback IPv4 address.</p></td>
@@ -662,13 +736,21 @@ display service in the bridge user’s group). Newline-delimited JSON, one reply
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">{&quot;cmd&quot;:&quot;status&quot;}</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:true,&quot;status&quot;:&lt;the</span> <span class="pre">status</span> <span class="pre">object&gt;}</span></code> (extra; same as the file).</p></td>
 </tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">{&quot;cmd&quot;:&quot;clients&quot;}</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:true,&quot;state&quot;:&lt;paired_clients_state&gt;,&quot;clients&quot;:[…]}</span></code> (plus a <code class="docutils literal notranslate"><span class="pre">note</span></code> when the relay is outdated).</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">{&quot;cmd&quot;:&quot;revoke&quot;,&quot;grant&quot;:&quot;&lt;id&gt;&quot;}</span></code></p></td>
+<td><p>Revokes one client by id, or by a unique prefix of ≥ 4 characters: <code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:true,&quot;revoked&quot;:&lt;id&gt;,&quot;label&quot;}</span></code> once the relay confirms (<code class="docutils literal notranslate"><span class="pre">revoked</span></code> frame); <code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:false,&quot;error&quot;}</span></code> for an unknown id, offline, or an outdated relay.</p></td>
+</tr>
 <tr class="row-even"><td><p>anything else</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:false,&quot;error&quot;:&quot;unknown</span> <span class="pre">cmd</span> <span class="pre">…&quot;}</span></code></p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">splanc-agent</span> <span class="pre">bridge-ctl</span> <span class="pre">new-code|revoke-all|identify|status</span></code> is a CLI over the same socket.</p>
+<p><code class="docutils literal notranslate"><span class="pre">splanc-agent</span> <span class="pre">bridge-ctl</span> <span class="pre">new-code|revoke-all|identify|status|live|clients|revoke</span> <span class="pre">&lt;id&gt;</span></code> is a CLI
+over the same socket; on the Pi, <code class="docutils literal notranslate"><span class="pre">splanc-bridge</span> <span class="pre">clients</span></code> and <code class="docutils literal notranslate"><span class="pre">splanc-bridge</span> <span class="pre">revoke</span> <span class="pre">&lt;id&gt;</span></code> print
+and ask the same.</p>
 </section>
 <section id="effects-library">
 <h2>Effects library<a class="headerlink" href="#effects-library" title="Link to this heading">¶</a></h2>
@@ -804,7 +886,7 @@ is never charged.</p>
 <tr class="row-even"><td><p>One MCP message (<code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/mcp</span></code>)</p></td>
 <td><p>1</p></td>
 <td><p>1 + 1/20 (the bridge’s reply)</p></td>
-<td><p>≤ 1 / 0</p></td>
+<td><p>≤ 2 / ≤ 1 (the grant’s last-used: read once per wake, written at most once a minute)</p></td>
 </tr>
 <tr class="row-odd"><td><p>Unauthenticated <code class="docutils literal notranslate"><span class="pre">/mcp</span></code> probe</p></td>
 <td><p>1</p></td>
@@ -814,7 +896,17 @@ is never charged.</p>
 <tr class="row-even"><td><p>Bridge connect</p></td>
 <td><p>1</p></td>
 <td><p>1</p></td>
-<td><p>2 + #tokens / 0–1</p></td>
+<td><p>2 + #tokens + #grants / 0–1</p></td>
+</tr>
+<tr class="row-odd"><td><p>Client list (<code class="docutils literal notranslate"><span class="pre">list_grants</span></code>, after <code class="docutils literal notranslate"><span class="pre">caps</span></code>, on a change)</p></td>
+<td><p>0</p></td>
+<td><p>1/20 when the bridge asks; 0 when pushed</p></td>
+<td><p>#tokens + #grants / 0</p></td>
+</tr>
+<tr class="row-even"><td><p>Revoke one client (<code class="docutils literal notranslate"><span class="pre">revoke_grant</span></code>)</p></td>
+<td><p>0</p></td>
+<td><p>1/20 + 1</p></td>
+<td><p>~2 × (#tokens + #grants) / #its tokens + 1</p></td>
 </tr>
 <tr class="row-odd"><td><p>Idle bridge, per day</p></td>
 <td><p>0</p></td>
@@ -834,7 +926,7 @@ is never charged.</p>
 <tr class="row-even"><td><p>Token refresh (daily per client)</p></td>
 <td><p>1</p></td>
 <td><p>2</p></td>
-<td><p>3 / 3</p></td>
+<td><p>4 / 3–4</p></td>
 </tr>
 <tr class="row-odd"><td><p>Library tool call (search, get, save, …)</p></td>
 <td><p>1</p></td>
@@ -863,7 +955,9 @@ is ~25 messages, so ~3,800 sessions/day if they were short and dense.</p></li>
 bridges. The design choices that keep it there: quick replies coalesced into one message, <code class="docutils literal notranslate"><span class="pre">405</span></code> on
 <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/mcp</span></code>,
 hibernatable bridge sockets with free pings, <code class="docutils literal notranslate"><span class="pre">401</span></code>s answered without a Durable Object, no
-per-request storage writes, and token checks cached per wake period. The effects library adds
+per-request storage writes (a client’s last-used time is written at most once a minute: a
+client in continuous use writes 1,440 rows/day, 1.4 % of the 100 k daily row writes; a typical
+few-sessions-a-day household a handful), and token checks cached per wake period. The effects library adds
 no Worker requests and no socket messages: its calls are answered inside the one Durable Object
 request, its index (≤ 500 small rows) is read once per wake, and a save writes two rows.</p>
 </section>
@@ -912,7 +1006,7 @@ bridge sits on; the bridge’s identity key; the relay’s free-tier budget.</p>
 <td><p>A determined attacker can block pairing for everyone in 10-min windows (retry later; self-host)</p></td>
 </tr>
 <tr class="row-even"><td><p>Someone near the display reads the code</p></td>
-<td><p>Codes show only while unpaired (first hour) or on a button press; <code class="docutils literal notranslate"><span class="pre">clients</span></code> on the display; revoke-all button</p></td>
+<td><p>Codes show only while unpaired (first hour) or on a button press; every paired client listed on the display with its last use; revoke one client, or all</p></td>
 <td><p>Physical presence + 10 min = can pair; that is the trust model of a code on a screen</p></td>
 </tr>
 <tr class="row-odd"><td><p>Consent phishing (attacker sends the user an authorize link for the attacker’s client)</p></td>
@@ -928,7 +1022,7 @@ bridge sits on; the bridge’s identity key; the relay’s free-tier budget.</p>
 <td><p>The thief wins if they use it first and the user never refreshes again</p></td>
 </tr>
 <tr class="row-even"><td><p>Stolen personal token</p></td>
-<td><p>Never expires by design (headers-only clients); revoke-all</p></td>
+<td><p>Never expires by design (headers-only clients); listed on the bridge with its last use; revoke it alone, or all</p></td>
 <td><p>User-managed</p></td>
 </tr>
 <tr class="row-odd"><td><p>Token passthrough / confused deputy</p></td>
@@ -952,7 +1046,7 @@ bridge sits on; the bridge’s identity key; the relay’s free-tier budget.</p>
 <td><p>Lights can be set to anything the effect engine can do</p></td>
 </tr>
 <tr class="row-even"><td><p>Local users</p></td>
-<td><p>Control socket mode 0660; status file world-readable (no secrets in it)</p></td>
+<td><p>Control socket mode 0660; status file world-readable (no secrets in it: client labels and grant ids, never tokens)</p></td>
 <td><p>Anyone in the bridge’s group can mint codes and revoke</p></td>
 </tr>
 <tr class="row-odd"><td><p>Consent page injection / clickjacking</p></td>
@@ -990,6 +1084,11 @@ codes (replacement, single use, expiry, per-IP and global limits), the OAuth flo
 page, PKCE, single-use codes, confidential clients, tampered client ids, CIMD), refresh
 rotation + reuse detection, <code class="docutils literal notranslate"><span class="pre">/pair</span></code>, RFC 7009, revoke-all, offline <code class="docutils literal notranslate"><span class="pre">503</span></code>, <code class="docutils literal notranslate"><span class="pre">405</span></code> GET, in-flight
 requests failing fast when the bridge drops, no token passthrough, hashes-only storage.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">//agent:relay_clients_test</span></code>: the paired-client list (in <code class="docutils literal notranslate"><span class="pre">hello</span></code>, <code class="docutils literal notranslate"><span class="pre">grants</span></code> frames only for a
+bridge that asked, labels and kinds for connectors, the app and personal tokens, grants from
+before grant records), last-used throttling (one write per minute, refresh counts, pushes),
+<code class="docutils literal notranslate"><span class="pre">revoke_grant</span></code> (access and refresh tokens refused, live sockets closed, other grants
+untouched, unknown ids), and that another bridge or an app socket can’t list or revoke.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">//agent:library_test</span></code>: the library on its own and in the stdio/CLI server: validation and
 caps, search ranking, LRU eviction (saved entries never), dedupe by source hash, duplicate
 lineage, deploy accumulation and perf, the seed examples, the uniform reader against the real
@@ -1001,7 +1100,8 @@ frame, <code class="docutils literal notranslate"><span class="pre">tools/list</
 the offline relay session (a real SDK client) and its <code class="docutils literal notranslate"><span class="pre">404</span></code> once the bridge is back, one
 library per bridge. <code class="docutils literal notranslate"><span class="pre">relay_e2e_test</span></code> deploys a library entry through the real bridge.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">//agent:lanbridge_test</span></code>: the display contract (every field, states, atomic writes), every
-control command, reconnect after a dropped socket, <code class="docutils literal notranslate"><span class="pre">offline</span></code> during a relay outage, recovery
+control command (<code class="docutils literal notranslate"><span class="pre">clients</span></code>, <code class="docutils literal notranslate"><span class="pre">revoke</span></code> by id or prefix), an older relay (<code class="docutils literal notranslate"><span class="pre">relay_outdated</span></code>, revoke
+refused with the reason), reconnect after a dropped socket, <code class="docutils literal notranslate"><span class="pre">offline</span></code> during a relay outage, recovery
 with the same bridge id and credentials after a relay restart.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">//agent:relay_e2e_test</span></code>: the MCP SDK’s Streamable HTTP client (as a connector) → relay →
 bridge → hub → two fake players; the pairing code read from the status file; tools, resources,
@@ -1072,6 +1172,7 @@ fan-out; <code class="docutils literal notranslate"><span class="pre">404</span>
 <li><a class="reference internal" href="#the-relay-s-http-surface">The relay’s HTTP surface</a></li>
 <li><a class="reference internal" href="#bridge-socket-protocol">Bridge socket protocol</a></li>
 <li><a class="reference internal" href="#pairing">Pairing</a></li>
+<li><a class="reference internal" href="#paired-clients">Paired clients</a></li>
 <li><a class="reference internal" href="#display-contract-fixed-the-pi-display-image-codes-against-it">Display contract (fixed; the Pi/display image codes against it)</a></li>
 <li><a class="reference internal" href="#effects-library">Effects library</a></li>
 <li><a class="reference internal" href="#free-tier-budget">Free-tier budget</a></li>

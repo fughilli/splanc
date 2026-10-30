@@ -57,17 +57,24 @@ async function ghAsset(request) {
 }
 
 // Public effects-demo relay. Credentials never enter a browser or static asset.
+// Order = fallback order. Nemotron leads: in the 2026-10-29 live check it answered
+// every Acid Mode request (1.7-2.5 s, plus one 19 s cold start) while MiniMax
+// (low reasoning) never did, so it is the faster first try for a waiting crowd.
 export const FREE_DEMO_MODELS = Object.freeze([
-  "minimax/minimax-m3.1-flash:free",
   "nvidia/nemotron-3.5-super-vl:free",
+  "minimax/minimax-m3.1-flash:free",
   "google/gemma-4-31b-it:free",
 ]);
 const DEMO_PATH = "/api/demo-ai/chat/completions";
 const DEMO_ORIGINS = new Set([
   "https://splanc.io", "https://www.splanc.io", "https://splanc.pages.dev",
   "https://ledmapper.pages.dev", "https://fughilli.github.io",
+  // The iOS (Capacitor) app's page origin. Origin is a hotlink guard, not
+  // authentication (any non-browser client can send it); the limits below are
+  // what protect the shared quota.
+  "capacitor://localhost",
 ]);
-const DEMO_TOOLS = new Set([
+export const DEMO_TOOLS = new Set([
   "set_script", "capture_preview", "estimate_performance", "list_midi_controls", "set_midi_mapping",
 ]);
 const BODY_LIMIT = 2 * 1024 * 1024;
@@ -156,8 +163,35 @@ function completion(json, tools) {
 // The isolate budget is a coarse burst guard, not globally coordinated abuse
 // prevention. Operators can bind AI_RATE_LIMITER for Cloudflare edge enforcement.
 // Every upstream request is additionally constrained to zero-priced models.
+//
+// Sizing (2026-10-29): the key has credit, so OpenRouter allows ~1000 free-model
+// requests/day and ~20/minute. A crowd at a Halloween stoop shares that, and an
+// Acid Mode prompt costs 1-3 requests. So: 20/minute per isolate (the upstream
+// per-minute cap; more only buys upstream 429s), and per client 6/minute (a prompt
+// plus repairs, twice) and 30/hour (~10-15 prompts), so one visitor can burn at
+// most a few percent of the day.
+export const DEMO_LIMITS = Object.freeze({
+  perMinute: 20, inFlight: 8, clientPerMinute: 6, clientPerHour: 30, clientActive: 2, clients: 2000,
+});
+
+/** Rate-limit key for a visitor: the IPv4 address, or the /64 of an IPv6 one.
+ * Phones on cellular are usually IPv6 and rotate privacy addresses inside their
+ * /64, so the /64 is the device; a carrier-NAT IPv4 may be shared (the hourly
+ * cap still leaves room for a few visitors per address). */
+export function clientKey(ip) {
+  if (!ip || !ip.includes(":")) return ip || "unknown";
+  const [head] = ip.split("%");
+  let groups;
+  if (head.includes("::")) {
+    const [l, r] = head.split("::");
+    const left = l ? l.split(":") : [], right = r ? r.split(":") : [];
+    groups = [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right];
+  } else groups = head.split(":");
+  return groups.slice(0, 4).map(g => (g || "0").toLowerCase().replace(/^0+(?=.)/, "")).join(":") + "::/64";
+}
+
 export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now = Date.now,
-  attemptMs = 45000, totalMs = 100000 } = {}) {
+  attemptMs = 30000, totalMs = 70000, limits = DEMO_LIMITS } = {}) {
   const clients = new Map();
   let windowStart = 0, requests = 0, inFlight = 0;
   return async function demoAi(request, env) {
@@ -180,18 +214,31 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
     if (request.signal.aborted) return error(499, "cancelled");
     const stamp = now();
     if (stamp - windowStart >= 60000) { windowStart = stamp; requests = 0; }
-    for (const [key, value] of clients) if (stamp - value.start >= 60000) clients.delete(key);
-    const ip = request.headers.get("cf-connecting-ip") || "unknown";
-    const client = clients.get(ip) ?? { start: stamp, count: 0, active: 0 };
-    if (requests >= 120 || inFlight >= 8 || client.count >= 24 || client.active >= 2 || (clients.size >= 2000 && !clients.has(ip))) {
-      return error(429, "demo_busy", { "retry-after": "60" });
+    for (const [key, value] of clients) {
+      if (stamp - value.start >= 60000) { value.start = stamp; value.count = 0; }
+      if (stamp - value.hourStart >= 3600000) {
+        if (value.active === 0) clients.delete(key);
+        else { value.hourStart = stamp; value.hourCount = 0; }
+      }
+    }
+    const ip = clientKey(request.headers.get("cf-connecting-ip"));
+    const client = clients.get(ip) ?? { start: stamp, count: 0, hourStart: stamp, hourCount: 0, active: 0 };
+    // Busy for everyone (try again in a minute) vs this visitor's own share.
+    if (requests >= limits.perMinute || inFlight >= limits.inFlight || (clients.size >= limits.clients && !clients.has(ip))) {
+      return error(429, "demo_busy", { "retry-after": String(Math.max(1, Math.ceil((windowStart + 60000 - stamp) / 1000))) });
+    }
+    if (client.count >= limits.clientPerMinute || client.active >= limits.clientActive) {
+      return error(429, "client_rate_limited", { "retry-after": String(Math.max(1, Math.ceil((client.start + 60000 - stamp) / 1000))) });
+    }
+    if (client.hourCount >= limits.clientPerHour) {
+      return error(429, "client_hourly_limit", { "retry-after": String(Math.max(1, Math.ceil((client.hourStart + 3600000 - stamp) / 1000))) });
     }
     if (env.AI_RATE_LIMITER) {
       try {
         if (!(await env.AI_RATE_LIMITER.limit({ key: ip })).success) return error(429, "demo_busy", { "retry-after": "60" });
       } catch { return error(503, "limiter_unavailable"); }
     }
-    client.count++; client.active++; requests++; inFlight++; clients.set(ip, client);
+    client.count++; client.hourCount++; client.active++; requests++; inFlight++; clients.set(ip, client);
     const total = new AbortController();
     const cancel = () => total.abort();
     request.signal.addEventListener("abort", cancel, { once: true });

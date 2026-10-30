@@ -546,7 +546,9 @@ tf-signing-prep → tf-archive → tf-export → tf-upload (<code class="docutil
 <ul class="simple">
 <li><p><strong>Committed:</strong> <code class="docutils literal notranslate"><span class="pre">web/capacitor.config.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">web/ios-config/</span></code> (the hand-maintained
 native config, re-applied by <code class="docutils literal notranslate"><span class="pre">ios-config</span></code>), the TS seams
-(<code class="docutils literal notranslate"><span class="pre">net/native.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">net/capacitorImprov.ts</span></code>), the build server + <code class="docutils literal notranslate"><span class="pre">iosctl</span></code>.</p></li>
+(<code class="docutils literal notranslate"><span class="pre">net/native.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">net/capacitorImprov.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">net/nativeBlePlayer.ts</span></code> — the
+player protocol over native BLE, reusing <code class="docutils literal notranslate"><span class="pre">bleTransport.ts</span></code>’s <code class="docutils literal notranslate"><span class="pre">BleSocket</span></code>), the
+build server + <code class="docutils literal notranslate"><span class="pre">iosctl</span></code>.</p></li>
 <li><p><strong>Generated, gitignored (<code class="docutils literal notranslate"><span class="pre">web/ios/</span></code>):</strong> the whole native Xcode project. Recreate
 it any time with <code class="docutils literal notranslate"><span class="pre">tools/iosctl</span> <span class="pre">bootstrap</span></code>. Never hand-edit it — put durable
 native changes in <code class="docutils literal notranslate"><span class="pre">web/ios-config/</span></code> so they survive a regenerate.</p></li>

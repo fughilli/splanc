@@ -119,13 +119,15 @@ the page shows:
 After pairing, it shows how many clients are connected. Along the bottom are:
 
 - **Fixtures**: the players the bridge found, with a green or red dot for online or not;
-- **Paired clients**: how many apps are paired with this bridge;
+- **Paired clients**: the apps and AI connectors paired with this bridge, each with a green dot
+  when it is in use (a live session, or a call in the last 10 minutes) and how long ago it was
+  last used;
 - **Network**: the Pi's address, the relay and the bridge ID.
 
 ![HDMI after pairing](img/pi-bridge/hdmi-paired.png)
 
 **OLED HAT**: when the screen service starts it plays a short Splanc logo animation (about two
-seconds, while the bridge itself starts up), then slides to four pages, which rotate every 8
+seconds, while the bridge itself starts up), then slides to five pages, which rotate every 8
 seconds:
 
 1. **Home**: the state, the pairing code in large letters, the short pairing link, the time left
@@ -134,7 +136,12 @@ seconds:
 3. **Fixtures**: every player the bridge knows, in a list that scrolls. Each row shows ● for
    connected, ○ for found but idle, ◐ for reconnecting, or × for unreachable, and on the right
    the frame rate (or, for an unreachable one, how long ago it was last heard from).
-4. **Network**: the IP address, the relay, the number of clients and the bridge ID.
+4. **Network**: the IP address, the relay, the number of connected clients and the bridge ID.
+5. **Clients**: every paired client (an AI connector such as Claude or ChatGPT, the Splanc app on
+   a phone, or a personal token), oldest first. Each row shows ● when the client is in use (a
+   live session open, or a call in the last 10 minutes) or ○ when it isn't, and on the right how
+   long ago it was last used: `now`, `40s`, `5m`, `2h`, `3d` or `never`. The title shows how many
+   are in use out of how many are paired.
 
 ![OLED pages](img/pi-bridge/oled-pages.png)
 
@@ -159,6 +166,27 @@ without a press. If the fixture disappears from the bridge's list while it is op
 goes back to the list.
 
 ![The fixture list, a fixture's details, and an unreachable fixture](img/pi-bridge/oled-fixtures.png)
+
+On the **Clients** page, move the joystick up and down to pick a client and press it to open its
+details: what kind of client it is, when it was last used and added, whether it is in use now,
+and its ID (the same ID `splanc-bridge clients` prints). A name too long for the title is
+spelled out in full first.
+
+To unpair just that client, hold **KEY3** in its details for 5 seconds, then press **KEY3** again
+on the confirm screen, which names the client. Its access ends at once: its tokens stop working,
+and an open app session closes. The other clients stay paired. Any other key, or 10 seconds of
+waiting, cancels. (Held anywhere else, **KEY3** still revokes every client.)
+
+The Clients page can also show:
+
+- **No paired clients**: nothing is paired. Press **KEY1** for a pairing code.
+- **Client list needs a relay update**: the relay this bridge uses is older than this feature.
+  The bridge and the clients still work, and **KEY3** revoke-all still works; only the list and
+  revoking one client wait for the relay update.
+- **offline** in the title: the relay can't be reached, so this is the last list it sent.
+  Revoking a client needs the relay, so it fails until the bridge is back online.
+
+![The client list, a client's details, and the confirm screen for revoking it](img/pi-bridge/oled-clients.png)
 
 Every change of screen slides: pages slide sideways, a fixture's details slide in over the list
 and back out, and the highlight in the list glides. A press during a slide takes effect at once.
@@ -185,20 +213,21 @@ Any key wakes it. That first press only wakes the screen and does nothing else.
 
 ## OLED HAT buttons
 
-| Button                       | Action                                                                                                                                                                     |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **KEY1**                     | Get a new pairing code.                                                                                                                                                    |
-| **KEY2**                     | Identify fixtures (every fixture flashes so you can tell them apart).                                                                                                      |
-| **KEY3**, held for 5 seconds | Revoke all clients. A progress bar fills while you hold. Then a confirm screen appears: press **KEY3** again to confirm. Any other key, or 10 seconds of waiting, cancels. |
-| Joystick right / down        | Next page. On the **Fixtures** page, down picks the next fixture instead.                                                                                                  |
-| Joystick left / up           | Previous page. On the **Fixtures** page, up picks the previous fixture instead.                                                                                            |
-| Joystick press               | Back to the home page. On the **Fixtures** page, it opens the picked fixture.                                                                                              |
-| In a fixture's details       | Up / down scroll. Left or press go back to the list.                                                                                                                       |
+| Button                                             | Action                                                                                                                                                                     |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **KEY1**                                           | Get a new pairing code.                                                                                                                                                    |
+| **KEY2**                                           | Identify fixtures (every fixture flashes so you can tell them apart).                                                                                                      |
+| **KEY3**, held for 5 seconds                       | Revoke all clients. A progress bar fills while you hold. Then a confirm screen appears: press **KEY3** again to confirm. Any other key, or 10 seconds of waiting, cancels. |
+| **KEY3** in a client's details, held for 5 seconds | Revoke just that client, with the same progress bar and confirm screen.                                                                                                    |
+| Joystick right / down                              | Next page. On the **Fixtures** and **Clients** pages, down picks the next item instead.                                                                                    |
+| Joystick left / up                                 | Previous page. On the **Fixtures** and **Clients** pages, up picks the previous item instead.                                                                              |
+| Joystick press                                     | Back to the home page. On the **Fixtures** and **Clients** pages, it opens the picked item.                                                                                |
+| In a fixture's or client's details                 | Up / down scroll. Left or press go back to the list.                                                                                                                       |
 
 **KEY1** works from every screen: it goes to the home page so you can see the new code.
 
 After a joystick press, the pages stop rotating for 30 seconds. They don't rotate while a
-fixture's details are open.
+fixture's or client's details are open.
 
 ![Holding KEY3, the revoke confirm screen, a button result, and the paired home page](img/pi-bridge/oled-overlays.png)
 
@@ -284,7 +313,8 @@ discovery uses. Try Ethernet, or put the Pi and the fixtures on the main network
 The bridge image has no password login at all. To log in, paste your SSH public key into the
 flasher's **Advanced ▸ SSH public key** box (or put it in `authorized_keys` on the card's boot
 partition). Then `ssh root@splanc-bridge.local` works, and `splanc-bridge status`, `new-code`,
-`identify`, `revoke-all`, `logs`, `update`, `restart` and `version` are available.
+`identify`, `revoke-all`, `clients`, `revoke`, `logs`, `update`, `restart` and `version` are
+available.
 
 ### Install on Raspberry Pi OS instead
 
@@ -315,6 +345,8 @@ splanc-bridge status            # state, code, fixtures, clients
 splanc-bridge new-code          # a fresh pairing code
 splanc-bridge identify          # flash every fixture
 splanc-bridge revoke-all        # unpair every client (asks first)
+splanc-bridge clients           # paired clients: ID, kind, last used, added, name
+splanc-bridge revoke <ID>       # unpair one client (asks first; the ID's first few characters do)
 splanc-bridge logs              # recent logs; add -f to follow
 sudo splanc-bridge restart
 sudo splanc-bridge update       # install the latest release now

@@ -68,7 +68,8 @@ The relay fixes exactly three `:free` model IDs server-side, prohibit paid
 fallbacks and arbitrary upstream URLs, bound request/output sizes and execution
 time, allow only the effect tool names, restrict browser origins, and apply rate
 limits. Bounds: 2 MiB request/response, 128 messages, five known tool names,
-4,000 output tokens, 45 seconds per provider and 100 seconds overall. The
+4,000 output tokens, 30 seconds per provider and 70 seconds overall (45/100
+before the Acid Mode change below). The
 [model catalog](https://openrouter.ai/api/v1/models) reports MiniMax's default
 reasoning effort as `max`; the interactive relay explicitly uses its supported
 `low` setting. Nemotron and Gemma disable optional reasoning. This retains the
@@ -78,8 +79,10 @@ not malformed JSON. Price caps
 cover input, output, requests and images at zero. Inline preview images only;
 remote image URLs and visitor-supplied routing overrides are rejected.
 
-The local burst guard allows 24 requests/minute/IP, two concurrent requests/IP,
-eight concurrent and 120 requests/minute/isolate. It is not a distributed quota;
+The local burst guard (`DEMO_LIMITS`) allows 6 requests/minute and 30/hour per
+client, two concurrent requests per client, eight concurrent and 20
+requests/minute/isolate. A client is its IPv4 address or the /64 of its IPv6
+address. It is not a distributed quota;
 bind `AI_RATE_LIMITER` for Cloudflare edge rate enforcement. The OpenRouter account
 still enforces its shared free allowance. Client IPs are kept only in the short
 in-memory limiter window; no prompts, keys or responses are logged by this worker.
@@ -176,3 +179,53 @@ Regression evidence: six synthetic 700 KB preview images previously exceeded
 real desktop browser at device pixel ratio 3 completed a mocked seven-request
 edit/five-preview/conclusion flow: requests remained below 223 KB and the current
 JPEG under 196 KB. This verifies transport and local compilation, not model output.
+
+## Acid Mode on the free relay (Halloween 2026)
+
+Acid Mode (`#/acid`) uses this relay whenever no AI provider is configured, so a
+stranger at a kiosk install can tap the mic and speak with zero setup.
+`#/acid?play=1` (from the kiosk play mode) adds a short Halloween persona
+(`web/src/effects/ai/acidPersona.ts`) for a fixture with an LED curtain on CH0
+and a rope on CH1, with unknown counts and possibly no map.
+
+**Quota sizing.** The key has OpenRouter credit, so free models allow about 1000
+requests/day and about 20/minute, shared by every visitor at both stoops.
+- Per isolate: 20 requests/minute, the upstream per-minute cap.
+- Per client: 6/minute and 30/hour, so one phone uses at most a few percent of a
+  day. A 429 carries `retry-after` and a code: `demo_busy` (everyone),
+  `client_rate_limited` or `client_hourly_limit` (this visitor).
+- The client shows "The AI is busy right now — try one of the spooky presets!"
+  for a 429, a 503, a 504 or its own 60-second deadline.
+
+**Fewer requests per prompt.** In play mode:
+- Each ask sends one user turn with the last good effect, and no history.
+- The prompt is the compact DSL spec plus the persona, about 9 KB.
+- Output is capped at 2,500 tokens.
+- Only `set_script` is advertised.
+- An accepted `set_script` ends the turn: its summary is the reply, so there is
+  no closing request. A refused script gets at most two repairs (three requests).
+
+**Tools.** The relay allowlist stays at five tools. The client filters instead:
+- `measure_on_device` and `file_bug` are offered only with a configured
+  provider. An anonymous visitor must not file GitHub issues on the owner's
+  repo, and on-device measuring adds rounds.
+- Play mode also drops `capture_preview`, the MIDI tools and
+  `estimate_performance`. The local upload guard runs the estimate itself, so
+  the model does not spend a round on it.
+
+**Never dark.** In play mode an effect reaches the fixture only if all of these hold:
+- it compiles;
+- a throwaway preview over about 2 s is not all black;
+- its estimated C6 cost for 600 LEDs or more is below 2× the frame budget. Below
+  that it only lags, and lag beats a cut-out.
+
+If any check fails, the tool result says why and the fixture keeps the last good
+effect.
+
+**Origins and order.**
+- `capacitor://localhost` (the iOS app's page origin) is allowed. Origin is a
+  hotlink guard, not authentication.
+- Nemotron now leads the fallback order. In the 2026-10-29 live check it answered
+  every play-mode request in 1.7–2.5 s, after one 19 s cold start, and three of
+  the four outputs compiled.
+

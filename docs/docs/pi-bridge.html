@@ -468,12 +468,14 @@ the page shows:</p>
 <p>After pairing, it shows how many clients are connected. Along the bottom are:</p>
 <ul class="simple">
 <li><p><strong>Fixtures</strong>: the players the bridge found, with a green or red dot for online or not;</p></li>
-<li><p><strong>Paired clients</strong>: how many apps are paired with this bridge;</p></li>
+<li><p><strong>Paired clients</strong>: the apps and AI connectors paired with this bridge, each with a green dot
+when it is in use (a live session, or a call in the last 10 minutes) and how long ago it was
+last used;</p></li>
 <li><p><strong>Network</strong>: the Pi’s address, the relay and the bridge ID.</p></li>
 </ul>
 <p><img alt="HDMI after pairing" src="docs/img/pi-bridge/hdmi-paired.png" /></p>
 <p><strong>OLED HAT</strong>: when the screen service starts it plays a short Splanc logo animation (about two
-seconds, while the bridge itself starts up), then slides to four pages, which rotate every 8
+seconds, while the bridge itself starts up), then slides to five pages, which rotate every 8
 seconds:</p>
 <ol class="arabic simple">
 <li><p><strong>Home</strong>: the state, the pairing code in large letters, the short pairing link, the time left
@@ -482,7 +484,12 @@ and the number of clients.</p></li>
 <li><p><strong>Fixtures</strong>: every player the bridge knows, in a list that scrolls. Each row shows ● for
 connected, ○ for found but idle, ◐ for reconnecting, or × for unreachable, and on the right
 the frame rate (or, for an unreachable one, how long ago it was last heard from).</p></li>
-<li><p><strong>Network</strong>: the IP address, the relay, the number of clients and the bridge ID.</p></li>
+<li><p><strong>Network</strong>: the IP address, the relay, the number of connected clients and the bridge ID.</p></li>
+<li><p><strong>Clients</strong>: every paired client (an AI connector such as Claude or ChatGPT, the Splanc app on
+a phone, or a personal token), oldest first. Each row shows ● when the client is in use (a
+live session open, or a call in the last 10 minutes) or ○ when it isn’t, and on the right how
+long ago it was last used: <code class="docutils literal notranslate"><span class="pre">now</span></code>, <code class="docutils literal notranslate"><span class="pre">40s</span></code>, <code class="docutils literal notranslate"><span class="pre">5m</span></code>, <code class="docutils literal notranslate"><span class="pre">2h</span></code>, <code class="docutils literal notranslate"><span class="pre">3d</span></code> or <code class="docutils literal notranslate"><span class="pre">never</span></code>. The title shows how many
+are in use out of how many are paired.</p></li>
 </ol>
 <p><img alt="OLED pages" src="docs/img/pi-bridge/oled-pages.png" /></p>
 <p>On the <strong>Fixtures</strong> page, move the joystick up and down to pick a fixture and press it to open
@@ -505,6 +512,24 @@ list. The details stay open while you look at them, and go back to the list afte
 without a press. If the fixture disappears from the bridge’s list while it is open, the screen
 goes back to the list.</p>
 <p><img alt="The fixture list, a fixture's details, and an unreachable fixture" src="docs/img/pi-bridge/oled-fixtures.png" /></p>
+<p>On the <strong>Clients</strong> page, move the joystick up and down to pick a client and press it to open its
+details: what kind of client it is, when it was last used and added, whether it is in use now,
+and its ID (the same ID <code class="docutils literal notranslate"><span class="pre">splanc-bridge</span> <span class="pre">clients</span></code> prints). A name too long for the title is
+spelled out in full first.</p>
+<p>To unpair just that client, hold <strong>KEY3</strong> in its details for 5 seconds, then press <strong>KEY3</strong> again
+on the confirm screen, which names the client. Its access ends at once: its tokens stop working,
+and an open app session closes. The other clients stay paired. Any other key, or 10 seconds of
+waiting, cancels. (Held anywhere else, <strong>KEY3</strong> still revokes every client.)</p>
+<p>The Clients page can also show:</p>
+<ul class="simple">
+<li><p><strong>No paired clients</strong>: nothing is paired. Press <strong>KEY1</strong> for a pairing code.</p></li>
+<li><p><strong>Client list needs a relay update</strong>: the relay this bridge uses is older than this feature.
+The bridge and the clients still work, and <strong>KEY3</strong> revoke-all still works; only the list and
+revoking one client wait for the relay update.</p></li>
+<li><p><strong>offline</strong> in the title: the relay can’t be reached, so this is the last list it sent.
+Revoking a client needs the relay, so it fails until the bridge is back online.</p></li>
+</ul>
+<p><img alt="The client list, a client's details, and the confirm screen for revoking it" src="docs/img/pi-bridge/oled-clients.png" /></p>
 <p>Every change of screen slides: pages slide sideways, a fixture’s details slide in over the list
 and back out, and the highlight in the list glides. A press during a slide takes effect at once.</p>
 <p>To protect the OLED from burn-in, it behaves as follows:</p>
@@ -569,16 +594,19 @@ and back out, and the highlight in the list glides. A press during a slide takes
 <tr class="row-even"><td><p><strong>KEY3</strong>, held for 5 seconds</p></td>
 <td><p>Revoke all clients. A progress bar fills while you hold. Then a confirm screen appears: press <strong>KEY3</strong> again to confirm. Any other key, or 10 seconds of waiting, cancels.</p></td>
 </tr>
-<tr class="row-odd"><td><p>Joystick right / down</p></td>
-<td><p>Next page. On the <strong>Fixtures</strong> page, down picks the next fixture instead.</p></td>
+<tr class="row-odd"><td><p><strong>KEY3</strong> in a client’s details, held for 5 seconds</p></td>
+<td><p>Revoke just that client, with the same progress bar and confirm screen.</p></td>
 </tr>
-<tr class="row-even"><td><p>Joystick left / up</p></td>
-<td><p>Previous page. On the <strong>Fixtures</strong> page, up picks the previous fixture instead.</p></td>
+<tr class="row-even"><td><p>Joystick right / down</p></td>
+<td><p>Next page. On the <strong>Fixtures</strong> and <strong>Clients</strong> pages, down picks the next item instead.</p></td>
 </tr>
-<tr class="row-odd"><td><p>Joystick press</p></td>
-<td><p>Back to the home page. On the <strong>Fixtures</strong> page, it opens the picked fixture.</p></td>
+<tr class="row-odd"><td><p>Joystick left / up</p></td>
+<td><p>Previous page. On the <strong>Fixtures</strong> and <strong>Clients</strong> pages, up picks the previous item instead.</p></td>
 </tr>
-<tr class="row-even"><td><p>In a fixture’s details</p></td>
+<tr class="row-even"><td><p>Joystick press</p></td>
+<td><p>Back to the home page. On the <strong>Fixtures</strong> and <strong>Clients</strong> pages, it opens the picked item.</p></td>
+</tr>
+<tr class="row-odd"><td><p>In a fixture’s or client’s details</p></td>
 <td><p>Up / down scroll. Left or press go back to the list.</p></td>
 </tr>
 </tbody>
@@ -586,7 +614,7 @@ and back out, and the highlight in the list glides. A press during a slide takes
 </div>
 <p><strong>KEY1</strong> works from every screen: it goes to the home page so you can see the new code.</p>
 <p>After a joystick press, the pages stop rotating for 30 seconds. They don’t rotate while a
-fixture’s details are open.</p>
+fixture’s or client’s details are open.</p>
 <p><img alt="Holding KEY3, the revoke confirm screen, a button result, and the paired home page" src="docs/img/pi-bridge/oled-overlays.png" /></p>
 </section>
 <section id="updates">
@@ -686,7 +714,8 @@ discovery uses. Try Ethernet, or put the Pi and the fixtures on the main network
 <p>The bridge image has no password login at all. To log in, paste your SSH public key into the
 flasher’s <strong>Advanced ▸ SSH public key</strong> box (or put it in <code class="docutils literal notranslate"><span class="pre">authorized_keys</span></code> on the card’s boot
 partition). Then <code class="docutils literal notranslate"><span class="pre">ssh</span> <span class="pre">root&#64;splanc-bridge.local</span></code> works, and <code class="docutils literal notranslate"><span class="pre">splanc-bridge</span> <span class="pre">status</span></code>, <code class="docutils literal notranslate"><span class="pre">new-code</span></code>,
-<code class="docutils literal notranslate"><span class="pre">identify</span></code>, <code class="docutils literal notranslate"><span class="pre">revoke-all</span></code>, <code class="docutils literal notranslate"><span class="pre">logs</span></code>, <code class="docutils literal notranslate"><span class="pre">update</span></code>, <code class="docutils literal notranslate"><span class="pre">restart</span></code> and <code class="docutils literal notranslate"><span class="pre">version</span></code> are available.</p>
+<code class="docutils literal notranslate"><span class="pre">identify</span></code>, <code class="docutils literal notranslate"><span class="pre">revoke-all</span></code>, <code class="docutils literal notranslate"><span class="pre">clients</span></code>, <code class="docutils literal notranslate"><span class="pre">revoke</span></code>, <code class="docutils literal notranslate"><span class="pre">logs</span></code>, <code class="docutils literal notranslate"><span class="pre">update</span></code>, <code class="docutils literal notranslate"><span class="pre">restart</span></code> and <code class="docutils literal notranslate"><span class="pre">version</span></code> are
+available.</p>
 </section>
 <section id="install-on-raspberry-pi-os-instead">
 <h3>Install on Raspberry Pi OS instead<a class="headerlink" href="#install-on-raspberry-pi-os-instead" title="Link to this heading">¶</a></h3>
@@ -726,6 +755,8 @@ everything. Options go after <code class="docutils literal notranslate"><span cl
 splanc-bridge<span class="w"> </span>new-code<span class="w">          </span><span class="c1"># a fresh pairing code</span>
 splanc-bridge<span class="w"> </span>identify<span class="w">          </span><span class="c1"># flash every fixture</span>
 splanc-bridge<span class="w"> </span>revoke-all<span class="w">        </span><span class="c1"># unpair every client (asks first)</span>
+splanc-bridge<span class="w"> </span>clients<span class="w">           </span><span class="c1"># paired clients: ID, kind, last used, added, name</span>
+splanc-bridge<span class="w"> </span>revoke<span class="w"> </span>&lt;ID&gt;<span class="w">       </span><span class="c1"># unpair one client (asks first; the ID&#39;s first few characters do)</span>
 splanc-bridge<span class="w"> </span>logs<span class="w">              </span><span class="c1"># recent logs; add -f to follow</span>
 sudo<span class="w"> </span>splanc-bridge<span class="w"> </span>restart
 sudo<span class="w"> </span>splanc-bridge<span class="w"> </span>update<span class="w">       </span><span class="c1"># install the latest release now</span>
