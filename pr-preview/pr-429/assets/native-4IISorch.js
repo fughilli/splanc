@@ -1,0 +1,1 @@
+function e(){return globalThis.Capacitor}function t(t){let n=e()?.registerPlugin;if(!n)throw Error(`Capacitor.registerPlugin unavailable (plugin ${t})`);return n(t)}function n(){return!!e()?.isNativePlatform?.()}function r(){return e()?.getPlatform?.()??`web`}function i(){return n()&&r()===`ios`}export{n,t as r,i as t};
