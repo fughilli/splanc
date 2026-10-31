@@ -19,7 +19,7 @@
     "mitigations": 12,
     "mitigations_verified": 6,
     "test_cases": 2736,
-    "gaps": 30
+    "gaps": 29
   },
   "levels": [
     {
@@ -7679,12 +7679,6 @@
       "route": "human-gate",
       "demanded_level": "hitl",
       "provided_level": "simulation"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/phone:ios_journeys",
-      "message": "//pi/hitl/phone:ios_journeys pi/hitl/phone/ios_journeys error and traces to no requirement",
-      "route": "autonomous"
     },
     {
       "kind": "high-risk-open",
