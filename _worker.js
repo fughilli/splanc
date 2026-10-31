@@ -7,7 +7,7 @@
 // fetches it server-side (no CORS there) and re-serves it with
 // Access-Control-Allow-Origin. Locked to this repo's release URLs — not an open proxy.
 //
-// The effects demo endpoint below relays only approved free models. The cloud relay's
+// The effects demo endpoint below relays only an approved model list. The cloud relay's
 // public paths (RELAY_PATHS, below) are forwarded to the splanc-relay Worker. On
 // splanc.pages.dev every other request 301s to https://splanc.io/app (retiredOrigin,
 // below); on other hosts (ledmapper.pages.dev) it passes through to the static site
@@ -57,14 +57,29 @@ async function ghAsset(request) {
 }
 
 // Public effects-demo relay. Credentials never enter a browser or static asset.
-// Order = fallback order. Nemotron leads: in the 2026-10-29 live check it answered
-// every Acid Mode request (1.7-2.5 s, plus one 19 s cold start) while MiniMax
-// (low reasoning) never did, so it is the faster first try for a waiting crowd.
-export const FREE_DEMO_MODELS = Object.freeze([
-  "nvidia/nemotron-3.5-super-vl:free",
-  "minimax/minimax-m3.1-flash:free",
-  "google/gemma-4-31b-it:free",
+// Order = fallback order. Claude leads, Opus first (owner, 2026-10-30: the free models wrote
+// poor effects; the OpenRouter key is topped up to pay for a good demo). Each
+// paid model is capped at its own list price (USD per million tokens), so a
+// provider price change can't silently cost more. When the key's credit runs out
+// (402) the relay falls through to the zero-priced models instead of failing.
+// Nemotron leads the free tail: in the 2026-10-29 live check it answered every
+// Acid Mode request (1.7-2.5 s) while MiniMax (low reasoning) never did.
+const FREE = Object.freeze({ prompt: 0, completion: 0, request: 0, image: 0 });
+// Claude on OpenRouter rejects {enabled: false} ("Reasoning is mandatory for this
+// endpoint", 400). Opus 4.8 at medium effort matches the editor's AI tab with an
+// Anthropic key (DEFAULT_ANTHROPIC_MODEL, effort "medium"): a play-mode wish took
+// 10.5 s and ~$0.02 on 2026-10-31. Sonnet/Haiku are the quicker paid fallbacks.
+const CLAUDE_REASONING = Object.freeze({ effort: "low" });
+const DEMO_MODEL_SPECS = Object.freeze([
+  { id: "anthropic/claude-opus-4.8", maxPrice: { prompt: 5, completion: 25, request: 0, image: 0 }, reasoning: { effort: "medium" } },
+  { id: "anthropic/claude-sonnet-5.5", maxPrice: { prompt: 2, completion: 10, request: 0, image: 0 }, reasoning: CLAUDE_REASONING },
+  { id: "anthropic/claude-haiku-5.5", maxPrice: { prompt: 0.1, completion: 0.5, request: 0, image: 0 }, reasoning: CLAUDE_REASONING },
+  { id: "nvidia/nemotron-3.5-super-vl:free", maxPrice: FREE },
+  // MiniMax defaults to max reasoning; this is an interactive editor.
+  { id: "minimax/minimax-m3.1-flash:free", maxPrice: FREE, reasoning: { effort: "low" } },
+  { id: "google/gemma-4-31b-it:free", maxPrice: FREE },
 ]);
+export const DEMO_MODELS = Object.freeze(DEMO_MODEL_SPECS.map(m => m.id));
 const DEMO_PATH = "/api/demo-ai/chat/completions";
 const DEMO_ORIGINS = new Set([
   "https://splanc.io", "https://www.splanc.io", "https://splanc.pages.dev",
@@ -74,6 +89,59 @@ const DEMO_ORIGINS = new Set([
   // what protect the shared quota.
   "capacitor://localhost",
 ]);
+// Acid Mode play (the Halloween kiosk, #/acid?play=1). The shipped app (incl. the
+// iOS build in review) sends a terse persona and shows set_script's `summary` as
+// the whole reply. Owner, 2026-10-31: give visitors an engaging conversation, not
+// a 5-word status. So the relay swaps the play persona (the system prompt's tail,
+// from PLAY_MARKER on) and the summary's description, offers capture_preview
+// again, and lifts the token cap,
+// without an app release. The fixture and cost rules are kept from the app's text.
+const PLAY_MARKER = 'You are "Acid Mode" on a Halloween LED install';
+const PLAY_PERSONA = `You are "Acid Mode", the friendly spirit living in a Halloween LED install at a front door. A visitor (often a kid, sometimes a grown-up, maybe a whole family) just SPOKE a wish into their phone and is watching the lights. Make this the coolest thing that happens to them tonight.
+- Make their wish real with ONE set_script call, right away. Don't ask questions first: if the wish is vague, silly or impossible, still make a fun spooky effect inspired by it.
+- The set_script \`summary\` is your spoken reply, shown to them in the chat. Write it like a delighted, slightly spooky friend: 2 to 4 short sentences. Tell them what they're seeing in vivid, specific words (what moves, which colours, where to look), give it a little personality or a playful spooky twist, then invite them to keep going with one concrete idea they could say next (e.g. "Want the ghosts to go faster, or should a storm roll in?"). No jargon, no code, no talk about uniforms, devices or maths. Family-friendly: spooky fun, never gory or scary-mean.
+- They may be refining the last effect ("faster!", "more purple", "add lightning"): the current effect source is included with their wish, so build on it and say what you changed.
+- The fixture: an LED curtain draped over pumpkins (the first LEDs, channel 0), then an LED rope snaked between the pumpkins (the remaining LEDs, channel 1). Counts are unknown and the LEDs may be UNMAPPED, so build the look along the wiring: \`fixed u = fixed(led.idx) / fixed(led.count);\` is a 0..1 coordinate, \`hash(float(led.idx))\` gives per-LED randomness, plus phases in state. Do not use led.pos, led.uv, led.dist, textures or buffers.
+- Halloween palette: pumpkin orange, ghost blue-white, witch purple, slime green, blood-moon red, with dark gaps. Never all black: keep a dim glow everywhere.
+- It runs on a tiny ESP32-C6 driving hundreds of LEDs, so keep it CHEAP: fixed maths per LED with fixed() around every literal, phases advanced in update(), no loops in shade(), no pow/exp/length/smoothstep per LED. Make it rich through motion and colour, not expensive maths.
+- Expose 1 or 2 uniforms (e.g. speed and a colour).
+- If the set_script result reports an error, a dark frame or "too slow", send a simpler fixed version with set_script, with a fresh spoken reply in its summary.
+- You can SEE your effect: capture_preview renders it on a stand-in for the curtain (a 240-LED serpentine grid; the real counts differ). Use it when seeing the result matters (judging colours, motion, coverage), in the same response as set_script; skip it after a compile error or for a tiny tweak. Capture at most once per wish. After you see it, either fix the effect with set_script (summary = your spoken reply), or give your spoken reply as plain text: the same 2 to 4 vivid, friendly sentences ending with one idea they could ask for next.`;
+const PLAY_SUMMARY = "Your spoken reply to the visitor, shown to them in the chat: 2 to 4 short, " +
+  "vivid, friendly sentences about what they're seeing, ending with one idea they could ask for next. Emit this field FIRST.";
+// Workers only accepts handlers/objects as named exports (a bare string export
+// fails to start the runtime), so the tests see these through one frozen object.
+export const DEMO_PLAY = Object.freeze({ marker: PLAY_MARKER, persona: PLAY_PERSONA });
+const PLAY_MAX_TOKENS = 4000;
+// The app withholds capture_preview in play mode but still answers it (owner: the
+// visitor's turn should see previews like the editor does). Same text as chatPrompt.ts.
+const CAPTURE_PREVIEW_TOOL = Object.freeze({ type: "function", function: Object.freeze({
+  name: "capture_preview",
+  description: "Render the current live preview to a PNG image so you can SEE how the " +
+    "effect looks on the LED map right now. Call this ONLY when actually seeing " +
+    "the result matters (e.g. to judge colours, motion, or coverage). Do NOT " +
+    "capture after a compile error (there's nothing new to see — fix the code " +
+    "first), and don't capture on every change; skipping it when unneeded is " +
+    "faster and cheaper.",
+  parameters: { type: "object", additionalProperties: false, properties: {} },
+}) });
+/** Rewrite an Acid play request (see PLAY_MARKER); any other request is unchanged. */
+export function engagePlay(body) {
+  const sys = body.messages[0];
+  const at = sys?.role === "system" && typeof sys.content === "string" ? sys.content.indexOf(PLAY_MARKER) : -1;
+  if (at < 0) return body;
+  return {
+    ...body,
+    max_tokens: PLAY_MAX_TOKENS,
+    messages: [{ ...sys, content: sys.content.slice(0, at) + PLAY_PERSONA }, ...body.messages.slice(1)],
+    tools: body.tools && [...body.tools.map(t => {
+      const summary = t.function.name === "set_script" && t.function.parameters?.properties?.summary;
+      if (!obj(summary)) return t;
+      const properties = { ...t.function.parameters.properties, summary: { ...summary, description: PLAY_SUMMARY } };
+      return { ...t, function: { ...t.function, parameters: { ...t.function.parameters, properties } } };
+    }), ...(body.tools.some(t => t.function.name === "capture_preview") ? [] : [CAPTURE_PREVIEW_TOOL])],
+  };
+}
 export const DEMO_TOOLS = new Set([
   "set_script", "capture_preview", "estimate_performance", "list_midi_controls", "set_midi_mapping",
 ]);
@@ -162,16 +230,17 @@ function completion(json, tools) {
 
 // The isolate budget is a coarse burst guard, not globally coordinated abuse
 // prevention. Operators can bind AI_RATE_LIMITER for Cloudflare edge enforcement.
-// Every upstream request is additionally constrained to zero-priced models.
+// Every upstream request is additionally capped at its model's list price.
 //
 // Sizing (2026-10-29): the key has credit, so OpenRouter allows ~1000 free-model
 // requests/day and ~20/minute. A crowd at a Halloween stoop shares that, and an
 // Acid Mode prompt costs 1-3 requests. So: 20/minute per isolate (the upstream
 // per-minute cap; more only buys upstream 429s), and per client 6/minute (a prompt
 // plus repairs, twice) and 30/hour (~10-15 prompts), so one visitor can burn at
-// most a few percent of the day.
+// most a few percent of the day. 2026-10-31: Claude (paid, no free-tier daily
+// cap) leads and play mode is a conversation, so 60/hour per client.
 export const DEMO_LIMITS = Object.freeze({
-  perMinute: 20, inFlight: 8, clientPerMinute: 6, clientPerHour: 30, clientActive: 2, clients: 2000,
+  perMinute: 20, inFlight: 8, clientPerMinute: 6, clientPerHour: 60, clientActive: 2, clients: 2000,
 });
 
 /** Rate-limit key for a visitor: the IPv4 address, or the /64 of an IPv6 one.
@@ -207,7 +276,7 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
     const error = (status, code, extra) => reply(status, { error: { code } }, extra);
     if (!allowed) return error(403, "origin_not_allowed");
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
-    if (request.method === "GET") return reply(200, { configured: Boolean(env.OPENROUTER_API_KEY), models: FREE_DEMO_MODELS });
+    if (request.method === "GET") return reply(200, { configured: Boolean(env.OPENROUTER_API_KEY), models: DEMO_MODELS });
     if (request.method !== "POST") return error(405, "method_not_allowed", { allow: "POST, GET, OPTIONS" });
     if (!env.OPENROUTER_API_KEY) return error(503, "not_configured");
     if (!(request.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) return error(415, "json_required");
@@ -253,8 +322,9 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
         return error(e instanceof RangeError ? 413 : 400, "invalid_request");
       }
       if (!validPayload(body)) return error(400, "invalid_request");
+      body = engagePlay(body);
       const attempts = [];
-      for (const model of FREE_DEMO_MODELS) {
+      for (const { id: model, maxPrice, reasoning } of DEMO_MODEL_SPECS) {
         if (total.signal.aborted) break;
         const diagnostic = { model, outcome: "pending" };
         attempts.push(diagnostic);
@@ -271,11 +341,10 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
               "HTTP-Referer": "https://splanc.io", "X-OpenRouter-Title": "Splanc effects playground" },
             body: JSON.stringify({ model, messages: body.messages, stream: false,
               max_tokens: Math.min(body.max_tokens ?? 4000, 4000),
-              // MiniMax defaults to max reasoning; this is an interactive editor.
-              // The other two models support disabling optional reasoning.
-              reasoning: model === "minimax/minimax-m3.1-flash:free" ? { effort: "low" } : { enabled: false },
+              // Optional reasoning off (latency) unless the model needs a setting.
+              reasoning: reasoning ?? { enabled: false },
               ...(body.tools?.length ? { tools: body.tools, tool_choice: "auto" } : {}),
-              provider: { max_price: { prompt: 0, completion: 0, request: 0, image: 0 }, require_parameters: true },
+              provider: { max_price: maxPrice, require_parameters: true },
             }),
           });
           if (result.status >= 300 && result.status < 400) {
@@ -314,6 +383,14 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
             }
             continue;
           }
+          // Out of credit: the paid models can't run, the zero-priced ones still can.
+          // A paid model the key can't use (out of credit, or a key/account
+          // guardrail that rejects it) falls through to the zero-priced models.
+          if ((status === 402 || status === 400) && maxPrice !== FREE) {
+            console.warn("demo-ai: paid model rejected, falling back", model, status,
+              String(json?.error?.message ?? "").slice(0, 200));
+            continue;
+          }
           if ([401, 402, 403].includes(status)) return error(503, "provider_unavailable");
           if ([404, 408].includes(status) || status >= 500) continue;
           if (status >= 400) return error(400, "upstream_rejected_request");
@@ -329,7 +406,7 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
           if (parsed) return reply(200, { ...parsed, model });
         } catch {
           diagnostic.outcome = attempt.signal.aborted ? "timeout" : "transport_error";
-          // Network failures/attempt deadlines may try the next free model.
+          // Network failures/attempt deadlines may try the next model.
           // A visitor cancellation or overall deadline exits below.
         } finally {
           clearTimeout(timer);
