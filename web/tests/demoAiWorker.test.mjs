@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { clientKey, createDemoRelay, DEMO_LIMITS, DEMO_TOOLS, DEMO_MODELS, RELAY_PATHS, engagePlay, PLAY_MARKER, PLAY_PERSONA } from '../_worker.js';
+import worker, { clientKey, createDemoRelay, DEMO_LIMITS, DEMO_TOOLS, DEMO_MODELS, RELAY_PATHS, engagePlay, DEMO_PLAY } from '../_worker.js';
+const { marker: PLAY_MARKER, persona: PLAY_PERSONA } = DEMO_PLAY;
 const url = 'https://splanc.pages.dev/api/demo-ai/chat/completions';
 const env = { OPENROUTER_API_KEY: 'unit-test-secret' };
 const tool = { type: 'function', function: { name: 'set_script', description: 'Edit an effect', parameters: { type: 'object' } } };
