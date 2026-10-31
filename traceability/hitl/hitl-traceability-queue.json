@@ -85,11 +85,12 @@
       "demanded_level": "hitl"
     },
     {
-      "kind": "unverified",
+      "kind": "pyramid",
       "entity": "PR-13",
-      "message": "no test evidence",
-      "route": "human-gate",
-      "demanded_level": "hitl"
+      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
+      "route": "autonomous",
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
     },
     {
       "kind": "unverified",
@@ -141,18 +142,12 @@
       "demanded_level": "hil"
     },
     {
-      "kind": "unverified",
+      "kind": "pyramid",
       "entity": "PR-21",
-      "message": "no test evidence",
-      "route": "human-gate",
-      "demanded_level": "hil"
-    },
-    {
-      "kind": "unverified",
-      "entity": "PR-22",
-      "message": "no test evidence",
+      "message": "demands hil but has no analysis/simulation evidence backing the physical result",
       "route": "autonomous",
-      "demanded_level": "simulation"
+      "demanded_level": "hil",
+      "provided_level": "hitl"
     },
     {
       "kind": "unverified",
@@ -176,11 +171,12 @@
       "demanded_level": "simulation"
     },
     {
-      "kind": "unverified",
+      "kind": "pyramid",
       "entity": "PR-26",
-      "message": "no test evidence",
-      "route": "human-gate",
-      "demanded_level": "hitl"
+      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
+      "route": "autonomous",
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
     },
     {
       "kind": "unverified",
@@ -197,11 +193,12 @@
       "demanded_level": "hil"
     },
     {
-      "kind": "unverified",
+      "kind": "pyramid",
       "entity": "PR-29",
-      "message": "no test evidence",
-      "route": "human-gate",
-      "demanded_level": "hitl"
+      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
+      "route": "autonomous",
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
     },
     {
       "kind": "unverified",
@@ -239,11 +236,12 @@
       "demanded_level": "simulation"
     },
     {
-      "kind": "unverified",
+      "kind": "pyramid",
       "entity": "PR-35",
-      "message": "no test evidence",
-      "route": "human-gate",
-      "demanded_level": "hitl"
+      "message": "demands hitl but has no analysis/simulation evidence backing the physical result",
+      "route": "autonomous",
+      "demanded_level": "hitl",
+      "provided_level": "hitl"
     },
     {
       "kind": "unverified",
@@ -275,171 +273,9 @@
     },
     {
       "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:ble_capture_e2e_netstack",
-      "message": "//pi/hitl/harness:ble_capture_e2e_netstack pi/hitl/harness/ble_capture_e2e_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:ble_player_e2e_netstack",
-      "message": "//pi/hitl/harness:ble_player_e2e_netstack pi/hitl/harness/ble_player_e2e_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:e2e_netstack",
-      "message": "//pi/hitl/harness:e2e_netstack hitl_e2e::rig error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:fpga_ws281x_led-mapper-pi",
-      "message": "//pi/hitl/harness:fpga_ws281x_led-mapper-pi pi/hitl/harness/fpga_ws281x_led-mapper-pi error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:fx_bench_jit_netstack",
-      "message": "//pi/hitl/harness:fx_bench_jit_netstack pi/hitl/harness/fx_bench_jit_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:fx_bench_netstack",
-      "message": "//pi/hitl/harness:fx_bench_netstack pi/hitl/harness/fx_bench_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:fx_debug_netstack",
-      "message": "//pi/hitl/harness:fx_debug_netstack pi/hitl/harness/fx_debug_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:heavy_effect_reachability",
-      "message": "//pi/hitl/harness:heavy_effect_reachability pi/hitl/harness/heavy_effect_reachability error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:improv_e2e_led-mapper-pi",
-      "message": "//pi/hitl/harness:improv_e2e_led-mapper-pi pi/hitl/harness/improv_e2e_led-mapper-pi error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:improv_fresh_join",
-      "message": "//pi/hitl/harness:improv_fresh_join pi/hitl/harness/improv_fresh_join error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:led_capture_jit_netstack",
-      "message": "//pi/hitl/harness:led_capture_jit_netstack pi/hitl/harness/led_capture_jit_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:led_capture_netstack",
-      "message": "//pi/hitl/harness:led_capture_netstack pi/hitl/harness/led_capture_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:loaded_tls_netstack",
-      "message": "//pi/hitl/harness:loaded_tls_netstack pi/hitl/harness/loaded_tls_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:map_upload_netstack",
-      "message": "//pi/hitl/harness:map_upload_netstack pi/hitl/harness/map_upload_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:netstack_examples",
-      "message": "//pi/hitl/harness:netstack_examples pi/hitl/harness/netstack_examples error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:no_reboot_no_park",
-      "message": "//pi/hitl/harness:no_reboot_no_park pi/hitl/harness/no_reboot_no_park error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:ota_gate",
-      "message": "//pi/hitl/harness:ota_gate pi/hitl/harness/ota_gate error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:rejoin_loop",
-      "message": "//pi/hitl/harness:rejoin_loop pi/hitl/harness/rejoin_loop error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:rig_isolation",
-      "message": "//pi/hitl/harness:rig_isolation hitl_rig_isolation::reserve error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:stable_identity",
-      "message": "//pi/hitl/harness:stable_identity pi/hitl/harness/stable_identity error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:tls_churn_netstack",
-      "message": "//pi/hitl/harness:tls_churn_netstack pi/hitl/harness/tls_churn_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:upgrade_keeps_wifi",
-      "message": "//pi/hitl/harness:upgrade_keeps_wifi pi/hitl/harness/upgrade_keeps_wifi error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:video_latency_netstack",
-      "message": "//pi/hitl/harness:video_latency_netstack pi/hitl/harness/video_latency_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:video_stream_netstack",
-      "message": "//pi/hitl/harness:video_stream_netstack pi/hitl/harness/video_stream_netstack error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:wifi_cadence",
-      "message": "//pi/hitl/harness:wifi_cadence pi/hitl/harness/wifi_cadence error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/phone:android_journeys",
-      "message": "//pi/hitl/phone:android_journeys pi/hitl/phone/android_journeys error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
       "entity": "//pi/hitl/phone:ios_journeys",
       "message": "//pi/hitl/phone:ios_journeys pi/hitl/phone/ios_journeys error and traces to no requirement",
       "route": "autonomous"
-    },
-    {
-      "kind": "high-risk-open",
-      "entity": "RISK-1",
-      "message": "high risk; mitigation is OPEN",
-      "route": "human-gate"
     },
     {
       "kind": "high-risk-open",
@@ -450,12 +286,6 @@
     {
       "kind": "high-risk-open",
       "entity": "RISK-3",
-      "message": "high risk; mitigation is OPEN",
-      "route": "human-gate"
-    },
-    {
-      "kind": "high-risk-open",
-      "entity": "RISK-4",
       "message": "high risk; mitigation is OPEN",
       "route": "human-gate"
     },
