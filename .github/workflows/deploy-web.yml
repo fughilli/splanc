@@ -68,6 +68,16 @@ jobs:
           MINIFLARE_MODULE="$RUNNER_TEMP/relay-runtime/node_modules/miniflare/dist/src/index.js" node web/tests/demoAiWorker.runtime.mjs
           cp web/_worker.js _site/_worker.js
           jq -n --arg app "$TESTED_SHA" --arg worker "$GITHUB_SHA" '{static_revision:$app,worker_revision:$worker}' > _site/worker-deployment.json
+      # Whatever path built it, the Worker about to ship must start in the Workers
+      # runtime (2026-10-31: a bare string export passed node but not workerd).
+      - name: Validate the Worker in the Workers runtime
+        run: |
+          set -euo pipefail
+          if [ ! -d "$RUNNER_TEMP/relay-runtime/node_modules/miniflare" ]; then
+            npm install --prefix "$RUNNER_TEMP/relay-runtime" --no-save --ignore-scripts miniflare@4.20260730.0
+          fi
+          MINIFLARE_MODULE="$RUNNER_TEMP/relay-runtime/node_modules/miniflare/dist/src/index.js" \
+            DEMO_WORKER="$PWD/_site/_worker.js" node web/tests/demoAiWorker.runtime.mjs
       - uses: pnpm/action-setup@v4
       - name: Deploy to Cloudflare Pages
         env:

@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
 const { Miniflare } = await import(pathToFileURL(process.env.MINIFLARE_MODULE).href);
-const source = readFileSync(new URL('../_worker.js', import.meta.url), 'utf8');
+// DEMO_WORKER: check the exact Worker a deploy ships (default: this checkout's).
+const source = readFileSync(process.env.DEMO_WORKER || new URL('../_worker.js', import.meta.url), 'utf8');
 const success = { choices: [{ message: { role: 'assistant', content: 'Synthetic success' }, finish_reason: 'stop' }] };
 async function run(label, script, upstream, expected, expectedCalls, expectedCode) {
   let calls = 0;
