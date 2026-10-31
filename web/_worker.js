@@ -323,7 +323,13 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
             continue;
           }
           // Out of credit: the paid models can't run, the zero-priced ones still can.
-          if (status === 402 && maxPrice !== FREE) continue;
+          // A paid model the key can't use (out of credit, or a key/account
+          // guardrail that rejects it) falls through to the zero-priced models.
+          if ((status === 402 || status === 400) && maxPrice !== FREE) {
+            console.warn("demo-ai: paid model rejected, falling back", model, status,
+              String(json?.error?.message ?? "").slice(0, 200));
+            continue;
+          }
           if ([401, 402, 403].includes(status)) return error(503, "provider_unavailable");
           if ([404, 408].includes(status) || status >= 500) continue;
           if (status >= 400) return error(400, "upstream_rejected_request");

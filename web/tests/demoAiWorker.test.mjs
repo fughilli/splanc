@@ -94,7 +94,8 @@ test('auth, payment, input failures and refusal are not retried; upstream errors
     let calls = 0;
     const relay = createDemoRelay({ fetchImpl: async () => { calls++; return failure(status, { raw: 'unit-test-secret' }); } });
     const r = await relay(req(), env);
-    assert.equal(calls, 1); assert.ok(!(await r.text()).includes('unit-test-secret'));
+    // A paid model's 400 (key guardrail) falls through; the first free model's is terminal.
+    assert.equal(calls, status === 400 ? 3 : 1); assert.ok(!(await r.text()).includes('unit-test-secret'));
   }
   let calls = 0;
   const relay = createDemoRelay({ fetchImpl: async () => { calls++; return Response.json({ choices: [{ message: { role: 'assistant', refusal: 'No' }, finish_reason: 'content_filter' }] }); } });
@@ -384,4 +385,13 @@ test('out of credit (402) on the paid models falls through to the free ones; 402
   const broke=createDemoRelay({fetchImpl:async(_,init)=>{calls++;return failure(402,{});}});
   assert.equal((await broke(req(),env)).status,503);
   assert.equal(calls,3,'paid models skipped, then the first free model\'s 402 is terminal');
+});
+
+test('a paid model the key rejects (400) falls through to the free ones', async () => {
+  const seen=[];
+  const relay=createDemoRelay({fetchImpl:async(_,init)=>{const {model}=JSON.parse(init.body);seen.push(model);
+    return model.endsWith(':free')?Response.json({choices:[{finish_reason:'stop',message:{role:'assistant',content:'Done'}}]}):failure(400,{});}});
+  const r=await relay(req(),env);
+  assert.equal(r.status,200);
+  assert.deepEqual(seen,DEMO_MODELS.slice(0,3));
 });
