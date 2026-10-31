@@ -322,7 +322,7 @@ test('interactive reasoning policy survives fallback without raising token or pr
   const sent=[];
   const relay=createDemoRelay({fetchImpl:async(_,init)=>{sent.push(JSON.parse(init.body));return failure(503,{});}});
   assert.equal((await relay(req(),env)).status,503);
-  assert.deepEqual(sent.map(x=>x.reasoning),[{enabled:false},{enabled:false},{enabled:false},{effort:'low'},{enabled:false}]);
+  assert.deepEqual(sent.map(x=>x.reasoning),[{effort:'low'},{effort:'low'},{enabled:false},{effort:'low'},{enabled:false}]);
   assert(sent.every(x=>x.max_tokens===4000));
   // Paid models never above their list price; every free fallback stays zero-priced.
   assert.deepEqual(sent.slice(0,2).map(x=>x.provider.max_price),[{prompt:2,completion:10,request:0,image:0},{prompt:0.1,completion:0.5,request:0,image:0}]);

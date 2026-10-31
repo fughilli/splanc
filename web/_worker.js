@@ -65,9 +65,12 @@ async function ghAsset(request) {
 // Nemotron leads the free tail: in the 2026-10-29 live check it answered every
 // Acid Mode request (1.7-2.5 s) while MiniMax (low reasoning) never did.
 const FREE = Object.freeze({ prompt: 0, completion: 0, request: 0, image: 0 });
+// Claude 5.5 on OpenRouter rejects {enabled: false} ("Reasoning is mandatory for
+// this endpoint", 400); low effort answered a short prompt in 0.7-0.8 s.
+const CLAUDE_REASONING = Object.freeze({ effort: "low" });
 const DEMO_MODEL_SPECS = Object.freeze([
-  { id: "anthropic/claude-sonnet-5.5", maxPrice: { prompt: 2, completion: 10, request: 0, image: 0 } },
-  { id: "anthropic/claude-haiku-5.5", maxPrice: { prompt: 0.1, completion: 0.5, request: 0, image: 0 } },
+  { id: "anthropic/claude-sonnet-5.5", maxPrice: { prompt: 2, completion: 10, request: 0, image: 0 }, reasoning: CLAUDE_REASONING },
+  { id: "anthropic/claude-haiku-5.5", maxPrice: { prompt: 0.1, completion: 0.5, request: 0, image: 0 }, reasoning: CLAUDE_REASONING },
   { id: "nvidia/nemotron-3.5-super-vl:free", maxPrice: FREE },
   // MiniMax defaults to max reasoning; this is an interactive editor.
   { id: "minimax/minimax-m3.1-flash:free", maxPrice: FREE, reasoning: { effort: "low" } },
