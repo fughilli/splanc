@@ -35,8 +35,10 @@ import {
   ACID_PLAY_MAX_BUDGET_FRACTION,
   ACID_PLAY_SYSTEM,
   ACID_PLAY_TURN,
+  ACID_PLAY_HISTORY_WISHES,
   ACID_SYSTEM,
   scriptAccepted,
+  trimToRecentWishes,
 } from "../../effects/ai/acidPersona";
 import { fallbackTarget, resolveFleetTargets } from "../../effects/fleet";
 import { estimateAcrossDevices, describeFleet } from "../../effects/multiDevice";
@@ -57,6 +59,7 @@ import { effectStore } from "../../store/effectStore";
 import { chatLogStore, newChatLogSessionId } from "../../store/chatLogStore";
 import { registerChatDriver } from "../../net/remoteChat";
 import { mapStore } from "../../store/mapStore";
+import { deviceMaps } from "./deviceMapCard";
 import { appState } from "../app/state";
 import { StatusPill, confirmDialog, icon, toast, type PillState } from "../kit";
 import { aiSummary, appFileBugHook, confirmFilingText } from "../../bugs/appBugReport";
@@ -93,12 +96,11 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
   el.className = play ? "screen screen--acid acid--play" : "screen screen--acid";
   el.dataset["state"] = "idle";
 
-  // No provider configured → the free hosted demo AI (docs/design/effects-demo.md):
-  // zero setup for a stranger. Play mode skips vision (each capture is another
-  // request on the shared quota, and the backdrop is not their fixture anyway).
+  // No provider configured → the hosted demo AI (docs/design/effects-demo.md):
+  // zero setup for a stranger. Play mode sees previews too (the owner, 2026-10-31:
+  // a visitor's conversation should be as good as the editor's).
   const demoProvider = makeDemoProvider(DEMO_AI_ENDPOINT, {
     timeoutMs: ACID_FREE_TIMEOUT_MS,
-    vision: !play,
     ...(play ? { maxTokens: ACID_PLAY_TURN.maxTokens } : {}),
   });
   const freeAi = (): AiProvider | undefined => (isAiConfigured() ? undefined : demoProvider);
@@ -170,7 +172,10 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
     const s = appState.status;
     pill.set(s.state as PillState, s.text);
   };
-  const unsubPill = appState.subscribe(syncPill);
+  const unsubPill = appState.subscribe(() => {
+    syncPill();
+    if (play && !playMapIsFixture) void loadFixtureMap();
+  });
   syncPill();
 
   const title = document.createElement("h1");
@@ -390,9 +395,9 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
     appendMsg("you", text);
 
     // Ground the turn in the current effect (if any) so refinements build on it.
-    // Play mode sends only this turn (no history) with the last GOOD effect: each
-    // request stays small on the shared quota, and a broken attempt never leaks
-    // into the next visitor's ask.
+    // Play mode grounds in the last GOOD effect (what the lights play) and keeps
+    // the conversation (each visitor is on their own phone), trimmed to the last
+    // ACID_PLAY_HISTORY_WISHES wishes so requests stay quick.
     const groundSource = play ? lastGoodSource : currentSource;
     const ctx = editorContext({
       source: groundSource || "(no effect yet)",
@@ -402,8 +407,14 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
           ? `OK — ${lastUniforms.length} uniforms, ${lastBytecode.length} bytes`
           : "nothing compiled yet",
     });
-    if (play) chatHistory.length = 0;
-    chatHistory.push({ role: "user", content: `${ctx}\n\nUser (spoken): ${text}` });
+    if (play) trimToRecentWishes(chatHistory, ACID_PLAY_HISTORY_WISHES - 1);
+    const historyBefore = chatHistory.length;
+    const previewNote = play
+      ? playMapIsFixture
+        ? `\n\nPreview: the fixture's real layout (${currentMap?.leds.length ?? 0} LEDs).`
+        : "\n\nPreview: a stand-in grid (the fixture's layout isn't available)."
+      : "";
+    chatHistory.push({ role: "user", content: `${ctx}${previewNote}\n\nUser (spoken): ${text}` });
 
     busy = true;
     micBtn.disabled = true;
@@ -480,6 +491,8 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
     } catch (e) {
       clearThinking();
       turnError = msg(e);
+      // Never leave a half-finished turn in a play conversation.
+      if (play) chatHistory.length = Math.min(chatHistory.length, historyBefore);
       if (isDemoAiBusy(e)) {
         // Quota / rate limit / every model down or slow: point at the presets.
         busyCard.hidden = false;
@@ -762,12 +775,34 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
     mapView.setLedColors(preview.shadeAll(positions));
   }
 
+  /** Play mode: show the connected Halloween fixture's own layout (the map it
+   * stores; play mode's screen fetched it already, else fetch it now). Keeps the
+   * stand-in grid when there's no fixture or it has no map. */
+  let playMapIsFixture = false;
+  let fixtureMapClient: unknown = null;
+  async function loadFixtureMap(): Promise<void> {
+    const c = appState.client;
+    if (!c || c === fixtureMapClient) return;
+    fixtureMapClient = c;
+    try {
+      const id = await deviceMaps.ensureLocal(c);
+      const rec = await mapStore.get(id);
+      if (disposed || appState.client !== c || !rec) return;
+      loadMap(rec.map, rec.topology);
+      mapView?.setMesh(rec.mesh ?? null);
+      playMapIsFixture = true;
+    } catch {
+      // No stored map / older firmware / link dropped: the grid stays.
+    }
+  }
+
   // Pick the most-recent map for the backdrop, else a sample fixture.
   async function initMap(): Promise<void> {
-    // Play mode: a visitor's phone has no map of the install; a serpentine grid
-    // reads like the curtain and doubles as the darkness probe's positions.
+    // Play mode: a serpentine grid reads like the curtain (and doubles as the
+    // darkness probe's positions) until the connected fixture's own layout loads.
     if (play) {
       loadMap(generateFixture("grid", { count: 240, seed: 31, jitterFrac: 0.04 }));
+      void loadFixtureMap();
       return;
     }
     try {
