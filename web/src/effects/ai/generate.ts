@@ -24,6 +24,7 @@ import {
   type AiProvider,
   type ChatMessage,
   type ContentBlock,
+  type ToolDef,
 } from "./provider";
 import { makeAnthropicProvider } from "./providers/anthropic";
 import { makeOpenAiProvider } from "./providers/openaiCompat";
@@ -493,12 +494,12 @@ export async function chatTurn(
   // vision `capture_preview` is withheld when the model can't see images, the
   // perf/MIDI groups only when the caller supplies their hooks, and nothing at
   // all when the provider has no tool-calling (the chat then runs plain-text).
-  const tools = selectTools(caps, {
+  const tools = withSummaryDescription(selectTools(caps, {
     perf: hooks.onEstimatePerformance !== undefined,
     devicePerf,
     midi: hooks.onListMidi !== undefined && hooks.onSetMidiMapping !== undefined,
     bugs,
-  });
+  }), turnOpts.summaryDescription);
   for (let round = 0; round < MAX_ROUNDS; round++) {
     hooks.onThinking?.(round + 1);
     // Debug trace: the new content going IN this round (round 0 → the user's
@@ -659,6 +660,18 @@ export async function chatTurn(
   return finalText;
 }
 
+/** Re-describe set_script's `summary` (e.g. Acid play mode, where it is the reply
+ * the visitor reads rather than a 5-word status). */
+function withSummaryDescription(tools: ToolDef[], description: string | undefined): ToolDef[] {
+  if (description === undefined) return tools;
+  return tools.map((t) => {
+    const props = t.input_schema["properties"] as Record<string, Record<string, unknown>> | undefined;
+    if (t.name !== "set_script" || props?.["summary"] === undefined) return t;
+    const properties = { ...props, summary: { ...props["summary"], description } };
+    return { ...t, input_schema: { ...t.input_schema, properties } };
+  });
+}
+
 /** Per-turn knobs for chatTurn (defaults = the editor's behaviour). */
 export interface ChatTurnOptions {
   /** Max model requests this turn (default 8). */
@@ -670,4 +683,6 @@ export interface ChatTurnOptions {
   /** Given a set_script result, true when it was accepted (compiled + sent):
    * the turn then ends with the script's summary as the reply, saving a request. */
   finishAfterScript?: (result: string) => boolean;
+  /** Replace set_script's `summary` description (see withSummaryDescription). */
+  summaryDescription?: string;
 }

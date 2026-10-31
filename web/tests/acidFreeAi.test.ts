@@ -1,7 +1,7 @@
 /**
  * Acid Mode with no key (Halloween play mode): the free demo provider's failure
  * classification + deadline, the play-mode turn budget (one request per accepted
- * set_script, compact prompt, capped repairs), tool filtering against the relay's
+ * set_script, full prompt, previews, capped repairs, trimmed history), tool filtering against the relay's
  * allowlist, and the upload guard that keeps the last good effect on the fixture.
  */
 
@@ -15,14 +15,16 @@ import { installFakeDom } from "./fakeDom";
 installFakeDom();
 
 import { chatTurn, type ChatHooks } from "../src/effects/ai/generate";
-import { CHAT_SYSTEM, CHAT_SYSTEM_COMPACT } from "../src/effects/ai/chatPrompt";
+import { CHAT_SYSTEM } from "../src/effects/ai/chatPrompt";
 import type { AiProvider, ChatMessage, SendOptions } from "../src/effects/ai/provider";
 import { DemoAiError, isDemoAiBusy, makeDemoProvider } from "../src/effects/ai/providers/demo";
 import {
   ACID_PLAY_EXAMPLES,
   ACID_PLAY_SYSTEM,
+  ACID_PLAY_SUMMARY,
   ACID_PLAY_TURN,
   scriptAccepted,
+  trimToRecentWishes,
 } from "../src/effects/ai/acidPersona";
 import { allDark, guardVerdict } from "../src/ui/acid/playGuard";
 import { createAcidKioskCountdown, registerAcidKioskCountdown } from "../src/ui/acid/playExtras";
@@ -121,7 +123,7 @@ const setScript = (id: string, summary: string) => () => ({
 });
 
 test("play turn: an accepted set_script ends the turn in ONE request, replying with its summary", async () => {
-  const { provider, seen } = scripted([setScript("a", "ghosts drifting up")]);
+  const { provider, seen } = scripted([setScript("a", "ghosts drifting up")], true);
   const history: ChatMessage[] = [{ role: "user", content: "ghosts" }];
   const hooks: ChatHooks = {
     onSetScript: async () => "Compiled OK — 1 uniforms, 99 bytes; uploaded + now playing on your device.",
@@ -133,11 +135,12 @@ test("play turn: an accepted set_script ends the turn in ONE request, replying w
   });
   assert.equal(reply, "ghosts drifting up");
   assert.equal(seen.length, 1);
-  // Compact spec + the Halloween persona; only set_script is advertised.
-  assert.ok(seen[0]!.system.startsWith(CHAT_SYSTEM_COMPACT));
+  // Full spec + the Halloween persona; set_script (its summary is the reply) and previews.
+  assert.ok(seen[0]!.system.startsWith(CHAT_SYSTEM));
   assert.ok(seen[0]!.system.includes(ACID_PLAY_SYSTEM));
-  assert.ok(seen[0]!.system.length < CHAT_SYSTEM.length);
-  assert.deepEqual(seen[0]!.tools.map((t) => t.name), ["set_script"]);
+  assert.deepEqual(seen[0]!.tools.map((t) => t.name), ["set_script", "capture_preview"]);
+  const summary = (seen[0]!.tools[0]!.input_schema["properties"] as Record<string, { description: string }>)["summary"]!;
+  assert.equal(summary.description, ACID_PLAY_SUMMARY);
   assert.equal(seen[0]!.maxTokens, ACID_PLAY_TURN.maxTokens);
   // History stays well-formed: user → assistant(tool_use) → user(tool_result) → assistant(text).
   assert.deepEqual(history.map((m) => m.role), ["user", "assistant", "user", "assistant"]);
@@ -194,8 +197,10 @@ test("scriptAccepted matches acidMode's success result only", () => {
 
 // -- persona + guard ------------------------------------------------------------
 
-test("the Halloween persona is short, parametric, and names the curtain + rope", () => {
-  assert.ok(ACID_PLAY_SYSTEM.length < 2000, `persona is ${ACID_PLAY_SYSTEM.length} chars`);
+test("the Halloween persona is conversational, parametric, and names the curtain + rope", () => {
+  assert.ok(ACID_PLAY_SYSTEM.length < 4000, `persona is ${ACID_PLAY_SYSTEM.length} chars`);
+  assert.match(ACID_PLAY_SYSTEM, /2 to 4 short sentences/);
+  assert.match(ACID_PLAY_SYSTEM, /capture_preview/);
   assert.match(ACID_PLAY_SYSTEM, /curtain/);
   assert.match(ACID_PLAY_SYSTEM, /rope/);
   assert.match(ACID_PLAY_SYSTEM, /led\.idx/);
@@ -228,4 +233,21 @@ test("kiosk countdown hook: absent → null; registered → mounted; a throwing 
   });
   assert.equal(createAcidKioskCountdown(), null);
   registerAcidKioskCountdown(null);
+});
+
+test("a play conversation keeps its most recent wishes, cut only at a wish", () => {
+  const wish = (n: number): ChatMessage => ({ role: "user", content: `wish ${n}` });
+  const toolTurn = (n: number): ChatMessage[] => [
+    { role: "assistant", content: [{ type: "tool_use", id: `t${n}`, name: "set_script", input: {} }] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: `t${n}`, content: [{ type: "text", text: "ok" }] }] },
+    { role: "assistant", content: [{ type: "text", text: `reply ${n}` }] },
+  ];
+  const history: ChatMessage[] = [1, 2, 3].flatMap((n) => [wish(n), ...toolTurn(n)]);
+  trimToRecentWishes(history, 2);
+  assert.deepEqual(history[0], wish(2));
+  assert.equal(history.length, 8);
+  trimToRecentWishes(history, 5);
+  assert.equal(history.length, 8);
+  trimToRecentWishes(history, 0);
+  assert.equal(history.length, 0);
 });
