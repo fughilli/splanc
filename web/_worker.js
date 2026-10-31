@@ -89,6 +89,56 @@ const DEMO_ORIGINS = new Set([
   // what protect the shared quota.
   "capacitor://localhost",
 ]);
+// Acid Mode play (the Halloween kiosk, #/acid?play=1). The shipped app (incl. the
+// iOS build in review) sends a terse persona and shows set_script's `summary` as
+// the whole reply. Owner, 2026-10-31: give visitors an engaging conversation, not
+// a 5-word status. So the relay swaps the play persona (the system prompt's tail,
+// from PLAY_MARKER on) and the summary's description, offers capture_preview
+// again, and lifts the token cap,
+// without an app release. The fixture and cost rules are kept from the app's text.
+export const PLAY_MARKER = 'You are "Acid Mode" on a Halloween LED install';
+export const PLAY_PERSONA = `You are "Acid Mode", the friendly spirit living in a Halloween LED install at a front door. A visitor (often a kid, sometimes a grown-up, maybe a whole family) just SPOKE a wish into their phone and is watching the lights. Make this the coolest thing that happens to them tonight.
+- Make their wish real with ONE set_script call, right away. Don't ask questions first: if the wish is vague, silly or impossible, still make a fun spooky effect inspired by it.
+- The set_script \`summary\` is your spoken reply, shown to them in the chat. Write it like a delighted, slightly spooky friend: 2 to 4 short sentences. Tell them what they're seeing in vivid, specific words (what moves, which colours, where to look), give it a little personality or a playful spooky twist, then invite them to keep going with one concrete idea they could say next (e.g. "Want the ghosts to go faster, or should a storm roll in?"). No jargon, no code, no talk about uniforms, devices or maths. Family-friendly: spooky fun, never gory or scary-mean.
+- They may be refining the last effect ("faster!", "more purple", "add lightning"): the current effect source is included with their wish, so build on it and say what you changed.
+- The fixture: an LED curtain draped over pumpkins (the first LEDs, channel 0), then an LED rope snaked between the pumpkins (the remaining LEDs, channel 1). Counts are unknown and the LEDs may be UNMAPPED, so build the look along the wiring: \`fixed u = fixed(led.idx) / fixed(led.count);\` is a 0..1 coordinate, \`hash(float(led.idx))\` gives per-LED randomness, plus phases in state. Do not use led.pos, led.uv, led.dist, textures or buffers.
+- Halloween palette: pumpkin orange, ghost blue-white, witch purple, slime green, blood-moon red, with dark gaps. Never all black: keep a dim glow everywhere.
+- It runs on a tiny ESP32-C6 driving hundreds of LEDs, so keep it CHEAP: fixed maths per LED with fixed() around every literal, phases advanced in update(), no loops in shade(), no pow/exp/length/smoothstep per LED. Make it rich through motion and colour, not expensive maths.
+- Expose 1 or 2 uniforms (e.g. speed and a colour).
+- If the set_script result reports an error, a dark frame or "too slow", send a simpler fixed version with set_script, with a fresh spoken reply in its summary.
+- You can SEE your effect: capture_preview renders it on a stand-in for the curtain (a 240-LED serpentine grid; the real counts differ). Use it when seeing the result matters (judging colours, motion, coverage), in the same response as set_script; skip it after a compile error or for a tiny tweak. Capture at most once per wish. After you see it, either fix the effect with set_script (summary = your spoken reply), or give your spoken reply as plain text: the same 2 to 4 vivid, friendly sentences ending with one idea they could ask for next.`;
+const PLAY_SUMMARY = "Your spoken reply to the visitor, shown to them in the chat: 2 to 4 short, " +
+  "vivid, friendly sentences about what they're seeing, ending with one idea they could ask for next. Emit this field FIRST.";
+const PLAY_MAX_TOKENS = 4000;
+// The app withholds capture_preview in play mode but still answers it (owner: the
+// visitor's turn should see previews like the editor does). Same text as chatPrompt.ts.
+const CAPTURE_PREVIEW_TOOL = Object.freeze({ type: "function", function: Object.freeze({
+  name: "capture_preview",
+  description: "Render the current live preview to a PNG image so you can SEE how the " +
+    "effect looks on the LED map right now. Call this ONLY when actually seeing " +
+    "the result matters (e.g. to judge colours, motion, or coverage). Do NOT " +
+    "capture after a compile error (there's nothing new to see — fix the code " +
+    "first), and don't capture on every change; skipping it when unneeded is " +
+    "faster and cheaper.",
+  parameters: { type: "object", additionalProperties: false, properties: {} },
+}) });
+/** Rewrite an Acid play request (see PLAY_MARKER); any other request is unchanged. */
+export function engagePlay(body) {
+  const sys = body.messages[0];
+  const at = sys?.role === "system" && typeof sys.content === "string" ? sys.content.indexOf(PLAY_MARKER) : -1;
+  if (at < 0) return body;
+  return {
+    ...body,
+    max_tokens: PLAY_MAX_TOKENS,
+    messages: [{ ...sys, content: sys.content.slice(0, at) + PLAY_PERSONA }, ...body.messages.slice(1)],
+    tools: body.tools && [...body.tools.map(t => {
+      const summary = t.function.name === "set_script" && t.function.parameters?.properties?.summary;
+      if (!obj(summary)) return t;
+      const properties = { ...t.function.parameters.properties, summary: { ...summary, description: PLAY_SUMMARY } };
+      return { ...t, function: { ...t.function, parameters: { ...t.function.parameters, properties } } };
+    }), ...(body.tools.some(t => t.function.name === "capture_preview") ? [] : [CAPTURE_PREVIEW_TOOL])],
+  };
+}
 export const DEMO_TOOLS = new Set([
   "set_script", "capture_preview", "estimate_performance", "list_midi_controls", "set_midi_mapping",
 ]);
@@ -184,9 +234,10 @@ function completion(json, tools) {
 // Acid Mode prompt costs 1-3 requests. So: 20/minute per isolate (the upstream
 // per-minute cap; more only buys upstream 429s), and per client 6/minute (a prompt
 // plus repairs, twice) and 30/hour (~10-15 prompts), so one visitor can burn at
-// most a few percent of the day.
+// most a few percent of the day. 2026-10-31: Claude (paid, no free-tier daily
+// cap) leads and play mode is a conversation, so 60/hour per client.
 export const DEMO_LIMITS = Object.freeze({
-  perMinute: 20, inFlight: 8, clientPerMinute: 6, clientPerHour: 30, clientActive: 2, clients: 2000,
+  perMinute: 20, inFlight: 8, clientPerMinute: 6, clientPerHour: 60, clientActive: 2, clients: 2000,
 });
 
 /** Rate-limit key for a visitor: the IPv4 address, or the /64 of an IPv6 one.
@@ -268,6 +319,7 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
         return error(e instanceof RangeError ? 413 : 400, "invalid_request");
       }
       if (!validPayload(body)) return error(400, "invalid_request");
+      body = engagePlay(body);
       const attempts = [];
       for (const { id: model, maxPrice, reasoning } of DEMO_MODEL_SPECS) {
         if (total.signal.aborted) break;

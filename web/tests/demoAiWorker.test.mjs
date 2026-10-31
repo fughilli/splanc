@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { clientKey, createDemoRelay, DEMO_LIMITS, DEMO_TOOLS, DEMO_MODELS, RELAY_PATHS } from '../_worker.js';
+import worker, { clientKey, createDemoRelay, DEMO_LIMITS, DEMO_TOOLS, DEMO_MODELS, RELAY_PATHS, engagePlay, PLAY_MARKER, PLAY_PERSONA } from '../_worker.js';
 const url = 'https://splanc.pages.dev/api/demo-ai/chat/completions';
 const env = { OPENROUTER_API_KEY: 'unit-test-secret' };
 const tool = { type: 'function', function: { name: 'set_script', description: 'Edit an effect', parameters: { type: 'object' } } };
@@ -158,7 +158,7 @@ test('sized for a ~1000/day shared key: per-client hourly cap, global per-minute
   let now = 100000;
   const relay = createDemoRelay({ now: () => now, fetchImpl: async () => success() });
   const from = ip => req(body, { headers: { origin: 'https://splanc.io', 'content-type': 'application/json', 'cf-connecting-ip': ip } });
-  // One visitor: 30 requests in an hour (6/minute), then told to wait for the hour.
+  // One visitor: clientPerHour requests in an hour (6/minute), then told to wait for the hour.
   let ok = 0;
   for (let minute = 0; minute < 10; minute++, now += 60001) {
     for (let i = 0; i < DEMO_LIMITS.clientPerMinute; i++) if ((await relay(from('9.9.9.9'), env)).status === 200) ok++;
@@ -394,4 +394,26 @@ test('a paid model the key rejects (400) falls through to the free ones', async 
   const r=await relay(req(),env);
   assert.equal(r.status,200);
   assert.deepEqual(seen,DEMO_MODELS.slice(0,4));
+});
+
+test('Acid play requests get the engaging persona, summary description and token cap; others are untouched', async () => {
+  const setScript = { type: 'function', function: { name: 'set_script', description: 'd',
+    parameters: { type: 'object', properties: { summary: { type: 'string', description: 'AT MOST 5 words' }, source: { type: 'string' } }, required: ['summary', 'source'] } } };
+  const play = { messages: [{ role: 'system', content: `SPEC\n\n${PLAY_MARKER}, terse rules` }, { role: 'user', content: 'ghosts' }], tools: [setScript], max_tokens: 2500 };
+  const out = engagePlay(play);
+  assert.equal(out.messages[0].content, `SPEC\n\n${PLAY_PERSONA}`);
+  assert.equal(out.max_tokens, 4000);
+  assert.match(out.tools[0].function.parameters.properties.summary.description, /spoken reply/);
+  assert.equal(play.tools[0].function.parameters.properties.summary.description, 'AT MOST 5 words', 'input not mutated');
+  assert.deepEqual(out.tools.map(t => t.function.name), ['set_script', 'capture_preview']);
+  assert.ok(out.tools.every(t => DEMO_TOOLS.has(t.function.name)));
+  assert.equal(engagePlay({ ...play, tools: out.tools }).tools.length, 2, 'never added twice');
+  const editor = { ...play, messages: [{ role: 'system', content: 'SPEC' }, play.messages[1]] };
+  assert.equal(engagePlay(editor), editor);
+  // End to end: the rewritten request is what goes upstream.
+  let sent;
+  const relay = createDemoRelay({ fetchImpl: async (_, init) => { sent = JSON.parse(init.body);
+    return Response.json({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'Boo' } }] }); } });
+  assert.equal((await relay(req(play), env)).status, 200);
+  assert.ok(sent.messages[0].content.endsWith(PLAY_PERSONA)); assert.equal(sent.max_tokens, 4000);
 });
