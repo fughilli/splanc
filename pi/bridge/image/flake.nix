@@ -61,6 +61,7 @@
         ./nix/lean.nix
         ./nix/splash.nix
         ./nix/system-update.nix
+        ./nix/bootlog-diag.nix
         { splancBridge.imageRev = rev; }
       ];
 
