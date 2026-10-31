@@ -38,7 +38,7 @@ in
 {
   systemd.watchdog.runtimeTime = lib.mkForce null;
   boot.kernelParams = [ "splanc.splash_stats=1" "softlockup_all_cpu_backtrace=1" ];
-  boot.kernel.sysctl."kernel.hung_task_timeout_secs" = 30;
+  boot.kernel.sysctl."kernel.hung_task_timeout_secs" = lib.mkDefault 30;
 
   systemd.services.splanc-bootlog = {
     description = "DIAGNOSTIC: copy the boot logs to the FAT partition as boot runs";
