@@ -13,6 +13,7 @@
 import { LedMapperClient } from "./client";
 import { connectionRegistry } from "./connectionRegistry";
 import { nativeSocketFactory } from "./nativeSocket";
+import { isBleUrl } from "./bleTransport";
 import { deviceStore, type KnownDevice } from "../store/deviceStore";
 
 const MIN_INTERVAL = 60_000; // one request / minute
@@ -57,6 +58,9 @@ export async function probeDevice(wssUrl: string): Promise<ProbeInfo | null> {
         }
       : null;
   }
+  // A Bluetooth device has no LAN address to probe (and its `ble:` key must never
+  // reach a socket transport: the native WssBridge aborts on it).
+  if (isBleUrl(wssUrl)) return null;
   // Native wrapper: probe through the cert-pinning bridge too (same self-signed
   // wss:// trust as the main client), else the browser WebSocket.
   const factory = nativeSocketFactory();

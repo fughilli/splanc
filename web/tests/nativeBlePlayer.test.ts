@@ -375,3 +375,55 @@ test("in the native app, the device sheet's 'Connect over Bluetooth (offline)' s
     delete g.Capacitor;
   }
 });
+
+test("relaunching the iOS app after a Bluetooth session never hands the ble: key to the native WssBridge", async () => {
+  // TestFlight 1.13.0 (1252): after a Halloween BLE session, every relaunch
+  // aborted in WssBridge.connect -> URLSession.webSocketTask(with: "ble:…"),
+  // because boot restored the active device and the prober probed it through the
+  // native socket bridge. Model the bridge the way iOS behaves: a non-ws(s) URL
+  // is fatal, so any call with one fails the test.
+  const bridgeUrls: string[] = [];
+  const g = globalThis as { Capacitor?: unknown };
+  g.Capacitor = {
+    isNativePlatform: () => true,
+    getPlatform: () => "ios",
+    registerPlugin: () => ({
+      addListener: async () => ({ remove: async () => {} }),
+      connect: async ({ url }: { url: string }) => {
+        bridgeUrls.push(url);
+        if (!/^wss?:\/\//.test(url)) throw new Error(`iOS would abort: webSocketTask(${url})`);
+        return { id: "sock-1" };
+      },
+      send: async () => {},
+      close: async () => {},
+    }),
+  };
+  const { deviceStore } = await import("../src/store/deviceStore");
+  const { deviceProber } = await import("../src/net/deviceProber");
+  const { nativeSocketFactory } = await import("../src/net/nativeSocket");
+  try {
+    const dev = deviceStore.upsert("ble:ios-peripheral-1", "SpookySplanc1");
+    deviceStore.setActive(dev.id);
+
+    appState.restoreActive(); // app launch
+    await advance(100);
+    assert.equal(appState.client, null, "a Bluetooth device is not auto-restored over a socket");
+
+    await deviceProber.probeNow(dev.id); // what a disconnect triggers
+    appState.connect("ble:ios-peripheral-1"); // device-sheet Connect with no BLE link
+    await advance(100);
+    assert.equal(appState.status.state, "offline");
+
+    const s = nativeSocketFactory()!("ble:ios-peripheral-1"); // and the socket itself refuses
+    let closed = false;
+    s.onclose = () => {
+      closed = true;
+    };
+    await settle();
+    assert.ok(closed, "the native socket fails as a JS error");
+    assert.deepEqual(bridgeUrls, [], "nothing reached the native bridge");
+  } finally {
+    deviceStore.setActive(null);
+    delete g.Capacitor;
+  }
+});

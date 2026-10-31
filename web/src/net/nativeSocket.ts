@@ -102,6 +102,13 @@ class NativeSocket implements SocketLike {
   constructor(url: string) {
     void (async () => {
       try {
+        // URLSession's webSocketTask throws an Objective-C exception (an app
+        // abort, not a JS error) for any scheme but ws/wss, so reject here. After
+        // a tick: the caller attaches onerror/onclose once this constructor returns.
+        if (!/^wss?:\/\//i.test(url)) {
+          await Promise.resolve();
+          throw new Error(`not a WebSocket URL: ${url}`);
+        }
         const b = wssBridge();
         await ensureListener();
         const { id } = await b.connect({ url });
