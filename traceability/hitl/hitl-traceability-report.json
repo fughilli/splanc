@@ -18,8 +18,8 @@
     "risks_mitigated": 0,
     "mitigations": 12,
     "mitigations_verified": 0,
-    "test_cases": 29,
-    "gaps": 70
+    "test_cases": 31,
+    "gaps": 72
   },
   "levels": [
     {
@@ -1666,6 +1666,18 @@
       "kind": "untraced-failure",
       "entity": "//pi/hitl/harness:wifi_cadence",
       "message": "//pi/hitl/harness:wifi_cadence pi/hitl/harness/wifi_cadence error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/phone:android_journeys",
+      "message": "//pi/hitl/phone:android_journeys pi/hitl/phone/android_journeys error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/phone:ios_journeys",
+      "message": "//pi/hitl/phone:ios_journeys pi/hitl/phone/ios_journeys error and traces to no requirement",
       "route": "autonomous"
     },
     {
