@@ -1,0 +1,50 @@
+# Waveshare ESP32-P4-WIFI6 board capabilities (the P4 player, docs/design/p4-c6-split.md),
+# a ledmapper.v1.BoardCapabilities message; same format and limits as board_caps.textproto
+# (every string <= 64 bytes, ASCII). Pins from the board schematic
+# (files.waveshare.com/wiki/ESP32-P4-WIFI6/ESP32-P4-WIFI6-datasheet.pdf): the 40-pin
+# header's GPIOs with no other duty on the board are recommended.
+board: "Waveshare ESP32-P4-WIFI6"
+
+# Header, right column (next to VBUS / VSYS / GND).
+gpio_pins { gpio: 20 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 21 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 22 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 23 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 26 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 27 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 32 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 33 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 46 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 47 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 48 safety: PIN_SAFETY_RECOMMENDED }
+# Header, left column.
+gpio_pins { gpio: 2 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 3 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 4 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 5 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 28 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 29 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 30 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 31 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 49 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 50 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 51 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 52 safety: PIN_SAFETY_RECOMMENDED }
+
+gpio_pins { gpio: 7 safety: PIN_SAFETY_CAUTION note: "I2C SDA: codec, DSI and CSI connectors (2.2k pull-up)." }
+gpio_pins { gpio: 8 safety: PIN_SAFETY_CAUTION note: "I2C SCL: codec, DSI and CSI connectors (2.2k pull-up)." }
+
+gpio_pins { gpio: 24 safety: PIN_SAFETY_AVOID note: "USB-Serial-JTAG D- (header pin 19)." }
+gpio_pins { gpio: 25 safety: PIN_SAFETY_AVOID note: "USB-Serial-JTAG D+ (header pin 20)." }
+gpio_pins { gpio: 6 safety: PIN_SAFETY_AVOID note: "Wired to the ESP32-C6's IO2." }
+gpio_pins { gpio: 14 safety: PIN_SAFETY_AVOID note: "SDIO D0 to the on-board ESP32-C6." }
+gpio_pins { gpio: 15 safety: PIN_SAFETY_AVOID note: "SDIO D1 to the on-board ESP32-C6." }
+gpio_pins { gpio: 16 safety: PIN_SAFETY_AVOID note: "SDIO D2 to the on-board ESP32-C6." }
+gpio_pins { gpio: 17 safety: PIN_SAFETY_AVOID note: "SDIO D3 to the on-board ESP32-C6." }
+gpio_pins { gpio: 18 safety: PIN_SAFETY_AVOID note: "SDIO CLK to the on-board ESP32-C6." }
+gpio_pins { gpio: 19 safety: PIN_SAFETY_AVOID note: "SDIO CMD to the on-board ESP32-C6." }
+gpio_pins { gpio: 37 safety: PIN_SAFETY_AVOID note: "UART0 TX: the console and the player link." }
+gpio_pins { gpio: 38 safety: PIN_SAFETY_AVOID note: "UART0 RX: the console and the player link." }
+gpio_pins { gpio: 54 safety: PIN_SAFETY_AVOID note: "ESP32-C6 reset (EN)." }
+
+led_modes { id: "ws281x" label: "WS281x (WS2811/2812/2812B/SK6812)" }

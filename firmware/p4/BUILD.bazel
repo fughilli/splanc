@@ -1,0 +1,86 @@
+"""ESP32-P4 bring-up images (docs/design/p4-c6-split.md §3.1, §7).
+
+esp32p4_hello: the first P4 image. It proves the toolchain end to end (the
+hard-float ilp32f C/C++ build, the P4 SDK libs, the bootloader at 0x2000) and
+prints what the board is: die revision, CPU clock, L2MEM and PSRAM heaps, flash.
+
+    bazel run -c opt //firmware/p4:flash_esp32p4_hello -- --port /dev/cu.usbmodem…
+"""
+
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@embedded//rules:firmware.bzl", "firmware_binary")
+load("@embedded//rules:flash.bzl", "esptool_flash")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# Link the wired Vive tracker module into the P4 player images (off by default):
+#   bazel run -c opt --//firmware/p4:tracker //firmware/player_app:flash_esp32p4_player_c6 -- …
+bool_flag(
+    name = "tracker",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "tracker_on",
+    flag_values = {":tracker": "true"},
+)
+
+cc_binary(
+    name = "hello",
+    srcs = ["hello.cpp"],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32p4": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = ["@embedded//libs/board:arduino_core"],
+)
+
+firmware_binary(
+    name = "esp32p4_hello",
+    binary = ":hello",
+    board = "esp32p4",
+    flash_size = "16MB",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32p4_hello",
+    app = ":esp32p4_hello",
+    bootloader = "@embedded//libs/board:esp32p4_bootloader_bin",
+    bootloader_offset = "0x2000",  # the P4 ROM loads the 2nd-stage bootloader from 0x2000
+    chip = "esp32p4",
+    tags = ["manual"],
+)
+
+# The on-board C6 from the P4: into its ROM downloader (BOOT = GPIO4, jumpered to the
+# C6's IO9 on header H4; EN = GPIO54) and identified over SDIO, then again running its
+# own firmware. The first step toward flashing the C6 from the P4 (§5.1).
+cc_binary(
+    name = "c6probe",
+    srcs = ["c6probe.cpp"],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32p4": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = ["@embedded//libs/board:arduino_core"],
+)
+
+firmware_binary(
+    name = "esp32p4_c6probe",
+    binary = ":c6probe",
+    board = "esp32p4",
+    flash_size = "16MB",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32p4_c6probe",
+    app = ":esp32p4_c6probe",
+    bootloader = "@embedded//libs/board:esp32p4_bootloader_bin",
+    bootloader_offset = "0x2000",
+    chip = "esp32p4",
+    tags = ["manual"],
+)

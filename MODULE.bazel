@@ -85,6 +85,7 @@ go_sdk.download(version = "1.24.0")
 # ---------------------------------------------------------------------------
 
 bazel_dep(name = "rules_rust", version = "0.71.3")
+bazel_dep(name = "platforms", version = "1.1.0")  # constraint labels in rust.repository_set (ESP32-P4)
 bazel_dep(name = "rules_rust_wasm_bindgen", version = "0.71.3")
 
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
@@ -100,8 +101,39 @@ rust.toolchain(
     # Pinned to the version the vendored firmware validated on-device.
     versions = ["1.85.0"],
 )
+# ESP32-P4 (rv32imafc, hard-float ilp32f): rules_rust 0.71 has no riscv32imafc
+# entry in its triple table, so a repository_set with explicit constraints, one
+# per exec host. Constrained to the P4 board AND registered ahead of
+# @rust_toolchains//:all through //firmware/p4/rust: the C6's riscv32imac
+# toolchain is only cpu:riscv32 + os:none and would otherwise match a P4 build
+# (soft-float objects the ilp32f link rejects). docs/design/p4-c6-split.md §3.1.
+[
+    rust.repository_set(
+        name = "rust_{}_riscv32imafc".format(exec_name),
+        edition = "2021",
+        exec_triple = exec_triple,
+        target_compatible_with = [
+            "@platforms//cpu:riscv32",
+            "@platforms//os:none",
+            "@embedded//platforms:esp32p4_board",
+        ],
+        target_triple = "riscv32imafc-unknown-none-elf",
+        versions = ["1.85.0"],
+    )
+    for exec_name, exec_triple in [
+        ("macos_aarch64", "aarch64-apple-darwin"),
+        ("macos_x86_64", "x86_64-apple-darwin"),
+        ("linux_aarch64", "aarch64-unknown-linux-gnu"),
+        ("linux_x86_64", "x86_64-unknown-linux-gnu"),
+    ]
+]
+
 use_repo(
     rust,
+    "rust_linux_aarch64_riscv32imafc__riscv32imafc-unknown-none-elf__stable_tools",
+    "rust_linux_x86_64_riscv32imafc__riscv32imafc-unknown-none-elf__stable_tools",
+    "rust_macos_aarch64_riscv32imafc__riscv32imafc-unknown-none-elf__stable_tools",
+    "rust_macos_x86_64_riscv32imafc__riscv32imafc-unknown-none-elf__stable_tools",
     # musl tools per EXEC host (the static player's rust-lld/rustc run on the
     # build host): linux container (aarch64) + x86_64-linux (CI) + macOS deploy
     # (aarch64 or x86_64). Fetched lazily, so each host pulls only what it uses.
@@ -125,6 +157,9 @@ register_toolchains(
     "//pi/player_rs/musl:macos_x86_64_rust_toolchain",
     "//pi/player_rs/musl:macos_x86_64_cc_toolchain",
 )
+
+# ESP32-P4 Rust, ahead of the hub (see the repository_set above).
+register_toolchains("//firmware/p4/rust:all")
 
 register_toolchains("@rust_toolchains//:all")
 
@@ -452,6 +487,17 @@ git_override(
     remote = "https://github.com/fughilli/hitl-reserve.git",
 )
 
+# Lighthouse (Vive Tracker) tracking: lh_kernel, lh_protocol, lh_device (no_std)
+# from fughilli/lighthouse, pinned (re-sync, not fork: bump the commit). The
+# ESP32-P4 player runs them with the tracker wired to the P4's USB OTG port.
+bazel_dep(name = "lighthouse", version = "0.0.0")
+archive_override(
+    module_name = "lighthouse",
+    integrity = "sha256-8KeGlT7pzwdNLef7lhSrY6z3Dh94V+n5u6gwwPRVEKw=",
+    strip_prefix = "lighthouse-4919232c4e350efcfe4dd6e49a83929cdf046c4f",
+    urls = ["https://github.com/fughilli/lighthouse/archive/4919232c4e350efcfe4dd6e49a83929cdf046c4f.tar.gz"],
+)
+
 bazel_dep(name = "firmware", version = "0.0.0", repo_name = "embedded")
 archive_override(
     module_name = "firmware",
@@ -500,6 +546,14 @@ archive_override(
         # (--@embedded//ld:esp32c6_sections_override, set in .bazelrc) — how the
         # player moves dead/cold vendor IRAM code to flash on the prebuilt SDK.
         "//patches:embedded-esp32c6-sections-ld-override.patch",
+        # esptool-5.6: @esptool from nix/esptool.nix (5.6.0 + esp-pylib). The
+        # nixos-25.11 pin's 5.1.0 can't flash an ESP32-P4 v3.x. Fold upstream.
+        "//patches:embedded-esptool-5.6.patch",
+        # esp32p4-build-target: the ESP32-P4 (die v3.1+, ilp32f) firmware target —
+        # platform, cc_toolchain, board/bootloader (0x2000), and the esp32p4
+        # section of the arduino_esp32 scaffold generated from the libs' flags/*
+        # by tools/gen_embedded_p4_section.py. docs/design/p4-c6-split.md §3.1.
+        "//patches:embedded-esp32p4-build-target.patch",
     ],
     strip_prefix = "embedded-569102d541664d790fc708206f450dce477ca220",
     urls = ["https://github.com/fughilli/embedded/archive/569102d541664d790fc708206f450dce477ca220.tar.gz"],
@@ -697,3 +751,13 @@ http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_
         "linux_arm64": "3f2c3c0b629a426cb5452fdf54b88c92b554344689e67c592046dbbc017fa562",
     }.items()
 ]
+
+# Espressif's flasher stub for the ESP32-C6 (esp-flasher-stub v1.3.0, Apache-2.0 OR MIT):
+# the P4 uploads it through the C6 ROM's SDIO downloader, which can only load RAM and
+# jump, to flash the on-board C6 (//firmware/p4/c6flash, docs/design/p4-c6-split.md §5.1).
+http_file(
+    name = "esp_flasher_stub_esp32c6",
+    downloaded_file_path = "esp32c6.json",
+    sha256 = "a326f564fa8fe3ec69c1c17a9dd2df8918da1e37b44004019a643f5f181b8b27",
+    urls = ["https://github.com/espressif/esp-flasher-stub/releases/download/v1.3.0/esp32c6.json"],
+)

@@ -20,7 +20,9 @@
 //    submit_map is ~45 KB); larger -> close 1009 (message too big).
 #include <Arduino.h>
 #include <Preferences.h>
+#if !defined(LM_LINK)
 #include <WiFi.h>
+#endif
 #include <esp_cpu.h>
 #include <esp_mac.h>
 #include <esp_littlefs.h>
@@ -34,6 +36,7 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <errno.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
@@ -74,6 +77,10 @@
 #endif
 #include "firmware/player_app/ws2812.h"
 #include "firmware/player_app/ws_codec.h"
+#include "firmware/player_app/player_module.h"  // optional hardware modules (e.g. the P4 tracker)
+#if defined(LM_FRONTEND)
+#include "frontend_link.h"  // the C6 front end: player messages go to the P4 over SDIO
+#endif
 
 // FUG-125: executable-memory primitives for the on-device JIT. The Rust FFI
 // (ffi.rs::fx_build_jit) compiles hot fx_vm blocks to RV32 PIC segments and asks
@@ -135,12 +142,46 @@ extern "C" {
 // The Rust side plans + compiles the effect's hot blocks straight into this
 // region (as a `&mut [u32]`), then calls lm_jit_arm once + lm_jit_sync_icache.
 uint32_t *lm_jit_region_ptr(void) { return reinterpret_cast<uint32_t *>(g_jit_region); }
+#if defined(LM_LINK)
+// The P4 runs the interpreter until the scalar digests match the host (p4-c6-split.md
+// §3.4); its PMP layout isn't the C6's, so the region is never armed there.
+size_t lm_jit_region_words(void) { return 0; }
+#else
 size_t lm_jit_region_words(void) { return kJitRegionSize / 4; }
+#endif
 void lm_jit_arm(void) {
   if (!g_jit_armed) jit_arm_exec_region();
 }
 void lm_jit_sync_icache(void) { asm volatile("fence.i" ::: "memory"); }
 size_t lm_jit_region_size(void) { return kJitRegionSize; }
+}
+
+// The CPU clock the cycle counter runs at (ffi.rs PERF_CPU_HZ says the same to the app):
+// the C6 at 160 MHz, the P4 player at 400 MHz.
+#if defined(LM_LINK)
+static constexpr uint32_t kCpuHz = 400000000u;
+#else
+static constexpr uint32_t kCpuHz = 160000000u;
+#endif
+
+// -- player modules (player_module.h) -------------------------------------------------
+namespace {
+constexpr int kMaxModules = 4;
+const LmPlayerModule *g_modules[kMaxModules];
+int g_n_modules = 0;
+}  // namespace
+
+void lm_register_module(const LmPlayerModule *m) {
+  if (g_n_modules < kMaxModules) g_modules[g_n_modules++] = m;
+}
+
+void lm_module_log(const char *fmt, ...) {
+  char buf[256];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof buf, fmt, ap);
+  va_end(ap);
+  Log().print(buf);
 }
 
 // Post-boot heap census hook (heap_census.cpp, where linked); a no-op otherwise.
@@ -181,6 +222,9 @@ static const uint16_t kWsPort = 81;
 // persisted custom name, or a "Led Widget <6-hex>" default derived from the MAC.
 // Reflected to BLE + persisted whenever the app sends set_device_name.
 static char g_device_name[33] = "Led Widget";
+#if defined(LM_FRONTEND)
+static char g_macstr[18] = "";  // what the front end advertises; pushed to the P4 with the name
+#endif
 // The soft-AP SSID and mDNS/DHCP hostname, both derived from g_device_name
 // (see names_from_identity): SSID is "<name>-AP"; the hostname is a DNS-label-
 // safe slug of the name so that <hostname>.local resolves over mDNS. Recomputed
@@ -301,7 +345,7 @@ static TaskHandle_t xmit_task_handle = nullptr;
 // before staging the next frame, so a snapshot never races an in-flight push.
 static SemaphoreHandle_t xmit_done = nullptr;
 // Latest transmit span (wall µs), written by the transmit task: the autoscaler's wire
-// cost and (×160) the perf ring's show cycles. Wall time, not the CPU cycle counter:
+// cost and (× kCpuHz in MHz) the perf ring's show cycles. Wall time, not the CPU cycle counter:
 // the counter pauses while the core idles in WFI during the DMA transmit, so it read
 // ~3 ms for a 7.5 ms wire frame when idle but the full 7.5 ms when other work kept the
 // core busy — the pacing then shifted with background load (wifi_cadence: a 77 fps
@@ -1304,16 +1348,21 @@ static void poll_device_rename() {
   g_device_name[sizeof g_device_name - 1] = 0;
   prefs.putString("name", g_device_name);
   improv_ble_set_name(g_device_name);
+#if defined(LM_FRONTEND)
+  frontend_link_set_identity(g_macstr, g_device_name);
+#endif
   Log().printf("[player] renamed to \"%s\"\n", g_device_name);
   // Track the new name across the AP SSID, the STA/AP + mDNS hostnames, and the
   // BLE advertisement. The soft-AP is reconfigured live only while it's still up
   // (it's torn down once a LAN is joined).
   names_from_identity();
+#if !defined(LM_LINK)
   WiFi.setHostname(g_hostname);
   if (softap_up) {
     WiFi.softAPsetHostname(g_hostname);
     WiFi.softAP(g_ap_ssid, kApPassword);
   }
+#endif
   mdns_begin_or_update();
   // Deliberately do NOT re-issue the wss cert here. The rename changes only the
   // hostname (cert CN + the <hostname>.local DNS SAN); the STA IP — the SAN the
@@ -1457,6 +1506,8 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
   if (!fs_ok) return -1;  // uploads need the fs (stream-decode + persistence)
 
   if (ch->seq == 0) {
+    Log().printf("[upload] kind %d id %u: first window %u B%s\n", (int)ch->kind, (unsigned)ch->upload_id,
+                 (unsigned)ch->payload_len, ch->last ? " (the only one)" : "");
     upload_active = false;
     FILE *f = fs_open(kUploadTmp, "wb");
     if (f == nullptr) return -1;
@@ -1469,6 +1520,8 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
     upload_next_seq = 1;
   } else {
     if (!upload_active || ch->seq != upload_next_seq) {
+      Log().printf("[upload] window %u out of order (expected %u, active %d): dropped\n", (unsigned)ch->seq,
+                   (unsigned)upload_next_seq, (int)upload_active);
       upload_active = false;
       return -1;  // out-of-order / stale window → drop; the client retries
     }
@@ -1532,6 +1585,10 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
   poll_device_rename();
 
   const bool ok = n > 0 && lm_envelope_arm(tx, (size_t)n) == kArmResultReady;
+  Log().printf("[upload] %s: %u B in %u windows, decoded in %d ms: reply %d B (arm %d)%s\n",
+               upload_kind == 1 ? "topology" : "map", (unsigned)upload_total, (unsigned)upload_next_seq,
+               (int)((int64_t)millis() - now), (int)n, n > 0 ? (int)lm_envelope_arm(tx, (size_t)n) : -1,
+               ok ? "" : ": NOT stored");
   if (ok) {
     const char *dest = (upload_kind == 1) ? kTopoPath : kMapPath;
     remove(dest);
@@ -1559,6 +1616,22 @@ static int ws_compute_reply_body(const uint8_t *msg, size_t len) {
   // Firmware update arms (ota_app.cpp): answered here, never by the player core.
   int ota = ota_app_dispatch(msg, len, tx, sizeof tx);
   if (ota != 0) return ota;
+#if defined(LM_FRONTEND)
+  // The C6 front end (docs/design/p4-c6-split.md §2.2): the arms it owns are answered
+  // here; everything else is the P4's. A rename is applied here too (BLE and mDNS
+  // advertise the name), then forwarded. While the P4 is down this C6's own player core
+  // answers, so the app still reaches the device.
+  {
+    const int32_t arm = lm_envelope_arm(msg, len);
+    const bool local = arm == 45 || arm == 90 || arm == 91;
+    if (arm == 27) dispatch_plain(msg, len);
+    if (!local) {
+      const int n = frontend_forward(1, msg, len, tx, sizeof tx, 1000);
+      if (n >= 0) return n;
+      if (n == -2) return -1;  // the P4's, undelivered: drop the session, the client retries
+    }
+  }
+#endif
   // Sharded upload window? Stream it to flash (process_upload_chunk writes the ack into tx
   // and handles the final-decode + persist).
   LmUploadChunk ch;
@@ -1895,6 +1968,41 @@ static uint32_t g_fx_delay_min = 0xffffffffu, g_fx_delay_max = 0;  // render sle
 static uint32_t s_fx_last_ms = 0;
 static int64_t s_fx_frame_start_us = 0;  // this effect frame's render start (pacing)
 
+// Frame timeline for the modules' frame() hook (player_module.h LmFrameTiming): a staged
+// effect frame's start travels with it to the transmit task (g_staged_start_us, written
+// under the xmit_done gate like the frame), which stamps when it lit; the render task keeps
+// the recent lead (lit - start) to tell the modules when the frame they are feeding will
+// light. A tracker module predicts its pose to that instant.
+static constexpr int64_t kLatchUs = 300;  // the strip's latch low (firmware/fps LATCH_US)
+static int64_t g_staged_start_us = 0;
+static portMUX_TYPE g_lit_mux = portMUX_INITIALIZER_UNLOCKED;
+static int64_t g_lit_start_us = 0, g_lit_us = 0;
+
+// Render task, effect frame, player mutex held, right before update(): each module's
+// frame() hook. `leds` is this frame's transmit length (the estimate before any has lit).
+static void modules_frame(uint32_t leds) {
+  static int64_t lead_us = 0, seen_start_us = 0;
+  bool any = false;
+  for (int i = 0; i < g_n_modules; i++) any |= g_modules[i]->frame != nullptr;
+  if (!any) return;
+  LmFrameTiming t;
+  taskENTER_CRITICAL(&g_lit_mux);
+  t.lit_start_us = g_lit_start_us;
+  t.lit_us = g_lit_us;
+  taskEXIT_CRITICAL(&g_lit_mux);
+  if (t.lit_start_us != 0 && t.lit_start_us != seen_start_us) {
+    seen_start_us = t.lit_start_us;
+    const int64_t lead = t.lit_us - t.lit_start_us;
+    lead_us = lead_us == 0 ? lead : lead_us + (lead - lead_us) / 8;
+  }
+  t.start_us = s_fx_frame_start_us;
+  // Until a frame has lit: the wire (28.8 us per LED) and the latch, plus ~1 ms of render.
+  t.present_us = t.start_us + (lead_us != 0 ? lead_us : (int64_t)leds * 288 / 10 + kLatchUs + 1000);
+  for (int i = 0; i < g_n_modules; i++) {
+    if (g_modules[i]->frame) g_modules[i]->frame(&t);
+  }
+}
+
 static uint32_t render_once() {
   static uint32_t last_shown_frame = 0xffffffff;
   static bool was_active = false;
@@ -2107,6 +2215,9 @@ static uint32_t render_once() {
     // compute, and it runs mailbox code the effect never touches (cold in the flash cache).
     osc_drain_frame();
 #endif
+    // Modules feed the pool last, with values for when this frame will light (a tracker's
+    // predicted pose): after the control input, right before update() reads it.
+    modules_frame(n);
     // Cycle-counter span around update() (perf-monitoring.md: two CSR reads,
     // negligible against the per-frame float ops).
     uint32_t c_frame_start = esp_cpu_get_cycle_count();
@@ -2239,7 +2350,7 @@ static uint32_t render_once() {
     // longer channel is the wire time — see led_store_begin.)
     wire_leds = count0 > count1 ? count0 : count1;
     led_show_async(fx_frame_rendered, count0, count1, use_frame_order ? frame_order : nullptr);
-    if (fx_frame_rendered) show_c = g_show_us * (160000000u / 1000000u);
+    if (fx_frame_rendered) show_c = g_show_us * (kCpuHz / 1000000u);
   }
 
   // An effect frame: feed its cost to the framerate autoscaler (FUG-82) for the
@@ -2280,7 +2391,7 @@ static uint32_t render_once() {
     // with just the 1-3 ms a near-budget frame left of its period, a NEW client's
     // TLS handshake, DHCP and the Wi-Fi join starved (1.12.3 field: players stayed
     // unreachable under such an effect, at every boot too since it persists).
-    uint32_t cpu_us = perf_frame_c / (160000000u / 1000000u);
+    uint32_t cpu_us = perf_frame_c / (kCpuHz / 1000000u);
     uint32_t share_ms = lm_fps_net_share_ms(cpu_us);
     next_delay_ms = lm_fps_on_frame(cost_us, cpu_us, wire_leds, perf_led_count);
     {
@@ -2289,7 +2400,7 @@ static uint32_t render_once() {
       // period − the wall time this frame has already taken — but never less than the
       // network's share of this frame's compute. The transmit overlaps the next frame's
       // render (the next stage waits for it), so it shortens nothing here.
-      uint32_t period_us = lm_fps_budget_cycles() / (160000000u / 1000000u);
+      uint32_t period_us = lm_fps_budget_cycles() / (kCpuHz / 1000000u);
       if (cost_us <= period_us && fx_elapsed_us >= 0 && (uint64_t)fx_elapsed_us < period_us) {
         uint32_t want_us = period_us - (uint32_t)fx_elapsed_us;
         next_delay_ms = (want_us + 500) / 1000;
@@ -2372,6 +2483,13 @@ static portMUX_TYPE g_osc_mux = portMUX_INITIALIZER_UNLOCKED;
 
 void lm_netstack_osc_rx(const uint8_t *data, size_t len) {
   if (len == 0 || len > kOscRxCap) return;
+#if defined(LM_FRONTEND)
+  frontend_link_osc(data, len);  // the P4 owns the uniforms (and any module's addresses)
+  return;
+#endif
+  for (int i = 0; i < g_n_modules; i++) {
+    if (g_modules[i]->osc && g_modules[i]->osc(data, len)) return;  // a module's own address
+  }
   if (!lm_osc_mailbox_bound()) {  // only this (network) task binds it
     const size_t bytes = lm_osc_mailbox_bytes();
     void *mem = heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -2469,8 +2587,17 @@ static void xmit_task(void *) {
     const uint32_t tr_seq = g_tr_staged_seq;
     if (g_show_timed) tr_xmit(tr_seq, false);
 #endif
+    const int64_t staged_start_us = g_staged_start_us;
     ws2812_send();
     if (g_show_timed) g_show_us = (uint32_t)(esp_timer_get_time() - t0);
+    if (g_show_timed && staged_start_us != 0) {
+      // The frame's last bit is out; it shows once the line has been low for the latch.
+      const int64_t lit = esp_timer_get_time() + kLatchUs;
+      taskENTER_CRITICAL(&g_lit_mux);
+      g_lit_start_us = staged_start_us;
+      g_lit_us = lit;
+      taskEXIT_CRITICAL(&g_lit_mux);
+    }
 #if defined(LM_NETSTACK) && defined(LM_CTRL_TRACE)
     if (g_show_timed) tr_xmit(tr_seq, true);
 #endif
@@ -2504,6 +2631,7 @@ static void led_show_async(bool timed, uint32_t count0, uint32_t count1,
   // overwrite `leds` immediately.
   ws2812_stage(reinterpret_cast<const uint8_t *>(leds), count0, count1, order_override);
   g_show_timed = timed;
+  g_staged_start_us = timed ? s_fx_frame_start_us : 0;
   xTaskNotifyGive(xmit_task_handle);
 }
 
@@ -3347,6 +3475,10 @@ void setup() {
   // serial is disconnected.
   Serial.setTxTimeoutMs(100);
   log_drain_start();
+#if defined(LM_FRONTEND)
+  // The SDIO slave first: the P4 probes for this front end as soon as it boots.
+  frontend_link_begin();
+#endif
   // Self-report WHY we last reset, first thing each boot. A clean power-on/USB reset is
   // expected; a PANIC/INT_WDT/TASK_WDT/BROWNOUT means the firmware actually crashed. This
   // one line disambiguates "device rebooted" from "device merely went unreachable" without
@@ -3452,7 +3584,11 @@ void setup() {
   // FNV-1a hash of the MAC; a user-set name persisted in NVS overrides it.
   // Resolved BEFORE WiFi comes up so the AP SSID + hostname derive from it.
   uint8_t macb[6] = {0};
+#if defined(LM_LINK)
+  esp_read_mac(macb, ESP_MAC_EFUSE_FACTORY);  // the P4 has no BT MAC (its radio is the C6's)
+#else
   esp_read_mac(macb, ESP_MAC_BT);
+#endif
   char macstr[18];
   snprintf(macstr, sizeof macstr, "%02X:%02X:%02X:%02X:%02X:%02X", macb[0], macb[1], macb[2],
            macb[3], macb[4], macb[5]);
@@ -3495,6 +3631,10 @@ void setup() {
 
   lm_player_set_identity(reinterpret_cast<const uint8_t *>(macstr), strlen(macstr),
                          reinterpret_cast<const uint8_t *>(g_device_name), strlen(g_device_name));
+#if defined(LM_FRONTEND)
+  frontend_link_set_identity(macstr, g_device_name);
+  strncpy(g_macstr, macstr, sizeof g_macstr - 1);
+#endif
   // Build info stamped in at build time (FUG-126): the full git commit + dirty
   // flag + release version, echoed in every welcome so the app can show + link
   // the device's build.
@@ -3587,6 +3727,10 @@ void setup() {
   Log().printf("[ota] LM_OTA_FAULT=2: render task not started (fault-injection build)\n");
   (void)render_stack;
   (void)render_tcb;
+#elif defined(LM_FRONTEND)
+  // The front end renders nothing (the P4 does): no render task.
+  (void)render_stack;
+  (void)render_tcb;
 #else
   xTaskCreateStatic(render_task, "render", kRenderTaskStack, nullptr, kRenderTaskPrio,
                     render_stack, &render_tcb);
@@ -3616,6 +3760,10 @@ void setup() {
   // 135-145 ms, the receive window advertised zero 300+ times, the session closed).
   vTaskPrioritySet(nullptr, kRenderTaskPrio - 1);
 #endif
+  for (int i = 0; i < g_n_modules; i++) {
+    Log().printf("[module] %s\n", g_modules[i]->name);
+    if (g_modules[i]->begin) g_modules[i]->begin();
+  }
   // Boot is done: from here on every heap allocation is attributed to its call site
   // (heap_census.cpp; read over JTAG, never reported by the DUT).
   lm_heap_freeze();
@@ -3728,6 +3876,49 @@ static void mode_observe() {
 }
 #endif
 
+#if defined(LM_LINK)
+// The front end's identity (LK_OP_NAME, link_transport.cpp): the C6 owns the device name
+// and the MAC the app knows it by (BLE, mDNS), so the P4's Welcome reports those. Loop task.
+extern "C" void lm_link_identity(const char *mac, const char *name) {
+  // The MAC too: the name alone matches after every reboot (it's kept here), and then the
+  // Welcome would carry this chip's MAC instead of the one the app and the bridge trust.
+  static char applied_mac[18];
+  if (strncmp(name, g_device_name, sizeof g_device_name) == 0 && strncmp(mac, applied_mac, sizeof applied_mac) == 0)
+    return;
+  strncpy(applied_mac, mac, sizeof applied_mac - 1);
+  const bool renamed = strncmp(name, g_device_name, sizeof g_device_name) != 0;
+  strncpy(g_device_name, name, sizeof g_device_name - 1);
+  g_device_name[sizeof g_device_name - 1] = 0;
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  lm_player_set_identity(reinterpret_cast<const uint8_t *>(mac), strlen(mac),
+                         reinterpret_cast<const uint8_t *>(g_device_name), strlen(g_device_name));
+  xSemaphoreGive(player_mutex);
+  if (renamed) prefs.putString("name", g_device_name);
+  Log().printf("[player] identity from the front end: %s \"%s\"\n", mac, g_device_name);
+}
+#endif
+
+bool lm_module_osc_send(const uint8_t *data, size_t len) {
+#if defined(LM_NETSTACK)
+  return netstack_osc_send(data, len);
+#else
+  (void)data;
+  (void)len;
+  return false;
+#endif
+}
+
+// Loop task, between frames (player_module.h): each module's pool values, under the player mutex (a try-lock:
+// mid-frame, the next pass does it).
+static void modules_publish() {
+  if (g_n_modules == 0 || xSemaphoreTake(player_mutex, 0) != pdTRUE) return;
+  for (int i = 0; i < g_n_modules; i++) {
+    if (g_modules[i]->publish) g_modules[i]->publish();
+  }
+  xSemaphoreGive(player_mutex);
+}
+
+
 void loop() {
   // loop() now only services the network stacks; the LEDs are driven by
   // render_task (started in setup), decoupled from this cooperative cycle.
@@ -3786,6 +3977,12 @@ void loop() {
   // on the mutex for the rest of the frame.
   if (g_render_in_frame) {
     if (netstack_service_due()) netstack_loop();
+    // Modules' poll() needs no mutex and keeps its own schedule (the tracker's poses
+    // out, 30 Hz): a frame fills nearly all of a 60 fps period, so waiting for the gap
+    // between frames starved it for seconds at a time.
+    for (int i = 0; i < g_n_modules; i++) {
+      if (g_modules[i]->poll) g_modules[i]->poll();
+    }
     // Sleep until the frame ends (render gives the mutex: the full pass runs at once, as
     // when the loop blocked on it) or the next RX poll is due. Polling on every tick still
     // cost +4 % frame cycles on a 10 ms frame (each wake is a context switch plus
@@ -3796,6 +3993,13 @@ void loop() {
     return;
   }
   netstack_loop();  // RX drain + DHCP + BLE-Improv join + TLS/WS pump (dispatched shared)
+#if defined(LM_FRONTEND)
+  frontend_link_poll();
+#endif
+  modules_publish();
+  for (int i = 0; i < g_n_modules; i++) {
+    if (g_modules[i]->poll) g_modules[i]->poll();
+  }
   poll_wifi_policy();
   loop_priority_follow_data_plane();
   mode_observe();
@@ -3817,7 +4021,12 @@ void loop() {
       seen_ticks = t;
       seen_at = now_ms;
     }
+#if defined(LM_FRONTEND)
+    bool render_alive = true;  // the front end renders nothing; the P4 does
+    (void)seen_at;
+#else
     bool render_alive = seen_at != 0 && now_ms - seen_at < 2000;
+#endif
 #if defined(LM_NETSTACK)
     // Offline / manual (outside a join window): the board isn't supposed to reach a
     // network, so a fresh update's health is judged on rendering alone — it must never
@@ -3875,6 +4084,13 @@ void loop() {
                  (unsigned)LM_MODE.unmodeled);
     char net[200];
     netstack_net_stats(net, sizeof net);
+#if defined(LM_FRONTEND)
+    {
+      char ln[120];
+      frontend_link_stats(ln, sizeof ln);
+      Log().printf("[link] %s\n", ln);
+    }
+#endif
     Log().printf("[net] t=%lu %s mtx_wait_max=%uus handle_max=%uus\n", (unsigned long)millis(),
                  net, (unsigned)g_mtx_wait_max_us, (unsigned)g_handle_max_us);
     g_mtx_wait_max_us = 0;
@@ -3892,6 +4108,9 @@ void loop() {
 #if defined(LM_SENSORS)
     sensor_log_status();
 #endif
+    for (int i = 0; i < g_n_modules; i++) {
+      if (g_modules[i]->status) g_modules[i]->status();
+    }
   }
   delay(1);
 }

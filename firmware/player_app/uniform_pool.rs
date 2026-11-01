@@ -26,11 +26,13 @@ use ledmapper_sensor::math::Quat;
 use super::{deck, fx_set_uniform, sensor_ffi, N_DECKS};
 
 /// Pool entries: the fixed sensor names + up to 8 dynamic ones (one driver's
-/// exports; each dynamic entry is 44 B of static RAM).
+/// exports; each dynamic entry is 92 B of static RAM: up to a mat4).
 pub const POOL_CAP: usize = SENSOR_ENTRIES.len() + 8;
 /// Bound uniforms per deck.
 pub const MAX_BIND: usize = 12;
 const NAME_MAX: usize = osc::MAX_NAME;
+/// Floats per entry: up to a mat4 (the P4 tracker's poses), like any uniform (osc::MAX_WIDTH).
+const VALS_MAX: usize = osc::MAX_WIDTH;
 
 /// The native sensor core's entries: (uniform name, width). Units are chosen
 /// for effects: accelerations in g (1.0 = gravity), angles in radians, and
@@ -66,12 +68,12 @@ struct Entry {
     name: [u8; NAME_MAX],
     name_len: u8,
     width: u8,
-    vals: [f32; 4],
+    vals: [f32; VALS_MAX],
     /// Dynamic entries: has a value been published since (re)creation.
     live: bool,
 }
 
-const EMPTY: Entry = Entry { name: [0; NAME_MAX], name_len: 0, width: 0, vals: [0.0; 4], live: false };
+const EMPTY: Entry = Entry { name: [0; NAME_MAX], name_len: 0, width: 0, vals: [0.0; VALS_MAX], live: false };
 
 #[derive(Clone, Copy)]
 struct Bind {
@@ -170,7 +172,7 @@ unsafe fn rebind_all() {
 /// # Safety
 /// Loop task, under the player mutex.
 pub(crate) unsafe fn publish(name: &[u8], vals: &[f32]) -> bool {
-    if name.is_empty() || name.len() > NAME_MAX || vals.is_empty() || vals.len() > 4 {
+    if name.is_empty() || name.len() > NAME_MAX || vals.is_empty() || vals.len() > VALS_MAX {
         return false;
     }
     let dyn_ = &mut *addr_of_mut!(DYN);
@@ -230,12 +232,12 @@ pub(crate) unsafe fn apply_frame() {
     for d in 0..N_DECKS {
         for b in &(*addr_of!(BINDS))[d][..n[d] as usize] {
             let i = b.entry as usize;
-            let mut v = [0.0f32; 4];
+            let mut v = [0.0f32; VALS_MAX];
             if i < SENSOR_ENTRIES.len() {
                 let Some(s) = snap.as_ref() else { continue };
                 let g = 1.0 / ledmapper_sensor::math::GRAVITY;
                 match i {
-                    0 => v = quat_to_map(s.quat),
+                    0 => v[..4].copy_from_slice(&quat_to_map(s.quat)),
                     1 => v[..3].copy_from_slice(&Quat::from_array(s.quat).to_euler()),
                     2 => v[..3].copy_from_slice(&to_map(s.gravity, 1.0)),
                     3 => v[..3].copy_from_slice(&to_map(s.linear_accel, g)),
@@ -266,4 +268,19 @@ fn to_map(v: [f32; 3], k: f32) -> [f32; 3] {
 /// about x. Expanded: (w, x, y, z) -> (w, x, z, -y).
 fn quat_to_map(q: [f32; 4]) -> [f32; 4] {
     [q[0], q[1], q[3], -q[2]]
+}
+
+/// C ABI over [`publish`] for native producers on the C++ side (the P4 player's wired
+/// tracker publishes `tracker_pos` / `tracker_quat` / `tracker_ok` here). Returns
+/// whether the value was taken.
+///
+/// # Safety
+/// Loop task, under the player mutex; `name` and `vals` point at `name_len` bytes and
+/// `n` floats.
+#[no_mangle]
+pub unsafe extern "C" fn lm_pool_publish(name: *const u8, name_len: usize, vals: *const f32, n: usize) -> bool {
+    if name.is_null() || vals.is_null() {
+        return false;
+    }
+    publish(core::slice::from_raw_parts(name, name_len), core::slice::from_raw_parts(vals, n))
 }

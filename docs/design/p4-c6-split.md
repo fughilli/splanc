@@ -3,6 +3,14 @@
 Status: proposed. Nothing here is built yet. Phase A runs on the bare ESP32-P4 dev boards we
 already have. Phase B waits for the P4 boards with an on-board C6 on SDIO, which are on order.
 
+Progress (2026-10-29, Waveshare ESP32-P4-WIFI6, die v3.2): `//firmware/p4:esp32p4_hello` runs.
+`//firmware/player_app:esp32p4_player` (main.cpp with `LM_LINK`) speaks the §4.1 link frames
+(`//firmware/p4/link`) over UART0 at 2 Mbaud, and `tools/p4_link_bridge.py` serves `ws://`
+for it: `player_probe` passes and `fx_bench` runs end to end through the bridge, with the JIT
+off. The PARLIO driver initialises on GPIO20/21; it has not been checked on a logic analyzer
+yet. A Vive tracker on the HS OTG port feeds the uniform pool (`tracker_pos`, `tracker_quat`,
+`tracker_ok`).
+
 Owner direction (2026-10-26): *"Let's integrate a c6 and p4 to have the expanded compute headroom
 while still having wifi and ble."* And: *"We can do some initial porting and FX engine validation
 against the bare P4 boards and then do the wireless bringup when we have the ones with the
@@ -609,6 +617,52 @@ measured: that's a Phase B measurement. The link is never the video bottleneck a
 C6 can receive. With the C6 no longer rendering, its loop always runs at full rate. That removes
 the starvation failure in `wifi-rejoin-policy.md` (523 ms p50) outright.
 
+### 4.2.1 Tracker: photon to photon
+
+From a base station's laser crossing a photodiode on the wired tracker to the LEDs showing a pose
+that includes it. The pose comes from the tracker module (`//firmware/p4/tracker`). Stages, with
+the medians before and after the latency work (2026-10-31, ms):
+
+| Stage | Before | After | What changed |
+| --- | ---: | ---: | --- |
+| light → in the filter | 6.5 (p99 8.4) | 1.4 (p99 3.6) | the kernel waited for the next cycle's sync to send a sweep. It now streams each report's hits into the filter (`TimingConfig::stream_sweeps`) [V: P4 dump `p4_wired2` replayed in `lhd --host-clock --stream-sweeps`] |
+| kernel, per sweep | ~1, bursts | ~0.1 [E] | the EKF propagate was a dense 23×23 Φ P Φᵀ at every hit. It now works on the 30 non-zeros of Φ − I in place (same poses to µm on the recorded sessions) |
+| → the frame that shows it | ≤ 2 frames (80 fps) | ≤ 1 frame (125 fps) | the loop task used to publish the pose between frames. The render task now reads it at each frame's start (`LmPlayerModule::frame`), and tracker images drop the 80 fps ceiling (`wire_ceiling`: only the wire bounds them) |
+| frame → lit | ~8.5 | ~8.5 | render ~1 ms + wire 28.8 µs × 250 LEDs + 300 µs latch: WS2812 physics |
+
+The light figures are "above the fastest report". The tracker's 48 MHz clock maps onto the P4's
+(`lh_device::clock::HostClock`) through the fastest delivery seen, so the tracker's own delay
+before that (USB polling, its internal buffering) can't be seen from the P4 and counts as zero.
+`/lh/lead` (below) stands in for it. On the wired tracker, light reports come 0–3 ms after the
+fastest, with a ~5 % tail past 7 ms. IMU reports come ~3.5 ms behind light.
+
+**Prediction.** Each pose carries the head's velocity and acceleration (gravity removed) and the
+angular rate, from the filter and the newest IMU sample. The frame hook extrapolates the pose to
+when that frame will light: constant acceleration and angular rate, so free fall is exact. That
+time is the frame's start plus the recent lead (lit − start), which the transmit task measures
+for every effect frame. The pool's `tracker` and `pose` are the predicted ones.
+
+**Instrumentation.** Every 5 s the status line adds:
+
+- `photon->photon` per stage (mean/max over the frames that lit): light → report, kernel →
+  frame → lit;
+- the prediction's horizon and how far the actual light-up was from the expected one;
+- the tracker task's CPU per kind of work (decode, IMU, light, pose-making parts), how late
+  light reports came, and the sweeps and parts.
+
+**Switches** (OSC on udp/9000):
+
+- `/lh/predict ,f` 1/0 turns prediction on or off;
+- `/lh/lead ,f` adds ms to the prediction;
+- `/lh/stream ,f` 1/0 streams sweeps (the default) or sends them whole.
+
+Streaming costs a little accuracy under fast rotation. On the recorded turntable sessions with
+fixed stations, the radial RMS went from 18 to 31 mm. On the slider it was unchanged (0.63 mm).
+
+**Not measured yet.** All of this needs the board to confirm. For an absolute number including
+the tracker's own delay, a photodiode next to one of the tracker's sensors, on a spare GPIO, sees
+the same laser crossing on the P4's clock.
+
 ### 4.3 C6 firmware: the front-end build
 
 **What changes.** A new `esp32c6_frontend` target. It is `player_app_netstack` with the player core
@@ -808,6 +862,20 @@ writes the P4's flash, and the P4 never writes the C6's application flash.
 - **Why not "the C6 flashes the P4"?** The P4 is the SDIO host, and its boot straps and UART are
   not wired to the C6 on these boards [U]. More to the point, the P4 doesn't need it: A/B plus
   rollback is safer than any external flasher, and the image still travels through the C6.
+
+**Flashing the C6 from the P4 (decided 2026-10-29).** The C6 ROM's SDIO downloader speaks
+only the SIP boot protocol: WRITE_MEMORY and BOOTUP, in 256-byte packets. It cannot write flash
+itself, so a RAM chain loader is required. The P4 SIP-uploads Espressif's flasher stub
+(`esp-flasher-stub` v1.3.0, Apache-2.0 OR MIT, pinned as data) and then drives it with esptool
+commands (FLASH_BEGIN / DATA / END, SPI_FLASH_MD5) over the SDIO packet registers. The host side
+is ours (`firmware/p4/c6flash`); `esp-serial-flasher` was read as the reference, not linked.
+The P4 image carries the C6 images, so one P4 release pins its C6 build. The board needs the
+C6's IO9 (BOOT) on a P4 GPIO; the Waveshare ESP32-P4-WIFI6 needs a jumper from header H4 pin 1
+to GPIO4. EN is already GPIO54.
+
+TODO: replace the stub with our own chain loader (a bare-metal C6 RAM program that takes the
+image through the SDIO packet registers and writes it with the C6 ROM's flash functions), so the
+recovery path has no third-party binary in it.
 
 ### 5.2 HITL integration
 

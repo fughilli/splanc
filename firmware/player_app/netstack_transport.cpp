@@ -567,13 +567,28 @@ int build_ping(uint8_t *p, const uint8_t *src, const uint8_t *dst, uint16_t seq)
 // payload, and appends the 8-byte MIC). All magic numbers are decomp-verified; the two
 // hang risks (txdesc.word4[11:8]=cipher, word4[7:4]=qclass) are set to CCMP=3 / TID0=2.
 // See hw-crypto-tx-seam.md.
+// TX refusals (no TRC yet, or the vendor's esf buffer pool full), counted for
+// netstack_osc_stats: the HW path gives no other sign a frame never went out.
+uint32_t g_tx_refused = 0;
+uint32_t g_tx_pp_err = 0;           // ppTxPkt returned nonzero
+uint32_t g_coex_yields = 0;         // radio handed to BLE (coex_timer_cb)
+uint32_t g_tx_refused_run = 0;      // in the current run of refusals
+int64_t g_tx_refused_run_us = 0;    // when it started
+
 bool tx_hw_encrypt(const uint8_t *frame, int frame_len) {
-  if (!g_trc) return false;
+  if (!g_trc) {
+    g_tx_refused++;
+    return false;
+  }
   // `frame` is [8-byte HW-TX-header pad][26-byte QoS 802.11 hdr][LLC + L3 cleartext]; the
   // 8-byte pad is where ppProcTxSecFrame's secure branch writes the HW header (it does NOT
   // do its own reservation when the 0x2000 flag is pre-set). +16 room for CCMP IV(8)+MIC(8).
   void *eb = esf_buf_alloc(frame, 1, frame_len + 16);
-  if (!eb) return false; // pool full -> bounded back-pressure
+  if (!eb) {               // pool full -> bounded back-pressure
+    g_tx_refused++;
+    if (g_tx_refused_run++ == 0) g_tx_refused_run_us = esp_timer_get_time();
+    return false;
+  }
   uint8_t *e = static_cast<uint8_t *>(eb);
   *reinterpret_cast<uint16_t *>(e + 0x14) = 0x1a + 8; // hdrlen incl the pre-reserved 8-byte HW hdr
   *reinterpret_cast<uint16_t *>(e + 0x24) |= 0x2000;  // "8-byte HW hdr already reserved" -> secure
@@ -588,6 +603,7 @@ bool tx_hw_encrypt(const uint8_t *frame, int frame_len) {
   td[0x2a] = 1; td[0x2e] = 1;                        // descriptor valid/ready bytes
   uint32_t w0_before = *reinterpret_cast<uint32_t *>(td + 0x00);
   int ret = ppTxPkt(eb, 1);                          // 1 = arm/transmit now
+  if (ret != 0) g_tx_pp_err++;
   static int dbg = 0;
   if (dbg++ < 3) {
     // After ppTxPkt: word0 bit29(0x20000000)=secure-branch-encrypt, bit30(0x40000000)=else
@@ -795,6 +811,11 @@ static const uint8_t kMdnsMac[6] = {0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb};
 // build's osc_task binds. Datagrams go to the app's latest-wins mailbox.
 constexpr uint16_t kOscUdpPort = 9000;
 constexpr int kUdpPayloadOff = 20 + 8;  // IPv4 (no options) + UDP, in tx_ip_slot()
+// The last OSC sender (netstack_osc_send replies there); port 0 = none yet.
+static uint8_t g_osc_peer_ip[4];
+static uint16_t g_osc_peer_port = 0;
+static uint8_t g_osc_peer_mac[6];
+static bool g_osc_peer_mac_ok = false;
 
 // Wrap the `len` bytes already at tx_ip_slot()+kUdpPayloadOff in IPv4+UDP (from our
 // leased IP) and send them to dst:dport (L2 `da`, or the neighbor/gateway when null).
@@ -822,6 +843,46 @@ static void send_udp_slot(const uint8_t *dst, uint16_t sport, uint16_t dport, in
   u[6] = uc >> 8; u[7] = uc & 0xff;
   if (da) send_ip_l2(ip, ip_len, da); else send_ip(ip, ip_len);
 }
+
+}  // namespace
+
+static uint32_t g_osc_out = 0, g_osc_unsent = 0;
+static uint32_t g_tx_runs = 0, g_tx_run_longest = 0, g_tx_run_last_ms = 0, g_tx_run_last_n = 0;
+
+// (netstack_transport.h; outside the file's anonymous namespace.)
+bool netstack_osc_send(const uint8_t *data, size_t len) {
+  if (!g_leased || g_osc_peer_port == 0 || len > (size_t)(kTxIpCap - kUdpPayloadOff)) {
+    g_osc_unsent++;
+    return false;
+  }
+  g_osc_out++;
+  memcpy(tx_ip_slot() + kUdpPayloadOff, data, len);
+  send_udp_slot(g_osc_peer_ip, kOscUdpPort, g_osc_peer_port, (int)len, 64,
+                g_osc_peer_mac_ok ? g_osc_peer_mac : nullptr);
+  return true;
+}
+
+int netstack_osc_stats(char *buf, size_t cap, bool *run_ended) {
+  // A run of TX refusals ends at the next frame the pool takes.
+  *run_ended = false;
+  static uint32_t seen_refused = 0;
+  if (g_tx_refused_run && g_tx_refused == seen_refused) {
+    g_tx_runs++;
+    g_tx_run_last_n = g_tx_refused_run;
+    g_tx_run_last_ms = (uint32_t)((esp_timer_get_time() - g_tx_refused_run_us) / 1000);
+    if (g_tx_run_last_ms > g_tx_run_longest) g_tx_run_longest = g_tx_run_last_ms;
+    g_tx_refused_run = 0;
+    *run_ended = g_tx_run_last_ms >= 200;
+  }
+  seen_refused = g_tx_refused;
+  return snprintf(buf, cap, "osc_out=%u unsent=%u tx_refused=%u pp_err=%u runs=%u longest=%ums last=%u/%ums "
+                  "ble_central=%d coex_yields=%u",
+                  (unsigned)g_osc_out, (unsigned)g_osc_unsent, (unsigned)g_tx_refused, (unsigned)g_tx_pp_err,
+                  (unsigned)g_tx_runs, (unsigned)g_tx_run_longest, (unsigned)g_tx_run_last_n,
+                  (unsigned)g_tx_run_last_ms, improv_ble_central_connected() ? 1 : 0, (unsigned)g_coex_yields);
+}
+
+namespace {
 
 // IGMPv2 Membership Report for 224.0.0.251 (TTL 1, Router Alert), so an IGMP-snooping
 // AP forwards the mDNS group to us. Group-addressed: callers gate it like the announce.
@@ -1106,6 +1167,13 @@ void handle_l3(const uint8_t *pt, int pl) {
     if (udplen < 8 || udplen > iplen - ihl) return;
     uint16_t sport = (udp[0] << 8) | udp[1], dport = (udp[2] << 8) | udp[3];
     if (dport == kOscUdpPort && g_leased) { // native OSC (docs/design/live-control.md)
+      // The sender is where OSC we send goes (netstack_osc_send): the last one wins.
+      memcpy(g_osc_peer_ip, ip + 12, 4);
+      g_osc_peer_port = sport;
+      // Its MAC too: the 4-entry neighbor table churns with every lamp's mDNS, and a
+      // miss sends to the BSSID, which drops it (seconds-long gaps in the poses out).
+      g_osc_peer_mac_ok = g_rx_sa_ok;
+      if (g_rx_sa_ok) memcpy(g_osc_peer_mac, g_rx_sa, 6);
       lm_netstack_osc_rx(udp + 8, (size_t)(udplen - 8));
       return;
     }
@@ -1920,8 +1988,12 @@ static void coex_timer_cb(void *) {
     }
   }
   if (want == mode) return;
-  if (want == 1) pm_go_to_sleep();  // release the force-awake so BLE gets its slice
-  else pm_go_to_wake();             // reclaim the radio for WiFi RX
+  if (want == 1) {
+    pm_go_to_sleep();  // release the force-awake so BLE gets its slice
+    g_coex_yields++;
+  } else {
+    pm_go_to_wake();   // reclaim the radio for WiFi RX
+  }
   mode = want;
 }
 

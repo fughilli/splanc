@@ -3928,7 +3928,11 @@ fn fx_error(code: &str, message: &str) -> pb::ServerMessage {
 /// the app never hardcodes it). The bring-up image runs the C6 at 160 MHz.
 /// TODO(hw): read this from the SoC (esp_clk_cpu_freq / rtc_clk_cpu_freq_get)
 /// via a C++-provided value instead of the constant, in case a build downclocks.
+#[cfg(not(lm_cpu_400m))]
 const PERF_CPU_HZ: u32 = 160_000_000;
+// The ESP32-P4 (its BUILD passes --cfg lm_cpu_400m): the cycle counter runs at 400 MHz.
+#[cfg(lm_cpu_400m)]
+const PERF_CPU_HZ: u32 = 400_000_000;
 
 // The per-frame overrun budget is no longer a fixed 33 ms: with the framerate
 // autoscaler (FUG-82) it tracks the live target, budget_cycles = cpu_hz /

@@ -23,6 +23,10 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
+#if defined(LM_LINK)
+extern "C" size_t link_log_write(const uint8_t *data, size_t len);  // link_transport.cpp
+#endif
+
 // A Print that appends to a byte ring (with '\n' -> "\r\n"), drained to Serial by
 // a separate task. Writes are guarded by a mutex (multiple tasks log) and never
 // block: on overflow the oldest bytes are discarded so the ring holds the most
@@ -72,7 +76,12 @@ class RingLog : public Print {
         return;
       }
     }
+#if defined(LM_LINK)
+    // The P4 player: the console shares UART0 with the link, so lines go as LOG frames.
+    pend_off_ += link_log_write(pend_ + pend_off_, pend_n_ - pend_off_);
+#else
     pend_off_ += Serial.write(pend_ + pend_off_, pend_n_ - pend_off_);
+#endif
     if (pend_off_ < pend_n_) vTaskDelay(pdMS_TO_TICKS(2));  // console busy/full: retry
   }
 
