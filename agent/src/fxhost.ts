@@ -182,6 +182,14 @@ export interface PreviewFrame {
   png: Buffer;
 }
 
+/** A long-lived device VM on `fxb` (the stage's live twin). Only creation takes
+ * the toolchain lock: an instance keeps the wasm module it was built from. */
+export function createSim(fxb: Uint8Array, toolchain?: Toolchain): Promise<FxPreview> {
+  return withToolchain(toolchain, () => FxPreview.create(fxb));
+}
+
+export { deriveLedTopology };
+
 /** Run the device VM over a fixture's real map + topology at the given times. */
 export async function preview(opts: {
   fxb: Uint8Array;
