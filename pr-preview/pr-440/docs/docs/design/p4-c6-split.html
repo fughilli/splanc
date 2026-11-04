@@ -1298,13 +1298,14 @@ it.</p>
 <h3>4.3.1 Several wss sessions on the front end<a class="headerlink" href="#several-wss-sessions-on-the-front-end" title="Link to this heading">¶</a></h3>
 <p><strong>Decision.</strong> The number of concurrent wss sessions is a build parameter, <code class="docutils literal notranslate"><span class="pre">LM_WSS_SESSIONS</span></code>.
 Plain C6 players keep <strong>1</strong>, because their RAM is tight. The C6 front end in the P4 + C6 build
-gets <strong>4</strong>: it has no LED, FX or sensor RAM (§4.3). With 1, the logic is the single-session
-transport as it was. Status: implemented and host-tested. Not yet run on a board (see
-<strong>Validation</strong>).</p>
+gets <strong>2</strong>: the most the reachability model proves fits the front end’s heap, which the bench
+confirms (<strong>Measured</strong> and <strong>Validation</strong> below). Four don’t fit: that image never brings Wi-Fi
+up. With 1, the logic is the single-session transport as it was.</p>
 <p><strong>Build.</strong> <code class="docutils literal notranslate"><span class="pre">//firmware/netstack:wifi_sta_ffi</span></code> has one TCP server slot.
-<code class="docutils literal notranslate"><span class="pre">:wifi_sta_ffi_sessions4</span></code> is the same source with the <code class="docutils literal notranslate"><span class="pre">sessions4</span></code> crate feature.
-<code class="docutils literal notranslate"><span class="pre">//firmware/player_app:netstack_transport_sessions4</span></code> defines <code class="docutils literal notranslate"><span class="pre">LM_WSS_SESSIONS=4</span></code> and links
-that four-slot FFI. <code class="docutils literal notranslate"><span class="pre">:player_app_frontend</span></code> uses it. Nothing else changes: the players and the
+<code class="docutils literal notranslate"><span class="pre">:wifi_sta_ffi_sessions2</span></code> / <code class="docutils literal notranslate"><span class="pre">_sessions4</span></code> are the same source with the <code class="docutils literal notranslate"><span class="pre">sessions2</span></code> /
+<code class="docutils literal notranslate"><span class="pre">sessions4</span></code> crate feature. <code class="docutils literal notranslate"><span class="pre">//firmware/player_app:netstack_transport_sessions&lt;N&gt;</span></code> defines
+<code class="docutils literal notranslate"><span class="pre">LM_WSS_SESSIONS=&lt;N&gt;</span></code> and links that FFI. <code class="docutils literal notranslate"><span class="pre">:player_app_frontend</span></code> uses
+<code class="docutils literal notranslate"><span class="pre">_FRONTEND_SESSIONS</span></code> (2). Nothing else changes: the players and the
 loader link the one-slot pair.</p>
 <p><strong>TCP slot table</strong> (<code class="docutils literal notranslate"><span class="pre">firmware/netstack/src/tcp_slots.rs</span></code>, <code class="docutils literal notranslate"><span class="pre">TcpSlots&lt;N&gt;</span></code>). There are N
 <code class="docutils literal notranslate"><span class="pre">TcpConn</span></code>s on the one listening port. At the bind, every slot listens (with distinct ISNs).
@@ -1384,49 +1385,99 @@ with several:</p>
 </table>
 </div>
 <p><strong>TLS region per build</strong> (<code class="docutils literal notranslate"><span class="pre">tls_region.cpp</span></code>). With the dynamic buffers, an idle session’s
-records are freed (<code class="docutils literal notranslate"><span class="pre">mbedtls-dynamic-buffers.md</span></code>: about 2 KB per idle session), and the loop
-serves one session at a time. So the record slots cover one partly received record per
-session plus one being written: <strong>N + 1</strong> slots of 6,912 B (2 at N = 1, as before). Each
-further session’s handshake state takes about 4 KB more of the small region [E]. A miss still
-falls back to the heap (<code class="docutils literal notranslate"><span class="pre">fb=</span></code>) and never fails.</p>
+records are freed, and the loop serves one session at a time. So the record slots cover one
+partly received record per session plus one being written: <strong>N + 1</strong> slots of 6,912 B (2 at
+N = 1, as before). The small region grows by 4 KB per extra session. A miss still falls back
+to the heap (<code class="docutils literal notranslate"><span class="pre">fb=</span></code>) and never fails. On the bench, two sessions plus churn peaked at 2 of 3
+slots and 10,948 of 14,336 B of the small region, with no fallbacks.</p>
+<p><strong>The mbedTLS ABI bug this found.</strong> <code class="docutils literal notranslate"><span class="pre">netstack_transport.cpp</span></code> compiles against the prebuilt
+SDK’s mbedtls headers, which come first on the include path. The image links the from-source
+mbedtls (&#64;embedded’s <code class="docutils literal notranslate"><span class="pre">mbedtls_src</span></code>, IDF v5.5.4). The two disagree on <code class="docutils literal notranslate"><span class="pre">mbedtls_ssl_context</span></code>:
+the ELF’s DWARF says 344 B in that file and 552 B in the library’s nine compile units. So
+every context the transport declared was overrun by 208 B. With the context first in a
+<code class="docutils literal notranslate"><span class="pre">Session</span></code>, the overrun landed on the session’s own state, and the first served GET panicked
+the C6 inside <code class="docutils literal notranslate"><span class="pre">mbedtls_ssl_session_reset</span></code>. That reboot also killed the SDIO link: the bench’s
+“one GET and <code class="docutils literal notranslate"><span class="pre">host=down</span></code>”.</p>
+<p>The single-session image overran into whatever globals followed <code class="docutils literal notranslate"><span class="pre">g_ssl</span></code>, silently. That
+includes the plain C6 players. Each context now lives in an <code class="docutils literal notranslate"><span class="pre">SslBox</span></code> sized for the library
+(576 B). <code class="docutils literal notranslate"><span class="pre">//firmware/player_app:tls_abi_test</span></code> reads both ELFs’ DWARF and fails if the
+library’s context outgrows it. (<code class="docutils literal notranslate"><span class="pre">mbedtls_ssl_config</span></code>: 224 B in the transport’s view, 196 B in
+the library’s, so the transport’s is the larger. <code class="docutils literal notranslate"><span class="pre">x509_crt</span></code> and <code class="docutils literal notranslate"><span class="pre">pk_context</span></code> agree.)</p>
+<p><strong>Measured</strong> (Waveshare ESP32-P4-WIFI6 + C6, 2026-11-04). These come from the front end’s
+<code class="docutils literal notranslate"><span class="pre">[heap]</span></code> status line (<code class="docutils literal notranslate"><span class="pre">frontend_link.cpp</span></code>): free internal heap, its minimum, the largest
+block, the TLS region’s high-water marks, the open sessions, the reset reason, and what the
+radio bring-up saw. The C6’s own console isn’t wired, so this line is how the numbers reach
+the P4’s console.</p>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
 <thead>
-<tr class="row-odd"><th class="head"><p></p></th>
-<th class="head text-right"><p>N = 1 (players)</p></th>
-<th class="head text-right"><p>N = 4 (front end)</p></th>
+<tr class="row-odd"><th class="head"><p>image</p></th>
+<th class="head text-right"><p>idle free (joined)</p></th>
+<th class="head text-right"><p>all-time min</p></th>
+<th class="head text-right"><p>largest block</p></th>
+<th class="head"><p>Wi-Fi</p></th>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p>record slots</p></td>
-<td class="text-right"><p>2 × 6,912 = 13,824 B</p></td>
-<td class="text-right"><p>5 × 6,912 = 34,560 B</p></td>
+<tr class="row-even"><td><p>N = 1</p></td>
+<td class="text-right"><p>70,844</p></td>
+<td class="text-right"><p>61,052 (boot scan)</p></td>
+<td class="text-right"><p>50,164</p></td>
+<td><p>joins</p></td>
 </tr>
-<tr class="row-odd"><td><p>small TLSF region</p></td>
-<td class="text-right"><p>10,240 B</p></td>
-<td class="text-right"><p>22,528 B</p></td>
+<tr class="row-odd"><td><p>N = 2</p></td>
+<td class="text-right"><p>46,608</p></td>
+<td class="text-right"><p>38,248 (boot scan)</p></td>
+<td class="text-right"><p>26,612</p></td>
+<td><p>joins; flat at 46,608 with 2 sessions open and through 16 churn rounds</p></td>
 </tr>
-<tr class="row-even"><td><p>WS reassembly</p></td>
-<td class="text-right"><p>6,144 B</p></td>
-<td class="text-right"><p>24,576 B</p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mbedtls_ssl_context</span></code>s and session state</p></td>
-<td class="text-right"><p>~0.5 KB</p></td>
-<td class="text-right"><p>~2 KB [E]</p></td>
-</tr>
-<tr class="row-even"><td><p><strong>total</strong></p></td>
-<td class="text-right"><p><strong>~30.7 KB</strong></p></td>
-<td class="text-right"><p><strong>~83.7 KB</strong> (+53 KB)</p></td>
+<tr class="row-even"><td><p>N = 4</p></td>
+<td class="text-right"><p>26,224 (no Wi-Fi)</p></td>
+<td class="text-right"><p>5,984</p></td>
+<td class="text-right"><p>14,324</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">esp_wifi_init</span></code> = 0x101 (<code class="docutils literal notranslate"><span class="pre">ESP_ERR_NO_MEM</span></code>): never starts, 0 beacons</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>The budget is about 60–100 KB more minimum free heap on the front end than the 2048-LED C6
-player’s 29.7 KB (§4.3), less the link’s ~29 KB of SDIO buffers, so roughly 60–100 KB [E].
-Four sessions fit, but <strong>not with much room</strong>: measure with <code class="docutils literal notranslate"><span class="pre">ram_audit</span></code> on the front end
-before merging. If it’s tight, the WS buffers are the first thing to cut. The front end
-forwards each message as it completes, so 4 KB per extra session would do.</p>
-<p><strong>Validation (HITL, not done yet).</strong> Before merging, on a P4 + C6 board:</p>
+<p>Each session past the first costs 24,108 B of statics (nm):</p>
+<ul class="simple">
+<li><p>the TCP slot: 6,316 B;</p></li>
+<li><p>a <code class="docutils literal notranslate"><span class="pre">Session</span></code>: 6,784 B, including the 6 KB WS buffer and the <code class="docutils literal notranslate"><span class="pre">SslBox</span></code>;</p></li>
+<li><p>a record slot: 6,912 B;</p></li>
+<li><p>4 KB of the small region.</p></li>
+</ul>
+<p>Sessions draw no heap of their own. Everything per session is static, and the TLS region
+absorbed the handshakes.</p>
+<p><strong>The model</strong> (<code class="docutils literal notranslate"><span class="pre">//firmware/sysmode</span></code>, <code class="docutils literal notranslate"><span class="pre">Profile::FrontEnd</span></code>, <code class="docutils literal notranslate"><span class="pre">cost::frontend</span></code>). The state machine’s
+<code class="docutils literal notranslate"><span class="pre">wss</span></code> axis is now a session count, 0..=the profile’s cap (1 on the player, whose model and
+pinned figures are unchanged). The front-end profile has no LED activity, which is the P4’s job,
+and it boots idle. Its heap components on top of the measured idle state are:</p>
+<ul class="simple">
+<li><p>the vendor scan transient (9,792 B);</p></li>
+<li><p>a BLE central’s link (3,876 B);</p></li>
+<li><p>record buffers past the region’s N + 1 slots, assuming every open session is mid-handshake
+(2 buffers each);</p></li>
+<li><p>small-region overflow.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">reachability_test</span></code> walks every reachable front-end state and proves each stays above a 24 KB
+floor, the same floor the player keeps (<code class="docutils literal notranslate"><span class="pre">kRuntimeHeapReserve</span></code>). At N = 2 (10 states) the worst
+state is the provisioning scan with the Improv central connected: 13,668 B against 22,032 B
+available, leaving 8,364 B of headroom. With sessions, the worst is two handshakes beside a
+central: 10,788 B. The same test proves N = 3 and N = 4 don’t fit. At N = 4 the statics alone
+exceed the heap, which the bench’s <code class="docutils literal notranslate"><span class="pre">ESP_ERR_NO_MEM</span></code> confirms.</p>
+<p><strong>Getting to four</strong> means freeing about 50 KB of C6 statics. The front end still links the full
+player core for its while-the-P4-is-down answers, including <code class="docutils literal notranslate"><span class="pre">FX_ARENA</span></code> (24 KB), <code class="docutils literal notranslate"><span class="pre">ARENA_MEM</span></code>
+(12 KB), <code class="docutils literal notranslate"><span class="pre">DECK_A</span></code> and <code class="docutils literal notranslate"><span class="pre">FX_AUX</span></code> (11.6 KB each). It has no LEDs to render on. Shrinking those
+for <code class="docutils literal notranslate"><span class="pre">LM_FRONTEND</span></code> is the way there. The model then says whether four fit.</p>
+<p><strong>Link failures are surfaced and recovered.</strong> The P4 counts failed ESSL calls (<code class="docutils literal notranslate"><span class="pre">sdio_err=</span></code> on
+its <code class="docutils literal notranslate"><span class="pre">[net]</span></code> line). When the front end’s 100 ms heartbeat has been silent for 2 s, the P4 says
+so, tears the SDIO link down and reopens it (<code class="docutils literal notranslate"><span class="pre">relinks=</span></code>). Every third failed attempt resets the
+C6 first. On the panicking build, this brought the link back within about 5 s of each C6
+reboot instead of leaving <code class="docutils literal notranslate"><span class="pre">host=down</span></code> for good. The C6 reports why it last reset (<code class="docutils literal notranslate"><span class="pre">rst=</span></code>), plus
+a breadcrumb of the stage the server was in, kept across a panic in RTC memory (<code class="docutils literal notranslate"><span class="pre">crumb=</span></code>).</p>
+<p><strong>Validation.</strong> Done on the bench at N = 2 (two runs of the multi-session bench, see the PR).
+Still to run before merging, on a P4 + C6 board:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">loaded_tls</span></code> and <code class="docutils literal notranslate"><span class="pre">tls_churn</span></code> against the front end with 4 concurrent clients and a 24-way
 burst: every client either gets a session or a fast refusal, and no slot wedges;</p></li>
