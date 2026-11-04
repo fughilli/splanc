@@ -48,6 +48,7 @@ import {
 import { remoteChatEnabled, setRemoteChatEnabled } from "../../net/remoteChat";
 import { debugModeEnabled, setDebugModeEnabled } from "../../store/debugMode";
 import { captureBundlesGroup } from "./captureBundles";
+import { backupGroup } from "./backupSection";
 
 type SettingsTab = "appearance" | "behavior" | "debugging";
 
@@ -125,7 +126,14 @@ export function SettingsScreen(router: Router): Screen {
     } else if (tab === "debugging") {
       panels = [captureBundlesGroup(group, row, segmented), debugServerGroup(), chatLogsDebugGroup()];
     } else {
-      panels = [captureGroup(), diffuseGroup(), helpGroup(), developerGroup(), captureResetRow()];
+      panels = [
+        captureGroup(),
+        diffuseGroup(),
+        helpGroup(),
+        backupGroup(group, row, segmented),
+        developerGroup(),
+        captureResetRow(),
+      ];
     }
     body.replaceChildren(tabBar(), ...panels);
   }
