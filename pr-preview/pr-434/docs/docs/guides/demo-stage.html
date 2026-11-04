@@ -373,9 +373,9 @@ itself to frame it). Start it on the phone; the phone and the laptop must be on 
 <li><p>The page that opens on the phone has the phone’s ScreenStream address filled in
 (<code class="docutils literal notranslate"><span class="pre">https://&lt;phone&gt;:8081/</span></code>; for stock ScreenStream tap the <code class="docutils literal notranslate"><span class="pre">http://…:8080/</span></code> link). Tap
 <strong>Show on the TV</strong>. The phone’s screen appears in the slot.</p></li>
-<li><p>The fork’s HTTPS certificate is self-signed, and a browser won’t ask about it inside a frame:
-if the slot stays blank, click <strong>Phone</strong> ▸ <strong>Trust the phone’s certificate</strong>, accept the
-warning in the tab that opens, close that tab, and reload the stage.</p></li>
+<li><p>There’s no certificate warning to accept: the stage connects to the phone itself and shows its
+page from <code class="docutils literal notranslate"><span class="pre">localhost</span></code>. It pins the certificate the phone presents when paired (<strong>Phone</strong> shows
+its SHA-256; ScreenStream shows the same one), and refuses a different one until you pair again.</p></li>
 <li><p>Press <strong>F</strong> to show the phone large across the stage (the header stays in view); <strong>F</strong> or
 <strong>Esc</strong> puts it back in its slot.</p></li>
 <li><p>Type ScreenStream’s PIN into the slot if it asks. Then click anywhere on the stage outside the
@@ -417,13 +417,16 @@ on the laptop screen, not the TV (behind other windows is fine).</p>
 <tr class="row-even"><td><p><strong>F</strong></p></td>
 <td><p>show the phone large (again, or <strong>Esc</strong>, to shrink it)</p></td>
 </tr>
-<tr class="row-odd"><td><p><strong>Esc</strong></p></td>
+<tr class="row-odd"><td><p><strong>G</strong></p></td>
+<td><p>show or hide the preview’s ground grid and axes</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>Esc</strong></p></td>
 <td><p>stop Claude mid-answer (and its voice)</p></td>
 </tr>
-<tr class="row-even"><td><p><strong>New</strong></p></td>
+<tr class="row-odd"><td><p><strong>New</strong></p></td>
 <td><p>start a fresh conversation</p></td>
 </tr>
-<tr class="row-odd"><td><p><strong>Maps</strong></p></td>
+<tr class="row-even"><td><p><strong>Maps</strong></p></td>
 <td><p>re-read the fixtures’ maps (after mapping one in the app)</p></td>
 </tr>
 </tbody>
@@ -472,6 +475,10 @@ voice’s name (e.g. <code class="docutils literal notranslate"><span class="pre
 </section>
 <section id="which-fixtures-are-on-screen">
 <h2>Which fixtures are on screen<a class="headerlink" href="#which-fixtures-are-on-screen" title="Link to this heading">¶</a></h2>
+<p>The preview is the app’s 3D map view: each fixture turns slowly, lit with the effect as it runs.
+Drag one with the mouse to orbit it, scroll to zoom (right-drag or Shift-drag pans); a few seconds
+after you let go it eases back and turns on its own again. <strong>G</strong> shows or hides the ground grid
+and axes.</p>
 <p>The live-preview strip shows two fixtures. It starts with the first two that have a map,
 and follows Claude: when it deploys to one or two fixtures, they come on screen. Ask to see
 others (“show me the wreath”, “put the arch next to the curtain”) and Claude brings them up;
