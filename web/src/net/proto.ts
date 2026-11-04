@@ -93,6 +93,9 @@ const CLIENT_ARMS: Record<string, string> = {
   get_kiosk_status: "getKioskStatus",
   set_kiosk_config: "setKioskConfig",
   kiosk_unlock: "kioskUnlock",
+  list_stored_effects: "listStoredEffects",
+  load_stored_effect: "loadStoredEffect",
+  delete_stored_effect: "deleteStoredEffect",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -130,6 +133,7 @@ const SERVER_ARMS: Record<string, string> = {
   wifi_policy_state: "wifiPolicyState",
   control_ack: "controlAck",
   kiosk_status: "kioskStatus",
+  stored_effect_list: "storedEffectList",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -919,6 +923,34 @@ export interface DriverStateMessage {
   heapBytes: number;
   jitterUsMax: number;
   feedImu: boolean;
+}
+
+// -- The on-device effect store (docs/design/effect-store.md) ----------------
+
+/** One effect in the device's store (proto StoredEffectInfo). `uniforms` are its
+ * uniforms' names (the start of the list if they didn't all fit the store's
+ * summary); `decks` the decks it is loaded on right now. */
+export interface StoredEffectInfoFlat {
+  effectId: string;
+  name?: string;
+  fxbBytes?: number;
+  uniforms?: string[];
+  decks?: number[];
+}
+
+/** Reply to list_stored_effects / delete_stored_effect (proto StoredEffectList). */
+export interface StoredEffectListMessage {
+  type: "stored_effect_list";
+  effects?: StoredEffectInfoFlat[];
+  capacity?: number;
+}
+
+/** Load a stored effect onto a deck (proto LoadStoredEffect). Reply: result_ready. */
+export interface LoadStoredEffectMessage {
+  type: "load_stored_effect";
+  effectId: string;
+  deck?: number;
+  activate?: boolean;
 }
 
 /** Reply to list_effects (proto EffectList). */

@@ -65,6 +65,8 @@ pub use fxdbg::*;
 // Kiosk mode (docs/design/kiosk-mode.md): the lock gate, idle revert, owner unlock.
 // A public module (not glob re-exported: its pure helpers share names with wifi_ffi's).
 pub mod kiosk_ffi;
+// The on-device effect store (effect_store.rs, docs/design/effect-store.md).
+pub mod effect_store;
 
 /// The frame's `ClientMessage` arm, read IN PLACE (pbview: no by-value
 /// envelope, no capacity profile). None when the frame isn't a valid encoding.
@@ -1939,6 +1941,12 @@ pub unsafe extern "C" fn lm_player_handle(
         // the firmware profile's inline bytes cap), so it's spliced from the .fxb.
         Some(ARM_GET_EFFECT_UNIFORMS) => return handle_get_effect_uniforms(frame, out, out_cap),
         Some(ARM_LIST_EFFECTS) => handle_list_effects(),
+        // The effect store (effect_store.rs): records on littlefs via the C++ hooks,
+        // the list encoded zero-copy into `out`. main.cpp loads a stored effect
+        // itself (lm_fxs_load); one reaching here wasn't found.
+        Some(effect_store::ARM_LIST_STORED_EFFECTS) => return effect_store::handle_list(out, out_cap),
+        Some(effect_store::ARM_LOAD_STORED_EFFECT) => effect_store::handle_load_unstaged(frame),
+        Some(effect_store::ARM_DELETE_STORED_EFFECT) => return effect_store::handle_delete(frame, out, out_cap),
         // The per-device TLS identity's state + pin (set by the firmware through
         // lm_set_tls_info): answers over BLE too, before wss is reachable.
         Some(ARM_GET_TLS_INFO) => handle_get_tls_info(),
@@ -2708,6 +2716,9 @@ pub const FEATURES: &[&str] =
         // Kiosk mode (get_kiosk_status / set_kiosk_config / kiosk_unlock, the
         // kiosk_status push, Error "kiosk_locked"): docs/design/kiosk-mode.md.
         "kiosk",
+        // The effect store (submit_effect{store}, list / load / delete_stored_effect):
+        // docs/design/effect-store.md.
+        "effect_store",
     ];
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
@@ -2735,12 +2746,21 @@ fn rd_varint(buf: &[u8], o: &mut usize) -> Option<u64> {
 /// onto the deck, and (optionally) activate. Reply result_ready(effect_id) or
 /// error(bad_fxb / effect_too_large).
 unsafe fn handle_submit_effect(frame: &[u8]) -> pb::ServerMessage {
+    effect_store::LAST_WAS_STORE = false;
     let Some(CArm::SubmitEffect(m)) = client_arm(frame) else {
         return fx_error("bad_fxb", "submit_effect is malformed");
     };
+    // store: true keeps it in the effect store instead (no deck changes).
+    if m.store() {
+        return effect_store::handle_store(&m);
+    }
+    submit_effect_view(&m, deck_index(m.deck()), m.activate())
+}
+
+/// The submit_effect load: `m`'s fxb onto deck `d`, activated or parked. Also how
+/// a stored effect loads (effect_store.rs, its own frame with the request's deck).
+unsafe fn submit_effect_view(m: &pv::SubmitEffectView<'_>, d: usize, activate: bool) -> pb::ServerMessage {
     let fxb = pbview::has_field(m.as_bytes(), pv::SubmitEffectView::FIELD_FXB).then(|| m.fxb());
-    let activate = m.activate();
-    let d = deck_index(m.deck());
     FX_LAST_DECK = d as u32;
     let Some(fxb) = fxb else {
         return fx_error("bad_fxb", "submit_effect without fxb");

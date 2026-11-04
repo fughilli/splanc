@@ -108,6 +108,9 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::GetKioskStatus(_)
         | CMsg::SetKioskConfig(_)
         | CMsg::KioskUnlock(_)
+        | CMsg::ListStoredEffects(_)
+        | CMsg::LoadStoredEffect(_)
+        | CMsg::DeleteStoredEffect(_)
         | CMsg::OtaBegin(_)
         | CMsg::OtaChunk(_)
         | CMsg::OtaFinish(_)
@@ -200,6 +203,9 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::GetKioskStatus(_) => "get_kiosk_status",
         CMsg::SetKioskConfig(_) => "set_kiosk_config",
         CMsg::KioskUnlock(_) => "kiosk_unlock",
+        CMsg::ListStoredEffects(_) => "list_stored_effects",
+        CMsg::LoadStoredEffect(_) => "load_stored_effect",
+        CMsg::DeleteStoredEffect(_) => "delete_stored_effect",
         CMsg::OtaBegin(_) => "ota_begin",
         CMsg::OtaChunk(_) => "ota_chunk",
         CMsg::OtaFinish(_) => "ota_finish",

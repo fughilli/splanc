@@ -670,6 +670,10 @@ impl Player {
             | CMsg::GetKioskStatus(_)
             | CMsg::SetKioskConfig(_)
             | CMsg::KioskUnlock(_)
+            // So does the effect store (player_app effect_store.rs).
+            | CMsg::ListStoredEffects(_)
+            | CMsg::LoadStoredEffect(_)
+            | CMsg::DeleteStoredEffect(_)
             // The FX debugger lives in the fx layer (player_app ffi) too.
             | CMsg::FxDebugControl(_)
             | CMsg::GetFxSnapshot(_)

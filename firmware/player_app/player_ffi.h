@@ -106,6 +106,21 @@ void lm_kp_set_store(lm_kp_read_fn read, lm_kp_write_fn write, lm_kp_remove_fn r
 // and that target encoded as a set_uniforms ClientMessage frame (length, or <0).
 bool lm_kp_commit(void);
 int32_t lm_kp_commit_frame(uint8_t *out, size_t cap);
+// The effect store (effect_store.rs, docs/design/effect-store.md): one record per
+// stored effect, file "fxs.<n>" under the FS base. read / remove as the keypoint
+// hooks; write stores a ++ b as one atomic (power-loss-safe) file.
+typedef bool (*lm_fxs_write_fn)(const uint8_t *name, size_t name_len, const uint8_t *a, size_t a_len,
+                                const uint8_t *b, size_t b_len);
+void lm_fxs_set_store(lm_kp_read_fn read, lm_fxs_write_fn write, lm_kp_remove_fn remove);
+// Whether the submit_effect just handled went to the store (not persisted as deck A's).
+bool lm_fxs_last_was_store(void);
+// load_stored_effect: the record ("fxs.<n>") the frame names, or -1. Then, under the
+// player mutex, load the staged record `rec`; the reply goes to out (its length is
+// returned). *persist_len > 0: rec[*persist_off ..] is the submit_effect frame to
+// persist as the boot effect (it landed on deck A, activated).
+int32_t lm_fxs_find(const uint8_t *frame, size_t len);
+int32_t lm_fxs_load(const uint8_t *frame, size_t len, const uint8_t *rec, size_t rec_len, uint8_t *out,
+                    size_t cap, size_t *persist_off, size_t *persist_len);
 // Copy the player's CURRENT display name into out (cap bytes). Returns the
 // length written, or -2 when it doesn't fit. The app polls this after each
 // lm_player_handle so a set_device_name is persisted + reflected to BLE.
