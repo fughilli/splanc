@@ -871,8 +871,9 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
       case "note": note(ev.text); break;
       case "phone":
         if (ev.url && ev.url !== phoneUrl && live) { closePair(); note("Phone on screen. Clicked into it? Click the stage again before pressing Space."); }
-        showPhoneUrl(ev.url);
+        showPhone(ev);
         break;
+      case "phone_cert": phoneCert = ev.fingerprint; renderPair(); break;
       case "twin_layout": shapes[ev.player] = ev; renderStrip(); break;
       case "twin_focus": focus = ev.players || []; renderStrip(); break;
       case "twin_note": note(ev.player + ": " + ev.text); break;
@@ -957,7 +958,7 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
   // ---- the phone slot --------------------------------------------------------
   // The phone's ScreenStream page in an iframe (its address comes from pairing:
   // the phone scans the QR code and sends it), or a captured window.
-  var phoneUrl = null;
+  var phoneUrl = null, phoneSrc = null, phoneCert = null;
   function phoneShown() { return !$("phoneFrame").hidden || !$("phone").hidden; }
   function stopCapture() {
     var v = $("phone");
@@ -969,21 +970,28 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
     if (!phoneShown()) $("app").classList.remove("phonebig");
     $("phoneBtn").classList.toggle("on", phoneShown());
   }
-  function showPhoneUrl(url) {
-    phoneUrl = url || null;
+  // Through the stage's phone proxy when it has one (no certificate prompt: the
+  // stage checks the phone's certificate itself), else the phone's page directly.
+  function showPhone(ev) {
+    phoneUrl = (ev && ev.url) || null;
+    phoneSrc = !phoneUrl ? null : ev.proxyPort ? location.protocol + "//" + location.hostname + ":" + ev.proxyPort + "/?splanc=" + (ev.n || 0) : phoneUrl;
+    if (!phoneUrl) phoneCert = null;
     var f = $("phoneFrame");
-    if (phoneUrl) {
+    if (phoneSrc) {
       stopCapture();
-      if (f.getAttribute("src") !== phoneUrl) f.setAttribute("src", phoneUrl);
+      if (f.getAttribute("src") !== phoneSrc) f.setAttribute("src", phoneSrc);
       f.hidden = false;
     } else { f.hidden = true; f.removeAttribute("src"); }
     layoutPhone();
     renderPair();
   }
   function renderPair() {
-    $("pairTrust").hidden = !phoneUrl || phoneUrl.indexOf("https:") !== 0;
+    var direct = phoneUrl && phoneSrc === phoneUrl && phoneUrl.indexOf("https:") === 0;
+    $("pairTrust").hidden = !direct;
     $("pairHide").hidden = !phoneShown();
-    $("pairState").textContent = phoneUrl ? "Showing " + phoneUrl + ". Blank? Trust its certificate once, then close the tab it opens." : "";
+    $("pairState").textContent = !phoneUrl ? "" : direct
+      ? "Showing " + phoneUrl + ". Blank? Trust its certificate once, then close the tab it opens."
+      : "Showing " + phoneUrl + (phoneCert ? ". Certificate SHA-256 " + phoneCert.slice(0, 23) + "… (ScreenStream shows the same)." : ".");
   }
   function openPair() {
     $("pair").hidden = false; renderPair();
@@ -995,6 +1003,7 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
         if (window.qrcode) { var qr = window.qrcode(0, "M"); qr.addData(u); qr.make(); $("pairQr").innerHTML = qr.createSvgTag(6, 2); }
         Array.prototype.forEach.call($("pairUrl").children, function (c) { c.classList.toggle("sel", c.textContent === u); });
       };
+      if (p.fingerprint) { phoneCert = p.fingerprint; renderPair(); }
       $("pairUrl").innerHTML = "";
       p.urls.forEach(function (u) {
         var a = document.createElement("span"); a.textContent = u; a.onclick = function () { draw(u); };
@@ -1012,7 +1021,7 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
   function hidePhone() {
     stopCapture();
     if (phoneUrl) post("/api/phone", { url: null }); // every screen hides it
-    showPhoneUrl(null);
+    showPhone(null);
   }
   $("pairClose").onclick = closePair;
   $("pairHide").onclick = function () { hidePhone(); closePair(); };
@@ -1021,7 +1030,7 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
     closePair();
     navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false }).then(function (s) {
       if (phoneUrl) post("/api/phone", { url: null });
-      showPhoneUrl(null);
+      showPhone(null);
       var v = $("phone");
       v.srcObject = s; v.hidden = false; layoutPhone();
       s.getVideoTracks()[0].addEventListener("ended", function () { stopCapture(); layoutPhone(); });

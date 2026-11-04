@@ -55,9 +55,9 @@ microphone works only on the laptop itself); `--no-open` doesn't open the browse
 3. The page that opens on the phone has the phone's ScreenStream address filled in
    (`https://<phone>:8081/`; for stock ScreenStream tap the `http://…:8080/` link). Tap
    **Show on the TV**. The phone's screen appears in the slot.
-4. The fork's HTTPS certificate is self-signed, and a browser won't ask about it inside a frame:
-   if the slot stays blank, click **Phone** ▸ **Trust the phone's certificate**, accept the
-   warning in the tab that opens, close that tab, and reload the stage.
+4. There's no certificate warning to accept: the stage connects to the phone itself and shows its
+   page from `localhost`. It pins the certificate the phone presents when paired (**Phone** shows
+   its SHA-256; ScreenStream shows the same one), and refuses a different one until you pair again.
 5. Press **F** to show the phone large across the stage (the header stays in view); **F** or
    **Esc** puts it back in its slot.
 6. Type ScreenStream's PIN into the slot if it asks. Then click anywhere on the stage outside the

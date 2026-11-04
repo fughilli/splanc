@@ -24,6 +24,7 @@ import { FONTS } from "./brand";
 import { StageBus, type StageEvent } from "./bus";
 import { Desk } from "./explain";
 import { PHONE_PAGE, STAGE_PAGE } from "./page";
+import { PhoneProxy } from "./phoneProxy";
 import { Twin } from "./twin";
 
 export interface StageOptions {
@@ -123,12 +124,23 @@ export async function runStage(o: StageOptions): Promise<{ url: string; close: (
   const history: { sel: Sel; effect: string; source: string }[] = [];
   // The phone slot's address (the phone's ScreenStream page), kept so a screen
   // that connects later shows it too.
+  // The page frames it through the phone proxy (phoneProxy.ts: no certificate
+  // prompt); `n` changes with every pairing so the frame reloads.
   let phoneUrl: string | null = null;
+  let pairings = 0;
+  const proxy = new PhoneProxy(o.log, (fingerprint) => bus.emit({ type: "phone_cert", fingerprint }));
+  const phoneEvent = (): StageEvent => ({
+    type: "phone",
+    url: phoneUrl,
+    ...(phoneUrl && proxy.port ? { proxyPort: proxy.port, n: pairings } : {}),
+  });
   const setPhone = (url: string | null): void => {
     phoneUrl = url;
-    bus.emit({ type: "phone", url });
+    pairings++;
+    proxy.setTarget(url);
+    bus.emit(phoneEvent());
   };
-  bus.snapshot = () => [...(twin.layouts() as StageEvent[]), ...(phoneUrl ? [{ type: "phone", url: phoneUrl }] : [])];
+  bus.snapshot = () => [...(twin.layouts() as StageEvent[]), ...(phoneUrl ? [phoneEvent()] : [])];
   const desk = new Desk({
     bus,
     find: (id) => findEffect(o.client, history, id),
@@ -182,7 +194,7 @@ export async function runStage(o: StageOptions): Promise<{ url: string; close: (
       if (route === "GET /api/pair") {
         if (!pair) return json(res, 200, { urls: [], error: "Pairing isn't available: its port was busy." });
         const urls = lanAddresses().map((a) => `http://${a}:${pair!.port}/p/${pairToken}`);
-        return json(res, 200, { urls, phone: phoneUrl });
+        return json(res, 200, { urls, phone: phoneUrl, fingerprint: proxy.fingerprint });
       }
       if (req.method === "POST" && req.headers["content-type"]?.startsWith("application/json") !== true) {
         return json(res, 415, { error: "json only" }); // no cross-site form posts
@@ -225,6 +237,10 @@ export async function runStage(o: StageOptions): Promise<{ url: string; close: (
   });
   const port = (server.address() as { port: number }).port;
   pair = await startPairing(o.pairPort ?? (o.port === 0 ? 0 : port + 1), pairToken, setPhone, o.log);
+  await proxy.listen(o.port === 0 ? 0 : port + 2, host).catch((e: unknown) => {
+    // Without it the page frames the phone directly (and needs its certificate trusted).
+    o.log(`stage: phone proxy off (${e instanceof Error ? e.message : e})`);
+  });
   const url = `http://localhost:${port}/${o.lan ? `?k=${key}` : ""}`;
   void twin.showMaps(false).catch((e: unknown) => o.log(`stage: maps: ${e instanceof Error ? e.message : e}`));
   return {
@@ -233,6 +249,7 @@ export async function runStage(o: StageOptions): Promise<{ url: string; close: (
       twin.close();
       server.close();
       pair?.server.close();
+      proxy.close();
     },
   };
 }
