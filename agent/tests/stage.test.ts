@@ -121,6 +121,16 @@ test("the page carries the brand mark", () => {
   assert.ok(!/\$\{/.test(STAGE_PAGE), "no unfilled template slots");
 });
 
+test("the neural voice library is pinned by version and hash", () => {
+  const map = /<script type="importmap">([^<]*)<\/script>/.exec(STAGE_PAGE);
+  assert.ok(map, "an import map");
+  const m = JSON.parse(map[1]!) as { imports: Record<string, string>; integrity: Record<string, string> };
+  const url = m.imports["kokoro"]!;
+  assert.match(url, /^https:\/\/cdn\.jsdelivr\.net\/npm\/kokoro-js@\d+\.\d+\.\d+\//, "an exact version");
+  assert.match(m.integrity[url] ?? "", /^sha384-[A-Za-z0-9+/]{64}$/, "a subresource hash");
+  assert.ok(STAGE_PAGE.indexOf('type="importmap"') < STAGE_PAGE.indexOf('type="module"'), "the map comes first");
+});
+
 test("locate points at lines or at an exact snippet", () => {
   assert.deepEqual(locate(GLOW, { lines: "2-3", note: "the knob" }), { from: 2, to: 3, style: "band", color: "yellow", note: "the knob" });
   assert.deepEqual(locate(GLOW.trimEnd(), { lines: "99" }), { from: 3, to: 3, style: "band", color: "yellow" }, "clamped to the code");

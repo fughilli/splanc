@@ -25,6 +25,7 @@ const PAGE = String.raw`<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Splanc Stage</title>
+<script type="importmap">{"imports":{"kokoro":"https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js"},"integrity":{"https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js":"sha384-suR1TeKe6Fe8fT0n/uTWoohnPJrp1zu3z0bj4VH2anmmq739wlmFSnMFJyMYszAC"}}</script>
 <style>
 @font-face { font-family: "Bangers"; src: url("/brand/bangers.woff2") format("woff2"); font-display: block; }
 @font-face { font-family: "Inter"; src: url("/brand/inter-400.woff2") format("woff2"); font-weight: 400; font-display: swap; }
@@ -371,14 +372,75 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
     reply.text += t;
   }
   var synth = window.speechSynthesis;
-  var voiceOn = !!synth && store("stage.voice") !== "off";
+  var voiceOn = false;
   function setVoice(on) {
-    voiceOn = !!synth && on;
+    voiceOn = canSpeak && on;
     store("stage.voice", voiceOn ? "on" : "off");
     $("voiceBtn").classList.toggle("on", voiceOn);
     $("voiceBtn").textContent = voiceOn ? "Voice on" : "Voice off";
-    if (!voiceOn && synth) synth.cancel();
+    if (!voiceOn) stopAudio();
   }
+
+  // The neural voice: Kokoro in the browser (?tts=system for the system voice;
+  // ?voice=af_bella etc. picks a Kokoro voice). Until it has loaded, or if it
+  // can't, the system voice speaks.
+  var KOKORO_VOICE = /^[ab][fm]_[a-z]+$/;
+  var tts = window.stageTts = {
+    wantKokoro: PARAMS.get("tts") !== "system" && !!(window.AudioContext || window.webkitAudioContext),
+    lib: null, loading: false, failed: false, model: null, ctx: null, src: null, chain: Promise.resolve(),
+    voice: KOKORO_VOICE.test((PARAMS.get("voice") || "").toLowerCase()) ? PARAMS.get("voice").toLowerCase() : "af_heart",
+    speed: parseFloat(PARAMS.get("rate") || "1") || 1,
+    // Only the tab that speaks loads the model (one copy in memory).
+    load: function () {
+      var Kokoro = tts.lib;
+      if (!Kokoro || tts.loading || tts.failed || !ownsVoice()) return;
+      tts.loading = true;
+      var id = "onnx-community/Kokoro-82M-v1.0-ONNX", gpu = false;
+      note("Loading the voice…");
+      // WebGPU when there is a real adapter (Chrome on a Mac), else WASM on the CPU.
+      var adapter = navigator.gpu ? navigator.gpu.requestAdapter().catch(function () { return null; }) : Promise.resolve(null);
+      adapter.then(function (a) {
+        gpu = !!a;
+        return Kokoro.from_pretrained(id, gpu ? { dtype: "fp32", device: "webgpu" } : { dtype: "q8", device: "wasm" });
+      }).then(function (m) {
+        tts.model = m;
+        note("Voice ready: " + tts.voice + (gpu ? "" : " (no WebGPU: slower)") + ".");
+      }, tts.fail);
+    },
+    fail: function (e) { tts.failed = true; note("Using the system voice (the neural voice didn't load: " + ((e && e.message) || e) + ").", "err"); },
+    // Synthesize in order (one model at a time); resolves to an AudioBuffer.
+    make: function (text) {
+      var p = tts.chain.then(function () { return tts.model.generate(text, { voice: tts.voice, speed: tts.speed }); }).then(function (a) {
+        var b = audioCtx().createBuffer(1, a.audio.length, a.sampling_rate);
+        b.copyToChannel(a.audio, 0);
+        return b;
+      });
+      tts.chain = p.catch(function () {});
+      return p;
+    }
+  };
+  var canSpeak = !!synth || tts.wantKokoro;
+  voiceOn = canSpeak && store("stage.voice") !== "off";
+  function audioCtx() { if (!tts.ctx) tts.ctx = new (window.AudioContext || window.webkitAudioContext)(); return tts.ctx; }
+  function stopAudio() {
+    if (synth) synth.cancel();
+    if (tts.src) { try { tts.src.stop(); } catch (e) { /* not started */ } tts.src = null; }
+  }
+
+  // One voice per browser: with the stage open in two tabs (the one it opened
+  // plus one on the TV), only the tab used last speaks; the others stay quiet.
+  var TAB = Math.random().toString(36).slice(2);
+  function voiceOwner() { try { return JSON.parse(localStorage.getItem("stage.voiceOwner") || "null"); } catch (e) { return null; } }
+  function claimVoice() { try { localStorage.setItem("stage.voiceOwner", JSON.stringify({ id: TAB, t: Date.now() })); } catch (e) { /* private window */ } }
+  function ownsVoice() { var o = voiceOwner(); return !o || o.id === TAB || Date.now() - o.t > 6000; }
+  if (ownsVoice()) claimVoice();
+  setInterval(function () { if (ownsVoice()) { claimVoice(); tts.load(); } }, 2000);
+  ["keydown", "pointerdown"].forEach(function (k) {
+    document.addEventListener(k, function () {
+      claimVoice();
+      if (tts.wantKokoro) { var c = audioCtx(); if (c.state === "suspended") c.resume(); tts.load(); }
+    }, true);
+  });
   var BAD_VOICE = /Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Good News|Jester|Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Fred|Junior|Ralph|Kathy|Grandma|Grandpa|Eddy|Flo|Reed|Rocko|Sandy|Shelley/;
   function pickVoice() {
     var vs = synth ? synth.getVoices() : [];
@@ -402,7 +464,14 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
   // The playback queue: spoken chunks of the reply and walkthrough steps, in order.
   var player = { q: [], busy: false, timer: 0, done: null };
   var live = false;
-  function enqueue(item) { player.q.push(item); pump(); }
+  function enqueue(item) {
+    // Start synthesizing now, so the clip is ready when its turn comes.
+    if (voiceOn && live && tts.model && ownsVoice()) {
+      var w = reply.text.slice(item.start, item.end).trim();
+      if (w) item.audio = tts.make(w);
+    }
+    player.q.push(item); pump();
+  }
   function pump() {
     if (player.busy) return;
     var it = player.q.shift();
@@ -418,8 +487,30 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
       player.busy = false; player.done = null;
       pump();
     };
-    if (voiceOn && words && live) {
-      if (statusKind === "" ) status("speaking", "Speaking…");
+    if (voiceOn && words && live && ownsVoice() && tts.model) {
+      if (statusKind === "") status("speaking", "Speaking…");
+      var made = it.audio || tts.make(words);
+      player.timer = setTimeout(done, 30000 + words.length * 200); // synthesis stalled
+      made.then(function (buf) {
+        if (finished) return;
+        clearTimeout(player.timer);
+        var c = audioCtx(), s = c.createBufferSource();
+        s.buffer = buf; s.connect(c.destination);
+        tts.src = s;
+        s.onended = function () { if (tts.src === s) tts.src = null; done(); };
+        var t0 = c.currentTime;
+        // Light the words up across the clip (Kokoro gives no word timings).
+        (function glow() {
+          if (finished) return;
+          var f = Math.min(1, (c.currentTime - t0) / buf.duration);
+          reply.pos = Math.max(reply.pos, it.start + lead + Math.round(words.length * f)); renderReply();
+          if (f < 1) requestAnimationFrame(glow);
+        })();
+        s.start();
+        player.timer = setTimeout(done, buf.duration * 1000 + 3000); // a suspended audio context never ends
+      }, function () { if (!finished) done(); });
+    } else if (voiceOn && words && live && ownsVoice() && synth) {
+      if (statusKind === "") status("speaking", "Speaking…");
       var u = new SpeechSynthesisUtterance(words);
       var v = pickVoice(); if (v) { u.voice = v; u.lang = v.lang; }
       u.rate = RATE;
@@ -438,7 +529,7 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
   }
   // Jump to the end: every pending highlight drawn, all the text bright.
   function flushPlayback() {
-    if (synth) synth.cancel();
+    stopAudio();
     var q = player.q; player.q = [];
     if (player.done) player.done();
     q.forEach(function (it) { if (it.act) it.act(); });
@@ -796,11 +887,19 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
       s.getVideoTracks()[0].addEventListener("ended", function () { v.srcObject = null; $("app").classList.add("nophone"); btn.classList.remove("on"); });
     }).catch(function (err) { note("Phone: " + err.message, "err"); });
   };
-  if (!synth) { $("voiceBtn").disabled = true; }
+  if (!canSpeak) { $("voiceBtn").disabled = true; }
   setVoice(voiceOn);
   if (synth) { synth.getVoices(); synth.addEventListener && synth.addEventListener("voiceschanged", function () { synth.getVoices(); }); }
   idleText = SR ? "Ready — hold Space to talk" : "Ready — press Enter to type";
 })();
+</script>
+<script type="module">
+  // The neural voice (Kokoro, open weights, runs here in the browser). The library is
+  // pinned by version and hash (the import map above); the model comes from Hugging Face
+  // on first use and is cached by the browser.
+  if (window.stageTts && window.stageTts.wantKokoro) {
+    import("kokoro").then(function (m) { window.stageTts.lib = m.KokoroTTS; window.stageTts.load(); }, function (e) { window.stageTts.fail(e); });
+  }
 </script>
 </body>
 </html>

@@ -93,12 +93,24 @@ gets a short comic-style label, and scrolls into view. To explain a different ef
 ("explain the candle effect from the library") and Claude opens it in the code panel first.
 Questions don't change the lights unless you ask for that too.
 
-Claude's replies are spoken aloud by the browser's built-in voice; the words light up as they
-are spoken. Press **V** (or the **Voice** button) to turn the voice off; walkthroughs then
-step along at reading pace. Pressing Space to talk cuts the voice off. To pick a voice, add
-`?voice=` and part of its name to the page address (e.g. `?voice=Daniel`), and `&rate=0.95`
-to slow it down. On macOS, the most natural voices are the "Enhanced" and "Premium" ones
-(System Settings → Accessibility → Spoken Content → System voice → Manage Voices).
+Claude's replies are spoken aloud by **Kokoro**, an open-weights neural voice that runs in the
+browser itself (no key, no cost). The words light up as they are spoken. The first time, the page
+downloads the voice model (about 90 MB, from Hugging Face) and the browser keeps it, so load the page
+once on the night's network before the show. Until the model is ready, and on browsers that can't run
+it, the system voice speaks instead. Chrome on a Mac runs it on the GPU (WebGPU); without that it runs
+on the CPU and the first words take longer.
+
+Press **V** (or the **Voice** button) to turn the voice off; walkthroughs then step along at reading
+pace. Pressing Space to talk cuts the voice off. Options in the page address:
+
+- `?voice=af_bella` picks a Kokoro voice: `af_heart` (default), `af_bella`, `am_michael`,
+  `bf_emma`, `bm_george` and others (samples on the
+  [model card](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX#samples)).
+- `&rate=1.1` speeds it up (1 is normal).
+- `?tts=system` uses the computer's own voice instead; then `?voice=` takes part of a system
+  voice's name (e.g. `?tts=system&voice=Daniel`).
+
+With the stage open in more than one tab, only the tab you last clicked or typed in speaks.
 
 ## Which fixtures are on screen
 
