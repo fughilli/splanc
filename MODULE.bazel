@@ -490,73 +490,29 @@ git_override(
 # Lighthouse (Vive Tracker) tracking: lh_kernel, lh_protocol, lh_device (no_std)
 # from fughilli/lighthouse, pinned (re-sync, not fork: bump the commit). The
 # ESP32-P4 player runs them with the tracker wired to the P4's USB OTG port.
+# 0d079ad = fughilli/lighthouse#1 (f32 kernel, photon-latency work, lone base
+# station lock); move to the merge commit once it lands.
 bazel_dep(name = "lighthouse", version = "0.0.0")
 archive_override(
     module_name = "lighthouse",
-    integrity = "sha256-8KeGlT7pzwdNLef7lhSrY6z3Dh94V+n5u6gwwPRVEKw=",
-    strip_prefix = "lighthouse-4919232c4e350efcfe4dd6e49a83929cdf046c4f",
-    urls = ["https://github.com/fughilli/lighthouse/archive/4919232c4e350efcfe4dd6e49a83929cdf046c4f.tar.gz"],
+    integrity = "sha256-qqvr2CZV6Yc3PYv62dMLSTmyBupN0hITUePw3iYzVGo=",
+    strip_prefix = "lighthouse-0d079ad742290ff73dd8430485c8cc4e0d4bdbd8",
+    urls = ["https://github.com/fughilli/lighthouse/archive/0d079ad742290ff73dd8430485c8cc4e0d4bdbd8.tar.gz"],
 )
 
 bazel_dep(name = "firmware", version = "0.0.0", repo_name = "embedded")
 archive_override(
     module_name = "firmware",
-    # embedded master @569102d — the mbedtls-8k-record-and-selfsigned-cert work
-    # merged: mbedtls 3.6.5 + IDF v5.5.4 built FROM SOURCE with
-    # CONFIG_MBEDTLS_DYNAMIC_BUFFER (TLS record buffer 16 KB -> 8 KB, fixes the
-    # C6's fragmented-heap wss/cert handshake OOM) + //libs/tls:selfsigned
-    # (on-device SAN-cert re-issuance). Includes the x86_64-linux riscv/xtensa
-    # toolchain hashes (were fakeHash → CI hash mismatch) + the embedded CI.
-    # (569102d is e37969f with a commit-message-only rewrite; identical tree.)
-    integrity = "sha256-7Ueh/m+aZh+HszxgLoBTcTbKyiGKN1jMTOY19XjrASc=",
-    patch_strip = 1,
-    # FUG-90: add ledmapper_gen_key() to //libs/tls:selfsigned so the player
-    # generates a per-device EC key on-device instead of baking one shared key
-    # into every firmware image. Additive-only patch (a new function in the
-    # existing TU); fold it upstream and drop this on the next embedded bump.
-    # esp32-libs-c6-c3: restrict the esp32-arduino-libs FOD to the esp32c6 +
-    # esp32c3 variants (upstream unpacks all ~8 chip variants, ~10 GB — overflowed
-    # the container overlay, the sole reason the C6 firmware couldn't build in
-    # container). We build C6 (+ the build-only C3 target). See the patch header.
-    # esp32c3-build-target: add esp32c3 (RISC-V rv32imc) as a BUILD-ONLY firmware
-    # target — a c3 platform + cc_toolchain + the parallel esp32c3 section of the
-    # generated arduino_esp32 scaffold. Build-gates future c3 work; the image is
-    # NOT runtime-correct yet (netstack ccmp.rs is C6-register-specific).
-    patches = [
-        "//patches:embedded-fug90-gen-key.patch",
-        "//patches:embedded-esp32-libs-c6-c3.patch",
-        # Shrink the from-source mbedTLS TLS record buffer 8 KB -> 6 KB now that all
-        # large control frames are chunked at the client — halves the per-connection
-        # dynamic record alloc so the heapless-netstack player survives many TLS
-        # reconnects on the C6's tight heap. ABI-safe (record buffer is off the struct).
-        "//patches:embedded-mbedtls-record-6k.patch",
-        # Make mbedtls_src's SDK-headers dep private (implementation_deps) so the
-        # esp32c6 SDK's ~315 -I dirs compile mbedtls but don't propagate to
-        # consumers — else the esp32c3 build stacked c6+c3 include lists and blew
-        # past the g++ -> cc1plus argv limit. Must precede the c3 patch.
-        "//patches:embedded-mbedtls-private-sdk-hdrs.patch",
-        "//patches:embedded-esp32c3-build-target.patch",
-        # esp32c3-mbedtls-sw-ecc: c3 runtime bring-up. Adds :mbedtls_src_esp32c3
-        # (drops the HW-ECC port the c3 has no accelerator for; software ECP
-        # instead) so the c3 image links strictly — no --unresolved-symbols=
-        # ignore-all. Must follow the build-target patch (patches its core_esp32c3).
-        "//patches:embedded-esp32c3-mbedtls-sw-ecc.patch",
-        # esp32c6-sections-ld-override: expose the SDK's sections.ld and let the
-        # consumer put a rewritten one ahead of it on the -L path
-        # (--@embedded//ld:esp32c6_sections_override, set in .bazelrc) — how the
-        # player moves dead/cold vendor IRAM code to flash on the prebuilt SDK.
-        "//patches:embedded-esp32c6-sections-ld-override.patch",
-        # esptool-5.6: @esptool from nix/esptool.nix (5.6.0 + esp-pylib). The
-        # nixos-25.11 pin's 5.1.0 can't flash an ESP32-P4 v3.x. Fold upstream.
-        "//patches:embedded-esptool-5.6.patch",
-        # esp32p4-build-target: the ESP32-P4 (die v3.1+, ilp32f) firmware target —
-        # platform, cc_toolchain, board/bootloader (0x2000), and the esp32p4
-        # section of the arduino_esp32 scaffold generated from the libs' flags/*
-        # by tools/gen_embedded_p4_section.py. docs/design/p4-c6-split.md §3.1.
-        "//patches:embedded-esp32p4-build-target.patch",
-    ],
-    strip_prefix = "embedded-569102d541664d790fc708206f450dce477ca220",
-    urls = ["https://github.com/fughilli/embedded/archive/569102d541664d790fc708206f450dce477ca220.tar.gz"],
+    # embedded @b158be6 = fughilli/embedded#9 (branch splanc-patches): master
+    # @569102d (mbedtls 3.6.5 + IDF v5.5.4 from source, dynamic record buffer,
+    # //libs/tls:selfsigned) plus what Splanc used to carry as patches/embedded-*:
+    # ledmapper_gen_key (FUG-90), the esp32c6+c3-only libs FOD, the 6 KB TLS
+    # record buffer, private mbedtls SDK headers, the esp32c3 build target and
+    # its software-ECC mbedtls, the overridable esp32c6 sections.ld, esptool 5.6,
+    # and the esp32p4 build target. Move to the merge commit once it lands.
+    integrity = "sha256-shY3DWkaJ5vvAzIU7leIcNLuL13+p7g2LdxHE7Dzy/Q=",
+    strip_prefix = "embedded-b158be6b59c2782e2ce2fcaa44a75cd81363cc95",
+    urls = ["https://github.com/fughilli/embedded/archive/b158be6b59c2782e2ce2fcaa44a75cd81363cc95.tar.gz"],
 )
 
 # ---------------------------------------------------------------------------

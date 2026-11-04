@@ -808,6 +808,7 @@ rust_static_library(
         "driver_ffi.rs",
         "ffi.rs",
         "fxdbg.rs",
+        "kiosk_ffi.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
         "wifi_ffi.rs",

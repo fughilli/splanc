@@ -32,7 +32,7 @@ branch `agent/fx-gpu-lowering`). This doc relies on it and does not repeat it. A
 
 Fact tags. **[V]** means checked against a primary source; §8 lists the sources. **[V-pin]**
 means read from the ESP-IDF build we pin: the `esp32-arduino-libs` zip in
-`patches/embedded-esp32-libs-c6-c3.patch`, IDF release/v5.5, arduino-esp32 3.3.10. **[U]**
+`@embedded`'s `nix/esp32_arduino_libs.nix`, IDF release/v5.5, arduino-esp32 3.3.10. **[U]**
 means unverified, to be confirmed at bring-up. **[E]** means an estimate.
 
 ## 1. Why split
@@ -255,12 +255,12 @@ On a v1.x board, Phase A builds against `esp32p4_es`. That still covers the whol
 
 The C3 port (#212, #216) is the template. It needed four things, and the P4 needs the same four:
 
-1. **SDK libs.** `patches/embedded-esp32-libs-c6-c3.patch` unzips only `esp32c6/*` and
+1. **SDK libs.** `@embedded`'s `nix/esp32_arduino_libs.nix` (then `patches/embedded-esp32-libs-c6-c3.patch`) unzips only `esp32c6/*` and
    `esp32c3/*` from the libs zip. That restriction exists because the full zip unpacks to about
    10 GB. Add `esp32p4/*` (or `esp32p4_es/*`, chosen per §3.0) and stage it at `sdk/esp32p4`.
    Measure the extra disk use first: each variant has about 4,200 entries, a size similar to the
    C6's.
-2. **Platform and C toolchain.** In the style of `patches/embedded-esp32c3-build-target.patch`
+2. **Platform and C toolchain.** In the style of the esp32c3 build target (then `patches/embedded-esp32c3-build-target.patch`)
    (949 lines): an `@embedded//platforms:is_esp32p4` constraint, a `cc_toolchain` with
    IDF v5.5.3's `-march=rv32imafc_zicsr_zifencei_xesploop_xespv -mabi=ilp32f` [V], a
    `libs/board:esp32p4` and bootloader, and
@@ -998,7 +998,7 @@ ESP-Hosted iperf on each board.
 ## 8. Sources
 
 **Pinned build (primary):** `esp32-arduino-libs-idf-release_v5.5-73550728-v6.zip`, as referenced
-from `patches/embedded-esp32-libs-c6-c3.patch`. Files read:
+from `@embedded`'s `nix/esp32_arduino_libs.nix`. Files read:
 
 - `esp32p4/sdkconfig`, `esp32p4_es/qio_qspi/include/sdkconfig.h`: revisions, CPU, PSRAM, L2
   cache, hosted SDIO pins and reset;

@@ -3,8 +3,8 @@ esp32-arduino-libs esp32p4 flags/ response files (includes, defines, c/cpp flags
 
     python3 tools/gen_embedded_p4_section.py <esp32-arduino-libs>/esp32p4 > section.BUILD
 
-The output is appended to @embedded's nix/arduino_esp32.BUILD by
-patches/embedded-esp32p4-build-target.patch; regenerate it when the libs pin moves.
+The output is the esp32p4 section of @embedded's nix/arduino_esp32.BUILD
+(embedded commit 3242aa3); regenerate it there when the libs pin moves.
 """
 
 import os

@@ -23,6 +23,7 @@ void improv_ble_set_state(uint8_t) {}
 void improv_ble_set_error(uint8_t) {}
 void improv_ble_send_redirect(const char *) {}
 void player_ble_poll() {}
+void player_ble_push(const uint8_t *, size_t) {}
 
 namespace {
 lm_cert::Machine g_cert;  // never leaves its boot state: no TLS listener on the P4
