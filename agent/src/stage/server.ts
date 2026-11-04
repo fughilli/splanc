@@ -18,6 +18,7 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
 import type { Hub } from "../hub";
 import type { UniformInput } from "../uniforms";
+import STAGE_VIEW_JS from "virtual:stage-view";
 import { StageAgent, type ToolResult } from "./agent";
 import { FONTS } from "./brand";
 import { StageBus, type StageEvent } from "./bus";
@@ -164,6 +165,11 @@ export async function runStage(o: StageOptions): Promise<{ url: string; close: (
         // Public brand fonts: the page's CSS can't carry the LAN key.
         res.writeHead(200, { "content-type": "font/woff2", "cache-control": "max-age=86400" });
         return res.end(Buffer.from(FONTS[font], "base64"));
+      }
+      if (req.method === "GET" && url.pathname === "/stage/view.js") {
+        // The app's map view (public code, like the fonts: a <script src> can't carry the key).
+        res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "max-age=3600" });
+        return res.end(STAGE_VIEW_JS);
       }
       if (!authorized(req, url)) return json(res, 403, { error: "stage key required (?k=…)" });
       const route = `${req.method} ${url.pathname}`;

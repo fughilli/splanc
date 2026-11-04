@@ -31,8 +31,9 @@ interface Live {
 
 /** The two axes with the largest extent, the up axis (+Y) vertical when it is one
  * of them (the same view as fxhost.renderPng), normalised to 0..1 with the aspect
- * kept. Flat [x0, y0, x1, y1, ...], y down. */
-export function project(pos: Float32Array): { xy: number[]; aspect: number } {
+ * kept. Flat [x0, y0, x1, y1, ...], y down. Also the 3D positions as they are
+ * (`xyz`, flat, 0.1 mm), for the page's orbiting view (the app's MapView). */
+export function project(pos: Float32Array): { xy: number[]; aspect: number; xyz: number[] } {
   const n = pos.length / 3;
   const min = [Infinity, Infinity, Infinity];
   const max = [-Infinity, -Infinity, -Infinity];
@@ -56,10 +57,19 @@ export function project(pos: Float32Array): { xy: number[]; aspect: number } {
     const y = (pos[i * 3 + v]! - min[v]!) / span;
     xy.push(+(w > 0 ? x / w : 0.5).toFixed(4), +(1 - (ht > 0 ? y / ht : 0.5)).toFixed(4));
   }
-  return { xy, aspect: ht > 0 ? w / ht : 8 };
+  const xyz = Array.from(pos, (c) => Math.round(c * 1e4) / 1e4);
+  return { xy, aspect: ht > 0 ? w / ht : 8, xyz };
 }
 
-type Layout = { type: "twin_layout"; player: string; name: string; effect: string | null; xy: number[]; aspect: number };
+type Layout = {
+  type: "twin_layout";
+  player: string;
+  name: string;
+  effect: string | null;
+  xy: number[];
+  aspect: number;
+  xyz: number[];
+};
 
 export class Twin {
   private live = new Map<string, Live>();

@@ -231,7 +231,7 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
   <header>
     <div class="mark"><span class="logo">@@LOGO@@</span><span class="word">Splanc</span><span class="live">Live!</span></div>
     <div class="status" id="status"><i></i><span id="statusText">Connecting…</span></div>
-    <div class="hint" id="hint">Hold <kbd>Space</kbd> to talk · <kbd>Enter</kbd> type · <kbd>V</kbd> voice · <kbd>F</kbd> phone · <kbd>Esc</kbd> stop</div>
+    <div class="hint" id="hint">Hold <kbd>Space</kbd> to talk · <kbd>Enter</kbd> type · <kbd>V</kbd> voice · <kbd>F</kbd> phone · <kbd>G</kbd> grid · <kbd>Esc</kbd> stop</div>
     <button class="btn" id="voiceBtn" title="Speak replies aloud (V)">Voice</button>
     <button class="btn" id="phoneBtn" title="Put the phone's screen (ScreenStream) or a window in the phone slot">Phone</button>
     <button class="btn" id="mapsBtn" title="Re-read the fixtures' maps (after mapping in the app)">Maps</button>
@@ -274,6 +274,7 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
   </div>
 </div></div>
 <div class="typebox" id="typebox"><input id="typed" placeholder="Type a prompt and press Enter" autocomplete="off"></div>
+<script src="/stage/view.js"></script>
 <script>
 (function () {
   "use strict";
@@ -678,7 +679,11 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
     if (!focus.length) return;
     if ($("noFx")) $("noFx").remove();
     var box = $("fixtures");
-    Object.keys(fixtures).forEach(function (id) { if (focus.indexOf(id) < 0) { fixtures[id].el.remove(); delete fixtures[id]; } });
+    Object.keys(fixtures).forEach(function (id) {
+      if (focus.indexOf(id) >= 0) return;
+      if (fixtures[id].view) fixtures[id].view.stop();
+      fixtures[id].el.remove(); delete fixtures[id];
+    });
     focus.forEach(function (id) {
       var s = shapes[id]; if (!s) return;
       var f = fixtures[id];
@@ -689,13 +694,14 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
         f = fixtures[id] = { el: el, canvas: el.querySelector("canvas"), rgb: null };
       }
       box.appendChild(f.el); // in spotlight order
-      if (f.shape !== s) { f.shape = s; f.rgb = null; }
+      if (f.shape !== s) { f.shape = s; f.rgb = null; attachView(f); }
       f.el.querySelector("b").textContent = s.name;
       f.el.querySelector("span").textContent = s.effect ? s.effect : "map only";
       draw(f);
     });
   }
   function draw(f) {
+    if (f.view) return;
     var c = f.canvas, dpr = window.devicePixelRatio || 1, s = f.shape;
     var W = c.clientWidth * dpr, H = c.clientHeight * dpr;
     if (!W || !H) return;
@@ -724,12 +730,42 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
       g.beginPath(); g.arc(x, y, rad, 0, 6.2832); g.fill();
     }
   }
+  // The app's 3D map view (window.SplancMapView, /stage/view.js): orbits slowly;
+  // drag to orbit, wheel to zoom, and after a pause it goes back to orbiting.
+  // G toggles its ground grid + axis gizmo. Without it, the flat drawing above.
+  var showGrid = store("stage.grid") !== "off";
+  function mapOf(s) {
+    var leds = [], n = s.xyz.length / 3;
+    for (var i = 0; i < n; i++) leds.push({ id: i, xyz: [s.xyz[3 * i], s.xyz[3 * i + 1], s.xyz[3 * i + 2]], confidence: 1, nViews: 2 });
+    return { leds: leds, ledCount: n };
+  }
+  function attachView(f) {
+    var V = window.SplancMapView, s = f.shape;
+    if (!V || !s || !s.xyz) return;
+    var map = mapOf(s);
+    if (f.view && f.viewN === map.leds.length) f.view.update(map);
+    else {
+      if (f.view) f.view.stop();
+      f.view = new V(f.canvas, map);
+      f.view.showStats = false;
+      f.view.showGrid = f.view.showTriad = showGrid;
+      f.view.resumeAfterMs = 6000;
+      f.view.start();
+    }
+    f.viewN = map.leds.length;
+    f.view.setLedColors(new Uint8Array(map.leds.length * 3)); // unlit: the map's shape in grey
+  }
+  function setGrid(on) {
+    showGrid = on; store("stage.grid", on ? "on" : "off");
+    for (var k in fixtures) if (fixtures[k].view) fixtures[k].view.showGrid = fixtures[k].view.showTriad = on;
+  }
   function frame(ev) {
     var f = fixtures[ev.player];
     if (!f) return;
     var bin = atob(ev.rgb), a = new Uint8Array(bin.length);
     for (var i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
     f.rgb = a;
+    if (f.view) { f.view.setLedColors(a); return; } // it draws every animation frame
     if (!f.queued) { f.queued = true; requestAnimationFrame(function () { f.queued = false; draw(f); }); }
   }
   window.addEventListener("resize", function () { for (var k in fixtures) draw(fixtures[k]); });
@@ -906,6 +942,7 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
     else if (TOGGLE[e.key]) { e.preventDefault(); if (e.repeat) return; if (listening) stopListening(true); else startListening(); }
     else if (e.key === "Enter") { e.preventDefault(); openType(); }
     else if (e.key === "v" || e.key === "V") { if (!e.repeat) setVoice(!voiceOn); }
+    else if (e.key === "g" || e.key === "G") { if (!e.repeat) setGrid(!showGrid); }
     else if (e.key === "f" || e.key === "F") { if (!e.repeat && phoneShown()) $("app").classList.toggle("phonebig"); }
     else if (e.key === "Escape" && !$("pair").hidden) closePair();
     else if (e.key === "Escape" && $("app").classList.contains("phonebig")) $("app").classList.remove("phonebig");

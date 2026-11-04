@@ -368,6 +368,13 @@ describe("stage agent against a fake player", () => {
       assert.equal(font.headers.get("content-type"), "font/woff2");
       assert.equal(Buffer.from(await font.arrayBuffer()).subarray(0, 4).toString(), "wOF2");
       assert.equal((await fetch(`${base}/brand/nope.woff2`)).status, 403);
+      const view = await fetch(`${base}/stage/view.js`);
+      assert.equal(view.status, 200, "the map view needs no key (a <script src> can't carry it)");
+      assert.match(view.headers.get("content-type") ?? "", /javascript/);
+      const js = await view.text();
+      assert.match(js, /SplancMapView/, "the app's map view, exposed to the page");
+      assert.ok(!/from\s*["']/.test(js.slice(0, 2000)), "one classic script (no imports)");
+      assert.match(html, /<script src="\/stage\/view\.js"><\/script>/);
       const form = await fetch(`${base}/api/reset?k=${key}`, { method: "POST", body: "x=1", headers: { "content-type": "application/x-www-form-urlencoded" } });
       assert.equal(form.status, 415, "no form posts");
       const st = await fetch(`${base}/api/status?k=${key}`);

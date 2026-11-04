@@ -83,6 +83,7 @@ on the laptop screen, not the TV (behind other windows is fine).
 | **Enter**                                      | type a request instead                                    |
 | **V**                                          | turn Claude's voice on or off                             |
 | **F**                                          | show the phone large (again, or **Esc**, to shrink it)    |
+| **G**                                          | show or hide the preview's ground grid and axes           |
 | **Esc**                                        | stop Claude mid-answer (and its voice)                    |
 | **New**                                        | start a fresh conversation                                |
 | **Maps**                                       | re-read the fixtures' maps (after mapping one in the app) |
@@ -132,6 +133,11 @@ pace. Pressing Space to talk cuts the voice off. Options in the page address:
 With the stage open in more than one tab, only the tab you last clicked or typed in speaks.
 
 ## Which fixtures are on screen
+
+The preview is the app's 3D map view: each fixture turns slowly, lit with the effect as it runs.
+Drag one with the mouse to orbit it, scroll to zoom (right-drag or Shift-drag pans); a few seconds
+after you let go it eases back and turns on its own again. **G** shows or hides the ground grid
+and axes.
 
 The live-preview strip shows two fixtures. It starts with the first two that have a map,
 and follows Claude: when it deploys to one or two fixtures, they come on screen. Ask to see
