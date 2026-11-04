@@ -365,15 +365,30 @@ microphone works only on the laptop itself); <code class="docutils literal notra
 </section>
 <section id="put-the-phone-on-screen">
 <h2>Put the phone on screen<a class="headerlink" href="#put-the-phone-on-screen" title="Link to this heading">¶</a></h2>
+<p><strong>Android (ScreenStream).</strong> The phone slot shows ScreenStream’s page in a frame:</p>
 <ol class="arabic simple">
-<li><p>Plug the iPhone into the Mac and unlock it.</p></li>
-<li><p>Open <strong>QuickTime Player</strong> → File → New Movie Recording. Next to the record button, open the
-menu and pick the iPhone as the camera. The phone’s screen appears in the window.</p></li>
-<li><p>In the stage page, click <strong>Phone</strong> and pick the QuickTime window. It appears in the phone
-slot at the left. Click <strong>Phone</strong> again to hide it.</p></li>
+<li><p>Use the ScreenStream fork (github.com/fughilli/ScreenStream, which allows a page on the laptop
+itself to frame it). Start it on the phone; the phone and the laptop must be on the same network.</p></li>
+<li><p>On the stage, click <strong>Phone</strong>. A QR code appears; scan it with the phone’s camera.</p></li>
+<li><p>The page that opens on the phone has the phone’s ScreenStream address filled in
+(<code class="docutils literal notranslate"><span class="pre">https://&lt;phone&gt;:8081/</span></code>; for stock ScreenStream tap the <code class="docutils literal notranslate"><span class="pre">http://…:8080/</span></code> link). Tap
+<strong>Show on the TV</strong>. The phone’s screen appears in the slot.</p></li>
+<li><p>The fork’s HTTPS certificate is self-signed, and a browser won’t ask about it inside a frame:
+if the slot stays blank, click <strong>Phone</strong> ▸ <strong>Trust the phone’s certificate</strong>, accept the
+warning in the tab that opens, close that tab, and reload the stage.</p></li>
+<li><p>Type ScreenStream’s PIN into the slot if it asks. Then click anywhere on the stage outside the
+slot before pressing Space: keys typed into the slot go to the phone’s page.</p></li>
 </ol>
-<p>Keep the QuickTime window on the laptop screen, not the TV. Hiding it behind other windows is
-fine.</p>
+<p>Click <strong>Phone</strong> again (or <strong>Hide it from the TV</strong> on the phone) to take it off screen. The QR code
+works for the whole session; if the laptop has several network addresses (VPN, two Wi-Fi), the
+others are listed under the code: click one to switch the code to it. Pairing uses the stage’s port</p>
+<ul class="simple">
+<li><p>1 (7421) on the local network.</p></li>
+</ul>
+<p><strong>iPhone (QuickTime), or any window.</strong> Plug the iPhone into the Mac and unlock it. Open <strong>QuickTime
+Player</strong> → File → New Movie Recording, and pick the iPhone as the camera next to the record button.
+Then click <strong>Phone</strong> ▸ <strong>Capture a window instead</strong> and pick the QuickTime window. Keep that window
+on the laptop screen, not the TV (behind other windows is fine).</p>
 </section>
 <section id="talk-to-it">
 <h2>Talk to it<a class="headerlink" href="#talk-to-it" title="Link to this heading">¶</a></h2>

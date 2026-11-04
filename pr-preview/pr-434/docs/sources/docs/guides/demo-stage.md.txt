@@ -47,14 +47,30 @@ microphone works only on the laptop itself); `--no-open` doesn't open the browse
 
 ## Put the phone on screen
 
-1. Plug the iPhone into the Mac and unlock it.
-2. Open **QuickTime Player** → File → New Movie Recording. Next to the record button, open the
-   menu and pick the iPhone as the camera. The phone's screen appears in the window.
-3. In the stage page, click **Phone** and pick the QuickTime window. It appears in the phone
-   slot at the left. Click **Phone** again to hide it.
+**Android (ScreenStream).** The phone slot shows ScreenStream's page in a frame:
 
-Keep the QuickTime window on the laptop screen, not the TV. Hiding it behind other windows is
-fine.
+1. Use the ScreenStream fork (github.com/fughilli/ScreenStream, which allows a page on the laptop
+   itself to frame it). Start it on the phone; the phone and the laptop must be on the same network.
+2. On the stage, click **Phone**. A QR code appears; scan it with the phone's camera.
+3. The page that opens on the phone has the phone's ScreenStream address filled in
+   (`https://<phone>:8081/`; for stock ScreenStream tap the `http://…:8080/` link). Tap
+   **Show on the TV**. The phone's screen appears in the slot.
+4. The fork's HTTPS certificate is self-signed, and a browser won't ask about it inside a frame:
+   if the slot stays blank, click **Phone** ▸ **Trust the phone's certificate**, accept the
+   warning in the tab that opens, close that tab, and reload the stage.
+5. Type ScreenStream's PIN into the slot if it asks. Then click anywhere on the stage outside the
+   slot before pressing Space: keys typed into the slot go to the phone's page.
+
+Click **Phone** again (or **Hide it from the TV** on the phone) to take it off screen. The QR code
+works for the whole session; if the laptop has several network addresses (VPN, two Wi-Fi), the
+others are listed under the code: click one to switch the code to it. Pairing uses the stage's port
+
+- 1 (7421) on the local network.
+
+**iPhone (QuickTime), or any window.** Plug the iPhone into the Mac and unlock it. Open **QuickTime
+Player** → File → New Movie Recording, and pick the iPhone as the camera next to the record button.
+Then click **Phone** ▸ **Capture a window instead** and pick the QuickTime window. Keep that window
+on the laptop screen, not the TV (behind other windows is fine).
 
 ## Talk to it
 
