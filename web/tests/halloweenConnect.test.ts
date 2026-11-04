@@ -1,8 +1,8 @@
 /**
  * Halloween play mode, connect + kiosk (net/halloweenConnect.ts,
- * halloween/kioskStore.ts, ui/screens/kioskSection.ts): the onboarding pumpkin
- * opens the Web Bluetooth chooser filtered to SpookySplanc*, connects over the
- * GATT player socket and lands on #/play; the kiosk countdown follows the
+ * halloween/kioskStore.ts, ui/screens/kioskSection.ts): play mode's Connect
+ * opens the Web Bluetooth chooser filtered to SpookySplanc* and connects over the
+ * GATT player socket; the kiosk countdown follows the
  * device's KioskStatus (get on connect, pushes, local activity); the owner's
  * section configures + unlocks with a secret kept on this phone.
  *
@@ -24,11 +24,9 @@ import { IMPROV_SERVICE } from "../src/net/improv";
 import { connectHalloweenFixture } from "../src/net/halloweenConnect";
 import { kioskStore } from "../src/halloween/kioskStore";
 import { kioskSecretFor } from "../src/halloween/kioskSecrets";
-import { connectAttempt } from "../src/halloween/playSession";
+import { connectAttempt, startPlayConnect } from "../src/halloween/playSession";
 import { appState } from "../src/ui/app/state";
-import { OnboardingScreen } from "../src/ui/screens/onboarding";
 import { KioskSection } from "../src/ui/screens/kioskSection";
-import type { Router } from "../src/ui/app/router";
 import {
   FakeLan,
   FakePlayerGatt,
@@ -128,22 +126,17 @@ function spookyBoard(name = "SpookySplanc1", kiosk: Record<string, unknown> = {}
   return k;
 }
 
-const fakeRouter = { navigate: (p: string) => (location.hash = `#${p}`) } as unknown as Router;
-
-test("the onboarding pumpkin opens a SpookySplanc chooser, connects over GATT and enters play mode", async () => {
+test("play mode's Connect opens a SpookySplanc chooser and connects over GATT", async () => {
   const k = spookyBoard("SpookySplanc1", { enabled: true, idleRemainingS: 102 });
   bt = installBluetooth(() => k.dev);
   kioskStore.start();
-  const screen = OnboardingScreen(fakeRouter);
-  document.body.appendChild(screen.el);
 
-  button("Play with the Halloween lights", screen.el).click();
-  assert.equal(bt.requests.length, 1, "the chooser opened inside the click (user gesture)");
+  void startPlayConnect();
+  assert.equal(bt.requests.length, 1, "the chooser opens synchronously (user gesture)");
   assert.deepEqual(bt.requests[0], {
     filters: [{ namePrefix: "SpookySplanc" }],
     optionalServices: [PLAYER_SERVICE_UUID, IMPROV_SERVICE],
   });
-  assert.equal(location.hash, "#/play");
   await advance(1000);
 
   assert.equal(appState.status.state, "connected");
@@ -152,7 +145,6 @@ test("the onboarding pumpkin opens a SpookySplanc chooser, connects over GATT an
   assert.equal(k.dev.player.count("get_kiosk_status"), 1, "kiosk status read right after connect");
   assert.equal(kioskStore.active, true);
   assert.ok(Math.abs(kioskStore.remaining() - 102) < 1.5, `remaining ${kioskStore.remaining()}`);
-  screen.onUnmount?.();
 });
 
 test("exact fixture name from the QR link filters the chooser to that board", async () => {

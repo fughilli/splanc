@@ -19,6 +19,8 @@ import {
   type DeviceMapLibrary,
 } from "../../store/deviceMap";
 import { mapStore, renderThumbnail, type StoredMap } from "../../store/mapStore";
+import { deviceStore } from "../../store/deviceStore";
+import { learnDeviceMap } from "../../store/previewMap";
 import { appState } from "../app/state";
 import { Button, icon, toast } from "../kit";
 import type { Router } from "../app/router";
@@ -151,6 +153,9 @@ export function DeviceMapCard(router: Router): DeviceMapCardHandle {
       render();
     }
     const next = await deviceMaps.probe(c);
+    // The effect editor previews on this fixture's map (store/previewMap.ts).
+    const dev = deviceStore.activeId();
+    if (next.kind === "saved" && dev) learnDeviceMap(dev, next.local.id);
     const ready = next.kind === "saved" || next.kind === "unsaved" ? await deviceImuReady(c) : false;
     if (my !== seq) return;
     state = next;

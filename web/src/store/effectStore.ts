@@ -59,19 +59,21 @@ function normTags(tags: string[]): string[] {
   );
 }
 
-/** Default effect source for a blank new effect (a valid, minimal shader). */
-export const BLANK_EFFECT_SOURCE = `uniform float speed : 0.0 .. 5.0 = 1.0;
-uniform float width : 0.02 .. 0.5 = 0.12;
+/** Default effect source for a blank new effect (a valid, minimal shader): a slow
+ * breath of one colour. Every LED shows the same value, so it looks calm on any
+ * fixture, however rough its map or topology (a chaser along led.s strobes where
+ * the topology jumps). */
+export const BLANK_EFFECT_SOURCE = `uniform float speed : 0.0 .. 2.0 = 0.25;
+uniform float low : 0.0 .. 1.0 = 0.08;
 uniform vec3 tint : color = 0.2, 0.6, 1.0;
-state float head;
+state float phase;
 
 // A rate knob is integrated here, never time * speed (that jumps when it moves).
-void update() { head = fract(head + dt * speed); }
+void update() { phase = fract(phase + dt * speed); }
 
 vec3 shade(Led led) {
-  float phase = fract(led.s - head);
-  float band = smoothstep(width, 0.0, abs(phase - 0.5));
-  return tint * band;
+  float b = 0.5 - 0.5 * cos(phase * 6.2832);
+  return tint * mix(low, 1.0, b * b);
 }
 `;
 

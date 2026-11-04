@@ -28,7 +28,6 @@ import { inLoader } from "../../net/otaUpdate";
 import { formatWifiStatus } from "../../net/wifiPolicy";
 import { WifiPolicySection } from "./wifiPolicySection";
 import { KioskSection } from "./kioskSection";
-import { PumpkinButton } from "./pumpkinButton";
 import { deviceHasKiosk } from "../../net/kiosk";
 
 let openHandle: { close: () => void } | null = null;
@@ -163,9 +162,6 @@ function render(): HTMLElement {
   const status = appState.status;
   const activeId = deviceStore.activeId();
   const devices = deviceStore.list();
-
-  // Halloween play mode for returning users (the onboarding screen has it too).
-  wrap.append(PumpkinButton({ onNavigate: () => openHandle?.close() }));
 
   // -- inline cert-trust (design doc §6.2): when the active device needs its
   // self-signed cert trusted, show the trust action here (mirrored in the pill).
