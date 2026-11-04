@@ -60,17 +60,40 @@ the deploy.
   deploy_effect. Never ask for confirmation of an effect change.
 - Keep effects small, readable and fast: the audience reads the code. Name the
   knobs well (they appear as sliders in the app).
-- Your text is read aloud and shown in large type: at most two short sentences,
-  plain words, no markdown, no code (the code is already on screen). Say what
-  the audience should see on the lights. After a deploy you may suggest one
-  playful next idea.
+- Your text is spoken aloud and shown in large type: plain words, no markdown,
+  no code, no symbols (the code is already on screen). After a change to the
+  lights: at most two short sentences saying what the audience should see; you
+  may suggest one playful next idea.
 - "Faster", "warmer", "more", "calmer": tune the running effect's uniforms
   (set_uniforms / ramp_uniforms) instead of writing a new one when a knob fits.
 - "Undo" / "go back": rollback_effect.
 - If a fixture is unreachable or a tool fails, say so in one sentence and carry on.
+- Questions ("how does that work?", "what does this line do?", "why is it so
+  smooth?"): answer, and change nothing on the lights unless asked. About code,
+  teach from the screen: show_code if the code in question is not the code on
+  screen, then explain_code, which speaks each step while it highlights, boxes,
+  underlines or labels the code. Point with \`match\` (an exact snippet); keep
+  notes to a few words. Two to six steps, each one or two short sentences, from
+  the big idea to the detail. The walkthrough is the whole answer: no text after
+  it beyond a few words. Other questions: answer in plain spoken prose, at most
+  four short sentences.
+- The live-preview strip shows two fixtures. When the presenter asks to see a
+  fixture, or you deploy to one that is not on screen, show_fixtures it.
 - Renaming, firmware, Wi-Fi, certificates, deleting and re-mapping are not
   available on stage; mapping is done in the Splanc app on the presenter's phone.
 `;
+
+/** Tools the stage runs itself (presenting, not lighting): see explain.ts. */
+export interface LocalTools {
+  readonly tools: Anthropic.Tool[];
+  has(name: string): boolean;
+  /** The tool input so far, while it streams. */
+  streaming?(name: string, id: string, json: string): void;
+  run(name: string, id: string, args: Record<string, unknown>): Promise<ToolResult>;
+  /** The source the code panel now shows. */
+  shown?(source: string): void;
+  reset?(): void;
+}
 
 export interface AgentOptions {
   client: Client;
@@ -82,6 +105,7 @@ export interface AgentOptions {
   effort?: "low" | "medium" | "high";
   /** After each tool call (the stage's twin follows deploys from here). */
   onToolResult?: (name: string, args: Record<string, unknown>, result: ToolResult) => void | Promise<void>;
+  local?: LocalTools;
   /** For tests: a stand-in for the Messages API. */
   anthropic?: Pick<Anthropic, "messages">;
 }
@@ -163,21 +187,22 @@ export class StageAgent {
   reset(): void {
     this.stop();
     this.messages = [];
+    this.o.local?.reset?.();
     this.o.bus.reset();
   }
 
   private async setup(): Promise<void> {
     if (this.tools) return;
     const listed = await this.o.client.listTools();
-    this.tools = listed.tools
-      .filter((t) => STAGE_TOOLS.has(t.name))
+    const local = this.o.local?.tools ?? [];
+    this.tools = [
+      ...listed.tools
+        .filter((t) => STAGE_TOOLS.has(t.name) && !local.some((l) => l.name === t.name))
+        .map((t) => ({ name: t.name, description: t.description ?? "", input_schema: t.inputSchema as Anthropic.Tool.InputSchema })),
+      ...local,
+    ]
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map((t) => ({
-        name: t.name,
-        description: t.description ?? "",
-        input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
-        eager_input_streaming: true,
-      }));
+      .map((t) => ({ ...t, eager_input_streaming: true }));
     const instructions = this.o.client.getInstructions() ?? "";
     this.system = [{ type: "text", text: `${instructions}\n\n${this.o.skill}\n${PERSONA}` }];
   }
@@ -252,6 +277,10 @@ export class StageAgent {
             const t = inputs.get(ev.index);
             if (!t) continue;
             t.json += d.partial_json;
+            if (this.o.local?.has(t.name)) {
+              this.o.local.streaming?.(t.name, t.id, t.json);
+              continue;
+            }
             const src = partialString(t.json, "source");
             // The code panel types along; at most one update per ~40 chars.
             if (src !== undefined && src.length - t.shown >= 40) {
@@ -273,8 +302,21 @@ export class StageAgent {
   private async call(u: Anthropic.ToolUseBlock): Promise<Anthropic.ToolResultBlockParam> {
     const bus = this.o.bus;
     const args = (u.input ?? {}) as Record<string, unknown>;
+    const local = this.o.local;
+    if (local?.has(u.name)) {
+      // Presenting, not lighting: no step on screen; what it draws is the point.
+      let r: ToolResult;
+      try {
+        r = await local.run(u.name, u.id, args);
+      } catch (e) {
+        r = { isError: true, content: [{ type: "text", text: errText(e) }] };
+      }
+      const content = r.content.map((c) => ({ type: "text" as const, text: c.text ?? "" }));
+      return { type: "tool_result", tool_use_id: u.id, content, ...(r.isError ? { is_error: true } : {}) };
+    }
     if (typeof args["source"] === "string") {
       bus.emit({ type: "code", id: u.id, tool: u.name, source: args["source"], done: true });
+      local?.shown?.(args["source"]);
     }
     const shown = Object.fromEntries(Object.entries(args).filter(([k]) => k !== "source"));
     bus.emit({ type: "tool_call", id: u.id, name: u.name, args: shown });

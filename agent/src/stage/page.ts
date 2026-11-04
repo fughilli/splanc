@@ -1,159 +1,227 @@
 /**
- * The stage page (one self-contained HTML document, no network fetches): laid out
- * for a 16:9 TV. Phone (a captured window: QuickTime's iPhone mirror) | the code
- * being written | the conversation and every tool call, with a live twin of each
- * fixture along the bottom.
+ * The stage page (one self-contained HTML document; the brand fonts come from
+ * /brand/ on the same server): laid out for a 16:9 TV in the splanc.io style kit
+ * (purple, yellow, black panels, thick outlines, offset shadows, Bangers).
+ * Phone (a captured window: QuickTime's iPhone mirror) | the code being written
+ * or explained | the conversation and every tool call, with a live twin of the
+ * one or two fixtures in the spotlight along the bottom.
+ *
+ * The agent's replies are spoken (Web Speech synthesis; V toggles the voice).
+ * An explain_code walkthrough plays step by step: each step's highlight is drawn
+ * as its sentence starts, paced by the voice, or by reading time when it is off.
  *
  * Keys: hold Space to talk; a presenter clicker's Page Down / Page Up (or B)
- * toggles listening; Enter types a prompt instead; Esc stops the agent.
+ * toggles listening; Enter types a prompt instead; V voice on/off; Esc stops the
+ * agent (and the voice).
  *
  * Kept free of backticks and dollar-brace so it can live in String.raw.
  */
 
-export const STAGE_PAGE = String.raw`<!doctype html>
+import { LOGO_SVG } from "./brand";
+
+const PAGE = String.raw`<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Splanc Stage</title>
 <style>
+@font-face { font-family: "Bangers"; src: url("/brand/bangers.woff2") format("woff2"); font-display: block; }
+@font-face { font-family: "Inter"; src: url("/brand/inter-400.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Inter"; src: url("/brand/inter-600.woff2") format("woff2"); font-weight: 600 800; font-display: swap; }
 :root {
-  --bg: #08080c;
-  --panel: #111118;
-  --panel-2: #181822;
-  --line: #262632;
-  --text: #ededf0;
-  --dim: #8e8e9a;
-  --faint: #55555f;
-  --accent: #7c95ff;
-  --ok: #3ddc84;
-  --warn: #f0b93e;
-  --err: #ff5c64;
-  --kw: #c792ea;
-  --ty: #7fd4ff;
-  --num: #f7a26b;
-  --fn: #9ef0b4;
-  --com: #6b6b7a;
-  --gap: 1.1vw;
-  --r: 14px;
+  --purple: #6a16a8;
+  --purple-deep: #4a0e78;
+  --yellow: #ffe600;
+  --yellow-hot: #f2a12e;
+  --black: #000;
+  --ink: #111;
+  --ink-2: #1a1a1a;
+  --white: #fff;
+  --gray: #777;
+  --dim: #a3a3ad;
+  --err: #ff4d5e;
+  --pink: #ff5fa2;
+  --cyan: #3fd8ff;
+  --green: #5dfc8d;
+  --display: "Bangers", "Anton", Impact, sans-serif;
+  --body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, "Fira Code", monospace;
+  --gap: 1.3vw;
+  --line: .2vw solid var(--black);
+  --shadow: .42vw .42vw 0 var(--black);
+  --shadow-sm: .22vw .22vw 0 var(--black);
+  --snap: cubic-bezier(.2, .85, .25, 1);
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overflow: hidden;
-  font: 400 1.05vw/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; }
-.app { height: 100vh; display: grid; gap: var(--gap); padding: var(--gap);
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--purple); color: var(--white);
+  font: 400 1.05vw/1.4 var(--body); -webkit-font-smoothing: antialiased; }
+body::before { content: ""; position: fixed; inset: 0; pointer-events: none;
+  background-image: radial-gradient(circle, rgba(0, 0, 0, .38) 1.1px, transparent 1.3px); background-size: 7px 7px;
+  -webkit-mask-image: linear-gradient(115deg, #000 0%, transparent 38%, transparent 62%, #000 100%);
+  mask-image: linear-gradient(115deg, #000 0%, transparent 38%, transparent 62%, #000 100%); }
+.app { position: relative; height: 100vh; display: grid; gap: var(--gap); padding: var(--gap) calc(var(--gap) + .42vw) calc(var(--gap) + .42vw) var(--gap);
   grid-template-rows: auto 1fr auto; grid-template-columns: auto minmax(0, 1.25fr) minmax(0, 1fr);
   grid-template-areas: "top top top" "phone code talk" "phone twin twin"; }
-.app.nophone { grid-template-columns: 0 minmax(0, 1.25fr) minmax(0, 1fr); }
-header { grid-area: top; display: flex; align-items: center; gap: 1.2vw; padding: 0 .3vw; }
-.mark { font-weight: 700; font-size: 1.5vw; letter-spacing: -.02em; }
-.mark span { color: var(--accent); }
-.status { display: flex; align-items: center; gap: .6vw; padding: .45vw 1vw; border-radius: 999px;
-  background: var(--panel-2); border: 1px solid var(--line); font-size: 1.05vw; color: var(--dim); transition: all .25s; }
-.status i { width: .7vw; height: .7vw; border-radius: 50%; background: var(--faint); }
-.status.listening { color: #fff; border-color: var(--err); background: #2a1114; }
-.status.listening i { background: var(--err); animation: pulse 1s infinite; }
-.status.thinking i, .status.working i { background: var(--accent); animation: pulse 1.2s infinite; }
-.status.thinking, .status.working { color: var(--text); }
-@keyframes pulse { 50% { opacity: .25; } }
-.hint { margin-left: auto; color: var(--faint); font-size: .9vw; }
-.hint kbd { font: inherit; color: var(--dim); border: 1px solid var(--line); border-radius: 5px; padding: 0 .35vw; }
-.btn { background: var(--panel-2); color: var(--dim); border: 1px solid var(--line); border-radius: 8px;
-  padding: .35vw .8vw; font: inherit; font-size: .9vw; cursor: pointer; }
-.btn:hover { color: var(--text); }
-.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); min-height: 0; min-width: 0;
+.app.nophone { grid-template-columns: 0 minmax(0, 1.25fr) minmax(0, 1fr); column-gap: 0; }
+.app.nophone .code { margin-right: var(--gap); }
+
+/* header */
+header { grid-area: top; display: flex; align-items: center; gap: 1.1vw; padding: .5vw 1vw; background: var(--ink);
+  border: var(--line); border-radius: .8vw; box-shadow: var(--shadow); }
+.mark { display: flex; align-items: center; gap: .8vw; }
+.mark .logo { width: 2.8vw; height: 2.8vw; border: var(--line); border-radius: .65vw; overflow: hidden; display: block; }
+.mark .logo svg { width: 100%; height: 100%; display: block; }
+.mark .word { font: 400 2.3vw/1 var(--display); letter-spacing: .05em; text-transform: uppercase; }
+.mark .live { font: 400 1.25vw/1 var(--display); letter-spacing: .06em; color: var(--black); background: var(--yellow);
+  border: var(--line); padding: .2vw .55vw .1vw; transform: rotate(-6deg); box-shadow: var(--shadow-sm); margin-left: .2vw; }
+.status { display: flex; align-items: center; gap: .6vw; padding: .4vw 1vw .3vw; border-radius: .5vw; background: var(--ink-2);
+  border: var(--line); color: var(--dim); font: 400 1.3vw/1 var(--display); letter-spacing: .07em; text-transform: uppercase;
+  transition: transform .15s var(--snap); }
+.status i { width: .75vw; height: .75vw; border-radius: 50%; background: var(--gray); margin-top: -.15vw; }
+.status.listening { color: var(--black); background: var(--yellow); transform: rotate(-2deg) scale(1.06); box-shadow: var(--shadow-sm); }
+.status.listening i { background: var(--err); animation: pulse .9s infinite; }
+.status.thinking, .status.working, .status.speaking { color: var(--white); }
+.status.thinking i, .status.working i { background: var(--yellow); animation: pulse 1.1s infinite; }
+.status.speaking i { background: var(--yellow); animation: talk .5s infinite alternate; border-radius: .2vw; }
+@keyframes pulse { 50% { opacity: .2; } }
+@keyframes talk { from { transform: scaleY(.45); } to { transform: scaleY(1.3); } }
+.hint { margin-left: auto; color: var(--dim); font-size: .85vw; }
+.hint kbd { font: 600 .8vw var(--body); color: var(--white); background: var(--ink-2); border: .12vw solid #333; border-bottom-width: .22vw;
+  border-radius: .3vw; padding: 0 .35vw; }
+.btn { background: var(--black); color: var(--white); border: .15vw solid #333; border-radius: .5vw; padding: .35vw .9vw .25vw;
+  font: 400 1.15vw/1.1 var(--display); letter-spacing: .06em; text-transform: uppercase; cursor: pointer;
+  transition: transform .12s var(--snap), box-shadow .12s var(--snap); }
+.btn:hover { transform: translate(-.1vw, -.1vw) rotate(-1deg); }
+.btn.on { background: var(--yellow); color: var(--black); border-color: var(--black); box-shadow: var(--shadow-sm); }
+
+/* panels */
+.panel { background: var(--ink); border: var(--line); border-radius: .8vw; box-shadow: var(--shadow); min-height: 0; min-width: 0;
   display: flex; flex-direction: column; overflow: hidden; }
-.ph { display: flex; align-items: center; gap: .8vw; padding: .8vw 1.1vw; border-bottom: 1px solid var(--line);
-  color: var(--dim); font-size: .95vw; text-transform: uppercase; letter-spacing: .08em; }
-.ph b { color: var(--text); text-transform: none; letter-spacing: 0; font-weight: 600; font-size: 1.1vw; }
-.badge { margin-left: auto; text-transform: none; letter-spacing: 0; padding: .15vw .6vw; border-radius: 6px;
-  background: var(--panel-2); color: var(--dim); font-size: .9vw; }
-.badge.ok { color: var(--ok); } .badge.err { color: var(--err); } .badge.busy { color: var(--accent); }
+.ph { display: flex; align-items: baseline; gap: .8vw; padding: .65vw 1.1vw .45vw; border-bottom: .15vw solid var(--black);
+  background: var(--black); font: 400 1.45vw/1.1 var(--display); letter-spacing: .07em; text-transform: uppercase; color: var(--yellow); }
+.ph b { color: var(--white); font: 600 1.1vw var(--body); text-transform: none; letter-spacing: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.badge { margin-left: auto; align-self: center; padding: .2vw .6vw .1vw; border-radius: .35vw; border: .15vw solid #333; color: var(--dim);
+  font: 400 1.05vw/1.1 var(--display); letter-spacing: .06em; white-space: nowrap; }
+.badge.ok { color: var(--black); background: var(--yellow); border-color: var(--black); }
+.badge.err { color: var(--white); background: var(--err); border-color: var(--black); }
+.badge.busy { color: var(--yellow); border-color: var(--yellow); }
 
 /* phone */
 .phone { grid-area: phone; width: 22vw; display: flex; align-items: center; justify-content: center; }
 .nophone .phone { display: none; }
-.phone video { max-height: 100%; max-width: 100%; border-radius: 2.2vw; border: .5vw solid #1d1d24;
-  box-shadow: 0 0 0 1px var(--line), 0 1.5vw 4vw #000a; background: #000; }
+.phone video { max-height: 100%; max-width: 100%; border-radius: 2.2vw; border: .55vw solid var(--black); box-shadow: var(--shadow); background: #000; }
 
 /* code */
 .code { grid-area: code; }
-pre { margin: 0; flex: 1; overflow: hidden; padding: 1vw 1.2vw; counter-reset: ln;
-  font: 400 1.02vw/1.5 ui-monospace, "SF Mono", Menlo, "Fira Code", monospace; color: #d6d6de; }
-pre .l { display: block; white-space: pre-wrap; padding-left: 3.2vw; text-indent: -3.2vw; }
-pre .l::before { counter-increment: ln; content: counter(ln); display: inline-block; width: 2.4vw; margin-right: .8vw;
-  text-align: right; color: var(--faint); text-indent: 0; }
-pre .l.bad { background: #ff5c6422; box-shadow: inset .25vw 0 var(--err); }
-pre .l.warnl { background: #f0b93e18; box-shadow: inset .25vw 0 var(--warn); }
-.kw { color: var(--kw); } .ty { color: var(--ty); } .nu { color: var(--num); } .fn { color: var(--fn); } .co { color: var(--com); font-style: italic; }
-.caret { display: inline-block; width: .55vw; height: 1.1vw; background: var(--accent); vertical-align: -.15vw; animation: pulse .8s infinite; }
-.diag { padding: .6vw 1.2vw; border-top: 1px solid var(--line); font: 400 .95vw/1.4 ui-monospace, Menlo, monospace; color: var(--err); max-height: 22%; overflow: hidden; }
-.diag.warn { color: var(--warn); }
+pre { position: relative; margin: 0; flex: 1; overflow: hidden; padding: 1vw 1.2vw 30vh; counter-reset: ln;
+  font: 400 1.02vw/1.55 var(--mono); color: #e8e8ee; }
+pre .l { display: block; white-space: pre-wrap; padding-left: 3.4vw; text-indent: -3.4vw; transition: background .25s, box-shadow .25s; }
+pre .l::before { counter-increment: ln; content: counter(ln); display: inline-block; width: 2.4vw; margin-right: 1vw;
+  text-align: right; color: #55555e; text-indent: 0; }
+pre .l.bad { background: #ff4d5e26; box-shadow: inset .3vw 0 var(--err); }
+pre .l.warnl { background: #f2a12e1c; box-shadow: inset .3vw 0 var(--yellow-hot); }
+.kw { color: var(--yellow); } .ty { color: #c8a6ff; } .nu { color: var(--yellow-hot); } .fn { color: #7fe7ff; } .co { color: #7a7a86; font-style: italic; }
+.caret { display: inline-block; width: .55vw; height: 1.15vw; background: var(--yellow); vertical-align: -.15vw; animation: pulse .8s infinite; }
+/* marks: c-* sets the colour, mk-* the shape */
+.c-yellow { --mk: var(--yellow); --mkbg: #ffe6002b; } .c-pink { --mk: var(--pink); --mkbg: #ff5fa22e; }
+.c-cyan { --mk: var(--cyan); --mkbg: #3fd8ff2b; } .c-green { --mk: var(--green); --mkbg: #5dfc8d26; }
+pre .l.mk-band { background: var(--mkbg); box-shadow: inset .32vw 0 var(--mk); }
+pre .l.mk-box { box-shadow: inset .2vw 0 var(--mk), inset -.2vw 0 var(--mk); background: #ffffff08; }
+pre .l.mk-box.top { box-shadow: inset .2vw 0 var(--mk), inset -.2vw 0 var(--mk), inset 0 .2vw var(--mk); }
+pre .l.mk-box.bot { box-shadow: inset .2vw 0 var(--mk), inset -.2vw 0 var(--mk), inset 0 -.2vw var(--mk); }
+pre .l.mk-box.top.bot { box-shadow: inset 0 0 0 .2vw var(--mk); }
+pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-decoration: underline wavy var(--mk);
+  text-decoration-thickness: .14vw; text-underline-offset: .32vw; animation: ink .35s var(--snap); }
+@keyframes ink { from { background: transparent; text-decoration-color: transparent; } }
+.callout { display: block; width: max-content; max-width: 88%; margin: .5vw 0 .7vw 3.2vw; padding: .35vw .8vw .2vw; position: relative;
+  font: 400 1.35vw/1.15 var(--display); letter-spacing: .05em; text-transform: uppercase; white-space: normal; text-indent: 0;
+  color: var(--black); background: var(--mk); border: var(--line); border-radius: .3vw; box-shadow: var(--shadow-sm);
+  transform: rotate(-1.2deg); animation: pop .35s var(--snap); }
+.callout::before { content: ""; position: absolute; left: 1.2vw; top: -.85vw; border: .45vw solid transparent;
+  border-bottom: .55vw solid var(--black); }
+.callout::after { content: ""; position: absolute; left: 1.32vw; top: -.5vw; border: .33vw solid transparent;
+  border-bottom: .4vw solid var(--mk); }
+@keyframes pop { from { transform: scale(.4) rotate(-8deg); opacity: 0; } 70% { transform: scale(1.06) rotate(-.5deg); } }
+.diag { padding: .6vw 1.2vw; border-top: .15vw solid var(--black); font: 400 .95vw/1.4 var(--mono); color: var(--err); max-height: 22%; overflow: hidden; background: #160809; }
+.diag.warn { color: var(--yellow-hot); background: #161008; }
 .diag:empty { display: none; }
-.empty { margin: auto; color: var(--faint); font-size: 1.3vw; text-align: center; padding: 2vw; }
+.empty { margin: auto; padding: 2vw; text-align: center; color: var(--dim); font-size: 1.1vw; }
+.empty b { display: block; color: var(--yellow); font: 400 2.6vw/1.1 var(--display); letter-spacing: .05em; transform: rotate(-2deg); margin-bottom: .6vw; }
 
 /* talk */
 .talk { grid-area: talk; }
-.conv { padding: 1.2vw 1.4vw .4vw; display: flex; flex-direction: column; gap: 1vw; }
-.said { font-size: 1.6vw; line-height: 1.3; font-weight: 600; color: #fff; }
-.said.interim { color: var(--dim); }
-.said:before { content: "\201C"; color: var(--accent); margin-right: .2vw; }
-.said:after { content: "\201D"; color: var(--accent); margin-left: .1vw; }
+.conv { padding: 1.3vw 1.4vw .4vw; display: flex; flex-direction: column; gap: 1vw; min-height: 0; flex: 0 1 auto; overflow: hidden; }
+.said { position: relative; align-self: flex-start; max-width: 100%; padding: .7vw 1.1vw; margin-bottom: .8vw; background: var(--white); color: var(--black);
+  border: var(--line); border-radius: 1.2vw; box-shadow: var(--shadow-sm); font: 700 1.5vw/1.28 var(--body); }
+.said::before, .said::after { content: ""; position: absolute; border-style: solid; border-color: transparent; }
+.said::before { left: 1.7vw; bottom: -1.35vw; border-width: 1.35vw 1.1vw 0 0; border-top-color: var(--black); }
+.said::after { left: 1.98vw; bottom: -.82vw; border-width: .85vw .68vw 0 0; border-top-color: var(--white); }
+.said.interim { color: #6a6a74; }
 .said:empty { display: none; }
-.reply { font-size: 1.45vw; line-height: 1.38; color: #dcdce4; }
+.reply { position: relative; font-size: 1.45vw; line-height: 1.4; color: var(--white); max-height: 46vh; overflow: hidden; }
+.reply .next { color: #6d6d78; }
 .reply:empty { display: none; }
-.think { font-size: .95vw; color: var(--faint); font-style: italic; max-height: 3.2em; overflow: hidden; }
+.think { font-size: .95vw; color: var(--gray); font-style: italic; max-height: 3.2em; overflow: hidden; }
 .think:empty { display: none; }
-.steps { flex: 1; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; gap: .45vw; padding: .6vw 1.1vw 1vw; }
-.step { display: grid; grid-template-columns: 1.4vw 1fr auto; gap: .2vw .7vw; align-items: center; padding: .5vw .8vw;
-  border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); animation: in .3s ease; }
-@keyframes in { from { opacity: 0; transform: translateY(.6vw); } }
-.step .ic { width: 1vw; height: 1vw; border-radius: 50%; border: .18vw solid var(--accent); border-top-color: transparent; animation: spin .8s linear infinite; }
-.step.ok .ic { border: none; background: var(--ok); animation: none; -webkit-mask: none; }
+.steps { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; gap: .45vw; padding: .6vw 1.1vw 1vw; }
+.step { display: grid; grid-template-columns: 1.4vw 1fr auto; gap: .2vw .7vw; align-items: center; padding: .45vw .8vw;
+  border-radius: .5vw; background: var(--ink-2); border: .15vw solid var(--black); animation: in .25s var(--snap); }
+@keyframes in { from { opacity: 0; transform: translateY(.6vw) rotate(.6deg); } }
+.step .ic { width: 1.05vw; height: 1.05vw; border-radius: 50%; border: .2vw solid var(--yellow); border-top-color: transparent; animation: spin .7s linear infinite; }
+.step.ok .ic { border: none; background: var(--yellow); animation: none; position: relative; }
+.step.ok .ic::after { content: ""; position: absolute; left: .34vw; top: .18vw; width: .25vw; height: .48vw; border: solid var(--black); border-width: 0 .14vw .14vw 0; transform: rotate(45deg); }
 .step.err .ic { border: none; background: var(--err); animation: none; }
 @keyframes spin { to { transform: rotate(1turn); } }
-.step .nm { font-weight: 600; font-size: 1.05vw; }
-.step .nm small { color: var(--dim); font-weight: 400; margin-left: .5vw; }
-.step .ms { color: var(--faint); font-size: .9vw; font-variant-numeric: tabular-nums; }
+.step .nm { font: 400 1.25vw/1.1 var(--display); letter-spacing: .05em; text-transform: uppercase; }
+.step .nm small { color: var(--gray); font: 400 .8vw var(--mono); text-transform: none; letter-spacing: 0; margin-left: .5vw; }
+.step .ms { color: var(--gray); font-size: .9vw; font-variant-numeric: tabular-nums; }
 .step .sub { grid-column: 2 / 4; color: var(--dim); font-size: .9vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .step.err .sub { color: var(--err); white-space: normal; max-height: 2.8em; }
 .step .pics { grid-column: 2 / 4; display: flex; gap: .4vw; }
-.step .pics img { height: 4.2vw; border-radius: 6px; background: #000; }
+.step .pics img { height: 4.2vw; border-radius: .3vw; border: .12vw solid var(--black); background: #000; }
 .step.note { grid-template-columns: 1fr; color: var(--dim); font-size: .95vw; }
+.step.note.err { color: var(--err); }
 
 /* twin */
-.twin { grid-area: twin; height: 36vh; }
+.twin { grid-area: twin; height: 34vh; }
 .fixtures { flex: 1; display: flex; gap: var(--gap); padding: .8vw 1.1vw 1vw; min-height: 0; }
-.fx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .4vw; }
-.fx .nm { font-size: .95vw; color: var(--dim); display: flex; gap: .6vw; }
-.fx .nm b { color: var(--text); font-weight: 600; }
-.fx canvas { flex: 1; min-height: 0; width: 100%; border-radius: 10px; background: #050507; }
+.fx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .4vw; animation: in .3s var(--snap); }
+.fx .nm { display: flex; align-items: baseline; gap: .6vw; font-size: .95vw; color: var(--dim); }
+.fx .nm b { color: var(--white); font: 400 1.35vw/1 var(--display); letter-spacing: .06em; text-transform: uppercase; }
+.fx canvas { flex: 1; min-height: 0; width: 100%; border-radius: .5vw; background: #000; border: .15vw solid var(--black); }
 
-/* deploy flash */
-.flash { position: fixed; left: 50%; top: 46%; transform: translate(-50%, -50%) scale(.9); opacity: 0; pointer-events: none;
-  padding: 1.4vw 2.6vw; border-radius: 18px; background: #0f2a1bf0; border: 2px solid var(--ok); color: #fff;
-  font-size: 2.4vw; font-weight: 700; transition: all .35s ease; box-shadow: 0 2vw 6vw #000c; }
-.flash.on { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+/* deploy burst */
+.flash { position: fixed; left: 50%; top: 45%; width: 30vw; height: 19vw; transform: translate(-50%, -50%) scale(.3) rotate(-14deg);
+  opacity: 0; pointer-events: none; transition: transform .28s var(--snap), opacity .2s; filter: drop-shadow(.5vw .5vw 0 #000); }
+.flash.on { opacity: 1; transform: translate(-50%, -50%) scale(1) rotate(-5deg); }
+.flash .burst { position: absolute; inset: 0; background: var(--black); }
+.flash .burst.in { inset: .55vw; background: var(--yellow); }
+.flash .txt { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--black); text-align: center; }
+.flash .big { font: 400 4.2vw/1 var(--display); letter-spacing: .04em; }
+.flash .small { font: 700 1.05vw/1.2 var(--body); max-width: 16vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .typebox { position: fixed; left: 50%; bottom: 31vh; transform: translateX(-50%); width: 50vw; display: none; }
 .typebox.on { display: block; }
-.typebox input { width: 100%; font: inherit; font-size: 1.5vw; padding: .9vw 1.2vw; border-radius: 12px;
-  border: 2px solid var(--accent); background: var(--panel-2); color: var(--text); outline: none; }
+.typebox input { width: 100%; font: 600 1.5vw var(--body); padding: .9vw 1.2vw; border-radius: .8vw;
+  border: var(--line); background: var(--white); color: var(--black); outline: none; box-shadow: var(--shadow); }
 </style>
 </head>
 <body>
 <div class="app nophone" id="app">
   <header>
-    <div class="mark">splanc<span>.</span>live</div>
+    <div class="mark"><span class="logo">@@LOGO@@</span><span class="word">Splanc</span><span class="live">Live!</span></div>
     <div class="status" id="status"><i></i><span id="statusText">Connecting…</span></div>
-    <div class="hint" id="hint">Hold <kbd>Space</kbd> to talk · <kbd>Enter</kbd> to type · <kbd>Esc</kbd> stop</div>
+    <div class="hint" id="hint">Hold <kbd>Space</kbd> to talk · <kbd>Enter</kbd> type · <kbd>V</kbd> voice · <kbd>Esc</kbd> stop</div>
+    <button class="btn" id="voiceBtn" title="Speak replies aloud (V)">Voice</button>
     <button class="btn" id="phoneBtn" title="Show a window (e.g. QuickTime's iPhone mirror) in the phone slot">Phone</button>
     <button class="btn" id="mapsBtn" title="Re-read the fixtures' maps (after mapping in the app)">Maps</button>
     <button class="btn" id="resetBtn" title="Start a new conversation">New</button>
   </header>
   <div class="phone"><video id="phone" autoplay muted playsinline></video></div>
   <section class="panel code">
-    <div class="ph">Effect <b id="effName">—</b><span class="badge" id="compile">waiting</span></div>
-    <pre id="code"><div class="empty">Ask for a look.<br>The code appears here as it is written.</div></pre>
+    <div class="ph">Effect <b id="effName"></b><span class="badge" id="compile">waiting</span></div>
+    <pre id="code"></pre>
     <div class="diag" id="diag"></div>
   </section>
   <section class="panel talk">
@@ -166,16 +234,17 @@ pre .l.warnl { background: #f0b93e18; box-shadow: inset .25vw 0 var(--warn); }
     <div class="steps" id="steps"></div>
   </section>
   <section class="panel twin">
-    <div class="ph">Live preview <span class="badge">device VM on each fixture's real map</span></div>
+    <div class="ph">Live preview <b id="fxCount"></b><span class="badge">device VM · real map</span></div>
     <div class="fixtures" id="fixtures"><div class="empty" id="noFx">Looking for fixtures…</div></div>
   </section>
 </div>
-<div class="flash" id="flash"></div>
+<div class="flash" id="flash"><div class="burst"></div><div class="burst in"></div><div class="txt"><div class="big" id="flashBig"></div><div class="small" id="flashSmall"></div></div></div>
 <div class="typebox" id="typebox"><input id="typed" placeholder="Type a prompt and press Enter" autocomplete="off"></div>
 <script>
 (function () {
   "use strict";
-  var KEY = new URLSearchParams(location.search).get("k") || "";
+  var PARAMS = new URLSearchParams(location.search);
+  var KEY = PARAMS.get("k") || "";
   var Q = KEY ? "?k=" + encodeURIComponent(KEY) : "";
   var $ = function (id) { return document.getElementById(id); };
   var LABEL = {
@@ -185,17 +254,28 @@ pre .l.warnl { background: #f0b93e18; box-shadow: inset .25vw 0 var(--warn); }
     list_keypoints: "Saved looks", recall_keypoint: "Recall look", blend_keypoints: "Blend looks", get_keypoint: "Read look",
     read_sensors: "Read sensor", compile_effect: "Compile", estimate_effect: "Estimate cost", preview_effect: "Preview",
     deploy_effect: "Deploy", set_effect: "Switch effect", rollback_effect: "Undo", crossfade_to: "Crossfade",
-    list_decks: "Decks", list_textures: "Textures", search_effects: "Search library", get_effect: "Open library effect"
+    list_decks: "Decks", list_textures: "Textures", search_effects: "Search library", get_effect: "Open library effect",
+    show_code: "Open code", explain_code: "Explain", show_fixtures: "Show fixtures"
   };
+  var EMPTY_CODE = '<div class="empty"><b>Ask for a look!</b>The code appears here as it is written.</div>';
   function post(path, body) {
     return fetch(path + Q, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
   }
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { /* private window */ } return null; }
 
   // ---- status ---------------------------------------------------------------
   var idleText = "Ready";
+  var statusKind = "";
   function status(kind, text) {
-    $("status").className = "status " + (kind || "");
+    statusKind = kind || "";
+    $("status").className = "status " + statusKind;
     $("statusText").textContent = text;
+  }
+  var turnActive = false;
+  function idle() {
+    if (player.busy || player.q.length) status("speaking", "Speaking…");
+    else if (turnActive) status("thinking", "Thinking…");
+    else status("", idleText);
   }
 
   // ---- code panel -----------------------------------------------------------
@@ -219,41 +299,177 @@ pre .l.warnl { background: #f0b93e18; box-shadow: inset .25vw 0 var(--warn); }
     }
     return out;
   }
-  var code = { id: null, target: "", shown: 0, done: false, bad: {}, warn: {} };
-  function renderCode() {
+  function freshCode() { return { id: null, target: "", shown: 0, done: false, bad: {}, warn: {}, marks: [] }; }
+  var code = freshCode();
+  function lineHtml(l, n) {
+    var u = null;
+    code.marks.forEach(function (m) { if (m.span && m.from === n && (m.style === "underline" || m.style === "band" || m.style === "box")) u = m; });
+    if (!u || u.span[0] >= l.length) return hl(l) || " ";
+    var a = u.span[0], b = Math.min(l.length, u.span[1]);
+    return hl(l.slice(0, a)) + '<mark class="c-' + u.color + '">' + hl(l.slice(a, b)) + "</mark>" + hl(l.slice(b));
+  }
+  function renderCode(scrollToMarks) {
+    var pre = $("code");
+    if (!code.target) { pre.innerHTML = EMPTY_CODE; return; }
     var text = code.target.slice(0, code.shown);
     if (code.done && code.shown >= code.target.length) text = text.replace(/\s+$/, "");
     var lines = text.split("\n");
     var html = lines.map(function (l, i) {
-      var cls = code.bad[i + 1] ? " bad" : code.warn[i + 1] ? " warnl" : "";
-      return '<span class="l' + cls + '">' + (hl(l) || " ") + (i === lines.length - 1 && !code.done ? '<span class="caret"></span>' : "") + "</span>";
+      var n = i + 1, cls = code.bad[n] ? " bad" : code.warn[n] ? " warnl" : "", after = "";
+      code.marks.forEach(function (m) {
+        if (n < m.from || n > m.to) return;
+        if (m.style === "band" && !(m.span && m.from === m.to)) cls += " mk-band c-" + m.color;
+        else if (m.style === "box") cls += " mk-box c-" + m.color + (n === m.from ? " top" : "") + (n === m.to ? " bot" : "");
+        if (n === m.to && m.note) after += '<span class="callout c-' + m.color + '">' + esc(m.note) + "</span>";
+      });
+      return '<span class="l' + cls + '" data-n="' + n + '">' + lineHtml(l, n) + (i === lines.length - 1 && !code.done ? '<span class="caret"></span>' : "") + "</span>" + after;
     }).join("");
-    var pre = $("code");
     pre.innerHTML = html;
-    // Follow the cursor while writing; show the top once done.
+    // Follow the cursor while writing; bring marks into view when explaining.
     var caret = pre.querySelector(".caret");
-    if (caret) { var over = caret.offsetTop - pre.clientHeight * 0.75; pre.scrollTop = over > 0 ? over : 0; }
+    if (caret) { var over = caret.offsetTop - pre.clientHeight * 0.75; pre.scrollTop = over > 0 ? over : 0; return; }
+    if (scrollToMarks && code.marks.length) {
+      var m = code.marks[code.marks.length - 1];
+      var first = pre.querySelector('[data-n="' + m.from + '"]'), last = pre.querySelector('[data-n="' + m.to + '"]');
+      if (!first || !last) return;
+      var bottom = last.offsetTop + last.offsetHeight + (m.note ? last.offsetHeight * 2.4 : 0);
+      var mid = (first.offsetTop + bottom) / 2;
+      var top = Math.max(0, Math.min(first.offsetTop - pre.clientHeight * 0.12, mid - pre.clientHeight * 0.42));
+      pre.scrollTo({ top: top, behavior: "smooth" });
+    }
   }
   setInterval(function () {
     if (code.shown >= code.target.length) return;
     var behind = code.target.length - code.shown;
     code.shown += Math.max(3, Math.ceil(behind / 12));
     if (code.shown > code.target.length) code.shown = code.target.length;
-    renderCode();
+    renderCode(false);
   }, 30);
   function effectName(src) {
     var m = /^\s*\/\/\s*(.+)$/m.exec(src);
     return m ? m[1].slice(0, 60) : "untitled";
   }
+  function applyMark(ev) {
+    if (!ev.keep) code.marks = [];
+    if (ev.mark) code.marks.push(ev.mark);
+    renderCode(true);
+  }
+
+  // ---- reply + voice --------------------------------------------------------
+  // The reply is one text; the part already spoken (or read) is bright.
+  var reply = { text: "", pos: 0, queued: 0 };
+  function renderReply() {
+    var el = $("reply");
+    if (!reply.text) { el.innerHTML = ""; return; }
+    var p = Math.min(reply.pos, reply.text.length);
+    el.innerHTML = esc(reply.text.slice(0, p)) + '<i id="at"></i><span class="next">' + esc(reply.text.slice(p)) + "</span>";
+    var at = $("at"), over = at.offsetTop - el.clientHeight * 0.6;
+    el.scrollTop = over > 0 ? over : 0;
+  }
+  function addReply(t, sep) {
+    if (sep && reply.text && !/\s$/.test(reply.text)) reply.text += " ";
+    reply.text += t;
+  }
+  var synth = window.speechSynthesis;
+  var voiceOn = !!synth && store("stage.voice") !== "off";
+  function setVoice(on) {
+    voiceOn = !!synth && on;
+    store("stage.voice", voiceOn ? "on" : "off");
+    $("voiceBtn").classList.toggle("on", voiceOn);
+    $("voiceBtn").textContent = voiceOn ? "Voice on" : "Voice off";
+    if (!voiceOn && synth) synth.cancel();
+  }
+  var BAD_VOICE = /Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Good News|Jester|Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Fred|Junior|Ralph|Kathy|Grandma|Grandpa|Eddy|Flo|Reed|Rocko|Sandy|Shelley/;
+  function pickVoice() {
+    var vs = synth ? synth.getVoices() : [];
+    if (!vs.length) return null;
+    var want = (PARAMS.get("voice") || "").toLowerCase();
+    if (want) { for (var i = 0; i < vs.length; i++) if (vs[i].name.toLowerCase().indexOf(want) >= 0) return vs[i]; }
+    var lang = (navigator.language || "en-US").slice(0, 2);
+    var best = null, bestScore = -99;
+    vs.forEach(function (v) {
+      var s = (v.lang || "").slice(0, 2) === lang ? 10 : 0;
+      if ((v.lang || "") === navigator.language) s += 2;
+      if (/premium|enhanced|neural|natural/i.test(v.name)) s += 5;
+      if (/^(Samantha|Daniel|Karen|Moira|Ava|Zoe|Evan|Allison|Tom|Serena|Google US English|Google UK English)/.test(v.name)) s += 3;
+      if (v.localService) s += 1;
+      if (BAD_VOICE.test(v.name)) s -= 30;
+      if (s > bestScore) { bestScore = s; best = v; }
+    });
+    return best;
+  }
+  var RATE = parseFloat(PARAMS.get("rate") || "1.05") || 1.05;
+  // The playback queue: spoken chunks of the reply and walkthrough steps, in order.
+  var player = { q: [], busy: false, timer: 0, done: null };
+  var live = false;
+  function enqueue(item) { player.q.push(item); pump(); }
+  function pump() {
+    if (player.busy) return;
+    var it = player.q.shift();
+    if (!it) { if (statusKind === "speaking") idle(); return; }
+    player.busy = true;
+    if (it.act) it.act();
+    var chunk = reply.text.slice(it.start, it.end), lead = chunk.length - chunk.replace(/^\s+/, "").length, words = chunk.trim();
+    var finished = false;
+    var done = player.done = function () {
+      if (finished) return; finished = true;
+      clearTimeout(player.timer);
+      reply.pos = Math.max(reply.pos, it.end); renderReply();
+      player.busy = false; player.done = null;
+      pump();
+    };
+    if (voiceOn && words && live) {
+      if (statusKind === "" ) status("speaking", "Speaking…");
+      var u = new SpeechSynthesisUtterance(words);
+      var v = pickVoice(); if (v) { u.voice = v; u.lang = v.lang; }
+      u.rate = RATE;
+      u.onend = done; u.onerror = done;
+      u.onboundary = function (e) {
+        if (typeof e.charIndex !== "number") return;
+        reply.pos = Math.max(reply.pos, it.start + lead + e.charIndex + (e.charLength || 0)); renderReply();
+      };
+      player.timer = setTimeout(done, 3000 + words.length * 120); // some engines drop onend
+      synth.resume();
+      synth.speak(u);
+    } else if (it.pace && words && live) {
+      reply.pos = Math.max(reply.pos, it.end); renderReply();
+      player.timer = setTimeout(done, Math.min(9000, 700 + words.length * 62));
+    } else done();
+  }
+  // Jump to the end: every pending highlight drawn, all the text bright.
+  function flushPlayback() {
+    if (synth) synth.cancel();
+    var q = player.q; player.q = [];
+    if (player.done) player.done();
+    q.forEach(function (it) { if (it.act) it.act(); });
+    player.q = []; player.busy = false;
+    reply.pos = reply.queued = reply.text.length; renderReply();
+  }
+  // Queue the reply text written since last time: whole sentences while the
+  // voice is on (so it speaks naturally), everything when it is off.
+  function queueText(all) {
+    var rest = reply.text.slice(reply.queued);
+    if (!rest) return;
+    var cut = rest.length;
+    if (voiceOn && !all) {
+      var m, re = /[.!?…:;](?=\s)|\n/g, last = -1;
+      while ((m = re.exec(rest)) !== null) last = m.index + 1;
+      if (last < 0) return;
+      cut = last;
+    }
+    var it = { start: reply.queued, end: reply.queued + cut };
+    reply.queued += cut;
+    enqueue(it);
+  }
 
   // ---- conversation + steps -------------------------------------------------
   var steps = {};
+  function trimSteps() { while ($("steps").children.length > 8) $("steps").removeChild($("steps").firstChild); }
   function addStep(id, cls, nameHtml) {
     var el = document.createElement("div");
     el.className = "step " + cls;
     el.innerHTML = '<div class="ic"></div><div class="nm">' + nameHtml + '</div><div class="ms"></div><div class="sub"></div>';
-    $("steps").appendChild(el);
-    while ($("steps").children.length > 9) $("steps").removeChild($("steps").firstChild);
+    $("steps").appendChild(el); trimSteps();
     if (id) steps[id] = el;
     return el;
   }
@@ -261,8 +477,7 @@ pre .l.warnl { background: #f0b93e18; box-shadow: inset .25vw 0 var(--warn); }
     var el = document.createElement("div");
     el.className = "step note " + (cls || "");
     el.textContent = text;
-    $("steps").appendChild(el);
-    while ($("steps").children.length > 9) $("steps").removeChild($("steps").firstChild);
+    $("steps").appendChild(el); trimSteps();
   }
   function summarize(name, args) {
     var parts = [];
@@ -283,6 +498,7 @@ pre .l.warnl { background: #f0b93e18; box-shadow: inset .25vw 0 var(--warn); }
     for (var k in j) { var r = findCompile(j[k]); if (r) return r; }
     return null;
   }
+  function badge(cls, text) { $("compile").className = "badge " + cls; $("compile").textContent = text; }
   function onCompiled(text, okCall) {
     var j = null;
     try { j = JSON.parse(text); } catch (e) { /* plain error text */ }
@@ -291,66 +507,82 @@ pre .l.warnl { background: #f0b93e18; box-shadow: inset .25vw 0 var(--warn); }
     var diag = $("diag");
     diag.className = "diag"; diag.textContent = "";
     if (!c) {
-      $("compile").className = "badge " + (okCall ? "ok" : "err");
-      $("compile").textContent = okCall ? "compiled" : "failed";
+      badge(okCall ? "ok" : "err", okCall ? "compiled" : "failed");
       if (!okCall) diag.textContent = text.slice(0, 300);
-      renderCode();
+      renderCode(false);
       return;
     }
     if (!c.ok) {
       (c.diagnostics || []).forEach(function (d) { code.bad[d.line] = 1; });
       diag.textContent = (c.diagnostics || []).slice(0, 3).map(function (d) { return d.line + ":" + d.col + "  " + d.msg; }).join("\n");
-      $("compile").className = "badge err";
-      $("compile").textContent = "compile error";
+      badge("err", "compile error");
     } else {
       var w = c.warnings || [];
       w.forEach(function (d) { code.warn[d.line] = 1; });
       if (w.length) { diag.className = "diag warn"; diag.textContent = w.slice(0, 2).map(function (d) { return d.line + ":" + d.col + "  " + d.msg; }).join("\n"); }
       var knobs = (c.uniforms || []).length;
-      $("compile").className = "badge ok";
-      $("compile").textContent = "compiled · " + c.bytecode_bytes + " B · " + knobs + " knob" + (knobs === 1 ? "" : "s");
+      badge("ok", "compiled · " + c.bytecode_bytes + " B · " + knobs + " knob" + (knobs === 1 ? "" : "s"));
     }
-    renderCode();
+    renderCode(false);
   }
+  // The deploy burst: a jagged comic star.
+  (function () {
+    var pts = [], n = 22;
+    for (var i = 0; i < n * 2; i++) {
+      var a = (i / (n * 2)) * Math.PI * 2, r = i % 2 ? 36 + (i * 7 % 5) : 50;
+      pts.push((50 + Math.cos(a) * r).toFixed(1) + "% " + (50 + Math.sin(a) * r).toFixed(1) + "%");
+    }
+    var poly = "polygon(" + pts.join(",") + ")";
+    Array.prototype.forEach.call(document.querySelectorAll(".burst"), function (b) { b.style.clipPath = poly; b.style.webkitClipPath = poly; });
+  })();
   var flashTimer = 0;
-  function flash(text) {
-    var f = $("flash");
-    f.textContent = text;
-    f.classList.add("on");
+  function flash(big, small) {
+    if (!live) return;
+    $("flashBig").textContent = big; $("flashSmall").textContent = small || "";
+    $("flash").classList.add("on");
     clearTimeout(flashTimer);
-    flashTimer = setTimeout(function () { f.classList.remove("on"); }, 1800);
+    flashTimer = setTimeout(function () { $("flash").classList.remove("on"); }, 1700);
   }
   var replyFresh = false;
 
   // ---- twin -----------------------------------------------------------------
-  var fixtures = {};
-  function layout(ev) {
-    $("noFx") && $("noFx").remove();
-    var f = fixtures[ev.player];
-    if (!f) {
-      var el = document.createElement("div");
-      el.className = "fx";
-      el.innerHTML = '<div class="nm"><b></b><span></span></div><canvas></canvas>';
-      $("fixtures").appendChild(el);
-      f = fixtures[ev.player] = { el: el, canvas: el.querySelector("canvas"), rgb: null };
-    }
-    f.xy = ev.xy; f.aspect = ev.aspect; f.live = !!ev.effect;
-    f.el.querySelector("b").textContent = ev.name;
-    f.el.querySelector("span").textContent = ev.effect ? "· " + ev.effect : "· map";
-    f.rgb = null;
-    draw(f);
+  // Layouts for every fixture seen; the strip shows the spotlight (newest first).
+  var shapes = {}, focus = [], fixtures = {};
+  function renderStrip() {
+    var known = Object.keys(shapes).length;
+    $("fxCount").textContent = known > focus.length ? focus.length + " of " + known + " fixtures" : "";
+    if (!focus.length) return;
+    if ($("noFx")) $("noFx").remove();
+    var box = $("fixtures");
+    Object.keys(fixtures).forEach(function (id) { if (focus.indexOf(id) < 0) { fixtures[id].el.remove(); delete fixtures[id]; } });
+    focus.forEach(function (id) {
+      var s = shapes[id]; if (!s) return;
+      var f = fixtures[id];
+      if (!f) {
+        var el = document.createElement("div");
+        el.className = "fx";
+        el.innerHTML = '<div class="nm"><b></b><span></span></div><canvas></canvas>';
+        f = fixtures[id] = { el: el, canvas: el.querySelector("canvas"), rgb: null };
+      }
+      box.appendChild(f.el); // in spotlight order
+      if (f.shape !== s) { f.shape = s; f.rgb = null; }
+      f.el.querySelector("b").textContent = s.name;
+      f.el.querySelector("span").textContent = s.effect ? s.effect : "map only";
+      draw(f);
+    });
   }
   function draw(f) {
-    var c = f.canvas, dpr = window.devicePixelRatio || 1;
+    var c = f.canvas, dpr = window.devicePixelRatio || 1, s = f.shape;
     var W = c.clientWidth * dpr, H = c.clientHeight * dpr;
+    if (!W || !H) return;
     if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
     var g = c.getContext("2d");
     g.globalCompositeOperation = "source-over";
-    g.fillStyle = "#050507"; g.fillRect(0, 0, W, H);
-    if (!f.xy) return;
-    var n = f.xy.length / 2, pad = 14 * dpr;
-    var bw = W - 2 * pad, bh = H - 2 * pad, w = bw, h = bw / f.aspect;
-    if (h > bh) { h = bh; w = bh * f.aspect; }
+    g.fillStyle = "#000"; g.fillRect(0, 0, W, H);
+    if (!s || !s.xy) return;
+    var n = s.xy.length / 2, pad = 14 * dpr;
+    var bw = W - 2 * pad, bh = H - 2 * pad, w = bw, h = bw / s.aspect;
+    if (h > bh) { h = bh; w = bh * s.aspect; }
     var ox = (W - w) / 2, oy = (H - h) / 2;
     var spacing = Math.sqrt((w * h) / Math.max(1, n));
     var rad = Math.max(1.5 * dpr, Math.min(9 * dpr, spacing * 0.42));
@@ -358,9 +590,9 @@ pre .l.warnl { background: #f0b93e18; box-shadow: inset .25vw 0 var(--warn); }
     var halo = Math.min(0.28, 0.28 * Math.pow(spacing / (rad * 4.2), 2)).toFixed(3);
     g.globalCompositeOperation = "lighter";
     for (var i = 0; i < n; i++) {
-      var x = ox + f.xy[2 * i] * w, y = oy + f.xy[2 * i + 1] * h;
+      var x = ox + s.xy[2 * i] * w, y = oy + s.xy[2 * i + 1] * h;
       var r, gg, b;
-      if (f.rgb) { r = f.rgb[3 * i]; gg = f.rgb[3 * i + 1]; b = f.rgb[3 * i + 2]; } else { r = gg = b = 34; }
+      if (f.rgb) { r = f.rgb[3 * i]; gg = f.rgb[3 * i + 1]; b = f.rgb[3 * i + 2]; } else { r = gg = b = 38; }
       if (r + gg + b < 6) continue;
       g.fillStyle = "rgba(" + r + "," + gg + "," + b + "," + halo + ")";
       g.beginPath(); g.arc(x, y, rad * 2.1, 0, 6.2832); g.fill();
@@ -379,48 +611,75 @@ pre .l.warnl { background: #f0b93e18; box-shadow: inset .25vw 0 var(--warn); }
   window.addEventListener("resize", function () { for (var k in fixtures) draw(fixtures[k]); });
 
   // ---- events ---------------------------------------------------------------
+  function newReply() {
+    flushPlayback();
+    reply = { text: "", pos: 0, queued: 0 };
+    renderReply();
+  }
   function handle(ev) {
     switch (ev.type) {
       case "reset":
-        $("said").textContent = ""; $("reply").textContent = ""; $("think").textContent = ""; $("steps").innerHTML = "";
-        code = { id: null, target: "", shown: 0, done: false, bad: {}, warn: {} };
-        $("code").innerHTML = '<div class="empty">Ask for a look.<br>The code appears here as it is written.</div>';
-        $("effName").textContent = "—"; $("compile").className = "badge"; $("compile").textContent = "waiting"; $("diag").textContent = "";
+        newReply(); turnActive = false;
+        $("said").textContent = ""; $("think").textContent = ""; $("steps").innerHTML = "";
+        code = freshCode(); renderCode(false);
+        $("effName").textContent = ""; badge("", "waiting"); $("diag").textContent = "";
         status("", idleText);
         break;
       case "prompt":
+        newReply();
         $("said").className = "said"; $("said").textContent = ev.text;
-        $("reply").textContent = ""; $("think").textContent = ""; replyFresh = true;
+        $("think").textContent = ""; replyFresh = true; turnActive = true;
         status("thinking", "Thinking…");
         break;
       case "thinking_start": status("thinking", "Thinking…"); $("think").textContent = ""; break;
       case "thinking": $("think").textContent = ($("think").textContent + ev.text).slice(-220); break;
       case "say_start":
-        if (!replyFresh && $("reply").textContent) $("reply").textContent += " ";
+        queueText(true);
+        if (!replyFresh) addReply("", true);
         replyFresh = false; $("think").textContent = "";
         break;
-      case "say": $("reply").textContent += ev.text; break;
-      case "tool_writing":
-        status("working", /compile_effect|deploy_effect|crossfade_to|preview_effect|estimate_effect/.test(ev.name) ? "Writing code…" : "Getting ready: " + (LABEL[ev.name] || ev.name).toLowerCase() + "…");
+      case "say":
+        addReply(ev.text, false);
+        if (live) queueText(false); else { reply.pos = reply.queued = reply.text.length; renderReply(); }
+        if (live && voiceOn && statusKind === "thinking") status("speaking", "Speaking…");
         break;
+      case "tool_writing":
+        queueText(true);
+        if (ev.name === "explain_code") status("speaking", "Explaining…");
+        else if (ev.name === "show_code" || ev.name === "show_fixtures") status("working", LABEL[ev.name] + "…");
+        else status("working", /compile_effect|deploy_effect|crossfade_to|preview_effect|estimate_effect/.test(ev.name) ? "Writing code…" : "Getting ready: " + (LABEL[ev.name] || ev.name).toLowerCase() + "…");
+        break;
+      case "explain_step": {
+        queueText(true);
+        var start = reply.text.length;
+        if (ev.say) addReply(ev.say, true);
+        var it = { start: start, end: reply.text.length, pace: true, act: function () { applyMark(ev); } };
+        reply.queued = it.end;
+        renderReply(); // what is still to come shows dim
+        if (live) enqueue(it); else { applyMark(ev); reply.pos = reply.text.length; renderReply(); }
+        break;
+      }
+      case "explain_end": break;
       case "code":
         if (code.id !== ev.id) {
-          var same = ev.source.indexOf(code.target.slice(0, 40)) === 0 && code.target.length > 0;
-          code.id = ev.id; code.bad = {}; code.warn = {};
-          if (!same) code.shown = 0;
-          $("compile").className = "badge busy"; $("compile").textContent = "writing"; $("diag").textContent = "";
+          var same = code.target.length > 0 && ev.source.indexOf(code.target.slice(0, 40)) === 0;
+          code.id = ev.id; code.bad = {}; code.warn = {}; code.marks = [];
+          if (!same) { code.shown = 0; $("code").scrollTop = 0; }
+          badge("busy", ev.instant ? "opened" : "writing"); $("diag").textContent = "";
         }
         code.target = ev.source; code.done = !!ev.done;
+        if (ev.instant) code.shown = code.target.length;
         if (code.shown > code.target.length) code.shown = code.target.length;
-        $("effName").textContent = effectName(ev.source);
-        renderCode();
+        $("effName").textContent = ev.label || effectName(ev.source);
+        if (ev.instant) badge("ok", "on screen");
+        renderCode(false);
         break;
       case "tool_call": {
         var el = addStep(ev.id, "", (LABEL[ev.name] || ev.name) + "<small>" + esc(ev.name) + "</small>");
         el.dataset.summary = summarize(ev.name, ev.args || {});
         el.querySelector(".sub").textContent = el.dataset.summary;
         status("working", (LABEL[ev.name] || ev.name) + "…");
-        if (ev.name === "compile_effect") { $("compile").className = "badge busy"; $("compile").textContent = "compiling"; }
+        if (ev.name === "compile_effect") badge("busy", "compiling");
         break;
       }
       case "tool_progress": { var s = steps[ev.id]; if (s) s.querySelector(".sub").textContent = ev.text; break; }
@@ -438,37 +697,43 @@ pre .l.warnl { background: #f0b93e18; box-shadow: inset .25vw 0 var(--warn); }
         }
         if (ev.name === "compile_effect" || ((ev.name === "deploy_effect" || ev.name === "crossfade_to") && !ev.ok)) onCompiled(ev.text, ev.ok);
         if (ev.ok && (ev.name === "deploy_effect" || ev.name === "crossfade_to")) {
-          flash((ev.name === "crossfade_to" ? "Crossfading ✦ " : "Deployed ✓ ") + $("effName").textContent);
-          if ($("compile").textContent === "writing" || $("compile").textContent === "waiting") { $("compile").className = "badge ok"; $("compile").textContent = "on the lights"; }
+          flash(ev.name === "crossfade_to" ? "Crossfade!" : "Splanc!", $("effName").textContent);
+          var bt = $("compile").textContent;
+          if (bt === "writing" || bt === "waiting") badge("ok", "on the lights");
         }
-        if (ev.ok && ev.name === "rollback_effect") flash("Undone ↺");
+        if (ev.ok && ev.name === "rollback_effect") flash("Undo!", "back to the last look");
         status("thinking", "Thinking…");
         break;
       }
-      case "turn_end": status("", idleText); $("think").textContent = ""; break;
-      case "stopped": status("", idleText); note("Stopped."); break;
-      case "error": status("", idleText); note(ev.text, "err"); break;
+      case "turn_end": turnActive = false; queueText(true); $("think").textContent = ""; idle(); break;
+      case "stopped": turnActive = false; flushPlayback(); status("", idleText); note("Stopped."); break;
+      case "error": turnActive = false; queueText(true); idle(); note(ev.text, "err"); break;
       case "note": note(ev.text); break;
-      case "twin_layout": layout(ev); break;
+      case "twin_layout": shapes[ev.player] = ev; renderStrip(); break;
+      case "twin_focus": focus = ev.players || []; renderStrip(); break;
       case "twin_note": note(ev.player + ": " + ev.text); break;
     }
   }
   function connect() {
     var es = new EventSource("/events" + Q);
-    es.addEventListener("open", function () { status("", idleText); });
+    es.addEventListener("open", function () { live = false; status("", idleText); });
+    es.addEventListener("live", function () { live = true; });
     es.addEventListener("stage", function (m) { handle(JSON.parse(m.data)); });
     es.addEventListener("frame", function (m) { frame(JSON.parse(m.data)); });
-    es.addEventListener("error", function () { status("", "Reconnecting…"); });
+    es.addEventListener("error", function () { live = false; status("", "Reconnecting…"); });
   }
+  renderCode(false);
   connect();
 
-  // ---- voice ----------------------------------------------------------------
+  // ---- listening ------------------------------------------------------------
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  var rec = null, listening = false, finalText = "", sendOnEnd = false;
+  var rec = null, listening = false, sendOnEnd = false;
   if (!SR) { $("hint").innerHTML = "No speech recognition in this browser (use Chrome or Safari) · <kbd>Enter</kbd> to type"; }
   function startListening() {
     if (!SR || listening) return;
-    finalText = ""; sendOnEnd = true;
+    flushPlayback(); // barge in: the voice stops, the explanation jumps to its end
+    var finalText = "";
+    sendOnEnd = true;
     rec = new SR();
     rec.lang = navigator.language || "en-US";
     rec.continuous = true;
@@ -490,7 +755,7 @@ pre .l.warnl { background: #f0b93e18; box-shadow: inset .25vw 0 var(--warn); }
       if (sendOnEnd && t) { post("/api/prompt", { text: t }); }
       else if (!t) status("", idleText);
     };
-    try { rec.start(); listening = true; status("listening", "Listening…"); $("said").textContent = ""; $("reply").textContent = ""; }
+    try { rec.start(); listening = true; status("listening", "Listening…"); $("said").textContent = ""; }
     catch (err) { note("Microphone: " + err.message, "err"); }
   }
   function stopListening(send) {
@@ -499,7 +764,7 @@ pre .l.warnl { background: #f0b93e18; box-shadow: inset .25vw 0 var(--warn); }
     rec.stop();
   }
   var typing = false;
-  function openType() { typing = true; $("typebox").classList.add("on"); $("typed").value = ""; $("typed").focus(); }
+  function openType() { flushPlayback(); typing = true; $("typebox").classList.add("on"); $("typed").value = ""; $("typed").focus(); }
   function closeType() { typing = false; $("typebox").classList.remove("on"); $("typed").blur(); }
   $("typed").addEventListener("keydown", function (e) {
     if (e.key === "Enter") { var t = $("typed").value.trim(); closeType(); if (t) post("/api/prompt", { text: t }); e.preventDefault(); }
@@ -508,29 +773,37 @@ pre .l.warnl { background: #f0b93e18; box-shadow: inset .25vw 0 var(--warn); }
   });
   var TOGGLE = { PageDown: 1, PageUp: 1, b: 1, B: 1, ".": 1 };
   document.addEventListener("keydown", function (e) {
-    if (typing) return;
+    if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.code === "Space") { e.preventDefault(); if (!e.repeat) startListening(); }
     else if (TOGGLE[e.key]) { e.preventDefault(); if (e.repeat) return; if (listening) stopListening(true); else startListening(); }
     else if (e.key === "Enter") { e.preventDefault(); openType(); }
-    else if (e.key === "Escape") { if (listening) stopListening(false); post("/api/stop"); }
+    else if (e.key === "v" || e.key === "V") { if (!e.repeat) setVoice(!voiceOn); }
+    else if (e.key === "Escape") { if (listening) stopListening(false); flushPlayback(); idle(); post("/api/stop"); }
   });
   document.addEventListener("keyup", function (e) { if (!typing && e.code === "Space") { e.preventDefault(); stopListening(true); } });
 
   // ---- buttons --------------------------------------------------------------
+  $("voiceBtn").onclick = function () { setVoice(!voiceOn); this.blur(); };
   $("resetBtn").onclick = function () { post("/api/reset"); this.blur(); };
   $("mapsBtn").onclick = function () { post("/api/maps"); note("Re-reading maps…"); this.blur(); };
   $("phoneBtn").onclick = function () {
     this.blur();
     var v = $("phone");
-    if (v.srcObject) { v.srcObject.getTracks().forEach(function (t) { t.stop(); }); v.srcObject = null; $("app").classList.add("nophone"); return; }
+    if (v.srcObject) { v.srcObject.getTracks().forEach(function (t) { t.stop(); }); v.srcObject = null; $("app").classList.add("nophone"); this.classList.remove("on"); return; }
+    var btn = this;
     navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false }).then(function (s) {
-      v.srcObject = s; $("app").classList.remove("nophone");
-      s.getVideoTracks()[0].addEventListener("ended", function () { v.srcObject = null; $("app").classList.add("nophone"); });
+      v.srcObject = s; $("app").classList.remove("nophone"); btn.classList.add("on");
+      s.getVideoTracks()[0].addEventListener("ended", function () { v.srcObject = null; $("app").classList.add("nophone"); btn.classList.remove("on"); });
     }).catch(function (err) { note("Phone: " + err.message, "err"); });
   };
+  if (!synth) { $("voiceBtn").disabled = true; }
+  setVoice(voiceOn);
+  if (synth) { synth.getVoices(); synth.addEventListener && synth.addEventListener("voiceschanged", function () { synth.getVoices(); }); }
   idleText = SR ? "Ready — hold Space to talk" : "Ready — press Enter to type";
 })();
 </script>
 </body>
 </html>
 `;
+
+export const STAGE_PAGE = PAGE.replace("@@LOGO@@", LOGO_SVG);

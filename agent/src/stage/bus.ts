@@ -44,6 +44,8 @@ export class StageBus {
     res.write(": stage\n\n");
     for (const e of this.history) res.write(`event: stage\ndata: ${JSON.stringify(e)}\n\n`);
     for (const e of this.snapshot()) res.write(`event: stage\ndata: ${JSON.stringify(e)}\n\n`);
+    // Everything before this was catch-up: the screen draws it but doesn't speak it.
+    res.write("event: live\ndata: {}\n\n");
     this.clients.add(res);
     const ping = setInterval(() => res.write(": ping\n\n"), 15_000);
     ping.unref?.();

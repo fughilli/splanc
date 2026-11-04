@@ -18,7 +18,9 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Hub } from "../hub";
 import type { UniformInput } from "../uniforms";
 import { StageAgent, type ToolResult } from "./agent";
+import { FONTS } from "./brand";
 import { StageBus } from "./bus";
+import { Desk } from "./explain";
 import { STAGE_PAGE } from "./page";
 import { Twin } from "./twin";
 
@@ -81,6 +83,24 @@ export async function followTool(
   }
 }
 
+/** An effect's source by id: deployed this session, else from the library. */
+export async function findEffect(
+  client: Pick<Client, "callTool">,
+  history: { effect: string; source: string }[],
+  id: string,
+): Promise<{ name: string; source: string } | undefined> {
+  const h = [...history].reverse().find((e) => e.effect === id);
+  if (h) return { name: h.effect, source: h.source };
+  const r = (await client.callTool({ name: "get_effect", arguments: { id } })) as ToolResult;
+  if (r.isError) return undefined;
+  try {
+    const j = JSON.parse(r.content.find((c) => c.type === "text")?.text ?? "{}") as { source?: string; name?: string };
+    return j.source ? { name: j.name ?? id, source: j.source } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   let n = 0;
@@ -98,7 +118,13 @@ export async function runStage(o: StageOptions): Promise<{ url: string; close: (
   const twin = new Twin(o.hub, bus);
   const history: { sel: Sel; effect: string; source: string }[] = [];
   bus.snapshot = () => twin.layouts() as never;
+  const desk = new Desk({
+    bus,
+    find: (id) => findEffect(o.client, history, id),
+    showFixtures: (players, only) => twin.show(players, only),
+  });
   const agent = new StageAgent({
+    local: desk,
     client: o.client,
     bus,
     skill: o.skill,
@@ -121,6 +147,12 @@ export async function runStage(o: StageOptions): Promise<{ url: string; close: (
   const server = createServer((req, res) => {
     void (async () => {
       const url = new URL(req.url ?? "/", "http://stage");
+      const font = req.method === "GET" && /^\/brand\/([\w-]+\.woff2)$/.exec(url.pathname)?.[1];
+      if (font && FONTS[font]) {
+        // Public brand fonts: the page's CSS can't carry the LAN key.
+        res.writeHead(200, { "content-type": "font/woff2", "cache-control": "max-age=86400" });
+        return res.end(Buffer.from(FONTS[font], "base64"));
+      }
       if (!authorized(req, url)) return json(res, 403, { error: "stage key required (?k=…)" });
       const route = `${req.method} ${url.pathname}`;
       if (route === "GET /") {

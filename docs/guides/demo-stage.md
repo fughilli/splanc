@@ -2,9 +2,11 @@
 
 `splanc-agent stage` turns a laptop and a TV into a live demo: you speak a request, Claude
 writes an effect, and the audience watches it happen. The stage page shows the code as it is
-being written, every step (compile, preview, deploy), Claude's reply in large type, a live
-preview of every fixture on its real map, and, next to all that, your phone's screen
-(mirrored), so the audience can follow the app while you map a fixture or play with effects.
+being written, every step (compile, preview, deploy), Claude's reply in large type (and
+spoken aloud), a live preview of two fixtures on their real maps, and, next to all that,
+your phone's screen (mirrored), so the audience can follow the app while you map a fixture or
+play with effects. Ask Claude how something works and it explains the code on screen,
+highlighting and labelling each part as it talks.
 
 ```text
  ┌──────────┬──────────────────────────┬────────────────────┐
@@ -61,7 +63,8 @@ fine.
 | Hold **Space**, speak, release                 | send a request (what you say appears as you speak)        |
 | Clicker **Page Down** / **Page Up** (or **B**) | start listening, then press again to send                 |
 | **Enter**                                      | type a request instead                                    |
-| **Esc**                                        | stop Claude mid-answer                                    |
+| **V**                                          | turn Claude's voice on or off                             |
+| **Esc**                                        | stop Claude mid-answer (and its voice)                    |
 | **New**                                        | start a fresh conversation                                |
 | **Maps**                                       | re-read the fixtures' maps (after mapping one in the app) |
 
@@ -73,11 +76,37 @@ Things that demo well:
 - "Now fade both fixtures to a flickering candle." Claude crossfades both in sync.
 - "Go back." Claude rolls back to the previous effect.
 - "Show me the rope's map." Claude plots the fixture.
+- "How does that work?" / "What does the speed knob do?" Claude explains the code (below).
+- "Show me the wreath." Claude brings that fixture into the live preview (below).
 
 The conversation carries on between requests, so follow-ups like "same, but purple" work.
 
 On stage Claude can only use the effect and look tools. It can't rename fixtures, update
 firmware, change Wi-Fi, delete saved looks or re-trust certificates, whatever it hears.
+
+## Claude explains its code
+
+Ask a question about an effect ("how does the breathing work?", "why is it so smooth?", "what
+does line 12 do?") and Claude teaches from the code panel. It talks through the code a step
+at a time; as each sentence starts, the part it's about is highlighted, boxed or underlined,
+gets a short comic-style label, and scrolls into view. To explain a different effect, name it
+("explain the candle effect from the library") and Claude opens it in the code panel first.
+Questions don't change the lights unless you ask for that too.
+
+Claude's replies are spoken aloud by the browser's built-in voice; the words light up as they
+are spoken. Press **V** (or the **Voice** button) to turn the voice off; walkthroughs then
+step along at reading pace. Pressing Space to talk cuts the voice off. To pick a voice, add
+`?voice=` and part of its name to the page address (e.g. `?voice=Daniel`), and `&rate=0.95`
+to slow it down. On macOS, the most natural voices are the "Enhanced" and "Premium" ones
+(System Settings → Accessibility → Spoken Content → System voice → Manage Voices).
+
+## Which fixtures are on screen
+
+The live-preview strip shows two fixtures. It starts with the first two that have a map,
+and follows Claude: when it deploys to one or two fixtures, they come on screen. Ask to see
+others ("show me the wreath", "put the arch next to the curtain") and Claude brings them up;
+the most recent stay up, and the header says how many fixtures there are in all. A fixture
+the stage hasn't deployed to shows its map, dimmed, until an effect is put on it.
 
 ## Demo mapping
 
@@ -97,6 +126,8 @@ Do one full run at home on the night's network:
 - Make three or four requests and check that the lights change and the preview matches.
 - Check the mic level: what you say should appear while you're still speaking. Chrome's speech
   recognition needs the internet; Safari's works offline on recent macOS.
+- Ask one "how does it work?" question and listen to the voice through the room's speakers;
+  pick a voice you like (see above). Keep the speakers away from the mic.
 - Check the phone mirror, and the clicker if you use one.
 - Watch the cost of the run on console.anthropic.com.
 
@@ -105,8 +136,10 @@ Do one full run at home on the night's network:
 - **"Claude API: 401"**: the key is wrong or not set in this terminal.
 - **"Microphone: not-allowed"**: allow the microphone for the page (the camera/mic icon in the
   address bar), then reload.
-- **A fixture missing from the preview**: it isn't on this Wi-Fi, or has no stored map. Ask
-  "find the fixtures", or check it in the app.
+- **A fixture missing from the preview**: ask Claude to show it. If it still doesn't appear,
+  it isn't reachable or has no stored map: ask "find the fixtures", or check it in the app.
+- **No voice**: click anywhere on the page once (browsers only speak after you've interacted
+  with the page), check that **Voice** is on, and check the Mac's output device.
 - **The preview doesn't match the lights**: the preview runs the same VM on the same map, but
   isn't synced to the fixture's clock, so motion can be out of phase; colours and shapes should
   match.

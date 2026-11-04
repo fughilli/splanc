@@ -20,7 +20,9 @@ import { Hub } from "../src/hub";
 import { createServer } from "../src/server";
 import { partialString, STAGE_TOOLS, StageAgent } from "../src/stage/agent";
 import { StageBus, type StageEvent } from "../src/stage/bus";
-import { runStage } from "../src/stage/server";
+import { Desk, locate, partialArray } from "../src/stage/explain";
+import { STAGE_PAGE } from "../src/stage/page";
+import { findEffect, runStage } from "../src/stage/server";
 import { project, Twin } from "../src/stage/twin";
 import { followTool } from "../src/stage/server";
 import { FakePlayer, yFixture } from "./fakePlayer";
@@ -98,6 +100,40 @@ test("project keeps the aspect and puts +Y up", () => {
   assert.equal(aspect, 2);
   assert.deepEqual(xy.slice(0, 2), [0, 1], "origin bottom-left (y down on screen)");
   assert.deepEqual(xy.slice(6, 8), [1, 0], "top-right");
+});
+
+test("partialArray yields each step as soon as it is complete", () => {
+  const steps = [{ say: 'a "b" {c}', match: "x[0]" }, { say: "two", lines: "3-4" }];
+  const json = JSON.stringify({ steps });
+  let seen = 0;
+  for (let n = 0; n <= json.length; n++) {
+    const got = partialArray(json.slice(0, n), "steps");
+    assert.ok(got.length >= seen, "never goes back");
+    seen = got.length;
+    got.forEach((g, i) => assert.deepEqual(JSON.parse(g), steps[i]));
+  }
+  assert.equal(seen, 2);
+  assert.deepEqual(partialArray('{"steps":', "steps"), []);
+});
+
+test("the page carries the brand mark", () => {
+  assert.ok(!STAGE_PAGE.includes("@@LOGO@@"));
+  assert.ok(!/\$\{/.test(STAGE_PAGE), "no unfilled template slots");
+});
+
+test("locate points at lines or at an exact snippet", () => {
+  assert.deepEqual(locate(GLOW, { lines: "2-3", note: "the knob" }), { from: 2, to: 3, style: "band", color: "yellow", note: "the knob" });
+  assert.deepEqual(locate(GLOW.trimEnd(), { lines: "99" }), { from: 3, to: 3, style: "band", color: "yellow" }, "clamped to the code");
+  const m = locate(GLOW, { match: "warmth * 0.5", style: "underline", color: "pink" });
+  assert.deepEqual(m, { from: 3, to: 3, style: "underline", color: "pink", span: [39, 51] });
+  assert.equal(GLOW.split("\n")[2]!.slice(39, 51), "warmth * 0.5");
+  const spaced = locate(GLOW, { match: "warmth  *   0.5" }) as { from: number; span: [number, number] };
+  assert.equal(spaced.from, 3, "whitespace runs may differ");
+  const multi = locate(GLOW, { match: "uniform float warmth : 0.0 .. 1.0 = 0.6;\nvec3 shade" }) as { from: number; to: number; span?: unknown };
+  assert.deepEqual([multi.from, multi.to, multi.span], [2, 3, undefined]);
+  assert.match(locate(GLOW, { match: "nope()" }) as string, /not in the code/);
+  assert.match(locate(GLOW, { lines: "two" }) as string, /use "12"/);
+  assert.equal(locate(GLOW, { say: "just talking" }), undefined);
 });
 
 describe("stage agent against a fake player", () => {
@@ -234,6 +270,78 @@ describe("stage agent against a fake player", () => {
     assert.deepEqual(msgs, [{ role: "user", content: "second" }], "the failed turn left nothing behind");
   });
 
+  test("a question gets a spoken walkthrough with highlights, and fixtures come on screen", async () => {
+    const bus = new StageBus();
+    const events: StageEvent[] = [];
+    bus.emit = (e) => void events.push(e);
+    bus.frame = () => undefined;
+    const twin = new Twin(hub, bus);
+    const history = [{ sel: undefined, effect: "glow", source: GLOW }];
+    const desk = new Desk({
+      bus,
+      find: (id) => findEffect(client, history, id),
+      showFixtures: (players, only) => twin.show(players, only),
+    });
+    const seen: Record<string, unknown>[] = [];
+    const walk = {
+      steps: [
+        { say: "One knob sets the warmth.", match: "uniform float warmth", note: "a slider in the app" },
+        { say: "Here it tints the green.", match: "warmth * 0.5", style: "underline", keep: true },
+        { say: "And this line is not there.", match: "no such code" },
+      ],
+    };
+    const agent = new StageAgent({
+      client,
+      bus,
+      skill: "",
+      local: desk,
+      anthropic: scripted(
+        [
+          [{ type: "tool_use", id: "s1", name: "show_code", input: { effect_id: "glow" } }],
+          [{ type: "tool_use", id: "e1", name: "explain_code", input: walk }],
+          [{ type: "tool_use", id: "f1", name: "show_fixtures", input: { players: ["Pumpkin"] } }],
+          [{ type: "text", text: "That's the whole trick." }],
+        ],
+        seen,
+      ),
+    });
+    await agent.prompt("how does the glow work?");
+    twin.close();
+    assert.ok(!events.some((e) => e.type === "error"), JSON.stringify(events.filter((e) => e.type === "error")));
+
+    const shown = events.find((e) => e.type === "code");
+    assert.equal(shown?.["source"], GLOW.trimEnd());
+    assert.equal(shown?.["instant"], true);
+    // show_code answers with numbered lines.
+    const r1 = JSON.stringify((seen[1]!["messages"] as { content: unknown }[]).at(-1)!.content);
+    assert.match(r1, /2\| uniform float warmth/);
+
+    const steps = events.filter((e) => e.type === "explain_step");
+    assert.deepEqual(steps.map((s) => s["say"]), walk.steps.map((s) => s.say));
+    assert.deepEqual(steps[0]!["mark"], { from: 2, to: 2, style: "band", color: "yellow", note: "a slider in the app", span: [0, 20] });
+    assert.equal(steps[1]!["keep"], true);
+    assert.equal(steps[2]!["mark"], undefined, "a snippet that isn't there is spoken without a mark");
+    // Steps reach the screen while the input streams: before the tool result goes back.
+    const firstStep = events.findIndex((e) => e.type === "explain_step");
+    assert.ok(firstStep >= 0 && firstStep < events.findIndex((e) => e.type === "explain_end"));
+    const r2 = JSON.stringify((seen[2]!["messages"] as { content: unknown }[]).at(-1)!.content);
+    assert.match(r2, /Presented 3 steps/);
+    assert.match(r2, /step 3: .*not in the code/);
+    // Presenting tools draw no step chips.
+    assert.ok(!events.some((e) => e.type === "tool_call"), "no chips for stage tools");
+
+    const focus = events.filter((e) => e.type === "twin_focus");
+    const layout = events.find((e) => e.type === "twin_layout" && e["name"] === "Pumpkin");
+    assert.ok(layout, "the fixture's map is laid out");
+    assert.deepEqual(focus.at(-1)!["players"], [layout["player"]]);
+    const r3 = JSON.stringify((seen[3]!["messages"] as { content: unknown }[]).at(-1)!.content);
+    assert.match(r3, /On screen: Pumpkin/);
+
+    const names = (seen[0]!["tools"] as { name: string }[]).map((t) => t.name);
+    for (const n of ["explain_code", "show_code", "show_fixtures"]) assert.ok(names.includes(n), n);
+    assert.deepEqual(names, [...names].sort());
+  });
+
   test("the page and its API", async () => {
     const stage = await runStage({ hub, client, skill: "", port: 0, lan: true, apiKey: "test", log: () => undefined });
     try {
@@ -242,7 +350,14 @@ describe("stage agent against a fake player", () => {
       assert.equal((await fetch(`${base}/`)).status, 403, "the LAN page needs the key");
       const page = await fetch(`${base}/?k=${key}`);
       assert.equal(page.status, 200);
-      assert.match(await page.text(), /<title>Splanc Stage<\/title>/);
+      const html = await page.text();
+      assert.match(html, /<title>Splanc Stage<\/title>/);
+      assert.match(html, /<span class="logo"><svg viewBox="0 0 512 512"/, "the splash mark is inlined");
+      const font = await fetch(`${base}/brand/bangers.woff2`);
+      assert.equal(font.status, 200, "brand fonts need no key (CSS can't carry it)");
+      assert.equal(font.headers.get("content-type"), "font/woff2");
+      assert.equal(Buffer.from(await font.arrayBuffer()).subarray(0, 4).toString(), "wOF2");
+      assert.equal((await fetch(`${base}/brand/nope.woff2`)).status, 403);
       const form = await fetch(`${base}/api/reset?k=${key}`, { method: "POST", body: "x=1", headers: { "content-type": "application/x-www-form-urlencoded" } });
       assert.equal(form.status, 415, "no form posts");
       const st = await fetch(`${base}/api/status?k=${key}`);
