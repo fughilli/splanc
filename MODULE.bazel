@@ -490,29 +490,28 @@ git_override(
 # Lighthouse (Vive Tracker) tracking: lh_kernel, lh_protocol, lh_device (no_std)
 # from fughilli/lighthouse, pinned (re-sync, not fork: bump the commit). The
 # ESP32-P4 player runs them with the tracker wired to the P4's USB OTG port.
-# 0d079ad = fughilli/lighthouse#1 (f32 kernel, photon-latency work, lone base
-# station lock); move to the merge commit once it lands.
+# main @b29cd17 = fughilli/lighthouse#1 (f32 kernel, photon-latency work, lone
+# base station lock).
 bazel_dep(name = "lighthouse", version = "0.0.0")
 archive_override(
     module_name = "lighthouse",
-    integrity = "sha256-qqvr2CZV6Yc3PYv62dMLSTmyBupN0hITUePw3iYzVGo=",
-    strip_prefix = "lighthouse-0d079ad742290ff73dd8430485c8cc4e0d4bdbd8",
-    urls = ["https://github.com/fughilli/lighthouse/archive/0d079ad742290ff73dd8430485c8cc4e0d4bdbd8.tar.gz"],
+    integrity = "sha256-S0Suz5e8udPjW4buehVR18R5afISCY/7fD6CJrK5Tv0=",
+    strip_prefix = "lighthouse-b29cd1791b09ed1ca1e6ba39cc01accf1f296f0b",
+    urls = ["https://github.com/fughilli/lighthouse/archive/b29cd1791b09ed1ca1e6ba39cc01accf1f296f0b.tar.gz"],
 )
 
 bazel_dep(name = "firmware", version = "0.0.0", repo_name = "embedded")
 archive_override(
     module_name = "firmware",
-    # embedded @b158be6 = fughilli/embedded#9 (branch splanc-patches): master
-    # @569102d (mbedtls 3.6.5 + IDF v5.5.4 from source, dynamic record buffer,
+    # embedded master @0ea4759 = fughilli/embedded#9: master @569102d (mbedtls 3.6.5 + IDF v5.5.4 from source, dynamic record buffer,
     # //libs/tls:selfsigned) plus what Splanc used to carry as patches/embedded-*:
     # ledmapper_gen_key (FUG-90), the esp32c6+c3-only libs FOD, the 6 KB TLS
     # record buffer, private mbedtls SDK headers, the esp32c3 build target and
     # its software-ECC mbedtls, the overridable esp32c6 sections.ld, esptool 5.6,
-    # and the esp32p4 build target. Move to the merge commit once it lands.
-    integrity = "sha256-shY3DWkaJ5vvAzIU7leIcNLuL13+p7g2LdxHE7Dzy/Q=",
-    strip_prefix = "embedded-b158be6b59c2782e2ce2fcaa44a75cd81363cc95",
-    urls = ["https://github.com/fughilli/embedded/archive/b158be6b59c2782e2ce2fcaa44a75cd81363cc95.tar.gz"],
+    # and the esp32p4 build target.
+    integrity = "sha256-ftz0jHpIH1W4ZZk85F6RFHreLxvbCILcegvYWkaMDq0=",
+    strip_prefix = "embedded-0ea4759ad7d70f4ce563b3f3c8ca0113ff2b887d",
+    urls = ["https://github.com/fughilli/embedded/archive/0ea4759ad7d70f4ce563b3f3c8ca0113ff2b887d.tar.gz"],
 )
 
 # ---------------------------------------------------------------------------

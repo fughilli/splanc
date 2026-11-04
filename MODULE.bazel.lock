@@ -1875,7 +1875,7 @@
           "@@lighthouse~//host-lock.json": "07046c68a19b72887fb9924e6d723df8d9579b3f5b4317bf12e2e6e66e839ef0",
           "@@lighthouse~//nostd-lock.json": "bb9024e4e6a073a42e9ed61c54a59f6b5eae9383ab7b8a083ff11d1ff94e6d19",
           "@@lighthouse~//nostd-Cargo.lock": "112c57cb73232b652c45f61a855e60b035d5409627a3eb99447eaf32235ca7b4",
-          "@@//MODULE.bazel": "a5803236a69df5914dbcbdf12d3fcba08d254c91e5b96a36a18ed6a12677a5a3",
+          "@@//MODULE.bazel": "43c0617b5f1777980cc2471f1423adf5f98549ecae841c34f7803042344824dd",
           "@@rules_rust~~rust_host_tools~rust_host_tools//rust_host_tools": "ENOENT"
         },
         "recordedDirentsInputs": {},
@@ -3403,7 +3403,7 @@
         "bzlTransitiveDigest": "vt4SxWkQ68m/aCDZsNn52k7/n0uWiqqPHns004YWnPk=",
         "usagesDigest": "28S0c0v9E9ZvyYWD0ltX6dRQnIcS6QTp9mhHSIJVP2Q=",
         "recordedFileInputs": {
-          "@@//MODULE.bazel": "a5803236a69df5914dbcbdf12d3fcba08d254c91e5b96a36a18ed6a12677a5a3",
+          "@@//MODULE.bazel": "43c0617b5f1777980cc2471f1423adf5f98549ecae841c34f7803042344824dd",
           "@@rules_rust~~rust_host_tools~rust_host_tools//rust_host_tools": "ENOENT"
         },
         "recordedDirentsInputs": {},
@@ -4313,7 +4313,7 @@
         "bzlTransitiveDigest": "vt4SxWkQ68m/aCDZsNn52k7/n0uWiqqPHns004YWnPk=",
         "usagesDigest": "Nkrh1COri7AFGPHiAZCCbd2EXCJbZo+wkL11gO6nrH8=",
         "recordedFileInputs": {
-          "@@//MODULE.bazel": "a5803236a69df5914dbcbdf12d3fcba08d254c91e5b96a36a18ed6a12677a5a3",
+          "@@//MODULE.bazel": "43c0617b5f1777980cc2471f1423adf5f98549ecae841c34f7803042344824dd",
           "@@rules_rust~~rust_host_tools~rust_host_tools//rust_host_tools": "ENOENT"
         },
         "recordedDirentsInputs": {},
