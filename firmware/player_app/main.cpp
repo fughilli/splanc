@@ -1612,6 +1612,9 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
 // out-of-order upload window → the transport should drop the connection). Shared verbatim by
 // the ws:81, wss:443 and netstack transports — upload-chunk streaming + lm_player_handle +
 // persistence + device-side polling all live here, so a message behaves identically on each.
+#if defined(LM_FRONTEND)
+constexpr uint16_t kFrontendBleSession = 0x100;
+#endif
 static int ws_compute_reply_body(const uint8_t *msg, size_t len) {
   // Firmware update arms (ota_app.cpp): answered here, never by the player core.
   int ota = ota_app_dispatch(msg, len, tx, sizeof tx);
@@ -1626,7 +1629,10 @@ static int ws_compute_reply_body(const uint8_t *msg, size_t len) {
     const bool local = arm == 45 || arm == 90 || arm == 91;
     if (arm == 27) dispatch_plain(msg, len);
     if (!local) {
-      const int n = frontend_forward(1, msg, len, tx, sizeof tx, 1000);
+      // The session id the P4 answers and pushes to: the wss session being served
+      // (1..LM_WSS_SESSIONS), or the BLE central's own id (its pushes aren't relayed).
+      const uint16_t session = g_kiosk_src == LM_KIOSK_SRC_BLE ? kFrontendBleSession : netstack_ws_session();
+      const int n = frontend_forward(session, msg, len, tx, sizeof tx, 1000);
       if (n >= 0) return n;
       if (n == -2) return -1;  // the P4's, undelivered: drop the session, the client retries
     }

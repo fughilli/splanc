@@ -880,7 +880,7 @@ cc_binary(
         ":device_cert",
         ":improv_ble_netstack",
         ":improv_codec",
-        ":netstack_transport",
+        ":netstack_transport_sessions4",  # four concurrent wss clients
         ":ota_app",
         ":player_ffi_frontend",
         ":ws_codec",
@@ -938,7 +938,9 @@ cc_library(
 # seam differently.
 # "_ctrltrace" is the LM_CTRL_TRACE measurement twin (its RX/TLS/reply stamps feed
 # :player_app_netstack_ctrltrace's live-control trace); the shipping player and the OTA
-# loader link the plain one, which compiles the stamps out.
+# loader link the plain one, which compiles the stamps out. "_sessions4" serves four
+# concurrent wss sessions (LM_WSS_SESSIONS, the four-slot netstack FFI): the P4's C6 front
+# end, which has the RAM (docs/design/p4-c6-split.md §4.3.1). The players keep one.
 [cc_library(
     name = "netstack_transport" + sfx,
     srcs = [
@@ -973,16 +975,22 @@ cc_library(
         ":device_cert",
         ":improv_codec",
         ":ws_codec",
-        "//firmware/netstack:wifi_sta_ffi",  # ns_* heapless MAC/CCMP/TCP FFI
+        ffi,  # ns_* heapless MAC/CCMP/TCP FFI
         "@embedded//libs/board:arduino_core",
         "@embedded//libs/vendor:wifi",
     ],
     alwayslink = True,
-) for sfx, extra in [
-    ("", []),
+) for sfx, extra, ffi in [
+    ("", [], "//firmware/netstack:wifi_sta_ffi"),
     (
         "_ctrltrace",
         ["LM_CTRL_TRACE=1"],
+        "//firmware/netstack:wifi_sta_ffi",
+    ),
+    (
+        "_sessions4",
+        ["LM_WSS_SESSIONS=4"],
+        "//firmware/netstack:wifi_sta_ffi_sessions4",
     ),
 ]]
 

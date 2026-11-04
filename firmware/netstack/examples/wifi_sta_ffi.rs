@@ -164,8 +164,40 @@ pub extern "C" fn ns_sta_decrypt(frame: *const u8, frame_len: u32, out: *mut u8,
 
 // --- TCP client -------------------------------------------------------------
 use ledmapper_netstack::tcp::{State, TcpConn};
+use ledmapper_netstack::tcp_slots::TcpSlots;
 
-static mut TCP: Option<TcpConn> = None;
+/// Server connection slots (concurrent wss clients). One on the players, where RAM is
+/// tight; the P4's C6 front end builds `wifi_sta_ffi_sessions4` (docs/design/p4-c6-split.md
+/// §4.3.1). Every `ns_tcp_*` call below acts on the SELECTED slot (`ns_tcp_select`), except
+/// `ns_tcp_on_ip`, which demuxes an inbound datagram to its own slot.
+#[cfg(not(feature = "sessions4"))]
+const SLOTS: usize = 1;
+#[cfg(feature = "sessions4")]
+const SLOTS: usize = 4;
+
+static mut TCPS: TcpSlots<SLOTS> = TcpSlots::new();
+static mut CUR: usize = 0;
+
+/// The selected slot's connection.
+unsafe fn cur() -> &'static mut Option<TcpConn> {
+    &mut TCPS.slots[CUR]
+}
+
+/// How many server slots this build has.
+#[no_mangle]
+pub extern "C" fn ns_tcp_slots() -> u32 {
+    SLOTS as u32
+}
+
+/// Select the slot the other `ns_tcp_*` calls act on (out of range: ignored).
+#[no_mangle]
+pub extern "C" fn ns_tcp_select(slot: u32) {
+    unsafe {
+        if (slot as usize) < SLOTS {
+            CUR = slot as usize;
+        }
+    }
+}
 
 /// Open a TCP connection (src/dst are 4-byte IPv4). Builds the SYN into `out`.
 #[no_mangle]
@@ -177,7 +209,7 @@ pub extern "C" fn ns_tcp_connect(src: *const u8, dst: *const u8, sport: u16, dpo
         let mut conn = TcpConn::new([s[0], s[1], s[2], s[3]], [d[0], d[1], d[2], d[3]], sport, dport, iss);
         let o = core::slice::from_raw_parts_mut(out, cap as usize);
         let n = conn.connect(o);
-        TCP = Some(conn);
+        *cur() = Some(conn);
         n as u32
     }
 }
@@ -188,19 +220,19 @@ pub extern "C" fn ns_tcp_connect(src: *const u8, dst: *const u8, sport: u16, dpo
 pub extern "C" fn ns_tcp_listen(src: *const u8, sport: u16, iss: u32) {
     unsafe {
         let s = core::slice::from_raw_parts(src, 4);
-        TCP = Some(TcpConn::listen([s[0], s[1], s[2], s[3]], sport, iss));
+        *cur() = Some(TcpConn::listen([s[0], s[1], s[2], s[3]], sport, iss));
     }
 }
 
-/// Feed an inbound IPv4 datagram to the connection. Writes any reply to `out`.
+/// Feed an inbound IPv4 datagram to the slot it belongs to (by the peer's address and
+/// port; `TcpSlots::route`), whichever is selected. Writes any reply to `out`.
 /// `now_ms` is the caller's millis() at arrival (RTT/RTO timing).
 #[no_mangle]
 pub extern "C" fn ns_tcp_on_ip(now_ms: u32, ip: *const u8, len: u32, out: *mut u8, cap: u32) -> u32 {
     unsafe {
-        let Some(c) = TCP.as_mut() else { return 0 };
         let i = core::slice::from_raw_parts(ip, len as usize);
         let o = core::slice::from_raw_parts_mut(out, cap as usize);
-        c.on_ip(now_ms, i, o) as u32
+        TCPS.on_ip(now_ms, i, o) as u32
     }
 }
 
@@ -210,7 +242,7 @@ pub extern "C" fn ns_tcp_on_ip(now_ms: u32, ip: *const u8, len: u32, out: *mut u
 #[no_mangle]
 pub extern "C" fn ns_tcp_enqueue(data: *const u8, len: u32) -> u32 {
     unsafe {
-        let Some(c) = TCP.as_mut() else { return 0 };
+        let Some(c) = cur().as_mut() else { return 0 };
         let d = core::slice::from_raw_parts(data, len as usize);
         c.enqueue(d) as u32
     }
@@ -221,14 +253,20 @@ pub extern "C" fn ns_tcp_enqueue(data: *const u8, len: u32) -> u32 {
 /// critical RPC replies aren't starved behind it.
 #[no_mangle]
 pub extern "C" fn ns_tcp_tx_room() -> u32 {
-    unsafe { TCP.as_ref().map(|c| c.tx_room() as u32).unwrap_or(0) }
+    unsafe { cur().as_ref().map(|c| c.tx_room() as u32).unwrap_or(0) }
 }
 
 /// Whether the send side still holds data (queued or unacknowledged): the RTO and the
 /// send window need servicing (`ns_tcp_tick` / `ns_tcp_pump_tx`) until it drains.
 #[no_mangle]
 pub extern "C" fn ns_tcp_tx_pending() -> u32 {
-    unsafe { TCP.as_ref().map(|c| c.tx_pending() as u32).unwrap_or(0) }
+    unsafe { cur().as_ref().map(|c| c.tx_pending() as u32).unwrap_or(0) }
+}
+
+/// `ns_tcp_tx_pending` over every slot: 1 if any of them still holds send data.
+#[no_mangle]
+pub extern "C" fn ns_tcp_tx_pending_any() -> u32 {
+    unsafe { TCPS.slots.iter().any(|c| c.as_ref().is_some_and(|c| c.tx_pending())) as u32 }
 }
 
 /// Oldest unacked send sequence — advances on every peer ACK. The forward-progress
@@ -236,14 +274,14 @@ pub extern "C" fn ns_tcp_tx_pending() -> u32 {
 /// a healthy saturating stream (window full but snd_una climbing).
 #[no_mangle]
 pub extern "C" fn ns_tcp_snd_una() -> u32 {
-    unsafe { TCP.as_ref().map(|c| c.snd_una()).unwrap_or(0) }
+    unsafe { cur().as_ref().map(|c| c.snd_una()).unwrap_or(0) }
 }
 
 /// Next expected receive sequence — advances when the peer sends us data. Lets the pre-WS
 /// watchdog distinguish a live-but-slow handshake from a stalled one.
 #[no_mangle]
 pub extern "C" fn ns_tcp_rcv_nxt() -> u32 {
-    unsafe { TCP.as_ref().map(|c| c.rcv_nxt()).unwrap_or(0) }
+    unsafe { cur().as_ref().map(|c| c.rcv_nxt()).unwrap_or(0) }
 }
 
 /// Emit the next in-flight segment into `out` if the peer's window allows; returns its
@@ -251,7 +289,7 @@ pub extern "C" fn ns_tcp_rcv_nxt() -> u32 {
 #[no_mangle]
 pub extern "C" fn ns_tcp_pump_tx(now_ms: u32, out: *mut u8, cap: u32) -> u32 {
     unsafe {
-        let Some(c) = TCP.as_mut() else { return 0 };
+        let Some(c) = cur().as_mut() else { return 0 };
         let o = core::slice::from_raw_parts_mut(out, cap as usize);
         c.pump_tx(now_ms, o) as u32
     }
@@ -264,7 +302,7 @@ pub extern "C" fn ns_tcp_pump_tx(now_ms: u32, out: *mut u8, cap: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn ns_tcp_tick(now_ms: u32, out: *mut u8, cap: u32) -> u32 {
     unsafe {
-        let Some(c) = TCP.as_mut() else { return 0 };
+        let Some(c) = cur().as_mut() else { return 0 };
         let o = core::slice::from_raw_parts_mut(out, cap as usize);
         c.tick(now_ms, o) as u32
     }
@@ -275,7 +313,7 @@ pub extern "C" fn ns_tcp_tick(now_ms: u32, out: *mut u8, cap: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn ns_tcp_window_ack(out: *mut u8, cap: u32) -> u32 {
     unsafe {
-        let Some(c) = TCP.as_mut() else { return 0 };
+        let Some(c) = cur().as_mut() else { return 0 };
         let o = core::slice::from_raw_parts_mut(out, cap as usize);
         c.window_ack(o) as u32
     }
@@ -285,7 +323,7 @@ pub extern "C" fn ns_tcp_window_ack(out: *mut u8, cap: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn ns_tcp_recv(out: *mut u8, cap: u32) -> u32 {
     unsafe {
-        let Some(c) = TCP.as_mut() else { return 0 };
+        let Some(c) = cur().as_mut() else { return 0 };
         let d = c.rx_data();
         let n = d.len().min(cap as usize);
         core::ptr::copy_nonoverlapping(d.as_ptr(), out, n);
@@ -294,7 +332,7 @@ pub extern "C" fn ns_tcp_recv(out: *mut u8, cap: u32) -> u32 {
     }
 }
 
-/// Arm/disarm graceful load-shedding for the single server slot. Pass `true` ONLY when the
+/// Arm/disarm graceful load-shedding for the selected server slot. Pass `true` ONLY when the
 /// WS/TLS session is genuinely up and actively serving a client; pass `false` the instant the
 /// app begins closing / reclaiming / re-listening (before close_notify). Only while armed AND
 /// Established does a SYN from a DIFFERENT peer get fast-REJECTED (RST|ACK) instead of silently
@@ -304,39 +342,52 @@ pub extern "C" fn ns_tcp_recv(out: *mut u8, cap: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn ns_tcp_set_serving_live(live: u32) {
     unsafe {
-        if let Some(c) = TCP.as_mut() {
+        if let Some(c) = cur().as_mut() {
             c.set_serving_live(live != 0);
         }
     }
 }
 
-/// Copy the connection's diagnostics counters into `out[0..7]`: rx data segments,
-/// out-of-order (discarded), duplicate, truncated, zero-window ACKs, RTOs, fast
+/// Copy the diagnostics counters, summed over the slots, into `out[0..7]`: rx data
+/// segments, out-of-order (discarded), duplicate, truncated, zero-window ACKs, RTOs, fast
 /// retransmits. Zeros when there is no connection.
 #[no_mangle]
 pub extern "C" fn ns_tcp_stats(out: *mut u32) {
     unsafe {
-        let s = TCP.as_ref().map(|c| c.stats).unwrap_or_default();
-        let v = [s.rx_segs, s.rx_ooo, s.rx_dup, s.rx_trunc, s.zero_wnd, s.rto, s.fast_rexmit];
+        let mut v = [0u32; 7];
+        for s in TCPS.slots.iter().flatten().map(|c| c.stats) {
+            let f = [s.rx_segs, s.rx_ooo, s.rx_dup, s.rx_trunc, s.zero_wnd, s.rto, s.fast_rexmit];
+            for (a, b) in v.iter_mut().zip(f) {
+                *a = a.wrapping_add(b);
+            }
+        }
         core::ptr::copy_nonoverlapping(v.as_ptr(), out, v.len());
+    }
+}
+
+fn state_code(c: Option<&TcpConn>) -> u32 {
+    match c.map(|c| c.state) {
+        Some(State::Closed) => 0,
+        Some(State::SynSent) => 1,
+        Some(State::Established) => 2,
+        Some(State::FinWait) => 3,
+        Some(State::Done) => 4,
+        Some(State::Listen) => 5,
+        Some(State::SynRcvd) => 6,
+        None => 0,
     }
 }
 
 /// Connection state: 0=Closed 1=SynSent 2=Established 3=FinWait 4=Done 5=Listen 6=SynRcvd.
 #[no_mangle]
 pub extern "C" fn ns_tcp_state() -> u32 {
-    unsafe {
-        match TCP.as_ref().map(|c| c.state) {
-            Some(State::Closed) => 0,
-            Some(State::SynSent) => 1,
-            Some(State::Established) => 2,
-            Some(State::FinWait) => 3,
-            Some(State::Done) => 4,
-            Some(State::Listen) => 5,
-            Some(State::SynRcvd) => 6,
-            None => 0,
-        }
-    }
+    unsafe { state_code(cur().as_ref()) }
+}
+
+/// `ns_tcp_state` of `slot`, without selecting it (0 when out of range).
+#[no_mangle]
+pub extern "C" fn ns_tcp_slot_state(slot: u32) -> u32 {
+    unsafe { state_code(TCPS.slots.get(slot as usize).and_then(|c| c.as_ref())) }
 }
 
 /// Copy the installed pairwise TK (16 bytes) into `out` for programming the hardware

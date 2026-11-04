@@ -38,6 +38,7 @@
 
 #include "firmware/p4/link/link_codec.h"
 #include "netstack_transport.h"
+#include "player_ffi.h"
 
 extern "C" void lm_link_identity(const char *mac, const char *name);  // main.cpp
 
@@ -68,6 +69,15 @@ size_t g_msg_len = 0;
 bool g_msg_overflow = false;
 
 uint16_t g_session = 0;  // the session the newest PLAYER message came from (0 = none)
+// The C6 front end can hold several sessions (docs/design/p4-c6-split.md §4.3.1), but the
+// player core has one sharded upload in flight (main.cpp process_upload_chunk): a window 0
+// from another session would restart it under the owner. So the session whose upload is
+// running owns it until its last window, its session ends, or it goes quiet for
+// kUploadIdleUs; another session's window meanwhile drops that session (LK_OP_RESET), and
+// its client retries. With one session this never fires.
+uint16_t g_upload_owner = 0;
+int64_t g_upload_seen_us = 0;
+constexpr int64_t kUploadIdleUs = 3 * 1000 * 1000;
 int64_t g_host_seen_us = 0;
 int64_t g_hb_sent_us = 0;
 
@@ -232,6 +242,17 @@ void send_hello() {
 }
 
 void on_player_message(uint16_t session, const uint8_t *msg, size_t len) {
+  LmUploadChunk ch;
+  if (lm_parse_upload_chunk(msg, len, &ch) == 1) {
+    const int64_t now = esp_timer_get_time();
+    if (g_upload_owner != 0 && g_upload_owner != session && now - g_upload_seen_us < kUploadIdleUs) {
+      const uint8_t b[] = {(uint8_t)session, (uint8_t)(session >> 8)};
+      send_link(LK_OP_RESET, b, sizeof b);
+      return;
+    }
+    g_upload_owner = ch.last ? 0 : session;
+    g_upload_seen_us = now;
+  }
   g_session = session;
   const uint8_t *reply = nullptr;
   const int n = lm_ws_dispatch(msg, len, &reply);
@@ -304,6 +325,7 @@ void on_frame(const lk_header &h, const uint8_t *p) {
         // The host closed a session: stop pushing to it.
         const uint16_t s = (uint16_t)(p[1] | p[2] << 8);
         if (s == g_session) g_session = 0;
+        if (s == g_upload_owner) g_upload_owner = 0;
         g_msg_len = 0;
         g_msg_overflow = false;
       }

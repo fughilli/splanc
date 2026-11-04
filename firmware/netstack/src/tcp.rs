@@ -275,6 +275,16 @@ impl TcpConn {
         self.serving_live = live;
     }
 
+    /// Whether load-shedding is armed (`set_serving_live`).
+    pub fn serving_live(&self) -> bool {
+        self.serving_live
+    }
+
+    /// The bound peer (address, port); all zeros on a listener that hasn't latched one.
+    pub fn peer(&self) -> ([u8; 4], u16) {
+        (self.dst, self.dport)
+    }
+
     /// Build the initial SYN into `out`; returns its length. Moves to SynSent.
     pub fn connect(&mut self, out: &mut [u8]) -> usize {
         let n = self.build(SYN, self.snd_nxt, &[], out);

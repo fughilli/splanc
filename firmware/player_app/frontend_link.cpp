@@ -5,7 +5,10 @@
 // Forwarding is synchronous in this first cut: main.cpp hands a player message to
 // frontend_forward, which sends it as PLAYER frames and waits for the REPLY (the P4
 // answers in a few ms). PUSH frames that arrive meanwhile, or between messages, go
-// straight to the open wss session. A HELLO every 100 ms carries this image's ELF
+// straight to the wss session they name. This build serves several sessions
+// (netstack_transport_sessions4, §4.3.1): each message carries its session's id, the P4
+// answers to that id, and a session that ends is reported to the P4 (LK_OP_RESET) so it
+// stops pushing there. The P4 drops a session the same way, in place of a REPLY. A HELLO every 100 ms carries this image's ELF
 // SHA-256, so the P4 knows whether the C6 runs the image it bundles (§5.1).
 #include "frontend_link.h"
 
@@ -52,6 +55,7 @@ uint8_t *g_reply = nullptr;
 size_t g_reply_cap = 0, g_reply_len = 0;
 uint16_t g_reply_session = 0;
 bool g_reply_done = false, g_waiting = false;
+bool g_reply_reset = false;  // the P4 dropped the session instead of replying
 
 // Pushes: assembled here, with the WS header headroom in front (netstack_ws_send).
 uint8_t g_push[kWsSendHeadroom + 2048];
@@ -134,14 +138,18 @@ void on_frame(const lk_header &h, const uint8_t *p) {
       }
       g_push_len += h.len;
       if (h.flags & LK_MORE) return;
-      if (g_push_len <= sizeof g_push - kWsSendHeadroom && netstack_ws_open()) {
-        netstack_ws_send(g_push + kWsSendHeadroom, g_push_len);
+      if (g_push_len <= sizeof g_push - kWsSendHeadroom &&
+          netstack_ws_send_to(h.session, g_push + kWsSendHeadroom, g_push_len)) {
         g_stats.pushes++;
       }
       g_push_len = 0;
       return;
     case LK_LINK:
       if (h.len >= 2 && p[0] == LK_OP_HELLO) memcpy(g_p4_ver, p + 1, h.len - 1 < 4 ? h.len - 1 : 4);
+      if (h.len >= 3 && p[0] == LK_OP_RESET && g_waiting &&
+          (uint16_t)(p[1] | p[2] << 8) == g_reply_session) {
+        g_reply_reset = true;
+      }
       return;
     case LK_OSC:
       netstack_osc_send(p, h.len);  // the P4's own OSC out (e.g. the tracker's poses)
@@ -201,6 +209,10 @@ bool frontend_link_begin() {
   }
   if (sdio_slave_start() != ESP_OK) return false;
   g_up = true;
+  netstack_session_closed = [](uint16_t session) {
+    const uint8_t b[] = {LK_OP_RESET, (uint8_t)session, (uint8_t)(session >> 8)};
+    send_frame(LK_LINK, 0, 0, b, sizeof b);
+  };
   printf("[link] front end: SDIO slave up (%d x %u B receive, %d send)\n", kRxBufs, (unsigned)kRxBuf, kTxBufs);
   return true;
 }
@@ -260,6 +272,7 @@ int frontend_forward(uint16_t session, const uint8_t *msg, size_t len, uint8_t *
   g_reply_len = 0;
   g_reply_session = session;
   g_reply_done = false;
+  g_reply_reset = false;
   g_waiting = true;
   size_t off = 0;
   bool sent = true;
@@ -273,7 +286,7 @@ int frontend_forward(uint16_t session, const uint8_t *msg, size_t len, uint8_t *
     off += n;
   } while (sent && off < len);
   const int64_t end = esp_timer_get_time() + timeout_ms * 1000LL;
-  while (sent && !g_reply_done && esp_timer_get_time() < end) pump(pdMS_TO_TICKS(1));
+  while (sent && !g_reply_done && !g_reply_reset && esp_timer_get_time() < end) pump(pdMS_TO_TICKS(1));
   g_waiting = false;
   g_stats.forwarded++;
   if (!sent) {
@@ -281,6 +294,7 @@ int frontend_forward(uint16_t session, const uint8_t *msg, size_t len, uint8_t *
     p4_log("[link] forward: %u B not sent (send queue full)\n", (unsigned)len);
     return -2;  // the P4 is there: answering here would split its state (an upload) in two
   }
+  if (g_reply_reset) return -2;  // the P4 dropped the session (e.g. another's upload runs)
   if (!g_reply_done) {
     g_stats.timeouts++;
     if (len > 64) p4_log("[link] forward: no reply to %u B in %d ms\n", (unsigned)len, timeout_ms);
