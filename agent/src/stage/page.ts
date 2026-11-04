@@ -25,6 +25,7 @@ const PAGE = String.raw`<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Splanc Stage</title>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js" integrity="sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k" crossorigin="anonymous"></script>
 <script type="importmap">{"imports":{"kokoro":"https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js"},"integrity":{"https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js":"sha384-suR1TeKe6Fe8fT0n/uTWoohnPJrp1zu3z0bj4VH2anmmq739wlmFSnMFJyMYszAC"}}</script>
 <style>
 @font-face { font-family: "Bangers"; src: url("/brand/bangers.woff2") format("woff2"); font-display: block; }
@@ -202,6 +203,19 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
 .flash .txt { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--black); text-align: center; }
 .flash .big { font: 400 4.2vw/1 var(--display); letter-spacing: .04em; }
 .flash .small { font: 700 1.05vw/1.2 var(--body); max-width: 16vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.phone iframe { width: 100%; height: 100%; border: .55vw solid var(--black); border-radius: 2.2vw; box-shadow: var(--shadow); background: #000; }
+.phone [hidden] { display: none; }
+.pair { position: fixed; inset: 0; background: rgba(20, 0, 40, .72); display: flex; align-items: center; justify-content: center; z-index: 20; }
+.pair[hidden] { display: none; }
+.pair .card { background: var(--white); color: var(--black); border: var(--line); border-radius: 1.2vw; box-shadow: var(--shadow); padding: 1.6vw 2vw; display: flex; gap: 2vw; align-items: center; max-width: 60vw; }
+.pair h2 { font: 400 2.6vw/1 var(--display); letter-spacing: .04em; margin: 0 0 .8vw; }
+.pair p { font: 500 1.05vw/1.4 var(--body); margin: 0 0 .6vw; }
+.pair .qr svg { width: 16vw; height: 16vw; display: block; }
+.pair .url { font: 600 .9vw var(--body); word-break: break-all; color: #888; }
+.pair .url span { display: block; cursor: pointer; }
+.pair .url span.sel { color: var(--purple); }
+.pair .row { display: flex; gap: .6vw; flex-wrap: wrap; margin-top: 1vw; }
+.pair .btn { font-size: 1vw; }
 .typebox { position: fixed; left: 50%; bottom: 31vh; transform: translateX(-50%); width: 50vw; display: none; }
 .typebox.on { display: block; }
 .typebox input { width: 100%; font: 600 1.5vw var(--body); padding: .9vw 1.2vw; border-radius: .8vw;
@@ -215,11 +229,11 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
     <div class="status" id="status"><i></i><span id="statusText">Connecting…</span></div>
     <div class="hint" id="hint">Hold <kbd>Space</kbd> to talk · <kbd>Enter</kbd> type · <kbd>V</kbd> voice · <kbd>Esc</kbd> stop</div>
     <button class="btn" id="voiceBtn" title="Speak replies aloud (V)">Voice</button>
-    <button class="btn" id="phoneBtn" title="Show a window (e.g. QuickTime's iPhone mirror) in the phone slot">Phone</button>
+    <button class="btn" id="phoneBtn" title="Put the phone's screen (ScreenStream) or a window in the phone slot">Phone</button>
     <button class="btn" id="mapsBtn" title="Re-read the fixtures' maps (after mapping in the app)">Maps</button>
     <button class="btn" id="resetBtn" title="Start a new conversation">New</button>
   </header>
-  <div class="phone"><video id="phone" autoplay muted playsinline></video></div>
+  <div class="phone"><video id="phone" autoplay muted playsinline hidden></video><iframe id="phoneFrame" title="Phone" allow="fullscreen; autoplay" hidden></iframe></div>
   <section class="panel code">
     <div class="ph">Effect <b id="effName"></b><span class="badge" id="compile">waiting</span></div>
     <pre id="code"></pre>
@@ -240,6 +254,21 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
   </section>
 </div>
 <div class="flash" id="flash"><div class="burst"></div><div class="burst in"></div><div class="txt"><div class="big" id="flashBig"></div><div class="small" id="flashSmall"></div></div></div>
+<div class="pair" id="pair" hidden><div class="card">
+  <div class="qr" id="pairQr"></div>
+  <div>
+    <h2>Put your phone on screen</h2>
+    <p>Start ScreenStream on the phone, then scan this code with the phone's camera and tap <b>Show on the TV</b>.</p>
+    <p class="url" id="pairUrl"></p>
+    <p id="pairState"></p>
+    <div class="row">
+      <button class="btn" id="pairTrust" hidden>Trust the phone's certificate</button>
+      <button class="btn" id="pairCapture">Capture a window instead</button>
+      <button class="btn" id="pairHide" hidden>Hide the phone</button>
+      <button class="btn" id="pairClose">Close</button>
+    </div>
+  </div>
+</div></div>
 <div class="typebox" id="typebox"><input id="typed" placeholder="Type a prompt and press Enter" autocomplete="off"></div>
 <script>
 (function () {
@@ -800,6 +829,10 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
       case "stopped": turnActive = false; flushPlayback(); status("", idleText); note("Stopped."); break;
       case "error": turnActive = false; queueText(true); idle(); note(ev.text, "err"); break;
       case "note": note(ev.text); break;
+      case "phone":
+        if (ev.url && ev.url !== phoneUrl && live) { closePair(); note("Phone on screen. Clicked into it? Click the stage again before pressing Space."); }
+        showPhoneUrl(ev.url);
+        break;
       case "twin_layout": shapes[ev.player] = ev; renderStrip(); break;
       case "twin_focus": focus = ev.players || []; renderStrip(); break;
       case "twin_note": note(ev.player + ": " + ev.text); break;
@@ -869,6 +902,7 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
     else if (TOGGLE[e.key]) { e.preventDefault(); if (e.repeat) return; if (listening) stopListening(true); else startListening(); }
     else if (e.key === "Enter") { e.preventDefault(); openType(); }
     else if (e.key === "v" || e.key === "V") { if (!e.repeat) setVoice(!voiceOn); }
+    else if (e.key === "Escape" && !$("pair").hidden) closePair();
     else if (e.key === "Escape") { if (listening) stopListening(false); flushPlayback(); idle(); post("/api/stop"); }
   });
   document.addEventListener("keyup", function (e) { if (!typing && e.code === "Space") { e.preventDefault(); stopListening(true); } });
@@ -877,14 +911,76 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
   $("voiceBtn").onclick = function () { setVoice(!voiceOn); this.blur(); };
   $("resetBtn").onclick = function () { post("/api/reset"); this.blur(); };
   $("mapsBtn").onclick = function () { post("/api/maps"); note("Re-reading maps…"); this.blur(); };
+  // ---- the phone slot --------------------------------------------------------
+  // The phone's ScreenStream page in an iframe (its address comes from pairing:
+  // the phone scans the QR code and sends it), or a captured window.
+  var phoneUrl = null;
+  function phoneShown() { return !$("phoneFrame").hidden || !$("phone").hidden; }
+  function stopCapture() {
+    var v = $("phone");
+    if (v.srcObject) v.srcObject.getTracks().forEach(function (t) { t.stop(); });
+    v.srcObject = null; v.hidden = true;
+  }
+  function layoutPhone() {
+    $("app").classList.toggle("nophone", !phoneShown());
+    $("phoneBtn").classList.toggle("on", phoneShown());
+  }
+  function showPhoneUrl(url) {
+    phoneUrl = url || null;
+    var f = $("phoneFrame");
+    if (phoneUrl) {
+      stopCapture();
+      if (f.getAttribute("src") !== phoneUrl) f.setAttribute("src", phoneUrl);
+      f.hidden = false;
+    } else { f.hidden = true; f.removeAttribute("src"); }
+    layoutPhone();
+    renderPair();
+  }
+  function renderPair() {
+    $("pairTrust").hidden = !phoneUrl || phoneUrl.indexOf("https:") !== 0;
+    $("pairHide").hidden = !phoneShown();
+    $("pairState").textContent = phoneUrl ? "Showing " + phoneUrl + ". Blank? Trust its certificate once, then close the tab it opens." : "";
+  }
+  function openPair() {
+    $("pair").hidden = false; renderPair();
+    fetch("/api/pair" + Q, { headers: { "x-stage-key": KEY } }).then(function (r) { return r.json(); }).then(function (p) {
+      var url = (p.urls || [])[0];
+      if (!url) { $("pairUrl").textContent = p.error || "Pairing isn't available (no network address)."; return; }
+      // The likeliest address is first; the others are a click away (VPNs, two networks).
+      var draw = function (u) {
+        if (window.qrcode) { var qr = window.qrcode(0, "M"); qr.addData(u); qr.make(); $("pairQr").innerHTML = qr.createSvgTag(6, 2); }
+        Array.prototype.forEach.call($("pairUrl").children, function (c) { c.classList.toggle("sel", c.textContent === u); });
+      };
+      $("pairUrl").innerHTML = "";
+      p.urls.forEach(function (u) {
+        var a = document.createElement("span"); a.textContent = u; a.onclick = function () { draw(u); };
+        $("pairUrl").appendChild(a);
+      });
+      draw(url);
+    }).catch(function (e) { $("pairUrl").textContent = "Pairing: " + e.message; });
+  }
+  function closePair() { $("pair").hidden = true; }
   $("phoneBtn").onclick = function () {
     this.blur();
-    var v = $("phone");
-    if (v.srcObject) { v.srcObject.getTracks().forEach(function (t) { t.stop(); }); v.srcObject = null; $("app").classList.add("nophone"); this.classList.remove("on"); return; }
-    var btn = this;
+    if (phoneShown()) { hidePhone(); return; }
+    openPair();
+  };
+  function hidePhone() {
+    stopCapture();
+    if (phoneUrl) post("/api/phone", { url: null }); // every screen hides it
+    showPhoneUrl(null);
+  }
+  $("pairClose").onclick = closePair;
+  $("pairHide").onclick = function () { hidePhone(); closePair(); };
+  $("pairTrust").onclick = function () { if (phoneUrl) window.open(phoneUrl, "_blank", "noopener"); };
+  $("pairCapture").onclick = function () {
+    closePair();
     navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false }).then(function (s) {
-      v.srcObject = s; $("app").classList.remove("nophone"); btn.classList.add("on");
-      s.getVideoTracks()[0].addEventListener("ended", function () { v.srcObject = null; $("app").classList.add("nophone"); btn.classList.remove("on"); });
+      if (phoneUrl) post("/api/phone", { url: null });
+      showPhoneUrl(null);
+      var v = $("phone");
+      v.srcObject = s; v.hidden = false; layoutPhone();
+      s.getVideoTracks()[0].addEventListener("ended", function () { stopCapture(); layoutPhone(); });
     }).catch(function (err) { note("Phone: " + err.message, "err"); });
   };
   if (!canSpeak) { $("voiceBtn").disabled = true; }
@@ -906,3 +1002,55 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
 `;
 
 export const STAGE_PAGE = PAGE.replace("@@LOGO@@", LOGO_SVG);
+
+/** The page a phone gets from the pairing QR code: it sends the phone's
+ * ScreenStream address to the stage. `@@IP@@` is the phone's address as the
+ * stage saw it; the form posts back to the same (token) path. */
+export const PHONE_PAGE = String.raw`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Splanc Stage: show this phone</title>
+<style>
+body { margin: 0; font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #6a16a8; color: #fff; }
+main { max-width: 30rem; margin: 0 auto; padding: 1.5rem 1rem; }
+h1 { font-size: 1.6rem; margin: 0 0 .5rem; }
+label { display: block; font-weight: 600; margin: 1rem 0 .3rem; }
+input { box-sizing: border-box; width: 100%; font: inherit; padding: .7rem; border-radius: .6rem; border: 3px solid #000; }
+button { display: block; width: 100%; margin-top: .8rem; padding: .85rem; font-family: inherit; font-weight: 700; font-size: 1.05rem; border: 3px solid #000; border-radius: .7rem; box-shadow: 4px 4px 0 #000; }
+.go { background: #ffe600; color: #000; }
+.quiet { background: #fff; color: #000; }
+.small { font-size: .9rem; opacity: .9; }
+.small a { color: #ffe600; }
+#msg { margin-top: 1rem; font-weight: 600; min-height: 1.5em; }
+</style>
+</head>
+<body><main>
+<h1>Show this phone on the TV</h1>
+<p>Start ScreenStream on this phone, then tap <b>Show on the TV</b>.</p>
+<label for="u">ScreenStream address</label>
+<input id="u" inputmode="url" autocomplete="off" value="https://@@IP@@:8081/">
+<p class="small">The ScreenStream fork serves its page over HTTPS on port 8081. Stock ScreenStream: <a href="#" id="stock">http://@@IP@@:8080/</a></p>
+<button class="go" id="go">Show on the TV</button>
+<button class="quiet" id="hide">Hide it from the TV</button>
+<div id="msg"></div>
+</main>
+<script>
+(function () {
+  var u = document.getElementById("u"), msg = document.getElementById("msg");
+  document.getElementById("stock").onclick = function (e) { e.preventDefault(); u.value = this.textContent; };
+  function send(url) {
+    msg.textContent = "Sending…";
+    fetch(location.pathname, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: url }) })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.status); }); })
+      .then(function () { msg.textContent = url ? "On the TV now. Keep ScreenStream running." : "Hidden."; },
+            function (e) { msg.textContent = "Couldn't reach the stage: " + e.message; });
+  }
+  document.getElementById("go").onclick = function () { send(u.value.trim()); };
+  document.getElementById("hide").onclick = function () { send(null); };
+})();
+</script>
+</body>
+</html>
+`;

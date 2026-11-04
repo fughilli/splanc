@@ -11,7 +11,8 @@
  */
 
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { networkInterfaces } from "node:os";
 
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
@@ -19,9 +20,9 @@ import type { Hub } from "../hub";
 import type { UniformInput } from "../uniforms";
 import { StageAgent, type ToolResult } from "./agent";
 import { FONTS } from "./brand";
-import { StageBus } from "./bus";
+import { StageBus, type StageEvent } from "./bus";
 import { Desk } from "./explain";
-import { STAGE_PAGE } from "./page";
+import { PHONE_PAGE, STAGE_PAGE } from "./page";
 import { Twin } from "./twin";
 
 export interface StageOptions {
@@ -30,6 +31,8 @@ export interface StageOptions {
   skill: string;
   port: number;
   lan: boolean;
+  /** The phone-pairing listener's port (default: the stage port + 1). */
+  pairPort?: number;
   apiKey?: string | undefined;
   effort?: "low" | "medium" | "high";
   log: (...a: unknown[]) => void;
@@ -117,7 +120,14 @@ export async function runStage(o: StageOptions): Promise<{ url: string; close: (
   const bus = new StageBus();
   const twin = new Twin(o.hub, bus);
   const history: { sel: Sel; effect: string; source: string }[] = [];
-  bus.snapshot = () => twin.layouts() as never;
+  // The phone slot's address (the phone's ScreenStream page), kept so a screen
+  // that connects later shows it too.
+  let phoneUrl: string | null = null;
+  const setPhone = (url: string | null): void => {
+    phoneUrl = url;
+    bus.emit({ type: "phone", url });
+  };
+  bus.snapshot = () => [...(twin.layouts() as StageEvent[]), ...(phoneUrl ? [{ type: "phone", url: phoneUrl }] : [])];
   const desk = new Desk({
     bus,
     find: (id) => findEffect(o.client, history, id),
@@ -143,6 +153,8 @@ export async function runStage(o: StageOptions): Promise<{ url: string; close: (
     res.writeHead(code, { "content-type": "application/json" });
     res.end(JSON.stringify(v));
   };
+  const pairToken = randomBytes(12).toString("base64url");
+  let pair: { server: Server; port: number } | null = null;
 
   const server = createServer((req, res) => {
     void (async () => {
@@ -161,6 +173,11 @@ export async function runStage(o: StageOptions): Promise<{ url: string; close: (
       }
       if (route === "GET /events") return bus.attach(res);
       if (route === "GET /api/status") return json(res, 200, { busy: agent.busy, screens: bus.screens, key: o.lan });
+      if (route === "GET /api/pair") {
+        if (!pair) return json(res, 200, { urls: [], error: "Pairing isn't available: its port was busy." });
+        const urls = lanAddresses().map((a) => `http://${a}:${pair!.port}/p/${pairToken}`);
+        return json(res, 200, { urls, phone: phoneUrl });
+      }
       if (req.method === "POST" && req.headers["content-type"]?.startsWith("application/json") !== true) {
         return json(res, 415, { error: "json only" }); // no cross-site form posts
       }
@@ -176,6 +193,13 @@ export async function runStage(o: StageOptions): Promise<{ url: string; close: (
       }
       if (route === "POST /api/reset") {
         agent.reset();
+        return json(res, 200, {});
+      }
+      if (route === "POST /api/phone") {
+        const b = await body(req);
+        const url = b["url"] === null ? null : phoneAddress(b["url"]);
+        if (url === undefined) return json(res, 400, { error: "an http(s) address, or null" });
+        setPhone(url);
         return json(res, 200, {});
       }
       if (route === "POST /api/maps") {
@@ -194,6 +218,7 @@ export async function runStage(o: StageOptions): Promise<{ url: string; close: (
     server.listen(o.port, host, () => resolve());
   });
   const port = (server.address() as { port: number }).port;
+  pair = await startPairing(o.pairPort ?? (o.port === 0 ? 0 : port + 1), pairToken, setPhone, o.log);
   const url = `http://localhost:${port}/${o.lan ? `?k=${key}` : ""}`;
   void twin.showMaps(false).catch((e: unknown) => o.log(`stage: maps: ${e instanceof Error ? e.message : e}`));
   return {
@@ -201,6 +226,84 @@ export async function runStage(o: StageOptions): Promise<{ url: string; close: (
     close: () => {
       twin.close();
       server.close();
+      pair?.server.close();
     },
   };
+}
+
+/** A phone-slot address: an http(s) URL, or undefined. */
+export function phoneAddress(v: unknown): string | null | undefined {
+  if (typeof v !== "string" || v.length > 400) return undefined;
+  try {
+    const u = new URL(v.trim());
+    return u.protocol === "http:" || u.protocol === "https:" ? u.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** This computer's IPv4 addresses on the LAN (what a phone can reach), the
+ * likeliest first: Wi-Fi/Ethernet private ranges before VPN (100.64/10,
+ * Tailscale) and container bridges. */
+export function lanAddresses(ifaces = networkInterfaces()): string[] {
+  const out: { address: string; score: number }[] = [];
+  for (const [name, list] of Object.entries(ifaces)) {
+    for (const a of list ?? []) {
+      if (a.family !== "IPv4" || a.internal) continue;
+      let score = /^192\.168\./.test(a.address) ? 3 : /^10\./.test(a.address) ? 2 : /^172\.(1[6-9]|2\d|3[01])\./.test(a.address) ? 1 : 0;
+      if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(a.address)) score = -1;
+      if (/^(en|eth|wl)/.test(name)) score += 2;
+      if (/^(docker|br-|veth|utun|tailscale|vboxnet|bridge)/.test(name)) score -= 3;
+      out.push({ address: a.address, score });
+    }
+  }
+  return out.sort((x, y) => y.score - x.score).map((x) => x.address);
+}
+
+/**
+ * The pairing listener, on the LAN: a phone that scans the stage's QR code gets
+ * a page (PHONE_PAGE) that sends its ScreenStream address to the stage. Only the
+ * secret path /p/<token> answers, and it can only set or clear the phone slot.
+ * The phone's own address prefills the form (the stage sees where it came from).
+ */
+async function startPairing(
+  port: number,
+  token: string,
+  setPhone: (url: string | null) => void,
+  log: (msg: string) => void,
+): Promise<{ server: Server; port: number } | null> {
+  const want = Buffer.from(`/p/${token}`);
+  const server = createServer((req, res) => {
+    const path = Buffer.from(new URL(req.url ?? "/", "http://pair").pathname);
+    const send = (code: number, type: string, body: string) => {
+      res.writeHead(code, { "content-type": type, "cache-control": "no-store", "referrer-policy": "no-referrer" });
+      res.end(body);
+    };
+    if (path.length !== want.length || !timingSafeEqual(path, want)) return send(404, "text/plain", "not found");
+    if (req.method === "GET") {
+      const ip = (req.socket.remoteAddress ?? "").replace(/^::ffff:/, "");
+      const host = /^[\d.]+$/.test(ip) ? ip : /^[\da-f:]+$/i.test(ip) ? `[${ip}]` : "phone.local";
+      return send(200, "text/html; charset=utf-8", PHONE_PAGE.split("@@IP@@").join(host));
+    }
+    if (req.method === "POST" && req.headers["content-type"]?.startsWith("application/json")) {
+      void body(req).then(
+        (b) => {
+          const url = b["url"] === null ? null : phoneAddress(b["url"]);
+          if (url === undefined) return send(400, "application/json", JSON.stringify({ error: "not an http(s) address" }));
+          setPhone(url);
+          send(200, "application/json", "{}");
+        },
+        () => send(400, "application/json", JSON.stringify({ error: "bad request" })),
+      );
+      return;
+    }
+    send(405, "text/plain", "method not allowed");
+  });
+  return new Promise((resolve) => {
+    server.once("error", (e) => {
+      log(`stage: phone pairing off (${e instanceof Error ? e.message : e})`);
+      resolve(null);
+    });
+    server.listen(port, "0.0.0.0", () => resolve({ server, port: (server.address() as { port: number }).port }));
+  });
 }

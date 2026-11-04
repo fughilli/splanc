@@ -22,7 +22,7 @@ import { partialString, STAGE_TOOLS, StageAgent } from "../src/stage/agent";
 import { StageBus, type StageEvent } from "../src/stage/bus";
 import { Desk, locate, partialArray } from "../src/stage/explain";
 import { STAGE_PAGE } from "../src/stage/page";
-import { findEffect, runStage } from "../src/stage/server";
+import { findEffect, lanAddresses, runStage } from "../src/stage/server";
 import { project, Twin } from "../src/stage/twin";
 import { followTool } from "../src/stage/server";
 import { FakePlayer, yFixture } from "./fakePlayer";
@@ -372,6 +372,50 @@ describe("stage agent against a fake player", () => {
       assert.equal(form.status, 415, "no form posts");
       const st = await fetch(`${base}/api/status?k=${key}`);
       assert.equal(((await st.json()) as { busy: boolean }).busy, false);
+    } finally {
+      stage.close();
+    }
+  });
+
+  test("the QR code points at the Wi-Fi address before VPNs and bridges", () => {
+    const at = (address: string) => ({ address, family: "IPv4", internal: false }) as never;
+    assert.deepEqual(
+      lanAddresses({ docker0: [at("172.17.0.1")], utun4: [at("100.70.1.2")], en0: [at("192.168.1.23")], lo0: [{ address: "127.0.0.1", family: "IPv4", internal: true } as never] }),
+      ["192.168.1.23", "172.17.0.1", "100.70.1.2"],
+    );
+  });
+
+  test("a phone pairs by QR code and lands in the phone slot", async () => {
+    const stage = await runStage({ hub, client, skill: "", port: 0, lan: false, apiKey: "test", log: () => undefined });
+    try {
+      const base = stage.url.replace(/\/$/, "");
+      const p = (await (await fetch(`${base}/api/pair`)).json()) as { urls: string[] };
+      assert.ok(p.urls.length > 0, "a LAN address to put in the QR code");
+      const pairUrl = new URL(p.urls[0]!);
+      assert.match(pairUrl.pathname, /^\/p\/[\w-]{16}$/);
+      // The phone's side, reached on loopback here.
+      const phone = `http://127.0.0.1:${pairUrl.port}`;
+      assert.equal((await fetch(`${phone}/p/wrong-token-0000`)).status, 404, "only the secret path answers");
+      const page = await (await fetch(`${phone}${pairUrl.pathname}`)).text();
+      assert.match(page, /value="https:\/\/127\.0\.0\.1:8081\/"/, "prefilled with the phone's own address");
+      const post = (url: unknown) =>
+        fetch(`${phone}${pairUrl.pathname}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url }) });
+      assert.equal((await post("javascript:alert(1)")).status, 400, "http(s) only");
+      assert.equal((await post("https://192.168.1.50:8081/")).status, 200);
+
+      // A screen that connects now gets the phone in its catch-up.
+      const ctl = new AbortController();
+      const sse = await fetch(`${base}/events`, { signal: ctl.signal });
+      const reader = sse.body!.getReader();
+      let text = "";
+      while (!text.includes("event: live")) text += new TextDecoder().decode((await reader.read()).value);
+      ctl.abort();
+      assert.match(text, /"type":"phone","url":"https:\/\/192\.168\.1\.50:8081\/"/);
+
+      // The stage's Hide clears it.
+      const hide = await fetch(`${base}/api/phone`, { method: "POST", headers: { "content-type": "application/json" }, body: '{"url":null}' });
+      assert.equal(hide.status, 200);
+      assert.deepEqual((await (await fetch(`${base}/api/pair`)).json() as { phone: unknown }).phone, null);
     } finally {
       stage.close();
     }
