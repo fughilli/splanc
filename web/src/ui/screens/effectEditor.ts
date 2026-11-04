@@ -78,6 +78,8 @@ import { deviceStore } from "../../store/deviceStore";
 import { chatLogStore, newChatLogSessionId } from "../../store/chatLogStore";
 import { registerChatDriver } from "../../net/remoteChat";
 import { mapStore } from "../../store/mapStore";
+import { DEVICE_MAP, initialPreviewMap, learnDeviceMap, pickMap, pickedMap } from "../../store/previewMap";
+import { deviceMapTitle, deviceMaps } from "./deviceMapCard";
 import { renderSettings } from "../../store/appearance";
 import { appState } from "../app/state";
 import { Button, IconButton, confirmDialog, icon, toast, type IconName } from "../kit";
@@ -914,7 +916,10 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     fxDebugPanel?.refresh();
     // Newly connected → automatically pull whatever effect is running so its
     // uniforms hydrate and any mismatch surfaces without a manual tap.
-    if (connected && !prevConnected) void hydrateFromDevice();
+    if (connected && !prevConnected) {
+      void hydrateFromDevice();
+      if (selectedMapId) void followDeviceMap();
+    }
     if (!connected) {
       runningEffectId = null;
       refreshMismatch();
@@ -1110,9 +1115,18 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     if (!mapMenu.contains(t) && !mapBtn.contains(t)) closeMapMenu();
   }
 
-  async function populateMapPicker(): Promise<string | null> {
+  // The preview map (store/previewMap.ts): the user's pick for this fixture, else
+  // the fixture's own map. DEVICE_MAP is the connected fixture's map when it isn't
+  // in the library yet (previewed from memory, not saved).
+  let selectedMapId = "";
+  let deviceBundle: { label: string; map: OutputMap; topology?: Topology } | null = null;
+
+  /** Fill the map menu; returns the remembered choice (null: none) and the old
+   * default (the app's selected map, else the newest). */
+  async function populateMapPicker(): Promise<{ chosen: string | null; fallback: string | null }> {
     const maps = await mapStore.list({ sort: "updated" });
     const opts: { value: string; label: string }[] = [
+      ...(deviceBundle ? [{ value: DEVICE_MAP, label: deviceBundle.label }] : []),
       { value: "__fixture__", label: "Sample fixture (tree)" },
       ...maps.map((m) => ({ value: m.id, label: m.name })),
     ];
@@ -1125,15 +1139,49 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       item.textContent = o.label;
       item.addEventListener("click", () => {
         closeMapMenu();
+        // Remembered per fixture; the fixture's own map means "follow the fixture".
+        pickMap(deviceStore.lastId(), o.value);
         void selectMap(o.value);
       });
       mapMenu.appendChild(item);
     }
-    return appState.selectedMapId ?? maps[0]?.id ?? null;
+    markSelectedMap(selectedMapId);
+    const available = new Set(opts.map((o) => o.value));
+    return {
+      chosen: initialPreviewMap(deviceStore.lastId(), available, null),
+      fallback: appState.selectedMapId ?? maps[0]?.id ?? null,
+    };
+  }
+
+  /** Learn the connected fixture's map and preview it, unless the user picked
+   * another map for this fixture. */
+  async function followDeviceMap(): Promise<void> {
+    const c = appState.client;
+    const dev = deviceStore.activeId();
+    if (!c?.isConnected || !dev) return;
+    const state = await deviceMaps.probe(c).catch(() => null);
+    if (!state || disposed || deviceStore.activeId() !== dev) return;
+    let own: string | null = null;
+    if (state.kind === "saved") {
+      own = state.local.id;
+      learnDeviceMap(dev, own);
+      deviceBundle = null;
+    } else if (state.kind === "unsaved" && state.bundle?.map) {
+      own = DEVICE_MAP;
+      deviceBundle = { label: deviceMapTitle(state.info), map: state.bundle.map };
+      if (state.bundle.topology) deviceBundle.topology = state.bundle.topology;
+    } else {
+      return;
+    }
+    await populateMapPicker();
+    const pick = pickedMap(dev);
+    if (pick && pick !== own) return; // the user's pick stands
+    if (own !== selectedMapId) await selectMap(own);
   }
 
   // Reflect the active map in the menu (a check-marked item).
   function markSelectedMap(id: string): void {
+    selectedMapId = id;
     for (const item of Array.from(mapMenu.children) as HTMLButtonElement[]) {
       item.classList.toggle("fxedit-menu-item--sel", item.dataset["value"] === id);
     }
@@ -1141,6 +1189,10 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
 
   async function selectMap(id: string): Promise<void> {
     markSelectedMap(id);
+    if (id === DEVICE_MAP && deviceBundle) {
+      loadMap(deviceBundle.map, deviceBundle.topology);
+      return;
+    }
     if (id === "__fixture__") {
       loadMap(generateFixture("tree", { count: 160, seed: 3, jitterFrac: 0.06 }));
       return;
@@ -1869,11 +1921,12 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     }
 
     try {
-      const defaultMapId = await populateMapPicker();
+      // The remembered pick / the fixture's map first, then a demo scene's own map.
+      const { chosen, fallback } = await populateMapPicker();
       const sceneMapId = initialScene
         ? (await mapStore.list()).find(map => map.deviceMapId === initialScene!.mapId)?.id
         : undefined;
-      await selectMap(sceneMapId ?? defaultMapId ?? "__fixture__");
+      await selectMap(chosen ?? sceneMapId ?? fallback ?? "__fixture__");
     } catch (e) {
       // A preview/map hiccup must not disable the rest of the editor.
       console.error("effect editor: preview/map init failed", e);

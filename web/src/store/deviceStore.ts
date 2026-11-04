@@ -84,6 +84,8 @@ export const DEFAULT_CAPTURE_STRIDE = 4;
 
 const KEY = "ledmapper.devices";
 const ACTIVE_KEY = "ledmapper.activeDevice";
+/** The device most recently made active; kept after a disconnect (unlike ACTIVE_KEY). */
+const LAST_KEY = "ledmapper.lastDevice";
 
 type Listener = () => void;
 
@@ -196,6 +198,12 @@ class DeviceStore {
     return localStorage.getItem(ACTIVE_KEY);
   }
 
+  /** The active device, else the one most recently connected (if still known). */
+  lastId(): string | null {
+    const id = this.activeId() ?? localStorage.getItem(LAST_KEY);
+    return id && this.get(id) ? id : null;
+  }
+
   active(): KnownDevice | undefined {
     const id = this.activeId();
     return id ? this.get(id) : undefined;
@@ -301,7 +309,10 @@ class DeviceStore {
 
   setActive(id: string | null): void {
     if (id === null) localStorage.removeItem(ACTIVE_KEY);
-    else localStorage.setItem(ACTIVE_KEY, id);
+    else {
+      localStorage.setItem(ACTIVE_KEY, id);
+      localStorage.setItem(LAST_KEY, id);
+    }
     this.emit();
   }
 
@@ -381,6 +392,7 @@ class DeviceStore {
   forget(id: string): void {
     write(read().filter((d) => d.id !== id));
     if (this.activeId() === id) this.setActive(null);
+    if (localStorage.getItem(LAST_KEY) === id) localStorage.removeItem(LAST_KEY);
     this.emit();
   }
 }

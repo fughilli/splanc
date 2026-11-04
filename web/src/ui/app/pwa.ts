@@ -21,6 +21,7 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 const DISMISS_KEY = "pwa.install.dismissed";
+const STALE_DISMISS_KEY = "pwa.staleIcon.dismissed";
 
 let deferred: BeforeInstallPromptEvent | null = null;
 let installed = false;
@@ -31,8 +32,11 @@ function notify(): void {
 }
 
 function isStandalone(): boolean {
+  const mode = (m: string): boolean => window.matchMedia?.(`(display-mode: ${m})`).matches === true;
   return (
-    window.matchMedia?.("(display-mode: standalone)").matches === true ||
+    mode("standalone") ||
+    mode("fullscreen") ||
+    mode("minimal-ui") ||
     // iOS Safari's legacy flag when launched from the home screen.
     (navigator as unknown as { standalone?: boolean }).standalone === true
   );
@@ -46,6 +50,17 @@ function isIosSafari(): boolean {
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1); // iPadOS 13+
   const webkit = /WebKit/.test(ua) && !/(CriOS|FxiOS|EdgiOS|OPiOS)/.test(ua);
   return iOS && webkit;
+}
+
+/**
+ * Opened from a home-screen icon (the manifest's start_url carries ?source=pwa) but
+ * not running as an installed app. The icon then belongs to an install made from
+ * another address, such as the retired splanc.pages.dev, which now redirects here:
+ * Android shows the page under a browser bar, and its X closes the app. The fix is
+ * to install again from this address and remove the old icon.
+ */
+function launchedFromStaleIcon(): boolean {
+  return new URLSearchParams(location.search).get("source") === "pwa" && !isStandalone();
 }
 
 /** True when the app is already running as an installed PWA. */
@@ -87,6 +102,10 @@ export async function promptInstall(): Promise<void> {
     showIosSheet();
     return;
   }
+  if (launchedFromStaleIcon()) {
+    toast("Open splanc.io/app in Chrome, then ⋮ → “Install app”. Then remove the old icon.");
+    return;
+  }
   toast("To install, use your browser's “Install app” / “Add to Home screen”.");
 }
 
@@ -118,7 +137,7 @@ export function initPwa(): void {
 
   // iOS never fires beforeinstallprompt — offer the banner directly, after the
   // first paint so it doesn't compete with startup.
-  if (isIosSafari() && !isInstalled()) {
+  if ((isIosSafari() || launchedFromStaleIcon()) && !isInstalled()) {
     setTimeout(maybeShowBanner, 1200);
   }
 }
@@ -142,15 +161,17 @@ let bannerEl: HTMLElement | null = null;
 
 function maybeShowBanner(): void {
   if (bannerEl || isInstalled()) return;
-  if (localStorage.getItem(DISMISS_KEY) === "1") return;
-  if (!canInstall()) return;
-  bannerEl = buildBanner();
+  const stale = launchedFromStaleIcon();
+  // An old icon is worth raising even after the plain install banner was dismissed.
+  if (localStorage.getItem(stale ? STALE_DISMISS_KEY : DISMISS_KEY) === "1") return;
+  if (!stale && !canInstall()) return;
+  bannerEl = buildBanner(stale);
   document.body.appendChild(bannerEl);
   requestAnimationFrame(() => bannerEl?.classList.add("pwa-banner--in"));
 }
 
 function dismissBanner(persist = false): void {
-  if (persist) localStorage.setItem(DISMISS_KEY, "1");
+  if (persist) localStorage.setItem(launchedFromStaleIcon() ? STALE_DISMISS_KEY : DISMISS_KEY, "1");
   const el = bannerEl;
   bannerEl = null;
   if (!el) return;
@@ -158,7 +179,7 @@ function dismissBanner(persist = false): void {
   setTimeout(() => el.remove(), 200);
 }
 
-function buildBanner(): HTMLElement {
+function buildBanner(stale: boolean): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "pwa-banner";
   wrap.setAttribute("role", "dialog");
@@ -177,12 +198,14 @@ function buildBanner(): HTMLElement {
   text.className = "pwa-banner-text";
   const title = document.createElement("div");
   title.className = "pwa-banner-title";
-  title.textContent = "Install Splanc";
+  title.textContent = stale ? "Reinstall Splanc" : "Install Splanc";
   const sub = document.createElement("div");
   sub.className = "pwa-banner-sub";
-  sub.textContent = isIosSafari()
-    ? "Add to your home screen for a full-screen app."
-    : "Add it to your home screen for quick, full-screen access.";
+  sub.textContent = stale
+    ? "This icon is from Splanc's old address, so it opens with a browser bar. Install again, then remove the old icon."
+    : isIosSafari()
+      ? "Add to your home screen for a full-screen app."
+      : "Add it to your home screen for quick, full-screen access.";
   text.append(title, sub);
 
   const actions = document.createElement("div");
