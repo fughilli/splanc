@@ -432,12 +432,23 @@ at a time; as each sentence starts, the part it’s about is highlighted, boxed 
 gets a short comic-style label, and scrolls into view. To explain a different effect, name it
 (“explain the candle effect from the library”) and Claude opens it in the code panel first.
 Questions don’t change the lights unless you ask for that too.</p>
-<p>Claude’s replies are spoken aloud by the browser’s built-in voice; the words light up as they
-are spoken. Press <strong>V</strong> (or the <strong>Voice</strong> button) to turn the voice off; walkthroughs then
-step along at reading pace. Pressing Space to talk cuts the voice off. To pick a voice, add
-<code class="docutils literal notranslate"><span class="pre">?voice=</span></code> and part of its name to the page address (e.g. <code class="docutils literal notranslate"><span class="pre">?voice=Daniel</span></code>), and <code class="docutils literal notranslate"><span class="pre">&amp;rate=0.95</span></code>
-to slow it down. On macOS, the most natural voices are the “Enhanced” and “Premium” ones
-(System Settings → Accessibility → Spoken Content → System voice → Manage Voices).</p>
+<p>Claude’s replies are spoken aloud by <strong>Kokoro</strong>, an open-weights neural voice that runs in the
+browser itself (no key, no cost). The words light up as they are spoken. The first time, the page
+downloads the voice model (about 90 MB, from Hugging Face) and the browser keeps it, so load the page
+once on the night’s network before the show. Until the model is ready, and on browsers that can’t run
+it, the system voice speaks instead. Chrome on a Mac runs it on the GPU (WebGPU); without that it runs
+on the CPU and the first words take longer.</p>
+<p>Press <strong>V</strong> (or the <strong>Voice</strong> button) to turn the voice off; walkthroughs then step along at reading
+pace. Pressing Space to talk cuts the voice off. Options in the page address:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">?voice=af_bella</span></code> picks a Kokoro voice: <code class="docutils literal notranslate"><span class="pre">af_heart</span></code> (default), <code class="docutils literal notranslate"><span class="pre">af_bella</span></code>, <code class="docutils literal notranslate"><span class="pre">am_michael</span></code>,
+<code class="docutils literal notranslate"><span class="pre">bf_emma</span></code>, <code class="docutils literal notranslate"><span class="pre">bm_george</span></code> and others (samples on the
+<a class="reference external" href="https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX#samples">model card</a>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&amp;rate=1.1</span></code> speeds it up (1 is normal).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">?tts=system</span></code> uses the computer’s own voice instead; then <code class="docutils literal notranslate"><span class="pre">?voice=</span></code> takes part of a system
+voice’s name (e.g. <code class="docutils literal notranslate"><span class="pre">?tts=system&amp;voice=Daniel</span></code>).</p></li>
+</ul>
+<p>With the stage open in more than one tab, only the tab you last clicked or typed in speaks.</p>
 </section>
 <section id="which-fixtures-are-on-screen">
 <h2>Which fixtures are on screen<a class="headerlink" href="#which-fixtures-are-on-screen" title="Link to this heading">¶</a></h2>
