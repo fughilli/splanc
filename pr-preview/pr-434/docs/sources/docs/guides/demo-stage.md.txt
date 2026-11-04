@@ -58,8 +58,10 @@ microphone works only on the laptop itself); `--no-open` doesn't open the browse
 4. The fork's HTTPS certificate is self-signed, and a browser won't ask about it inside a frame:
    if the slot stays blank, click **Phone** ▸ **Trust the phone's certificate**, accept the
    warning in the tab that opens, close that tab, and reload the stage.
-5. Type ScreenStream's PIN into the slot if it asks. Then click anywhere on the stage outside the
-   slot before pressing Space: keys typed into the slot go to the phone's page.
+5. Press **F** to show the phone large across the stage (the header stays in view); **F** or
+   **Esc** puts it back in its slot.
+6. Type ScreenStream's PIN into the slot if it asks. Then click anywhere on the stage outside the
+   slot before pressing Space or F: keys typed into the slot go to the phone's page.
 
 Click **Phone** again (or **Hide it from the TV** on the phone) to take it off screen. The QR code
 works for the whole session; if the laptop has several network addresses (VPN, two Wi-Fi), the
@@ -80,6 +82,7 @@ on the laptop screen, not the TV (behind other windows is fine).
 | Clicker **Page Down** / **Page Up** (or **B**) | start listening, then press again to send                 |
 | **Enter**                                      | type a request instead                                    |
 | **V**                                          | turn Claude's voice on or off                             |
+| **F**                                          | show the phone large (again, or **Esc**, to shrink it)    |
 | **Esc**                                        | stop Claude mid-answer (and its voice)                    |
 | **New**                                        | start a fresh conversation                                |
 | **Maps**                                       | re-read the fixtures' maps (after mapping one in the app) |
