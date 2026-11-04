@@ -205,6 +205,10 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
 .flash .small { font: 700 1.05vw/1.2 var(--body); max-width: 16vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .phone iframe { width: 100%; height: 100%; border: .55vw solid var(--black); border-radius: 2.2vw; box-shadow: var(--shadow); background: #000; }
 .phone [hidden] { display: none; }
+/* F: the phone fills the stage below the header (the status and voice stay in view). */
+.app.phonebig .phone { position: fixed; top: 10.5vh; bottom: 2.5vh; left: 2vw; right: 2vw; width: auto; z-index: 15;
+  background: rgba(20, 0, 40, .88); border-radius: 1.2vw; padding: 1vh 1vw; }
+.app.phonebig .phone video { max-height: 100%; max-width: 100%; }
 .pair { position: fixed; inset: 0; background: rgba(20, 0, 40, .72); display: flex; align-items: center; justify-content: center; z-index: 20; }
 .pair[hidden] { display: none; }
 .pair .card { background: var(--white); color: var(--black); border: var(--line); border-radius: 1.2vw; box-shadow: var(--shadow); padding: 1.6vw 2vw; display: flex; gap: 2vw; align-items: center; max-width: 60vw; }
@@ -227,7 +231,7 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
   <header>
     <div class="mark"><span class="logo">@@LOGO@@</span><span class="word">Splanc</span><span class="live">Live!</span></div>
     <div class="status" id="status"><i></i><span id="statusText">Connecting…</span></div>
-    <div class="hint" id="hint">Hold <kbd>Space</kbd> to talk · <kbd>Enter</kbd> type · <kbd>V</kbd> voice · <kbd>Esc</kbd> stop</div>
+    <div class="hint" id="hint">Hold <kbd>Space</kbd> to talk · <kbd>Enter</kbd> type · <kbd>V</kbd> voice · <kbd>F</kbd> phone · <kbd>Esc</kbd> stop</div>
     <button class="btn" id="voiceBtn" title="Speak replies aloud (V)">Voice</button>
     <button class="btn" id="phoneBtn" title="Put the phone's screen (ScreenStream) or a window in the phone slot">Phone</button>
     <button class="btn" id="mapsBtn" title="Re-read the fixtures' maps (after mapping in the app)">Maps</button>
@@ -902,7 +906,9 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
     else if (TOGGLE[e.key]) { e.preventDefault(); if (e.repeat) return; if (listening) stopListening(true); else startListening(); }
     else if (e.key === "Enter") { e.preventDefault(); openType(); }
     else if (e.key === "v" || e.key === "V") { if (!e.repeat) setVoice(!voiceOn); }
+    else if (e.key === "f" || e.key === "F") { if (!e.repeat && phoneShown()) $("app").classList.toggle("phonebig"); }
     else if (e.key === "Escape" && !$("pair").hidden) closePair();
+    else if (e.key === "Escape" && $("app").classList.contains("phonebig")) $("app").classList.remove("phonebig");
     else if (e.key === "Escape") { if (listening) stopListening(false); flushPlayback(); idle(); post("/api/stop"); }
   });
   document.addEventListener("keyup", function (e) { if (!typing && e.code === "Space") { e.preventDefault(); stopListening(true); } });
@@ -923,6 +929,7 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
   }
   function layoutPhone() {
     $("app").classList.toggle("nophone", !phoneShown());
+    if (!phoneShown()) $("app").classList.remove("phonebig");
     $("phoneBtn").classList.toggle("on", phoneShown());
   }
   function showPhoneUrl(url) {
