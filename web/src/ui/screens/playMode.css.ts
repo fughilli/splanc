@@ -262,30 +262,6 @@ const CSS = `
   white-space: nowrap;
 }
 
-/* The pumpkin entry button (onboarding + device sheet). */
-.pumpkin-btn {
-  appearance: none;
-  border: 0;
-  border-radius: 18px;
-  min-height: 64px;
-  width: 100%;
-  padding: 12px 16px;
-  font: inherit;
-  font-size: 1.1875rem;
-  font-weight: 800;
-  color: #1a0b00;
-  background: linear-gradient(180deg, #ffa04d, #ff7a1a);
-  box-shadow: 0 4px 18px rgba(255, 122, 26, 0.35);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  cursor: pointer;
-  touch-action: manipulation;
-  margin-bottom: var(--sp-3, 12px);
-}
-.pumpkin-btn-emoji { font-size: 1.875rem; line-height: 1; }
-
 /* Kiosk owner section (device detail). */
 .kiosk-section { display: flex; flex-direction: column; gap: 10px; }
 .kiosk-section h3 { margin: 0; font-size: 1rem; }
