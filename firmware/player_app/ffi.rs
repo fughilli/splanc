@@ -1561,13 +1561,15 @@ pub unsafe extern "C" fn lm_set_tls_info(
 }
 
 /// The device's mDNS service: `<name>._splanc._tcp.local` on the wss/HTTPS port,
-/// host `splanc-<mac tail>.local`, TXT id/name/fw/path (+ `tls` = the TLS
+/// host `splanc-<mac tail>.local` (and the name as a host, `name_label`), TXT id/name/fw/path (+ `tls` = the TLS
 /// identity's state, once published) — from the player's live identity, so a
 /// rename is advertised on the next reply.
 unsafe fn with_mdns_service<R>(ip: [u8; 4], f: impl FnOnce(&ledmapper_mdns::Service) -> R) -> R {
     let p = player();
     let mut hb = [0u8; 13];
     let host = ledmapper_mdns::host_label(p.mac(), &mut hb);
+    let mut ab = [0u8; 63];
+    let alias = ledmapper_mdns::name_label(p.device_name(), &mut ab);
     let tls = tls_state();
     let txt = [
         ("id", p.mac()),
@@ -1577,7 +1579,7 @@ unsafe fn with_mdns_service<R>(ip: [u8; 4], f: impl FnOnce(&ledmapper_mdns::Serv
         ("tls", tls),
     ];
     let txt: &[(&str, &str)] = if tls.is_empty() { &txt[..4] } else { &txt };
-    let svc = ledmapper_mdns::Service { host, instance: p.device_name(), port: 443, ip, txt };
+    let svc = ledmapper_mdns::Service { host, instance: p.device_name(), alias, port: 443, ip, txt };
     f(&svc)
 }
 

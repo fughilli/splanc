@@ -1,6 +1,6 @@
 //! The responder against hand-built queries, decoded back with a small DNS reader.
 
-use ledmapper_mdns::{announce, host_label, igmp_v2_report, inet_checksum, respond, Dest, Service};
+use ledmapper_mdns::{announce, host_label, igmp_v2_report, inet_checksum, name_label, respond, Dest, Service};
 
 const TXT: &[(&str, &str)] = &[
     ("id", "AA:BB:CC:DD:EE:FF"),
@@ -10,7 +10,7 @@ const TXT: &[(&str, &str)] = &[
 ];
 
 fn svc() -> Service<'static> {
-    Service { host: "splanc-ddeeff", instance: "Kitchen", port: 443, ip: [192, 168, 4, 23], txt: TXT }
+    Service { host: "splanc-ddeeff", instance: "Kitchen", alias: "Kitchen", port: 443, ip: [192, 168, 4, 23], txt: TXT }
 }
 
 fn qname(name: &str) -> Vec<u8> {
@@ -221,7 +221,38 @@ fn the_announcement_carries_every_record() {
     let mut out = [0u8; 1024];
     let n = announce(&svc(), &mut out).unwrap();
     let m = decode(&out[..n]);
-    assert_eq!(m.answers.iter().map(|r| r.rtype).collect::<Vec<_>>(), vec![12, 12, 33, 16, 1]);
+    assert_eq!(m.answers.iter().map(|r| r.rtype).collect::<Vec<_>>(), vec![12, 12, 33, 16, 1, 1]);
+    let a: Vec<&str> = m.answers.iter().filter(|r| r.rtype == 1).map(|r| r.name.as_str()).collect();
+    assert_eq!(a, vec!["splanc-ddeeff.local", "Kitchen.local"]);
+}
+
+#[test]
+fn the_display_name_resolves_as_a_host_too() {
+    let (m, _, _) = ask(&query(0, &[("kitchen.local", 1, false)]), 5353).unwrap();
+    assert_eq!(m.answers.len(), 1);
+    let a = &m.answers[0];
+    assert_eq!((a.name.as_str(), a.rtype, a.rdata.as_slice()), ("Kitchen.local", 1, &[192u8, 168, 4, 23][..]));
+    // The SRV still points at the stable MAC host.
+    let (m, _, raw) = ask(&query(0, &[("Kitchen._splanc._tcp.local", 33, false)]), 5353).unwrap();
+    assert_eq!(name_at(&raw, m.answers[0].rdata_off + 6).0, "splanc-ddeeff.local");
+    // No alias, or one equal to the host: only the host answers.
+    let mut out = [0u8; 1024];
+    for alias in ["", "SPLANC-ddeeff"] {
+        let s = Service { alias, ..svc() };
+        assert!(respond(&query(0, &[("kitchen.local", 1, false)]), 5353, &s, &mut out).is_none());
+        let n = announce(&s, &mut out).unwrap();
+        assert_eq!(decode(&out[..n]).answers.iter().filter(|r| r.rtype == 1).count(), 1);
+    }
+}
+
+#[test]
+fn display_names_become_host_labels() {
+    let mut b = [0u8; 63];
+    assert_eq!(name_label("PixieLamp2", &mut b), "PixieLamp2");
+    assert_eq!(name_label("  Living room / lamp #2 ", &mut b), "Living-room-lamp-2");
+    assert_eq!(name_label("Café", &mut b), "Caf");
+    assert_eq!(name_label("---", &mut b), "");
+    assert_eq!(name_label(&"a".repeat(80), &mut b).len(), 63);
 }
 
 #[test]
