@@ -712,6 +712,169 @@ nearly full. The netstack's own buffers, the HW-AES bounce and the 6.5 KB WS upg
 (`c6-ram-audit` notes). Bring up the SDIO slave with the player already removed, never next to
 it.
 
+### 4.3.1 Several wss sessions on the front end
+
+**Decision.** The number of concurrent wss sessions is a build parameter, `LM_WSS_SESSIONS`.
+Plain C6 players keep **1**, because their RAM is tight. The C6 front end in the P4 + C6 build
+gets **2**: the most the reachability model proves fits the front end's heap, which the bench
+confirms (**Measured** and **Validation** below). Four don't fit: that image never brings Wi-Fi
+up. With 1, the logic is the single-session transport as it was.
+
+**Build.** `//firmware/netstack:wifi_sta_ffi` has one TCP server slot.
+`:wifi_sta_ffi_sessions2` / `_sessions4` are the same source with the `sessions2` /
+`sessions4` crate feature. `//firmware/player_app:netstack_transport_sessions<N>` defines
+`LM_WSS_SESSIONS=<N>` and links that FFI. `:player_app_frontend` uses
+`_FRONTEND_SESSIONS` (2). Nothing else changes: the players and the
+loader link the one-slot pair.
+
+**TCP slot table** (`firmware/netstack/src/tcp_slots.rs`, `TcpSlots<N>`). There are N
+`TcpConn`s on the one listening port. At the bind, every slot listens (with distinct ISNs).
+`ns_tcp_select(i)` picks the slot that the existing `ns_tcp_*` calls act on. The one
+exception is `ns_tcp_on_ip`, which demuxes each inbound datagram itself. Our half of the
+4-tuple is the same for every slot, so demux is by the peer's address and port:
+
+1. A slot already bound to that peer (any state but `Listen`) takes the datagram.
+2. Otherwise the first `Listen` slot takes it. A SYN latches that slot. Anything else gets the
+   listener's RST, as with one slot.
+3. Otherwise every slot is busy. If any slot is not a live, serving session (pre-WS,
+   closing, SynRcvd), the datagram goes there, so a new SYN is **dropped**: the client
+   retransmits it in about 1 s, and by then a closing slot has re-listened. Only when **every**
+   slot is Established and `serving_live` does slot 0 take it. A new SYN then gets the existing
+   **RST|ACK refusal**, so the client backs off instead of hanging. This is the load-shedding
+   rule for "all N busy". It keeps the #199/#204 guard: a closing session's own reconnect is
+   never refused.
+
+With N = 1 every datagram goes to slot 0, and slot 0's own rules are the old ones. A host
+test pins this down (`single_slot_keeps_the_busy_slot_rules`). `ns_tcp_stats` sums over the
+slots. `ns_tcp_tx_pending_any` and `ns_tcp_slot_state(i)` read slots without selecting them.
+
+**Per-session state** (`netstack_transport.cpp`, `struct Session`, `g_sess[kSessions]`).
+Each session has its own:
+
+- `mbedtls_ssl_context`, with the Session as the BIO context; `bio_send`/`bio_recv` select
+  its slot;
+- the TLS/WS flags (`tls_hs`, `ws_up`, `ws_closing`, `responding`);
+- the 6 KB WS reassembly buffer;
+- the BIO progress counters;
+- every reclaim gate's clock and mark (pre-WS wedge 4 s, post-WS peer-gone 6 s, idle ping
+  15 s, served-and-closing 8 s), and the BLE-teardown edge.
+
+The config, the device cert and the key stay shared. Each `netstack_loop` pass serves the
+sessions in turn, selecting each one's slot, with the same per-session logic as before.
+Send windows and RTOs are pumped for every slot (`tcp_pump_all`, `tcp_tick_all`), including
+inside a TLS write spin.
+
+The "a client is connected" gates (DHCP T1 renewal, gratuitous ARP and mDNS announcements,
+group-addressed mDNS replies, the data-plane priority) now ask about **any** session. The
+link-wide resets (deauth, a new network, an IP change) clear every session. The whole
+transport runs on loopTask. The selection is shared state, so nothing else may call into it.
+
+**Sessions over the link.** A session's id is its slot + 1 (1..N). The BLE central is
+`0x100`. The front end sends each forwarded message with its session's id
+(`netstack_ws_session()`), and the P4 replies to that id. A PUSH goes to the session it
+names (`netstack_ws_send_to`). It's dropped when that session is gone or its window is full,
+under #353's rule. When a session that had a client ends, the front end sends
+`LINK RESET(session)` so the P4 stops pushing there. When the P4 sends `RESET(session)`
+instead of a REPLY, the waiting forward returns −2, and the front end drops that session (the
+client retries). Forwarding is still synchronous, one message at a time: a slow P4 reply
+(at most 1 s) holds up every session behind it. Async forwarding, with a reply table keyed by
+session, is the next step if that shows up in `loaded_tls`.
+
+**The player core with concurrent clients.** It was written for one client. What happens
+with several:
+
+| Concern | Behaviour with N clients |
+| --- | --- |
+| Sharded uploads (map, topology, effect) | One upload at a time (`upload_active`, one temp file). The P4 (`link_transport.cpp`) gives the upload to the session that sent window 0, until its last window, until its session ends, or until it has been quiet for 3 s. Another session's window meanwhile gets `RESET`: that session is dropped, and its client retries later. The owner's upload is untouched. |
+| Pushes (PerfReport, fps lag, kiosk status) | To the session that spoke last (`g_session` on the P4, `g_push` on the front end). This is one subscriber, as before. A second app that only listens gets no reports until it sends something. |
+| Live mailbox (`set_uniforms`, OSC) | Latest wins across clients. Two knob streams interleave. |
+| FX debugger lease | Lapses when the push target closes (`netstack_ws_open()`), the same as before. |
+| Kiosk unlock | Per connection on a player. On the P4 every link message counts as one "wss" source, so one client's unlock covers every wss client. **Open question.** |
+
+**TLS region per build** (`tls_region.cpp`). With the dynamic buffers, an idle session's
+records are freed, and the loop serves one session at a time. So the record slots cover one
+partly received record per session plus one being written: **N + 1** slots of 6,912 B (2 at
+N = 1, as before). The small region grows by 4 KB per extra session. A miss still falls back
+to the heap (`fb=`) and never fails. On the bench, two sessions plus churn peaked at 2 of 3
+slots and 10,948 of 14,336 B of the small region, with no fallbacks.
+
+**The mbedTLS ABI bug this found.** `netstack_transport.cpp` compiles against the prebuilt
+SDK's mbedtls headers, which come first on the include path. The image links the from-source
+mbedtls (@embedded's `mbedtls_src`, IDF v5.5.4). The two disagree on `mbedtls_ssl_context`:
+the ELF's DWARF says 344 B in that file and 552 B in the library's nine compile units. So
+every context the transport declared was overrun by 208 B. With the context first in a
+`Session`, the overrun landed on the session's own state, and the first served GET panicked
+the C6 inside `mbedtls_ssl_session_reset`. That reboot also killed the SDIO link: the bench's
+"one GET and `host=down`".
+
+The single-session image overran into whatever globals followed `g_ssl`, silently. That
+includes the plain C6 players. Each context now lives in an `SslBox` sized for the library
+(576 B). `//firmware/player_app:tls_abi_test` reads both ELFs' DWARF and fails if the
+library's context outgrows it. (`mbedtls_ssl_config`: 224 B in the transport's view, 196 B in
+the library's, so the transport's is the larger. `x509_crt` and `pk_context` agree.)
+
+**Measured** (Waveshare ESP32-P4-WIFI6 + C6, 2026-11-04). These come from the front end's
+`[heap]` status line (`frontend_link.cpp`): free internal heap, its minimum, the largest
+block, the TLS region's high-water marks, the open sessions, the reset reason, and what the
+radio bring-up saw. The C6's own console isn't wired, so this line is how the numbers reach
+the P4's console.
+
+| image | idle free (joined) | all-time min | largest block | Wi-Fi |
+| --- | ---: | ---: | ---: | --- |
+| N = 1 | 70,844 | 61,052 (boot scan) | 50,164 | joins |
+| N = 2 | 46,608 | 38,248 (boot scan) | 26,612 | joins; flat at 46,608 with 2 sessions open and through 16 churn rounds |
+| N = 4 | 26,224 (no Wi-Fi) | 5,984 | 14,324 | `esp_wifi_init` = 0x101 (`ESP_ERR_NO_MEM`): never starts, 0 beacons |
+
+Each session past the first costs 24,108 B of statics (nm):
+- the TCP slot: 6,316 B;
+- a `Session`: 6,784 B, including the 6 KB WS buffer and the `SslBox`;
+- a record slot: 6,912 B;
+- 4 KB of the small region.
+
+Sessions draw no heap of their own. Everything per session is static, and the TLS region
+absorbed the handshakes.
+
+**The model** (`//firmware/sysmode`, `Profile::FrontEnd`, `cost::frontend`). The state machine's
+`wss` axis is now a session count, 0..=the profile's cap (1 on the player, whose model and
+pinned figures are unchanged). The front-end profile has no LED activity, which is the P4's job,
+and it boots idle. Its heap components on top of the measured idle state are:
+- the vendor scan transient (9,792 B);
+- a BLE central's link (3,876 B);
+- record buffers past the region's N + 1 slots, assuming every open session is mid-handshake
+  (2 buffers each);
+- small-region overflow.
+
+`reachability_test` walks every reachable front-end state and proves each stays above a 24 KB
+floor, the same floor the player keeps (`kRuntimeHeapReserve`). At N = 2 (10 states) the worst
+state is the provisioning scan with the Improv central connected: 13,668 B against 22,032 B
+available, leaving 8,364 B of headroom. With sessions, the worst is two handshakes beside a
+central: 10,788 B. The same test proves N = 3 and N = 4 don't fit. At N = 4 the statics alone
+exceed the heap, which the bench's `ESP_ERR_NO_MEM` confirms.
+
+**Getting to four** means freeing about 50 KB of C6 statics. The front end still links the full
+player core for its while-the-P4-is-down answers, including `FX_ARENA` (24 KB), `ARENA_MEM`
+(12 KB), `DECK_A` and `FX_AUX` (11.6 KB each). It has no LEDs to render on. Shrinking those
+for `LM_FRONTEND` is the way there. The model then says whether four fit.
+
+**Link failures are surfaced and recovered.** The P4 counts failed ESSL calls (`sdio_err=` on
+its `[net]` line). When the front end's 100 ms heartbeat has been silent for 2 s, the P4 says
+so, tears the SDIO link down and reopens it (`relinks=`). Every third failed attempt resets the
+C6 first. On the panicking build, this brought the link back within about 5 s of each C6
+reboot instead of leaving `host=down` for good. The C6 reports why it last reset (`rst=`), plus
+a breadcrumb of the stage the server was in, kept across a panic in RTC memory (`crumb=`).
+
+**Validation.** Done on the bench at N = 2 (two runs of the multi-session bench, see the PR).
+Still to run before merging, on a P4 + C6 board:
+
+- `loaded_tls` and `tls_churn` against the front end with 4 concurrent clients and a 24-way
+  burst: every client either gets a session or a fast refusal, and no slot wedges;
+- `ram_audit` on the front end for the minimum free heap and the `slots=`/`fb=` peaks;
+- the cert-trust GET right after a wss close (the #199/#204 case), and an upload from one
+  client while another streams knobs.
+
+The single-session images need the usual e2e gates. Their logic is unchanged, but the code
+moved.
+
 ### 4.4 Pin map and conflicts
 
 **C6 side: fixed.** The C6 SDIO slave pins go through the IO MUX, not the GPIO matrix:

@@ -212,7 +212,7 @@ fn next_event(s: SysMode, o: Observed, link_lost: &mut bool) -> Option<Next> {
         return Some(Next::Event(E::LinkLost));
     }
     // Sessions and links.
-    if s.wss != o.wss {
+    if (s.wss > 0) != o.wss {
         return Some(Next::Event(if o.wss { E::WssOpen } else { E::WssClose }));
     }
     match (s.ble, o.ble_connected) {
@@ -254,7 +254,7 @@ fn force(mut s: SysMode, o: Observed, e: Option<Event>) -> SysMode {
     match e {
         Some(E::ImprovCredentials | E::WiredCredentials) => s.wifi = Wifi::Scanning,
         Some(E::Joined | E::LinkLost) => s.wifi = Wifi::Joined,
-        Some(E::WssOpen | E::WssClose) => s.wss = o.wss,
+        Some(E::WssOpen | E::WssClose) => s.wss = o.wss as u8,
         Some(E::BleConnect | E::BleDisconnect) => {
             s.ble = if o.ble_connected {
                 Ble::Connected
@@ -289,7 +289,7 @@ pub fn state_code(s: SysMode) -> u32 {
         Activity::Upload => 4,
     };
     wifi | ((s.ble == Ble::Connected) as u32) << 2
-        | (s.wss as u32) << 3
+        | ((s.wss > 0) as u32) << 3
         | act << 4
         | (s.map as u32) << 7
 }

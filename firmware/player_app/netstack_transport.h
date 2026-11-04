@@ -34,6 +34,22 @@ constexpr size_t kWsSendHeadroom = 10;
 bool netstack_ws_send(uint8_t *data, size_t len);
 // True when a WS client is upgraded (for gating unsolicited pushes).
 bool netstack_ws_open(void);
+// With several wss sessions (LM_WSS_SESSIONS; one on the players) those two act on the
+// session whose message was dispatched last. Sessions are numbered 1..LM_WSS_SESSIONS:
+// netstack_ws_session() is the one being served (the one lm_ws_dispatch's message came
+// from), netstack_ws_send_to pushes to a given one (false if it isn't upgraded or the
+// window is full), and netstack_session_closed, when set, is told when a session that had
+// a client ends. All of it runs on loopTask, like netstack_loop. (Only the C6 front end
+// uses these three; the P4 build's link_transport.cpp doesn't provide them.)
+uint16_t netstack_ws_session(void);
+bool netstack_ws_send_to(uint16_t session, uint8_t *data, size_t len);
+extern void (*netstack_session_closed)(uint16_t session);
+// Front-end diagnostics: wss sessions upgraded now, and what the radio bring-up saw
+// (esp_wifi_init / start results, heap then, beacons; join state) as one line.
+int netstack_sessions_open(void);
+int netstack_bringup_info(char *buf, size_t cap);
+// Set the panic-surviving breadcrumb (diagnostics).
+void netstack_crumb(uint32_t n);
 
 // Facts for the memory-mode tracker (lm_mode_observe): WiFi credentials committed, and a
 // DHCP lease held.

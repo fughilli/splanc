@@ -43,6 +43,7 @@ pub mod pb;
 pub mod wpa;
 pub mod ccmp;
 pub mod tcp;
+pub mod tcp_slots;
 pub mod sta;
 pub mod ap;
 pub mod gatt;
