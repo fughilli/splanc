@@ -44,6 +44,12 @@ bool netstack_ws_open(void);
 uint16_t netstack_ws_session(void);
 bool netstack_ws_send_to(uint16_t session, uint8_t *data, size_t len);
 extern void (*netstack_session_closed)(uint16_t session);
+// Front-end diagnostics: wss sessions upgraded now, and what the radio bring-up saw
+// (esp_wifi_init / start results, heap then, beacons; join state) as one line.
+int netstack_sessions_open(void);
+int netstack_bringup_info(char *buf, size_t cap);
+// Set the panic-surviving breadcrumb (diagnostics).
+void netstack_crumb(uint32_t n);
 
 // Facts for the memory-mode tracker (lm_mode_observe): WiFi credentials committed, and a
 // DHCP lease held.

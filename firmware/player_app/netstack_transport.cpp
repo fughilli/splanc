@@ -39,6 +39,7 @@
 #include "esp_system.h"     // esp_get_free_heap_size
 #include "esp_log.h"        // esp_log_level_set: silence the vendor "wifi" tag after the hijack
 #include "esp_mac.h"        // esp_read_mac: the factory STA MAC
+#include "esp_attr.h"       // RTC_NOINIT_ATTR: the breadcrumb that survives a panic
 #include "sta_mac.h"        // stable (factory) vs opt-in random station MAC
 #include "join_guard.h"     // per-boot 802.11 sequence numbers + the unanswered-auth guard
 #include "serial_log.h"     // Console(): the ordered, lossless log ring (identity lines)
@@ -1304,8 +1305,37 @@ bool g_tls_setup = false;
 #define LM_WSS_SESSIONS 1
 #endif
 constexpr int kSessions = LM_WSS_SESSIONS;
+// Where the server path last was, kept across a reset (RTC_NOINIT): after a PANIC the
+// front end reports the stage it died in (netstack_bringup_info), since its console
+// isn't wired. g_crumb_boot is the previous boot's.
+RTC_NOINIT_ATTR uint32_t g_crumb;
+uint32_t g_crumb_boot = 0;
+// 0x5c <session> <stage>. Stages: 1/2 around a handshake step, 3/4/5 serving the manifest
+// GET, 6/7 around close_notify, 8/9/12 in session_clear (before / after the closed hook /
+// after the TLS reset), 10/11 around a FIN re-listen, 20 netstack_loop entry, 30
+// frontend_link_poll entry.
+#define CRUMB(n) (g_crumb = 0x5c000000u | ((uint32_t)sess_index(g_s) << 16) | (n))
+int sess_index(const struct Session *s);
+// mbedTLS ABI: the linked mbedtls is built from source (@embedded's mbedtls_src, IDF
+// v5.5.4), but this file compiles against the prebuilt SDK's mbedtls headers, which come
+// first on the include path, and the two disagree on mbedtls_ssl_context: 344 B here, 552 B
+// in the library (DWARF of the linked ELF). A context declared here is overrun by 208 B
+// as soon as the library initialises it, into whatever the linker put next: a Session's
+// flags, which crashed mbedtls_ssl_session_reset after the first served GET (PANIC). The
+// single-session image overran into its neighbouring globals too, silently. So each
+// context lives in storage sized for the library, with room (tls_abi_test reads the
+// library's size from the ELF and checks it fits). (mbedtls_ssl_config: 224 B here, 196 B
+// in the library; x509_crt and pk_context agree.)
+constexpr size_t kSslContextBytes = 576;
+struct SslBox {
+  alignas(16) unsigned char raw[kSslContextBytes];
+  mbedtls_ssl_context *get() { return reinterpret_cast<mbedtls_ssl_context *>(raw); }
+};
+static_assert(sizeof(mbedtls_ssl_context) <= kSslContextBytes, "SslBox too small for this header's context");
+
 struct Session {
-  mbedtls_ssl_context ssl;
+  SslBox ssl_box;
+  mbedtls_ssl_context *ssl() { return ssl_box.get(); }
   bool setup = false;   // mbedtls_ssl_setup done (bound to g_conf)
   bool tls_hs = false;  // TLS handshake complete
   bool ws_up = false;   // WS upgraded: the LED Mapper protocol is live
@@ -1404,15 +1434,18 @@ static int bio_recv(void *ctx, unsigned char *buf, size_t len) {
 // mbedtls_ssl_session_reset on a context that was never mbedtls_ssl_setup'd dereferences
 // its unset conf).
 static void tls_session_reset() {
-  if (g_tls_setup) mbedtls_ssl_session_reset(&g_s->ssl);
+  if (g_tls_setup) mbedtls_ssl_session_reset(g_s->ssl());
 }
 
 // Abandon the current session's TLS and WS state for a fresh listener: the reset every
 // re-listen / reclaim / deauth path does.
 static void session_clear() {
+  CRUMB(8);
   if (netstack_session_closed && (g_s->tls_hs || g_s->ws_up || g_s->responding))
     netstack_session_closed((uint16_t)(sess_index(g_s) + 1));
+  CRUMB(9);
   tls_session_reset();
+  CRUMB(12);
   g_s->tls_hs = false;
   g_s->ws_up = false;
   g_s->responding = false;
@@ -1479,14 +1512,14 @@ static bool tls_install_identity() {
 static bool tls_setup_session() {
   for (Session &ss : g_sess) {
     if (ss.setup) continue;
-    int r3 = mbedtls_ssl_setup(&ss.ssl, &g_conf);
+    int r3 = mbedtls_ssl_setup(ss.ssl(), &g_conf);
     if (r3 != 0) {
       Serial.printf("[tls] mbedtls_ssl_setup failed -0x%04x; retrying\n", (unsigned)-r3);
-      mbedtls_ssl_free(&ss.ssl);
-      mbedtls_ssl_init(&ss.ssl);
+      mbedtls_ssl_free(ss.ssl());
+      mbedtls_ssl_init(ss.ssl());
       return false;
     }
-    mbedtls_ssl_set_bio(&ss.ssl, &ss, bio_send, bio_recv, nullptr);
+    mbedtls_ssl_set_bio(ss.ssl(), &ss, bio_send, bio_recv, nullptr);
     ss.setup = true;
   }
   g_tls_setup = true;
@@ -1501,7 +1534,7 @@ static bool tls_setup_session() {
 
 void tls_init() {
   tls_region_install();  // mbedtls allocates from its own region from here on
-  for (Session &ss : g_sess) mbedtls_ssl_init(&ss.ssl);
+  for (Session &ss : g_sess) mbedtls_ssl_init(ss.ssl());
   mbedtls_ssl_config_init(&g_conf);
   mbedtls_x509_crt_init(&g_srvcert);
   mbedtls_pk_init(&g_pk);
@@ -1592,7 +1625,7 @@ static bool tls_write_all(const uint8_t *buf, size_t len) {
   size_t off = 0;
   uint32_t stall_since = 0;
   while (off < len) {
-    int w = mbedtls_ssl_write(&g_s->ssl, buf + off, len - off);
+    int w = mbedtls_ssl_write(g_s->ssl(), buf + off, len - off);
     if (w > 0) {
       off += w;
       stall_since = 0;  // progress — reset the stall clock
@@ -1649,7 +1682,7 @@ static bool ws_pump() {
   // cycle). Loop until WANT_READ (nothing buffered in mbedtls AND nothing new on ns_tcp) so a
   // burst of streamed frames is applied in one iteration and the per-loop overhead amortizes.
   for (int iter = 0; iter < 128; iter++) {
-    int r = mbedtls_ssl_read(&g_s->ssl, g_s->ws_rx + g_s->ws_rxlen, sizeof(g_s->ws_rx) - g_s->ws_rxlen);
+    int r = mbedtls_ssl_read(g_s->ssl(), g_s->ws_rx + g_s->ws_rxlen, sizeof(g_s->ws_rx) - g_s->ws_rxlen);
     if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE) return true;  // drained
     if (r <= 0) return false;  // close_notify or error
     g_s->ws_rxlen += r;
@@ -1666,7 +1699,9 @@ static bool ws_pump() {
       if (strncmp((char *)g_s->ws_rx, kManifestGet, sizeof kManifestGet - 1) == 0 &&
           (g_s->ws_rx[sizeof kManifestGet - 1] == ' ' || g_s->ws_rx[sizeof kManifestGet - 1] == '?')) {
         const uint8_t *body = nullptr;
+        CRUMB(3);
         int bn = lm_agent_manifest_body(device_cert_sha256(), &body);
+        CRUMB(4);
         char hdr[192];
         int hn = bn > 0 ? snprintf(hdr, sizeof hdr,
                                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
@@ -1678,6 +1713,7 @@ static bool ws_pump() {
         g_s->responding = true;
         tls_write_all((const uint8_t *)hdr, hn);
         if (bn > 0) tls_write_all(body, (size_t)bn);
+        CRUMB(5);
         return false;
       }
       if (!ws_find_key((char *)g_s->ws_rx, key, sizeof key)) {
@@ -1804,6 +1840,12 @@ bool netstack_ws_send_to(uint16_t session, uint8_t *data, size_t len) {
   return s && netstack_ws_send_frame(s, data, len);
 }
 uint16_t netstack_ws_session() { return (uint16_t)(sess_index(g_s) + 1); }
+void netstack_crumb(uint32_t n) { CRUMB(n); }
+int netstack_sessions_open() {
+  int n = 0;
+  for (const Session &ss : g_sess) n += ss.ws_up ? 1 : 0;
+  return n;
+}
 // Mode-tracking facts (main.cpp's lm_mode_observe snapshot): credentials committed (Improv
 // or the wired console) and a DHCP lease held.
 bool netstack_creds_ready() { return g_creds_ready; }
@@ -1873,6 +1915,8 @@ void netstack_prepare_restart() {
 static void radio_bringup(bool at_boot);
 
 void netstack_setup() {
+  g_crumb_boot = g_crumb;
+  g_crumb = 0;
   // NON-BLOCKING serial: on the C6 USB-Serial-JTAG, Serial.write BLOCKS when the TX FIFO
   // fills with no host draining the port, which would wedge loopTask mid-association during
   // the HITL provisioning phase (the harness monitors serial only during flash). 0ms TX
@@ -1896,6 +1940,14 @@ void netstack_setup() {
 // Start the Wi-Fi radio and hijack the MAC (boot, or later when leaving offline mode).
 // `at_boot`: also run the RX sanity check (a 1.2 s diagnostic that would only stall the
 // loop task when the radio comes up at runtime).
+// What the last radio bring-up saw (netstack_bringup_info): the front end has no console
+// of its own, so these go to the P4 with its status lines.
+static struct {
+  int wifi_init, wifi_start;
+  uint32_t free, dma, beacons;
+  bool done;
+} g_bringup;
+
 static void radio_bringup(bool at_boot) {
   if (g_radio_up) return;
   // The BT controller is already up (the app's improv_ble_begin ran first); hijack the MAC
@@ -2024,10 +2076,14 @@ static void radio_bringup(bool at_boot) {
   }
   Serial.printf("[netstack] RX sanity (STA vif, promiscuous all-frames, SW CCMP): beacons=%u\n",
                 beacons);
+  g_bringup = {(int)werr, (int)serr, (uint32_t)esp_get_free_heap_size(),
+               (uint32_t)heap_caps_get_free_size(MALLOC_CAP_DMA), beacons, true};
   tls_init();
 }
 
 enum St { AUTH, ASSOC, FOURWAY, DONE };
+static int g_join_st = 0;  // st at the last netstack_loop pass (netstack_bringup_info)
+static int st_now() { return g_join_st; }
 
 // Vendor PM lever (libpp): the counterpart of pm_go_to_wake — releases the hardware force-awake
 // so the MAC duty-cycles and the coex silicon can hand radio slots to BLE.
@@ -2247,6 +2303,15 @@ bool netstack_data_plane_active() {
 
 void netstack_set_unseen_base(uint32_t seconds) { g_unseen_base_s = seconds; }
 
+int netstack_bringup_info(char *buf, size_t cap) {
+  if (!g_bringup.done) return snprintf(buf, cap, "radio=down");
+  return snprintf(buf, cap, "crumb=%08x wifi_init=%d start=%d free=%u dma=%u beacons=%u st=%d leased=%d slots=%d",
+                  (unsigned)g_crumb_boot,
+                  g_bringup.wifi_init, g_bringup.wifi_start, (unsigned)g_bringup.free,
+                  (unsigned)g_bringup.dma, (unsigned)g_bringup.beacons, (int)st_now(), g_leased ? 1 : 0,
+                  kSessions);
+}
+
 void netstack_wifi_status(NetstackWifiStatus *o) {
   if (!o) return;
   memset(o, 0, sizeof *o);
@@ -2278,6 +2343,8 @@ void netstack_loop() {
     g_loop_last_us = now_us;
   }
   static St st = AUTH;
+  g_join_st = st;
+  CRUMB(20);
   static uint32_t t = 0;
   static bool inited = false;
   if (g_link_reset_pending) {  // offline at runtime: forget the join (netstack_set_wifi_policy)
@@ -3278,12 +3345,14 @@ void netstack_loop() {
       }
       if (s == 2 && TLS_SERVER) { // Established: drive the TLS handshake, then read+echo
         if (!ss.tls_hs) {
-          int hs = ss.ssl.MBEDTLS_PRIVATE(state);
+          int hs = ss.ssl()->MBEDTLS_PRIVATE(state);
           if (hs != ss.last_hstate) { Serial.printf("  TLS hs state -> %d\n", hs); ss.last_hstate = hs; }
-          int r = mbedtls_ssl_handshake(&ss.ssl);
+          CRUMB(1);
+          int r = mbedtls_ssl_handshake(ss.ssl());
+          CRUMB(2);
           if (r == 0) {
             ss.tls_hs = true;
-            Serial.printf("*** TLS HANDSHAKE COMPLETE (%s) ***\n", mbedtls_ssl_get_ciphersuite(&ss.ssl));
+            Serial.printf("*** TLS HANDSHAKE COMPLETE (%s) ***\n", mbedtls_ssl_get_ciphersuite(ss.ssl()));
           } else if (r != MBEDTLS_ERR_SSL_WANT_READ && r != MBEDTLS_ERR_SSL_WANT_WRITE) {
             Serial.printf("*** TLS handshake err -0x%04x ***\n", (unsigned)-r);
             tls_session_reset();
@@ -3309,7 +3378,9 @@ void netstack_loop() {
             // no-reject guarantee hold across the whole transition, not just from the next scan.
             ns_tcp_set_serving_live(0u);
             ss.ws_closing = true;  // ...and keep it disarmed until the re-listen (scan top)
-            mbedtls_ssl_close_notify(&ss.ssl);
+            CRUMB(6);
+            mbedtls_ssl_close_notify(ss.ssl());
+            CRUMB(7);
           } else {
             // The WS pump just drained the TCP rx (mbedtls read the record) — if that re-opened
             // a window we'd shrunk to ~0 on a big inbound upload frame, announce it so the peer
@@ -3320,12 +3391,12 @@ void netstack_loop() {
           }
         } else {
           uint8_t rb[600];
-          int r = mbedtls_ssl_read(&ss.ssl, rb, sizeof(rb));
+          int r = mbedtls_ssl_read(ss.ssl(), rb, sizeof(rb));
           if (r > 0) {
             Serial.printf("*** TLS RX %d B — echoing ***\n", r);
             int off = 0;
             while (off < r) {
-              int w = mbedtls_ssl_write(&ss.ssl, rb + off, r - off);
+              int w = mbedtls_ssl_write(ss.ssl(), rb + off, r - off);
               if (w > 0) off += w;
               else if (w != MBEDTLS_ERR_SSL_WANT_WRITE && w != MBEDTLS_ERR_SSL_WANT_READ) break;
             }
@@ -3340,9 +3411,11 @@ void netstack_loop() {
         }
       } else if (s == 4 || s == 0) { // Done/Closed: re-arm the listener for the next client
         static uint32_t niss = 0x4000;
+        CRUMB(10);
         ns_tcp_listen(g_offer_ip, SERVER_PORT, niss);
         niss += 0x1000;
         if (TLS_SERVER) session_clear();
+        CRUMB(11);
         Serial.println("*** SERVER re-listening ***");
       }
     }

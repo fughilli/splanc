@@ -716,14 +716,15 @@ it.
 
 **Decision.** The number of concurrent wss sessions is a build parameter, `LM_WSS_SESSIONS`.
 Plain C6 players keep **1**, because their RAM is tight. The C6 front end in the P4 + C6 build
-gets **4**: it has no LED, FX or sensor RAM (§4.3). With 1, the logic is the single-session
-transport as it was. Status: implemented and host-tested. Not yet run on a board (see
-**Validation**).
+gets **2**: the most the reachability model proves fits the front end's heap, which the bench
+confirms (**Measured** and **Validation** below). Four don't fit: that image never brings Wi-Fi
+up. With 1, the logic is the single-session transport as it was.
 
 **Build.** `//firmware/netstack:wifi_sta_ffi` has one TCP server slot.
-`:wifi_sta_ffi_sessions4` is the same source with the `sessions4` crate feature.
-`//firmware/player_app:netstack_transport_sessions4` defines `LM_WSS_SESSIONS=4` and links
-that four-slot FFI. `:player_app_frontend` uses it. Nothing else changes: the players and the
+`:wifi_sta_ffi_sessions2` / `_sessions4` are the same source with the `sessions2` /
+`sessions4` crate feature. `//firmware/player_app:netstack_transport_sessions<N>` defines
+`LM_WSS_SESSIONS=<N>` and links that FFI. `:player_app_frontend` uses
+`_FRONTEND_SESSIONS` (2). Nothing else changes: the players and the
 loader link the one-slot pair.
 
 **TCP slot table** (`firmware/netstack/src/tcp_slots.rs`, `TcpSlots<N>`). There are N
@@ -791,27 +792,79 @@ with several:
 | Kiosk unlock | Per connection on a player. On the P4 every link message counts as one "wss" source, so one client's unlock covers every wss client. **Open question.** |
 
 **TLS region per build** (`tls_region.cpp`). With the dynamic buffers, an idle session's
-records are freed (`mbedtls-dynamic-buffers.md`: about 2 KB per idle session), and the loop
-serves one session at a time. So the record slots cover one partly received record per
-session plus one being written: **N + 1** slots of 6,912 B (2 at N = 1, as before). Each
-further session's handshake state takes about 4 KB more of the small region [E]. A miss still
-falls back to the heap (`fb=`) and never fails.
+records are freed, and the loop serves one session at a time. So the record slots cover one
+partly received record per session plus one being written: **N + 1** slots of 6,912 B (2 at
+N = 1, as before). The small region grows by 4 KB per extra session. A miss still falls back
+to the heap (`fb=`) and never fails. On the bench, two sessions plus churn peaked at 2 of 3
+slots and 10,948 of 14,336 B of the small region, with no fallbacks.
 
-| | N = 1 (players) | N = 4 (front end) |
-| --- | ---: | ---: |
-| record slots | 2 × 6,912 = 13,824 B | 5 × 6,912 = 34,560 B |
-| small TLSF region | 10,240 B | 22,528 B |
-| WS reassembly | 6,144 B | 24,576 B |
-| `mbedtls_ssl_context`s and session state | ~0.5 KB | ~2 KB [E] |
-| **total** | **~30.7 KB** | **~83.7 KB** (+53 KB) |
+**The mbedTLS ABI bug this found.** `netstack_transport.cpp` compiles against the prebuilt
+SDK's mbedtls headers, which come first on the include path. The image links the from-source
+mbedtls (@embedded's `mbedtls_src`, IDF v5.5.4). The two disagree on `mbedtls_ssl_context`:
+the ELF's DWARF says 344 B in that file and 552 B in the library's nine compile units. So
+every context the transport declared was overrun by 208 B. With the context first in a
+`Session`, the overrun landed on the session's own state, and the first served GET panicked
+the C6 inside `mbedtls_ssl_session_reset`. That reboot also killed the SDIO link: the bench's
+"one GET and `host=down`".
 
-The budget is about 60–100 KB more minimum free heap on the front end than the 2048-LED C6
-player's 29.7 KB (§4.3), less the link's ~29 KB of SDIO buffers, so roughly 60–100 KB [E].
-Four sessions fit, but **not with much room**: measure with `ram_audit` on the front end
-before merging. If it's tight, the WS buffers are the first thing to cut. The front end
-forwards each message as it completes, so 4 KB per extra session would do.
+The single-session image overran into whatever globals followed `g_ssl`, silently. That
+includes the plain C6 players. Each context now lives in an `SslBox` sized for the library
+(576 B). `//firmware/player_app:tls_abi_test` reads both ELFs' DWARF and fails if the
+library's context outgrows it. (`mbedtls_ssl_config`: 224 B in the transport's view, 196 B in
+the library's, so the transport's is the larger. `x509_crt` and `pk_context` agree.)
 
-**Validation (HITL, not done yet).** Before merging, on a P4 + C6 board:
+**Measured** (Waveshare ESP32-P4-WIFI6 + C6, 2026-11-04). These come from the front end's
+`[heap]` status line (`frontend_link.cpp`): free internal heap, its minimum, the largest
+block, the TLS region's high-water marks, the open sessions, the reset reason, and what the
+radio bring-up saw. The C6's own console isn't wired, so this line is how the numbers reach
+the P4's console.
+
+| image | idle free (joined) | all-time min | largest block | Wi-Fi |
+| --- | ---: | ---: | ---: | --- |
+| N = 1 | 70,844 | 61,052 (boot scan) | 50,164 | joins |
+| N = 2 | 46,608 | 38,248 (boot scan) | 26,612 | joins; flat at 46,608 with 2 sessions open and through 16 churn rounds |
+| N = 4 | 26,224 (no Wi-Fi) | 5,984 | 14,324 | `esp_wifi_init` = 0x101 (`ESP_ERR_NO_MEM`): never starts, 0 beacons |
+
+Each session past the first costs 24,108 B of statics (nm):
+- the TCP slot: 6,316 B;
+- a `Session`: 6,784 B, including the 6 KB WS buffer and the `SslBox`;
+- a record slot: 6,912 B;
+- 4 KB of the small region.
+
+Sessions draw no heap of their own. Everything per session is static, and the TLS region
+absorbed the handshakes.
+
+**The model** (`//firmware/sysmode`, `Profile::FrontEnd`, `cost::frontend`). The state machine's
+`wss` axis is now a session count, 0..=the profile's cap (1 on the player, whose model and
+pinned figures are unchanged). The front-end profile has no LED activity, which is the P4's job,
+and it boots idle. Its heap components on top of the measured idle state are:
+- the vendor scan transient (9,792 B);
+- a BLE central's link (3,876 B);
+- record buffers past the region's N + 1 slots, assuming every open session is mid-handshake
+  (2 buffers each);
+- small-region overflow.
+
+`reachability_test` walks every reachable front-end state and proves each stays above a 24 KB
+floor, the same floor the player keeps (`kRuntimeHeapReserve`). At N = 2 (10 states) the worst
+state is the provisioning scan with the Improv central connected: 13,668 B against 22,032 B
+available, leaving 8,364 B of headroom. With sessions, the worst is two handshakes beside a
+central: 10,788 B. The same test proves N = 3 and N = 4 don't fit. At N = 4 the statics alone
+exceed the heap, which the bench's `ESP_ERR_NO_MEM` confirms.
+
+**Getting to four** means freeing about 50 KB of C6 statics. The front end still links the full
+player core for its while-the-P4-is-down answers, including `FX_ARENA` (24 KB), `ARENA_MEM`
+(12 KB), `DECK_A` and `FX_AUX` (11.6 KB each). It has no LEDs to render on. Shrinking those
+for `LM_FRONTEND` is the way there. The model then says whether four fit.
+
+**Link failures are surfaced and recovered.** The P4 counts failed ESSL calls (`sdio_err=` on
+its `[net]` line). When the front end's 100 ms heartbeat has been silent for 2 s, the P4 says
+so, tears the SDIO link down and reopens it (`relinks=`). Every third failed attempt resets the
+C6 first. On the panicking build, this brought the link back within about 5 s of each C6
+reboot instead of leaving `host=down` for good. The C6 reports why it last reset (`rst=`), plus
+a breadcrumb of the stage the server was in, kept across a panic in RTC memory (`crumb=`).
+
+**Validation.** Done on the bench at N = 2 (two runs of the multi-session bench, see the PR).
+Still to run before merging, on a P4 + C6 board:
 
 - `loaded_tls` and `tls_churn` against the front end with 4 concurrent clients and a 24-way
   burst: every client either gets a session or a fast refusal, and no slot wedges;

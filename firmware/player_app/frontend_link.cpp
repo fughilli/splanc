@@ -15,6 +15,7 @@
 #include <driver/sdio_slave.h>
 #include <esp_app_desc.h>
 #include <esp_heap_caps.h>
+#include <esp_system.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <stdarg.h>
@@ -23,6 +24,7 @@
 
 #include "firmware/p4/link/link_codec.h"
 #include "netstack_transport.h"
+#include "tls_region.h"
 
 namespace {
 
@@ -107,7 +109,7 @@ bool send_frame(uint8_t type, uint8_t flags, uint16_t session, const uint8_t *p,
 // side's own UART is on a header nobody watches.
 void p4_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void p4_log(const char *fmt, ...) {
-  char b[160];
+  char b[320];
   va_list ap;
   va_start(ap, fmt);
   const int n = vsnprintf(b, sizeof b, fmt, ap);
@@ -217,8 +219,52 @@ bool frontend_link_begin() {
   return true;
 }
 
+namespace {
+
+// Heap visibility (this chip has no console of its own): the lowest free internal heap
+// seen since the last status line, sampled every loop, beside the IDF all-time minimum.
+uint32_t g_heap_window_min = UINT32_MAX;
+
+const char *reset_name() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON: return "POWERON";
+    case ESP_RST_EXT: return "EXT";
+    case ESP_RST_SW: return "SW";
+    case ESP_RST_PANIC: return "PANIC";
+    case ESP_RST_INT_WDT: return "INT_WDT";
+    case ESP_RST_TASK_WDT: return "TASK_WDT";
+    case ESP_RST_WDT: return "WDT";
+    case ESP_RST_BROWNOUT: return "BROWNOUT";
+    default: return "OTHER";
+  }
+}
+
+void heap_log() {
+  const uint32_t f = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+  const TlsRegionStats &t = tls_region_stats();
+  char b[160];
+  netstack_bringup_info(b, sizeof b);
+  p4_log("[heap] free=%u win_min=%u min=%u big=%u tls small=%u/%u slots=%u/%u req=%u fb=%u/%u ws=%d up=%us rst=%s %s\n",
+         (unsigned)f, (unsigned)(g_heap_window_min == UINT32_MAX ? f : g_heap_window_min),
+         (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL), (unsigned)t.small_peak,
+         (unsigned)t.small_size, (unsigned)t.slots_peak, (unsigned)t.slots, (unsigned)t.largest_request,
+         (unsigned)t.fallbacks, (unsigned)t.fallback_live, netstack_sessions_open(),
+         (unsigned)(esp_timer_get_time() / 1000000), reset_name(), b);
+  g_heap_window_min = UINT32_MAX;
+}
+
+}  // namespace
+
+void frontend_link_heap_sample() {
+  const uint32_t f = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+  if (f < g_heap_window_min) g_heap_window_min = f;
+}
+
 void frontend_link_poll() {
   if (!g_up) return;
+  netstack_crumb(30);
+  frontend_link_heap_sample();
   pump(0);
   reclaim();
   const int64_t now = esp_timer_get_time();
@@ -233,6 +279,7 @@ void frontend_link_poll() {
     char b[160];
     const int n = frontend_link_stats(b, sizeof b - 1);
     if (n > 0) p4_log("[link] %s down=%u unsent=%u\n", b, (unsigned)g_stats.fwd_down, (unsigned)g_stats.fwd_unsent);
+    heap_log();
   }
   {
     static int64_t checked_us = 0;

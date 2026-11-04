@@ -53,7 +53,7 @@ fn e2e_improv_then_wss() {
     assert_tracks(&t, &r);
     assert_eq!(
         (t.state.wifi, t.state.ble, t.state.wss),
-        (Wifi::Joined, Ble::Advertising, true)
+        (Wifi::Joined, Ble::Advertising, 1)
     );
 }
 
@@ -63,7 +63,7 @@ fn wired_provisioning_without_a_central() {
         vec![&|o| o.creds = true, &|o| o.leased = true, &|o| o.wss = true];
     let (t, r) = run(SysMode::BOOT_UNPROVISIONED, Observed::default(), &seq);
     assert_tracks(&t, &r);
-    assert!(t.state.wss);
+    assert!(t.state.wss > 0);
 }
 
 /// The ram_audit / loaded_tls worst case: provision, wss, a sharded 512-LED map
@@ -130,7 +130,7 @@ fn link_loss_mid_session() {
     ]);
     let (t, r) = run(SysMode::BOOT_UNPROVISIONED, Observed::default(), &seq);
     assert_tracks(&t, &r);
-    assert!(t.state.wss);
+    assert!(t.state.wss > 0);
 }
 
 /// Restored boot (stored map + effect, no credentials: they are RAM-only), then
@@ -158,7 +158,7 @@ fn an_unreachable_observation_is_refused() {
     let (t, r) = run(SysMode::BOOT_UNPROVISIONED, Observed::default(), &seq);
     assert_eq!(r.len(), 1, "{r:#?}");
     assert_eq!(t.stats.refused, 1);
-    assert!(t.state.wss, "forced to the observed state");
+    assert!(t.state.wss > 0, "forced to the observed state");
 }
 
 /// A Show Mode session over wss: video streams into deck A, then deck B is cued

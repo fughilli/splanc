@@ -289,19 +289,19 @@ rust_static_library(
     deps = [":netstack"],
 )
 
-# The same FFI with four TCP server slots (concurrent wss clients): the P4's C6 front
-# end, which has the RAM the players don't (docs/design/p4-c6-split.md §4.3.1).
-rust_static_library(
-    name = "wifi_sta_ffi_sessions4",
+# The same FFI with two or four TCP server slots (concurrent wss clients): the P4's C6
+# front end, which has the RAM the players don't (docs/design/p4-c6-split.md §4.3.1).
+[rust_static_library(
+    name = "wifi_sta_ffi_sessions%d" % n,
     srcs = ["examples/wifi_sta_ffi.rs"],
-    crate_features = ["sessions4"],
+    crate_features = ["sessions%d" % n],
     # Its own crate name: the archive is named after it, and :wifi_sta_ffi's would collide.
-    crate_name = "wifi_sta_ffi_sessions4",
+    crate_name = "wifi_sta_ffi_sessions%d" % n,
     crate_root = "examples/wifi_sta_ffi.rs",
     edition = "2021",
     target_compatible_with = _C6,
     deps = [":netstack"],
-)
+) for n in [2, 4]]
 
 cc_binary(
     name = "wifi_sta_driver",

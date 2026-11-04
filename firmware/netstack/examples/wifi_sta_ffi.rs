@@ -167,11 +167,13 @@ use ledmapper_netstack::tcp::{State, TcpConn};
 use ledmapper_netstack::tcp_slots::TcpSlots;
 
 /// Server connection slots (concurrent wss clients). One on the players, where RAM is
-/// tight; the P4's C6 front end builds `wifi_sta_ffi_sessions4` (docs/design/p4-c6-split.md
+/// tight; the P4's C6 front end builds `wifi_sta_ffi_sessions<N>` (docs/design/p4-c6-split.md
 /// §4.3.1). Every `ns_tcp_*` call below acts on the SELECTED slot (`ns_tcp_select`), except
 /// `ns_tcp_on_ip`, which demuxes an inbound datagram to its own slot.
-#[cfg(not(feature = "sessions4"))]
+#[cfg(not(any(feature = "sessions2", feature = "sessions4")))]
 const SLOTS: usize = 1;
+#[cfg(feature = "sessions2")]
+const SLOTS: usize = 2;
 #[cfg(feature = "sessions4")]
 const SLOTS: usize = 4;
 

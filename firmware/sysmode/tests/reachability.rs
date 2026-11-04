@@ -6,24 +6,33 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use ledmapper_sysmode::{
-    components, cost, heap_bytes, is_quiescent, live_bytes, live_bytes_at, step, Activity, Ble, Event,
-    SysMode,
-    Wifi,
+    components, cost, frontend_components, frontend_heap, heap_bytes, is_quiescent, live_bytes, live_bytes_at,
+    step, step_in, Activity, Ble, Event, Profile, SysMode, Wifi,
 };
 
 const BOOTS: [SysMode; 2] = [SysMode::BOOT_UNPROVISIONED, SysMode::BOOT_RESTORED];
 
-/// Every reachable state -> one (predecessor, event) that first reached it.
+/// Every reachable state of the plain player -> one (predecessor, event) that first reached it.
 fn explore() -> BTreeMap<SysMode, Option<(SysMode, Event)>> {
+    explore_in(Profile::Player)
+}
+
+fn explore_in(p: Profile) -> BTreeMap<SysMode, Option<(SysMode, Event)>> {
     let mut seen = BTreeMap::new();
     let mut q = VecDeque::new();
-    for b in BOOTS {
+    // The front end holds no map or effect of its own to restore: it boots idle
+    // (stored credentials arrive as WiredCredentials, as on the player).
+    let boots: &[SysMode] = match p {
+        Profile::Player => &BOOTS,
+        Profile::FrontEnd { .. } => &[SysMode::BOOT_UNPROVISIONED],
+    };
+    for &b in boots {
         seen.insert(b, None);
         q.push_back(b);
     }
     while let Some(s) = q.pop_front() {
         for e in Event::ALL {
-            if let Ok(n) = step(s, e) {
+            if let Ok(n) = step_in(p, s, e) {
                 if !seen.contains_key(&n) {
                     seen.insert(n, Some((s, e)));
                     q.push_back(n);
@@ -63,9 +72,10 @@ fn invariants_hold_in_every_reachable_state() {
     for &s in seen.keys() {
         let why = || format!("state {s:?} via {:?}", trace(&seen, s));
         // A wss session needs the network; video needs the wss transport.
-        assert!(!s.wss || s.wifi == Wifi::Joined, "{}", why());
+        assert!(s.wss == 0 || s.wifi == Wifi::Joined, "{}", why());
+        assert!(s.wss <= 1, "the player serves one session: {}", why());
         if let Activity::Effect { video, deck_b } = s.activity {
-            assert!(!video || s.wss, "video without wss: {}", why());
+            assert!(!video || s.wss > 0, "video without wss: {}", why());
             // The aux region holds ONE of video / deck B (ffi.rs FxAux).
             assert!(!(video && deck_b), "video and deck B share the aux region: {}", why());
             if deck_b {
@@ -78,7 +88,7 @@ fn invariants_hold_in_every_reachable_state() {
             assert!(step(s, Event::FxLoad).is_err(), "{}", why());
             assert!(!s.map, "the old map is invalid during an upload: {}", why());
             // A running upload needs a live transport.
-            assert!(s.wss || s.ble == Ble::Connected, "orphaned upload: {}", why());
+            assert!(s.wss > 0 || s.ble == Ble::Connected, "orphaned upload: {}", why());
         }
     }
 }
@@ -91,19 +101,19 @@ fn ble_and_wss_coexist() {
     rr::verifies!("PR-38");
     let seen = explore();
     let both: Vec<&SysMode> =
-        seen.keys().filter(|s| s.wss && s.ble == Ble::Connected).collect();
+        seen.keys().filter(|s| s.wss > 0 && s.ble == Ble::Connected).collect();
     assert!(!both.is_empty(), "no reachable state serves a BLE central beside wss");
     for &s in seen.keys() {
-        if s.wss && s.ble == Ble::Advertising {
+        if s.wss > 0 && s.ble == Ble::Advertising {
             assert_eq!(
                 step(s, Event::BleConnect).map(|n| (n.wss, n.ble)),
-                Ok((true, Ble::Connected)),
+                Ok((s.wss, Ble::Connected)),
                 "a central must be able to connect during a wss session: {s:?}"
             );
         }
-        if s.wifi == Wifi::Joined && !s.wss {
+        if s.wifi == Wifi::Joined && s.wss == 0 {
             let n = step(s, Event::WssOpen).expect("wss opens with BLE up");
-            assert!(n.wss, "{s:?}");
+            assert_eq!(n.wss, 1, "{s:?}");
         }
     }
 }
@@ -233,3 +243,94 @@ fn the_max_led_config_still_fits_the_budget() {
         / (cost::MAX_LEDS - cost::DEFAULT_LEDS);
     assert_eq!(per_led, 31);
 }
+
+// -- the P4 + C6 build's C6 front end (docs/design/p4-c6-split.md §4.3.1) ----------
+
+/// The front end's session cap: //firmware/player_app:BUILD.bazel _FRONTEND_SESSIONS.
+const FRONTEND_SESSIONS: u8 = 2;
+
+fn frontend_worst(sessions: u8) -> (SysMode, usize, BTreeMap<SysMode, Option<(SysMode, Event)>>) {
+    let seen = explore_in(Profile::FrontEnd { sessions });
+    let (s, b) = seen.keys().map(|&s| (s, frontend_heap(sessions, s))).max_by_key(|x| x.1).unwrap();
+    (s, b, seen)
+}
+
+fn frontend_headroom(sessions: u8) -> isize {
+    let (_, worst, _) = frontend_worst(sessions);
+    cost::frontend::idle_free(sessions) - cost::frontend::FLOOR as isize - worst as isize
+}
+
+/// The per-session static cost the model derives the cap from reproduces the
+/// one-session image's measured idle heap (to the allocator's block overhead).
+#[test]
+fn frontend_per_session_cost_matches_the_bench() {
+    let predicted = cost::frontend::idle_free(1);
+    let measured = cost::frontend::IDLE_FREE_1_MEASURED as isize;
+    assert!((predicted - measured).abs() <= 256, "model {predicted} B vs measured {measured} B");
+}
+
+/// Every front-end state: sessions within the cap, only with Wi-Fi joined, every
+/// session can close again, and a full house refuses the next client.
+#[test]
+fn frontend_sessions_stay_within_the_cap() {
+    for sessions in [1u8, 2, 4] {
+        let p = Profile::FrontEnd { sessions };
+        let seen = explore_in(p);
+        assert!(seen.keys().any(|s| s.wss == sessions), "{sessions} sessions reachable");
+        for &s in seen.keys() {
+            assert!(s.wss <= sessions && (s.wss == 0 || s.wifi == Wifi::Joined), "{s:?}");
+            assert_eq!(s.activity, Activity::Idle, "the front end runs no LED activity: {s:?}");
+            if s.wss == sessions {
+                assert!(step_in(p, s, Event::WssOpen).is_err(), "a full front end refuses: {s:?}");
+            }
+            if s.wss > 0 {
+                assert_eq!(step_in(p, s, Event::WssClose).map(|n| n.wss), Ok(s.wss - 1));
+            }
+        }
+        // BLE coexists with every session count (PR-38).
+        assert!(seen.keys().any(|s| s.wss == sessions && s.ble == Ble::Connected));
+    }
+}
+
+/// THE gate: no reachable state of the shipped front end (FRONTEND_SESSIONS)
+/// takes its heap below the floor. Every reachable state, not just the worst.
+#[test]
+fn frontend_heap_never_exhausts() {
+    let (s, worst, seen) = frontend_worst(FRONTEND_SESSIONS);
+    let avail = cost::frontend::idle_free(FRONTEND_SESSIONS) - cost::frontend::FLOOR as isize;
+    println!(
+        "front end, {FRONTEND_SESSIONS} sessions: {} reachable states, idle free {} B, floor {} B, \
+         worst {worst} B in {s:?} via {:?}, headroom {} B",
+        seen.len(),
+        cost::frontend::idle_free(FRONTEND_SESSIONS),
+        cost::frontend::FLOOR,
+        trace(&seen, s),
+        avail - worst as isize
+    );
+    for &st in seen.keys() {
+        let need = frontend_heap(FRONTEND_SESSIONS, st) as isize;
+        let parts: Vec<String> =
+            frontend_components(FRONTEND_SESSIONS, st).map(|c| format!("{}={}", c.name, c.bytes)).collect();
+        assert!(need <= avail, "{st:?} needs {need} B > {avail} B ({}) via {:?}", parts.join(" + "), trace(&seen, st));
+    }
+    // Pinned: a cost or transition change that moves these is a reviewed change.
+    assert_eq!((seen.len(), worst), (FRONTEND_PINNED_STATES, FRONTEND_PINNED_WORST));
+}
+
+/// Why the cap isn't higher: three or four sessions don't fit (four don't even
+/// leave the Wi-Fi driver its boot heap: the bench's "never joins").
+#[test]
+fn frontend_more_sessions_do_not_fit() {
+    assert!(frontend_headroom(FRONTEND_SESSIONS) >= 0);
+    for sessions in [3u8, 4] {
+        assert!(frontend_headroom(sessions) < 0, "{sessions} sessions would fit: raise the cap?");
+    }
+    assert!(cost::frontend::idle_free(4) < cost::frontend::FLOOR as isize);
+}
+
+// Two sessions, 10 states (Wi-Fi x BLE, sessions 0..=2 once joined). The worst is the
+// provisioning scan with the Improv central connected (scan transient + BLE link);
+// with sessions it is both mid-handshake beside a central: the BLE link + one record
+// buffer past the region's three slots, 10,788 B.
+const FRONTEND_PINNED_STATES: usize = 10;
+const FRONTEND_PINNED_WORST: usize = 9_792 + 3_876;

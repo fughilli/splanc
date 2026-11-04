@@ -56,6 +56,8 @@ constexpr size_t kMsgCap = 64 * 1024;
 constexpr int64_t kHeartbeatUs = 100 * 1000;
 // Three missed host heartbeats and the link counts as down (§4.1).
 constexpr int64_t kLinkTimeoutUs = 350 * 1000;
+// Silent this long and the SDIO link is reopened (netstack_loop).
+constexpr int64_t kLinkLostUs = 2 * 1000 * 1000;
 
 bool g_up = false;  // the UART driver is installed
 SemaphoreHandle_t g_tx_mux = nullptr;
@@ -83,6 +85,7 @@ int64_t g_hb_sent_us = 0;
 
 struct {
   uint32_t rx_frames, rx_noise, rx_bytes, tx_frames, tx_bytes, too_big, dispatched;
+  uint32_t sdio_err, relinks;  // failed ESSL calls; links torn down + reopened (SDIO)
 } g_stats;
 
 bool host_alive(int64_t now) { return g_host_seen_us != 0 && now - g_host_seen_us < kLinkTimeoutUs; }
@@ -162,7 +165,9 @@ void on_frame(const lk_header &h, const uint8_t *p);
 void sdio_rx() {
   if (!g_essl) return;
   uint32_t avail = 0;
-  if (essl_get_rx_data_size(g_essl, &avail, 10) != ESP_OK || avail == 0) return;
+  const esp_err_t se = essl_get_rx_data_size(g_essl, &avail, 10);
+  if (se != ESP_OK) g_stats.sdio_err++;
+  if (se != ESP_OK || avail == 0) return;
   for (;;) {
     size_t got = 0;
     const esp_err_t e = essl_get_packet(g_essl, g_rx_wire + g_stream_len, kStreamCap - g_stream_len, &got, 10);
@@ -215,7 +220,10 @@ void send_msg(uint8_t type, uint16_t session, const uint8_t *data, size_t len) {
     if (n) memcpy(g_tx_wire + LK_HEADER, data + off, n);
     const size_t w = LK_HEADER + n;
     // The C6's receive buffers are the credits (§4.1); a stalled front end drops the frame.
-    if (!g_essl || essl_send_packet(g_essl, g_tx_wire, w, 100) != ESP_OK) g_stats.too_big++;
+    if (!g_essl || essl_send_packet(g_essl, g_tx_wire, w, 100) != ESP_OK) {
+      g_stats.too_big++;
+      g_stats.sdio_err++;
+    }
 #else
     const size_t w = lk_encode(&h, data + off, g_tx_wire);
     uart_write_bytes(kUart, g_tx_wire, w);
@@ -411,13 +419,20 @@ void netstack_setup(void) {
   printf("[link] the C6 front end isn't answering yet: retrying every 5 s\n");
 }
 
-// The front end can come up late (its first boot generates its TLS key): keep looking.
+// The front end can come up late (its first boot generates its TLS key), or come back
+// after the link was lost: keep looking. Every third miss resets the C6 first, so a front
+// end whose SDIO slave is wedged (or that hangs) is brought back too.
 static void sdio_retry() {
   static int64_t next = 0;
+  static int misses = 0;
   const int64_t now = esp_timer_get_time();
   if (now < next) return;
   next = now + 5 * 1000 * 1000;
   g_c6_sha_valid = false;
+  if (++misses % 3 == 0) {
+    printf("[link] front end still not answering: resetting the C6\n");
+    c6_reset_normal(kWaveshareP4Wifi6);
+  }
   if (!sdio_open(500)) return;
   const int64_t end = esp_timer_get_time() + 1000 * 1000;
   while (!g_c6_sha_valid && esp_timer_get_time() < end) {
@@ -426,6 +441,7 @@ static void sdio_retry() {
   }
   if (g_c6_sha_valid) {
     g_up = true;
+    misses = 0;
     printf("[link] C6 front end up over SDIO (image %02x%02x%02x%02x)\n", g_c6_sha[0], g_c6_sha[1], g_c6_sha[2],
            g_c6_sha[3]);
     send_hello();
@@ -453,6 +469,22 @@ void netstack_loop(void) {
     send_link(LK_OP_HEARTBEAT, nullptr, 0);
   }
   if (!host_alive(now)) g_session = 0;
+  // The front end heartbeats every 100 ms. Silent this long, the link is gone (the C6
+  // restarted, or its SDIO slave stopped answering: sdmmc timeouts): say so, tear it
+  // down and let sdio_retry bring it back, instead of polling a dead card forever.
+  if (g_host_seen_us != 0 && now - g_host_seen_us > kLinkLostUs) {
+    printf("[link] front end silent for %lld ms (%u SDIO errors): reopening the link\n",
+           (long long)((now - g_host_seen_us) / 1000), (unsigned)g_stats.sdio_err);
+    xSemaphoreTake(g_tx_mux, portMAX_DELAY);
+    g_up = false;
+    sdio_close();
+    xSemaphoreGive(g_tx_mux);
+    g_host_seen_us = 0;
+    g_session = 0;
+    g_stream_len = 0;
+    g_stats.relinks++;
+    return;
+  }
   sdio_rx();
 }
 #else
@@ -529,11 +561,11 @@ void netstack_restore_credentials(const char *, const char *) {}
 uint32_t netstack_rekey_count(void) { return 0; }
 
 int netstack_net_stats(char *buf, size_t cap) {
-  return snprintf(buf, cap, "link rx=%u/%uB noise=%u tx=%u/%uB msgs=%u big=%u host=%s session=%u",
+  return snprintf(buf, cap, "link rx=%u/%uB noise=%u tx=%u/%uB msgs=%u big=%u host=%s session=%u sdio_err=%u relinks=%u",
                   (unsigned)g_stats.rx_frames, (unsigned)g_stats.rx_bytes, (unsigned)g_stats.rx_noise,
                   (unsigned)g_stats.tx_frames, (unsigned)g_stats.tx_bytes, (unsigned)g_stats.dispatched,
                   (unsigned)g_stats.too_big, host_alive(esp_timer_get_time()) ? "up" : "down",
-                  (unsigned)g_session);
+                  (unsigned)g_session, (unsigned)g_stats.sdio_err, (unsigned)g_stats.relinks);
 }
 
 void netstack_set_wifi_policy(const NetstackWifiPolicy *) {}
