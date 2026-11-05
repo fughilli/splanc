@@ -272,6 +272,12 @@
       "demanded_level": "hitl"
     },
     {
+      "kind": "untraced-failure",
+      "entity": "//pi/hitl/harness:ble_capture_e2e_netstack",
+      "message": "//pi/hitl/harness:ble_capture_e2e_netstack pi/hitl/harness/ble_capture_e2e_netstack error and traces to no requirement",
+      "route": "autonomous"
+    },
+    {
       "kind": "high-risk-open",
       "entity": "RISK-2",
       "message": "high risk; mitigation is OPEN",
