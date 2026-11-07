@@ -4,7 +4,7 @@
 //! reply is written into a caller buffer. It answers exactly one service,
 //! `<instance>._splanc._tcp.local` (SRV -> `<host>.local:<port>`, TXT with the
 //! agent-discovery keys), the DNS-SD enumeration PTR, and the `<host>.local` A
-//! record — what the agent bridge (and `avahi-browse` / python-zeroconf) needs to
+//! record (plus `<alias>.local`, the display name as a hostname) — what the agent bridge (and `avahi-browse` / python-zeroconf) needs to
 //! find a device and fetch its `/.well-known/splanc.json`.
 //!
 //! Reply routing (RFC 6762 §5.4, §6.7): a query from a source port other than
@@ -44,6 +44,10 @@ pub struct Service<'a> {
     pub instance: &'a str,
     /// The TCP port the SRV points at (the wss/HTTPS server).
     pub port: u16,
+    /// A second host label that also resolves to `ip`: the display name as a
+    /// hostname (`name_label`), so `ping PixieLamp2.local` works. Empty = none. The
+    /// SRV keeps pointing at `host`, which is stable across renames.
+    pub alias: &'a str,
     /// The device's IPv4 address (the A record).
     pub ip: [u8; 4],
     /// TXT key/value pairs, in order.
@@ -71,6 +75,7 @@ const R_ENUM: u8 = 2; // _services._dns-sd._udp.local PTR _splanc._tcp.local
 const R_SRV: u8 = 4;
 const R_TXT: u8 = 8;
 const R_A: u8 = 16;
+const R_ALIAS: u8 = 32; // <alias>.local A
 
 /// `splanc-` + the last three MAC bytes in lowercase hex, from a MAC string such
 /// as `AA:BB:CC:DD:EE:FF` (any separators). Falls back to `splanc` when the string
@@ -90,6 +95,31 @@ pub fn host_label<'b>(mac: &str, buf: &'b mut [u8; 13]) -> &'b str {
     }
     buf[7..].copy_from_slice(&hex[n - 6..n]);
     core::str::from_utf8(&buf[..]).unwrap_or("splanc")
+}
+
+/// The display name as a DNS host label, as the IDF build named its host: letters
+/// and digits kept, every other run of characters one `-`, none leading or trailing,
+/// at most 63 bytes. Empty when nothing is left.
+pub fn name_label<'b>(name: &str, buf: &'b mut [u8; 63]) -> &'b str {
+    let mut n = 0;
+    let mut gap = false;
+    for c in name.bytes() {
+        if n == buf.len() {
+            break;
+        }
+        if c.is_ascii_alphanumeric() {
+            if gap && n > 0 && n + 1 < buf.len() {
+                buf[n] = b'-';
+                n += 1;
+            }
+            buf[n] = c;
+            n += 1;
+            gap = false;
+        } else {
+            gap = true;
+        }
+    }
+    core::str::from_utf8(&buf[..n]).unwrap_or("")
 }
 
 /// Answer `query` (a DNS message received on port 5353 from `src_port`), or None
@@ -137,6 +167,9 @@ pub fn respond(query: &[u8], src_port: u16, svc: &Service, out: &mut [u8]) -> Op
         }
         if names.is_host(q) && (any || qtype == T_A) {
             answers |= R_A;
+        }
+        if names.is_alias(q) && (any || qtype == T_A) {
+            answers |= R_ALIAS;
         }
         if answers != before && qclass & 0x8000 == 0 {
             all_qu = false;
@@ -190,7 +223,7 @@ pub fn respond(query: &[u8], src_port: u16, svc: &Service, out: &mut [u8]) -> Op
 pub fn announce(svc: &Service, out: &mut [u8]) -> Option<usize> {
     let names = Names::new(svc);
     let mut w = Writer { out, n: 0, ok: true };
-    let all = R_PTR | R_ENUM | R_SRV | R_TXT | R_A;
+    let all = R_PTR | R_ENUM | R_SRV | R_TXT | R_A | if names.has_alias() { R_ALIAS } else { 0 };
     w.u16(0);
     w.u16(0x8400);
     w.u16(0);
@@ -284,6 +317,12 @@ fn write_records(
         w.u16(4);
         w.bytes(&svc.ip);
     }
+    if set & R_ALIAS != 0 {
+        w.raw_name(names.alias());
+        w.rr_head(T_A, CLASS_IN | flush, ttl(TTL_HOST));
+        w.u16(4);
+        w.bytes(&svc.ip);
+    }
 }
 
 /// A TXT string's length: `key=value`, capped at 255.
@@ -297,6 +336,7 @@ struct Names {
     enumeration: Name,
     instance: Name,
     host: Name,
+    alias: Name,
 }
 
 impl Names {
@@ -306,6 +346,7 @@ impl Names {
             enumeration: Name::new(),
             instance: Name::new(),
             host: Name::new(),
+            alias: Name::new(),
         };
         for l in ["_splanc", "_tcp", "local"] {
             n.service.label(l);
@@ -319,6 +360,11 @@ impl Names {
         }
         n.host.label(svc.host);
         n.host.label("local");
+        // Only when it names something else: the same name twice would answer twice.
+        if !svc.alias.is_empty() && !svc.alias.eq_ignore_ascii_case(svc.host) {
+            n.alias.label(svc.alias);
+            n.alias.label("local");
+        }
         n
     }
     fn service(&self) -> &[u8] {
@@ -344,6 +390,15 @@ impl Names {
     }
     fn is_host(&self, q: &[u8]) -> bool {
         q.eq_ignore_ascii_case(self.host())
+    }
+    fn alias(&self) -> &[u8] {
+        self.alias.wire()
+    }
+    fn has_alias(&self) -> bool {
+        self.alias.n > 0
+    }
+    fn is_alias(&self, q: &[u8]) -> bool {
+        self.has_alias() && q.eq_ignore_ascii_case(self.alias())
     }
 }
 

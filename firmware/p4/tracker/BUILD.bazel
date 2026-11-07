@@ -1,0 +1,136 @@
+"""ESP32-P4 tracker bring-up: a Vive Tracker 3.0 wired to the P4's USB OTG port,
+tracked on the P4 by lh_kernel (fughilli/lighthouse, pinned in //MODULE.bazel).
+
+    bazel run -c opt //firmware/p4/tracker:flash_esp32p4_tracker -- --port /dev/cu.usbmodem…
+
+The step after //firmware/p4:esp32p4_hello and before the tracker feeds the
+player's uniform pool (docs/design/p4-c6-split.md; the tracker is an addition).
+"""
+
+load("@embedded//rules:firmware.bzl", "firmware_binary")
+load("@embedded//rules:flash.bzl", "esptool_flash")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_rust//rust:defs.bzl", "rust_static_library")
+
+package(default_visibility = ["//visibility:public"])
+
+_P4_ONLY = select({
+    "@embedded//platforms:is_esp32p4": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+# lh_device + lh_kernel behind a C ABI, with a PSRAM global allocator. The f32
+# builds: the P4's FPU has no doubles.
+rust_static_library(
+    name = "lh_p4",
+    srcs = ["lh_p4.rs"],
+    crate_root = "lh_p4.rs",
+    edition = "2021",
+    target_compatible_with = _P4_ONLY,
+    deps = [
+        "@lighthouse//device:lh_device_f32",
+        "@lighthouse//kernel:lh_kernel_f32",
+        "@lighthouse//protocol:lh_protocol_f32",
+    ],
+)
+
+# The tracker inside the P4 player (//firmware/player_app:esp32p4_player): the task
+# and the latest pose, for the uniform pool.
+cc_library(
+    name = "tracker_service",
+    srcs = [
+        "lh_p4.h",
+        "tracker_service.cpp",
+        "usb_tracker.cpp",
+        "usb_tracker.h",
+    ],
+    hdrs = ["tracker_service.h"],
+    target_compatible_with = _P4_ONLY,
+    deps = [
+        ":lh_p4",
+        "@embedded//libs/board:arduino_core",
+    ],
+)
+
+# The tracker as a player module (player_module.h): link it and it registers itself.
+# The P4 player images take it with --//firmware/p4:tracker.
+cc_library(
+    name = "tracker_module",
+    srcs = ["tracker_module.cpp"],
+    target_compatible_with = _P4_ONLY,
+    deps = [
+        ":tracker_service",
+        "//firmware/player_app:player_ffi_hdr",
+        "//firmware/player_app:player_module_hdr",
+    ],
+    alwayslink = True,
+)
+
+cc_binary(
+    name = "tracker",
+    srcs = [
+        "lh_p4.h",
+        "tracker.cpp",
+        "usb_tracker.cpp",
+        "usb_tracker.h",
+    ],
+    target_compatible_with = _P4_ONLY,
+    deps = [
+        ":lh_p4",
+        "@embedded//libs/board:arduino_core",
+    ],
+)
+
+# The same with every report on the console (2 Mbaud), for host replay:
+#   tools/p4_dump_to_rec.py --port /dev/cu.usbmodem… out.rec.gz
+cc_binary(
+    name = "tracker_dump",
+    srcs = [
+        "lh_p4.h",
+        "tracker.cpp",
+        "usb_tracker.cpp",
+        "usb_tracker.h",
+    ],
+    local_defines = ["LH_DUMP"],
+    target_compatible_with = _P4_ONLY,
+    deps = [
+        ":lh_p4",
+        "@embedded//libs/board:arduino_core",
+    ],
+)
+
+firmware_binary(
+    name = "esp32p4_tracker_dump",
+    binary = ":tracker_dump",
+    board = "esp32p4",
+    flash_size = "16MB",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32p4_tracker_dump",
+    app = ":esp32p4_tracker_dump",
+    bootloader = "@embedded//libs/board:esp32p4_bootloader_bin",
+    bootloader_offset = "0x2000",
+    chip = "esp32p4",
+    tags = ["manual"],
+)
+
+firmware_binary(
+    name = "esp32p4_tracker",
+    binary = ":tracker",
+    board = "esp32p4",
+    flash_size = "16MB",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32p4_tracker",
+    app = ":esp32p4_tracker",
+    bootloader = "@embedded//libs/board:esp32p4_bootloader_bin",
+    bootloader_offset = "0x2000",
+    chip = "esp32p4",
+    tags = ["manual"],
+)

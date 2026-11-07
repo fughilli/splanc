@@ -1,0 +1,24 @@
+"""The P4 <-> front-end link frames (docs/design/p4-c6-split.md §4.1).
+
+Header-only and dependency-free: the P4 player's link transport and the host
+tests use the same bytes; tools/p4_link.py is the host bridge's copy.
+"""
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "link_codec",
+    hdrs = ["link_codec.h"],
+)
+
+cc_test(
+    name = "link_codec_test",
+    srcs = ["link_codec_test.cc"],
+    deps = [
+        ":link_codec",
+        "@rules_requirements//cc:case",
+    ],
+)

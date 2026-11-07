@@ -55,6 +55,8 @@ unsafe fn with_service<R>(ip: [u8; 4], f: impl FnOnce(&ledmapper_mdns::Service) 
     let fw = get(core::ptr::addr_of!(VERSION) as *const u8, 32);
     let mut hb = [0u8; 13];
     let host = ledmapper_mdns::host_label(mac, &mut hb);
+    let mut ab = [0u8; 63];
+    let alias = ledmapper_mdns::name_label(name, &mut ab);
     let txt = [
         ("id", mac),
         ("name", name),
@@ -62,7 +64,7 @@ unsafe fn with_service<R>(ip: [u8; 4], f: impl FnOnce(&ledmapper_mdns::Service) 
         ("path", "/.well-known/splanc.json"),
         ("mode", "loader"),
     ];
-    let svc = ledmapper_mdns::Service { host, instance: name, port: 443, ip, txt: &txt };
+    let svc = ledmapper_mdns::Service { host, instance: name, alias, port: 443, ip, txt: &txt };
     f(&svc)
 }
 

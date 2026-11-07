@@ -85,6 +85,7 @@ go_sdk.download(version = "1.24.0")
 # ---------------------------------------------------------------------------
 
 bazel_dep(name = "rules_rust", version = "0.71.3")
+bazel_dep(name = "platforms", version = "1.1.0")  # constraint labels in rust.repository_set (ESP32-P4)
 bazel_dep(name = "rules_rust_wasm_bindgen", version = "0.71.3")
 
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
@@ -100,8 +101,39 @@ rust.toolchain(
     # Pinned to the version the vendored firmware validated on-device.
     versions = ["1.85.0"],
 )
+# ESP32-P4 (rv32imafc, hard-float ilp32f): rules_rust 0.71 has no riscv32imafc
+# entry in its triple table, so a repository_set with explicit constraints, one
+# per exec host. Constrained to the P4 board AND registered ahead of
+# @rust_toolchains//:all through //firmware/p4/rust: the C6's riscv32imac
+# toolchain is only cpu:riscv32 + os:none and would otherwise match a P4 build
+# (soft-float objects the ilp32f link rejects). docs/design/p4-c6-split.md §3.1.
+[
+    rust.repository_set(
+        name = "rust_{}_riscv32imafc".format(exec_name),
+        edition = "2021",
+        exec_triple = exec_triple,
+        target_compatible_with = [
+            "@platforms//cpu:riscv32",
+            "@platforms//os:none",
+            "@embedded//platforms:esp32p4_board",
+        ],
+        target_triple = "riscv32imafc-unknown-none-elf",
+        versions = ["1.85.0"],
+    )
+    for exec_name, exec_triple in [
+        ("macos_aarch64", "aarch64-apple-darwin"),
+        ("macos_x86_64", "x86_64-apple-darwin"),
+        ("linux_aarch64", "aarch64-unknown-linux-gnu"),
+        ("linux_x86_64", "x86_64-unknown-linux-gnu"),
+    ]
+]
+
 use_repo(
     rust,
+    "rust_linux_aarch64_riscv32imafc__riscv32imafc-unknown-none-elf__stable_tools",
+    "rust_linux_x86_64_riscv32imafc__riscv32imafc-unknown-none-elf__stable_tools",
+    "rust_macos_aarch64_riscv32imafc__riscv32imafc-unknown-none-elf__stable_tools",
+    "rust_macos_x86_64_riscv32imafc__riscv32imafc-unknown-none-elf__stable_tools",
     # musl tools per EXEC host (the static player's rust-lld/rustc run on the
     # build host): linux container (aarch64) + x86_64-linux (CI) + macOS deploy
     # (aarch64 or x86_64). Fetched lazily, so each host pulls only what it uses.
@@ -125,6 +157,9 @@ register_toolchains(
     "//pi/player_rs/musl:macos_x86_64_rust_toolchain",
     "//pi/player_rs/musl:macos_x86_64_cc_toolchain",
 )
+
+# ESP32-P4 Rust, ahead of the hub (see the repository_set above).
+register_toolchains("//firmware/p4/rust:all")
 
 register_toolchains("@rust_toolchains//:all")
 
@@ -452,57 +487,31 @@ git_override(
     remote = "https://github.com/fughilli/hitl-reserve.git",
 )
 
+# Lighthouse (Vive Tracker) tracking: lh_kernel, lh_protocol, lh_device (no_std)
+# from fughilli/lighthouse, pinned (re-sync, not fork: bump the commit). The
+# ESP32-P4 player runs them with the tracker wired to the P4's USB OTG port.
+# main @b29cd17 = fughilli/lighthouse#1 (f32 kernel, photon-latency work, lone
+# base station lock).
+bazel_dep(name = "lighthouse", version = "0.0.0")
+archive_override(
+    module_name = "lighthouse",
+    integrity = "sha256-S0Suz5e8udPjW4buehVR18R5afISCY/7fD6CJrK5Tv0=",
+    strip_prefix = "lighthouse-b29cd1791b09ed1ca1e6ba39cc01accf1f296f0b",
+    urls = ["https://github.com/fughilli/lighthouse/archive/b29cd1791b09ed1ca1e6ba39cc01accf1f296f0b.tar.gz"],
+)
+
 bazel_dep(name = "firmware", version = "0.0.0", repo_name = "embedded")
 archive_override(
     module_name = "firmware",
-    # embedded master @569102d — the mbedtls-8k-record-and-selfsigned-cert work
-    # merged: mbedtls 3.6.5 + IDF v5.5.4 built FROM SOURCE with
-    # CONFIG_MBEDTLS_DYNAMIC_BUFFER (TLS record buffer 16 KB -> 8 KB, fixes the
-    # C6's fragmented-heap wss/cert handshake OOM) + //libs/tls:selfsigned
-    # (on-device SAN-cert re-issuance). Includes the x86_64-linux riscv/xtensa
-    # toolchain hashes (were fakeHash → CI hash mismatch) + the embedded CI.
-    # (569102d is e37969f with a commit-message-only rewrite; identical tree.)
-    integrity = "sha256-7Ueh/m+aZh+HszxgLoBTcTbKyiGKN1jMTOY19XjrASc=",
-    patch_strip = 1,
-    # FUG-90: add ledmapper_gen_key() to //libs/tls:selfsigned so the player
-    # generates a per-device EC key on-device instead of baking one shared key
-    # into every firmware image. Additive-only patch (a new function in the
-    # existing TU); fold it upstream and drop this on the next embedded bump.
-    # esp32-libs-c6-c3: restrict the esp32-arduino-libs FOD to the esp32c6 +
-    # esp32c3 variants (upstream unpacks all ~8 chip variants, ~10 GB — overflowed
-    # the container overlay, the sole reason the C6 firmware couldn't build in
-    # container). We build C6 (+ the build-only C3 target). See the patch header.
-    # esp32c3-build-target: add esp32c3 (RISC-V rv32imc) as a BUILD-ONLY firmware
-    # target — a c3 platform + cc_toolchain + the parallel esp32c3 section of the
-    # generated arduino_esp32 scaffold. Build-gates future c3 work; the image is
-    # NOT runtime-correct yet (netstack ccmp.rs is C6-register-specific).
-    patches = [
-        "//patches:embedded-fug90-gen-key.patch",
-        "//patches:embedded-esp32-libs-c6-c3.patch",
-        # Shrink the from-source mbedTLS TLS record buffer 8 KB -> 6 KB now that all
-        # large control frames are chunked at the client — halves the per-connection
-        # dynamic record alloc so the heapless-netstack player survives many TLS
-        # reconnects on the C6's tight heap. ABI-safe (record buffer is off the struct).
-        "//patches:embedded-mbedtls-record-6k.patch",
-        # Make mbedtls_src's SDK-headers dep private (implementation_deps) so the
-        # esp32c6 SDK's ~315 -I dirs compile mbedtls but don't propagate to
-        # consumers — else the esp32c3 build stacked c6+c3 include lists and blew
-        # past the g++ -> cc1plus argv limit. Must precede the c3 patch.
-        "//patches:embedded-mbedtls-private-sdk-hdrs.patch",
-        "//patches:embedded-esp32c3-build-target.patch",
-        # esp32c3-mbedtls-sw-ecc: c3 runtime bring-up. Adds :mbedtls_src_esp32c3
-        # (drops the HW-ECC port the c3 has no accelerator for; software ECP
-        # instead) so the c3 image links strictly — no --unresolved-symbols=
-        # ignore-all. Must follow the build-target patch (patches its core_esp32c3).
-        "//patches:embedded-esp32c3-mbedtls-sw-ecc.patch",
-        # esp32c6-sections-ld-override: expose the SDK's sections.ld and let the
-        # consumer put a rewritten one ahead of it on the -L path
-        # (--@embedded//ld:esp32c6_sections_override, set in .bazelrc) — how the
-        # player moves dead/cold vendor IRAM code to flash on the prebuilt SDK.
-        "//patches:embedded-esp32c6-sections-ld-override.patch",
-    ],
-    strip_prefix = "embedded-569102d541664d790fc708206f450dce477ca220",
-    urls = ["https://github.com/fughilli/embedded/archive/569102d541664d790fc708206f450dce477ca220.tar.gz"],
+    # embedded master @0ea4759 = fughilli/embedded#9: master @569102d (mbedtls 3.6.5 + IDF v5.5.4 from source, dynamic record buffer,
+    # //libs/tls:selfsigned) plus what Splanc used to carry as patches/embedded-*:
+    # ledmapper_gen_key (FUG-90), the esp32c6+c3-only libs FOD, the 6 KB TLS
+    # record buffer, private mbedtls SDK headers, the esp32c3 build target and
+    # its software-ECC mbedtls, the overridable esp32c6 sections.ld, esptool 5.6,
+    # and the esp32p4 build target.
+    integrity = "sha256-ftz0jHpIH1W4ZZk85F6RFHreLxvbCILcegvYWkaMDq0=",
+    strip_prefix = "embedded-0ea4759ad7d70f4ce563b3f3c8ca0113ff2b887d",
+    urls = ["https://github.com/fughilli/embedded/archive/0ea4759ad7d70f4ce563b3f3c8ca0113ff2b887d.tar.gz"],
 )
 
 # ---------------------------------------------------------------------------
@@ -697,3 +706,13 @@ http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_
         "linux_arm64": "3f2c3c0b629a426cb5452fdf54b88c92b554344689e67c592046dbbc017fa562",
     }.items()
 ]
+
+# Espressif's flasher stub for the ESP32-C6 (esp-flasher-stub v1.3.0, Apache-2.0 OR MIT):
+# the P4 uploads it through the C6 ROM's SDIO downloader, which can only load RAM and
+# jump, to flash the on-board C6 (//firmware/p4/c6flash, docs/design/p4-c6-split.md §5.1).
+http_file(
+    name = "esp_flasher_stub_esp32c6",
+    downloaded_file_path = "esp32c6.json",
+    sha256 = "a326f564fa8fe3ec69c1c17a9dd2df8918da1e37b44004019a643f5f181b8b27",
+    urls = ["https://github.com/espressif/esp-flasher-stub/releases/download/v1.3.0/esp32c6.json"],
+)

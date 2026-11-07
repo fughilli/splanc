@@ -26,6 +26,7 @@
 #include <esp_heap_caps.h>
 #include <esp_rom_gpio.h>
 #include <soc/gpio_sig_map.h>
+#include <soc/soc_caps.h>
 
 #include <array>
 #include <cstring>
@@ -34,6 +35,11 @@
 
 #ifndef LM_MAX_LEDS
 #error "LM_MAX_LEDS must be defined by the build — see //firmware/player_app:led_caps.bzl"
+#endif
+
+// The P4's signal map spells the PARLIO TX data line differently.
+#if defined(PARLIO_TX_DATA0_PAD_OUT_IDX) && !defined(PARL_TX_DATA0_IDX)
+#define PARL_TX_DATA0_IDX PARLIO_TX_DATA0_PAD_OUT_IDX
 #endif
 
 namespace {

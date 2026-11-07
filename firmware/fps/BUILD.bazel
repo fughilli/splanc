@@ -15,6 +15,11 @@ package(default_visibility = ["//visibility:public"])
 rust_library(
     name = "fps",
     srcs = ["src/lib.rs"],
+    # Tracker images: no 80 fps ceiling, the wire's is the only one (MAX_FPS).
+    crate_features = select({
+        "//firmware/p4:tracker_on": ["wire_ceiling"],
+        "//conditions:default": [],
+    }),
     crate_name = "ledmapper_fps",
     edition = "2021",
 )
