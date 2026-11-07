@@ -40,6 +40,7 @@ import { generateFixture } from "../../effects/fixtures";
 import { extractTopology } from "../../topology/extract";
 import { FxCompilerWorker } from "../../effects/editor/compiler";
 import { UniformPanel } from "../../effects/editor/uniform-panel";
+import { deviceHasEffectStore, storeErrorText } from "../../net/effectStore";
 import { sceneUniformValues, type EffectScene } from "../../effects/scene";
 import { highlight } from "../../effects/editor/highlight";
 import { formatFx } from "../../effects/editor/format";
@@ -830,9 +831,12 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   };
   const sendBtn = deviceTile("effect-to-device", "Push", () => void sendToDevice());
   const hydrateBtn = deviceTile("effect-from-device", "Pull", () => void hydrateFromDevice());
+  // Store (firmware "effect_store"): keep this effect in the device's own store
+  // without running it (Device settings → Stored effects opens it later).
+  const storeBtn = deviceTile("save", "Store on device", () => void storeOnDevice());
   const devTiles = document.createElement("div");
   devTiles.className = "k-actiongrid fxedit-devtiles";
-  devTiles.append(sendBtn, hydrateBtn);
+  devTiles.append(sendBtn, hydrateBtn, storeBtn);
 
   // Auto-push: when on, every successful compile is sent to the device.
   const AUTOPUSH_KEY = "fxedit.autopush.v1";
@@ -1680,6 +1684,27 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       devStatus.textContent = "Pushed · effect active.";
     } catch (e) {
       devStatus.textContent = `push failed: ${msg(e)}`;
+    }
+  }
+
+  async function storeOnDevice(): Promise<void> {
+    const c = appState.client;
+    if (!c?.isConnected) return;
+    if (!deviceHasEffectStore(c.welcome)) {
+      devStatus.textContent = "This device's firmware has no effect store.";
+      return;
+    }
+    const r = await worker.compile(codeEl.value);
+    if (!r.ok) {
+      devStatus.textContent = "Fix compile errors before storing.";
+      return;
+    }
+    devStatus.textContent = "Storing…";
+    try {
+      await withDeviceLock(() => c.storeEffect(effectId, effectName, r.bytecode));
+      devStatus.textContent = "Stored on the device (Device settings → Stored effects).";
+    } catch (e) {
+      devStatus.textContent = `store failed: ${storeErrorText(e)}`;
     }
   }
 

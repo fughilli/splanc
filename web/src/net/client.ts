@@ -47,6 +47,8 @@ import {
   decodeMappingBundle,
   type BlendOptions,
   type EffectListMessage,
+  type LoadStoredEffectMessage,
+  type StoredEffectListMessage,
   type EffectUniformsMessage,
   type KeypointListMessage,
   type KeypointMessage,
@@ -967,6 +969,47 @@ export class LedMapperClient {
       { type: "list_effects" } as unknown as ClientMessage,
       "effect_list",
     )) as unknown as EffectListMessage;
+  }
+
+  /** Keep a compiled effect in the device's effect store WITHOUT loading it
+   * (submit_effect{store: true}; the "effect_store" feature,
+   * docs/design/effect-store.md). An effect with the same id is replaced. Sharded
+   * like submitEffect. Reply: result_ready (id=effectId). */
+  async storeEffect(effectId: string, name: string, fxb: Uint8Array): Promise<ResultReadyMessage> {
+    for (const fn of this.activitySubs) fn();
+    return this.sendChunked("EFFECT", {
+      type: "submit_effect",
+      effectId,
+      fxb,
+      store: true,
+      name,
+    } as unknown as ClientMessage);
+  }
+
+  /** The effects in the device's store, with their names and uniform names. */
+  async listStoredEffects(): Promise<StoredEffectListMessage> {
+    return (await this.request(
+      { type: "list_stored_effects" } as unknown as ClientMessage,
+      "stored_effect_list",
+    )) as unknown as StoredEffectListMessage;
+  }
+
+  /** Load a stored effect onto `deck` (0 = A) as if it had been submitted there;
+   * `activate` makes it the running effect. Landing on deck A, activated, it is
+   * also what the device resumes on boot. Reply: result_ready. */
+  async loadStoredEffect(effectId: string, deck = 0, activate = true): Promise<ResultReadyMessage> {
+    this.live.resetDeck(deck);
+    const msg: LoadStoredEffectMessage = { type: "load_stored_effect", effectId, deck, activate };
+    return (await this.request(msg as unknown as ClientMessage, "result_ready")) as ResultReadyMessage;
+  }
+
+  /** Remove an effect from the store (a deck it is loaded on keeps it). Reply: what
+   * is left. */
+  async deleteStoredEffect(effectId: string): Promise<StoredEffectListMessage> {
+    return (await this.request(
+      { type: "delete_stored_effect", effectId } as unknown as ClientMessage,
+      "stored_effect_list",
+    )) as unknown as StoredEffectListMessage;
   }
 
   /** The device's TLS identity: its state ("generating" until the first-boot key +

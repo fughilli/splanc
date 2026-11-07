@@ -90,9 +90,14 @@ pub fn classify(arm: u32, frame: &[u8]) -> Class {
         // get_wifi_policy, get_kiosk_status, kiosk_unlock.
         1 | 2 | 9 | 10 | 11 | 12 | 18 | 19 | 20 | 24 | 25 | 26 | 34 | 35 | 36 | 38 | 42 | 43 | 45 | 48 | 53
         | 56 | 74 | 91 | ARM_GET_KIOSK_STATUS | ARM_KIOSK_UNLOCK => Class::Read,
+        // list_stored_effects (the effect store).
+        95 => Class::Read,
+        // submit_effect{store} writes the effect store: the owner's.
+        21 if submit_stores(frame) => Class::Refuse,
         // set_playback, submit_effect, set_effect, set_uniforms (live too),
-        // set_texture, set_brightness (no cap), set_crossfade, blend_keypoints.
-        17 | 21 | 22 | 23 | 28 | 31 | 39 | 44 => Class::Play,
+        // set_texture, set_brightness (no cap), set_crossfade, blend_keypoints,
+        // load_stored_effect (play one of the owner's stored effects).
+        17 | 21 | 22 | 23 | 28 | 31 | 39 | 44 | 96 => Class::Play,
         // upload_chunk: only a sharded effect upload (the BLE path for a big .fxb).
         29 => match parse_upload_chunk(frame) {
             Ok(Some(c)) if c.kind == UPLOAD_KIND_EFFECT => Class::Play,
@@ -100,9 +105,15 @@ pub fn classify(arm: u32, frame: &[u8]) -> Class {
         },
         // Everything else: mapping, map / topology / pose uploads, led count,
         // rename, hardware / colour config, set_jit, set_fps, keypoint writes,
-        // sensors / drivers, OTA, the FX debugger, Wi-Fi policy, kiosk config.
+        // sensors / drivers, OTA, the FX debugger, Wi-Fi policy, kiosk config,
+        // delete_stored_effect.
         _ => Class::Refuse,
     }
+}
+
+/// Whether `frame` is a submit_effect{store: true} (an effect-store write).
+fn submit_stores(frame: &[u8]) -> bool {
+    matches!(client_arm(frame), Some(CArm::SubmitEffect(m)) if m.store())
 }
 
 /// The persisted configuration (/lfs/kiosk.cfg, [`encode`]).

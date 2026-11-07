@@ -231,6 +231,23 @@ fn main() -> std::io::Result<()> {
         }
     }
 
+    // The effect store (docs/design/effect-store.md). The firmware encodes
+    // stored_effect_list zero-copy (effect_store.rs), so its profile drops the repeated
+    // fields from the by-value envelope; the host profile holds a full store (8).
+    g.configure(".ledmapper.v1.StoredEffectInfo.name", Config::new().max_bytes(32));
+    g.configure(".ledmapper.v1.SubmitEffect.name", Config::new().max_bytes(32));
+    for (field, host_len, host_bytes) in [
+        (".ledmapper.v1.StoredEffectList.effects", 8, 64),
+        (".ledmapper.v1.StoredEffectInfo.uniforms", 32, 24),
+        (".ledmapper.v1.StoredEffectInfo.decks", 2, 64),
+    ] {
+        if firmware {
+            g.configure(field, Config::new().skip(true));
+        } else {
+            g.configure(field, Config::new().max_len(host_len).max_bytes(host_bytes));
+        }
+    }
+
     // Firmware update (docs/design/ota.md). Neither firmware image decodes or encodes
     // these through the generated bindings: the app and the loader intercept the OTA
     // arms and use the hand-coded codec in //firmware/ota (wire.rs, cross-checked
