@@ -10,7 +10,8 @@ player's uniform pool (docs/design/p4-c6-split.md; the tracker is an addition).
 load("@embedded//rules:firmware.bzl", "firmware_binary")
 load("@embedded//rules:flash.bzl", "esptool_flash")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
-load("@rules_rust//rust:defs.bzl", "rust_static_library")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -18,6 +19,34 @@ _P4_ONLY = select({
     "@embedded//platforms:is_esp32p4": [],
     "//conditions:default": ["@platforms//:incompatible"],
 })
+
+# How far the pose can be trusted (lost / coasting / acquiring / locked), on the device
+# clock (#446). No platform deps: the P4 (lh_p4) and the host tests share it.
+rust_library(
+    name = "lh_health",
+    srcs = ["lh_health.rs"],
+    edition = "2021",
+)
+
+rust_test(
+    name = "lh_health_test",
+    size = "small",
+    crate = ":lh_health",
+)
+
+# #446: fast motion, occlusions (one station, both briefly, a handoff, the slave back
+# first), then still in clear view, simulated against the kernel the P4 runs (f32) and
+# lh_health: honest states, reacquisition time, no jumps.
+rust_test(
+    name = "reacquire_test",
+    size = "small",
+    srcs = ["tests/reacquire.rs"],
+    edition = "2021",
+    deps = [
+        ":lh_health",
+        "@lighthouse//kernel:lh_kernel_f32",
+    ],
+)
 
 # lh_device + lh_kernel behind a C ABI, with a PSRAM global allocator. The f32
 # builds: the P4's FPU has no doubles.
@@ -28,6 +57,7 @@ rust_static_library(
     edition = "2021",
     target_compatible_with = _P4_ONLY,
     deps = [
+        ":lh_health",
         "@lighthouse//device:lh_device_f32",
         "@lighthouse//kernel:lh_kernel_f32",
         "@lighthouse//protocol:lh_protocol_f32",

@@ -56,7 +56,7 @@ class Bridge:
         self.stats = {"rx": 0, "tx": 0, "noise": 0}
         self.loop: asyncio.AbstractEventLoop | None = None
         self.log_buf = ""
-        self.osc_out = None   # the udp/9000 endpoint
+        self.osc_out = None  # the udp/9000 endpoint
         self.osc_peer = None  # the last OSC sender
 
     # -- serial side -------------------------------------------------------------
@@ -97,7 +97,11 @@ class Bridge:
         elif f.type == L.LINK and f.payload:
             op = f.payload[0]
             if op == L.OP_HELLO:
-                ver, minor, mtu = f.payload[1], f.payload[2], struct.unpack_from("<H", f.payload, 3)[0]
+                ver, minor, mtu = (
+                    f.payload[1],
+                    f.payload[2],
+                    struct.unpack_from("<H", f.payload, 3)[0],
+                )
                 print(f"[bridge] P4 link up: v{ver}.{minor}, MTU {mtu}", flush=True)
             elif op == L.OP_RESET and len(f.payload) >= 3:
                 s = struct.unpack_from("<H", f.payload, 1)[0]
@@ -178,18 +182,30 @@ class Bridge:
         self.send_link(L.OP_HELLO, bytes([L.VERSION, 0]) + struct.pack("<H", L.MTU))
         asyncio.ensure_future(self.heartbeat())
         async with websockets.serve(self.client, host, port, max_size=1 << 20):
-            print(f"[bridge] serving ws://{host}:{port}/ws -> {self.ser.port} @ {self.ser.baudrate}", flush=True)
+            print(
+                f"[bridge] serving ws://{host}:{port}/ws -> {self.ser.port} @ {self.ser.baudrate}",
+                flush=True,
+            )
             await asyncio.Future()
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--port", required=True, help="the P4 board's USB serial port")
-    ap.add_argument("--baud", type=int, default=2000000, help="link baud rate (link_transport.cpp kBaud)")
+    ap.add_argument(
+        "--baud", type=int, default=2000000, help="link baud rate (link_transport.cpp kBaud)"
+    )
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--ws-port", type=int, default=8081)
     ap.add_argument("--reset", action="store_true", help="reset the board first (RTS)")
-    ap.add_argument("--osc-port", type=int, default=9000, help="forward OSC datagrams from this UDP port (0: off)")
+    ap.add_argument(
+        "--osc-port",
+        type=int,
+        default=9000,
+        help="forward OSC datagrams from this UDP port (0: off)",
+    )
     ap.add_argument("-v", "--verbose", action="store_true", help="print undecodable bytes too")
     a = ap.parse_args()
     try:

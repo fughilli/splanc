@@ -67,6 +67,7 @@ BUILD_INPUTS = SRCS + RELAY_SRCS + [
     "//web:node_modules/@ledmapper/protocol",
     ":node_modules/@bufbuild/protobuf",
     ":node_modules/@ledmapper/protocol",
+    ":node_modules/@anthropic-ai/sdk",
     ":node_modules/@modelcontextprotocol/sdk",
     ":node_modules/multicast-dns",
     ":node_modules/vite",

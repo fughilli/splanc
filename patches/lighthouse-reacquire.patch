@@ -1,0 +1,204 @@
+From 66e449c14f3c80e20f021e169569b07dad990b32 Mon Sep 17 00:00:00 2001
+From: Claude Agent <noreply@anthropic.com>
+Date: Mon, 9 Nov 2026 03:59:41 +0000
+Subject: [PATCH] kernel: reacquire promptly after the light is lost (splanc
+ #446)
+
+Three ways a tracker stayed lost, or claimed a lock it no longer had, after fast
+motion or an occlusion:
+
+- Tracking loss for darkness (lost_after_dark) was only judged when a sweep came
+  in. With both stations blocked no sweep comes, so the kernel kept "tracking"
+  (no new poses, the last one stale) for as long as the dark lasted. It is now
+  judged on the IMU clock as well.
+- A dark longer than max_silent_cycles (1 s) drops the sweep-timing lock, and
+  with it the slot -> station mapping, so after the re-lock every sweep was
+  ignored until each station's next OOTX packet (~3-6 s of clear view). The
+  mapping is now kept and put back once sweeps have come from both slots
+  (which pins the cycle phase); OOTX still confirms it, and a slot that turns
+  out to be another station drops what was tracked with it.
+- A lock taken while only the slave station was in view calls its slot 0; when
+  the master came back its syncs landed in the sweep window and the lock never
+  corrected. A sync flash one slot ahead of slot 0 for 8 cycles in a row now
+  drops the lock (LockLoss::SlotPhase), and the mapping is shifted to match.
+---
+ kernel/src/kernel.rs | 67 +++++++++++++++++++++++++++++++++++++++++---
+ kernel/src/timing.rs | 24 ++++++++++++++++
+ 2 files changed, 87 insertions(+), 4 deletions(-)
+
+diff --git a/kernel/src/kernel.rs b/kernel/src/kernel.rs
+index 1f91880..75dd43c 100644
+--- a/kernel/src/kernel.rs
++++ b/kernel/src/kernel.rs
+@@ -302,6 +302,14 @@ struct Device {
+     model: TrackerModel,
+     timing: Timing,
+     slot_station: [Option<u32>; 2],
++    /// The stations the slots had before the sweep-timing lock was lost. A re-lock puts
++    /// them back once sweeps have come from both slots (which pins the cycle phase, so slot
++    /// 0 is the master again), instead of waiting ~3-6 s for each station's next OOTX
++    /// packet; the OOTX that follows confirms or corrects them.
++    prev_slot_station: [Option<u32>; 2],
++    /// Since the re-lock, sweeps seen per slot (bit per slot), while `prev_slot_station`
++    /// waits to be put back.
++    relock_slots: u8,
+     clock: Clock,
+     imu: VecDeque<(i64, Vec3, Vec3)>,
+     last_imu: Option<(i64, Vec3, Vec3)>,
+@@ -361,6 +369,8 @@ impl Kernel {
+                     model,
+                     timing,
+                     slot_station: [None, None],
++                    prev_slot_station: [None, None],
++                    relock_slots: 0,
+                     clock: Clock::default(),
+                     imu: VecDeque::new(),
+                     last_imu: None,
+@@ -497,6 +507,14 @@ impl Kernel {
+             }
+         }
+         let d = &mut self.devices[di];
++        // No usable light for too long: lost, judged on the IMU clock too (a sweep's
++        // own check never runs while both stations are blocked, and the filter would
++        // coast on the IMU, "tracking", for as long as the dark lasts).
++        if d.track.is_some() && (t - d.last_used) as Real / TPS > cfg.lost_after_dark {
++            d.track = None;
++            d.recent.clear();
++            out.push(Event::TrackingLost { dev, reason: TrackLoss::NoLight });
++        }
+         if still && cfg.still_updates {
+             if let Some(track) = d.track.as_mut() {
+                 if t > track.time {
+@@ -593,14 +611,42 @@ impl Kernel {
+     fn timing_event(&mut self, di: usize, e: TimingEvent, out: &mut Vec<Event>) {
+         let dev = self.devices[di].id;
+         match e {
+-            TimingEvent::Locked { .. } => out.push(Event::TimingLocked { dev }),
++            TimingEvent::Locked { .. } => {
++                self.devices[di].relock_slots = 0;
++                out.push(Event::TimingLocked { dev });
++            }
+             TimingEvent::LockLost { reason } => {
+-                self.devices[di].slot_station = [None, None];
++                let d = &mut self.devices[di];
++                if reason == LockLoss::SlotPhase {
++                    // What this lock called slot 0 was the slave's slot.
++                    if let Some(s) = d.slot_station[0] {
++                        d.prev_slot_station[1] = Some(s);
++                        if d.prev_slot_station[0] == Some(s) {
++                            d.prev_slot_station[0] = None;
++                        }
++                    }
++                } else {
++                    for slot in 0..2 {
++                        if d.slot_station[slot].is_some() {
++                            d.prev_slot_station[slot] = d.slot_station[slot];
++                        }
++                    }
++                }
++                d.slot_station = [None, None];
++                d.relock_slots = 0;
+                 out.push(Event::TimingLost { dev, reason });
+             }
+             TimingEvent::Station { slot, info } => {
+-                let changed = self.devices[di].slot_station[slot as usize] != Some(info.id);
+-                self.devices[di].slot_station[slot as usize] = Some(info.id);
++                let d = &mut self.devices[di];
++                let was = d.slot_station[slot as usize];
++                let changed = was != Some(info.id);
++                d.slot_station[slot as usize] = Some(info.id);
++                // A slot put back after a re-lock turned out to be another station: what
++                // was tracked with it is wrong.
++                if was.is_some() && changed && d.track.take().is_some() {
++                    d.recent.clear();
++                    out.push(Event::TrackingLost { dev, reason: TrackLoss::StationsMoved });
++                }
+                 let si = self.station_index(info.id);
+                 let st = &mut self.stations[si];
+                 let new_info = st.info.as_ref() != Some(&info);
+@@ -619,6 +665,19 @@ impl Kernel {
+     }
+ 
+     fn sweep(&mut self, di: usize, s: Sweep, out: &mut Vec<Event>) {
++        {
++            let d = &mut self.devices[di];
++            if d.relock_slots != 3 && d.slot_station.contains(&None) && d.prev_slot_station != [None, None] {
++                d.relock_slots |= 1 << (s.slot & 1);
++                if d.relock_slots == 3 {
++                    for slot in 0..2 {
++                        if d.slot_station[slot].is_none() {
++                            d.slot_station[slot] = d.prev_slot_station[slot];
++                        }
++                    }
++                }
++            }
++        }
+         let Some(sid) = self.devices[di].slot_station[s.slot as usize] else { return };
+         if let Some(sb) = self.devices[di].scene.as_mut() {
+             sb.add(sid, s.axis, &s.hits);
+diff --git a/kernel/src/timing.rs b/kernel/src/timing.rs
+index 913e6ad..4b737cc 100644
+--- a/kernel/src/timing.rs
++++ b/kernel/src/timing.rs
+@@ -156,6 +156,10 @@ pub enum LockLoss {
+     Confidence,
+     Silence,
+     Ootx,
++    /// A sync flash one slot ahead of slot 0, cycle after cycle: the master's, so the lock
++    /// took the slave for slot 0 (it locked while only the slave was in view). What it
++    /// called slot 0 was slot 1.
++    SlotPhase,
+ }
+ 
+ /// Learned mapping from sync width to code: code = round((len - 2750 -
+@@ -302,6 +306,9 @@ struct Lock {
+     period: Real,
+     confidence: i32,
+     silent: u32,
++    /// Cycles in a row with a sync flash where the master's would be if this lock's slot 0
++    /// were really slot 1 (see LockLoss::SlotPhase).
++    early_syncs: u32,
+     /// Last code per slot, to predict the next (tie-breaks).
+     last_code: [Option<SyncCode>; 2],
+ }
+@@ -608,6 +615,7 @@ impl Timing {
+                 period: CYCLE_TICKS as Real,
+                 confidence: 20,
+                 silent: 0,
++                early_syncs: 0,
+                 last_code: [None, None],
+             });
+             self.stats.locks += 1;
+@@ -692,6 +700,20 @@ impl Timing {
+ 
+         // Sweep: whichever station isn't skipping; its axis from its code. What `clock`
+         // already sent went as that station's; the rest goes out now, as its next part.
++        // One slot before the next cycle's slot 0 (81 deg into a sweep: outside every
++        // station's field of view, so no sweep hit lands there).
++        let early_at = lock.origin + lock.period as i64 - SLOT_TICKS as i64;
++        let early: Vec<(i64, u32, u8)> = self
++            .cycle_sweep
++            .iter()
++            .copied()
++            .filter(|p| self.is_sync_width_ext(p.1) && (p.0 - early_at).abs() < SLOT_TOLERANCE)
++            .collect();
++        if !early.is_empty() && group_stats(&early).0 >= min_sensors {
++            lock.early_syncs += 1;
++        } else {
++            lock.early_syncs = 0;
++        }
+         if min_sensors > 1 && coincident_sync_flash(&self.cycle_sweep, min_sensors) {
+             self.stats.misplaced_flashes += 1;
+             lock.confidence -= 1;
+@@ -758,6 +780,8 @@ impl Timing {
+             self.drop_lock(LockLoss::Silence, out);
+         } else if ootx_bad {
+             self.drop_lock(LockLoss::Ootx, out);
++        } else if lock.early_syncs >= 8 {
++            self.drop_lock(LockLoss::SlotPhase, out);
+         }
+     }
+ 
+-- 
+2.43.0
+

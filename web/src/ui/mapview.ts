@@ -6,7 +6,7 @@
  * Interactive (CAD-style, no inertia, mirroring Sim Studio's conventions):
  * one pointer drags to orbit, two-finger drag pans, pinch or wheel zooms,
  * mouse pan via shift/middle/right drag. Auto-orbits slowly until the first
- * interaction. Works both as the post-solve result browser and as the live
+ * interaction (or, with resumeAfterMs, until the next pause in input). Works both as the post-solve result browser and as the live
  * in-capture inset (`update()` swaps maps without resetting the camera).
  */
 
@@ -38,6 +38,12 @@ export class MapView {
   private panX = 0;
   private panY = 0;
   private autoOrbit = true;
+  private lastInput = 0;
+  /** Resume the slow orbit this long after the last pointer/wheel input, easing
+   * the camera back to its starting framing (0 = never: the app's views stay
+   * where the user left them). The demo stage uses it so a fixture someone
+   * grabbed goes back to turning on its own. */
+  resumeAfterMs = 0;
   private ac: AbortController | null = null;
   private readonly pointers = new Map<number, { x: number; y: number }>();
 
@@ -225,10 +231,30 @@ export class MapView {
     this.resizeObs.observe(this.canvas);
     const loop = () => {
       this.raf = requestAnimationFrame(loop);
-      if (this.autoOrbit) this.yaw += 0.005;
+      if (
+        !this.autoOrbit &&
+        this.resumeAfterMs > 0 &&
+        this.pointers.size === 0 &&
+        performance.now() - this.lastInput > this.resumeAfterMs
+      ) {
+        this.autoOrbit = true;
+      }
+      if (this.autoOrbit) {
+        this.yaw += 0.005;
+        if (this.resumeAfterMs > 0) this.settleHome();
+      }
       this.draw();
     };
     loop();
+  }
+
+  /** Ease zoom, pan and pitch back toward the starting framing (a few % a frame). */
+  private settleHome(): void {
+    const k = 0.04;
+    this.zoom += (1 - this.zoom) * k;
+    this.panX -= this.panX * k;
+    this.panY -= this.panY * k;
+    this.pitch += (0.35 - this.pitch) * k;
   }
 
   /** Render once for externally driven effects and static reduced-motion scenes. */
@@ -285,6 +311,7 @@ export class MapView {
         this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
         this.downAt = this.pointers.size === 1 ? { x: e.clientX, y: e.clientY } : null;
         this.autoOrbit = false;
+        this.lastInput = performance.now();
         e.preventDefault();
       },
       opts,
@@ -325,6 +352,7 @@ export class MapView {
           if (dPrev > 1e-3) this.zoom = clamp(this.zoom * (dCur / dPrev), 0.05, 40);
         }
         this.pointers.set(e.pointerId, cur);
+        this.lastInput = performance.now();
         e.preventDefault();
       },
       opts,
@@ -362,6 +390,7 @@ export class MapView {
       (e) => {
         e.preventDefault();
         this.autoOrbit = false;
+        this.lastInput = performance.now();
         this.zoom = clamp(this.zoom * Math.exp(-e.deltaY * 0.0015), 0.05, 40);
       },
       { signal: this.ac.signal, passive: false },

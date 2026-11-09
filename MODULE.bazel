@@ -101,6 +101,7 @@ rust.toolchain(
     # Pinned to the version the vendored firmware validated on-device.
     versions = ["1.85.0"],
 )
+
 # ESP32-P4 (rv32imafc, hard-float ilp32f): rules_rust 0.71 has no riscv32imafc
 # entry in its triple table, so a repository_set with explicit constraints, one
 # per exec host. Constrained to the P4 board AND registered ahead of
@@ -496,6 +497,10 @@ bazel_dep(name = "lighthouse", version = "0.0.0")
 archive_override(
     module_name = "lighthouse",
     integrity = "sha256-S0Suz5e8udPjW4buehVR18R5afISCY/7fD6CJrK5Tv0=",
+    # #446 (prompt reacquisition after an occlusion), until it lands upstream and the pin
+    # moves past it: a git-format patch, `git am`-able onto fughilli/lighthouse.
+    patch_strip = 1,
+    patches = ["//patches:lighthouse-reacquire.patch"],
     strip_prefix = "lighthouse-b29cd1791b09ed1ca1e6ba39cc01accf1f296f0b",
     urls = ["https://github.com/fughilli/lighthouse/archive/b29cd1791b09ed1ca1e6ba39cc01accf1f296f0b.tar.gz"],
 )

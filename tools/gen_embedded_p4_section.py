@@ -48,7 +48,8 @@ def lst(xs, ind=8):
     return "\n".join(" " * ind + q(x) + "," for x in xs)
 
 
-print('''
+print(
+    """
 # --- esp32p4 (RISC-V rv32imafc + Xesppie, hard-float ilp32f) -----------------
 # GENERATED from esp32-arduino-libs esp32p4/flags/{includes,defines,c_flags,
 # cpp_flags} by splanc tools/gen_embedded_p4_section.py; regenerate, don't edit.
@@ -167,4 +168,6 @@ cc_library(
     includes = ["libraries/Preferences/src"],
     deps = [":sdk_hdrs_esp32p4"],
 )
-''' % (lst(inc), lst(defines), lst(C, 4), lst(CXX, 4)))
+"""
+    % (lst(inc), lst(defines), lst(C, 4), lst(CXX, 4))
+)
