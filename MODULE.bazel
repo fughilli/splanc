@@ -491,18 +491,15 @@ git_override(
 # Lighthouse (Vive Tracker) tracking: lh_kernel, lh_protocol, lh_device (no_std)
 # from fughilli/lighthouse, pinned (re-sync, not fork: bump the commit). The
 # ESP32-P4 player runs them with the tracker wired to the P4's USB OTG port.
-# main @b29cd17 = fughilli/lighthouse#1 (f32 kernel, photon-latency work, lone
-# base station lock).
+# @6447428 = fughilli/lighthouse#2 (prompt reacquisition after an occlusion, splanc #446)
+# on main @b29cd17 (#1: f32 kernel, photon-latency work, lone base station lock). Move to
+# #2's merge commit (same tree) once it lands.
 bazel_dep(name = "lighthouse", version = "0.0.0")
 archive_override(
     module_name = "lighthouse",
-    integrity = "sha256-S0Suz5e8udPjW4buehVR18R5afISCY/7fD6CJrK5Tv0=",
-    # #446 (prompt reacquisition after an occlusion), until it lands upstream and the pin
-    # moves past it: a git-format patch, `git am`-able onto fughilli/lighthouse.
-    patch_strip = 1,
-    patches = ["//patches:lighthouse-reacquire.patch"],
-    strip_prefix = "lighthouse-b29cd1791b09ed1ca1e6ba39cc01accf1f296f0b",
-    urls = ["https://github.com/fughilli/lighthouse/archive/b29cd1791b09ed1ca1e6ba39cc01accf1f296f0b.tar.gz"],
+    integrity = "sha256-24jilDzcDe/ilixBPAEMB59JP6sNGd0cjw/uq5toahc=",
+    strip_prefix = "lighthouse-644742865bd7d43e0bcd7d3c1c1e2a67c4fc131f",
+    urls = ["https://github.com/fughilli/lighthouse/archive/644742865bd7d43e0bcd7d3c1c1e2a67c4fc131f.tar.gz"],
 )
 
 bazel_dep(name = "firmware", version = "0.0.0", repo_name = "embedded")
