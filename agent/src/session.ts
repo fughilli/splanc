@@ -45,7 +45,7 @@ import { renderedChannels } from "./channels";
 import type { Pose } from "./config";
 import { FxDebugger } from "../../web/src/fx/fxDebug";
 import { compile, type CompileOutcome, type Toolchain } from "./fxhost";
-import { progress } from "./progress";
+import { cancellation, progress } from "./progress";
 import type { ClockSync } from "./timesync";
 import {
   currentByName,
@@ -432,9 +432,17 @@ export class DeviceSession {
     }
   }
 
-  /** Run `fn` after every earlier request on this session has settled. */
+  /** Run `fn` after every earlier request on this session has settled. A request
+   * whose tool call was cancelled meanwhile (its caller stopped or superseded it)
+   * is dropped when its turn comes, never delivered late: behind a slow request
+   * an old deploy could otherwise land long after the caller moved on (#447). */
   run<T>(fn: () => Promise<T>): Promise<T> {
-    const next = this.queue.then(fn, fn);
+    const cancelled = cancellation();
+    const step = (): Promise<T> =>
+      cancelled()
+        ? Promise.reject(new ToolError("cancelled by the caller before it reached the player: nothing was sent"))
+        : fn();
+    const next = this.queue.then(step, step);
     this.queue = next.catch(() => undefined);
     return next.then(undefined, (e) => {
       throw this.mapError(e);

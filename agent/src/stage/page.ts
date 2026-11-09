@@ -109,6 +109,7 @@ header { grid-area: top; display: flex; align-items: center; gap: 1.1vw; padding
 .badge.ok { color: var(--black); background: var(--yellow); border-color: var(--black); }
 .badge.err { color: var(--white); background: var(--err); border-color: var(--black); }
 .badge.busy { color: var(--yellow); border-color: var(--yellow); }
+.badge:empty { display: none; }
 
 /* phone */
 .phone { grid-area: phone; width: 22vw; display: flex; align-items: center; justify-content: center; }
@@ -244,7 +245,7 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
     <div class="diag" id="diag"></div>
   </section>
   <section class="panel talk">
-    <div class="ph">Conversation</div>
+    <div class="ph">Conversation<span class="badge" id="req"></span></div>
     <div class="conv">
       <div class="said" id="said"></div>
       <div class="think" id="think"></div>
@@ -588,14 +589,27 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
   }
 
   // ---- conversation + steps -------------------------------------------------
+  // One card per tool call (by its id): a repeated tool_call redraws its card in
+  // place. The newest 8 cards (and notes) are kept.
   var steps = {};
-  function trimSteps() { while ($("steps").children.length > 8) $("steps").removeChild($("steps").firstChild); }
+  function trimSteps() {
+    var box = $("steps");
+    while (box.children.length > 8) {
+      var c = box.firstChild;
+      if (c.dataset && c.dataset.id && steps[c.dataset.id] === c) delete steps[c.dataset.id];
+      box.removeChild(c);
+    }
+  }
   function addStep(id, cls, nameHtml) {
-    var el = document.createElement("div");
+    var el = id ? steps[id] : null;
+    if (!el || el.parentNode !== $("steps")) {
+      el = document.createElement("div");
+      $("steps").appendChild(el);
+      if (id) { steps[id] = el; el.dataset.id = id; }
+    }
     el.className = "step " + cls;
     el.innerHTML = '<div class="ic"></div><div class="nm">' + nameHtml + '</div><div class="ms"></div><div class="sub"></div>';
-    $("steps").appendChild(el); trimSteps();
-    if (id) steps[id] = el;
+    trimSteps();
     return el;
   }
   function note(text, cls) {
@@ -776,14 +790,46 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
     reply = { text: "", pos: 0, queued: 0 };
     renderReply();
   }
+  // Everything the conversation, the cards and the code panel show (not the
+  // fixtures or the phone: the catch-up's snapshot redraws those).
+  function clearShown() {
+    newReply(); turnActive = false;
+    $("said").className = "said"; $("said").textContent = ""; $("think").textContent = "";
+    $("steps").innerHTML = ""; steps = {};
+    code = freshCode(); renderCode(false);
+    $("effName").textContent = ""; badge("", "waiting"); $("diag").textContent = "";
+    request = { id: 0 }; renderRequest();
+  }
+  // The request badge: the newest request and where it is.
+  var REQ = {
+    queued: ["busy", "queued"], generating: ["busy", "thinking"], writing: ["busy", "writing code"],
+    running: ["busy", "running"], deploying: ["busy", "deploying"], done: ["ok", "done"],
+    failed: ["err", "failed"], stopped: ["", "stopped"], superseded: ["", "superseded"]
+  };
+  var request = { id: 0 };
+  function renderRequest() {
+    var el = $("req");
+    if (!request.id) { el.className = "badge"; el.textContent = ""; el.title = ""; return; }
+    var k = REQ[request.state] || ["", request.state];
+    var what = k[1];
+    if (request.state === "running" && request.tool) what = (LABEL[request.tool] || request.tool).toLowerCase();
+    if (request.state === "superseded" && request.by) what += " by #" + request.by;
+    el.className = "badge " + k[0];
+    el.textContent = "#" + request.id + " · " + what;
+    el.title = request.text + (request.detail ? " (" + request.detail + ")" : "");
+  }
+  // Catch-up replays each event once: seq only grows, and a sync starts over.
+  var lastSeq = 0;
   function handle(ev) {
+    if (typeof ev.seq === "number") { if (ev.seq <= lastSeq) return; lastSeq = ev.seq; }
     switch (ev.type) {
       case "reset":
-        newReply(); turnActive = false;
-        $("said").textContent = ""; $("think").textContent = ""; $("steps").innerHTML = "";
-        code = freshCode(); renderCode(false);
-        $("effName").textContent = ""; badge("", "waiting"); $("diag").textContent = "";
+        clearShown();
         status("", idleText);
+        break;
+      case "request":
+        if (ev.id < request.id) break; // an older request: its stopped/note says what happened
+        request = ev; renderRequest();
         break;
       case "prompt":
         newReply();
@@ -800,7 +846,10 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
         break;
       case "say":
         addReply(ev.text, false);
-        if (live) queueText(false); else { reply.pos = reply.queued = reply.text.length; renderReply(); }
+        // The words show as they arrive (dim until spoken), never held back
+        // behind the voice: a slow or stalled synthesis must not blank the reply.
+        if (live) queueText(false); else reply.pos = reply.queued = reply.text.length;
+        renderReply();
         if (live && voiceOn && statusKind === "thinking") status("speaking", "Speaking…");
         break;
       case "tool_writing":
@@ -866,7 +915,7 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
         break;
       }
       case "turn_end": turnActive = false; queueText(true); $("think").textContent = ""; idle(); break;
-      case "stopped": turnActive = false; flushPlayback(); status("", idleText); note("Stopped."); break;
+      case "stopped": turnActive = false; flushPlayback(); status("", idleText); note(ev.text || "Stopped."); break;
       case "error": turnActive = false; queueText(true); idle(); note(ev.text, "err"); break;
       case "note": note(ev.text); break;
       case "phone":
@@ -882,6 +931,9 @@ pre mark { color: inherit; background: var(--mkbg); border-radius: .2vw; text-de
   function connect() {
     var es = new EventSource("/events" + Q);
     es.addEventListener("open", function () { live = false; status("", idleText); });
+    // Every (re)connect starts with a sync and a full catch-up: start over, so
+    // nothing already shown is drawn twice.
+    es.addEventListener("sync", function () { live = false; lastSeq = 0; clearShown(); });
     es.addEventListener("live", function () { live = true; });
     es.addEventListener("stage", function (m) { handle(JSON.parse(m.data)); });
     es.addEventListener("frame", function (m) { frame(JSON.parse(m.data)); });

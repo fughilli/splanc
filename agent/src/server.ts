@@ -33,7 +33,7 @@ import { lintWarnings, renderPng, preview, type CompileOutcome } from "./fxhost"
 import { Hub, shape, type PlayerResult, type Selector } from "./hub";
 import { localBugOptions, registerFileBug, type BugFilingOptions } from "./bugs";
 import { DEPLOY_LIBRARY_SHAPE, registerLibraryTools } from "./libraryLocal";
-import { progress, withProgress, type ProgressSink } from "./progress";
+import { progress, withCancel, withProgress, type ProgressSink } from "./progress";
 import { IDENTITY, bbox, normQuat, placeFixtures, summarizeRoom, yaw, type Quat, type Vec3 } from "./room";
 import { DeviceSession, ToolError, summarize, type Curve, type TextureSource } from "./session";
 import { buildScene, renderScene, type ColorBy, type SceneFixture } from "./fixtureplot";
@@ -79,6 +79,8 @@ const knownSources = new Map<string, string>();
 /** What the SDK hands a tool/resource callback (the parts used here). */
 interface CallExtra {
   _meta?: { progressToken?: string | number };
+  /** Aborted when the caller cancels the call (notifications/cancelled). */
+  signal?: AbortSignal;
   sendNotification?: (n: { method: string; params: Record<string, unknown> }) => Promise<void>;
 }
 
@@ -103,7 +105,8 @@ function callSink(server: McpServer, extra: CallExtra | undefined, echo?: Progre
   };
 }
 
-/** Route every tool's and resource's progress (see progress.ts) to its caller. */
+/** Route every tool's and resource's progress (see progress.ts) to its caller,
+ * and scope its cancellation (a cancelled call sends nothing more to a player). */
 function withCallProgress(server: McpServer, echo?: ProgressSink): void {
   type Fn = (...a: unknown[]) => unknown;
   const s = server as unknown as { registerTool: Fn; registerResource: Fn };
@@ -111,8 +114,10 @@ function withCallProgress(server: McpServer, echo?: ProgressSink): void {
     const orig = s[k].bind(server) as Fn;
     s[k] = (...reg: unknown[]) => {
       const cb = reg[reg.length - 1] as Fn;
-      reg[reg.length - 1] = (...args: unknown[]) =>
-        withProgress(callSink(server, args[args.length - 1] as CallExtra | undefined, echo), () => cb(...args));
+      reg[reg.length - 1] = (...args: unknown[]) => {
+        const extra = args[args.length - 1] as CallExtra | undefined;
+        return withCancel(extra?.signal, () => withProgress(callSink(server, extra, echo), () => cb(...args)));
+      };
       return orig(...reg);
     };
   }

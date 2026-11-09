@@ -108,6 +108,9 @@ export class FakePlayer {
   /** Every blend_keypoints applied (for assertions). */
   blends: Msg[] = [];
 
+  /** A slow player: handle (and answer) these request types after this long (ms). */
+  readonly slow = new Map<string, number>();
+
   /** Extra request handlers by message type (checked before the built-in ones),
    * e.g. the FX debugger emulation in fxdebug.test.ts. Return null for no reply. */
   readonly handlers = new Map<string, (m: Msg) => Msg | null>();
@@ -257,6 +260,15 @@ export class FakePlayer {
 
   private onMessage(ws: WebSocket, m: Msg): void {
     if (this.silent) return;
+    const wait = this.slow.get(m.type);
+    if (wait) {
+      setTimeout(() => this.handle(ws, m), wait);
+      return;
+    }
+    this.handle(ws, m);
+  }
+
+  private handle(ws: WebSocket, m: Msg): void {
     this.received.push(m);
     const refusal = this.refuse.get(m.type);
     if (refusal) {
