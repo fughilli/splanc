@@ -1,10 +1,10 @@
 // Per-device TLS identity: on-device EC P-256 keygen + self-signed cert, persisted in
 // littlefs. See device_cert.h and docs/design/per-device-cert.md.
 //
-// Compiled against the ledmapper mbedtls config (BUILD: -DMBEDTLS_CONFIG_FILE=...),
-// which turns on the X.509/PK writers the stock ESP config prunes. The writers are
-// additive (no ssl-context struct change), so this TU links against the same
-// from-source mbedtls the TLS server uses.
+// Compiled against the ledmapper mbedtls config (the MBEDTLS_CONFIG_FILE define that
+// @embedded's mbedtls_src propagates to every consumer), which turns on the X.509/PK
+// writers the stock ESP config prunes: the same config, and so the same struct layouts,
+// as the from-source mbedtls this TU and the TLS server link.
 #include "device_cert.h"
 
 #include <Arduino.h>

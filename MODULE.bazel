@@ -500,6 +500,12 @@ archive_override(
         # (--@embedded//ld:esp32c6_sections_override, set in .bazelrc) — how the
         # player moves dead/cold vendor IRAM code to flash on the prebuilt SDK.
         "//patches:embedded-esp32c6-sections-ld-override.patch",
+        # mbedtls-propagate-config (#468): mbedtls_src's MBEDTLS_CONFIG_FILE becomes a
+        # propagated define and :sdk_hdrs drops the prebuilt SDK's mbedtls include dirs,
+        # so every TU that includes <mbedtls/*.h> compiles against the headers AND config
+        # of the mbedtls the image links (the netstack transport saw a 344 B
+        # mbedtls_ssl_context vs the library's 552 B). Must follow the c3 sw-ecc patch.
+        "//patches:embedded-mbedtls-propagate-config.patch",
     ],
     strip_prefix = "embedded-569102d541664d790fc708206f450dce477ca220",
     urls = ["https://github.com/fughilli/embedded/archive/569102d541664d790fc708206f450dce477ca220.tar.gz"],

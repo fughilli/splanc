@@ -2,15 +2,9 @@
 
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
+#include <mbedtls/platform.h>  // mbedtls_platform_set_calloc_free (MBEDTLS_PLATFORM_MEMORY)
 #include <multi_heap.h>
 #include <string.h>
-
-// mbedTLS is built from source with MBEDTLS_PLATFORM_MEMORY (@mbedtls_src's
-// esp_config.h: mbedtls_calloc goes through the mbedtls_calloc_func pointer), but the
-// app's include path resolves <mbedtls/platform.h> under a config that hides the
-// setter, so declare it; the link binds it to the from-source library.
-extern "C" int mbedtls_platform_set_calloc_free(void *(*calloc_func)(size_t, size_t),
-                                                void (*free_func)(void *));
 
 namespace {
 

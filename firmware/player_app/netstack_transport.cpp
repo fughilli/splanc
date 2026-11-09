@@ -1220,25 +1220,17 @@ int eapol_body(const uint8_t *f, int len, const uint8_t **out) {
 // The :443 listener is not opened until the identity is installed (g_tls_setup), so a
 // handshake never meets a missing/partial cert.
 constexpr bool TLS_SERVER = true;
-// mbedTLS ABI: the linked mbedtls is built from source (@embedded's mbedtls_src), but this
-// file compiles against the prebuilt SDK's mbedtls headers, which come first on the include
-// path, and the two disagree on mbedtls_ssl_context: 344 B here, 552 B in the library (its
-// mbedtls_ssl_init memsets 552). A context declared here as a plain global was overrun by
-// 208 B into whatever the linker placed next — on main that was g_conf (224 B), the server
-// config every handshake reads — on every init / setup / session reset. Found by #440
-// (where the overrun hit a Session's state and panicked after the first served GET); here it
-// was silent, layout-dependent corruption. The context now lives in storage sized for the
-// library, with room; //firmware/player_app:tls_abi_test reads the library's size from the
-// linked ELF and fails if it outgrows the box. (mbedtls_ssl_config: 224 B here, 196 B in
-// the library, so g_conf is large enough; x509_crt and pk_context agree.)
-constexpr size_t kSslContextBytes = 576;
-struct SslBox {
-  alignas(16) unsigned char raw[kSslContextBytes];
-  mbedtls_ssl_context *get() { return reinterpret_cast<mbedtls_ssl_context *>(raw); }
-};
-static_assert(sizeof(mbedtls_ssl_context) <= kSslContextBytes, "SslBox too small for this header's context");
-SslBox g_ssl_box;
-mbedtls_ssl_context &g_ssl = *g_ssl_box.get();
+// mbedTLS ABI: these are declared with the from-source mbedtls's own headers and config
+// (@embedded's mbedtls_src propagates MBEDTLS_CONFIG_FILE to every consumer, and the
+// prebuilt SDK's mbedtls headers are off the include path:
+// patches/embedded-mbedtls-propagate-config.patch). Before that this file silently got
+// upstream's default config: a 344 B mbedtls_ssl_context against the library's 552 B, so
+// every init / setup / session reset overran g_ssl by 208 B into the next global (#444,
+// found by #440; root cause #468). //firmware/player_app:tls_abi_test reads each type's
+// size from the linked library's own code in the shipped ELF and requires these globals
+// to match it EXACTLY, so no padding box is needed: a header/config mismatch, in either
+// direction, fails the build's test instead of being absorbed.
+mbedtls_ssl_context g_ssl;
 mbedtls_ssl_config g_conf;
 mbedtls_x509_crt g_srvcert;
 mbedtls_pk_context g_pk;
