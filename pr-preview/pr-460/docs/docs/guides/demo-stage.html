@@ -422,7 +422,7 @@ on the laptop screen, not the TV (behind other windows is fine).</p>
 <td><p>show or hide the preview’s ground grid and axes</p></td>
 </tr>
 <tr class="row-even"><td><p><strong>Esc</strong></p></td>
-<td><p>stop Claude mid-answer (and its voice)</p></td>
+<td><p>stop Claude’s request (and its voice)</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>New</strong></p></td>
 <td><p>start a fresh conversation</p></td>
@@ -445,6 +445,16 @@ writing a new one.</p></li>
 <li><p>“Show me the wreath.” Claude brings that fixture into the live preview (below).</p></li>
 </ul>
 <p>The conversation carries on between requests, so follow-ups like “same, but purple” work.</p>
+<p>Each request gets a number, and the badge on the Conversation panel says where the latest one
+is: queued, thinking, writing code, running a tool, deploying, done, failed, stopped or
+superseded. One request runs at a time and the newest wins: asking again while Claude is still
+busy replaces the request in flight (like talking over the voice), and Esc stops it. A
+replaced or stopped request makes no further tool calls, its call in flight is cancelled, and
+whatever it would still have sent to a fixture is dropped, so an old effect can’t turn up on the
+lights later. Claude is told the earlier request was cut off. The stage asks for no approvals:
+it can only use the tools listed below.</p>
+<p>The page can be reloaded, or opened on a second screen, at any time: it redraws the current
+conversation, its tool calls and the code from the stage’s history.</p>
 <p>On stage Claude can only use the effect and look tools. It can’t rename fixtures, update
 firmware, change Wi-Fi, delete saved looks or re-trust certificates, whatever it hears.</p>
 </section>

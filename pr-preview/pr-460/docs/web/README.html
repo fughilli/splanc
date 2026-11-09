@@ -562,6 +562,15 @@ scene upgrade). The server restamps the pattern epoch, the wall follows on
 its next <code class="docutils literal notranslate"><span class="pre">get_pattern</span></code> poll, the phone rebuilds its decode pipeline, and
 detections already collected stay valid. Two consecutive 2 s ticks must
 agree before a renegotiation fires (hysteresis).</p>
+<p>Every run’s link behavior — each negotiated config (symbols, bit period,
+frames/bit), the selected exposure per tick, frame timing + dropouts, decode
+coverage over time and the decoded-ID error signals — is recorded by
+<code class="docutils literal notranslate"><span class="pre">src/cv/linkTelemetry.ts</span></code> into the debug capture bundle (<code class="docutils literal notranslate"><span class="pre">link</span></code>, bundle v2).
+<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//web:link_bench</span></code> reports time-to-coverage / ID error rate /
+dropouts from those bundles, or from a moving-camera simulation
+(<code class="docutils literal notranslate"><span class="pre">tests/linkSim.ts</span></code>) per tuning policy, and rejects any candidate that raises
+the wrong-ID rate or signals under 3 frames/bit (see
+<code class="docutils literal notranslate"><span class="pre">pi/hitl/phone/MOVING_CAMERA_RIG.md</span></code> for the real-camera rig).</p>
 </section>
 <section id="how-the-wall-stays-in-sync">
 <h3>How the wall stays in sync<a class="headerlink" href="#how-the-wall-stays-in-sync" title="Link to this heading">¶</a></h3>

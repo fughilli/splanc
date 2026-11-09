@@ -388,6 +388,11 @@ that both implementations solve the same synthetic session to the same map.</p>
 a floating focal is a scale-drift channel; calibration studies keep the
 Python solver, which also remains the automatic fallback when the binary is
 missing from runfiles).</p>
+<p>One deliberate difference: the outlier loop’s best-round rollback ranks
+rounds degeneracy-first (diag.rs <code class="docutils literal notranslate"><span class="pre">better</span></code>: non-degenerate, then solved LEDs,
+then rms), where the Python reference ranks (solved, rms) only. They agree
+unless a round goes degenerate — a scale collapse keeps most LEDs within
+8 px, since reprojection is scale-invariant, so (solved, rms) can’t see it.</p>
 </section>
 <section id="strip-prior-options-stripprior-off-by-default">
 <h2>Strip prior (<code class="docutils literal notranslate"><span class="pre">options.stripPrior</span></code>, off by default)<a class="headerlink" href="#strip-prior-options-stripprior-off-by-default" title="Link to this heading">¶</a></h2>
@@ -410,6 +415,17 @@ unmapped ids is placed on the straight segment between its mapped
 neighbours at equal spacing. End runs stay unmapped. Placed LEDs are
 emitted as ordinary entries with <code class="docutils literal notranslate"><span class="pre">nViews</span> <span class="pre">=</span> <span class="pre">0,</span> <span class="pre">confidence</span> <span class="pre">=</span> <span class="pre">0</span></code> (the web app’s
 <code class="docutils literal notranslate"><span class="pre">geom/inferred.ts</span></code> keys on that), so any real measurement outranks them.</p></li>
+<li><p><strong>Candidate protection</strong> — the rope solve does not replace the
+pre-strip state outright. Both are assembled (demote + fill, each with
+its own pitch/breaks) and assessed on their measured LEDs (diag.rs), and
+<code class="docutils literal notranslate"><span class="pre">strip_candidate_policy</span></code> decides: a strip result that is degenerate (e.g.
+a scale collapse) while the retained one is not is rolled back
+(<code class="docutils literal notranslate"><span class="pre">rollback-to-pre-strip</span></code> stage); otherwise the strip result stands, even
+with fewer measured LEDs or a higher residual — demoting off-chain LEDs
+is the prior’s job. Both candidates (measured/removed/inferred counts,
+camera distance, spread, rms, degeneracy) and the decision are in the
+diagnostics’ <code class="docutils literal notranslate"><span class="pre">stripCandidates</span></code>. The scale warnings come from whichever
+candidate is returned.</p></li>
 </ol>
 <p>Rust-only: the Python reference doesn’t implement it, and with the option off
 (the default) the solve is unchanged, so <code class="docutils literal notranslate"><span class="pre">rust_parity_test</span></code> is unaffected. The
