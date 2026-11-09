@@ -22,7 +22,9 @@ def runfile(rel):
 
 
 def struct_sizes(objdump, elf, names):
-    out = subprocess.run([objdump, "--dwarf=info", elf], check=True, capture_output=True, text=True).stdout
+    out = subprocess.run(
+        [objdump, "--dwarf=info", elf], check=True, capture_output=True, text=True
+    ).stdout
     sizes = {n: set() for n in names}
     lines = out.splitlines()
     pat = re.compile(r"DW_AT_name\s*:.*?\b(%s)$" % "|".join(names))
@@ -44,11 +46,21 @@ class TlsAbiTest(unittest.TestCase):
         box = int(re.search(r"constexpr size_t kSslContextBytes = (\d+);", src).group(1))
         objdump = runfile(os.environ["OBJDUMP"])
         for elf in os.environ["ELFS"].split():
-            sizes = struct_sizes(objdump, runfile(elf), ["mbedtls_ssl_context", "mbedtls_ssl_config",
-                                                         "mbedtls_x509_crt", "mbedtls_pk_context"])
+            sizes = struct_sizes(
+                objdump,
+                runfile(elf),
+                [
+                    "mbedtls_ssl_context",
+                    "mbedtls_ssl_config",
+                    "mbedtls_x509_crt",
+                    "mbedtls_pk_context",
+                ],
+            )
             ctx = sizes["mbedtls_ssl_context"]
             self.assertTrue(ctx, "no mbedtls_ssl_context in %s" % elf)
-            self.assertLessEqual(max(ctx), box, "%s: the library's context (%s B) outgrew SslBox" % (elf, ctx))
+            self.assertLessEqual(
+                max(ctx), box, "%s: the library's context (%s B) outgrew SslBox" % (elf, ctx)
+            )
             # Declared by value (g_conf, g_srvcert, g_pk): one size, or ours the larger.
             for n in ["mbedtls_ssl_config", "mbedtls_x509_crt", "mbedtls_pk_context"]:
                 self.assertTrue(len(sizes[n]) <= 2, (elf, n, sizes[n]))

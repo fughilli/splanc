@@ -998,7 +998,10 @@ cc_library(
         ["LM_WSS_SESSIONS=%d" % n],
         "//firmware/netstack:wifi_sta_ffi_sessions%d" % n,
     )
-    for n in [2, 4]
+    for n in [
+        2,
+        4,
+    ]
 ]]
 
 # The BLE side of the transport's improv_ble.h seam: Improv provisioning + the BLE player

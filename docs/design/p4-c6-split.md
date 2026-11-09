@@ -851,10 +851,22 @@ available, leaving 8,364 B of headroom. With sessions, the worst is two handshak
 central: 10,788 B. The same test proves N = 3 and N = 4 don't fit. At N = 4 the statics alone
 exceed the heap, which the bench's `ESP_ERR_NO_MEM` confirms.
 
-**Getting to four** means freeing about 50 KB of C6 statics. The front end still links the full
-player core for its while-the-P4-is-down answers, including `FX_ARENA` (24 KB), `ARENA_MEM`
-(12 KB), `DECK_A` and `FX_AUX` (11.6 KB each). It has no LEDs to render on. Shrinking those
-for `LM_FRONTEND` is the way there. The model then says whether four fit.
+**Getting to four: the front end becomes a pure transport** (decision, 2026-11-08). Four
+sessions need about 50 KB more of C6 statics. The front end still links the full player core
+for its while-the-P4-is-down answers, including `FX_ARENA` (24 KB), `ARENA_MEM` (12 KB),
+`DECK_A` and `FX_AUX` (11.6 KB each), though it has no LEDs to render on. The decision is to
+drop the effects engine and the player core from `LM_FRONTEND` entirely, not to shrink them.
+The front end keeps only the network, BLE provisioning, identity, OTA and the link. Every
+player message goes to the P4. While the P4 is down, the front end answers with a "player
+unavailable" error instead of serving from a local core. All the freed RAM goes to more wss
+sessions. The steps:
+
+1. Compile the player core, the FX VM, the decks and their arenas out of `:esp32c6_frontend`.
+   Keep the welcome/hello path the app needs to see the device and its state.
+2. Measure the new idle heap with the `[heap]` line and update `cost::frontend`.
+3. Let `reachability_test` pick the cap: the largest N whose every reachable state keeps
+   the 24 KB floor. Aim for 4.
+4. Rerun the multi-session bench at that N.
 
 **Link failures are surfaced and recovered.** The P4 counts failed ESSL calls (`sdio_err=` on
 its `[net]` line). When the front end's 100 ms heartbeat has been silent for 2 s, the P4 says

@@ -301,7 +301,10 @@ rust_static_library(
     edition = "2021",
     target_compatible_with = _C6,
     deps = [":netstack"],
-) for n in [2, 4]]
+) for n in [
+    2,
+    4,
+]]
 
 cc_binary(
     name = "wifi_sta_driver",
