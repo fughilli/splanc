@@ -1036,7 +1036,8 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
         "(source, or effect_id of one compiled/deployed this session, or the id of the effect already waiting on " +
         "the idle deck) is loaded onto the idle FX deck, then the device blends A<->B over `seconds` with the " +
         "given curve; several players share one clock and fade in lockstep. The outgoing effect stays loaded on " +
-        "its deck: rollback_effect fades back to it. Frame cost is checked first like deploy_effect (both effects " +
+        "its deck: rollback_effect fades back to it. It replaces anything already waiting on the idle deck (list_decks " +
+        "shows the decks). Frame cost is checked first like deploy_effect (both effects " +
         "render during the fade). Deck B is runtime-only: after a reboot the player resumes deck A's effect. " +
         "library_id fades to an effects-library entry (search_effects) instead of source.",
       inputSchema: {
