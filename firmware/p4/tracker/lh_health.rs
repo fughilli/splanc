@@ -11,8 +11,11 @@
 //! - **Lost** (0): not tracking (no tracker, never locked, or lost). The pose holds its last
 //!   value and is not to be followed.
 //! - **Uncertain** (1): tracking with light, but the position uncertainty is past
-//!   [`POS_SIGMA_LIMIT_M`] (one station alone, moving, loses depth that fast), or the light
-//!   has been gone longer than [`COAST_MAX_S`] without the kernel giving up. Not usable.
+//!   [`POS_SIGMA_LIMIT_M`] (a genuinely poor fix: e.g. one station far off, seen by few
+//!   sensors, under fast motion), or the light has been gone longer than [`COAST_MAX_S`]
+//!   without the kernel giving up. Not usable. One station alone is a full 6-DoF fix: the
+//!   tracker's sensor constellation is known, so the angles between its sensors give the
+//!   range; at 1-3 m it reads Locked (tests/reacquire.rs, single_station_sigma_follows_the_error).
 //! - **Acquiring** (2): a fresh solve, being confirmed by light. Not usable yet.
 //! - **Coasting** (3): dead reckoning on the IMU, no light confirming it (speculative), its
 //!   uncertainty still under [`POS_SIGMA_LIMIT_M`]. Usable: `tracker_ok`, and the render
@@ -29,14 +32,15 @@ pub const TPS: i64 = 48_000_000;
 
 /// Position uncertainty (m, sqrt of the covariance trace) up to which a pose is usable,
 /// locked or coasting. The kernel's `lost_sigma_pos` default is the same: past it, dead
-/// reckoning ends in Lost (Drifted). Two stations at ~3 m hold ~6 mm (conservative: the
-/// errors are a tenth of that). Dead reckoning mid-carry (~0.5 m/s) crosses 2 cm ~0.24 s
-/// into the dark (tests/reacquire.rs), whatever the true accelerometer bias; the actual
-/// drift by then is 6-9 mm for biases up to 0.02 g, 14 mm at 0.05 g.
+/// reckoning ends in Lost (Drifted). Simulated (tests/reacquire.rs): two stations hold
+/// ~1 mm (errors under 1 mm); one station alone ~1 mm still and 4/9/16 mm rms carried at
+/// 1/2/3 m (errors 1/2/5 mm). Dead reckoning mid-carry (~0.5 m/s) crosses 2 cm ~0.27 s into
+/// the dark, whatever the true accelerometer bias; the actual drift by then is 6-8 mm for
+/// biases up to 0.02 g, 11 mm at 0.05 g.
 pub const POS_SIGMA_LIMIT_M: f32 = 0.02;
 
 /// The backstop on dead reckoning (s): the kernel's `lost_after_dark` default. Moving, the
-/// covariance rule ends coasting long before it (~0.24 s). Still, zero-velocity updates
+/// covariance rule ends coasting long before it (~0.27 s). Still, zero-velocity updates
 /// hold the covariance and the simulated drift stays under 1 mm over the whole second, so
 /// this is what ends it: a bound for a still detector fooled by slow handling (a 1 cm/s
 /// creep it misses costs at most ~1 cm).

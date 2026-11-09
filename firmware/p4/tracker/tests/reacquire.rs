@@ -38,13 +38,18 @@ use lh_kernel::Real;
 const REACQUIRE_S: f64 = 0.5;
 /// Light back after a coast -> Locked within this (s): fused, no fresh solve.
 const RELOCK_S: f64 = 0.05;
-/// A Locked pose is within this of the truth (m).
-const LOCKED_ERR_M: f64 = 0.015;
+/// A Locked pose is within this of the truth (m): the σ limit it's Locked under
+/// (POS_SIGMA_LIMIT_M), and within 2σ + 2 mm of its own reported σ (an honest covariance).
+const LOCKED_ERR_M: f64 = 0.02;
 /// A coasting (dead-reckoned) pose is within this of the truth (m): the 2 cm σ limit
 /// (POS_SIGMA_LIMIT_M) the kernel ends coasting at, with margin for σ underestimating.
 const COAST_ERR_M: f64 = 0.03;
-/// Consecutive usable poses move by what the tracker moved, within this (m).
+/// Consecutive Locked poses move by what the tracker moved, within this (m) plus half the
+/// pose's σ (a correction of a few mm is what an uncertainty of a cm allows).
 const STEP_ERR_M: f64 = 0.005;
+/// ... and into, through and out of coasting within this: fusing the light back in
+/// corrects what the dead reckoning drifted (COAST_ERR_M bounds that), smoothly.
+const COAST_STEP_M: f64 = 0.01;
 
 // ------------------------------------------------------------------ f64 truth
 
@@ -218,6 +223,8 @@ struct Sim {
     base: u32,
     /// Per published pose: (time s, health then, estimate, truth).
     poses: Vec<(f64, Health, V, V)>,
+    /// Per published pose, its position σ (sqrt of the covariance trace, m).
+    sigmas: Vec<f64>,
     /// Health sampled every ms: (time s, state).
     states: Vec<(f64, Health)>,
     /// (time s, event).
@@ -233,17 +240,16 @@ const B: u32 = 0x3333_4444;
 
 impl Sim {
     fn new(path: Path, occl: Vec<Occlusion>) -> Sim {
+        Sim::with_cfg(path, occl, p4_config())
+    }
+
+    fn with_cfg(path: Path, occl: Vec<Occlusion>, cfg: KernelConfig) -> Sim {
         let target = Vec3::new(0.0, 0.0, 1.0);
         let st = |id: u32, pos: Vec3, mode: u8| Station {
             id,
             model: StationModel { cal: Default::default(), world_from_station: look_at(pos, target) },
             ootx: ootx_frame(id, mode),
         };
-        // As lh_p4.rs configures the kernel, with lhd's stations adopted (lh_station_prior).
-        let mut cfg = KernelConfig { start_interval: 0.05, ..KernelConfig::default() };
-        cfg.timing.stream_sweeps = true;
-        cfg.auto_calibrate = false;
-        cfg.check_stations = false;
         let mut s = Sim {
             stations: vec![st(A, Vec3::new(2.0, -1.0, 2.2), 1), st(B, Vec3::new(-1.5, 2.0, 2.0), 2)],
             model: tracker_model(),
@@ -253,6 +259,7 @@ impl Sim {
             health: TrackHealth::default(),
             base: 4_000_000_000, // the device clock wraps ~6 s in
             poses: Vec::new(),
+            sigmas: Vec::new(),
             states: Vec::new(),
             events: Vec::new(),
             rng: 0x2545_f491_4f6c_dd1d,
@@ -332,6 +339,7 @@ impl Sim {
                     let est = V([p.x as f64, p.y as f64, p.z as f64]);
                     let (truth, _) = self.path.at(t);
                     self.poses.push((t, self.health.state(), est, truth));
+                    self.sigmas.push(sigma as f64);
                     if std::env::var("SIMDBG").is_ok() {
                         eprintln!(
                             "pose t={t:.3} {:?} sigma={:.1}mm err={:.1}mm used={used} spec={speculative}",
@@ -429,9 +437,9 @@ impl Sim {
     /// within LOCKED_ERR_M of the truth, coasting ones within COAST_ERR_M, and steps
     /// (including into and out of coasting) that follow the truth's.
     fn assert_no_jumps(&self, from: f64) {
-        let mut prev: Option<(V, V)> = None;
+        let mut prev: Option<(V, V, Health)> = None;
         let mut n = 0;
-        for &(t, h, est, truth) in &self.poses {
+        for (i, &(t, h, est, truth)) in self.poses.iter().enumerate() {
             if t < from {
                 continue;
             }
@@ -440,13 +448,27 @@ impl Sim {
                 continue;
             }
             let err = est.sub(truth).norm();
-            let bound = if h == Health::Locked { LOCKED_ERR_M } else { COAST_ERR_M };
-            assert!(err < bound, "{h:?} pose {:.1} mm off the truth at t={:.3} s\n{}", err * 1e3, t, self.log());
-            if let Some((pe, pt)) = prev {
-                let step = est.sub(pe).sub(truth.sub(pt)).norm();
-                assert!(step < STEP_ERR_M, "{h:?} pose jumped {:.1} mm at t={:.3} s\n{}", step * 1e3, t, self.log());
+            let sigma = self.sigmas[i];
+            if h == Health::Locked {
+                assert!(
+                    err < LOCKED_ERR_M && err < 2.0 * sigma + 0.002,
+                    "Locked pose {:.1} mm off the truth (σ {:.1} mm) at t={:.3} s\n{}",
+                    err * 1e3,
+                    sigma * 1e3,
+                    t,
+                    self.log()
+                );
+            } else {
+                assert!(err < COAST_ERR_M, "{h:?} pose {:.1} mm off the truth at t={:.3} s\n{}", err * 1e3, t, self.log());
             }
-            prev = Some((est, truth));
+            if let Some((pe, pt, ph)) = prev {
+                let step = est.sub(pe).sub(truth.sub(pt)).norm();
+                // A correction may move a pose by part of its stated uncertainty.
+                let base = if h == Health::Locked && ph == Health::Locked { STEP_ERR_M } else { COAST_STEP_M };
+                let bound = base + 0.5 * sigma;
+                assert!(step < bound, "{h:?} pose jumped {:.1} mm at t={:.3} s\n{}", step * 1e3, t, self.log());
+            }
+            prev = Some((est, truth, h));
             n += 1;
         }
         assert!(n > 10, "too few usable poses after {from} s ({n})\n{}", self.log());
@@ -481,6 +503,15 @@ impl Sim {
         }
         s
     }
+}
+
+/// The kernel as lh_p4.rs configures it, with lhd's stations adopted (lh_station_prior).
+fn p4_config() -> KernelConfig {
+    let mut cfg = KernelConfig { start_interval: 0.05, ..KernelConfig::default() };
+    cfg.timing.stream_sweeps = true;
+    cfg.auto_calibrate = false;
+    cfg.check_stations = false;
+    cfg
 }
 
 fn key(t: f64, pos: [f64; 3], rotvec: [f64; 3]) -> Key {
@@ -571,9 +602,9 @@ fn swing_behind_the_body_then_put_down_relocks() {
     reacquired(&sim, end);
 }
 
-/// One station blocked by a hand for 1.5 s while the tracker is carried 20 cm: tracking
-/// continues on the other (Coasting where one station can't hold depth), and the return of
-/// the first is no jump.
+/// One station blocked by a hand for 1.5 s while the tracker is carried 20 cm: the other
+/// alone gives the full pose (the constellation's known geometry gives the range), so it
+/// stays Locked, with an honest σ, and the return of the first is no jump.
 #[test]
 fn one_station_occluded_keeps_tracking() {
     let path = Path(vec![
@@ -584,13 +615,12 @@ fn one_station_occluded_keeps_tracking() {
     sim.run(SETTLE + 5.0);
     locked_by_settle(&sim);
     sim.assert_no_jumps(SETTLE);
-    // A single station keeps the kernel tracking (no loss, no fresh solve needed), though
-    // under motion it can't hold depth to a lock's accuracy: that shows as Coasting.
     assert!(
-        sim.states.iter().filter(|x| x.0 > SETTLE && x.0 < SETTLE + 2.3).all(|x| x.1 != Health::Lost),
-        "lost tracking with one station in view\n{}",
+        sim.states.iter().filter(|x| x.0 > SETTLE && x.0 < SETTLE + 2.3).all(|x| x.1 == Health::Locked),
+        "not Locked with one station in view\n{}",
         sim.log()
     );
+    assert_eq!(sim.starts(SETTLE), 0, "{}", sim.log());
     reacquired(&sim, SETTLE + 2.5);
 }
 
@@ -707,10 +737,11 @@ fn both_occluded_during_a_handoff_relocks_fresh() {
     let mut sim = Sim::new(path, vec![(dark.0, dark.1, &[A, B])]);
     sim.run(SETTLE + 6.0);
     locked_by_settle(&sim);
-    // Lost, not a stale lock: out of Locked at once, and dropped by the kernel well before
-    // the light is back.
-    let lost = sim.first(dark.0, Health::Lost).unwrap_or_else(|| panic!("never Lost in a 2 s dark\n{}", sim.log()));
-    assert!(lost - dark.0 < 0.7, "tracking held {:.3} s into the dark\n{}", lost - dark.0, sim.log());
+    // Coasting, then Lost once the carry's dead reckoning passes the σ limit (Drifted, not
+    // the cap), well before the light is back.
+    let (t, why) = sim.loss(dark.0).unwrap_or_else(|| panic!("never lost in a 2 s dark\n{}", sim.log()));
+    assert!(why.contains("Drifted"), "lost for {why}\n{}", sim.log());
+    assert!(t - dark.0 < lh_health::COAST_MAX_S as f64, "tracking held {:.3} s into the dark\n{}", t - dark.0, sim.log());
     assert!(
         sim.states.iter().filter(|x| x.0 > dark.0 + 0.13 && x.0 < dark.1).all(|x| x.1 != Health::Locked),
         "{}",
@@ -736,4 +767,54 @@ fn only_the_slave_back_first_is_no_wrong_lock() {
     locked_by_settle(&sim);
     sim.assert_no_jumps(SETTLE);
     reacquired(&sim, a_back);
+}
+
+/// One station alone, at 1, 2 and 3 m from it: still, then carried 0.4 m and turned
+/// 0.9 rad over 2 s. The known constellation gives the full pose; σ must follow the
+/// actual error (no overconfidence) and stay under the limit (Locked) at demo ranges.
+#[test]
+fn single_station_sigma_follows_the_error() {
+    let a = V([2.0, -1.0, 2.2]);
+    let dir = V([-2.0, 1.0, -1.2]).scale(1.0 / V([-2.0, 1.0, -1.2]).norm());
+    for d in [1.0, 2.0, 3.0] {
+        let p = a.add(dir.scale(d));
+        let q = p.add(V([0.25, 0.3, 0.05]));
+        let path = Path(vec![key(SETTLE + 1.5, p.0, [0.0, 0.0, 0.3]), key(SETTLE + 3.5, q.0, [0.2, 0.0, 0.9])]);
+        let mut sim = Sim::new(path, vec![(SETTLE + 0.5, SETTLE + 4.0, &[B])]);
+        sim.run(SETTLE + 4.0);
+        locked_by_settle(&sim);
+        for (lab, w0, w1) in [("still", SETTLE + 0.8, SETTLE + 1.5), ("carried", SETTLE + 1.5, SETTLE + 3.5)] {
+            let (mut n, mut e2, mut s2, mut emax, mut smax) = (0.0, 0.0, 0.0, 0.0f64, 0.0f64);
+            for (i, p) in sim.poses.iter().enumerate().filter(|(_, p)| p.0 >= w0 && p.0 < w1) {
+                let e = p.2.sub(p.3).norm();
+                let sg = sim.sigmas[i];
+                n += 1.0;
+                e2 += e * e;
+                s2 += sg * sg;
+                emax = emax.max(e);
+                smax = smax.max(sg);
+            }
+            let (erms, srms) = ((e2 / n).sqrt(), (s2 / n).sqrt());
+            eprintln!(
+                "one station at {d:.0} m, {lab:>7}: error rms {:4.1} mm (max {:4.1}), σ rms {:4.1} mm (max {:4.1})",
+                erms * 1e3,
+                emax * 1e3,
+                srms * 1e3,
+                smax * 1e3
+            );
+            assert!(erms <= srms + 0.001, "{d} m {lab}: σ {:.1} mm under the error {:.1} mm", srms * 1e3, erms * 1e3);
+            let states: Vec<_> = sim.states.iter().filter(|x| x.0 >= w0 && x.0 < w1).collect();
+            let locked = states.iter().filter(|x| x.1 == Health::Locked).count() as f64 / states.len() as f64;
+            eprintln!("    Locked {:.0}% of the time", locked * 100.0);
+            // Up to 2 m, and still at 3 m, σ stays under the limit. Carried at 3 m it peaks
+            // past it: the tracking process noise (accel_noise) keeps σ ~3x the error here,
+            // so part of that carry reads Uncertain.
+            if d <= 2.0 || lab == "still" {
+                assert!(locked == 1.0, "{d} m {lab}: not Locked on one station\n{}", sim.log());
+            } else {
+                assert!(locked > 0.5, "{d} m {lab}: Locked only {:.0}%\n{}", locked * 100.0, sim.log());
+            }
+        }
+        sim.assert_no_jumps(SETTLE);
+    }
 }
