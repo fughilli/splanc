@@ -11,9 +11,11 @@ class LinkCodecTest(unittest.TestCase):
 
     def test_vectors(self):
         f = L.Frame(L.PLAYER, bytes([0x0A, 0x00, 0x12, 0x34]), session=0x0102, seq=7)
-        self.assertEqual(f.pack()[:L.HEADER].hex(), "010100000201070004008bda")
+        self.assertEqual(f.pack()[: L.HEADER].hex(), "010100000201070004008bda")
         self.assertEqual(L.encode(f).hex(), "0003010101040201070204048bda0a03123400")
-        self.assertEqual(L.encode(L.Frame(L.LOG, b"hi\n")).hex(), "000301060101010101020306e81168690a00")
+        self.assertEqual(
+            L.encode(L.Frame(L.LOG, b"hi\n")).hex(), "000301060101010101020306e81168690a00"
+        )
 
     def test_roundtrips(self):
         for n in (0, 1, 241, 242, 243, 253, 254, 255, 600, 4095, 4096):

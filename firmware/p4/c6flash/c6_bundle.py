@@ -40,7 +40,7 @@ def main() -> None:
     (magic,) = struct.unpack_from("<I", app, APP_DESC_AT)
     if magic != APP_DESC_MAGIC:
         raise SystemExit(f"no esp_app_desc_t in the app image (magic 0x{magic:08x})")
-    elf_sha = app[ELF_SHA_AT:ELF_SHA_AT + 32]
+    elf_sha = app[ELF_SHA_AT : ELF_SHA_AT + 32]
     head = b"C6B1" + struct.pack("<I", len(images)) + elf_sha
     body = b""
     for off, data in images:
@@ -50,7 +50,9 @@ def main() -> None:
     with open(out, "wb") as f:
         f.write(head + body)
     total = sum(len(d) for _, d in images)
-    print(f"c6 bundle: {len(images)} images, {total} B -> {len(head) + len(body)} B, app elf sha {elf_sha.hex()[:16]}")
+    print(
+        f"c6 bundle: {len(images)} images, {total} B -> {len(head) + len(body)} B, app elf sha {elf_sha.hex()[:16]}"
+    )
 
 
 if __name__ == "__main__":

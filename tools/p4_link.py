@@ -20,7 +20,15 @@ PLAYER, REPLY, PUSH, LINK, BULK, LOG, OSC = 1, 2, 3, 4, 5, 6, 7
 MORE, ACK_REQ = 1, 2
 OP_HELLO, OP_HEARTBEAT, OP_RESET, OP_NAME, OP_STATS = 1, 2, 3, 4, 5
 
-TYPE_NAMES = {PLAYER: "PLAYER", REPLY: "REPLY", PUSH: "PUSH", LINK: "LINK", BULK: "BULK", LOG: "LOG", OSC: "OSC"}
+TYPE_NAMES = {
+    PLAYER: "PLAYER",
+    REPLY: "REPLY",
+    PUSH: "PUSH",
+    LINK: "LINK",
+    BULK: "BULK",
+    LOG: "LOG",
+    OSC: "OSC",
+}
 
 
 def crc16(data: bytes, crc: int = 0xFFFF) -> int:
@@ -44,8 +52,17 @@ class Frame:
         """Header + payload (not yet COBS-framed)."""
         if len(self.payload) > MTU:
             raise ValueError(f"payload {len(self.payload)} > MTU {MTU}")
-        hdr = struct.pack("<BBBBHHHH", VERSION, self.type, self.lane, self.flags, self.session, self.seq,
-                          len(self.payload), 0)
+        hdr = struct.pack(
+            "<BBBBHHHH",
+            VERSION,
+            self.type,
+            self.lane,
+            self.flags,
+            self.session,
+            self.seq,
+            len(self.payload),
+            0,
+        )
         crc = crc16(self.payload, crc16(hdr))
         return hdr[:10] + struct.pack("<H", crc) + self.payload
 
@@ -89,7 +106,7 @@ def cobs_decode(data: bytes) -> bytes | None:
         i += 1
         if code == 0 or i + code - 1 > len(data):
             return None
-        out += data[i:i + code - 1]
+        out += data[i : i + code - 1]
         i += code - 1
         if code != 0xFF and i < len(data):
             out.append(0)
@@ -103,8 +120,10 @@ def encode(frame: Frame) -> bytes:
 
 def fragments(typ: int, msg: bytes, session: int = 0, lane: int = 0) -> list[Frame]:
     """A message as MTU-sized frames, all but the last flagged MORE (seq left 0)."""
-    parts = [msg[i:i + MTU] for i in range(0, len(msg), MTU)] or [b""]
-    return [Frame(typ, p, lane, MORE if k + 1 < len(parts) else 0, session) for k, p in enumerate(parts)]
+    parts = [msg[i : i + MTU] for i in range(0, len(msg), MTU)] or [b""]
+    return [
+        Frame(typ, p, lane, MORE if k + 1 < len(parts) else 0, session) for k, p in enumerate(parts)
+    ]
 
 
 class StreamDecoder:

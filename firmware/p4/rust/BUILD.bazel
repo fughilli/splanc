@@ -23,9 +23,33 @@ _P4 = [
         toolchain_type = "@rules_rust//rust:toolchain_type",
     )
     for exec_name, exec_constraints in [
-        ("macos_aarch64", ["@platforms//cpu:aarch64", "@platforms//os:macos"]),
-        ("macos_x86_64", ["@platforms//cpu:x86_64", "@platforms//os:macos"]),
-        ("linux_aarch64", ["@platforms//cpu:aarch64", "@platforms//os:linux"]),
-        ("linux_x86_64", ["@platforms//cpu:x86_64", "@platforms//os:linux"]),
+        (
+            "macos_aarch64",
+            [
+                "@platforms//cpu:aarch64",
+                "@platforms//os:macos",
+            ],
+        ),
+        (
+            "macos_x86_64",
+            [
+                "@platforms//cpu:x86_64",
+                "@platforms//os:macos",
+            ],
+        ),
+        (
+            "linux_aarch64",
+            [
+                "@platforms//cpu:aarch64",
+                "@platforms//os:linux",
+            ],
+        ),
+        (
+            "linux_x86_64",
+            [
+                "@platforms//cpu:x86_64",
+                "@platforms//os:linux",
+            ],
+        ),
     ]
 ]

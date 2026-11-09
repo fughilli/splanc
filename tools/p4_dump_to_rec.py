@@ -52,7 +52,9 @@ def main():
                 if p[0] == "F" and len(p) == 5:
                     us = int(p[2])
                     t0 = us if t0 is None else t0
-                    out.write(f"{(us - t0) / 1e6:.6f} {a.name} HIDFEAT {p[1]} {us - t0} {p[3]} {p[4]}\n")
+                    out.write(
+                        f"{(us - t0) / 1e6:.6f} {a.name} HIDFEAT {p[1]} {us - t0} {p[3]} {p[4]}\n"
+                    )
                     n["F"] += 1
                 elif p[0] == "R" and len(p) == 4:
                     us = int(p[2])
