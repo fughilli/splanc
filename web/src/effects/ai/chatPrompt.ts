@@ -165,6 +165,52 @@ export const MIDI_TOOLS = [
   },
 ] as const;
 
+/** Live uniform control (#452), added only when the screen supplies the hook:
+ * set or reset the LIVE values the preview + fixture use, without a source edit. */
+export const LIVE_UNIFORM_TOOLS = [
+  {
+    name: "set_live_uniforms",
+    description:
+      "Set or reset the LIVE value of named uniforms — the values the preview and the connected fixture " +
+      "use right now. Live values persist across recompiles, so changing a uniform's default in the " +
+      "source does not change an existing control; use this to apply a requested value (e.g. a colour) " +
+      "or to reset a uniform to its new source default. Only the named uniforms change; other tuning " +
+      "and MIDI mappings are left alone. The result says whether the fixture received the values.",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        set: {
+          type: "array",
+          description: "Uniforms to set: value has one number per component (a colour is [r, g, b] in 0..1).",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              name: { type: "string", description: "Uniform name in the effect." },
+              value: { type: "array", items: { type: "number" } },
+            },
+            required: ["name", "value"],
+          },
+        },
+        reset: {
+          type: "array",
+          description: "Uniform names to reset to their source default.",
+          items: { type: "string" },
+        },
+        reset_all: { type: "boolean", description: "Reset EVERY uniform to its source default (only when asked)." },
+      },
+    },
+  },
+] as const;
+
+/** Prompt guidance that rides with LIVE_UNIFORM_TOOLS. */
+export const LIVE_UNIFORMS_GUIDE =
+  "Live uniforms: the turn context lists each uniform's LIVE value next to its source default. A live " +
+  "value that differs from the default overrides it on the preview and fixture. When a requested look " +
+  "depends on a uniform (e.g. a colour), change the live value with set_live_uniforms (or reset it after " +
+  "changing the default) — do not rename uniforms, remove controls or hardcode values to get around it.";
+
 /** Bug reports (docs/design/agent-bug-reports.md), added only when the screen
  * supplies the hook — the same file_bug every Splanc agent has. */
 export const BUG_TOOLS = [
@@ -225,7 +271,7 @@ export function baseChatSystem(providerId: string): string {
  * app's tool-use loop and the eval harness both use. */
 export function selectTools(
   caps: { tools: boolean; vision: boolean },
-  opts: { perf: boolean; midi: boolean; devicePerf?: boolean; bugs?: boolean },
+  opts: { perf: boolean; midi: boolean; devicePerf?: boolean; bugs?: boolean; liveUniforms?: boolean },
 ): ToolDef[] {
   if (!caps.tools) return [];
   const base = caps.vision ? TOOLS : TOOLS.filter((t) => t.name !== "capture_preview");
@@ -234,6 +280,7 @@ export function selectTools(
     ...(opts.perf ? PERF_TOOLS : []),
     ...(opts.devicePerf ? DEVICE_PERF_TOOLS : []),
     ...(opts.midi ? MIDI_TOOLS : []),
+    ...(opts.liveUniforms ? (LIVE_UNIFORM_TOOLS as unknown as ToolDef[]) : []),
     ...(opts.bugs ? (BUG_TOOLS as unknown as ToolDef[]) : []),
   ];
 }

@@ -1702,6 +1702,29 @@ body.is-locked {
   background: var(--surface-2);
   max-width: 90%;
 }
+/* An agent turn that is not a clean finish (#451 out of steps, #443 over
+   budget / stopped): a tinted edge so it never reads as a normal reply. */
+.fxedit-msg--warn {
+  border-left: 3px solid var(--warn);
+}
+.fxedit-msg--alert {
+  border-left: 3px solid var(--err);
+}
+.fxedit-turnactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-self: flex-start;
+}
+.fxedit-turnaction {
+  padding: 0.3rem 0.7rem;
+  border-radius: var(--r-ctrl);
+  border: 1px solid var(--accent-quiet);
+  background: var(--surface-2);
+  color: inherit;
+  font-size: var(--f-caption);
+  cursor: pointer;
+}
 .fxedit-msg--tool {
   align-self: flex-start;
   color: var(--text-dim);

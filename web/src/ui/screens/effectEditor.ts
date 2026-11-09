@@ -45,13 +45,34 @@ import { highlight } from "../../effects/editor/highlight";
 import { formatFx } from "../../effects/editor/format";
 import { complete, type CompletionItem } from "../../effects/editor/completions";
 import {
-  chatTurn,
+  CONTINUE_NOTE,
+  describeExhaustedTurn,
   editorContext,
+  endsWithToolResults,
+  pushUserAsk,
+  runChatTurn,
   type ChatMessage,
   type ChatTraceEvent,
+  type ChatTurnResult,
   type MidiMappingCall,
   type MeasureOnDeviceCall,
 } from "../../effects/ai/generate";
+import {
+  describeLiveUniformResult,
+  describeLiveUniforms,
+  liveDeviceSink,
+  planLiveUniformChange,
+  retainedLiveNote,
+  type LiveUniformCall,
+} from "../../effects/ai/liveUniforms";
+import {
+  draftNotice,
+  holdAgentAutoPush,
+  optimizeAsk,
+  type AgentTurnEnd,
+  type DraftAction,
+  type DraftBudget,
+} from "../../effects/ai/agentDraft";
 import { isAiConfigured, getAiConfig } from "../../effects/ai/provider";
 import { resolveFleetTargets } from "../../effects/fleet";
 import { estimateAcrossDevices, describeFleet } from "../../effects/multiDevice";
@@ -157,6 +178,8 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   // needlessly re-flash the device.
   let lastPushedFxb: Uint8Array | null = null;
   let chatBusy = false;
+  // An AI draft auto-push held back for being over budget (#443).
+  let heldDraft: Uint8Array | null = null;
   // Chat persists per effect across navigation (restored below; saved each turn;
   // cleared only via "New chat"). `history` is the API conversation; `transcript`
   // is the visible bubble log.
@@ -528,15 +551,34 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       perfWrap.style.display = "none";
       return;
     }
+    const budget = await draftBudgetOf(bytecode);
+    if (budget === null) {
+      perfWrap.style.display = "none";
+      return;
+    }
+    budgetBar.update(budget.status);
+    perfWrap.style.display = "";
+  }
+
+  // The budget reading per compiled program (#443): the same estimate the bar
+  // shows, cached by bytecode so auto-push and the end-of-turn notice agree.
+  const draftBudgets = new WeakMap<Uint8Array, DraftBudget & { status: ReturnType<typeof budgetFromEstimate> }>();
+  async function draftBudgetOf(
+    bytecode: Uint8Array,
+  ): Promise<(DraftBudget & { status: ReturnType<typeof budgetFromEstimate> }) | null> {
+    const hit = draftBudgets.get(bytecode);
+    if (hit) return hit;
     try {
       const { table } = await costTableStore.resolveTable();
       const model: BudgetModel = table.budget ?? DEFAULT_BUDGET_MODEL;
       const ledCount = currentMap ? currentMap.leds.length : 256;
       const est = estimateFrameTime({ bytecode, ledCount, table });
-      budgetBar.update(budgetFromEstimate(est, model));
-      perfWrap.style.display = "";
+      const status = budgetFromEstimate(est, model);
+      const b = { fraction: status.fraction, source: "estimate" as const, status };
+      draftBudgets.set(bytecode, b);
+      return b;
     } catch {
-      perfWrap.style.display = "none";
+      return null;
     }
   }
 
@@ -1266,6 +1308,24 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     }, SAVE_DEBOUNCE_MS);
   }
 
+  /** Auto-push one clean compile — unless it is an AI draft over the frame
+   * budget (#443): that stays an optimizing preview, and the fixture keeps
+   * playing what it has until the draft fits (or the user pushes it anyway). */
+  async function autoPushCompiled(bytecode: Uint8Array): Promise<void> {
+    if (chatBusy) {
+      const budget = await draftBudgetOf(bytecode);
+      if (holdAgentAutoPush({ agentTurn: chatBusy, budget })) {
+        heldDraft = bytecode;
+        devStatus.textContent =
+          `Auto-push held: the AI draft is at ${Math.round((budget?.fraction ?? 0) * 100)}% of the frame budget ` +
+          "(estimate) — still optimizing; the device keeps the previous effect.";
+        return;
+      }
+    }
+    if (bytecode !== lastBytecode) return; // superseded while estimating
+    await pushBytecode(bytecode);
+  }
+
   /** Compile once and update all sinks. Returns the FxCompiled for callers that
    * need the result (the AI set_script tool). Superseded compiles no-op. */
   async function compileNow(): Promise<void> {
@@ -1311,7 +1371,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       appState.client?.isConnected &&
       !bytesEqual(r.bytecode, lastPushedFxb)
     ) {
-      void pushBytecode(r.bytecode);
+      void autoPushCompiled(r.bytecode);
     }
     midiRouter.setManifest(r.uniforms);
     // Auto-bind uniforms to like-named controls ("speed" uniform ↔ a knob named
@@ -1499,21 +1559,127 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     if (result.deployed) {
       lastPushedFxb = bytecode;
       runningEffectId = effectId;
+      if (heldDraft !== null && bytesEqual(heldDraft, bytecode)) heldDraft = null;
       refreshMismatch();
+    }
+    if (result.budgetFraction !== undefined) {
+      measuredBudgets.set(bytecode, { fraction: result.budgetFraction, source: "measured" });
     }
     return unknown.length > 0
       ? `${result.text}\n(Ignored unknown uniforms: ${unknown.join(", ")}.)`
       : result.text;
   }
 
-  /** Shared body: ground the turn in the editor context, run the tool loop. */
-  async function submitChat(ask: string, opts: { label?: string } = {}): Promise<void> {
+  /** The effective live uniform values for the agent's context (#452). */
+  function liveUniformsContext(): string {
+    return describeLiveUniforms(lastUniforms, panel.values(), midiStore.bindings(effectId));
+  }
+
+  /** set_live_uniforms (#452): change only the named live values — panel,
+   * preview, and the fixture when it honestly runs this effect. */
+  function applyLiveUniforms(call: LiveUniformCall): string {
+    const plan = planLiveUniformChange(lastUniforms, panel.values(), call);
+    const c = appState.client;
+    const device = liveDeviceSink({
+      demo: screenOpts.demo === true,
+      connected: c?.isConnected ?? false,
+      runningEffectId,
+      effectId,
+      pushedCurrent: lastBytecode !== null && bytesEqual(lastBytecode, lastPushedFxb),
+    });
+    for (const ch of plan.changes) {
+      panel.setLive(ch.slot, ch.to);
+      preview?.setUniform(ch.slot, ch.to);
+      if (c?.isConnected && (device === "sent" || device === "sent-maybe-stale")) c.live.setUniform(ch.slot, ch.to);
+    }
+    if (plan.changes.length > 0) scheduleSave();
+    return describeLiveUniformResult(plan, {
+      preview: preview !== null,
+      device,
+      midiBound: midiStore.bindings(effectId),
+    });
+  }
+
+  // -- end-of-turn honesty (#451 exhausted turns, #443 over-budget drafts) ---
+  let turnActionsEl: HTMLElement | null = null;
+  function clearTurnActions(): void {
+    turnActionsEl?.remove();
+    turnActionsEl = null;
+  }
+  function renderTurnActions(actions: DraftAction[], budget: DraftBudget | null): void {
+    clearTurnActions();
+    if (actions.length === 0) return;
+    const row = document.createElement("div");
+    row.className = "fxedit-turnactions";
+    const label: Record<DraftAction, string> = {
+      continue: "Continue",
+      optimize: "Keep optimizing",
+      push: "Push anyway",
+    };
+    for (const a of actions) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "fxedit-turnaction";
+      b.textContent = label[a];
+      b.addEventListener("click", () => {
+        if (chatBusy) return;
+        clearTurnActions();
+        if (a === "continue") void submitChat("Continue", { resume: true });
+        else if (a === "optimize" && budget) void submitChat(optimizeAsk(budget), { label: "Keep optimizing" });
+        else if (a === "push" && lastBytecode) void pushBytecode(lastBytecode);
+      });
+      row.appendChild(b);
+    }
+    chatLog.appendChild(row);
+    chatLog.scrollTop = chatLog.scrollHeight;
+    turnActionsEl = row;
+  }
+
+  // On-device measurements per compiled program (beat the estimate, #443).
+  const measuredBudgets = new WeakMap<Uint8Array, DraftBudget>();
+
+  /** After a turn: say plainly when the draft is not ready, and offer recovery. */
+  async function showTurnActions(end: AgentTurnEnd, error: string | undefined, scripted: boolean): Promise<void> {
+    const bytecode = lastBytecode;
+    const canResume = endsWithToolResults(chatHistory);
+    const budget = bytecode ? measuredBudgets.get(bytecode) ?? (await draftBudgetOf(bytecode)) : null;
+    if (disposed || chatBusy) return;
+    const stalled = end !== "complete" && end !== "finished-after-script";
+    const notice =
+      scripted || stalled
+        ? draftNotice({
+            end,
+            budget,
+            onDevice: bytecode !== null && bytesEqual(bytecode, lastPushedFxb) && runningEffectId === effectId,
+            held: bytecode !== null && heldDraft !== null && bytesEqual(heldDraft, bytecode),
+            connected: appState.client?.isConnected ?? false,
+            error,
+            canResume,
+          })
+        : null;
+    if (notice) {
+      const row = appendChat("assistant", notice.text);
+      row.classList.add(notice.tone === "error" ? "fxedit-msg--alert" : "fxedit-msg--warn");
+      persistChat();
+      renderTurnActions(notice.actions, budget);
+    } else if (canResume && stalled) {
+      renderTurnActions(["continue"], budget);
+    }
+  }
+
+  // A restored conversation that stopped on unassessed tool results can resume.
+  if (endsWithToolResults(chatHistory)) renderTurnActions(["continue"], null);
+
+  /** Shared body: ground the turn in the editor context, run the tool loop.
+   * `resume` continues a turn that stopped on unassessed tool results (#451). */
+  async function submitChat(ask: string, opts: { label?: string; resume?: boolean } = {}): Promise<void> {
     if (chatBusy) return;
     if (!screenOpts.demo && !isAiConfigured()) {
       // AI not set up yet — send them to the provider settings the ⋯ menu opens.
       location.hash = "#/settings/ai";
       return;
     }
+    clearTurnActions();
     appendChat("user", opts.label ?? ask);
 
     // Ground the turn in the current editor + latest compile. Include the
@@ -1522,17 +1688,27 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     // little benefit, so the wllama path drops it (it also gets the condensed
     // system spec — see generate.ts).
     const cpuMode = !demoProvider && getAiConfig().kind === "wllama";
-    const ctx = editorContext(
-      lastDisassembly && !cpuMode
-        ? { source: codeEl.value, compileSummary: lastCompileSummary, disassembly: lastDisassembly }
-        : { source: codeEl.value, compileSummary: lastCompileSummary },
-    );
-    chatHistory.push({ role: "user", content: `${ctx}\n\nUser: ${ask}` });
+    if (opts.resume && endsWithToolResults(chatHistory)) {
+      // Deliberate continuation: the model picks up at the tool results it never
+      // saw — nothing already executed is re-run.
+      pushUserAsk(chatHistory, CONTINUE_NOTE);
+    } else {
+      const liveUniforms = liveUniformsContext();
+      const ctx = editorContext({
+        source: codeEl.value,
+        compileSummary: lastCompileSummary,
+        ...(lastDisassembly && !cpuMode ? { disassembly: lastDisassembly } : {}),
+        ...(liveUniforms ? { liveUniforms } : {}),
+      });
+      pushUserAsk(chatHistory, `${ctx}\n\nUser: ${ask}`);
+    }
 
     chatBusy = true;
     chatSend.disabled = true;
     chatTurns += 1;
     let turnError: string | undefined;
+    let turnEnd: AgentTurnEnd = "complete";
+    let scripted = false;
     setChatStatus("Thinking…");
 
     // Per-device builtin cost listing (from the user's calibrated board if any,
@@ -1546,7 +1722,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     }
 
     try {
-      const finalText = await chatTurn(
+      const result: ChatTurnResult = await runChatTurn(
         chatHistory,
         {
         signal: chatAbort.signal,
@@ -1558,6 +1734,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
           // Streaming already surfaced the summary live; keep it sticky through
           // the fast client-side compile instead of flicking to "Compiling…".
           if (summary) setChatStatus(summary);
+          scripted = true;
           codeEl.value = source;
           paintHighlight();
           syncScroll();
@@ -1565,7 +1742,10 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
           await compileNow();
           // Feed disassembly back only to capable models (see cpuMode above) — the
           // CPU path keeps every tool round lean.
-          return `Compile result: ${lastCompileSummary}${
+          // Kept live values that now differ from the new defaults (#452): the
+          // one case where a compiled source edit changes nothing on screen.
+          const kept = lastCompileSummary.startsWith("OK") ? retainedLiveNote(lastUniforms, panel.values()) : "";
+          return `Compile result: ${lastCompileSummary}${kept ? `\n\n${kept}` : ""}${
             lastDisassembly && !cpuMode ? `\n\nDisassembly:\n${lastDisassembly}` : ""
           }`;
         },
@@ -1608,6 +1788,10 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
               }),
             }
           : {}),
+        onSetLiveUniforms: async (call) => {
+          setChatStatus("Setting live values…");
+          return applyLiveUniforms(call);
+        },
         onToolUse: () => undefined,
         onTrace: onChatTrace,
         },
@@ -1616,10 +1800,18 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
         demoProvider,
       );
       clearChatStatus();
-      appendChat("assistant", finalText || "(done)");
+      turnEnd = result.outcome;
+      // An exhausted round cap is NOT a finished answer (#451): say what is
+      // unresolved instead of recycling interim narration as the reply.
+      if (result.outcome === "exhausted") {
+        appendChat("assistant", describeExhaustedTurn(result)).classList.add("fxedit-msg--warn");
+      } else {
+        appendChat("assistant", result.text || "(done)");
+      }
     } catch (e) {
       clearChatStatus();
       turnError = msg(e);
+      turnEnd = "error";
       appendChat("assistant", `AI error: ${turnError}`);
     } finally {
       chatBusy = false;
@@ -1635,8 +1827,10 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
         turns: chatTurns,
         errored: turnError !== undefined,
         lastError: turnError,
+        outcome: turnEnd,
         messages: chatHistory,
       });
+      void showTurnActions(turnEnd, turnError, scripted);
     }
   }
 
@@ -1670,6 +1864,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     try {
       await c.submitEffect(effectId, bytecode, true);
       lastPushedFxb = bytecode; // flashed — auto-push dedupes against this
+      if (heldDraft !== null && bytesEqual(heldDraft, bytecode)) heldDraft = null;
       if (panel.values().length > 0) c.setUniforms(panel.values());
       // Remember this effect now lives on the connected device (green badge +
       // the "On <device>" folder in the effects browser, FUG-110).

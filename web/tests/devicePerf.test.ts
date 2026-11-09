@@ -10,6 +10,7 @@ import { test } from "node:test";
 
 import {
   canMeasure,
+  capturePopulations,
   measureOnDevice,
   perfDeviceFromClient,
   resolveUniforms,
@@ -108,13 +109,15 @@ test("measures a window stream on the fixture and restores perf to OFF", async (
   assert.equal(r.deployed, true);
   assert.deepEqual(dev.log, ["submit fx1", "perf FULL 0", "perf OFF 0"]);
   assert.deepEqual(dev.uniforms, [[{ slot: 0, value: [3] }]]);
-  // 2 s / 0.5 s = 4 windows of 3 frames; the discarded pre-upload window is absent.
-  assert.match(r.text, /Measured ON THE FIXTURE \(4 windows, 12 frames, 128 LEDs\)/);
-  assert.match(r.text, /frame mean 5\.\d\d ms, p95 5\.\d\d ms, max 5\.20 ms/); // +1 ms show
+  // 2 s / 0.5 s = 4 polls of 3 ticks; the discarded pre-upload window is absent.
+  assert.match(r.text, /Measured ON THE FIXTURE \(4 polls, 128 LEDs\)/);
+  assert.match(r.text, /Rolling windows \(4\): mean 5\.0[23] ms/);
   assert.match(r.text, /per-window means 5\.00 \/ 5\.20 \/ 4\.80 \/ 5\.10 ms/);
+  assert.match(r.text, /tick samples \(12, a SUBSET[^)]*\): mean 5\.\d\d ms, p95 5\.\d\d ms, max 5\.20 ms/); // +1 ms show
   assert.match(r.text, /source: measured/);
   assert.match(r.text, /was running "other"; it now runs this workspace's effect/);
-  assert.match(r.text, /measured is \+\d+% — OUTSIDE the band\. Trust the measurement/);
+  assert.match(r.text, /measured rolling-window mean \(5\.0[23] ms\) is \+\d+% — OUTSIDE the band\. Trust the measurement/);
+  assert.ok(r.budgetFraction !== undefined && r.budgetFraction > 0.3 && r.budgetFraction < 0.31, String(r.budgetFraction));
   assert.ok(!r.text.includes("99"), "the pre-upload window must not leak into the stats");
 });
 
@@ -199,4 +202,83 @@ test("uniform operating points resolve by name, clamp to width, and report unkno
     { slot: 2, value: [1, 0, 1] },
   ]);
   assert.deepEqual(unknown, ["nope"]);
+});
+
+// -- #453: sample populations are labelled, never mixed ---------------------------
+
+/** A window whose rolling summary (mean/max over the device's buffered frames)
+ * differs from its few returned ticks, as on real firmware (≤4 ticks per reply,
+ * ≤16 frames in the ring). */
+function windowOf(
+  meanMs: number,
+  tickMs: number[],
+  extra: Partial<PerfReportMessage> = {},
+  maxMs = meanMs,
+): PerfReportMessage {
+  const r = report("fx1", meanMs, 0);
+  const cyc = (v: number) => (v / 1000) * HZ;
+  return {
+    ...r,
+    frameCyclesMean: cyc(meanMs),
+    frameCyclesMax: cyc(maxMs),
+    showCyclesMean: 0,
+    ticks: tickMs.map((v, i) => ({ ...report("fx1", v, 1).ticks[0]!, seq: i, frameCycles: cyc(v), showCycles: 0 })),
+    ...extra,
+  };
+}
+
+test("capped replies: tick percentiles are labelled a SUBSET, not full-capture guarantees", () => {
+  const windows = [windowOf(30, [29, 29.5, 30, 30.5]), windowOf(30, [29, 30, 30, 30.5]), windowOf(31, [30, 30, 31, 31])];
+  const text = summarizeWindows(windows, { table, calibrated: false });
+  assert.match(text, /Returned per-frame tick samples \(12, a SUBSET/);
+  assert.match(text, /Sample statistics only — not a full-capture p95\/max/);
+  assert.doesNotMatch(text, /\d+ frames\)/, "no headline that counts tick samples as observed frames");
+});
+
+test("a spike in the rolling windows but absent from the ticks is still reported", () => {
+  // The device saw a 52 ms frame (window max, 3 overruns) between the returned ticks.
+  const windows = [windowOf(30, [29, 30, 30, 30]), windowOf(34.6, [30, 30, 30.5, 30.5], { overruns: 3 }, 52)];
+  const text = summarizeWindows(windows, { table, calibrated: false });
+  assert.match(text, /largest window max 52\.00 ms/);
+  assert.match(text, /tick samples \(8,[^)]*\): mean [\d.]+ ms, p95 [\d.]+ ms, max 30\.50 ms/);
+  assert.match(text, /overruns 3, dropped rendering frames 0/);
+});
+
+test("unequal windows: one documented population for the headline, the context and the estimate", () => {
+  // Window means 30 / 34.64 ms with few ticks: the old output mixed a 29.69 ms
+  // tick mean with a 30.45 ms context mean. Now every comparison uses the
+  // (unweighted) rolling-window mean, and says so.
+  const windows = [windowOf(30, [29.5, 29.6]), windowOf(34.64, [29.7, 30.3, 30.57])];
+  const text = summarizeWindows(windows, {
+    table,
+    calibrated: false,
+    predict: () => ({ totalMs: 32, lowMs: 30, highMs: 34 }),
+  });
+  const mean = ((30 + 34.64) / 2).toFixed(2); // 32.32
+  assert.match(text, new RegExp(`Rolling windows \\(2\\): mean ${mean} ms \\(unweighted mean of the window means; window sizes are not reported\\)`));
+  assert.match(text, new RegExp(`Frame time: ${mean} ms of [\\d.]+ ms budget \\(\\d+% consumed\\) — unweighted mean of 2 rolling-window means`));
+  assert.match(text, new RegExp(`measured rolling-window mean \\(${mean} ms\\) is \\+1% — inside the band`));
+  const pop = capturePopulations(windows, HZ);
+  assert.equal(pop.windows, 2);
+  assert.equal(pop.tickMs.length, 5);
+});
+
+test("dropped measurement samples are summed and surfaced apart from dropped rendering frames", () => {
+  const windows = [
+    windowOf(30, [30, 30], { samplesDropped: 5, droppedFrames: 1 }),
+    windowOf(30, [30, 30], { samplesDropped: 7 }),
+  ];
+  const text = summarizeWindows(windows, { table, calibrated: false });
+  assert.match(text, /Measurement samples dropped \(perf-ring overflow, NOT dropped rendering frames\): 12/);
+  assert.match(text, /dropped rendering frames 1/);
+  // The perf-context block carries the capture total (not just the last window's).
+  assert.match(text, /Measurement samples dropped \(perf data lost, not rendering drops\): 12 — the statistics may miss frames/);
+  assert.equal(capturePopulations(windows, HZ).samplesDropped, 12);
+});
+
+test("no ticks: the window-mean fallback is not presented as per-frame statistics", () => {
+  const text = summarizeWindows([windowOf(20, []), windowOf(22, [])], { table, calibrated: false });
+  assert.match(text, /No per-frame tick samples were returned \(window summaries only\)/);
+  assert.doesNotMatch(text, /p95/);
+  assert.match(text, /Measurement samples dropped \(perf-ring overflow\): 0\./);
 });

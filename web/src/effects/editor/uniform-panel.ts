@@ -56,6 +56,20 @@ export class UniformPanel {
     this.onChange(slot, s.value);
   }
 
+  /**
+   * Set one slot's live value and move its control, WITHOUT firing onChange:
+   * the caller decides which sinks get it (the agent's set_live_uniforms tool
+   * applies the preview itself and sends to the device only when that is
+   * honest, #452). Returns false for an unknown slot.
+   */
+  setLive(slot: number, value: number[]): boolean {
+    const s = this.slots.find((x) => x.uniform.slot === slot);
+    if (s === undefined) return false;
+    s.value = value.slice();
+    this.setters.get(slot)?.(s.value);
+    return true;
+  }
+
   /** Overwrite live values (e.g. from device getEffectUniforms hydration). The
    * device reports a wide uniform (mat3/mat4) as consecutive ≤4-float slot
    * chunks: those are reassembled against the manifest first. */
