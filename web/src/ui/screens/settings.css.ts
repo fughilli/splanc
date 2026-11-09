@@ -222,4 +222,39 @@ const CSS = `
   justify-content: flex-end;
   gap: var(--sp-2);
 }
+
+/* Failed-connect panel (#454): stable guidance with explicit Retry / Change URL
+   instead of a toast per scan tick. Sits under the hint, above the bar. */
+.dbgconn-fail {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + var(--sp-4) + 2.2rem);
+  left: var(--sp-4);
+  right: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-card);
+  border: 1px solid rgba(248, 113, 113, 0.55);
+  background: rgba(16, 16, 20, 0.92);
+  color: #fff;
+  backdrop-filter: blur(8px);
+}
+.dbgconn-fail[hidden],
+.dbgconn-fail [hidden] {
+  display: none;
+}
+.dbgconn-fail-title {
+  font-weight: 600;
+}
+.dbgconn-fail-detail {
+  font-size: var(--f-caption);
+  color: rgba(255, 255, 255, 0.82);
+}
+.dbgconn-fail-actions {
+  flex-wrap: wrap;
+}
+a.dbgconn-health {
+  text-decoration: none;
+}
 `;
