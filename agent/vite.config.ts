@@ -7,11 +7,41 @@
  *                            tests/*.test.ts, for node:test
  *
  * The web app's protocol/effects modules are pulled in by relative import.
+ *
+ * `virtual:stage-view` is the demo stage's browser code (src/stage/view.ts: the
+ * app's 3D map view), built here as one minified script and imported as text,
+ * so the stage server can serve it with no extra file in the bundle.
  */
 
 import { readdirSync } from "node:fs";
 
-import { defineConfig } from "vite";
+import { build, defineConfig, type Plugin } from "vite";
+
+const STAGE_VIEW = "virtual:stage-view";
+
+function stageView(): Plugin {
+  return {
+    name: "stage-view",
+    resolveId: (id) => (id === STAGE_VIEW ? `\0${STAGE_VIEW}` : null),
+    async load(id) {
+      if (id !== `\0${STAGE_VIEW}`) return null;
+      const out = await build({
+        configFile: false,
+        logLevel: "warn",
+        build: {
+          write: false,
+          minify: true,
+          target: "es2020",
+          lib: { entry: "src/stage/view.ts", formats: ["iife"], name: "SplancStageView", fileName: () => "view.js" },
+        },
+      });
+      const outputs = (Array.isArray(out) ? out : [out]) as { output: { type: string; code?: string }[] }[];
+      const code = outputs.flatMap((o) => o.output).find((c) => c.type === "chunk")?.code;
+      if (!code) throw new Error("stage view: no output");
+      return `export default ${JSON.stringify(code)};`;
+    },
+  };
+}
 
 export default defineConfig(({ mode }) => {
   const test = mode === "test";
@@ -29,6 +59,7 @@ export default defineConfig(({ mode }) => {
         );
   const single = !test || one !== undefined;
   return {
+    plugins: [stageView()],
     build: {
       ssr: true,
       target: "node20",

@@ -31,6 +31,7 @@ import { ms, setProgressSink } from "./progress";
 import { RelayHost } from "./relayHost";
 import { localLibrary } from "./libraryLocal";
 import { createServer, VERSION } from "./server";
+import { runStage } from "./stage/server";
 import { readBundleInfo } from "./toolchain";
 
 const log = (...a: unknown[]) => console.error("[splanc-agent]", ...a);
@@ -249,6 +250,56 @@ async function bridgeCtl(p: Parsed): Promise<number> {
   return (JSON.parse(reply) as { ok?: boolean }).ok ? 0 : 1;
 }
 
+/** `splanc-agent stage`: the demo-night TV screen + voice agent (src/stage/). */
+async function runStageCmd(p: Parsed, root: string): Promise<void> {
+  const keyFile = flag(p, "api-key-file");
+  const apiKey = keyFile ? readFileSync(keyFile, "utf8").trim() : process.env["ANTHROPIC_API_KEY"];
+  if (!apiKey) throw new Error("stage needs a Claude API key: set ANTHROPIC_API_KEY, or pass --api-key-file <file>");
+  const effort = flag(p, "effort");
+  if (effort !== undefined && !["low", "medium", "high"].includes(effort)) throw new Error("--effort is low, medium or high");
+  const hub = makeHub(p, root);
+  setFxHostRoot(root);
+  setProgressSink(log);
+  const server = createServer(hub, { library: localLibrary() });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a);
+  const client = new Client({ name: "splanc-stage", version: VERSION });
+  await client.connect(b);
+  const skillText = ["SKILL.md", "effect-language.md", "uniforms-and-ui.md", "geometry.md"]
+    .map((f) => skill(root, f === "SKILL.md" ? undefined : f))
+    .join("\n\n");
+  const stage = await runStage({
+    hub,
+    client,
+    skill: skillText,
+    port: Number(flag(p, "port") ?? 7420),
+    lan: flag(p, "lan") !== undefined,
+    apiKey,
+    ...(effort ? { effort: effort as "low" | "medium" | "high" } : {}),
+    log,
+  });
+  log(`stage: open ${stage.url} (full screen on the TV: Ctrl+Cmd+F in Chrome)`);
+  hub.ready().then(
+    async () => {
+      const ps = await hub.players();
+      log(`players: ${ps.map((x) => `${x.name} (${x.host})`).join(", ") || "none yet"}`);
+      await hub.warm();
+    },
+    (e: Error) => log(`discovery: ${e.message}`),
+  );
+  if (flag(p, "no-open") === undefined && process.platform === "darwin") {
+    const { spawn } = await import("node:child_process");
+    spawn("open", [stage.url], { stdio: "ignore", detached: true }).unref();
+  }
+  const stop = () => {
+    stage.close();
+    hub.close();
+    process.exit(0);
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+}
+
 /** `splanc-agent relay`: host the relay yourself (docs/guides/relay-tailscale.md). */
 async function runRelay(p: Parsed): Promise<void> {
   const dataDir = flag(p, "data-dir") ?? join(defaultStateDir(), "relay");
@@ -282,6 +333,7 @@ async function main(): Promise<void> {
   }
   if (p.positional[0] === "bridge") return runBridge(p, root);
   if (p.positional[0] === "relay") return runRelay(p);
+  if (p.positional[0] === "stage") return runStageCmd(p, root);
   if (p.positional[0] === "bridge-ctl") {
     process.exitCode = await bridgeCtl(p);
     return;

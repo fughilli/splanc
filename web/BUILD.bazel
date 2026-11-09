@@ -107,6 +107,15 @@ copy_to_bin(
         "src/net/uniformWire.ts",  # wide (mat3/mat4) uniforms: wire chunking + reassembly
         "src/net/wifiPolicy.ts",  # Wi-Fi rejoin policy (get/set_wifi_policy)
         "src/store/costTableStore.ts",  # defaultCostTable (IndexedDB only inside methods)
+        # The 3D map view (and what it imports), for the demo stage's fixture
+        # previews (agent/src/stage/view.ts, bundled for the browser).
+        "src/geom/fit.ts",
+        "src/geom/inferred.ts",
+        "src/geom/mesh.ts",
+        "src/store/appearance.ts",
+        "src/topology/extract.ts",
+        "src/topology/relax.ts",
+        "src/ui/mapview.ts",
         "tsconfig.json",  # rolldown resolves these modules' tsconfig in the bin tree
     ],
 )
