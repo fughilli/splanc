@@ -26,16 +26,30 @@
  *   solver     crate version + SHA-256 of the exact wasm build
  *   app/device build + browser/device info
  *   frames     optional downsampled camera frames (opt-in; big)
+ *   link       (v2+) mapping optical-link telemetry: negotiated symbols / bit
+ *              period, selected exposure over time, frame timing + dropouts,
+ *              decode coverage over time and decoded-ID checks
+ *              (cv/linkTelemetry.ts; `bazel run //web:link_bench -- <file>`)
+ *
+ * Versions: 1 = the original layout; 2 adds `link`. Every v2 field is
+ * additive, so a v1 bundle is still a valid input everywhere (readers treat a
+ * missing `link` as "not recorded" — see bundleLink) and the solver replay,
+ * which ignores unknown keys, reads both.
  */
 
 import type { CodeParams, OutputMap } from "@ledmapper/protocol";
 
 import type { SolveDiag, SolveProblem } from "./agent";
 import { assessMap, better, decideFinal, observableLeds, type Assessment, type FinalDecision } from "./degeneracy";
+import type { LinkTelemetrySnapshot } from "../cv/linkTelemetry";
 import type { CaptureObservations } from "../store/mapStore";
 
 export const BUNDLE_FORMAT = "splanc-capture-bundle";
-export const BUNDLE_VERSION = 1;
+/** The version this build writes. */
+export const BUNDLE_VERSION = 2;
+/** Every version this build reads (older ones lack the later, additive fields). */
+export const SUPPORTED_BUNDLE_VERSIONS = [1, 2] as const;
+export type BundleVersion = (typeof SUPPORTED_BUNDLE_VERSIONS)[number];
 export const BUNDLE_EXT = ".splanc-capture.json";
 
 /** One live-preview (interim) solve. */
@@ -171,7 +185,7 @@ export interface BundleFrame {
 
 export interface CaptureBundle {
   format: typeof BUNDLE_FORMAT;
-  version: typeof BUNDLE_VERSION;
+  version: BundleVersion;
   id: string;
   createdAt: string;
   outcome: FinalDecision["outcome"];
@@ -197,8 +211,23 @@ export interface CaptureBundle {
   /** Supplemental scans: the joint re-solve / fusion outcome (summary only). */
   supplement: { method: string; registered: boolean; summary: string; jointError: string | null } | null;
   frames: BundleFrame[];
+  /** v2+: mapping optical-link telemetry (absent on v1; null when the run
+   * recorded none, e.g. a bundle rebuilt from a saved map). */
+  link?: LinkTelemetrySnapshot | null;
   /** Provenance caveats (e.g. rebuilt from a saved library map). */
   note?: string;
+}
+
+/** Whether `b` is a capture bundle this build can read (any supported version). */
+export function isCaptureBundle(b: unknown): b is CaptureBundle {
+  if (b === null || typeof b !== "object") return false;
+  const o = b as { format?: unknown; version?: unknown };
+  return o.format === BUNDLE_FORMAT && (SUPPORTED_BUNDLE_VERSIONS as readonly unknown[]).includes(o.version);
+}
+
+/** The bundle's link telemetry, or null (v1 bundles and runs that recorded none). */
+export function bundleLink(b: Pick<CaptureBundle, "link">): LinkTelemetrySnapshot | null {
+  return b.link ?? null;
 }
 
 export function bundleSummary(b: Pick<CaptureBundle, "outcome" | "decision" | "final" | "capture">): string {
@@ -238,6 +267,7 @@ export interface BundleInputs {
   final: CaptureBundle["final"];
   supplement: CaptureBundle["supplement"];
   frames: BundleFrame[];
+  link?: LinkTelemetrySnapshot | null;
   note?: string;
 }
 
@@ -260,6 +290,7 @@ export function buildBundle(i: BundleInputs): CaptureBundle {
     final: i.final,
     supplement: i.supplement,
     frames: i.frames,
+    link: i.link ?? null,
     ...(i.note !== undefined ? { note: i.note } : {}),
   } satisfies CaptureBundle;
   return { ...base, summary: bundleSummary(base) };

@@ -26,6 +26,7 @@ import {
   recommendConfig,
 } from "../../cv/exposure";
 import { CapturePerf, formatPerfLine, formatPhaseLine } from "../../cv/capturePerf";
+import { LinkTelemetry, type LinkTelemetrySnapshot } from "../../cv/linkTelemetry";
 import { CvPipeline } from "../../cv/pipeline";
 import { DetectorGL } from "../../cv/detect";
 import {
@@ -692,6 +693,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   let runSupplement: CaptureBundle["supplement"] = null;
   // Opt-in downsampled camera frames for the bundle (getUserMedia path only).
   let bundleFrames: BundleFrame[] = [];
+  // Mapping optical-link telemetry for the bundle (#448, cv/linkTelemetry):
+  // negotiated symbols/rate, exposure, frame timing, coverage over time.
+  // `runLinkSnapshot` freezes it when the capture stops (the solve after it
+  // must not stretch the timeline).
+  let runLink: LinkTelemetry | null = null;
+  let runLinkSnapshot: LinkTelemetrySnapshot | null = null;
   // Hot-loop + live-solver perf counters for the current capture (cv/capturePerf).
   let perf: CapturePerf | null = null;
   let localDetections: DetectionRecord[] = [];
@@ -1274,6 +1281,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           // buffers with data that only the phone's solver can use.
           if (c.hostSolverBenchMs !== null) c.sendDetections(records);
           localDetections.push(...records);
+          runLink?.recordsEmitted(records);
         });
         return pl;
       };
@@ -1298,6 +1306,13 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
 
       capturing = true;
       startedAt = performance.now();
+      runLink = new LinkTelemetry(startedAt);
+      runLinkSnapshot = null;
+      runLink.config(startedAt, params, "start", monitor.frameIntervalMs());
+      {
+        const pl = pipeline;
+        runLink.attachDecoder(() => pl.stats);
+      }
       interimLog = new InterimLog();
       runProblem = null;
       runFinal = { map: null, diag: null, error: null, assessment: null, timing: null };
@@ -1375,6 +1390,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           blobs: blobPopulation(blobs),
         });
         lastAmbient = f.ambientIntensity ?? lastAmbient;
+        runLink?.frame(f.tCaptureMs, clipped);
 
         if (clipped) {
           truncatedFrames++;
@@ -1691,6 +1707,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             epoch = ps.patternClockEpoch;
             pipeline = makePipeline(params, epoch);
             pipeline.updateSolved(liveLeds);
+            const pl = pipeline;
+            runLink?.attachDecoder(() => pl.stats);
+            runLink?.config(performance.now(), params, "reconfigure", monitor.frameIntervalMs());
             guideEl.textContent = diffuse
               ? `diffuse: phase ${phaseIdx + 1}/${phaseTotal} (stride ${strideSpacing}) · ${params.symbols} symbols`
               : `code renegotiated: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame` +
@@ -1852,6 +1871,18 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           detector.threshold = adjustThreshold(detector.threshold, report.blobCount, ledCount);
           nativeSource?.setDetectParams({ threshold: detector.threshold });
         }
+        // Link telemetry: the settings in effect over the window this report
+        // measured (before this tick's servo steps change them).
+        runLink?.exposure(performance.now(), {
+          exposure: servoExposure || manualMode || initialExposure !== null ? servoedExposure : null,
+          brightness: params.brightness ?? null,
+          threshold: detector.threshold,
+          frameIntervalMs: report.frameIntervalMs,
+          meanLuma: report.meanLuma,
+          clipFrac: report.clipFrac,
+          blobCount: report.blobCount,
+          marginEma: pipeline.stats.marginEma,
+        });
         if (renegotiating) return;
         const wantBit = forcedBitMs === null ? planReconfigure(params.bitPeriodMs, report.frameIntervalMs) : null;
         const wantSym =
@@ -1987,6 +2018,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     const c = client();
     if (c === null) return;
     capturing = false;
+    runLinkSnapshot = runLink?.snapshot(performance.now()) ?? null;
     manualHooks = null;
     diffuseHook = null;
     strideHook = null;
@@ -2390,6 +2422,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         final: runFinal,
         supplement: runSupplement,
         frames: bundleFrames,
+        link: runLinkSnapshot ?? runLink?.snapshot(performance.now()) ?? null,
       });
       const meta = await captureBundleStore.save(bundle);
       if (meta !== null) {
