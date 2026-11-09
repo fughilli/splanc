@@ -14,6 +14,15 @@
  *    optimizing / continue / push anyway).
  * A manual compile with auto-push on is the user's own call and is not held.
  *
+ * Only a TRUSTED reading counts as "over budget": an on-device measurement, or
+ * an estimate from a CALIBRATED cost model — a stored cost table whose origin
+ * is an on-device benchmark of the user's board (StoredCostTable.origin ===
+ * "calibrated", the notion effects/fleet.ts uses). The shipped default
+ * model is uncalibrated: its over-budget estimate does not hold the draft back
+ * or mark it "not ready". The effect is pushed normally, and the agent and the
+ * operator are told to read the measured number instead (owner decision on
+ * PR #462).
+ *
  * Pure (no DOM); the editor feeds it the budget-bar estimate (or a measurement).
  */
 
@@ -23,6 +32,14 @@ export interface DraftBudget {
   fraction: number;
   /** "estimate" = the offline cost model (the budget bar); "measured" = device. */
   source: "estimate" | "measured";
+  /** For an estimate: the cost table was calibrated on the user's board. */
+  calibrated?: boolean;
+}
+
+/** A reading the over-budget decisions may act on: a measurement, or an
+ * estimate from a calibrated cost model. */
+export function trustedBudget(b: DraftBudget | null | undefined): boolean {
+  return !!b && (b.source === "measured" || b.calibrated === true);
 }
 
 export type DraftVerdict = "within" | "over" | "unknown";
@@ -37,7 +54,23 @@ export function draftVerdict(b: DraftBudget | null | undefined): DraftVerdict {
  * agent-driven, known-over-budget draft is held; unknown budgets are not (an
  * estimator failure must not silently stop pushes). */
 export function holdAgentAutoPush(s: { agentTurn: boolean; budget: DraftBudget | null | undefined }): boolean {
-  return s.agentTurn && draftVerdict(s.budget) === "over";
+  return s.agentTurn && trustedBudget(s.budget) && draftVerdict(s.budget) === "over";
+}
+
+/**
+ * For the agent (set_script result): an over-budget estimate from the
+ * UNCALIBRATED default model is not a verdict. Say so, and point at the
+ * measurement. Empty string when there is nothing to add.
+ */
+export function uncalibratedEstimateNote(b: DraftBudget | null | undefined, connected: boolean): string {
+  if (!b || trustedBudget(b) || draftVerdict(b) !== "over") return "";
+  return (
+    `Budget estimate: ${pct(b.fraction)} of the frame budget, from the UNCALIBRATED default cost model ` +
+    "(this board has no calibration), so it is not a verdict and the effect was not held back. " +
+    (connected
+      ? "Call measure_on_device and treat the measured number as what counts."
+      : "No fixture is connected to measure it; say the estimate is uncalibrated rather than calling the effect too slow.")
+  );
 }
 
 /** How the agent turn ended, from the editor's point of view. */
@@ -46,7 +79,7 @@ export type AgentTurnEnd = "complete" | "finished-after-script" | "exhausted" | 
 export type DraftAction = "optimize" | "continue" | "push";
 
 export interface DraftNotice {
-  tone: "warn" | "error";
+  tone: "info" | "warn" | "error";
   text: string;
   actions: DraftAction[];
 }
@@ -73,13 +106,27 @@ export function draftNotice(s: {
 }): DraftNotice | null {
   const verdict = draftVerdict(s.budget);
   const stalled = s.end === "error" || s.end === "exhausted" || s.end === "cancelled";
+  if (verdict === "over" && !trustedBudget(s.budget)) {
+    // Uncalibrated estimate: inform, never "not ready" (the measurement decides).
+    return {
+      tone: "info",
+      text:
+        `The offline estimate is ${pct(s.budget!.fraction)} of the frame budget, but this board's cost model is ` +
+        "uncalibrated, so it is only a rough guide" +
+        (s.onDevice ? "; the effect is playing on the fixture. " : ". ") +
+        (s.connected
+          ? "The measured number (measure_on_device) is what counts."
+          : "Connect a fixture to measure it."),
+      actions: [],
+    };
+  }
   if (verdict !== "over") {
     // A stalled turn with an in-budget (or unknown) draft is already covered by
     // the error / exhausted message itself; nothing budget-specific to add.
     return null;
   }
   const b = s.budget!;
-  const what = `${pct(b.fraction)} of the frame budget (${b.source === "measured" ? "measured" : "estimate"})`;
+  const what = `${pct(b.fraction)} of the frame budget (${b.source === "measured" ? "measured" : "calibrated estimate"})`;
   const device = !s.connected
     ? "No fixture is connected."
     : s.onDevice
@@ -116,7 +163,7 @@ export function draftNotice(s: {
 export function optimizeAsk(b: DraftBudget): string {
   return (
     `The current effect is at ${pct(b.fraction)} of the fixture's frame budget (${
-      b.source === "measured" ? "measured" : "offline estimate"
+      b.source === "measured" ? "measured" : b.calibrated ? "calibrated offline estimate" : "uncalibrated offline estimate"
     }). Optimize it to fit within the budget while keeping the look. Check with estimate_performance ` +
     "(and measure_on_device when a fixture is connected) and report the final number honestly, including " +
     "if it is still over budget."

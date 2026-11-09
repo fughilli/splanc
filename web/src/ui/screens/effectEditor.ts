@@ -69,6 +69,7 @@ import {
   draftNotice,
   holdAgentAutoPush,
   optimizeAsk,
+  uncalibratedEstimateNote,
   type AgentTurnEnd,
   type DraftAction,
   type DraftBudget,
@@ -569,12 +570,15 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     const hit = draftBudgets.get(bytecode);
     if (hit) return hit;
     try {
-      const { table } = await costTableStore.resolveTable();
+      // "Calibrated" = a stored cost table whose origin is an on-device
+      // benchmark of the user's board (StoredCostTable.origin, the notion the
+      // estimation fleet uses), not the shipped default model.
+      const { table, stored } = await costTableStore.resolveTable();
       const model: BudgetModel = table.budget ?? DEFAULT_BUDGET_MODEL;
       const ledCount = currentMap ? currentMap.leds.length : 256;
       const est = estimateFrameTime({ bytecode, ledCount, table });
       const status = budgetFromEstimate(est, model);
-      const b = { fraction: status.fraction, source: "estimate" as const, status };
+      const b = { fraction: status.fraction, source: "estimate" as const, calibrated: stored?.origin === "calibrated", status };
       draftBudgets.set(bytecode, b);
       return b;
     } catch {
@@ -1318,7 +1322,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
         heldDraft = bytecode;
         devStatus.textContent =
           `Auto-push held: the AI draft is at ${Math.round((budget?.fraction ?? 0) * 100)}% of the frame budget ` +
-          "(estimate) — still optimizing; the device keeps the previous effect.";
+          "(calibrated estimate) — still optimizing; the device keeps the previous effect.";
         return;
       }
     }
@@ -1659,7 +1663,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
         : null;
     if (notice) {
       const row = appendChat("assistant", notice.text);
-      row.classList.add(notice.tone === "error" ? "fxedit-msg--alert" : "fxedit-msg--warn");
+      if (notice.tone !== "info") row.classList.add(notice.tone === "error" ? "fxedit-msg--alert" : "fxedit-msg--warn");
       persistChat();
       renderTurnActions(notice.actions, budget);
     } else if (canResume && stalled) {
@@ -1745,7 +1749,16 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
           // Kept live values that now differ from the new defaults (#452): the
           // one case where a compiled source edit changes nothing on screen.
           const kept = lastCompileSummary.startsWith("OK") ? retainedLiveNote(lastUniforms, panel.values()) : "";
-          return `Compile result: ${lastCompileSummary}${kept ? `\n\n${kept}` : ""}${
+          // An over-budget estimate from an uncalibrated model is not a verdict:
+          // tell the agent to measure (the draft was pushed normally).
+          const uncal =
+            lastCompileSummary.startsWith("OK") && lastBytecode
+              ? uncalibratedEstimateNote(
+                  measuredBudgets.get(lastBytecode) ?? (await draftBudgetOf(lastBytecode)),
+                  !screenOpts.demo && canMeasure(perfDeviceFromClient(appState.client)),
+                )
+              : "";
+          return `Compile result: ${lastCompileSummary}${kept ? `\n\n${kept}` : ""}${uncal ? `\n\n${uncal}` : ""}${
             lastDisassembly && !cpuMode ? `\n\nDisassembly:\n${lastDisassembly}` : ""
           }`;
         },
