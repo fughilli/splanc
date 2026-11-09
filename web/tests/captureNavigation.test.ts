@@ -77,19 +77,22 @@ class FakeHistory {
     replaceState(state: unknown): void {
       h.current.state = state;
     },
+    // Traversal is asynchronous, as in a browser: location still shows the old
+    // entry until a later task, and only then does hashchange fire.
     back(): void {
-      if (h.index === 0) return;
-      const before = h.current.hash;
-      h.index--;
-      if (h.current.hash !== before) h.fire();
+      setImmediate(() => h.traverse(-1));
     },
     forward(): void {
-      if (h.index >= h.entries.length - 1) return;
-      const before = h.current.hash;
-      h.index++;
-      if (h.current.hash !== before) h.fire();
+      setImmediate(() => h.traverse(1));
     },
   }))(this);
+  traverse(delta: number): void {
+    const to = this.index + delta;
+    if (to < 0 || to >= this.entries.length) return;
+    const before = this.current.hash;
+    this.index = to;
+    if (this.current.hash !== before) this.win.dispatchEvent(new Event("hashchange"));
+  }
   hashes(): string[] {
     return this.entries.map((e) => e.hash);
   }
@@ -182,6 +185,22 @@ test("leave() back to the origin pops the one-shot entry; Forward can't re-enter
   await settle();
   assert.equal(nav.location.hash, "#/maps");
   assert.ok(!log.slice(3).includes("once"), `re-mounted: ${log.join(",")}`);
+});
+
+test("navigating right after leave() pops back still opens the screen (cancel, then a new capture)", async () => {
+  nav = installHistory("#/maps");
+  const log: string[] = [];
+  const r = makeRouter(log);
+  await settle();
+  r.navigate("/once");
+  await settle();
+  r.leave("/maps"); // pops back to /maps, asynchronously
+  r.navigate("/once"); // before that traversal has landed
+  await settle();
+  assert.equal(nav.location.hash, "#/once");
+  assert.deepEqual(log, ["maps", "once", "maps", "once"]);
+  // The new entry is a fresh one: not stamped as left.
+  assert.equal((nav.history.state as Record<string, unknown> | null)?.["splancLeftTo"], undefined);
 });
 
 test("leave() elsewhere replaces the one-shot entry, so Back skips it", async () => {
