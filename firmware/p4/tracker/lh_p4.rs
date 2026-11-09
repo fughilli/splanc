@@ -13,6 +13,11 @@
 //! acceleration (world).
 //! The kernel allocates (scene records, per-device queues), so this crate brings a
 //! global allocator over the P4's PSRAM (heap_caps, MALLOC_CAP_SPIRAM).
+//!
+//! Whether the pose is a lock at all (#446) is lh_health's call, on the device clock: the
+//! kernel publishes poses only when light comes in, so after fast motion or an occlusion the
+//! newest pose can be seconds old while the kernel still says "tracking". `health` in the
+//! status is what the player shows (tracker_ok / tracker_state) and sends out.
 #![no_std]
 
 extern crate alloc;
@@ -23,6 +28,7 @@ use alloc::vec::Vec;
 use core::alloc::{GlobalAlloc, Layout};
 use lh_device::clock::HostClock;
 use lh_device::{Decoder, Link, LinkError, Output};
+use lh_health::{Health, TrackHealth};
 use lh_kernel::kernel::{Event, Input, Kernel, KernelConfig};
 use lh_kernel::linalg::Mat;
 use lh_kernel::math::{Pose, Quat, Vec3};
@@ -135,6 +141,14 @@ pub struct LhStatus {
     pub light_us: i64,
     pub trigger_us: i64,
     pub ready_us: i64,
+    /// The newest pose's position uncertainty (m, sqrt of its covariance trace).
+    pub pos_sigma: f32,
+    /// Locks gained (fresh pose solves) and lost, so far.
+    pub starts: u32,
+    pub losses: u32,
+    /// lh_health::Health: 0 lost, 1 coasting (tracking on the IMU, no light confirming it),
+    /// 2 acquiring (a fresh solve settling), 3 locked. Only 3 is a pose to show as tracked.
+    pub health: u8,
 }
 
 /// Where the tracker task's time goes (CPU cycles), per kind of work: 0 decoding reports,
@@ -177,6 +191,7 @@ struct Tracker {
     /// Arrival (P4 µs) of the report or clock tick being pushed into the kernel.
     trigger_us: i64,
     profile: LhProfile,
+    health: TrackHealth,
 }
 
 static mut TRACKER: Option<Tracker> = None;
@@ -221,6 +236,10 @@ fn tracker() -> &'static mut Tracker {
                 light_us: 0,
                 trigger_us: 0,
                 ready_us: 0,
+                pos_sigma: 0.0,
+                starts: 0,
+                losses: 0,
+                health: Health::Lost as u8,
             },
             stations: Vec::new(),
             clock: HostClock::new(),
@@ -228,6 +247,7 @@ fn tracker() -> &'static mut Tracker {
             gyro: Vec3::ZERO,
             trigger_us: 0,
             profile: LhProfile::default(),
+            health: TrackHealth::default(),
         })
     }
 }
@@ -236,8 +256,11 @@ impl Tracker {
     fn drain_events(&mut self) {
         for e in self.events.drain(..) {
             match e {
-                Event::Pose { time, light, world_from_head, world_from_body, velocity, .. } => {
+                Event::Pose { time, light, world_from_head, world_from_body, velocity, cov, used, .. } => {
+                    let sigma = lh_kernel::math::sqrt((cov[(0, 0)] + cov[(1, 1)] + cov[(2, 2)]).max(0.0)) as f32;
+                    self.health.pose(used, sigma);
                     let s = &mut self.status;
+                    s.pos_sigma = sigma;
                     s.poses += 1;
                     s.t = time as f64 / 48e6; // i64 ticks: once per pose, so f64 is fine here
                     let p = world_from_head.pos;
@@ -268,10 +291,12 @@ impl Tracker {
                 Event::Still { .. } => {}
                 Event::TrackingStarted { rms, .. } => {
                     self.status.tracking = 1;
+                    self.health.started();
                     log(&format!("lh: tracking started (rms {:.0} urad)", rms * 1e6));
                 }
                 Event::TrackingLost { reason, .. } => {
                     self.status.tracking = 0;
+                    self.health.lost();
                     log(&format!("lh: tracking lost ({:?})", reason));
                 }
                 Event::Calibrated { reason, stations, .. } => {
@@ -303,6 +328,21 @@ impl Tracker {
                 other => log(&format!("lh: {:?}", other)),
             }
         }
+        self.refresh_health();
+    }
+
+    /// The health state (lh_health) into the status, with its transitions on the console.
+    fn refresh_health(&mut self) {
+        let h = self.health.state();
+        let s = &mut self.status;
+        if h as u8 != s.health {
+            let dark = self.health.dark_ticks().map_or(-1, |t| t / 48_000);
+            let sigma_mm = s.pos_sigma * 1e3;
+            log(&format!("lh: pose {:?} (was {}; sigma {:.1} mm, {} ms since light)", h, s.health, sigma_mm, dark));
+        }
+        s.health = h as u8;
+        s.starts = self.health.starts;
+        s.losses = self.health.losses;
     }
 }
 
@@ -364,6 +404,8 @@ pub extern "C" fn lh_detach() {
     }
     t.status.configured = 0;
     t.status.tracking = 0;
+    t.health.lost();
+    t.refresh_health();
 }
 
 impl Tracker {
@@ -411,7 +453,8 @@ pub unsafe extern "C" fn lh_report(interface: i32, data: *const u8, len: usize, 
     for o in outs.drain(..) {
         if let Output::Kernel(input) = o {
             match &input {
-                Input::Imu { accel_g, gyro, .. } => {
+                Input::Imu { time, accel_g, gyro, .. } => {
+                    t.health.clock(*time);
                     t.status.imu += 1;
                     t.accel_g = *accel_g;
                     t.gyro = *gyro;
@@ -436,6 +479,9 @@ pub extern "C" fn lh_clock(us: i64) {
     let Some(dev) = t.dec.as_ref().map(|d| d.dev) else { return };
     let raw = if t.status.streaming != 0 { t.clock.now(us) } else { t.clock.passed(us) };
     let Some(raw) = raw else { return };
+    if t.status.streaming != 0 {
+        t.health.clock(raw); // (not streaming, `raw` lags by the light margin)
+    }
     t.trigger_us = us;
     t.push(Input::Clock { dev, time: raw });
     t.timing_counters();
@@ -506,6 +552,7 @@ pub unsafe extern "C" fn lh_station_prior(id: u32, p: *const f32) -> i32 {
         t.kernel.push(d.added(), &mut t.events);
     }
     t.status.tracking = 0;
+    t.health.lost();
     log(&format!("lh: adopted station {} at ({:.3}, {:.3}, {:.3}) from lhd", id, v[0], v[1], v[2]));
     t.drain_events();
     1
@@ -513,7 +560,9 @@ pub unsafe extern "C" fn lh_station_prior(id: u32, p: *const f32) -> i32 {
 
 #[no_mangle]
 pub unsafe extern "C" fn lh_status(out: *mut LhStatus) {
-    let s = &tracker().status;
+    let t = tracker();
+    // The state moves with the clock too (a pose ages into coasting with no new event).
+    t.refresh_health();
+    let s = &t.status;
     core::ptr::copy_nonoverlapping(s as *const LhStatus, out, 1);
 }
-

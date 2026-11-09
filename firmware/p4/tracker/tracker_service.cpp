@@ -56,6 +56,10 @@ void publish(const LhStatus& s) {
   p.late_pulses = s.late_pulses;
   p.light_margin_us = s.light_margin_us;
   p.streaming = s.streaming;
+  p.health = s.health;
+  p.pos_sigma = s.pos_sigma;
+  p.starts = s.starts;
+  p.losses = s.losses;
   taskENTER_CRITICAL(&g_mux);
   const bool fresh = s.poses != g_pose.poses;
   p.seq = g_pose.seq + (fresh ? 1 : 0);

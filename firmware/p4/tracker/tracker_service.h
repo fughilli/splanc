@@ -28,6 +28,12 @@ struct TrackerPose {
   uint32_t sweeps, sweep_parts, late_pulses;
   uint32_t light_margin_us;  // how late light reports recently came over the fastest
   bool streaming;            // the kernel streams sweeps (tracker_service_stream)
+  // How far the pose can be trusted (lh_health, #446): LH_LOCKED is a lock; LH_COASTING is
+  // the IMU's dead reckoning with no light confirming it; LH_ACQUIRING a fresh solve
+  // settling; LH_LOST nothing (the matrices hold the last pose).
+  uint8_t health;
+  float pos_sigma;              // position uncertainty of the pose (m)
+  uint32_t starts, losses;      // locks gained (fresh solves) and lost
 };
 
 // Starts the USB host (its tasks at `usb_prio`, core 0) and the tracker task, pinned to
