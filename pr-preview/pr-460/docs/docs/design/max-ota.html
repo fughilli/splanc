@@ -1,0 +1,1230 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html">
+        <link rel="prefetch" href="../../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Splanc MAX updates over the air - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
+<li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
+<li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-demo.html">Effects demo</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../requirements-driven-development.html">Requirements-driven development</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/design/max-ota.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/design/max-ota.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="splanc-max-updates-over-the-air">
+<h1>Splanc MAX updates over the air<a class="headerlink" href="#splanc-max-updates-over-the-air" title="Link to this heading">¶</a></h1>
+<p>Status: implemented (PR “Splanc MAX over-the-air updates”). HITL results at the end.</p>
+<p>A <strong>Splanc MAX</strong> is a Raspberry Pi driving a Tang Nano 9K FPGA (the <code class="docutils literal notranslate"><span class="pre">spi_ws281x</span></code>
+gateware) over SPI. Until now it could only be updated by re-flashing a <code class="docutils literal notranslate"><span class="pre">pi-v*</span></code> SD
+image or by a developer running <code class="docutils literal notranslate"><span class="pre">deploy_live</span></code> with the deploy key. Now a MAX updates
+the way a C6 fixture does: the web app’s <strong>“Update over Wi-Fi”</strong>, the agent’s
+<strong><code class="docutils literal notranslate"><span class="pre">update_firmware</span></code></strong> and the <strong>bridge</strong> all work, with one dispatch on the device.</p>
+<p>What is different from the C6 (docs/design/ota.md):</p>
+<ul class="simple">
+<li><p><strong>The unit is a whole NixOS system</strong>, not a 2 MB app image.</p></li>
+<li><p><strong>The Pi downloads its image itself.</strong> The client sends only the 108-byte signed
+manifest.</p></li>
+<li><p><strong>A new system is booted exactly once.</strong> It is kept only after the player proves
+healthy. Otherwise U-Boot’s default, the old system, comes back by itself: after
+a crash, a hang, a reset or a power cut.</p></li>
+</ul>
+<section id="the-update-unit-a-nixos-generation-booted-once">
+<h2>The update unit: a NixOS generation, booted once<a class="headerlink" href="#the-update-unit-a-nixos-generation-booted-once" title="Link to this heading">¶</a></h2>
+<p>The options, for an SD card in a fixture that can lose power at any moment:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p></p></th>
+<th class="head"><p>Writes per update</p></th>
+<th class="head"><p>Power-loss story</p></th>
+<th class="head"><p>Keeps device state</p></th>
+<th class="head"><p>Migration</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>A/B root partitions</strong></p></td>
+<td><p>the whole root (≈1.5–3 GB)</p></td>
+<td><p>good: flip a partition</p></td>
+<td><p>needs a separate state partition</p></td>
+<td><p>re-partition every card</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>NixOS generation + one-shot trial boot</strong> (chosen)</p></td>
+<td><p>only the store paths that changed</p></td>
+<td><p>the bootloader default never changes until healthy</p></td>
+<td><p>free: /etc and /var are untouched</p></td>
+<td><p>one deploy or SD flash (already needed: v1.0.0 has no OTA arms)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">switch-to-configuration</span> <span class="pre">switch</span></code> in place (what <code class="docutils literal notranslate"><span class="pre">deploy_live</span></code> does)</p></td>
+<td><p>changed paths</p></td>
+<td><p>none: a bad system becomes the default at once</p></td>
+<td><p>free</p></td>
+<td><p>none</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Why the generation.</strong></p>
+<ul class="simple">
+<li><p><strong>SD wear.</strong> <code class="docutils literal notranslate"><span class="pre">nix-store</span> <span class="pre">--import</span></code> skips every path already in the store, so an
+update writes only what changed. A delta image (below) doesn’t even transfer the
+rest. An A/B root rewrites the whole filesystem every time.</p></li>
+<li><p><strong>Power-loss safety.</strong> Each store path is written, then registered in the Nix
+database in one SQLite transaction; a cut leaves an invalid path that the next
+import rewrites. Every file the updater writes outside the store is
+temp + fsync + rename + fsync(dir). Most importantly, the default boot entry
+(<code class="docutils literal notranslate"><span class="pre">/boot/extlinux/extlinux.conf</span></code>) is not touched until the new system has proven
+healthy (see Trial boot), so the state after a cut is always “the old system”, or
+“the new system, healthy and committed”.</p></li>
+<li><p><strong>State survives for free.</strong> A generation switch leaves /etc’s stateful parts and
+all of /var alone. An A/B root would have to move Wi-Fi, identity and the stored
+map onto a third partition, then re-partition every card in the field.</p></li>
+<li><p><strong>It’s what NixOS already does.</strong> <code class="docutils literal notranslate"><span class="pre">deploy_live</span></code> is <code class="docutils literal notranslate"><span class="pre">nix</span> <span class="pre">copy</span></code> + <code class="docutils literal notranslate"><span class="pre">nix-env</span> <span class="pre">--set</span></code> +
+<code class="docutils literal notranslate"><span class="pre">switch-to-configuration</span></code>. OTA adds the download, the signature, and <em>when</em> the
+switch happens.</p></li>
+</ul>
+<section id="trial-boot-one-shot">
+<h3>Trial boot (one-shot)<a class="headerlink" href="#trial-boot-one-shot" title="Link to this heading">¶</a></h3>
+<p>The released fleet is Pi 3. The Pi 3, Pi 4 and Zero 2W boot through U-Boot +
+extlinux (nixos-raspberrypi’s default). The Pi 5 boots its kernel straight from the
+firmware (see “Boards”).</p>
+<p>The Pi 3 firmware has no <code class="docutils literal notranslate"><span class="pre">tryboot</span></code>, so the one-shot lives in <strong>U-Boot</strong>.
+<code class="docutils literal notranslate"><span class="pre">pi/provisioning/nix/ota.nix</span></code> builds U-Boot 2025.01 (<code class="docutils literal notranslate"><span class="pre">rpi_arm64_defconfig</span></code>) with a
+<code class="docutils literal notranslate"><span class="pre">PREBOOT</span></code> that runs before the stock <code class="docutils literal notranslate"><span class="pre">bootflow</span> <span class="pre">scan</span></code>:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>pci enum; usb start;
+if load mmc 0:1 ${scriptaddr} splanc-trial &amp;&amp; itest.b *${scriptaddr} == 0x31; then
+  mw.b ${scriptaddr} 0x30 1; fatwrite mmc 0:1 ${scriptaddr} splanc-trial ${filesize};
+  sysboot mmc 0:2 any ${pxefile_addr_r} /boot/extlinux/splanc-trial.conf;
+fi
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">/boot/firmware/splanc-trial</span></code> (FAT) holds <code class="docutils literal notranslate"><span class="pre">1</span> <span class="pre">&lt;nonce&gt;</span></code> when armed.</p></li>
+<li><p>U-Boot rewrites the first byte to <code class="docutils literal notranslate"><span class="pre">0</span></code> <strong>before</strong> it loads the trial kernel, so the
+trial boots once.</p></li>
+<li><p>Anything that fails returns to the stock boot, which reads <code class="docutils literal notranslate"><span class="pre">extlinux.conf</span></code>, which
+still names the old system. That covers no flag, a <code class="docutils literal notranslate"><span class="pre">0</span></code>, a missing trial conf and a
+missing kernel.</p></li>
+<li><p>The trial entry <code class="docutils literal notranslate"><span class="pre">/boot/extlinux/splanc-trial.conf</span></code> is written in the NixOS
+extlinux builder’s own format, with the builder’s file names
+(<code class="docutils literal notranslate"><span class="pre">pi/max_ota/src/extlinux.rs</span></code>). Its <code class="docutils literal notranslate"><span class="pre">APPEND</span></code> adds <code class="docutils literal notranslate"><span class="pre">splanc.ota=trial</span></code>.</p></li>
+<li><p>Any later <code class="docutils literal notranslate"><span class="pre">switch-to-configuration</span></code> deletes boot files no generation uses. A stale
+trial can therefore only vanish; it can never become a default.</p></li>
+</ul>
+<p><strong>What brings the old system back:</strong></p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Failure in the trial</p></th>
+<th class="head"><p>What happens</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>kernel panic</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">panic=10</span></code>, reboot; the flag reads <code class="docutils literal notranslate"><span class="pre">0</span></code>, so the old system boots</p></td>
+</tr>
+<tr class="row-odd"><td><p>hung kernel or userspace</p></td>
+<td><p>the BCM2835 hardware watchdog (<code class="docutils literal notranslate"><span class="pre">systemd.watchdog.runtimeTime</span> <span class="pre">=</span> <span class="pre">15s</span></code>) resets the board; the old system boots</p></td>
+</tr>
+<tr class="row-even"><td><p>player never healthy</p></td>
+<td><p>the updater’s deadline (300 s) reboots; the old system boots</p></td>
+</tr>
+<tr class="row-odd"><td><p>power cut</p></td>
+<td><p>the old system boots</p></td>
+</tr>
+<tr class="row-even"><td><p>U-Boot didn’t clear the flag</p></td>
+<td><p>the updater clears it itself on entering the trial; a second trial boot is rolled back</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The updater refuses to stage anything (<code class="docutils literal notranslate"><span class="pre">bootloader_unsupported</span></code>) unless the U-Boot
+binary on the firmware partition contains the marker, because a stock U-Boot would
+ignore the flag.</p>
+</section>
+<section id="flow">
+<h3>Flow<a class="headerlink" href="#flow" title="Link to this heading">¶</a></h3>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>client: ota_begin{manifest, source_url?}         player (unprivileged): check signature,
+        &lt;- ota_status{DOWNLOADING}               board, key, version; write inbox/request
+root updater (splanc-ota-apply, path unit on the inbox):
+   check again (the authority) -&gt; curl -C - into dl/&lt;sha&gt;.part  (resumable)
+   size + SHA-256 = the signed digest -&gt; dl/&lt;sha&gt;.img
+   header: board + version must match the manifest; delta base paths must be valid
+   zstd -dc | nix-store --import -&gt; GC root on the new toplevel
+   copy kernel/initrd to /boot/nixos, write splanc-trial.conf, state = staged,
+   THEN arm the flag (1 &lt;nonce&gt;)                 &lt;- ota_status{INSTALLED}
+   reboot
+U-Boot: flag 1 -&gt; 0, sysboot the trial
+splanc-ota-boot (every boot, before the player): booted == new &amp;&amp; splanc.ota=trial -&gt; trial
+splanc-ota-health: player healthy before the deadline?
+   yes -&gt; nix-env --set + switch-to-configuration boot (extlinux default = new),
+          drop the trial entry, raise the security floor, collect garbage -&gt; &quot;ok&quot;
+   no  -&gt; state &quot;rolled_back&quot;, reboot -&gt; U-Boot boots extlinux.conf (old)
+client: polls get_ota_status through the reboots until last_result ok / rolled_back
+</pre></div>
+</div>
+</section>
+<section id="power-loss-at-every-step">
+<h3>Power loss at every step<a class="headerlink" href="#power-loss-at-every-step" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">//pi/max_ota:updater_test</span></code> cuts the power at <strong>every</strong> mutating step of a whole
+update, from the request to the commit (30 cut points). The fake Pi has a
+filesystem, a Nix store, a web server, U-Boot’s PREBOOT and the extlinux builder.</p>
+<p><strong>Every cut point recovers:</strong></p>
+<ul class="simple">
+<li><p>the Pi boots a complete system, old or new, never anything else;</p></li>
+<li><p>if it boots the new one, that system is committed (<code class="docutils literal notranslate"><span class="pre">ok</span></code>) and is the extlinux
+default;</p></li>
+<li><p>if it boots the old one, extlinux.conf still names it;</p></li>
+<li><p>a retry from the client then always reaches the new system.</p></li>
+</ul>
+<p><strong>Outcomes over the 30 cut points:</strong> 25 end on the new system with no retry,
+because a cut during the download resumes and a cut during staging re-stages. 3
+roll back. 2 lose the request before it was persisted.</p>
+<p><strong>Where each cut lands:</strong></p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Cut during</p></th>
+<th class="head"><p>After power returns</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>request, before the state is saved</p></td>
+<td><p>idle on the old system; the client retries</p></td>
+</tr>
+<tr class="row-odd"><td><p>download</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">splanc-ota-apply</span></code> resumes the <code class="docutils literal notranslate"><span class="pre">.part</span></code> at boot (<code class="docutils literal notranslate"><span class="pre">curl</span> <span class="pre">-C</span> <span class="pre">-</span></code>)</p></td>
+</tr>
+<tr class="row-even"><td><p>import / staging, before the flag is armed</p></td>
+<td><p>the boot reconcile re-stages (the import is idempotent)</p></td>
+</tr>
+<tr class="row-odd"><td><p>after the flag, before the reboot</p></td>
+<td><p>U-Boot runs the trial on the next power-up</p></td>
+</tr>
+<tr class="row-even"><td><p>trial</p></td>
+<td><p>the old system; <code class="docutils literal notranslate"><span class="pre">rolled_back</span></code> (<code class="docutils literal notranslate"><span class="pre">trial_failed</span></code> / <code class="docutils literal notranslate"><span class="pre">trial_reset</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p>commit (<code class="docutils literal notranslate"><span class="pre">nix-env</span> <span class="pre">--set</span></code>, <code class="docutils literal notranslate"><span class="pre">switch-to-configuration</span> <span class="pre">boot</span></code>)</p></td>
+<td><p>the boot reconcile finishes the commit; if the old system booted, it reboots once into the new default</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+<section id="signing">
+<h2>Signing<a class="headerlink" href="#signing" title="Link to this heading">¶</a></h2>
+<p><strong>The manifest</strong> is the C6’s 108-byte manifest, unchanged (<code class="docutils literal notranslate"><span class="pre">splanc_ota::manifest</span></code>):
+version, size, SHA-256 of the image, flags, then ECDSA P-256 r‖s over SHA-256 of
+the first 44 bytes.</p>
+<p><strong>The flags:</strong></p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>bits</p></th>
+<th class="head"><p>field</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>0</p></td>
+<td><p>loader image (refused)</p></td>
+</tr>
+<tr class="row-odd"><td><p>8–15</p></td>
+<td><p>key id: the C6 ring’s, <strong>0</strong> <code class="docutils literal notranslate"><span class="pre">release</span></code> (every release) or <strong>1</strong> <code class="docutils literal notranslate"><span class="pre">backup</span></code> (offline, rotation only)</p></td>
+</tr>
+<tr class="row-even"><td><p>16–23</p></td>
+<td><p>security version</p></td>
+</tr>
+<tr class="row-odd"><td><p>24–31</p></td>
+<td><p><strong>board</strong>: 1 <code class="docutils literal notranslate"><span class="pre">pi3</span></code>, 2 <code class="docutils literal notranslate"><span class="pre">pi4</span></code>, 3 <code class="docutils literal notranslate"><span class="pre">pi5</span></code>, 4 <code class="docutils literal notranslate"><span class="pre">zero2w</span></code>; 0 = a C6 image. <strong>Mandatory</strong></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>The keyring: the C6’s own.</strong> A MAX trusts exactly the keys the C6 loaders trust,
+from the same source: <code class="docutils literal notranslate"><span class="pre">firmware/ota/ring.bzl</span></code> holds <code class="docutils literal notranslate"><span class="pre">RELEASE_RING</span></code> / <code class="docutils literal notranslate"><span class="pre">TEST_RING</span></code>,
+which <code class="docutils literal notranslate"><span class="pre">//firmware/ota</span></code> (the loader’s C++ header) and <code class="docutils literal notranslate"><span class="pre">//pi/max_ota</span></code> (a Rust const,
+<code class="docutils literal notranslate"><span class="pre">gen_key_header.py</span> <span class="pre">--lang</span> <span class="pre">rust</span></code>) both generate; <code class="docutils literal notranslate"><span class="pre">MAX_RELEASE_RING</span></code> /
+<code class="docutils literal notranslate"><span class="pre">MAX_TEST_RING</span></code> are the same dicts, not copies. <code class="docutils literal notranslate"><span class="pre">--//firmware/ota:trust=test</span></code>
+swaps in the TEST keys (<code class="docutils literal notranslate"><span class="pre">test</span></code>, <code class="docutils literal notranslate"><span class="pre">test_backup</span></code>) for both.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>id</p></th>
+<th class="head"><p>name</p></th>
+<th class="head"><p>file</p></th>
+<th class="head"><p>role</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>0</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">release</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">keys/release.pub</span></code></p></td>
+<td><p>online: the <code class="docutils literal notranslate"><span class="pre">OTA_SIGNING_KEY</span></code> secret signs every C6 <strong>and</strong> MAX release</p></td>
+</tr>
+<tr class="row-odd"><td><p>1</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">backup</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">keys/backup.pub</span></code></p></td>
+<td><p><strong>offline</strong>, in cold storage, never in CI; signs key-epoch records and, in a rotation, bridge images</p></td>
+</tr>
+<tr class="row-even"><td><p>2</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">next</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">keys/next.pub</span></code></p></td>
+<td><p>a planned successor (<code class="docutils literal notranslate"><span class="pre">UNSET</span></code> today)</p></td>
+</tr>
+<tr class="row-odd"><td><p>3, 4</p></td>
+<td><p>—</p></td>
+<td><p>—</p></td>
+<td><p><strong>reserved</strong> for a possible future separate MAX key (+ its backup); unused, in no ring</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>An <code class="docutils literal notranslate"><span class="pre">UNSET</span></code> entry verifies nothing. A manifest names its key id and is verified
+against <strong>that key only</strong>. There are no MAX-specific key files and no MAX-specific
+secret.</p>
+<p><strong>The board is the separation.</strong> With shared keys, a C6 image is validly signed as
+far as a MAX is concerned, and vice versa. What keeps them apart is the signed board
+field, checked on both sides:</p>
+<ul class="simple">
+<li><p><strong>A MAX refuses board 0</strong> (a C6 image) and any board but its own, as
+<code class="docutils literal notranslate"><span class="pre">wrong_board</span></code>, before anything is downloaded (<code class="docutils literal notranslate"><span class="pre">verify::check_offer</span></code>).</p></li>
+<li><p><strong>A C6 refuses any board but 0</strong>, as <code class="docutils literal notranslate"><span class="pre">wrong_board</span></code>: the app’s pre-check and the
+loader both go through <code class="docutils literal notranslate"><span class="pre">splanc_ota::session::check_offer</span></code>.</p></li>
+<li><p><strong>Never a bare sha256</strong> (contrast <code class="docutils literal notranslate"><span class="pre">pi/bridge/selfupdate.py</span></code>).</p></li>
+<li><p><strong>Who checks.</strong> The player checks every offer for a quick answer. The root updater
+checks it again before it downloads anything; it is the authority.</p></li>
+</ul>
+<p><strong>When separate keys would be worth revisiting.</strong> Sharing is right while the C6 and
+the MAX ship from the same repo, the same release and the same CI secret holders.
+If the MAX ever gets its own distribution channel (a separate release stream or
+mirror), or different people should be able to sign MAX systems than C6 firmware,
+give the MAX its own key: ids <strong>3</strong> (<code class="docutils literal notranslate"><span class="pre">max</span></code>, online) and <strong>4</strong> (<code class="docutils literal notranslate"><span class="pre">max_backup</span></code>,
+offline) are reserved for that, in no ring today. Moving to them is a normal
+rotation (below): ship a system whose ring has 3/4, then revoke 0/1 for the MAX.</p>
+<p><strong>Key epochs.</strong> The same record as the C6: the updater applies the release’s
+<code class="docutils literal notranslate"><span class="pre">key-epoch.bin</span></code> (from <code class="docutils literal notranslate"><span class="pre">firmware/ota/keys/epoch.bin</span></code>), sent in <code class="docutils literal notranslate"><span class="pre">ota_begin.key_epoch</span></code>
+by the web app and the agent. The rules are the C6’s (docs/design/ota.md “Key
+rotation”): the signer must be a provisioned ring key (<code class="docutils literal notranslate"><span class="pre">unknown_key</span></code> otherwise), the
+epoch must rise, revocations never shrink, a record can’t revoke its own signer, and
+a revoked key signs nothing more, records included. The revocations are device state
+(<code class="docutils literal notranslate"><span class="pre">/var/lib/splanc-ota</span></code>), so they outlive every later update; only a re-flash resets
+them.</p>
+<section id="key-rotation">
+<h3>Key rotation<a class="headerlink" href="#key-rotation" title="Link to this heading">¶</a></h3>
+<p>It is the C6’s (docs/design/ota.md “Runbook: the release key is compromised”), and
+one <code class="docutils literal notranslate"><span class="pre">key-epoch.bin</span></code> covers both kinds of fixture. What differs on a MAX:</p>
+<ul>
+<li><p><strong>The ring ships over the air.</strong> It is part of the system image, so a MAX bridge
+release can carry a new ring (the C6 needs a USB migration for that).</p></li>
+<li><p><strong>Bridge images are signed by hand with the backup</strong>, on the offline machine,
+until units trust the successor key:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">python3</span> <span class="n">tools</span><span class="o">/</span><span class="n">max_ota_release</span><span class="o">.</span><span class="n">py</span> <span class="o">--</span><span class="n">toplevel</span> <span class="o">&lt;</span><span class="n">system</span><span class="o">&gt;</span> <span class="o">--</span><span class="n">board</span> <span class="n">pi3</span> <span class="o">--</span><span class="n">version</span> <span class="n">X</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">Z</span> \
+  <span class="o">--</span><span class="n">signer</span> <span class="n">ota_sign</span> <span class="o">--</span><span class="n">pubkey</span> <span class="n">firmware</span><span class="o">/</span><span class="n">ota</span><span class="o">/</span><span class="n">keys</span><span class="o">/</span><span class="n">backup</span><span class="o">.</span><span class="n">pub</span> \
+  <span class="o">--</span><span class="n">key</span><span class="o">-</span><span class="nb">id</span> <span class="mi">1</span> <span class="o">--</span><span class="n">key</span><span class="o">-</span><span class="n">file</span> <span class="n">backup</span><span class="o">.</span><span class="n">key</span> <span class="o">--</span><span class="n">out</span><span class="o">-</span><span class="nb">dir</span> <span class="n">_assets</span>
+</pre></div>
+</div>
+<p>CI never does this: there is no backup secret, and <code class="docutils literal notranslate"><span class="pre">max_ota_release.py</span></code> refuses
+<code class="docutils literal notranslate"><span class="pre">--key-id</span> <span class="pre">1</span></code> without <code class="docutils literal notranslate"><span class="pre">--key-file</span></code>.</p>
+</li>
+<li><p><strong>Revoked ids are never reused</strong>, on either kind of fixture: a successor key takes
+<code class="docutils literal notranslate"><span class="pre">next</span></code> (2) or another free id.</p></li>
+</ul>
+<p>The tests (<code class="docutils literal notranslate"><span class="pre">//pi/max_ota:updater_test</span></code>) run this end to end with the TEST keys: a
+backup-signed (id 1) record revoking <code class="docutils literal notranslate"><span class="pre">release</span></code> (id 0), after which release-signed
+images are refused and backup-signed ones install.</p>
+<p><strong>Anti-rollback.</strong> It works exactly as on the C6:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">allow_downgrade</span></code> lets a client install an older version;</p></li>
+<li><p>the <strong>security floor</strong> (raised at every commit) refuses older security versions
+regardless.</p></li>
+</ul>
+</section>
+</section>
+<section id="download">
+<h2>Download<a class="headerlink" href="#download" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>The client sends only the manifest.</strong> The Pi fetches the image itself. It is not
+streamed over the control connection: a phone can sleep, a laptop can close, and
+the agent can be on another network. The Pi has a full TLS stack (curl) and its
+own network, so the update carries on regardless.</p></li>
+<li><p><strong>Where it fetches from.</strong> By default, the release asset for the manifest’s version
+and the Pi’s board:
+<code class="docutils literal notranslate"><span class="pre">https://github.com/fughilli/splanc/releases/download/firmware-vX.Y.Z/max-&lt;board&gt;-X.Y.Z.nixclosure</span></code>.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">ota_begin.source_url</span></code></strong> (new field 4) overrides it with any http(s) URL: a LAN
+mirror for a MAX without internet, a development build, or the HITL gate’s tunnel.
+The URL decides nothing about what installs; the signed digest does.</p></li>
+<li><p><strong>Resumable.</strong> The download is <code class="docutils literal notranslate"><span class="pre">curl</span> <span class="pre">-C</span> <span class="pre">-</span></code> into <code class="docutils literal notranslate"><span class="pre">dl/&lt;sha&gt;.part</span></code>, flushed every
+second, so a power cut keeps what arrived. At boot, <code class="docutils literal notranslate"><span class="pre">splanc-ota-apply</span></code> resumes it.
+It retries 5 times with backoff, then <code class="docutils literal notranslate"><span class="pre">download_failed:</span> <span class="pre">&lt;curl</span> <span class="pre">error&gt;</span></code>.</p></li>
+<li><p><strong>Verified before use.</strong> Nothing is imported until the whole file’s size and
+SHA-256 match the signed manifest.</p></li>
+</ul>
+<section id="the-image-nixclosure">
+<h3>The image (<code class="docutils literal notranslate"><span class="pre">.nixclosure</span></code>)<a class="headerlink" href="#the-image-nixclosure" title="Link to this heading">¶</a></h3>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>SPLANC-MAX-OTA 1
+board: pi3
+version: 1010000
+toplevel: /nix/store/…-nixos-system-ledmapper-…
+compression: zstd
+base: /nix/store/…        (delta only: paths left out, which the device must have)
+
+&lt;zstd(nix-store --export &lt;paths&gt;)&gt;
+</pre></div>
+</div>
+<p>The manifest’s size and SHA-256 cover the whole file, header included.</p>
+<ul class="simple">
+<li><p><strong>Full image:</strong> the whole closure.</p></li>
+<li><p><strong>Delta (<code class="docutils literal notranslate"><span class="pre">--base-toplevel</span></code>):</strong> only the paths the base system doesn’t have. The
+updater checks every <code class="docutils literal notranslate"><span class="pre">base:</span></code> path is valid before importing anything
+(<code class="docutils literal notranslate"><span class="pre">missing_base</span></code> otherwise).</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">tools/max_ota_release.py</span></code> packs and signs both (stdlib Python, <code class="docutils literal notranslate"><span class="pre">nix-store</span></code>, <code class="docutils literal notranslate"><span class="pre">zstd</span></code>,
+<code class="docutils literal notranslate"><span class="pre">ota_sign</span></code>).</p>
+</section>
+</section>
+<section id="health-proof">
+<h2>Health proof<a class="headerlink" href="#health-proof" title="Link to this heading">¶</a></h2>
+<p>The player (<code class="docutils literal notranslate"><span class="pre">pi/player_rs</span></code>) writes <code class="docutils literal notranslate"><span class="pre">/run/ledmapper/health</span></code> every 2 s:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">listening=1</span></code> once its WSS listener is bound;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ticks</span></code>: the frames its render loop pushed to SPI;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">up_ms</span></code>.</p></li>
+</ul>
+<p>The trial is kept only if, before the <strong>300 s deadline</strong>, all of these hold
+(<code class="docutils literal notranslate"><span class="pre">splanc_max_ota::health</span></code>, host-tested):</p>
+<ul class="simple">
+<li><p>the player has been up for ≥ 20 s;</p></li>
+<li><p>it is listening;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ticks</span></code> advanced across two samples ≥ 5 s apart;</p></li>
+<li><p>if the old system had a default route when it staged the update, the new one has
+one too.</p></li>
+</ul>
+<p><strong>Why the network rule.</strong> A system that can’t reach the network can’t be fixed over
+the network, so it isn’t kept. Unlike the C6, a MAX that loses its AP for the
+trial’s duration just keeps the old system, and the update can be retried.</p>
+<p><strong>The deadline.</strong> It counts from the trial’s boot reconcile and uses
+<code class="docutils literal notranslate"><span class="pre">CLOCK_BOOTTIME</span></code> (a Pi has no RTC, and NTP moves the wall clock after boot). It is
+long because the player starts only after the FPGA is re-flashed with the new
+gateware, when the gateware changed.</p>
+</section>
+<section id="fpga-bitstream-versioning">
+<h2>FPGA bitstream versioning<a class="headerlink" href="#fpga-bitstream-versioning" title="Link to this heading">¶</a></h2>
+<p><strong>The gateware is part of the system.</strong> It is the Bazel-built
+<code class="docutils literal notranslate"><span class="pre">spi_ws281x_tangnano9k.fs</span></code>, in the closure as <code class="docutils literal notranslate"><span class="pre">build_data</span></code>. The Tang is commissioned
+at every player start (<code class="docutils literal notranslate"><span class="pre">fpga.nix</span></code> / <code class="docutils literal notranslate"><span class="pre">apps.nix</span></code>):</p>
+<ul class="simple">
+<li><p>The sha256 of the <code class="docutils literal notranslate"><span class="pre">.fs</span></code> is stamped into the Tang’s own SPI flash at 0x300000.</p></li>
+<li><p>The bitstream is re-flashed only when the stamp differs.</p></li>
+</ul>
+<p>A trial boot of a new gateware flashes it, and a rollback flashes the old one back:
+the gateware always follows the system that booted, with no Pi-side state to drift.</p>
+<p><strong>Power-loss fix (this PR).</strong> The commission now <strong>invalidates the stamp before
+flashing</strong>. Before, a cut mid-flash left the previous gateware’s stamp next to a
+half-written bitstream, so the next boot of that previous system skipped the flash.
+That is exactly the rollback case.</p>
+</section>
+<section id="device-state-kept-across-updates">
+<h2>Device state kept across updates<a class="headerlink" href="#device-state-kept-across-updates" title="Link to this heading">¶</a></h2>
+<p>An OTA image is built once per board, not per device. Everything that makes a unit
+itself therefore lives outside the system closure:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>State</p></th>
+<th class="head"><p>Where</p></th>
+<th class="head"><p>Across an update</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Wi-Fi credentials</p></td>
+<td><p>NetworkManager <code class="docutils literal notranslate"><span class="pre">/etc/NetworkManager/system-connections</span></code> (Improv writes them)</p></td>
+<td><p>untouched by a generation switch</p></td>
+</tr>
+<tr class="row-odd"><td><p>hostname</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/var/lib/sbc/hostname</span></code> (sbc-deploy writes it once)</p></td>
+<td><p>the image bakes <strong>no</strong> hostname (<code class="docutils literal notranslate"><span class="pre">networking.hostName</span> <span class="pre">=</span> <span class="pre">&quot;&quot;</span></code>), so NixOS doesn’t own <code class="docutils literal notranslate"><span class="pre">/etc/hostname</span></code> or avahi’s <code class="docutils literal notranslate"><span class="pre">host-name</span></code>; activation writes <code class="docutils literal notranslate"><span class="pre">/etc/hostname</span></code> from the committed name, and avahi advertises <code class="docutils literal notranslate"><span class="pre">&lt;name&gt;.local</span></code> (a fresh unit takes the commissioning <code class="docutils literal notranslate"><span class="pre">--hostname</span></code>, else <code class="docutils literal notranslate"><span class="pre">ledmapper</span></code>)</p></td>
+</tr>
+<tr class="row-even"><td><p>SSH host keys</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/etc/ssh/ssh_host_*</span></code></p></td>
+<td><p>untouched</p></td>
+</tr>
+<tr class="row-odd"><td><p>deploy key</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/var/lib/sbc/authorized_keys.d/root</span></code></p></td>
+<td><p>seeded once from the keys of the first OTA-capable system (a developer’s <code class="docutils literal notranslate"><span class="pre">deploy_live</span></code>, or the SD image), then never rewritten; sshd reads it alongside the baked keys</p></td>
+</tr>
+<tr class="row-even"><td><p>stored map / app data</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/var/lib/ledmapper</span></code></p></td>
+<td><p>untouched</p></td>
+</tr>
+<tr class="row-odd"><td><p>update state</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/var/lib/splanc-ota</span></code></p></td>
+<td><p>the updater’s own</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The HITL gate checks each of these before and after every phase.</p>
+</section>
+<section id="boards-one-artifact-per-board">
+<h2>Boards: one artifact per board<a class="headerlink" href="#boards-one-artifact-per-board" title="Link to this heading">¶</a></h2>
+<p>Each board needs its own kernel, firmware and device tree, so each one has its own
+artifact (<code class="docutils literal notranslate"><span class="pre">max-&lt;board&gt;-&lt;ver&gt;.{nixclosure,manifest}</span></code>) and its own board id in the
+signed flags. The updater checks the board twice:</p>
+<ul class="simple">
+<li><p>against the hardware (<code class="docutils literal notranslate"><span class="pre">/proc/device-tree/model</span></code>, the same identity sbc-deploy’s
+brick guard reads);</p></li>
+<li><p>against the image header.</p></li>
+</ul>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Board</p></th>
+<th class="head"><p>Boot path</p></th>
+<th class="head"><p>Trial boot</p></th>
+<th class="head"><p>Status</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Pi 3 (released fleet, HITL <code class="docutils literal notranslate"><span class="pre">pi-ledmapper-1/2</span></code>)</p></td>
+<td><p>U-Boot + extlinux</p></td>
+<td><p>U-Boot PREBOOT one-shot</p></td>
+<td><p><strong>implemented, HITL-tested</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>Zero 2W</p></td>
+<td><p>U-Boot + extlinux (<code class="docutils literal notranslate"><span class="pre">rpi_arm64</span></code> U-Boot)</p></td>
+<td><p>same</p></td>
+<td><p>same code; needs an <code class="docutils literal notranslate"><span class="pre">sbc_application</span></code> target + a release matrix row</p></td>
+</tr>
+<tr class="row-even"><td><p>Pi 4</p></td>
+<td><p>U-Boot + extlinux</p></td>
+<td><p>same (or firmware <code class="docutils literal notranslate"><span class="pre">tryboot</span></code>)</p></td>
+<td><p>same code; needs a target + a matrix row</p></td>
+</tr>
+<tr class="row-odd"><td><p>Pi 5</p></td>
+<td><p>firmware loads the kernel (<code class="docutils literal notranslate"><span class="pre">kernel</span></code> generational bootloader on SD images)</p></td>
+<td><p>firmware <strong><code class="docutils literal notranslate"><span class="pre">tryboot</span></code></strong>: <code class="docutils literal notranslate"><span class="pre">tryboot.txt</span></code> with <code class="docutils literal notranslate"><span class="pre">os_prefix=nixos/&lt;gen&gt;/</span></code>, <code class="docutils literal notranslate"><span class="pre">reboot</span> <span class="pre">&quot;0</span> <span class="pre">tryboot&quot;</span></code></p></td>
+<td><p>refused (<code class="docutils literal notranslate"><span class="pre">bootloader_unsupported</span></code>) until wired</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The release workflow’s <code class="docutils literal notranslate"><span class="pre">max</span></code> job is a matrix over boards. Pi 3 is the only row
+today.</p>
+</section>
+<section id="transport-ledmapper-proto">
+<h2>Transport (<code class="docutils literal notranslate"><span class="pre">ledmapper.proto</span></code>)<a class="headerlink" href="#transport-ledmapper-proto" title="Link to this heading">¶</a></h2>
+<p><strong>Messages.</strong> The same arms as the C6: <code class="docutils literal notranslate"><span class="pre">ota_begin</span></code> / <code class="docutils literal notranslate"><span class="pre">get_ota_status</span></code> /
+<code class="docutils literal notranslate"><span class="pre">ota_abort</span></code> → <code class="docutils literal notranslate"><span class="pre">ota_status</span></code>. The additions:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">OtaBegin.source_url</span> <span class="pre">=</span> <span class="pre">4</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OtaStatus.board</span> <span class="pre">=</span> <span class="pre">17</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">OtaStatus.State.STATE_DOWNLOADING</span> <span class="pre">=</span> <span class="pre">6</span></code></p></li>
+<li><p>the welcome feature <strong><code class="docutils literal notranslate"><span class="pre">ota_pull</span></code></strong></p></li>
+</ul>
+<p><strong>How the player answers.</strong> <code class="docutils literal notranslate"><span class="pre">pi/player_rs/src/ota.rs</span></code> uses the loader’s zero-copy
+codec (<code class="docutils literal notranslate"><span class="pre">splanc_ota::wire</span></code>, now with those fields). The host profile’s by-value
+envelopes overflow a worker stack.</p>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">ota_begin</span></code></strong>: <code class="docutils literal notranslate"><span class="pre">DOWNLOADING</span></code>, or <code class="docutils literal notranslate"><span class="pre">FAILED</span></code> + <code class="docutils literal notranslate"><span class="pre">error</span></code>.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">get_ota_status</span></code></strong>: mode <code class="docutils literal notranslate"><span class="pre">APP</span></code> (a MAX has no loader), the state mapped from the
+updater’s phase, <code class="docutils literal notranslate"><span class="pre">offset</span></code> = bytes downloaded, <code class="docutils literal notranslate"><span class="pre">board</span></code>, <code class="docutils literal notranslate"><span class="pre">app_version</span></code>,
+<code class="docutils literal notranslate"><span class="pre">last_result</span></code>, key state, <code class="docutils literal notranslate"><span class="pre">max_chunk</span> <span class="pre">=</span> <span class="pre">0</span></code>.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">ota_chunk</span></code> / <code class="docutils literal notranslate"><span class="pre">ota_finish</span></code></strong>: <code class="docutils literal notranslate"><span class="pre">pull_only</span></code>.</p></li>
+</ul>
+<p><strong>What the player and the updater share.</strong> The player is unprivileged (user
+<code class="docutils literal notranslate"><span class="pre">ledmapper</span></code>) and talks to the root updater only through
+<code class="docutils literal notranslate"><span class="pre">/var/lib/splanc-ota/inbox/</span></code> (group-writable) and the world-readable state file.</p>
+<p><strong>Error codes added for MAX:</strong> <code class="docutils literal notranslate"><span class="pre">wrong_board</span></code>, <code class="docutils literal notranslate"><span class="pre">busy</span></code>, <code class="docutils literal notranslate"><span class="pre">bad_url</span></code>, <code class="docutils literal notranslate"><span class="pre">pull_only</span></code>,
+<code class="docutils literal notranslate"><span class="pre">download_failed</span></code>, <code class="docutils literal notranslate"><span class="pre">bad_image</span></code>, <code class="docutils literal notranslate"><span class="pre">missing_base</span></code>, <code class="docutils literal notranslate"><span class="pre">import_failed</span></code>,
+<code class="docutils literal notranslate"><span class="pre">bootloader_unsupported</span></code>.</p>
+</section>
+<section id="ux-and-clients">
+<h2>UX and clients<a class="headerlink" href="#ux-and-clients" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>Web app.</strong> <code class="docutils literal notranslate"><span class="pre">web/src/net/otaUpdate.ts</span></code> <code class="docutils literal notranslate"><span class="pre">updateFirmware</span></code> dispatches on <code class="docutils literal notranslate"><span class="pre">ota_pull</span></code>:
+<code class="docutils literal notranslate"><span class="pre">pullUpdate</span></code> sends the manifest and follows the device through download → verify →
+reboot → health, reconnecting across reboots. The Flash screen shows
+<strong>“Update ⟨name⟩ over Wi-Fi”</strong> for a MAX. It fetches
+<code class="docutils literal notranslate"><span class="pre">max-&lt;board&gt;-&lt;ver&gt;.manifest</span></code> (and the shared <code class="docutils literal notranslate"><span class="pre">key-epoch.bin</span></code>) from the selected release,
+with <code class="docutils literal notranslate"><span class="pre">board</span></code> taken from <code class="docutils literal notranslate"><span class="pre">ota_status</span></code>. Progress reads “The device is downloading the
+firmware… n%”, then the C6’s verify / reboot / health steps.</p></li>
+<li><p><strong>Agent <code class="docutils literal notranslate"><span class="pre">update_firmware</span></code>.</strong> It resolves one package per kind of player: the C6
+<code class="docutils literal notranslate"><span class="pre">.ota</span></code>, or the board’s manifest. A mixed fleet still rolls out canary-first. For
+development, <code class="docutils literal notranslate"><span class="pre">SPLANC_MAX_OTA_MANIFEST</span></code> and <code class="docutils literal notranslate"><span class="pre">SPLANC_MAX_OTA_SOURCE_URL</span></code> override
+the release.</p></li>
+<li><p><strong>Bridge.</strong> It hosts the same MCP server, so it is unchanged.</p></li>
+<li><p><strong>Python (HITL).</strong> <code class="docutils literal notranslate"><span class="pre">ota_core.pull()</span></code>.</p></li>
+</ul>
+</section>
+<section id="release-artifacts-and-cadence">
+<h2>Release artifacts and cadence<a class="headerlink" href="#release-artifacts-and-cadence" title="Link to this heading">¶</a></h2>
+<p>MAX images are built <strong>alongside the firmware releases</strong>: the <code class="docutils literal notranslate"><span class="pre">max</span></code> job runs on
+every <code class="docutils literal notranslate"><span class="pre">firmware-v*</span></code> tag, after the C6 job, onto the same release.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Asset</p></th>
+<th class="head"><p></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">max-pi3-X.Y.Z.nixclosure</span></code></p></td>
+<td><p>the image (full closure, zstd -19)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">max-pi3-X.Y.Z.manifest</span></code></p></td>
+<td><p>108 bytes, signed with <code class="docutils literal notranslate"><span class="pre">OTA_SIGNING_KEY</span></code> (key id 0, the C6’s key, checked against <code class="docutils literal notranslate"><span class="pre">release.pub</span></code> as in the C6 job; board 1). CI never signs with <code class="docutils literal notranslate"><span class="pre">backup</span></code> (id 1): it has no secret, and <code class="docutils literal notranslate"><span class="pre">max_ota_release.py</span></code> refuses <code class="docutils literal notranslate"><span class="pre">--key-id</span> <span class="pre">1</span></code> without <code class="docutils literal notranslate"><span class="pre">--key-file</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">key-epoch.bin</span></code></p></td>
+<td><p>the C6’s, published by the firmware job; a MAX applies it too</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p><strong>The version.</strong> The system is stamped with the release version
+(<code class="docutils literal notranslate"><span class="pre">SPLANC_MAX_VERSION</span></code> → <code class="docutils literal notranslate"><span class="pre">/etc/splanc-max/version</span></code>), so “latest” names the same
+version for every fixture.</p></li>
+<li><p><strong>The key.</strong> The job fails, like the C6 job, if <code class="docutils literal notranslate"><span class="pre">OTA_SIGNING_KEY</span></code> is missing or
+isn’t <code class="docutils literal notranslate"><span class="pre">release.pub</span></code>’s private half.</p></li>
+<li><p><strong>SD images.</strong> <code class="docutils literal notranslate"><span class="pre">pi-v*</span></code> SD images keep their own tag. They report version 0
+(<code class="docutils literal notranslate"><span class="pre">0.0.0-dev</span></code>) until their first OTA, so any release updates them.</p></li>
+</ul>
+</section>
+<section id="migration-once">
+<h2>Migration (once)<a class="headerlink" href="#migration-once" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">pi-v1.0.0</span></code> units have no OTA arms, no updater and a stock U-Boot. They need <strong>one</strong>
+of:</p>
+<ul class="simple">
+<li><p>a new SD image (the next <code class="docutils literal notranslate"><span class="pre">pi-v*</span></code>);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//pi/provisioning:update</span> <span class="pre">--</span> <span class="pre">&lt;host&gt;</span></code> / <code class="docutils literal notranslate"><span class="pre">deploy_live</span></code>.</p></li>
+</ul>
+<p>That first OTA-capable system installs the trial U-Boot on the firmware partition
+(the U-Boot builder copies it at every switch) and seeds the persistent deploy key.
+From then on, everything is over the air. Until then the updater refuses with
+<code class="docutils literal notranslate"><span class="pre">bootloader_unsupported</span></code>, so the C6 clients’ “Update over Wi-Fi” can’t strand a
+v1.0.0 unit.</p>
+</section>
+<section id="testing">
+<h2>Testing<a class="headerlink" href="#testing" title="Link to this heading">¶</a></h2>
+<p><strong>Host tests</strong> (all in <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span> <span class="pre">//...</span></code>):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Target</p></th>
+<th class="head"><p>Covers</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">//pi/max_ota:updater_test</span></code></p></td>
+<td><p>the simulated Pi: happy path, refusals (<code class="docutils literal notranslate"><span class="pre">bad_signature</span></code>, <code class="docutils literal notranslate"><span class="pre">wrong_board</span></code>, a reserved key id, <code class="docutils literal notranslate"><span class="pre">downgrade</span></code>, <code class="docutils literal notranslate"><span class="pre">bad_manifest</span></code>, Pi 5, a stock U-Boot, <code class="docutils literal notranslate"><span class="pre">bad_url</span></code>), <strong>shared keys</strong> (the ring is the C6 test ring; C6 images — board 0 — signed by the shared release or backup key are refused as <code class="docutils literal notranslate"><span class="pre">wrong_board</span></code>, as are other boards), security floor, an unhealthy trial, a trial kernel panic, no network in the trial, download retries, delta base check, a tampered image, key epochs (a signer outside the ring is <code class="docutils literal notranslate"><span class="pre">unknown_key</span></code>), <strong>rotation</strong> (backup-signed images install; a backup-signed epoch revokes <code class="docutils literal notranslate"><span class="pre">release</span></code>, after which release-signed images and records are refused and the backup’s bridge image installs; the backup can’t revoke itself or un-revoke; an <code class="docutils literal notranslate"><span class="pre">UNSET</span></code> slot verifies nothing), and the <strong>power cut at every step</strong> sweep</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">//pi/max_ota:max_ota_unit_test</span></code></p></td>
+<td><p>header, extlinux mirror, health verdicts, state/request round trips</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">//pi/player_rs:player_rs_test</span></code></p></td>
+<td><p>the OTA arms, status mapping, pending request, download offset, <code class="docutils literal notranslate"><span class="pre">pull_only</span></code>, the welcome features</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">//firmware/ota:ota_test</span></code></p></td>
+<td><p>the other direction: a MAX image (board ≠ 0) signed by the shared release key is refused by the C6’s offer check (<code class="docutils literal notranslate"><span class="pre">wrong_board</span></code>), also through the C entry point</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">//firmware/ota:wire_test</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">source_url</span></code>, <code class="docutils literal notranslate"><span class="pre">board</span></code> and <code class="docutils literal notranslate"><span class="pre">STATE_DOWNLOADING</span></code> against the generated bindings</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">//web:otaPull_test</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">pullUpdate</span></code> against a simulated MAX (rollback, refusals, dispatch)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">//agent:firmware_test</span></code></p></td>
+<td><p>the MAX manifest + the shared <code class="docutils literal notranslate"><span class="pre">key-epoch.bin</span></code> resolution</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">//pi/hitl/tests:hitl_test</span></code> (<code class="docutils literal notranslate"><span class="pre">test_max_ota_core.py</span></code>)</p></td>
+<td><p>the Python <code class="docutils literal notranslate"><span class="pre">pull()</span></code> client</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>HITL gate</strong> (<code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:max_ota_gate</span></code>, a <code class="docutils literal notranslate"><span class="pre">py_binary</span></code> tagged <code class="docutils literal notranslate"><span class="pre">hitl</span></code> +
+<code class="docutils literal notranslate"><span class="pre">manual</span></code>). Its images are Nix-built: <code class="docutils literal notranslate"><span class="pre">pi/hitl/max_ota_images.sh</span> <span class="pre">OUT</span></code> builds A/B/U/N
+with TEST trust and packs deltas. It runs on rig-1’s <code class="docutils literal notranslate"><span class="pre">pi-ledmapper-1/2</span></code> in one
+reservation:</p>
+<ul class="simple">
+<li><p><strong>setup:</strong> deploy A over SSH and record the state;</p></li>
+<li><p><strong>upgrade:</strong> A → B;</p></li>
+<li><p><strong>badsig;</strong></p></li>
+<li><p><strong>unhealthy:</strong> U rolls back to B;</p></li>
+<li><p><strong>noboot:</strong> N, a system that never boots (<code class="docutils literal notranslate"><span class="pre">SPLANC_MAX_VARIANT=noboot</span></code>: its stage 1
+is pointed at a missing init with <code class="docutils literal notranslate"><span class="pre">boot.panic_on_fail</span></code>, so it panics before
+userspace), rolls back to B through the <code class="docutils literal notranslate"><span class="pre">panic=10</span></code> reboot;</p></li>
+<li><p><strong>powercut:</strong> B → A with an immediate reset mid-download, then resume;</p></li>
+<li><p><strong>trialcut:</strong> A → B with a reset during the trial; back on A.</p></li>
+</ul>
+<p>Kept state is compared by content: the Wi-Fi profiles (names and contents), the
+hostname, SSH host key and deploy key, and a hash of every file under
+<code class="docutils literal notranslate"><span class="pre">/var/lib/ledmapper</span></code>, where the gate also plants a sentinel (removed at the end).
+The player’s TLS cert is made in memory at each start, so there is none to keep.</p>
+<p><strong>Effects keep running.</strong> Across setup’s plain deploy reboot and the upgrade, the
+gate samples the player’s health file (<code class="docutils literal notranslate"><span class="pre">ticks</span></code>) about once a second. The upgrade
+passes only if the old system rendered through the whole download and staging (no
+gap over 8 s), kept rendering until it went down for the reboot, and the trial’s
+player started no more than 15 s (DUT uptime) later than after the plain reboot.</p>
+<p>The network DUTs have no switchable power. <code class="docutils literal notranslate"><span class="pre">echo</span> <span class="pre">b</span> <span class="pre">&gt;</span> <span class="pre">/proc/sysrq-trigger</span></code> resets
+immediately, with no sync and no unmount, which is what a cut does to the
+filesystem. Journals of the OTA units and the player are saved per phase.</p>
+</section>
+<section id="what-the-owner-must-do-decisions">
+<h2>What the owner must do (decisions)<a class="headerlink" href="#what-the-owner-must-do-decisions" title="Link to this heading">¶</a></h2>
+<ol class="arabic simple">
+<li><p><strong>Nothing for signing keys.</strong> A MAX uses the C6’s keys: the existing
+<code class="docutils literal notranslate"><span class="pre">OTA_SIGNING_KEY</span></code> secret / <code class="docutils literal notranslate"><span class="pre">release.pub</span></code> and the offline <code class="docutils literal notranslate"><span class="pre">backup.pub</span></code>. There is
+no MAX key to create, no MAX secret and no MAX key file. The C6 runbooks
+(docs/design/ota.md “Key rotation”) now cover MAX units too.</p></li>
+<li><p><strong>Revisit separate keys</strong> only if the MAX gets its own distribution channel or
+its own signers (see “Signing”); ids 3/4 are reserved for that.</p></li>
+<li><p><strong>Internet for MAX units.</strong> By default the Pi downloads from github.com. A
+fixture on an isolated LAN needs a mirror passed as <code class="docutils literal notranslate"><span class="pre">source_url</span></code>; the bridge
+could serve one. That is not built yet.</p></li>
+</ol>
+</section>
+<section id="limitations-and-follow-ups">
+<h2>Limitations and follow-ups<a class="headerlink" href="#limitations-and-follow-ups" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>Pi 5 / Pi 4 / Zero 2W</strong> aren’t wired yet (see “Boards”). Pi 5 needs its tryboot
+backend.</p></li>
+<li><p><strong>Release images are full closures.</strong> Deltas exist in the tool and the updater,
+but CI doesn’t keep the previous release’s closure to diff against.</p></li>
+<li><p><strong>A trial that changes the gateware re-flashes the Tang twice on rollback</strong>
+(new, then old). That is a few seconds of dark LEDs each time.</p></li>
+<li><p><strong>The first OTA-capable system needs a deploy or an SD flash</strong> (Migration).</p></li>
+<li><p>The updater keeps the current and the previous generation. A full disk shows up
+as <code class="docutils literal notranslate"><span class="pre">import_failed</span></code> or <code class="docutils literal notranslate"><span class="pre">flash_error</span></code>.</p></li>
+</ul>
+</section>
+<section id="hitl-results">
+<h2>HITL results<a class="headerlink" href="#hitl-results" title="Link to this heading">¶</a></h2>
+<section id="pi-ledmapper-2-2026-10-28-rebased-on-main-all-seven-phases">
+<h3>pi-ledmapper-2, 2026-10-28 (rebased on main, all seven phases)<a class="headerlink" href="#pi-ledmapper-2-2026-10-28-rebased-on-main-all-seven-phases" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:max_ota_gate</span></code> on rig-1 / <strong>pi-ledmapper-2</strong> (splanc-max-1: Pi 3
+Model B+ Rev 1.4, no FPGA attached; the player still renders to spidev), in one
+reservation and one run. Images from this tree: A 9.1.0, B 9.2.0, U 9.3.0
+(unhealthy), N 9.4.0 (noboot); deltas of 66 KB (A↔B, B→N) and 3.4 MB (B→U), all
+TEST-signed. <strong>Verdict: PASS, 61 of 61 checks.</strong> The unit ends on A, a working system.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>phase</p></th>
+<th class="head"><p>result</p></th>
+<th class="head"><p>numbers</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>setup</p></td>
+<td><p>PASS</p></td>
+<td><p>A deployed over SSH (from the unit’s pre-OTA Sep-24 system); trial U-Boot in place; sentinel planted</p></td>
+</tr>
+<tr class="row-odd"><td><p>upgrade A→B</p></td>
+<td><p>PASS</p></td>
+<td><p><strong>87 s</strong>: download 4.5 s, installed at 8.5 s, trial up at 62 s, healthy and committed at 86 s</p></td>
+</tr>
+<tr class="row-even"><td><p>effects keep running</p></td>
+<td><p>PASS</p></td>
+<td><p>the old system rendered through download + staging (longest frame gap 2.1 s, = the health file period) and until it went down (0 s); the trial’s player started at uptime 20.7 s vs 19.3 s after a plain reboot</p></td>
+</tr>
+<tr class="row-odd"><td><p>bad signature</p></td>
+<td><p>PASS</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">bad_signature</span></code> before any fetch; dl/ empty; still on B</p></td>
+</tr>
+<tr class="row-even"><td><p>unhealthy (U)</p></td>
+<td><p>PASS</p></td>
+<td><p>trial booted, never healthy, rolled back at the deadline (<code class="docutils literal notranslate"><span class="pre">unhealthy:</span> <span class="pre">no</span> <span class="pre">health</span> <span class="pre">file</span></code>), back on B; 403 s</p></td>
+</tr>
+<tr class="row-odd"><td><p>noboot (N)</p></td>
+<td><p>PASS</p></td>
+<td><p>the trial panicked in stage 1 (no journal from it); the <code class="docutils literal notranslate"><span class="pre">panic=10</span></code> reboot booted B and the boot reconcile reported <code class="docutils literal notranslate"><span class="pre">rolled_back</span></code> (<code class="docutils literal notranslate"><span class="pre">trial_failed</span></code>); 95 s</p></td>
+</tr>
+<tr class="row-even"><td><p>power cut mid-download</p></td>
+<td><p>PASS</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sysrq</span> <span class="pre">b</span></code> at 28,672 / 66,584 B; resumed by HTTP Range after the reset; installed, healthy, committed; on A; 155 s</p></td>
+</tr>
+<tr class="row-odd"><td><p>power cut in the trial</p></td>
+<td><p>PASS</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sysrq</span> <span class="pre">b</span></code> during the unproven trial; back on A (<code class="docutils literal notranslate"><span class="pre">trial_reset</span></code>); 120 s</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Wi-Fi profiles (contents), hostname, SSH host key, deploy key, <code class="docutils literal notranslate"><span class="pre">/var/lib/ledmapper</span></code>
+(content hash) and the sentinel were identical after every phase.</p>
+<p><strong>Found on the way:</strong> an image built in a checkout without
+<code class="docutils literal notranslate"><span class="pre">pi/provisioning/secrets/deploy_key.pub</span></code> gets a freshly minted deploy key (sbc-deploy
+<code class="docutils literal notranslate"><span class="pre">keys_ensure</span></code>), and its first activation persists that key as the unit’s only
+persistent deploy key, locking the real key out. The gate now refuses to deploy an
+image that doesn’t trust its key, and <code class="docutils literal notranslate"><span class="pre">max_ota_images.sh</span></code> refuses to build without
+the public half. Also note: committing an update garbage-collects all but the
+current and previous generation, so a unit’s pre-OTA system is gone after its
+second committed update.</p>
+</section>
+<section id="pi-ledmapper-1-2026-10-23">
+<h3>pi-ledmapper-1, 2026-10-23<a class="headerlink" href="#pi-ledmapper-1-2026-10-23" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:max_ota_gate</span></code> on rig-1 / <strong>pi-ledmapper-1</strong> (splanc-max-2: Pi 3
+Model B+ Rev 1.4 with its Tang Nano 9K), in one reservation, 2026-10-23. The images
+are <code class="docutils literal notranslate"><span class="pre">pi/hitl/max_ota_images.sh</span></code> deltas of 66 KB (A↔B) and 3.4 MB (U), all TEST-signed.</p>
+<p><strong>Verdict: PASS.</strong> Every check passed, across two runs in the same reservation:</p>
+<ul class="simple">
+<li><p><strong>run 5:</strong> setup, upgrade, badsig, unhealthy, trialcut;</p></li>
+<li><p><strong>run 6:</strong> powercut, re-run alone with the download throttled, because the
+66 KB delta had finished before the gate could cut it.</p></li>
+</ul>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>phase</p></th>
+<th class="head"><p>result</p></th>
+<th class="head"><p>numbers</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>setup</p></td>
+<td><p>PASS</p></td>
+<td><p>deploy over SSH 80 s. The first OTA-capable system and the trial U-Boot boot on real hardware. Hostname, Wi-Fi profiles, SSH host key and /var/lib/ledmapper kept; the deploy key was persisted</p></td>
+</tr>
+<tr class="row-odd"><td><p>upgrade A→B</p></td>
+<td><p>PASS</p></td>
+<td><p><strong>77 s total</strong>: download 4 s, then the trial boot (U-Boot one-shot), healthy and committed 29 s after the trial came up. Runs B; all state kept</p></td>
+</tr>
+<tr class="row-even"><td><p>bad signature</p></td>
+<td><p>PASS</p></td>
+<td><p>refused (<code class="docutils literal notranslate"><span class="pre">bad_signature</span></code>) before anything was fetched (dl/ empty); still on B</p></td>
+</tr>
+<tr class="row-odd"><td><p>unhealthy (U)</p></td>
+<td><p>PASS</p></td>
+<td><p>U booted once; no health file; rolled back at the 300 s deadline; <strong>back on B by itself</strong> (<code class="docutils literal notranslate"><span class="pre">unhealthy:</span> <span class="pre">no</span> <span class="pre">health</span> <span class="pre">file</span></code>)</p></td>
+</tr>
+<tr class="row-even"><td><p>power cut mid-download</p></td>
+<td><p>PASS</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sysrq</span> <span class="pre">b</span></code> at 28,672 / 66,362 B. The Pi came back on A; <code class="docutils literal notranslate"><span class="pre">splanc-ota-apply</span></code> resumed at 28,672 (HTTP Range); installed, healthy, committed: <strong>runs B</strong> (126 s)</p></td>
+</tr>
+<tr class="row-odd"><td><p>power cut in the trial</p></td>
+<td><p>PASS</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sysrq</span> <span class="pre">b</span></code> while the trial was up and not yet proven. U-Boot booted the old default: <strong>back on A</strong>, <code class="docutils literal notranslate"><span class="pre">rolled_back</span></code> (<code class="docutils literal notranslate"><span class="pre">trial_reset</span></code>), 84 s</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The device ends on B, a working system.</p>
+<p><strong>What the first runs found, all fixed in this PR:</strong></p>
+<ul class="simple">
+<li><p><strong>The player SEGV’d at start.</strong> On <code class="docutils literal notranslate"><span class="pre">main</span></code> the host-profile <code class="docutils literal notranslate"><span class="pre">Player::handle</span></code> needs
+<strong>8.2 MiB of stack</strong> (<code class="docutils literal notranslate"><span class="pre">sub</span> <span class="pre">sp,</span> <span class="pre">#0x82b000</span></code>), more than the 8 MiB main thread and the
+8 MiB tokio workers. Both <code class="docutils literal notranslate"><span class="pre">--start</span> <span class="pre">N</span></code> and every client frame crashed the static-musl
+player in a loop. It now runs on 32 MiB stacks.</p></li>
+<li><p><strong>spidev’s 4 KiB buffer.</strong> It made every 6.6 KB FPGA frame (4 × 550 LEDs) fail with
+EMSGSIZE, silently, so the Tang got nothing. The image now sets
+<code class="docutils literal notranslate"><span class="pre">spidev.bufsiz=65536</span></code>, and the player logs the first write error. The health check,
+which counts frames that reached SPI, caught this.</p></li>
+<li><p><strong>The baked hostname.</strong> It made avahi advertise <code class="docutils literal notranslate"><span class="pre">ledmapper.local</span></code>, which would have
+broken the rig’s <code class="docutils literal notranslate"><span class="pre">splanc-max-2.local</span></code> addressing. Now the hostname comes from
+/var/lib/sbc (see “Device state”).</p></li>
+<li><p><strong>The health service lost its first sample</strong> across ticks; now the caller carries
+it.</p></li>
+</ul>
+<p><strong>U-Boot under QEMU.</strong> Before deploying the trial U-Boot to hardware, it was run under
+QEMU <code class="docutils literal notranslate"><span class="pre">raspi3b</span></code> against a two-partition SD image. The flag <code class="docutils literal notranslate"><span class="pre">1</span> <span class="pre">abcd</span></code> became <code class="docutils literal notranslate"><span class="pre">0</span> <span class="pre">abcd</span></code>;
+<code class="docutils literal notranslate"><span class="pre">0</span> <span class="pre">…</span></code> and an absent flag were left alone.</p>
+</section>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Splanc MAX updates over the air</a><ul>
+<li><a class="reference internal" href="#the-update-unit-a-nixos-generation-booted-once">The update unit: a NixOS generation, booted once</a><ul>
+<li><a class="reference internal" href="#trial-boot-one-shot">Trial boot (one-shot)</a></li>
+<li><a class="reference internal" href="#flow">Flow</a></li>
+<li><a class="reference internal" href="#power-loss-at-every-step">Power loss at every step</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#signing">Signing</a><ul>
+<li><a class="reference internal" href="#key-rotation">Key rotation</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#download">Download</a><ul>
+<li><a class="reference internal" href="#the-image-nixclosure">The image (<code class="docutils literal notranslate"><span class="pre">.nixclosure</span></code>)</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#health-proof">Health proof</a></li>
+<li><a class="reference internal" href="#fpga-bitstream-versioning">FPGA bitstream versioning</a></li>
+<li><a class="reference internal" href="#device-state-kept-across-updates">Device state kept across updates</a></li>
+<li><a class="reference internal" href="#boards-one-artifact-per-board">Boards: one artifact per board</a></li>
+<li><a class="reference internal" href="#transport-ledmapper-proto">Transport (<code class="docutils literal notranslate"><span class="pre">ledmapper.proto</span></code>)</a></li>
+<li><a class="reference internal" href="#ux-and-clients">UX and clients</a></li>
+<li><a class="reference internal" href="#release-artifacts-and-cadence">Release artifacts and cadence</a></li>
+<li><a class="reference internal" href="#migration-once">Migration (once)</a></li>
+<li><a class="reference internal" href="#testing">Testing</a></li>
+<li><a class="reference internal" href="#what-the-owner-must-do-decisions">What the owner must do (decisions)</a></li>
+<li><a class="reference internal" href="#limitations-and-follow-ups">Limitations and follow-ups</a></li>
+<li><a class="reference internal" href="#hitl-results">HITL results</a><ul>
+<li><a class="reference internal" href="#pi-ledmapper-2-2026-10-28-rebased-on-main-all-seven-phases">pi-ledmapper-2, 2026-10-28 (rebased on main, all seven phases)</a></li>
+<li><a class="reference internal" href="#pi-ledmapper-1-2026-10-23">pi-ledmapper-1, 2026-10-23</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../../static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>
