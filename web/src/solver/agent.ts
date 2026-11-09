@@ -85,7 +85,27 @@ export interface SolveDiag {
   start: "cold" | "warm";
   warmStartError?: string;
   assessment: Assessment;
+  /** Strip prior only: both final candidates, assessed on their assembled maps
+   * (pipeline.rs StripCandidates). `chosen: "retained"` = the strip solve was
+   * rolled back. */
+  stripCandidates?: StripCandidates;
   state: WarmState;
+}
+
+/** One final candidate of a strip-prior solve (pipeline.rs CandidateTrace). */
+export interface StripCandidate extends Assessment {
+  /** Measured LEDs the chain check demoted at assembly. */
+  removed: number;
+  /** LEDs the gap fill placed (nViews = 0). */
+  inferred: number;
+}
+
+/** The strip prior's candidate decision (pipeline.rs strip_candidate_policy). */
+export interface StripCandidates {
+  chosen: "strip" | "retained";
+  reason: "strip-degenerate" | "strip-usable" | "both-degenerate";
+  retained: StripCandidate;
+  strip: StripCandidate;
 }
 
 /** An interim solve during capture. The worker keeps the capture's records
