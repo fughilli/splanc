@@ -191,6 +191,17 @@ export class FakePlayer {
     await new Promise<void>((r) => this.server.close(() => r()));
   }
 
+  /** Open /ws sessions right now. */
+  get openSessions(): number {
+    return this.wss.clients.size;
+  }
+
+  /** Hand the session to "another client", as the netstack player does with an idle one
+   * (#444): WS close 4001 + reason, then the socket goes away. */
+  takeOver(): void {
+    for (const c of this.wss.clients) c.close(4001, "taken over by another client");
+  }
+
   /** Push an fps_state (FUG-82) to every connected session, as the autoscaler does. */
   pushFpsState(st: { targetFps: number; currentFps: number; auto: boolean; lagging: boolean; achievedFps?: number }): void {
     for (const c of this.wss.clients) this.reply(c, { type: "fps_state", minFps: 25, maxFps: 80, ...st });

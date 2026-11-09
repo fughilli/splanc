@@ -494,6 +494,17 @@ cc_test(
     deps = [":heap_census_core"],
 )
 
+# Session takeover policy (#444): when a new client may take over the netstack player's
+# one wss session (an idle one), host-tested. Header-only; netstack_transport includes it.
+cc_test(
+    name = "session_takeover_test",
+    srcs = [
+        "session_takeover.h",
+        "session_takeover_test.cc",
+    ],
+    copts = ["-UNDEBUG"],
+)
+
 # Per-device TLS identity (docs/design/per-device-cert.md): the blob format + the
 # readiness state machine that gates the :443 listener, host-testable...
 cc_library(
@@ -808,6 +819,7 @@ cc_library(
         "join_guard.h",
         "netstack_transport.cpp",
         "serial_log.h",
+        "session_takeover.h",
         "sta_mac.h",
         "tls_region.cpp",
         "wifi_creds.h",
@@ -1472,6 +1484,27 @@ filegroup(
     name = "esp32c6_netstack_elf",
     srcs = [":esp32c6_netstack"],
     output_group = "elf",
+)
+
+# The mbedtls ABI between the transport's headers and the linked library: the context
+# it declares holds the library's (netstack_transport.cpp SslBox; #444, found by #440).
+py_test(
+    name = "tls_abi_test",
+    srcs = ["tests/test_tls_abi.py"],
+    data = [
+        "netstack_transport.cpp",
+        ":esp32c6_netstack_elf",
+        "@embedded//tools:riscv_objdump",
+    ],
+    env = {
+        "ELF": "$(rlocationpath :esp32c6_netstack_elf)",
+        "OBJDUMP": "$(rlocationpath @embedded//tools:riscv_objdump)",
+    },
+    main = "tests/test_tls_abi.py",
+    # Linux CI, as stack_bound_test: the macOS runner's riscv objdump exits 101 in the
+    # sandbox.
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = ["@rules_python//python/runfiles"],
 )
 
 py_test(

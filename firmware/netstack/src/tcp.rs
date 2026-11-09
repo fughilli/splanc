@@ -164,6 +164,14 @@ pub struct TcpConn {
     // reject a busy-slot SYN only while the slot is a live, established, actively-serving
     // session — never while it is closing, idle pre-WS, or transitioning back to LISTEN.
     serving_live: bool,
+    // Session takeover (#444). While `serving_live` AND `takeover_ok` (the app's verdict that
+    // the live session is IDLE: no client messages for a while, no mapping / debugger pause /
+    // video), a SYN from a different peer is not RST-refused: it is silently dropped and
+    // latched in `takeover_req`. The app sees the request, closes the idle session cleanly
+    // (WS close 4001 + close_notify) and re-LISTENs; the new peer's SYN retransmit (~1 s)
+    // then lands on the fresh listener. A busy session still refuses (RST|ACK) as before.
+    takeover_ok: bool,
+    takeover_req: bool,
     // RTT estimator (Jacobson/Karels, RFC 6298). The fixed 300 ms RTO was ~2 orders too
     // large for the LAN RTT (~ms), so a single lost handshake/cert segment cost a full
     // 300 ms–2 s stall before go-back-N recovered — and under the concurrent-DUT
@@ -258,6 +266,8 @@ impl TcpConn {
             ooo: [(0, 0); OOO_MAX], ooo_n: 0, ooo_recent: (0, 0),
             tx_at_ms: 0, rto_ms: RTO_INITIAL_MS, rto_count: 0,
             serving_live: false,
+            takeover_ok: false,
+            takeover_req: false,
             srtt_8: 0, rttvar_4: 0, rtt_seq: iss, rtt_at_ms: 0, rtt_valid: false,
             dup_ack: 0, dup_ack_seq: 0, tlp_done: false, in_recovery: false,
         }
@@ -273,6 +283,17 @@ impl TcpConn {
     /// regression). Cleared automatically on `listen()` so a reclaimed slot never sheds.
     pub fn set_serving_live(&mut self, live: bool) {
         self.serving_live = live;
+    }
+
+    /// Let a new peer take over the live session instead of being refused (the app's verdict
+    /// that the session is idle; see `takeover_ok`). Cleared on `listen()`.
+    pub fn set_takeover_ok(&mut self, ok: bool) {
+        self.takeover_ok = ok;
+    }
+
+    /// Whether a new peer asked for the slot since the last call (and clear it).
+    pub fn take_takeover_request(&mut self) -> bool {
+        core::mem::replace(&mut self.takeover_req, false)
     }
 
     /// Build the initial SYN into `out`; returns its length. Moves to SynSent.
@@ -654,6 +675,13 @@ impl TcpConn {
                 && f & SYN != 0
                 && f & ACK == 0
             {
+                if self.takeover_ok {
+                    // Idle session: the newcomer gets it. Drop this SYN (no RST: the peer
+                    // retransmits it in ~1 s) and tell the app, which closes the idle
+                    // session and re-LISTENs before that retransmit arrives.
+                    self.takeover_req = true;
+                    return 0;
+                }
                 let s = u32::from_be_bytes([tcp[4], tcp[5], tcp[6], tcp[7]]);
                 return self.build_rst_to(&ip[12..16], sport, 0, Some(s.wrapping_add(1)), out);
             }
@@ -1352,6 +1380,53 @@ mod tests {
         let r = srv.on_ip(1, &a[..n], &mut b);
         assert_eq!(srv.rx_data(), b"hello");
         assert!(r > 0);
+    }
+
+    // Session takeover (#444): with the app's idle verdict armed, a newcomer's SYN at a live
+    // slot is not refused but latched as a takeover request (and dropped, so it retransmits
+    // onto the fresh listener the app opens); the live slot is untouched until the app acts.
+    // Without the verdict (a busy session) the same SYN is still RST-refused.
+    #[test]
+    fn idle_live_slot_latches_a_takeover_instead_of_refusing() {
+        let a_ip = [10, 0, 0, 1];
+        let b_ip = [10, 0, 0, 3];
+        let srv_ip = [10, 0, 0, 2];
+        let mut a = [0u8; 1600];
+        let mut b = [0u8; 1600];
+        let mut srv = TcpConn::listen(srv_ip, 443, 9000);
+        let mut cli_a = TcpConn::new(a_ip, srv_ip, 5000, 443, 1000);
+        let n = cli_a.connect(&mut a);
+        let r = srv.on_ip(1, &a[..n], &mut b);
+        let n = cli_a.on_ip(1, &b[..r], &mut a);
+        let _ = srv.on_ip(1, &a[..n], &mut b);
+        assert_eq!(srv.state, State::Established);
+        srv.set_serving_live(true);
+        assert!(!srv.take_takeover_request(), "nothing asked yet");
+
+        // Busy (no idle verdict): refused, no request latched.
+        let mut cli_b = TcpConn::new(b_ip, srv_ip, 6000, 443, 2000);
+        let n = cli_b.connect(&mut a);
+        assert!(srv.on_ip(1, &a[..n], &mut b) > 0, "a busy session still refuses");
+        assert!(!srv.take_takeover_request());
+
+        // Idle: the newcomer's SYN is dropped (it retransmits) and latched.
+        srv.set_takeover_ok(true);
+        let mut cli_c = TcpConn::new(b_ip, srv_ip, 6001, 443, 3000);
+        let n = cli_c.connect(&mut a);
+        assert_eq!(srv.on_ip(1, &a[..n], &mut b), 0, "no RST for a takeover");
+        assert_eq!(cli_c.state, State::SynSent, "the newcomer keeps waiting for its retransmit");
+        assert_eq!(srv.state, State::Established, "the old session is the app's to close");
+        assert_eq!(srv.dst, a_ip);
+        assert!(srv.take_takeover_request(), "the takeover request is latched");
+        assert!(!srv.take_takeover_request(), "…and cleared once read");
+
+        // The app closes the idle session and re-listens: the retransmitted SYN latches, and
+        // the fresh listener has neither the verdict nor a stale request.
+        srv = TcpConn::listen(srv_ip, 443, 0x7000);
+        assert!(!srv.takeover_ok && !srv.take_takeover_request());
+        let n = cli_c.connect(&mut a);
+        assert!(srv.on_ip(1, &a[..n], &mut b) > 0);
+        assert_eq!(srv.state, State::SynRcvd, "the newcomer gets the slot");
     }
 
     // THE regression guard for #199/#204: the SAME client's post-WS cert-trust-page GET

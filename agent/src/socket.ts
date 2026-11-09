@@ -87,7 +87,8 @@ export function nodeSocketFactory(
       }
     });
     ws.on("open", () => adapter.onopen?.());
-    ws.on("close", () => adapter.onclose?.());
+    // Pass the close code on: 4001 = the player handed this session to another client (#444).
+    ws.on("close", (code: number, reason: Buffer) => adapter.onclose?.({ code, reason: reason?.toString() ?? "" }));
     ws.on("error", (e) => {
       onError?.(new Error(errorText(e)));
       adapter.onerror?.(e);

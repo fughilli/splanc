@@ -185,6 +185,14 @@ export interface ClientOptions {
    * true. (Independent of certApprovalUrl(), which only compares origins and is
    * ALWAYS non-null in the wrapper, whose page origin is capacitor://localhost.) */
   certTrustPossible?: boolean;
+  /** This browser has completed a wss welcome with this exact host before, so its
+   * certificate was trusted here (KnownDevice.wssOkAt). A fresh client then treats
+   * its failures like a warm reconnect's: a device that is busy (the netstack player
+   * serves ONE wss session and RST-refuses a second client while it is live) or
+   * briefly unreachable fails exactly like an untrusted cert to a browser
+   * WebSocket, and a once-trusted device's cert almost never changes (it is derived
+   * from the MAC; only a factory reset replaces it). Default false. */
+  trustedBefore?: boolean;
   /** Byte-window size for sharded uploads (submit_map / submit_topology /
    * submit_effect). Defaults to {@link CHUNK_BYTES} (4096), sized for the wss
    * heap. The BLE transport passes a smaller value so each upload window — and
@@ -211,7 +219,39 @@ export interface ClientEvents {
    * coldRetryLimit): the UI should show the "trust the cert" affordance and wait
    * for the user rather than expect a background reconnect. */
   onCertTrustNeeded?: (url: string) => void;
+  /** Fired when an attempt fails before `welcome`, with why: "timeout" = nothing
+   * answered within connectTimeoutMs (device off this network, rebooting, a new IP,
+   * or its single slot silently held) — never a certificate problem, a browser
+   * rejects an untrusted cert quickly; "failed" = the socket was closed or refused
+   * (an untrusted/changed cert, or the device refusing a second client). */
+  onAttemptFailed?: (kind: ConnectFailureKind, attempt: number) => void;
+  /** The device closed this session because another client took it over (WS close
+   * {@link WS_CLOSE_TAKEN_OVER}; the player hands an IDLE session to a newcomer, #444).
+   * The client does NOT reconnect by itself — that would take the session straight back
+   * and the two would fight. A fresh {@link LedMapperClient.connect} resumes. */
+  onTakenOver?: (reason: string) => void;
 }
+
+/** WS close code a player sends when a new client took over its idle session (#444;
+ * netstack_transport.cpp kWsCloseTakenOver). */
+export const WS_CLOSE_TAKEN_OVER = 4001;
+
+/** Why a connect attempt failed before `welcome` (see ClientEvents.onAttemptFailed). */
+export type ConnectFailureKind = "timeout" | "failed";
+
+/** The rejection of {@link LedMapperClient.connect}: carries the failure kind. */
+export class ConnectFailedError extends Error {
+  constructor(readonly kind: ConnectFailureKind) {
+    super(kind === "timeout" ? "connection timed out" : "connection failed");
+    this.name = "ConnectFailedError";
+  }
+}
+
+/** Backoff between the slow retries a once-trusted client keeps making after it has
+ * surfaced the trust affordance (ms). One attempt per this period costs the device's
+ * TLS slot about a second at most, and lets a busy or rejoining device reconnect on
+ * its own once it frees up, instead of dead-ending at "trust needed". */
+export const GAVE_UP_RETRY_MS = 15_000;
 
 /** Default WebSocket URL for the page's own origin (wss on https pages). */
 export function defaultWsUrl(loc: { protocol: string; host: string } = location): string {
@@ -259,6 +299,7 @@ const KIOSK_ACTIVITY_TYPES = new Set([
 export class LedMapperClient {
   private sock: SocketLike | null = null;
   private readonly factory: SocketFactory;
+  private readonly customFactory: boolean;
   private readonly now: () => number;
   private readonly schedule: (fn: () => void, ms: number) => void;
   private readonly backoffMs: number[];
@@ -281,6 +322,13 @@ export class LedMapperClient {
   private failsSinceWelcome = 0;
   // Set when onclose stopped auto-retrying (cert-trust give-up); cleared by connect().
   private gaveUp = false;
+  // The device handed this session to another client (WS close 4001); cleared by connect().
+  private takenOver_ = false;
+  // Once-trusted (warm, or trustedBefore): after a give-up, keep retrying slowly.
+  private readonly trustedBefore: boolean;
+  // onCertTrustNeeded already fired for this run of failures (reset on welcome), so
+  // the slow retries after a give-up don't re-announce it every round.
+  private trustSurfaced = false;
   // A backoff reconnect is already scheduled (never stack two).
   private reconnectScheduled = false;
   private reconnectGen = 0;
@@ -341,6 +389,7 @@ export class LedMapperClient {
 
   constructor(readonly url: string, opts: ClientOptions = {}) {
     this.factory = opts.socketFactory ?? ((u) => new WebSocket(u) as unknown as SocketLike);
+    this.customFactory = opts.socketFactory !== undefined;
     this.now = opts.now ?? (() => performance.now());
     this.schedule = opts.schedule ?? ((fn, ms) => setTimeout(fn, ms));
     // Gentle by default: a wss player (self-signed cert) rejects the socket
@@ -355,6 +404,7 @@ export class LedMapperClient {
     this.coldRetryLimit = opts.coldRetryLimit ?? 1;
     this.warmRetryLimit = opts.warmRetryLimit ?? 4;
     this.needsTrust = (opts.certTrustPossible ?? true) && certApprovalUrl(url) !== null;
+    this.trustedBefore = opts.trustedBefore ?? false;
     this.appVersion = opts.appVersion ?? "0.1.0";
     this.clientName = opts.clientName ?? "android-web";
     this.clock = new ServerClock({ offsetMs: 0, rttMs: Infinity }, this.now);
@@ -380,6 +430,26 @@ export class LedMapperClient {
     return this.sock?.bufferedAmount ?? 0;
   }
 
+  /** Whether this client has ever reached `welcome`. */
+  get everConnected(): boolean {
+    return this.everWelcomed;
+  }
+
+  /** Whether the device handed this session to another client (and it isn't retrying). */
+  get takenOver(): boolean {
+    return this.takenOver_;
+  }
+
+  /** Whether it stopped (or slowed) auto-retrying at the cert-trust limit. */
+  get hasGivenUp(): boolean {
+    return this.gaveUp;
+  }
+
+  /** Whether the socket comes from an explicit factory (BLE, the native bridge). */
+  get viaFactory(): boolean {
+    return this.customFactory;
+  }
+
   get isConnected(): boolean {
     return this.sock !== null && this.sock.readyState === SOCKET_OPEN && this.welcome_ !== null;
   }
@@ -388,12 +458,14 @@ export class LedMapperClient {
   connect(): Promise<WelcomeMessage> {
     this.closed = false;
     this.gaveUp = false;
+    this.takenOver_ = false;
     this.reconnectScheduled = false;
     this.reconnectGen++; // cancels a backoff reconnect still pending
     this.events.onConnecting?.(++this.attempt, this.url);
     return new Promise((resolve, reject) => {
       let settled = false;
       let welcomed = false;
+      let timedOut = false;
       const sock = this.factory(this.url);
       sock.binaryType = "arraybuffer"; // binary protobuf frames (proto-comms)
       this.sock = sock;
@@ -404,6 +476,7 @@ export class LedMapperClient {
       // connected or once a newer socket has replaced this one.
       this.schedule(() => {
         if (!welcomed) {
+          if (sock.readyState !== SOCKET_CLOSED) timedOut = true;
           try {
             sock.close();
           } catch {
@@ -434,6 +507,7 @@ export class LedMapperClient {
           this.attempt = 0;
           this.everWelcomed = true;
           this.failsSinceWelcome = 0;
+          this.trustSurfaced = false;
           welcomed = true;
           this.redeliverOwedStop();
           this.flushBatches();
@@ -450,12 +524,33 @@ export class LedMapperClient {
       sock.onerror = () => {
         // onclose always follows; reconnect handled there.
       };
-      sock.onclose = () => {
+      sock.onclose = (ev?: unknown) => {
         const hadWelcome = this.welcome_ !== null;
+        const code = (ev as { code?: unknown } | undefined)?.code;
+        if (code === WS_CLOSE_TAKEN_OVER && this.sock === sock && !this.closed) {
+          // Another client took this (idle) session over: stop here, no reconnect.
+          const reason = String((ev as { reason?: unknown }).reason ?? "") || "taken over by another client";
+          this.closed = true;
+          this.takenOver_ = true;
+          this.reconnectGen++; // cancel any pending backoff
+          this.reconnectScheduled = false;
+          this.welcome_ = null;
+          this.live.onDisconnect();
+          this.failWaiters(new Error(`the player was ${reason}`));
+          if (hadWelcome) this.events.onDisconnected?.();
+          this.events.onTakenOver?.(reason);
+          if (!settled) {
+            settled = true;
+            reject(new ConnectFailedError("failed"));
+          }
+          return;
+        }
         this.welcome_ = null;
         this.live.onDisconnect();
         this.failWaiters(new Error("socket closed"));
         if (hadWelcome) this.events.onDisconnected?.();
+        const kind: ConnectFailureKind = timedOut ? "timeout" : "failed";
+        if (!hadWelcome && !this.closed) this.events.onAttemptFailed?.(kind, this.attempt);
         if (!this.closed) {
           // A run of reconnects that never reach `welcome` against a cert-trust
           // target is almost certainly failing on the self-signed cert: retrying
@@ -480,12 +575,29 @@ export class LedMapperClient {
           // stranded the update at "Restarting into the updater…" with nothing left
           // reconnecting. So keep retrying the same target until the waiter's own
           // deadline, at a short capped backoff so the device is picked up promptly.
-          const limit = this.everWelcomed ? this.warmRetryLimit : this.coldRetryLimit;
+          //
+          // A TIMEOUT is never counted: a browser rejects an untrusted cert within the
+          // handshake (well under a second), so an attempt nothing answered for
+          // connectTimeoutMs is a device that is off this network, rebooting, on a new
+          // address, or still holding its single slot. Calling that "trust needed"
+          // sent users to a cert page that could not load either (#444); retry it.
+          //
+          // A once-trusted client (warm, or trustedBefore) surfaces the trust
+          // affordance at its limit but does NOT stop: its cert is derived from the
+          // MAC and survives reboots and renames, so far likelier causes are another
+          // client holding the device's only session (the agent, another phone or
+          // tab) or a network drop, both of which clear by themselves. It keeps
+          // retrying slowly (GAVE_UP_RETRY_MS) so control comes back on its own.
+          const warm = this.everWelcomed || this.trustedBefore;
+          const limit = warm ? this.warmRetryLimit : this.coldRetryLimit;
           const awaited = this.welcomeListeners.size > 0;
-          const certGiveUp = this.needsTrust && ++this.failsSinceWelcome >= limit && !awaited;
+          const counts = kind !== "timeout";
+          const certGiveUp = this.needsTrust && counts && ++this.failsSinceWelcome >= limit && !awaited;
           if (certGiveUp) {
             this.gaveUp = true;
-            this.events.onCertTrustNeeded?.(this.url);
+            if (!this.trustSurfaced) this.events.onCertTrustNeeded?.(this.url);
+            this.trustSurfaced = true;
+            if (warm) this.scheduleReconnect(GAVE_UP_RETRY_MS);
           } else {
             let delay = this.backoffMs[Math.min(this.backoffIdx++, this.backoffMs.length - 1)]!;
             if (awaited) delay = Math.min(delay, AWAITED_RECONNECT_MAX_MS);
@@ -494,10 +606,17 @@ export class LedMapperClient {
         }
         if (!settled) {
           settled = true;
-          reject(new Error("connection failed"));
+          reject(new ConnectFailedError(kind));
         }
       };
     });
+  }
+
+  /** Reconnect right away, superseding a slow post-give-up retry still pending. */
+  private reconnectNow(): void {
+    this.reconnectGen++;
+    this.reconnectScheduled = false;
+    this.scheduleReconnect(0);
   }
 
   /** Schedule one backoff reconnect (at most one outstanding). */
@@ -529,7 +648,7 @@ export class LedMapperClient {
       return;
     }
     // No live socket: make sure something is reconnecting (e.g. after a give-up).
-    if (this.gaveUp) this.scheduleReconnect(0);
+    if (this.gaveUp) this.reconnectNow();
   }
 
   close(): void {
@@ -999,7 +1118,7 @@ export class LedMapperClient {
       this.welcomeListeners.add(done);
       // While anyone waits, the client keeps reconnecting (see onclose). If it had
       // already given up (cert-trust budget spent before this wait began), restart it.
-      if (this.gaveUp && !this.closed) this.scheduleReconnect(0);
+      if (this.gaveUp && !this.closed) this.reconnectNow();
       this.schedule(() => {
         if (!this.welcomeListeners.delete(done)) return;
         reject(new RequestTimeoutError("welcome", timeoutMs));

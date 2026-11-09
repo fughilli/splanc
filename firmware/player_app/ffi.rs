@@ -5664,6 +5664,21 @@ pub unsafe extern "C" fn lm_mode_boot() {
     *addr_of_mut!(LM_MODE) = (*addr_of!(MODE)).stats;
 }
 
+/// Whether the open client session is doing something a session takeover must not cut
+/// (#444; netstack_transport.cpp): a mapping pattern running (the client's camera is
+/// capturing it), the FX debugger holding a pause, or a texture/video stream within the last
+/// VIDEO_QUIET_MS. The transport only asks once the client has also been quiet for a while.
+///
+/// # Safety
+/// Single firmware thread, under the player mutex.
+#[no_mangle]
+pub unsafe extern "C" fn lm_session_busy(now_ms: i64) -> bool {
+    let p = player();
+    let mapping = p.pattern_timing().is_some() || p.counting_len() > 0;
+    let video = LAST_TEXTURE_MS.is_some_and(|t| now_ms.wrapping_sub(t) < VIDEO_QUIET_MS);
+    mapping || video || lm_fxdbg_paused()
+}
+
 /// Observe the device now (`now_ms`: millis) and track it through the model.
 /// Writes up to `cap` refusals into `out` and returns how many occurred (may
 /// exceed `cap`). Cheap: a handful of compares when nothing changed.
