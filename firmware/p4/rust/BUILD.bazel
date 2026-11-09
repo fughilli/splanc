@@ -1,0 +1,55 @@
+"""ESP32-P4 Rust toolchains (riscv32imafc-unknown-none-elf, hard-float ilp32f).
+
+The tool repos come from the rust.repository_set in //MODULE.bazel (rules_rust
+0.71 lacks the triple). These wrappers carry the P4 board constraint and are
+registered before @rust_toolchains//:all, so only a P4 build gets them and a P4
+build never falls through to the C6's soft-float riscv32imac toolchain.
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+_P4 = [
+    "@platforms//cpu:riscv32",
+    "@platforms//os:none",
+    "@embedded//platforms:esp32p4_board",
+]
+
+[
+    toolchain(
+        name = "p4_rust_" + exec_name,
+        exec_compatible_with = exec_constraints,
+        target_compatible_with = _P4,
+        toolchain = "@rust_{}_riscv32imafc__riscv32imafc-unknown-none-elf__stable_tools//:rust_toolchain".format(exec_name),
+        toolchain_type = "@rules_rust//rust:toolchain_type",
+    )
+    for exec_name, exec_constraints in [
+        (
+            "macos_aarch64",
+            [
+                "@platforms//cpu:aarch64",
+                "@platforms//os:macos",
+            ],
+        ),
+        (
+            "macos_x86_64",
+            [
+                "@platforms//cpu:x86_64",
+                "@platforms//os:macos",
+            ],
+        ),
+        (
+            "linux_aarch64",
+            [
+                "@platforms//cpu:aarch64",
+                "@platforms//os:linux",
+            ],
+        ),
+        (
+            "linux_x86_64",
+            [
+                "@platforms//cpu:x86_64",
+                "@platforms//os:linux",
+            ],
+        ),
+    ]
+]

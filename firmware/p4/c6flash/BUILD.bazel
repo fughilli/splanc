@@ -1,0 +1,127 @@
+"""Flash the P4 board's ESP32-C6 from the P4 over SDIO (docs/design/p4-c6-split.md §5.1).
+
+The C6 ROM's SDIO downloader only loads RAM and jumps, so the P4 uploads Espressif's
+flasher stub (@esp_flasher_stub_esp32c6, pinned) and drives it with esptool commands.
+The C6 images travel inside the P4 image as a bundle (c6_bundle.py).
+
+    bazel run -c opt //firmware/p4/c6flash:flash_esp32p4_c6flash -- --port /dev/cu.usbmodem…
+"""
+
+load("@embedded//rules:firmware.bzl", "firmware_binary")
+load("@embedded//rules:flash.bzl", "esptool_flash")
+load("@embedded//rules:resources.bzl", "c_resource_library")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+_P4_ONLY = select({
+    "@embedded//platforms:is_esp32p4": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+py_binary(
+    name = "c6_bundle",
+    srcs = ["c6_bundle.py"],
+)
+
+py_binary(
+    name = "stub_to_c",
+    srcs = ["stub_to_c.py"],
+)
+
+genrule(
+    name = "c6_stub_c",
+    srcs = ["@esp_flasher_stub_esp32c6//file"],
+    outs = ["c6_stub.c"],
+    cmd = "$(execpath :stub_to_c) $< $@",
+    tools = [":stub_to_c"],
+)
+
+cc_library(
+    name = "c6_flasher",
+    srcs = [
+        "c6_flasher.cpp",
+        ":c6_stub_c",
+    ],
+    hdrs = ["c6_flasher.h"],
+    target_compatible_with = _P4_ONLY,
+    deps = ["@embedded//libs/board:arduino_core"],
+)
+
+# A C6 image set as the P4 carries it. `app` is a C6 firmware_binary (its own transition
+# builds it for the C6 whatever the P4 build's platform is).
+def_c6_images = [
+    "@embedded//libs/board:esp32c6_bootloader_bin",
+    "@embedded//libs/vendor:partitions_huge_app",
+    "@embedded//libs/vendor:boot_app0",
+]
+
+genrule(
+    name = "c6_bundle_netstack",
+    srcs = def_c6_images + ["//firmware/player_app:esp32c6_netstack"],
+    outs = ["c6_bundle_netstack/c6_bundle.bin"],
+    cmd = ("$(execpath :c6_bundle) $@ " +
+           "0x0=$(execpath @embedded//libs/board:esp32c6_bootloader_bin) " +
+           "0x8000=$(execpath @embedded//libs/vendor:partitions_huge_app) " +
+           "0xe000=$(execpath @embedded//libs/vendor:boot_app0) " +
+           "0x10000=$$(ls $(locations //firmware/player_app:esp32c6_netstack) | grep '\\.bin$$')"),
+    tools = [":c6_bundle"],
+)
+
+# -> c6_bundle_bin[] / c6_bundle_bin_len.
+c_resource_library(
+    name = "c6_bundle_netstack_res",
+    srcs = [":c6_bundle_netstack"],
+)
+
+# The C6 front end (Wi-Fi, BLE, TLS for the P4 player): what //firmware/player_app:
+# esp32p4_player_c6 carries and keeps on the board's C6.
+genrule(
+    name = "c6_bundle_frontend",
+    srcs = def_c6_images + ["//firmware/player_app:esp32c6_frontend"],
+    outs = ["c6_bundle_frontend/c6_bundle.bin"],
+    cmd = ("$(execpath :c6_bundle) $@ " +
+           "0x0=$(execpath @embedded//libs/board:esp32c6_bootloader_bin) " +
+           "0x8000=$(execpath @embedded//libs/vendor:partitions_huge_app) " +
+           "0xe000=$(execpath @embedded//libs/vendor:boot_app0) " +
+           "0x10000=$$(ls $(locations //firmware/player_app:esp32c6_frontend) | grep '\\.bin$$')"),
+    tools = [":c6_bundle"],
+)
+
+c_resource_library(
+    name = "c6_bundle_frontend_res",
+    srcs = [":c6_bundle_frontend"],
+)
+
+# Bring-up: flash the plain C6 netstack player onto the board's C6 at boot, then idle.
+cc_binary(
+    name = "c6flash",
+    srcs = ["c6flash_main.cpp"],
+    target_compatible_with = _P4_ONLY,
+    deps = [
+        ":c6_bundle_netstack_res",
+        ":c6_flasher",
+        "@embedded//libs/board:arduino_core",
+    ],
+)
+
+firmware_binary(
+    name = "esp32p4_c6flash",
+    binary = ":c6flash",
+    board = "esp32p4",
+    flash_size = "16MB",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32p4_c6flash",
+    app = ":esp32p4_c6flash",
+    bootloader = "@embedded//libs/board:esp32p4_bootloader_bin",
+    bootloader_offset = "0x2000",
+    chip = "esp32p4",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)

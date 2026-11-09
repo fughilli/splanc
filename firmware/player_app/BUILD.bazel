@@ -92,7 +92,10 @@ agent_bundle_info(
 # The board-caps descriptor as a labelable source: the HITL board-caps check
 # (//pi/hitl) loads this SAME textproto as its expected value, so the on-hardware
 # report is pinned to exactly what the image embeds.
-exports_files(["board_caps.textproto"])
+exports_files([
+    "board_caps.textproto",
+    "board_caps_p4.textproto",
+])
 
 # The C ABI over the player stack, as the firmware links it. Bare-metal
 # only (it carries the panic handler); the host test drives the same source
@@ -113,11 +116,17 @@ rust_static_library(
     edition = "2021",
     # LED cap SSOT (led_caps.bzl): ffi.rs FX_TOPO_CAP reads env!("LM_MAX_LEDS").
     rustc_env = led_cap_rustc_env(),
+    # PERF_CPU_HZ: the P4's cycle counter runs at 400 MHz, the C6's and C3's at 160.
+    rustc_flags = select({
+        "@embedded//platforms:is_esp32p4": ["--cfg=lm_cpu_400m"],
+        "//conditions:default": [],
+    }),
     # esp32c3 is a build-only target (see //MODULE.bazel + firmware/netstack);
     # the player core is board-agnostic so it compiles for both ESP RISC-V SKUs.
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
         "@embedded//platforms:is_esp32c3": [],
+        "@embedded//platforms:is_esp32p4": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
@@ -407,6 +416,20 @@ rust_test(
     ],
 )
 
+# The P4 player's tracker -> uniform pool C ABI (lm_pool_publish). Own binary: fresh
+# process-global FFI state.
+rust_test(
+    name = "tracker_pool_test",
+    srcs = ["tests/tracker_pool.rs"],
+    crate_root = "tests/tracker_pool.rs",
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+    ],
+)
+
 # FUG-107 driver VM through the C ABI + the native-vs-VM MPU-6050 A/B
 # (docs/design/sensor-core.md §8). Own binary: fresh process-global FFI state.
 rust_test(
@@ -469,6 +492,13 @@ cc_library(
     name = "player_ffi_hdr",
     hdrs = ["player_ffi.h"],
     includes = ["."],
+)
+
+# The player-module hook API (player_module.h; main.cpp implements it). A module library
+# (e.g. //firmware/p4/tracker:tracker_module) depends on this and registers itself.
+cc_library(
+    name = "player_module_hdr",
+    hdrs = ["player_module.h"],
 )
 
 cc_test(
@@ -635,16 +665,18 @@ cc_test(
 # Board-specific firmware_binary targets swap in their own textproto here.
 genrule(
     name = "board_caps_binaryproto",
-    srcs = [
-        "board_caps.textproto",
-        "//shared/protocol/proto:ledmapper.proto",
-    ],
+    # The P4 player (Waveshare ESP32-P4-WIFI6) has its own pins; the symbols keep the
+    # one name either way.
+    srcs = select({
+        "@embedded//platforms:is_esp32p4": ["board_caps_p4.textproto"],
+        "//conditions:default": ["board_caps.textproto"],
+    }) + ["//shared/protocol/proto:ledmapper.proto"],
     outs = ["board_caps.binaryproto"],
     cmd = "$(execpath //tools/toolchains:protoc) " +
           "-I $$(dirname $(location //shared/protocol/proto:ledmapper.proto)) " +
           "--encode=ledmapper.v1.BoardCapabilities " +
           "$(location //shared/protocol/proto:ledmapper.proto) " +
-          "< $(location board_caps.textproto) > $@",
+          "< $$(ls $(SRCS) | grep 'textproto$$') > $@",
     tools = ["//tools/toolchains:protoc"],
 )
 
@@ -709,6 +741,7 @@ NETSTACK_VARIANTS = [
         # with the OTA loader.)
         "led_config.h",
         "main.cpp",
+        "player_module.h",
         "player_ffi.h",
         "sensor_bus.cpp",
         "sensor_bus.h",
@@ -768,6 +801,113 @@ NETSTACK_VARIANTS = [
         "//conditions:default": [],
     }),
 ) for sfx, extra in NETSTACK_VARIANTS]
+
+# -- ESP32-C6 front end for the P4 player (docs/design/p4-c6-split.md §2, §4) ----------
+# The netstack player with LM_FRONTEND: Wi-Fi, BLE Improv, TLS/wss and mDNS stay here;
+# player messages go to the P4 as link frames over the SDIO slave (frontend_link.cpp),
+# except the arms the front end owns. No rendering and no LED or sensor pins: GPIO20-23
+# are the SDIO link on the P4 boards. The P4 image carries this one and flashes it onto
+# the board's C6 (//firmware/p4/c6flash).
+_FRONTEND_LEDS = 64
+
+rust_static_library(
+    name = "player_ffi_frontend",
+    srcs = [
+        "driver_ffi.rs",
+        "ffi.rs",
+        "fxdbg.rs",
+        "kiosk_ffi.rs",
+        "sensor_ffi.rs",
+        "uniform_pool.rs",
+        "wifi_ffi.rs",
+    ],
+    # Its own crate name: the archive is named after it, and :player_ffi's would collide.
+    crate_name = "ledmapper_player_ffi_frontend",
+    crate_root = "ffi.rs",
+    edition = "2021",
+    # The front end's player core only answers while the P4 is down: a token LED cap.
+    rustc_env = {
+        "LM_MAX_LEDS": "%d" % _FRONTEND_LEDS,
+        "LM_MAX_LEDS_PER_CHANNEL": "%d" % (_FRONTEND_LEDS // 2),
+    },
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        "//firmware/arena",
+        "//firmware/fps",
+        "//firmware/fx_jit",
+        "//firmware/fx_vm",
+        "//firmware/keypoint",
+        "//firmware/mdns",
+        "//firmware/osc",
+        "//firmware/ota",
+        "//firmware/player:player_fw",
+        "//firmware/sensor",
+        "//firmware/store",
+        "//firmware/sysmode",
+        "//oss/pbview",
+        "//shared/protocol/rust:ledmapper_pb_fw",
+        "//shared/protocol/rust:ledmapper_view",
+        "@crates//:micropb",
+    ],
+)
+
+cc_binary(
+    name = "player_app_frontend",
+    srcs = [
+        "frontend_link.cpp",
+        "frontend_link.h",
+        "led_config.h",
+        "main.cpp",
+        "player_ffi.h",
+        "player_module.h",
+        "sensor_bus.h",
+        "serial_log.h",
+        "ws2812.h",
+        "ws2812_none.cpp",
+        ":agent_bundle_h",
+        ":build_info_h",
+    ],
+    copts = ["-fno-rtti"],
+    linkopts = ["-Wl,--allow-multiple-definition"],
+    local_defines = [
+        "LM_NETSTACK",
+        "LM_FRONTEND",
+        "LM_MAX_LEDS=%d" % _FRONTEND_LEDS,
+        "LM_MAX_LEDS_PER_CHANNEL=%d" % (_FRONTEND_LEDS // 2),
+    ],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":board_caps_res",
+        ":color_correction",
+        ":device_cert",
+        ":improv_ble_netstack",
+        ":improv_codec",
+        ":netstack_transport",
+        ":ota_app",
+        ":player_ffi_frontend",
+        ":ws_codec",
+        "//firmware/landing:landing_page",
+        "//firmware/p4/link:link_codec",
+        "@embedded//libs/board:arduino_core",
+        "@embedded//libs/vendor:ble",
+        "@embedded//libs/vendor:preferences",
+        "@embedded//libs/vendor:wifi",
+    ],
+)
+
+firmware_binary(
+    name = "esp32c6_frontend",
+    binary = ":player_app_frontend",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
 
 # The app's half of OTA (ota_app.h, docs/design/ota.md): the OTA arms, the handoff to
 # the loader, the health check that marks a fresh install valid, the crash-loop guard.
@@ -1064,6 +1204,158 @@ flash_bundle(
     tags = ["manual"],
 )
 
+# -- ESP32-P4 player (docs/design/p4-c6-split.md §3.2-3.3, Phase A) -------------------
+# Optional hardware modules (player_module.h), each self-contained and off by default:
+#   --//firmware/p4:tracker   the wired Vive tracker on the USB OTG port
+#                             (//firmware/p4/tracker:tracker_module: pose / mount / tracker
+#                             mat4s in the uniform pool, /lh/* OSC)
+P4_PLAYER_MODULES = select({
+    "//firmware/p4:tracker_on": ["//firmware/p4/tracker:tracker_module"],
+    "//conditions:default": [],
+})
+
+# The same main.cpp as the netstack build (LM_NETSTACK paths: dispatch, pushes, render,
+# persistence), with LM_LINK swapping its transport for link_transport.cpp: the player
+# protocol as link frames (//firmware/p4/link) over UART0, the board's USB serial bridge.
+# tools/p4_link_bridge.py serves ws:// on the host and plays the C6's part. Wi-Fi, BLE,
+# TLS and OTA belong to the front end (link_stubs.cpp); the JIT stays off until the
+# scalar digests match (§3.4).
+#
+#   bazel run -c opt //firmware/player_app:flash_esp32p4_player -- --port /dev/cu.usbmodem…
+#   python3 tools/p4_link_bridge.py --port /dev/cu.usbmodem…   # then ws://127.0.0.1:8081/ws
+cc_binary(
+    name = "player_app_link",
+    srcs = [
+        "device_cert.h",
+        "improv_ble.h",
+        "led_config.h",
+        "link_stubs.cpp",
+        "link_transport.cpp",
+        "main.cpp",
+        "netstack_transport.h",
+        "ota_app.h",
+        "player_ffi.h",
+        "player_module.h",
+        "serial_log.h",
+        "tls_region.h",
+        ":agent_bundle_h",
+        ":build_info_h",
+    ] + WS2812_SRCS,
+    copts = ["-fno-rtti"],
+    # Two no_std Rust staticlibs (player_ffi + the tracker's lh_p4) each carry the panic
+    # handler; take the first, as the netstack build does.
+    linkopts = ["-Wl,--allow-multiple-definition"],
+    local_defines = [
+        "LM_NETSTACK",
+        "LM_LINK",
+    ] + led_cap_defines(),
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32p4": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":board_caps_res",
+        ":color_correction",
+        ":device_cert_core",
+        ":improv_codec",
+        ":player_ffi",
+        ":ws_codec",
+        "//firmware/landing:landing_page",
+        "//firmware/p4/link:link_codec",
+        "@embedded//libs/board:arduino_core",
+        "@embedded//libs/vendor:preferences",
+    ] + P4_PLAYER_MODULES,
+)
+
+# Phase B on the Waveshare ESP32-P4-WIFI6: the same player with its link on SDIO to the
+# board's C6, which runs :esp32c6_frontend (Wi-Fi, BLE Improv, wss). This image carries
+# that C6 image and flashes it onto the C6 whenever the C6 runs anything else
+# (//firmware/p4/c6flash; the C6's BOOT needs the H4 pin 1 -> GPIO4 jumper).
+#
+#   bazel run -c opt //firmware/player_app:flash_esp32p4_player_c6 -- --port /dev/cu.usbmodem…
+cc_binary(
+    name = "player_app_link_sdio",
+    srcs = [
+        "device_cert.h",
+        "improv_ble.h",
+        "led_config.h",
+        "link_stubs.cpp",
+        "link_transport.cpp",
+        "main.cpp",
+        "netstack_transport.h",
+        "ota_app.h",
+        "player_ffi.h",
+        "player_module.h",
+        "serial_log.h",
+        "tls_region.h",
+        ":agent_bundle_h",
+        ":build_info_h",
+    ] + WS2812_SRCS,
+    copts = ["-fno-rtti"],
+    linkopts = ["-Wl,--allow-multiple-definition"],
+    local_defines = [
+        "LM_NETSTACK",
+        "LM_LINK",
+        "LM_LINK_SDIO",
+    ] + led_cap_defines(),
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32p4": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":board_caps_res",
+        ":color_correction",
+        ":device_cert_core",
+        ":improv_codec",
+        ":player_ffi",
+        ":ws_codec",
+        "//firmware/landing:landing_page",
+        "//firmware/p4/c6flash:c6_bundle_frontend_res",
+        "//firmware/p4/c6flash:c6_flasher",
+        "//firmware/p4/link:link_codec",
+        "@embedded//libs/board:arduino_core",
+        "@embedded//libs/vendor:preferences",
+    ] + P4_PLAYER_MODULES,
+)
+
+firmware_binary(
+    name = "esp32p4_player_c6",
+    binary = ":player_app_link_sdio",
+    board = "esp32p4",
+    flash_size = "16MB",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32p4_player_c6",
+    app = ":esp32p4_player_c6",
+    bootloader = "@embedded//libs/board:esp32p4_bootloader_bin",
+    bootloader_offset = "0x2000",
+    chip = "esp32p4",
+    # 3 MB app slot: the P4 player plus the C6 bundle (~1.2 MB compressed).
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+firmware_binary(
+    name = "esp32p4_player",
+    binary = ":player_app_link",
+    board = "esp32p4",
+    flash_size = "16MB",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32p4_player",
+    app = ":esp32p4_player",
+    bootloader = "@embedded//libs/board:esp32p4_bootloader_bin",
+    bootloader_offset = "0x2000",  # the P4 ROM loads the 2nd-stage bootloader from 0x2000
+    chip = "esp32p4",
+    tags = ["manual"],
+)
+
 # -- On-device OSC bench image (FUG-121) -------------------------------------
 # A dedicated -DLM_OSC_BENCH build that, at boot, times one uniform update via
 # each transport with the C6 cycle counter, logs `[oscbench]` lines and halts.
@@ -1091,6 +1383,7 @@ cc_binary(
         "led_config.h",
         "main.cpp",
         "player_ffi.h",
+        "player_module.h",
         "serial_log.h",
         ":build_info_h",  # generated build_info.h (git commit + dirty flag)
     ] + WS2812_SRCS,
@@ -1167,6 +1460,7 @@ cc_binary(
         "led_config.h",
         "main.cpp",
         "player_ffi.h",
+        "player_module.h",
         "serial_log.h",
         ":build_info_h",  # generated build_info.h (git commit + dirty flag)
     ] + WS2812_SRCS,
@@ -1516,6 +1810,7 @@ py_test(
     srcs = ["tests/test_stack_bound.py"],
     data = [
         "main.cpp",
+        "player_module.h",
         "sensor_bus.cpp",
         "serial_log.h",
         "stack_bound.json",

@@ -497,6 +497,9 @@ uint32_t lm_sensor_poll(uint64_t now_us);
 int32_t lm_sensor_take_cal_record(uint8_t *out, size_t cap);
 // Status for the periodic log: u[6], f[5] (see sensor_ffi.rs).
 void lm_sensor_status(uint32_t *u, float *f);
+// Publish a named value into the uniform pool (uniform_pool.rs lm_pool_publish): effects
+// that declare a uniform of that name get it every frame. Loop task, under the player mutex.
+bool lm_pool_publish(const uint8_t *name, size_t name_len, const float *vals, size_t n);
 // -- IMU extrinsic + capture profile (sensor-core.md §7) -------------------------
 // A NEW map was stored by a live upload: drop the capture profile, mark the IMU
 // extrinsic's yaw unresolved.

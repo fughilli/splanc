@@ -10,7 +10,7 @@ namespace {
 
 // Sizes from the HITL worst case (ram_audit, rig-2 2026-10-19; the status line's
 // tls=/slots=/big=/fb= fields): the record buffers are MBEDTLS_SSL_{IN,OUT}_CONTENT_LEN
-// (6 KB, patches/embedded-mbedtls-record-6k.patch) + header/MAC/IV overhead, 6,818 B
+// (6 KB, @embedded's nix/mbedtls_src.BUILD) + header/MAC/IV overhead, 6,818 B
 // at most, both live at once; everything else peaked at 7,644 B, so 10 KB is ~1.3x.
 // Re-measure before shrinking; a miss falls back to the heap (fb=), never fails.
 constexpr size_t kSlotSize = 6912;

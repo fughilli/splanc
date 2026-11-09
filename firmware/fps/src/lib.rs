@@ -76,7 +76,12 @@ pub const FLOOR_REF_LEDS: u32 = 512;
 pub const LADDER_MIN_FPS: u32 = 5;
 /// Above the ceiling there is nothing to gain from a faster strip write than
 /// the eye resolves.
+#[cfg(not(feature = "wire_ceiling"))]
 pub const MAX_FPS: u32 = 80;
+/// Images where latency matters more than the eye (the P4 with its wired tracker: a frame
+/// that starts sooner shows a fresher pose): the strip's wire is the only ceiling.
+#[cfg(feature = "wire_ceiling")]
+pub const MAX_FPS: u32 = 200;
 /// Ladder step. Rungs are LADDER_MIN_FPS, LADDER_MIN_FPS+STEP, ..., MAX_FPS.
 pub const FPS_STEP: u32 = 5;
 

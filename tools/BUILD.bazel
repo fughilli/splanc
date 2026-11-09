@@ -4,7 +4,7 @@
 """
 
 load("@pypi//:requirements.bzl", "requirement")
-load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 
 # Static RAM auditor for a firmware ELF (stdlib only; shells to host nm/readelf).
 # Exported so the `ram_chart` macro (//tools:ram_chart.bzl) can build a
@@ -121,6 +121,30 @@ py_binary(
     deps = [
         requirement("playwright"),
         requirement("segno"),  # QR page for the effects-intake URL
+    ],
+)
+
+# The P4 player's link frames, host side (docs/design/p4-c6-split.md §4.1), and the bridge
+# that plays the C6's part in Phase A: ws://127.0.0.1:8081/ws <-> the board's USB serial.
+py_library(
+    name = "p4_link",
+    srcs = ["p4_link.py"],
+    imports = ["."],
+)
+
+py_test(
+    name = "p4_link_test",
+    srcs = ["p4_link_test.py"],
+    deps = [":p4_link"],
+)
+
+py_binary(
+    name = "p4_link_bridge",
+    srcs = ["p4_link_bridge.py"],
+    deps = [
+        ":p4_link",
+        requirement("pyserial"),
+        requirement("websockets"),
     ],
 )
 

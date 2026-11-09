@@ -26,4 +26,10 @@
 // (set_led_count(1, n)), so single-channel wiring is unaffected. GPIO14: clean on
 // the C6 SuperMini (NOT strapping 4/5/8/9/15, NOT USB-JTAG 12/13, and NOT the
 // SuperMini's internal SPI flash — GPIO18/19 carry that, so they're off-limits).
+#if defined(LM_LINK)
+// The P4 player (Waveshare ESP32-P4-WIFI6): GPIO14 is SDIO D0 to the on-board C6 there.
+// GPIO21 has no on-board duty (board_caps_p4.textproto).
+#define LED_DATA_PIN_2 21
+#else
 #define LED_DATA_PIN_2 14
+#endif
