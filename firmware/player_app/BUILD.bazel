@@ -802,6 +802,11 @@ NETSTACK_VARIANTS = [
 # the board's C6 (//firmware/p4/c6flash).
 _FRONTEND_LEDS = 64
 
+# Concurrent wss sessions the front end serves (LM_WSS_SESSIONS; the players keep 1).
+# The cap the reachability model proves fits (//firmware/sysmode, PROFILE_FRONTEND) and
+# the bench confirmed: docs/design/p4-c6-split.md §4.3.1.
+_FRONTEND_SESSIONS = 2
+
 rust_static_library(
     name = "player_ffi_frontend",
     srcs = [
@@ -880,7 +885,7 @@ cc_binary(
         ":device_cert",
         ":improv_ble_netstack",
         ":improv_codec",
-        ":netstack_transport",
+        ":netstack_transport_sessions%d" % _FRONTEND_SESSIONS if _FRONTEND_SESSIONS > 1 else ":netstack_transport",  # concurrent wss clients
         ":ota_app",
         ":player_ffi_frontend",
         ":ws_codec",
@@ -938,7 +943,9 @@ cc_library(
 # seam differently.
 # "_ctrltrace" is the LM_CTRL_TRACE measurement twin (its RX/TLS/reply stamps feed
 # :player_app_netstack_ctrltrace's live-control trace); the shipping player and the OTA
-# loader link the plain one, which compiles the stamps out.
+# loader link the plain one, which compiles the stamps out. "_sessions4" serves four
+# concurrent wss sessions (LM_WSS_SESSIONS, the four-slot netstack FFI): the P4's C6 front
+# end, which has the RAM (docs/design/p4-c6-split.md §4.3.1). The players keep one.
 [cc_library(
     name = "netstack_transport" + sfx,
     srcs = [
@@ -973,17 +980,28 @@ cc_library(
         ":device_cert",
         ":improv_codec",
         ":ws_codec",
-        "//firmware/netstack:wifi_sta_ffi",  # ns_* heapless MAC/CCMP/TCP FFI
+        ffi,  # ns_* heapless MAC/CCMP/TCP FFI
         "@embedded//libs/board:arduino_core",
         "@embedded//libs/vendor:wifi",
     ],
     alwayslink = True,
-) for sfx, extra in [
-    ("", []),
+) for sfx, extra, ffi in [
+    ("", [], "//firmware/netstack:wifi_sta_ffi"),
     (
         "_ctrltrace",
         ["LM_CTRL_TRACE=1"],
+        "//firmware/netstack:wifi_sta_ffi",
     ),
+] + [
+    (
+        "_sessions%d" % n,
+        ["LM_WSS_SESSIONS=%d" % n],
+        "//firmware/netstack:wifi_sta_ffi_sessions%d" % n,
+    )
+    for n in [
+        2,
+        4,
+    ]
 ]]
 
 # The BLE side of the transport's improv_ble.h seam: Improv provisioning + the BLE player
@@ -1766,6 +1784,34 @@ filegroup(
     name = "esp32c6_netstack_elf",
     srcs = [":esp32c6_netstack"],
     output_group = "elf",
+)
+
+filegroup(
+    name = "esp32c6_frontend_elf",
+    srcs = [":esp32c6_frontend"],
+    output_group = "elf",
+)
+
+# The mbedtls ABI between the transport's headers and the linked library: every
+# context it declares holds the library's (netstack_transport.cpp SslBox).
+py_test(
+    name = "tls_abi_test",
+    srcs = ["tests/test_tls_abi.py"],
+    data = [
+        "netstack_transport.cpp",
+        ":esp32c6_frontend_elf",
+        ":esp32c6_netstack_elf",
+        "@embedded//tools:riscv_objdump",
+    ],
+    env = {
+        "ELFS": "$(rlocationpath :esp32c6_netstack_elf) $(rlocationpath :esp32c6_frontend_elf)",
+        "OBJDUMP": "$(rlocationpath @embedded//tools:riscv_objdump)",
+    },
+    main = "tests/test_tls_abi.py",
+    # Linux CI, as stack_bound_test: the macOS runner's riscv objdump exits 101 in the
+    # sandbox.
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = ["@rules_python//python/runfiles"],
 )
 
 py_test(

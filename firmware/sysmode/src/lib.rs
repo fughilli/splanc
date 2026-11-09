@@ -20,6 +20,12 @@
 //! BLE and wss COEXIST (requirement PR-38): the controller is never torn down
 //! for a wss session, so the budget must hold both at once — radio mutual
 //! exclusion is not an available memory-reduction strategy.
+//!
+//! Two [`Profile`]s share the state machine. [`PLAYER`] is the plain C6 player
+//! (one wss session; [`step`], [`live_bytes`] and the cost table above). A
+//! [`Profile::FrontEnd`] is the P4 + C6 build's C6 (docs/design/p4-c6-split.md
+//! §4.3.1): up to N wss sessions, no LEDs or effects of its own worth modeling,
+//! and its own heap model ([`cost::frontend`], [`frontend_heap`]).
 
 #![no_std]
 
@@ -71,8 +77,9 @@ pub enum Activity {
 pub struct SysMode {
     pub wifi: Wifi,
     pub ble: Ble,
-    /// A wss (TLS) session is open. The netstack serves one at a time.
-    pub wss: bool,
+    /// wss (TLS) sessions open: 0..=the profile's cap ([`Profile::wss_cap`]; one on
+    /// the player).
+    pub wss: u8,
     pub activity: Activity,
     /// A map (+ topology) is stored: the per-LED caches are populated.
     pub map: bool,
@@ -155,7 +162,7 @@ impl SysMode {
     pub const BOOT_UNPROVISIONED: SysMode = SysMode {
         wifi: Wifi::Unprovisioned,
         ble: Ble::Advertising,
-        wss: false,
+        wss: 0,
         activity: Activity::Idle,
         map: false,
     };
@@ -168,20 +175,66 @@ impl SysMode {
     pub const BOOT_RESTORED: SysMode = SysMode {
         wifi: Wifi::Unprovisioned,
         ble: Ble::Advertising,
-        wss: false,
+        wss: 0,
         activity: Activity::Effect { video: false, deck_b: false },
         map: true,
     };
 
     fn transport(&self) -> bool {
-        self.wss || self.ble == Ble::Connected
+        self.wss > 0 || self.ble == Ble::Connected
     }
 }
 
-/// The transition function. Pure and total: every (state, event) is either a
-/// new state or a [`Refuse`].
+/// Which build the model describes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Profile {
+    /// The plain C6 player: LEDs, effects, one wss session.
+    Player,
+    /// The P4 + C6 build's C6 front end with `sessions` concurrent wss sessions
+    /// (LM_WSS_SESSIONS). The LEDs and effects are the P4's; the C6's token
+    /// player core (answering while the P4 is down) is all statics, in the
+    /// measured base.
+    FrontEnd { sessions: u8 },
+}
+
+/// The plain C6 player.
+pub const PLAYER: Profile = Profile::Player;
+
+impl Profile {
+    /// wss sessions open at most.
+    pub const fn wss_cap(self) -> u8 {
+        match self {
+            Profile::Player => 1,
+            Profile::FrontEnd { sessions } => sessions,
+        }
+    }
+}
+
+/// The transition function of the plain C6 player ([`PLAYER`]).
 pub fn step(s: SysMode, e: Event) -> Result<SysMode, Refuse> {
+    step_in(PLAYER, s, e)
+}
+
+/// The transition function. Pure and total: every (state, event) is either a
+/// new state or a [`Refuse`]. The front end serves no LED activity (the P4
+/// does): those events are refused there.
+pub fn step_in(p: Profile, s: SysMode, e: Event) -> Result<SysMode, Refuse> {
     use Activity as A;
+    if matches!(p, Profile::FrontEnd { .. })
+        && !matches!(
+            e,
+            Event::BleConnect
+                | Event::BleDisconnect
+                | Event::ImprovCredentials
+                | Event::WiredCredentials
+                | Event::Joined
+                | Event::LinkLost
+                | Event::WssOpen
+                | Event::WssClose
+        )
+    {
+        return Err(Refuse::NotApplicable);
+    }
     let mut n = s;
     match e {
         Event::BleConnect => {
@@ -222,8 +275,8 @@ pub fn step(s: SysMode, e: Event) -> Result<SysMode, Refuse> {
                 return Err(Refuse::NotApplicable);
             }
             // The netstack rejoins in place (Joined -> Joined), but the TCP
-            // session dies with the link.
-            if s.wss {
+            // sessions die with the link.
+            while n.wss > 0 {
                 n = close_wss(n);
             }
         }
@@ -231,10 +284,11 @@ pub fn step(s: SysMode, e: Event) -> Result<SysMode, Refuse> {
             if s.wifi != Wifi::Joined {
                 return Err(Refuse::NotJoined);
             }
-            if s.wss {
+            if s.wss >= p.wss_cap() {
+                // Every slot busy: the client is refused (tcp_slots.rs).
                 return Err(Refuse::NotApplicable);
             }
-            n.wss = true;
+            n.wss += 1;
             // A wss client appearing drops the (vestigial, post-provisioning)
             // BLE link so coex stops yielding airtime to it during the
             // handshake; the controller keeps advertising and a central may
@@ -244,7 +298,7 @@ pub fn step(s: SysMode, e: Event) -> Result<SysMode, Refuse> {
             }
         }
         Event::WssClose => {
-            if !s.wss {
+            if s.wss == 0 {
                 return Err(Refuse::NotApplicable);
             }
             n = close_wss(n);
@@ -292,7 +346,7 @@ pub fn step(s: SysMode, e: Event) -> Result<SysMode, Refuse> {
             n.activity = A::Effect { video: false, deck_b: false };
         }
         Event::VideoStart => {
-            if !s.wss {
+            if s.wss == 0 {
                 return Err(Refuse::NoTransport); // 8 KB frames ride wss only
             }
             match s.activity {
@@ -338,11 +392,13 @@ fn need_transport(s: SysMode) -> Result<(), Refuse> {
 }
 
 fn close_wss(mut n: SysMode) -> SysMode {
-    n.wss = false;
-    // Video frames ride wss only: the stream ends with the session even if a
-    // BLE central is still connected (found by the reachability test).
+    n.wss -= 1;
+    // Video frames ride wss only: the stream ends with the (one) session even if
+    // a BLE central is still connected (found by the reachability test).
     if let Activity::Effect { video: true, deck_b } = n.activity {
-        n.activity = Activity::Effect { video: false, deck_b };
+        if n.wss == 0 {
+            n.activity = Activity::Effect { video: false, deck_b };
+        }
     }
     if !n.transport() {
         n = drop_transport(n);
@@ -514,6 +570,85 @@ pub mod cost {
     /// The 1024-per-channel LED cap: +214 B (the FX shade entry's packed
     /// topology / F24 position decode off the boot-sized store, pinned).
     pub const IRAM_TEXT: usize = 99_986;
+
+    /// The P4 + C6 build's C6 front end (docs/design/p4-c6-split.md §4.3.1), all
+    /// measured on the Waveshare ESP32-P4-WIFI6 bench board (PixieLamp2,
+    /// 2026-11-04) through the front end's `[heap]` status line (frontend_link.cpp
+    /// heap_log: heap_caps free / minimum / largest internal block, the TLS
+    /// region's high-water marks), on agent/frontend-multisession.
+    pub mod frontend {
+        /// Free internal heap with Wi-Fi joined, no session, no central, link up:
+        /// the reference state, on the two-session image (LM_WSS_SESSIONS=2, the
+        /// shipped cap). Flat at this through two concurrent sessions and 16 churn
+        /// rounds (every session's state is static; the TLS region held: no
+        /// fallbacks).
+        pub const IDLE_FREE_2: usize = 46_608;
+        /// The one-session image's, the check on [`PER_SESSION_STATIC`].
+        pub const IDLE_FREE_1_MEASURED: usize = 70_844;
+        /// What one more session costs in statics (nm -S of esp32c6_frontend.elf):
+        /// a TCP server slot (wifi_sta_ffi::TCPS 6,316: the TcpConn's 4,096 B
+        /// receive + 2,048 B send windows), a Session (netstack_transport g_sess
+        /// 6,784: the 6,144 B WS reassembly buffer + the 576 B SslBox the
+        /// library's 552 B mbedtls_ssl_context lives in), one more TLS record slot
+        /// (tls_region kSlotSize 6,912) and 4 KB more of the TLS small region.
+        pub const PER_SESSION_STATIC: usize = 6_316 + 6_784 + 6_912 + 4_096;
+
+        /// The idle free heap of the `sessions`-session image: each session past
+        /// two comes out of it, each one fewer gives it back. Negative = the
+        /// statics alone don't fit.
+        pub const fn idle_free(sessions: u8) -> isize {
+            IDLE_FREE_2 as isize - (sessions as isize - 2) * PER_SESSION_STATIC as isize
+        }
+
+        /// Heap kept free for everything the state machine doesn't model: the
+        /// vendor Wi-Fi / BLE drivers' per-frame and timer allocations, the SDIO
+        /// slave's, a sharded effect upload staged while the P4 is down
+        /// (main.cpp rx_stage_get, up to 4,608 B), and fragmentation. The same
+        /// 24 KB floor the player keeps under its boot-sized LED buffers
+        /// (docs/design/ram-budget.md, kRuntimeHeapReserve).
+        pub const FLOOR: usize = 24 * 1024;
+
+        /// The vendor scan + join, transient (Wi-Fi Scanning): idle free minus the
+        /// all-time minimum, which the boot scan sets (sessions never lowered it):
+        /// 70,844 - 61,052 = 9,792 B (one session), 46,608 - 38,248 = 8,360 B (two);
+        /// before the SslBox fix 9,132 and 9,360 B. The largest.
+        pub const SCAN_TRANSIENT: usize = 9_792;
+
+        /// A TLS record buffer (tls_region kSlotSize; the 6 KB record + overhead;
+        /// the largest request seen was 6,818 B).
+        pub const RECORD: usize = 6_912;
+        /// TLS small-region use with no session: the parsed device cert + key and
+        /// the first mbedtls_ssl_setup (`tls small` high-water at idle, one-session
+        /// image) ...
+        pub const SMALL_BASE: usize = 4_692;
+        /// ... each further context's setup (two-session idle high-water 6,476) ...
+        pub const SMALL_PER_CONTEXT: usize = 6_476 - 4_692;
+        /// ... and one handshake (ECDHE, transforms, the handshake state): a
+        /// served GET took the one-session high-water to 7,292 and the
+        /// two-session one to 9,076. Two concurrent sessions + churn peaked at
+        /// 10,948 of 14,336.
+        pub const SMALL_PER_HANDSHAKE: usize = 9_076 - 6_476;
+
+        /// Record buffers spilling to the heap with `open` of `sessions` open: a
+        /// handshake or a session reset holds an in and an out buffer at once
+        /// (esp_mbedtls_reset_add_{tx,rx}_buffer), so with every open session
+        /// mid-handshake 2 x open are live, against the region's sessions + 1
+        /// slots (tls_region.cpp kSlots). Worst case: the bench peaked at 2 of 3.
+        pub const fn record_spill(sessions: u8, open: u8) -> usize {
+            let need = 2 * open as usize;
+            let slots = sessions as usize + 1;
+            if need > slots { (need - slots) * RECORD } else { 0 }
+        }
+
+        /// Small-region overflow to the heap with `open` sessions handshaking.
+        pub const fn small_spill(sessions: u8, open: u8) -> usize {
+            let need = SMALL_BASE
+                + (sessions as usize - 1) * SMALL_PER_CONTEXT
+                + open as usize * SMALL_PER_HANDSHAKE;
+            let size = (10 + 4 * (sessions as usize - 1)) * 1024;
+            if need > size { need - size } else { 0 }
+        }
+    }
 }
 
 /// One mode-dependent component live in a state.
@@ -542,8 +677,8 @@ pub fn components_at(s: SysMode, leds: usize) -> impl Iterator<Item = Component>
         c(true, "ble_host", BLE_HOST_STATIC, false),
         c(true, "led_frame", led_frame(leds), false),
         c(s.ble == Ble::Connected, "ble_link", BLE_LINK_HEAP, true),
-        c(s.wss, "tls_session", TLS_SESSION_HEAP, true),
-        c(s.wss, "ws_buffers", WS_BUFFERS_STATIC, false),
+        c(s.wss > 0, "tls_session", TLS_SESSION_HEAP, true),
+        c(s.wss > 0, "ws_buffers", WS_BUFFERS_STATIC, false),
         c(s.wifi != Wifi::Unprovisioned, "scan_residue", SCAN_RESIDUE_HEAP, true),
         c(s.wifi == Wifi::Scanning, "scan", SCAN_STATIC, false),
         c(s.map || s.activity == Activity::Upload, "map_store", map_store(leds), false),
@@ -578,5 +713,27 @@ pub fn heap_bytes(s: SysMode) -> usize {
 
 /// Quiescent: nothing in flight (no session, no central, nothing showing).
 pub fn is_quiescent(s: SysMode) -> bool {
-    !s.wss && s.ble != Ble::Connected && s.activity == Activity::Idle
+    s.wss == 0 && s.ble != Ble::Connected && s.activity == Activity::Idle
+}
+
+/// The front end's heap in state `s` ([`Profile::FrontEnd`], [`cost::frontend`]):
+/// what the mode-dependent components draw from the shared heap on top of the
+/// measured idle state. Everything per session is static on this build (the TCP
+/// slot, the Session, the TLS region); the heap only pays for what spills out of
+/// the TLS region and for the BLE link and the vendor scan.
+pub fn frontend_components(sessions: u8, s: SysMode) -> impl Iterator<Item = Component> {
+    use cost::frontend as f;
+    let c = |live: bool, name, bytes| (live, Component { name, bytes, heap: true });
+    let parts = [
+        c(s.wifi == Wifi::Scanning, "scan_transient", f::SCAN_TRANSIENT),
+        c(s.ble == Ble::Connected, "ble_link", cost::BLE_LINK_HEAP),
+        c(s.wss > 0, "tls_record_spill", f::record_spill(sessions, s.wss)),
+        c(s.wss > 0, "tls_small_spill", f::small_spill(sessions, s.wss)),
+    ];
+    parts.into_iter().filter(|p| p.0).map(|p| p.1)
+}
+
+/// [`frontend_components`] summed.
+pub fn frontend_heap(sessions: u8, s: SysMode) -> usize {
+    frontend_components(sessions, s).map(|c| c.bytes).sum()
 }

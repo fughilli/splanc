@@ -19,10 +19,19 @@ namespace {
 // (6 KB, @embedded's nix/mbedtls_src.BUILD) + header/MAC/IV overhead, 6,818 B
 // at most, both live at once; everything else peaked at 7,644 B, so 10 KB is ~1.3x.
 // Re-measure before shrinking; a miss falls back to the heap (fb=), never fails.
+//
+// With several wss sessions (LM_WSS_SESSIONS, the P4's C6 front end) the dynamic buffers
+// keep an idle session's records freed, and the loop serves one session at a time, so the
+// slots cover one partly received record per session plus one being written: N + 1 (2 at
+// N = 1). Each further session's handshake state takes ~4 KB more of the small region [E].
+// Not measured on the front end yet (docs/design/p4-c6-split.md §4.3.1): ram_audit there.
+#ifndef LM_WSS_SESSIONS
+#define LM_WSS_SESSIONS 1
+#endif
 constexpr size_t kSlotSize = 6912;
-constexpr int kSlots = 2;
+constexpr int kSlots = LM_WSS_SESSIONS + 1;
 constexpr size_t kSlotMin = 4096;  // requests at least this big are record buffers
-constexpr size_t kSmallSize = 10 * 1024;
+constexpr size_t kSmallSize = (10 + 4 * (LM_WSS_SESSIONS - 1)) * 1024;
 
 alignas(16) uint8_t g_slot_mem[kSlots][kSlotSize];
 bool g_slot_used[kSlots];
