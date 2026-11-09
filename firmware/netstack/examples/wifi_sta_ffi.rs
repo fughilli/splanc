@@ -310,6 +310,23 @@ pub extern "C" fn ns_tcp_set_serving_live(live: u32) {
     }
 }
 
+/// The app's verdict that the live session is idle, so a new peer may take it over
+/// instead of being refused (#444; tcp.rs `takeover_ok`).
+#[no_mangle]
+pub extern "C" fn ns_tcp_set_takeover_ok(ok: u32) {
+    unsafe {
+        if let Some(c) = TCP.as_mut() {
+            c.set_takeover_ok(ok != 0);
+        }
+    }
+}
+
+/// 1 when a new peer asked to take over the live session since the last call (cleared).
+#[no_mangle]
+pub extern "C" fn ns_tcp_take_takeover_request() -> u32 {
+    unsafe { TCP.as_mut().map(|c| c.take_takeover_request() as u32).unwrap_or(0) }
+}
+
 /// Copy the connection's diagnostics counters into `out[0..7]`: rx data segments,
 /// out-of-order (discarded), duplicate, truncated, zero-window ACKs, RTOs, fast
 /// retransmits. Zeros when there is no connection.

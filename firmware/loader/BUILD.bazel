@@ -50,10 +50,8 @@ rust_static_library(
         "ota_kat.h",
         ":build_info_h",
     ],
-    copts = [
-        "-fno-rtti",
-        "-DMBEDTLS_CONFIG_FILE=\\\"mbedtls/esp_config_ledmapper.h\\\"",
-    ],
+    # (The mbedtls config arrives with @embedded's mbedtls_src as a propagated define.)
+    copts = ["-fno-rtti"],
     # Two no_std Rust staticlibs (the netstack's wifi_sta_ffi + loader_ffi) each define
     # the panic handler / compiler-builtins; take the first (as the player does).
     linkopts = ["-Wl,--allow-multiple-definition"],

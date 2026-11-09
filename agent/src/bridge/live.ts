@@ -369,9 +369,15 @@ export class LiveMux {
     const t = Date.now();
     for (const [pid, l] of [...this.locks]) if (l.until !== undefined && l.until <= t) this.unlock(pid);
     this.syncLocks();
+    // While an app is attached, keep its players' Wi-Fi sessions (hub idle release, #444);
+    // let them go once the last app leaves.
+    this.syncHolds();
     if (this.conns.size > 0) {
       for (const p of this.hub.registry.list()) {
         const s = this.hub.openSession(p.id);
+        // Released on purpose (idle, or another client took it over): reopened by the next
+        // call, never re-dialed here — that would take the player back from its new client.
+        if (s?.released) continue;
         if (s?.client.isConnected) {
           this.downSince.delete(p.id);
           continue;
@@ -394,6 +400,27 @@ export class LiveMux {
       }
     }
     for (const cs of this.conns.values()) this.pushPlayers(cs);
+  }
+
+  /** Live-control holds on the sessions (see poll): one per session while any app is attached. */
+  private readonly sessionHolds = new Map<DeviceSession, () => void>();
+  private syncHolds(): void {
+    const want = new Set<DeviceSession>();
+    if (this.conns.size > 0) {
+      for (const p of this.hub.registry.list()) {
+        const s = this.hub.openSession(p.id);
+        if (s && !s.released) want.add(s);
+      }
+    }
+    for (const [s, off] of [...this.sessionHolds]) {
+      if (!want.has(s)) {
+        off();
+        this.sessionHolds.delete(s);
+      }
+    }
+    for (const s of want) {
+      if (!this.sessionHolds.has(s)) this.sessionHolds.set(s, s.hold("an attached live app"));
+    }
   }
 
   private pushPlayers(cs: ConnState, force = false): void {

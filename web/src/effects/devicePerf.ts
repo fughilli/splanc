@@ -141,38 +141,84 @@ function percentile(sorted: number[], p: number): number {
   return sorted[i]!;
 }
 
+/**
+ * The three sample populations one capture yields (#453), kept apart so no
+ * statistic is presented as covering more than it does:
+ *  - windows: each poll's firmware rolling summary over the frames buffered in
+ *    its perf ring at that moment (≤16; the count is not reported, and frames
+ *    left in the ring after a poll appear again in the next window);
+ *  - ticks: the raw per-frame samples a poll returns — at most the reply's
+ *    field capacity (a few) per poll, oldest-first, so a SUBSET of frames;
+ *  - counters: overruns / dropped rendering frames since the previous poll,
+ *    counted on the device over EVERY frame, plus samplesDropped — perf-ring
+ *    overflow, i.e. frames missing from the ticks and windows.
+ */
+export interface CapturePopulations {
+  windows: number;
+  /** Mean of the window means (unweighted: window sizes are not reported). */
+  windowMeanMs: number;
+  windowMeansMs: number[];
+  /** Largest per-window frame max (+ that window's mean show time). */
+  windowMaxMs: number;
+  /** Returned per-frame tick samples (frame + show), unsorted. */
+  tickMs: number[];
+  overruns: number;
+  droppedFrames: number;
+  samplesDropped: number;
+}
+
+/** Split a window stream into its populations (pure). */
+export function capturePopulations(windows: PerfReportMessage[], hz: number): CapturePopulations {
+  const usable = windows.filter((w) => w.frameCyclesMean > 0);
+  const winMeans = usable.map((w) => ms(w.frameCyclesMean + w.showCyclesMean, hz));
+  const tickMs: number[] = [];
+  for (const w of usable) {
+    for (const t of w.ticks) if (t.frameCycles > 0) tickMs.push(ms(t.frameCycles + t.showCycles, hz));
+  }
+  const sum = (f: (w: PerfReportMessage) => number): number => usable.reduce((s, w) => s + (f(w) || 0), 0);
+  return {
+    windows: usable.length,
+    windowMeanMs: winMeans.length > 0 ? winMeans.reduce((a, b) => a + b, 0) / winMeans.length : 0,
+    windowMeansMs: winMeans,
+    windowMaxMs: usable.reduce(
+      (m, w) => Math.max(m, ms(Math.max(w.frameCyclesMax, w.frameCyclesMean) + w.showCyclesMean, hz)),
+      0,
+    ),
+    tickMs,
+    overruns: sum((w) => w.overruns),
+    droppedFrames: sum((w) => w.droppedFrames),
+    // Each report resets the counter, so the sum is the capture's total.
+    samplesDropped: sum((w) => w.samplesDropped),
+  };
+}
+
 /** Summarize a window stream into the agent-facing text (pure; exported for tests). */
 export function summarizeWindows(
   windows: PerfReportMessage[],
   opts: Pick<MeasureOptions, "table" | "calibrated" | "predict"> & { notes?: string[] },
 ): string {
+  return summarizeCapture(windows, opts).text;
+}
+
+/** summarizeWindows plus the measured budget fraction (undefined: no frames). */
+export function summarizeCapture(
+  windows: PerfReportMessage[],
+  opts: Pick<MeasureOptions, "table" | "calibrated" | "predict"> & { notes?: string[] },
+): { text: string; budgetFraction?: number } {
   const usable = windows.filter((w) => w.frameCyclesMean > 0);
   if (usable.length === 0) {
-    return [
+    return { text: [
       ...(opts.notes ?? []),
       "measure_on_device: the fixture reported no frames for this effect during the capture " +
         "(is it rendering? an effect that errors every frame reports nothing). Check the compile " +
         "result and try again.",
-    ].join("\n");
+    ].join("\n") };
   }
   const hz = usable[usable.length - 1]!.cpuHz || opts.table.cpuHz;
-  // Per-frame totals (frame + show) from FULL-mode ticks when present; else the
-  // window means stand in for frames.
-  const frames: number[] = [];
-  for (const w of usable) {
-    if (w.ticks.length > 0) {
-      for (const t of w.ticks) if (t.frameCycles > 0) frames.push(ms(t.frameCycles + t.showCycles, hz));
-    } else {
-      frames.push(ms(w.frameCyclesMean + w.showCyclesMean, hz));
-    }
-  }
-  frames.sort((a, b) => a - b);
-  const mean = frames.reduce((s, v) => s + v, 0) / frames.length;
-  const winMeans = usable.map((w) => ms(w.frameCyclesMean + w.showCyclesMean, hz));
-  const overruns = usable.reduce((s, w) => s + w.overruns, 0);
-  const dropped = usable.reduce((s, w) => s + w.droppedFrames, 0);
-  // The measured context renders from a merged report: window means averaged,
-  // the newest window's ticks/heap.
+  const pop = capturePopulations(usable, hz);
+  // The measured context renders from a merged report: window means averaged
+  // (the SAME population as the headline and the estimate comparison), the
+  // counters summed over the capture, the newest window's ticks/heap.
   const avg = (f: (w: PerfReportMessage) => number): number =>
     usable.reduce((s, w) => s + f(w), 0) / usable.length;
   const last = usable[usable.length - 1]!;
@@ -182,38 +228,74 @@ export function summarizeWindows(
     updateCyclesMean: avg((w) => w.updateCyclesMean),
     shadeCyclesMean: avg((w) => w.shadeCyclesMean),
     showCyclesMean: avg((w) => w.showCyclesMean),
-    overruns,
-    droppedFrames: dropped,
+    overruns: pop.overruns,
+    droppedFrames: pop.droppedFrames,
+    samplesDropped: pop.samplesDropped,
   };
   const ctx = contextFromReport(merged, opts.table, opts.calibrated);
-  const leds = last.ticks.length > 0 ? last.ticks[last.ticks.length - 1]!.ledCount : 0;
+  ctx.population =
+    `unweighted mean of ${pop.windows} rolling-window means (each window = the frames buffered on the ` +
+    "device at that poll; sizes not reported, windows may overlap)";
+  const lastTick = [...usable].reverse().find((w) => w.ticks.length > 0)?.ticks;
+  const leds = lastTick && lastTick.length > 0 ? lastTick[lastTick.length - 1]!.ledCount : 0;
   const lines = [...(opts.notes ?? [])];
+  lines.push(`Measured ON THE FIXTURE (${pop.windows} polls${leds > 0 ? `, ${leds} LEDs` : ""}):`);
   lines.push(
-    `Measured ON THE FIXTURE (${usable.length} windows, ${frames.length} frames${
-      leds > 0 ? `, ${leds} LEDs` : ""
-    }): frame mean ${mean.toFixed(2)} ms, p95 ${percentile(frames, 0.95).toFixed(2)} ms, max ${frames[
-      frames.length - 1
-    ]!.toFixed(2)} ms; per-window means ${winMeans.map((v) => v.toFixed(2)).join(" / ")} ms.`,
+    `- Rolling windows (${pop.windows}): mean ${pop.windowMeanMs.toFixed(2)} ms (unweighted mean of the window ` +
+      `means; window sizes are not reported); per-window means ${pop.windowMeansMs
+        .map((v) => v.toFixed(2))
+        .join(" / ")} ms; largest window max ${pop.windowMaxMs.toFixed(2)} ms.`,
+  );
+  if (pop.tickMs.length > 0) {
+    const sorted = [...pop.tickMs].sort((a, b) => a - b);
+    const mean = sorted.reduce((a, b) => a + b, 0) / sorted.length;
+    lines.push(
+      `- Returned per-frame tick samples (${sorted.length}, a SUBSET: each poll returns only a few of the frames ` +
+        `rendered): mean ${mean.toFixed(2)} ms, p95 ${percentile(sorted, 0.95).toFixed(2)} ms, max ${sorted[
+          sorted.length - 1
+        ]!.toFixed(2)} ms. Sample statistics only — not a full-capture p95/max; a stutter between samples ` +
+        "shows up in the window max and the overrun count, not here.",
+    );
+  } else {
+    lines.push(
+      "- No per-frame tick samples were returned (window summaries only): there are no per-frame " +
+        "percentiles for this capture; the window means above stand in.",
+    );
+  }
+  lines.push(
+    `- Device counters over every frame of the capture: overruns ${pop.overruns}, dropped rendering frames ${pop.droppedFrames}.`,
+  );
+  lines.push(
+    pop.samplesDropped > 0
+      ? `- Measurement samples dropped (perf-ring overflow, NOT dropped rendering frames): ${pop.samplesDropped} — ` +
+          "those frames are missing from the tick samples and windows, so the statistics above may hide stutters."
+      : "- Measurement samples dropped (perf-ring overflow): 0.",
   );
   lines.push(perfContextToPrompt(ctx));
   const pred = leds > 0 ? opts.predict?.(leds) ?? null : null;
   if (pred) {
-    const inBand = mean >= pred.lowMs && mean <= pred.highMs;
-    const delta = pred.totalMs > 0 ? ((mean - pred.totalMs) / pred.totalMs) * 100 : 0;
+    // Compared against the rolling-window mean: the same population as the
+    // perf-context frame time, so the two numbers the agent sees agree.
+    const measured = pop.windowMeanMs;
+    const inBand = measured >= pred.lowMs && measured <= pred.highMs;
+    const delta = pred.totalMs > 0 ? ((measured - pred.totalMs) / pred.totalMs) * 100 : 0;
     lines.push(
       `Offline estimate for the same program at ${leds} LEDs: ${pred.totalMs.toFixed(2)} ms ` +
-        `(band ${pred.lowMs.toFixed(2)}–${pred.highMs.toFixed(2)} ms); measured is ${
-          delta >= 0 ? "+" : ""
-        }${delta.toFixed(0)}% — ${inBand ? "inside" : "OUTSIDE"} the band.` +
+        `(band ${pred.lowMs.toFixed(2)}–${pred.highMs.toFixed(2)} ms); the measured rolling-window mean ` +
+        `(${measured.toFixed(2)} ms) is ${delta >= 0 ? "+" : ""}${delta.toFixed(0)}% — ${
+          inBand ? "inside" : "OUTSIDE"
+        } the band.` +
         (inBand ? "" : " Trust the measurement; the estimate models the interpreter (the device may JIT)."),
     );
   }
-  return lines.join("\n");
+  return { text: lines.join("\n"), budgetFraction: ctx.metrics.budgetFraction };
 }
 
 export interface MeasureResult {
   /** The agent-facing summary. */
   text: string;
+  /** Measured frame-time / frame-budget (rolling-window mean), when frames came back. */
+  budgetFraction?: number;
   /** The fixture is now running `bytecode` (uploaded, or already was). */
   deployed: boolean;
 }
@@ -267,7 +349,12 @@ export async function measureOnDevice(
         const r = await withTimeout(dev.getPerfReport(), timeoutMs, "reading perf");
         if (!r.effectId || r.effectId === opts.effectId) windows.push(r);
       }
-      return { text: summarizeWindows(windows, { ...opts, notes }), deployed };
+      const summary = summarizeCapture(windows, { ...opts, notes });
+      return {
+        text: summary.text,
+        deployed,
+        ...(summary.budgetFraction !== undefined ? { budgetFraction: summary.budgetFraction } : {}),
+      };
     } catch (e) {
       const why = e instanceof Error ? e.message : String(e);
       return {

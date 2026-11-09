@@ -146,6 +146,148 @@ test("locate points at lines or at an exact snippet", () => {
   assert.equal(locate(GLOW, { say: "just talking" }), undefined);
 });
 
+/** A stand-in MCP client: each call answers at once, except the ones `hold`
+ * picks, which wait (ignoring the cancel, like a server that finishes late)
+ * until the test releases them. */
+function stubClient(hold: (name: string, args: Record<string, unknown>) => boolean) {
+  const calls: { name: string; args: Record<string, unknown> }[] = [];
+  const held: ((r: unknown) => void)[] = [];
+  const client = {
+    listTools: async () => ({
+      tools: ["crossfade_to", "deploy_effect", "set_uniforms"].map((name) => ({ name, inputSchema: { type: "object" } })),
+    }),
+    getInstructions: () => "",
+    callTool: (p: { name: string; arguments: Record<string, unknown> }) => {
+      calls.push({ name: p.name, args: p.arguments });
+      if (hold(p.name, p.arguments)) return new Promise((r) => held.push(r));
+      return Promise.resolve({ content: [{ type: "text", text: "{}" }] });
+    },
+  };
+  const release = () => held.splice(0).forEach((r) => r({ content: [{ type: "text", text: '{"ok":true}' }] }));
+  return { client: client as unknown as Client, calls, release };
+}
+
+const until = async (cond: () => boolean, what: string) => {
+  for (let i = 0; i < 200 && !cond(); i++) await settle(10);
+  assert.ok(cond(), what);
+};
+
+describe("requests: superseded and stopped requests never change the lights later (#447)", () => {
+  const states = (events: StageEvent[], id: number) =>
+    events.filter((e) => e.type === "request" && e["id"] === id).map((e) => e["state"]);
+
+  test("a newer request supersedes one stuck in a deploy; the late result is not acted on", async () => {
+    const bus = new StageBus();
+    const events: StageEvent[] = [];
+    bus.emit = (e) => void events.push(e);
+    const { client, calls, release } = stubClient((_n, a) => a["effect_id"] === "hill");
+    const followed: string[] = [];
+    const seen: Record<string, unknown>[] = [];
+    const agent = new StageAgent({
+      client,
+      bus,
+      skill: "",
+      onToolResult: (n, a) => void followed.push(`${n}:${a["effect_id"]}`),
+      anthropic: scripted(
+        [
+          // Request 1: a crossfade that hangs. (Were it to go on, it would take
+          // the next script turn and deploy "hill2".)
+          [
+            { type: "text", text: "A sunny hillside, coming up." },
+            { type: "tool_use", id: "a1", name: "crossfade_to", input: { effect_id: "hill", source: GLOW } },
+          ],
+          // Request 2.
+          [{ type: "tool_use", id: "b1", name: "deploy_effect", input: { effect_id: "tracking", source: GLOW } }],
+          [{ type: "text", text: "The tracking demo is on." }],
+          [{ type: "tool_use", id: "a2", name: "deploy_effect", input: { effect_id: "hill2", source: GLOW } }],
+        ],
+        seen,
+      ),
+    });
+    const first = agent.prompt("make it a sunny hillside");
+    await until(() => calls.length === 1, "the crossfade is in flight");
+    assert.deepEqual(agent.active, { id: 1, text: "make it a sunny hillside", state: "deploying" });
+
+    const second = agent.prompt("switch to the tracking demo");
+    await first; // ends at once: it doesn't wait for the stuck call
+    await second;
+    assert.deepEqual(
+      calls.map((c) => c.args["effect_id"]),
+      ["hill", "tracking"],
+      "request 1 made no further tool calls",
+    );
+    // Now the stuck call finishes, long after request 2 took over.
+    release();
+    await settle(50);
+    assert.deepEqual(followed, ["deploy_effect:tracking"], "the twin follows only the newer request");
+    assert.equal(seen.length, 3, "request 1 never asked the model again");
+
+    assert.deepEqual(states(events, 1), ["queued", "generating", "writing", "deploying", "superseded"]);
+    assert.equal(events.filter((e) => e.type === "request" && e["id"] === 1).at(-1)!["by"], 2);
+    assert.deepEqual(states(events, 2), ["queued", "generating", "writing", "deploying", "generating", "done"]);
+    const a1 = events.filter((e) => e.type === "tool_result" && e["id"] === "a1");
+    assert.deepEqual(a1.map((e) => [e["ok"], e["cancelled"]]), [[false, true]], "one cancelled card, no late success");
+    const stopped = events.find((e) => e.type === "stopped");
+    assert.match(String(stopped?.["text"]), /superseded by #2/);
+    assert.equal(agent.active, null);
+
+    // Request 2's model heard that request 1 was cut off, and nothing of its half-done round.
+    const m = seen[1]!["messages"] as { role: string; content: unknown }[];
+    assert.equal(m.length, 1);
+    assert.match(String(m[0]!.content), /was cancelled before it finished/);
+    assert.match(String(m[0]!.content), /switch to the tracking demo$/);
+  });
+
+  test("a request superseded before it starts never runs; Stop cancels the running one", async () => {
+    const bus = new StageBus();
+    const events: StageEvent[] = [];
+    bus.emit = (e) => void events.push(e);
+    const { client, calls, release } = stubClient((n) => n === "crossfade_to");
+    const followed: string[] = [];
+    const seen: Record<string, unknown>[] = [];
+    const agent = new StageAgent({
+      client,
+      bus,
+      skill: "",
+      onToolResult: (n, a) => void followed.push(`${n}:${a["effect_id"]}`),
+      anthropic: scripted(
+        [
+          [{ type: "tool_use", id: "a1", name: "crossfade_to", input: { effect_id: "one", source: GLOW } }],
+          [{ type: "tool_use", id: "c1", name: "crossfade_to", input: { effect_id: "three", source: GLOW } }],
+        ],
+        seen,
+      ),
+    });
+    const one = agent.prompt("one");
+    await until(() => calls.length === 1, "request 1 is deploying");
+    const two = agent.prompt("two");
+    const three = agent.prompt("three"); // supersedes 2 while it still waits
+    await Promise.all([one, two]);
+    await until(() => calls.length === 2, "request 3 is deploying");
+    agent.stop();
+    await three;
+    release();
+    await settle(50);
+
+    assert.deepEqual(states(events, 2), ["queued", "superseded"], "request 2 never started");
+    assert.ok(!events.some((e) => e.type === "prompt" && e["text"] === "two"));
+    assert.ok(events.some((e) => e.type === "note" && /#2 superseded by #3 before it started/.test(String(e["text"]))));
+    assert.equal(states(events, 3).at(-1), "stopped");
+    assert.deepEqual(followed, [], "neither late crossfade is followed");
+    assert.equal(agent.busy, false);
+
+    // The conversation stays usable: the next request runs normally.
+    const next = new StageAgent({
+      client,
+      bus,
+      skill: "",
+      anthropic: scripted([[{ type: "text", text: "Hi." }]], []),
+    });
+    await next.prompt("hello");
+    assert.equal(states(events, 1).at(-1), "done");
+  });
+});
+
 describe("stage agent against a fake player", () => {
   let player: FakePlayer;
   let hub: Hub;
@@ -212,7 +354,7 @@ describe("stage agent against a fake player", () => {
     await settle(200);
     twin.close();
 
-    const types = events.map((e) => e.type);
+    const types = events.map((e) => e.type).filter((t) => t !== "request");
     assert.equal(types[0], "prompt");
     assert.ok(types.includes("turn_end"), JSON.stringify(types));
     assert.ok(!types.includes("error"), JSON.stringify(events.filter((e) => e.type === "error")));
@@ -252,6 +394,38 @@ describe("stage agent against a fake player", () => {
     assert.match(JSON.stringify(m2.at(-1)!.content), /tool_result/);
   });
 
+  test("a cancelled deploy waiting behind a slow request never reaches the player (#447)", async () => {
+    player.slow.set("set_brightness", 700);
+    try {
+      // Another caller's slow request holds the player's request queue...
+      const slow = client.callTool({ name: "set_brightness", arguments: { level: 0.5 } });
+      await settle(150);
+      // ...and a deploy queues behind it, then its caller gives up on it.
+      const ctl = new AbortController();
+      const late = client
+        .callTool({ name: "deploy_effect", arguments: { effect_id: "late", source: GLOW } }, undefined, { signal: ctl.signal })
+        .then(
+          () => "answered",
+          () => "cancelled",
+        );
+      await settle(60);
+      ctl.abort();
+      assert.equal(await late, "cancelled");
+      await slow;
+      await settle(400);
+      const uploaded = player.received.filter((m) => m.type === "submit_effect").map((m) => m["effectId"]);
+      assert.equal(player.brightness, 0.5, "the slow request did finish");
+      assert.ok(!uploaded.includes("late"), `the cancelled deploy reached the player: ${JSON.stringify(uploaded)}`);
+      assert.notEqual(player.effect?.id, "late");
+      // The session is fine afterwards: a deploy now goes through.
+      const r = (await client.callTool({ name: "deploy_effect", arguments: { effect_id: "after", source: GLOW } })) as { isError?: boolean };
+      assert.ok(!r.isError);
+      assert.equal(player.effect?.id, "after");
+    } finally {
+      player.slow.clear();
+    }
+  });
+
   test("a failing API call drops the turn and keeps the history usable", async () => {
     const bus = new StageBus();
     const events: StageEvent[] = [];
@@ -272,10 +446,13 @@ describe("stage agent against a fake player", () => {
         },
       } as never,
     });
+    const last = () => events.filter((e) => e.type !== "request").at(-1)!.type;
     await agent.prompt("first");
-    assert.equal(events.at(-1)!.type, "error");
+    assert.equal(last(), "error");
+    assert.deepEqual(events.at(-1), { type: "request", id: 1, text: "first", state: "failed", detail: "network down" });
     await agent.prompt("second");
-    assert.equal(events.at(-1)!.type, "turn_end");
+    assert.equal(last(), "turn_end");
+    assert.equal(events.at(-1)!["state"], "done");
     const msgs = seen[0]!["messages"] as { role: string; content: unknown }[];
     assert.deepEqual(msgs, [{ role: "user", content: "second" }], "the failed turn left nothing behind");
   });

@@ -524,6 +524,17 @@ cc_test(
     deps = [":heap_census_core"],
 )
 
+# Session takeover policy (#444): when a new client may take over the netstack player's
+# one wss session (an idle one), host-tested. Header-only; netstack_transport includes it.
+cc_test(
+    name = "session_takeover_test",
+    srcs = [
+        "session_takeover.h",
+        "session_takeover_test.cc",
+    ],
+    copts = ["-UNDEBUG"],
+)
+
 # Per-device TLS identity (docs/design/per-device-cert.md): the blob format + the
 # readiness state machine that gates the :443 listener, host-testable...
 cc_library(
@@ -544,8 +555,8 @@ cc_test(
 
 # ...and the firmware half: on-device EC P-256 keygen + self-signed cert (mbedtls) and
 # the load/generate/persist flow. Compiled against the ledmapper mbedtls config, which
-# enables the X.509/PK writers the stock ESP config prunes (additive; no ssl-context
-# struct change), from the same from-source mbedtls :core links.
+# enables the X.509/PK writers the stock ESP config prunes: the from-source mbedtls :core
+# links propagates it (MBEDTLS_CONFIG_FILE) to every consumer, this one included.
 cc_library(
     name = "device_cert",
     srcs = [
@@ -553,10 +564,7 @@ cc_library(
         "serial_log.h",
     ],
     hdrs = ["device_cert.h"],
-    copts = [
-        "-fno-rtti",
-        "-DMBEDTLS_CONFIG_FILE=\\\"mbedtls/esp_config_ledmapper.h\\\"",
-    ],
+    copts = ["-fno-rtti"],
     includes = ["."],
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
@@ -912,13 +920,11 @@ cc_library(
         ":build_info_h",
     ],
     hdrs = ["ota_app.h"],
-    # The SAME mbedtls config the linked from-source mbedtls was built with (as
-    # :device_cert): mbedtls_sha256_context's layout depends on it, and a mismatch
-    # made the app's slot re-hash come out wrong (app_version 0 on hardware).
-    copts = [
-        "-fno-rtti",
-        "-DMBEDTLS_CONFIG_FILE=\\\"mbedtls/esp_config_ledmapper.h\\\"",
-    ],
+    # mbedtls_sha256_context's layout depends on the mbedtls config (a mismatch once
+    # made the app's slot re-hash come out wrong: app_version 0 on hardware). The
+    # linked from-source mbedtls's config now reaches every consumer as a propagated
+    # define (patches/embedded-mbedtls-propagate-config.patch, #468), so no -D here.
+    copts = ["-fno-rtti"],
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
         "@embedded//platforms:is_esp32c3": [],
@@ -948,6 +954,7 @@ cc_library(
         "join_guard.h",
         "netstack_transport.cpp",
         "serial_log.h",
+        "session_takeover.h",
         "sta_mac.h",
         "tls_region.cpp",
         "wifi_creds.h",
@@ -1766,6 +1773,36 @@ filegroup(
     name = "esp32c6_netstack_elf",
     srcs = [":esp32c6_netstack"],
     output_group = "elf",
+)
+
+# The OTA loader links the same :netstack_transport; tls_abi_test checks it too.
+filegroup(
+    name = "esp32c6_loader_elf",
+    srcs = ["//firmware/loader:esp32c6_loader"],
+    output_group = "elf",
+)
+
+# The mbedtls ABI between the transport and the linked library: every mbedtls object the
+# transport declares is exactly the library's size, in the player and in the OTA loader
+# (#444, found by #440; root cause #468).
+py_test(
+    name = "tls_abi_test",
+    srcs = ["tests/test_tls_abi.py"],
+    data = [
+        ":esp32c6_loader_elf",
+        ":esp32c6_netstack_elf",
+        "@embedded//tools:riscv_objdump",
+    ],
+    env = {
+        "ELF": "$(rlocationpath :esp32c6_netstack_elf)",
+        "LOADER_ELF": "$(rlocationpath :esp32c6_loader_elf)",
+        "OBJDUMP": "$(rlocationpath @embedded//tools:riscv_objdump)",
+    },
+    main = "tests/test_tls_abi.py",
+    # Linux CI, as stack_bound_test: the macOS runner's riscv objdump exits 101 in the
+    # sandbox.
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = ["@rules_python//python/runfiles"],
 )
 
 py_test(

@@ -285,17 +285,18 @@ export class FakeWebSocket {
     queueMicrotask(() => this.finishClose());
   }
 
-  /** The device closes the connection (e.g. it rebooted). */
-  serverClose(): void {
+  /** The device closes the connection (e.g. it rebooted; with `code`, a WS close frame
+   * such as 4001 = taken over by another client). */
+  serverClose(code?: number, reason = ""): void {
     if (this.readyState >= 2) return;
-    this.finishClose();
+    this.finishClose(code === undefined ? undefined : { code, reason });
   }
 
-  private finishClose(): void {
+  private finishClose(ev?: { code: number; reason: string }): void {
     if (this.readyState === 3) return;
     this.readyState = 3;
     this.lan.untrack(this);
-    this.onclose?.();
+    this.onclose?.(ev);
   }
 }
 
@@ -341,6 +342,11 @@ export class FakeLan {
   /** The most sockets ever simultaneously alive toward `host`. */
   peakLiveTo(host: string): number {
     return this.peak.get(host) ?? 0;
+  }
+
+  /** The device at `host` hands its session to another client (WS close 4001, #444). */
+  takeOver(host: string): void {
+    for (const s of [...this.live]) if (s.host === host) s.serverClose(4001, "taken over by another client");
   }
 
   /** The device at `host` drops every connection (reboot / link loss). */

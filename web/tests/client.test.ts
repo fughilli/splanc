@@ -7,7 +7,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DetectionRecord, ServerMessage } from "@ledmapper/protocol";
-import { certApprovalUrl, LedMapperClient, RequestTimeoutError, type SocketLike } from "../src/net/client";
+import {
+  certApprovalUrl,
+  ConnectFailedError,
+  GAVE_UP_RETRY_MS,
+  LedMapperClient,
+  RequestTimeoutError,
+  WS_CLOSE_TAKEN_OVER,
+  type SocketLike,
+} from "../src/net/client";
 import { decodeClient, encodeClient, encodeServer } from "../src/net/proto";
 
 class FakeSocket implements SocketLike {
@@ -225,16 +233,98 @@ test("a cert-trust wss that never welcomes stops retrying (no cert-page starvati
     p.catch(() => undefined);
     // Only the open-timeout is queued so far.
     assert.equal(scheduled.length, 1);
-    // Fire it: the stuck socket is force-closed → onclose runs. Because the
-    // target needs cert trust and never welcomed, it must NOT schedule a
-    // reconnect — it surfaces onCertTrustNeeded and waits for the user.
-    scheduled[0]!();
+    // The browser rejects the untrusted cert inside the handshake: the socket
+    // closes (well before the open-timeout). Because the target needs cert trust
+    // and never welcomed, it must NOT schedule a reconnect — it surfaces
+    // onCertTrustNeeded and waits for the user.
+    sockets[0]!.close();
     assert.equal(trustNeeded, 1, "surfaced cert-trust-needed");
     assert.equal(scheduled.length, 1, "no backoff reconnect scheduled");
     assert.equal(sockets.length, 1, "did not open a second socket");
   } finally {
     (globalThis as unknown as { location?: unknown }).location = saved;
   }
+});
+
+test("an attempt nothing answers is never taken for an untrusted cert: it reports a timeout and retries (#444)", async () => {
+  // A browser rejects an untrusted cert inside the handshake, so a socket our
+  // open-timeout had to cut is a device that is off this network, rebooting, on a
+  // new address, or holding its one session silently. That used to dead-end at
+  // "trust needed" and send the user to a cert page that could not load either.
+  await withLocation(async () => {
+    const { client, sockets, scheduled, events } = trustClient(4);
+    const kinds: string[] = [];
+    client.events.onAttemptFailed = (kind) => kinds.push(kind);
+    const p = client.connect();
+    const failure = p.catch((e: unknown) => e);
+    scheduled[0]!.fn(); // open-timeout fires on the unanswered socket
+    const e = await failure;
+    assert.ok(e instanceof ConnectFailedError && e.kind === "timeout", "connect() rejects with the reason");
+    assert.deepEqual(kinds, ["timeout"]);
+    assert.equal(events.trustNeeded, 0, "no cert-trust give-up for a timeout");
+    for (let i = 0; i < 6; i++) {
+      scheduled[scheduled.length - 1]!.fn(); // backoff -> next attempt
+      scheduled[scheduled.length - 1]!.fn(); // its open-timeout
+    }
+    assert.equal(events.trustNeeded, 0);
+    assert.equal(sockets.length, 7, "kept retrying over the backoff");
+    scheduled[scheduled.length - 1]!.fn();
+    const s = sockets[sockets.length - 1]!;
+    s.open();
+    s.receive({ type: "welcome", sessionId: "s", codeParams: CODE_PARAMS, solverBenchMs: null });
+    assert.ok(client.isConnected, "picked the device up once it answered");
+  });
+});
+
+test("a client for a host trusted before keeps retrying slowly after surfacing trust (#444)", async () => {
+  await withLocation(async () => {
+    const sockets: FakeSocket[] = [];
+    const scheduled: Array<{ fn: () => void; ms: number }> = [];
+    let trustNeeded = 0;
+    const client = new LedMapperClient("wss://device.test/ws", {
+      socketFactory: () => {
+        const s = new FakeSocket();
+        sockets.push(s);
+        return s;
+      },
+      now: () => 1000,
+      schedule: (fn, ms) => void scheduled.push({ fn, ms }),
+      trustedBefore: true,
+      warmRetryLimit: 2,
+    });
+    client.events = { onCertTrustNeeded: () => void trustNeeded++ };
+    client.connect().catch(() => undefined);
+    sockets[0]!.close(); // refused: another client holds the device's one session
+    assert.equal(trustNeeded, 0, "a once-trusted host is not sent to the trust page after one refusal");
+    scheduled[scheduled.length - 1]!.fn();
+    sockets[1]!.close();
+    assert.equal(trustNeeded, 1);
+    assert.equal(scheduled[scheduled.length - 1]!.ms, GAVE_UP_RETRY_MS, "a slow retry is pending");
+    assert.ok(client.hasGivenUp);
+  });
+});
+
+test("a session the device hands to another client (close 4001) is not reconnected (#444)", async () => {
+  const { client, sockets, scheduled } = makeClient();
+  const taken: string[] = [];
+  client.events = { onTakenOver: (r) => taken.push(r) };
+  const p = client.connect();
+  sockets[0]!.open();
+  sockets[0]!.receive({ type: "welcome", sessionId: "s", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await p;
+  const before = scheduled.length;
+  sockets[0]!.readyState = 3;
+  sockets[0]!.onclose?.({ code: WS_CLOSE_TAKEN_OVER, reason: "taken over by another client" });
+  assert.deepEqual(taken, ["taken over by another client"]);
+  assert.ok(client.takenOver);
+  assert.equal(scheduled.length, before, "no backoff reconnect");
+  // A fresh connect() takes it back.
+  const p2 = client.connect();
+  sockets[1]!.open();
+  sockets[1]!.receive({ type: "welcome", sessionId: "s2", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await p2;
+  assert.ok(client.isConnected);
+  assert.equal(client.takenOver, false);
 });
 
 test("a warm wss whose reconnects keep failing surfaces cert-trust (rotated cert)", async () => {
@@ -275,21 +365,30 @@ test("a warm wss whose reconnects keep failing surfaces cert-trust (rotated cert
     assert.equal(trustNeeded, 0, "one warm drop must not cry cert-trust yet");
 
     // Drive reconnects that never welcome (the rotated cert is untrusted). Each
-    // round: fire the backoff to open the next socket, then its open-timeout to
-    // close the never-welcomed socket. The 3rd such close hits warmRetryLimit.
+    // round: fire the backoff to open the next socket, which the browser then
+    // closes at the handshake. The 3rd such close hits warmRetryLimit.
     const fireLast = (): void => scheduled[scheduled.length - 1]!();
     fireLast(); // backoff -> connect() opens socket[1]
-    fireLast(); // open-timeout -> closes socket[1] (fail #2)
+    sockets[1]!.close(); // fail #2
     assert.equal(trustNeeded, 0, "still retrying below the warm limit");
     fireLast(); // backoff -> connect() opens socket[2]
     const socketsBefore = sockets.length;
-    const scheduledBefore = scheduled.length;
-    fireLast(); // open-timeout -> closes socket[2] (fail #3 == warmRetryLimit)
+    sockets[2]!.close(); // fail #3 == warmRetryLimit
 
     assert.equal(trustNeeded, 1, "surfaced cert-trust after warmRetryLimit fails");
-    // And it STOPPED: the give-up scheduled no backoff, so nothing reconnects.
-    assert.equal(scheduled.length, scheduledBefore, "no backoff scheduled after give-up");
-    assert.equal(sockets.length, socketsBefore, "no reconnect after cert-trust give-up");
+    // A once-welcomed client does not dead-end there (#444): the same failure is what
+    // a device busy with another client, or a network drop, looks like. It keeps
+    // retrying, but slowly (one attempt per GAVE_UP_RETRY_MS), and says so only once.
+    assert.equal(sockets.length, socketsBefore, "no immediate reconnect");
+    fireLast(); // the slow retry
+    assert.equal(sockets.length, socketsBefore + 1, "one slow retry");
+    sockets[sockets.length - 1]!.close();
+    assert.equal(trustNeeded, 1, "the trust affordance is not re-announced every round");
+    fireLast();
+    const s = sockets[sockets.length - 1]!;
+    s.open();
+    s.receive({ type: "welcome", sessionId: "s-2", codeParams: CODE_PARAMS, solverBenchMs: null });
+    assert.ok(client.isConnected, "reconnected by itself once the device answered again");
   } finally {
     (globalThis as unknown as { location?: unknown }).location = saved;
   }
@@ -1013,7 +1112,7 @@ test("once nobody waits, the cert-trust give-up applies again", async () => {
     sockets[0]!.close(); // fail #1 (no waiter)
     for (let i = 0; i < 2; i++) {
       scheduled[scheduled.length - 1]!.fn();
-      scheduled[scheduled.length - 1]!.fn();
+      sockets[sockets.length - 1]!.close();
     }
     assert.equal(events.trustNeeded, 1, "the rotated-cert give-up still works");
   });
@@ -1028,7 +1127,7 @@ test("waitForWelcome restarts a client that had already given up", async () => {
     await p;
     sockets[0]!.close();
     scheduled[scheduled.length - 1]!.fn();
-    scheduled[scheduled.length - 1]!.fn(); // fail #2 -> give up
+    sockets[sockets.length - 1]!.close(); // fail #2 -> give up
     assert.equal(events.trustNeeded, 1);
     const n = sockets.length;
     const back = client.waitForWelcome(() => true, 60_000);

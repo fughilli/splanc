@@ -368,13 +368,21 @@ describe("pairing edge cases (live-relay E2E findings)", () => {
     const st = () => JSON.parse(readFileSync(statusPath, "utf8")) as BridgeStatus;
     await b.start();
     try {
-      const code = (await until(() => st().pairing, "an automatic code")).code;
+      // With no throttle a second automatic code can replace the first while the bridge
+      // settles (seen on slow CI runners: the first code then redeems as unknown, 400).
+      // Redeem a code that has stayed the one shown for a moment.
+      let code = (await until(() => st().pairing, "an automatic code")).code;
+      for (let seen = Date.now(); Date.now() - seen < 500; ) {
+        await new Promise((res) => setTimeout(res, 50));
+        const now = st().pairing?.code;
+        if (now && now !== code) [code, seen] = [now, Date.now()];
+      }
       const r = await fetch(`${relay}/pair`, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
         body: new URLSearchParams({ pairing_code: code }),
       });
-      assert.equal(r.status, 200);
+      assert.equal(r.status, 200, `redeeming ${code}: ${await r.clone().text()}`);
       await until(() => l.credentials === 1, "paired");
       await new Promise((res) => setTimeout(res, 300)); // room for a stray new_code round trip
       assert.equal(l.pairing, null, "no new code after the redeem");

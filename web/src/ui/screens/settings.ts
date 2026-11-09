@@ -32,10 +32,7 @@ import { prefs, DEFAULT_MANUAL_EXPOSURE_CEILING_MS } from "../../store/prefs";
 import { startTour } from "../guide/tour";
 import { resetTour } from "../guide/tourStore";
 import { openDebugServerConnect } from "./debugServerConnect";
-import { effectStore } from "../../store/effectStore";
 import {
-  debugServerUrl,
-  postJson,
   debugServerConnected,
   subscribeDebugServer,
   pingDebugServer,
@@ -49,6 +46,7 @@ import { remoteChatEnabled, setRemoteChatEnabled } from "../../net/remoteChat";
 import { debugModeEnabled, setDebugModeEnabled } from "../../store/debugMode";
 import { captureBundlesGroup } from "./captureBundles";
 import { backupGroup } from "./backupSection";
+import { diagnosticsGroup } from "./diagnosticsSection";
 
 type SettingsTab = "appearance" | "behavior" | "debugging";
 
@@ -124,7 +122,12 @@ export function SettingsScreen(router: Router): Screen {
     if (tab === "appearance") {
       panels = [themeGroup(), typeGroup(), viewGroup(), startupGroup(), experimentalGroup(), appearanceResetRow()];
     } else if (tab === "debugging") {
-      panels = [captureBundlesGroup(group, row, segmented), debugServerGroup(), chatLogsDebugGroup()];
+      panels = [
+        debugServerGroup(),
+        diagnosticsGroup(group, row, segmented),
+        captureBundlesGroup(group, row, segmented),
+        chatLogsDebugGroup(),
+      ];
     } else {
       panels = [
         captureGroup(),
@@ -416,38 +419,6 @@ export function SettingsScreen(router: Router): Screen {
     connectWrap.append(status);
     g.append(connectWrap);
 
-    g.append(
-      row(
-        "Effects library",
-        "Send the whole effects library (source only) to pull off-device.",
-        Button({
-          label: "Send",
-          icon: "effect-to-device",
-          disabled: !connected,
-          onClick: () => void sendEffectsLibrary(),
-        }),
-      ),
-      row(
-        "AI chat logs",
-        "Send the FX-agent transcripts to the server to debug failed requests.",
-        Button({
-          label: "Send",
-          icon: "sparkles",
-          disabled: !connected,
-          onClick: () => void sendChatLogsToServer(),
-        }),
-      ),
-      row(
-        "Download AI chat logs",
-        "Save the transcripts as JSON (works offline, no server needed).",
-        Button({
-          label: "Download",
-          variant: "quiet",
-          icon: "download",
-          onClick: () => void downloadChatLogs(),
-        }),
-      ),
-    );
     return g;
   }
 
@@ -744,85 +715,6 @@ export function SettingsScreen(router: Router): Screen {
       unsubDebug?.();
     },
   };
-}
-
-// -- Debug-server actions (Debugging tab) ------------------------------------
-
-/** POST JSON to the connected debug server, toasting on failure. Returns the
- * parsed response, or null. */
-async function postToServer(path: string, payload: unknown): Promise<Record<string, unknown> | null> {
-  const base = debugServerUrl();
-  if (!base) {
-    toast("Not connected to a debug server", { error: true });
-    return null;
-  }
-  try {
-    const res = await postJson(base, path, payload);
-    if (!res.ok) {
-      toast(`Server ${res.status}: ${await res.text()}`, { error: true });
-      return null;
-    }
-    return JSON.parse(await res.text()) as Record<string, unknown>;
-  } catch (e) {
-    toast(`Upload failed: ${e instanceof Error ? e.message : e}`, { error: true });
-    return null;
-  }
-}
-
-async function sendEffectsLibrary(): Promise<void> {
-  const effects = await effectStore.list();
-  const j = await postToServer("/effects", {
-    exportedAt: new Date().toISOString(),
-    count: effects.length,
-    userAgent: navigator.userAgent,
-    effects,
-  });
-  if (j) toast(`Sent ${(j.effects as number) ?? effects.length} effects`);
-}
-
-async function sendChatLogsToServer(): Promise<void> {
-  const sessions = await chatLogStore.list();
-  if (sessions.length === 0) {
-    toast("No AI chat logs yet — run the FX agent first", { error: true });
-    return;
-  }
-  const j = await postToServer("/chatlogs", {
-    exportedAt: new Date().toISOString(),
-    count: sessions.length,
-    userAgent: navigator.userAgent,
-    sessions,
-  });
-  if (j) toast(`Sent ${(j.sessions as number) ?? sessions.length} chat sessions`);
-}
-
-async function downloadChatLogs(): Promise<void> {
-  const sessions = await chatLogStore.list();
-  if (sessions.length === 0) {
-    toast("No AI chat logs yet — run the FX agent first", { error: true });
-    return;
-  }
-  const blob = new Blob(
-    [
-      JSON.stringify(
-        {
-          exportedAt: new Date().toISOString(),
-          count: sessions.length,
-          userAgent: navigator.userAgent,
-          sessions,
-        },
-        null,
-        2,
-      ),
-    ],
-    { type: "application/json" },
-  );
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `ledmapper-chatlogs-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-  toast(`Downloaded ${sessions.length} chat session(s)`);
 }
 
 // -- 3D preview --------------------------------------------------------------

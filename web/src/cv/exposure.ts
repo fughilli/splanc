@@ -199,13 +199,19 @@ export function planSymbolSwitch(
   current: 2 | 4,
   m: { meanLuma: number; clipFrac: number },
   marginEma: number | null,
+  /** Margin band override — for the link benchmark's candidate tunings
+   * (tests/tools/linkBench.ts); production uses the defaults. */
+  band: { downgrade: number; upgrade: number; upgradeMinLuma?: number } = {
+    downgrade: SYMBOL_DOWNGRADE_MARGIN,
+    upgrade: SYMBOL_UPGRADE_MARGIN,
+  },
 ): 2 | 4 | null {
   if (marginEma === null) return null;
-  if (current === 4 && marginEma < SYMBOL_DOWNGRADE_MARGIN) return 2;
+  if (current === 4 && marginEma < band.downgrade) return 2;
   if (
     current === 2 &&
-    marginEma >= SYMBOL_UPGRADE_MARGIN &&
-    m.meanLuma >= HUE4_MIN_MEAN_LUMA &&
+    marginEma >= band.upgrade &&
+    m.meanLuma >= (band.upgradeMinLuma ?? HUE4_MIN_MEAN_LUMA) &&
     m.clipFrac <= HUE4_MAX_CLIP_FRAC
   ) {
     return 4;

@@ -147,3 +147,16 @@ py_binary(
         requirement("websockets"),
     ],
 )
+
+# The debug server's diagnostics intake (capture bundles, manifests, acks) —
+# stdlib only, runs the real Handler on localhost. Playwright is imported lazily,
+# so the test needs neither it nor segno.
+py_test(
+    name = "browser_server_test",
+    size = "small",
+    srcs = [
+        "browser_server.py",
+        "browser_server_test.py",
+    ],
+    imports = ["."],
+)

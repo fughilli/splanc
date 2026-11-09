@@ -513,6 +513,15 @@ archive_override(
     # its software-ECC mbedtls, the overridable esp32c6 sections.ld, esptool 5.6,
     # and the esp32p4 build target.
     integrity = "sha256-ftz0jHpIH1W4ZZk85F6RFHreLxvbCILcegvYWkaMDq0=",
+    patch_strip = 1,
+    patches = [
+        # mbedtls-propagate-config (#468): mbedtls_src's MBEDTLS_CONFIG_FILE becomes a
+        # propagated define and :sdk_hdrs drops the prebuilt SDK's mbedtls include dirs,
+        # so every TU that includes <mbedtls/*.h> compiles against the headers AND config
+        # of the mbedtls the image links (the netstack transport saw a 344 B
+        # mbedtls_ssl_context vs the library's 552 B). Upstream it to embedded next.
+        "//patches:embedded-mbedtls-propagate-config.patch",
+    ],
     strip_prefix = "embedded-0ea4759ad7d70f4ce563b3f3c8ca0113ff2b887d",
     urls = ["https://github.com/fughilli/embedded/archive/0ea4759ad7d70f4ce563b3f3c8ca0113ff2b887d.tar.gz"],
 )

@@ -29,6 +29,7 @@ import { formatWifiStatus } from "../../net/wifiPolicy";
 import { WifiPolicySection } from "./wifiPolicySection";
 import { KioskSection } from "./kioskSection";
 import { deviceHasKiosk } from "../../net/kiosk";
+import { isBleUrl } from "../../net/bleTransport";
 
 let openHandle: { close: () => void } | null = null;
 
@@ -171,10 +172,17 @@ function render(): HTMLElement {
     card.style.borderColor = "var(--warn)";
     card.style.marginBottom = "var(--sp-3)";
     const p = document.createElement("div");
-    p.textContent = "This device uses a self-signed certificate — trust it once to connect.";
+    p.className = "device-trust-text";
+    p.textContent = trustText(status.trustKind ?? "first", deviceStore.active()?.label);
     p.style.marginBottom = "var(--sp-2)";
-    const btn = Button({ label: "Trust & connect", onClick: () => trustCert(status.certUrl!) });
-    card.append(p, btn);
+    const again = status.trustKind === "again";
+    const btn = Button({
+      label: again ? "Trust again & connect" : "Trust & connect",
+      onClick: () => trustCert(status.certUrl!),
+    });
+    // The way out that needs neither the cert nor the device's one Wi-Fi session.
+    const ble = Button({ label: "Connect over Bluetooth", onClick: () => connectOverBle() });
+    card.append(p, btn, ble);
     wrap.append(card);
   }
   // -- per-device certificate changed (TOFU): a known device now reports a different
@@ -360,6 +368,19 @@ function deviceRow(
         className: "device-connect",
         onClick: () => appState.connect(dev.wssUrl, dev.label),
       }),
+    );
+  } else if (isBleUrl(dev.wssUrl) && dev.lanUrl) {
+    // Reached over Bluetooth before, with a known Wi-Fi address: going back to
+    // Wi-Fi is one tap, not a re-add by IP (#444 — the BLE fallback used to swallow
+    // the device's Wi-Fi record).
+    const lanUrl = dev.lanUrl;
+    btns.append(
+      IconButton("plug", {
+        title: `Connect over Wi-Fi (${hostOfUrl(lanUrl)})`,
+        className: "device-connect",
+        onClick: () => appState.connect(lanUrl, dev.label),
+      }),
+      IconButton("ble-search", { title: "Find over Bluetooth", onClick: () => bleRediscover(dev) }),
     );
   } else {
     // Unreachable on the LAN: the connect affordance opens the BLE picker
@@ -631,6 +652,36 @@ function openDeviceDetail(dev: KnownDevice): void {
   }
 }
 
+function hostOfUrl(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+/** The trust card's explanation (#444). A browser WebSocket can't tell an untrusted
+ * certificate from a device refusing a second client — the netstack player serves
+ * ONE Wi-Fi session and refuses others while it is live — so the card names both
+ * causes and what to do about each, leading with the likelier one. */
+export function trustText(kind: "first" | "again", name?: string): string {
+  const who = name || "This device";
+  if (kind === "again") {
+    return (
+      `Couldn't connect to ${who} over Wi-Fi. It serves one Wi-Fi connection at a time: if the ` +
+      "Splanc agent, another phone or another browser tab is connected to it, close that and " +
+      "this reconnects by itself. If this browser forgot its certificate (or the device was " +
+      "reset), trust it again."
+    );
+  }
+  return (
+    `${who} uses a self-signed certificate — trust it once to connect. If its page then says ` +
+    "the connection was refused, something else (the Splanc agent, another phone or browser " +
+    "tab) is connected to it: it serves one Wi-Fi connection at a time. Close that, or connect " +
+    "over Bluetooth."
+  );
+}
+
 /**
  * Popup-based self-signed-cert trust (unchanged from main.ts §4.1). A browser
  * only offers "proceed anyway" for a TOP-LEVEL context, so we open the device's
@@ -638,10 +689,11 @@ function openDeviceDetail(dev: KnownDevice): void {
  */
 function trustCert(certUrl: string): void {
   const deviceOrigin = new URL(certUrl).origin;
-  const wssUrl = appState.client?.url ?? null;
+  const wssUrl = appState.client?.url ?? deviceStore.active()?.wssUrl ?? `wss://${new URL(certUrl).host}/ws`;
   appState.disconnect(); // stop competing for the device's scarce TLS slots
   let popup: Window | null = null;
   let done = false;
+  let closedPoll: number | null = null;
   // Named handlers so finish() can REMOVE them: without this, every "Trust &
   // connect" click (and the flow re-pops on a mid-linger bounce) leaked a fresh
   // message + visibilitychange pair. The stale listeners kept firing finish() on
@@ -649,16 +701,20 @@ function trustCert(certUrl: string): void {
   // TLS slots until only a full page reload cleared them — the reload-to-recover
   // bug. One trust attempt now registers exactly one pair and tears it down.
   const onMessage = (ev: MessageEvent): void => {
-    if (ev.origin === deviceOrigin && ev.data === "ledmapper-cert-ok") finish();
+    if (ev.origin === deviceOrigin && ev.data === "ledmapper-cert-ok") finish(true);
   };
   const onVisible = (): void => {
     if (document.visibilityState === "visible") finish();
   };
-  const finish = (): void => {
+  // `confirmed`: the device page itself said the cert is accepted (postMessage), so a
+  // failure after this is never the cert — the reconnect runs as a trusted one (busy /
+  // unreachable reasons, keeps retrying) instead of looping back to "trust" (#444).
+  const finish = (confirmed = false): void => {
     if (done) return;
     done = true;
     window.removeEventListener("message", onMessage);
     document.removeEventListener("visibilitychange", onVisible);
+    if (closedPoll !== null) window.clearInterval(closedPoll);
     try {
       popup?.close();
     } catch {
@@ -670,9 +726,10 @@ function trustCert(certUrl: string): void {
     // left is transient slot-linger that clears within a second or two. Without
     // the delay the first attempt lands mid-linger and bounces the user back to
     // "trust needed"; without the backoff it wouldn't retry after that.
-    if (wssUrl) {
-      window.setTimeout(() => appState.connect(wssUrl, undefined, { coldRetryLimit: 6 }), 800);
-    }
+    window.setTimeout(
+      () => appState.connect(wssUrl, undefined, { coldRetryLimit: 6, ...(confirmed ? { trustedBefore: true } : {}) }),
+      800,
+    );
     toast("Certificate trusted — connecting…");
   };
   window.addEventListener("message", onMessage);
@@ -698,6 +755,19 @@ function trustCert(certUrl: string): void {
   } catch {
     /* a cross-origin document.write may be refused — the navigate below still runs */
   }
+  // A desktop popup is its own window: closing it changes neither this page's
+  // visibility nor sends a message when the device page never loaded (e.g. Chrome's
+  // "refused to connect" while the device is busy with another client). Without this
+  // the app sat "offline" after the user closed the popup — nothing reconnected.
+  closedPoll = window.setInterval(() => {
+    let closed = false;
+    try {
+      closed = popup?.closed === true;
+    } catch {
+      /* unreadable — the message/visibility paths still cover it */
+    }
+    if (closed) finish();
+  }, 500);
   window.setTimeout(() => {
     if (done) return; // trust already resolved (message/visibility) — don't re-navigate
     try {

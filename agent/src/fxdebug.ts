@@ -301,7 +301,7 @@ export function registerFxDebugTools(server: McpServer, fan: Fan, knownSources: 
       inputSchema: { hold_seconds: hold, players },
     },
     ({ hold_seconds, players: sel }) =>
-      guard(async () => ok(await fan(sel, async (s) => engineView(await s.fxDebugger().pause(hold_seconds ? hold_seconds * 1000 : undefined))))),
+      guard(async () => ok(await fan(sel, async (s) => engineView(s.noteFx(await s.fxDebugger().pause(hold_seconds ? hold_seconds * 1000 : undefined)))))),
   );
   server.registerTool(
     "resume_fx",
@@ -309,7 +309,7 @@ export function registerFxDebugTools(server: McpServer, fan: Fan, knownSources: 
       description: "Unfreeze the effect engine (time continues from where it stopped)." + DEBUG_HINT,
       inputSchema: { players },
     },
-    ({ players: sel }) => guard(async () => ok(await fan(sel, async (s) => engineView(await s.fxDebugger().resume())))),
+    ({ players: sel }) => guard(async () => ok(await fan(sel, async (s) => engineView(s.noteFx(await s.fxDebugger().resume()))))),
   );
   server.registerTool(
     "step_fx",
@@ -332,12 +332,14 @@ export function registerFxDebugTools(server: McpServer, fan: Fan, knownSources: 
         ok(
           await fan(a.players, async (s) =>
             engineView(
-              await s.fxDebugger().step({
-                ...(a.frames !== undefined ? { frames: a.frames } : {}),
-                ...(a.dt !== undefined ? { dt: a.dt } : {}),
-                ...(a.to_time !== undefined ? { toTime: a.to_time } : {}),
-                ...(a.hold_seconds ? { holdMs: a.hold_seconds * 1000 } : {}),
-              }),
+              s.noteFx(
+                await s.fxDebugger().step({
+                  ...(a.frames !== undefined ? { frames: a.frames } : {}),
+                  ...(a.dt !== undefined ? { dt: a.dt } : {}),
+                  ...(a.to_time !== undefined ? { toTime: a.to_time } : {}),
+                  ...(a.hold_seconds ? { holdMs: a.hold_seconds * 1000 } : {}),
+                }),
+              ),
             ),
           ),
         ),

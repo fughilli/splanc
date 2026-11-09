@@ -11,8 +11,11 @@
  * - destructiveHint: it deletes, or overwrites without an undo, something the
  *   user keeps — a remembered player, a keypoint, a stored effect, a pose, a
  *   room, a certificate pin, a name — or may replace the running effect without
- *   being asked to (measure_effect's rollback_on_overrun). crossfade_to counts:
- *   it overwrites whatever was cued on the idle deck (the user's Show Mode cue).
+ *   being asked to (measure_effect's rollback_on_overrun). Replacing the running
+ *   effect on request does not count: deploy_effect and crossfade_to are undone by
+ *   rollback_effect, and marking them destructive made hosts confirm every scene
+ *   change (the 2026-11-04 demo, #447). crossfade_to does replace a cue left on
+ *   the idle deck; its description says so (list_decks shows the decks).
  * - idempotentHint: calling it again with the same arguments changes nothing
  *   further.
  * - openWorldHint: false for every tool that talks only to the user's own players
@@ -83,10 +86,10 @@ export const TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = {
   compile_effect: read("Compile an effect"),
   estimate_effect: read("Estimate an effect's frame cost"),
   preview_effect: read("Preview an effect"),
-  deploy_effect: write("Deploy an effect", true, false),
+  deploy_effect: write("Deploy an effect", false, false),
   set_effect: write("Switch the running effect", false, true),
   rollback_effect: write("Roll back the last deploy", true, false),
-  crossfade_to: write("Crossfade to an effect", true, false),
+  crossfade_to: write("Crossfade to an effect", false, false),
   list_decks: read("Show the FX decks"),
   measure_effect: write("Measure the running effect", true, false),
   // FX debugger: pausing freezes the show (auto-resumes on a lease), nothing is

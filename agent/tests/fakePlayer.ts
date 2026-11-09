@@ -108,6 +108,9 @@ export class FakePlayer {
   /** Every blend_keypoints applied (for assertions). */
   blends: Msg[] = [];
 
+  /** A slow player: handle (and answer) these request types after this long (ms). */
+  readonly slow = new Map<string, number>();
+
   /** Extra request handlers by message type (checked before the built-in ones),
    * e.g. the FX debugger emulation in fxdebug.test.ts. Return null for no reply. */
   readonly handlers = new Map<string, (m: Msg) => Msg | null>();
@@ -188,6 +191,17 @@ export class FakePlayer {
     await new Promise<void>((r) => this.server.close(() => r()));
   }
 
+  /** Open /ws sessions right now. */
+  get openSessions(): number {
+    return this.wss.clients.size;
+  }
+
+  /** Hand the session to "another client", as the netstack player does with an idle one
+   * (#444): WS close 4001 + reason, then the socket goes away. */
+  takeOver(): void {
+    for (const c of this.wss.clients) c.close(4001, "taken over by another client");
+  }
+
   /** Push an fps_state (FUG-82) to every connected session, as the autoscaler does. */
   pushFpsState(st: { targetFps: number; currentFps: number; auto: boolean; lagging: boolean; achievedFps?: number }): void {
     for (const c of this.wss.clients) this.reply(c, { type: "fps_state", minFps: 25, maxFps: 80, ...st });
@@ -257,6 +271,15 @@ export class FakePlayer {
 
   private onMessage(ws: WebSocket, m: Msg): void {
     if (this.silent) return;
+    const wait = this.slow.get(m.type);
+    if (wait) {
+      setTimeout(() => this.handle(ws, m), wait);
+      return;
+    }
+    this.handle(ws, m);
+  }
+
+  private handle(ws: WebSocket, m: Msg): void {
     this.received.push(m);
     const refusal = this.refuse.get(m.type);
     if (refusal) {

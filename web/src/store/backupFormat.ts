@@ -26,6 +26,54 @@ export interface BackupFile {
   includes: { secrets: boolean; captures: boolean };
   localStorage: Record<string, string>;
   idb: Record<string, Record<string, BackupRecord[]>>;
+  /** Present on a diagnostics snapshot (store/diagnosticExport.ts): what the
+   * file holds, per category, with each item's checksum. Older apps ignore it
+   * and import the records like any backup. */
+  manifest?: DiagnosticManifest;
+}
+
+// -- diagnostics manifest ------------------------------------------------------
+
+export const DIAG_MANIFEST_KIND = "splanc-diagnostics";
+export const DIAG_MANIFEST_VERSION = 1;
+
+/** The diagnostic categories one export can carry. */
+export type DiagCategory = "effects" | "chatlogs" | "captures";
+export const DIAG_CATEGORIES: readonly DiagCategory[] = ["effects", "chatlogs", "captures"];
+
+/** One item in a snapshot. `sha256` is over the item's JSON text exactly as it
+ * appears in the file (and as it is uploaded): JSON.stringify of its
+ * backup-encoded value. */
+export interface DiagItem {
+  id: string;
+  sha256: string;
+  bytes: number;
+  /** captures: "mapping" | "localization"; with the run's outcome. */
+  kind?: string;
+  outcome?: string;
+}
+
+export interface DiagCategoryManifest {
+  count: number;
+  bytes: number;
+  items: DiagItem[];
+}
+
+/** The one versioned manifest for a diagnostics snapshot, shared by every
+ * transport (server upload, Share, Save file). */
+export interface DiagnosticManifest {
+  kind: typeof DIAG_MANIFEST_KIND;
+  version: number;
+  snapshotId: string;
+  createdAt: string;
+  app: { version?: string; commit?: string };
+  userAgent: string;
+  /** Camera frames were kept in capture bundles (otherwise stripped). */
+  includeFrames: boolean;
+  categories: Partial<Record<DiagCategory, DiagCategoryManifest>>;
+  /** What couldn't be read when the snapshot was taken (storage unavailable,
+   * a bundle pruned between listing and reading it). */
+  unavailable: { category: DiagCategory; id?: string; reason: string }[];
 }
 
 // -- secrets -------------------------------------------------------------------
@@ -259,6 +307,7 @@ export function parseBackup(text: string): BackupFile {
     includes: { secrets: f.includes?.secrets === true, captures: f.includes?.captures === true },
     localStorage: f.localStorage ?? {},
     idb: f.idb ?? {},
+    ...(f.manifest && f.manifest.kind === DIAG_MANIFEST_KIND ? { manifest: f.manifest } : {}),
   };
 }
 

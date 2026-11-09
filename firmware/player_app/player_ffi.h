@@ -533,6 +533,9 @@ bool lm_fxdbg_hold(uint32_t now_ms);
 // this frame is a debugger step (skip the autoscaler).
 bool lm_fxdbg_step(float *time_s, float *dt_s);
 bool lm_fxdbg_paused(void);
+// Whether the open session is doing something a takeover must not cut (#444): mapping,
+// an FX-debugger pause, or a video stream in the last 2 s. Under the player mutex.
+bool lm_session_busy(int64_t now_ms);
 // Loop task: lapse a pause whose client went away (no session open).
 void lm_fxdbg_poll(uint32_t now_ms, bool session_open);
 

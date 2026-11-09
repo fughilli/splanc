@@ -1737,6 +1737,15 @@ int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
 
 bool lm_ws_reply_droppable() { return g_reply_droppable; }
 
+bool lm_ws_session_busy() {
+  if (upload_active) return true;
+  // Bounded: render holds the mutex for a frame; a takeover can wait for the next ask.
+  if (xSemaphoreTake(player_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return true;
+  bool busy = lm_session_busy((int64_t)millis());
+  xSemaphoreGive(player_mutex);
+  return busy;
+}
+
 // Player-protocol BLE transport bridge (improv_ble_netstack.cpp's player_ble_poll
 // calls this): identical contract to lm_ws_dispatch — one received frame in, the
 // shared handler's reply out — so a message behaves the same over BLE and the

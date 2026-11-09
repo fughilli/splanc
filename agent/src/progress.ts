@@ -35,6 +35,36 @@ export function withProgress<T>(sink: ProgressSink, fn: () => T): T {
   return scope.run(sink, fn);
 }
 
+// The call's cancellation, scoped the same way: a tool call whose caller gave up
+// (an MCP notifications/cancelled: a stopped or superseded request) must not
+// reach a player later. DeviceSession.run checks it before each device request.
+// Only while the call is still running: timers and sockets created during a call
+// inherit its scope, and must not be cancelled with it once it has ended.
+const cancelScope = new AsyncLocalStorage<{ signal: AbortSignal; running: boolean }>();
+
+/** Run `fn` (a tool call) with `signal` as its cancellation. */
+export function withCancel<T>(signal: AbortSignal | undefined, fn: () => T): T {
+  if (!signal) return fn();
+  const call = { signal, running: true };
+  return cancelScope.run(call, () => {
+    const r = fn();
+    if (r instanceof Promise) {
+      r.then(
+        () => (call.running = false),
+        () => (call.running = false),
+      );
+    } else call.running = false;
+    return r;
+  });
+}
+
+/** For work queued now and run later: a check that says whether the tool call it
+ * belongs to has been cancelled meanwhile (while that call is still running). */
+export function cancellation(): () => boolean {
+  const c = cancelScope.getStore();
+  return c ? () => c.running && c.signal.aborted : () => false;
+}
+
 /** "180 ms" / "2.4 s". */
 export function ms(t0: number): string {
   const d = performance.now() - t0;

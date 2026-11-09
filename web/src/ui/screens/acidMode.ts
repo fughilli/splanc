@@ -20,8 +20,12 @@ import { generateFixture } from "../../effects/fixtures";
 import { extractTopology } from "../../topology/extract";
 import { FxCompilerWorker } from "../../effects/editor/compiler";
 import {
-  chatTurn,
+  CONTINUE_NOTE,
+  describeExhaustedTurn,
   editorContext,
+  endsWithToolResults,
+  pushUserAsk,
+  runChatTurn,
   type ChatMessage,
   type MidiMappingCall,
   type MeasureOnDeviceCall,
@@ -387,11 +391,34 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
   let chatTurns = 0;
   let unregisterChatDriver: (() => void) | null = null;
 
-  async function ask(text: string): Promise<void> {
+  // "Continue" for a turn that ran out of tool steps (#451; owner mode only).
+  let continueBtn: HTMLButtonElement | null = null;
+  function clearContinue(): void {
+    continueBtn?.remove();
+    continueBtn = null;
+  }
+  function offerContinue(): void {
+    clearContinue();
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "acid-busy-btn acid-continue";
+    b.textContent = "Continue";
+    b.addEventListener("click", () => {
+      if (busy) return;
+      clearContinue();
+      void ask("Continue", { resume: true });
+    });
+    feed.appendChild(b);
+    scrollFeed();
+    continueBtn = b;
+  }
+
+  async function ask(text: string, opts: { resume?: boolean } = {}): Promise<void> {
     if (busy) return;
     const provider = freeAi();
     freeNote.hidden = provider === undefined;
     busyCard.hidden = true;
+    clearContinue();
     appendMsg("you", text);
 
     // Ground the turn in the current effect (if any) so refinements build on it.
@@ -409,18 +436,22 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
     });
     if (play) trimToRecentWishes(chatHistory, ACID_PLAY_HISTORY_WISHES - 1);
     const historyBefore = chatHistory.length;
+    const resume = opts.resume === true && !play && endsWithToolResults(chatHistory);
     const previewNote = play
       ? playMapIsFixture
         ? `\n\nPreview: the fixture's real layout (${currentMap?.leds.length ?? 0} LEDs).`
         : "\n\nPreview: a stand-in grid (the fixture's layout isn't available)."
       : "";
-    chatHistory.push({ role: "user", content: `${ctx}${previewNote}\n\nUser (spoken): ${text}` });
+    // pushUserAsk keeps the history well-formed after a turn that stopped on
+    // unassessed tool results; a resume adds only the Continue note (#451).
+    pushUserAsk(chatHistory, resume ? CONTINUE_NOTE : `${ctx}${previewNote}\n\nUser (spoken): ${text}`);
 
     busy = true;
     micBtn.disabled = true;
     setState("thinking");
     chatTurns += 1;
     let turnError: string | undefined;
+    let turnOutcome: string | undefined;
     const goodBefore = lastGoodSource;
     showThinking("Thinking");
 
@@ -435,7 +466,7 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
     }
 
     try {
-      const finalText = await chatTurn(
+      const result = await runChatTurn(
         chatHistory,
         {
           onThinking: () => showThinking("Thinking…"),
@@ -480,10 +511,25 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
         play ? { ...ACID_PLAY_TURN, finishAfterScript: scriptAccepted } : {},
       );
       clearThinking();
+      turnOutcome = result.outcome;
+      const finalText = result.text;
       if (play && lastGoodSource === goodBefore) {
         // Nothing new reached the lights (compile error / guard): say so kindly.
         appendMsg("agent", "That one didn't come out right, so the lights kept the last effect. Try saying it another way!");
         setState("idle");
+        if (result.outcome === "exhausted") chatHistory.length = Math.min(chatHistory.length, historyBefore);
+      } else if (result.outcome === "exhausted") {
+        // Out of tool steps (#451): never present interim narration as done.
+        if (play) {
+          // A visitor gets a plain-language note; the conversation is closed off
+          // so the next wish starts clean (no unassessed tool results linger).
+          chatHistory.push({ role: "assistant", content: [{ type: "text", text: "(Stopped: out of steps.)" }] });
+          appendMsg("agent", "Here's what I got to so far — I ran out of steps before finishing it. Ask again to keep tweaking!");
+        } else {
+          appendMsg("agent", describeExhaustedTurn(result));
+          offerContinue();
+        }
+        setState("idle", "Stopped before finishing");
       } else {
         appendMsg("agent", finalText || "Done.");
         setState("done");
@@ -491,6 +537,7 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
     } catch (e) {
       clearThinking();
       turnError = msg(e);
+      turnOutcome = "error";
       // Never leave a half-finished turn in a play conversation.
       if (play) chatHistory.length = Math.min(chatHistory.length, historyBefore);
       if (isDemoAiBusy(e)) {
@@ -500,6 +547,8 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
       } else {
         appendMsg("agent", play ? "Hmm, that didn't work — try again, or pick a preset!" : `Hmm, that didn't work: ${turnError}`);
         setState("idle");
+        // Tools already ran before the failure: resume from their results.
+        if (!play && endsWithToolResults(chatHistory)) offerContinue();
       }
     } finally {
       busy = false;
@@ -514,6 +563,7 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
         turns: chatTurns,
         errored: turnError !== undefined,
         lastError: turnError,
+        outcome: turnOutcome,
         messages: chatHistory,
       });
     }
