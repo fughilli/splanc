@@ -231,7 +231,7 @@ function localStorageEntries(): [string, string][] {
   return out;
 }
 
-function appInfo(): { version?: string; commit?: string } {
+export function appInfo(): { version?: string; commit?: string } {
   const out: { version?: string; commit?: string } = {};
   if (appBuildInfo.version) out.version = appBuildInfo.version;
   if (appBuildInfo.gitCommit) out.commit = appBuildInfo.gitCommit;
@@ -239,9 +239,16 @@ function appInfo(): { version?: string; commit?: string } {
 }
 
 async function gzip(bytes: Uint8Array): Promise<Uint8Array | null> {
+  const out = await gzipBlob(new Blob([bytes as unknown as BlobPart]));
+  return out ? new Uint8Array(await out.arrayBuffer()) : null;
+}
+
+/** Gzip a Blob by streaming it (its parts are never joined into one string),
+ * or null when the browser can't compress. */
+export async function gzipBlob(blob: Blob, type = "application/gzip"): Promise<Blob | null> {
   if (typeof CompressionStream === "undefined") return null;
-  const stream = new Blob([bytes as unknown as BlobPart]).stream().pipeThrough(new CompressionStream("gzip"));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+  const stream = blob.stream().pipeThrough(new CompressionStream("gzip"));
+  return new Blob([await new Response(stream).arrayBuffer()], { type });
 }
 
 async function gunzip(bytes: Uint8Array): Promise<Uint8Array> {

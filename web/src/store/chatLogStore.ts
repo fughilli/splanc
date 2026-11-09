@@ -40,6 +40,8 @@ export interface ChatLogSession {
   errored: boolean;
   /** The most recent AI error message, if any — the thing to debug. */
   lastError?: string | undefined;
+  /** How the latest turn ended ("exhausted" = ran out of tool rounds, #451). */
+  outcome?: string | undefined;
   userAgent: string;
   /** Full transcript (image bytes redacted). Shape matches the Anthropic API. */
   messages: ChatMessage[];
@@ -54,6 +56,7 @@ export interface ChatLogUpdate {
   turns: number;
   errored: boolean;
   lastError?: string | undefined;
+  outcome?: string | undefined;
   messages: ChatMessage[];
 }
 
@@ -152,6 +155,7 @@ class ChatLogStore {
           turns: update.turns,
           errored: update.errored,
           lastError: update.lastError,
+          ...(update.outcome !== undefined ? { outcome: update.outcome } : {}),
           userAgent: navigator.userAgent,
           messages,
         };
@@ -166,7 +170,7 @@ class ChatLogStore {
 
   /** Push one session to the debug server's /chatlogs (best-effort). Only fires
    * when a server is configured; the server merges by id, so error auto-pushes
-   * accumulate alongside a later manual "Send AI chat logs". */
+   * accumulate alongside a later manual "Send diagnostics". */
   private async autoPush(session: ChatLogSession): Promise<void> {
     const base = debugServerUrl();
     if (!base) return;
@@ -178,7 +182,7 @@ class ChatLogStore {
         sessions: [session],
       });
     } catch {
-      // Best-effort; the manual "Send AI chat logs" button is the fallback.
+      // Best-effort; Settings ▸ Debugging ▸ Send diagnostics is the fallback.
     }
   }
 

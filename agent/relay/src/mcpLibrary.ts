@@ -7,7 +7,10 @@
  *   Object (one Worker request + one DO invocation; nothing crosses the bridge
  *   socket), bridge online or not.
  * - tools/list: the bridge's tools + the library tools (and deploy_effect's
- *   library arguments); the library tools alone while the bridge is offline.
+ *   library arguments). While the bridge is offline, the last such list the relay
+ *   served (kept in storage), so hosts never see the lights' tools vanish and come
+ *   back (a host may then ask again for approvals already given); calling one then says
+ *   the bridge is offline. The library tools alone before any bridge list is known.
  * - initialize: forwarded, with the library's guidance appended to the
  *   instructions; while the bridge is offline the relay answers it itself with a
  *   relay session (`relay-…`) that serves the library only. Once the bridge is

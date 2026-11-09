@@ -14,7 +14,15 @@
 
 import type { FxDiagnostic } from "../../fx/preview";
 import { OUTPUT_SCHEMA, SYSTEM_PROMPT } from "./system-prompt";
-import { BUG_REPORT_GUIDE, CHAT_SYSTEM_COMPACT, DEVICE_PERF_GUIDE, baseChatSystem, selectTools } from "./chatPrompt";
+import {
+  BUG_REPORT_GUIDE,
+  CHAT_SYSTEM_COMPACT,
+  DEVICE_PERF_GUIDE,
+  LIVE_UNIFORMS_GUIDE,
+  baseChatSystem,
+  selectTools,
+} from "./chatPrompt";
+import { parseLiveUniformCall, type LiveUniformCall } from "./liveUniforms";
 import { stripCodeFence } from "./providers/wllamaProtocol";
 import { isMobileUserAgent } from "../../flash/env";
 import {
@@ -379,6 +387,10 @@ export interface ChatHooks {
    * issue). Optional — omit to withhold the tool. Never offered to the tiny
    * on-device (wllama) models. */
   onFileBug?: (args: unknown) => Promise<string>;
+  /** The model called set_live_uniforms (#452): set/reset LIVE uniform values
+   * (preview + connected fixture) without a source edit. Return the result text,
+   * honest about which sinks received it. Optional — omit to withhold the tool. */
+  onSetLiveUniforms?: (call: LiveUniformCall) => Promise<string>;
   /** Streamed assistant text (deltas) for the "thinking…"/live panel. */
   onText?: (delta: string) => void;
   /** Live status label as the response streams — "Thinking…", a fixed tool verb,
@@ -446,8 +458,12 @@ export function editorContext(opts: {
   source: string;
   compileSummary: string;
   disassembly?: string;
+  /** The effective live uniform values (liveUniforms.describeLiveUniforms),
+   * distinct from the source defaults (#452). */
+  liveUniforms?: string;
 }): string {
   let ctx = `Current editor script:\n\n\`\`\`\n${opts.source}\n\`\`\`\n\nLatest compile result: ${opts.compileSummary}`;
+  if (opts.liveUniforms) ctx += `\n\n${opts.liveUniforms}`;
   if (opts.disassembly) {
     ctx += `\n\nDisassembly:\n\`\`\`\n${opts.disassembly}\n\`\`\``;
   }
@@ -455,12 +471,99 @@ export function editorContext(opts: {
 }
 
 /**
- * Run the tool-use loop for one user turn. `history` is the running conversation
- * (mutated in place: the user turn should already be appended by the caller, or
- * pass it and we append). Returns the updated history plus the final assistant
- * text. Executes set_script / capture_preview locally; a few rounds of
- * auto-iteration are natural since the model gets compile results back.
+ * How a chat turn ended (#451):
+ * - `complete`: the model replied without asking for more tools (a real answer).
+ * - `finished-after-script`: the caller's finishAfterScript accepted every
+ *   set_script of the last round, so the script's own summary is the reply.
+ * - `exhausted`: the round cap ran out while the model was still working — its
+ *   last request asked for tools whose results it never got to assess. `text`
+ *   is then only interim narration, NOT a conclusion.
  */
+export type ChatTurnOutcome = "complete" | "finished-after-script" | "exhausted";
+
+/** One executed tool call of the turn's last round (for an honest summary). */
+export interface ChatToolOutcome {
+  name: string;
+  /** The tool result text the model was given (images elided). */
+  text: string;
+  isError: boolean;
+}
+
+export interface ChatTurnResult {
+  /** The final assistant text (for `exhausted`: the last interim narration). */
+  text: string;
+  outcome: ChatTurnOutcome;
+  /** Model requests made this turn. */
+  rounds: number;
+  /** The cap in force (ChatTurnOptions.maxRounds, default 8). */
+  maxRounds: number;
+  /** The last round's tool calls + results. For `exhausted`, these are results
+   * the model has NOT seen yet: `history` ends with them (a user tool_result
+   * message), so `continueTurnNote` + another runChatTurn resumes from there
+   * without re-running any of them. */
+  lastTools: ChatToolOutcome[];
+}
+
+/** Default tool-round cap per turn. */
+export const DEFAULT_MAX_ROUNDS = 8;
+
+/** True when `history` ends in unassessed tool results (an exhausted turn, or a
+ * turn that failed after its tools ran): the next request can resume there. */
+export function endsWithToolResults(history: ChatMessage[]): boolean {
+  const last = history[history.length - 1];
+  return (
+    last !== undefined &&
+    last.role === "user" &&
+    typeof last.content !== "string" &&
+    last.content.some((b) => b.type === "tool_result")
+  );
+}
+
+/** The note a deliberate "Continue" appends so the model resumes an exhausted
+ * turn: assess the tool results it has not seen, never blindly redo them. */
+export const CONTINUE_NOTE =
+  "(Continue: the previous request hit its tool-step limit before you saw the results above. " +
+  "First assess those results — they already ran, do not repeat them — then finish the task or " +
+  "say plainly what is still unresolved.)";
+
+/**
+ * Append a user ask to `history`, keeping it well-formed when it ends in tool
+ * results the model never saw (#451): the text joins that tool_result message
+ * (valid for every provider: Anthropic accepts text after tool_results, the
+ * OpenAI mapping emits it as a user message after the tool messages) instead of
+ * creating two consecutive user turns.
+ */
+export function pushUserAsk(history: ChatMessage[], text: string): void {
+  const last = history[history.length - 1];
+  if (endsWithToolResults(history) && last !== undefined && typeof last.content !== "string") {
+    last.content = [...last.content, { type: "text", text }];
+    return;
+  }
+  history.push({ role: "user", content: text });
+}
+
+/** Operator-facing explanation of an exhausted turn: what ran last, and that
+ * the agent has not assessed it (so nothing here is a conclusion). Pure. */
+export function describeExhaustedTurn(r: ChatTurnResult): string {
+  const lines = [
+    `**Stopped before finishing** — the agent used all ${r.maxRounds} tool steps for this request, ` +
+      "and its last step's results have not been assessed yet. Nothing below is a conclusion.",
+  ];
+  if (r.lastTools.length > 0) {
+    lines.push("", "Last step (not yet reviewed by the agent):");
+    for (const t of r.lastTools) {
+      const first = t.text.split("\n").find((l) => l.trim() !== "") ?? "";
+      const brief = first.length > 220 ? `${first.slice(0, 217)}…` : first;
+      lines.push(`- ${t.name}${t.isError ? " (error)" : ""}: ${brief || "(no text)"}`);
+    }
+  }
+  if (r.text.trim()) lines.push("", `Last interim note from the agent: ${r.text.trim()}`);
+  lines.push("", "Continue lets the agent review those results and finish, without re-running them.");
+  return lines.join("\n");
+}
+
+/** Back-compat wrapper: the final text only. App screens use runChatTurn so an
+ * exhausted turn is never mistaken for a finished one (#451). */
 export async function chatTurn(
   history: ChatMessage[],
   hooks: ChatHooks,
@@ -469,10 +572,32 @@ export async function chatTurn(
   providerOverride?: AiProvider,
   turnOpts: ChatTurnOptions = {},
 ): Promise<string> {
+  return (await runChatTurn(history, hooks, deviceCosts, systemExtra, providerOverride, turnOpts)).text;
+}
+
+/**
+ * Run the tool-use loop for one user turn. `history` is the running conversation
+ * (mutated in place: the user turn should already be appended by the caller).
+ * Executes the client tools locally; a few rounds of auto-iteration are natural
+ * since the model gets compile results back. Bounded by `maxRounds`: when the
+ * cap is hit while the model still asked for tools, the result says `exhausted`
+ * (the history then ends with those unseen tool results).
+ */
+export async function runChatTurn(
+  history: ChatMessage[],
+  hooks: ChatHooks,
+  deviceCosts?: string,
+  systemExtra?: string,
+  providerOverride?: AiProvider,
+  turnOpts: ChatTurnOptions = {},
+): Promise<ChatTurnResult> {
   let finalText = "";
+  let outcome: ChatTurnOutcome = "exhausted";
+  let rounds = 0;
+  let lastTools: ChatToolOutcome[] = [];
   // Hard cap so a misbehaving loop can't run forever (callers on a shared quota
   // cap lower: every round is one request).
-  const MAX_ROUNDS = turnOpts.maxRounds ?? 8;
+  const MAX_ROUNDS = Math.max(1, Math.floor(turnOpts.maxRounds ?? DEFAULT_MAX_ROUNDS));
   const provider = providerOverride ?? activeProvider();
   const caps = provider.capabilities;
   // Assemble the system prompt once: the frozen chat spec, then the per-device
@@ -490,6 +615,8 @@ export async function chatTurn(
   if (devicePerf && provider.id !== "wllama") system += `\n\n${DEVICE_PERF_GUIDE}`;
   const bugs = hooks.onFileBug !== undefined && provider.id !== "wllama";
   if (bugs) system += `\n\n${BUG_REPORT_GUIDE}`;
+  const liveUniforms = hooks.onSetLiveUniforms !== undefined;
+  if (liveUniforms && provider.id !== "wllama") system += `\n\n${LIVE_UNIFORMS_GUIDE}`;
   // Advertise only tools the active provider can fulfill (see selectTools): the
   // vision `capture_preview` is withheld when the model can't see images, the
   // perf/MIDI groups only when the caller supplies their hooks, and nothing at
@@ -499,8 +626,10 @@ export async function chatTurn(
     devicePerf,
     midi: hooks.onListMidi !== undefined && hooks.onSetMidiMapping !== undefined,
     bugs,
+    liveUniforms,
   }), turnOpts.summaryDescription);
   for (let round = 0; round < MAX_ROUNDS; round++) {
+    rounds = round + 1;
     hooks.onThinking?.(round + 1);
     // Debug trace: the new content going IN this round (round 0 → the user's
     // grounded ask; later rounds → the tool_result(s) fed back).
@@ -553,7 +682,10 @@ export async function chatTurn(
           "call — try a smaller change, or ask again",
       );
     }
-    if (stop_reason !== "tool_use" || toolUses.length === 0) break;
+    if (stop_reason !== "tool_use" || toolUses.length === 0) {
+      outcome = "complete";
+      break;
+    }
 
     // Fulfill every tool call locally, then feed the results back in one user turn.
     const results: ContentBlock[] = [];
@@ -608,6 +740,13 @@ export async function chatTurn(
             tool_use_id: tu.id,
             content: [{ type: "text", text: summary }],
           });
+        } else if (tu.name === "set_live_uniforms" && hooks.onSetLiveUniforms) {
+          const summary = await hooks.onSetLiveUniforms(parseLiveUniformCall(tu.input));
+          results.push({
+            type: "tool_result",
+            tool_use_id: tu.id,
+            content: [{ type: "text", text: summary }],
+          });
         } else if (tu.name === "list_midi_controls" && hooks.onListMidi) {
           const summary = await hooks.onListMidi();
           results.push({
@@ -648,16 +787,23 @@ export async function chatTurn(
       }
     }
     history.push({ role: "user", content: results });
+    lastTools = toolUses.map((tu, i) => {
+      const r = results[i];
+      const text =
+        r?.type === "tool_result" ? r.content.map((c) => (c.type === "text" ? c.text : "[image]")).join("\n") : "";
+      return { name: tu.name, text, isError: r?.type === "tool_result" && r.is_error === true };
+    });
     // One-request turns: when every call this round was an accepted set_script,
     // the model's own summary is the reply — skip the "say what you did" round.
     // A closing assistant message keeps the history well-formed for a follow-up.
     if (turnOpts.finishAfterScript && scriptsAccepted && toolUses.every((t) => t.name === "set_script")) {
       finalText = scriptSummary || finalText || "Done.";
       history.push({ role: "assistant", content: [{ type: "text", text: finalText }] });
+      outcome = "finished-after-script";
       break;
     }
   }
-  return finalText;
+  return { text: finalText, outcome, rounds, maxRounds: MAX_ROUNDS, lastTools: outcome === "complete" ? [] : lastTools };
 }
 
 /** Re-describe set_script's `summary` (e.g. Acid play mode, where it is the reply
@@ -674,7 +820,7 @@ function withSummaryDescription(tools: ToolDef[], description: string | undefine
 
 /** Per-turn knobs for chatTurn (defaults = the editor's behaviour). */
 export interface ChatTurnOptions {
-  /** Max model requests this turn (default 8). */
+  /** Max model requests this turn (default DEFAULT_MAX_ROUNDS = 8). */
   maxRounds?: number;
   /** Use the condensed DSL spec (~1/3 the tokens) instead of the full one. */
   compactSystem?: boolean;

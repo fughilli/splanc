@@ -399,9 +399,12 @@ describe("mcp", () => {
       "snapshot_fx",
     ]);
     const destructive = tools.filter((t) => t.annotations!.destructiveHint).map((t) => t.name);
-    for (const d of ["forget_player", "delete_keypoint", "rollback_effect", "deploy_effect", "crossfade_to", "set_device_name", "trust_player", "delete_effect", "update_effect", "set_wifi_policy"]) {
+    for (const d of ["forget_player", "delete_keypoint", "rollback_effect", "set_device_name", "trust_player", "delete_effect", "update_effect", "set_wifi_policy"]) {
       assert.ok(destructive.includes(d), d);
     }
+    // Scene changes on request are undone by rollback_effect: not destructive, so hosts
+    // don't confirm every one of them (#447).
+    for (const d of ["deploy_effect", "crossfade_to", "set_effect"]) assert.ok(!destructive.includes(d), d);
     // measure_effect can roll back (rollback_on_overrun): not read-only.
     assert.equal(tools.find((t) => t.name === "measure_effect")!.annotations!.readOnlyHint, false);
 

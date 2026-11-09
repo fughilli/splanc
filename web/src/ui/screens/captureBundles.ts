@@ -85,7 +85,7 @@ export function captureBundlesGroup(group: GroupFn, row: RowFn, segmented: Segme
   intro.textContent =
     "While debug mode is on, every mapping run that fails, comes out degenerate, or disagrees " +
     "with its live preview saves everything needed to replay its solves offline. Export or " +
-    "share one to attach it to a bug report.";
+    "share one to attach it to a bug report, or send them all with Send diagnostics.";
   g.append(intro);
   g.append(
     row(

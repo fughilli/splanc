@@ -243,6 +243,12 @@ const CSS = `
   cursor: pointer;
 }
 
+/* "Continue" after a turn that ran out of tool steps (#451). */
+.acid-continue {
+  align-self: flex-start;
+  margin: 4px 0;
+}
+
 /* Free-AI disclosure: tiny, at the bottom. */
 .acid-free-note {
   margin-top: var(--sp-2);

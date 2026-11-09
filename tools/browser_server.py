@@ -30,15 +30,24 @@ Drive it from the container:
           the SAN cert.
   /app    loads the hosted app pointed at the player and reports the connection
           status pill text + a screenshot path.
+
+Debug intake (the app's Settings ▸ Debugging ▸ Send diagnostics, over HTTPS):
+  /effects, /chatlogs      effects library / FX-agent chat sessions (POST; GET pulls)
+  /capturebundles          mapping + localization capture bundles, one per POST,
+                           persisted under --store-dir; GET lists, ?id= fetches one
+  /diagnostics             snapshot manifests; GET ?id=<snapshot> reports which of
+                           its items this server holds
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import html
 import json
 import os
+import re
 import socket
 import ssl
 import struct
@@ -65,10 +74,23 @@ _EFFECTS_FILE = os.path.join(tempfile.gettempdir(), "ledmapper-effects-library.j
 # FX-agent chat logs the app POSTed to /chatlogs (transcripts of the AI effect
 # sessions, for debugging why the agent failed a request). MERGED by session id
 # across POSTs — so the error auto-pushes (one session each) accumulate alongside
-# a later manual "Send AI chat logs" (the whole set). Pull with
+# a later manual "Send diagnostics" (the whole set). Pull with
 # `curl http://host:8092/chatlogs`.
 _CHATLOGS: dict = {"sessions": {}, "at": None}  # id -> session
 _CHATLOGS_FILE = os.path.join(tempfile.gettempdir(), "ledmapper-chatlogs.json")
+
+# Diagnostics intake (#450): the app's unified "send diagnostics" snapshot.
+# Capture bundles (mapping + room-localization, solver/captureBundle.ts and
+# solver/localizeBundle.ts) are persisted one file per bundle under
+# <store>/capturebundles/ with an index (id -> sha256 of the received body,
+# kind, outcome, …), and each snapshot's manifest under <store>/diagnostics/.
+# Both survive a restart and are enumerable: `curl host:8092/capturebundles`,
+# `curl 'host:8092/capturebundles?id=<id>'`, `curl 'host:8092/diagnostics?id=<snapshot>'`.
+_STORE = {"dir": os.path.join(tempfile.gettempdir(), "ledmapper-debug-store")}
+_BUNDLE_FORMATS = {"splanc-capture-bundle": "mapping", "splanc-localize-bundle": "localization"}
+# One request body cap (a bundle with camera frames can be tens of MB).
+MAX_BODY_BYTES = 256 * 1024 * 1024
+_STORE_LOCK = threading.Lock()
 
 # Remote chat-drive queue (repro-on-device without the user retyping): the agent
 # enqueues prompts here (`POST /chatcmd {"text": ...}`), and the app — when
@@ -697,6 +719,206 @@ def _load_chatlogs_if_empty() -> None:
     _CHATLOGS["at"] = saved.get("at") or _CHATLOGS["at"]
 
 
+def _decode_tagged(v):
+    """Undo the app backup format's value tagging (web/src/store/backupFormat.ts
+    encodeValue) for JSON data, yielding what JSON.stringify(decodeValue(v))
+    would: NaN/±Infinity → null, an `undefined` field is dropped (null in an
+    array), a wrapped object is unwrapped. Other tags (binary data) are kept."""
+    if isinstance(v, list):
+        return [None if _is_undef(x) else _decode_tagged(x) for x in v]
+    if isinstance(v, dict):
+        tag = v.get("$b")
+        if isinstance(tag, str):
+            if tag == "num":
+                return None
+            if tag == "obj" and isinstance(v.get("v"), dict):
+                return {k: _decode_tagged(x) for k, x in v["v"].items() if not _is_undef(x)}
+            return v
+        return {k: _decode_tagged(x) for k, x in v.items() if not _is_undef(x)}
+    return v
+
+
+def _is_undef(v) -> bool:
+    return isinstance(v, dict) and v.get("$b") == "undef" and len(v) == 1
+
+
+def _safe_name(ident: str) -> str:
+    """A filesystem-safe file stem for a record id (ids are UUID-ish)."""
+    stem = re.sub(r"[^A-Za-z0-9._-]", "_", ident)[:120].lstrip(".")
+    if stem != ident:  # sanitized: keep distinct ids in distinct files
+        stem = f"{stem}-{hashlib.sha256(ident.encode()).hexdigest()[:10]}"
+    return stem
+
+
+def _store_path(*parts: str) -> str:
+    d = os.path.join(_STORE["dir"], *parts[:-1])
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, parts[-1])
+
+
+def _write_atomic(path: str, data: bytes) -> None:
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, path)
+
+
+def _read_json(path: str, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def _bundle_index() -> dict:
+    idx = _read_json(_store_path("capturebundles", "index.json"), {})
+    return idx if isinstance(idx, dict) else {}
+
+
+def store_capture_bundle(raw: bytes, snapshot: str = "") -> tuple[dict, int]:
+    """Persist one capture/localization bundle POSTed by the app. The body is
+    the bundle's JSON (backup-encoded or plain). Idempotent by id: the same
+    bytes again are a `duplicate` (nothing rewritten); different bytes under
+    the same id `replace` it. Returns (ack, http_status)."""
+    try:
+        doc = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        return {"error": f"bad JSON body: {e}"}, 400
+    bundle = _decode_tagged(doc)
+    if not isinstance(bundle, dict):
+        return {"error": "expected a capture bundle object"}, 400
+    kind = _BUNDLE_FORMATS.get(str(bundle.get("format")))
+    ident = bundle.get("id")
+    if kind is None or not isinstance(ident, str) or not ident:
+        return {"error": "not a capture/localization bundle (format + id required)"}, 400
+    sha = hashlib.sha256(raw).hexdigest()
+    with _STORE_LOCK:
+        idx = _bundle_index()
+        prev = idx.get(ident)
+        if isinstance(prev, dict) and prev.get("sha256") == sha:
+            status = "duplicate"
+        else:
+            status = "replaced" if prev else "stored"
+            earlier = (prev or {}).get("snapshots") or []
+            name = _safe_name(ident) + ".json"
+            _write_atomic(_store_path("capturebundles", name), json.dumps(bundle).encode())
+            prev = {
+                "id": ident,
+                "file": name,
+                "kind": kind,
+                "format": bundle.get("format"),
+                "createdAt": bundle.get("createdAt"),
+                "outcome": bundle.get("outcome"),
+                "summary": bundle.get("summary"),
+                "frames": len(bundle.get("frames") or []),
+                "bytes": len(raw),
+                "sha256": sha,
+                "snapshots": earlier,
+            }
+        snaps = set(prev.get("snapshots") or [])
+        if snapshot:
+            snaps.add(snapshot)
+        prev["snapshots"] = sorted(snaps)
+        prev["receivedAt"] = _now()
+        idx[ident] = prev
+        _write_atomic(
+            _store_path("capturebundles", "index.json"), json.dumps(idx, indent=2).encode()
+        )
+    _log(f"/capturebundles {status} {kind} {ident} ({len(raw)} bytes)")
+    return {
+        "stored": True,
+        "status": status,
+        "id": ident,
+        "kind": kind,
+        "sha256": sha,
+        "bytes": len(raw),
+    }, 200
+
+
+def list_capture_bundles() -> list:
+    """Every persisted bundle's index row, newest first."""
+    rows = [r for r in _bundle_index().values() if isinstance(r, dict)]
+    return sorted(rows, key=lambda r: str(r.get("createdAt") or ""), reverse=True)
+
+
+def get_capture_bundle(ident: str):
+    row = _bundle_index().get(ident)
+    if not isinstance(row, dict):
+        return None
+    return _read_json(_store_path("capturebundles", str(row.get("file"))), None)
+
+
+def store_manifest(raw: bytes) -> tuple[dict, int]:
+    """Persist a diagnostics snapshot manifest (what the app is about to send)."""
+    try:
+        man = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        return {"error": f"bad JSON body: {e}"}, 400
+    sid = man.get("snapshotId") if isinstance(man, dict) else None
+    if not isinstance(sid, str) or not sid:
+        return {"error": "expected a manifest with snapshotId"}, 400
+    with _STORE_LOCK:
+        _write_atomic(_store_path("diagnostics", _safe_name(sid) + ".json"), raw)
+    return {"stored": True, "snapshotId": sid}, 200
+
+
+def list_manifests() -> list:
+    d = os.path.join(_STORE["dir"], "diagnostics")
+    out = []
+    for name in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+        if not name.endswith(".json"):
+            continue
+        m = _read_json(os.path.join(d, name), None)
+        if isinstance(m, dict):
+            cats = m.get("categories") or {}
+            out.append(
+                {
+                    "snapshotId": m.get("snapshotId"),
+                    "createdAt": m.get("createdAt"),
+                    "counts": {k: (v or {}).get("count") for k, v in cats.items()},
+                }
+            )
+    return sorted(out, key=lambda r: str(r.get("createdAt") or ""), reverse=True)
+
+
+def manifest_report(sid: str):
+    """A stored manifest plus what this server actually holds of it: per
+    category, the ids received and the ids still missing (capture bundles are
+    matched by sha256, effects / chat sessions by id)."""
+    man = _read_json(_store_path("diagnostics", _safe_name(sid) + ".json"), None)
+    if not isinstance(man, dict):
+        return None
+    idx = _bundle_index()
+    _load_chatlogs_if_empty()
+    lib = _EFFECTS_LIB["library"] or _read_json(_EFFECTS_FILE, None)
+    effect_ids = (
+        {str(e.get("id")) for e in (lib.get("effects") or []) if isinstance(e, dict)}
+        if isinstance(lib, dict)
+        else set()
+    )
+    have = {
+        "effects": lambda it: str(it.get("id")) in effect_ids,
+        "chatlogs": lambda it: str(it.get("id")) in _CHATLOGS["sessions"],
+        "captures": lambda it: (idx.get(str(it.get("id"))) or {}).get("sha256") == it.get("sha256"),
+    }
+    report = {}
+    for cat, body in (man.get("categories") or {}).items():
+        items = [it for it in (body or {}).get("items") or [] if isinstance(it, dict)]
+        test = have.get(cat, lambda _it: False)
+        got = [str(it.get("id")) for it in items if test(it)]
+        missing = [str(it.get("id")) for it in items if not test(it)]
+        report[cat] = {"expected": len(items), "received": got, "missing": missing}
+    complete = all(not r["missing"] for r in report.values())
+    return {"manifest": man, "report": report, "complete": complete}
+
+
+def _now() -> str:
+    import datetime
+
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
 def _print_qr_console(intake_url: str) -> None:
     """Print the intake-URL QR to the console as ASCII/ANSI art (segno) so the app
     can be pointed at this server without opening the separate QR web page."""
@@ -738,6 +960,10 @@ def _qr_page(intake_url: str) -> str:
     )
 
 
+class _TooLarge(Exception):
+    """A request body over MAX_BODY_BYTES (answered 413, never read)."""
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "browser-driver/1.0"
 
@@ -762,6 +988,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _read_body(self) -> bytes:
         n = int(self.headers.get("Content-Length", "0") or "0")
+        if n > MAX_BODY_BYTES:
+            raise _TooLarge(n)
         return self.rfile.read(n) if n > 0 else b""
 
     def _html(self, body: str, code: int = 200) -> None:
@@ -912,12 +1140,20 @@ class Handler(BaseHTTPRequestHandler):
                             json.dump(lib, f, indent=2)
                     except OSError:
                         pass
-                    n = len(lib.get("effects", [])) if isinstance(lib, dict) else 0
+                    effects = lib.get("effects", []) if isinstance(lib, dict) else []
+                    n = len(effects)
+                    ids = [str(e.get("id")) for e in effects if isinstance(e, dict) and "id" in e]
                     _log(
                         f"/effects stored library: {n} effects, {len(raw)} bytes -> {_EFFECTS_FILE}"
                     )
                     self._json(
-                        {"stored": True, "effects": n, "bytes": len(raw), "file": _EFFECTS_FILE}
+                        {
+                            "stored": True,
+                            "effects": n,
+                            "ids": ids,
+                            "bytes": len(raw),
+                            "file": _EFFECTS_FILE,
+                        }
                     )
                 else:
                     lib = _EFFECTS_LIB["library"]
@@ -943,9 +1179,11 @@ class Handler(BaseHTTPRequestHandler):
                         self._json({"error": "expected {sessions: [...]}"}, 400)
                         return
                     merged = 0
+                    ids = []
                     for sess in incoming:
                         if isinstance(sess, dict) and "id" in sess:
                             _CHATLOGS["sessions"][str(sess["id"])] = sess
+                            ids.append(str(sess["id"]))
                             merged += 1
                     _CHATLOGS["at"] = g("at") or ""
                     _persist_chatlogs()
@@ -959,6 +1197,7 @@ class Handler(BaseHTTPRequestHandler):
                             "stored": True,
                             "sessions": n,
                             "merged": merged,
+                            "ids": ids,
                             "bytes": len(raw),
                             "file": _CHATLOGS_FILE,
                         }
@@ -969,6 +1208,36 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(
                         {"sessions": sessions, "count": len(sessions), "at": _CHATLOGS["at"]}
                     )
+            elif route == "/capturebundles":
+                # POST (from the app): one mapping/localization bundle per request.
+                # GET: the index of every persisted bundle, or ?id= one bundle.
+                if self.command == "POST":
+                    ack, code = store_capture_bundle(self._read_body(), g("snapshot", "") or "")
+                    self._json(ack, code)
+                elif g("id"):
+                    b = get_capture_bundle(g("id"))
+                    if b is None:
+                        self._json({"error": f"no bundle {g('id')}"}, 404)
+                    else:
+                        self._json(b)
+                else:
+                    rows = list_capture_bundles()
+                    self._json({"bundles": rows, "count": len(rows), "dir": _STORE["dir"]})
+            elif route == "/diagnostics":
+                # POST (from the app): a snapshot manifest, sent before its items.
+                # GET: the manifests, or ?id=<snapshotId> with a received/missing report.
+                if self.command == "POST":
+                    ack, code = store_manifest(self._read_body())
+                    self._json(ack, code)
+                elif g("id"):
+                    rep = manifest_report(g("id"))
+                    if rep is None:
+                        self._json({"error": f"no snapshot {g('id')}"}, 404)
+                    else:
+                        self._json(rep)
+                else:
+                    rows = list_manifests()
+                    self._json({"snapshots": rows, "count": len(rows)})
             elif route == "/chatcmd":
                 # POST (from the agent/container): enqueue a prompt to drive the
                 # app's FX-agent chat. GET (from the app, polling): pop the next
@@ -999,6 +1268,9 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(cmd if cmd is not None else {})
             else:
                 self._json({"error": f"no such endpoint: {route}"}, 404)
+        except _TooLarge as e:
+            self.close_connection = True
+            self._json({"error": f"body too large ({e.args[0]} bytes > {MAX_BODY_BYTES})"}, 413)
         except Exception as e:  # noqa: BLE001
             self._json({"error": f"{type(e).__name__}: {e}"}, 500)
 
@@ -1082,8 +1354,14 @@ def main() -> int:
     ap.add_argument(
         "--app", default="https://ledmapper.pages.dev/", help="hosted app base URL for /app"
     )
+    ap.add_argument(
+        "--store-dir",
+        default=_STORE["dir"],
+        help="where received capture bundles and diagnostics manifests are kept",
+    )
     args = ap.parse_args()
     CFG.update(app=args.app)
+    _STORE["dir"] = args.store_dir
 
     lan = _lan_ip() if args.host in ("0.0.0.0", "::") else args.host
     CFG["intake_url"] = f"https://{lan}:{args.tls_port}"
@@ -1106,6 +1384,10 @@ def main() -> int:
             _log(
                 f"  chat-log intake (HTTPS): https://{lan}:{args.tls_port}/chatlogs "
                 f"— pull with: curl http://{lan}:{args.port}/chatlogs"
+            )
+            _log(
+                f"  capture-bundle intake (HTTPS): https://{lan}:{args.tls_port}/capturebundles "
+                f"— list with: curl http://{lan}:{args.port}/capturebundles  (kept in {_STORE['dir']})"
             )
             _log(
                 f"  drive chat (repro on-device): "

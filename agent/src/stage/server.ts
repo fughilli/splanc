@@ -190,7 +190,7 @@ export async function runStage(o: StageOptions): Promise<{ url: string; close: (
         return res.end(STAGE_PAGE);
       }
       if (route === "GET /events") return bus.attach(res);
-      if (route === "GET /api/status") return json(res, 200, { busy: agent.busy, screens: bus.screens, key: o.lan });
+      if (route === "GET /api/status") return json(res, 200, { busy: agent.busy, request: agent.active, screens: bus.screens, key: o.lan });
       if (route === "GET /api/pair") {
         if (!pair) return json(res, 200, { urls: [], error: "Pairing isn't available: its port was busy." });
         const urls = lanAddresses().map((a) => `http://${a}:${pair!.port}/p/${pairToken}`);

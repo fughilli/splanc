@@ -26,6 +26,7 @@ import {
   recommendConfig,
 } from "../../cv/exposure";
 import { CapturePerf, formatPerfLine, formatPhaseLine } from "../../cv/capturePerf";
+import { LinkTelemetry, type LinkTelemetrySnapshot } from "../../cv/linkTelemetry";
 import { CvPipeline } from "../../cv/pipeline";
 import { DetectorGL } from "../../cv/detect";
 import {
@@ -234,6 +235,13 @@ function offscreenGl(): WebGL2RenderingContext {
   const gl = c.getContext("webgl2");
   if (!gl) throw new CaptureUnsupportedError("WebGL2 is unavailable.", []);
   return gl;
+}
+
+/** Startup was abandoned because the capture screen unmounted (#442). */
+class CaptureAbandoned extends Error {
+  constructor() {
+    super("capture screen left during startup");
+  }
 }
 
 /** Undo the transparency the native preview layer needs (see the capture start
@@ -664,6 +672,22 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   // Set only under the HITL app-driver (?driver=): a hardware-free synthetic scene.
   let syntheticSource: SyntheticCaptureSource | null = null;
   let capturing = false;
+  // Set once the screen unmounts (browser Back, tab switch, …). Async work that
+  // outlives the screen — a startup still awaiting the device, a final solve —
+  // must not navigate, toast a stale error or start a device session after
+  // that (#442).
+  let disposed = false;
+  /** Leave the capture screen for `path` without leaving the session's entry
+   * in history: Back from the result must never land on #/capture again,
+   * which would mount a fresh screen and restart mapping on the device (#442).
+   * A no-op once the screen is gone (the user already navigated elsewhere). */
+  const go = (path: string): void => {
+    if (!disposed) router.leave(path);
+  };
+  /** Thrown at startup checkpoints when the screen was left meanwhile. */
+  const abandonIfDisposed = (): void => {
+    if (disposed) throw new CaptureAbandoned();
+  };
   let imuRecorder: ImuRecorder | null = null;
   let previewVideo: HTMLVideoElement | null = null;
   let liveView: MapView | null = null;
@@ -692,6 +716,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   let runSupplement: CaptureBundle["supplement"] = null;
   // Opt-in downsampled camera frames for the bundle (getUserMedia path only).
   let bundleFrames: BundleFrame[] = [];
+  // Mapping optical-link telemetry for the bundle (#448, cv/linkTelemetry):
+  // negotiated symbols/rate, exposure, frame timing, coverage over time.
+  // `runLinkSnapshot` freezes it when the capture stops (the solve after it
+  // must not stretch the timeline).
+  let runLink: LinkTelemetry | null = null;
+  let runLinkSnapshot: LinkTelemetrySnapshot | null = null;
   // Hot-loop + live-solver perf counters for the current capture (cv/capturePerf).
   let perf: CapturePerf | null = null;
   let localDetections: DetectionRecord[] = [];
@@ -1000,7 +1030,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     if (c === null || !c.isConnected) {
       if (driverActive()) setDriverCaptureError("device disconnected before capture");
       toast("Connect a device to capture", { error: true });
-      router.navigate("/maps");
+      go("/maps");
       return;
     }
     // Supplemental capture: load the prior map + its observations up front, so
@@ -1010,7 +1040,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       const rec = await mapStore.get(calibrateId);
       if (!rec) {
         toast("That map isn't in the library.", { error: true });
-        router.navigate("/maps");
+        go("/maps");
         return;
       }
       priorMap = rec.map;
@@ -1027,13 +1057,14 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       calPrompt.textContent = "Starting the mapping code…";
       await loadStoredProfile(c, rec.map.mapId);
       updateCalSettingsNote();
+      if (disposed) return;
     }
     if (supplementId !== null) {
       const rec = await mapStore.get(supplementId);
       const obs = await mapStore.getObservations(supplementId);
       if (!rec || rec.map.leds.length === 0) {
         toast("This map has no LEDs to supplement.", { error: true });
-        router.navigate(`/map/${supplementId}`);
+        go(`/map/${supplementId}`);
         return;
       }
       priorMap = rec.map;
@@ -1066,6 +1097,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     // fixture's hardware layout.
     const channelPlan = supplementId === null && calibrateId === null ? await resolveChannelPlan(c) : null;
     runChannelPlan = channelPlan;
+    if (disposed) return;
     if (channelPlan !== null) {
       const st0 = channelPlan.stages[0]!;
       const strided = channelPlan.stages.find((x) => x.kind === "strided");
@@ -1226,6 +1258,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         ...(channelPlan !== null ? { codeSpace: channelPlan.total } : {}),
       };
 
+      abandonIfDisposed();
       await c.syncClock(4);
       // Per-channel capture whose first stage codes only a prefix (the curtain):
       // the device transmits just [0, ledCount) while capturing, so a channel
@@ -1234,8 +1267,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // narrow to the first stage at the real brightness.
       const stage0 = channelPlan?.stages[0];
       const blankFirst = channelPlan !== null && stage0 !== undefined && stage0.ledCount < channelPlan.total;
+      abandonIfDisposed();
       const started = await c.startMapping(ledCount, blankFirst ? { ...config, brightness: 0 } : config);
       mappingStarted = true;
+      abandonIfDisposed();
       if (calibrateId !== null) startCalibrationUi(c);
       let params: CodeParams = started.codeParams;
       let epoch: number = started.patternClockEpoch;
@@ -1274,6 +1309,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           // buffers with data that only the phone's solver can use.
           if (c.hostSolverBenchMs !== null) c.sendDetections(records);
           localDetections.push(...records);
+          runLink?.recordsEmitted(records);
         });
         return pl;
       };
@@ -1298,6 +1334,13 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
 
       capturing = true;
       startedAt = performance.now();
+      runLink = new LinkTelemetry(startedAt);
+      runLinkSnapshot = null;
+      runLink.config(startedAt, params, "start", monitor.frameIntervalMs());
+      {
+        const pl = pipeline;
+        runLink.attachDecoder(() => pl.stats);
+      }
       interimLog = new InterimLog();
       runProblem = null;
       runFinal = { map: null, diag: null, error: null, assessment: null, timing: null };
@@ -1375,6 +1418,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           blobs: blobPopulation(blobs),
         });
         lastAmbient = f.ambientIntensity ?? lastAmbient;
+        runLink?.frame(f.tCaptureMs, clipped);
 
         if (clipped) {
           truncatedFrames++;
@@ -1691,6 +1735,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             epoch = ps.patternClockEpoch;
             pipeline = makePipeline(params, epoch);
             pipeline.updateSolved(liveLeds);
+            const pl = pipeline;
+            runLink?.attachDecoder(() => pl.stats);
+            runLink?.config(performance.now(), params, "reconfigure", monitor.frameIntervalMs());
             guideEl.textContent = diffuse
               ? `diffuse: phase ${phaseIdx + 1}/${phaseTotal} (stride ${strideSpacing}) · ${params.symbols} symbols`
               : `code renegotiated: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame` +
@@ -1852,6 +1899,18 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           detector.threshold = adjustThreshold(detector.threshold, report.blobCount, ledCount);
           nativeSource?.setDetectParams({ threshold: detector.threshold });
         }
+        // Link telemetry: the settings in effect over the window this report
+        // measured (before this tick's servo steps change them).
+        runLink?.exposure(performance.now(), {
+          exposure: servoExposure || manualMode || initialExposure !== null ? servoedExposure : null,
+          brightness: params.brightness ?? null,
+          threshold: detector.threshold,
+          frameIntervalMs: report.frameIntervalMs,
+          meanLuma: report.meanLuma,
+          clipFrac: report.clipFrac,
+          blobCount: report.blobCount,
+          marginEma: pipeline.stats.marginEma,
+        });
         if (renegotiating) return;
         const wantBit = forcedBitMs === null ? planReconfigure(params.bitPeriodMs, report.frameIntervalMs) : null;
         const wantSym =
@@ -1943,9 +2002,15 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       restorePageBackground();
       await capture?.stop().catch(() => undefined);
       capture = null;
+      if (disposed || e instanceof CaptureAbandoned) {
+        // The user left while the capture was starting: end any device session
+        // this startup opened, quietly — no error toast, no navigation.
+        if (mappingStarted) await c.stopMappingNoSolve().catch(() => undefined);
+        return;
+      }
       if (e instanceof CaptureUnsupportedError) toast(e.message, { error: true });
       else toast(e instanceof Error ? e.message : String(e), { error: true });
-      router.navigate("/maps");
+      go("/maps");
     }
   }
 
@@ -1979,7 +2044,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       await client()?.stopMappingNoSolve().catch(() => undefined);
     }
     resetLiveFeedback();
-    router.navigate("/maps");
+    go(router.origin() ?? "/maps");
   }
 
   async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
@@ -1987,6 +2052,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     const c = client();
     if (c === null) return;
     capturing = false;
+    runLinkSnapshot = runLink?.snapshot(performance.now()) ?? null;
     manualHooks = null;
     diffuseHook = null;
     strideHook = null;
@@ -2027,7 +2093,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       calPanel.style.display = "none";
       await c.stopMappingNoSolve().catch(() => undefined);
       stopBtn.disabled = false;
-      router.navigate(`/map/${calibrateId}`);
+      go(`/map/${calibrateId}`);
       return;
     }
 
@@ -2062,7 +2128,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       );
       driverSolveResolve = null;
       driverSolveReject = null;
-      router.navigate("/maps");
+      go("/maps");
       return;
     }
 
@@ -2275,7 +2341,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         driverSolveResolve?.({ mapId: id, ledCount: lastLedCount, solved: map.leds.length });
         driverSolveResolve = null;
         driverSolveReject = null;
-        router.navigate(`/map/${id}`);
+        go(`/map/${id}`);
       }
     } catch (e) {
       nativeLog(`[solve] FAILED: ${e instanceof Error ? e.message : String(e)}`);
@@ -2291,7 +2357,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       driverSolveReject?.(e);
       driverSolveResolve = null;
       driverSolveReject = null;
-      router.navigate(supplementId !== null ? `/map/${supplementId}` : "/maps");
+      go(supplementId !== null ? `/map/${supplementId}` : "/maps");
     } finally {
       if (solvePoll !== null) clearInterval(solvePoll);
       progWrap.style.display = "none";
@@ -2390,6 +2456,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         final: runFinal,
         supplement: runSupplement,
         frames: bundleFrames,
+        link: runLinkSnapshot ?? runLink?.snapshot(performance.now()) ?? null,
       });
       const meta = await captureBundleStore.save(bundle);
       if (meta !== null) {
@@ -2413,7 +2480,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     const prior = priorMap;
     const obs = priorObs;
     if (prior === null || supplementId === null) {
-      router.navigate("/maps");
+      go("/maps");
       return;
     }
     // The base capture's observations + this session's on one timeline: the
@@ -2545,7 +2612,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     } else {
       toast("Supplemental scan discarded — map unchanged");
     }
-    router.navigate(`/map/${supplementId}`);
+    go(`/map/${supplementId}`);
   }
 
   return {
@@ -2568,6 +2635,11 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       void startCapture();
     },
     onUnmount: () => {
+      disposed = true;
+      // Left mid-capture (browser Back / a tab) rather than via Cancel or Stop:
+      // end the device's mapping session too, as Cancel does — otherwise it
+      // keeps playing the code and the next screen finds it mid-capture.
+      if (capturing) void client()?.stopMappingNoSolve().catch(() => undefined);
       if (driverActive()) registerDriverCapture(null);
       driverSolveReject?.(new Error("capture screen unmounted before solve"));
       driverSolveResolve = null;

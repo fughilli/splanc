@@ -315,7 +315,8 @@ Mac mini below can host **both** the Android and iOS lanes — one machine cover
 swing a real phone around a physical known-map fixture (a rigid LED strip whose geometry
 matches a `.binpb`), plus DMX/PWM-controllable light panels to sweep ambient level — to
 close the sim-to-real gap (bloom, rolling shutter, sensor noise, ambient contrast) the
-synthetic source can't, enabling the exposure/blob-tuner hill-climb.
+synthetic source can't, enabling the exposure/blob-tuner hill-climb. Design, hardware
+list and metrics: [MOVING_CAMERA_RIG.md](MOVING_CAMERA_RIG.md) (#448).
 
 ## Status
 

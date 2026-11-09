@@ -278,6 +278,9 @@ export function wwwAuthenticate(origin: string, error?: string): string {
   );
 }
 
+/** Characters per stored chunk of the remembered tool list (UTF-16 ≤ 2 bytes each, under the 128 KiB value cap). */
+const TOOLS_CHUNK = 60_000;
+
 export class BridgeObject {
   private readonly pending = new Map<number, Pending>();
   private seq = 0;
@@ -637,7 +640,7 @@ export class BridgeObject {
       }
       if (relaySession && ws) return sessionGone(); // the bridge is back: initialize again
       if (relaySession || !ws) {
-        const offline = this.offlineMcp(msg, relaySession);
+        const offline = await this.offlineMcp(msg, relaySession);
         if (offline) return offline;
       }
       if (ws && name === "deploy_effect" && msg.id !== undefined) {
@@ -665,7 +668,9 @@ export class BridgeObject {
           if (method === "initialize") return { ...m, result: { ...m.result, instructions: withLibraryInstructions(m.result["instructions"]) } };
           if (!first) return m;
           await this.setBridgeFileBug(bridgeHasFileBug(m.result["tools"]));
-          return { ...m, result: { ...m.result, tools: mergeTools(m.result["tools"]) } };
+          const tools = mergeTools(m.result["tools"]);
+          await this.rememberTools(tools);
+          return { ...m, result: { ...m.result, tools } };
         });
       }
     } else if (relaySession && req.method === "POST") {
@@ -685,7 +690,7 @@ export class BridgeObject {
 
   /** What the relay answers by itself while the bridge is offline (or on its own
    * offline session); null = the usual 503. */
-  private offlineMcp(msg: RpcRequest, relaySession: boolean): Response | null {
+  private async offlineMcp(msg: RpcRequest, relaySession: boolean): Promise<Response | null> {
     if (msg.id === undefined) return relaySession ? new Response(null, { status: 202 }) : null;
     switch (msg.method) {
       case "initialize": {
@@ -693,7 +698,10 @@ export class BridgeObject {
         return rpcResult(msg.id, relayInitializeResult(msg.params, String(WIRE_VERSION)), { "mcp-session-id": session });
       }
       case "tools/list":
-        return rpcResult(msg.id, { tools: mergeTools([]) });
+        // The bridge's last tool list, not the library alone: a host that sees tools
+        // vanish and come back may treat them as new and ask for approval
+        // again, though the user allowed them. Calling one says the bridge is offline.
+        return rpcResult(msg.id, { tools: (await this.lastTools()) ?? mergeTools([]) });
       case "ping":
         return relaySession ? rpcResult(msg.id, {}) : null;
       default: {
@@ -720,6 +728,37 @@ export class BridgeObject {
     if ((await this.bridgeFileBug()) === v) return;
     this.fileBugFlag = v;
     await this.state.storage.put("bridgeFileBug", v);
+  }
+
+  /** The last tools/list served while the bridge was online (merged with the
+   * library), kept in storage so the offline list matches it. Stored as JSON text
+   * in chunks: a Durable Object value is capped at 128 KiB. */
+  private toolsText: string | null | undefined;
+
+  private async lastTools(): Promise<Record<string, unknown>[] | null> {
+    if (this.toolsText === undefined) {
+      const n = (await this.state.storage.get<number>("bridgeTools:n")) ?? 0;
+      const parts: string[] = [];
+      for (let i = 0; i < n; i++) parts.push((await this.state.storage.get<string>(`bridgeTools:${i}`)) ?? "");
+      this.toolsText = n ? parts.join("") : null;
+    }
+    if (!this.toolsText) return null;
+    try {
+      return JSON.parse(this.toolsText) as Record<string, unknown>[];
+    } catch {
+      return null;
+    }
+  }
+
+  private async rememberTools(tools: Record<string, unknown>[]): Promise<void> {
+    const text = JSON.stringify(tools);
+    await this.lastTools();
+    if (this.toolsText === text) return;
+    const n = Math.ceil(text.length / TOOLS_CHUNK);
+    const entries: Record<string, string | number> = { "bridgeTools:n": n };
+    for (let i = 0; i < n; i++) entries[`bridgeTools:${i}`] = text.slice(i * TOOLS_CHUNK, (i + 1) * TOOLS_CHUNK);
+    await this.state.storage.put(entries); // one write: never a half-updated list
+    this.toolsText = text;
   }
 
   private lib: EffectLibrary | null = null;
