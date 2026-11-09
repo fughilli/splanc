@@ -1,0 +1,728 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="What’s new" href="whats-new.html"><link rel="prev" title="Splanc quickstart" href="quickstart.html">
+        <link rel="prefetch" href="../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>The Splanc manifesto - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="quickstart.html">Quickstart</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="whats-new.html">What's new</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/kani-bazel.html">Kani under Bazel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-demo.html">Effects demo</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="requirements-driven-development.html">Requirements-driven development</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/manifesto.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/manifesto.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="the-splanc-manifesto">
+<h1>The Splanc manifesto<a class="headerlink" href="#the-splanc-manifesto" title="Link to this heading">¶</a></h1>
+<p>Splanc is a small system built on a few firm opinions. This page explains the
+engineering decisions that surprise people, and what each one costs. If you
+want to know <em>why</em> the code looks the way it does, start here; for <em>how</em> it
+fits together, see the Architecture page of the docs site and
+<a class="reference internal" href="../DEVELOPERS.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">DEVELOPERS.md</span></code></span></a>.</p>
+<p>The short version:</p>
+<ol class="arabic simple">
+<li><p><strong>The fixture knows its own shape.</strong> Every LED has a measured 3D position,
+and effects are written against that geometry, not against a strip index.</p></li>
+<li><p><strong>The controller does not fall over.</strong> One cheap microcontroller per fixture
+runs the show itself. Memory is a budget we prove, not a pool we hope for.</p></li>
+<li><p><strong>Anything can drive it.</strong> A browser, a phone, a console over OSC, or an AI
+agent all use the same narrow, named, versioned interface.</p></li>
+</ol>
+<p>Everything below follows from those three.</p>
+<section id="why-a-microcontroller-and-not-art-net-nodes-and-show-control-software">
+<h2>Why a microcontroller, and not Art-Net nodes and show-control software?<a class="headerlink" href="#why-a-microcontroller-and-not-art-net-nodes-and-show-control-software" title="Link to this heading">¶</a></h2>
+<p>The established way to light a sculpture is a pixel-mapping app (MadMapper,
+Resolume, TouchDesigner, a lighting console) on a computer. It renders every
+frame and streams the pixels as Art-Net or sACN to Ethernet nodes, which clock
+them out to the strips. That stack is mature, it interoperates with every
+console, and for a show with a technician and a laptop it is the right
+answer.</p>
+<p>Splanc is for the other case: an installation that has to run by itself, in a
+living room, a shop window or a tree, for months, with nobody watching it.
+There, the classic stack has three problems:</p>
+<ul class="simple">
+<li><p><strong>A computer has to stay up.</strong> If the show PC sleeps, updates or loses
+Wi-Fi, the lights go dark. A Splanc fixture carries its effect in flash and
+resumes it at power-up with nothing else on the network
+(<code class="docutils literal notranslate"><span class="pre">firmware/player_app</span></code> replays the stored map and effect at boot).</p></li>
+<li><p><strong>Streaming pixels does not scale over Wi-Fi.</strong> Art-Net is one frame of
+raw RGB per universe, many times a second, which is fine on wired Ethernet
+but fragile on a home access point. Splanc sends a program once (a few
+hundred bytes of <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> bytecode) and then only the knobs that change.</p></li>
+<li><p><strong>The software does not know where the LEDs are.</strong> Pixel mappers work on a
+2D canvas that someone lays out by hand. Splanc measures the 3D position of
+every LED with a phone (see below), so <code class="docutils literal notranslate"><span class="pre">led.pos</span></code> in an effect is metres in
+the real room.</p></li>
+</ul>
+<p>So each fixture gets its own ESP32-C6, an inexpensive RISC-V microcontroller
+with Wi-Fi 6 and BLE. It renders the effect locally, per LED, every frame, with
+the same VM the browser preview runs (<code class="docutils literal notranslate"><span class="pre">firmware/fx_vm</span></code>).</p>
+<p><strong>What it costs.</strong> We give up the console ecosystem’s native protocol, so
+there is no Art-Net or sACN input. Show-control integration goes through
+uniforms instead: OSC input on the device (<code class="docutils literal notranslate"><span class="pre">firmware/osc</span></code>), the TouchDesigner
+plugin (<code class="docutils literal notranslate"><span class="pre">tools/touchdesigner</span></code>) and MIDI in the web app. We also accept a much
+smaller machine: 512 KiB of SRAM, no FPU and a 160 MHz core. That last point
+drives most of the decisions that follow. For fixtures beyond what one C6 can
+drive, the Raspberry Pi and FPGA path (<code class="docutils literal notranslate"><span class="pre">pi/</span></code>, <code class="docutils literal notranslate"><span class="pre">fpga/</span></code>) is the bigger player.</p>
+</section>
+<section id="why-rewrite-the-vendor-wireless-stack">
+<h2>Why rewrite the vendor wireless stack?<a class="headerlink" href="#why-rewrite-the-vendor-wireless-stack" title="Link to this heading">¶</a></h2>
+<p>Because the vendor stack was the thing that kept falling over.</p>
+<p>The ESP-IDF networking path is general purpose: lwIP for TCP/IP, a malloc per
+packet buffer, mbedTLS allocating its record buffers per session, an event
+loop and a handful of tasks, all on one shared first-fit heap. On a 512 KiB
+part also running BLE provisioning and an LED renderer, that heap fragments.
+The failure we chased for months (FUG-71) was a TLS handshake that needs a
+contiguous record buffer the fragmented heap could no longer supply.
+<code class="docutils literal notranslate"><span class="pre">mbedtls_ssl_setup</span></code> returned <code class="docutils literal notranslate"><span class="pre">-0x7F00</span></code>, and the phone lost its connection
+mid-capture.</p>
+<p>The heapless netstack (<code class="docutils literal notranslate"><span class="pre">firmware/netstack</span></code>,
+<code class="docutils literal notranslate"><span class="pre">firmware/player_app/netstack_transport.cpp</span></code>) keeps the vendor’s PHY and
+lower-MAC blobs, the part that is genuinely radio-specific, and owns
+everything above them. That means our own RX ring, the STA association and
+the WPA2 4-way handshake, CCMP on the AES accelerator, DHCP, ARP, TCP, the TLS
+bio and the WebSocket layer. Its design rules (<a class="reference internal" href="#../firmware/netstack/DESIGN.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">DESIGN.md</span></code></span></a>):
+zero allocation after init, capacity-typed buffers, bounded parsers, fixed
+pools with back-pressure instead of growth. The TX path builds each frame once,
+in place, with headroom for every layer’s header (#267). The BLE side is the
+same idea: a heapless host over the vendor controller (<code class="docutils literal notranslate"><span class="pre">firmware/blehost</span></code>),
+replacing Bluedroid’s ~43 KiB permanent draw.</p>
+<p>The result is that the network’s memory is a compile-time constant you can
+read with <code class="docutils literal notranslate"><span class="pre">size</span></code>. What’s left of the vendor heap gets audited down to the
+allocations nobody can avoid (see the <a class="reference internal" href="design/heap-census.html"><span class="std std-doc">heap census</span></a>).</p>
+<p><strong>What it costs.</strong> Maintenance, mostly. We reverse-engineered parts of the
+vendor’s MAC interface (the comments in <code class="docutils literal notranslate"><span class="pre">netstack_transport.cpp</span></code> say which),
+we track their binary blobs across SDK upgrades, and we own interoperability
+bugs a vendor stack would have absorbed for us. For example, group-key
+handling that worked on our test rigs’ access points and failed on commercial
+mesh APs. We decided that owning a few thousand lines of bounded,
+host-tested Rust is cheaper than a field failure we cannot reason about.</p>
+</section>
+<section id="why-no-heap">
+<h2>Why no heap?<a class="headerlink" href="#why-no-heap" title="Link to this heading">¶</a></h2>
+<p>A heap’s worst case depends on its <em>history</em>: which sizes were allocated and
+freed, in what order. A system that must run for months cannot be tested into
+confidence about a property that depends on history. So the player’s rule is
+that the shared heap allocates nothing after boot that we have not accounted
+for, and mutually exclusive features share memory through typed regions
+instead (<code class="docutils literal notranslate"><span class="pre">firmware/region</span></code>):</p>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">Pool&lt;T,</span> <span class="pre">N&gt;</span></code></strong>: fixed slots, O(1), no fragmentation; full means “refused”,
+never “corrupted”.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">Slab</span></code></strong>: a few size classes, for C callers that insist on <code class="docutils literal notranslate"><span class="pre">malloc</span></code>.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">ModeRegion&lt;S&gt;</span></code></strong>: one storage holding a union of variants. Switching
+variants while anything borrowed from the current one is alive is a
+<em>borrow-check error</em>.</p></li>
+</ul>
+<p>The work this unlocked (#262 to #273) took the measured worst-case minimum
+free heap from <strong>1.6 KiB to about 87 KiB</strong>, while also reserving a dedicated
+24 KiB region for TLS so a handshake can no longer fail on a fragmented heap.
+The rest of the budget came from many small cuts rather than one big one:</p>
+<ul class="simple">
+<li><p>zero-copy protocol envelopes and in-place request dispatch;</p></li>
+<li><p>loopTask’s stack sized from a proof instead of a guess (48 → 14 KiB);</p></li>
+<li><p>freeing the vendor Wi-Fi scan residue;</p></li>
+<li><p>moving 17 KiB of dead vendor code out of IRAM (<code class="docutils literal notranslate"><span class="pre">.iram0.text</span></code> 114,910 →
+97,512 B);</p></li>
+<li><p>unbuffered littlefs files.</p></li>
+</ul>
+<p>Headroom is there to be spent deliberately. Later features each took a measured,
+reviewed slice of it: the room-frame cache (3 KiB), a larger topology arena
+(4 KiB), and a second effect deck with on-device keypoints (6.5 KB, plus 2.2 KB
+of hot shade code pinned back into IRAM). With both decks running and a wss
+session open, the keypoints HITL run still measured a 72.7 KB minimum free heap.
+Each of those changes re-pinned the memory-mode model in the same PR.</p>
+<p>The detail is in <a class="reference internal" href="design/ram-budget.html"><span class="std std-doc">ram-budget.md</span></a>.</p>
+<p><strong>What it costs.</strong> Static sizing means choosing limits up front: the LED count,
+the effect size, the number of TLS slots. A feature that wants “just a little
+dynamic memory” needs a design conversation. That is a feature.</p>
+</section>
+<section id="why-bother-with-model-checking-for-an-led-controller">
+<h2>Why bother with model checking for an LED controller?<a class="headerlink" href="#why-bother-with-model-checking-for-an-led-controller" title="Link to this heading">¶</a></h2>
+<p>Because the bug was a <em>state</em>, not a big buffer.</p>
+<p>When we finally caught the heap at its minimum (a JTAG core dump at the
+low-water mark, every block attributed), no single feature was too big. The
+low point was a <em>combination</em>: BLE provisioning still resident while the first
+TLS handshake allocated. Testing finds the combinations you think to test.
+Proving the system safe means enumerating all of them.</p>
+<p>So the device’s memory modes are a small pure model (<code class="docutils literal notranslate"><span class="pre">firmware/sysmode</span></code>):</p>
+<ul class="simple">
+<li><p>Wi-Fi, BLE, wss, the current activity and the map are its axes;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">step(state,</span> <span class="pre">event)</span></code> is a total transition function;</p></li>
+<li><p>every component has a RAM cost with a cited source.</p></li>
+</ul>
+<p>A breadth-first reachability test visits every reachable state (57 today) and
+asserts invariants, recoverability and that <strong>no reachable state exceeds the
+memory budget</strong> (worst live set 151,213 B, pinned so any change is a reviewed
+budget change). The firmware is tracked against the model at run time, log-only
+for now, and an agreement test replays the HITL scenarios through it. Wiring
+it up found two places where the model was wrong about the firmware, which is
+the point.</p>
+<p>The same attitude applies at two smaller scales:</p>
+<ul class="simple">
+<li><p><strong>Stacks.</strong> A static bound over the shipped ELF’s call graph
+(<code class="docutils literal notranslate"><span class="pre">//tools/stack_bound</span></code>) fails CI when any task’s worst-case stack, with ISR
+context and a 25% margin, exceeds what it reserves. Measured high-water marks
+understate the paths a run did not take. The render task measured 0.8 KiB
+against a 7.4 KiB bound.</p></li>
+<li><p><strong>Data structures.</strong> Kani proves the region allocators correct for every
+short operation sequence: slots never alias, alloc succeeds iff a slot is
+free, and the slab routes every free back to its class. It now runs
+hermetically as a Bazel test (<a class="reference internal" href="design/kani-bazel.html"><span class="std std-doc">kani-bazel.md</span></a>).</p></li>
+</ul>
+<p><strong>What it costs.</strong> The model is only as true as its cost table. We keep it
+honest by deriving costs from <code class="docutils literal notranslate"><span class="pre">nm</span> <span class="pre">-S</span></code> and the measured core dump, and by
+replacing each constant with <code class="docutils literal notranslate"><span class="pre">size_of</span></code> once a component moves into a region.
+None of this is a proof of the firmware. It is a proof of the model, plus
+tests that the firmware agrees with it.</p>
+</section>
+<section id="why-zero-copy-protocol-buffers">
+<h2>Why zero-copy protocol buffers?<a class="headerlink" href="#why-zero-copy-protocol-buffers" title="Link to this heading">¶</a></h2>
+<p>The wire protocol is protobuf (<code class="docutils literal notranslate"><span class="pre">shared/protocol/proto/ledmapper.proto</span></code>), one
+schema shared by the TypeScript app, the Python tools, the Rust firmware and
+the agent bridge. Protobuf was the right choice for compatibility, but the
+usual generated code is wrong for a microcontroller. A by-value decoded
+message is sized by its <em>largest</em> arm, and it lands on the stack of whatever
+task handles the frame. One rarely used arm, the 4 KiB board-capabilities
+catalog, made <em>every</em> <code class="docutils literal notranslate"><span class="pre">ServerMessage</span></code> 4,104 bytes. That inflated every handler
+frame on the hottest task.</p>
+<p><code class="docutils literal notranslate"><span class="pre">oss/pbview</span></code> generates borrowed <em>views</em> instead. A view is two words that read
+fields straight out of the received bytes, validated once, with no allocation,
+no <code class="docutils literal notranslate"><span class="pre">unsafe</span></code> and no panics on any input. The firmware now dispatches every
+request in place from the RX buffer (#265), and the firmware’s own
+<code class="docutils literal notranslate"><span class="pre">ServerMessage</span></code> is 656 bytes. pbview is self-contained under <code class="docutils literal notranslate"><span class="pre">oss/</span></code> because it
+is useful to anyone doing protobuf on <code class="docutils literal notranslate"><span class="pre">no_std</span></code>.</p>
+</section>
+<section id="why-ble-and-wi-fi-at-the-same-time">
+<h2>Why BLE and Wi-Fi at the same time?<a class="headerlink" href="#why-ble-and-wi-fi-at-the-same-time" title="Link to this heading">¶</a></h2>
+<p>It would be cheaper not to. Turning BLE off once a device has joined Wi-Fi was
+the obvious memory lever, and we decided not to pull it. Requirement <strong>PR-38</strong>
+(<code class="docutils literal notranslate"><span class="pre">requirements/requirements.yaml</span></code>) says the device keeps advertising and serves
+a BLE central and a wss client concurrently, and that radio mutual exclusion is
+not an allowed memory-reduction strategy. BLE is how a phone finds and
+re-provisions a device that has lost its network, and it is the offline
+control path (the BLE player transport, #154). A device that
+goes deaf to BLE when it is busy is a device you have to power-cycle.</p>
+<p>Writing the decision down as a requirement, with a HITL verification method,
+means the next person trying to win back 30 KiB does not quietly undo it.</p>
+</section>
+<section id="why-a-bytecode-vm-and-a-jit-for-effects">
+<h2>Why a bytecode VM (and a JIT) for effects?<a class="headerlink" href="#why-a-bytecode-vm-and-a-jit-for-effects" title="Link to this heading">¶</a></h2>
+<p>Effects are tiny GLSL-flavoured programs evaluated per LED, per frame
+(<a class="reference internal" href="../EFFECTS.html"><span class="std std-doc">EFFECTS.md</span></a>). They compile to <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> bytecode and run on
+<code class="docutils literal notranslate"><span class="pre">fx_vm</span></code>. We could have compiled effects to native firmware images or rendered
+them on a host. We chose a VM because:</p>
+<ul class="simple">
+<li><p><strong>One VM, three hosts.</strong> The same Rust VM runs on the C6, as wasm in the
+browser preview, and in the host golden tests. What you preview is,
+bit-for-bit, what the device renders.</p></li>
+<li><p><strong>Deploying an effect is a message, not a reflash.</strong> A few hundred bytes over
+the control channel, checked against the device’s budget before it is sent.</p></li>
+<li><p><strong>It is safe to accept programs from anywhere,</strong> including an AI. The VM
+bounds its own execution and memory, and a bad program is refused with
+<code class="docutils literal notranslate"><span class="pre">bad_fxb</span></code> rather than crashing the player.</p></li>
+<li><p><strong>Costs are predictable.</strong> Opcode costs are fitted from on-device cycle
+counts (<a class="reference internal" href="fx-vm-performance.html"><span class="std std-doc">fx-vm-performance</span></a>), so the editor and the
+agent can tell you whether an effect fits <em>before</em> you deploy it.</p></li>
+</ul>
+<p>The interpreter’s dispatch overhead is real on a 160 MHz core, so hot
+straight-line integer blocks are compiled at load time to RV32 machine code
+(<code class="docutils literal notranslate"><span class="pre">firmware/fx_jit</span></code>). The JIT is checked by differential tests against the
+interpreter and has the interpreter as its always-on fallback.</p>
+<p><strong>What it costs.</strong> A language and compiler to maintain, and an effect
+vocabulary narrower than a desktop shader. In exchange we get uniforms with
+names, ranges and units that any client can discover and drive.</p>
+</section>
+<section id="why-map-with-a-phone-camera">
+<h2>Why map with a phone camera?<a class="headerlink" href="#why-map-with-a-phone-camera" title="Link to this heading">¶</a></h2>
+<p>Because the hard part of a 3D LED installation is not lighting it, it is
+knowing where each LED ended up after someone wrapped it around a branch. The
+controller blinks a self-clocking colour code that gives every LED a unique
+temporal signature. You walk around the fixture with any phone, and a
+visual-inertial solver recovers the camera path and every LED’s position
+together, metric-scaled and gravity-aligned, in a browser
+(<code class="docutils literal notranslate"><span class="pre">solver/</span></code>, <a class="reference internal" href="../led-mapper-design.html"><span class="std std-doc">led-mapper-design.md</span></a>).</p>
+<p>No ARCore, no LiDAR, no app install. That is what lets a non-technical person
+map their own fixture. It is also why the solver, the CV pipeline and the
+capture UX get so much attention: they are the product.</p>
+</section>
+<section id="why-so-much-hardware-in-the-loop-testing">
+<h2>Why so much hardware-in-the-loop testing?<a class="headerlink" href="#why-so-much-hardware-in-the-loop-testing" title="Link to this heading">¶</a></h2>
+<p>Because a microcontroller’s failure modes live in the hardware. They include
+radio airtime, a watchdog, a strap pin sampled at reset and a USB bus shared by
+two boards, and no host test sees any of them. The HITL rigs (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>) are
+Raspberry Pis with real ESP32-C6 boards, an access point, a logic analyzer and
+real phones, reserved from a queue by CI. Every firmware PR flashes, provisions
+over BLE and exercises a real device. The worst-case memory scenario
+(<code class="docutils literal notranslate"><span class="pre">ram_audit</span></code>) watches the heap over JTAG without halting the core.</p>
+<p>HITL is also how we learned humility about our own instruments. A
+“provisioning hang” that got two good IRAM optimizations backed out turned out
+to be the RAM watcher: a 46-second JTAG halt landing inside the Wi-Fi join,
+followed by a watchdog reset that looked exactly like a firmware hang. Dumps
+are now armed only after provisioning. The rule we took from it: when a
+measurement and the system disagree, suspect the measurement too. Every HITL
+failure ships with the device’s serial log so the next person can tell.</p>
+<p><strong>What it costs.</strong> Rigs are hardware: they flake, they need redeploying, they
+contend for airtime. A rig is also only one environment (the group-key bug
+above passed on every rig). We treat a flaky rig as a bug to fix, not a test
+to retry.</p>
+</section>
+<section id="why-bazel-and-nix">
+<h2>Why Bazel and Nix?<a class="headerlink" href="#why-bazel-and-nix" title="Link to this heading">¶</a></h2>
+<p>The repo is a polyglot: TypeScript, Rust (native, <code class="docutils literal notranslate"><span class="pre">no_std</span></code> RISC-V and wasm),
+C++ firmware, Python, Go and protobuf codegen for all of them. One
+<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span> <span class="pre">//...</span></code> builds and tests all of it hermetically, and the same
+graph produces the firmware image, the web app and the agent bundle in CI.
+Nix supplies the toolchains that Bazel cannot fetch reproducibly by itself,
+such as the ESP32 cross compilers and Arduino cores through <code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code>.
+Freshness gates keep generated artifacts (protocol bindings, the performance
+doc, the user guide) from drifting from their sources.</p>
+<p><strong>What it costs.</strong> Bazel has a steep learning curve and a heavy first build,
+and Nix is a hard prerequisite. We think that is the price of “builds the same
+everywhere” for a project whose firmware, app and tools must agree byte for
+byte.</p>
+</section>
+<section id="why-requirements-driven-development">
+<h2>Why requirements-driven development?<a class="headerlink" href="#why-requirements-driven-development" title="Link to this heading">¶</a></h2>
+<p>Splanc’s requirements, risks and their mitigations live in a machine-readable
+model (<code class="docutils literal notranslate"><span class="pre">requirements/requirements.yaml</span></code>). Tests declare which requirements they
+verify, and CI rolls them up into a report of what is validated, verified and
+controlled (<a class="reference internal" href="requirements-driven-development.html"><span class="std std-doc">requirements-driven-development.md</span></a>).</p>
+<p>This is unusual for a hobby-sized project. We do it because so much of the
+system is a set of <em>negative</em> promises that are easy to break by accident and
+hard to notice: no heap growth, BLE stays up, an over-budget effect is refused,
+a schema change can’t drift between languages. A requirement with a test is
+how a decision survives the next refactor.</p>
+</section>
+<section id="why-a-thin-device-and-a-fat-agent-bridge">
+<h2>Why a thin device and a fat agent bridge?<a class="headerlink" href="#why-a-thin-device-and-a-fat-agent-bridge" title="Link to this heading">¶</a></h2>
+<p>The device speaks one narrow, versioned protocol and does as little as
+possible beyond rendering: it advertises itself over mDNS (<code class="docutils literal notranslate"><span class="pre">_splanc._tcp</span></code>),
+publishes a manifest at <code class="docutils literal notranslate"><span class="pre">/.well-known/splanc.json</span></code>, and accepts effects,
+uniforms, a fixture pose and a time base. All of the intelligence lives off the
+device in the agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>): discovery across the LAN, version
+matching, compile and preview, budget checks, room-frame layout and clock
+alignment across fixtures. The bridge is an MCP server and a one-shot CLI, so
+“use splanc.io to set the mood of the room” works for an AI agent with a shell
+and nothing configured (<a class="reference internal" href="design/agent-multi-fixture.html"><span class="std std-doc">agent-multi-fixture.md</span></a>).</p>
+<p>Two rules shape that interface:</p>
+<ul class="simple">
+<li><p><strong>Names, not slots.</strong> Uniforms are addressed by name, with documented ranges
+and units from the effect’s own source comments. An agent never needs to know
+that <code class="docutils literal notranslate"><span class="pre">warmth</span></code> is slot 3.</p></li>
+<li><p><strong>Effects own the motion.</strong> The client sets intent (“glide warmth to 0.8 over
+20 seconds”), and the device renders every frame. Fixtures share one time base
+so identical effects across a room stay in step (the target is under 20 ms of
+skew, measured on HITL with a logic analyzer).</p></li>
+</ul>
+<p><strong>What it costs.</strong> There is no LAN authentication today: anyone on the network
+can drive the lights, and we say so in the agent’s own instructions rather than
+pretend otherwise. The agent surface also deliberately excludes rewiring,
+remapping and calibration, which stay in the app where a human is looking.</p>
+</section>
+<section id="the-common-thread">
+<h2>The common thread<a class="headerlink" href="#the-common-thread" title="Link to this heading">¶</a></h2>
+<p>Each of these decisions trades generality for a property we can check: memory
+that is a constant, a state space that is enumerable, a stack that is bounded,
+a protocol that cannot drift, a preview that is the render. An LED controller
+is a small thing to be this careful about. It is also a thing people put in
+their homes and expect to just work, and “just works for months” is a
+property you have to design for. You cannot get it by debugging.</p>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="whats-new.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">What’s new</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="quickstart.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Splanc quickstart</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">The Splanc manifesto</a><ul>
+<li><a class="reference internal" href="#why-a-microcontroller-and-not-art-net-nodes-and-show-control-software">Why a microcontroller, and not Art-Net nodes and show-control software?</a></li>
+<li><a class="reference internal" href="#why-rewrite-the-vendor-wireless-stack">Why rewrite the vendor wireless stack?</a></li>
+<li><a class="reference internal" href="#why-no-heap">Why no heap?</a></li>
+<li><a class="reference internal" href="#why-bother-with-model-checking-for-an-led-controller">Why bother with model checking for an LED controller?</a></li>
+<li><a class="reference internal" href="#why-zero-copy-protocol-buffers">Why zero-copy protocol buffers?</a></li>
+<li><a class="reference internal" href="#why-ble-and-wi-fi-at-the-same-time">Why BLE and Wi-Fi at the same time?</a></li>
+<li><a class="reference internal" href="#why-a-bytecode-vm-and-a-jit-for-effects">Why a bytecode VM (and a JIT) for effects?</a></li>
+<li><a class="reference internal" href="#why-map-with-a-phone-camera">Why map with a phone camera?</a></li>
+<li><a class="reference internal" href="#why-so-much-hardware-in-the-loop-testing">Why so much hardware-in-the-loop testing?</a></li>
+<li><a class="reference internal" href="#why-bazel-and-nix">Why Bazel and Nix?</a></li>
+<li><a class="reference internal" href="#why-requirements-driven-development">Why requirements-driven development?</a></li>
+<li><a class="reference internal" href="#why-a-thin-device-and-a-fat-agent-bridge">Why a thin device and a fat agent bridge?</a></li>
+<li><a class="reference internal" href="#the-common-thread">The common thread</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>
