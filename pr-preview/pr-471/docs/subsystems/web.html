@@ -353,7 +353,13 @@ video panels), <code class="docutils literal notranslate"><span class="pre">effe
 the exact device VM in-browser over a map’s LED positions). The AI chat has
 <code class="docutils literal notranslate"><span class="pre">estimate_performance</span></code> (offline cost model) and, while a fixture with <code class="docutils literal notranslate"><span class="pre">perf</span></code>
 is connected, <code class="docutils literal notranslate"><span class="pre">measure_on_device</span></code> (<code class="docutils literal notranslate"><span class="pre">effects/devicePerf.ts</span></code>), which reads the
-device’s perf stream.</p></li>
+device’s perf stream. The agent’s context lists the effective live uniform
+values next to the source defaults, and <code class="docutils literal notranslate"><span class="pre">set_live_uniforms</span></code>
+(<code class="docutils literal notranslate"><span class="pre">effects/ai/liveUniforms.ts</span></code>) sets or resets named live values in the preview
+and, when it runs this effect, on the fixture. A turn that runs out of tool
+steps ends as <code class="docutils literal notranslate"><span class="pre">exhausted</span></code> (<code class="docutils literal notranslate"><span class="pre">runChatTurn</span></code>), with a Continue action, and an AI
+draft over its frame budget is held from auto-push and flagged as not ready
+(<code class="docutils literal notranslate"><span class="pre">effects/ai/agentDraft.ts</span></code>).</p></li>
 <li><p><strong>Show Mode &amp; keypoints (<code class="docutils literal notranslate"><span class="pre">ui/screens/showMode.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">keypointStrip.ts</span></code>)</strong> —
 two decks, the crossfader and per-deck keypoint pads with a morph fader;
 <code class="docutils literal notranslate"><span class="pre">midi/showRouter.ts</span></code> maps every control to MIDI. The editor reuses the
@@ -624,6 +630,15 @@ scene upgrade). The server restamps the pattern epoch, the wall follows on
 its next <code class="docutils literal notranslate"><span class="pre">get_pattern</span></code> poll, the phone rebuilds its decode pipeline, and
 detections already collected stay valid. Two consecutive 2 s ticks must
 agree before a renegotiation fires (hysteresis).</p>
+<p>Every run’s link behavior — each negotiated config (symbols, bit period,
+frames/bit), the selected exposure per tick, frame timing + dropouts, decode
+coverage over time and the decoded-ID error signals — is recorded by
+<code class="docutils literal notranslate"><span class="pre">src/cv/linkTelemetry.ts</span></code> into the debug capture bundle (<code class="docutils literal notranslate"><span class="pre">link</span></code>, bundle v2).
+<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//web:link_bench</span></code> reports time-to-coverage / ID error rate /
+dropouts from those bundles, or from a moving-camera simulation
+(<code class="docutils literal notranslate"><span class="pre">tests/linkSim.ts</span></code>) per tuning policy, and rejects any candidate that raises
+the wrong-ID rate or signals under 3 frames/bit (see
+<code class="docutils literal notranslate"><span class="pre">pi/hitl/phone/MOVING_CAMERA_RIG.md</span></code> for the real-camera rig).</p>
 </section>
 <section id="how-the-wall-stays-in-sync">
 <h4>How the wall stays in sync<a class="headerlink" href="#how-the-wall-stays-in-sync" title="Link to this heading">¶</a></h4>
