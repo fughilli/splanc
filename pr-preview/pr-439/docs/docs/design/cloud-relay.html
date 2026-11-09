@@ -839,7 +839,11 @@ with the response for that request id waits).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">deploy_effect</span> <span class="pre">{library_id}</span></code>: the relay puts the entry’s source and an <code class="docutils literal notranslate"><span class="pre">effect_id</span></code> in the
 call and strips the library arguments, so any bridge version deploys it. After a successful
 deploy (and a <code class="docutils literal notranslate"><span class="pre">measure_effect</span></code>), the library is updated and a note added to the result.</p></li>
-<li><p>Bridge offline: <code class="docutils literal notranslate"><span class="pre">tools/list</span></code> answers the library tools; <code class="docutils literal notranslate"><span class="pre">initialize</span></code> gets a relay session
+<li><p>Bridge offline: <code class="docutils literal notranslate"><span class="pre">tools/list</span></code> answers the last list the relay served while the bridge was
+online (kept in the bridge’s Durable Object; the library tools alone until there is one),
+so the host’s tool set never shrinks and grows back (a host may treat reappearing tools as
+new and ask again for approvals the user already gave). Calling a bridge tool says the bridge is
+offline. <code class="docutils literal notranslate"><span class="pre">initialize</span></code> gets a relay session
 (<code class="docutils literal notranslate"><span class="pre">Mcp-Session-Id:</span> <span class="pre">relay-…</span></code>, <code class="docutils literal notranslate"><span class="pre">serverInfo.name:</span> <span class="pre">splanc-relay</span></code>, instructions saying the bridge
 is offline) serving the library, <code class="docutils literal notranslate"><span class="pre">ping</span></code> and notifications (<code class="docutils literal notranslate"><span class="pre">202</span></code>); other calls on it get a
 JSON-RPC error. Once the bridge is back, that session gets <code class="docutils literal notranslate"><span class="pre">404</span></code> for anything but library
