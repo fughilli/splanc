@@ -69,6 +69,13 @@ Cloud agents (docs/guides/cloud-agent.md; docs/design/cloud-relay.md):
   relay [--port 8787] [--listen 127.0.0.1] [--public-url https://...] [--data-dir d] [--trust-proxy]
                                        host the relay yourself (e.g. behind tailscale funnel)
 
+Demo night (docs/guides/demo-stage.md):
+  stage [--port 7420] [--effort low|medium|high] [--lan] [--no-open]
+                                       the TV screen: talk to Claude (push-to-talk in the page),
+                                       watch the effect code being written, every tool call, and a
+                                       live twin of each fixture. Needs ANTHROPIC_API_KEY (or
+                                       --api-key-file f). --lan serves the LAN too, behind a key
+
 Every device command takes --players <name|room|mac|all>[,...] (default: the
 only player, or all of them when they form one room); keypoint commands also
 take --deck 0|1 (FX deck A/B, default 0).
@@ -118,6 +125,8 @@ const BOOL = new Set([
   "trust-proxy",
   "direct",
   "user-confirmed",
+  "lan",
+  "no-open",
 ]);
 
 export function parseArgs(argv: string[]): Parsed {
