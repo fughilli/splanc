@@ -254,6 +254,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/ram-budget.html">RAM budget</a></li>
@@ -343,7 +344,9 @@ bazel<span class="w"> </span><span class="nb">test</span><span class="w">  </spa
 </pre></div>
 </div>
 <p>The math and the joint pose+LED formulation are covered in
-<a class="reference internal" href="../design/index.html"><span class="doc">Design notes</span></a> (VIO exploration) and the reconstruction reference below.</p>
+<a class="reference internal" href="../design/index.html"><span class="doc">Design notes</span></a> (VIO exploration) and the reconstruction reference below.
+<a class="reference internal" href="../docs/design/strided-capture.html"><span class="doc">Strided (diffuse) capture: mapping LEDs behind a diffuser</span></a> covers the solver under strided (diffuse)
+capture: bridges, gauge and scale, decode-lock gaps and the scale diagnostics.</p>
 <hr class="docutils" />
 <p>The solver’s own README (interface, placement algorithm, parity):</p>
 </section>

@@ -254,6 +254,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/ram-budget.html">RAM budget</a></li>
@@ -363,7 +364,10 @@ helix fixture.</span><a class="headerlink" href="#id1" title="Link to this image
 </figcaption>
 </figure>
 <p>The reconstruction quality metrics and the outlier-rejection rationale are in the
-<a class="reference internal" href="../led-mapper-design.html"><span class="doc">design spec</span></a> (§7.5, §8.3, §12).</p>
+<a class="reference internal" href="../led-mapper-design.html"><span class="doc">design spec</span></a> (§7.5, §8.3, §12). For fixtures behind a
+diffuser, where only a sparse subset of LEDs is lit at a time, see
+<a class="reference internal" href="../docs/design/strided-capture.html"><span class="doc">Strided (diffuse) capture: mapping LEDs behind a diffuser</span></a>: what ties the phases into one rigid map,
+and why the solve never drops observations across the decode gaps.</p>
 </section>
 </section>
 

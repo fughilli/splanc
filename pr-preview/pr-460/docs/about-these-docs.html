@@ -254,6 +254,7 @@
 <li class="toctree-l2"><a class="reference internal" href="docs/design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/ram-budget.html">RAM budget</a></li>
@@ -329,7 +330,9 @@
 <li><p><strong>Regenerates the figures and animations.</strong> It runs the <em>real</em> <code class="docutils literal notranslate"><span class="pre">shared/simulator</span></code>
 → <code class="docutils literal notranslate"><span class="pre">pi/reconstruction</span></code> code path (<code class="docutils literal notranslate"><span class="pre">docs/gen_figures.py</span></code>) to render the fixture
 gallery, the synthetic camera-walk animation, and the reconstruction-accuracy
-figure. Nothing is hand-drawn, so the visuals can’t drift from the code.</p></li>
+figure, plus the strided-capture schedule (drawn from the stride golden the
+phone and firmware are tested against). Nothing is hand-drawn, so the visuals
+can’t drift from the code.</p></li>
 <li><p><strong>Builds the HTML.</strong> It assembles a staging source tree that mirrors the repo
 layout — so the relative links between the existing markdown docs keep
 resolving — drops in the hand-written overview / architecture / subsystem
@@ -340,6 +343,8 @@ over HTTP:</p>
 <div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazel<span class="w"> </span>run<span class="w"> </span>//docs:serve<span class="w">       </span><span class="c1"># serves docs/site/html on http://localhost:8000</span>
 </pre></div>
 </div>
+<p>CI publishes the site from <code class="docutils literal notranslate"><span class="pre">main</span></code> at
+<a class="reference external" href="https://fughilli.github.io/splanc/docs/">https://fughilli.github.io/splanc/docs/</a>.</p>
 <section id="what-s-hand-written-vs-folded-in">
 <h2>What’s hand-written vs folded in<a class="headerlink" href="#what-s-hand-written-vs-folded-in" title="Link to this heading">¶</a></h2>
 <ul class="simple">

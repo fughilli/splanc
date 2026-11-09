@@ -254,6 +254,7 @@
 <li class="toctree-l2"><a class="reference internal" href="design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/ram-budget.html">RAM budget</a></li>
@@ -434,7 +435,9 @@ let the solver triangulate depth. Keep going until the live preview looks
 complete, then tap <strong>Stop &amp; finish</strong>.</p></li>
 <li><p>LEDs behind a diffuser? Turn on <strong>Diffuse capture</strong> on the capture screen.
 It lights every Nth LED per phase (the <strong>Stride length</strong>, default 4, set in
-<strong>Hardware</strong>) so neighbouring spots don’t bleed together.</p></li>
+<strong>Hardware</strong>) so neighbouring spots don’t bleed together. Keep moving slowly
+through the whole capture: every phase needs its own range of angles (how it
+works: <a class="reference internal" href="design/strided-capture.html"><span class="std std-doc">strided capture</span></a>).</p></li>
 </ol>
 <p>You get a <strong>3D map</strong> of every LED, in metres with +Y up, plus a topology
 skeleton (strands, junctions, loops). Tidy it in the mapping workspace, send
@@ -544,7 +547,8 @@ Jump to <a class="reference internal" href="user-guide.html#flashing-firmware"><
 <a class="reference internal" href="user-guide.html#midi-controllers"><span class="std std-ref">MIDI</span></a>.</p></li>
 <li><p><strong>How mapping works</strong>: <a class="reference internal" href="../led-mapper-design.html"><span class="std std-doc">the design spec</span></a>, and
 <a class="reference internal" href="design/mapping-solve-paths.html"><span class="std std-doc">mapping-solve-paths.md</span></a> on the live-preview and
-final solves.</p></li>
+final solves, and <a class="reference internal" href="design/strided-capture.html"><span class="std std-doc">strided-capture.md</span></a> on mapping
+fixtures behind a diffuser.</p></li>
 <li><p><strong>Effects</strong>: <a class="reference internal" href="../EFFECTS.html"><span class="std std-doc">EFFECTS.md</span></a> covers the effects language, the
 bytecode VM, uniforms, textures and MIDI. See also
 <a class="reference internal" href="design/effects-runtime.html"><span class="std std-doc">effects-runtime.md</span></a>,
