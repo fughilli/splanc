@@ -776,9 +776,25 @@ names (`netstack_ws_send_to`). It's dropped when that session is gone or its win
 under #353's rule. When a session that had a client ends, the front end sends
 `LINK RESET(session)` so the P4 stops pushing there. When the P4 sends `RESET(session)`
 instead of a REPLY, the waiting forward returns −2, and the front end drops that session (the
-client retries). Forwarding is still synchronous, one message at a time: a slow P4 reply
-(at most 1 s) holds up every session behind it. Async forwarding, with a reply table keyed by
-session, is the next step if that shows up in `loaded_tls`.
+client retries). In this PR, forwarding is still synchronous, one message at a time: a slow
+P4 reply (at most 1 s) holds up every session behind it.
+
+**Decided for the pure-transport front end (2026-11-08)** (still to implement):
+
+- **Async throughout.** No forward waits for its reply. The front end tags each player
+  message with its session and request id, sends it, and keeps serving. Replies come back
+  through a reply table keyed by (session, request id), and go out on that session when they
+  arrive. A session that has closed by then drops its reply. Nothing on either side of the
+  link blocks the loop on the other: not the front end's forwards, and not the P4's sends.
+- **Generalized pub/sub for pushes.** Pushes are PerfReport, fps lag, kiosk status and the
+  like. Instead of going to "the session that spoke last", they go to every session that
+  subscribed to that topic. A subscription lasts until its session closes. A session that only
+  listens gets its reports too. The P4 publishes once per topic, and the front end fans the
+  message out to the subscribed sessions, under #353's rule for a full window. BLE is one more
+  subscriber.
+- **Every client is one source.** The player treats all wss clients as a single client, for
+  the kiosk unlock as for everything else. This is the behaviour on the P4 today, and it's
+  now intended, not an open question.
 
 **The player core with concurrent clients.** It was written for one client. What happens
 with several:
@@ -786,10 +802,10 @@ with several:
 | Concern | Behaviour with N clients |
 | --- | --- |
 | Sharded uploads (map, topology, effect) | One upload at a time (`upload_active`, one temp file). The P4 (`link_transport.cpp`) gives the upload to the session that sent window 0, until its last window, until its session ends, or until it has been quiet for 3 s. Another session's window meanwhile gets `RESET`: that session is dropped, and its client retries later. The owner's upload is untouched. |
-| Pushes (PerfReport, fps lag, kiosk status) | To the session that spoke last (`g_session` on the P4, `g_push` on the front end). This is one subscriber, as before. A second app that only listens gets no reports until it sends something. |
+| Pushes (PerfReport, fps lag, kiosk status) | To the session that spoke last (`g_session` on the P4, `g_push` on the front end). This is one subscriber, as before. A second app that only listens gets no reports until it sends something. **To change:** generalized pub/sub (above). |
 | Live mailbox (`set_uniforms`, OSC) | Latest wins across clients. Two knob streams interleave. |
 | FX debugger lease | Lapses when the push target closes (`netstack_ws_open()`), the same as before. |
-| Kiosk unlock | Per connection on a player. On the P4 every link message counts as one "wss" source, so one client's unlock covers every wss client. **Open question.** |
+| Kiosk unlock | Per connection on a player. On the P4 every link message counts as one "wss" source, so one client's unlock covers every wss client. **Decided:** keep it so: all clients are one source. |
 
 **TLS region per build** (`tls_region.cpp`). With the dynamic buffers, an idle session's
 records are freed, and the loop serves one session at a time. So the record slots cover one
@@ -798,7 +814,8 @@ N = 1, as before). The small region grows by 4 KB per extra session. A miss stil
 to the heap (`fb=`) and never fails. On the bench, two sessions plus churn peaked at 2 of 3
 slots and 10,948 of 14,336 B of the small region, with no fallbacks.
 
-**The mbedTLS ABI bug this found.** `netstack_transport.cpp` compiles against the prebuilt
+**The mbedTLS ABI bug this found** (tracked in #468; `main` takes #460's version of the fix,
+and this branch drops its copy when it's next merged with `main`). `netstack_transport.cpp` compiles against the prebuilt
 SDK's mbedtls headers, which come first on the include path. The image links the from-source
 mbedtls (@embedded's `mbedtls_src`, IDF v5.5.4). The two disagree on `mbedtls_ssl_context`:
 the ELF's DWARF says 344 B in that file and 552 B in the library's nine compile units. So
