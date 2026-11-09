@@ -61,7 +61,31 @@ export interface HubOptions {
   /** Background search for players that stopped answering: delays between
    * rounds (ms; the last repeats). [] turns it off. */
   huntBackoffMs?: number[];
+  /** Release a player's Wi-Fi session after this long with nothing sent and no call in
+   * flight (ms; default {@link IDLE_RELEASE_MS}; 0 = never). The next call reconnects. */
+  idleReleaseMs?: number;
 }
+
+/**
+ * Idle release (#444). A netstack player serves ONE wss session and refuses other clients
+ * while it is in use, so a bridge that kept every session open forever locked the user's
+ * phone (and its cert-trust page) out of the fixture the agent last touched. After this
+ * long with nothing sent and no call, stream, debugger pause, show lock or attached live
+ * app, the hub lets the socket go; the session object (deploy history, decks, fixture)
+ * stays, and the next call reopens it transparently.
+ *
+ * Why 45 s: reopening costs one TLS handshake, ~0.8 s median / ~3 s p90 on a C6
+ * (agent-first-call-latency notes, PR #299), so the period must comfortably exceed the
+ * gaps between tool calls inside one agent turn (model think time, typically 5-30 s) or
+ * every multi-step task would pay it repeatedly; and it should stay well under the minutes
+ * a person waits before giving up on the phone. The player also hands a session that has
+ * been quiet for 15 s to a newcomer (netstack_transport.cpp kTakeoverIdleMs), so a phone
+ * needn't wait out the 45 s; this release just stops the bridge from holding a slot it
+ * isn't using.
+ */
+export const IDLE_RELEASE_MS = 45_000;
+/** How often the hub looks for idle sessions to release (ms). */
+const IDLE_SCAN_MS = 5_000;
 
 /** Background search rounds for a lost player: soon, then backing off to 5 min. */
 const HUNT_BACKOFF_MS = [2_000, 5_000, 10_000, 20_000, 40_000, 60_000, 120_000, 300_000];
@@ -91,6 +115,9 @@ export class Hub {
   private huntRound = 0;
   private hunting: Promise<void> | null = null;
   private closed = false;
+  private idleTimer: ReturnType<typeof setInterval> | null = null;
+  /** Sessions whose client events this hub already wrapped (watchSession is re-run on resume). */
+  private readonly watched = new WeakSet<DeviceSession>();
 
   constructor(private readonly opts: HubOptions) {
     this.config = opts.config ?? loadConfig();
@@ -163,8 +190,13 @@ export class Hub {
   }
 
   async refresh(opts: RefreshOptions = {}): Promise<PlayerRecord[]> {
+    // A session released on purpose (idle, or taken over by another client; #444) is known
+    // good at its host: don't probe it — a TCP probe of a player busy with another client
+    // is refused and would wrongly mark it unreachable.
     const live = new Set(
-      [...this.sessions].filter(([, s]) => this.alive(s)).map(([id]) => this.registry.get(id)?.host ?? ""),
+      [...this.sessions]
+        .filter(([, s]) => this.alive(s) || s.released !== null)
+        .map(([id]) => this.registry.get(id)?.host ?? ""),
     );
     const p = this.registry.refresh({ mdns: this.opts.mdns !== false, ...opts }, live);
     this.refreshed = p;
@@ -182,7 +214,8 @@ export class Hub {
     if (this.registry.list().some((p) => p.checked === "cached")) await this.refresh({ sweep: "auto" });
     // A session that died since is not "checked: session" any more.
     for (const p of this.registry.list()) {
-      if (p.checked === "session" && !this.isConnected(p.id) && !this.dialedFor(p)) {
+      // (A session released on purpose — idle, or taken over (#444) — is not a death.)
+      if (p.checked === "session" && !this.isConnected(p.id) && !this.dialedFor(p) && !this.sessions.get(p.id)?.released) {
         this.registry.markUnreachable(p.id, p.manifestError ?? "its session closed");
       }
     }
@@ -277,7 +310,12 @@ export class Hub {
     // The player was found at another host since this session opened (add_player,
     // the search): the old socket must prove itself before it is used.
     const movedOn = have !== undefined && this.sessionHost.has(have) && this.sessionHost.get(have) !== (this.registry.get(p.id) ?? p).host;
-    if (have && (await this.verify(have, movedOn))) return have;
+    if (have?.released) {
+      if (!movedOn) return this.resume(have, p);
+      // Released, and the player has since been found elsewhere: dial the new address.
+      for (const [k, v] of [...this.sessions]) if (v === have) this.sessions.delete(k);
+      this.forgetSession(have);
+    } else if (have && (await this.verify(have, movedOn))) return have;
     let c = this.connecting.get(p.id);
     if (!c) {
       // The record may have moved (a new host) since the caller looked it up.
@@ -346,18 +384,27 @@ export class Hub {
   private watchSession(s: DeviceSession, host: string, live: Liveness): void {
     this.liveness.set(s, live);
     this.sessionHost.set(s, host);
+    this.armIdleRelease();
+    // The handlers look the CURRENT heartbeat up: a released session that resumes gets a
+    // fresh Liveness, and its client's events must only ever be wrapped once.
+    if (this.watched.has(s)) return;
+    this.watched.add(s);
     const mac = (s.client.welcome?.mac ?? "").toUpperCase();
     const ev = s.client.events;
     const prevDown = ev.onDisconnected;
     const prevUp = ev.onConnected;
+    const prevTaken = ev.onTakenOver;
     let grace: ReturnType<typeof setTimeout> | null = null;
     ev.onDisconnected = () => {
       prevDown?.();
-      if (grace || live.dead) return;
+      const cur = this.liveness.get(s);
+      // A socket we let go on purpose (idle release / taken over) is not a drop.
+      if (grace || !cur || cur.dead || s.released) return;
       const ms = this.opts.reconnectGraceMs ?? 10_000;
       grace = setTimeout(() => {
         grace = null;
-        if (!s.client.isConnected) live.kill(`the connection closed and didn't come back within ${ms / 1000} s`);
+        const now = this.liveness.get(s);
+        if (now && !s.released && !s.client.isConnected) now.kill(`the connection closed and didn't come back within ${ms / 1000} s`);
       }, ms);
       grace.unref?.();
     };
@@ -365,10 +412,73 @@ export class Hub {
       prevUp?.(w);
       if (grace) clearTimeout(grace);
       grace = null;
-      live.rx();
+      const cur = this.liveness.get(s);
+      cur?.rx();
       // The reconnect reached whoever has that IP now: it must be the same player.
-      if (mac && w.mac && w.mac.toUpperCase() !== mac) live.kill(`another player (${w.mac}) now answers at ${host}`);
+      if (cur && mac && w.mac && w.mac.toUpperCase() !== mac) cur.kill(`another player (${w.mac}) now answers at ${this.sessionHost.get(s) ?? host}`);
     };
+    // The player handed this session to another client (the phone app, usually; #444).
+    // Don't fight back: no reconnect now, the next tool call reopens it.
+    ev.onTakenOver = (reason) => {
+      prevTaken?.(reason);
+      if (grace) clearTimeout(grace);
+      grace = null;
+      this.releaseSession(s, "taken_over");
+      const name = s.client.welcome?.deviceName || mac || host;
+      progress(`${name}: ${reason}; reconnecting on the next call`);
+      this.log(`${name}: session ${reason}; released until the next call`);
+    };
+  }
+
+  // -- idle release (#444) ------------------------------------------------------------
+
+  private armIdleRelease(): void {
+    const ms = this.opts.idleReleaseMs ?? IDLE_RELEASE_MS;
+    if (this.idleTimer || this.closed || ms <= 0) return;
+    this.idleTimer = setInterval(() => this.releaseIdle(ms), Math.min(IDLE_SCAN_MS, ms));
+    this.idleTimer.unref?.();
+  }
+
+  /** Release every hub-opened session idle at least `ms` with nothing keeping it. */
+  releaseIdle(ms = this.opts.idleReleaseMs ?? IDLE_RELEASE_MS): DeviceSession[] {
+    const out: DeviceSession[] = [];
+    for (const s of new Set(this.sessions.values())) {
+      if (s.released || !this.sessionHost.has(s) || !this.alive(s)) continue;
+      if (s.idleMs < ms || s.keepReason() !== null) continue;
+      this.releaseSession(s, "idle");
+      const name = s.client.welcome?.deviceName || this.sessionHost.get(s);
+      this.log(`${name}: idle ${Math.round(s.idleMs / 1000)} s — Wi-Fi session released (reopens on the next call)`);
+      out.push(s);
+    }
+    return out;
+  }
+
+  /** Stop watching a session and let its socket go, keeping it for the next call. */
+  private releaseSession(s: DeviceSession, why: "idle" | "taken_over"): void {
+    this.liveness.get(s)?.stop();
+    this.liveness.delete(s);
+    s.release(why);
+  }
+
+  /** Reopen a released session for a call. A player now busy with another client is
+   * reported as such (and stays released: nothing retries in the background). */
+  private async resume(s: DeviceSession, p: PlayerRecord): Promise<DeviceSession> {
+    const host = this.sessionHost.get(s) ?? p.host;
+    const was = s.released;
+    try {
+      await s.resume();
+    } catch (e) {
+      s.client.close(); // no background retries: they would fight the client using it
+      s.release(was ?? "idle");
+      throw new ToolError(
+        `can't reopen ${p.name}'s Wi-Fi session at ${host}: ${(e as Error).message}. It serves one ` +
+          `Wi-Fi client at a time and hands over an idle one, so another client (the phone app?) is ` +
+          `actively using it; try again when it is idle, or ask the user to close it.`,
+      );
+    }
+    const live = new Liveness((t) => s.client.ping(t), (why) => this.lost(s, why), this.opts.liveness);
+    this.watchSession(s, host, live);
+    return s;
   }
 
   // -- the background search for lost players -------------------------------------------
@@ -422,7 +532,7 @@ export class Hub {
   /** Session state for list_players: live (heard from recently), reconnecting, or none. */
   sessionState(id: string): { state: "live" | "reconnecting" | "none"; heard_s_ago?: number } {
     const s = this.sessions.get(id);
-    if (!s) return { state: "none" };
+    if (!s || s.released) return { state: "none" };
     const live = this.liveness.get(s);
     if (live?.dead) return { state: "none" };
     if (!s.client.isConnected) return { state: "reconnecting" };
@@ -658,6 +768,8 @@ export class Hub {
     this.closed = true;
     if (this.huntTimer) clearTimeout(this.huntTimer);
     this.huntTimer = null;
+    if (this.idleTimer) clearInterval(this.idleTimer);
+    this.idleTimer = null;
     for (const s of new Set([...this.sessions.values(), ...this.dialed.values()])) this.forgetSession(s);
     this.sessions.clear();
     this.dialed.clear();
@@ -673,8 +785,13 @@ export class Hub {
           s = await this.session(p);
           const cur = this.registry.get(p.id) ?? [...this.registry.list()].find((r) => this.sessions.get(r.id) === s) ?? p;
           const live = this.liveness.get(s);
-          const result = live ? await live.watch(fn(s, cur)) : await fn(s, cur);
-          return { player: { id: cur.id, name: cur.name }, ok: true, result };
+          const off = s.hold("a tool call"); // never released mid-call (#444)
+          try {
+            const result = live ? await live.watch(fn(s, cur)) : await fn(s, cur);
+            return { player: { id: cur.id, name: cur.name }, ok: true, result };
+          } finally {
+            off();
+          }
         } catch (e) {
           const cur = this.registry.get(p.id) ?? p;
           const error =

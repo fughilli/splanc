@@ -155,6 +155,17 @@ class AppState {
           this.setStatus({ error: refusedMessage(name()) });
         }
       },
+      // The player handed this (idle) session to another client (#444): it does not
+      // reconnect by itself — that would take it straight back. Say who likely has it
+      // and leave the device one tap from reconnecting.
+      onTakenOver: () => {
+        if (this.client !== client) return;
+        this.clearReconnectWatch();
+        connectionRegistry.unregister(client);
+        this.client = null;
+        deviceStore.setActive(null);
+        this.setStatus({ state: "offline", text: "offline", certUrl: null, error: takenOverMessage(name()) });
+      },
       onConnected: () => {
         this.setStatus({ state: "connecting", text: "syncing clock…", certUrl: null });
         // A Calibrate IMU solve that never reached this device (it dropped
@@ -457,14 +468,22 @@ export function notAnsweringMessage(name: string, host: string): string {
   );
 }
 
+/** Status detail after another client took the session over (#444). */
+export function takenOverMessage(name: string): string {
+  return (
+    `Another client (the Splanc agent, another phone or browser tab) took over ${name}'s ` +
+    "Wi-Fi connection while this app was idle. Tap Connect to take it back."
+  );
+}
+
 /** Status detail when a device this browser has reached before refuses or drops
  * the connection: the netstack player serves ONE Wi-Fi session and refuses a
  * second client while it is live (#444). */
 export function refusedMessage(name: string): string {
   return (
-    `${name} refused the connection. It serves one Wi-Fi connection at a time: if the ` +
-    "Splanc agent, another phone or another browser tab is connected to it, close that. " +
-    "Retrying…"
+    `${name} refused the connection. It serves one Wi-Fi connection at a time and hands an ` +
+    "idle one over, so another client (the Splanc agent, another phone or browser tab) is " +
+    "actively using it — stop or close that. Retrying…"
   );
 }
 

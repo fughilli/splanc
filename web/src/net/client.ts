@@ -225,7 +225,16 @@ export interface ClientEvents {
    * rejects an untrusted cert quickly; "failed" = the socket was closed or refused
    * (an untrusted/changed cert, or the device refusing a second client). */
   onAttemptFailed?: (kind: ConnectFailureKind, attempt: number) => void;
+  /** The device closed this session because another client took it over (WS close
+   * {@link WS_CLOSE_TAKEN_OVER}; the player hands an IDLE session to a newcomer, #444).
+   * The client does NOT reconnect by itself — that would take the session straight back
+   * and the two would fight. A fresh {@link LedMapperClient.connect} resumes. */
+  onTakenOver?: (reason: string) => void;
 }
+
+/** WS close code a player sends when a new client took over its idle session (#444;
+ * netstack_transport.cpp kWsCloseTakenOver). */
+export const WS_CLOSE_TAKEN_OVER = 4001;
 
 /** Why a connect attempt failed before `welcome` (see ClientEvents.onAttemptFailed). */
 export type ConnectFailureKind = "timeout" | "failed";
@@ -313,6 +322,8 @@ export class LedMapperClient {
   private failsSinceWelcome = 0;
   // Set when onclose stopped auto-retrying (cert-trust give-up); cleared by connect().
   private gaveUp = false;
+  // The device handed this session to another client (WS close 4001); cleared by connect().
+  private takenOver_ = false;
   // Once-trusted (warm, or trustedBefore): after a give-up, keep retrying slowly.
   private readonly trustedBefore: boolean;
   // onCertTrustNeeded already fired for this run of failures (reset on welcome), so
@@ -424,6 +435,11 @@ export class LedMapperClient {
     return this.everWelcomed;
   }
 
+  /** Whether the device handed this session to another client (and it isn't retrying). */
+  get takenOver(): boolean {
+    return this.takenOver_;
+  }
+
   /** Whether it stopped (or slowed) auto-retrying at the cert-trust limit. */
   get hasGivenUp(): boolean {
     return this.gaveUp;
@@ -442,6 +458,7 @@ export class LedMapperClient {
   connect(): Promise<WelcomeMessage> {
     this.closed = false;
     this.gaveUp = false;
+    this.takenOver_ = false;
     this.reconnectScheduled = false;
     this.reconnectGen++; // cancels a backoff reconnect still pending
     this.events.onConnecting?.(++this.attempt, this.url);
@@ -507,8 +524,27 @@ export class LedMapperClient {
       sock.onerror = () => {
         // onclose always follows; reconnect handled there.
       };
-      sock.onclose = () => {
+      sock.onclose = (ev?: unknown) => {
         const hadWelcome = this.welcome_ !== null;
+        const code = (ev as { code?: unknown } | undefined)?.code;
+        if (code === WS_CLOSE_TAKEN_OVER && this.sock === sock && !this.closed) {
+          // Another client took this (idle) session over: stop here, no reconnect.
+          const reason = String((ev as { reason?: unknown }).reason ?? "") || "taken over by another client";
+          this.closed = true;
+          this.takenOver_ = true;
+          this.reconnectGen++; // cancel any pending backoff
+          this.reconnectScheduled = false;
+          this.welcome_ = null;
+          this.live.onDisconnect();
+          this.failWaiters(new Error(`the player was ${reason}`));
+          if (hadWelcome) this.events.onDisconnected?.();
+          this.events.onTakenOver?.(reason);
+          if (!settled) {
+            settled = true;
+            reject(new ConnectFailedError("failed"));
+          }
+          return;
+        }
         this.welcome_ = null;
         this.live.onDisconnect();
         this.failWaiters(new Error("socket closed"));

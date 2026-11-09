@@ -648,6 +648,8 @@ int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
 
 // The loader answers no live-control frames: every reply is a must-deliver.
 bool lm_ws_reply_droppable() { return false; }
+// The updater's session is never taken over (#444): an OTA must not be cut by a newcomer.
+bool lm_ws_session_busy() { return true; }
 // ...and runs no effect, so native OSC datagrams are ignored.
 void lm_netstack_osc_rx(const uint8_t *, size_t) {}
 

@@ -30,6 +30,7 @@
 #include "improv_ble.h"      // BLE Improv onboarding (advertise + creds)
 #include "improv_codec.h"    // IMPROV_STATE_* constants
 #include "netstack_transport.h"  // our public API + the shared lm_ws_dispatch seam
+#include "session_takeover.h"    // #444: when a newcomer may take over the idle session
 #include "tls_region.h"         // mbedtls's own memory region
 #include "device_cert.h"        // this device's own TLS key + cert (first-boot generated)
 #include "dhcp_reply.h"
@@ -97,6 +98,8 @@ uint32_t ns_tcp_state();
 uint32_t ns_tcp_snd_una(); // oldest unacked seq — advances on peer ACK (TX forward progress)
 uint32_t ns_tcp_rcv_nxt(); // next expected seq — advances on peer data (RX forward progress)
 void ns_tcp_set_serving_live(uint32_t live); // arm graceful RST load-shedding (live WS session)
+void ns_tcp_set_takeover_ok(uint32_t ok);    // the live session is idle: a newcomer may take it
+uint32_t ns_tcp_take_takeover_request();     // 1 = a newcomer asked for the slot (read+clear)
 // Vendor lower-MAC RX filter surface (libpp) — set a real STA accept policy so the
 // hardware crypto engine does per-address CCMP decrypt instead of promiscuous accept-all.
 void ic_set_rx_policy(uint32_t vif, uint32_t a1, uint32_t a2, uint32_t a3);
@@ -1373,6 +1376,9 @@ bool g_ws_closing = false;
 // which the 4s gate must still reclaim). The post-WS 6s peer-gone gate covers a responding
 // connection instead. Cleared on every re-listen / reclaim (alongside g_ws_up).
 bool g_responding = false;
+// Session takeover (#444): an IDLE session is handed to a newcomer instead of refusing it
+// (policy, thresholds and rationale: session_takeover.h). One Policy per wss session.
+lm_takeover::Policy g_takeover;
 // Edge tracker for "a wss client just appeared on :443". When it does, we gracefully
 // disconnect the VESTIGIAL post-provision BLE link (see netstack_loop): after the central
 // drops the provisioning link, the controller otherwise only fires EV_DISCONN on the ~6s
@@ -1560,6 +1566,7 @@ static bool ws_pump() {
       if (!tls_write_all((const uint8_t *)resp, n)) return false;
       g_ws_up = true;
       g_ws_closing = false;
+      g_takeover.on_session_start(millis());
       g_ws_rxlen = 0;  // the request body ends at the blank line; nothing after it yet
       Serial.println("*** WS UPGRADED — LED Mapper protocol over heapless TLS ***");
       continue;  // keep draining: streamed frames may already be buffered behind the upgrade
@@ -1576,6 +1583,7 @@ static bool ws_pump() {
       uint8_t *payload = g_ws_rx + h.header_len;
       if (h.masked) ws_unmask(payload, h.payload_len, h.mask, 0);
       if (h.opcode == WS_OP_BINARY || h.opcode == WS_OP_CONT) {
+        g_takeover.on_client_message(millis());  // client activity (takeover idle clock)
         // Hand the message to the SHARED app dispatch (main.cpp): upload-chunk streaming +
         // lm_player_handle + persistence + device-side polling, identical to the vendor ws/wss
         // paths. Returns the reply length; reply bytes are in *reply (the app's tx buffer).
@@ -2098,6 +2106,39 @@ void netstack_wifi_status(NetstackWifiStatus *o) {
   o->unseen_s = joined ? 0 : unseen_s();
   if (g_creds_ready) memcpy(o->ssid, g_ssid, sizeof o->ssid);
   o->ssid[32] = 0;
+}
+
+// Session takeover glue (#444; policy in session_takeover.h): arm the tcp layer's verdict
+// each scan and, when a newcomer asked for an idle session, close it with WS 4001.
+static void takeover_scan(bool live) {
+  uint32_t now = millis();
+  bool idle = g_takeover.idle(live, now, [] { return lm_ws_session_busy(); });
+  ns_tcp_set_takeover_ok(idle ? 1u : 0u);
+  if (!ns_tcp_take_takeover_request() || !idle) return;
+  Serial.printf("*** SERVER session idle %lus — taken over by a new client ***\n",
+                (unsigned long)((now - g_takeover.last_msg_ms) / 1000));
+  ns_tcp_set_serving_live(0u);
+  ns_tcp_set_takeover_ok(0u);
+  uint8_t cf[kWsSendHeadroom + 2 + sizeof lm_takeover::kCloseReason];
+  size_t n = lm_takeover::close_payload(cf + kWsSendHeadroom, sizeof cf - kWsSendHeadroom);
+  ws_send(WS_OP_CLOSE, cf + kWsSendHeadroom, n, kWsSendHeadroom);  // best-effort
+  mbedtls_ssl_close_notify(&g_ssl);
+  g_takeover.begin_close(now);
+}
+
+// Once the takeover close is ACKed (or lingered), re-listen for the newcomer's SYN
+// retransmit; the old peer's later segments meet the listener and are RST. True if it did.
+static bool takeover_finish(bool slot_open) {
+  if (!g_takeover.should_relisten(millis(), ns_tcp_tx_room() >= 2048, slot_open)) return false;
+  static uint32_t tiss = 0x8000;
+  ns_tcp_listen(g_offer_ip, SERVER_PORT, tiss);
+  tiss += 0x1000;
+  if (TLS_SERVER) { tls_session_reset(); g_tls_hs = false; g_ws_up = false; g_responding = false; g_ws_rxlen = 0; }
+  g_ws_closing = false;
+  g_bio_tx = g_bio_rx = 0;
+  g_takeover.relistened();
+  Serial.println("*** SERVER re-listening for the new client ***");
+  return true;
 }
 
 void netstack_loop() {
@@ -2967,9 +3008,14 @@ void netstack_loop() {
       // re-arming here on every scan of that wait RST-refused the closing client's own
       // reconnect whenever its FIN was late or lost (heavy_effect_reachability under
       // contention: "a silent live session was dropped" — reset at connect).
-      bool live = (s == 2) && !g_ws_closing &&
+      bool live = (s == 2) && !g_ws_closing && !g_takeover.closing() &&
                   (TLS_SERVER ? (PLAYER_MODE ? g_ws_up : g_tls_hs) : true);
       ns_tcp_set_serving_live(live ? 1u : 0u);
+      takeover_scan(live && PLAYER_MODE && TLS_SERVER);
+    }
+    if (takeover_finish(s == 2)) {
+      last_state = 99;
+      s = ns_tcp_state();
     }
     // Reclaim a wedged half-open connection. A concurrent-handshake burst (the tls_churn
     // stress) can leave the single connection slot stuck mid-accept: the DOMINANT wedge is
@@ -3136,6 +3182,8 @@ void netstack_loop() {
           tls_session_reset();
           g_bio_tx = g_bio_rx = 0;
         }
+      } else if (PLAYER_MODE && g_takeover.closing()) {
+        // Taking over: the old session is closing; don't read or dispatch it any more.
       } else if (PLAYER_MODE) {
         if (!ws_pump()) {
           // Peer torn/ungraceful, OR a one-shot GET / (the cert-trust page) that ws_pump

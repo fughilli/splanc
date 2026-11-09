@@ -85,6 +85,12 @@ int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply);
 // when its send window can't take it, instead of blocking RX behind a full window.
 bool lm_ws_reply_droppable(void);
 
+// Whether the app's open session must not be taken over by a new client right now (#444):
+// an upload, mapping, an FX-debugger pause or a video stream in progress. Asked only after
+// the client has been quiet for kTakeoverIdleMs. Takes the player mutex (bounded wait; a
+// busy mutex answers true). The OTA loader answers true (never take over an update).
+bool lm_ws_session_busy(void);
+
 // A UDP datagram for the native OSC port (udp/9000): stash it for the next frame
 // (latest value per address). Called on the network task; must not block.
 void lm_netstack_osc_rx(const uint8_t *data, size_t len);

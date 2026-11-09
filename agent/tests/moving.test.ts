@@ -445,3 +445,83 @@ describe("neighbour hints", () => {
     );
   });
 });
+
+// #444: a netstack player serves ONE Wi-Fi session, so the bridge must not hold it while
+// idle, and must not fight a client the player handed an idle session to.
+describe("the bridge's Wi-Fi session is released when idle and yields to a takeover (#444)", () => {
+  const cleanup: FakePlayer[] = [];
+  after(async () => {
+    for (const p of cleanup) await p.stop().catch(() => undefined);
+  });
+
+  test("an idle session is released, and the next call reopens it transparently with its history", async () => {
+    const lamp = await fake("PixieLamp", LAMP);
+    cleanup.push(lamp);
+    const hub = hubOn([lamp.host], emptyConfig(), { idleReleaseMs: 400, liveness: { idleMs: 5000, busyMs: 5000, pingTimeoutMs: 1000, misses: 2 } });
+    const c = await mcp(hub);
+    try {
+      assert.equal((await call(c, "deploy_effect", { effect_id: "mood", source: EFFECT, players: "PixieLamp" })).isError, false);
+      assert.equal((await call(c, "deploy_effect", { effect_id: "rain", source: EFFECT, players: "PixieLamp" })).isError, false);
+      assert.equal(lamp.openSessions, 1);
+
+      await until(() => lamp.openSessions === 0, "the idle session released");
+      const listed = (await call(c, "list_players")).json.players.find((x: any) => x.id === LAMP);
+      assert.equal(listed.session.state, "none", "listed as not holding a session");
+      assert.notEqual(listed.checked, "unreachable", "a release is not a loss");
+      const ws = lamp.connections.filter((k) => k === "ws").length;
+
+      // The next call reconnects by itself, and the session kept its deploy history.
+      const r = await call(c, "rollback_effect", { players: "PixieLamp" });
+      assert.equal(r.isError, false, r.text);
+      assert.equal(lamp.effect?.id, "mood", "rolled back to the effect before the release");
+      assert.equal(lamp.connections.filter((k) => k === "ws").length, ws + 1, "one new handshake");
+    } finally {
+      hub.close();
+    }
+  });
+
+  test("a session with something holding it (an attached live app, a stream) is not released", async () => {
+    const lamp = await fake("PixieLamp", LAMP);
+    cleanup.push(lamp);
+    const hub = hubOn([lamp.host], emptyConfig(), { idleReleaseMs: 300, liveness: { idleMs: 5000, busyMs: 5000, pingTimeoutMs: 1000, misses: 2 } });
+    const c = await mcp(hub);
+    try {
+      assert.equal((await call(c, "set_brightness", { level: 0.5, players: "PixieLamp" })).isError, false);
+      const s = hub.openSession(LAMP)!;
+      const off = s.hold("an attached live app");
+      await new Promise((r) => setTimeout(r, 1200));
+      assert.equal(lamp.openSessions, 1, "held: kept open");
+      assert.equal(s.keepReason(), "an attached live app");
+      off();
+      await until(() => lamp.openSessions === 0, "released once the hold ends");
+    } finally {
+      hub.close();
+    }
+  });
+
+  test("taken over by another client: the bridge backs off (no reconnect) until the next call", async () => {
+    const lamp = await fake("PixieLamp", LAMP);
+    cleanup.push(lamp);
+    const hub = hubOn([lamp.host], emptyConfig(), { idleReleaseMs: 0 });
+    const c = await mcp(hub);
+    try {
+      assert.equal((await call(c, "set_brightness", { level: 0.5, players: "PixieLamp" })).isError, false);
+      const s = hub.openSession(LAMP)!;
+      const ws = lamp.connections.filter((k) => k === "ws").length;
+
+      lamp.takeOver(); // the phone app took the idle session
+      await until(() => s.released === "taken_over", "the session marked taken over");
+      await new Promise((r) => setTimeout(r, 1500)); // past the reconnect grace + backoff
+      assert.equal(lamp.connections.filter((k) => k === "ws").length, ws, "no fight: nothing reconnected");
+      const listed = (await call(c, "list_players")).json.players.find((x: any) => x.id === LAMP);
+      assert.notEqual(listed.checked, "unreachable", "a takeover is not a loss");
+
+      // The next tool call takes it back (the player hands over idle sessions both ways).
+      assert.equal((await call(c, "set_brightness", { level: 0.2, players: "PixieLamp" })).isError, false);
+      assert.equal(lamp.brightness, 0.2);
+      assert.equal(lamp.connections.filter((k) => k === "ws").length, ws + 1);
+    } finally {
+      hub.close();
+    }
+  });
+});

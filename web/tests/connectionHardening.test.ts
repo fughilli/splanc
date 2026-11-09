@@ -537,3 +537,25 @@ test("falling back to Bluetooth keeps the device's Wi-Fi address, and switching 
     bt.restore();
   }
 });
+
+test("when another client takes the device's idle session over, the app says so and does not fight back (#444)", async () => {
+  lan.add("10.0.0.67", { mac: mac(0x67), deviceName: "Big Lamp" });
+  appState.connect("wss://10.0.0.67/ws");
+  await settle();
+  assert.equal(appState.status.state, "connected");
+  const n = lan.socketsTo("10.0.0.67").length;
+
+  lan.takeOver("10.0.0.67"); // e.g. the agent's next tool call took the idle session
+  await settle();
+  assert.equal(appState.client, null);
+  assert.equal(appState.status.state, "offline");
+  assert.match(appState.status.error ?? "", /took over Big Lamp's Wi-Fi connection/);
+  await advance(60_000);
+  assert.equal(lan.socketsTo("10.0.0.67").length, n, "no reconnect that would take it straight back");
+
+  // One tap takes it back.
+  appState.connect("wss://10.0.0.67/ws");
+  await settle();
+  assert.equal(appState.status.state, "connected");
+  assert.equal(appState.status.error, null);
+});

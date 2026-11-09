@@ -273,6 +273,18 @@ export class DeviceSession {
   effectGen = 0;
   /** >0 while {@link groupCaptureScope} runs (permits GROUP_CAPTURE_TYPES). */
   private groupScope = 0;
+  /** Idle release (#444): when this session last sent anything or finished a call
+   * (performance.now), calls in flight, and named holds (e.g. the live mux while an app
+   * is attached) that keep the Wi-Fi session open. The netstack player serves ONE wss
+   * session, so a bridge that keeps it while idle locks the phone out. */
+  private lastActivity = performance.now();
+  private inflight = 0;
+  private readonly holds = new Map<symbol, string>();
+  /** Until when (performance.now) the FX debugger holds a pause (0 = not paused). */
+  private fxPausedUntil = 0;
+  /** The socket was let go on purpose (idle release, or another client took it over);
+   * {@link resume} reopens it. */
+  released: "idle" | "taken_over" | null = null;
 
   constructor(private readonly opts: SessionOptions) {
     this.extraFeatures = opts.features ?? [];
@@ -285,6 +297,9 @@ export class DeviceSession {
         // Guard at the wire: decode just the envelope arm and refuse forbidden
         // ones (belt and braces under the tool layer, which never builds them).
         const t = sniffType(data);
+        // Activity for the idle release, except the heartbeat's own pings (they'd keep an
+        // unused session open forever; a tool's clock sync runs under its call's hold).
+        if (t !== "time_sync_ping") this.lastActivity = performance.now();
         if (t !== null) {
           if (FORBIDDEN_TYPES.has(t) && !(this.groupScope > 0 && GROUP_CAPTURE_TYPES.has(t))) {
             this.blockedTypes.push(t);
@@ -434,11 +449,75 @@ export class DeviceSession {
 
   /** Run `fn` after every earlier request on this session has settled. */
   run<T>(fn: () => Promise<T>): Promise<T> {
+    this.inflight++;
+    this.lastActivity = performance.now();
     const next = this.queue.then(fn, fn);
     this.queue = next.catch(() => undefined);
-    return next.then(undefined, (e) => {
-      throw this.mapError(e);
-    });
+    const done = (): void => {
+      this.inflight--;
+      this.lastActivity = performance.now();
+    };
+    return next.then(
+      (v) => {
+        done();
+        return v;
+      },
+      (e) => {
+        done();
+        throw this.mapError(e);
+      },
+    );
+  }
+
+  // -- idle release (#444) -----------------------------------------------------------
+
+  /** Keep the Wi-Fi session open until the returned function is called (the live mux
+   * holds it while an app is attached). */
+  hold(why: string): () => void {
+    const k = Symbol(why);
+    this.holds.set(k, why);
+    return () => {
+      this.holds.delete(k);
+      this.lastActivity = performance.now();
+    };
+  }
+
+  /** Record the FX debugger's engine state (pause / step / resume replies): a held pause
+   * keeps the session (releasing it would lapse the pause on the player). */
+  noteFx<T extends { paused: boolean; holdRemainingMs: number }>(st: T): T {
+    this.fxPausedUntil = st.paused ? performance.now() + Math.max(0, st.holdRemainingMs) : 0;
+    return st;
+  }
+
+  /** Milliseconds since this session last sent anything or finished a call. */
+  get idleMs(): number {
+    return performance.now() - this.lastActivity;
+  }
+
+  /** Why the session must stay open now (null: it may be released when idle). */
+  keepReason(): string | null {
+    if (this.inflight > 0) return "a call in flight";
+    if (this.streams.size > 0) return "a texture stream";
+    if (this.liveLock) return "a live show lock";
+    if (performance.now() < this.fxPausedUntil) return "an FX debugger pause";
+    for (const why of this.holds.values()) return why;
+    return null;
+  }
+
+  /** Let the socket go (idle release, or the player handed it to another client). The
+   * session object keeps its state (deploy history, decks, fixture), so the next call
+   * picks up where it left off after {@link resume}. */
+  release(why: "idle" | "taken_over"): void {
+    this.released = why;
+    if (why === "idle") this.client.close();
+  }
+
+  /** Reopen a released socket (one TLS handshake, ~1 s on a C6). */
+  async resume(): Promise<void> {
+    if (!this.released) return;
+    this.released = null;
+    this.lastActivity = performance.now();
+    await this.client.connect();
   }
 
   async connect() {

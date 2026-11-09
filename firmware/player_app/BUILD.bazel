@@ -494,6 +494,17 @@ cc_test(
     deps = [":heap_census_core"],
 )
 
+# Session takeover policy (#444): when a new client may take over the netstack player's
+# one wss session (an idle one), host-tested. Header-only; netstack_transport includes it.
+cc_test(
+    name = "session_takeover_test",
+    srcs = [
+        "session_takeover.h",
+        "session_takeover_test.cc",
+    ],
+    copts = ["-UNDEBUG"],
+)
+
 # Per-device TLS identity (docs/design/per-device-cert.md): the blob format + the
 # readiness state machine that gates the :443 listener, host-testable...
 cc_library(
@@ -808,6 +819,7 @@ cc_library(
         "join_guard.h",
         "netstack_transport.cpp",
         "serial_log.h",
+        "session_takeover.h",
         "sta_mac.h",
         "tls_region.cpp",
         "wifi_creds.h",

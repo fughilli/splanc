@@ -13,6 +13,7 @@ import {
   GAVE_UP_RETRY_MS,
   LedMapperClient,
   RequestTimeoutError,
+  WS_CLOSE_TAKEN_OVER,
   type SocketLike,
 } from "../src/net/client";
 import { decodeClient, encodeClient, encodeServer } from "../src/net/proto";
@@ -301,6 +302,29 @@ test("a client for a host trusted before keeps retrying slowly after surfacing t
     assert.equal(scheduled[scheduled.length - 1]!.ms, GAVE_UP_RETRY_MS, "a slow retry is pending");
     assert.ok(client.hasGivenUp);
   });
+});
+
+test("a session the device hands to another client (close 4001) is not reconnected (#444)", async () => {
+  const { client, sockets, scheduled } = makeClient();
+  const taken: string[] = [];
+  client.events = { onTakenOver: (r) => taken.push(r) };
+  const p = client.connect();
+  sockets[0]!.open();
+  sockets[0]!.receive({ type: "welcome", sessionId: "s", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await p;
+  const before = scheduled.length;
+  sockets[0]!.readyState = 3;
+  sockets[0]!.onclose?.({ code: WS_CLOSE_TAKEN_OVER, reason: "taken over by another client" });
+  assert.deepEqual(taken, ["taken over by another client"]);
+  assert.ok(client.takenOver);
+  assert.equal(scheduled.length, before, "no backoff reconnect");
+  // A fresh connect() takes it back.
+  const p2 = client.connect();
+  sockets[1]!.open();
+  sockets[1]!.receive({ type: "welcome", sessionId: "s2", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await p2;
+  assert.ok(client.isConnected);
+  assert.equal(client.takenOver, false);
 });
 
 test("a warm wss whose reconnects keep failing surfaces cert-trust (rotated cert)", async () => {
