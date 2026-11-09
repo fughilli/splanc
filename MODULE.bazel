@@ -29,6 +29,15 @@ git_override(
     remote = "https://github.com/Studio-Fug/rules_requirements.git",
 )
 
+# Zero-copy protobuf views (Rust no_std + C++), extracted from this repo's former oss/pbview.
+# https://github.com/fughilli/pbview — for co-development: bazel --override_module=pbview=/path
+bazel_dep(name = "pbview", version = "0.1.0")
+git_override(
+    module_name = "pbview",
+    commit = "5f4c8cd9d0f99702cc55d7aa612d3bf3229dc3a8",
+    remote = "https://github.com/fughilli/pbview.git",
+)
+
 bazel_dep(name = "aspect_rules_js", version = "3.2.2")
 bazel_dep(name = "aspect_rules_ts", version = "3.8.11")
 bazel_dep(name = "aspect_bazel_lib", version = "2.22.5")

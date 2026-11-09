@@ -11,8 +11,8 @@ here and RE-ENCODE TO THE IDENTICAL BYTES, pinning micropb's presence and
 packing behavior to canonical protobuf.
 """
 
+load("@pbview//:defs.bzl", "pbview_library")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
-load("//oss/pbview:defs.bzl", "pbview_library")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -98,7 +98,7 @@ rust_test(
     ],
 )
 
-# Zero-copy views of the same proto (//oss/pbview): read a frame in place from
+# Zero-copy views of the same proto (@pbview): read a frame in place from
 # the RX buffer, no by-value envelope and no capacity profile.
 pbview_library(
     name = "ledmapper_view",

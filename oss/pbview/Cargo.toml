@@ -1,3 +1,0 @@
-[workspace]
-members = ["pbview", "pbview-gen"]
-resolver = "2"
