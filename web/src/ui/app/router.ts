@@ -49,6 +49,10 @@ export class Router {
   // way (deep link, reload, browser Back/Forward into an old entry).
   private pendingPush: { hash: string; from: string } | null = null;
   private enteredFrom: string | null = null;
+  // Set while leave()'s history.back() is in flight (browsers traverse on a
+  // later task), with a navigate() that arrived meanwhile. It runs once the
+  // traversal lands: run now, the stamped entry would redirect it away.
+  private popping: { to: string; then: string | null } | null = null;
 
   constructor(private readonly outlet: HTMLElement) {}
 
@@ -69,6 +73,10 @@ export class Router {
 
   /** Navigate to a hash path, e.g. `navigate("/map/abc")`. */
   navigate(path: string): void {
+    if (this.popping) {
+      this.popping.then = path;
+      return;
+    }
     const next = `#${path.startsWith("/") ? path : `/${path}`}`;
     if (location.hash === next) void this.resolve();
     else {
@@ -108,7 +116,10 @@ export class Router {
     }
     if (this.enteredFrom !== null && this.enteredFrom === norm && h !== undefined) {
       this.enteredFrom = null;
+      this.popping = { to: next, then: null };
       h.back();
+      // Should the traversal never report (no hashchange), don't hold navigation.
+      setTimeout(() => this.landed(next), 1000);
       return;
     }
     this.replace(norm);
@@ -130,7 +141,25 @@ export class Router {
     return raw.split("?")[0] || "/";
   }
 
+  /** leave()'s pop has landed on `hash` (or timed out): run a deferred navigate. */
+  private landed(hash: string): void {
+    const p = this.popping;
+    if (!p || p.to !== hash) return;
+    this.popping = null;
+    if (p.then !== null) this.navigate(p.then);
+  }
+
   private async resolve(): Promise<void> {
+    if (this.popping && location.hash === this.popping.to) {
+      const to = this.popping.to;
+      await this.resolveNow();
+      this.landed(to);
+      return;
+    }
+    await this.resolveNow();
+  }
+
+  private async resolveNow(): Promise<void> {
     // Ignore the hashchange we caused by restoring the route after a vetoed leave.
     if (this.restoringHash) {
       this.restoringHash = false;
