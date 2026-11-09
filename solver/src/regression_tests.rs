@@ -295,3 +295,187 @@ fn a_recorded_bundle_replays_identically() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// #455: the optional strip-prior pass turned a retained, non-degenerate final
+// into a scale collapse, with no rollback. The real captures (sanitized Case
+// A/B bundles) are not in the repo yet; these synthetic captures reproduce
+// the same failure deterministically.
+// ---------------------------------------------------------------------------
+
+/// A gentle, strided diffuse capture with 2 % decode swaps: its scale is
+/// barely observable (relative SE ~0.3, camera path ~16 cm from the fixture,
+/// just above the 15 cm collapse threshold — the shape of Case A). On it the
+/// strip pass collapses the scale to ~7 cm (Case A: 0.15 → 0.068 m), and an
+/// outlier round collapses it too, at a slightly *lower* residual.
+fn gentle_strided() -> crate::scenario::Scenario {
+    generate(&spec(
+        json!({"sweep": 0.3, "bob": 0.01, "duration": 20, "frameHz": 6,
+               "seed": 4, "swapP": 0.02, "stride": 3, "deadS": 1}),
+    ))
+}
+
+fn measured_xyz(map: &OutputMap) -> Vec<(u32, [f64; 3])> {
+    map.leds
+        .iter()
+        .filter(|l| l.n_views > 0)
+        .map(|l| (l.id, l.xyz))
+        .collect()
+}
+
+#[test]
+fn the_strip_prior_never_turns_a_usable_final_into_a_scale_collapse() {
+    let sc = gentle_strided();
+    let (plain, plain_diag) = solve(&with_options(&sc.problem, json!({})));
+    assert!(
+        !plain_diag.assessment.degenerate,
+        "without the prior: {}",
+        describe(&plain_diag.assessment)
+    );
+
+    let (map, diag) = solve(&with_options(&sc.problem, json!({"stripPrior": true})));
+    let sc_dec = diag
+        .strip_candidates
+        .as_ref()
+        .expect("strip candidates traced");
+    // The failure itself, as the trace records it: the strip candidate,
+    // assessed on its assembled measured LEDs, collapsed; the retained one
+    // did not.
+    assert!(
+        sc_dec
+            .strip
+            .assessment
+            .reasons
+            .contains(&"scale-collapse".to_string()),
+        "strip candidate: {}",
+        describe(&sc_dec.strip.assessment)
+    );
+    assert!(
+        !sc_dec.retained.assessment.degenerate,
+        "retained: {}",
+        describe(&sc_dec.retained.assessment)
+    );
+    let cam = |a: &Assessment| a.geometry.median_camera_dist_m.unwrap();
+    assert!(cam(&sc_dec.strip.assessment) < cam(&sc_dec.retained.assessment));
+    // ...and the protection: rolled back to the retained candidate.
+    assert_eq!(
+        (sc_dec.chosen.as_str(), sc_dec.reason.as_str()),
+        ("retained", "strip-degenerate")
+    );
+    assert!(diag
+        .trace
+        .iter()
+        .any(|t| t.stage == "rollback-to-pre-strip"));
+    assert!(
+        !diag.assessment.degenerate,
+        "final: {}",
+        describe(&diag.assessment)
+    );
+    assert_eq!(diag.assessment, sc_dec.retained.assessment);
+    // Nothing on this capture is off the chain, so the retained map is the
+    // plain solve's, LED for LED.
+    assert_eq!((sc_dec.retained.removed, sc_dec.retained.inferred), (0, 0));
+    assert_eq!(measured_xyz(&map), measured_xyz(&plain));
+    // The scale stays flagged as uncertain: the rollback restores a usable
+    // map, not a trustworthy size.
+    assert!(
+        map.stats
+            .warnings
+            .iter()
+            .any(|w| w.contains("size is uncertain")),
+        "{:?}",
+        map.stats.warnings
+    );
+    assert!(map.stats.scale_rel_std_err.unwrap() > 0.1);
+}
+
+#[test]
+fn a_wrong_strip_pitch_cannot_collapse_the_final() {
+    // An adversarial prior: the user's LED pitch is ~10x too small (e.g. a
+    // density typo), on a near-static capture whose scale is uncertain. The
+    // rope then drags the whole scene (cameras included — reprojection is
+    // scale-invariant) to ~1 cm; the pre-strip state is retained.
+    let sc = generate(&spec(
+        json!({"sweep": 0.3, "bob": 0.01, "duration": 20, "frameHz": 6, "seed": 2}),
+    ));
+    let (_, diag) = solve(&with_options(
+        &sc.problem,
+        json!({"stripPrior": true, "stripSpacingM": 0.002}),
+    ));
+    let d = diag.strip_candidates.as_ref().unwrap();
+    assert!(
+        d.strip.assessment.degenerate && !d.retained.assessment.degenerate,
+        "strip {} / retained {}",
+        describe(&d.strip.assessment),
+        describe(&d.retained.assessment)
+    );
+    assert_eq!(d.chosen, "retained");
+    assert!(
+        !diag.assessment.degenerate,
+        "{}",
+        describe(&diag.assessment)
+    );
+    // The diagnostics serialize both candidates for the capture bundle.
+    let v = serde_json::to_value(&diag).unwrap();
+    for c in ["retained", "strip"] {
+        let c = &v["stripCandidates"][c];
+        for k in [
+            "measured",
+            "removed",
+            "inferred",
+            "medianCameraDistM",
+            "spreadM",
+            "rmsPx",
+        ] {
+            assert!(c[k].is_number(), "{k} missing: {c}");
+        }
+        assert!(c["degenerate"].is_boolean());
+    }
+
+    // A correct pitch on a well-excited capture leaves the strip result in
+    // place (and records the decision).
+    let ok = generate(&spec(json!({"duration": 10, "frameHz": 6, "seed": 1})));
+    let (_, diag) = solve(&with_options(&ok.problem, json!({"stripPrior": true})));
+    let d = diag.strip_candidates.as_ref().unwrap();
+    assert_eq!(
+        (d.chosen.as_str(), d.reason.as_str()),
+        ("strip", "strip-usable")
+    );
+    assert!(!diag
+        .trace
+        .iter()
+        .any(|t| t.stage == "rollback-to-pre-strip"));
+}
+
+#[test]
+fn outlier_rounds_rank_degeneracy_before_residual() {
+    // On the gentle strided capture an outlier round collapses the scale at a
+    // slightly lower rms than the round before it — every LED still within
+    // 8 px. Ranked on (solved LEDs, rms) alone, that round would be kept.
+    let sc = gentle_strided();
+    let (_, diag) = solve(&with_options(&sc.problem, json!({})));
+    let rounds: Vec<_> = diag
+        .trace
+        .iter()
+        .filter(|t| t.stage.starts_with("outlier-round-"))
+        .collect();
+    let collapsed = rounds
+        .iter()
+        .find(|t| !t.degenerate.is_empty())
+        .expect("a degenerate outlier round");
+    let kept = diag
+        .trace
+        .iter()
+        .find(|t| t.stage == "rollback-to-best-round")
+        .expect("rolled back");
+    assert!(kept.degenerate.is_empty());
+    assert!(
+        (collapsed.solved, -collapsed.rms_px) > (kept.solved, -kept.rms_px),
+        "the old (solved, rms) score would have preferred the collapsed round"
+    );
+    assert!(
+        !diag.assessment.degenerate,
+        "{}",
+        describe(&diag.assessment)
+    );
+}

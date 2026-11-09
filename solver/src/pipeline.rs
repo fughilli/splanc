@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use crate::camera::project;
-use crate::diag::{assess_state, Assessment};
+use crate::diag::{assess_state, better, Assessment};
 use crate::linalg::{
     add, cross, dot, mat_vec, norm, normalize, scale, solve3_spd, sub, Mat3, Vec3, EYE3, ZERO3,
 };
@@ -559,7 +559,8 @@ pub struct StageTrace {
         skip_serializing_if = "std::ops::Not::not"
     )]
     pub init_scale_fallback: bool,
-    /// Degeneracy reasons of this stage's state (initial solves only).
+    /// Degeneracy reasons of this stage's raw state (initial solves and
+    /// outlier rounds, whose choice is degeneracy-first).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub degenerate: Vec<String>,
 }
@@ -578,6 +579,187 @@ fn trace_stage(stage: &str, frames: &[FrameObservations], r: &VioResult) -> Stag
         init_scale: r.init_scale,
         init_scale_fallback: r.init_scale_fallback,
         degenerate: Vec::new(),
+    }
+}
+
+/// The strip prior's assembly context: the pitch and the chain breaks.
+type StripCtx = (f64, Vec<(u32, u32)>);
+
+/// A solver state assembled into its output map.
+struct Assembled {
+    map: OutputMap,
+    /// Measured LEDs the strip check demoted off the chain.
+    removed: usize,
+    /// LEDs placed by the gap fill (nViews = 0).
+    inferred: usize,
+}
+
+/// One final candidate of a strip-prior solve, as assessed on its assembled
+/// map (measured LEDs only, after chain demotion).
+#[derive(serde::Serialize, Debug, Clone)]
+pub struct CandidateTrace {
+    #[serde(flatten)]
+    pub assessment: Assessment,
+    /// Measured LEDs the chain check demoted at assembly.
+    pub removed: usize,
+    /// LEDs the gap fill placed (nViews = 0).
+    pub inferred: usize,
+}
+
+impl CandidateTrace {
+    fn new(a: &Assembled, assessment: &Assessment) -> Self {
+        CandidateTrace {
+            assessment: assessment.clone(),
+            removed: a.removed,
+            inferred: a.inferred,
+        }
+    }
+}
+
+/// The strip prior's candidate decision (SolveDiagnostics.stripCandidates).
+#[derive(serde::Serialize, Debug, Clone)]
+pub struct StripCandidates {
+    /// "strip" (the rope-constrained solve) or "retained" (rolled back to
+    /// the pre-strip state).
+    pub chosen: String,
+    /// Which rule of `strip_candidate_policy` decided.
+    pub reason: String,
+    pub retained: CandidateTrace,
+    pub strip: CandidateTrace,
+}
+
+/// Candidate-quality policy between the retained (pre-strip) final and the
+/// strip-prior final, both assessed on their assembled maps. Returns whether
+/// to keep the strip result, and the rule that decided:
+///
+/// - `strip-degenerate`: the strip result is degenerate (diag.rs: e.g. a
+///   scale collapse) while the retained one is not → roll back. The prior is
+///   optional; it must never be what turns a usable map into a fallback.
+/// - `strip-usable`: the strip result is not degenerate → keep it, even with
+///   fewer measured LEDs or a higher residual: demoting off-chain LEDs (decode
+///   swaps, bad triangulations) is the prior's job and costs both.
+/// - `both-degenerate`: neither is usable → keep the strip result (the app
+///   falls back to its preview either way).
+pub fn strip_candidate_policy(retained: &Assessment, strip: &Assessment) -> (bool, &'static str) {
+    match (retained.degenerate, strip.degenerate) {
+        (false, true) => (false, "strip-degenerate"),
+        (_, false) => (true, "strip-usable"),
+        (true, true) => (true, "both-degenerate"),
+    }
+}
+
+/// Assemble a solver state into the gravity-leveled output map: per-LED
+/// quality, the strip prior's demotion + gap fill (with `strip_ctx`), and
+/// the scale warnings.
+fn assemble(
+    problem: &Problem,
+    frames: &[FrameObservations],
+    result: &VioResult,
+    strip_ctx: Option<&StripCtx>,
+) -> Assembled {
+    let opts = &problem.options;
+    let strip_tol = opts.strip_tolerance.max(0.0);
+    // Gravity leveling + per-LED quality (view count, rms, parallax).
+    let rot = gravity_level_rot(result.gravity);
+    let quality = led_quality(frames, result);
+
+    let mut entries: Vec<LedEntry> = Vec::new();
+    for (idx, &led) in result.led_ids.iter().enumerate() {
+        let q = match quality.get(&led) {
+            Some(q) if q.views >= opts.min_views => q,
+            _ => continue,
+        };
+        let xyz = mat_vec(&rot, result.led_positions[idx]);
+        entries.push(LedEntry {
+            id: led,
+            xyz,
+            confidence: confidence(q.parallax, q.views, q.rms),
+            n_views: q.views,
+            rms_reproj_px: q.rms,
+            parallax_deg: q.parallax,
+        });
+    }
+
+    let led_count = problem
+        .led_count
+        .unwrap_or_else(|| result.led_ids.iter().max().map(|m| m + 1).unwrap_or(0));
+
+    // Strip prior, output side: demote LEDs that still break the chain, then
+    // place interior unmapped runs on the segment between their mapped
+    // neighbours. Placed LEDs carry nViews = 0 / confidence = 0 — measured by
+    // nothing, so any real observation (a supplemental scan) outranks them.
+    let (mut removed, mut inferred) = (0, 0);
+    if let Some((spacing, breaks)) = strip_ctx {
+        let ids: Vec<u32> = entries.iter().map(|e| e.id).collect();
+        let pos: Vec<Vec3> = entries.iter().map(|e| e.xyz).collect();
+        let demoted = strip::chain_outliers(&ids, &pos, *spacing, strip_tol, breaks);
+        let before = entries.len();
+        entries.retain(|e| !demoted.contains(&e.id));
+        removed = before - entries.len();
+        let ids: Vec<u32> = entries.iter().map(|e| e.id).collect();
+        let pos: Vec<Vec3> = entries.iter().map(|e| e.xyz).collect();
+        for (id, xyz) in strip::fill_gaps(&ids, &pos, *spacing, strip_tol, breaks) {
+            if id < led_count {
+                inferred += 1;
+                entries.push(LedEntry {
+                    id,
+                    xyz,
+                    confidence: 0.0,
+                    n_views: 0,
+                    rms_reproj_px: 0.0,
+                    parallax_deg: 0.0,
+                });
+            }
+        }
+        entries.sort_by_key(|e| e.id);
+    }
+
+    let parallaxes: Vec<f64> = entries
+        .iter()
+        .filter(|e| e.n_views > 0)
+        .map(|e| e.parallax_deg)
+        .collect();
+    let placed: std::collections::BTreeSet<u32> = entries.iter().map(|e| e.id).collect();
+    let unmapped: Vec<u32> = (0..led_count).filter(|id| !placed.contains(id)).collect();
+    let leveled_traj: Vec<Vec3> = result.positions.iter().map(|p| mat_vec(&rot, *p)).collect();
+    let measured: Vec<Vec3> = entries
+        .iter()
+        .filter(|e| e.n_views > 0)
+        .map(|e| e.xyz)
+        .collect();
+    // Infinite = the re-anchor couldn't observe scale at all (warned below);
+    // only a finite estimate goes on the wire.
+    let warnings = scale_warnings(
+        result.scale_rel_se,
+        median_camera_distance(&leveled_traj, &measured),
+    );
+
+    let map = OutputMap {
+        map_id: problem
+            .map_id
+            .clone()
+            .unwrap_or_else(|| "rust-solve".to_string()),
+        created_at: problem
+            .created_at
+            .clone()
+            .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string()),
+        units: "meters".to_string(),
+        frame: "gravity_leveled".to_string(),
+        led_count,
+        leds: entries,
+        unmapped,
+        trajectory: decimate_path(&leveled_traj, 240),
+        stats: OutputMapStats {
+            rms_reproj_px_global: result.rms_reproj_px,
+            median_parallax_deg: median(&parallaxes),
+            scale_rel_std_err: Some(result.scale_rel_se).filter(|s| s.is_finite()),
+            warnings,
+        },
+    };
+    Assembled {
+        map,
+        removed,
+        inferred,
     }
 }
 
@@ -607,6 +789,11 @@ pub struct SolveDiagnostics {
     pub warm_start_error: Option<String>,
     /// The degeneracy verdict on the returned map (diag.rs).
     pub assessment: Assessment,
+    /// Strip prior only: both final candidates (the retained pre-strip
+    /// state and the strip solve), assessed on their assembled maps, and
+    /// which one was returned.
+    #[serde(rename = "stripCandidates", skip_serializing_if = "Option::is_none")]
+    pub strip_candidates: Option<StripCandidates>,
     /// The final solver state, un-leveled — a later solve's `warmStart`.
     pub state: WarmState,
 }
@@ -701,15 +888,18 @@ pub fn reconstruct_vio_diag(
     }
 
     if opts.reject_outliers {
-        let score = |res: &VioResult, frs: &[FrameObservations]| -> (usize, f64) {
-            (solved_led_count(frs, res, 8.0), -res.rms_reproj_px)
-        };
-        let cmp = |a: (usize, f64), b: (usize, f64)| -> std::cmp::Ordering {
-            a.0.cmp(&b.0).then(a.1.partial_cmp(&b.1).unwrap())
+        // Rounds are ranked like the cold/warm starts (diag::better): a
+        // non-degenerate state beats a degenerate one, then more solved LEDs,
+        // then the lower residual. Ranking on (solved, rms) alone let a round
+        // that collapsed the scale (still many LEDs within 8 px — reprojection
+        // is scale-invariant) displace a sound earlier state.
+        let assess = |res: &VioResult, frs: &[FrameObservations]| -> Assessment {
+            assess_state(res, solved_led_count(frs, res, 8.0), observable)
         };
         let mut best_result = result.clone();
         let mut best_frames = frames.clone();
-        let mut best_score = score(&result, &frames);
+        let mut best_q = assess(&result, &frames);
+        let mut cur_q = best_q.clone();
         for round in 0..3 {
             let (kept, outliers_dropped) =
                 reject_outlier_observations(&frames, &result, opts.outlier_sigma, 3.0);
@@ -728,22 +918,22 @@ pub fn reconstruct_vio_diag(
                 ..solve_opts.clone()
             };
             result = solve_vio(&frames, &imu, &resolve_opts, Some(&result), prog!());
-            trace.push(trace_stage(
-                &format!("outlier-round-{round}"),
-                &frames,
-                &result,
-            ));
-            let cur = score(&result, &frames);
-            if cmp(cur, best_score) == std::cmp::Ordering::Greater {
+            cur_q = assess(&result, &frames);
+            let mut t = trace_stage(&format!("outlier-round-{round}"), &frames, &result);
+            t.degenerate = cur_q.reasons.clone();
+            trace.push(t);
+            if better(&cur_q, &best_q) {
                 best_result = result.clone();
                 best_frames = frames.clone();
-                best_score = cur;
+                best_q = cur_q.clone();
             }
         }
-        if cmp(best_score, score(&result, &frames)) == std::cmp::Ordering::Greater {
+        if better(&best_q, &cur_q) {
             result = best_result;
             frames = best_frames;
-            trace.push(trace_stage("rollback-to-best-round", &frames, &result));
+            let mut t = trace_stage("rollback-to-best-round", &frames, &result);
+            t.degenerate = best_q.reasons.clone();
+            trace.push(t);
         }
     }
 
@@ -752,7 +942,10 @@ pub fn reconstruct_vio_diag(
     // warm-started from the best state. The gap fill happens at assembly.
     let strip_tol = opts.strip_tolerance.max(0.0);
     let known_spacing = opts.strip_spacing_m.filter(|s| s.is_finite() && *s > 0.0);
-    let mut strip_ctx: Option<(f64, Vec<(u32, u32)>)> = None;
+    let mut strip_ctx: Option<StripCtx> = None;
+    // The pre-strip state and its own strip context: the strip solve can
+    // only replace it after both are assembled and assessed (below).
+    let mut retained: Option<(VioResult, StripCtx)> = None;
     if opts.strip_prior {
         let (ids, pos, conf) = strip_inputs(&frames, &result, opts.min_views);
         if let Some(spacing) = known_spacing.or_else(|| strip::estimate_spacing(&ids, &pos, &conf))
@@ -764,6 +957,7 @@ pub fn reconstruct_vio_diag(
             // demoted at assembly if they still don't fit.
             let (_links, breaks) = strip::chain_links(&ids, &pos, &conf, spacing, strip_tol);
             let off_chain = strip::chain_outliers(&ids, &pos, spacing, strip_tol, &breaks);
+            let pre_strip_ctx = (spacing, breaks);
             let keep: Vec<usize> = (0..ids.len())
                 .filter(|&w| !off_chain.contains(&ids[w]))
                 .collect();
@@ -781,8 +975,9 @@ pub fn reconstruct_vio_diag(
                     chain_sigma: CHAIN_SIGMA_PITCH * spacing,
                     ..solve_opts.clone()
                 };
-                result = solve_vio(&frames, &imu, &chain_opts, Some(&result), prog!());
-                trace.push(trace_stage("strip-prior", &frames, &result));
+                let roped = solve_vio(&frames, &imu, &chain_opts, Some(&result), prog!());
+                trace.push(trace_stage("strip-prior", &frames, &roped));
+                retained = Some((std::mem::replace(&mut result, roped), pre_strip_ctx));
             }
             // Re-measure on the constrained state: the solve's a-posteriori
             // metric re-anchor may have rescaled it.
@@ -795,105 +990,41 @@ pub fn reconstruct_vio_diag(
         }
     }
 
-    // Gravity leveling + per-LED quality (view count, rms, parallax).
-    let rot = gravity_level_rot(result.gravity);
-    let quality = led_quality(&frames, &result);
+    let mut assembled = assemble(problem, &frames, &result, strip_ctx.as_ref());
+    let mut assessment = crate::diag::assess_map(&assembled.map, observable);
 
-    let mut entries: Vec<LedEntry> = Vec::new();
-    for (idx, &led) in result.led_ids.iter().enumerate() {
-        let q = match quality.get(&led) {
-            Some(q) if q.views >= opts.min_views => q,
-            _ => continue,
+    // Candidate protection: the strip solve replaced the retained (pre-strip)
+    // state only provisionally. Both are assembled — chain demotion and gap
+    // fill included — and assessed on their measured LEDs, and the strip
+    // result is rolled back when it alone is degenerate (strip_candidate_policy).
+    let mut strip_candidates = None;
+    if let Some((pre, pre_ctx)) = retained {
+        let pre_assembled = assemble(problem, &frames, &pre, Some(&pre_ctx));
+        let pre_assessment = crate::diag::assess_map(&pre_assembled.map, observable);
+        let (keep_strip, reason) = strip_candidate_policy(&pre_assessment, &assessment);
+        let decision = StripCandidates {
+            chosen: if keep_strip { "strip" } else { "retained" }.to_string(),
+            reason: reason.to_string(),
+            retained: CandidateTrace::new(&pre_assembled, &pre_assessment),
+            strip: CandidateTrace::new(&assembled, &assessment),
         };
-        let xyz = mat_vec(&rot, result.led_positions[idx]);
-        entries.push(LedEntry {
-            id: led,
-            xyz,
-            confidence: confidence(q.parallax, q.views, q.rms),
-            n_views: q.views,
-            rms_reproj_px: q.rms,
-            parallax_deg: q.parallax,
-        });
-    }
-
-    let led_count = problem
-        .led_count
-        .unwrap_or_else(|| result.led_ids.iter().max().map(|m| m + 1).unwrap_or(0));
-
-    // Strip prior, output side: demote LEDs that still break the chain, then
-    // place interior unmapped runs on the segment between their mapped
-    // neighbours. Placed LEDs carry nViews = 0 / confidence = 0 — measured by
-    // nothing, so any real observation (a supplemental scan) outranks them.
-    if let Some((spacing, breaks)) = &strip_ctx {
-        let ids: Vec<u32> = entries.iter().map(|e| e.id).collect();
-        let pos: Vec<Vec3> = entries.iter().map(|e| e.xyz).collect();
-        let demoted = strip::chain_outliers(&ids, &pos, *spacing, strip_tol, breaks);
-        entries.retain(|e| !demoted.contains(&e.id));
-        let ids: Vec<u32> = entries.iter().map(|e| e.id).collect();
-        let pos: Vec<Vec3> = entries.iter().map(|e| e.xyz).collect();
-        for (id, xyz) in strip::fill_gaps(&ids, &pos, *spacing, strip_tol, breaks) {
-            if id < led_count {
-                entries.push(LedEntry {
-                    id,
-                    xyz,
-                    confidence: 0.0,
-                    n_views: 0,
-                    rms_reproj_px: 0.0,
-                    parallax_deg: 0.0,
-                });
-            }
+        if !keep_strip {
+            result = pre;
+            assembled = pre_assembled;
+            assessment = pre_assessment;
+            let mut t = trace_stage("rollback-to-pre-strip", &frames, &result);
+            t.degenerate = assessment.reasons.clone();
+            trace.push(t);
         }
-        entries.sort_by_key(|e| e.id);
+        strip_candidates = Some(decision);
     }
-
-    let parallaxes: Vec<f64> = entries
-        .iter()
-        .filter(|e| e.n_views > 0)
-        .map(|e| e.parallax_deg)
-        .collect();
-    let placed: std::collections::BTreeSet<u32> = entries.iter().map(|e| e.id).collect();
-    let unmapped: Vec<u32> = (0..led_count).filter(|id| !placed.contains(id)).collect();
-    let leveled_traj: Vec<Vec3> = result.positions.iter().map(|p| mat_vec(&rot, *p)).collect();
-    let measured: Vec<Vec3> = entries
-        .iter()
-        .filter(|e| e.n_views > 0)
-        .map(|e| e.xyz)
-        .collect();
-    // Infinite = the re-anchor couldn't observe scale at all (warned below);
-    // only a finite estimate goes on the wire.
-    let warnings = scale_warnings(
-        result.scale_rel_se,
-        median_camera_distance(&leveled_traj, &measured),
-    );
-
-    let map = OutputMap {
-        map_id: problem
-            .map_id
-            .clone()
-            .unwrap_or_else(|| "rust-solve".to_string()),
-        created_at: problem
-            .created_at
-            .clone()
-            .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_string()),
-        units: "meters".to_string(),
-        frame: "gravity_leveled".to_string(),
-        led_count,
-        leds: entries,
-        unmapped,
-        trajectory: decimate_path(&leveled_traj, 240),
-        stats: OutputMapStats {
-            rms_reproj_px_global: result.rms_reproj_px,
-            median_parallax_deg: median(&parallaxes),
-            scale_rel_std_err: Some(result.scale_rel_se).filter(|s| s.is_finite()),
-            warnings,
-        },
-    };
-    let assessment = crate::diag::assess_map(&map, observable);
+    let map = assembled.map;
     let diag = SolveDiagnostics {
         trace,
         start: start.to_string(),
         warm_start_error,
         assessment,
+        strip_candidates,
         state: crate::diag::to_warm_state(&result),
     };
     Ok((map, diag))
@@ -938,6 +1069,42 @@ mod tests {
         assert!(vague[0].contains("±40%"), "{}", vague[0]);
         assert!(!scale_warnings(f64::INFINITY, None)[0].contains('±'));
         assert_eq!(scale_warnings(0.4, Some(0.09)).len(), 2);
+    }
+
+    #[test]
+    fn strip_candidate_policy_rolls_back_only_a_new_degeneracy() {
+        let a = |deg: bool, measured: usize, rms: f64| Assessment {
+            degenerate: deg,
+            reasons: if deg {
+                vec!["scale-collapse".into()]
+            } else {
+                vec![]
+            },
+            warnings: vec![],
+            measured,
+            observable: 60,
+            rms_px: rms,
+            scale_rel_se: None,
+            geometry: Default::default(),
+        };
+        assert_eq!(
+            strip_candidate_policy(&a(false, 60, 1.0), &a(true, 60, 1.0)),
+            (false, "strip-degenerate")
+        );
+        // Fewer measured LEDs / a higher residual is the prior demoting
+        // off-chain LEDs: kept.
+        assert_eq!(
+            strip_candidate_policy(&a(false, 60, 1.0), &a(false, 50, 2.0)),
+            (true, "strip-usable")
+        );
+        assert_eq!(
+            strip_candidate_policy(&a(true, 60, 1.0), &a(false, 50, 2.0)),
+            (true, "strip-usable")
+        );
+        assert_eq!(
+            strip_candidate_policy(&a(true, 60, 1.0), &a(true, 50, 2.0)),
+            (true, "both-degenerate")
+        );
     }
 
     #[test]
@@ -1106,7 +1273,20 @@ mod tests {
         let plain = reconstruct_vio(&problem, None).unwrap();
         let mut with_prior = problem.clone();
         with_prior.options.strip_prior = true;
-        let strip_map = reconstruct_vio(&with_prior, None).unwrap();
+        let (strip_map, diag) = reconstruct_vio_diag(&with_prior, None).unwrap();
+
+        // Adversarial coverage for candidate protection (#455): the strip
+        // result demotes the swapped LED (fewer measured LEDs than the
+        // retained candidate) and is still kept — the rollback is for
+        // degeneracy only, not for the prior doing its job.
+        let d = diag.strip_candidates.as_ref().expect("strip candidates");
+        assert_eq!(
+            (d.chosen.as_str(), d.reason.as_str()),
+            ("strip", "strip-usable")
+        );
+        assert!(d.strip.removed >= 1, "nothing demoted: {d:?}");
+        assert!(d.strip.inferred >= 5, "nothing inferred: {d:?}");
+        assert!(!d.retained.assessment.degenerate && !d.strip.assessment.degenerate);
 
         let e_plain = errors_vs_truth(&plain, &truth);
         let e_strip = errors_vs_truth(&strip_map, &truth);
