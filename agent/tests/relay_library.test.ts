@@ -348,6 +348,32 @@ describe("relay-served library", () => {
     fb.link.stop();
   });
 
+  test("bridge offline after a tools/list: the same tool list, the lights' tools say offline", async () => {
+    const fb = await fakeBridge();
+    try {
+      const token = await personalToken(fb);
+      const online = await rpc(await mcpPost(relay, token, { jsonrpc: "2.0", id: 1, method: "tools/list" }), 1);
+      const names = (online.result.tools as { name: string }[]).map((t) => t.name);
+      assert.ok(names.includes("deploy_effect"), "the bridge's tools are listed");
+      fb.link.stop();
+      await until(async () => (await mcpPost(relay, token, { jsonrpc: "2.0", id: 2, method: "ping" })).status === 503, "offline");
+      // An existing session and a new relay session both see the list unchanged
+      // (hosts may re-ask for approval of tools that vanish and come back).
+      const kept = await rpc(await mcpPost(relay, token, { jsonrpc: "2.0", id: 3, method: "tools/list" }, { "mcp-session-id": "bridge-session-1" }), 3);
+      assert.deepEqual(kept.result.tools, online.result.tools);
+      const transport = new StreamableHTTPClientTransport(new URL(`${relay}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${token}` } } });
+      const c = new Client({ name: "offline-agent", version: "0" });
+      await c.connect(transport as unknown as Parameters<Client["connect"]>[0]);
+      assert.deepEqual((await c.listTools()).tools.map((t) => t.name), names);
+      const off = (await c.callTool({ name: "deploy_effect", arguments: { source: "x" } })) as { isError?: boolean; content: { text: string }[] };
+      assert.equal(off.isError, true);
+      assert.match(off.content[0]!.text, /bridge is offline/);
+      await transport.close();
+    } finally {
+      fb.link.stop();
+    }
+  });
+
   test("libraries are per bridge", async () => {
     const a = await fakeBridge();
     const b = await fakeBridge();
