@@ -101,6 +101,7 @@ rust_static_library(
     name = "player_ffi",
     srcs = [
         "driver_ffi.rs",
+        "effect_store.rs",
         "ffi.rs",
         "fxdbg.rs",
         "kiosk_ffi.rs",
@@ -146,6 +147,7 @@ rust_library(
     name = "player_ffi_host",
     srcs = [
         "driver_ffi.rs",
+        "effect_store.rs",
         "ffi.rs",
         "fxdbg.rs",
         "kiosk_ffi.rs",
@@ -235,6 +237,21 @@ rust_test(
 rust_test(
     name = "kiosk_test",
     srcs = ["tests/kiosk.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# The on-device effect store (effect_store.rs): store / list / load / delete through
+# the C ABI with an in-memory littlefs, the record format, the kiosk classes.
+rust_test(
+    name = "effect_store_test",
+    srcs = ["tests/effect_store.rs"],
     edition = "2021",
     env = {"RUST_MIN_STACK": "100663296"},
     deps = [

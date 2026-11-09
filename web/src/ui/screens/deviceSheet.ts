@@ -28,6 +28,8 @@ import { inLoader } from "../../net/otaUpdate";
 import { formatWifiStatus } from "../../net/wifiPolicy";
 import { WifiPolicySection } from "./wifiPolicySection";
 import { KioskSection } from "./kioskSection";
+import { StoredEffectsSection } from "./storedEffectsSection";
+import { deviceHasEffectStore } from "../../net/effectStore";
 import { deviceHasKiosk } from "../../net/kiosk";
 
 let openHandle: { close: () => void } | null = null;
@@ -621,6 +623,14 @@ function openDeviceDetail(dev: KnownDevice): void {
     const wifiDivider = document.createElement("hr");
     wifiDivider.className = "device-detail-divider";
     sheet.body.append(wifiLine, wifiDivider, section);
+  }
+
+  // -- The effect store (firmware advertising "effect_store"): effects kept on the
+  // device, opened onto deck A with their uniforms as live controls.
+  if (isActive && client && deviceHasEffectStore(client.welcome)) {
+    const storeDivider = document.createElement("hr");
+    storeDivider.className = "device-detail-divider";
+    sheet.body.append(storeDivider, StoredEffectsSection(client));
   }
 
   // -- Kiosk mode (firmware advertising "kiosk"): the owner's public-install controls.

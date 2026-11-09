@@ -591,6 +591,7 @@ static const int32_t kArmEffectUniforms = 16;
 static const int32_t kArmWelcome = 1;
 static const int32_t kArmSetFixturePose = 37;
 static const int32_t kArmBlendKeypoints = 44;
+static const int32_t kArmLoadStoredEffect = 96;
 
 // Coalesced effect-control save (set_effect / set_uniforms): slider drags
 // re-send set_uniforms on every tick, so writing flash each time would thrash
@@ -681,7 +682,16 @@ static FILE *fs_open(const char *path, const char *mode) {
 // "esp_littlefs ... Corrupted dir pair at {0x0, 0x1}" on the next mount. The
 // temp path is derived from the destination so writers to different keys never
 // collide (writes are serialized on this task anyway).
+static bool fs_write_parts(const char *path, const uint8_t *data, size_t len, const uint8_t *more,
+                           size_t more_len);
 static bool fs_write_file(const char *path, const uint8_t *data, size_t len) {
+  return fs_write_parts(path, data, len, nullptr, 0);
+}
+
+// fs_write_file of `data ++ more` (the effect store writes a record as its header
+// and the .fxb it came with, without staging them together).
+static bool fs_write_parts(const char *path, const uint8_t *data, size_t len, const uint8_t *more,
+                           size_t more_len) {
   char tmp[64];
   int pn = snprintf(tmp, sizeof tmp, "%s.tmp", path);
   if (pn < 0 || (size_t)pn >= sizeof tmp) {
@@ -694,6 +704,8 @@ static bool fs_write_file(const char *path, const uint8_t *data, size_t len) {
     return false;
   }
   size_t w = fwrite(data, 1, len, f);
+  if (w == len && more_len > 0) w += fwrite(more, 1, more_len, f);
+  len += more_len;
   // Force the data + its metadata out to flash before we swap it in. Without
   // this the rename can commit ahead of the file's own contents, so a reset in
   // the window would leave the new name pointing at a short/empty file.
@@ -1083,7 +1095,7 @@ static void persist_if_upload(const uint8_t *req, size_t req_len,
   } else if (reply_arm == kArmResultReady && req_arm == kArmSubmitTopology) {
     fs_write_file(kTopoPath, req, req_len);
   } else if (reply_arm == kArmResultReady && req_arm == kArmSubmitEffect &&
-             lm_fx_last_deck() == 0) {
+             lm_fx_last_deck() == 0 && !lm_fxs_last_was_store()) {
     // A validated deck-A effect upload: persist the raw .fxb frame (the effect
     // bytecode) so it auto-resumes on boot. A new effect supersedes any prior
     // selection/uniforms (they belong to the old effect). Deck B is runtime-only
@@ -1167,6 +1179,8 @@ static void fs_replay(const char *path) {
 static int32_t kp_fs_read(const uint8_t *name, size_t len, uint8_t *buf, size_t cap);
 static bool kp_fs_write(const uint8_t *name, size_t len, const uint8_t *buf, size_t n);
 static void kp_fs_remove(const uint8_t *name, size_t len);
+static bool fxs_fs_write(const uint8_t *name, size_t len, const uint8_t *a, size_t a_len, const uint8_t *b,
+                         size_t b_len);
 
 // Kiosk config from littlefs: true when the device should boot into the attract
 // snapshot (enabled, a snapshot recorded, and its effect frame present).
@@ -1201,6 +1215,7 @@ static void fs_begin_and_restore() {
   }
   fs_ok = true;
   lm_kp_set_store(kp_fs_read, kp_fs_write, kp_fs_remove);
+  lm_fxs_set_store(kp_fs_read, fxs_fs_write, kp_fs_remove);  // same files, same base
   fs_replay(kMapPath);
   fs_replay(kTopoPath);
   remove(kLegacyPlaybackPath);
@@ -1550,6 +1565,49 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
   return n;
 }
 
+// load_stored_effect (effect_store.rs): the record is up to the 4 KiB .fxb plus its
+// header, more than the player core has a buffer for, so it is staged here (like a
+// sharded effect upload) and handed to lm_fxs_load. Landing on deck A, activated, its
+// submit_effect frame becomes the boot effect, as a deck-A submit_effect does.
+// kNotStaged: not in the store (or no fs) — the player core answers not_found.
+static const int kNotStaged = -100;
+static int load_stored_effect(const uint8_t *in, size_t len) {
+  // The request is tiny; copy it out first, since on the vendor build the stage is the
+  // rx buffer the request may be sitting in.
+  uint8_t msg[160];
+  if (!fs_ok || len > sizeof msg) return kNotStaged;
+  memcpy(msg, in, len);
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t slot = lm_fxs_find(msg, len);
+  xSemaphoreGive(player_mutex);
+  if (slot < 0) return kNotStaged;
+  char path[48];
+  snprintf(path, sizeof path, "%s/fxs.%d", kFsBase, (int)slot);
+  FILE *f = fs_open(path, "rb");
+  if (f == nullptr) return kNotStaged;
+  fseek(f, 0, SEEK_END);
+  long size = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  uint8_t *rec = size > 0 && (size_t)size <= kRxCap ? rx_stage_get((size_t)size) : nullptr;
+  size_t rn = rec ? fread(rec, 1, (size_t)size, f) : 0;
+  fclose(f);
+  if (rec == nullptr || rn != (size_t)size) {
+    rx_stage_put(rec);
+    return kNotStaged;
+  }
+  size_t off = 0, plen = 0;
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t n = lm_fxs_load(msg, len, rec, rn, tx, sizeof tx, &off, &plen);
+  xSemaphoreGive(player_mutex);
+  if (plen > 0 && !lm_kiosk_msg_locked()) {
+    fs_write_file(kEffectPath, rec + off, plen);
+    remove(kEffectSelPath);  // the old effect's selection / uniforms
+  }
+  rx_stage_put(rec);
+  poll_after_message();
+  return (int)n;
+}
+
 // Compute the reply for the message msg[0..len), read in place. Returns the reply length
 // (bytes written to the global tx, >0), 0 (no reply / fire-and-forget), or -1 (fs error /
 // out-of-order upload window → the transport should drop the connection). Shared verbatim by
@@ -1564,6 +1622,10 @@ static int ws_compute_reply_body(const uint8_t *msg, size_t len) {
   LmUploadChunk ch;
   if (lm_parse_upload_chunk(msg, len, &ch) == 1) {
     return (int)process_upload_chunk(&ch, msg + ch.payload_off);
+  }
+  if (lm_envelope_arm(msg, len) == kArmLoadStoredEffect) {
+    int n = load_stored_effect(msg, len);
+    if (n != kNotStaged) return n;
   }
   return dispatch_plain(msg, len);
 }
@@ -3927,4 +3989,13 @@ static bool kp_fs_write(const uint8_t *name, size_t len, const uint8_t *buf, siz
 static void kp_fs_remove(const uint8_t *name, size_t len) {
   char path[48];
   if (kp_path(path, sizeof path, name, len)) remove(path);
+}
+
+// Effect store hooks (ffi.rs lm_fxs_set_store): read / remove are the keypoint ones
+// (a record is a small file under the same base, "fxs.<n>"); a write is the record
+// header plus the .fxb, as one power-loss-safe file.
+static bool fxs_fs_write(const uint8_t *name, size_t len, const uint8_t *a, size_t a_len, const uint8_t *b,
+                         size_t b_len) {
+  char path[48];
+  return kp_path(path, sizeof path, name, len) && fs_write_parts(path, a, a_len, b, b_len);
 }
