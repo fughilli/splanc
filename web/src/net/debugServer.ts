@@ -42,6 +42,19 @@ export function postJson(base: string, path: string, payload: unknown): Promise<
   }));
 }
 
+/** POST an already-serialized JSON body to `<base><path>` — for uploads whose
+ * exact bytes matter (the server checksums them). Same transports and errors
+ * as {@link postJson}. */
+export function postJsonText(base: string, path: string, body: string): Promise<HttpResult> {
+  const headers = { "Content-Type": "application/json" };
+  if (nativeHttpAvailable()) return nativeRequest(base + path, "POST", headers, body);
+  return fetch(base + path, { method: "POST", headers, body }).then((res) => ({
+    ok: res.ok,
+    status: res.status,
+    text: () => res.text(),
+  }));
+}
+
 /** GET `<base><path>` (native cert bridge or fetch). Used to poll the remote
  * chat-drive queue. Throws on a transport failure. */
 export function getJson(base: string, path: string): Promise<HttpResult> {
