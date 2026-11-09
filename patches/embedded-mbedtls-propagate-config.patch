@@ -1,0 +1,147 @@
+Every consumer of the from-source mbedtls compiles against ITS headers and ITS config
+(splanc #468).
+
+Two halves, one invariant ("a TU that includes <mbedtls/*.h> sees exactly the struct
+layouts of the mbedtls the image links"):
+
+1. nix/mbedtls_src.BUILD: MBEDTLS_CONFIG_FILE (and the c3 variant's
+   LM_MBEDTLS_NO_HW_ECC) move from copts to `defines`, so they propagate to every
+   dependent. Before, only mbedtls_src's own sources had the -D; a consumer that did not
+   repeat it by hand got upstream's default mbedtls/mbedtls_config.h, a different config:
+   splanc's netstack transport compiled a 344 B mbedtls_ssl_context (library: 552 B) and a
+   224 B mbedtls_ssl_config (library: 196 B), and mbedtls_ssl_init overran its g_ssl by
+   208 B. (The prebuilt SDK's flags/defines carries -DMBEDTLS_CONFIG_FILE=
+   "mbedtls/esp_config.h", but :sdk_hdrs does not.) CONFIG_MBEDTLS_DYNAMIC_BUFFER stays a
+   private copt: only port/dynamic/*.c read it, no header does.
+
+2. nix/arduino_esp32.BUILD: drop the prebuilt SDK's mbedtls include dirs from :sdk_hdrs
+   (esp32c6 + esp32c3; the classic esp32 section still links the prebuilt mbedtls and is
+   untouched). They preceded @mbedtls_src's on every consumer's include path. The headers
+   are byte-identical today (both mbedtls 3.6.5 / IDF v5.5.4), so this changes no layout,
+   but it makes @mbedtls_src's the ONLY mbedtls headers a TU can reach: one that includes
+   them without depending on @mbedtls_src (and so without its config) now fails to
+   compile instead of silently mismatching. esp_crt_bundle/include stays (not mbedtls).
+
+Applied after the other mbedtls patches; fold upstream on the next embedded bump.
+
+diff --git a/nix/arduino_esp32.BUILD b/nix/arduino_esp32.BUILD
+--- a/nix/arduino_esp32.BUILD
++++ b/nix/arduino_esp32.BUILD
+@@ -264,13 +264,16 @@
+         "sdk/esp32c6/include/esp_phy/include",
+         "sdk/esp32c6/include/esp_phy/esp32c6/include",
+         "sdk/esp32c6/include/esp_netif/include",
+-        "sdk/esp32c6/include/mbedtls/port/include",
+-        "sdk/esp32c6/include/mbedtls/mbedtls/include",
+-        "sdk/esp32c6/include/mbedtls/mbedtls/library",
++        # The prebuilt SDK's own mbedtls include dirs (port/include, mbedtls/include,
++        # mbedtls/library, 3rdparty/everest, p256-m) are deliberately NOT here: this
++        # image links the from-source @mbedtls_src, which carries its own headers AND
++        # its config (MBEDTLS_CONFIG_FILE, a propagated define). With both on the
++        # path the SDK's came first, and a TU that reached mbedtls through them
++        # compiled against a config the library was not built with (splanc #468:
++        # mbedtls_ssl_context 344 B vs the library's 552 B). Now the only mbedtls
++        # headers a TU can see are @mbedtls_src's, so anything that includes them
++        # without depending on it fails to compile instead of silently mismatching.
+         "sdk/esp32c6/include/mbedtls/esp_crt_bundle/include",
+-        "sdk/esp32c6/include/mbedtls/mbedtls/3rdparty/everest/include",
+-        "sdk/esp32c6/include/mbedtls/mbedtls/3rdparty/p256-m",
+-        "sdk/esp32c6/include/mbedtls/mbedtls/3rdparty/p256-m/p256-m",
+         "sdk/esp32c6/include/fatfs/diskio",
+         "sdk/esp32c6/include/fatfs/src",
+         "sdk/esp32c6/include/fatfs/vfs",
+@@ -1353,13 +1356,16 @@
+         "sdk/esp32c3/include/esp_phy/include",
+         "sdk/esp32c3/include/esp_phy/esp32c3/include",
+         "sdk/esp32c3/include/esp_netif/include",
+-        "sdk/esp32c3/include/mbedtls/port/include",
+-        "sdk/esp32c3/include/mbedtls/mbedtls/include",
+-        "sdk/esp32c3/include/mbedtls/mbedtls/library",
++        # The prebuilt SDK's own mbedtls include dirs (port/include, mbedtls/include,
++        # mbedtls/library, 3rdparty/everest, p256-m) are deliberately NOT here: this
++        # image links the from-source @mbedtls_src, which carries its own headers AND
++        # its config (MBEDTLS_CONFIG_FILE, a propagated define). With both on the
++        # path the SDK's came first, and a TU that reached mbedtls through them
++        # compiled against a config the library was not built with (splanc #468:
++        # mbedtls_ssl_context 344 B vs the library's 552 B). Now the only mbedtls
++        # headers a TU can see are @mbedtls_src's, so anything that includes them
++        # without depending on it fails to compile instead of silently mismatching.
+         "sdk/esp32c3/include/mbedtls/esp_crt_bundle/include",
+-        "sdk/esp32c3/include/mbedtls/mbedtls/3rdparty/everest/include",
+-        "sdk/esp32c3/include/mbedtls/mbedtls/3rdparty/p256-m",
+-        "sdk/esp32c3/include/mbedtls/mbedtls/3rdparty/p256-m/p256-m",
+         "sdk/esp32c3/include/fatfs/diskio",
+         "sdk/esp32c3/include/fatfs/src",
+         "sdk/esp32c3/include/fatfs/vfs",
+diff --git a/nix/mbedtls_src.BUILD b/nix/mbedtls_src.BUILD
+--- a/nix/mbedtls_src.BUILD
++++ b/nix/mbedtls_src.BUILD
+@@ -20,15 +20,32 @@
+     "-fno-tree-switch-conversion",
+     "-std=gnu17",
+     "-w",
+-    # Config: a thin wrapper (:ledmapper_mbedtls_config) that includes the ESP
+-    # port's esp_config.h and then shrinks the TLS record length (see genrule);
+-    # enable dynamic buffers. The SDK's sdkconfig.h (on the include path via
++    # Enable dynamic buffers. The SDK's sdkconfig.h (on the include path via
+     # @arduino_esp32//:sdk_hdrs) does not define CONFIG_MBEDTLS_DYNAMIC_BUFFER, so
+-    # -D here is the only change.
+-    "-DMBEDTLS_CONFIG_FILE=\\\"mbedtls/esp_config_ledmapper.h\\\"",
++    # -D here is the only change. (A port knob read only by port/dynamic/*.c: no
++    # public header looks at it, so it stays private.) The config file itself is
++    # _MBEDTLS_DEFINES, which consumers must see too.
+     "-DCONFIG_MBEDTLS_DYNAMIC_BUFFER=1",
+ ]
+ 
++# The mbedtls config, as `defines` so it PROPAGATES to every consumer, not just
++# copts for this library's own sources. mbedtls struct layouts (ssl_context,
++# ssl_config, sha256_context, ...) depend on the config, and a TU that includes
++# <mbedtls/*.h> without MBEDTLS_CONFIG_FILE falls back to upstream's default
++# mbedtls/mbedtls_config.h — a different config. The prebuilt SDK's define list
++# (sdk/<chip>/flags/defines: -DMBEDTLS_CONFIG_FILE="mbedtls/esp_config.h") is not
++# carried by @arduino_esp32//:sdk_hdrs, so before this every consumer that did not
++# repeat the -D by hand compiled against the default config: the player's netstack
++# transport saw a 344 B mbedtls_ssl_context while this library's is 552 B, and
++# mbedtls_ssl_init overran its g_ssl by 208 B (splanc #444/#468). The mbedtls/
++# headers themselves are byte-identical between the SDK and this source tree; only
++# the config differed. Config: a thin wrapper (:ledmapper_mbedtls_config) that
++# includes the ESP port's esp_config.h and then shrinks the TLS record length (see
++# genrule).
++_MBEDTLS_DEFINES = [
++    "MBEDTLS_CONFIG_FILE=\\\"mbedtls/esp_config_ledmapper.h\\\"",
++]
++
+ # ESP32-C3 (rv32imc — NO atomics, unlike the C6's rv32imac) variant of the copts.
+ # Two differences from the C6 build:
+ #   1. -march drops the 'a' extension so no lr/sc or amo* is emitted (the C3 would
+@@ -44,9 +61,13 @@
+     if c != "-march=rv32imac_zicsr_zifencei"
+ ] + [
+     "-march=rv32imc_zicsr_zifencei",
+-    "-DLM_MBEDTLS_NO_HW_ECC=1",
+ ]
+ 
++# The c3 variant's config: the same wrapper, plus LM_MBEDTLS_NO_HW_ECC (point 2
++# above). Propagated like _MBEDTLS_DEFINES, so c3 consumers read the config exactly
++# as the c3 library was built.
++_MBEDTLS_DEFINES_ESP32C3 = _MBEDTLS_DEFINES + ["LM_MBEDTLS_NO_HW_ECC=1"]
++
+ # mbedtls core (library/*.c) + 3rdparty ECC (everest, p256-m).
+ # Everest: compile ONLY the 3 files mbedtls' 3rdparty/everest/CMakeLists.txt
+ # lists. Hacl_Curve25519_joined.c #includes Hacl_Curve25519.c (and the
+@@ -199,6 +220,7 @@
+         "mbedtls/3rdparty/p256-m",
+     ],
+     copts = _MBEDTLS_COPTS,
++    defines = _MBEDTLS_DEFINES,
+     # Our symbols must satisfy the precompiled esp-tls/https_server callers.
+     alwayslink = True,
+     # esp_* / soc / hal / lwip / freertos headers the port pulls in — PRIVATE so
+@@ -240,6 +262,7 @@
+         "mbedtls/3rdparty/p256-m",
+     ],
+     copts = _MBEDTLS_COPTS_ESP32C3,
++    defines = _MBEDTLS_DEFINES_ESP32C3,
+     alwayslink = True,
+     implementation_deps = ["@arduino_esp32//:sdk_hdrs"],
+ )
