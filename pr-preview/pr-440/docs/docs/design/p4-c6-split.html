@@ -1353,9 +1353,25 @@ names (<code class="docutils literal notranslate"><span class="pre">netstack_ws_
 under #353’s rule. When a session that had a client ends, the front end sends
 <code class="docutils literal notranslate"><span class="pre">LINK</span> <span class="pre">RESET(session)</span></code> so the P4 stops pushing there. When the P4 sends <code class="docutils literal notranslate"><span class="pre">RESET(session)</span></code>
 instead of a REPLY, the waiting forward returns −2, and the front end drops that session (the
-client retries). Forwarding is still synchronous, one message at a time: a slow P4 reply
-(at most 1 s) holds up every session behind it. Async forwarding, with a reply table keyed by
-session, is the next step if that shows up in <code class="docutils literal notranslate"><span class="pre">loaded_tls</span></code>.</p>
+client retries). In this PR, forwarding is still synchronous, one message at a time: a slow
+P4 reply (at most 1 s) holds up every session behind it.</p>
+<p><strong>Decided for the pure-transport front end (2026-11-08)</strong> (still to implement):</p>
+<ul class="simple">
+<li><p><strong>Async throughout.</strong> No forward waits for its reply. The front end tags each player
+message with its session and request id, sends it, and keeps serving. Replies come back
+through a reply table keyed by (session, request id), and go out on that session when they
+arrive. A session that has closed by then drops its reply. Nothing on either side of the
+link blocks the loop on the other: not the front end’s forwards, and not the P4’s sends.</p></li>
+<li><p><strong>Generalized pub/sub for pushes.</strong> Pushes are PerfReport, fps lag, kiosk status and the
+like. Instead of going to “the session that spoke last”, they go to every session that
+subscribed to that topic. A subscription lasts until its session closes. A session that only
+listens gets its reports too. The P4 publishes once per topic, and the front end fans the
+message out to the subscribed sessions, under #353’s rule for a full window. BLE is one more
+subscriber.</p></li>
+<li><p><strong>Every client is one source.</strong> The player treats all wss clients as a single client, for
+the kiosk unlock as for everything else. This is the behaviour on the P4 today, and it’s
+now intended, not an open question.</p></li>
+</ul>
 <p><strong>The player core with concurrent clients.</strong> It was written for one client. What happens
 with several:</p>
 <div class="table-wrapper colwidths-auto docutils container">
@@ -1370,7 +1386,7 @@ with several:</p>
 <td><p>One upload at a time (<code class="docutils literal notranslate"><span class="pre">upload_active</span></code>, one temp file). The P4 (<code class="docutils literal notranslate"><span class="pre">link_transport.cpp</span></code>) gives the upload to the session that sent window 0, until its last window, until its session ends, or until it has been quiet for 3 s. Another session’s window meanwhile gets <code class="docutils literal notranslate"><span class="pre">RESET</span></code>: that session is dropped, and its client retries later. The owner’s upload is untouched.</p></td>
 </tr>
 <tr class="row-odd"><td><p>Pushes (PerfReport, fps lag, kiosk status)</p></td>
-<td><p>To the session that spoke last (<code class="docutils literal notranslate"><span class="pre">g_session</span></code> on the P4, <code class="docutils literal notranslate"><span class="pre">g_push</span></code> on the front end). This is one subscriber, as before. A second app that only listens gets no reports until it sends something.</p></td>
+<td><p>To the session that spoke last (<code class="docutils literal notranslate"><span class="pre">g_session</span></code> on the P4, <code class="docutils literal notranslate"><span class="pre">g_push</span></code> on the front end). This is one subscriber, as before. A second app that only listens gets no reports until it sends something. <strong>To change:</strong> generalized pub/sub (above).</p></td>
 </tr>
 <tr class="row-even"><td><p>Live mailbox (<code class="docutils literal notranslate"><span class="pre">set_uniforms</span></code>, OSC)</p></td>
 <td><p>Latest wins across clients. Two knob streams interleave.</p></td>
@@ -1379,7 +1395,7 @@ with several:</p>
 <td><p>Lapses when the push target closes (<code class="docutils literal notranslate"><span class="pre">netstack_ws_open()</span></code>), the same as before.</p></td>
 </tr>
 <tr class="row-even"><td><p>Kiosk unlock</p></td>
-<td><p>Per connection on a player. On the P4 every link message counts as one “wss” source, so one client’s unlock covers every wss client. <strong>Open question.</strong></p></td>
+<td><p>Per connection on a player. On the P4 every link message counts as one “wss” source, so one client’s unlock covers every wss client. <strong>Decided:</strong> keep it so: all clients are one source.</p></td>
 </tr>
 </tbody>
 </table>
@@ -1390,7 +1406,8 @@ partly received record per session plus one being written: <strong>N + 1</strong
 N = 1, as before). The small region grows by 4 KB per extra session. A miss still falls back
 to the heap (<code class="docutils literal notranslate"><span class="pre">fb=</span></code>) and never fails. On the bench, two sessions plus churn peaked at 2 of 3
 slots and 10,948 of 14,336 B of the small region, with no fallbacks.</p>
-<p><strong>The mbedTLS ABI bug this found.</strong> <code class="docutils literal notranslate"><span class="pre">netstack_transport.cpp</span></code> compiles against the prebuilt
+<p><strong>The mbedTLS ABI bug this found</strong> (tracked in #468; <code class="docutils literal notranslate"><span class="pre">main</span></code> takes #460’s version of the fix,
+and this branch drops its copy when it’s next merged with <code class="docutils literal notranslate"><span class="pre">main</span></code>). <code class="docutils literal notranslate"><span class="pre">netstack_transport.cpp</span></code> compiles against the prebuilt
 SDK’s mbedtls headers, which come first on the include path. The image links the from-source
 mbedtls (&#64;embedded’s <code class="docutils literal notranslate"><span class="pre">mbedtls_src</span></code>, IDF v5.5.4). The two disagree on <code class="docutils literal notranslate"><span class="pre">mbedtls_ssl_context</span></code>:
 the ELF’s DWARF says 344 B in that file and 552 B in the library’s nine compile units. So
@@ -1466,10 +1483,23 @@ state is the provisioning scan with the Improv central connected: 13,668 B again
 available, leaving 8,364 B of headroom. With sessions, the worst is two handshakes beside a
 central: 10,788 B. The same test proves N = 3 and N = 4 don’t fit. At N = 4 the statics alone
 exceed the heap, which the bench’s <code class="docutils literal notranslate"><span class="pre">ESP_ERR_NO_MEM</span></code> confirms.</p>
-<p><strong>Getting to four</strong> means freeing about 50 KB of C6 statics. The front end still links the full
-player core for its while-the-P4-is-down answers, including <code class="docutils literal notranslate"><span class="pre">FX_ARENA</span></code> (24 KB), <code class="docutils literal notranslate"><span class="pre">ARENA_MEM</span></code>
-(12 KB), <code class="docutils literal notranslate"><span class="pre">DECK_A</span></code> and <code class="docutils literal notranslate"><span class="pre">FX_AUX</span></code> (11.6 KB each). It has no LEDs to render on. Shrinking those
-for <code class="docutils literal notranslate"><span class="pre">LM_FRONTEND</span></code> is the way there. The model then says whether four fit.</p>
+<p><strong>Getting to four: the front end becomes a pure transport</strong> (decision, 2026-11-08). Four
+sessions need about 50 KB more of C6 statics. The front end still links the full player core
+for its while-the-P4-is-down answers, including <code class="docutils literal notranslate"><span class="pre">FX_ARENA</span></code> (24 KB), <code class="docutils literal notranslate"><span class="pre">ARENA_MEM</span></code> (12 KB),
+<code class="docutils literal notranslate"><span class="pre">DECK_A</span></code> and <code class="docutils literal notranslate"><span class="pre">FX_AUX</span></code> (11.6 KB each), though it has no LEDs to render on. The decision is to
+drop the effects engine and the player core from <code class="docutils literal notranslate"><span class="pre">LM_FRONTEND</span></code> entirely, not to shrink them.
+The front end keeps only the network, BLE provisioning, identity, OTA and the link. Every
+player message goes to the P4. While the P4 is down, the front end answers with a “player
+unavailable” error instead of serving from a local core. All the freed RAM goes to more wss
+sessions. The steps:</p>
+<ol class="arabic simple">
+<li><p>Compile the player core, the FX VM, the decks and their arenas out of <code class="docutils literal notranslate"><span class="pre">:esp32c6_frontend</span></code>.
+Keep the welcome/hello path the app needs to see the device and its state.</p></li>
+<li><p>Measure the new idle heap with the <code class="docutils literal notranslate"><span class="pre">[heap]</span></code> line and update <code class="docutils literal notranslate"><span class="pre">cost::frontend</span></code>.</p></li>
+<li><p>Let <code class="docutils literal notranslate"><span class="pre">reachability_test</span></code> pick the cap: the largest N whose every reachable state keeps
+the 24 KB floor. Aim for 4.</p></li>
+<li><p>Rerun the multi-session bench at that N.</p></li>
+</ol>
 <p><strong>Link failures are surfaced and recovered.</strong> The P4 counts failed ESSL calls (<code class="docutils literal notranslate"><span class="pre">sdio_err=</span></code> on
 its <code class="docutils literal notranslate"><span class="pre">[net]</span></code> line). When the front end’s 100 ms heartbeat has been silent for 2 s, the P4 says
 so, tears the SDIO link down and reopens it (<code class="docutils literal notranslate"><span class="pre">relinks=</span></code>). Every third failed attempt resets the
