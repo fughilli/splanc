@@ -236,6 +236,13 @@ function offscreenGl(): WebGL2RenderingContext {
   return gl;
 }
 
+/** Startup was abandoned because the capture screen unmounted (#442). */
+class CaptureAbandoned extends Error {
+  constructor() {
+    super("capture screen left during startup");
+  }
+}
+
 /** Undo the transparency the native preview layer needs (see the capture start
  * path). A no-op on the getUserMedia path, which never set it. */
 function restorePageBackground(): void {
@@ -664,6 +671,22 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   // Set only under the HITL app-driver (?driver=): a hardware-free synthetic scene.
   let syntheticSource: SyntheticCaptureSource | null = null;
   let capturing = false;
+  // Set once the screen unmounts (browser Back, tab switch, …). Async work that
+  // outlives the screen — a startup still awaiting the device, a final solve —
+  // must not navigate, toast a stale error or start a device session after
+  // that (#442).
+  let disposed = false;
+  /** Leave the capture screen for `path` without leaving the session's entry
+   * in history: Back from the result must never land on #/capture again,
+   * which would mount a fresh screen and restart mapping on the device (#442).
+   * A no-op once the screen is gone (the user already navigated elsewhere). */
+  const go = (path: string): void => {
+    if (!disposed) router.leave(path);
+  };
+  /** Thrown at startup checkpoints when the screen was left meanwhile. */
+  const abandonIfDisposed = (): void => {
+    if (disposed) throw new CaptureAbandoned();
+  };
   let imuRecorder: ImuRecorder | null = null;
   let previewVideo: HTMLVideoElement | null = null;
   let liveView: MapView | null = null;
@@ -1000,7 +1023,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     if (c === null || !c.isConnected) {
       if (driverActive()) setDriverCaptureError("device disconnected before capture");
       toast("Connect a device to capture", { error: true });
-      router.navigate("/maps");
+      go("/maps");
       return;
     }
     // Supplemental capture: load the prior map + its observations up front, so
@@ -1010,7 +1033,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       const rec = await mapStore.get(calibrateId);
       if (!rec) {
         toast("That map isn't in the library.", { error: true });
-        router.navigate("/maps");
+        go("/maps");
         return;
       }
       priorMap = rec.map;
@@ -1027,13 +1050,14 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       calPrompt.textContent = "Starting the mapping code…";
       await loadStoredProfile(c, rec.map.mapId);
       updateCalSettingsNote();
+      if (disposed) return;
     }
     if (supplementId !== null) {
       const rec = await mapStore.get(supplementId);
       const obs = await mapStore.getObservations(supplementId);
       if (!rec || rec.map.leds.length === 0) {
         toast("This map has no LEDs to supplement.", { error: true });
-        router.navigate(`/map/${supplementId}`);
+        go(`/map/${supplementId}`);
         return;
       }
       priorMap = rec.map;
@@ -1066,6 +1090,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     // fixture's hardware layout.
     const channelPlan = supplementId === null && calibrateId === null ? await resolveChannelPlan(c) : null;
     runChannelPlan = channelPlan;
+    if (disposed) return;
     if (channelPlan !== null) {
       const st0 = channelPlan.stages[0]!;
       const strided = channelPlan.stages.find((x) => x.kind === "strided");
@@ -1226,6 +1251,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         ...(channelPlan !== null ? { codeSpace: channelPlan.total } : {}),
       };
 
+      abandonIfDisposed();
       await c.syncClock(4);
       // Per-channel capture whose first stage codes only a prefix (the curtain):
       // the device transmits just [0, ledCount) while capturing, so a channel
@@ -1234,8 +1260,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // narrow to the first stage at the real brightness.
       const stage0 = channelPlan?.stages[0];
       const blankFirst = channelPlan !== null && stage0 !== undefined && stage0.ledCount < channelPlan.total;
+      abandonIfDisposed();
       const started = await c.startMapping(ledCount, blankFirst ? { ...config, brightness: 0 } : config);
       mappingStarted = true;
+      abandonIfDisposed();
       if (calibrateId !== null) startCalibrationUi(c);
       let params: CodeParams = started.codeParams;
       let epoch: number = started.patternClockEpoch;
@@ -1943,9 +1971,15 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       restorePageBackground();
       await capture?.stop().catch(() => undefined);
       capture = null;
+      if (disposed || e instanceof CaptureAbandoned) {
+        // The user left while the capture was starting: end any device session
+        // this startup opened, quietly — no error toast, no navigation.
+        if (mappingStarted) await c.stopMappingNoSolve().catch(() => undefined);
+        return;
+      }
       if (e instanceof CaptureUnsupportedError) toast(e.message, { error: true });
       else toast(e instanceof Error ? e.message : String(e), { error: true });
-      router.navigate("/maps");
+      go("/maps");
     }
   }
 
@@ -1979,7 +2013,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       await client()?.stopMappingNoSolve().catch(() => undefined);
     }
     resetLiveFeedback();
-    router.navigate("/maps");
+    go(router.origin() ?? "/maps");
   }
 
   async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
@@ -2027,7 +2061,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       calPanel.style.display = "none";
       await c.stopMappingNoSolve().catch(() => undefined);
       stopBtn.disabled = false;
-      router.navigate(`/map/${calibrateId}`);
+      go(`/map/${calibrateId}`);
       return;
     }
 
@@ -2062,7 +2096,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       );
       driverSolveResolve = null;
       driverSolveReject = null;
-      router.navigate("/maps");
+      go("/maps");
       return;
     }
 
@@ -2275,7 +2309,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         driverSolveResolve?.({ mapId: id, ledCount: lastLedCount, solved: map.leds.length });
         driverSolveResolve = null;
         driverSolveReject = null;
-        router.navigate(`/map/${id}`);
+        go(`/map/${id}`);
       }
     } catch (e) {
       nativeLog(`[solve] FAILED: ${e instanceof Error ? e.message : String(e)}`);
@@ -2291,7 +2325,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       driverSolveReject?.(e);
       driverSolveResolve = null;
       driverSolveReject = null;
-      router.navigate(supplementId !== null ? `/map/${supplementId}` : "/maps");
+      go(supplementId !== null ? `/map/${supplementId}` : "/maps");
     } finally {
       if (solvePoll !== null) clearInterval(solvePoll);
       progWrap.style.display = "none";
@@ -2413,7 +2447,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     const prior = priorMap;
     const obs = priorObs;
     if (prior === null || supplementId === null) {
-      router.navigate("/maps");
+      go("/maps");
       return;
     }
     // The base capture's observations + this session's on one timeline: the
@@ -2545,7 +2579,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     } else {
       toast("Supplemental scan discarded — map unchanged");
     }
-    router.navigate(`/map/${supplementId}`);
+    go(`/map/${supplementId}`);
   }
 
   return {
@@ -2568,6 +2602,11 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       void startCapture();
     },
     onUnmount: () => {
+      disposed = true;
+      // Left mid-capture (browser Back / a tab) rather than via Cancel or Stop:
+      // end the device's mapping session too, as Cancel does — otherwise it
+      // keeps playing the code and the next screen finds it mid-capture.
+      if (capturing) void client()?.stopMappingNoSolve().catch(() => undefined);
       if (driverActive()) registerDriverCapture(null);
       driverSolveReject?.(new Error("capture screen unmounted before solve"));
       driverSolveResolve = null;
