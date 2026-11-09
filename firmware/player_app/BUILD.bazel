@@ -147,10 +147,10 @@ rust_static_library(
         "//firmware/sensor",
         "//firmware/store",
         "//firmware/sysmode",
-        "//oss/pbview",
         "//shared/protocol/rust:ledmapper_pb_fw",
         "//shared/protocol/rust:ledmapper_view",
         "@crates//:micropb",
+        "@pbview",
     ],
 )
 
@@ -189,10 +189,10 @@ rust_library(
         "//firmware/sensor",
         "//firmware/store",
         "//firmware/sysmode",
-        "//oss/pbview",
         "//shared/protocol/rust:ledmapper_pb",
         "//shared/protocol/rust:ledmapper_view",
         "@crates//:micropb",
+        "@pbview",
     ],
 )
 
@@ -885,7 +885,7 @@ rust_static_library(
         "//firmware/sensor",
         "//firmware/store",
         "//firmware/sysmode",
-        "//oss/pbview",
+        "@pbview",
         "//shared/protocol/rust:ledmapper_pb_fw",
         "//shared/protocol/rust:ledmapper_view",
         "@crates//:micropb",

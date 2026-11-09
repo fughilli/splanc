@@ -44,7 +44,7 @@ rust_library(
         "//firmware/ota",
         "//firmware/player",
         "//firmware/store",
-        "//oss/pbview",
+        "@pbview",
         # Over-the-air updates (docs/design/max-ota.md): the offer check + the
         # updater's state/inbox formats.
         "//pi/max_ota",
