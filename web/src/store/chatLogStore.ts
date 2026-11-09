@@ -166,7 +166,7 @@ class ChatLogStore {
 
   /** Push one session to the debug server's /chatlogs (best-effort). Only fires
    * when a server is configured; the server merges by id, so error auto-pushes
-   * accumulate alongside a later manual "Send AI chat logs". */
+   * accumulate alongside a later manual "Send diagnostics". */
   private async autoPush(session: ChatLogSession): Promise<void> {
     const base = debugServerUrl();
     if (!base) return;
@@ -178,7 +178,7 @@ class ChatLogStore {
         sessions: [session],
       });
     } catch {
-      // Best-effort; the manual "Send AI chat logs" button is the fallback.
+      // Best-effort; Settings ▸ Debugging ▸ Send diagnostics is the fallback.
     }
   }
 
