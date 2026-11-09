@@ -112,6 +112,9 @@ export interface PerfContext {
   hotOpcodes: { op: string; cycles: number; fraction: number }[];
   /** the device economics the agent reasons with (relative op costs). */
   costTable: { soc: string; cpuHz: number; costs: Record<string, number>; calibrated: boolean };
+  /** Which sample population `metrics.totalMs` summarizes (measured only; e.g.
+   * "mean of 6 rolling-window means"), so it is never read as per-frame (#453). */
+  population?: string;
 }
 
 function cyclesToMs(cycles: number, cpuHz: number): number {
@@ -231,7 +234,7 @@ export function perfContextToPrompt(ctx: PerfContext): string {
   lines.push(
     `- Frame time: ${m.totalMs.toFixed(2)} ms of ${m.budgetMs.toFixed(1)} ms budget (${pct(
       m.budgetFraction,
-    )} consumed).`,
+    )} consumed)${ctx.population ? ` — ${ctx.population}` : ""}.`,
   );
   if (ctx.errorBand) {
     lines.push(
@@ -250,6 +253,15 @@ export function perfContextToPrompt(ctx: PerfContext): string {
   if (m.overruns !== null || m.droppedFrames !== null) {
     lines.push(
       `- Overruns: ${m.overruns ?? 0}, dropped frames: ${m.droppedFrames ?? 0}.`,
+    );
+  }
+  // Measurement gaps (perf-ring overflow) are NOT dropped rendering frames:
+  // reported separately so a gap in the data is never read as a clean capture.
+  if (m.samplesDropped !== null) {
+    lines.push(
+      `- Measurement samples dropped (perf data lost, not rendering drops): ${m.samplesDropped}${
+        m.samplesDropped > 0 ? " — the statistics may miss frames" : ""
+      }.`,
     );
   }
   if (ctx.hotOpcodes.length > 0) {
