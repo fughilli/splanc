@@ -37,7 +37,19 @@ import { deviceProber } from "../src/net/deviceProber";
 import { deviceStore } from "../src/store/deviceStore";
 import { appState } from "../src/ui/app/state";
 import { openDeviceSheet } from "../src/ui/screens/deviceSheet";
-import { FakeLan, advance, button, clearOverlays, outcome, settle, type FakePlayer } from "./deviceFakes";
+import {
+  FakeLan,
+  FakePlayerGatt,
+  advance,
+  all,
+  button,
+  buttonTitled,
+  clearOverlays,
+  installBluetooth,
+  outcome,
+  settle,
+  type FakePlayer,
+} from "./deviceFakes";
 
 let lan: FakeLan;
 let restoreWs: () => void = () => undefined;
@@ -365,4 +377,163 @@ test("an ordinary reboot (same cert) reconnects within the warm budget without a
   assert.equal(appState.client, client, "the same session object reconnects");
   assert.ok(client.isConnected, "reconnected after the reboot");
   assert.equal(appState.status.certUrl, null, "no re-trust prompt for an unchanged cert");
+});
+
+// -- #444: the demo-night "certificate grief" (Wi-Fi refused, BLE fallback) ----------
+// A browser WebSocket cannot tell an untrusted cert from a device refusing a second
+// client (the netstack player serves ONE Wi-Fi session and RST-refuses others while it
+// is live — e.g. the Splanc agent holding it) or from a device that is not answering.
+// The app must not send a once-trusted device, or a silent one, to the trust page, and
+// must reconnect by itself when the cause clears.
+
+/** Connect once successfully (the cert is trusted in this browser), then disconnect. */
+async function trustedOnce(host: string, n: number, name: string): Promise<FakePlayer> {
+  const player = lan.add(host, { mac: mac(n), deviceName: name });
+  appState.connect(`wss://${host}/ws`);
+  await settle();
+  assert.equal(appState.status.state, "connected");
+  appState.disconnect();
+  await settle();
+  return player;
+}
+
+test("a once-trusted device that refuses (busy with another client) is not sent to the trust page and reconnects when freed (#444)", async () => {
+  const player = await trustedOnce("10.0.0.60", 0x60, "Big Lamp");
+  player.mode = "refuse"; // e.g. the agent holds the device's one Wi-Fi session
+  appState.connect("wss://10.0.0.60/ws");
+  await settle();
+
+  assert.equal(appState.status.certUrl, null, "no trust card after one refusal");
+  assert.match(appState.status.error ?? "", /refused the connection.*one Wi-Fi connection at a time/);
+  assert.match(appState.status.error ?? "", /Splanc agent/, "names the likely holder");
+
+  await advance(5_000);
+  player.mode = "answer"; // the other client let go
+  await advance(20_000);
+  assert.equal(appState.status.state, "connected", "reconnected by itself");
+  assert.equal(appState.status.error, null);
+});
+
+test("a once-trusted device that keeps refusing offers trust-again and Bluetooth, and still reconnects on its own (#444)", async () => {
+  const player = await trustedOnce("10.0.0.61", 0x61, "Big Lamp");
+  player.mode = "refuse";
+  appState.connect("wss://10.0.0.61/ws");
+  await advance(20_000); // past the warm budget
+
+  assert.equal(appState.status.text, "trust needed");
+  assert.equal(appState.status.trustKind, "again");
+  openDeviceSheet();
+  const text = all(".device-trust-text")[0]?.textContent ?? "";
+  assert.match(text, /Couldn't connect to Big Lamp over Wi-Fi/);
+  assert.match(text, /one Wi-Fi connection at a time/);
+  assert.ok(button("Trust again & connect"));
+  assert.ok(button("Connect over Bluetooth"), "the fallback that needs neither");
+
+  player.mode = "answer";
+  await advance(20_000); // one slow retry (GAVE_UP_RETRY_MS)
+  assert.equal(appState.status.state, "connected", "not wedged at the trust card");
+  assert.equal(appState.status.certUrl, null);
+});
+
+test("a device nothing answers is reported as not answering, never as a cert to trust, and is retried (#444)", async () => {
+  const player = lan.add("10.0.0.62", { mac: mac(0x62), deviceName: "Porch" });
+  player.mode = "silent"; // rebooting / off this network / new address
+  appState.connect("wss://10.0.0.62/ws");
+  await advance(10_500);
+
+  assert.equal(appState.status.certUrl, null, "a timeout is not a certificate problem");
+  assert.match(appState.status.error ?? "", /isn't answering at 10\.0\.0\.62/);
+  player.mode = "answer";
+  await advance(15_000);
+  assert.equal(appState.status.state, "connected");
+});
+
+test("closing the cert popup without a confirmation (its page refused to load) still reconnects (#444)", async () => {
+  const player = await untrusted("10.0.0.63", 0x63);
+  const opener = stubWindowOpen();
+  openDeviceSheet();
+  button("Trust & connect").click();
+  await advance(1000);
+  assert.equal(appState.client, null);
+
+  // Desktop: the popup is its own window, so this page's visibility never changes
+  // and the device page (which says "refused") never posts its message.
+  player.mode = "answer";
+  opener.popup.closed = true; // the user closes it
+  await advance(500 + 800 + 100);
+  await settle();
+  assert.ok(appState.client, "a reconnect started");
+  await advance(1000);
+  assert.equal(appState.status.state, "connected");
+});
+
+test("after the cert page confirms trust, a busy device is reported as busy and retried, not looped back to trust (#444)", async () => {
+  const player = await untrusted("10.0.0.64", 0x64);
+  stubWindowOpen();
+  openDeviceSheet();
+  button("Trust & connect").click();
+  await advance(1000);
+
+  // The device page loaded and posted its confirmation, but by the time the app
+  // reconnects another client has taken the device's one session.
+  fire(dom.window, "message", { origin: "https://10.0.0.64", data: "ledmapper-cert-ok" });
+  await advance(900);
+  await settle();
+  assert.equal(appState.status.certUrl, null, "not straight back to the trust card");
+  assert.match(appState.status.error ?? "", /refused the connection/);
+
+  await advance(60_000);
+  if (appState.status.certUrl) assert.equal(appState.status.trustKind, "again", "worded as busy / trust again");
+  const n = lan.socketsTo("10.0.0.64").length;
+  player.mode = "answer";
+  await advance(20_000);
+  assert.ok(lan.socketsTo("10.0.0.64").length > n);
+  assert.equal(appState.status.state, "connected");
+});
+
+test("a network drop that outlasts the warm budget (device still holding the dead session) reconnects without the user (#444)", async () => {
+  const player = lan.add("10.0.0.65", { mac: mac(0x65), deviceName: "Office" });
+  appState.connect("wss://10.0.0.65/ws");
+  await settle();
+  const client = appState.client!;
+
+  // The phone roamed: the device keeps the dead session ~21 s (15 s idle ping +
+  // 6 s peer-gone reclaim) and RST-refuses every reconnect meanwhile.
+  player.mode = "refuse";
+  lan.dropAll("10.0.0.65");
+  await advance(21_000);
+  player.mode = "answer";
+  await advance(20_000);
+
+  assert.equal(appState.client, client);
+  assert.ok(client.isConnected, "reconnected by itself");
+  assert.equal(appState.status.state, "connected");
+});
+
+test("falling back to Bluetooth keeps the device's Wi-Fi address, and switching back is one tap (#444)", async () => {
+  await trustedOnce("10.0.0.66", 0x66, "Big Lamp");
+  const board = new FakePlayerGatt({ mac: mac(0x66), deviceName: "Big Lamp" }, { id: "bt-lamp" });
+  const bt = installBluetooth(() => board);
+  try {
+    openDeviceSheet();
+    buttonTitled("Connect over Bluetooth (offline)").click();
+    await advance(1000);
+    assert.equal(appState.status.state, "connected");
+    const rec = deviceStore.active()!;
+    assert.ok(rec.wssUrl.startsWith("ble:"));
+    assert.equal(rec.lanUrl, "wss://10.0.0.66/ws", "the merged Wi-Fi record's address is kept");
+    assert.ok(rec.wssOkAt, "…with its trust");
+    assert.equal(deviceStore.list().length, 1, "still one record for the one device");
+
+    appState.disconnect();
+    await settle();
+    clearOverlays();
+    openDeviceSheet();
+    buttonTitled("Connect over Wi-Fi (10.0.0.66)").click();
+    await settle();
+    assert.equal(appState.status.state, "connected");
+    assert.equal(appState.client?.url, "wss://10.0.0.66/ws");
+  } finally {
+    bt.restore();
+  }
 });

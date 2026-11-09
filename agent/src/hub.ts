@@ -467,7 +467,7 @@ export class Hub {
       let why = sockErr ?? (e as Error).message;
       // Our own connect timeout closes the socket, which ws reports as "closed before
       // the connection was established" — say what actually happened.
-      if (took >= connectTimeoutMs - 50 && /closed before the connection|connection failed/i.test(why)) {
+      if (took >= connectTimeoutMs - 50 && /closed before the connection|connection failed|connection timed out/i.test(why)) {
         why = `no TLS/WebSocket handshake within ${connectTimeoutMs / 1000} s`;
       } else if (why === "connection failed") {
         why = "the connection closed during the TLS/WebSocket handshake";

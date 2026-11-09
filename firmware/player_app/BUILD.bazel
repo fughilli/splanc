@@ -1474,6 +1474,27 @@ filegroup(
     output_group = "elf",
 )
 
+# The mbedtls ABI between the transport's headers and the linked library: the context
+# it declares holds the library's (netstack_transport.cpp SslBox; #444, found by #440).
+py_test(
+    name = "tls_abi_test",
+    srcs = ["tests/test_tls_abi.py"],
+    data = [
+        "netstack_transport.cpp",
+        ":esp32c6_netstack_elf",
+        "@embedded//tools:riscv_objdump",
+    ],
+    env = {
+        "ELF": "$(rlocationpath :esp32c6_netstack_elf)",
+        "OBJDUMP": "$(rlocationpath @embedded//tools:riscv_objdump)",
+    },
+    main = "tests/test_tls_abi.py",
+    # Linux CI, as stack_bound_test: the macOS runner's riscv objdump exits 101 in the
+    # sandbox.
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = ["@rules_python//python/runfiles"],
+)
+
 py_test(
     name = "stack_bound_test",
     srcs = ["tests/test_stack_bound.py"],

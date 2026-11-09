@@ -6,7 +6,13 @@
  */
 
 import type { WelcomeMessage } from "@ledmapper/protocol";
-import { certApprovalUrl, LedMapperClient, type ClientOptions, type SocketFactory } from "../../net/client";
+import {
+  certApprovalUrl,
+  ConnectFailedError,
+  LedMapperClient,
+  type ClientOptions,
+  type SocketFactory,
+} from "../../net/client";
 import { connectionRegistry } from "../../net/connectionRegistry";
 import { nativeSocketFactory } from "../../net/nativeSocket";
 import { isBleUrl } from "../../net/bleTransport";
@@ -23,6 +29,12 @@ export interface ConnStatus {
   text: string;
   /** Set when a self-signed cert must be trusted (cross-origin wss). */
   certUrl: string | null;
+  /** With certUrl: "first" = this browser never reached the device over Wi-Fi, so
+   * its cert most likely needs trusting; "again" = it did (or the user just trusted
+   * it), so the failure is far likelier the device being busy with another client
+   * (it serves one Wi-Fi session) or unreachable — the sheet says so and the client
+   * keeps retrying by itself (#444). */
+  trustKind?: "first" | "again";
   /** Last server/connection error detail (surfaced in the device sheet). */
   error: string | null;
   /** The connected device reported a DIFFERENT certificate than the one first seen
@@ -63,7 +75,14 @@ class AppState {
   connect(
     wssUrl: string,
     label?: string,
-    opts?: { coldRetryLimit?: number; socketFactory?: SocketFactory; uploadChunkBytes?: number },
+    opts?: {
+      coldRetryLimit?: number;
+      socketFactory?: SocketFactory;
+      uploadChunkBytes?: number;
+      /** The cert is known trusted (the cert page just confirmed it): see
+       * ClientOptions.trustedBefore. Otherwise derived from the device store. */
+      trustedBefore?: boolean;
+    },
   ): void {
     this.disconnect();
     // A Bluetooth device is only reachable through its BLE socket factory (made by
@@ -91,6 +110,11 @@ class AppState {
     // An explicit factory (BLE transport — connect over Bluetooth, offline) wins
     // over the native cert-pinning bridge; both make cert-trust meaningless.
     const factory = opts?.socketFactory ?? nativeSocketFactory();
+    // Reached over Wi-Fi in this browser before (or just trusted): a failure is then
+    // not presumed to be the cert (ClientOptions.trustedBefore).
+    const trustedBefore = !factory && (opts?.trustedBefore === true || deviceStore.wssTrusted(wssUrl));
+    if (trustedBefore) clientOpts.trustedBefore = true;
+    const name = (): string => deviceStore.get(dev.id)?.label || label || hostOf(wssUrl);
     if (factory) {
       clientOpts.socketFactory = factory;
       // …and tell the client the trust affordance is meaningless on this
@@ -114,12 +138,23 @@ class AppState {
       wasLagging = s.lagging;
     });
     client.events = {
-      onConnecting: (attempt, url) =>
+      onConnecting: (attempt) =>
         this.setStatus({
           state: "connecting",
           text: attempt <= 1 ? "connecting…" : `connecting (${attempt})…`,
-          error: null,
+          // Keep a standing reason (not answering / refused) visible across retries.
+          error: attempt <= 1 ? null : this.status.error,
         }),
+      // Say WHY an attempt failed while the client keeps retrying, so a device that
+      // is off the network or busy isn't left at a bare "connecting (n)…" (#444).
+      onAttemptFailed: (kind) => {
+        if (this.client !== client || factory) return;
+        if (kind === "timeout") {
+          this.setStatus({ certUrl: null, error: notAnsweringMessage(name(), hostOf(wssUrl)) });
+        } else if ((trustedBefore || client.everConnected) && !this.status.certUrl) {
+          this.setStatus({ error: refusedMessage(name()) });
+        }
+      },
       onConnected: () => {
         this.setStatus({ state: "connecting", text: "syncing clock…", certUrl: null });
         // A Calibrate IMU solve that never reached this device (it dropped
@@ -143,7 +178,13 @@ class AppState {
       // the trust affordance and STOP hammering; the user's "Trust & connect"
       // does a fresh connect() once the cert is accepted.
       onCertTrustNeeded: (url) =>
-        this.setStatus({ state: "connecting", text: "trust needed", certUrl: certApprovalUrl(url), error: null }),
+        this.setStatus({
+          state: "connecting",
+          text: "trust needed",
+          certUrl: certApprovalUrl(url),
+          trustKind: client.everConnected || trustedBefore ? "again" : "first",
+          error: null,
+        }),
     };
     void (async () => {
       try {
@@ -156,6 +197,7 @@ class AppState {
         // device's Bluetooth name tracks the display name the user set.
         const w = client.welcome;
         if (w) {
+          if (!factory) deviceStore.markWssOk(wssUrl);
           deviceStore.applyWelcome(dev.id, {
             mac: w.mac,
             deviceName: w.deviceName,
@@ -199,7 +241,7 @@ class AppState {
           );
         }
         void sync;
-      } catch {
+      } catch (e) {
         // Drop a PROVISIONAL BLE entry that never learned an identity (no welcome
         // MAC). It's keyed on an ephemeral Web Bluetooth device.id, so a failed or
         // aborted (re)connect would otherwise strand a duplicate next to the
@@ -227,11 +269,34 @@ class AppState {
         // the native wrapper the socket comes from the cert-pinning bridge, which
         // already trusts it, so this is an ordinary failure to retry (and note
         // certApprovalUrl alone can't tell — it's always non-null in the wrapper).
+        // A connect attempt nothing answered is never a certificate problem (a
+        // browser rejects an untrusted cert within the handshake): the client keeps
+        // retrying it, so say the device isn't answering instead of sending the user
+        // to a cert page that can't load either (#444). Likewise a device this browser
+        // has reached before that the client is still retrying: no trust card yet.
+        const timedOut = !factory && e instanceof ConnectFailedError && e.kind === "timeout";
+        if (this.client !== client) return;
+        if (timedOut || (trustedBefore && !client.hasGivenUp)) {
+          this.setStatus({
+            state: "connecting",
+            text: "retrying…",
+            certUrl: null,
+            error: timedOut ? notAnsweringMessage(name(), hostOf(wssUrl)) : refusedMessage(name()),
+          });
+          this.watchReconnect(dev.id);
+          return;
+        }
+        if (client.hasGivenUp && this.status.certUrl) {
+          // onCertTrustNeeded already put up the (right kind of) trust card.
+          this.watchReconnect(dev.id);
+          return;
+        }
         const certUrl = factory ? null : certApprovalUrl(wssUrl);
         this.setStatus({
           state: certUrl ? "connecting" : "error",
           text: certUrl ? "trust needed" : "connection failed",
           certUrl,
+          trustKind: trustedBefore ? "again" : "first",
           error: certUrl ? null : "connection failed — retrying",
         });
         // Watch for a background reconnect in BOTH cases. A cert-trust target whose
@@ -265,6 +330,7 @@ class AppState {
         this.clearReconnectWatch();
         const w = c.welcome;
         if (devId !== undefined && w) {
+          if (!isBleUrl(c.url) && !c.viaFactory) deviceStore.markWssOk(c.url);
           deviceStore.applyWelcome(devId, {
             mac: w.mac,
             deviceName: w.deviceName,
@@ -373,6 +439,33 @@ class AppState {
   welcome(): WelcomeMessage | null {
     return this.client?.welcome ?? null;
   }
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+/** Status detail while nothing answers a connect attempt (the client keeps retrying). */
+export function notAnsweringMessage(name: string, host: string): string {
+  return (
+    `${name} isn't answering at ${host}. It may be restarting, off this Wi-Fi network, or ` +
+    "on a new address. Retrying… (or connect over Bluetooth)"
+  );
+}
+
+/** Status detail when a device this browser has reached before refuses or drops
+ * the connection: the netstack player serves ONE Wi-Fi session and refuses a
+ * second client while it is live (#444). */
+export function refusedMessage(name: string): string {
+  return (
+    `${name} refused the connection. It serves one Wi-Fi connection at a time: if the ` +
+    "Splanc agent, another phone or another browser tab is connected to it, close that. " +
+    "Retrying…"
+  );
 }
 
 /** The gentle notice when an effect starts lagging (FUG-82): it keeps playing. */

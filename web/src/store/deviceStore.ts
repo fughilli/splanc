@@ -46,8 +46,22 @@ export interface KnownDevice {
    * one map. Absent / all-null = today's per-device behaviour (captureStride +
    * the global diffuse toggle) — see capture/channelCapture.ts. */
   captureChannels?: (ChannelCaptureProfile | null)[];
+  /** A Bluetooth (`ble:`) record's last-known LAN address (wss URL), kept when the
+   * device's Wi-Fi record is merged into it on a Bluetooth connect, so falling back
+   * to Bluetooth never loses the way back to Wi-Fi (#444). Absent on wss records. */
+  lanUrl?: string;
+  /** ISO time a wss session last reached `welcome` at this record's LAN address
+   * (wssUrl, or lanUrl for a Bluetooth record): its certificate was trusted in this
+   * browser. A later failure there is then far likelier a busy or unreachable device
+   * than a cert to trust (net/client.ts trustedBefore). */
+  wssOkAt?: string;
   /** ISO timestamp of the last successful connection. */
   lastSeen: string;
+}
+
+/** Whether a URL is a synthetic Bluetooth key (`ble:<id>`), not a LAN address. */
+function isBleKey(url: string): boolean {
+  return url.startsWith("ble:");
 }
 
 /** How one output channel is captured (see KnownDevice.captureChannels). */
@@ -117,6 +131,8 @@ function normalize(d: Partial<KnownDevice> & { id: string; wssUrl: string }): Kn
     ...(d.fwGitDirty !== undefined ? { fwGitDirty: d.fwGitDirty } : {}),
     ...(d.fwVersion !== undefined ? { fwVersion: d.fwVersion } : {}),
     ...(d.captureStride !== undefined ? { captureStride: d.captureStride } : {}),
+    ...(d.lanUrl ? { lanUrl: d.lanUrl } : {}),
+    ...(d.wssOkAt ? { wssOkAt: d.wssOkAt } : {}),
     ...((): Pick<KnownDevice, "captureChannels"> => {
       const cc = sanitizeChannelCaptures(d.captureChannels);
       return cc ? { captureChannels: cc } : {};
@@ -291,11 +307,36 @@ class DeviceStore {
         d.label = dup.label;
         d.named = true;
       }
+      // Reached over Bluetooth now: keep the Wi-Fi record's LAN address (and that it
+      // was trusted) so the device can still be connected over Wi-Fi from here.
+      if (isBleKey(d.wssUrl)) {
+        const lan = isBleKey(dup.wssUrl) ? dup.lanUrl : dup.wssUrl;
+        if (lan && (!d.lanUrl || (dup.wssOkAt ?? "") > (d.wssOkAt ?? ""))) {
+          d.lanUrl = lan;
+          if (dup.wssOkAt) d.wssOkAt = dup.wssOkAt;
+          else delete d.wssOkAt;
+        }
+      }
     }
     write(dups.length ? list.filter((x) => !dups.includes(x)) : list);
     const active = this.activeId();
     if (active && dups.some((x) => x.id === active)) this.setActive(id);
     this.emit();
+  }
+
+  /** A wss session at `wssUrl` reached `welcome`: its certificate is trusted in
+   * this browser (see KnownDevice.wssOkAt). */
+  markWssOk(wssUrl: string): void {
+    if (isBleKey(wssUrl)) return;
+    this.mutate(idForUrl(wssUrl), (d) => {
+      d.wssOkAt = new Date().toISOString();
+    });
+  }
+
+  /** Whether a wss session at `wssUrl` has reached `welcome` in this browser before
+   * (on its own record, or as a Bluetooth record's remembered LAN address). */
+  wssTrusted(wssUrl: string): boolean {
+    return read().some((d) => !!d.wssOkAt && (d.wssUrl === wssUrl || d.lanUrl === wssUrl));
   }
 
   /** Record the Web Bluetooth device id captured during BLE provisioning, keyed

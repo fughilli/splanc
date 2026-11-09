@@ -330,9 +330,13 @@ test("once a dropped device's cert stops passing the handshake, warm reconnects 
 
   assert.equal(appState.status.text, "trust needed");
   assert.equal(appState.status.certUrl, "https://10.0.0.30/", "the trust prompt targets that board's origin");
+  assert.equal(appState.status.trustKind, "again", "worded as a once-trusted device (busy, or trust again)");
+  // A once-trusted device keeps being retried, but slowly (#444): the same failure is
+  // what a device busy with another client looks like, and that clears by itself.
   const attempts = lan.socketsTo("10.0.0.30").length;
   await advance(60_000);
-  assert.equal(lan.socketsTo("10.0.0.30").length, attempts, "no further handshakes until the user acts");
+  const more = lan.socketsTo("10.0.0.30").length - attempts;
+  assert.ok(more >= 1 && more <= 4, `slow retries only (${more} in 60 s)`);
 });
 
 test("a Bluetooth device's record is keyed on its Bluetooth id, never its editable name [rr:PR-35]", async () => {
