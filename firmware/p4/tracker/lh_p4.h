@@ -23,13 +23,15 @@ struct LhStatus {
   int64_t trigger_us; //   arrival of the report / clock tick that completed its sweep
   int64_t ready_us;   //   the kernel done with it
   float pos_sigma;    // the pose's position uncertainty (m, sqrt of the covariance trace)
-  uint32_t starts, losses;  // locks gained (fresh solves) and lost
-  // lh_health::Health: 0 lost, 1 coasting (IMU only, no light confirming it), 2 acquiring
-  // (a fresh solve settling), 3 locked. Only 3 is a pose to show as tracked (#446).
+  uint32_t starts, losses, coasts;  // locks gained (fresh solves) and lost; darks coasted
+  // lh_health::Health (#446): 0 lost, 1 uncertain (σ past the limit), 2 acquiring (a fresh
+  // solve settling), 3 coasting (IMU dead reckoning, no light confirming it, σ within the
+  // limit), 4 locked. Coasting and locked are poses to follow.
   uint8_t health;
+  uint8_t speculative;  // the newest pose is the kernel's dead reckoning
 };
 
-enum LhHealth : uint8_t { LH_LOST = 0, LH_COASTING = 1, LH_ACQUIRING = 2, LH_LOCKED = 3 };
+enum LhHealth : uint8_t { LH_LOST = 0, LH_UNCERTAIN = 1, LH_ACQUIRING = 2, LH_COASTING = 3, LH_LOCKED = 4 };
 
 // CPU cycles by kind of work (0 decode, 1 IMU, 2 light/clock without a pose, 3 with one)
 // and how late light reports came over the fastest delivery, since the last call.

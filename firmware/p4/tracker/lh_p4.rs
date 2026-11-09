@@ -143,12 +143,16 @@ pub struct LhStatus {
     pub ready_us: i64,
     /// The newest pose's position uncertainty (m, sqrt of its covariance trace).
     pub pos_sigma: f32,
-    /// Locks gained (fresh pose solves) and lost, so far.
+    /// Locks gained (fresh pose solves) and lost, and dark stretches dead reckoned, so far.
     pub starts: u32,
     pub losses: u32,
-    /// lh_health::Health: 0 lost, 1 coasting (tracking on the IMU, no light confirming it),
-    /// 2 acquiring (a fresh solve settling), 3 locked. Only 3 is a pose to show as tracked.
+    pub coasts: u32,
+    /// lh_health::Health: 0 lost, 1 uncertain, 2 acquiring (a fresh solve settling),
+    /// 3 coasting (dead reckoning on the IMU, no light confirming it, still within the σ
+    /// limit), 4 locked. 3 and 4 are poses to follow.
     pub health: u8,
+    /// 1 if the newest pose is the kernel's speculative dead reckoning.
+    pub speculative: u8,
 }
 
 /// Where the tracker task's time goes (CPU cycles), per kind of work: 0 decoding reports,
@@ -239,7 +243,9 @@ fn tracker() -> &'static mut Tracker {
                 pos_sigma: 0.0,
                 starts: 0,
                 losses: 0,
+                coasts: 0,
                 health: Health::Lost as u8,
+                speculative: 0,
             },
             stations: Vec::new(),
             clock: HostClock::new(),
@@ -256,11 +262,12 @@ impl Tracker {
     fn drain_events(&mut self) {
         for e in self.events.drain(..) {
             match e {
-                Event::Pose { time, light, world_from_head, world_from_body, velocity, cov, used, .. } => {
+                Event::Pose { time, light, world_from_head, world_from_body, velocity, cov, used, speculative, .. } => {
                     let sigma = lh_kernel::math::sqrt((cov[(0, 0)] + cov[(1, 1)] + cov[(2, 2)]).max(0.0)) as f32;
-                    self.health.pose(used, sigma);
+                    self.health.pose(used, sigma, speculative);
                     let s = &mut self.status;
                     s.pos_sigma = sigma;
+                    s.speculative = speculative as u8;
                     s.poses += 1;
                     s.t = time as f64 / 48e6; // i64 ticks: once per pose, so f64 is fine here
                     let p = world_from_head.pos;
@@ -343,6 +350,7 @@ impl Tracker {
         s.health = h as u8;
         s.starts = self.health.starts;
         s.losses = self.health.losses;
+        s.coasts = self.health.coasts;
     }
 }
 

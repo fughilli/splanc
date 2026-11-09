@@ -1,24 +1,28 @@
-//! #446: the tracker loses its pose after fast motion or an occlusion and must report that
-//! honestly, then lock again promptly once the light is back.
+//! #446: after fast motion or an occlusion the tracker must dead reckon honestly, report a
+//! lost pose as lost, and lock again promptly once the light is back.
 //!
 //! A deterministic simulation of the demo setup drives the kernel the P4 runs
 //! (lh_kernel_f32, configured as lh_p4.rs configures it, with the stations adopted from lhd)
 //! and the health state the player publishes (lh_health): two Lighthouse 1.0 base stations
 //! (sync flashes with OOTX, alternating sweeps), a tracker with 24 sensors and a 1 kHz IMU
-//! consistent with its trajectory, and occlusions per station. Each scenario establishes a
-//! lock, moves / occludes as in the recording, then holds the tracker still in clear view,
-//! and checks:
+//! (biased, noisy) consistent with its trajectory, and occlusions per station. Each scenario
+//! establishes a lock, moves / occludes as in the recording, then holds the tracker still in
+//! clear view, and checks:
 //!
-//! - honesty: while light is blocked the state leaves Locked within `fresh_ticks` (+ one
-//!   sweep), and the kernel drops a lock that stays dark;
-//! - reacquisition: Locked again within REACQUIRE_S of the tracker being still in clear view,
+//! - dead reckoning: a dark shorter than the covariance allows is coasted through (usable,
+//!   within COAST_ERR_M of the truth) and the returning light is fused into the same track
+//!   (no fresh solve), Locked within RELOCK_S;
+//! - honesty: a longer dark ends in Lost when the position σ passes POS_SIGMA_LIMIT_M
+//!   (or, still, at the COAST_MAX_S backstop), never coasting on;
+//! - reacquisition: Locked within REACQUIRE_S of being still in clear view after a loss,
 //!   from a fresh solve;
-//! - no jumps: every pose published as Locked is within LOCKED_ERR_M of the truth, and
-//!   consecutive Locked poses move by what the tracker moved (within STEP_ERR_M).
+//! - no jumps: usable poses within LOCKED_ERR_M (locked) / COAST_ERR_M (coasting) of the
+//!   truth, consecutive ones stepping with it (STEP_ERR_M), into and out of coasting.
 //!
 //! The demo requirement these encode (host time; the P4's bootstrap takes ~0.6 s of CPU per
 //! attempt, so on the device add up to ~1 s): a still tracker in clear view is Locked within
-//! 0.5 s, whatever happened before.
+//! 0.5 s, whatever happened before. SIMDBG=1 prints every pose and the state log, SIMVEL=1
+//! the velocity error per pose.
 
 use lh_health::{Health, TrackHealth, TPS};
 use lh_kernel::kernel::{Event, Input, Kernel, KernelConfig};
@@ -32,9 +36,14 @@ use lh_kernel::Real;
 
 /// Still in clear view -> Locked within this (s).
 const REACQUIRE_S: f64 = 0.5;
+/// Light back after a coast -> Locked within this (s): fused, no fresh solve.
+const RELOCK_S: f64 = 0.05;
 /// A Locked pose is within this of the truth (m).
 const LOCKED_ERR_M: f64 = 0.015;
-/// Consecutive Locked poses move by what the tracker moved, within this (m).
+/// A coasting (dead-reckoned) pose is within this of the truth (m): the 2 cm σ limit
+/// (POS_SIGMA_LIMIT_M) the kernel ends coasting at, with margin for σ underestimating.
+const COAST_ERR_M: f64 = 0.03;
+/// Consecutive usable poses move by what the tracker moved, within this (m).
 const STEP_ERR_M: f64 = 0.005;
 
 // ------------------------------------------------------------------ f64 truth
@@ -215,6 +224,8 @@ struct Sim {
     events: Vec<(f64, String)>,
     /// Deterministic noise (an LCG): IMU white noise and per-hit timing jitter.
     rng: u64,
+    /// The accelerometer's bias (g, body frame); the gyro's is fixed (5 mrad/s).
+    accel_bias: V,
 }
 
 const A: u32 = 0x1111_2222;
@@ -245,6 +256,7 @@ impl Sim {
             states: Vec::new(),
             events: Vec::new(),
             rng: 0x2545_f491_4f6c_dd1d,
+            accel_bias: V([0.02, -0.01, 0.015]),
         };
         let mut out = Vec::new();
         for i in 0..s.stations.len() {
@@ -306,16 +318,23 @@ impl Sim {
             match &e {
                 Event::TrackingStarted { .. } => self.health.started(),
                 Event::TrackingLost { .. } => self.health.lost(),
-                Event::Pose { world_from_head, cov, used, .. } => {
+                Event::Pose { world_from_head, cov, used, speculative, velocity, .. } => {
+                    if std::env::var("SIMVEL").is_ok() {
+                        let (a, _) = self.path.at(t - 1e-3);
+                        let (b, _) = self.path.at(t + 1e-3);
+                        let tv = b.sub(a).scale(500.0);
+                        let ev = V([velocity.x as f64, velocity.y as f64, velocity.z as f64]);
+                        eprintln!("vel t={t:.3} err={:.1}mm/s spec={speculative}", ev.sub(tv).norm() * 1e3);
+                    }
                     let sigma = (cov[(0, 0)] + cov[(1, 1)] + cov[(2, 2)]).max(0.0).sqrt() as f32;
-                    self.health.pose(*used, sigma);
+                    self.health.pose(*used, sigma, *speculative);
                     let p = world_from_head.pos;
                     let est = V([p.x as f64, p.y as f64, p.z as f64]);
                     let (truth, _) = self.path.at(t);
                     self.poses.push((t, self.health.state(), est, truth));
                     if std::env::var("SIMDBG").is_ok() {
                         eprintln!(
-                            "pose t={t:.3} {:?} sigma={:.1}mm err={:.1}mm used={used}",
+                            "pose t={t:.3} {:?} sigma={:.1}mm err={:.1}mm used={used} spec={speculative}",
                             self.health.state(),
                             sigma * 1e3,
                             est.sub(truth).norm() * 1e3
@@ -383,9 +402,10 @@ impl Sim {
                     self.push(tp, Input::Pulse { dev: 1, pulse: p });
                     pi += 1;
                 }
-                // A real IMU: biases (0.02 g, 5 mrad/s) and white noise per sample.
+                // A real IMU: biases (0.02 g, 5 mrad/s) and white noise per sample (2 mg: under the
+                // kernel's still detector's 4 mg spread, as on the recorded sessions).
                 let (f, w) = self.path.imu(next_imu);
-                let f = f.add(V([0.02, -0.01, 0.015])).add(self.noise(0.005));
+                let f = f.add(self.accel_bias).add(self.noise(0.002));
                 let w = w.add(V([0.005, -0.003, 0.004])).add(self.noise(0.003));
                 let raw = self.raw(next_imu);
                 self.health.clock(raw);
@@ -405,8 +425,9 @@ impl Sim {
         self.states.iter().find(|(t, h)| *t >= from && *h == want).map(|x| x.0)
     }
 
-    /// Checks every pose published while Locked after `from`: near the truth, and steps
-    /// that follow the truth's.
+    /// Checks every usable pose (Locked or Coasting) published after `from`: Locked ones
+    /// within LOCKED_ERR_M of the truth, coasting ones within COAST_ERR_M, and steps
+    /// (including into and out of coasting) that follow the truth's.
     fn assert_no_jumps(&self, from: f64) {
         let mut prev: Option<(V, V)> = None;
         let mut n = 0;
@@ -414,26 +435,36 @@ impl Sim {
             if t < from {
                 continue;
             }
-            if h != Health::Locked {
+            if !h.usable() {
                 prev = None;
                 continue;
             }
             let err = est.sub(truth).norm();
-            assert!(
-                err < LOCKED_ERR_M,
-                "Locked pose {:.1} mm off the truth at t={:.3} s\n{}",
-                err * 1e3,
-                t,
-                self.log()
-            );
+            let bound = if h == Health::Locked { LOCKED_ERR_M } else { COAST_ERR_M };
+            assert!(err < bound, "{h:?} pose {:.1} mm off the truth at t={:.3} s\n{}", err * 1e3, t, self.log());
             if let Some((pe, pt)) = prev {
                 let step = est.sub(pe).sub(truth.sub(pt)).norm();
-                assert!(step < STEP_ERR_M, "Locked pose jumped {:.1} mm at t={:.3} s\n{}", step * 1e3, t, self.log());
+                assert!(step < STEP_ERR_M, "{h:?} pose jumped {:.1} mm at t={:.3} s\n{}", step * 1e3, t, self.log());
             }
             prev = Some((est, truth));
             n += 1;
         }
-        assert!(n > 10, "too few Locked poses after {from} s ({n})\n{}", self.log());
+        assert!(n > 10, "too few usable poses after {from} s ({n})\n{}", self.log());
+    }
+
+    /// Fresh solves (TrackingStarted) at or after `from`.
+    fn starts(&self, from: f64) -> usize {
+        self.events.iter().filter(|(t, e)| *t >= from && e.starts_with("TrackingStarted")).count()
+    }
+
+    /// The first TrackingLost at or after `from`: (time, reason as printed).
+    fn loss(&self, from: f64) -> Option<(f64, String)> {
+        self.events.iter().find(|(t, e)| *t >= from && e.starts_with("TrackingLost")).map(|(t, e)| (*t, e.clone()))
+    }
+
+    /// The largest error of a pose published in [from, to), and its state.
+    fn max_err(&self, from: f64, to: f64) -> f64 {
+        self.poses.iter().filter(|p| p.0 >= from && p.0 < to).map(|p| p.2.sub(p.3).norm()).fold(0.0, f64::max)
     }
 
     fn log(&self) -> String {
@@ -482,6 +513,11 @@ fn reacquired(sim: &Sim, from: f64) -> f64 {
         sim.log()
     );
     dt
+}
+
+/// A steady carry through the demo space: 0.6 m and 1 rad over 2.4 s (peaks ~0.5 m/s).
+fn carry(t0: f64) -> Path {
+    Path(vec![key(t0, [0.2, 0.3, 1.0], [0.0, 0.0, 0.3]), key(t0 + 2.4, [-0.3, -0.1, 1.2], [0.3, -0.2, 1.3])])
 }
 
 #[test]
@@ -558,22 +594,103 @@ fn one_station_occluded_keeps_tracking() {
     reacquired(&sim, SETTLE + 2.5);
 }
 
-/// Both stations blocked for 0.3 s (a body passing): not a lock while dark, Locked again at
-/// once after.
+/// Asserts dead reckoning through a dark that ends before the covariance limit: usable
+/// (Coasting) from shortly into it to the end, never Lost, no fresh solve, and Locked again
+/// within RELOCK_S of the light by fusing it into the same track. Returns the largest error
+/// of a coasting pose.
+fn coasted_through(sim: &Sim, dark: (f64, f64)) -> f64 {
+    let from = dark.0 + 0.11; // the kernel's coast_after + lh_health's FRESH_S
+    assert!(
+        sim.states.iter().filter(|x| x.0 > from && x.0 < dark.1).all(|x| x.1 == Health::Coasting),
+        "not Coasting through a {:.2} s dark\n{}",
+        dark.1 - dark.0,
+        sim.log()
+    );
+    assert!(sim.first(dark.0, Health::Lost).is_none(), "Lost in a {:.2} s dark\n{}", dark.1 - dark.0, sim.log());
+    assert_eq!(sim.starts(dark.0), 0, "a fresh solve: the light wasn't fused into the coasting track\n{}", sim.log());
+    let back = sim.first(dark.1, Health::Locked).unwrap_or_else(|| panic!("never Locked after\n{}", sim.log()));
+    assert!(back - dark.1 < RELOCK_S, "Locked {:.3} s after the light came back\n{}", back - dark.1, sim.log());
+    let err = sim.max_err(dark.0, dark.1);
+    eprintln!("coasted {:.2} s: worst error {:.1} mm, Locked {:.3} s after the light", dark.1 - dark.0, err * 1e3, back - dark.1);
+    err
+}
+
+/// Both stations blocked for 0.3 s while the tracker sits still (a body passing): it coasts
+/// (zero-velocity updates hold it), then the light is fused back in.
 #[test]
-fn both_occluded_briefly_reports_coasting_then_relocks() {
+fn both_occluded_briefly_while_still_coasts() {
     let dark = (SETTLE + 1.0, SETTLE + 1.3);
     let mut sim = Sim::new(Path(vec![key(0.0, [0.1, 0.2, 1.0], [0.0, 0.0, 0.3])]), vec![(dark.0, dark.1, &[A, B])]);
     sim.run(SETTLE + 4.0);
     locked_by_settle(&sim);
-    let left = sim.states.iter().find(|x| x.0 >= dark.0 && x.1 != Health::Locked).map(|x| x.0);
-    let left = left.unwrap_or_else(|| panic!("still Locked in the dark\n{}", sim.log()));
-    assert!(left - dark.0 < 0.13, "Locked {:.3} s into the dark\n{}", left - dark.0, sim.log());
-    assert!(
-        sim.states.iter().filter(|x| x.0 > left && x.0 < dark.1).all(|x| x.1 != Health::Locked),
-        "Locked in the dark\n{}",
-        sim.log()
-    );
+    coasted_through(&sim, dark);
+    sim.assert_no_jumps(SETTLE);
+}
+
+/// Both stations blocked for 0.15 s mid-carry (~0.5 m/s): dead reckoned through it within
+/// COAST_ERR_M, and fused back in without a jump.
+#[test]
+fn brief_occlusion_during_motion_coasts_and_fuses() {
+    let dark = (SETTLE + 1.6, SETTLE + 1.75);
+    let mut sim = Sim::new(carry(SETTLE + 0.5), vec![(dark.0, dark.1, &[A, B])]);
+    sim.run(SETTLE + 5.0);
+    locked_by_settle(&sim);
+    coasted_through(&sim, dark);
+    sim.assert_no_jumps(SETTLE);
+}
+
+/// A 2 s dark mid-carry: the dead reckoning's covariance passes the limit and the kernel
+/// declares the track lost (Drifted), well before the hard cap; nothing coasts on after.
+#[test]
+fn long_occlusion_during_motion_ends_lost_on_variance() {
+    let dark = (SETTLE + 1.0, SETTLE + 3.0);
+    let mut sim = Sim::new(carry(SETTLE + 0.5), vec![(dark.0, dark.1, &[A, B])]);
+    sim.run(SETTLE + 5.0);
+    locked_by_settle(&sim);
+    let (t, why) = sim.loss(dark.0).unwrap_or_else(|| panic!("never lost in a 2 s dark\n{}", sim.log()));
+    assert!(why.contains("Drifted"), "lost for {why}, not the covariance\n{}", sim.log());
+    assert!(t - dark.0 < 0.6, "coasted {:.3} s", t - dark.0);
+    assert!(sim.states.iter().filter(|x| x.0 > t && x.0 < dark.1).all(|x| x.1 == Health::Lost), "{}", sim.log());
+    sim.assert_no_jumps(SETTLE);
+    reacquired(&sim, SETTLE + 2.9);
+}
+
+/// What the accelerometer bias does to dead reckoning: the window is the covariance's (the
+/// filter's own bias uncertainty), the same whatever the true bias; the true bias sets how
+/// far the coasting pose actually drifts in it. Up to 0.02 g (a warm, tracked IMU) it stays
+/// within COAST_ERR_M.
+#[test]
+fn accelerometer_bias_sets_the_drift_not_the_window() {
+    let dark = (SETTLE + 1.0, SETTLE + 3.0);
+    let mut windows = Vec::new();
+    for bias_g in [0.0, 0.01, 0.02, 0.05] {
+        let mut sim = Sim::new(carry(SETTLE + 0.5), vec![(dark.0, dark.1, &[A, B])]);
+        sim.accel_bias = V([bias_g, -bias_g * 0.5, bias_g * 0.75]);
+        sim.run(SETTLE + 3.2);
+        let (t, why) = sim.loss(dark.0).unwrap_or_else(|| panic!("never lost at {bias_g} g\n{}", sim.log()));
+        let err = sim.max_err(dark.0, t);
+        eprintln!("accel bias {bias_g:.2} g: coasted {:.0} ms, worst error {:.1} mm, {why}", (t - dark.0) * 1e3, err * 1e3);
+        if bias_g <= 0.02 {
+            assert!(err < COAST_ERR_M, "{bias_g} g: {:.1} mm", err * 1e3);
+        }
+        windows.push((t - dark.0, err));
+    }
+    let (w0, e0) = windows[0];
+    assert!(windows.iter().all(|w| (w.0 - w0).abs() < 0.03), "window moved with the bias: {windows:?}");
+    assert!(windows.last().unwrap().1 > e0, "drift should grow with the bias: {windows:?}");
+}
+
+/// Under a hand while sitting still for 2 s: zero-velocity updates keep the covariance in
+/// bounds, so the hard cap (lost_after_dark, COAST_MAX_S) is what ends it.
+#[test]
+fn still_under_a_hand_coasts_until_the_cap() {
+    let dark = (SETTLE + 1.0, SETTLE + 3.0);
+    let mut sim = Sim::new(Path(vec![key(0.0, [0.1, 0.2, 1.0], [0.0, 0.0, 0.3])]), vec![(dark.0, dark.1, &[A, B])]);
+    sim.run(SETTLE + 4.5);
+    locked_by_settle(&sim);
+    let (t, why) = sim.loss(dark.0).unwrap_or_else(|| panic!("coasted forever\n{}", sim.log()));
+    eprintln!("still under a hand: coasted {:.3} s, {why}, worst error {:.1} mm", t - dark.0, sim.max_err(dark.0, t) * 1e3);
+    assert!(t - dark.0 <= lh_health::COAST_MAX_S as f64 + 0.02, "past the cap: {:.3} s", t - dark.0);
     sim.assert_no_jumps(SETTLE);
     reacquired(&sim, dark.1);
 }

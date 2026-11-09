@@ -60,6 +60,8 @@ void publish(const LhStatus& s) {
   p.pos_sigma = s.pos_sigma;
   p.starts = s.starts;
   p.losses = s.losses;
+  p.coasts = s.coasts;
+  p.speculative = s.speculative;
   taskENTER_CRITICAL(&g_mux);
   const bool fresh = s.poses != g_pose.poses;
   p.seq = g_pose.seq + (fresh ? 1 : 0);

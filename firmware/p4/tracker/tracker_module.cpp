@@ -9,11 +9,14 @@
 //   mount       tracker <- fixture map frame (T_TF, from the calibration; kept in NVS)
 //   pose        world <- fixture map frame = tracker * mount
 //               (the convention of agent/skill/examples/plane_slice_pose.fx)
-//   tracker_ok     1 while the pose is a lock (light keeps confirming it), else 0: lost,
-//                  coasting on the IMU after an occlusion or fast motion, or a fresh solve
-//                  still settling. The matrices then hold their last value (no
-//                  prediction), so an effect should fade or freeze rather than follow them.
-//   tracker_state  why (lh_health, #446): 0 lost, 1 coasting, 2 acquiring, 3 locked
+//   tracker_ok     1 while the pose is one to follow: locked, or coasting (dead reckoned
+//                  on the IMU through an occlusion or fast motion, its σ within
+//                  POS_SIGMA_LIMIT_M = 2 cm, at most COAST_MAX_S = 1 s; lh_health.rs).
+//                  0 when lost, uncertain or a fresh solve still settling: the matrices
+//                  then hold their last value (no prediction), so an effect should fade or
+//                  freeze rather than follow them.
+//   tracker_state  which (lh_health, #446): 0 lost, 1 uncertain, 2 acquiring, 3 coasting,
+//                  4 locked; an effect that wants optical locks only checks for 4
 //
 // OSC (udp/9000, forwarded to the P4 by its C6 front end), claimed before the mailbox:
 //   /lh/station ,iffffff f  base station id, then world <- station (x y z qw qx qy qz):
@@ -38,8 +41,9 @@
 // constant that `/lh/lead` stands in for).
 //
 // OSC out (to whoever last sent OSC in: the lighthouse demo, which draws them), <= 30 Hz
-// while the pose changes, and at once when tracker_ok does:
-//   /lh/pose         ,ffffffff  tracker_ok (0/1), world <- tracker: x y z qw qx qy qz
+// while the pose changes, and at once when tracker_state does:
+//   /lh/pose         ,ffffffff  tracker_ok (0/1: locked or coasting), world <- tracker:
+//                               x y z qw qx qy qz
 //   /lh/fixture_pose ,f x16     world <- fixture map (`pose`), once the mount is set
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
@@ -66,21 +70,25 @@ volatile bool g_predict = true;
 volatile int32_t g_lead_us = 0;
 // Never extrapolate further than this (a stalled tracker must not fly off).
 constexpr int64_t kMaxPredictUs = 60 * 1000;
-// A lock publishes a pose every sweep (8 ms): one older than this means the tracker task
-// stalled, and the pose is no lock whatever its state says.
+// Locked or coasting, the kernel publishes a pose every sweep / every 8 ms of dead
+// reckoning: one older than this means the tracker task stalled, and the pose is not to be
+// followed whatever its state says.
 constexpr int64_t kStaleUs = 150 * 1000;
 
 // The state to show for `p` at `now_us`: lh_health's, downgraded if the pose went stale.
 uint8_t shown_health(const TrackerPose &p, int64_t now_us) {
-  if (p.health == LH_LOCKED && (p.seq == 0 || now_us - p.published_us > kStaleUs)) return LH_COASTING;
+  if (p.health >= LH_COASTING && (p.seq == 0 || now_us - p.published_us > kStaleUs)) return LH_UNCERTAIN;
   return p.health;
 }
+
+bool usable(uint8_t h) { return h >= LH_COASTING; }
 
 const char *health_name(uint8_t h) {
   switch (h) {
     case LH_LOCKED: return "locked";
     case LH_ACQUIRING: return "acquiring";
     case LH_COASTING: return "coasting";
+    case LH_UNCERTAIN: return "uncertain";
     default: return "lost";
   }
 }
@@ -364,14 +372,16 @@ void frame(const LmFrameTiming *t) {
   FrameRec &f = g_frames[g_frame_next];
   g_frame_next = (g_frame_next + 1) % (int)(sizeof g_frames / sizeof g_frames[0]);
   const uint8_t health = shown_health(p, t->start_us);
-  const bool ok = health == LH_LOCKED;
-  f = {t->start_us, t->present_us, p.light_us, p.trigger_us, p.ready_us, p.published_us, p.pose_us, ok};
+  const bool ok = usable(health);
+  // Latency figures only for frames on an optical lock (a coasting pose's light is old).
+  f = {t->start_us, t->present_us, p.light_us,    p.trigger_us, p.ready_us,
+       p.published_us, p.pose_us,  health == LH_LOCKED};
   if (p.seq != 0) {
     float pos[3], quat[4];
     memcpy(pos, p.pos, sizeof pos);
     memcpy(quat, p.quat, sizeof quat);
-    // Predicted only while light confirms the pose: coasting, the rates are the last
-    // lock's, and extrapolating them is how a lost pose flies off.
+    // Predicted while usable (locked, or coasting: a dead-reckoned pose comes with the
+    // IMU's current rates); never once lost, where extrapolating is how a pose flies off.
     if (g_predict && ok && p.clock_ok) {
       int64_t ahead = t->present_us + g_lead_us - p.pose_us;
       if (ahead < 0) ahead = 0;
@@ -407,12 +417,13 @@ void status() {
   tracker_service_lag(&lag);
   const int64_t now = esp_timer_get_time();
   const float dt = prev_us ? (now - prev_us) / 1e6f : 1.0f;
-  lm_module_log("[tracker] %s%s, pose %s (sigma %.1f mm; locks %u, lost %u), %u stations; IMU %.0f/s, light "
+  lm_module_log("[tracker] %s%s, pose %s (sigma %.1f mm; locks %u, lost %u, coasts %u), %u stations; IMU %.0f/s, light "
                 "%.0f/s, poses %.0f/s; pos (%.3f, %.3f, %.3f); "
                 "mount %s; out %u (fail %u), poll gap max %lld ms, send gap max %lld ms; "
                 "lag %u ms (max %u, queue max %u, dropped %u, skipped %u)\n",
                 p.configured ? "configured" : "no tracker", p.tracking ? ", tracking" : "",
                 health_name(shown_health(p, now)), p.pos_sigma * 1e3f, (unsigned)p.starts, (unsigned)p.losses,
+                (unsigned)p.coasts,
                 (unsigned)p.stations,
                 (p.imu - prev.imu) / dt, (p.pulses - prev.pulses) / dt, (p.poses - prev.poses) / dt, p.pos[0],
                 p.pos[1], p.pos[2], g_mount_valid ? "set" : "not set", (unsigned)g_out, (unsigned)g_out_fail,
@@ -461,22 +472,22 @@ void status() {
 void poll() {
   static int64_t last_us = 0;
   static uint32_t last_seq = 0;
-  static bool last_ok = false;
+  static uint8_t last_state = LH_LOST;
   const int64_t now = esp_timer_get_time();
   if (g_poll_last_us && now - g_poll_last_us > g_poll_gap_max_us) g_poll_gap_max_us = now - g_poll_last_us;
   g_poll_last_us = now;
   TrackerPose p;
   tracker_service_get(&p);
-  const bool ok = shown_health(p, now) == LH_LOCKED;
-  // A change of ok goes out at once (the host must not draw a lost pose as tracked); new
-  // poses at most every 33 ms.
-  if (p.seq == 0 || (ok == last_ok && (now - last_us < 33 * 1000 || p.seq == last_seq))) return;
-  last_ok = ok;
+  const uint8_t state = shown_health(p, now);
+  // A change of state goes out at once (the host must not draw a lost pose as tracked);
+  // new poses at most every 33 ms.
+  if (p.seq == 0 || (state == last_state && (now - last_us < 33 * 1000 || p.seq == last_seq))) return;
+  last_state = state;
   if (last_us && now - last_us > g_send_gap_max_us) g_send_gap_max_us = now - last_us;
   last_us = now;
   last_seq = p.seq;
   uint8_t buf[24 + 24 + 16 * 4];
-  const float v[8] = {ok ? 1.0f : 0.0f, p.pos[0], p.pos[1], p.pos[2], p.quat[0], p.quat[1], p.quat[2], p.quat[3]};
+  const float v[8] = {usable(state) ? 1.0f : 0.0f, p.pos[0], p.pos[1], p.pos[2], p.quat[0], p.quat[1], p.quat[2], p.quat[3]};
   if (lm_module_osc_send(buf, osc_floats(buf, "/lh/pose", v, 8))) {
     g_out++;
   } else {
