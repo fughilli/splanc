@@ -296,6 +296,20 @@ js_binary(
     entry_point = ":dist-test/tests/tools/offlineDecode.js",
 )
 
+# Mapping-link throughput benchmark (#448): time-to-coverage, decoded-ID error
+# rate and dropouts from capture bundles' link telemetry (bundle v2), or from
+# the moving-camera simulator (tests/linkSim.ts) over a scenario suite per
+# tuning policy, compared correctness-first against the baseline:
+#   bazel run //web:link_bench [-- --json base.json | --baseline base.json | <bundle.json>...]
+js_binary(
+    name = "link_bench",
+    data = [
+        ":dist_test_pkg_json",
+        ":web_tests_js",
+    ],
+    entry_point = ":dist-test/tests/tools/linkBench.js",
+)
+
 # Headless fit + validation of a HITL device-measurement bundle (FUG-11) through
 # the same buildDeviceProfile the app uses — so a rig run can fit + validate +
 # commit an authoritative device profile with no browser:

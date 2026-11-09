@@ -93,6 +93,13 @@ export interface DecodeStats {
   /** Records dropped: another track decoded the same id this cycle, brighter. */
   rejectedDuplicate: number;
   /**
+   * Accepted decodes that CHANGED an already-labeled track's id. One physical
+   * blob can only be one LED, so every flip means one of the two decodes was
+   * wrong (or the tracker swapped blobs) — the ground-truth-free decoded-ID
+   * error signal the mapping-link telemetry records (cv/linkTelemetry.ts).
+   */
+  idFlips: number;
+  /**
    * EMA of per-cycle worst-window symbol margins over sync-valid cycles
    * (including ones later rejected for low confidence) — the measured
    * chroma SNR. The symbol-alphabet renegotiation reads this: chronically
@@ -138,6 +145,7 @@ export class Decoder {
     rejectedSupport: 0,
     rejectedPoseGap: 0,
     rejectedDuplicate: 0,
+    idFlips: 0,
     marginEma: null,
   };
 
@@ -464,6 +472,7 @@ export class Decoder {
     }
 
     this.stats.uniqueIds.add(ledId);
+    if (track.ledId !== null && track.ledId !== ledId) this.stats.idFlips++;
     // Label the track for live UI feedback (id overlays in the camera view).
     track.ledId = ledId;
     track.ledConfidence = confidence;
