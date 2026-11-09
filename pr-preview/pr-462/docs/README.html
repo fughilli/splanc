@@ -254,6 +254,7 @@
 <li class="toctree-l2"><a class="reference internal" href="docs/design/uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/strided-capture.html">Strided (diffuse) capture</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
 <li class="toctree-l2"><a class="reference internal" href="docs/design/ram-budget.html">RAM budget</a></li>
@@ -334,6 +335,9 @@
   <a href="https://splanc.io/app"><img
     src="https://img.shields.io/badge/live%20app-splanc.io%2Fapp-084de7"
     alt="Live app" /></a>
+  <a href="https://fughilli.github.io/splanc/docs/"><img
+    src="https://img.shields.io/badge/docs-developer%20docs-6741d9"
+    alt="Developer docs" /></a>
   <a href="https://bazel.build"><img
     src="https://img.shields.io/badge/built%20with-Bazel-43a047"
     alt="Built with Bazel" /></a>
@@ -435,6 +439,9 @@ a microcontroller instead of Art-Net boxes, our own wireless stack, no heap,
 and model checking for an LED controller.</p></li>
 <li><p><strong>What’s new:</strong> <a class="reference internal" href="docs/whats-new.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/whats-new.md</span></code></span></a></p></li>
 <li><p><strong>Contributing &amp; building from source:</strong> <a class="reference internal" href="DEVELOPERS.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">DEVELOPERS.md</span></code></span></a></p></li>
+<li><p><strong>Developer docs:</strong> <a class="reference external" href="https://fughilli.github.io/splanc/docs/">fughilli.github.io/splanc/docs</a>
+— architecture, subsystems and design notes as one site (built by
+<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//docs:build</span></code>)</p></li>
 <li><p><strong>Design &amp; architecture:</strong> <a class="reference internal" href="led-mapper-design.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">led-mapper-design.md</span></code></span></a> —
 the durable spec — plus <a class="reference internal" href="#./docs"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">docs/</span></code></span></a></p></li>
 <li><p><strong>Project history / build log:</strong> <a class="reference internal" href="#./WORKLOG.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code></span></a></p></li>
