@@ -3,7 +3,7 @@
 //! simulated NOR flash), the image header gate, and the boot/health decisions.
 
 use splanc_ota::boot::{self, AppState, Handoff, Health, LoaderAction, LoaderInputs, Reason, Reset, Verdict};
-use splanc_ota::image::{self, ImageError, CHIP_ESP32C3, CHIP_ESP32C6};
+use splanc_ota::image::{self, ImageError, CHIP_ESP32C3, CHIP_ESP32C6, CHIP_ESP32P4};
 use splanc_ota::manifest::{self, Manifest, ENCODED_LEN, FLAG_LOADER};
 use splanc_ota::session::{self, Refusal, Resume, Session, Target, MAX_CHUNK, PERSIST_EVERY, SECTOR};
 use splanc_ota::sha256::{sha256, Sha256};
@@ -110,7 +110,7 @@ fn image_header_gate() {
 const SLOT: u32 = 0x240000;
 
 fn target(installed: u32) -> Target {
-    Target { slot_size: SLOT, chip: CHIP_ESP32C6, installed_version: installed }
+    Target { slot_size: SLOT, chip: CHIP_ESP32C6, installed_version: installed, board: 0 }
 }
 
 #[test]
@@ -124,7 +124,7 @@ fn offers_are_checked_before_anything_is_touched() {
     assert_eq!(session::check_offer(&loader, true, &target(0), false), Err(Refusal::LoaderImage));
     // A Splanc MAX image (board != 0 in the signed flags), validly signed by the
     // SHARED release key: the board, not the key, keeps it off a C6.
-    for board in [1u32, 2, 3, 4, 0xff] {
+    for board in [1u32, 2, 3, 4, 16, 0xff] {
         let mut max = m;
         max.flags = splanc_ota::keyring::flags(splanc_ota::keyring::KEY_RELEASE, 0) | (board << manifest::BOARD_SHIFT);
         assert_eq!(session::check_offer(&max, true, &target(0), false), Err(Refusal::WrongBoard), "board {board}");
@@ -144,6 +144,53 @@ fn offers_are_checked_before_anything_is_touched() {
     assert_eq!(session::check_offer(&m, true, &target(1_010_000), false), Err(Refusal::Downgrade));
     assert!(session::check_offer(&m, true, &target(1_010_000), true).is_ok());
     assert!(session::check_offer(&m, true, &target(1_009_000), false).is_ok(), "same version: reinstall");
+}
+
+#[test]
+fn a_p4_takes_only_p4_player_images() {
+    // docs/design/p4-c6-split.md §5.1: the P4's receiver installs board 16 (the P4
+    // player, which carries the C6 front end's images); every other chip board 0.
+    assert_eq!(session::board_for_chip(CHIP_ESP32P4), manifest::BOARD_P4);
+    assert_eq!(session::board_for_chip(CHIP_ESP32C6), manifest::BOARD_C6);
+    assert_eq!(session::board_for_chip(CHIP_ESP32C3), manifest::BOARD_C6);
+    let p4 = Target { slot_size: SLOT, chip: CHIP_ESP32P4, installed_version: 0, board: manifest::BOARD_P4 };
+    let img = app_image(CHIP_ESP32P4, 10_000);
+    let mut m = manifest_for(&img, 1_014_000);
+    m.flags = splanc_ota::keyring::flags(splanc_ota::keyring::KEY_RELEASE, 0)
+        | ((manifest::BOARD_P4 as u32) << manifest::BOARD_SHIFT);
+    assert!(session::check_offer(&m, true, &p4, false).is_ok());
+    // ... and refuses a C6 image or a MAX image signed with the same key.
+    for board in [0u32, 1, 2, 3, 4, 0xff] {
+        let mut other = m;
+        other.flags = splanc_ota::keyring::flags(splanc_ota::keyring::KEY_RELEASE, 0) | (board << manifest::BOARD_SHIFT);
+        assert_eq!(session::check_offer(&other, true, &p4, false), Err(Refusal::WrongBoard), "board {board}");
+    }
+    // The C entry point the P4 calls picks the board from the chip id.
+    let enc = m.encode();
+    let err = unsafe {
+        splanc_ota::capi::ota_session_begin(
+            enc.as_ptr(),
+            enc.len(),
+            true,
+            SLOT,
+            CHIP_ESP32P4,
+            0,
+            false,
+            std::ptr::null(),
+            0,
+        )
+    };
+    assert!(err.is_null(), "a P4 image on a P4");
+    splanc_ota::capi::ota_session_reset();
+    let err = unsafe {
+        splanc_ota::capi::ota_session_begin(enc.as_ptr(), enc.len(), true, SLOT, CHIP_ESP32C6, 0, false, std::ptr::null(), 0)
+    };
+    assert_eq!(unsafe { std::ffi::CStr::from_ptr(err) }.to_str(), Ok("wrong_board"));
+    // A C6 image (chip 0x000D in its header) inside a P4-signed manifest still fails
+    // the header gate at offset 0.
+    let s = Session::begin(m, true, &p4, false, None).unwrap();
+    let c6 = app_image(CHIP_ESP32C6, 4096);
+    assert_eq!(s.plan(0, &c6, CHIP_ESP32P4), Err(Refusal::Image(ImageError::WrongChip { got: CHIP_ESP32C6 })));
 }
 
 // -- the receive session --------------------------------------------------------------

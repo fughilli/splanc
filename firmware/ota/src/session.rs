@@ -38,6 +38,18 @@ pub struct Target {
     /// Manifest version of the app in the slot (0 = unknown, e.g. USB-flashed:
     /// any version is accepted).
     pub installed_version: u32,
+    /// The manifest board this receiver installs (`manifest::BOARD_*`).
+    pub board: u8,
+}
+
+/// The manifest board a chip's receiver installs: the P4 takes P4 player images,
+/// every other chip (the C6, the C3) C6-family app images.
+pub fn board_for_chip(chip: u16) -> u8 {
+    if chip == image::CHIP_ESP32P4 {
+        manifest::BOARD_P4
+    } else {
+        manifest::BOARD_C6
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,8 +58,9 @@ pub enum Refusal {
     BadSignature,
     /// FLAG_LOADER images are reserved (no loader self-update yet).
     LoaderImage,
-    /// Signed for another board (a Splanc MAX image: flags bits 24..31 != 0). The
-    /// MAX shares the C6's keys, so the signature alone doesn't keep it out.
+    /// Signed for another board (flags bits 24..31: a Splanc MAX or P4 image on a
+    /// C6, a C6 image on a P4). They all share the keys, so the signature alone
+    /// doesn't keep it out.
     WrongBoard,
     TooLarge,
     Downgrade,
@@ -84,7 +97,7 @@ impl Refusal {
 }
 
 /// Check an offer before anything is touched: signature (checked by the caller,
-/// passed in), the reserved loader flag, the board (C6 = 0), size, and version
+/// passed in), the reserved loader flag, the board (`t.board`), size, and version
 /// order. Shared by
 /// the app (which checks before rebooting into the loader, so a bad manifest
 /// costs no reboot) and the loader (which is authoritative).
@@ -95,7 +108,7 @@ pub fn check_offer(m: &Manifest, signature_ok: bool, t: &Target, allow_downgrade
     if m.flags & FLAG_LOADER != 0 {
         return Err(Refusal::LoaderImage);
     }
-    if manifest::board(m.flags) != manifest::BOARD_C6 {
+    if manifest::board(m.flags) != t.board {
         return Err(Refusal::WrongBoard);
     }
     if m.size == 0 {

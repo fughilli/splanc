@@ -18,6 +18,12 @@
  * simulated device in web/tests/otaUpdate.test.ts; the Python HITL client
  * (pi/hitl/harness/ota_core.py) is the same state machine.
  *
+ * An ESP32-P4 player (docs/design/p4-c6-split.md §5.1; welcome feature "ota_inapp")
+ * takes the image in the app itself, through its C6 front end: no handoff, the same
+ * transfer, then it restarts into the new image, which reflashes the C6 with the front
+ * end it carries (one package updates both chips) and proves healthy, or the device goes
+ * back to the previous pair (last_result "rolled_back", still in MODE_APP).
+ *
  * A Splanc MAX (Raspberry Pi, docs/design/max-ota.md; welcome feature "ota_pull")
  * PULLS its image: the client sends only the manifest (`max-<board>-<ver>.manifest`,
  * 108 bytes — a full package works too, its image is ignored) and follows the
@@ -224,6 +230,12 @@ export function pullsImage(w: WelcomeMessage | null): boolean {
   return ((w?.features as string[] | undefined) ?? []).includes("ota_pull");
 }
 
+/** A device that takes its image in the app, without a loader (the ESP32-P4 player:
+ * welcome feature "ota_inapp"). */
+export function updatesInApp(w: WelcomeMessage | null): boolean {
+  return ((w?.features as string[] | undefined) ?? []).includes("ota_inapp");
+}
+
 /** The release asset holding a pull device's manifest (`board` from ota_status.board). */
 export function maxManifestAsset(board: string, version: string): string {
   const v = version.replace(/^v/, "");
@@ -254,14 +266,17 @@ export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaO
     dev.expectRestart();
   };
   let handoffs = 0;
+  const inApp = updatesInApp(dev.welcome);
 
-  /** From the app: ask it to restart into the loader and wait for the loader. */
+  /** From the app: ask it to restart into the loader and wait for the loader. An
+   * in-app device takes the image where it is. */
   const handoff = async (): Promise<void> => {
     if (inLoader(dev.welcome)) return;
     const st = await dev.getOtaStatus();
     if (st.error === "legacy_layout") {
       throw new OtaError("legacy_layout", "This device needs a one-time USB update before it can update over Wi-Fi.");
     }
+    if (inApp) return;
     for (;;) {
       if (++handoffs > MAX_HANDOFFS) {
         throw new OtaError(
@@ -341,8 +356,9 @@ export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaO
           "resume_timeout", `Lost the connection to the updater mid-transfer. ${TRANSFER_RECOVERY_TEXT}`);
       }
       // The updater gave the device back to its app (nothing was left installed):
-      // hand it over again and start the transfer over.
-      if (!inLoader(w)) await handoff();
+      // hand it over again and start the transfer over. (An in-app device resumes
+      // from the offset its ota_begin reports.)
+      if (!inApp && !inLoader(w)) await handoff();
       offset = -1;
     }
   }
@@ -384,7 +400,9 @@ export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaO
           waiting("Waiting for the new firmware", total), "health_timeout", "", undefined);
       }
       final = await dev.getOtaStatus();
-      if (final.mode === "MODE_LOADER" && final.lastResult === "rolled_back") {
+      // A loader device rolls back into its loader; an in-app one into the previous
+      // image, which says so.
+      if ((final.mode === "MODE_LOADER" || inApp) && final.lastResult === "rolled_back") {
         outcome = "rolled_back";
         break;
       }
@@ -404,7 +422,9 @@ export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaO
     throw new OtaError(
       outcome,
       outcome === "rolled_back"
-        ? "The new firmware didn't start correctly; the device rolled back to its updater. Try another version."
+        ? inApp
+          ? "The new firmware didn't start correctly; the device went back to its previous version. Try another version."
+          : "The new firmware didn't start correctly; the device rolled back to its updater. Try another version."
         : "The device didn't confirm the new firmware in time. Reload this page and reconnect to check which version it runs.",
     );
   }

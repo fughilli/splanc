@@ -126,7 +126,7 @@ pub unsafe extern "C" fn ota_check_offer(
     allow_downgrade: bool,
 ) -> *const c_char {
     let Some(m) = Manifest::decode(bytes(p, len)) else { return c("bad_manifest") };
-    let t = Target { slot_size, chip: 0, installed_version };
+    let t = Target { slot_size, chip: 0, installed_version, board: crate::manifest::BOARD_C6 };
     match session::check_offer(&m, signature_ok, &t, allow_downgrade) {
         Ok(()) => core::ptr::null(),
         Err(r) => refusal(r),
@@ -383,7 +383,7 @@ pub unsafe extern "C" fn ota_session_begin(
 ) -> *const c_char {
     let Some(m) = Manifest::decode(bytes(manifest, manifest_len)) else { return c("bad_manifest") };
     let r = Resume::decode(bytes(resume, resume_len));
-    let t = Target { slot_size, chip, installed_version };
+    let t = Target { slot_size, chip, installed_version, board: session::board_for_chip(chip) };
     match Session::begin(m, signature_ok, &t, allow_downgrade, r.as_ref()) {
         Ok(s) => {
             *session_mut() = Some(s);

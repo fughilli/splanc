@@ -18,6 +18,7 @@ extern "C" {
 #define OTA_MAX_CHUNK 4096
 #define OTA_CHIP_ESP32C6 0x000D
 #define OTA_CHIP_ESP32C3 0x0005
+#define OTA_CHIP_ESP32P4 0x0012  // its receiver takes manifest board 16 only (session.rs)
 
 // ClientMessage arms (ledmapper.proto).
 #define OTA_ARM_HELLO 1
