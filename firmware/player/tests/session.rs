@@ -1098,3 +1098,26 @@ fn network_channels_in_hardware_config() {
     };
     assert_eq!(st.r#channels.len(), 2);
 }
+
+/// While Ethernet is on, its pins are refused as LED data pins.
+#[test]
+fn reserved_gpios_are_refused() {
+    let mut player = Player::new("esp32p4-0001", 64);
+    player.set_hw_defaults(0, 20, ledmapper_player::DEFAULT_COLOR_ORDER);
+    let gpio = |g: i32| {
+        let mut cfg = pb::SetHardwareConfig::default();
+        cfg.set_channel(0);
+        cfg.set_gpio(g);
+        CMsg::SetHardwareConfig(cfg)
+    };
+    player.set_reserved_gpios(&[28, 29, -1, 30]);
+    expect_error(send(&mut player, gpio(29), 1.0), "bad_message");
+    assert_eq!(player.hw_gpio(0), Some(20));
+    let Some(SMsg::HardwareConfigState(_)) = send(&mut player, gpio(21), 2.0) else {
+        panic!("a free pin");
+    };
+    player.set_reserved_gpios(&[]);
+    let Some(SMsg::HardwareConfigState(_)) = send(&mut player, gpio(29), 3.0) else {
+        panic!("Ethernet off: the pin is free again");
+    };
+}

@@ -48,3 +48,32 @@ gpio_pins { gpio: 38 safety: PIN_SAFETY_AVOID note: "UART0 RX: the console and t
 gpio_pins { gpio: 54 safety: PIN_SAFETY_AVOID note: "ESP32-C6 reset (EN)." }
 
 led_modes { id: "ws281x" label: "WS281x (WS2811/2812/2812B/SK6812)" }
+
+# Ethernet + network LED outputs (docs/design/p4-ethernet-ddp.md). The P4 has an
+# EMAC but this board has no PHY: an add-on RMII module wires to the header. The
+# defaults are the IDF's P4 wiring (as on the P4-NANO's on-board IP101): MDC 31,
+# MDIO 52, reset 51, the 50 MHz clock in on GPIO50; and a private LED network
+# (192.168.50.1/24, the P4 handing out addresses). The RMII data bus is fixed by
+# the IO MUX: TX_EN 49, TXD0/1 34/35, CRS_DV 28, RXD0/1 29/30, REF_CLK 50.
+net_channels: 6
+ethernet {
+  phys: "ip101"
+  phys: "lan8720"
+  phys: "rtl8201"
+  phys: "dp83848"
+  phys: "ksz80xx"
+  defaults {
+    enabled: false
+    phy: "ip101"
+    phy_addr: 1
+    mdc_gpio: 31
+    mdio_gpio: 52
+    phy_reset_gpio: 51
+    clock: RMII_CLOCK_EXT_IN
+    clock_gpio: -1
+    ip_mode: IP_MODE_DHCP_SERVER
+    ip: 0xC0A83201
+    netmask: 0xFFFFFF00
+  }
+  rmii_gpios: [49, 34, 35, 28, 29, 30, 50]
+}

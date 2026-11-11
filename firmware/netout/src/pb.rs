@@ -105,7 +105,10 @@ impl<'a> Writer<'a> {
 
     pub fn raw(&mut self, b: &[u8]) -> Result<(), Overflow> {
         let end = self.pos.checked_add(b.len()).ok_or(Overflow)?;
-        self.buf.get_mut(self.pos..end).ok_or(Overflow)?.copy_from_slice(b);
+        self.buf
+            .get_mut(self.pos..end)
+            .ok_or(Overflow)?
+            .copy_from_slice(b);
         self.pos = end;
         Ok(())
     }
@@ -171,17 +174,24 @@ impl<'a> Writer<'a> {
             return Err(Overflow);
         }
         let body_len = {
-            let mut sub = Writer { buf: &mut self.buf[body_at..], pos: 0 };
+            let mut sub = Writer {
+                buf: &mut self.buf[body_at..],
+                pos: 0,
+            };
             f(&mut sub)?;
             sub.pos
         };
         let mut len = [0u8; 3];
         let n = {
-            let mut lw = Writer { buf: &mut len, pos: 0 };
+            let mut lw = Writer {
+                buf: &mut len,
+                pos: 0,
+            };
             lw.varint(body_len as u64)?;
             lw.pos
         };
-        self.buf.copy_within(body_at..body_at + body_len, len_at + n);
+        self.buf
+            .copy_within(body_at..body_at + body_len, len_at + n);
         self.buf[len_at..len_at + n].copy_from_slice(&len[..n]);
         self.pos = len_at + n + body_len;
         Ok(())

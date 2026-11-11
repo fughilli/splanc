@@ -1,8 +1,8 @@
 //! Config validation, the flash blob and DDP packets.
 
 use splanc_netout::config::{
-    net_index, netmask_ok, Clock, EthConfig, IpMode, NetOutput, NetSettings, Phy, Refusal, BLOB_LEN,
-    NET_CHANNELS,
+    net_index, netmask_ok, Clock, EthConfig, IpMode, NetOutput, NetSettings, Phy, Refusal,
+    BLOB_LEN, NET_CHANNELS,
 };
 use splanc_netout::ddp;
 
@@ -20,7 +20,10 @@ fn default_config_is_valid_and_off() {
 
 #[test]
 fn pins_are_checked() {
-    let mut c = EthConfig { enabled: true, ..Default::default() };
+    let mut c = EthConfig {
+        enabled: true,
+        ..Default::default()
+    };
     assert_eq!(c.validate(&[]), Ok(()));
     // MDC on an RMII data pin.
     c.mdc = 34;
@@ -65,9 +68,18 @@ fn addresses_are_checked() {
     assert!(!netmask_ok(0));
     assert!(!netmask_ok(0xFF00_FF00));
 
-    let mut c = EthConfig { ip_mode: IpMode::Static, ..Default::default() };
+    let mut c = EthConfig {
+        ip_mode: IpMode::Static,
+        ..Default::default()
+    };
     assert_eq!(c.validate(&[]), Ok(()));
-    for bad in [ip(192, 168, 50, 0), ip(192, 168, 50, 255), ip(127, 0, 0, 1), ip(224, 0, 0, 1), 0] {
+    for bad in [
+        ip(192, 168, 50, 0),
+        ip(192, 168, 50, 255),
+        ip(127, 0, 0, 1),
+        ip(224, 0, 0, 1),
+        0,
+    ] {
         c.ip = bad;
         assert_eq!(c.validate(&[]), Err(Refusal::BadAddress), "{bad:08x}");
     }
@@ -76,7 +88,11 @@ fn addresses_are_checked() {
     c.gateway = ip(10, 0, 0, 1);
     assert_eq!(c.validate(&[]), Ok(()));
     c.gateway = ip(192, 168, 1, 1);
-    assert_eq!(c.validate(&[]), Err(Refusal::BadAddress), "gateway off the subnet");
+    assert_eq!(
+        c.validate(&[]),
+        Err(Refusal::BadAddress),
+        "gateway off the subnet"
+    );
     c.netmask = 0x00FF_FFFF;
     assert_eq!(c.validate(&[]), Err(Refusal::BadAddress));
     // DHCP client ignores the static fields.
@@ -97,8 +113,15 @@ fn outputs() {
     assert_eq!(o.port_or_default(), 4048);
     assert_eq!(o.name(), b"DISTIRA");
     assert_eq!(o.validate(), Ok(()));
-    assert_eq!(NetOutput::new(ip(239, 0, 0, 1), 0, b"").validate(), Err(Refusal::BadAddress));
-    assert_eq!(NetOutput::new(ip(192, 168, 50, 255), 0, b"").validate(), Ok(()), "broadcast is allowed");
+    assert_eq!(
+        NetOutput::new(ip(239, 0, 0, 1), 0, b"").validate(),
+        Err(Refusal::BadAddress)
+    );
+    assert_eq!(
+        NetOutput::new(ip(192, 168, 50, 255), 0, b"").validate(),
+        Ok(()),
+        "broadcast is allowed"
+    );
     assert_eq!(NetOutput::default().validate(), Ok(()), "clearing");
     // Names are cut to 32 bytes at a character boundary.
     let long = "é".repeat(20); // 40 bytes
@@ -135,7 +158,10 @@ fn blob_round_trips() {
 fn bad_blobs_keep_the_defaults() {
     let mut b = [0u8; BLOB_LEN];
     NetSettings::default().to_blob(&mut b);
-    assert!(NetSettings::from_blob(&b[..BLOB_LEN - 1]).is_none(), "short");
+    assert!(
+        NetSettings::from_blob(&b[..BLOB_LEN - 1]).is_none(),
+        "short"
+    );
     let mut v = b;
     v[0] = 99;
     assert!(NetSettings::from_blob(&v).is_none(), "unknown version");
@@ -171,7 +197,11 @@ fn ddp_matches_the_host_player() {
         let n = ddp::packet(&data, i, 7, &mut out).unwrap();
         let p = &out[..n];
         let last = i == 3;
-        assert_eq!(p[0], 0x40 | if last { 0x01 } else { 0 }, "ver1, PUSH on the last");
+        assert_eq!(
+            p[0],
+            0x40 | if last { 0x01 } else { 0 },
+            "ver1, PUSH on the last"
+        );
         assert_eq!(p[1], 7);
         assert_eq!(p[2], 0x0B, "RGB8");
         assert_eq!(p[3], 0x01, "display");
@@ -184,7 +214,11 @@ fn ddp_matches_the_host_player() {
     }
     assert_eq!(rebuilt, data);
     assert_eq!(ddp::packet(&data, 4, 7, &mut out), None, "past the frame");
-    assert_eq!(ddp::packet(&data, 0, 7, &mut out[..100]), None, "short buffer");
+    assert_eq!(
+        ddp::packet(&data, 0, 7, &mut out[..100]),
+        None,
+        "short buffer"
+    );
 }
 
 #[test]
@@ -196,7 +230,10 @@ fn ddp_sequence_skips_zero() {
         seen.push(s);
     }
     assert!(seen.iter().all(|&x| (1..=15).contains(&x)));
-    assert_eq!(&seen[..16], &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 1]);
+    assert_eq!(
+        &seen[..16],
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 1]
+    );
 }
 
 #[test]
@@ -228,9 +265,18 @@ fn not_wled_is_none() {
     use splanc_netout::wled::parse_info;
     assert!(parse_info(b"").is_none());
     assert!(parse_info(b"<html>").is_none());
-    assert!(parse_info(br#"{"name":"router"}"#).is_none(), "no leds.count");
-    assert!(parse_info(br#"{"leds":{"count":5}"#).is_some(), "a truncated tail still has the count");
-    assert!(parse_info(br#"{"name":"x"#).is_none(), "unterminated string");
+    assert!(
+        parse_info(br#"{"name":"router"}"#).is_none(),
+        "no leds.count"
+    );
+    assert!(
+        parse_info(br#"{"leds":{"count":5}"#).is_some(),
+        "a truncated tail still has the count"
+    );
+    assert!(
+        parse_info(br#"{"name":"x"#).is_none(),
+        "unterminated string"
+    );
     assert!(parse_info(br#"}}}"#).is_none());
 }
 

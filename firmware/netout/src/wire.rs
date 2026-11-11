@@ -77,10 +77,19 @@ pub const DISCOVER_MAX_MS: u32 = 800;
 /// and answered with the current state and the error.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Request {
-    SetEthernetConfig { config: EthConfig, commit: bool },
+    SetEthernetConfig {
+        config: EthConfig,
+        commit: bool,
+    },
     GetEthernetState,
-    DiscoverControllers { timeout_ms: u32 },
-    SetNetworkOutput { channel: i32, output: NetOutput, commit: bool },
+    DiscoverControllers {
+        timeout_ms: u32,
+    },
+    SetNetworkOutput {
+        channel: i32,
+        output: NetOutput,
+        commit: bool,
+    },
     Refused(&'static str),
     /// Some other arm (its field number), or none: not ours.
     Other(u32),
@@ -211,7 +220,11 @@ pub fn decode_client(frame: &[u8]) -> Result<Request, Malformed> {
                         t = u32::try_from(x).unwrap_or(u32::MAX);
                     }
                 }
-                let t = if t == 0 { DISCOVER_DEFAULT_MS } else { t.min(DISCOVER_MAX_MS) };
+                let t = if t == 0 {
+                    DISCOVER_DEFAULT_MS
+                } else {
+                    t.min(DISCOVER_MAX_MS)
+                };
                 Request::DiscoverControllers { timeout_ms: t }
             }
             CM_SET_NETWORK_OUTPUT => {
@@ -226,7 +239,11 @@ pub fn decode_client(frame: &[u8]) -> Result<Request, Malformed> {
                     }
                 }
                 match out.unwrap_or(Err("bad_message")) {
-                    Ok((channel, output)) => Request::SetNetworkOutput { channel, output, commit },
+                    Ok((channel, output)) => Request::SetNetworkOutput {
+                        channel,
+                        output,
+                        commit,
+                    },
                     Err(e) => Request::Refused(e),
                 }
             }
@@ -283,7 +300,10 @@ pub fn encode_ethernet_state(
                 continue;
             }
             w.message(es::OUTPUTS, |w| {
-                w.int32(no::CHANNEL, crate::config::NET_CHANNEL_FIRST as i32 + i as i32)?;
+                w.int32(
+                    no::CHANNEL,
+                    crate::config::NET_CHANNEL_FIRST as i32 + i as i32,
+                )?;
                 w.fixed32(no::IP, o.ip)?;
                 w.uint(no::PORT, o.port as u64)?;
                 w.bytes(no::NAME, o.name())
@@ -324,7 +344,11 @@ fn cut(s: &[u8], n: usize) -> &[u8] {
 /// Encode a `ServerMessage{controller_list}` into `out`; returns its length.
 /// Strings are cut to the host bindings' capacities (name 32, version 16,
 /// kind 8) so any client decodes the reply.
-pub fn encode_controller_list(list: &[Controller<'_>], error: &str, out: &mut [u8]) -> Result<usize, Overflow> {
+pub fn encode_controller_list(
+    list: &[Controller<'_>],
+    error: &str,
+    out: &mut [u8],
+) -> Result<usize, Overflow> {
     let mut w = Writer::new(out);
     w.message(SM_CONTROLLER_LIST, |w| {
         for c in list.iter().take(16) {

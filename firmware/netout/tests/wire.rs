@@ -19,7 +19,8 @@ fn encode(msg: CMsg) -> Vec<u8> {
 
 fn decode_server(b: &[u8]) -> SMsg {
     let mut m = pb::ServerMessage::default();
-    m.decode_from_bytes(b).expect("decodes with the generated bindings");
+    m.decode_from_bytes(b)
+        .expect("decodes with the generated bindings");
     m.r#msg.expect("an arm")
 }
 
@@ -67,20 +68,45 @@ fn set_ethernet_config_decodes() {
     let mut m = pb::SetEthernetConfig::default();
     m.set_config(pb_config(&cfg));
     let f = encode(CMsg::SetEthernetConfig(m.clone()));
-    assert_eq!(wire::decode_client(&f), Ok(Request::SetEthernetConfig { config: cfg, commit: true }));
+    assert_eq!(
+        wire::decode_client(&f),
+        Ok(Request::SetEthernetConfig {
+            config: cfg,
+            commit: true
+        })
+    );
     m.set_commit(false);
     let f = encode(CMsg::SetEthernetConfig(m));
-    assert_eq!(wire::decode_client(&f), Ok(Request::SetEthernetConfig { config: cfg, commit: false }));
+    assert_eq!(
+        wire::decode_client(&f),
+        Ok(Request::SetEthernetConfig {
+            config: cfg,
+            commit: false
+        })
+    );
 }
 
 #[test]
 fn config_zeros_and_negatives_survive() {
     // proto3 drops zero scalars: GPIO 0 and DHCP client must still read back.
-    let cfg = EthConfig { mdc: 0, mdio: 1, reset: -1, phy_addr: 0, ip_mode: IpMode::DhcpClient, ..sample_config() };
+    let cfg = EthConfig {
+        mdc: 0,
+        mdio: 1,
+        reset: -1,
+        phy_addr: 0,
+        ip_mode: IpMode::DhcpClient,
+        ..sample_config()
+    };
     let mut m = pb::SetEthernetConfig::default();
     m.set_config(pb_config(&cfg));
     let f = encode(CMsg::SetEthernetConfig(m));
-    assert_eq!(wire::decode_client(&f), Ok(Request::SetEthernetConfig { config: cfg, commit: true }));
+    assert_eq!(
+        wire::decode_client(&f),
+        Ok(Request::SetEthernetConfig {
+            config: cfg,
+            commit: true
+        })
+    );
 }
 
 #[test]
@@ -90,17 +116,26 @@ fn bad_configs_are_refused_not_ignored() {
     p.r#phy.push_str("w5500").unwrap();
     let mut m = pb::SetEthernetConfig::default();
     m.set_config(p);
-    assert_eq!(wire::decode_client(&encode(CMsg::SetEthernetConfig(m))), Ok(Request::Refused("bad_phy")));
+    assert_eq!(
+        wire::decode_client(&encode(CMsg::SetEthernetConfig(m))),
+        Ok(Request::Refused("bad_phy"))
+    );
 
     let mut p = pb_config(&sample_config());
     p.r#mdc_gpio = 300;
     let mut m = pb::SetEthernetConfig::default();
     m.set_config(p);
-    assert_eq!(wire::decode_client(&encode(CMsg::SetEthernetConfig(m))), Ok(Request::Refused("bad_pin")));
+    assert_eq!(
+        wire::decode_client(&encode(CMsg::SetEthernetConfig(m))),
+        Ok(Request::Refused("bad_pin"))
+    );
 
     // No config at all.
     let m = pb::SetEthernetConfig::default();
-    assert_eq!(wire::decode_client(&encode(CMsg::SetEthernetConfig(m))), Ok(Request::Refused("bad_message")));
+    assert_eq!(
+        wire::decode_client(&encode(CMsg::SetEthernetConfig(m))),
+        Ok(Request::Refused("bad_message"))
+    );
 }
 
 #[test]
@@ -110,13 +145,22 @@ fn other_requests_decode() {
 
     let mut d = pb::DiscoverControllers::default();
     let f = encode(CMsg::DiscoverControllers(d.clone()));
-    assert_eq!(wire::decode_client(&f), Ok(Request::DiscoverControllers { timeout_ms: 600 }));
+    assert_eq!(
+        wire::decode_client(&f),
+        Ok(Request::DiscoverControllers { timeout_ms: 600 })
+    );
     d.r#timeout_ms = 200;
     let f = encode(CMsg::DiscoverControllers(d.clone()));
-    assert_eq!(wire::decode_client(&f), Ok(Request::DiscoverControllers { timeout_ms: 200 }));
+    assert_eq!(
+        wire::decode_client(&f),
+        Ok(Request::DiscoverControllers { timeout_ms: 200 })
+    );
     d.r#timeout_ms = 5000;
     let f = encode(CMsg::DiscoverControllers(d));
-    assert_eq!(wire::decode_client(&f), Ok(Request::DiscoverControllers { timeout_ms: 800 }));
+    assert_eq!(
+        wire::decode_client(&f),
+        Ok(Request::DiscoverControllers { timeout_ms: 800 })
+    );
 
     let mut o = pb::NetworkOutput::default();
     o.r#channel = 3;
@@ -160,7 +204,9 @@ fn ethernet_state_encodes() {
     };
     let mut buf = [0u8; 2048];
     let n = wire::encode_ethernet_state(&cfg, &outputs, &st, "phy_not_found", &mut buf).unwrap();
-    let SMsg::EthernetState(s) = decode_server(&buf[..n]) else { panic!("not ethernet_state") };
+    let SMsg::EthernetState(s) = decode_server(&buf[..n]) else {
+        panic!("not ethernet_state")
+    };
     assert_eq!(s.r#config(), Some(&pb_config(&cfg)));
     assert_eq!(s.r#outputs.len(), 2);
     assert_eq!(s.r#outputs[0].r#channel, 2);
@@ -184,11 +230,15 @@ fn empty_ethernet_state_still_has_its_arm() {
     let cfg = EthConfig::default();
     let mut buf = [0u8; 256];
     let n = wire::encode_ethernet_state(&cfg, &[], &LinkStatus::default(), "", &mut buf).unwrap();
-    let SMsg::EthernetState(s) = decode_server(&buf[..n]) else { panic!("not ethernet_state") };
+    let SMsg::EthernetState(s) = decode_server(&buf[..n]) else {
+        panic!("not ethernet_state")
+    };
     assert_eq!(s.r#config().unwrap().r#phy.as_str(), "ip101");
     assert!(!s.r#link_up);
     // Too small a buffer is an error, not a truncated frame.
-    assert!(wire::encode_ethernet_state(&cfg, &[], &LinkStatus::default(), "", &mut buf[..8]).is_err());
+    assert!(
+        wire::encode_ethernet_state(&cfg, &[], &LinkStatus::default(), "", &mut buf[..8]).is_err()
+    );
 }
 
 #[test]
@@ -203,11 +253,20 @@ fn controller_list_encodes() {
             version: b"16.0.1",
             kind: b"wled",
         },
-        Controller { name: &long, ip: ip(192, 168, 50, 9), mac: [0; 6], led_count: 0, version: b"", kind: b"wled" },
+        Controller {
+            name: &long,
+            ip: ip(192, 168, 50, 9),
+            mac: [0; 6],
+            led_count: 0,
+            version: b"",
+            kind: b"wled",
+        },
     ];
     let mut buf = [0u8; 2048];
     let n = wire::encode_controller_list(&list, "", &mut buf).unwrap();
-    let SMsg::ControllerList(l) = decode_server(&buf[..n]) else { panic!("not controller_list") };
+    let SMsg::ControllerList(l) = decode_server(&buf[..n]) else {
+        panic!("not controller_list")
+    };
     assert_eq!(l.r#controllers.len(), 2);
     let c = &l.r#controllers[0];
     assert_eq!(c.r#name.as_str(), "DISTIRA");
@@ -216,11 +275,17 @@ fn controller_list_encodes() {
     assert_eq!(c.r#led_count, 1680);
     assert_eq!(c.r#version.as_str(), "16.0.1");
     assert_eq!(c.r#kind.as_str(), "wled");
-    assert_eq!(l.r#controllers[1].r#name.len(), 32, "cut to the bindings' capacity");
+    assert_eq!(
+        l.r#controllers[1].r#name.len(),
+        32,
+        "cut to the bindings' capacity"
+    );
     assert!(l.r#controllers[1].r#mac.is_empty());
 
     let n = wire::encode_controller_list(&[], "no_link", &mut buf).unwrap();
-    let SMsg::ControllerList(l) = decode_server(&buf[..n]) else { panic!("not controller_list") };
+    let SMsg::ControllerList(l) = decode_server(&buf[..n]) else {
+        panic!("not controller_list")
+    };
     assert!(l.r#controllers.is_empty());
     assert_eq!(l.r#error.as_str(), "no_link");
 }
@@ -230,8 +295,20 @@ fn arm_numbers_match_the_proto() {
     // The generated oneof tags, read back from an encoded envelope's first key.
     // Arms 95-98 have two-byte keys.
     let key = |f: Vec<u8>| ((f[0] as u32 & 0x7f) | ((f[1] as u32 & 0x7f) << 7)) >> 3;
-    assert_eq!(key(encode(CMsg::SetEthernetConfig(Default::default()))), wire::CM_SET_ETHERNET_CONFIG);
-    assert_eq!(key(encode(CMsg::GetEthernetState(Default::default()))), wire::CM_GET_ETHERNET_STATE);
-    assert_eq!(key(encode(CMsg::DiscoverControllers(Default::default()))), wire::CM_DISCOVER_CONTROLLERS);
-    assert_eq!(key(encode(CMsg::SetNetworkOutput(Default::default()))), wire::CM_SET_NETWORK_OUTPUT);
+    assert_eq!(
+        key(encode(CMsg::SetEthernetConfig(Default::default()))),
+        wire::CM_SET_ETHERNET_CONFIG
+    );
+    assert_eq!(
+        key(encode(CMsg::GetEthernetState(Default::default()))),
+        wire::CM_GET_ETHERNET_STATE
+    );
+    assert_eq!(
+        key(encode(CMsg::DiscoverControllers(Default::default()))),
+        wire::CM_DISCOVER_CONTROLLERS
+    );
+    assert_eq!(
+        key(encode(CMsg::SetNetworkOutput(Default::default()))),
+        wire::CM_SET_NETWORK_OUTPUT
+    );
 }

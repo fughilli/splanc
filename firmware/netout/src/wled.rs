@@ -48,7 +48,13 @@ fn copy_str(s: &[u8], out: &mut [u8]) -> u8 {
         }
         if lead > 0 && out[lead - 1] >= 0xC0 {
             let b = out[lead - 1];
-            let want = if b >= 0xF0 { 4 } else if b >= 0xE0 { 3 } else { 2 };
+            let want = if b >= 0xF0 {
+                4
+            } else if b >= 0xE0 {
+                3
+            } else {
+                2
+            };
             if n - (lead - 1) < want {
                 n = lead - 1;
             }

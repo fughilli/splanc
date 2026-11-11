@@ -19,6 +19,9 @@
 // The OTA core's C ABI (ota_ffi.h) rides in this staticlib for the app's
 // update hooks (ota_app.cpp): linked here, not referenced from Rust.
 extern crate splanc_ota;
+// Likewise the Ethernet + network outputs core (netout_ffi.h) for the P4's
+// netout_app.cpp (docs/design/p4-ethernet-ddp.md).
+extern crate splanc_netout;
 
 use core::convert::Infallible;
 use core::ffi::c_void;
@@ -1802,6 +1805,15 @@ pub unsafe extern "C" fn lm_hw_seed(channel: u32, gpio: i32, order: *const u8, o
 #[no_mangle]
 pub unsafe extern "C" fn lm_led_count_seed(channel: u32, led_count: u32) {
     player().seed_led_count(channel as usize, led_count);
+}
+
+/// GPIOs another output owns (the enabled Ethernet's pins, netout_busy_pins),
+/// which `set_hardware_config` then refuses as LED data pins. Replaces the
+/// previous set; `n == 0` clears it.
+#[no_mangle]
+pub unsafe extern "C" fn lm_set_reserved_gpios(pins: *const i32, n: usize) {
+    let pins: &[i32] = if pins.is_null() || n == 0 { &[] } else { core::slice::from_raw_parts(pins, n) };
+    player().set_reserved_gpios(pins);
 }
 
 /// Install this board's static capability descriptor: `data` is a serialized

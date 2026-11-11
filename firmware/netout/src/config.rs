@@ -28,7 +28,13 @@ pub enum Phy {
 }
 
 impl Phy {
-    pub const ALL: [Phy; 5] = [Phy::Ip101, Phy::Lan8720, Phy::Rtl8201, Phy::Dp83848, Phy::Ksz80xx];
+    pub const ALL: [Phy; 5] = [
+        Phy::Ip101,
+        Phy::Lan8720,
+        Phy::Rtl8201,
+        Phy::Dp83848,
+        Phy::Ksz80xx,
+    ];
 
     pub fn id(self) -> &'static str {
         match self {
@@ -41,7 +47,9 @@ impl Phy {
     }
 
     pub fn from_id(s: &[u8]) -> Option<Phy> {
-        Phy::ALL.into_iter().find(|p| p.id().as_bytes().eq_ignore_ascii_case(s))
+        Phy::ALL
+            .into_iter()
+            .find(|p| p.id().as_bytes().eq_ignore_ascii_case(s))
     }
 
     pub fn from_u8(v: u8) -> Option<Phy> {
@@ -148,7 +156,11 @@ impl EthConfig {
         p[7] = self.mdc as i32;
         p[8] = self.mdio as i32;
         p[9] = self.reset as i32;
-        p[10] = if self.clock == Clock::Out { self.clock_gpio as i32 } else { -1 };
+        p[10] = if self.clock == Clock::Out {
+            self.clock_gpio as i32
+        } else {
+            -1
+        };
         p
     }
 
@@ -190,7 +202,8 @@ impl EthConfig {
                 // Not the network or broadcast address, and not 0.0.0.0/8, 127/8
                 // or multicast and above.
                 let first = self.ip >> 24;
-                if host == 0 || host == !self.netmask || first == 0 || first == 127 || first >= 224 {
+                if host == 0 || host == !self.netmask || first == 0 || first == 127 || first >= 224
+                {
                     return Err(Refusal::BadAddress);
                 }
                 if self.gateway != 0 && (self.gateway & self.netmask) != (self.ip & self.netmask) {
@@ -218,13 +231,22 @@ pub struct NetOutput {
 
 impl Default for NetOutput {
     fn default() -> Self {
-        Self { ip: 0, port: 0, name: [0; NAME_MAX], name_len: 0 }
+        Self {
+            ip: 0,
+            port: 0,
+            name: [0; NAME_MAX],
+            name_len: 0,
+        }
     }
 }
 
 impl NetOutput {
     pub fn new(ip: u32, port: u16, name: &[u8]) -> Self {
-        let mut o = Self { ip, port, ..Default::default() };
+        let mut o = Self {
+            ip,
+            port,
+            ..Default::default()
+        };
         o.set_name(name);
         o
     }
@@ -249,7 +271,11 @@ impl NetOutput {
     }
 
     pub fn port_or_default(&self) -> u16 {
-        if self.port == 0 { DDP_PORT } else { self.port }
+        if self.port == 0 {
+            DDP_PORT
+        } else {
+            self.port
+        }
     }
 
     pub fn validate(&self) -> Result<(), Refusal> {
@@ -268,7 +294,11 @@ impl NetOutput {
 /// Index into the outputs table for LED `channel`, if it is a network channel.
 pub fn net_index(channel: i32) -> Option<usize> {
     let i = channel.checked_sub(NET_CHANNEL_FIRST as i32)?;
-    if (0..NET_CHANNELS as i32).contains(&i) { Some(i as usize) } else { None }
+    if (0..NET_CHANNELS as i32).contains(&i) {
+        Some(i as usize)
+    } else {
+        None
+    }
 }
 
 /// Everything persisted: the config and every output.

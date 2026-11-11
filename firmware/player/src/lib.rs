@@ -354,6 +354,10 @@ fn board_lists_gpio(caps: &[u8], gpio: i32) -> bool {
 /// logical set_led_count fan-out): only these carry a GPIO + color order.
 pub const HW_CHANNELS: usize = 2;
 
+/// Most GPIOs [`Player::set_reserved_gpios`] keeps (the P4's RMII bus, MDC,
+/// MDIO, PHY reset and a clock-out pin are 11).
+pub const MAX_RESERVED_GPIOS: usize = 12;
+
 /// The six wire color orders, each a permutation of "RGB". The `[u8; 3]` is the
 /// SOURCE-INDEX permutation the driver applies: wire byte `i` carries logical
 /// channel `perm[i]` of the R,G,B input (R=0, G=1, B=2). So "GRB" -> [1, 0, 2]
@@ -490,6 +494,9 @@ pub struct Player {
     /// `HW_CHANNELS..HW_CHANNELS + net_channels` join the LED total
     /// (docs/design/p4-ethernet-ddp.md).
     net_channels: u32,
+    /// GPIOs another output owns (the enabled Ethernet's RMII / MDIO pins),
+    /// refused as LED data pins; -1 = unused slot. Set by the firmware.
+    reserved_gpios: [i32; MAX_RESERVED_GPIOS],
     /// LEDs (summed) this boot's per-LED buffers hold (0 = unbounded / not
     /// reported): a count change past it is accepted, persisted, and asks the
     /// firmware to reboot into the bigger size ([`Player::take_reboot_request`]).
@@ -538,6 +545,7 @@ impl Player {
             out_max_leds: 0,
             out_max_per_channel: 0,
             net_channels: 0,
+            reserved_gpios: [-1; MAX_RESERVED_GPIOS],
             led_capacity: 0,
             reboot_request: false,
         }
@@ -1081,6 +1089,9 @@ impl Player {
             if !ok {
                 return error("bad_message", "gpio out of range");
             }
+            if self.reserved_gpios.contains(&gpio) {
+                return error("bad_message", "gpio in use by Ethernet");
+            }
         }
         if let Some(t) = m.led_type() {
             if !t.eq_ignore_ascii_case(LED_TYPE_WS281X) {
@@ -1612,6 +1623,16 @@ impl Player {
             );
         }
         None
+    }
+
+    /// Set the GPIOs another output owns (the enabled Ethernet's pins), which
+    /// set_hardware_config then refuses as LED data pins. Replaces the previous
+    /// set; at most [`MAX_RESERVED_GPIOS`] are kept.
+    pub fn set_reserved_gpios(&mut self, pins: &[i32]) {
+        self.reserved_gpios = [-1; MAX_RESERVED_GPIOS];
+        for (d, s) in self.reserved_gpios.iter_mut().zip(pins.iter().filter(|p| **p >= 0)) {
+            *d = *s;
+        }
     }
 
     /// LED channels that carry LEDs: the GPIO channels, then the network ones.

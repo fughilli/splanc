@@ -34,7 +34,12 @@ static mut STATE: State = State {
             netmask: 0xFFFF_FF00,
             gateway: 0,
         },
-        outputs: [NetOutput { ip: 0, port: 0, name: [0; 32], name_len: 0 }; NET_CHANNELS],
+        outputs: [NetOutput {
+            ip: 0,
+            port: 0,
+            name: [0; 32],
+            name_len: 0,
+        }; NET_CHANNELS],
     },
     gen: 0,
     commit: true,
@@ -62,11 +67,19 @@ fn c(code: &str) -> *const c_char {
 }
 
 unsafe fn bytes<'a>(p: *const u8, len: usize) -> &'a [u8] {
-    if p.is_null() || len == 0 { &[] } else { core::slice::from_raw_parts(p, len) }
+    if p.is_null() || len == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(p, len)
+    }
 }
 
 unsafe fn bytes_mut<'a>(p: *mut u8, len: usize) -> &'a mut [u8] {
-    if p.is_null() || len == 0 { &mut [] } else { core::slice::from_raw_parts_mut(p, len) }
+    if p.is_null() || len == 0 {
+        &mut []
+    } else {
+        core::slice::from_raw_parts_mut(p, len)
+    }
 }
 
 unsafe fn cstr<'a>(p: *const c_char) -> &'a str {
@@ -167,7 +180,11 @@ pub unsafe extern "C" fn netout_apply(
     busy: *const i32,
     n_busy: usize,
 ) -> *const c_char {
-    let busy: &[i32] = if busy.is_null() || n_busy == 0 { &[] } else { core::slice::from_raw_parts(busy, n_busy) };
+    let busy: &[i32] = if busy.is_null() || n_busy == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(busy, n_busy)
+    };
     let s = state();
     match wire::decode_client(bytes(msg, len)) {
         Ok(Request::SetEthernetConfig { config, commit }) => {
@@ -179,8 +196,14 @@ pub unsafe extern "C" fn netout_apply(
             s.gen = s.gen.wrapping_add(1);
             core::ptr::null()
         }
-        Ok(Request::SetNetworkOutput { channel, output, commit }) => {
-            let Some(i) = net_index(channel) else { return c("bad_channel") };
+        Ok(Request::SetNetworkOutput {
+            channel,
+            output,
+            commit,
+        }) => {
+            let Some(i) = net_index(channel) else {
+                return c("bad_channel");
+            };
             if let Err(r) = output.validate() {
                 return c(r.code());
             }
@@ -242,13 +265,18 @@ pub unsafe extern "C" fn netout_config(out: *mut NetoutEthConfig) {
 /// with a target, else 0.
 #[no_mangle]
 pub unsafe extern "C" fn netout_output(channel: i32, out: *mut NetoutTarget) -> i32 {
-    let Some(i) = net_index(channel) else { return 0 };
+    let Some(i) = net_index(channel) else {
+        return 0;
+    };
     let o = &state().settings.outputs[i];
     if !o.active() {
         return 0;
     }
     if !out.is_null() {
-        *out = NetoutTarget { ip: o.ip, port: o.port_or_default() };
+        *out = NetoutTarget {
+            ip: o.ip,
+            port: o.port_or_default(),
+        };
     }
     1
 }
@@ -280,7 +308,11 @@ pub unsafe extern "C" fn netout_encode_state(
     out: *mut u8,
     cap: usize,
 ) -> usize {
-    let st = if st.is_null() { NetoutLinkStatus::default() } else { *st };
+    let st = if st.is_null() {
+        NetoutLinkStatus::default()
+    } else {
+        *st
+    };
     let ls = LinkStatus {
         link_up: st.link_up != 0,
         speed_mbps: st.speed_mbps,
@@ -293,7 +325,8 @@ pub unsafe extern "C" fn netout_encode_state(
         tx_errors: st.tx_errors,
     };
     let s = &state().settings;
-    wire::encode_ethernet_state(&s.eth, &s.outputs, &ls, cstr(error), bytes_mut(out, cap)).unwrap_or(0)
+    wire::encode_ethernet_state(&s.eth, &s.outputs, &ls, cstr(error), bytes_mut(out, cap))
+        .unwrap_or(0)
 }
 
 /// Encode `ServerMessage{controller_list}`. Returns the length, 0 if `cap` is short.
@@ -305,9 +338,19 @@ pub unsafe extern "C" fn netout_encode_controllers(
     out: *mut u8,
     cap: usize,
 ) -> usize {
-    let list: &[NetoutController] = if list.is_null() || n == 0 { &[] } else { core::slice::from_raw_parts(list, n) };
-    let mut cs: [Controller<'_>; 16] =
-        [Controller { name: &[], ip: 0, mac: [0; 6], led_count: 0, version: &[], kind: b"wled" }; 16];
+    let list: &[NetoutController] = if list.is_null() || n == 0 {
+        &[]
+    } else {
+        core::slice::from_raw_parts(list, n)
+    };
+    let mut cs: [Controller<'_>; 16] = [Controller {
+        name: &[],
+        ip: 0,
+        mac: [0; 6],
+        led_count: 0,
+        version: &[],
+        kind: b"wled",
+    }; 16];
     let mut k = 0;
     for c in list.iter().take(16) {
         cs[k] = Controller {
@@ -358,8 +401,14 @@ pub unsafe extern "C" fn netout_load(b: *const u8, len: usize) -> i32 {
 /// Parse a WLED `/json/info` body into `out` (its `ip` is left as it was: the
 /// caller knows whom it asked). Returns 1, or 0 if it isn't a WLED reply.
 #[no_mangle]
-pub unsafe extern "C" fn netout_parse_wled_info(json: *const u8, len: usize, out: *mut NetoutController) -> i32 {
-    let Some(info) = crate::wled::parse_info(bytes(json, len)) else { return 0 };
+pub unsafe extern "C" fn netout_parse_wled_info(
+    json: *const u8,
+    len: usize,
+    out: *mut NetoutController,
+) -> i32 {
+    let Some(info) = crate::wled::parse_info(bytes(json, len)) else {
+        return 0;
+    };
     if out.is_null() {
         return 1;
     }
