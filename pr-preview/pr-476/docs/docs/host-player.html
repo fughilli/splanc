@@ -482,19 +482,29 @@ DDP pixels that come out.</p></li>
 </section>
 <section id="handoff-where-this-stands-2026-11-11">
 <h2>Handoff: where this stands (2026-11-11)<a class="headerlink" href="#handoff-where-this-stands-2026-11-11" title="Link to this heading">¶</a></h2>
-<p>This was written and tested in the Linux dev container. It has not yet been run
-on a Mac, against a real WLED board, or with the phone app. Next steps, in order:</p>
+<p>It was written and tested in the Linux dev container, then run on a Mac:</p>
+<ul class="simple">
+<li><p><strong>Built on macOS.</strong> <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">build</span> <span class="pre">//pi/player_rs:player_host</span></code> and
+<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span> <span class="pre">//pi/player_rs:player_rs_test</span></code> pass. The smoke test has not been
+run on the Mac yet.</p></li>
+<li><p><strong>One WLED board, wired.</strong> It drove a WLED 16.0.1 board with 1680 LEDs (4 × 420)
+over DDP on a wired interface: <code class="docutils literal notranslate"><span class="pre">--output</span> <span class="pre">ddp://&lt;board&gt;</span> <span class="pre">--leds</span> <span class="pre">1680</span></code>. WLED
+switched to DDP realtime mode with no configuration beyond <em>Receive UDP
+realtime</em>.</p></li>
+<li><p><strong>The phone app.</strong> The app connected over WSS after the browser accepted the
+certificate, and the setup was reported working. The first run hit Chrome’s
+non-bypassable <code class="docutils literal notranslate"><span class="pre">ERR_SSL_KEY_USAGE_INCOMPATIBLE</span></code>, because the self-signed cert
+was built as a CA (key usage <code class="docutils literal notranslate"><span class="pre">keyCertSign</span></code> / <code class="docutils literal notranslate"><span class="pre">cRLSign</span></code> only). It is now an
+end-entity cert with <code class="docutils literal notranslate"><span class="pre">digitalSignature</span></code> (<code class="docutils literal notranslate"><span class="pre">server.rs</span></code>, <code class="docutils literal notranslate"><span class="pre">self_signed_config</span></code>).
+This fixes the Pi player too. After you accept the warning, the browser shows
+<code class="docutils literal notranslate"><span class="pre">ERR_EMPTY_RESPONSE</span></code>, which is expected: the player only answers WebSocket
+upgrades.</p></li>
+</ul>
+<p>Next steps:</p>
 <ol class="arabic simple">
-<li><p><strong>Build on the Mac.</strong> Run <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">build</span> <span class="pre">//pi/player_rs:player_host</span></code>, then
-<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span> <span class="pre">//pi/player_rs:player_rs_test</span></code> and the smoke test. The <code class="docutils literal notranslate"><span class="pre">test-macos</span></code>
-CI job already compiles <code class="docutils literal notranslate"><span class="pre">//pi/player_rs/...</span></code> on macOS, so the first build is
-expected to work. If it fails, check Xcode Command Line Tools (the linker) and
-the Nix install first.</p></li>
-<li><p><strong>One WLED board.</strong> Run <code class="docutils literal notranslate"><span class="pre">player_host</span> <span class="pre">--output</span> <span class="pre">ddp://&lt;board&gt;</span> <span class="pre">--leds</span> <span class="pre">&lt;n&gt;</span> <span class="pre">--start</span> <span class="pre">&lt;n&gt;</span></code>.
-The strip should show the mapping pattern. Then drop <code class="docutils literal notranslate"><span class="pre">--start</span></code>, add the player
-in the app and run a real mapping capture. Check that the solve looks right
-and that the pattern decodes cleanly over the network. Network latency is the
-untested part.</p></li>
+<li><p>Run the smoke test on the Mac.</p></li>
+<li><p>Check that a full mapping capture decodes cleanly over the network. Network
+latency is the least tested part.</p></li>
 <li><p><strong>Effects.</strong> Push an effect from the library and compare it with the preview.</p></li>
 <li><p><strong>Several boards.</strong> Either run one <code class="docutils literal notranslate"><span class="pre">player_host</span></code> per board on different
 <code class="docutils literal notranslate"><span class="pre">--serve-port</span></code>s (each is its own fixture in the app), or split one fixture
