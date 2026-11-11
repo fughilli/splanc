@@ -1,0 +1,53 @@
+"""Ethernet + network LED outputs for the P4 player (docs/design/p4-ethernet-ddp.md):
+the Ethernet config and network outputs (validation, flash blob), the hand-coded
+protocol arms 95-98 / replies 53-54, and DDP packets. no_std and dependency-free;
+the P4 player's C++ calls it via netout_ffi.h.
+"""
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "netout",
+    srcs = glob(["src/*.rs"]),
+    crate_name = "splanc_netout",
+    edition = "2021",
+)
+
+cc_library(
+    name = "netout_ffi_hdr",
+    hdrs = ["netout_ffi.h"],
+    include_prefix = "firmware/netout",
+)
+
+rust_test(
+    name = "netout_unit_test",
+    crate = ":netout",
+    edition = "2021",
+)
+
+rust_test(
+    name = "netout_test",
+    srcs = ["tests/netout.rs"],
+    compile_data = glob(["testdata/*"]),
+    edition = "2021",
+    deps = [":netout"],
+)
+
+# Every hand-coded field number in src/wire.rs against the generated host
+# bindings of ledmapper.proto (both directions).
+rust_test(
+    name = "wire_test",
+    srcs = ["tests/wire.rs"],
+    edition = "2021",
+    # Debug builds keep several whole host ServerMessages on the stack per test
+    # (see //firmware/ota:wire_test).
+    env = {"RUST_MIN_STACK": "67108864"},
+    deps = [
+        ":netout",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
