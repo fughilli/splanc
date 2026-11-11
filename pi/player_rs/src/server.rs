@@ -29,6 +29,11 @@ pub type SharedPlayer = Arc<Mutex<Player>>;
 /// Unset (tests, a dev host): OTA arms reach the core, which answers "unsupported".
 pub static OTA: std::sync::OnceLock<crate::ota::Ota> = std::sync::OnceLock::new();
 
+/// The host player's effects layer (crate::fx), set once at startup by
+/// `player_host`. Unset (the Pi): the effect arms reach the core, which answers
+/// "unsupported".
+pub static HOST_FX: std::sync::OnceLock<Arc<Mutex<crate::fx::HostFx>>> = std::sync::OnceLock::new();
+
 /// The player's monotonic clock: whole milliseconds since a shared epoch. The WS
 /// task stamps recv/send with it (so a start_mapping's pattern epoch is on this
 /// clock) and the render loop derives its frame index from the SAME epoch, so
@@ -104,16 +109,36 @@ pub fn handle_frame(
             return Ok(ota.handle(frame));
         }
     }
+    // Effect / map / chunked-upload arms: the host effects layer, when there is
+    // one. Lock order: the effects layer, then the player (the render loop never
+    // holds both).
+    let mut forwarded = None;
+    if let Some(fx) = HOST_FX.get() {
+        if crate::fx::HostFx::intercepts(frame) {
+            let mut fx = fx.lock().expect("fx mutex poisoned");
+            let mut p = player.lock().expect("player mutex poisoned");
+            match fx.handle(&mut p, frame) {
+                crate::fx::Handled::Raw(out) => return Ok(Some(out)),
+                crate::fx::Handled::Reply(reply) => return encode(&p, &reply).map(Some),
+                crate::fx::Handled::Forward(whole) => forwarded = Some(whole),
+            }
+        }
+    }
+    let frame = forwarded.as_deref().unwrap_or(frame);
     let mut p = player.lock().expect("player mutex poisoned");
     let Some(reply) = p.handle_frame(frame, recv_ms, send_ms) else {
         return Ok(None);
     };
-    // Every reply goes out through Player::encode_reply (it splices the board
-    // descriptor into hardware_config_state).
+    encode(&p, &reply).map(Some)
+}
+
+/// Every reply goes out through Player::encode_reply (it splices the board
+/// descriptor into hardware_config_state).
+fn encode(p: &Player, reply: &ledmapper_pb::ledmapper_::v1_::ServerMessage) -> Result<Vec<u8>, &'static str> {
     let mut out = vec![0u8; REPLY_CAP];
-    let n = p.encode_reply(&reply, &mut out).ok_or("reply too large")?;
+    let n = p.encode_reply(reply, &mut out).ok_or("reply too large")?;
     out.truncate(n);
-    Ok(Some(out))
+    Ok(out)
 }
 
 /// Serve the player over TLS + WebSocket at `addr` forever, sharing `player`

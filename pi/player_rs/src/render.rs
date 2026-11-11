@@ -7,7 +7,7 @@
 //! and emits. It is the aarch64/std analogue of `firmware/player_app`'s C++
 //! render loop and the Python driver `_run`, running the SAME core.
 
-use crate::wire::{FpgaCodec, Rgb};
+use crate::wire::{to_wire, FpgaCodec, Rgb};
 use ledmapper_player::Player;
 
 /// Anything the render loop can push framed bytes to — the injection seam.
@@ -138,6 +138,40 @@ pub fn render_fpga(player: &Player, now_us: i64, codec: &FpgaCodec, dark_n: usiz
     }
 }
 
+/// The mapping / counting pixels the player wants at `now_us`, already in the
+/// strip's colour order (the probe's order while counting, else the channel-0
+/// order the app configured), and the absolute mapping seq shown. None when
+/// neither is active — the host player then renders its effect, or dark. This is
+/// the colour-level twin of [`render_fpga`] for outputs that take pixels
+/// (`crate::output`), not FPGA framing.
+pub fn render_colors(player: &Player, now_us: i64) -> Option<(Vec<Rgb>, Option<u32>)> {
+    match pick_source(player) {
+        Source::Counting { n, order } => Some((
+            (0..n)
+                .map(|i| to_wire(arr(player.counting_color(i).unwrap_or((0, 0, 0))), order))
+                .collect(),
+            None,
+        )),
+        Source::Mapping {
+            n,
+            epoch_us,
+            bit_period_us,
+            cycle_frames,
+        } => {
+            let seq = mapping_seq(now_us, epoch_us, bit_period_us);
+            let frame = if cycle_frames > 0 { seq % cycle_frames } else { 0 };
+            let order = player.hw_color_order_perm(0);
+            Some((
+                (0..n)
+                    .map(|i| to_wire(arr(player.pattern_color(i, frame).unwrap_or((0, 0, 0))), order))
+                    .collect(),
+                Some(seq),
+            ))
+        }
+        Source::Idle => None,
+    }
+}
+
 /// Drive one FPGA tick to `sink`: the CSR write then the STREAM payload (each a
 /// separate transfer so CS frames it), recording the shown seq back into the
 /// player for the phone's frame-timing feedback.
@@ -255,6 +289,18 @@ mod tests {
         assert_eq!(sink.writes.len(), 2);
         assert_eq!(sink.writes[0][0], OP_WRITE_CSR);
         assert_eq!(sink.writes[1][0], OP_STREAM);
+    }
+
+    #[test]
+    fn render_colors_follows_the_core() {
+        let mut player = Player::new("pi-0001", 64);
+        assert_eq!(render_colors(&player, 0), None, "idle: nothing to show");
+        start_mapping(&mut player, 8, 1000);
+        let (px, seq) = render_colors(&player, 1_000_000).expect("mapping");
+        assert_eq!(seq, Some(0));
+        assert_eq!(px.len(), 8);
+        // Frame 0 is the all-on sync frame: white in any colour order.
+        assert!(px.iter().all(|p| *p == [255, 255, 255]));
     }
 
     #[test]
