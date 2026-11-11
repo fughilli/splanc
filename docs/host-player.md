@@ -124,19 +124,29 @@ manifest defaults.
 
 ## Handoff: where this stands (2026-11-11)
 
-This was written and tested in the Linux dev container. It has not yet been run
-on a Mac, against a real WLED board, or with the phone app. Next steps, in order:
+It was written and tested in the Linux dev container, then run on a Mac:
 
-1. **Build on the Mac.** Run `bazel build //pi/player_rs:player_host`, then
-   `bazel test //pi/player_rs:player_rs_test` and the smoke test. The `test-macos`
-   CI job already compiles `//pi/player_rs/...` on macOS, so the first build is
-   expected to work. If it fails, check Xcode Command Line Tools (the linker) and
-   the Nix install first.
-2. **One WLED board.** Run `player_host --output ddp://<board> --leds <n> --start <n>`.
-   The strip should show the mapping pattern. Then drop `--start`, add the player
-   in the app and run a real mapping capture. Check that the solve looks right
-   and that the pattern decodes cleanly over the network. Network latency is the
-   untested part.
+- **Built on macOS.** `bazel build //pi/player_rs:player_host` and
+  `bazel test //pi/player_rs:player_rs_test` pass. The smoke test has not been
+  run on the Mac yet.
+- **One WLED board, wired.** It drove a WLED 16.0.1 board with 1680 LEDs (4 × 420)
+  over DDP on a wired interface: `--output ddp://<board> --leds 1680`. WLED
+  switched to DDP realtime mode with no configuration beyond _Receive UDP
+  realtime_.
+- **The phone app.** The app connected over WSS after the browser accepted the
+  certificate, and the setup was reported working. The first run hit Chrome's
+  non-bypassable `ERR_SSL_KEY_USAGE_INCOMPATIBLE`, because the self-signed cert
+  was built as a CA (key usage `keyCertSign` / `cRLSign` only). It is now an
+  end-entity cert with `digitalSignature` (`server.rs`, `self_signed_config`).
+  This fixes the Pi player too. After you accept the warning, the browser shows
+  `ERR_EMPTY_RESPONSE`, which is expected: the player only answers WebSocket
+  upgrades.
+
+Next steps:
+
+1. Run the smoke test on the Mac.
+2. Check that a full mapping capture decodes cleanly over the network. Network
+   latency is the least tested part.
 3. **Effects.** Push an effect from the library and compare it with the preview.
 4. **Several boards.** Either run one `player_host` per board on different
    `--serve-port`s (each is its own fixture in the app), or split one fixture

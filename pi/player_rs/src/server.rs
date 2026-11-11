@@ -66,11 +66,22 @@ pub fn self_signed_config() -> Result<ServerConfig, Box<dyn std::error::Error + 
 
     let signing_key = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
     let spki = SubjectPublicKeyInfoOwned::from_key(*signing_key.verifying_key())?;
+    let name = Name::from_str("CN=ledmapper")?;
+    // A self-signed END-ENTITY cert (issuer == subject, signed by its own key), not
+    // Profile::Root: Root marks it a CA with KeyUsage keyCertSign|cRLSign only, and
+    // Chrome refuses a TLS server cert without digitalSignature with the
+    // non-bypassable ERR_SSL_KEY_USAGE_INCOMPATIBLE, so a browser could never get
+    // as far as accepting the self-signed warning. Leaf gives CA:FALSE +
+    // digitalSignature (what an ECDSA server key needs).
     let cert = CertificateBuilder::new(
-        Profile::Root, // self-signed (issuer == subject); client bypasses validation
+        Profile::Leaf {
+            issuer: name.clone(),
+            enable_key_agreement: false,
+            enable_key_encipherment: false,
+        },
         SerialNumber::from(1u32),
         Validity::from_now(std::time::Duration::from_secs(3650 * 24 * 3600))?,
-        Name::from_str("CN=ledmapper")?,
+        name,
         spki,
         &signing_key,
     )?
