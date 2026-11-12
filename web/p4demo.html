@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0e0e12" />
+    <title>Splanc — P4 tracker demo</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #0e0e12;
+        color: #e8e8ea;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="p4" class="p4">
+      <header class="p4-bar">
+        <h1>P4 demo</h1>
+        <div class="p4-pills" id="pills"></div>
+      </header>
+      <div class="p4-banner" id="banner" hidden></div>
+      <div class="p4-view">
+        <canvas id="view" aria-label="3D view: base stations, stylus, lamp and shape"></canvas>
+        <div class="p4-hud" id="hud"></div>
+      </div>
+      <main class="p4-panel" id="panel"></main>
+      <nav class="p4-modes" id="modes" aria-label="Demo mode"></nav>
+    </div>
+    <script type="module" src="./src/p4demo/main.ts"></script>
+  </body>
+</html>

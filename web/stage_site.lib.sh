@@ -4,7 +4,7 @@
 # The site is the Vite bundle at the root plus the four wasm bundles the app
 # loads at runtime, staged at the SAME paths the Pi M2 server serves them from
 # (see web/serve.sh) so the identical bundle works from every origin:
-#   /             the app (capture PWA + wall + effects pages)
+#   /             the app (capture PWA + wall + effects pages; the P4 demo at /p4-demo)
 #   /solver/      the VIO solver wasm      (//solver:solver_web)
 #   /pulse/       the effects Sim wasm     (//firmware/pulse:pulse_web)
 #   /fx-compiler/ the effect compiler wasm (//fx_compiler:fx_compiler_web)
@@ -23,6 +23,10 @@ stage_site() {
   rm -rf "$out"
   mkdir -p "$out"
   cp -RL web/dist/. "$out"/
+  # The P4 tracker demo's clean URL: GitHub Pages and Cloudflare Pages both serve
+  # /p4-demo from p4-demo.html. A copy at the same level, so its relative asset
+  # URLs resolve exactly as p4demo.html's do.
+  if [ -f "$out/p4demo.html" ]; then cp "$out/p4demo.html" "$out/p4-demo.html"; fi
   # Cloudflare Pages advanced-mode Worker — the /gh-asset CORS proxy for release
   # firmware downloads. Staged as _worker.js at the deploy root, where Pages always
   # executes it (a nested functions/ dir was NOT compiled by wrangler on this

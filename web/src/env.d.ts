@@ -31,3 +31,10 @@ declare const __BUILD_INFO__: {
   gitCommitShort: string;
   gitDirty: boolean;
 };
+
+// Vite `?raw` imports resolve to the file's text (the P4 demo page bundles its effect
+// sources this way — see src/p4demo/effects/index.ts).
+declare module "*?raw" {
+  const text: string;
+  export default text;
+}

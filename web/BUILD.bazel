@@ -66,6 +66,9 @@ npm_link_all_packages(name = "node_modules")
 
 SRCS = glob(["src/**/*.ts"])
 
+# Effect sources a page bundles as text (Vite `?raw`): the P4 demo's effects.
+GLSL = glob(["src/**/*.glsl"])
+
 # The protocol client + effects-preview modules the MCP bridge (//agent) bundles
 # by relative import, so it speaks /ws through the same code as the app rather
 # than a copy. Keep this the closure of what agent/src imports from web/src.
@@ -207,6 +210,10 @@ ts_project(
             "src/ui/screens/showMode.ts",
             # Halloween play mode compiles its preset tiles with the worker too.
             "src/ui/screens/playMode.ts",
+            # The P4 demo page (p4demo.html): its deploy path compiles with the
+            # worker, and its entry imports that.
+            "src/p4demo/deploy.ts",
+            "src/p4demo/main.ts",
             "src/ui/app/main.ts",
             "src/ui/main.ts",
             # The JIT fx-bench golden lives here only for the shared
@@ -406,9 +413,10 @@ genrule(
 # comment there (rolldown vs sandbox symlinks).
 vite_bin.vite(
     name = "dist",
-    srcs = SRCS + CSS + glob(["public/**"]) + [
+    srcs = SRCS + CSS + GLSL + glob(["public/**"]) + [
         "effects.html",
         "index.html",
+        "p4demo.html",
         "scene.html",
         "package.json",
         "vite.config.ts",
@@ -537,10 +545,11 @@ js_run_devserver(
     name = "dev_server",
     args = ["dev"],
     chdir = package_name(),
-    data = SRCS + CSS + [
+    data = SRCS + CSS + GLSL + [
         "index.html",
         "wall.html",
         "effects.html",
+        "p4demo.html",
         "scene.html",
         "vite.config.ts",
         "package.json",
