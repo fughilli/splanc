@@ -34,4 +34,3 @@ test("1-σ ring radius is σ projected through the pinhole", () => {
   assert.equal(sigmaRadiusPx(0.01, 2, 1000), 5);
   assert.equal(sigmaRadiusPx(0.01, 0, 1000), Infinity);
 });
-
