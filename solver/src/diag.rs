@@ -297,6 +297,7 @@ pub fn from_warm_state(w: &WarmState) -> Result<VioResult, String> {
         reanchor_scale: 1.0,
         init_scale: None,
         init_scale_fallback: false,
+        scale_floor: 1.0,
     })
 }
 

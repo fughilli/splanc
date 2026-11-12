@@ -39,6 +39,10 @@ export interface SolveProblem {
     stripSpacingM?: number;
     /** Fractional slack on the pitch bound (default 0.25). */
     stripTolerance?: number;
+    /** Scale floor (solver vio::SolveOptions::min_camera_dist_m): the closest
+     * the solved camera path may sit to the fixture, meters; a solve that
+     * lands closer is rescaled up to it. 0 = off; unset = the solver's 0.2. */
+    minCameraDistM?: number;
     /** Solver state of an earlier (interim) solve of this capture: the final
      * solve also starts from it and keeps the better start, so it can't come
      * back worse than the live preview (solver/src/pipeline.rs). */
