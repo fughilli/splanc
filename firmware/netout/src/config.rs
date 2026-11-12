@@ -14,6 +14,38 @@ pub const RMII_GPIOS: [i32; 7] = [49, 34, 35, 28, 29, 30, 50];
 pub const RMII_CLK_IN_GPIO: i32 = 50;
 /// DDP's UDP port.
 pub const DDP_PORT: u16 = 4048;
+/// Art-Net's UDP port.
+pub const ARTNET_PORT: u16 = 6454;
+/// Highest Art-Net port address (15 bits: net << 8 | subnet << 4 | universe).
+pub const ARTNET_MAX_UNIVERSE: u16 = 0x7FFF;
+
+/// How a network output's pixels go out (proto NetProtocol).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Protocol {
+    /// DDP to 4048: 480 pixels per packet, PUSH on the last (WLED: no setup).
+    Ddp = 0,
+    /// Art-Net ArtDmx to 6454: 170 pixels per universe from `universe`, with an
+    /// optional ArtSync after each frame.
+    ArtNet = 1,
+}
+
+impl Protocol {
+    pub fn from_u8(v: u8) -> Option<Protocol> {
+        match v {
+            0 => Some(Protocol::Ddp),
+            1 => Some(Protocol::ArtNet),
+            _ => None,
+        }
+    }
+
+    pub fn default_port(self) -> u16 {
+        match self {
+            Protocol::Ddp => DDP_PORT,
+            Protocol::ArtNet => ARTNET_PORT,
+        }
+    }
+}
 /// Display names are cut to this many bytes.
 pub const NAME_MAX: usize = 32;
 
@@ -221,10 +253,15 @@ impl EthConfig {
 /// One network output (an LED channel 2..=7 with a target).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NetOutput {
+    pub protocol: Protocol,
     /// Controller IPv4 (big-endian octets in a u32); 0 = off.
     pub ip: u32,
-    /// UDP port; 0 = DDP_PORT.
+    /// UDP port; 0 = the protocol's default.
     pub port: u16,
+    /// Art-Net: the first universe (port address); DDP ignores it.
+    pub universe: u16,
+    /// Art-Net: send an ArtSync after each frame; DDP ignores it.
+    pub sync: bool,
     pub name: [u8; NAME_MAX],
     pub name_len: u8,
 }
@@ -232,8 +269,11 @@ pub struct NetOutput {
 impl Default for NetOutput {
     fn default() -> Self {
         Self {
+            protocol: Protocol::Ddp,
             ip: 0,
             port: 0,
+            universe: 0,
+            sync: false,
             name: [0; NAME_MAX],
             name_len: 0,
         }
@@ -272,10 +312,19 @@ impl NetOutput {
 
     pub fn port_or_default(&self) -> u16 {
         if self.port == 0 {
-            DDP_PORT
+            self.protocol.default_port()
         } else {
             self.port
         }
+    }
+
+    /// An Art-Net output on `universe` (and the universes after it).
+    pub fn artnet(ip: u32, port: u16, universe: u16, sync: bool, name: &[u8]) -> Self {
+        let mut o = Self::new(ip, port, name);
+        o.protocol = Protocol::ArtNet;
+        o.universe = universe;
+        o.sync = sync;
+        o
     }
 
     pub fn validate(&self) -> Result<(), Refusal> {
@@ -285,6 +334,9 @@ impl NetOutput {
         let first = self.ip >> 24;
         // A unicast or limited-broadcast IPv4: not 0/8, 127/8 or multicast.
         if first == 0 || first == 127 || (224..255).contains(&first) {
+            return Err(Refusal::BadAddress);
+        }
+        if self.universe > ARTNET_MAX_UNIVERSE {
             return Err(Refusal::BadAddress);
         }
         Ok(())
@@ -309,10 +361,16 @@ pub struct NetSettings {
 }
 
 /// Flash blob layout version. Bump on any change, and keep reading the old one.
+/// v1: DDP only. v2 adds each output's protocol, Art-Net universe and sync.
 const BLOB_V1: u8 = 1;
+const BLOB_V2: u8 = 2;
 const CFG_LEN: usize = 22;
-const OUT_LEN: usize = 4 + 2 + 1 + NAME_MAX;
-/// Size of the flash blob.
+/// v1 output: ip, port, name length, name.
+const OUT_LEN_V1: usize = 4 + 2 + 1 + NAME_MAX;
+/// v2 output: v1's, then protocol, universe (BE), sync.
+const OUT_LEN: usize = OUT_LEN_V1 + 1 + 2 + 1;
+const BLOB_LEN_V1: usize = 2 + CFG_LEN + NET_CHANNELS * OUT_LEN_V1;
+/// Size of the flash blob (v2).
 pub const BLOB_LEN: usize = 2 + CFG_LEN + NET_CHANNELS * OUT_LEN;
 
 impl NetSettings {
@@ -320,7 +378,7 @@ impl NetSettings {
     pub fn to_blob(&self, out: &mut [u8; BLOB_LEN]) {
         let e = &self.eth;
         out.fill(0);
-        out[0] = BLOB_V1;
+        out[0] = BLOB_V2;
         out[1] = CFG_LEN as u8;
         let c = &mut out[2..2 + CFG_LEN];
         c[0] = e.enabled as u8;
@@ -342,7 +400,10 @@ impl NetSettings {
             b[0..4].copy_from_slice(&o.ip.to_be_bytes());
             b[4..6].copy_from_slice(&o.port.to_be_bytes());
             b[6] = o.name_len;
-            b[7..].copy_from_slice(&o.name);
+            b[7..OUT_LEN_V1].copy_from_slice(&o.name);
+            b[OUT_LEN_V1] = o.protocol as u8;
+            b[OUT_LEN_V1 + 1..OUT_LEN_V1 + 3].copy_from_slice(&o.universe.to_be_bytes());
+            b[OUT_LEN_V1 + 3] = o.sync as u8;
         }
     }
 
@@ -350,7 +411,17 @@ impl NetSettings {
     /// version or that fails validation reads as None (the caller keeps the
     /// defaults): flash from another build must never brick the output.
     pub fn from_blob(b: &[u8]) -> Option<NetSettings> {
-        if b.len() < BLOB_LEN || b[0] != BLOB_V1 || b[1] as usize != CFG_LEN {
+        let out_len = match b.first() {
+            Some(&BLOB_V1) => OUT_LEN_V1,
+            Some(&BLOB_V2) => OUT_LEN,
+            _ => return None,
+        };
+        let need = if out_len == OUT_LEN {
+            BLOB_LEN
+        } else {
+            BLOB_LEN_V1
+        };
+        if b.len() < need || b[1] as usize != CFG_LEN {
             return None;
         }
         let c = &b[2..2 + CFG_LEN];
@@ -381,10 +452,19 @@ impl NetSettings {
         eth.validate(&[]).ok()?;
         let mut outputs = [NetOutput::default(); NET_CHANNELS];
         for (i, o) in outputs.iter_mut().enumerate() {
-            let at = 2 + CFG_LEN + i * OUT_LEN;
-            let s = &b[at..at + OUT_LEN];
+            let at = 2 + CFG_LEN + i * out_len;
+            let s = &b[at..at + out_len];
             let n = (s[6] as usize).min(NAME_MAX);
             *o = NetOutput::new(be(&s[0..4]), u16::from_be_bytes([s[4], s[5]]), &s[7..7 + n]);
+            if out_len == OUT_LEN {
+                let Some(p) = Protocol::from_u8(s[OUT_LEN_V1]) else {
+                    *o = NetOutput::default();
+                    continue;
+                };
+                o.protocol = p;
+                o.universe = u16::from_be_bytes([s[OUT_LEN_V1 + 1], s[OUT_LEN_V1 + 2]]);
+                o.sync = s[OUT_LEN_V1 + 3] != 0;
+            }
             if o.validate().is_err() {
                 *o = NetOutput::default();
             }

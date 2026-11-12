@@ -3,7 +3,7 @@
 //! without the core's by-value envelopes growing. tests/wire.rs checks every
 //! number here against the generated host bindings.
 
-use crate::config::{Clock, EthConfig, IpMode, NetOutput, Phy, NAME_MAX};
+use crate::config::{Clock, EthConfig, IpMode, NetOutput, Phy, Protocol, NAME_MAX};
 use crate::pb::{Malformed, Overflow, Reader, Value, Writer};
 
 /// `ClientMessage.msg` field numbers.
@@ -39,6 +39,8 @@ mod no {
     pub const IP: u32 = 3;
     pub const PORT: u32 = 4;
     pub const NAME: u32 = 5;
+    pub const UNIVERSE: u32 = 6;
+    pub const SYNC: u32 = 7;
 }
 
 /// `EthernetState` field numbers.
@@ -166,7 +168,16 @@ fn decode_output(b: &[u8]) -> Result<(i32, NetOutput), &'static str> {
         match (n, v) {
             (no::CHANNEL, v) => channel = v.as_i32().ok_or("bad_message")?,
             // DDP is the only protocol (0); anything else is refused.
-            (no::PROTOCOL, Value::Varint(x)) if x != 0 => return Err("bad_message"),
+            (no::PROTOCOL, Value::Varint(x)) => {
+                o.protocol = u8::try_from(x)
+                    .ok()
+                    .and_then(Protocol::from_u8)
+                    .ok_or("bad_message")?
+            }
+            (no::UNIVERSE, Value::Varint(x)) => {
+                o.universe = u16::try_from(x).map_err(|_| "bad_address")?
+            }
+            (no::SYNC, Value::Varint(x)) => o.sync = x != 0,
             (no::IP, Value::Fixed32(x)) => o.ip = x,
             (no::PORT, Value::Varint(x)) => o.port = u16::try_from(x).map_err(|_| "bad_address")?,
             (no::NAME, Value::Bytes(s)) => o.set_name(s),
@@ -304,9 +315,12 @@ pub fn encode_ethernet_state(
                     no::CHANNEL,
                     crate::config::NET_CHANNEL_FIRST as i32 + i as i32,
                 )?;
+                w.uint(no::PROTOCOL, o.protocol as u64)?;
                 w.fixed32(no::IP, o.ip)?;
                 w.uint(no::PORT, o.port as u64)?;
-                w.bytes(no::NAME, o.name())
+                w.bytes(no::NAME, o.name())?;
+                w.uint(no::UNIVERSE, o.universe as u64)?;
+                w.uint(no::SYNC, o.sync as u64)
             })?;
         }
         w.uint(es::LINK_UP, st.link_up as u64)?;

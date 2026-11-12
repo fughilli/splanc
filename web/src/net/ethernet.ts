@@ -49,14 +49,25 @@ export interface EthernetConfig {
   gateway: number;
 }
 
+export type NetProtocol = "ddp" | "artnet";
+export const NET_PROTOCOL_LABELS: Record<NetProtocol, string> = {
+  ddp: "DDP (WLED, most pixel bridges)",
+  artnet: "Art-Net",
+};
+
 /** One network output (proto NetworkOutput): an LED channel streaming to a
  * controller. Its LED count lives with the channel (hardware_config_state). */
 export interface NetworkOutput {
   channel: number;
+  protocol: NetProtocol;
   ip: number;
-  /** 0 = the protocol default (4048 for DDP). */
+  /** 0 = the protocol default (4048 for DDP, 6454 for Art-Net). */
   port: number;
   name: string;
+  /** Art-Net: the first universe (15-bit port address). */
+  universe: number;
+  /** Art-Net: an ArtSync after each frame. */
+  sync: boolean;
 }
 
 /** The device's Ethernet state (proto EthernetState), normalized. */
@@ -95,6 +106,28 @@ export interface EthernetCaps {
 }
 
 export const DDP_PORT = 4048;
+export const ARTNET_PORT = 6454;
+/** Pixels one Art-Net universe carries (510 of its 512 channels). */
+export const ARTNET_PX_PER_UNIVERSE = 170;
+export const ARTNET_MAX_UNIVERSE = 0x7fff;
+
+export function defaultPort(p: NetProtocol): number {
+  return p === "artnet" ? ARTNET_PORT : DDP_PORT;
+}
+
+/** Universes an Art-Net output of `leds` LEDs takes. */
+export function artnetUniverses(leds: number): number {
+  return Math.max(1, Math.ceil(Math.max(0, leds) / ARTNET_PX_PER_UNIVERSE));
+}
+
+/** "DDP → 192.168.50.2" / "Art-Net → 10.0.0.9, universes 3–10" for a summary line. */
+export function describeOutput(o: NetworkOutput, leds: number): string {
+  const addr = `${ipToString(o.ip)}${o.port && o.port !== defaultPort(o.protocol) ? `:${o.port}` : ""}`;
+  if (o.protocol !== "artnet") return `DDP → ${addr}`;
+  const n = artnetUniverses(leds);
+  const range = n > 1 ? `universes ${o.universe}–${o.universe + n - 1}` : `universe ${o.universe}`;
+  return `Art-Net → ${addr}, ${range}${o.sync ? ", ArtSync" : ""}`;
+}
 
 // -- IPv4 ---------------------------------------------------------------------
 
@@ -161,6 +194,14 @@ export function macFromWire(v: unknown): string {
   return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join(":");
 }
 
+export function protocolFromWire(v: unknown): NetProtocol {
+  return v === 1 || v === "NET_PROTOCOL_ARTNET" ? "artnet" : "ddp";
+}
+
+export function protocolToWire(p: NetProtocol): string {
+  return p === "artnet" ? "NET_PROTOCOL_ARTNET" : "NET_PROTOCOL_DDP";
+}
+
 function clockFromWire(v: unknown): RmiiClock {
   return v === 1 || v === "RMII_CLOCK_OUT" ? "out" : "in";
 }
@@ -222,7 +263,15 @@ export function stateFromWire(m: unknown): EthernetState {
     config: configFromWire(o.config),
     outputs: outputs.map((x) => {
       const p = (x ?? {}) as Record<string, unknown>;
-      return { channel: num(p.channel), ip: num(p.ip) >>> 0, port: num(p.port), name: str(p.name) };
+      return {
+        channel: num(p.channel),
+        protocol: protocolFromWire(p.protocol),
+        ip: num(p.ip) >>> 0,
+        port: num(p.port),
+        name: str(p.name),
+        universe: num(p.universe),
+        sync: p.sync === true,
+      };
     }),
     linkUp: o.linkUp === true,
     speedMbps: num(o.speedMbps),

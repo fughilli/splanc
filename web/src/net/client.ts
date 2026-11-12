@@ -80,6 +80,7 @@ import { normalizeWifiPolicy, wifiPolicyMessage, type WifiPolicy, type WifiPolic
 import {
   configToWire as ethConfigToWire,
   controllersFromWire,
+  protocolToWire as ethProtocolToWire,
   stateFromWire as ethStateFromWire,
   type DiscoveredController,
   type EthernetConfig,
@@ -1232,7 +1233,15 @@ export class LedMapperClient {
     const r = await this.request(
       {
         type: "set_network_output",
-        output: { channel: output.channel, ip: output.ip >>> 0, port: output.port, name: output.name },
+        output: {
+          channel: output.channel,
+          protocol: ethProtocolToWire(output.protocol),
+          ip: output.ip >>> 0,
+          port: output.port,
+          name: output.name,
+          universe: output.universe,
+          sync: output.sync,
+        },
         commit,
       } as unknown as ClientMessage,
       "ethernet_state",

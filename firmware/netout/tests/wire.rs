@@ -312,3 +312,63 @@ fn arm_numbers_match_the_proto() {
         wire::CM_SET_NETWORK_OUTPUT
     );
 }
+
+#[test]
+fn artnet_outputs_round_trip() {
+    use splanc_netout::config::Protocol;
+    let mut o = pb::NetworkOutput::default();
+    o.r#channel = 4;
+    o.r#protocol = pb::NetProtocol(1);
+    o.r#ip = ip(192, 168, 50, 9);
+    o.r#universe = 3;
+    o.r#sync = true;
+    let mut s = pb::SetNetworkOutput::default();
+    s.set_output(o);
+    let f = encode(CMsg::SetNetworkOutput(s));
+    let Ok(Request::SetNetworkOutput {
+        channel, output, ..
+    }) = wire::decode_client(&f)
+    else {
+        panic!("decodes")
+    };
+    assert_eq!(channel, 4);
+    assert_eq!(output.protocol, Protocol::ArtNet);
+    assert_eq!((output.universe, output.sync), (3, true));
+
+    // An unknown protocol is refused, not taken as DDP.
+    let mut o = pb::NetworkOutput::default();
+    o.r#channel = 4;
+    o.r#protocol = pb::NetProtocol(7);
+    let mut s = pb::SetNetworkOutput::default();
+    s.set_output(o);
+    assert_eq!(
+        wire::decode_client(&encode(CMsg::SetNetworkOutput(s))),
+        Ok(Request::Refused("bad_message"))
+    );
+
+    // And it comes back in ethernet_state.
+    let mut outputs = [NetOutput::default(); NET_CHANNELS];
+    outputs[2] = output;
+    let mut buf = [0u8; 1024];
+    let n = wire::encode_ethernet_state(
+        &EthConfig::default(),
+        &outputs,
+        &LinkStatus::default(),
+        "",
+        &mut buf,
+    )
+    .unwrap();
+    let SMsg::EthernetState(st) = decode_server(&buf[..n]) else {
+        panic!("ethernet_state")
+    };
+    let back = &st.r#outputs[0];
+    assert_eq!(
+        (
+            back.r#channel,
+            back.r#protocol.0,
+            back.r#universe,
+            back.r#sync
+        ),
+        (4, 1, 3, true)
+    );
+}

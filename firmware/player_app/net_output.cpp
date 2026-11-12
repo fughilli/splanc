@@ -49,7 +49,9 @@ bool send_frame(const Frame &f, const NetoutTarget (&t)[NET_OUTPUT_CHANNELS]) {
     int one = 1;
     lwip_setsockopt(s_sock, SOL_SOCKET, SO_BROADCAST, &one, sizeof one);  // a /24 broadcast target
   }
-  static uint8_t pkt[NETOUT_DDP_MAX_PACKET];
+  // Big enough for either protocol: DDP 1450 B, ArtDmx 528 B.
+  static uint8_t pkt[NETOUT_DDP_MAX_PACKET > NETOUT_ARTNET_MAX_PACKET ? NETOUT_DDP_MAX_PACKET
+                                                                      : NETOUT_ARTNET_MAX_PACKET];
   bool any = false;
   for (int ch = 0; ch < NET_OUTPUT_CHANNELS; ch++) {
     if (t[ch].ip == 0 || f.counts[ch] == 0) continue;
@@ -59,14 +61,31 @@ bool send_frame(const Frame &f, const NetoutTarget (&t)[NET_OUTPUT_CHANNELS]) {
     to.sin_addr.s_addr = eth_to_nbo32(t[ch].ip);
     const uint8_t *data = f.rgb + f.offset[ch];
     const size_t len = (size_t)f.counts[ch] * 3;
-    s_seq[ch] = netout_ddp_next_seq(s_seq[ch]);
-    const size_t n = netout_ddp_packet_count(len);
-    for (size_t i = 0; i < n; i++) {
-      const size_t plen = netout_ddp_packet(data, len, i, s_seq[ch], pkt, sizeof pkt);
-      if (plen == 0) break;
-      if (lwip_sendto(s_sock, pkt, plen, 0, reinterpret_cast<sockaddr *>(&to), sizeof to) < 0) {
+    auto send = [&](const uint8_t *buf, size_t n) {
+      if (lwip_sendto(s_sock, buf, n, 0, reinterpret_cast<sockaddr *>(&to), sizeof to) < 0) {
         s_tx_errors = s_tx_errors + 1;
-        break;  // the rest of this frame would go the same way (no route / no buffers)
+        return false;  // the rest of this frame would go the same way (no route / no buffers)
+      }
+      return true;
+    };
+    if (t[ch].protocol == NETOUT_PROTOCOL_ARTNET) {
+      s_seq[ch] = netout_artnet_next_seq(s_seq[ch]);
+      const size_t n = netout_artnet_packet_count(len);
+      bool ok = true;
+      for (size_t i = 0; i < n && ok; i++) {
+        const size_t plen = netout_artnet_packet(data, len, i, t[ch].universe, s_seq[ch], pkt, sizeof pkt);
+        ok = plen != 0 && send(pkt, plen);
+      }
+      if (ok && t[ch].sync) {
+        const size_t plen = netout_artnet_sync(pkt, sizeof pkt);
+        if (plen) send(pkt, plen);
+      }
+    } else {
+      s_seq[ch] = netout_ddp_next_seq(s_seq[ch]);
+      const size_t n = netout_ddp_packet_count(len);
+      for (size_t i = 0; i < n; i++) {
+        const size_t plen = netout_ddp_packet(data, len, i, s_seq[ch], pkt, sizeof pkt);
+        if (plen == 0 || !send(pkt, plen)) break;
       }
     }
     any = true;

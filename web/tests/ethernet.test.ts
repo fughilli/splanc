@@ -8,7 +8,10 @@ import { test } from "node:test";
 
 import { decodeClient, decodeServer, encodeClient, encodeServer } from "../src/net/proto";
 import {
+  artnetUniverses,
   busyPins,
+  describeOutput,
+  protocolToWire,
   capsFromWire,
   configFromWire,
   configToWire,
@@ -78,7 +81,9 @@ test("ethernet_state decodes into the app shape", () => {
   } as never);
   const st = stateFromWire(decodeServer(frame));
   assert.deepEqual(st.config, CFG);
-  assert.deepEqual(st.outputs, [{ channel: 2, ip: 0xc0a8326b, port: 0, name: "DISTIRA" }]);
+  assert.deepEqual(st.outputs, [
+    { channel: 2, protocol: "ddp", ip: 0xc0a8326b, port: 0, name: "DISTIRA", universe: 0, sync: false },
+  ]);
   assert.equal(st.mac, "01:02:03:04:05:06");
   assert.equal(st.txFrames, 42);
   assert.equal(statusText(st), "Link up, 100 Mbps, 192.168.50.1/24");
@@ -115,4 +120,35 @@ test("busy pins and caps", () => {
     [0, 23, 28, 29, 30, 32, 34, 35, 49, 50],
   );
   assert.equal(capsFromWire(undefined), null);
+});
+
+test("Art-Net outputs survive the proto boundary", () => {
+  const frame = encodeServer({
+    type: "ethernet_state",
+    config: configToWire(CFG),
+    outputs: [{ channel: 3, protocol: protocolToWire("artnet"), ip: 0xc0a83209, universe: 4, sync: true, name: "panel" }],
+  } as never);
+  const st = stateFromWire(decodeServer(frame));
+  assert.deepEqual(st.outputs[0], {
+    channel: 3,
+    protocol: "artnet",
+    ip: 0xc0a83209,
+    port: 0,
+    name: "panel",
+    universe: 4,
+    sync: true,
+  });
+});
+
+test("output summaries", () => {
+  assert.equal(artnetUniverses(0), 1);
+  assert.equal(artnetUniverses(170), 1);
+  assert.equal(artnetUniverses(171), 2);
+  assert.equal(artnetUniverses(1260), 8);
+  const ddp = { channel: 2, protocol: "ddp" as const, ip: 0xc0a83202, port: 0, name: "", universe: 0, sync: false };
+  assert.equal(describeOutput(ddp, 1260), "DDP → 192.168.50.2");
+  assert.equal(describeOutput({ ...ddp, port: 4049 }, 1260), "DDP → 192.168.50.2:4049");
+  const art = { ...ddp, protocol: "artnet" as const, universe: 3, sync: true };
+  assert.equal(describeOutput(art, 1260), "Art-Net → 192.168.50.2, universes 3–10, ArtSync");
+  assert.equal(describeOutput({ ...art, sync: false }, 100), "Art-Net → 192.168.50.2, universe 3");
 });

@@ -12,10 +12,12 @@
 //!   bindings, like `//firmware/ota:wire_test`).
 //! * [`ddp`]: DDP packets, byte for byte the format of the Mac host player
 //!   (`pi/player_rs/src/output.rs`).
+//! * [`artnet`]: Art-Net ArtDmx / ArtSync packets, as the host player's.
 //! * [`wled`]: what discovery reads from a WLED board's `/json/info`.
 //! * [`capi`]: the C ABI, declared in `netout_ffi.h`.
 #![no_std]
 
+pub mod artnet;
 pub mod capi;
 pub mod config;
 pub mod ddp;

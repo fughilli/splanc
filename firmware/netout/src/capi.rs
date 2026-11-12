@@ -7,7 +7,7 @@
 use core::ffi::{c_char, CStr};
 
 use crate::config::{
-    net_index, Clock, EthConfig, IpMode, NetOutput, NetSettings, Phy, BLOB_LEN, NET_CHANNELS,
+    net_index, Clock, EthConfig, IpMode, NetOutput, NetSettings, Phy, Protocol, BLOB_LEN, NET_CHANNELS,
     NET_CHANNEL_FIRST,
 };
 use crate::wire::{self, Controller, LinkStatus, Request};
@@ -35,8 +35,11 @@ static mut STATE: State = State {
             gateway: 0,
         },
         outputs: [NetOutput {
+            protocol: Protocol::Ddp,
             ip: 0,
             port: 0,
+            universe: 0,
+            sync: false,
             name: [0; 32],
             name_len: 0,
         }; NET_CHANNELS],
@@ -115,8 +118,14 @@ pub struct NetoutEthConfig {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NetoutTarget {
     pub ip: u32,
-    /// The port to send to (the default filled in).
+    /// The port to send to (the protocol's default filled in).
     pub port: u16,
+    /// 0 = DDP, 1 = Art-Net.
+    pub protocol: u8,
+    /// Art-Net: send an ArtSync after each frame.
+    pub sync: u8,
+    /// Art-Net: the first universe.
+    pub universe: u16,
 }
 
 /// The running link state (netout_ffi.h `NetoutLinkStatus`).
@@ -276,6 +285,9 @@ pub unsafe extern "C" fn netout_output(channel: i32, out: *mut NetoutTarget) -> 
         *out = NetoutTarget {
             ip: o.ip,
             port: o.port_or_default(),
+            protocol: o.protocol as u8,
+            sync: o.sync as u8,
+            universe: o.universe,
         };
     }
     1
@@ -445,6 +457,47 @@ pub unsafe extern "C" fn netout_ddp_packet(
     cap: usize,
 ) -> usize {
     crate::ddp::packet(bytes(data, len), index, seq, bytes_mut(out, cap)).unwrap_or(0)
+}
+
+/// Universes (ArtDmx packets) one frame of `len` RGB bytes takes.
+#[no_mangle]
+pub extern "C" fn netout_artnet_packet_count(len: usize) -> usize {
+    crate::artnet::packet_count(len)
+}
+
+/// Write ArtDmx packet `index` (universe `first_universe + index`) of the frame
+/// `data[0..len)` into `out`. Returns its length, 0 if `index` is past the frame
+/// or `cap` is short. Pure: safe from any task.
+#[no_mangle]
+pub unsafe extern "C" fn netout_artnet_packet(
+    data: *const u8,
+    len: usize,
+    index: usize,
+    first_universe: u16,
+    seq: u8,
+    out: *mut u8,
+    cap: usize,
+) -> usize {
+    crate::artnet::packet(
+        bytes(data, len),
+        index,
+        first_universe,
+        seq,
+        bytes_mut(out, cap),
+    )
+    .unwrap_or(0)
+}
+
+/// Write an ArtSync packet into `out`. Returns its length, 0 if `cap` is short.
+#[no_mangle]
+pub unsafe extern "C" fn netout_artnet_sync(out: *mut u8, cap: usize) -> usize {
+    crate::artnet::sync(bytes_mut(out, cap)).unwrap_or(0)
+}
+
+/// The Art-Net sequence number after `seq` (1..=255).
+#[no_mangle]
+pub extern "C" fn netout_artnet_next_seq(seq: u8) -> u8 {
+    crate::artnet::next_seq(seq)
 }
 
 /// The sequence number after `seq` (1..=15).

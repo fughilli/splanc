@@ -32,9 +32,15 @@ typedef struct {
   uint32_t gateway;
 } NetoutEthConfig;
 
+#define NETOUT_PROTOCOL_DDP 0
+#define NETOUT_PROTOCOL_ARTNET 1
+
 typedef struct {
   uint32_t ip;
-  uint16_t port;  // default filled in (4048 for DDP)
+  uint16_t port;      // the protocol's default filled in (4048 DDP, 6454 Art-Net)
+  uint8_t protocol;   // NETOUT_PROTOCOL_*
+  uint8_t sync;       // Art-Net: an ArtSync after each frame
+  uint16_t universe;  // Art-Net: the first universe
 } NetoutTarget;
 
 typedef struct {
@@ -99,6 +105,14 @@ size_t netout_ddp_packet_count(size_t len);
 size_t netout_ddp_packet(const uint8_t *data, size_t len, size_t index, uint8_t seq, uint8_t *out,
                          size_t cap);
 uint8_t netout_ddp_next_seq(uint8_t seq);
+
+// Art-Net. Pure: safe from any task.
+#define NETOUT_ARTNET_MAX_PACKET 528  // 18 B header + 510 B (170 RGB pixels)
+size_t netout_artnet_packet_count(size_t len);
+size_t netout_artnet_packet(const uint8_t *data, size_t len, size_t index, uint16_t first_universe,
+                            uint8_t seq, uint8_t *out, size_t cap);
+size_t netout_artnet_sync(uint8_t *out, size_t cap);
+uint8_t netout_artnet_next_seq(uint8_t seq);
 
 #ifdef __cplusplus
 }

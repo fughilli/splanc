@@ -36,7 +36,7 @@ void apply(bool eth_changed) {
   NetoutTarget t[NET_OUTPUT_CHANNELS];
   const int32_t first = netout_first_channel();
   for (int i = 0; i < NET_OUTPUT_CHANNELS; i++) {
-    if (!netout_output(first + i, &t[i])) t[i] = NetoutTarget{0, 0};
+    if (!netout_output(first + i, &t[i])) t[i] = NetoutTarget{};
   }
   net_output_set_targets(t);
 }

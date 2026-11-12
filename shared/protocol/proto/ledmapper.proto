@@ -1877,6 +1877,9 @@ message EthernetConfig {
 enum NetProtocol {
   // Distributed Display Protocol to UDP 4048: what WLED takes with no setup.
   NET_PROTOCOL_DDP = 0;
+  // Art-Net ArtDmx to UDP 6454: 170 RGB pixels per universe, counting up from
+  // NetworkOutput.universe; NetworkOutput.sync adds an ArtSync after each frame.
+  NET_PROTOCOL_ARTNET = 1;
 }
 
 // One network LED output: an LED channel whose pixels go to a controller on the
@@ -1887,10 +1890,15 @@ message NetworkOutput {
   NetProtocol protocol = 2;
   // Controller IPv4 (as EthernetConfig.ip); 0 = no target (the channel is off).
   fixed32 ip = 3;
-  // UDP port; 0 = the protocol's default (4048 for DDP).
+  // UDP port; 0 = the protocol's default (4048 for DDP, 6454 for Art-Net).
   uint32 port = 4;
   // Display name only (e.g. the WLED name discovery found).
   string name = 5;
+  // Art-Net: the first universe (a 15-bit port address: net << 8 | subnet << 4 |
+  // universe). The output takes ceil(leds / 170) universes from here.
+  uint32 universe = 6;
+  // Art-Net: send an ArtSync after each frame (for receivers set to wait for it).
+  bool sync = 7;
 }
 
 // Configure (and bring up or take down) the Ethernet port. Reply: ethernet_state.

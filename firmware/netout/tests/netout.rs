@@ -293,3 +293,78 @@ fn wled_long_names_cut_cleanly() {
     assert_eq!(i.name().len(), 31);
     assert!(core::str::from_utf8(i.name()).is_ok());
 }
+
+#[test]
+fn artnet_matches_the_host_player() {
+    use splanc_netout::artnet;
+    // 1260 LEDs: 3780 bytes, 8 universes (7 x 170 + 70).
+    let data: Vec<u8> = (0..1260 * 3).map(|i| (i % 253) as u8).collect();
+    assert_eq!(artnet::packet_count(data.len()), 8);
+    let mut out = [0u8; artnet::MAX_PACKET];
+    let mut rebuilt = Vec::new();
+    for i in 0..8 {
+        let n = artnet::packet(&data, i, 0x0102, 9, &mut out).unwrap();
+        let p = &out[..n];
+        assert_eq!(&p[..8], b"Art-Net\0");
+        assert_eq!(
+            u16::from_le_bytes([p[8], p[9]]),
+            0x5000,
+            "OpDmx, little-endian"
+        );
+        assert_eq!(
+            u16::from_be_bytes([p[10], p[11]]),
+            14,
+            "protocol version 14"
+        );
+        assert_eq!(p[12], 9, "sequence");
+        let addr = 0x0102 + i as u16;
+        assert_eq!(
+            (p[14], p[15]),
+            ((addr & 0xFF) as u8, (addr >> 8) as u8),
+            "SubUni, Net"
+        );
+        let len = u16::from_be_bytes([p[16], p[17]]) as usize;
+        assert_eq!(len, if i == 7 { 210 } else { 510 });
+        rebuilt.extend_from_slice(&p[18..18 + len]);
+    }
+    assert_eq!(&rebuilt[..data.len()], &data[..]);
+    assert_eq!(artnet::packet(&data, 8, 0, 1, &mut out), None);
+    // An odd DMX length is padded to even.
+    let n = artnet::packet(&[1, 2, 3], 0, 0, 1, &mut out).unwrap();
+    assert_eq!(u16::from_be_bytes([out[16], out[17]]), 4);
+    assert_eq!(&out[18..n], &[1, 2, 3, 0]);
+    // The universe wraps at 15 bits.
+    artnet::packet(&data, 1, 0x7FFF, 1, &mut out).unwrap();
+    assert_eq!((out[14], out[15]), (0, 0));
+    // ArtSync.
+    let n = artnet::sync(&mut out).unwrap();
+    assert_eq!(&out[..n], b"Art-Net\0\x00\x52\x00\x0e\x00\x00");
+    assert_eq!(artnet::next_seq(255), 1);
+}
+
+#[test]
+fn blob_keeps_artnet_and_reads_v1() {
+    use splanc_netout::config::{Protocol, ARTNET_PORT};
+    let mut s = NetSettings::default();
+    s.outputs[1] = NetOutput::artnet(ip(192, 168, 50, 9), 0, 3, true, b"panel");
+    let mut b = [0u8; BLOB_LEN];
+    s.to_blob(&mut b);
+    let r = NetSettings::from_blob(&b).unwrap();
+    assert_eq!(r, s);
+    assert_eq!(r.outputs[1].protocol, Protocol::ArtNet);
+    assert_eq!(r.outputs[1].port_or_default(), ARTNET_PORT);
+
+    // A v1 blob (DDP only, written by the first P4 Ethernet build) still loads.
+    let mut v1 = vec![0u8; 2 + 22 + 6 * 39];
+    v1[..2 + 22].copy_from_slice(&b[..2 + 22]);
+    v1[0] = 1;
+    let at = 2 + 22; // output 0
+    v1[at..at + 4].copy_from_slice(&ip(192, 168, 50, 2).to_be_bytes());
+    v1[at + 6] = 7;
+    v1[at + 7..at + 14].copy_from_slice(b"DISTIRA");
+    let r = NetSettings::from_blob(&v1).expect("v1 loads");
+    assert_eq!(r.outputs[0].ip, ip(192, 168, 50, 2));
+    assert_eq!(r.outputs[0].name(), b"DISTIRA");
+    assert_eq!(r.outputs[0].protocol, Protocol::Ddp);
+    assert!(!r.outputs[1].active());
+}
