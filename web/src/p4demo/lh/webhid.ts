@@ -74,8 +74,21 @@ export function webHidUnavailable(hid: unknown = (globalThis as { navigator?: { 
   }
   return (
     "WebHID is not available in this browser. Desktop Chrome/Edge have it; on Android " +
-    "Chrome it's a developer trial: enable chrome://flags/#enable-experimental-web-platform-features " +
+    "Chrome (154+, Android 17+) it's a developer trial: enable chrome://flags/#enable-experimental-web-platform-features " +
     "(or the WebHID flag) and reload"
+  );
+}
+
+/** The status for a device picker that came back empty. On Android before 17 (API 37),
+ * or with the system's HID access toggle for Chrome off, navigator.hid exists but
+ * requestDevice() always resolves to an empty list, so say so there. */
+export function noDeviceChosenDetail(
+  userAgent: string = (globalThis as { navigator?: { userAgent?: string } }).navigator?.userAgent ?? "",
+): string {
+  if (!/Android/i.test(userAgent)) return "no Vive device chosen";
+  return (
+    "no Vive device chosen. If the picker showed nothing: WebHID on Android needs Android 17 " +
+    "or later and the system's HID access setting turned on for Chrome"
   );
 }
 
@@ -198,7 +211,7 @@ class WebHidTracking implements LhTracking {
     picked = picked.filter((d) => d.vendorId === VALVE_VID && (VIVE_PIDS as readonly number[]).includes(d.productId));
     picked = picked.filter((d) => !this.groups.some((g) => g.devices.includes(d)));
     if (picked.length === 0) {
-      if (this.groups.length === 0) this.setStatus({ state: "disconnected", detail: "no Vive device chosen" });
+      if (this.groups.length === 0) this.setStatus({ state: "disconnected", detail: noDeviceChosenDetail() });
       return;
     }
     this.setStatus({ state: "connecting", detail: "loading the tracker" });
