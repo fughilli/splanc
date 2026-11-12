@@ -78,6 +78,7 @@
 #include "firmware/player_app/ws2812.h"
 #include "firmware/player_app/ws_codec.h"
 #include "firmware/player_app/player_module.h"  // optional hardware modules (e.g. the P4 tracker)
+#include "firmware/player_app/osc_route.h"      // OSC in/out over UDP and the wss session
 #if defined(LM_FRONTEND)
 #include "frontend_link.h"  // the C6 front end: player messages go to the P4 over SDIO
 #endif
@@ -1682,6 +1683,7 @@ int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
 // the transport's reassembly buffer (g_ws_rx / the BLE frame — never copied into rx),
 // compute the reply into the shared tx, and hand back a pointer to it.
 static bool live_post(const uint8_t *in, size_t len);  // the live-move mailbox (below)
+static void osc_session_in(const uint8_t *data, size_t len);  // OSC over the session (below)
 
 int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
   g_reply_droppable = false;
@@ -1710,6 +1712,17 @@ int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
     if (g > 0) {
       *reply = tx;
       return g;
+    }
+  }
+  // OSC over the session (ClientMessage.osc, feature "osc"): into the same input as a
+  // udp/9000 datagram (modules, then the mailbox; on the front end, on to the P4), never
+  // under the player mutex. No reply, like the datagram it stands for.
+  {
+    const uint8_t *pkt = nullptr;
+    size_t pn = 0;
+    if (lm_osc_session_packet(in, len, &pkt, &pn)) {
+      osc_session_in(pkt, pn);
+      return 0;
     }
   }
   // A live move (seq'd, uncommitted set_uniforms): stash it for the next frame and ack
@@ -2489,16 +2502,10 @@ static void osc_task(void *) {
 // static RAM comes straight out of the boot heap that sizes the LED buffers
 // (led_store_begin -> board.max_leds), so OSC must not cost a byte until it is used.
 static portMUX_TYPE g_osc_mux = portMUX_INITIALIZER_UNLOCKED;
+static_assert(kOscRxCap == lm_osc_route::kPacketMax, "one OSC packet cap for both transports");
 
-void lm_netstack_osc_rx(const uint8_t *data, size_t len) {
-  if (len == 0 || len > kOscRxCap) return;
-#if defined(LM_FRONTEND)
-  frontend_link_osc(data, len);  // the P4 owns the uniforms (and any module's addresses)
-  return;
-#endif
-  for (int i = 0; i < g_n_modules; i++) {
-    if (g_modules[i]->osc && g_modules[i]->osc(data, len)) return;  // a module's own address
-  }
+// The uniform mailbox: what no module claimed (osc_in).
+static void osc_mailbox_post(const uint8_t *data, size_t len) {
   if (!lm_osc_mailbox_bound()) {  // only this (network) task binds it
     const size_t bytes = lm_osc_mailbox_bytes();
     void *mem = heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -2534,6 +2541,66 @@ void lm_netstack_osc_rx(const uint8_t *data, size_t len) {
   if (e) e->handled_us = tr_now();
 #endif
 }
+
+// The player's one OSC input (osc_route.h), whichever way the packet came: the modules
+// first (a module's own addresses), then the uniform mailbox. Network (loop) task.
+static void osc_in(const uint8_t *data, size_t len) {
+#if defined(LM_FRONTEND)
+  frontend_link_osc(data, len);  // the P4 owns the uniforms (and any module's addresses)
+  return;
+#endif
+  lm_osc_route::deliver(g_modules, g_n_modules, data, len, osc_mailbox_post);
+}
+
+// Where module OSC goes back to (lm_module_osc_send): the last OSC sender, by UDP or as
+// a ServerMessage.osc push on the session. The push buffer (with the WS header's
+// headroom in front) is allocated by the first ClientMessage.osc: OSC costs no RAM until
+// it is used (see the mailbox above).
+static lm_osc_route::Router g_osc_route;
+static uint8_t *g_osc_push = nullptr;
+
+// udp/9000 (netstack_transport.cpp), or the link's LK_OSC on the P4 (link_transport.cpp).
+void lm_netstack_osc_rx(const uint8_t *data, size_t len) {
+  if (len == 0 || len > kOscRxCap) return;
+  g_osc_route.on_datagram_in();
+  osc_in(data, len);
+}
+
+// ClientMessage.osc on the session (lm_ws_dispatch): the same input, and module replies
+// go back to this session from now on. An empty or oversized packet is dropped.
+static void osc_session_in(const uint8_t *data, size_t len) {
+  if (len == 0 || len > kOscRxCap) return;
+  if (!g_osc_push) {
+    g_osc_push = static_cast<uint8_t *>(
+        heap_caps_malloc(kWsSendHeadroom + lm_osc_route::kPushMax, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (g_osc_push) Log().printf("[osc] first OSC over the session (replies there now)\n");
+  }
+  g_osc_route.on_session_in();
+  osc_in(data, len);
+}
+
+namespace {
+// The two ways back (osc_route.h Router::send).
+struct OscOut {
+  bool datagram_send(const uint8_t *p, size_t n) { return netstack_osc_send(p, n); }
+  bool session_open() { return netstack_ws_open(); }
+  int encode_push(const uint8_t *p, size_t n, uint8_t *buf, size_t cap) {
+    return (int)lm_osc_build_push(p, n, buf, cap);
+  }
+  // Never blocks: the netstack drops a push its send window can't take (and on the P4
+  // a LK_PUSH frame to the host); false then.
+  bool session_send(uint8_t *buf, size_t n) { return netstack_ws_send(buf, n); }
+};
+}  // namespace
+
+static bool osc_route_send(const uint8_t *data, size_t len) {
+  OscOut out;
+  uint8_t *buf = g_osc_push ? g_osc_push + kWsSendHeadroom : nullptr;
+  const lm_osc_route::Sent r = g_osc_route.send(out, data, len, buf, lm_osc_route::kPushMax);
+  return r == lm_osc_route::Sent::kDatagram || r == lm_osc_route::Sent::kSession;
+}
+
+int lm_osc_route_stats(char *buf, size_t cap) { return g_osc_route.format(buf, cap); }
 
 // Set (under g_osc_mux) when lm_live_post stashed a move; the frame boundary only calls
 // into the mailbox then, so an idle knob costs every frame one flag test, not a call into
@@ -3909,7 +3976,7 @@ extern "C" void lm_link_identity(const char *mac, const char *name) {
 
 bool lm_module_osc_send(const uint8_t *data, size_t len) {
 #if defined(LM_NETSTACK)
-  return netstack_osc_send(data, len);
+  return osc_route_send(data, len);  // UDP, or the session that last sent OSC
 #else
   (void)data;
   (void)len;
@@ -4100,8 +4167,10 @@ void loop() {
       Log().printf("[link] %s\n", ln);
     }
 #endif
-    Log().printf("[net] t=%lu %s mtx_wait_max=%uus handle_max=%uus\n", (unsigned long)millis(),
-                 net, (unsigned)g_mtx_wait_max_us, (unsigned)g_handle_max_us);
+    char osc_ws[64];
+    lm_osc_route_stats(osc_ws, sizeof osc_ws);
+    Log().printf("[net] t=%lu %s mtx_wait_max=%uus handle_max=%uus%s\n", (unsigned long)millis(),
+                 net, (unsigned)g_mtx_wait_max_us, (unsigned)g_handle_max_us, osc_ws);
     g_mtx_wait_max_us = 0;
     g_handle_max_us = 0;
     // Each task's stack high-water: the fewest bytes ever left free (FreeRTOS fills

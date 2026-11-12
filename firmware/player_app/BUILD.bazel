@@ -517,6 +517,19 @@ cc_library(
     hdrs = ["player_module.h"],
 )
 
+# OSC over the wss session (feature "osc"): the input order (modules, then the
+# mailbox) and where a module's OSC goes back to (UDP or a ServerMessage.osc push, never
+# blocking). Header-only; main.cpp includes it.
+cc_test(
+    name = "osc_route_test",
+    srcs = [
+        "osc_route.h",
+        "osc_route_test.cc",
+        "player_module.h",
+    ],
+    copts = ["-UNDEBUG"],
+)
+
 cc_test(
     name = "ws_codec_test",
     srcs = ["ws_codec_test.cc"],
@@ -757,6 +770,7 @@ NETSTACK_VARIANTS = [
         # with the OTA loader.)
         "led_config.h",
         "main.cpp",
+        "osc_route.h",
         "player_module.h",
         "player_ffi.h",
         "sensor_bus.cpp",
@@ -877,6 +891,7 @@ cc_binary(
         "frontend_link.h",
         "led_config.h",
         "main.cpp",
+        "osc_route.h",
         "player_ffi.h",
         "player_module.h",
         "sensor_bus.h",
@@ -1249,6 +1264,7 @@ cc_binary(
         "link_transport.cpp",
         "main.cpp",
         "netstack_transport.h",
+        "osc_route.h",
         "ota_app.h",
         "player_ffi.h",
         "player_module.h",
@@ -1299,6 +1315,7 @@ cc_binary(
         "link_transport.cpp",
         "main.cpp",
         "netstack_transport.h",
+        "osc_route.h",
         "ota_app.h",
         "player_ffi.h",
         "player_module.h",
@@ -1398,6 +1415,7 @@ cc_binary(
         "improv_ble.h",
         "led_config.h",
         "main.cpp",
+        "osc_route.h",
         "player_ffi.h",
         "player_module.h",
         "serial_log.h",
@@ -1475,6 +1493,7 @@ cc_binary(
         "improv_ble.h",
         "led_config.h",
         "main.cpp",
+        "osc_route.h",
         "player_ffi.h",
         "player_module.h",
         "serial_log.h",
@@ -1826,6 +1845,7 @@ py_test(
     srcs = ["tests/test_stack_bound.py"],
     data = [
         "main.cpp",
+        "osc_route.h",
         "player_module.h",
         "sensor_bus.cpp",
         "serial_log.h",

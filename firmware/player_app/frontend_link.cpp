@@ -20,6 +20,7 @@
 
 #include "firmware/p4/link/link_codec.h"
 #include "netstack_transport.h"
+#include "player_module.h"  // lm_module_osc_send: the P4's OSC out, routed here
 
 namespace {
 
@@ -103,7 +104,7 @@ bool send_frame(uint8_t type, uint8_t flags, uint16_t session, const uint8_t *p,
 // side's own UART is on a header nobody watches.
 void p4_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void p4_log(const char *fmt, ...) {
-  char b[160];
+  char b[200];
   va_list ap;
   va_start(ap, fmt);
   const int n = vsnprintf(b, sizeof b, fmt, ap);
@@ -144,7 +145,9 @@ void on_frame(const lk_header &h, const uint8_t *p) {
       if (h.len >= 2 && p[0] == LK_OP_HELLO) memcpy(g_p4_ver, p + 1, h.len - 1 < 4 ? h.len - 1 : 4);
       return;
     case LK_OSC:
-      netstack_osc_send(p, h.len);  // the P4's own OSC out (e.g. the tracker's poses)
+      // The P4's own OSC out (e.g. the tracker's poses), to whoever last sent OSC in:
+      // UDP, or the wss session as ServerMessage.osc (main.cpp, osc_route.h).
+      lm_module_osc_send(p, h.len);
       return;
     case LK_LOG:
       printf("[p4] %.*s", (int)h.len, (const char *)p);
@@ -220,7 +223,10 @@ void frontend_link_poll() {
     g_stats_sent_us = now;
     char b[160];
     const int n = frontend_link_stats(b, sizeof b - 1);
-    if (n > 0) p4_log("[link] %s down=%u unsent=%u\n", b, (unsigned)g_stats.fwd_down, (unsigned)g_stats.fwd_unsent);
+    char osc_ws[64];
+    lm_osc_route_stats(osc_ws, sizeof osc_ws);
+    if (n > 0)
+      p4_log("[link] %s down=%u unsent=%u%s\n", b, (unsigned)g_stats.fwd_down, (unsigned)g_stats.fwd_unsent, osc_ws);
   }
   {
     static int64_t checked_us = 0;
