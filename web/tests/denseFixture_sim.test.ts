@@ -22,8 +22,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CodeParams, DetectionRecord, Intrinsics, Pose, Vec3 } from "@ledmapper/protocol";
-import { colorForFrame } from "../src/code/gray";
-import { frameIndexAt } from "../src/code/timing";
+import { colorForFrame, DATA_FRAME_OFFSET, dataFrames, decodeCycleSymbols, FRAME_ALL_ON, symbolAt } from "../src/code/gray";
+import { cycleIndexAt, frameIndexAt } from "../src/code/timing";
 import type { DecoderOptions } from "../src/cv/decoder";
 import { MotionGuide } from "../src/cv/motionGuide";
 import { CvPipeline } from "../src/cv/pipeline";
@@ -86,12 +86,12 @@ function fixtureLeds(): Vec3[] {
 
 /** What the detector does to spots it can't resolve (edge-on faces): one blob
  * at their centroid, colours mixed. */
-function mergeClose(blobs: Blob[]): void {
+function mergeClose(blobs: Blob[], mergePx = MERGE_PX): void {
   for (let i = 0; i < blobs.length; i++) {
     for (let j = i + 1; j < blobs.length; j++) {
       const a = blobs[i]!;
       const b = blobs[j]!;
-      if (Math.hypot(a.u - b.u, a.v - b.v) >= MERGE_PX) continue;
+      if (Math.hypot(a.u - b.u, a.v - b.v) >= mergePx) continue;
       blobs[i] = {
         ...a,
         u: (a.u + b.u) / 2,
@@ -122,6 +122,9 @@ interface Walk {
   /** Amplitude (m) of the slow side-to-side sway (0.25 Hz). */
   swayM?: number;
   seed?: number;
+  /** Sync bloom: on the all-white sync frame, spots closer than this (px)
+   * merge into one blob (the white frame saturates and blooms). 0 = off. */
+  bloomPx?: number;
 }
 
 interface Result {
@@ -176,7 +179,7 @@ function run(walk: Walk, tracker: TrackerOptions = {}, decoder: DecoderOptions =
       const c = colorForFrame(FIRST_ID + i, frameIdx, PARAMS);
       blobs.push({ u: pr.u + 0.4 * gauss(), v: pr.v + 0.4 * gauss(), intensity: 0.9, area: 20, r: c[0], g: c[1], b: c[2] });
     }
-    mergeClose(blobs);
+    mergeClose(blobs, frameIdx === FRAME_ALL_ON ? Math.max(MERGE_PX, walk.bloomPx ?? 0) : MERGE_PX);
     pipeline.step(blobs, { tCaptureMs: t, pose: null, K, imgW: IMG_W, imgH: IMG_H });
     if (guide.update(pipeline.tracker.lastStats, t)) flagged++;
     frames++;
@@ -251,4 +254,95 @@ test("shaking the phone is flagged", () => {
   const r = run({ jitterRad: 0.02 });
   console.log(`shaking: ${fmt(r)}`);
   assert.ok(r.flaggedFrac > 0.5, `flagged ${r.flaggedFrac}`);
+});
+
+/** Sync bloom at about one LED pitch: on the all-white sync frame each spot
+ * swells into its neighbours, so the detector sees clumps, not LEDs, and
+ * every track loses its own blob on the same frame (hue code v2 failure mode
+ * 1, docs/design/hue-code-v2.md). */
+const BLOOM_PX = 14;
+
+test("sync bloom: the dense tracker keeps most identities where the fixed gate loses them all", () => {
+  const before = run({ jitterRad: 0.006, bloomPx: BLOOM_PX }, ...BEFORE);
+  const after = run({ jitterRad: 0.006, bloomPx: BLOOM_PX });
+  console.log(`sync bloom ${BLOOM_PX} px: before ${fmt(before)} | after ${fmt(after)}`);
+  assert.ok(before.wrongFrac > 0.9, "the control reproduces the failure");
+  // Partial: the bloomed white window is still each record's anchor and
+  // colour reference, so some records sit on a clump's centroid and yield
+  // drops. Staggered sync (hue code v2 phase 2) is the fix for the rest.
+  assert.ok(after.grossFrac < 0.08, `gross ${after.grossFrac}`);
+  assert.ok(after.wrongFrac < 0.2, `wrong ${after.wrongFrac}`);
+  assert.ok(after.goodPerLedSec > 0.3, `yield ${after.goodPerLedSec}`);
+});
+
+/**
+ * A hop that stitches a valid codeword: a track that moves from LED `a` to its
+ * neighbour `b` partway through a cycle reads `a`'s symbols, then `b`'s. On
+ * the radiolarian code (16-bit SEC-DED, distance 4) some such stitches decode
+ * cleanly to a THIRD id, which lands a record far across the fixture. Finds
+ * the first pair of physical neighbours on a panel (adjacent on a ring, or
+ * across rings) and split whose stitch does.
+ */
+function stitchedCodeword(): { a: number; b: number; split: number; c: number } {
+  const n = dataFrames(PARAMS);
+  const panel = panelLeds();
+  for (let i = 0; i < panel.length; i++) {
+    for (let j = 0; j < panel.length; j++) {
+      const gap = Math.hypot(panel[i]![0] - panel[j]![0], panel[i]![1] - panel[j]![1]);
+      if (i === j || gap > 1.5 * PITCH_M) continue;
+      const [a, b] = [FIRST_ID + i, FIRST_ID + j];
+      for (let split = 1; split < n; split++) {
+      const syms = Array.from({ length: n }, (_, d) => symbolAt(d < split ? a : b, d, PARAMS));
+      const { id } = decodeCycleSymbols(syms, PARAMS);
+        if (id === null) continue;
+        // A third id, not on the same patch of the panel.
+        const pc = panel[id - FIRST_ID];
+        const far = pc === undefined || Math.hypot(pc[0] - panel[i]![0], pc[1] - panel[i]![1]) > 3 * PITCH_M;
+        if (far) return { a, b, split, c: id };
+      }
+    }
+  }
+  throw new Error("no stitched codeword");
+}
+
+const STITCH_CYCLE = 4;
+
+/** One LED position whose track hops from `a` to `b` partway through cycle
+ * STITCH_CYCLE (the stitched cycle), held still and never dropped: the hop is forced, so
+ * only the decoder stands between it and a wrong record. Returns the ids of
+ * the records it emitted. */
+function runForcedHop(decoder: DecoderOptions = {}): { ids: number[]; hop: ReturnType<typeof stitchedCodeword> } {
+  const hop = stitchedCodeword();
+  const pipeline = new CvPipeline(PARAMS, EPOCH, (t) => t + OFFSET, { decoder });
+  const ids: number[] = [];
+  pipeline.onDetections((rs) => ids.push(...rs.map((r) => r.ledId)));
+  const cycleMs = PARAMS.cycleFrames * PARAMS.bitPeriodMs;
+  for (let t = 0; t < 2 * STITCH_CYCLE * cycleMs + cycleMs; t += 35) {
+    const cycle = cycleIndexAt(t + OFFSET, EPOCH, PARAMS) - cycleIndexAt(OFFSET, EPOCH, PARAMS);
+    const frame = frameIndexAt(t + OFFSET, EPOCH, PARAMS);
+    const d = frame - DATA_FRAME_OFFSET;
+    const led = cycle < STITCH_CYCLE ? hop.a : cycle > STITCH_CYCLE ? hop.b : d < hop.split ? hop.a : hop.b;
+    const c = colorForFrame(led, frame, PARAMS);
+    pipeline.step([{ u: 360, v: 640, intensity: 0.9, area: 20, r: c[0], g: c[1], b: c[2] }], {
+      tCaptureMs: t,
+      pose: null,
+      K,
+      imgW: IMG_W,
+      imgH: IMG_H,
+    });
+  }
+  return { ids, hop };
+}
+
+test("a hop that stitches a valid codeword doesn't put a third LED's id on the map", () => {
+  // Hue code v2 failure mode 2 (docs/design/hue-code-v2.md): SEC-DED is the
+  // only check on a cycle, and a stitched cycle can pass it.
+  const before = runForcedHop(BEFORE[1]);
+  const { a, b, c } = before.hop;
+  console.log(`stitch ${a}→${b} decodes as ${c}; records before: ${before.ids.join(",")}`);
+  assert.ok(before.ids.includes(c), "control: the unconfirmed decoder records the stitched id");
+  const after = runForcedHop();
+  console.log(`records after: ${after.ids.join(",")}`);
+  assert.ok(!after.ids.includes(c), "the stitched id is never confirmed");
+  assert.ok(after.ids.includes(a) && after.ids.includes(b), "both real ids still land");
 });
