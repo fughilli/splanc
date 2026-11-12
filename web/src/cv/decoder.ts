@@ -33,8 +33,10 @@ import {
   FRAME_ALL_OFF,
   FRAME_ALL_ON,
   SYMBOL_COLORS,
+  symbolAt,
 } from "../code/gray";
 import { cycleIndexAt, cycleMs, frameFractionAt, frameIndexAt } from "../code/timing";
+import { ChannelQuality } from "./channelQuality";
 import type { Track, TrackSample } from "./tracker";
 
 export interface DecoderOptions {
@@ -72,6 +74,9 @@ export interface DecoderOptions {
    * dense VIO mode on every frame until the next cycle. 1 = trust the first.
    */
   confirmCycles?: number;
+  /** Where confirmed decodes report their per-window hue errors (shared
+   * across pipeline rebuilds: the estimate doesn't depend on the alphabet). */
+  quality?: ChannelQuality;
 }
 
 export interface DecodeStats {
@@ -138,6 +143,7 @@ export class Decoder {
   private readonly minConfidence: number;
   private readonly minOnSamples: number;
   private readonly confirmCycles: number;
+  readonly quality: ChannelQuality;
   private readonly nDataFrames: number;
 
   private lastCompletedCycle: number | null = null;
@@ -177,6 +183,7 @@ export class Decoder {
     this.minConfidence = opts.minConfidence ?? 0.4;
     this.minOnSamples = opts.minOnSamples ?? 3;
     this.confirmCycles = Math.max(1, opts.confirmCycles ?? 2);
+    this.quality = opts.quality ?? new ChannelQuality();
     this.nDataFrames = dataFrames(params);
   }
 
@@ -405,6 +412,7 @@ export class Decoder {
     let missing = 0;
     let minMargin = 1;
     const symbols: number[] = new Array(this.nDataFrames).fill(0);
+    const seen: ([number, number, number] | null)[] = new Array(this.nDataFrames).fill(null);
     for (let k = 1; k < p.cycleFrames; k++) {
       if (windowOnW[k] === 0) {
         missing++;
@@ -442,6 +450,7 @@ export class Decoder {
           }
         }
         symbols[k - 2] = bestSym;
+        seen[k - 2] = o;
         const margin = ((best - second) * 3) / minPairDist;
         minMargin = Math.min(minMargin, margin);
       }
@@ -464,6 +473,7 @@ export class Decoder {
     if (dec.id === null) {
       if (dec.uncorrectable) this.stats.rejectedFec++;
       else this.stats.rejectedRange++;
+      this.quality.noteCycle(false);
       return null;
     }
     const ledId = dec.id;
@@ -475,6 +485,7 @@ export class Decoder {
     const confidence = Math.max(0, Math.min(1, minMargin));
     if (confidence < this.minConfidence) {
       this.stats.rejectedLowConf++;
+      this.quality.noteCycle(false);
       return null;
     }
 
@@ -488,6 +499,7 @@ export class Decoder {
       this.stats.rejectedSupport++;
       return null;
     }
+    this.quality.noteCycle(true);
 
     // Confirmation: consecutive agreeing decodes of THIS track. A
     // disagreement revokes the current label at once (one of the two decodes
@@ -508,6 +520,12 @@ export class Decoder {
     }
     const confirmed = track.pendingCount >= this.confirmCycles;
     if (confirmed) {
+      // Channel measurement: the id is trusted, so the symbol each window
+      // carried is known — compare what was read against what was sent.
+      for (let d = 0; d < this.nDataFrames; d++) {
+        const o = seen[d];
+        if (o != null) this.quality.add(o, symbolAt(ledId, d, p), symbols[d]!, p.symbols);
+      }
       this.stats.uniqueIds.add(ledId);
       // Label the track for live UI feedback (id overlays in the camera view).
       track.ledId = ledId;
