@@ -28,7 +28,8 @@ BZ=(bazelisk)
   //solver:solver_web \
   //firmware/pulse:pulse_web \
   //fx_compiler:fx_compiler_web \
-  //firmware/fx_vm:fx_vm_web
+  //firmware/fx_vm:fx_vm_web \
+  //web/lh_wasm:lh_wasm_web
 
 dist="web/dist"
 [ -f "$dist/index.html" ] || {
@@ -62,5 +63,6 @@ stage "solver/solver_web" "solver"
 stage "firmware/pulse/pulse_web" "pulse"
 stage "fx_compiler/fx_compiler_web" "fx-compiler"
 stage "firmware/fx_vm/fx_vm_web" "fx-vm"
+stage "web/lh_wasm/lh_wasm_web" "lh-wasm"
 
 echo "[stage-wasm] done."

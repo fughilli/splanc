@@ -1,23 +1,15 @@
 /**
- * THE one place the P4 demo page picks its tracking implementation.
- *
- * Today only the mock exists on this branch. The real one, lhd compiled to wasm and
- * driven over WebHID (the stylus through its Watchman dongle), is being built in this
- * directory on a separate branch and exports `createWebHidTracking(): LhTracking`.
- *
- * ┌──────────────────────────────────────────────────────────────────────────────────┐
- * │ TODO(webhid-tracking): wire the real tracking in HERE when it lands:             │
- * │   import { createWebHidTracking } from "./webhid";                               │
- * │   ...                                                                            │
- * │   if (!mock) return { tracking: createWebHidTracking(), mock: false };           │
- * │ and drop the "unavailable" stub below. Nothing else in the page needs to change. │
- * └──────────────────────────────────────────────────────────────────────────────────┘
+ * THE one place the P4 demo page picks its tracking implementation: the stylus over
+ * WebHID (lhd compiled to wasm, webhid.ts), or a synthetic stylus with `?mock=1`
+ * (mock.ts). See types.ts for the interface.
  */
 
 import { createMockTracking, type MockTracking } from "./mock";
-import type { LhStatus, LhTracking } from "./types";
+import type { LhTracking } from "./types";
+import { createWebHidTracking } from "./webhid";
 
 export type { LhPose, LhStation, LhStatus, LhTracking, Quat, Vec3 } from "./types";
+export { createWebHidTracking, webHidUnavailable } from "./webhid";
 
 export interface TrackingChoice {
   tracking: LhTracking;
@@ -29,32 +21,5 @@ export function createTracking(opts: { mock: boolean }): TrackingChoice {
     const m = createMockTracking();
     return { tracking: m, mock: m };
   }
-  // TODO(webhid-tracking): return { tracking: createWebHidTracking(), mock: null };
-  return { tracking: unavailableTracking(), mock: null };
-}
-
-/** Until the WebHID tracking lands: says so, and points at ?mock=1. */
-function unavailableTracking(): LhTracking {
-  const status: LhStatus = {
-    state: "disconnected",
-    detail: "Stylus tracking over USB (WebHID) isn't in this build yet. Add ?mock=1 to the URL for a simulated stylus.",
-  };
-  return {
-    async connect() {
-      throw new Error(status.detail);
-    },
-    async disconnect() {},
-    onPose: () => () => {},
-    onStations: () => () => {},
-    onStatus(cb) {
-      cb(status);
-      return () => {};
-    },
-    stations: () => [],
-    exportCalibration: () => "{}",
-    importCalibration() {
-      throw new Error(status.detail);
-    },
-    recalibrate() {},
-  };
+  return { tracking: createWebHidTracking(), mock: null };
 }

@@ -49,6 +49,7 @@ def create_app(
     pulse_dir: Optional[Path] = None,
     fx_compiler_dir: Optional[Path] = None,
     fx_vm_dir: Optional[Path] = None,
+    lh_wasm_dir: Optional[Path] = None,
     firmware_dir: Optional[Path] = None,
     default_led_count: int = 1024,
     bit_period_ms: float = DEFAULT_BIT_PERIOD_MS,
@@ -68,7 +69,9 @@ def create_app(
     effects-simulator workspace (effects.html). ``fx_compiler_dir`` and
     ``fx_vm_dir`` serve the wasm effects compiler (//fx_compiler:fx_compiler_web)
     at /fx-compiler/ and the preview VM (//firmware/fx_vm:fx_vm_web) at /fx-vm/
-    for the effects-editor workspace (editor.html). ``firmware_dir`` serves the
+    for the effects-editor workspace (editor.html). ``lh_wasm_dir`` serves the
+    lighthouse (Vive tracking) wasm + worker (//web/lh_wasm:lh_wasm_web) at
+    /lh-wasm/ for WebHID tracking in the page. ``firmware_dir`` serves the
     bundled firmware tree (tools/stage_firmware output) at /firmware/ for the
     webapp's in-browser USB flasher (FUG-60).
     """
@@ -269,6 +272,8 @@ def create_app(
         app.mount("/fx-compiler", StaticFiles(directory=str(fx_compiler_dir)), name="fx-compiler")
     if fx_vm_dir is not None and Path(fx_vm_dir).is_dir():
         app.mount("/fx-vm", StaticFiles(directory=str(fx_vm_dir)), name="fx-vm")
+    if lh_wasm_dir is not None and Path(lh_wasm_dir).is_dir():
+        app.mount("/lh-wasm", StaticFiles(directory=str(lh_wasm_dir)), name="lh-wasm")
 
     # Bundled firmware image(s) for in-browser USB flashing (FUG-60). Mounted
     # before "/" so the app can fetch /firmware/manifest.json + the flash bins.

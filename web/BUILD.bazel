@@ -236,6 +236,12 @@ ts_project(
 # display-scaling suite scans the shell stylesheet and the video-texture panel's
 # inline CSS for fixed px font sizes (PR-1).
 _TEST_SOURCE_DATA = {
+    # A recorded Watchman session replayed through the Node build of the lighthouse
+    # wasm (the reference lhd output, testdata/lh/session_lhd.json, is imported).
+    "tests/lhReplay.test.ts": [
+        "tests/testdata/lh/session.rec.gz",
+        "//web/lh_wasm:lh_wasm_node_pkg_opt",
+    ],
     "tests/displayScaling.test.ts": [
         "src/effects/editor/videoTexture.ts",
         "src/ui/app/app.css",
@@ -495,6 +501,7 @@ copy_to_directory(
         "//firmware/pulse:pulse_web",
         "//fx_compiler:fx_compiler_web",
         "//solver:solver_web",
+        "//web/lh_wasm:lh_wasm_web",
     ],
     # The wasm bundles ship .d.ts alongside the runtime glue; the app never loads
     # them, so drop them from the payload (as tools/stage_ios_wasm.sh did).
@@ -505,6 +512,7 @@ copy_to_directory(
         "firmware/pulse/pulse_web": "pulse",
         "fx_compiler/fx_compiler_web": "fx-compiler",
         "firmware/fx_vm/fx_vm_web": "fx-vm",
+        "web/lh_wasm/lh_wasm_web": "lh-wasm",
     },
 )
 
@@ -524,6 +532,7 @@ sh_binary(
         "//fx_compiler:fx_compiler_web",
         "//pi/server:serve",
         "//solver:solver_web",
+        "//web/lh_wasm:lh_wasm_web",
     ],
 )
 
@@ -591,6 +600,7 @@ sh_binary(
         "//pi/server:serve",
         "//solver:solver_web",
         "//third_party/ibazel",
+        "//web/lh_wasm:lh_wasm_web",
     ],
 )
 
@@ -613,6 +623,7 @@ SITE_DATA = [
     "//firmware/pulse:pulse_web",
     "//fx_compiler:fx_compiler_web",
     "//solver:solver_web",
+    "//web/lh_wasm:lh_wasm_web",
     # The staging tool that lays the firmware image(s) under /firmware/ for
     # in-browser USB flashing (FUG-60). The flash bundle itself is NOT a data dep
     # here — building it compiles the esp32c6 image (mbedtls + Arduino core from

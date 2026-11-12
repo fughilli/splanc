@@ -1,14 +1,7 @@
 /**
- * The tracking seam of the P4 demo page: where the stylus (a Vive tracker behind a
- * Watchman dongle) and lhd's base stations come from.
- *
- * Two implementations: `createMockTracking()` (./mock.ts, a synthetic stylus and two
- * fake stations, `?mock=1`) and the real one, lhd compiled to wasm over WebHID
- * (`createWebHidTracking()`, built separately in this directory). The page only ever
- * talks to this interface; ./index.ts is the one place that picks an implementation.
- *
- * Frames: lhd's world, metres, +Z up (libsurvive's convention, the same world the
- * P4 tracks in once it has adopted the stations). Quaternions are (w, x, y, z).
+ * Lighthouse (Vive) tracking in the page: the interface the P4 demo page builds
+ * against. `createWebHidTracking()` (webhid.ts) implements it over WebHID and the
+ * wasm build of @lighthouse's lh_device + lh_kernel (//web/lh_wasm).
  */
 
 export type Vec3 = [number, number, number];
@@ -16,17 +9,21 @@ export type Quat = [number, number, number, number]; // w, x, y, z
 
 export interface LhPose {
   serial: string;
-  t: number /* performance.now() ms */;
-  pos: Vec3 /* m, lhd world, +Z up */;
+  /** performance.now() ms: when the pose was true (its newest IMU sample, on the page's clock). */
+  t: number;
+  /** m, lhd world, +Z up. The tracker's head frame. */
+  pos: Vec3;
   quat: Quat;
+  /** Locked or coasting (a pose to follow). */
   ok: boolean;
 }
 
+/** world <- station */
 export interface LhStation {
   id: number;
   pos: Vec3;
   quat: Quat;
-} // world <- station
+}
 
 export interface LhStatus {
   state: "disconnected" | "connecting" | "no-tracker" | "calibrating" | "tracking" | "lost";
@@ -34,13 +31,16 @@ export interface LhStatus {
 }
 
 export interface LhTracking {
+  /** navigator.hid.requestDevice (Valve 0x28de: 0x2101/0x2102/0x2300/0x2022) under a user gesture, then handshake. */
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   onPose(cb: (p: LhPose) => void): () => void;
   onStations(cb: (s: LhStation[]) => void): () => void;
   onStatus(cb: (s: LhStatus) => void): () => void;
   stations(): LhStation[];
+  /** JSON compatible with lhd's calibration.json. */
   exportCalibration(): string;
   importCalibration(json: string): void;
+  /** Forget stations, calibrate from still scenes again. */
   recalibrate(): void;
 }

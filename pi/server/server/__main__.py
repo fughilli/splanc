@@ -57,6 +57,13 @@ def main(argv=None) -> int:
         "/fx-vm/ for the effects-editor live preview (editor.html)",
     )
     parser.add_argument(
+        "--lh-wasm-dir",
+        type=Path,
+        default=None,
+        help="lighthouse (Vive tracking) wasm + worker (//web/lh_wasm:lh_wasm_web) "
+        "to serve at /lh-wasm/ for WebHID tracking in the page",
+    )
+    parser.add_argument(
         "--firmware-dir",
         type=Path,
         default=None,
@@ -111,6 +118,7 @@ def main(argv=None) -> int:
         pulse_dir=args.pulse_dir,
         fx_compiler_dir=args.fx_compiler_dir,
         fx_vm_dir=args.fx_vm_dir,
+        lh_wasm_dir=args.lh_wasm_dir,
         firmware_dir=args.firmware_dir,
         default_led_count=args.led_count,
         bit_period_ms=args.bit_period_ms,

@@ -33,6 +33,7 @@ exec pi/server/serve \
   --pulse-dir firmware/pulse/pulse_web \
   --fx-compiler-dir fx_compiler/fx_compiler_web \
   --fx-vm-dir firmware/fx_vm/fx_vm_web \
+  --lh-wasm-dir web/lh_wasm/lh_wasm_web \
   --session-dir "$STATE_DIR/sessions" \
   --maps-dir "$STATE_DIR/maps" \
   "${TLS_ARGS[@]}" \
