@@ -132,6 +132,11 @@ pub struct VioResult {
     /// The cold start rejected `init_scale` as implausible and seeded the
     /// arm's-length prior (`FALLBACK_CAMERA_DIST_M`) instead.
     pub init_scale_fallback: bool,
+    /// Factor the scale floor (`SolveOptions::min_camera_dist_m`) multiplied
+    /// the solved geometry by after the re-anchor (1 = not applied): the
+    /// inertial scale put the camera path implausibly close, so the size is
+    /// the floor's, a lower bound, not a measurement.
+    pub scale_floor: f64,
 }
 
 impl VioResult {
@@ -162,6 +167,15 @@ pub struct SolveOptions {
     /// closer than 5 cm / farther than 30 m) and seed the arm's-length prior
     /// instead. Off reproduces the solver before the guard (replays only).
     pub init_scale_guard: bool,
+    /// Scale floor: the median camera-to-fixture distance the solved geometry
+    /// may not fall below (meters; 0 = off). The visual geometry fixes shape,
+    /// not size; only the IMU measures size, and a starved or barely excited
+    /// IMU (a slow orbit, dropped DeviceMotion events) lets the re-anchor
+    /// shrink the map toward nothing, where a closed fixture fits its rays
+    /// with the camera nearly inside it. Nobody maps from closer than this,
+    /// so a solve that lands closer is rescaled up to it: every reprojection
+    /// is unchanged (a similarity), only the size claim is overridden.
+    pub min_camera_dist_m: f64,
 }
 
 impl Default for SolveOptions {
@@ -176,6 +190,7 @@ impl Default for SolveOptions {
             chain: Vec::new(),
             chain_sigma: 0.0,
             init_scale_guard: true,
+            min_camera_dist_m: MIN_CAMERA_DIST_M,
         }
     }
 }
@@ -622,6 +637,10 @@ fn scale_std_err(rows: &[Vec<(usize, f64)>], rhs: &[f64], sol: &[f64], n_cols: u
 pub const INIT_CAMERA_DIST_RANGE_M: (f64, f64) = (0.05, 30.0);
 /// Seed distance when the linear alignment's scale is implausible.
 pub const FALLBACK_CAMERA_DIST_M: f64 = 0.75;
+/// Default scale floor (`SolveOptions::min_camera_dist_m`): just above the
+/// assessment's `scale-collapse` line (diag::MIN_CAMERA_DIST_M, 0.15 m), so a
+/// floored solve isn't then judged collapsed.
+pub const MIN_CAMERA_DIST_M: f64 = 0.20;
 
 /// Median distance from the init's camera centers to the LED centroid, in
 /// the visual init's (unit-depth) units.
@@ -647,9 +666,15 @@ fn init_camera_distance(centers: &[Vec3], leds: &[Vec3]) -> f64 {
 /// `s` if it puts the cameras a plausible metric distance from the fixture
 /// (init distance `d0` in init units), else None.
 pub fn plausible_init_scale(s: f64, d0: f64) -> Option<f64> {
+    plausible_init_scale_min(s, d0, INIT_CAMERA_DIST_RANGE_M.0)
+}
+
+/// [`plausible_init_scale`] with the lower bound raised to `min_dist` (the
+/// solve's scale floor) when that is stricter.
+pub fn plausible_init_scale_min(s: f64, d0: f64, min_dist: f64) -> Option<f64> {
     let d = s * d0;
-    (s.is_finite() && d >= INIT_CAMERA_DIST_RANGE_M.0 && d <= INIT_CAMERA_DIST_RANGE_M.1)
-        .then_some(s)
+    let lo = INIT_CAMERA_DIST_RANGE_M.0.max(min_dist);
+    (s.is_finite() && d >= lo && d <= INIT_CAMERA_DIST_RANGE_M.1).then_some(s)
 }
 
 /// Central-difference velocities of the scaled init centers (the seed when
@@ -808,7 +833,7 @@ pub fn solve_vio(
             // Seed an implausible scale from an arm's-length prior instead and
             // let the BA + re-anchor settle the metric size.
             let d0 = init_camera_distance(&centers, &led_seed);
-            let s = match plausible_init_scale(s_lin, d0) {
+            let s = match plausible_init_scale_min(s_lin, d0, opts.min_camera_dist_m) {
                 Some(s) => s,
                 None if !opts.init_scale_guard => s_lin,
                 None => {
@@ -1154,6 +1179,26 @@ pub fn solve_vio(
         }
     }
 
+    // Scale floor: an inertial scale that put the camera path implausibly
+    // close is overridden by the floor. A uniform rescale keeps every
+    // reprojection (and so the shape) exactly; the velocities scale with it.
+    let mut scale_floor = 1.0;
+    if opts.min_camera_dist_m > 0.0 {
+        let d = init_camera_distance(&ps, &leds);
+        if d.is_finite() && d > 1e-9 && d < opts.min_camera_dist_m {
+            scale_floor = opts.min_camera_dist_m / d;
+            for p in ps.iter_mut() {
+                *p = scale(*p, scale_floor);
+            }
+            for v in vs.iter_mut() {
+                *v = scale(*v, scale_floor);
+            }
+            for l in leds.iter_mut() {
+                *l = scale(*l, scale_floor);
+            }
+        }
+    }
+
     // Final rms against the (possibly re-anchored) state.
     let rms = reproj_rms(frames, &rots, &ps, &leds, &led_ids);
     let quats: Vec<Quat> = rots.iter().map(rotmat_to_quat).collect();
@@ -1172,6 +1217,7 @@ pub fn solve_vio(
         reanchor_scale,
         init_scale,
         init_scale_fallback,
+        scale_floor,
     }
 }
 
@@ -1363,6 +1409,45 @@ mod tests {
         let (frames, imu, _) = coil_session(60.0, 0.5, 0.005, 2);
         let res = solve_vio(&frames, &imu, &SolveOptions::default(), None, None);
         assert!(res.scale_rel_se > 0.3, "rel se {:.3}", res.scale_rel_se);
+    }
+
+    #[test]
+    fn the_scale_floor_stops_a_collapse_and_keeps_the_shape() {
+        // The near-static capture above: the BA shrinks the coil and the
+        // inertial re-anchor can't recover it. Set the floor above where that
+        // free solve lands: the floored solve sits exactly on it, and as a
+        // similarity the rescale leaves every reprojection (so the rms) alone.
+        let (frames, imu, _) = coil_session(60.0, 0.5, 0.005, 2);
+        let off = SolveOptions {
+            min_camera_dist_m: 0.0,
+            ..SolveOptions::default()
+        };
+        let free = solve_vio(&frames, &imu, &off, None, None);
+        let d_free = init_camera_distance(&free.positions, &free.led_positions);
+        assert_eq!(free.scale_floor, 1.0, "a floor of 0 is off");
+
+        let floor = 2.0 * d_free;
+        let on = SolveOptions {
+            min_camera_dist_m: floor,
+            ..SolveOptions::default()
+        };
+        let floored = solve_vio(&frames, &imu, &on, None, None);
+        let d = init_camera_distance(&floored.positions, &floored.led_positions);
+        assert!((d - floor).abs() < 1e-9, "camera path at {d:.4} m, floor {floor:.4} m");
+        assert!(floored.scale_floor > 1.0);
+        assert!(
+            (floored.rms_reproj_px - free.rms_reproj_px).abs() < 1e-6,
+            "rms {:.6} vs {:.6}: the floor must not change the fit",
+            floored.rms_reproj_px,
+            free.rms_reproj_px
+        );
+    }
+
+    #[test]
+    fn the_scale_floor_leaves_a_well_scaled_solve_alone() {
+        let (frames, imu, _) = coil_session(10.0, 1.0, 0.15, 1);
+        let res = solve_vio(&frames, &imu, &SolveOptions::default(), None, None);
+        assert_eq!(res.scale_floor, 1.0);
     }
 
     /// A dwell-and-hop diffuse capture of the coil_session coil: `k` vantage

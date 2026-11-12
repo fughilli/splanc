@@ -325,15 +325,27 @@ fn measured_xyz(map: &OutputMap) -> Vec<(u32, [f64; 3])> {
 
 #[test]
 fn the_strip_prior_never_turns_a_usable_final_into_a_scale_collapse() {
+    // The candidate protection under test only acts on a collapse, which the
+    // scale floor (minCameraDistM) now prevents: exercise it with the floor
+    // off, then check the default floor keeps the strip result usable on its own.
     let sc = gentle_strided();
-    let (plain, plain_diag) = solve(&with_options(&sc.problem, json!({})));
+    let (_, floored) = solve(&with_options(&sc.problem, json!({"stripPrior": true})));
+    assert!(
+        !floored.assessment.degenerate,
+        "with the scale floor: {}",
+        describe(&floored.assessment)
+    );
+    let (plain, plain_diag) = solve(&with_options(&sc.problem, json!({"minCameraDistM": 0})));
     assert!(
         !plain_diag.assessment.degenerate,
         "without the prior: {}",
         describe(&plain_diag.assessment)
     );
 
-    let (map, diag) = solve(&with_options(&sc.problem, json!({"stripPrior": true})));
+    let (map, diag) = solve(&with_options(
+        &sc.problem,
+        json!({"stripPrior": true, "minCameraDistM": 0}),
+    ));
     let sc_dec = diag
         .strip_candidates
         .as_ref()
@@ -394,13 +406,14 @@ fn a_wrong_strip_pitch_cannot_collapse_the_final() {
     // An adversarial prior: the user's LED pitch is ~10x too small (e.g. a
     // density typo), on a near-static capture whose scale is uncertain. The
     // rope then drags the whole scene (cameras included — reprojection is
-    // scale-invariant) to ~1 cm; the pre-strip state is retained.
+    // scale-invariant) to ~1 cm; the pre-strip state is retained. (With the
+    // scale floor off: the floor alone would stop the drag.)
     let sc = generate(&spec(
         json!({"sweep": 0.3, "bob": 0.01, "duration": 20, "frameHz": 6, "seed": 2}),
     ));
     let (_, diag) = solve(&with_options(
         &sc.problem,
-        json!({"stripPrior": true, "stripSpacingM": 0.002}),
+        json!({"stripPrior": true, "stripSpacingM": 0.002, "minCameraDistM": 0}),
     ));
     let d = diag.strip_candidates.as_ref().unwrap();
     assert!(
@@ -452,8 +465,9 @@ fn outlier_rounds_rank_degeneracy_before_residual() {
     // On the gentle strided capture an outlier round collapses the scale at a
     // slightly lower rms than the round before it — every LED still within
     // 8 px. Ranked on (solved LEDs, rms) alone, that round would be kept.
+    // (With the scale floor off: it stops the collapse itself.)
     let sc = gentle_strided();
-    let (_, diag) = solve(&with_options(&sc.problem, json!({})));
+    let (_, diag) = solve(&with_options(&sc.problem, json!({"minCameraDistM": 0})));
     let rounds: Vec<_> = diag
         .trace
         .iter()
