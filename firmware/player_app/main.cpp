@@ -1004,6 +1004,11 @@ static void poll_hardware_config() {
       snprintf(key, sizeof key, "hw_len%d", ch);
       const int32_t n = lm_led_count((uint32_t)ch);
       prefs.putInt(key, n > 0 ? n : 0);
+      char ord[8] = {0};
+      if (lm_hw_color_order_name((uint32_t)ch, reinterpret_cast<uint8_t *>(ord), sizeof ord - 1) >= 0) {
+        snprintf(key, sizeof key, "hw_ord%d", ch);
+        prefs.putString(key, ord);
+      }
     }
 #endif
     char ord0[8] = {0}, ord1[8] = {0};
@@ -1070,6 +1075,11 @@ static void hardware_config_begin() {
     snprintf(key, sizeof key, "hw_len%d", ch);
     const int n = prefs.getInt(key, 0);
     lm_led_count_seed((uint32_t)ch, n > 0 ? (uint32_t)n : 0);
+    // Its wire order: RGB unless the color-order check set another (a WLED
+    // board applies its strip's own order).
+    snprintf(key, sizeof key, "hw_ord%d", ch);
+    String ord = prefs.getString(key, "RGB");
+    lm_hw_seed((uint32_t)ch, -1, reinterpret_cast<const uint8_t *>(ord.c_str()), ord.length());
   }
 #endif
   // Apply the wire color orders to the driver.
@@ -2081,6 +2091,11 @@ static uint32_t render_once() {
   const uint32_t net_total = 0;
 #endif
   uint32_t total_cfg = ch0_len + ch1_len + net_total;
+#if defined(LM_NETOUT)
+  // A counting probe on a network channel, and the wire order it drives there.
+  bool net_probe = false;
+  uint8_t net_probe_perm[3] = {0, 1, 2};
+#endif
   uint32_t xmit_len = total_cfg > 0 ? total_cfg : g_led_cap;
   if (xmit_len > g_led_cap) xmit_len = g_led_cap;
 
@@ -2151,7 +2166,34 @@ static uint32_t render_once() {
     int64_t d = next_ms - (int64_t)millis();
     next_delay_ms = d <= 1 ? 1 : (d > (int64_t)kStaticPollMs ? kStaticPollMs : (uint32_t)d);
     was_active = true;
-  } else if (lm_counting_color(0, rgb)) {
+  }
+#if defined(LM_NETOUT)
+  else if (lm_counting_channel() >= 2 && lm_counting_color(0, rgb)) {
+    // Counting probe on a NETWORK channel (a WLED board): its blocks are relative
+    // to that channel's first LED, which sits after the strips and the network
+    // channels before it in the global frame. Everything else is black. The probe
+    // drives its own wire order on that channel (net_probe_perm below), never
+    // the committed one.
+    const uint32_t nch = lm_counting_channel() - 2;
+    uint32_t off = ch0_len + ch1_len;
+    for (uint32_t i = 0; i < nch && i < NET_OUTPUT_CHANNELS; i++) off += net_counts[i];
+    uint32_t end = ch0_len + ch1_len + net_total;
+    if (end > g_led_cap) end = g_led_cap;
+    fill_rgb(leds, end, Rgb::Black);
+    uint32_t cn = lm_counting_len();
+    for (uint32_t i = 0; i < cn && off + i < end; i++) {
+      lm_counting_color(i, rgb);
+      leds[off + i] = Rgb(rgb[0], rgb[1], rgb[2]);
+    }
+    xmit_len = end;
+    net_probe = true;
+    lm_counting_color_order(net_probe_perm);
+    show = true;
+    was_active = true;
+    last_shown_frame = 0xffffffff;
+  }
+#endif
+  else if (lm_counting_color(0, rgb)) {
     // Counting probe: static pattern, repaint at the slow static cadence. Its
     // blocks are relative to the START of the probed channel's strip, so the
     // probe is routed straight to that output (bypassing the logical split) and
@@ -2404,8 +2446,20 @@ static uint32_t render_once() {
 #if defined(LM_NETOUT)
     // The same frame to the network channels. The counting probe (direct_split)
     // drives a strip only: the network channels go black while it runs.
+    // Each network channel's committed wire order, or the probe's own on the
+    // probed channel.
+    uint8_t net_perms[NET_OUTPUT_CHANNELS][3];
+    for (int i = 0; i < NET_OUTPUT_CHANNELS; i++) {
+      if (lm_hw_color_order_perm((uint32_t)(2 + i), net_perms[i]) != 0) {
+        net_perms[i][0] = 0, net_perms[i][1] = 1, net_perms[i][2] = 2;
+      }
+    }
+    if (net_probe) {
+      const uint32_t nch = lm_counting_channel() - 2;
+      if (nch < NET_OUTPUT_CHANNELS) memcpy(net_perms[nch], net_probe_perm, 3);
+    }
     net_output_submit(reinterpret_cast<const uint8_t *>(leds), ch0_len + ch1_len, net_counts,
-                      direct_split ? 0 : xmit_len);
+                      net_perms, direct_split ? 0 : xmit_len);
 #endif
     if (fx_frame_rendered) show_c = g_show_us * (kCpuHz / 1000000u);
   }

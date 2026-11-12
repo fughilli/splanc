@@ -31,8 +31,11 @@ bool net_output_active(void);
 // the global LED order; the network channels start at LED `net_base` (the GPIO
 // strips' total) and take `counts[i]` LEDs each, in channel order. LEDs at or
 // past `rendered` weren't drawn this frame and go out black.
+// `perms[i]` is channel i's wire order as a source permutation (wire byte j =
+// rgb[perms[i][j]]; {0, 1, 2} = RGB), applied in the copy.
 void net_output_submit(const uint8_t *rgb, uint32_t net_base,
-                       const uint32_t counts[NET_OUTPUT_CHANNELS], uint32_t rendered);
+                       const uint32_t counts[NET_OUTPUT_CHANNELS],
+                       const uint8_t perms[NET_OUTPUT_CHANNELS][3], uint32_t rendered);
 
 // Frames sent (one per frame with at least one target reached) and send errors.
 void net_output_counters(uint32_t *frames, uint32_t *errors);

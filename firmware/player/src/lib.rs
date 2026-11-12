@@ -373,6 +373,19 @@ pub const COLOR_ORDERS: [(&str, [u8; 3]); 6] = [
 ];
 /// Default wire order index into [`COLOR_ORDERS`] — GRB, the WS2812B order.
 pub const DEFAULT_COLOR_ORDER: u8 = 2;
+/// [`COLOR_ORDERS`] index of identity RGB: a network channel's default.
+const RGB_ORDER: u8 = 0;
+/// Every channel's starting order: GRB on the GPIO strips, RGB on the network
+/// channels.
+const DEFAULT_HW_ORDER: [u8; MAX_CHANNELS] = {
+    let mut o = [RGB_ORDER; MAX_CHANNELS];
+    let mut i = 0;
+    while i < HW_CHANNELS {
+        o[i] = DEFAULT_COLOR_ORDER;
+        i += 1;
+    }
+    o
+};
 /// The only LED chip family supported today (WS2811/2812/2812B/SK6812 clockless).
 const LED_TYPE_WS281X: &str = "ws281x";
 /// The LED type a network output channel reports (docs/design/p4-ethernet-ddp.md).
@@ -445,7 +458,10 @@ pub struct Player {
     /// [`COLOR_ORDERS`]. A `led_type` other than `ws281x` is rejected (only type
     /// supported today), so it is echoed as a constant rather than stored.
     hw_gpio: [i32; HW_CHANNELS],
-    hw_order: [u8; HW_CHANNELS],
+    /// Per LED channel: the GPIO strips', and the network channels' (which
+    /// default to RGB: a WLED board applies its strip's own order, so the
+    /// player sends plain RGB unless the color-order check says otherwise).
+    hw_order: [u8; MAX_CHANNELS],
     /// Bumped on every `set_hardware_config`; the firmware polls it (like the
     /// color-correction gen) to persist the config + re-apply it to the RMT
     /// driver (color order live, a GPIO change on the transmit task).
@@ -530,7 +546,7 @@ impl Player {
             crossfade: 0.0,
             crossfade_mode: 0,
             hw_gpio: [-1; HW_CHANNELS],
-            hw_order: [DEFAULT_COLOR_ORDER; HW_CHANNELS],
+            hw_order: DEFAULT_HW_ORDER,
             hw_config_gen: 0,
             hw_config_commit: true,
             board_caps: None,
@@ -1001,7 +1017,7 @@ impl Player {
         channel: Option<i32>,
     ) -> pb::ServerMessage {
         let channel = channel.unwrap_or(0);
-        if channel < 0 || channel as usize >= HW_CHANNELS {
+        if channel < 0 || channel as usize >= self.led_channels() {
             return error("bad_message", "channel out of range");
         }
         let mut state = pb::CountingState::default();
@@ -1071,10 +1087,10 @@ impl Player {
             return error("bad_message", "channel out of range");
         }
         let ch = channel as usize;
-        // A network channel has only an LED count here (its target is set with
-        // set_network_output, docs/design/p4-ethernet-ddp.md).
-        if ch >= HW_CHANNELS && (m.gpio().is_some() || m.led_type().is_some() || m.color_order().is_some()) {
-            return error("bad_message", "a network channel has no gpio, led_type or color_order");
+        // A network channel has an LED count and a color order here (its target
+        // is set with set_network_output, docs/design/p4-ethernet-ddp.md).
+        if ch >= HW_CHANNELS && (m.gpio().is_some() || m.led_type().is_some()) {
+            return error("bad_message", "a network channel has no gpio or led_type");
         }
         // Validate everything BEFORE mutating so a bad field leaves the config
         // untouched (and the app sees the real state echoed back).
@@ -1318,7 +1334,7 @@ impl Player {
                 r#channel: ch as i32,
                 r#gpio: -1,
                 r#led_type: short(LED_TYPE_DDP),
-                r#color_order: short("RGB"),
+                r#color_order: short(COLOR_ORDERS[self.hw_order[ch] as usize].0),
                 r#led_count: n as i32,
             };
             let _ = state.r#channels.push(hc);
@@ -1521,14 +1537,17 @@ impl Player {
     /// persist. `order` indexes [`COLOR_ORDERS`]; out-of-range falls back to the
     /// WS2812B default.
     pub fn set_hw_defaults(&mut self, channel: usize, gpio: i32, order: u8) {
-        if channel >= HW_CHANNELS {
+        if channel >= MAX_CHANNELS {
             return;
         }
-        self.hw_gpio[channel] = gpio;
+        // A network channel (>= HW_CHANNELS) has no GPIO: only its order seeds.
+        if channel < HW_CHANNELS {
+            self.hw_gpio[channel] = gpio;
+        }
         self.hw_order[channel] = if (order as usize) < COLOR_ORDERS.len() {
             order
         } else {
-            DEFAULT_COLOR_ORDER
+            DEFAULT_HW_ORDER[channel]
         };
     }
 

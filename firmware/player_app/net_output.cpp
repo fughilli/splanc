@@ -132,7 +132,8 @@ void net_output_set_targets(const NetoutTarget targets[NET_OUTPUT_CHANNELS]) {
 bool net_output_active(void) { return s_active && s_task != nullptr; }
 
 void net_output_submit(const uint8_t *rgb, uint32_t net_base,
-                       const uint32_t counts[NET_OUTPUT_CHANNELS], uint32_t rendered) {
+                       const uint32_t counts[NET_OUTPUT_CHANNELS],
+                       const uint8_t perms[NET_OUTPUT_CHANNELS][3], uint32_t rendered) {
   if (!net_output_active()) return;
   Frame &f = s_frames[s_w];
   uint32_t at = 0;            // bytes into f.rgb
@@ -144,7 +145,18 @@ void net_output_submit(const uint8_t *rgb, uint32_t net_base,
     f.offset[ch] = at;
     // LEDs [led, led + n) of the frame; those at or past `rendered` are black.
     const uint32_t drawn = rendered > led ? (rendered - led < n ? rendered - led : n) : 0;
-    if (drawn) memcpy(f.rgb + at, rgb + (size_t)led * 3, (size_t)drawn * 3);
+    const uint8_t *p = perms[ch];
+    if (drawn && p[0] == 0 && p[1] == 1 && p[2] == 2) {
+      memcpy(f.rgb + at, rgb + (size_t)led * 3, (size_t)drawn * 3);
+    } else if (drawn) {
+      const uint8_t *src = rgb + (size_t)led * 3;
+      uint8_t *dst = f.rgb + at;
+      for (uint32_t k = 0; k < drawn; k++, src += 3, dst += 3) {
+        dst[0] = src[p[0] % 3];
+        dst[1] = src[p[1] % 3];
+        dst[2] = src[p[2] % 3];
+      }
+    }
     if (drawn < n) memset(f.rgb + at + drawn * 3, 0, (size_t)(n - drawn) * 3);
     at += n * 3;
     led += counts[ch];

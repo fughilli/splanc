@@ -1075,7 +1075,7 @@ fn network_channels_in_hardware_config() {
         {
             let mut c = pb::SetHardwareConfig::default();
             c.set_channel(3);
-            c.set_color_order(micropb::heapless::String::try_from("GRB").unwrap());
+            c.set_led_type(micropb::heapless::String::try_from("ws281x").unwrap());
             c
         },
         {
@@ -1088,6 +1088,31 @@ fn network_channels_in_hardware_config() {
         expect_error(send(&mut player, CMsg::SetHardwareConfig(bad), 2.0), "bad_message");
     }
     assert_eq!(player.led_count(3), Some(1680), "refusals change nothing");
+
+    // A network channel's color order: RGB by default (WLED applies the strip's
+    // own), settable for a board that needs another, and probeable like a strip.
+    assert_eq!(player.hw_color_order_name(3), "RGB");
+    let mut cfg = pb::SetHardwareConfig::default();
+    cfg.set_channel(3);
+    cfg.set_color_order(micropb::heapless::String::try_from("GRB").unwrap());
+    let Some(SMsg::HardwareConfigState(st)) = send(&mut player, CMsg::SetHardwareConfig(cfg), 2.5) else {
+        panic!("hardware_config_state");
+    };
+    assert_eq!(st.r#channels[2].r#color_order.as_str(), "GRB");
+    assert_eq!(player.hw_color_order_perm(3), [1, 0, 2]);
+    let mut probe = pb::SetCountingPattern::default();
+    let mut block = pb::ColorBlock { r#start: 0, r#count: 3, ..Default::default() };
+    for c in [1.0, 0.0, 0.0] {
+        block.r#rgb.push(c).unwrap();
+    }
+    probe.r#blocks.push(block).unwrap();
+    probe.set_channel(3);
+    probe.set_color_order(micropb::heapless::String::try_from("RGB").unwrap());
+    let Some(SMsg::CountingState(cs)) = send(&mut player, CMsg::SetCountingPattern(probe), 2.6) else {
+        panic!("counting_state");
+    };
+    assert!(cs.r#active);
+    assert_eq!(player.counting_channel(), 3);
 
     // Clearing the count drops the channel from the state.
     let mut cfg = pb::SetHardwareConfig::default();

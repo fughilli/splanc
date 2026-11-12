@@ -502,6 +502,9 @@ export function HardwareSetupScreen(_router: Router): Screen {
           }),
         );
       }
+      // Network channels' color order (the same check as a strip's), after the
+      // Ethernet cards that set their targets and LED counts.
+      parts.push(...channels.filter(isNet).map(channelCard));
       parts.push(layoutGroup());
     }
     // The per-device stride is local (persisted with the device), so surface it
@@ -740,6 +743,7 @@ export function HardwareSetupScreen(_router: Router): Screen {
   }
 
   function channelCard(cfg: HardwareChannel): HTMLElement {
+    if (isNet(cfg)) return netChannelCard(cfg);
     const g = group(`Channel ${cfg.channel}`);
 
     const ledTypes = catalog().ledTypes;
@@ -768,7 +772,30 @@ export function HardwareSetupScreen(_router: Router): Screen {
     );
     const cap = captureModeRow(cfg.channel);
     if (cap) g.append(cap);
+    appendColorOrder(g, cfg);
+    return g;
+  }
 
+  /** A network channel (a WLED board): no GPIO or LED type, its target and LED
+   * count live on the WLED boards card; here only its capture mode and color
+   * order, with the same check as a strip's. */
+  function netChannelCard(cfg: HardwareChannel): HTMLElement {
+    const name = ethState?.outputs.find((o) => o.channel === cfg.channel)?.name;
+    const g = group(`Channel ${cfg.channel} · ${name || "WLED board"}`);
+    const note = document.createElement("div");
+    note.className = "hw-hint";
+    note.textContent =
+      "WLED applies its strip's own color order (Config → LED Preferences), so leave this at " +
+      "RGB unless the check shows the colors swapped.";
+    g.append(note);
+    const cap = captureModeRow(cfg.channel);
+    if (cap) g.append(cap);
+    appendColorOrder(g, cfg);
+    return g;
+  }
+
+  /** The color-order row and its check / confirm flow, for any channel. */
+  function appendColorOrder(g: HTMLElement, cfg: HardwareChannel): void {
     // Color order: current value + the test/confirm flow.
     const orderRow = document.createElement("div");
     orderRow.className = "hw-row";
@@ -846,7 +873,6 @@ export function HardwareSetupScreen(_router: Router): Screen {
       );
       g.append(actions);
     }
-    return g;
   }
 
   /** "N per color" picker sitting next to the check button. Retunes the live
