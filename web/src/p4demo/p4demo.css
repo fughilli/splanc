@@ -1,0 +1,234 @@
+/* P4 demo page (p4demo.html). Phone first: the view on top, the controls for the
+ * current mode under it, and the mode buttons along the bottom where a thumb reaches.
+ * Wider screens put the view on the left and the controls on the right. Colours come
+ * from the app's tokens (ui/kit/tokens.css). */
+
+.p4 {
+  --p4-view-bg: #0b0b0f;
+  --p4-modes-h: 64px;
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(240px, 46dvh) 1fr;
+  overflow-x: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font: var(--f-body) / 1.45 var(--font-ui);
+  padding-bottom: calc(var(--p4-modes-h) + env(safe-area-inset-bottom, 0px));
+}
+
+.p4-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: calc(var(--sp-2) + env(safe-area-inset-top, 0px)) var(--sp-3) var(--sp-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.p4-bar h1 {
+  font-size: var(--f-title);
+  margin: 0;
+  flex: 0 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.p4-pills {
+  display: flex;
+  gap: var(--sp-2);
+  min-width: 0;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+}
+.p4-pills .k-pill {
+  min-width: 0;
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p4-banner {
+  padding: var(--sp-2) var(--sp-3);
+  background: color-mix(in srgb, var(--warn) 16%, var(--surface));
+  border-bottom: 1px solid var(--warn);
+  font-size: var(--f-caption);
+}
+.p4-banner[data-kind="err"] {
+  background: color-mix(in srgb, var(--err) 16%, var(--surface));
+  border-color: var(--err);
+}
+.p4-banner p {
+  margin: 0;
+}
+.p4-banner p + p {
+  margin-top: var(--sp-1);
+}
+.p4-banner .k-btn {
+  margin-top: var(--sp-2);
+}
+
+.p4-view {
+  position: relative;
+  min-height: 0;
+}
+.p4-view canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.p4-hud {
+  position: absolute;
+  left: var(--sp-2);
+  top: var(--sp-2);
+  font: 11px/1.4 var(--font-mono);
+  color: #9fd8ff;
+  text-shadow: 0 1px 2px #000;
+  pointer-events: none;
+  white-space: pre;
+}
+
+.p4-panel {
+  padding: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.p4-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.p4-card h2 {
+  font-size: var(--f-body);
+  margin: 0;
+}
+.p4-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.p4-row > .grow {
+  flex: 1 1 auto;
+}
+.p4-dim {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+}
+.p4-mono {
+  font-family: var(--font-mono);
+  font-size: var(--f-caption);
+}
+.p4-big {
+  min-height: 52px;
+  font-size: 1.05rem;
+}
+
+details.p4-card > summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+details.p4-card > summary::-webkit-details-marker {
+  display: none;
+}
+details.p4-card > summary::after {
+  content: "▸";
+  float: right;
+  color: var(--text-dim);
+}
+details.p4-card[open] > summary::after {
+  content: "▾";
+}
+
+.p4-color {
+  width: 44px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  background: none;
+}
+
+.p4-spot {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.p4-spot .p4-mono {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.p4-modes {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2) calc(var(--sp-1) + env(safe-area-inset-bottom, 0px));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.p4-modes button {
+  min-height: calc(var(--p4-modes-h) - 2 * var(--sp-1));
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  background: var(--surface-2);
+  color: var(--text);
+  font: 600 var(--f-body) var(--font-ui);
+}
+.p4-modes button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.p4-modes button small {
+  display: block;
+  font-weight: 400;
+  font-size: 0.7rem;
+  opacity: 0.8;
+}
+
+@media (min-width: 900px) {
+  .p4 {
+    grid-template-columns: minmax(0, 1fr) 380px;
+    grid-template-rows: auto auto 1fr;
+    height: 100dvh;
+    min-height: 0;
+  }
+  .p4-bar,
+  .p4-banner {
+    grid-column: 1 / -1;
+  }
+  .p4-view {
+    grid-row: 3;
+    grid-column: 1;
+  }
+  .p4-panel {
+    grid-row: 3;
+    grid-column: 2;
+    overflow-y: auto;
+    border-left: 1px solid var(--border);
+  }
+  .p4-modes {
+    left: auto;
+    width: 380px;
+  }
+}
