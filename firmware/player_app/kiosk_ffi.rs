@@ -91,8 +91,9 @@ pub fn classify(arm: u32, frame: &[u8]) -> Class {
         1 | 2 | 9 | 10 | 11 | 12 | 18 | 19 | 20 | 24 | 25 | 26 | 34 | 35 | 36 | 38 | 42 | 43 | 45 | 48 | 53
         | 56 | 74 | 91 | ARM_GET_KIOSK_STATUS | ARM_KIOSK_UNLOCK => Class::Read,
         // set_playback, submit_effect, set_effect, set_uniforms (live too),
-        // set_texture, set_brightness (no cap), set_crossfade, blend_keypoints.
-        17 | 21 | 22 | 23 | 28 | 31 | 39 | 44 => Class::Play,
+        // set_texture, set_brightness (no cap), set_crossfade, blend_keypoints, and
+        // osc (what udp/9000 takes on the LAN unlocked: uniforms, a module's addresses).
+        17 | 21 | 22 | 23 | 28 | 31 | 39 | 44 | crate::ARM_OSC => Class::Play,
         // upload_chunk: only a sharded effect upload (the BLE path for a big .fxb).
         29 => match parse_upload_chunk(frame) {
             Ok(Some(c)) if c.kind == UPLOAD_KIND_EFFECT => Class::Play,

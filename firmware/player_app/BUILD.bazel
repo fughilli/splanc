@@ -303,6 +303,22 @@ rust_test(
     ],
 )
 
+# OSC over the wss session (feature "osc"): ClientMessage.osc read in place, its packet
+# through the udp/9000 mailbox, the ServerMessage.osc push, the welcome feature and the
+# kiosk class. Own binary: fresh process-global FFI state.
+rust_test(
+    name = "osc_session_test",
+    srcs = ["tests/osc_session.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
 # The FX debugger (fxdbg.rs): pause / step / lease, chunked snapshot sections, and
 # a host replay of a paused frame that must match the device bit-exactly
 # (docs/design/fx-debugger.md). Own binary: fresh process-global FFI state.
