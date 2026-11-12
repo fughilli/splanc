@@ -303,6 +303,22 @@ rust_test(
     ],
 )
 
+# OSC over the wss session (feature "osc"): ClientMessage.osc read in place, its packet
+# through the udp/9000 mailbox, the ServerMessage.osc push, the welcome feature and the
+# kiosk class. Own binary: fresh process-global FFI state.
+rust_test(
+    name = "osc_session_test",
+    srcs = ["tests/osc_session.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
 # The FX debugger (fxdbg.rs): pause / step / lease, chunked snapshot sections, and
 # a host replay of a paused frame that must match the device bit-exactly
 # (docs/design/fx-debugger.md). Own binary: fresh process-global FFI state.
@@ -499,6 +515,19 @@ cc_library(
 cc_library(
     name = "player_module_hdr",
     hdrs = ["player_module.h"],
+)
+
+# OSC over the wss session (feature "osc"): the input order (modules, then the
+# mailbox) and where a module's OSC goes back to (UDP or a ServerMessage.osc push, never
+# blocking). Header-only; main.cpp includes it.
+cc_test(
+    name = "osc_route_test",
+    srcs = [
+        "osc_route.h",
+        "osc_route_test.cc",
+        "player_module.h",
+    ],
+    copts = ["-UNDEBUG"],
 )
 
 cc_test(
@@ -741,6 +770,7 @@ NETSTACK_VARIANTS = [
         # with the OTA loader.)
         "led_config.h",
         "main.cpp",
+        "osc_route.h",
         "player_module.h",
         "player_ffi.h",
         "sensor_bus.cpp",
@@ -861,6 +891,7 @@ cc_binary(
         "frontend_link.h",
         "led_config.h",
         "main.cpp",
+        "osc_route.h",
         "player_ffi.h",
         "player_module.h",
         "sensor_bus.h",
@@ -1233,6 +1264,7 @@ cc_binary(
         "link_transport.cpp",
         "main.cpp",
         "netstack_transport.h",
+        "osc_route.h",
         "ota_app.h",
         "player_ffi.h",
         "player_module.h",
@@ -1283,6 +1315,7 @@ cc_binary(
         "link_transport.cpp",
         "main.cpp",
         "netstack_transport.h",
+        "osc_route.h",
         "ota_app.h",
         "player_ffi.h",
         "player_module.h",
@@ -1382,6 +1415,7 @@ cc_binary(
         "improv_ble.h",
         "led_config.h",
         "main.cpp",
+        "osc_route.h",
         "player_ffi.h",
         "player_module.h",
         "serial_log.h",
@@ -1459,6 +1493,7 @@ cc_binary(
         "improv_ble.h",
         "led_config.h",
         "main.cpp",
+        "osc_route.h",
         "player_ffi.h",
         "player_module.h",
         "serial_log.h",
@@ -1810,6 +1845,7 @@ py_test(
     srcs = ["tests/test_stack_bound.py"],
     data = [
         "main.cpp",
+        "osc_route.h",
         "player_module.h",
         "sensor_bus.cpp",
         "serial_log.h",

@@ -30,8 +30,9 @@ struct LmPlayerModule {
   // Loop task, between render frames, with the player mutex held: publish pool values
   // here (lm_pool_publish). Keep it short.
   void (*publish)(void);
-  // Network task, one OSC datagram (udp/9000, or forwarded by the front end). Return true
-  // when the module consumed it (it then never reaches the uniform mailbox). No mutex.
+  // Network task, one OSC datagram (udp/9000, a ClientMessage.osc on the wss session, or
+  // either forwarded by the front end). Return true when the module consumed it (it then
+  // never reaches the uniform mailbox). No mutex.
   bool (*osc)(const uint8_t *data, size_t len);
   // The periodic status line (every 5 s), loop task.
   void (*status)(void);
@@ -48,7 +49,9 @@ struct LmPlayerModule {
 void lm_register_module(const LmPlayerModule *m);
 
 // Send one OSC datagram back to the last OSC sender (via the C6 front end on the P4
-// boards). False when there's nobody to send to. Loop task (poll).
+// boards): by UDP, or as a ServerMessage.osc push when it sent over the wss session
+// (osc_route.h; a push the session can't take right now is dropped, never waited on).
+// False when there's nobody to send to. Loop task (poll).
 bool lm_module_osc_send(const uint8_t *data, size_t len);
 
 // The player's async console log (serial_log.h), for modules.
