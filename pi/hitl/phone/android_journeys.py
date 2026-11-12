@@ -126,7 +126,11 @@ def _stage_bundle(include_flash: bool) -> str:
     tar = tempfile.mktemp(prefix="hitl-android-", suffix=".tar")
     # COPYFILE_DISABLE: macOS bsdtar otherwise packs an AppleDouble `._<name>` sidecar
     # for every file with xattrs, which the in-env loader then tries to parse.
-    subprocess.run(["tar", "cf", tar, "-C", stage, "."], check=True, env={**os.environ, "COPYFILE_DISABLE": "1"})
+    subprocess.run(
+        ["tar", "cf", tar, "-C", stage, "."],
+        check=True,
+        env={**os.environ, "COPYFILE_DISABLE": "1"},
+    )
     shutil.rmtree(stage, ignore_errors=True)
     return tar
 

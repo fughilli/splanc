@@ -137,7 +137,10 @@ def main(argv: list[str] | None = None) -> int:
         time.sleep(1.0)
     bad = tally.get("dead_send", 0) + tally.get("fresh_fail", 0) + tally.get("connect_fail", 0)
     verdict = "PASS" if bad == 0 else "FAIL"
-    print(f"RESULT verdict={verdict} " + " ".join(f"{k}={v}" for k, v in sorted(tally.items())), flush=True)
+    print(
+        f"RESULT verdict={verdict} " + " ".join(f"{k}={v}" for k, v in sorted(tally.items())),
+        flush=True,
+    )
     return 0 if verdict == "PASS" else 1
 
 

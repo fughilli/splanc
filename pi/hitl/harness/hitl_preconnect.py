@@ -38,7 +38,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--owner", default=os.environ.get("USER", "preconnect"))
     ap.add_argument(
         "--bundle",
-        default=_runfile(os.environ.get("HITL_BUNDLE_RUNFILE", "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar")),
+        default=_runfile(
+            os.environ.get(
+                "HITL_BUNDLE_RUNFILE", "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar"
+            )
+        ),
     )
     ap.add_argument("--no-flash", action="store_true")
     ap.add_argument("--rounds", type=int, default=5)
@@ -82,7 +86,10 @@ def main(argv: list[str] | None = None) -> int:
         out = (p.stdout or "") + (p.stderr or "")
         for line in out.splitlines():
             _log(f"[probe] {line}")
-        verdict = next((l for l in out.splitlines() if l.startswith("RESULT ")), "RESULT verdict=FAIL (no result)")
+        verdict = next(
+            (ln for ln in out.splitlines() if ln.startswith("RESULT ")),
+            "RESULT verdict=FAIL (no result)",
+        )
         _log(f"[result] {verdict}")
         return 0 if "verdict=PASS" in verdict else 1
     finally:
