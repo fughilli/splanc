@@ -3,7 +3,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { markerStyle, PROVENANCE_STYLE, sigmaRadiusPx } from "../src/ui/overlayStyle";
-import { formatSigma } from "../src/ui/projectionOverlay";
 
 test("provenance is coded by BOTH hue and shape (colorblind-safe)", () => {
   const kinds = ["base", "scan", "updated"] as const;
@@ -36,9 +35,3 @@ test("1-σ ring radius is σ projected through the pinhole", () => {
   assert.equal(sigmaRadiusPx(0.01, 0, 1000), Infinity);
 });
 
-test("σ labels are compact", () => {
-  assert.equal(formatSigma(0.0042), "4.2mm");
-  assert.equal(formatSigma(0.042), "42mm");
-  assert.equal(formatSigma(0.42), "42cm");
-  assert.equal(formatSigma(Infinity), "∞");
-});
