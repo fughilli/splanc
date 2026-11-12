@@ -3,9 +3,9 @@
 //! Mirrors the phone client's actual flow (web/src/net/client.ts usage):
 //! hello -> clock sync -> start_mapping -> pattern -> configure ->
 //! counting handshake -> stop -> submit_map/topology -> playback. The
-//! pattern-generator integration is pinned to the SAME golden the phone
-//! decoder verifies: a 16-LED capture must produce golden_secded16.json's
-//! colorPlan frame for frame.
+//! pattern-generator integration is pinned to the hue-code kernel's golden
+//! (firmware/pattern/testdata): a 16-LED capture must produce
+//! golden_secded16.json's colorPlan frame for frame.
 
 use ledmapper_pattern as pat;
 use ledmapper_pb::ledmapper_::v1_ as pb;

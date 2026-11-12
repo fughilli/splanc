@@ -5,47 +5,26 @@
 #   * led-server (M2) — FastAPI/uvicorn web server; depends on the driver's
 #     control socket, binds :80, serves the web app.
 #
-# M1 (led-driver) is now a REAL package: the //pi/led_driver app run over
-# hardware SPI. M2 (led-server) is still an inert stub. The unit shape, service
-# user, dirs, capabilities, and firewall openings here are already correct.
+# M1 (led-driver) is the Rust player (//pi/player_rs) driving the FPGA; the
+# Python M1 driver (the old apa102 path) was retired. M2 (led-server) is still
+# an inert stub. The unit shape, service user, dirs, capabilities, and firewall
+# openings here are already correct.
 { pkgs, sbcBuildData ? { }, ... }:
 let
-  # The driver's only runtime deps: spidev (native, lazy-imported, Pi-only) and
-  # pydantic v2 (ledmapper_protocol's models). Everything else is stdlib.
-  ledPyEnv = pkgs.python3.withPackages (ps: [ ps.spidev ps.pydantic ]);
-
   # Output backend baked into this image. Both current test boards are Raspberry
   # Pi 3s: splanc-max-2 (the FPGA rig, Tang Nano 9K attached) drives the
   # //fpga/spi_ws281x streaming WS281x FPGA over SPI, and splanc-max-1 is the same
-  # config. `fpga` needs the Tang wired to the board; a board without one can run
-  # APA102 strips by flipping ledOutput back to "apa102". (The Pi 3/Pi 5 split is a
-  # BOARD choice, not tied to a specific host — deploy the matching sbc_application
-  # variant; deploy_live's board guard refuses a mismatched closure.) --start N
+  # config. `fpga` (the Rust player) is the only backend: the Python apa102 driver
+  # and its own hue-code copy were retired (one Rust kernel, //firmware/pattern).
+  # (The Pi 3/Pi 5 split is a BOARD choice, not tied to a specific host — deploy
+  # the matching sbc_application variant; deploy_live's board guard refuses a
+  # mismatched closure.) --start N
   # self-drives a default cycle at boot so the SPI wire is always active for the
   # logic-analyzer probe (//pi/tools/la_probe) without needing a client.
   ledOutput = "fpga";
   ledFpgaPorts = 4;
   ledStartLeds = 2200; # 4 ports x 550 LEDs (60Hz max-length HITL case)
   ledFps = 60;
-
-  # Sources are VENDORED under ./ledapp because the deploy builds the flake as
-  # `path:pi/provisioning/nix`, whose tree can't reach ../../{pi/led_driver,
-  # shared/protocol}. TODO: bazel-generate ./ledapp from the canonical sources +
-  # a sync test (mirrors //pi/hitl/internal/skus) to prevent drift.
-  ledDriverPkg = pkgs.runCommand "led-mapper-driver"
-    { nativeBuildInputs = [ pkgs.makeWrapper ]; }
-    ''
-      mkdir -p "$out/bin" "$out/libexec"
-      cp -r ${./ledapp}/. "$out/libexec/"
-      makeWrapper ${ledPyEnv}/bin/python3 "$out/bin/led-driver" \
-        --set PYTHONPATH "$out/libexec" \
-        --set PYTHONUNBUFFERED 1 \
-        --add-flags "-m led_driver" \
-        --add-flags "--output ${ledOutput}" \
-        --add-flags "--fpga-ports ${toString ledFpgaPorts}" \
-        --add-flags "--start ${toString ledStartLeds}" \
-        --add-flags "--fps ${toString ledFps}"
-    '';
 
   # The Rust player (//pi/player_rs:player) — the unified aarch64/std sibling of
   # the ESP32 firmware: ONE process that serves the protocol over WSS AND drives
@@ -176,13 +155,14 @@ in
     # exposes the control socket under /run/ledmapper. Creates the shared
     # `ledmapper` service user (member of spi/gpio via extraGroups).
     led-driver = {
-      # On the FPGA path this is the unified Rust player (WSS protocol + FPGA
-      # render, the firmware's model); the apa102 path keeps the Python M1 driver
-      # (the Rust render loop is FPGA-only so far). The unit name stays
-      # sbc-led-driver.service for continuity (HITL harness restarts it).
+      # The unified Rust player (WSS protocol + FPGA render, the firmware's
+      # model). The unit name stays sbc-led-driver.service for continuity (HITL
+      # harness restarts it).
       description = "LED Mapper player — WSS protocol + LED render";
-      package = if ledOutput == "fpga" then playerRsPkg else ledDriverPkg;
-      exec = if ledOutput == "fpga" then "bin/player" else "bin/led-driver";
+      package =
+        if ledOutput == "fpga" then playerRsPkg
+        else throw "ledOutput \"${ledOutput}\": only \"fpga\" (the Rust player) remains; the Python apa102 driver was retired";
+      exec = "bin/player";
       user = "ledmapper";
       extraGroups = [ "spi" "gpio" ];
       realtime = true;

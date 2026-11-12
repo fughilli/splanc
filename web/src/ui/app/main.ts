@@ -11,6 +11,7 @@ import "../kit/fonts.css";
 import "../kit/tokens.css";
 import "./app.css";
 
+import { codeKernelReady } from "../../code/kernel";
 import { installIconSprite } from "../kit";
 import { Router } from "./router";
 import { Shell } from "./shell";
@@ -54,6 +55,10 @@ import { maybeShowFirstRunHint } from "../guide/tour";
 import { chatLogStore, chatLogDumpOnBootEnabled } from "../../store/chatLogStore";
 
 async function main(): Promise<void> {
+  // The hue-code kernel (wasm) must be callable before any capture / decode /
+  // sim render runs; already resolved wherever it compiled synchronously.
+  await codeKernelReady;
+
   // Apply the saved appearance (theme / fonts / scale) before the shell mounts
   // so there's no flash of the default palette.
   initAppearance();

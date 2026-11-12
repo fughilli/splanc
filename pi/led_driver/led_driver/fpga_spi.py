@@ -16,15 +16,16 @@ global stream interleaves the ports byte-by-byte. Because the FPGA consumes at a
 fixed WS rate with only a couple of bytes of buffer per port, the SPI clock must
 be roughly rate-matched (see :func:`matched_speed_hz`).
 
-Everything here is pure (colours → bytes) so it is unit-tested without hardware;
-the transport reuses :class:`led_driver.spi.SpidevSink`.
+Everything here is pure (colours → bytes) so it is unit-tested without hardware.
+The device side is the Rust player (//pi/player_rs); this Python codec is the
+HITL harness's reference encoder for the raw-SPI cross-check.
 """
 
 from __future__ import annotations
 
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Tuple
 
-from .spi import RGB
+RGB = Tuple[int, int, int]
 
 OP_WRITE_CSR = 0x01
 OP_STREAM = 0x02

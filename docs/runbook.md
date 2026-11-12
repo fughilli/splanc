@@ -55,21 +55,13 @@ sandbox.
 
 ## The LED driver (M1)
 
-The real-time driver process owns the SPI bus and the pattern clock, running the
-Gray-code cycle and exposing a Unix-socket control plane for M2.
-
-```sh
-# On the Pi (real hardware):
-bazelisk run //pi/led_driver:drive -- --socket /run/ledmapper/control.sock
-
-# Hardware-free dry run (in-memory sink), lighting a 16-LED cycle:
-bazelisk run //pi/led_driver:drive -- --dry-run --socket /tmp/control.sock --start 16
-```
-
-The control commands (`start`/`stop`/`get_clock`/`set_debug`) and the wire format
-are documented in [`pi/led_driver/README.md`](../pi/led_driver/README.md). Real
-cadence verification (±10% per §9 Phase 1) needs a logic analyzer on a bench and
-is not covered by CI.
+On the Pi, M1 is the Rust player (`//pi/player_rs`): one process that serves the
+protocol over WSS and renders the hue-code pattern onto the FPGA, from the same
+pattern kernel (`//firmware/pattern`) the ESP32 firmware links. The old Python
+M1 driver (`//pi/led_driver:drive`, APA102 over SPI with a control socket) was
+retired; `pi/led_driver` now only holds the spi_ws281x reference encoder the
+HITL harness uses. Real cadence verification (±10% per §9 Phase 1) needs a logic
+analyzer on a bench (`//pi/tools/la_probe`) and is not covered by CI.
 
 ## The Pi server (M2)
 

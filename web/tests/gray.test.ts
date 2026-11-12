@@ -1,54 +1,74 @@
-/** Hue-code logic vs. the Python driver's golden fixtures + inverses. */
+/**
+ * The hue-code wrappers (src/code/gray.ts) over the wasm kernel: the binding
+ * (constants + palette pinned to the kernel's, marshalling of every call) and
+ * the behaviour the decoder relies on. The code itself is pinned by the
+ * kernel's own goldens (//firmware/pattern:golden_pattern_test).
+ */
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CodeParams } from "@ledmapper/protocol";
 import {
+  CODE_OFFSET,
   colorForFrame,
+  COLOR_GREEN,
+  COLOR_WHITE,
+  colorOfIndex,
+  DATA_FRAME_OFFSET,
+  dataBits,
   dataFrames,
   decodeCycleSymbols,
   decodeGray,
+  expectedBits,
+  FRAME_ALL_OFF,
+  FRAME_ALL_ON,
   gray,
+  SYMBOL_COLORS,
   symbolAt,
-  type Rgb,
 } from "../src/code/gray";
-import golden2 from "./golden_secded16.json";
-import golden4 from "./golden_secded16_sym4.json";
+import { codeKernelReady, kernel } from "../src/code/kernel";
 
-function paramsOf(g: typeof golden2): CodeParams {
-  return {
-    ledCount: g.ledCount,
-    bits: g.bits,
+function book(ledCount: number, symbols: 2 | 4): CodeParams {
+  const p: CodeParams = {
+    ledCount,
+    bits: 0,
     encoding: "hue",
-    symbols: g.symbols,
+    symbols,
     bitPeriodMs: 100,
     syncPattern: "on_off",
-    cycleFrames: g.cycleFrames,
+    cycleFrames: 0,
     fec: "secded",
   };
+  p.bits = expectedBits(p);
+  p.cycleFrames = DATA_FRAME_OFFSET + dataFrames(p);
+  return p;
 }
 
-/** The golden's palette-letter encoding of a normalized color. */
-function letterOf(c: Rgb): string {
-  const key = c.join(",");
-  const table: Record<string, string> = {
-    "1,1,1": "W",
-    "0,1,0": "G",
-    "1,0,0": "R",
-    "0,0,1": "B",
-    "1,0,1": "M",
-    "1,1,0": "Y",
-  };
-  const letter = table[key];
-  assert.ok(letter !== undefined, `unknown palette color ${key}`);
-  return letter;
-}
+test("the kernel loads synchronously under node", async () => {
+  await codeKernelReady;
+  assert.ok(kernel());
+});
 
-test("gray matches the Python driver golden", () => {
-  assert.deepEqual(
-    golden2.gray,
-    Array.from({ length: golden2.ledCount }, (_, i) => gray(i)),
-  );
+test("protocol constants and the palette are the kernel's", () => {
+  const k = kernel();
+  assert.equal(CODE_OFFSET, k.pk_code_offset());
+  assert.equal(FRAME_ALL_ON, k.pk_frame_all_on());
+  assert.equal(FRAME_ALL_OFF, k.pk_frame_all_off());
+  assert.equal(DATA_FRAME_OFFSET, k.pk_data_frame_offset());
+  for (const symbols of [2, 4]) {
+    SYMBOL_COLORS[symbols]!.forEach((c, v) => {
+      assert.equal(colorOfIndex(k.pk_symbol_color(symbols, v)), c, `symbols=${symbols} value ${v}`);
+    });
+  }
+});
+
+test("code-book sizing (16 LEDs: 5 data bits, 10 coded, 12/7 cycle frames)", () => {
+  assert.equal(dataBits(16), 5);
+  assert.equal(book(16, 2).bits, 10);
+  assert.equal(book(16, 2).cycleFrames, 12);
+  assert.equal(book(16, 4).cycleFrames, 7);
+  assert.equal(dataBits(4094), 12);
+  assert.equal(book(4094, 2).bits, 18);
 });
 
 test("decodeGray inverts gray for all 10-bit values", () => {
@@ -62,41 +82,39 @@ test("adjacent ids differ in exactly one gray bit", () => {
   }
 });
 
-for (const [name, golden] of [
-  ["symbols=2", golden2],
-  ["symbols=4", golden4],
-] as const) {
-  const params = paramsOf(golden);
+for (const symbols of [2, 4] as const) {
+  const params = book(100, symbols);
 
-  test(`${name}: symbol values match the Python driver golden`, () => {
-    for (let id = 0; id < golden.ledCount; id++) {
-      for (let f = 0; f < dataFrames(params); f++) {
-        assert.equal(symbolAt(id, f, params), golden.symbolValues[id]![f], `id ${id} frame ${f}`);
-      }
-    }
-  });
-
-  test(`${name}: color plan matches the Python driver golden, frame for frame`, () => {
-    for (let frame = 0; frame < golden.cycleFrames; frame++) {
-      let row = "";
-      for (let id = 0; id < golden.ledCount; id++) {
-        row += letterOf(colorForFrame(id, frame, params));
-      }
-      assert.equal(row, golden.colorPlan[frame], `frame ${frame}`);
-    }
-  });
-
-  test(`${name}: decodeCycleSymbols round-trips every LED id`, () => {
+  test(`symbols=${symbols}: the cycle is white, green, then the palette colour of each symbol`, () => {
     for (let id = 0; id < params.ledCount; id++) {
-      const symbols = Array.from({ length: dataFrames(params) }, (_, f) =>
-        symbolAt(id, f, params),
-      );
-      const dec = decodeCycleSymbols(symbols, params);
+      assert.equal(colorForFrame(id, FRAME_ALL_ON, params), COLOR_WHITE);
+      assert.equal(colorForFrame(id, FRAME_ALL_OFF, params), COLOR_GREEN);
+      for (let f = 0; f < dataFrames(params); f++) {
+        const want = SYMBOL_COLORS[symbols]![symbolAt(id, f, params)];
+        assert.equal(colorForFrame(id, DATA_FRAME_OFFSET + f, params), want, `id ${id} frame ${f}`);
+      }
+    }
+  });
+
+  test(`symbols=${symbols}: decodeCycleSymbols round-trips every LED id`, () => {
+    for (let id = 0; id < params.ledCount; id++) {
+      const syms = Array.from({ length: dataFrames(params) }, (_, f) => symbolAt(id, f, params));
+      const dec = decodeCycleSymbols(syms, params);
       assert.equal(dec.id, id);
       assert.equal(dec.corrected, false);
     }
   });
 }
+
+test("argument validation stays at the TS edge", () => {
+  const p = book(16, 2);
+  assert.throws(() => colorForFrame(0, p.cycleFrames, p), RangeError);
+  assert.throws(() => colorForFrame(0, -1, p), RangeError);
+  assert.throws(() => dataFrames({ ...p, symbols: 3 }), RangeError);
+  assert.throws(() => symbolAt(40, 0, p), RangeError, "id past the code-book");
+  // A wrong frame count is not a decode.
+  assert.equal(decodeCycleSymbols([0, 1], p).id, null);
+});
 
 test("out-of-range ids decode to null", () => {
   // A FEC-less book keeps the code width constant across ledCounts with the

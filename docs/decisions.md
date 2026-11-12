@@ -478,3 +478,37 @@ HTML tree or a wiki. Rationale:
   (like other `bazel run` outputs); only the sources under `docs/_sphinx/`, the
   generators (`docs/build_docs.py`, `docs/gen_figures.py`), and the folded-in
   markdown are tracked. `docs/site/` should be git-ignored.
+
+## One hue-code kernel: Rust everywhere (hue-code v2 phase 0, 2026-11-12)
+
+The LED colour code (Gray/SEC-DED codewords, symbol palette, code-book sizing,
+cycle decode, stride schedule, pattern-clock timing) has ONE implementation, the
+Rust crate `//firmware/pattern` (`ledmapper_pattern`). It replaces three
+hand-synced copies (Rust, `web/src/code/*.ts`, Python `graycode.py` + `fec.py`)
+that were held together by cross-language goldens.
+
+- **Firmware links the render path only.** The decode side (Gray inverse,
+  SEC-DED decode, cycle decode, the phone's float clock) is behind the crate's
+  `app` feature, enabled only by `//firmware/pattern:pattern_app` (the ABI, the
+  golden generator, tests); `:pattern`, which every player links, compiles
+  without it.
+- **Phone: the kernel as wasm.** A flat `extern "C"` ABI
+  (`firmware/pattern/abi/kernel_abi.rs`, numbers only, no wasm-bindgen glue)
+  built for wasm32 at `-c opt` and embedded as base64
+  (`web/src/code/kernel_wasm.ts`, checked in, diff-tested by
+  `//web:code_kernel_wasm`). It compiles synchronously at import where the engine
+  allows; otherwise the page entries `await codeKernelReady`. The CV/tracker
+  stays TS; only the code moved.
+- **Python: the Python M1 driver is retired, codebook.py binds the kernel.** The
+  Pi image runs the Rust player (the `apa102` Python path was never selected),
+  so `graycode.py`, the M1 driver/control socket, `ledmapper_protocol.fec` and
+  the vendored `pi/provisioning/nix/ledapp` copy were deleted. The M2 dev
+  backend (`//pi/server`, used by `//web:dev` and the HITL harness) still issues
+  code-books, so `codebook.py` calls the kernel's C ABI from the host cdylib
+  `//firmware/pattern:kernel_abi` via ctypes rather than re-deriving them.
+- **Goldens are regression pins, not contracts.** `firmware/pattern/testdata/*`
+  are emitted by `//firmware/pattern:gen_golden` and diff-tested
+  (`//firmware/pattern:goldens`); the TS/Python equivalence tests against them
+  were removed (there is nothing left to be equivalent to).
+- **Consequence:** hue-code v2 (staggered cycles, Golay [24,12,8], 8/16-hue
+  alphabets) is written once, in Rust.

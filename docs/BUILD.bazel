@@ -78,9 +78,9 @@ filegroup(
 py_binary(
     name = "gen_figures",
     srcs = ["gen_figures.py"],
-    # The stride schedule figure draws the cross-language golden (the fixture
-    # web/src/code/stride.ts and firmware/pattern `stride_lit` are tested against).
-    data = ["//web:tests/golden_stride.json"],
+    # The stride schedule figure draws the hue-code kernel's stride golden
+    # (firmware/pattern, the one implementation the players and the phone run).
+    data = ["//firmware/pattern:testdata/golden_stride.json"],
     main = "gen_figures.py",
     deps = [
         "//shared/simulator",
@@ -96,7 +96,7 @@ py_binary(
         "build_docs.py",
         "gen_figures.py",
     ],
-    data = ["//web:tests/golden_stride.json"],
+    data = ["//firmware/pattern:testdata/golden_stride.json"],
     main = "build_docs.py",
     deps = [
         "//shared/simulator",
