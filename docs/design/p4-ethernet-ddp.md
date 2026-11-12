@@ -1,6 +1,10 @@
 # P4 Ethernet output: streaming DDP to WLED controllers
 
-Status: in progress (2026-11-11). Branch `agent/p4-ethernet-ddp`.
+Status (2026-11-11, branch `agent/p4-ethernet-ddp`): stages 1–3 are written. The protocol,
+`//firmware/netout`, the core's network channels, the P4 bring-up / DDP sender / discovery and the
+Hardware Setup sections are in place. Host tests pass, and both P4 images and the C6 images build.
+**Nothing has run on hardware yet**: the bench P4 (Waveshare ESP32-P4-WIFI6) has no PHY. Stage 4
+is next.
 
 Owner direction: _"We're going to next do a variant that runs on the P4 but streams DDP to the
 same WLED controllers. We're going to need to add some features to the hardware setup page for
@@ -95,12 +99,24 @@ Shown only when the board reports `ethernet` caps:
 
 ## 5. Stages
 
-1. Protocol + core + DDP encoder, host-tested (no hardware). App UI against the new messages.
-2. P4 Ethernet bring-up and the network output task. Builds for `esp32p4`; first run on a board
-   with a PHY.
-3. Discovery.
-4. HITL: a P4 with a PHY on the bench network next to a WLED board, the same check as the Mac's
-   (WLED reports `live: true, lm: DDP`), then a mapping capture through the network output.
+1. **Done.** Protocol, `//firmware/netout` and the core's network channels, all host-tested.
+2. **Done, untested on hardware.** P4 Ethernet bring-up (`eth_p4`), the network output task
+   (`net_output`) and the glue (`netout_app`, `main.cpp` under `LM_NETOUT`). Builds for `esp32p4`.
+3. **Done, untested on hardware.** Discovery (`wled_discovery`) and the Hardware Setup sections
+   (`web/src/ui/screens/hardwareSetupEthernet.ts`, `web/src/net/ethernet.ts`).
+4. **Next: HITL.** Put a P4 with a PHY on the bench network next to a WLED board. Run the same
+   check as on the Mac (WLED reports `live: true, lm: DDP`), then discovery, then a mapping capture
+   through the network output. Things to watch:
+   - the PHY's MDIO address and reset pin on the actual module;
+   - the RMII clock direction;
+   - whether `esp_eth_driver_install` failing really means "no PHY" (`phy_not_found`);
+   - DHCP-server leases reaching WLED;
+   - the sender task's priority under a heavy effect.
+
+**Not done yet:**
+- LED counting (`set_counting_pattern`) on a network channel: the probe only drives the GPIO
+  channels. The WLED board's own LED count comes from discovery instead.
+- A subnet probe for boards with mDNS turned off. Today they are added by address.
 
 ## 6. Open questions
 

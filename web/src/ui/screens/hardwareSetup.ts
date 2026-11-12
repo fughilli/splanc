@@ -51,6 +51,13 @@ import type { ColorBlock } from "@ledmapper/protocol";
 import { installHardwareSetupStyles } from "./hardwareSetup.css";
 import { wireFpsCeiling } from "../../net/ledWire";
 import { openCurtainLayoutSheet } from "../../halloween/layoutSheet";
+import { busyPins, capsFromWire, type EthernetCaps, type EthernetState } from "../../net/ethernet";
+import { ethernetGroups, resetEthernetSection } from "./hardwareSetupEthernet";
+
+/** Network output channels (WLED over DDP, docs/design/p4-ethernet-ddp.md)
+ * report this LED type and have no GPIO. */
+const NET_LED_TYPE = "ddp";
+const isNet = (c: HardwareChannel): boolean => c.ledType === NET_LED_TYPE;
 
 // Output-capable C6 GPIOs for LED data, grouped by how safe they are to use.
 // Categories + caveats follow the ESP32-C6 SuperMini pinout published at
@@ -248,6 +255,11 @@ export function HardwareSetupScreen(_router: Router): Screen {
   let pendingOrder: ColorOrder | null = null;
   // How many pixels of each primary the color-order test lights (see TEST_COUNTS).
   let testCount = 3;
+  // The P4's Ethernet (null when the board has none or it hasn't answered yet).
+  let ethState: EthernetState | null = null;
+  const ethCaps = (): EthernetCaps | null => capsFromWire(boardCaps?.ethernet);
+  // Pins the enabled Ethernet takes: shown as unavailable in the strip pin pickers.
+  const ethBusy = (): number[] => (ethState ? busyPins(ethState.config, ethCaps()) : []);
 
   // Active pin/LED-type catalog: the board's own when it reports one, else the
   // built-in SuperMini fallback.
@@ -310,6 +322,14 @@ export function HardwareSetupScreen(_router: Router): Screen {
       boardCaps = st.board ?? null;
       configState = channels.length > 0 ? "ok" : "empty";
       render();
+      if (ethCaps()) {
+        try {
+          ethState = await c.getEthernetState();
+        } catch {
+          ethState = null;
+        }
+        render();
+      }
     } catch (err) {
       // The firmware didn't answer get_hardware_config. A RequestTimeoutError
       // (it never replied) is the classic signature of firmware too old to know
@@ -464,7 +484,24 @@ export function HardwareSetupScreen(_router: Router): Screen {
     const parts: HTMLElement[] = [];
     if (channels.length === 0) parts.push(emptyNote());
     else {
-      parts.push(...channels.map(channelCard));
+      parts.push(...channels.filter((x) => !isNet(x)).map(channelCard));
+      const caps = ethCaps();
+      if (caps) {
+        parts.push(
+          ...ethernetGroups({
+            client: connectedClient,
+            caps,
+            netChannels: boardCaps?.netChannels ?? 0,
+            state: ethState,
+            channels: channels.filter(isNet),
+            setLedCount,
+            onState: (st) => {
+              ethState = st;
+              render();
+            },
+          }),
+        );
+      }
       parts.push(layoutGroup());
     }
     // The per-device stride is local (persisted with the device), so surface it
@@ -633,14 +670,14 @@ export function HardwareSetupScreen(_router: Router): Screen {
     const max = boardCaps?.maxLeds ?? 0;
     const perChannel = boardCaps?.maxLedsPerChannel ?? 0;
     const total = totalLeds();
-    const longest = Math.max(0, ...channels.map((x) => x.ledCount || 0));
+    // Only the strips clock out over a wire; network channels don't set the pace.
+    const longest = Math.max(0, ...channels.filter((x) => !isNet(x)).map((x) => x.ledCount || 0));
     const ranges: string[] = [];
     let start = 0;
     for (const x of [...channels].sort((a, b) => a.channel - b.channel)) {
       const n = Math.max(0, x.ledCount || 0);
-      ranges.push(
-        n > 0 ? `channel ${x.channel} = LEDs ${start}–${start + n - 1}` : `channel ${x.channel} not set`,
-      );
+      const label = isNet(x) ? `channel ${x.channel} (WLED)` : `channel ${x.channel}`;
+      ranges.push(n > 0 ? `${label} = LEDs ${start}–${start + n - 1}` : `${label} not set`);
       start += n;
     }
     note.textContent =
@@ -861,6 +898,7 @@ export function HardwareSetupScreen(_router: Router): Screen {
    * select snaps back to the previously-set pin so nothing is committed. */
   function gpioSelect(cfg: HardwareChannel): HTMLElement {
     const cat = catalog();
+    const busy = ethBusy();
     const sel = document.createElement("select");
     sel.className = "hw-select";
     for (const grp of gpioGroupsFor(cat, cfg.gpio)) {
@@ -870,6 +908,10 @@ export function HardwareSetupScreen(_router: Router): Screen {
         const o = document.createElement("option");
         o.value = String(gpio);
         o.textContent = `GPIO ${gpio}`;
+        if (busy.includes(gpio) && gpio !== cfg.gpio) {
+          o.disabled = true;
+          o.textContent = `GPIO ${gpio} (Ethernet)`;
+        }
         if (gpio === cfg.gpio) o.selected = true;
         og.appendChild(o);
       }
@@ -908,6 +950,7 @@ export function HardwareSetupScreen(_router: Router): Screen {
     onUnmount: () => {
       // Leave the strip clean: clear any in-progress color test.
       if (activeTest !== null) void stopTest(activeTest);
+      resetEthernetSection();
     },
   };
 }
