@@ -37,6 +37,9 @@ export interface LhTracking {
   onPose(cb: (p: LhPose) => void): () => void;
   onStations(cb: (s: LhStation[]) => void): () => void;
   onStatus(cb: (s: LhStatus) => void): () => void;
+  /** A device's held buttons changed: `mask` has one bit per held button (libsurvive's
+   * ids: 0 trigger, 1 trackpad, 3 system, 6 menu, 7 grip); 0 = all released. */
+  onButtons(cb: (serial: string, mask: number) => void): () => void;
   stations(): LhStation[];
   /** JSON compatible with lhd's calibration.json. */
   exportCalibration(): string;
