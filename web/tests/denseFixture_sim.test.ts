@@ -25,6 +25,8 @@ import type { CodeParams, DetectionRecord, Intrinsics, Pose, Vec3 } from "@ledma
 import { colorForFrame, DATA_FRAME_OFFSET, dataFrames, decodeCycleSymbols, FRAME_ALL_ON, symbolAt } from "../src/code/gray";
 import { cycleIndexAt, frameIndexAt } from "../src/code/timing";
 import type { DecoderOptions } from "../src/cv/decoder";
+import { AlphabetPlanner, formatPrediction } from "../src/cv/channelQuality";
+import { planSymbolSwitch } from "../src/cv/exposure";
 import { MotionGuide } from "../src/cv/motionGuide";
 import { CvPipeline } from "../src/cv/pipeline";
 import type { TrackerOptions } from "../src/cv/tracker";
@@ -125,6 +127,9 @@ interface Walk {
   /** Sync bloom: on the all-white sync frame, spots closer than this (px)
    * merge into one blob (the white frame saturates and blooms). 0 = off. */
   bloomPx?: number;
+  /** Per-channel colour noise (std, on [0, 1] channels): a dark room's
+   * sensor noise on dim spots. 0 = off. */
+  colorNoise?: number;
 }
 
 interface Result {
@@ -137,6 +142,8 @@ interface Result {
   goodPerLedSec: number;
   /** Frames the motion guide showed its jerky-motion hint on. */
   flaggedFrac: number;
+  /** The pipeline after the run (decoder telemetry, channel measurement). */
+  pipeline: CvPipeline;
 }
 
 const FRAME_MS = 40; // the CV loop's ~25 fps; dense records every 3rd frame
@@ -177,7 +184,9 @@ function run(walk: Walk, tracker: TrackerOptions = {}, decoder: DecoderOptions =
       if (pr.depth <= 0 || pr.u < 0 || pr.u >= IMG_W || pr.v < 0 || pr.v >= IMG_H) continue;
       if (rand() < DROP_P) continue;
       const c = colorForFrame(FIRST_ID + i, frameIdx, PARAMS);
-      blobs.push({ u: pr.u + 0.4 * gauss(), v: pr.v + 0.4 * gauss(), intensity: 0.9, area: 20, r: c[0], g: c[1], b: c[2] });
+      const n = walk.colorNoise ?? 0;
+      const ch = (x: number): number => (n > 0 ? Math.min(1, Math.max(0, x + n * gauss())) : x);
+      blobs.push({ u: pr.u + 0.4 * gauss(), v: pr.v + 0.4 * gauss(), intensity: 0.9, area: 20, r: ch(c[0]), g: ch(c[1]), b: ch(c[2]) });
     }
     mergeClose(blobs, frameIdx === FRAME_ALL_ON ? Math.max(MERGE_PX, walk.bloomPx ?? 0) : MERGE_PX);
     pipeline.step(blobs, { tCaptureMs: t, pose: null, K, imgW: IMG_W, imgH: IMG_H });
@@ -199,6 +208,7 @@ function run(walk: Walk, tracker: TrackerOptions = {}, decoder: DecoderOptions =
     grossFrac: gross / n,
     goodPerLedSec: (records.length - wrong) / leds.length / (DURATION_MS / 1000),
     flaggedFrac: flagged / frames,
+    pipeline,
   };
 }
 
@@ -346,3 +356,51 @@ test("a hop that stitches a valid codeword doesn't put a third LED's id on the m
   assert.ok(!after.ids.includes(c), "the stitched id is never confirmed");
   assert.ok(after.ids.includes(a) && after.ids.includes(b), "both real ids still land");
 });
+
+/** Mean luma of a dark room (the old rule's upgrade gate is 0.12) and of a lit one. */
+const DARK = { meanLuma: 0.04, clipFrac: 0 };
+const LIT = { meanLuma: 0.3, clipFrac: 0 };
+
+test("dark room, dense fixture: the alphabet is no longer stuck at 2 symbols", () => {
+  // Hue code v2 failure mode 3: all five radiolarian captures ran at 2
+  // symbols. The old rule (planSymbolSwitch) needs a lit scene AND a healthy
+  // decode-margin average; a dark room fails the first, and on a dense fixture
+  // the old tracker's hops dragged down the second.
+  const noise = 0.06; // dim spots: per-channel sensor noise
+  const oldTracker = run({ jitterRad: 0.006, colorNoise: noise }, ...BEFORE);
+  const r = run({ jitterRad: 0.006, colorNoise: noise });
+  const q = r.pipeline.decoder.quality;
+  const est = q.estimate();
+  const measured = new AlphabetPlanner().plan(2, est, PARAMS, q.decodeYield(), DURATION_MS);
+  console.log(
+    `dark dense: margin EMA ${r.pipeline.stats.marginEma?.toFixed(2)} (old tracker ${oldTracker.pipeline.stats.marginEma?.toFixed(2)}) · ${formatPrediction(est, PARAMS)} → ${measured}`,
+  );
+  assert.equal(planSymbolSwitch(2, DARK, r.pipeline.stats.marginEma), null, "control: the old rule stays on 2 in the dark");
+  assert.equal(
+    planSymbolSwitch(2, LIT, oldTracker.pipeline.stats.marginEma),
+    null,
+    "control: with the old tracker's hops it stays on 2 even when lit",
+  );
+  assert.equal(measured, 4, "the measured channel supports 4 symbols");
+
+  // And a channel that really is too noisy stays on 2.
+  const murky = run({ jitterRad: 0.006, colorNoise: 0.4 });
+  const mq = murky.pipeline.decoder.quality;
+  assert.equal(new AlphabetPlanner().plan(2, mq.estimate(), PARAMS, mq.decodeYield(), DURATION_MS), null);
+});
+
+test(
+  "sync bloom with staggered sync: identities and yield survive (hue code v2 phase 2)",
+  { todo: "phase 2 (staggered cycles) is not built yet; see docs/design/hue-code-v2.md" },
+  () => {
+    // Failure mode 1: today every LED shows the white sync frame at once, so a
+    // bloom of about a pitch costs every track its blob on the same frame
+    // (12% wrong, 4% gross, a fifth of the bloom-free yield). Phase 2's target
+    // is the bloom-free result. Running the sim with staggered rendering is
+    // part of phase 2; until then this records the gap.
+    const r = run({ jitterRad: 0.006, bloomPx: BLOOM_PX });
+    console.log(`sync bloom, all-in-phase sync: ${fmt(r)}`);
+    assert.ok(r.grossFrac < 0.01, `gross ${r.grossFrac}`);
+    assert.ok(r.goodPerLedSec > 1.5, `yield ${r.goodPerLedSec}`);
+  },
+);
