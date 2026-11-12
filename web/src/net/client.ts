@@ -73,7 +73,13 @@ import {
 } from "./proto";
 import type { ColorBlock } from "@ledmapper/protocol";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
-import { decodeServer, encodeClient, type KioskStatusMessage, type SetKioskConfigMessage } from "./proto";
+import {
+  decodeServer,
+  encodeClient,
+  type KioskStatusMessage,
+  type OscDatagramMessage,
+  type SetKioskConfigMessage,
+} from "./proto";
 import { LiveControl } from "./liveControl";
 import type { CaptureProfileFlat } from "../capture/captureProfile";
 import { normalizeWifiPolicy, wifiPolicyMessage, type WifiPolicy, type WifiPolicyRequest } from "./wifiPolicy";
@@ -364,6 +370,8 @@ export class LedMapperClient {
   // Kiosk mode: visitor activity this client sends (the countdown restarts on it).
   private activitySubs = new Set<() => void>();
   private kioskSubs = new Set<(s: KioskStatusMessage) => void>();
+  // OSC datagrams a player module sent back (ServerMessage.osc, feature "osc").
+  private oscSubs = new Set<(packet: Uint8Array) => void>();
 
   /**
    * A stop_mapping(solveOnHost=false) the device has not acknowledged (it timed
@@ -1240,6 +1248,24 @@ export class LedMapperClient {
     return () => this.kioskSubs.delete(fn);
   }
 
+  /** Send one OSC packet (a message or a bundle) to the player's OSC input, exactly as
+   * if it had arrived on udp/9000 (ClientMessage.osc; firmware advertising the "osc"
+   * feature). Fire-and-forget, latest-wins is the caller's business (an OSC streamer):
+   * false when the socket isn't open. Not kiosk activity: a stream of OSC is a live
+   * show, the same as UDP OSC, which never restarts the kiosk timer either. */
+  sendOsc(packet: Uint8Array): boolean {
+    if (!this.isConnected) return false;
+    return this.send({ type: "osc", packet } as unknown as ClientMessage);
+  }
+
+  /** Subscribe to the OSC datagrams a player module sends back (ServerMessage.osc,
+   * e.g. the P4 tracker's /lh/pose) — only to a session that has sent OSC itself.
+   * Returns an unsubscribe fn. */
+  onOsc(fn: (packet: Uint8Array) => void): () => void {
+    this.oscSubs.add(fn);
+    return () => this.oscSubs.delete(fn);
+  }
+
   /** The motion sensor's live state (docs/design/sensor-core.md). Needs the
    * "sensors" feature. */
   async getSensors(): Promise<SensorStateMessage> {
@@ -1681,6 +1707,11 @@ export class LedMapperClient {
         this.waiters.delete("fps_state");
         fw.resolve(msg);
       }
+      return;
+    }
+    if ((msg.type as string) === "osc") {
+      const packet = (msg as unknown as OscDatagramMessage).packet;
+      for (const fn of this.oscSubs) fn(packet);
       return;
     }
     if ((msg.type as string) === "kiosk_status") {
