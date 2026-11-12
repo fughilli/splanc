@@ -64,6 +64,14 @@ export interface DecoderOptions {
    * stitched by the coasting tracker forge clean codewords.
    */
   minOnSamples?: number;
+  /**
+   * A track's id is only trusted (labelled, recorded) once this many of its
+   * consecutive decodes agree; a disagreeing decode revokes the label until
+   * the new id is confirmed in turn. A tracker swap onto a neighbour, or a
+   * one-off misread, otherwise stamps a wrong id on a position — and in the
+   * dense VIO mode on every frame until the next cycle. 1 = trust the first.
+   */
+  confirmCycles?: number;
 }
 
 export interface DecodeStats {
@@ -92,6 +100,8 @@ export interface DecodeStats {
   rejectedPoseGap: number;
   /** Records dropped: another track decoded the same id this cycle, brighter. */
   rejectedDuplicate: number;
+  /** Decodes held back: the track's id not yet confirmed (confirmCycles). */
+  rejectedUnconfirmed: number;
   /**
    * Accepted decodes that CHANGED an already-labeled track's id. One physical
    * blob can only be one LED, so every flip means one of the two decodes was
@@ -114,6 +124,9 @@ interface GlobalSample {
   greenCount: number;
 }
 
+/** Cap on records a track holds while its id awaits confirmation. */
+export const MAX_HELD = 64;
+
 /** EMA factor for the margin statistic (~10 cycles of memory). */
 const MARGIN_EMA_BLEND = 0.2;
 
@@ -124,6 +137,7 @@ export class Decoder {
   private readonly alignStep: number;
   private readonly minConfidence: number;
   private readonly minOnSamples: number;
+  private readonly confirmCycles: number;
   private readonly nDataFrames: number;
 
   private lastCompletedCycle: number | null = null;
@@ -145,6 +159,7 @@ export class Decoder {
     rejectedSupport: 0,
     rejectedPoseGap: 0,
     rejectedDuplicate: 0,
+    rejectedUnconfirmed: 0,
     idFlips: 0,
     marginEma: null,
   };
@@ -161,6 +176,7 @@ export class Decoder {
     this.alignStep = (opts.alignStepFrac ?? 0.1) * params.bitPeriodMs;
     this.minConfidence = opts.minConfidence ?? 0.4;
     this.minOnSamples = opts.minOnSamples ?? 3;
+    this.confirmCycles = Math.max(1, opts.confirmCycles ?? 2);
     this.nDataFrames = dataFrames(params);
   }
 
@@ -196,7 +212,7 @@ export class Decoder {
     // so same-id collisions are expected in shiny scenes — the direct
     // sighting is (almost always) the brightest. Without this, reflections
     // outvote the real LED in the solver.
-    const bestById = new Map<number, { rec: DetectionRecord; intensity: number }>();
+    const bestById = new Map<number, { rec: DetectionRecord; intensity: number; released: DetectionRecord[] }>();
     let decoded = 0;
     for (const track of tracks) {
       const hit = this.decodeTrackCycle(track, target);
@@ -213,6 +229,8 @@ export class Decoder {
     }
     const records: DetectionRecord[] = [...bestById.values()].map((h) => h.rec);
     this.stats.rejectedDuplicate += decoded - records.length;
+    // The winners' held (pre-confirmation) records go out with them.
+    for (const h of bestById.values()) records.push(...h.released);
     this.stats.cyclesCompleted++;
     this.stats.recordsEmitted += records.length;
     this.stats.alignShiftMs = this.alignShift;
@@ -322,7 +340,7 @@ export class Decoder {
   private decodeTrackCycle(
     track: Track,
     cycleIndex: number,
-  ): { rec: DetectionRecord; intensity: number } | null {
+  ): { rec: DetectionRecord; intensity: number; released: DetectionRecord[] } | null {
     const p = this.params;
 
     // Bucket this cycle's samples into frame windows with centrality
@@ -471,11 +489,30 @@ export class Decoder {
       return null;
     }
 
-    this.stats.uniqueIds.add(ledId);
-    if (track.ledId !== null && track.ledId !== ledId) this.stats.idFlips++;
-    // Label the track for live UI feedback (id overlays in the camera view).
-    track.ledId = ledId;
-    track.ledConfidence = confidence;
+    // Confirmation: consecutive agreeing decodes of THIS track. A
+    // disagreement revokes the current label at once (one of the two decodes
+    // is wrong, or the tracker swapped blobs) — better no records for a cycle
+    // than a neighbour's position under this id.
+    // Records decoded while the id is pending are HELD, not dropped: they are
+    // released with the confirming decode, or discarded if it disagrees.
+    if (track.pendingId === ledId) track.pendingCount++;
+    else {
+      track.pendingId = ledId;
+      track.pendingCount = 1;
+      track.held.length = 0;
+      track.heldDense.length = 0;
+    }
+    if (track.ledId !== null && track.ledId !== ledId) {
+      this.stats.idFlips++;
+      track.ledId = null;
+    }
+    const confirmed = track.pendingCount >= this.confirmCycles;
+    if (confirmed) {
+      this.stats.uniqueIds.add(ledId);
+      // Label the track for live UI feedback (id overlays in the camera view).
+      track.ledId = ledId;
+      track.ledConfidence = confidence;
+    }
 
     // LATENCY-CORRECTED pose pairing: the anchor's pixels were EXPOSED
     // ~alignShift ms before the frame that delivered them (alignShift is the
@@ -503,19 +540,23 @@ export class Decoder {
         return null;
       }
     }
-    return {
-      rec: {
-        ledId,
-        tCaptureMs: anchorSample.tCaptureMs,
-        u: anchorSample.u,
-        v: anchorSample.v,
-        imgW: meta.imgW,
-        imgH: meta.imgH,
-        K: meta.K,
-        pose: meta.pose,
-        confidence,
-      },
-      intensity: anchorSample.intensity,
+    const rec: DetectionRecord = {
+      ledId,
+      tCaptureMs: anchorSample.tCaptureMs,
+      u: anchorSample.u,
+      v: anchorSample.v,
+      imgW: meta.imgW,
+      imgH: meta.imgH,
+      K: meta.K,
+      pose: meta.pose,
+      confidence,
     };
+    if (!confirmed) {
+      this.stats.rejectedUnconfirmed++;
+      if (track.held.length < MAX_HELD) track.held.push(rec);
+      return null;
+    }
+    const released = track.held.splice(0);
+    return { rec, intensity: anchorSample.intensity, released };
   }
 }

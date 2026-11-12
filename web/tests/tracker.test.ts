@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Intrinsics, Pose, Vec3 } from "@ledmapper/protocol";
-import { Tracker } from "../src/cv/tracker";
+import { type Track, Tracker } from "../src/cv/tracker";
 import type { Blob, FrameMeta } from "../src/cv/types";
 import { project } from "../src/geom/pinhole";
 
@@ -158,4 +158,62 @@ test("pruneBefore drops old samples only", () => {
   t.pruneBefore(450);
   assert.equal(t.samples.length, 5);
   assert.equal(t.samples[0]!.tCaptureMs, 500);
+});
+
+/** A 6×6 grid of blobs `pitch` px apart, offset by (du, dv), minus `skip`. */
+function grid(pitch: number, du = 0, dv = 0, skip = -1): Blob[] {
+  const out: Blob[] = [];
+  for (let i = 0; i < 36; i++) {
+    if (i === skip) continue;
+    out.push(blob(100 + (i % 6) * pitch + du, 100 + Math.floor(i / 6) * pitch + dv));
+  }
+  return out;
+}
+
+test("dense LEDs: a track whose blob drops out coasts instead of taking a stray blob", () => {
+  // 13 px pitch (radiolarian panels). An LED's blob drops out the same frame a
+  // stray blob (a reflection, a merge) appears half a pitch away. The old
+  // fixed 40 px gate hands the stray to the track — a wrong position under
+  // that LED's id; the adaptive gate (a fraction of the local spacing) must
+  // let the track coast instead, and the stray must not fork a duplicate.
+  const run = (opts: ConstructorParameters<typeof Tracker>[0]): { tr: Tracker; victim: Track } => {
+    const tr = new Tracker(opts);
+    for (let f = 0; f < 3; f++) tr.step(grid(13), meta(f * 40));
+    const victim = tr.tracks[14]!; // interior LED at (126, 126)
+    tr.step([...grid(13, 0, 0, 14), blob(126 + 6.5, 126)], meta(120));
+    return { tr, victim };
+  };
+  const now = run({});
+  assert.equal(now.victim.samples.at(-1)!.on, false, "the victim coasts");
+  assert.ok(Math.hypot(now.victim.u - 126, now.victim.v - 126) < 1, "at its own position");
+  assert.equal(now.tr.tracks.length, 36, "no duplicate founded at the stray");
+
+  const old = run({ gatePx: 40, gateSpacingFrac: 0, ambiguityRatio: 1, globalMotion: false, localConsistencyFrac: 0 });
+  assert.equal(old.victim.samples.at(-1)!.on, true, "control: the fixed gate takes the stray");
+});
+
+test("dense LEDs: a sudden jump of the whole image keeps every identity", () => {
+  // A wrist snap: the image jumps 9 px (0.7 pitch) in one frame with no
+  // velocity to predict it. Without the global shift, each track would be
+  // nearest a neighbour or nothing; with it, all 36 re-acquire their own LED.
+  const tr = new Tracker();
+  for (let f = 0; f < 3; f++) tr.step(grid(13), meta(f * 40));
+  const ids = tr.tracks.map((t) => t.id);
+  tr.step(grid(13, 9, 3), meta(120));
+  assert.ok(tr.lastStats.shiftPx > 8, `shift ${tr.lastStats.shiftPx}`);
+  assert.deepEqual(tr.tracks.map((t) => t.id), ids, "same tracks, no forks");
+  for (let i = 0; i < 36; i++) {
+    const t = tr.tracks[i]!;
+    assert.ok(t.samples.at(-1)!.on);
+    assert.ok(Math.hypot(t.u - (100 + (i % 6) * 13 + 9), t.v - (100 + Math.floor(i / 6) * 13 + 3)) < 0.5, `track ${i}`);
+  }
+});
+
+test("a one-pitch jump on a periodic grid is not mistaken for no motion's alias", () => {
+  // On a periodic grid a shift of exactly one pitch scores almost as well as
+  // zero. With nothing moving, the tracker must not adopt it.
+  const tr = new Tracker();
+  for (let f = 0; f < 6; f++) tr.step(grid(13), meta(f * 40));
+  assert.equal(tr.lastStats.shiftPx < 1, true, `shift ${tr.lastStats.shiftPx}`);
+  assert.equal(tr.tracks.length, 36);
 });

@@ -27,6 +27,7 @@ import {
 } from "../../cv/exposure";
 import { CapturePerf, formatPerfLine, formatPhaseLine } from "../../cv/capturePerf";
 import { LinkTelemetry, type LinkTelemetrySnapshot } from "../../cv/linkTelemetry";
+import { JERKY_MOTION_HINT, MotionGuide } from "../../cv/motionGuide";
 import { CvPipeline } from "../../cv/pipeline";
 import { DetectorGL } from "../../cv/detect";
 import {
@@ -1325,6 +1326,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         return pl;
       };
       let pipeline = makePipeline(params, epoch);
+      // Jerky-motion hint (cv/motionGuide.ts): while the image moves more than
+      // the tracker can predict, the guide line asks for SMOOTHER motion —
+      // never less of it (IMU scale needs the movement) — and the line it
+      // replaced comes back once the motion settles.
+      const motionGuide = new MotionGuide();
+      let guideBeforeJerk: string | null = null;
       // Hand the synthetic scene the negotiated code-book so it renders the exact
       // hue-code + frame timing the decoder expects (matches the device side).
       syntheticSource?.setCode(params, epoch, (t) => c.clock.toServerTime(t));
@@ -1470,6 +1477,17 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             imgW: f.imgW,
             imgH: f.imgH,
           });
+          if (motionGuide.update(pipeline.tracker.lastStats, f.tCaptureMs)) {
+            // Re-asserted every frame: other guidance (coverage, stages) may
+            // have written the line since; that text is what comes back.
+            if (guideEl.textContent !== JERKY_MOTION_HINT) {
+              guideBeforeJerk = guideEl.textContent ?? "";
+              guideEl.textContent = JERKY_MOTION_HINT;
+            }
+          } else if (guideBeforeJerk !== null) {
+            if (guideEl.textContent === JERKY_MOTION_HINT) guideEl.textContent = guideBeforeJerk;
+            guideBeforeJerk = null;
+          }
           const tDecoded = performance.now();
           focalPx = f.K[0];
           let overlayMs = 0;
@@ -1526,6 +1544,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             hudStats.textContent =
               `decoded ${s.uniqueIds.size}/${params.ledCount} ids · ${s.tracks} tracks · ` +
               `${blobs.length} blobs · align ${s.alignShiftMs.toFixed(0)} ms · ` +
+              `jerk ${motionGuide.pitchesPerFrame?.toFixed(2) ?? "–"} pitch/frame · ` +
               `${c.pendingBatchCount} unsent${liveSolvedText}\n` +
               servoLine +
               `\n${formatPerfLine(ps)}`;

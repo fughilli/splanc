@@ -50,6 +50,7 @@ export const DECODE_COUNTERS = [
   "rejectedSupport",
   "rejectedPoseGap",
   "rejectedDuplicate",
+  "rejectedUnconfirmed",
   "idFlips",
 ] as const;
 export type DecodeCounter = (typeof DECODE_COUNTERS)[number];

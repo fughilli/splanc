@@ -10,7 +10,7 @@
 
 import type { CodeParams, DetectionRecord } from "@ledmapper/protocol";
 import { cycleMs } from "../code/timing";
-import { Decoder, type DecoderOptions } from "./decoder";
+import { Decoder, type DecoderOptions, MAX_HELD } from "./decoder";
 import { Tracker, type TrackerOptions } from "./tracker";
 import type { Blob, FrameMeta } from "./types";
 
@@ -113,10 +113,33 @@ export class CvPipeline {
       // reflection dedup at frame granularity.
       if (this.frameIndex % this.denseStride === 0) {
         const best = new Map<number, { rec: DetectionRecord; intensity: number }>();
+        const released: DetectionRecord[] = [];
         for (let i = 0; i < blobs.length; i++) {
           const tr = this.tracker.lastAssignment[i] ?? null;
-          if (tr === null || tr.ledId === null) continue;
+          if (tr === null) continue;
           const b = blobs[i]!;
+          if (tr.ledId === null) {
+            // Id decoded but not yet confirmed: hold this sighting under it
+            // (the decoder releases or discards the track's held records).
+            if (tr.pendingId !== null && tr.heldDense.length < MAX_HELD) {
+              tr.heldDense.push({
+                ledId: tr.pendingId,
+                tCaptureMs: meta.tCaptureMs,
+                u: b.u,
+                v: b.v,
+                imgW: meta.imgW,
+                imgH: meta.imgH,
+                K: meta.K,
+                pose: meta.pose,
+                confidence: tr.ledConfidence ?? 0.5,
+              });
+            }
+            continue;
+          }
+          // Confirmed: anything still held for this id goes out now.
+          if (tr.heldDense.length > 0) {
+            for (const h of tr.heldDense.splice(0)) if (h.ledId === tr.ledId) released.push(h);
+          }
           const prev = best.get(tr.ledId);
           if (prev !== undefined && prev.intensity >= b.intensity) continue;
           best.set(tr.ledId, {
@@ -134,7 +157,8 @@ export class CvPipeline {
             },
           });
         }
-        if (best.size > 0) this.cb?.([...best.values()].map((e) => e.rec));
+        const out = [...released, ...[...best.values()].map((e) => e.rec)];
+        if (out.length > 0) this.cb?.(out);
       }
       this.frameIndex++;
     } else if (records.length > 0) {
