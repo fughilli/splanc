@@ -9,6 +9,7 @@
 #   /pulse/       the effects Sim wasm     (//firmware/pulse:pulse_web)
 #   /fx-compiler/ the effect compiler wasm (//fx_compiler:fx_compiler_web)
 #   /fx-vm/       the effect preview VM     (//firmware/fx_vm:fx_vm_web)
+#   /lh-wasm/     lighthouse (Vive) tracking (//web/lh_wasm:lh_wasm_web)
 #   /docs/        the developer docs site   (//docs:build, when staged in)
 #
 # Sourced by both deploy_cloudflare.sh (Cloudflare Pages) and stage_site.sh
@@ -33,6 +34,7 @@ stage_site() {
   mkdir -p "$out/pulse" && cp -RL firmware/pulse/pulse_web/. "$out/pulse/"
   mkdir -p "$out/fx-compiler" && cp -RL fx_compiler/fx_compiler_web/. "$out/fx-compiler/"
   mkdir -p "$out/fx-vm" && cp -RL firmware/fx_vm/fx_vm_web/. "$out/fx-vm/"
+  mkdir -p "$out/lh-wasm" && cp -RL web/lh_wasm/lh_wasm_web/. "$out/lh-wasm/"
   # The generated static user guide (FUG-103), served at /user-guide/. Generated
   # from the in-app guide catalog and pinned fresh by //web:user_guide_freshness.
   # index.html + any dedicated flow sub-pages (effect-editor.html, …).
