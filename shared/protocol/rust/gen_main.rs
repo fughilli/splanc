@@ -63,6 +63,15 @@ fn main() -> std::io::Result<()> {
         Config::new().max_bytes(if firmware { 8 } else { 1024 }),
     );
 
+    // OSC over the session (feature "osc"): one UDP-sized OSC packet. On FIRMWARE
+    // neither direction goes through the generated bindings (ffi.rs reads
+    // ClientMessage.osc in place and writes ServerMessage.osc zero-copy), so the
+    // field is a stub there; the host profile holds a whole Ethernet-MTU datagram.
+    g.configure(
+        ".ledmapper.v1.OscDatagram.packet",
+        Config::new().max_bytes(if firmware { 8 } else { 1472 }),
+    );
+
     // Sharded upload window. On firmware the player NEVER decodes UploadChunk
     // through the generated bindings — the transport intercepts the arm and
     // hand-walks the payload straight into the reassembly buffer (like the

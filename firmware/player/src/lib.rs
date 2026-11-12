@@ -675,13 +675,15 @@ impl Player {
             | CMsg::GetFxSnapshot(_)
             | CMsg::DebugFxLed(_) => Some(error("unsupported", "handled by the firmware, not the player core")),
             // Fire-and-forget: Pi-profile telemetry, set_texture (a video frame),
-            // and set_jit (the JIT debug/bench toggle) — all handled by the fx
-            // layer before they reach here. Dropped.
+            // set_jit (the JIT debug/bench toggle) and osc (an OSC datagram over the
+            // session, feature "osc") — all handled by the fx layer / the firmware
+            // before they reach here. Dropped.
             CMsg::Detections(_)
             | CMsg::ImuBatch(_)
             | CMsg::ExposureReport(_)
             | CMsg::SetTexture(_)
-            | CMsg::SetJit(_) => None,
+            | CMsg::SetJit(_)
+            | CMsg::Osc(_) => None,
             // Pi-only REQUEST arms: bounded unsupported error.
             CMsg::GetStatus(_) | CMsg::GetLiveMap(_) | CMsg::GetSolveStatus(_) => {
                 Some(error("unsupported", "not available on this player profile"))
