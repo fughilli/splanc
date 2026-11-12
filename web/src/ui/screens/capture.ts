@@ -22,11 +22,11 @@ import {
   planExposureServo,
   planLedBrightness,
   planReconfigure,
-  planSymbolSwitch,
   recommendConfig,
 } from "../../cv/exposure";
 import { CapturePerf, formatPerfLine, formatPhaseLine } from "../../cv/capturePerf";
 import { LinkTelemetry, type LinkTelemetrySnapshot } from "../../cv/linkTelemetry";
+import { AlphabetPlanner, ChannelQuality, channelSnapshot, formatPrediction } from "../../cv/channelQuality";
 import { JERKY_MOTION_HINT, MotionGuide } from "../../cv/motionGuide";
 import { CvPipeline } from "../../cv/pipeline";
 import { DetectorGL } from "../../cv/detect";
@@ -1312,8 +1312,16 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       }
       // Every LED id decoded so far this run (drives the per-channel stage switch).
       const decodedIds = new Set<number>();
+      // Data-aided channel measurement (cv/channelQuality.ts): shared across
+      // pipeline rebuilds, since the hue-noise estimate doesn't depend on the
+      // alphabet. It drives the alphabet both ways (no scene-luma gate).
+      const channelQuality = new ChannelQuality();
+      const alphabetPlanner = new AlphabetPlanner([2, 4]);
       const makePipeline = (p: CodeParams, e: number): CvPipeline => {
-        const pl = new CvPipeline(p, e, (t) => c.clock.toServerTime(t), { denseRecords: true });
+        const pl = new CvPipeline(p, e, (t) => c.clock.toServerTime(t), {
+          denseRecords: true,
+          decoder: { quality: channelQuality },
+        });
         pl.onDetections((records: DetectionRecord[]) => {
           for (const r of records) decodedIds.add(r.ledId);
           // Embedded players discard capture telemetry and have no host solver.
@@ -1396,6 +1404,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           frameCount,
           truncatedFrames,
           perf: loopPerf.snapshot(),
+          channel: channelSnapshot(channelQuality, params),
           fixture: {
             deviceId: activeId,
             name: w?.deviceName || (activeId ? deviceStore.get(activeId)?.label ?? null : null),
@@ -1547,6 +1556,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
               `jerk ${motionGuide.pitchesPerFrame?.toFixed(2) ?? "–"} pitch/frame · ` +
               `${c.pendingBatchCount} unsent${liveSolvedText}\n` +
               servoLine +
+              `\n${formatPrediction(channelQuality.estimate(), params)}` +
               `\n${formatPerfLine(ps)}`;
             // Live count chip reads observations · solved, so the user sees more
             // recording only helps (design doc §4.2).
@@ -1804,6 +1814,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           .then((ps) => {
             if (!capturing || !ps.active || ps.patternClockEpoch === null) return;
             onApplied?.();
+            if (ps.codeParams.symbols !== params.symbols) channelQuality.resetYield();
             params = ps.codeParams;
             epoch = ps.patternClockEpoch;
             pipeline = makePipeline(params, epoch);
@@ -1988,11 +1999,13 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         const wantBit = forcedBitMs === null ? planReconfigure(params.bitPeriodMs, report.frameIntervalMs) : null;
         const wantSym =
           forcedSymbols === null
-            ? planSymbolSwitch(
-                params.symbols as 2 | 4,
-                { meanLuma: report.meanLuma, clipFrac: report.clipFrac },
-                pipeline.stats.marginEma,
-              )
+            ? (alphabetPlanner.plan(
+                params.symbols,
+                channelQuality.estimate(),
+                params,
+                channelQuality.decodeYield(),
+                performance.now(),
+              ) as 2 | 4 | null)
             : null;
         const pop = monitor.blobPopulation();
         if (servoExposure && !manualMode && pop !== null) {
