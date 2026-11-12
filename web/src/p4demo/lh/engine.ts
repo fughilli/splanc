@@ -152,8 +152,9 @@ export class WorkerEngine implements LhEngine {
   }
 
   send(method: LhMethod, ...args: unknown[]): void {
-    // Typed arrays are copied (structured clone); a report batch is small.
-    this.worker.postMessage({ method, args });
+    // A report batch is built for this message alone: hand its buffer over.
+    const batch = method === "reports" && args[0] instanceof Uint8Array ? [args[0].buffer as ArrayBuffer] : [];
+    this.worker.postMessage({ method, args }, batch);
   }
 
   onEvents(cb: (events: LhEvent[]) => void): void {
