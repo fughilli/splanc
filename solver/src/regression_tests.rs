@@ -493,3 +493,69 @@ fn outlier_rounds_rank_degeneracy_before_residual() {
         describe(&diag.assessment)
     );
 }
+
+// ---------------------------------------------------------------------------
+// The radiolarian captures (2026-11-12, customer data, not in the repo): full
+// orbits of a closed dodecahedral fixture whose phone delivered DeviceMotion
+// at ~15 Hz with 20-35 % of the capture inside gaps of up to 0.6 s. The
+// observations fit, but the inertial re-anchor shrank the map until the
+// camera path sat inside the fixture (scale collapse). #479's scale floor
+// (minCameraDistM) is the fix; this synthetic stands in for those captures.
+// ---------------------------------------------------------------------------
+
+/// A slow, nearly unexcited orbit (3 rad over 60 s at 35 cm, 5 mm of bob,
+/// 3 mm of hand sway) of a 228-LED dodecahedron (19 LEDs per face, rings
+/// 13.5 mm apart, back faces hidden), with 2 % decode swaps. `starved`: the
+/// IMU arrives at 15 Hz with 30 % of the capture inside gaps up to 0.6 s,
+/// as on the radiolarian captures that collapsed; otherwise a healthy 60 Hz.
+/// Seed 54 found by sweeping seeds 1-60 for a capture whose healthy-IMU solve
+/// is metric while its starved one collapses with a clean fit, as 01-26 did
+/// (a few others collapse with a wrecked fit as well).
+fn radiolarian_orbit(starved: bool) -> crate::scenario::Scenario {
+    let (imu_hz, gaps) = if starved { (15, 0.3) } else { (60, 0.0) };
+    generate(&spec(json!({
+        "fixture": "dodecahedron", "ledCount": 228, "pitch": 0.0135,
+        "radius": 0.35, "sweep": 3.0, "bob": 0.005, "sway": 0.003,
+        "duration": 60, "frameHz": 4, "dropP": 0.3, "swapP": 0.02,
+        "imuHz": imu_hz, "imuGapFrac": gaps, "imuGapMaxS": 0.6, "seed": 54,
+    })))
+}
+
+#[test]
+fn a_starved_imu_on_a_closed_fixture_no_longer_collapses_the_map() {
+    // Control: with a healthy IMU the same orbit solves metrically.
+    let healthy = radiolarian_orbit(false);
+    let (map, diag) = solve(&with_options(&healthy.problem, json!({"minCameraDistM": 0})));
+    assert!(
+        !diag.assessment.degenerate,
+        "healthy IMU: {}",
+        describe(&diag.assessment)
+    );
+    let size = size_vs_truth(&map, &healthy.truth);
+    assert!((0.6..1.5).contains(&size), "healthy IMU: size {size:.3}");
+
+    // The failure: starve the IMU and the re-anchor shrinks the map until the
+    // camera path is inside the fixture (the solver before the floor).
+    let starved = radiolarian_orbit(true);
+    let (_, before) = solve(&with_options(&starved.problem, json!({"minCameraDistM": 0})));
+    assert_eq!(
+        before.assessment.reasons,
+        vec!["scale-collapse".to_string()],
+        "expected the radiolarian collapse: {}",
+        describe(&before.assessment)
+    );
+    let cam = before.assessment.geometry.median_camera_dist_m.unwrap();
+    assert!(cam < 0.15, "camera path {cam:.3} m");
+
+    // Fixed: the default scale floor keeps it a usable map, not shrunk away.
+    let (map, diag) = solve(&starved.problem);
+    assert!(
+        !diag.assessment.degenerate && diag.assessment.measured >= 140,
+        "{}",
+        describe(&diag.assessment)
+    );
+    let cam = diag.assessment.geometry.median_camera_dist_m.unwrap();
+    assert!(cam >= 0.2 - 1e-6, "camera path {cam:.3} m");
+    let size = size_vs_truth(&map, &starved.truth);
+    assert!(size > 0.5, "size {size:.3}");
+}
