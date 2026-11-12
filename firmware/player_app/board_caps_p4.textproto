@@ -35,7 +35,7 @@ gpio_pins { gpio: 8 safety: PIN_SAFETY_CAUTION note: "I2C SCL: codec, DSI and CS
 
 gpio_pins { gpio: 24 safety: PIN_SAFETY_AVOID note: "USB-Serial-JTAG D- (header pin 19)." }
 gpio_pins { gpio: 25 safety: PIN_SAFETY_AVOID note: "USB-Serial-JTAG D+ (header pin 20)." }
-gpio_pins { gpio: 4 safety: PIN_SAFETY_AVOID note: "Jumpered to the ESP32-C6's IO9 (BOOT) so the P4 can reflash the C6." }
+gpio_pins { gpio: 4 safety: PIN_SAFETY_AVOID note: "C6 IO9 (BOOT) jumper, J2 pad 4: the P4 reflashes the C6." }
 gpio_pins { gpio: 6 safety: PIN_SAFETY_AVOID note: "Wired to the ESP32-C6's IO2." }
 gpio_pins { gpio: 14 safety: PIN_SAFETY_AVOID note: "SDIO D0 to the on-board ESP32-C6." }
 gpio_pins { gpio: 15 safety: PIN_SAFETY_AVOID note: "SDIO D1 to the on-board ESP32-C6." }

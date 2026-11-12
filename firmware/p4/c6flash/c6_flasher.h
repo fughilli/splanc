@@ -18,7 +18,7 @@ struct C6Pins {
   int clk, cmd, d0, d1, d2, d3;
 };
 
-// The Waveshare ESP32-P4-WIFI6 (the C6's IO9 / BOOT jumpered to P4 GPIO4).
+// The Waveshare ESP32-P4-WIFI6 (the C6's IO9 / BOOT, pad 4 of J2 next to the C6, jumpered to P4 GPIO4).
 constexpr C6Pins kWaveshareP4Wifi6 = {54, 4, 18, 19, 14, 15, 16, 17};
 
 // A c6_bundle.py blob: its images and the app's ELF SHA-256.

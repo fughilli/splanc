@@ -871,8 +871,10 @@ commands (FLASH_BEGIN / DATA / END, SPI_FLASH_MD5) over the SDIO packet register
 is ours (`firmware/p4/c6flash`); `esp-serial-flasher` was read as the reference, not linked.
 The P4 image carries the C6 images, so one P4 release pins its C6 build. The board needs the
 C6's IO9 (BOOT) on a P4 GPIO; the Waveshare ESP32-P4-WIFI6 needs a jumper from the C6's IO9 (BOOT)
-to P4 GPIO4. (An older note here said "header H4 pin 1"; on the dev kit H4 is the PoE header,
-which can carry PoE voltage: never jumper it to a GPIO.) EN is already GPIO54.
+to P4 GPIO4. On the dev kit the C6's IO9 is pad 4 of J2, the 4-pad array next to the C6 (found
+in bring-up, 2026-11-11): wire J2 pad 4 to GPIO4 on the 40-pin header. (An older note here said
+"header H4 pin 1"; on the dev kit H4 is the PoE header, which can carry PoE voltage: never jumper
+it to a GPIO.) EN is already GPIO54.
 
 TODO: replace the stub with our own chain loader (a bare-metal C6 RAM program that takes the
 image through the SDIO packet registers and writes it with the C6 ROM's flash functions), so the
