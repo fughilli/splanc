@@ -229,6 +229,12 @@ ts_project(
 # display-scaling suite scans the shell stylesheet and the video-texture panel's
 # inline CSS for fixed px font sizes (PR-1).
 _TEST_SOURCE_DATA = {
+    # A recorded Watchman session replayed through the Node build of the lighthouse
+    # wasm (the reference lhd output, testdata/lh/session_lhd.json, is imported).
+    "tests/lhReplay.test.ts": [
+        "tests/testdata/lh/session.rec.gz",
+        "//web/lh_wasm:lh_wasm_node_pkg_opt",
+    ],
     "tests/displayScaling.test.ts": [
         "src/effects/editor/videoTexture.ts",
         "src/ui/app/app.css",

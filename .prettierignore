@@ -20,3 +20,7 @@ pi/hitl/observability/fxbench/data/
 # minified by run_capacity.py backfill. Data, not source: pretty-printing it would
 # push it past the 600 KB large-file gate.
 pi/hitl/observability/capacity/data/
+
+# lhd's poses on a recorded Vive session (web/tests/lhReplay.test.ts), minified: data,
+# not source; pretty-printed it'd pass the 600 KB large-file gate.
+web/tests/testdata/lh/
