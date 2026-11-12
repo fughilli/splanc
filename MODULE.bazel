@@ -266,6 +266,47 @@ host_crate.spec(
 host_crate.from_specs(name = "host_crates")
 use_repo(host_crate, "host_crates")
 
+# The lighthouse no_std crates' own deps, for building lh_kernel / lh_protocol /
+# lh_device for the BROWSER (//web/lh_wasm: Vive tracking over WebHID). @lighthouse's
+# lh_nostd_crates has no wasm32 triple (and, as a non-root universe, can't be repinned
+# from here), so //web/lh_wasm compiles the pinned @lighthouse sources against these:
+# the same versions and features as its nostd-Cargo.lock. ISOLATED so serde_json's
+# alloc-only build doesn't unify with the main universe's std one. Drop this once
+# fughilli/lighthouse lists wasm32-unknown-unknown itself.
+lh_wasm_crate = use_extension(
+    "@rules_rust//crate_universe:extensions.bzl",
+    "crate",
+    isolate = True,
+)
+lh_wasm_crate.spec(
+    default_features = False,
+    package = "libm",
+    version = "=0.2.16",
+)
+lh_wasm_crate.spec(
+    default_features = False,
+    features = ["alloc"],
+    package = "serde_json",
+    version = "=1.0.154",
+)
+lh_wasm_crate.spec(
+    default_features = False,
+    features = ["with-alloc"],
+    package = "miniz_oxide",
+    version = "=0.9.1",
+)
+lh_wasm_crate.from_specs(
+    name = "lh_wasm_crates",
+    supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "wasm32-unknown-unknown",
+    ],
+)
+use_repo(lh_wasm_crate, "lh_wasm_crates")
+
 # Pi player (//pi/player_rs) std deps — the WS+TLS server + Linux SPI + pure-Rust
 # crypto. ISOLATED universe (like host_crates): tungstenite pulls byteorder WITH
 # std (it uses std::io via ReadBytesExt), and crate_universe unifies features per
