@@ -142,7 +142,9 @@ struct Dev {
     clock_us: i64,
     health: TrackHealth,
     last_health: Health,
-    last_report_us: i64,
+    /// Arrival of the last report; None until the first `tick` after the handshake (the
+    /// host's clock isn't known here before then).
+    last_report_us: Option<i64>,
     buttons: Option<u32>,
 }
 
@@ -248,7 +250,7 @@ impl Session {
             clock_us: 0,
             health: TrackHealth::default(),
             last_health: Health::Lost,
-            last_report_us: 0,
+            last_report_us: None,
             buttons: None,
         });
         self.out.push(format!("{{\"type\":\"usb\",\"handle\":{},\"product\":{},\"state\":\"added\"}}", handle, json_str(kind.name)));
@@ -350,7 +352,7 @@ impl Session {
                 d.clock_us = 0;
                 d.health = TrackHealth::default();
                 d.buttons = None;
-                d.last_report_us = 0;
+                d.last_report_us = None;
                 self.out.push(format!(
                     "{{\"type\":\"device\",\"handle\":{},\"serial\":{},\"model\":{},\"sensors\":{},\"state\":\"connected\"}}",
                     handle,
@@ -376,7 +378,7 @@ impl Session {
         let host_clock = self.opts.host_clock;
         let stream = self.opts.host_clock && self.opts.stream;
         let d = &mut self.devs[i];
-        d.last_report_us = host_us;
+        d.last_report_us = Some(host_us);
         let Some(dec) = d.dec.as_mut() else { return };
         let passed = |c: &HostClock, us: i64| if stream { c.now(us) } else { c.passed(us) };
         if host_clock && d.clock.mapped() {
@@ -416,7 +418,7 @@ impl Session {
                         self.out.push(format!("{{\"type\":\"buttons\",\"serial\":{},\"buttons\":{}}}", json_str(&dec.config.serial), b));
                     }
                 }
-                Output::TurnedOff => d.last_report_us = i64::MIN / 2,
+                Output::TurnedOff => d.last_report_us = Some(i64::MIN / 2),
             }
         }
         if host_clock {
@@ -438,7 +440,15 @@ impl Session {
         let mut redo = Vec::new();
         for i in 0..self.devs.len() {
             let d = &mut self.devs[i];
-            if d.dec.is_some() && d.kind.wireless() && host_us - d.last_report_us > QUIET_US {
+            if d.dec.is_none() || !d.kind.wireless() {
+                continue;
+            }
+            let Some(last) = d.last_report_us else {
+                // Configured, no report yet: the quiet second starts now.
+                d.last_report_us = Some(host_us);
+                continue;
+            };
+            if host_us - last > QUIET_US {
                 let dec = d.dec.take().unwrap();
                 self.kernel.push(Input::DeviceRemoved { dev: dec.dev }, &mut self.events);
                 d.health.lost();
@@ -779,6 +789,40 @@ mod tests {
         assert_eq!(steps, 6); // five NAKed tries, then the failure
         // From scratch: the first GET again, no delay.
         assert_eq!(s.handshake(h), Step::Pending { sets: vec![], delay_ms: 0, get: 0x10, len: 64 });
+    }
+
+    /// Hands the handshake the fake dongle's answers until it's configured.
+    fn configure(s: &mut Session, h: u32) {
+        let (start, chunks) = device_answers();
+        let mut chunk = chunks.into_iter();
+        loop {
+            match s.handshake(h) {
+                Step::Pending { get, .. } => {
+                    let a = match get {
+                        commands::GET_CONFIG_START => Answer::Ok(start.clone()),
+                        commands::GET_CONFIG_CHUNK => Answer::Ok(chunk.next().unwrap()),
+                        _ => Answer::Ok(vec![get, 1, 1]),
+                    };
+                    s.handshake_answer(h, get, a);
+                }
+                Step::Ready { .. } => return,
+                Step::Failed { why } => panic!("{}", why),
+            }
+        }
+    }
+
+    #[test]
+    fn a_quiet_dongle_is_handshaken_again() {
+        let mut s = Session::new(Options { host_clock: true, stream: true });
+        let h = s.add_device(0x28de, 0x2101);
+        configure(&mut s, h);
+        // The page has been open a while: no report yet isn't "quiet" by itself.
+        assert!(s.tick(50_000_000).is_empty());
+        assert!(s.tick(50_900_000).is_empty());
+        // A second without reports is.
+        assert_eq!(s.tick(51_100_000), vec![h]);
+        assert!(matches!(s.handshake(h), Step::Pending { get: 0x10, .. }));
+        assert!(s.drain().contains("\"state\":\"disconnected\""));
     }
 
     #[test]
