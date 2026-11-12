@@ -1378,6 +1378,9 @@ esptool_flash(
     bootloader = "@embedded//libs/board:esp32p4_bootloader_bin",
     bootloader_offset = "0x2000",  # the P4 ROM loads the 2nd-stage bootloader from 0x2000
     chip = "esp32p4",
+    # The 3 MB app slot, as :flash_esp32p4_player_c6 has: with Ethernet (esp_eth,
+    # lwIP, mDNS, the HTTP client) the image is past default.csv's 1.25 MB slot.
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
     tags = ["manual"],
 )
 
