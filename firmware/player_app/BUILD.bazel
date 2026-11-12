@@ -1284,7 +1284,7 @@ cc_binary(
 # Phase B on the Waveshare ESP32-P4-WIFI6: the same player with its link on SDIO to the
 # board's C6, which runs :esp32c6_frontend (Wi-Fi, BLE Improv, wss). This image carries
 # that C6 image and flashes it onto the C6 whenever the C6 runs anything else
-# (//firmware/p4/c6flash; the C6's BOOT needs the H4 pin 1 -> GPIO4 jumper).
+# (//firmware/p4/c6flash; the C6's IO9 (BOOT) needs a jumper to P4 GPIO4).
 #
 #   bazel run -c opt //firmware/player_app:flash_esp32p4_player_c6 -- --port /dev/cu.usbmodem…
 cc_binary(
