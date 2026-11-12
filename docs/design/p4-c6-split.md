@@ -101,6 +101,7 @@ running") true by construction.
 | Rendering and LED output | **none** (drivers compiled out) | **owns** |
 | Live mailbox (`set_uniforms` `commit:false`), `ControlAck` | forwards | **owns** |
 | OSC udp/9000 | receives and forwards datagrams | parses into the mailbox, applies at frame boundaries |
+| OSC over wss (`ClientMessage.osc` / `ServerMessage.osc`, feature `osc`) | forwards the packet as `LK_OSC`, like a datagram; routes the P4's `LK_OSC` replies to the last sender (UDP, or the session as a push that drops under backpressure: `firmware/player_app/osc_route.h`) | as for udp/9000 (modules first, then the mailbox) |
 | Time sync (`time_sync_ping`), effect time base | forwards (answers from its own clock only while the P4 is down) | **owns** (the renderer's clock) |
 | IMU / sensor drivers | none (the C6 IMU pins are SDIO pins, §4.4) | **owns** |
 

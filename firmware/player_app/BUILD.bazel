@@ -558,6 +558,19 @@ cc_library(
     hdrs = ["player_module.h"],
 )
 
+# OSC over the wss session (feature "osc"): the input order (modules, then the
+# mailbox) and where a module's OSC goes back to (UDP or a ServerMessage.osc push, never
+# blocking). Header-only; main.cpp includes it.
+cc_test(
+    name = "osc_route_test",
+    srcs = [
+        "osc_route.h",
+        "osc_route_test.cc",
+        "player_module.h",
+    ],
+    copts = ["-UNDEBUG"],
+)
+
 cc_test(
     name = "ws_codec_test",
     srcs = ["ws_codec_test.cc"],
@@ -916,6 +929,7 @@ rust_test(
         # with the OTA loader.)
         "led_config.h",
         "main.cpp",
+        "osc_route.h",
         "player_module.h",
         "player_ffi.h",
         "sensor_bus.cpp",
@@ -1061,7 +1075,9 @@ cc_binary(
     srcs = [
         "frontend_link.cpp",
         "frontend_link.h",
+        "osc_route.h",
         "player_ffi.h",
+        "player_module.h",
         "relay_main.cpp",
         "serial_log.h",
         ":agent_bundle_h",
@@ -1496,6 +1512,7 @@ cc_binary(
         "netout_app.cpp",
         "netout_app.h",
         "netstack_transport.h",
+        "osc_route.h",
         "ota_app.h",
         "ota_p4.cpp",
         "player_ffi.h",
@@ -1561,6 +1578,7 @@ cc_binary(
         "netout_app.cpp",
         "netout_app.h",
         "netstack_transport.h",
+        "osc_route.h",
         "ota_app.h",
         "ota_p4.cpp",
         "player_ffi.h",
@@ -1710,6 +1728,7 @@ cc_binary(
         "improv_ble.h",
         "led_config.h",
         "main.cpp",
+        "osc_route.h",
         "player_ffi.h",
         "player_module.h",
         "serial_log.h",
@@ -1787,6 +1806,7 @@ cc_binary(
         "improv_ble.h",
         "led_config.h",
         "main.cpp",
+        "osc_route.h",
         "player_ffi.h",
         "player_module.h",
         "serial_log.h",
@@ -2153,6 +2173,7 @@ py_test(
     srcs = ["tests/test_stack_bound.py"],
     data = [
         "main.cpp",
+        "osc_route.h",
         "player_module.h",
         "sensor_bus.cpp",
         "serial_log.h",

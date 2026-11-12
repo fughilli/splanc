@@ -32,6 +32,9 @@ fn client_arm(frame: &[u8]) -> Option<CArm<'_>> {
 }
 
 const ARM_SET_WIFI_POLICY: u32 = 90;
+const ARM_OSC: u32 = 110;
+/// ServerMessage.osc (OscDatagram): a module's OSC back to a session (feature "osc").
+const SMSG_OSC: u32 = 60;
 const ARM_GET_WIFI_POLICY: u32 = 91;
 
 #[cfg(all(not(test), target_os = "none"))]
@@ -112,6 +115,46 @@ pub unsafe extern "C" fn lm_is_live_move(data: *const u8, len: usize) -> bool {
         Some(CArm::SetUniforms(m)) => m.seq() != 0 && m.commit() == Some(false) && m.apply_at_ms().is_none(),
         _ => false,
     }
+}
+
+/// A ClientMessage.osc's packet (feature "osc"), read in place: true and `*pkt`/`*pkt_len`
+/// set when `data` is one (an empty packet: length 0), else false.
+///
+/// # Safety
+/// `data` points to `len` readable bytes; `pkt`/`pkt_len` are writable.
+#[no_mangle]
+pub unsafe extern "C" fn lm_osc_session_packet(data: *const u8, len: usize, pkt: *mut *const u8, pkt_len: *mut usize) -> bool {
+    if data.is_null() || len == 0 || pkt.is_null() || pkt_len.is_null() {
+        return false;
+    }
+    if lm_envelope_arm(data, len) != ARM_OSC as i32 {
+        return false;
+    }
+    let p: &[u8] = match client_arm(core::slice::from_raw_parts(data, len)) {
+        Some(CArm::Osc(m)) => m.packet(),
+        _ => &[],
+    };
+    *pkt = p.as_ptr();
+    *pkt_len = p.len();
+    true
+}
+
+/// `ServerMessage{osc{packet}}` into `out` (the P4's OSC back to the session that last
+/// sent OSC): its length, -2 when `out_cap` is too small, -1 for bad arguments.
+///
+/// # Safety
+/// `packet` points to `len` readable bytes (or is null with len 0); `out` to `out_cap`.
+#[no_mangle]
+pub unsafe extern "C" fn lm_osc_build_push(packet: *const u8, len: usize, out: *mut u8, out_cap: usize) -> i32 {
+    if (packet.is_null() && len != 0) || out.is_null() {
+        return -1;
+    }
+    let packet = if len == 0 { &[][..] } else { core::slice::from_raw_parts(packet, len) };
+    write_arm(out, out_cap, SMSG_OSC, |w| {
+        if !packet.is_empty() {
+            w.bytes(1, packet);
+        }
+    })
 }
 
 /// The arms the front end answers itself, whether or not the P4 is up: the Wi-Fi rejoin
