@@ -1,0 +1,1401 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html"><link rel="next" title="Blob-detection optimization playbook" href="../blob-detection-playbook.html"><link rel="prev" title="Eliminating WebXR: joint pose + LED optimization with IMU dead reckoning" href="../vio-exploration.html">
+        <link rel="prefetch" href="../../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Strided (diffuse) capture: mapping LEDs behind a diffuser - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Strided (diffuse) capture</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
+<li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
+<li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-demo.html">Effects demo</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../requirements-driven-development.html">Requirements-driven development</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/design/strided-capture.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/design/strided-capture.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="strided-diffuse-capture-mapping-leds-behind-a-diffuser">
+<h1>Strided (diffuse) capture: mapping LEDs behind a diffuser<a class="headerlink" href="#strided-diffuse-capture-mapping-leds-behind-a-diffuser" title="Link to this heading">¶</a></h1>
+<p>Status: implemented (#152 strided capture, which also landed the
+no-gap-discard fix written as #250; #259 scale guard; #318 warm start and
+fallback). The strip-prior scale issue (#455) is
+open, see <a class="reference internal" href="#failure-modes-and-diagnostics">Failure modes</a>.</p>
+<p>A diffuser spreads each LED into a wide, dim, soft-edged spot, and spots next
+to each other bleed into one blob. The normal capture lights every LED in
+every frame, and on a diffused fixture the decoder then reads mixed colours
+from merged blobs and decodes almost nothing. Strided capture lights only a
+sparse subset of LEDs at a time, spaced far enough apart that their spots
+stay separate, and rotates through subsets until every LED has been seen. The
+solver then has to build one rigid fixture out of observations where no frame
+ever sees more than a fraction of the LEDs. This page covers both halves: the
+lighting schedule, and what makes the bundle adjustment hold together.</p>
+<p>Code map:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Piece</p></th>
+<th class="head"><p>Where</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Schedule (the one implementation)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">firmware/pattern/src/lib.rs</span></code> (<code class="docutils literal notranslate"><span class="pre">stride_lit</span></code>, <code class="docutils literal notranslate"><span class="pre">stride_phase_count</span></code>): linked by <code class="docutils literal notranslate"><span class="pre">firmware/player/src/lib.rs</span></code> <code class="docutils literal notranslate"><span class="pre">pattern_color</span></code>, run by the phone as wasm behind <code class="docutils literal notranslate"><span class="pre">web/src/code/stride.ts</span></code> (<code class="docutils literal notranslate"><span class="pre">strideLit</span></code>, <code class="docutils literal notranslate"><span class="pre">phaseCount</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Golden (regression pin)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">firmware/pattern/testdata/golden_stride.json</span></code>, emitted by <code class="docutils literal notranslate"><span class="pre">//firmware/pattern:gen_golden</span></code>, checked by <code class="docutils literal notranslate"><span class="pre">//firmware/pattern:golden_stride_test</span></code> and diff-tested by <code class="docutils literal notranslate"><span class="pre">//firmware/pattern:goldens</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p>Wire fields</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">strideSpacing</span></code>, <code class="docutils literal notranslate"><span class="pre">anchorDensity</span></code>, <code class="docutils literal notranslate"><span class="pre">stridePhase</span></code> in <code class="docutils literal notranslate"><span class="pre">shared/protocol/schemas/code_params.json</span></code> and the <code class="docutils literal notranslate"><span class="pre">start_mapping</span></code> / <code class="docutils literal notranslate"><span class="pre">configure</span></code> options in <code class="docutils literal notranslate"><span class="pre">client_messages.json</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>Phase rotation, dense ⇄ strided switch</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">web/src/ui/screens/capture.ts</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p>Per-channel capture (dense curtain + strided rope)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">web/src/capture/channelCapture.ts</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>Knobs</p></td>
+<td><p>Hardware Setup (per-device stride, per-channel mode), Settings ▸ Behavior ▸ Diffuse capture (<code class="docutils literal notranslate"><span class="pre">web/src/store/prefs.ts</span></code>)</p></td>
+</tr>
+<tr class="row-even"><td><p>Diffuse detector</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">web/src/cv/detect.ts</span></code> (local-contrast prefilter)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Image-space simulation</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">web/src/sim/render.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">web/tests/diffuse_sim.test.ts</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p>Solver tests</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">solver/src/scenario.rs</span></code> (<code class="docutils literal notranslate"><span class="pre">stride</span></code>, <code class="docutils literal notranslate"><span class="pre">phaseS</span></code>, <code class="docutils literal notranslate"><span class="pre">deadS</span></code>), <code class="docutils literal notranslate"><span class="pre">solver/src/regression_tests.rs</span></code>, <code class="docutils literal notranslate"><span class="pre">pi/reconstruction/tests/test_interrupted_capture.py</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<section id="why-lighting-a-subset-helps">
+<h2>Why lighting a subset helps<a class="headerlink" href="#why-lighting-a-subset-helps" title="Link to this heading">¶</a></h2>
+<p>The mapping code is carried by colour (<code class="docutils literal notranslate"><span class="pre">web/src/code/gray.ts</span></code>): each cycle is
+a white frame, a green frame, then the data frames, and each LED shows its own
+codeword, <code class="docutils literal notranslate"><span class="pre">gray(id</span> <span class="pre">+</span> <span class="pre">1)</span></code> wrapped in SEC-DED. The decoder tracks a blob across
+the cycle and reads its hue in each frame. Behind a diffuser this breaks in
+two separate ways:</p>
+<ol class="arabic simple">
+<li><p><strong>Bleed.</strong> Neighbouring spots overlap, so one blob holds two or three LEDs
+showing different codewords. Its hue in each data frame is a mix, and the
+decoded id is wrong or fails the FEC check.</p></li>
+<li><p><strong>Dimming.</strong> The diffuser spreads a spot’s energy, so the peak drops and the
+edges flatten. A fixed global threshold misses the dimmer spots, and the
+ones it catches have weak gradients.</p></li>
+</ol>
+<p>Striding fixes the first. If the lit LEDs are at least <code class="docutils literal notranslate"><span class="pre">S</span></code> indices apart and
+<code class="docutils literal notranslate"><span class="pre">S</span></code> is larger than the diffuser’s blur in LED pitches, every blob holds one
+LED again. The diffuse detector fixes the second. In diffuse mode <code class="docutils literal notranslate"><span class="pre">detect.ts</span></code>
+subtracts a local background before the threshold: a 5×5 tap mean over a
+radius of 8 detection pixels by default, scaled by the gain (<code class="docutils literal notranslate"><span class="pre">lcGain</span></code>, default
+1.0, which removes the diffuser’s DC lift fully). The threshold is then low
+(default 0.18) because it reads residual contrast, not absolute brightness.
+The exposure servo’s threshold adjustment is turned off in diffuse mode so it
+doesn’t fight the prefilter.</p>
+<p><code class="docutils literal notranslate"><span class="pre">web/tests/diffuse_sim.test.ts</span></code> renders a 32-LED line through an
+energy-conserving Gaussian diffuser (σ = 2.5 px against an 8 px LED pitch, in
+<code class="docutils literal notranslate"><span class="pre">web/src/sim/render.ts</span></code>) and runs the production blob and decode path on it.
+It asserts that each fix only works together with the other:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Configuration</p></th>
+<th class="head"><p>Decoded fraction (asserted)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>No diffuser, all lit</p></td>
+<td><p>≥ 0.95 (the floor)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Diffuser, all lit, default detector</p></td>
+<td><p>≤ 0.1</p></td>
+</tr>
+<tr class="row-even"><td><p>Diffuser, all lit, diffuse detector</p></td>
+<td><p>≤ 0.3 (bleed survives the prefilter)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Diffuser, stride 3, default detector</p></td>
+<td><p>≤ 0.3 (isolated spots are too dim)</p></td>
+</tr>
+<tr class="row-even"><td><p>Diffuser, stride 3, diffuse detector</p></td>
+<td><p>≥ 0.9 × the floor, every record on the right LED</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Striding changes only which LEDs are lit. Every lit LED still sends its full
+codeword, so a decoded id is the LED’s absolute index in every phase, and
+records from different phases join by id with no relabelling.</p>
+</section>
+<section id="the-schedule">
+<h2>The schedule<a class="headerlink" href="#the-schedule" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">stride.ts</span></code> takes two parameters:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">S</span></code> (<code class="docutils literal notranslate"><span class="pre">strideSpacing</span></code>), the minimum index separation between lit LEDs.
+<code class="docutils literal notranslate"><span class="pre">S</span> <span class="pre">≤</span> <span class="pre">1</span></code> turns striding off (every LED lit).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">A</span></code> (<code class="docutils literal notranslate"><span class="pre">anchorDensity</span></code>), the bridge anchor spacing in units of <code class="docutils literal notranslate"><span class="pre">S</span></code>. Values
+below 3 are clamped to 3.</p></li>
+</ul>
+<p>One schedule has <code class="docutils literal notranslate"><span class="pre">2S</span> <span class="pre">−</span> <span class="pre">1</span></code> phases:</p>
+<ul class="simple">
+<li><p><strong>Coverage phases</strong> <code class="docutils literal notranslate"><span class="pre">o</span> <span class="pre">=</span> <span class="pre">0</span> <span class="pre">…</span> <span class="pre">S−1</span></code> light <code class="docutils literal notranslate"><span class="pre">{</span> <span class="pre">i</span> <span class="pre">:</span> <span class="pre">i</span> <span class="pre">mod</span> <span class="pre">S</span> <span class="pre">=</span> <span class="pre">o</span> <span class="pre">}</span></code>, the LEDs of
+<strong>class</strong> <code class="docutils literal notranslate"><span class="pre">o</span></code>. The lit LEDs are exactly <code class="docutils literal notranslate"><span class="pre">S</span></code> apart, and the <code class="docutils literal notranslate"><span class="pre">S</span></code> coverage
+phases partition the fixture: every LED is lit in exactly one of them.</p></li>
+<li><p><strong>Bridge phases</strong> <code class="docutils literal notranslate"><span class="pre">j</span> <span class="pre">=</span> <span class="pre">1</span> <span class="pre">…</span> <span class="pre">S−1</span></code> (phase index <code class="docutils literal notranslate"><span class="pre">S</span> <span class="pre">−</span> <span class="pre">1</span> <span class="pre">+</span> <span class="pre">j</span></code>) work in blocks of
+<code class="docutils literal notranslate"><span class="pre">A·S</span></code> LEDs. Each block lights its first LED (a class-0 <strong>anchor</strong>) and the
+LED at offset <code class="docutils literal notranslate"><span class="pre">⌊A/2⌋·S</span> <span class="pre">+</span> <span class="pre">j</span></code> (a class-<code class="docutils literal notranslate"><span class="pre">j</span></code> <strong>rep</strong>, which lands in class 0’s
+gap). Only <code class="docutils literal notranslate"><span class="pre">2/(A·S)</span></code> of the LEDs are lit.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">A</span> <span class="pre">≥</span> <span class="pre">3</span></code> keeps every bridge’s lit LEDs at least <code class="docutils literal notranslate"><span class="pre">S</span></code> apart. The rep sits at
+<code class="docutils literal notranslate"><span class="pre">⌊A/2⌋·S</span> <span class="pre">+</span> <span class="pre">j</span></code> from its anchor and <code class="docutils literal notranslate"><span class="pre">(A</span> <span class="pre">−</span> <span class="pre">⌊A/2⌋)·S</span> <span class="pre">−</span> <span class="pre">j</span></code> from the next anchor.
+With <code class="docutils literal notranslate"><span class="pre">A</span> <span class="pre">=</span> <span class="pre">2</span></code> that second gap is <code class="docutils literal notranslate"><span class="pre">S</span> <span class="pre">−</span> <span class="pre">j</span></code>, which is less than <code class="docutils literal notranslate"><span class="pre">S</span></code>. With <code class="docutils literal notranslate"><span class="pre">A</span> <span class="pre">≥</span> <span class="pre">3</span></code>
+it’s at least <code class="docutils literal notranslate"><span class="pre">S</span> <span class="pre">+</span> <span class="pre">1</span></code>.</p>
+<p>For <code class="docutils literal notranslate"><span class="pre">S</span> <span class="pre">=</span> <span class="pre">3,</span> <span class="pre">A</span> <span class="pre">=</span> <span class="pre">3</span></code> (block size 9, rep offset <code class="docutils literal notranslate"><span class="pre">3</span> <span class="pre">+</span> <span class="pre">j</span></code>):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Phase</p></th>
+<th class="head"><p>Kind</p></th>
+<th class="head"><p>Lit LEDs (first 18)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>0</p></td>
+<td><p>coverage, class 0</p></td>
+<td><p>0, 3, 6, 9, 12, 15</p></td>
+</tr>
+<tr class="row-odd"><td><p>1</p></td>
+<td><p>coverage, class 1</p></td>
+<td><p>1, 4, 7, 10, 13, 16</p></td>
+</tr>
+<tr class="row-even"><td><p>2</p></td>
+<td><p>coverage, class 2</p></td>
+<td><p>2, 5, 8, 11, 14, 17</p></td>
+</tr>
+<tr class="row-odd"><td><p>3</p></td>
+<td><p>bridge 0↔1</p></td>
+<td><p>0, 4, 9, 13</p></td>
+</tr>
+<tr class="row-even"><td><p>4</p></td>
+<td><p>bridge 0↔2</p></td>
+<td><p>0, 5, 9, 14</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<figure class="align-default" id="id1">
+<a class="reference internal image-reference" href="../../images/stride_schedule.png"><img alt="Grid of LED index against schedule phase for S=3, A=3 and S=4, A=3, lit cells coloured by class" src="../../images/stride_schedule.png" style="width: 100%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">The lit LEDs in each phase, drawn by <code class="docutils literal notranslate"><span class="pre">//docs:build</span></code> from
+<code class="docutils literal notranslate"><span class="pre">firmware/pattern/testdata/golden_stride.json</span></code> (the hue-code kernel’s pinned
+schedule, the one the phone and the firmware both run). Coverage phases sit above the dashed line, bridges below.
+Each bridge lights class-0 anchors with one other class’s reps.</span><a class="headerlink" href="#id1" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p>The phone and the firmware run the same function. The firmware’s
+<code class="docutils literal notranslate"><span class="pre">pattern_color</span></code> returns black for an LED outside the active phase (not “no
+colour”), because the render loop leaves an LED without a colour at its
+previous value, and masked LEDs would otherwise stay lit from the previous
+phase. On a multi-channel fixture the channels share one LED index space,
+so the stride runs over global LED indices.</p>
+<section id="why-bridges-are-needed">
+<h3>Why bridges are needed<a class="headerlink" href="#why-bridges-are-needed" title="Link to this heading">¶</a></h3>
+<p>Each coverage class on its own is a set of points that no frame shares with
+any other class. The solver doesn’t know a capture was strided: it receives
+detection records (LED id, pixel, time) and solves one joint visual-inertial
+bundle adjustment over all of them (<code class="docutils literal notranslate"><span class="pre">solver/src/pipeline.rs</span></code>
+<code class="docutils literal notranslate"><span class="pre">reconstruct_vio</span></code>). There’s no per-phase map and no registration step. So the
+question is what ties class <code class="docutils literal notranslate"><span class="pre">j</span></code>’s points to class 0’s points in that one
+problem. There are three ties, of very different strength:</p>
+<ol class="arabic simple">
+<li><p><strong>The camera trajectory.</strong> Consecutive keyframes are linked by
+preintegrated IMU factors, including across a phase switch. That link’s
+uncertainty grows with the gap (see
+<a class="reference internal" href="#decode-lock-dead-time-and-why-no-observation-is-ever-dropped">Dead time</a>).
+Over a 2–3 s decode dead time it’s centimetres, which doesn’t hold mm-scale
+geometry.</p></li>
+<li><p><strong>Bridge co-observations.</strong> In a bridge-<code class="docutils literal notranslate"><span class="pre">j</span></code> frame the camera sees class-0
+anchors and class-<code class="docutils literal notranslate"><span class="pre">j</span></code> reps through the same pose. The anchors are already
+placed by the coverage-0 frames, so they fix the bridge frames’ poses. The
+reps then land in class 0’s frame, and because the reps are also class-<code class="docutils literal notranslate"><span class="pre">j</span></code>
+LEDs, the coverage-<code class="docutils literal notranslate"><span class="pre">j</span></code> frames that observed them, and every other class-<code class="docutils literal notranslate"><span class="pre">j</span></code>
+LED, follow.</p></li>
+<li><p><strong>The strip prior</strong>, when on (the app’s default; Settings ▸ Behavior ▸ Capture). Its
+rope links connect consecutive mapped ids, and consecutive ids are always
+in different classes, so every link is a direct inter-class tie. These
+links are one-sided, though (see <a class="reference internal" href="#gauge-and-scale">Gauge and scale</a>).</p></li>
+</ol>
+<p>The cold-start initialization shows why the second tie matters most.
+<code class="docutils literal notranslate"><span class="pre">known_rotation_linear_init</span></code> (<code class="docutils literal notranslate"><span class="pre">solver/src/vio.rs</span></code>) solves camera centres and
+LED positions from ray membership alone, with gyro-integrated rotations. Its
+only link between two frames is a shared LED. Without bridges, the
+frame–LED graph splits into one component per coverage class. The gauge pins
+one camera centre in one component, and every other component keeps its own
+free translation and gets its scale only from the weak depth pins. Bundle
+adjustment then has to pull those blocks together through the IMU factors
+alone. <code class="docutils literal notranslate"><span class="pre">mapping-solve-paths.md</span></code> records the result on synthetic sweeps:
+without bridges the classes are only IMU-linked and the shapes go wrong.</p>
+<p>With bridges the graph is connected through class 0. At the class level the
+co-observation graph is a star centred on class 0 (<code class="docutils literal notranslate"><span class="pre">stride.ts</span></code>: “diameter 2”),
+so any LED reaches class 0’s frame in at most two hops: coverage <code class="docutils literal notranslate"><span class="pre">j</span></code> → bridge
+<code class="docutils literal notranslate"><span class="pre">j</span></code> → class 0. <code class="docutils literal notranslate"><span class="pre">stride.test.ts</span></code> checks (for <code class="docutils literal notranslate"><span class="pre">S</span> <span class="pre">=</span> <span class="pre">4,</span> <span class="pre">A</span> <span class="pre">=</span> <span class="pre">3</span></code> on 300 LEDs) that
+every bridge shares at least 3 LEDs with coverage 0 and with its own coverage
+class.</p>
+<pre  class="mermaid">
+        flowchart LR
+  C0((&quot;class 0&lt;br/&gt;(coverage 0)&quot;))
+  C1((&quot;class 1&quot;))
+  C2((&quot;class 2&quot;))
+  Cn((&quot;class S-1&quot;))
+  C1 ---|&quot;bridge 0↔1:&lt;br/&gt;anchors + class-1 reps&quot;| C0
+  C2 ---|&quot;bridge 0↔2&quot;| C0
+  Cn ---|&quot;bridge 0↔S-1&quot;| C0
+    </pre><p>Only class 0 is a hub. Classes 1 and 2 are never lit together, so a shape
+error between them goes through class 0, which gives the “bounded degrees of
+intraframe association” the schedule was designed for. It also means class 0
+is observed far more than the others: in the coverage-0 phase and as anchors
+in every bridge.</p>
+</section>
+<section id="group-capture">
+<h3>Group capture<a class="headerlink" href="#group-capture" title="Link to this heading">¶</a></h3>
+<p>Multi-fixture localization (<code class="docutils literal notranslate"><span class="pre">web/src/geom/groupCode.ts</span></code>,
+<a class="reference internal" href="multi-fixture-localization.html"><span class="std std-doc">multi-fixture-localization.md</span></a>) registers
+fixtures whose maps are already known. A diffuse member there lights only
+coverage phase 0 and doesn’t rotate, because a sparse, well-spread subset is
+enough to locate a known map.</p>
+</section>
+</section>
+<section id="the-capture-side">
+<h2>The capture side<a class="headerlink" href="#the-capture-side" title="Link to this heading">¶</a></h2>
+<section id="phase-rotation">
+<h3>Phase rotation<a class="headerlink" href="#phase-rotation" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">capture.ts</span></code> starts a diffuse capture with <code class="docutils literal notranslate"><span class="pre">start_mapping</span></code> options
+<code class="docutils literal notranslate"><span class="pre">{strideSpacing,</span> <span class="pre">anchorDensity,</span> <span class="pre">stridePhase:</span> <span class="pre">0}</span></code>. A 2 s tick (the same one
+that handles exposure telemetry and code renegotiation) advances the phase
+once it has been held for</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>dwell = max(3000 ms, 4 × cycleFrames × bitPeriodMs)
+</pre></div>
+</div>
+<p>by sending <code class="docutils literal notranslate"><span class="pre">configure</span> <span class="pre">{stridePhase}</span></code>. The firmware keeps the session’s <code class="docutils literal notranslate"><span class="pre">S</span></code> and
+<code class="docutils literal notranslate"><span class="pre">A</span></code> and restamps the pattern epoch. The phone rebuilds its decode pipeline on
+the new epoch. Detections already collected stay valid. The phase wraps modulo
+<code class="docutils literal notranslate"><span class="pre">2S</span> <span class="pre">−</span> <span class="pre">1</span></code> for as long as the capture runs. The rotation skips a tick while
+another reconfigure is in flight, and both go through the same
+<code class="docutils literal notranslate"><span class="pre">applyReconfigure</span></code> and <code class="docutils literal notranslate"><span class="pre">renegotiating</span></code> path.</p>
+<p><code class="docutils literal notranslate"><span class="pre">cycleFrames</span></code> is <code class="docutils literal notranslate"><span class="pre">2</span> <span class="pre">+</span> <span class="pre">⌈bits</span> <span class="pre">/</span> <span class="pre">log₂(symbols)⌉</span></code> (the sync frames plus the data
+frames), and <code class="docutils literal notranslate"><span class="pre">bits</span></code> is the SEC-DED codeword length for the LED count. Some
+example dwells at <code class="docutils literal notranslate"><span class="pre">bitPeriodMs</span> <span class="pre">=</span> <span class="pre">100</span></code> (a 30 fps camera):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>LEDs</p></th>
+<th class="head"><p>Alphabet</p></th>
+<th class="head"><p>Bits</p></th>
+<th class="head"><p>Cycle</p></th>
+<th class="head"><p>Dwell per phase</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>300</p></td>
+<td><p>2 symbols</p></td>
+<td><p>14</p></td>
+<td><p>16 frames, 1.6 s</p></td>
+<td><p>6.4 s</p></td>
+</tr>
+<tr class="row-odd"><td><p>300</p></td>
+<td><p>4 symbols</p></td>
+<td><p>14</p></td>
+<td><p>9 frames, 0.9 s</p></td>
+<td><p>3.6 s</p></td>
+</tr>
+<tr class="row-even"><td><p>650</p></td>
+<td><p>2 symbols</p></td>
+<td><p>15</p></td>
+<td><p>17 frames, 1.7 s</p></td>
+<td><p>6.8 s</p></td>
+</tr>
+<tr class="row-odd"><td><p>650</p></td>
+<td><p>4 symbols</p></td>
+<td><p>15</p></td>
+<td><p>10 frames, 1.0 s</p></td>
+<td><p>4.0 s</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The tick is 2 s, so a phase actually lasts up to 2 s past the dwell.</p>
+</section>
+<section id="live-switching-and-per-channel-capture">
+<h3>Live switching and per-channel capture<a class="headerlink" href="#live-switching-and-per-channel-capture" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Dense ⇄ strided mid-capture.</strong> The <strong>Diffuse capture</strong> toggle on the
+capture screen persists the mode and, while capturing, sends
+<code class="docutils literal notranslate"><span class="pre">configure</span> <span class="pre">{strideSpacing,</span> <span class="pre">anchorDensity,</span> <span class="pre">stridePhase:</span> <span class="pre">0}</span></code> (or
+<code class="docutils literal notranslate"><span class="pre">{strideSpacing:</span> <span class="pre">0}</span></code> to go dense). The phase rotation and the detector
+(threshold, prefilter gain) switch only once the device has confirmed, so
+the pattern and the decoder always agree.</p></li>
+<li><p><strong>Stride control on the calibrate screen.</strong> It re-strides the running code
+and restarts at phase 0.</p></li>
+<li><p><strong>Per-channel capture</strong> (<code class="docutils literal notranslate"><span class="pre">channelCapture.ts</span></code>). A fixture with a dense
+curtain on one channel and a diffused rope on another runs as stages of one
+session, because the firmware mask can only express “LED &lt; ledCount, and on
+the stride phase”. First comes a regular stage over the leading run of
+regular channels, stride off. It hands over after 20 s once 85 % of its LEDs
+have decoded, or at 60 s. Then a strided stage over every LED, using the
+largest stride of the strided channels. The code space is pinned to the
+whole fixture from the start, so ids and timing are the same in both stages
+and the records join into one solve. The strided stage strides the regular
+channels too. Those are extra observations of LEDs already mapped, and they
+tie the two stages together the way bridges tie phases. After the solve,
+<code class="docutils literal notranslate"><span class="pre">fillChannelGaps</span></code> fills unmapped LEDs within their own channel.</p></li>
+<li><p><strong>Profiles.</strong> The settings that worked (diffuse, <code class="docutils literal notranslate"><span class="pre">S</span></code>, <code class="docutils literal notranslate"><span class="pre">A</span></code>, threshold,
+exposure) are saved with the map’s capture profile and replayed on the next
+re-map of that fixture.</p></li>
+</ul>
+</section>
+</section>
+<section id="decode-lock-dead-time-and-why-no-observation-is-ever-dropped">
+<h2>Decode-lock dead time, and why no observation is ever dropped<a class="headerlink" href="#decode-lock-dead-time-and-why-no-observation-is-ever-dropped" title="Link to this heading">¶</a></h2>
+<p>After every phase switch the newly lit LEDs produce nothing until the decoder
+has tracked each of them through a full code cycle from the sync frames. The
+pipeline also restarts on the new epoch. So every switch is followed by a gap
+with no records, typically about 1–3 s. In the strided
+stretch of a capture that’s a regular sawtooth of gaps, one per phase.</p>
+<p>The solver used to have a time-gap segment filter (<code class="docutils literal notranslate"><span class="pre">keep_dominant_segment</span></code>)
+that kept only the richest stretch between gaps, plus a retry when a gap
+diverged. On strided captures it kept one phase: 12 of 36 LEDs. The fix
+(written as #250, landed with #152) removed it from both
+<code class="docutils literal notranslate"><span class="pre">solver/src/pipeline.rs</span></code> and the Python reference
+<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/reconstruction/vio_api.py</span></code>, and fixed the problems it had
+been hiding:</p>
+<ul class="simple">
+<li><p><strong>Gauge on the best-observed frame.</strong> <code class="docutils literal notranslate"><span class="pre">vio::gauge_frame</span></code> pins the frame with
+the most observations, not frame 0. A stray two-record leading frame once
+anchored a whole solve and diverged it. In a strided capture the gauge is
+always a coverage-phase frame, because bridges light far fewer LEDs.</p></li>
+<li><p><strong>Gap-aware IMU factors.</strong> <code class="docutils literal notranslate"><span class="pre">interval_sigmas</span></code> adds drift terms that grow with
+the interval (<code class="docutils literal notranslate"><span class="pre">GYRO_DRIFT</span> <span class="pre">·</span> <span class="pre">Δt</span></code> on rotation, <code class="docutils literal notranslate"><span class="pre">0.5</span> <span class="pre">·</span> <span class="pre">ACCEL_DRIFT</span> <span class="pre">·</span> <span class="pre">Δt²</span></code> on
+position) on top of white sample noise. A gap is still IMU-linked, just
+as loosely as the physics allows. At a 100 Hz IMU stream the position σ is
+about 0.9 mm over a 0.25 s keyframe interval, 4.7 cm over 2 s and 10 cm
+over 3 s. That’s why tie 1 above can’t hold the classes together by itself.</p></li>
+<li><p><strong>IMU holes.</strong> If the IMU stream itself has a gap over <code class="docutils literal notranslate"><span class="pre">IMU_HOLE_S</span></code> (0.25 s)
+inside an interval, that interval gets no inertial information
+(σ = 10⁶, layout kept). The rotation seed is held across it, and inertial
+alignment skips it. A zero-order hold across a hole would make up data.</p></li>
+<li><p><strong>Weighted inertial alignment.</strong> Each interval’s rows are weighted against
+the session’s median covered interval, so one long dead-reckoned gap can’t
+dominate the scale and gravity estimate. The roll/pitch seed averages the
+accelerometer within ±0.5 s of the first frame only, so walking before the
+capture doesn’t leak into the gravity direction.</p></li>
+</ul>
+<p>The rule: <strong>a gap only loosens the inertial link across it. It never causes
+observations to be discarded.</strong> Bad data is the robust loss’s and the outlier
+loop’s job. Keyframe decimation (<code class="docutils literal notranslate"><span class="pre">frames_from_records</span></code>, <code class="docutils literal notranslate"><span class="pre">maxKeyframes</span></code> 120 for
+the live preview and 250 for the final) takes an even subsample of the
+distinct frame times that have records. It doesn’t look at gaps, and each
+phase gets keyframes in proportion to its duration. The PR-31 tests in
+<code class="docutils literal notranslate"><span class="pre">test_interrupted_capture.py</span></code>, including
+<code class="docutils literal notranslate"><span class="pre">test_strided_capture_fuses_every_phase_across_decode_gaps</span></code> (S = 3, A = 3,
+3 s phases, 3.5 s dead time), assert that every record reaches the solution.
+<code class="docutils literal notranslate"><span class="pre">regression_tests.rs</span></code>
+<code class="docutils literal notranslate"><span class="pre">a_warm_start_places_leds_the_interim_never_saw</span></code> uses the synthetic scenario
+<code class="docutils literal notranslate"><span class="pre">{&quot;stride&quot;:</span> <span class="pre">3,</span> <span class="pre">&quot;phaseS&quot;:</span> <span class="pre">5,</span> <span class="pre">&quot;deadS&quot;:</span> <span class="pre">1.0}</span></code>. Class 2 first lights at 11 s,
+after 1 s of dead time. A live-preview solve that ended at 10.5 s never saw
+it, and the warm-started final must still place at least 57 of 60 LEDs.</p>
+</section>
+<section id="gauge-and-scale">
+<h2>Gauge and scale<a class="headerlink" href="#gauge-and-scale" title="Link to this heading">¶</a></h2>
+<p>The visual problem fixes the shape only up to a similarity: rotation and
+translation (the gauge) and scale.</p>
+<ul class="simple">
+<li><p><strong>Gauge.</strong> The best-observed keyframe’s rotation and position are pinned at
+their seeds (residual σ 10⁻⁶) in the bundle adjustment. In the linear init
+that frame’s centre is the origin. After the solve the map is
+gravity-levelled, so +Y is up.</p></li>
+<li><p><strong>Scale comes only from the IMU.</strong> Reprojection doesn’t depend on scale.
+The cold start’s linear <code class="docutils literal notranslate"><span class="pre">inertial_alignment</span></code> estimates scale, gravity and
+velocities from the vision-only camera path and the preintegrated
+accelerometer. A scale that would put the cameras outside 5 cm–30 m of the
+fixture falls back to 0.75 m (<code class="docutils literal notranslate"><span class="pre">plausible_init_scale</span></code>, #318). After every
+optimizer stage (the initial solve, each outlier round, the strip pass)
+<code class="docutils literal notranslate"><span class="pre">solve_vio</span></code> runs the alignment again with the biases the BA estimated (zero
+biases pulled scale about 15 % low) and rescales the geometry if the result
+is more than 2 % off. That <strong>a-posteriori re-anchor</strong> exists because the
+accelerometer-bias freedom lets the BA drift the global scale on
+low-excitation sessions.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">scaleRelStdErr</span></code>.</strong> The re-anchor also gives a scale standard error
+<code class="docutils literal notranslate"><span class="pre">[(AᵀA)⁻¹]₀₀</span></code>. It separates regimes well (good captures ≤ 0.05, near-static
+ones 0.5+) but understates the true error 2–4×, so it drives warnings only.
+It doesn’t gate the re-anchor: when it’s high, the BA’s own scale is worse.</p></li>
+<li><p><strong>Strip links can’t hold scale.</strong> A strip-prior rope link is zero while two
+LEDs are within <code class="docutils literal notranslate"><span class="pre">k</span> <span class="pre">·</span> <span class="pre">pitch</span> <span class="pre">·</span> <span class="pre">(1</span> <span class="pre">+</span> <span class="pre">tolerance)</span></code> and linear past that. It
+penalizes links that are too long and never ones that are too short. A
+uniform shrink makes every link shorter, so the prior doesn’t resist it,
+and the pitch itself is estimated from the solve it’s constraining. A
+diffuse capture leans on the strip prior more than a dense one (each LED is
+observed less often and bloomed blobs give poor ray vergence), but that
+doesn’t help with scale.</p></li>
+</ul>
+<section id="dwell-heavy-captures-dilute-scale">
+<h3>Dwell-heavy captures dilute scale<a class="headerlink" href="#dwell-heavy-captures-dilute-scale" title="Link to this heading">¶</a></h3>
+<p>Diffuse decode tends to lose lock while the phone moves, so a natural way to
+capture is to hold still and then hop between vantage points. With no frames
+during the hops (<code class="docutils literal notranslate"><span class="pre">scenario.rs</span></code> <code class="docutils literal notranslate"><span class="pre">DwellHop</span></code>, <code class="docutils literal notranslate"><span class="pre">hop_frames:</span> <span class="pre">false</span></code>) maps came out
+0.2–0.6 of true size. The alignment weighted position rows by IMU noise only,
+so vision jitter of the camera centres across many static intervals looked
+like motion the IMU had missed. It diluted the scale toward zero (regression
+dilution), and the BA kept the init’s scale because it barely moves along
+that direction. #259 fits a metric centre-noise τ from the position rows’
+residual χ² (a few solve-and-refit rounds) and folds <code class="docutils literal notranslate"><span class="pre">2τ²</span></code> into each row’s σ.
+On those captures the size went to 0.86–0.98 of true. Matching the pixel σ
+didn’t help. <code class="docutils literal notranslate"><span class="pre">mapping-solve-paths.md</span></code> still lists dwell-and-hop at 0.66 of
+true size on its sweep, so treat this regime as improved, not solved.</p>
+</section>
+</section>
+<section id="how-to-move-during-a-strided-capture">
+<h2>How to move during a strided capture<a class="headerlink" href="#how-to-move-during-a-strided-capture" title="Link to this heading">¶</a></h2>
+<p>Rotation is driven by the clock, not by motion, and each class is observed
+only while it’s lit (plus anchors and reps in the bridges). That leads to
+these rules:</p>
+<ul class="simple">
+<li><p><strong>Every phase needs its own parallax.</strong> Class <code class="docutils literal notranslate"><span class="pre">o</span></code> is triangulated only from
+the frames of coverage phase <code class="docutils literal notranslate"><span class="pre">o</span></code>, which last one dwell (3–7 s) per
+schedule. If you stand still for a phase, that class gets no baseline that
+time around.</p></li>
+<li><p><strong>Run several full schedules, from different places.</strong> A single slow arc
+across one schedule gives each class only the slice of the arc it happened
+to be lit for. Repeated sweeps that cover the full range of angles bring
+each phase back at new vantage points. A full schedule is
+<code class="docutils literal notranslate"><span class="pre">(2S</span> <span class="pre">−</span> <span class="pre">1)</span> <span class="pre">×</span> <span class="pre">dwell</span></code>, so plan for a few of those (see the table below).</p></li>
+<li><p><strong>Keep moving slowly and steadily.</strong> Moving fast loses decode lock, and
+those frames give no records.</p></li>
+<li><p><strong>Include a few brisk sweeps</strong> side to side and up and down. The IMU only
+measures scale when the phone accelerates, and the solver’s own
+scale-uncertainty warning asks for exactly this.</p></li>
+<li><p><strong>Stay at a sensible distance.</strong> Under 15 cm median camera distance reads as
+a collapse, both in the warning and in the degeneracy check.</p></li>
+</ul>
+</section>
+<section id="choosing-s-and-a">
+<h2>Choosing S and A<a class="headerlink" href="#choosing-s-and-a" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">S</span></code> is set per device (Hardware Setup ▸ Diffuse capture ▸ <strong>Stride length</strong>,
+1–16, default 4; per-channel strided mode needs 2 or more). It depends on the
+fixture’s LED pitch and diffuser, so it’s saved on the device record. <code class="docutils literal notranslate"><span class="pre">A</span></code> is
+app-wide (Settings ▸ Behavior ▸ Diffuse capture ▸ <strong>Anchor density</strong>, 3–16 on
+the slider, default 3). URL parameters <code class="docutils literal notranslate"><span class="pre">?stride=</span></code>, <code class="docutils literal notranslate"><span class="pre">?anchor=</span></code>, <code class="docutils literal notranslate"><span class="pre">?lcgain=</span></code>,
+<code class="docutils literal notranslate"><span class="pre">?threshold=</span></code>, <code class="docutils literal notranslate"><span class="pre">?downscale=</span></code> and <code class="docutils literal notranslate"><span class="pre">?diffuse=1</span></code> override per run.</p>
+<ul class="simple">
+<li><p><strong>Choose <code class="docutils literal notranslate"><span class="pre">S</span></code> from the blur.</strong> The lit spots must be farther apart than the
+diffuser blends. If neighbouring blobs still merge or decode to wrong ids,
+raise <code class="docutils literal notranslate"><span class="pre">S</span></code>. The spacing is in index space, though: a coil, serpentine or
+folded strip can put LEDs <code class="docutils literal notranslate"><span class="pre">S</span></code> indices apart (or <code class="docutils literal notranslate"><span class="pre">k·S</span></code>) next to each other
+in space, and those can still merge.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">S</span></code> sets the capture time.</strong> There are <code class="docutils literal notranslate"><span class="pre">2S</span> <span class="pre">−</span> <span class="pre">1</span></code> phases, and each LED
+outside class 0 is lit in one coverage phase plus at most one bridge per
+schedule. Raising <code class="docutils literal notranslate"><span class="pre">S</span></code> makes the schedule longer and each LED’s observation
+rate lower, roughly in proportion to <code class="docutils literal notranslate"><span class="pre">2S</span> <span class="pre">−</span> <span class="pre">1</span></code>.</p></li>
+</ul>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>S</p></th>
+<th class="head"><p>Phases</p></th>
+<th class="head"><p>One schedule at a 3.6 s dwell</p></th>
+<th class="head"><p>One schedule at a 6.8 s dwell</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>2</p></td>
+<td><p>3</p></td>
+<td><p>~11 s</p></td>
+<td><p>~20 s</p></td>
+</tr>
+<tr class="row-odd"><td><p>3</p></td>
+<td><p>5</p></td>
+<td><p>~18 s</p></td>
+<td><p>~34 s</p></td>
+</tr>
+<tr class="row-even"><td><p>4 (default)</p></td>
+<td><p>7</p></td>
+<td><p>~25 s</p></td>
+<td><p>~48 s</p></td>
+</tr>
+<tr class="row-odd"><td><p>6</p></td>
+<td><p>11</p></td>
+<td><p>~40 s</p></td>
+<td><p>~75 s</p></td>
+</tr>
+<tr class="row-even"><td><p>8</p></td>
+<td><p>15</p></td>
+<td><p>~54 s</p></td>
+<td><p>~102 s</p></td>
+</tr>
+<tr class="row-odd"><td><p>16 (max)</p></td>
+<td><p>31</p></td>
+<td><p>~112 s</p></td>
+<td><p>~211 s</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>(Add up to 2 s per phase for the tick.)</p>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">A</span></code> doesn’t change the capture time.</strong> The phase count doesn’t depend on
+it. It sets how many anchors each bridge lights: one anchor and one rep per
+<code class="docutils literal notranslate"><span class="pre">A·S</span></code> LEDs, so a 300-LED fixture at <code class="docutils literal notranslate"><span class="pre">S</span> <span class="pre">=</span> <span class="pre">4</span></code> gets about 25 of each per bridge
+at <code class="docutils literal notranslate"><span class="pre">A</span> <span class="pre">=</span> <span class="pre">3</span></code> and about 13 at <code class="docutils literal notranslate"><span class="pre">A</span> <span class="pre">=</span> <span class="pre">6</span></code>. Fewer anchors means weaker bridge ties. Keep the
+default 3 unless the bridge phases show merging (for example on a folded
+fixture where the anchor and rep blobs land close together in the image),
+and on short fixtures check that each bridge still shows several anchors in
+frame.</p></li>
+</ul>
+</section>
+<section id="failure-modes-and-diagnostics">
+<h2>Failure modes and diagnostics<a class="headerlink" href="#failure-modes-and-diagnostics" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Symptom</p></th>
+<th class="head"><p>Likely cause</p></th>
+<th class="head"><p>Where it shows</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Few ids decode, blobs merge</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">S</span></code> too small for the diffuser, or a fold in index space</p></td>
+<td><p>Capture HUD decode count. Raise <code class="docutils literal notranslate"><span class="pre">S</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Ids decode, but spots are dim or missed</p></td>
+<td><p>Detector not in diffuse mode, or the threshold is too high</p></td>
+<td><p>Settings ▸ Behavior ▸ Diffuse capture (threshold, local-contrast gain)</p></td>
+</tr>
+<tr class="row-even"><td><p>One class is offset, rotated or warped against the rest</p></td>
+<td><p>Weak bridge ties: too few anchors in view during bridges, or no parallax during that class’s phase</p></td>
+<td><p>Map shape. Move more and run more schedules.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Shape right, size too small</p></td>
+<td><p>Scale dilution (dwell-heavy, gentle motion)</p></td>
+<td><p>Map warning “The map’s size is uncertain (±N%)…” when <code class="docutils literal notranslate"><span class="pre">scaleRelStdErr</span></code> &gt; 0.1</p></td>
+</tr>
+<tr class="row-even"><td><p>Map shrinks to a few cm</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">scale-collapse</span></code>: median camera distance &lt; 0.15 m or LED rms spread &lt; 2 mm</p></td>
+<td><p>Degeneracy verdict (<code class="docutils literal notranslate"><span class="pre">solver/src/diag.rs</span></code>, <code class="docutils literal notranslate"><span class="pre">web/src/solver/degeneracy.ts</span></code>). The final falls back to the best preview map.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Preview good, final degenerate</p></td>
+<td><p>Cold-start scale sign or collapse</p></td>
+<td><p>Fixed by #318’s warm start and fallback (<a class="reference internal" href="mapping-solve-paths.html"><span class="std std-doc">mapping-solve-paths.md</span></a>)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>What the solver reports:</p>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">OutputMap.stats.scaleRelStdErr</span></code></strong> is the re-anchor’s relative scale
+standard error. <strong><code class="docutils literal notranslate"><span class="pre">stats.warnings</span></code></strong> gets the size-uncertainty warning
+above 0.1 and the “implausibly close” warning when the solved camera path
+is under 15 cm from the fixture. <code class="docutils literal notranslate"><span class="pre">diag.rs</span></code> also flags <code class="docutils literal notranslate"><span class="pre">scale-uncertain</span></code>
+above 0.5 as a warning, not a degeneracy, because the shape is still right.</p></li>
+<li><p><strong>The degeneracy verdict</strong> (<code class="docutils literal notranslate"><span class="pre">non-finite</span></code>, <code class="docutils literal notranslate"><span class="pre">too-few-leds</span></code>, <code class="docutils literal notranslate"><span class="pre">huge-residual</span></code>,
+<code class="docutils literal notranslate"><span class="pre">scale-collapse</span></code>, <code class="docutils literal notranslate"><span class="pre">scale-blowup</span></code>) decides between the cold and warm starts
+in the solver. In the app, <code class="docutils literal notranslate"><span class="pre">decideFinal</span></code> uses it to keep the best
+live-preview map when the final comes out degenerate (<code class="docutils literal notranslate"><span class="pre">fallback-degenerate</span></code>
+or <code class="docutils literal notranslate"><span class="pre">fallback-failed</span></code>).</p></li>
+<li><p><strong>The stage trace.</strong> Each stage (<code class="docutils literal notranslate"><span class="pre">initial-cold</span></code>, <code class="docutils literal notranslate"><span class="pre">initial-warm</span></code>,
+<code class="docutils literal notranslate"><span class="pre">outlier-round-N</span></code>, <code class="docutils literal notranslate"><span class="pre">rollback-to-best-round</span></code>, <code class="docutils literal notranslate"><span class="pre">strip-prior</span></code>) records solved
+LEDs, rms, the re-anchor factor, <code class="docutils literal notranslate"><span class="pre">scaleRelStdErr</span></code> and, for the initial
+solves, the degeneracy reasons. With debug mode on, a capture bundle
+stores it with the exact solver input, and <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//solver:replay_bundle</span> <span class="pre">--</span> <span class="pre">&lt;file&gt;</span></code> replays the bundle bit for bit. The
+bundle’s capture parameters record <code class="docutils literal notranslate"><span class="pre">strideSpacing</span></code> and <code class="docutils literal notranslate"><span class="pre">diffuse</span></code>.</p></li>
+<li><p><strong>Synthetic reproduction.</strong> <code class="docutils literal notranslate"><span class="pre">solver_cli</span> <span class="pre">--synth</span> <span class="pre">'{&quot;stride&quot;:</span> <span class="pre">3,</span> <span class="pre">&quot;anchorDensity&quot;:</span> <span class="pre">3,</span> <span class="pre">&quot;phaseS&quot;:</span> <span class="pre">5,</span> <span class="pre">&quot;deadS&quot;:</span> <span class="pre">1.5,</span> <span class="pre">…}'</span></code> generates a strided
+capture with known ground truth and decode dead time (plus <code class="docutils literal notranslate"><span class="pre">dwell_hop</span></code>,
+<code class="docutils literal notranslate"><span class="pre">swapP</span></code>, noise). Use it to reproduce a field failure before changing the
+solver.</p></li>
+</ul>
+<section id="known-issue-the-strip-prior-pass-can-collapse-scale-455">
+<h3>Known issue: the strip-prior pass can collapse scale (#455)<a class="headerlink" href="#known-issue-the-strip-prior-pass-can-collapse-scale-455" title="Link to this heading">¶</a></h3>
+<p>The outlier loop keeps its best-scoring round and rolls back to it. The strip
+pass that follows replaces the result unconditionally. On a real 650-LED
+capture the outlier stage produced a non-degenerate candidate (433 LEDs,
+3.56 px rms), and the strip pass turned it into a <code class="docutils literal notranslate"><span class="pre">scale-collapse</span></code> (400 LEDs,
+6.49 px, median camera distance 6.8 cm). The app then correctly fell back to
+an older preview with fewer LEDs, but the solver had already thrown away the
+better candidate. The one-sided rope links are one reason the strip pass
+can’t resist the shrink. A fix is in progress on another branch. Until it
+lands, if a diffused fixture collapses with the strip prior on, capture it
+again with <strong>Settings ▸ Behavior ▸ Capture ▸ Strip prior</strong> off to compare.</p>
+</section>
+</section>
+<section id="related">
+<h2>Related<a class="headerlink" href="#related" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><a class="reference internal" href="mapping-solve-paths.html"><span class="std std-doc">mapping-solve-paths.md</span></a>: the live-preview and final
+solves, warm start, degeneracy, capture bundles.</p></li>
+<li><p><a class="reference internal" href="../blob-detection-playbook.html"><span class="std std-doc">blob-detection-playbook.md</span></a>: tuning the
+detector on real frames.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">solver/README.md</span></code> (strip prior) and <code class="docutils literal notranslate"><span class="pre">web/README.md</span></code> (code timing, mid-capture
+renegotiation).</p></li>
+</ul>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="../blob-detection-playbook.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Blob-detection optimization playbook</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="../vio-exploration.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Eliminating WebXR: joint pose + LED optimization with IMU dead reckoning</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Strided (diffuse) capture: mapping LEDs behind a diffuser</a><ul>
+<li><a class="reference internal" href="#why-lighting-a-subset-helps">Why lighting a subset helps</a></li>
+<li><a class="reference internal" href="#the-schedule">The schedule</a><ul>
+<li><a class="reference internal" href="#why-bridges-are-needed">Why bridges are needed</a></li>
+<li><a class="reference internal" href="#group-capture">Group capture</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#the-capture-side">The capture side</a><ul>
+<li><a class="reference internal" href="#phase-rotation">Phase rotation</a></li>
+<li><a class="reference internal" href="#live-switching-and-per-channel-capture">Live switching and per-channel capture</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#decode-lock-dead-time-and-why-no-observation-is-ever-dropped">Decode-lock dead time, and why no observation is ever dropped</a></li>
+<li><a class="reference internal" href="#gauge-and-scale">Gauge and scale</a><ul>
+<li><a class="reference internal" href="#dwell-heavy-captures-dilute-scale">Dwell-heavy captures dilute scale</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#how-to-move-during-a-strided-capture">How to move during a strided capture</a></li>
+<li><a class="reference internal" href="#choosing-s-and-a">Choosing S and A</a></li>
+<li><a class="reference internal" href="#failure-modes-and-diagnostics">Failure modes and diagnostics</a><ul>
+<li><a class="reference internal" href="#known-issue-the-strip-prior-pass-can-collapse-scale-455">Known issue: the strip-prior pass can collapse scale (#455)</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#related">Related</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../../static/design-tabs.js?v=f930bc37"></script>
+    <script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+
+
+
+const initStyles = () => {
+    const defaultStyle = document.createElement('style');
+    defaultStyle.textContent = "pre.mermaid {\n    /* Same as .mermaid-container > pre */\n    display: block;\n    width: 100%;\n}\n\npre.mermaid > svg {\n    /* Same as .mermaid-container > pre > svg */\n    height: 500px;\n    width: 100%;\n    max-width: 100% !important;\n}";
+    document.head.appendChild(defaultStyle);
+
+    const fullscreenStyle = document.createElement('style');
+    fullscreenStyle.textContent = ".mermaid-container {\n    position: relative;\n    display: flex;\n    flex-direction: row;\n    width: 100%;\n}\n\n.mermaid-container > pre {\n    display: block;\n    width: 100%;\n}\n\n.mermaid-container > pre > svg {\n    height: 500px;\n    width: 100%;\n    max-width: 100% !important;\n}\n\n.mermaid-fullscreen-btn {\n    position: absolute;\n    width: 28px;\n    height: 28px;\n    background: rgba(255, 255, 255, 0.95);\n    border: 1px solid rgba(0, 0, 0, 0.3);\n    border-radius: 4px;\n    cursor: pointer;\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    transition: all 0.2s;\n    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);\n    font-size: 14px;\n    line-height: 1;\n    padding: 0;\n    color: #333;\n}\n\n.mermaid-fullscreen-btn:hover {\n    opacity: 100% !important;\n    background: rgba(255, 255, 255, 1);\n    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);\n    transform: scale(1.1);\n}\n\n.mermaid-fullscreen-btn.dark-theme {\n    background: rgba(50, 50, 50, 0.95);\n    border: 1px solid rgba(255, 255, 255, 0.3);\n    color: #e0e0e0;\n}\n\n.mermaid-fullscreen-btn.dark-theme:hover {\n    background: rgba(60, 60, 60, 1);\n    box-shadow: 0 3px 10px rgba(255, 255, 255, 0.2);\n}\n\n.mermaid-fullscreen-modal {\n    display: none;\n    position: fixed !important;\n    top: 0 !important;\n    left: 0 !important;\n    width: 95vw;\n    height: 100vh;\n    background: rgba(255, 255, 255, 0.98);\n    z-index: 9999;\n    padding: 20px;\n    overflow: auto;\n}\n\n.mermaid-fullscreen-modal.dark-theme {\n    background: rgba(0, 0, 0, 0.98);\n}\n\n.mermaid-fullscreen-modal.active {\n    display: flex;\n    align-items: center;\n    justify-content: center;\n}\n\n.mermaid-container-fullscreen {\n    position: relative;\n    width: 95vw;\n    height: 90vh;\n    max-width: 95vw;\n    max-height: 90vh;\n    background: white;\n    border-radius: 8px;\n    padding: 20px;\n    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);\n    overflow: auto;\n    display: flex;\n    align-items: center;\n    justify-content: center;\n}\n\n.mermaid-container-fullscreen.dark-theme {\n    background: #1a1a1a;\n    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);\n}\n\n.mermaid-container-fullscreen pre.mermaid {\n    width: 100%;\n    height: 100%;\n    display: flex;\n    align-items: center;\n    justify-content: center;\n}\n\n.mermaid-container-fullscreen .mermaid svg {\n    height: 100% !important;\n    width: 100% !important;\n    cursor: grab;\n}\n\n.mermaid-fullscreen-close {\n    position: fixed !important;\n    top: 20px !important;\n    right: 20px !important;\n    width: 40px;\n    height: 40px;\n    background: rgba(255, 255, 255, 0.95);\n    border: 1px solid rgba(0, 0, 0, 0.2);\n    border-radius: 50%;\n    cursor: pointer;\n    z-index: 10000;\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);\n    transition: all 0.2s;\n    font-size: 24px;\n    line-height: 1;\n    color: #333;\n}\n\n.mermaid-fullscreen-close:hover {\n    background: white;\n    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);\n    transform: scale(1.1);\n}\n\n.mermaid-fullscreen-close.dark-theme {\n    background: rgba(50, 50, 50, 0.95);\n    border: 1px solid rgba(255, 255, 255, 0.2);\n    color: #e0e0e0;\n}\n\n.mermaid-fullscreen-close.dark-theme:hover {\n    background: rgba(60, 60, 60, 1);\n    box-shadow: 0 6px 16px rgba(255, 255, 255, 0.2);\n}\n\n.mermaid-fullscreen-modal .mermaid-fullscreen-btn {\n    display: none !important;\n}";
+    document.head.appendChild(fullscreenStyle);
+}
+
+// Detect if page has dark background
+const isDarkTheme = () => {
+    // We use a set of heuristics:
+    // 1. Check for common dark mode classes or attributes
+    // 2. Check computed background color brightness
+    if (document.documentElement.classList.contains('dark') ||
+        document.documentElement.getAttribute('data-theme') === 'dark' ||
+        document.body.classList.contains('dark') ||
+        document.body.getAttribute('data-theme') === 'dark') {
+        // console.log("Dark theme detected via class/attribute");
+        return true;
+    }
+    if (document.documentElement.classList.contains('light') ||
+        document.documentElement.getAttribute('data-theme') === 'light' ||
+        document.body.classList.contains('light') ||
+        document.body.getAttribute('data-theme') === 'light') {
+        // console.log("Light theme detected via class/attribute");
+        return false;
+    }
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        // console.log("Dark theme detected via prefers-color-scheme");
+        return true;
+    }
+    const bgColor = window.getComputedStyle(document.body).backgroundColor;
+    const match = bgColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)/);
+    if (match) {
+        const r = parseInt(match[1]);
+        const g = parseInt(match[2]);
+        const b = parseInt(match[3]);
+        const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+        // console.log("Background color brightness:", brightness);
+        return brightness < 128;
+    }
+    // console.log("No dark or light theme detected, defaulting to light theme");
+    return false;
+};
+
+let darkTheme = isDarkTheme();
+let modal = null;
+let modalContent = null;
+let previousScrollOffset = [window.scrollX, window.scrollY];
+let _lazyObserver = null;
+let _renderQueue = Promise.resolve();
+let closeModal = () => {};
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal?.classList.contains('active')) {
+        closeModal();
+    }
+});
+
+// Apply d3 zoom to each SVG. Idempotent: an SVG already wrapped is skipped,
+// so this is safe to call both for the initial batch and for diagrams that
+// render lazily once they become visible.
+const addZoomToSvgs = (svgs) => {
+    svgs.each(function() {
+        if (this.getAttribute('data-zoom-applied') === 'true') return;
+        var svg = d3.select(this);
+        svg.html("<g class='wrapper'>" + svg.html() + "</g>");
+        var inner = svg.select("g");
+        var zoom = d3.zoom().on("zoom", function(event) {
+            inner.attr("transform", event.transform);
+        });
+        svg.call(zoom);
+        this.setAttribute('data-zoom-applied', 'true');
+    });
+};
+
+const runMermaid = async (rerun) => {
+    console.log("Running mermaid diagrams, rerun =", rerun);
+    // clear all existing mermaid charts
+    let all_mermaids = document.querySelectorAll(".mermaid");
+
+    if (rerun) {
+        // Disconnect any previous lazy rendering observer
+        if (_lazyObserver) {
+            _lazyObserver.disconnect();
+            _lazyObserver = null;
+        }
+
+        all_mermaids.forEach((el) => {
+            el.removeAttribute('data-mermaid-deferred');
+            el.removeAttribute('data-mermaid-render-failed');
+            if(!el.hasAttribute("data-original-code")) {
+                // store original code
+                // console.log(`Storing original code for first run: `, el.innerHTML);
+                el.setAttribute('data-original-code', el.innerHTML);
+            }
+            if(el.getAttribute("data-processed") === "true") {
+                // remove and restore original
+                el.removeAttribute("data-processed");
+                // console.log(`Restoring original code for re-run: `, el.getAttribute('data-original-code'));
+                el.innerHTML = el.getAttribute('data-original-code');
+            } else {
+                // store original code
+                // console.log(`Storing original code for re-run: `, el.innerHTML);
+                el.setAttribute('data-original-code', el.innerHTML);
+            }
+        });
+
+        // Separate visible and hidden elements. Mermaid's layout engine measures
+        // text dimensions via the DOM, which fails for elements hidden by a parent
+        // (e.g., Reveal.js non-active slides, sphinx-design unopened tabs),
+        // producing broken SVGs. Render visible elements now, defer hidden ones.
+        const visible = [];
+        const hidden = [];
+        all_mermaids.forEach((el) => {
+            // offsetParent is null for display:none ancestors.
+            // getClientRects().length > 0 catches position:fixed elements
+            // (which also have null offsetParent but are still visible).
+            if (el.offsetParent !== null || el.getClientRects().length > 0) {
+                visible.push(el);
+            } else {
+                hidden.push(el);
+                el.setAttribute('data-mermaid-deferred', 'true');
+            }
+        });
+
+        if (visible.length > 0) {
+            try {
+                await mermaid.run({ nodes: visible });
+            } catch (e) {
+                console.error("Mermaid rendering failed:", e);
+            }
+        }
+
+        // Lazily render hidden elements when they become visible.
+        // Uses a promise chain (_renderQueue) to serialize rendering,
+        // since IntersectionObserver may report multiple entries at once
+        // and mermaid.run() is not safe to call concurrently.
+        if (hidden.length > 0) {
+            if (typeof IntersectionObserver === 'undefined') {
+                console.warn("IntersectionObserver not available; hidden mermaid diagrams will not render.");
+            } else {
+                _renderQueue = Promise.resolve();
+                _lazyObserver = new IntersectionObserver((entries) => {
+                    for (const entry of entries) {
+                        if (entry.isIntersecting && entry.target.getAttribute("data-processed") !== "true") {
+                            _lazyObserver.unobserve(entry.target);
+                            const el = entry.target;
+                            _renderQueue = _renderQueue.then(async () => {
+                                try {
+                                    await mermaid.run({ nodes: [el] });
+                                    el.removeAttribute('data-mermaid-deferred');
+                                    // Apply zoom to the now-rendered diagram, matching
+                                    // the decoration visible diagrams receive.
+                                    if (false) {
+                                        addZoomToSvgs(d3.selectAll("").select(function() {
+                                            return this.querySelector("svg");
+                                        }));
+                                    }
+                                } catch (e) {
+                                    console.error("Mermaid deferred rendering failed:", e);
+                                    el.removeAttribute('data-mermaid-deferred');
+                                    el.setAttribute('data-mermaid-render-failed', 'true');
+                                }
+                            });
+                        }
+                    }
+                });
+                hidden.forEach((el) => _lazyObserver.observe(el));
+            }
+        }
+    }
+
+    all_mermaids = document.querySelectorAll(".mermaid");
+    // Exclude deferred (hidden) and render-failed elements from completion checks
+    const mermaids_active = document.querySelectorAll(".mermaid:not([data-mermaid-deferred]):not([data-mermaid-render-failed])");
+    const mermaids_processed = document.querySelectorAll(".mermaid:not([data-mermaid-deferred]):not([data-mermaid-render-failed])[data-processed='true']");
+
+    if (false) {
+        const mermaids_to_add_zoom = 0 === -1 ? mermaids_active.length : 0;
+        if(mermaids_to_add_zoom > 0) {
+            var svgs = d3.selectAll("").select(function() {
+                return this.querySelector("svg");
+            });
+            // Wait until every active (visible) diagram has rendered. Deferred
+            // diagrams are excluded, so a fixed d3_node_count that counts a
+            // hidden diagram no longer loops forever waiting for its SVG.
+            if(mermaids_active.length !== mermaids_processed.length) {
+                setTimeout(() => runMermaid(false), 200);
+                return;
+            }
+            addZoomToSvgs(svgs);
+        }
+    } else if(mermaids_active.length !== mermaids_processed.length) {
+        // Wait for mermaid to process all diagrams
+        setTimeout(() => runMermaid(false), 200);
+        return;
+    }
+
+    // Stop here if not adding fullscreen capability
+    if (!true) return;
+
+    if (modal !== null ) {
+        // Destroy existing modal
+        modal.remove();
+        modal = null;
+        modalContent = null;
+    }
+
+    modal = document.createElement('div');
+    modal.className = 'mermaid-fullscreen-modal' + (darkTheme ? ' dark-theme' : '');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', 'Fullscreen diagram viewer');
+    modal.innerHTML = `
+        <button class="mermaid-fullscreen-close${darkTheme ? ' dark-theme' : ''}" aria-label="Close fullscreen">✕</button>
+        <div class="mermaid-container-fullscreen${darkTheme ? ' dark-theme' : ''}"></div>
+    `;
+    document.body.appendChild(modal);
+
+    modalContent = modal.querySelector('.mermaid-container-fullscreen');
+    const closeBtn = modal.querySelector('.mermaid-fullscreen-close');
+
+    closeModal = () => {
+        modal.classList.remove('active');
+        modalContent.innerHTML = '';
+        document.body.style.overflow = ''
+        window.scrollTo({left: previousScrollOffset[0], top: previousScrollOffset[1], behavior: 'instant'});
+    };
+
+    closeBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+    });
+    document.querySelectorAll('.mermaid').forEach((mermaidDiv) => {
+        if (mermaidDiv.parentNode.classList.contains('mermaid-container') ||
+            mermaidDiv.closest('.mermaid-fullscreen-modal')) {
+            // Already processed, adjust button class if needed
+            const existingBtn = mermaidDiv.parentNode.querySelector('.mermaid-fullscreen-btn');
+            if (existingBtn) {
+                existingBtn.className = 'mermaid-fullscreen-btn' + (darkTheme ? ' dark-theme' : '');
+            }
+            return;
+        }
+
+        const container = document.createElement('div');
+        container.className = 'mermaid-container';
+        mermaidDiv.parentNode.insertBefore(container, mermaidDiv);
+        container.appendChild(mermaidDiv);
+
+        const fullscreenBtn = document.createElement('button');
+        fullscreenBtn.className = 'mermaid-fullscreen-btn' + (darkTheme ? ' dark-theme' : '');
+        fullscreenBtn.setAttribute('aria-label', 'View diagram in fullscreen');
+        fullscreenBtn.textContent = "\u26f6";
+        fullscreenBtn.style.opacity = "50%";
+
+        // Calculate dynamic position based on diagram's margin and padding
+        const diagramStyle = window.getComputedStyle(mermaidDiv);
+        const marginTop = parseFloat(diagramStyle.marginTop) || 0;
+        const marginRight = parseFloat(diagramStyle.marginRight) || 0;
+        const paddingTop = parseFloat(diagramStyle.paddingTop) || 0;
+        const paddingRight = parseFloat(diagramStyle.paddingRight) || 0;
+        fullscreenBtn.style.top = `${marginTop + paddingTop + 4}px`;
+        fullscreenBtn.style.right = `${marginRight + paddingRight + 4}px`;
+
+        fullscreenBtn.addEventListener('click', () => {
+            previousScrollOffset = [window.scrollX, window.scrollY];
+            const clone = mermaidDiv.cloneNode(true);
+            modalContent.innerHTML = '';
+            modalContent.appendChild(clone);
+
+            const svg = clone.querySelector('svg');
+            if (svg) {
+                svg.removeAttribute('width');
+                svg.removeAttribute('height');
+                svg.style.width = '100%';
+                svg.style.height = 'auto';
+                svg.style.maxWidth = '100%';
+                svg.style.display = 'block';
+
+                if (false) {
+                    setTimeout(() => {
+                        const g = svg.querySelector('g');
+                        if (g) {
+                            var svgD3 = d3.select(svg);
+                            svgD3.html("<g class='wrapper'>" + svgD3.html() + "</g>");
+                            var inner = svgD3.select("g");
+                            var zoom = d3.zoom().on("zoom", function(event) {
+                                inner.attr("transform", event.transform);
+                            });
+                            svgD3.call(zoom);
+                        }
+                    }, 100);
+                }
+            }
+
+            modal.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        });
+        container.appendChild(fullscreenBtn);
+    });
+};
+
+
+
+const load = async () => {
+    initStyles();
+
+
+    await runMermaid(true);
+
+    const reRunIfThemeChanges = async () => {
+        const newDarkTheme = isDarkTheme();
+        if (newDarkTheme !== darkTheme) {
+            darkTheme = newDarkTheme;
+            console.log("Theme change detected, re-running mermaid with", darkTheme ? "dark" : "default", "theme");
+            await mermaid.initialize(
+                {...{"startOnLoad": false},
+                ...{ darkMode: darkTheme, theme: darkTheme ? "dark" : "default" },
+                }
+            );
+            await runMermaid(true);
+        }
+    };
+
+    // Update theme classes when theme changes
+    const themeObserver = new MutationObserver(reRunIfThemeChanges);
+    themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'data-theme']
+    });
+    themeObserver.observe(document.body, {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'data-theme']
+    });
+};
+
+
+
+
+
+console.log("Initializing mermaid with", darkTheme ? "dark" : "default", "theme");
+mermaid.initialize(
+    {...{"startOnLoad": false},
+    ...{ darkMode: darkTheme, theme: darkTheme ? "dark" : "default" },
+    }
+);
+
+window.addEventListener("load", load);
+window.runMermaid = runMermaid;</script>
+    </body>
+</html>
