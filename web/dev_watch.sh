@@ -73,6 +73,7 @@ fi
   --pulse-dir "$RUNFILES/firmware/pulse/pulse_web" \
   --fx-compiler-dir "$RUNFILES/fx_compiler/fx_compiler_web" \
   --fx-vm-dir "$RUNFILES/firmware/fx_vm/fx_vm_web" \
+  --lh-wasm-dir "$RUNFILES/web/lh_wasm/lh_wasm_web" \
   --session-dir "$STATE_DIR/sessions" \
   --maps-dir "$STATE_DIR/maps" \
   ${EXTRA_BACKEND[@]+"${EXTRA_BACKEND[@]}"} &
