@@ -40,6 +40,7 @@ import {
   SYMBOL_DOWNGRADE_MARGIN,
   SYMBOL_UPGRADE_MARGIN,
 } from "../src/cv/exposure";
+import { AlphabetPlanner, ChannelQuality } from "../src/cv/channelQuality";
 import { LinkTelemetry, type LinkTelemetrySnapshot } from "../src/cv/linkTelemetry";
 import { CvPipeline } from "../src/cv/pipeline";
 import type { Blob } from "../src/cv/types";
@@ -82,6 +83,10 @@ export interface LinkPolicy {
   /** Mid-capture alphabet-switch margin band (planSymbolSwitch). */
   downgradeMargin?: number;
   upgradeMargin?: number;
+  /** Mid-capture alphabet rule: the decoder-margin band with its scene-luma
+   * gate (planSymbolSwitch, the default), or the data-aided channel
+   * measurement (cv/channelQuality.ts planAlphabet). */
+  symbolRule?: "margin" | "measured";
   /** Scene-luma gate on the 2 → 4 upgrade (default HUE4_MIN_MEAN_LUMA). */
   upgradeMinLuma?: number;
   brightness?: number;
@@ -238,8 +243,10 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
     truth: (r: DetectionRecord) => frameTruth.get(key(r.tCaptureMs, r.u, r.v)) ?? null,
   });
   let records = 0;
+  const quality = new ChannelQuality();
+  const planner = new AlphabetPlanner([2, 4]);
   const makePipeline = (e: CodeEpoch): CvPipeline => {
-    const pl = new CvPipeline(e.params, e.epochServer, (t) => t + CLOCK_OFFSET, { denseRecords: true });
+    const pl = new CvPipeline(e.params, e.epochServer, (t) => t + CLOCK_OFFSET, { denseRecords: true, decoder: { quality } });
     pl.onDetections((rs) => {
       records += rs.length;
       tel.recordsEmitted(rs);
@@ -275,6 +282,7 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
     // capture page rebuilds its pipeline on the configure reply).
     if (pendingSwitch !== null && tFrame >= pendingSwitch.atLocal) {
       epochs.push(pendingSwitch.e);
+      if (pendingSwitch.e.params.symbols !== pipeline.params.symbols) quality.resetYield();
       pipeline = makePipeline(pendingSwitch.e);
       tel.attachDecoder(pipeline.decoder.stats);
       tel.config(tFrame, pendingSwitch.e.params, "reconfigure", median(diffs(recentT)) ?? interval);
@@ -410,7 +418,9 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
         const wantBit = policy.bitPeriodMs === "auto" ? planReconfigure(curP.bitPeriodMs, fi) : null;
         const wantSym =
           policy.symbols === "auto"
-            ? planSymbolSwitch(curP.symbols as 2 | 4, scene, pipeline.stats.marginEma, band)
+            ? policy.symbolRule === "measured"
+              ? (planner.plan(curP.symbols, quality.estimate(), curP, quality.decodeYield(), tFrame) as 2 | 4 | null)
+              : planSymbolSwitch(curP.symbols as 2 | 4, scene, pipeline.stats.marginEma, band)
             : null;
         const confirmed = (wantBit !== null && wantBit === pendingBit) || (wantSym !== null && wantSym === pendingSym);
         if (confirmed) {

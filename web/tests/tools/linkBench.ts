@@ -42,6 +42,9 @@ export const POLICIES: LinkPolicy[] = [
   // Let the measured margin alone upgrade 2 → 4 in a dark room (the luma
   // gate otherwise pins dark rooms to 2 symbols for the whole run).
   { ...BASELINE_POLICY, name: "upgrade-dark", upgradeMinLuma: 0 },
+  // Data-aided channel measurement drives the alphabet both ways
+  // (cv/channelQuality.ts), no scene-luma gate.
+  { ...BASELINE_POLICY, name: "measured", symbolRule: "measured" },
   // Start the exposure servo longer (fewer dim first seconds).
   { ...BASELINE_POLICY, name: "exp-start-0.5", exposureStart: 0.5 },
   // Faster signaling than the timing constraint allows (expected UNSAFE).
