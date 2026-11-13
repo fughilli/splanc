@@ -172,8 +172,28 @@ void tracker_usb_start(QueueHandle_t reports, int prio) {
   xTaskCreatePinnedToCore(client_task, "usb_client", 4096, nullptr, prio, nullptr, 0);
 }
 
+// The feature exchanges since the device was opened (usb_tracker.h). The tracker's
+// handshake reads its config in ~60 B pieces: a few hundred at most.
+static TrackerFeature g_feats[384];
+static size_t g_nfeats = 0;
+
+static void keep_feature(bool set, int rtn, const uint8_t* data, size_t len) {
+  if (g_nfeats >= sizeof g_feats / sizeof g_feats[0]) return;
+  TrackerFeature& f = g_feats[g_nfeats];
+  f.us = esp_timer_get_time();
+  f.rtn = static_cast<int16_t>(rtn);
+  f.set = set ? 1 : 0;
+  f.len = static_cast<uint8_t>(len < sizeof f.data ? len : sizeof f.data);
+  memcpy(f.data, data, f.len);
+  g_nfeats++;  // published after the data (one writer: the tracker task)
+}
+
+size_t tracker_feature_count() { return g_nfeats; }
+const TrackerFeature* tracker_feature(size_t i) { return i < g_nfeats ? &g_feats[i] : nullptr; }
+
 bool tracker_usb_open(uint16_t* vid, uint16_t* pid) {
   if (g_dev != nullptr || g_new_addr == 0 || g_client == nullptr) return false;
+  g_nfeats = 0;
   const uint8_t addr = g_new_addr;
   g_new_addr = 0;
   g_gone = false;
@@ -296,6 +316,7 @@ extern "C" int p4_tracker_get_feature(uint8_t report_id, uint8_t* buf, size_t le
     buf[0] = report_id;
     n = m + 1;
   }
+  keep_feature(false, n, buf, n > 0 ? static_cast<size_t>(n) : 1);
 #ifdef LH_DUMP
   tracker_dump_feature("GET", n, buf, n > 0 ? n : 1);
 #endif
@@ -306,6 +327,7 @@ extern "C" int p4_tracker_set_feature(const uint8_t* data, size_t len) {
   // SET_REPORT: bmRequestType 0x21 (OUT, class, interface), bRequest 0x09; the id is data[0].
   if (len == 0) return -1;
   int n = control(0x21, 0x09, data[0], data, nullptr, len);
+  keep_feature(true, n >= 0 ? static_cast<int>(len) : n, data, len);
 #ifdef LH_DUMP
   // hidapi's convention, which the recordings carry: a SET returns its length.
   tracker_dump_feature("SET", n >= 0 ? static_cast<int>(len) : n, data, len);
