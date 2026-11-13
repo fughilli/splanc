@@ -49,8 +49,10 @@ stage_site() {
   # (the webapp fetches /firmware/manifest.json) — the "This build (dev)" flash
   # source. The flash bundles are NOT built here; CI's firmware job builds them and
   # hands the tar paths in $LEDMAPPER_FLASHBUNDLE_NETSTACK (the shipping netstack
-  # player) and, optionally, $LEDMAPPER_FLASHBUNDLE (the vendor-WiFi player,
-  # deprecated in #171 and no longer built by CI). Each is staged independently:
+  # player), $LEDMAPPER_FLASHBUNDLE_P4 (the ESP32-P4 player with its C6 front end
+  # and the Vive tracker module) and, optionally, $LEDMAPPER_FLASHBUNDLE (the
+  # vendor-WiFi player, deprecated in #171 and no longer built by CI). The first
+  # one staged is the flash sheet's default. Each is staged independently:
   # gating the whole tree on the vendor bundle silently dropped /firmware/ from
   # every site build once CI stopped producing it. A path that is SET but missing
   # is an error — CI asked for firmware and must not ship a preview without it.
@@ -59,7 +61,7 @@ stage_site() {
   # reports "no bundled firmware".
   local -a images=()
   local var id
-  for var in LEDMAPPER_FLASHBUNDLE LEDMAPPER_FLASHBUNDLE_NETSTACK; do
+  for var in LEDMAPPER_FLASHBUNDLE LEDMAPPER_FLASHBUNDLE_NETSTACK LEDMAPPER_FLASHBUNDLE_P4; do
     [[ -n "${!var:-}" ]] || continue
     if [[ ! -f "${!var}" ]]; then
       echo "stage_site: \$$var=${!var} does not exist" >&2
@@ -67,6 +69,7 @@ stage_site() {
     fi
     id=esp32c6
     [[ "$var" == LEDMAPPER_FLASHBUNDLE_NETSTACK ]] && id=esp32c6_netstack
+    [[ "$var" == LEDMAPPER_FLASHBUNDLE_P4 ]] && id=esp32p4_tracker
     images+=(--image "$id=${!var}")
   done
   if ((${#images[@]})); then

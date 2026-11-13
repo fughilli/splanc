@@ -35,7 +35,7 @@ export function lampProblem(link: LampLink | null): string | null {
     return (
       `${link.name() || "This player"}'s firmware can't take OSC over the app's connection ` +
       '(its welcome lacks the "osc" feature). Reflash it with a P4 build that includes ' +
-      "OSC over the WebSocket session (Flash firmware in the Splanc app), then reconnect."
+      "OSC over the WebSocket session (Flash P4 firmware below, over USB), then reconnect."
     );
   return null;
 }

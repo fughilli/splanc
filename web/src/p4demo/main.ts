@@ -482,6 +482,12 @@ function cancelPivot(): void {
   render();
 }
 
+/** The app's USB flasher, opened on this build's own P4 image (the PR preview stages
+ * it under /firmware/): the lamp needs it for OSC over the app's connection. */
+function flashP4(): void {
+  void import("../ui/screens/flashSheet").then((m) => m.openFlashSheet({ source: "bundled", prefer: (e) => e.chip.toLowerCase() === "esp32p4" }));
+}
+
 function pickFile(accept: string, then: (text: string, name: string) => void): void {
   const inp = document.createElement("input");
   inp.type = "file";
@@ -807,6 +813,7 @@ function setupControls(): HTMLElement[] {
     false,
     live("lamp-info"),
     row(Button({ label: "Devices…", variant: "quiet", onClick: () => openDeviceSheet() }), Button({ label: "Deploy effect", onClick: () => maybeDeploy(true) })),
+    row(text("Flash this build's P4 firmware over USB", "grow"), Button({ label: "Flash P4 firmware", variant: "quiet", onClick: flashP4 })),
     row(text("Deploy the effect when a lamp connects", "grow"), auto.el),
     row(text("Send lhd's base stations (/lh/station, 1 Hz)", "grow"), stations.el),
     text(
@@ -1003,7 +1010,9 @@ function banner(): { kind: "warn" | "err"; lines: string[]; action?: HTMLElement
   const problem = lampProblem(lamp);
   if (problem && (appState.client?.isConnected || !MOCK)) {
     if (appState.status.certUrl) return { kind: "warn", lines: ["The lamp's certificate needs trusting first.", problem], action: Button({ label: "Open devices", onClick: () => openDeviceSheet() }) };
-    return { kind: appState.client?.isConnected ? "err" : "warn", lines: [problem] };
+    // A connected player without OSC needs this build's firmware: offer the flasher.
+    const needsFlash = !!appState.client?.isConnected;
+    return { kind: needsFlash ? "err" : "warn", lines: [problem], ...(needsFlash ? { action: Button({ label: "Flash P4 firmware", onClick: flashP4 }) } : {}) };
   }
   if (deployError) return { kind: "err", lines: [`The effect didn't deploy: ${deployError}`], action: Button({ label: "Try again", onClick: () => maybeDeploy(true) }) };
   if (trackStatus.state === "disconnected" && trackStatus.detail) return { kind: "warn", lines: [trackStatus.detail] };

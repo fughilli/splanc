@@ -1371,6 +1371,17 @@ esptool_flash(
     tags = ["manual"],
 )
 
+# The same flash as a bundle (flash.json + bins), for the app's USB flasher: CI stages
+# it under /firmware/ on PR previews as "This build (dev)" (web/stage_site.lib.sh,
+# $LEDMAPPER_FLASHBUNDLE_P4). One USB flash of the P4 does both chips: the image carries
+# the C6 front end and flashes it onto the board's C6 at boot. Build it with
+# --//firmware/p4:tracker for the wired Vive tracker (what CI stages).
+flash_bundle(
+    name = "esp32p4_player_c6_flashbundle",
+    flash = ":flash_esp32p4_player_c6",
+    tags = ["manual"],
+)
+
 firmware_binary(
     name = "esp32p4_player",
     binary = ":player_app_link",

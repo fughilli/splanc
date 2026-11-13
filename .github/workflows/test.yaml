@@ -139,6 +139,17 @@ jobs:
           bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
             //firmware/player_app:esp32c6_netstack_flashbundle
 
+      # The ESP32-P4 player with its C6 front end and the wired Vive tracker
+      # module: one USB flash of the P4 does both chips (the image carries the C6
+      # front end and flashes it at boot). Staged next to the C6 bundle as a
+      # second "This build (dev)" image, so a PR preview can flash a P4 board with
+      # the PR's own firmware. This is also the only CI build of the P4 images.
+      - name: Build firmware flash bundle (esp32p4 player + C6 front end, tracker)
+        run: |
+          bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
+            --//firmware/p4:tracker \
+            //firmware/player_app:esp32p4_player_c6_flashbundle
+
       # esp32c3 is a BUILD-ONLY target (see //MODULE.bazel + firmware/netstack
       # ccmp.rs): build-gate that the c3 flashbundle compiles + links on every PR
       # so future c3 firmware work stays green. The image is NOT runtime-correct
@@ -153,6 +164,14 @@ jobs:
         with:
           name: esp32c6-flashbundle
           path: bazel-bin/firmware/player_app/esp32c6_netstack_flashbundle.tar
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Upload esp32p4 flash bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32p4-flashbundle
+          path: bazel-bin/firmware/player_app/esp32p4_player_c6_flashbundle.tar
           retention-days: 3
           if-no-files-found: error
 
@@ -351,6 +370,13 @@ jobs:
           name: esp32c6-flashbundle
           path: ${{ github.workspace }}/_flashbundle
 
+      # The esp32p4 flash bundle (player + C6 front end + tracker), same revision.
+      - name: Download esp32p4 flash bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: esp32p4-flashbundle
+          path: ${{ github.workspace }}/_flashbundle_p4
+
       # Same caching rationale as the `test` job: cache /nix so the pinned
       # nixpkgs snapshot + build tools aren't re-realized every run. This job is
       # on the PR critical path (needs: test) and builds the wasm bundles.
@@ -404,6 +430,7 @@ jobs:
         # docs built above so they're staged under /docs/.
         env:
           LEDMAPPER_FLASHBUNDLE_NETSTACK: ${{ github.workspace }}/_flashbundle/esp32c6_netstack_flashbundle.tar
+          LEDMAPPER_FLASHBUNDLE_P4: ${{ github.workspace }}/_flashbundle_p4/esp32p4_player_c6_flashbundle.tar
           LEDMAPPER_DOCS_SITE: ${{ github.workspace }}/docs/site/html
         run: bazel run //web:stage_site --disk_cache="$HOME/.cache/bazel-disk" -- "$GITHUB_WORKSPACE/_site"
 
