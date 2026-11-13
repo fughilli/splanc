@@ -399,3 +399,42 @@ fn mailbox_drops_a_long_message_that_does_not_fit_whole() {
     got.sort();
     assert_eq!(got, vec![(4, 4), (8, 4), (12, 1)]);
 }
+
+#[test]
+fn nested_bundles_flatten_in_order_up_to_the_depth_limit() {
+    use ledmapper_osc::MAX_BUNDLE_DEPTH;
+    let val = |m: &ledmapper_osc::OscMessage| m.first_f32().unwrap();
+    // #bundle[ /a, #bundle[ /b, #bundle[], /c ], /d ]: document order, empty bundle fine.
+    let inner = bundle(&[msg("/b", "f", &2f32.to_be_bytes()), bundle(&[]), msg("/c", "f", &3f32.to_be_bytes())]);
+    let outer = bundle(&[msg("/a", "f", &1f32.to_be_bytes()), inner, msg("/d", "f", &4f32.to_be_bytes())]);
+    let mut seen = Vec::new();
+    assert!(for_each_message(&outer, &mut |m| seen.push((m.addr.to_string(), val(m)))));
+    assert_eq!(
+        seen,
+        vec![("/a".to_string(), 1.0), ("/b".to_string(), 2.0), ("/c".to_string(), 3.0), ("/d".to_string(), 4.0)]
+    );
+
+    // Nested to exactly the limit parses; one deeper is malformed (dropped whole).
+    let nest = |levels: usize| {
+        let mut p = bundle(&[msg("/x", "f", &9f32.to_be_bytes())]);
+        for _ in 1..levels {
+            p = bundle(&[p]);
+        }
+        p
+    };
+    let mut n = 0;
+    assert!(for_each_message(&nest(MAX_BUNDLE_DEPTH), &mut |_| n += 1));
+    assert_eq!(n, 1);
+    assert!(!for_each_message(&nest(MAX_BUNDLE_DEPTH + 1), &mut |_| {}));
+
+    // An element that runs past its own bundle (but not past the packet) is malformed.
+    let mut liar = bundle(&[msg("/b", "f", &2f32.to_be_bytes())]);
+    let n = liar.len();
+    liar[16..20].copy_from_slice(&((n as i32 - 20 + 4).to_be_bytes())); // inner element claims 4 bytes too many
+    let outer = bundle(&[liar, msg("/tail", "f", &1f32.to_be_bytes())]);
+    assert!(!for_each_message(&outer, &mut |_| {}));
+    // Garbage where an element should be.
+    let mut junk = bundle(&[msg("/a", "f", &1f32.to_be_bytes())]);
+    junk[20] = b'x';
+    assert!(!for_each_message(&junk, &mut |_| {}));
+}
