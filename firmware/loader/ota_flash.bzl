@@ -84,19 +84,20 @@ ota_flash = rule(
     },
 )
 
-def ota_package(name, app, manifest_key, version, key_id = 0, security_version = 0, signer = "//firmware/ota:ota_sign", **kwargs):
+def ota_package(name, app, manifest_key, version, key_id = 0, security_version = 0, board = 0, signer = "//firmware/ota:ota_sign", **kwargs):
     """Builds `<name>.ota`: the signed manifest followed by the app image.
 
     The 108-byte manifest + image is the one file a client streams over the air (manifest to ota_begin, the rest as
     ota_chunks). Signed at build time with `manifest_key` (a keys/*.key file): only
     the TEST key belongs in a build; release images are signed by the release
-    workflow with the OTA_SIGNING_KEY secret (tools/ota_release.sh)."""
+    workflow with the OTA_SIGNING_KEY secret (tools/ota_release.sh). `board` is the
+    manifest's signed board id (0 a C6 app, 16 the ESP32-P4 player)."""
     native.genrule(
         name = name,
         srcs = [app, manifest_key],
         outs = [name + ".ota", name + ".manifest"],
         cmd = ("$(execpath %s) sign --key-file $(location %s) --version %s " +
-               ("--key-id %d --security-version %d " % (key_id, security_version)) +
+               ("--key-id %d --security-version %d --board %d " % (key_id, security_version, board)) +
                "--in $(location %s) --out $(location %s.manifest) >/dev/null && " +
                "cat $(location %s.manifest) $(location %s) > $(location %s.ota)") % (
             signer,

@@ -817,7 +817,66 @@ blanks the LEDs because the network had trouble (`bootloop.txt`).
 
 ### 5.1 OTA for both chips
 
-**Recommendation: each chip updates itself, and the C6 relays the P4's image.** The C6 never
+**As built (2026-11-10): one package updates both chips.** The P4 image already carries the
+C6 front end's images (`//firmware/p4/c6flash`) and reflashes the C6 over SDIO at boot
+whenever the C6's ELF SHA-256 differs. So the update is a P4 update, and the C6 follows:
+
+1. **Package.** `esp32p4-player-<ver>.ota` = the 108-byte manifest + the P4 image. The board
+   is signed into the manifest: flags bits 24..31 = **16** (`manifest::BOARD_P4`), clear of the
+   MAX's 1..4. The receive session picks the board from the chip id (`session::board_for_chip`):
+   - the P4 (`0x0012`) takes board 16 only;
+   - the C6 and C3 take board 0 only.
+
+   The image header's chip id is checked as well, so no chip can install another's image even
+   though they share the keyring. Test-signed build:
+   `//firmware/player_app:esp32p4_player_c6_ota_test`; the signer takes `--board 16`.
+2. **Wire.** The proto is unchanged. The C6 front end forwards `ota_*` 70–75 to the P4
+   (`main.cpp`, `LM_FRONTEND`) and never answers them itself while the P4 is up. While the P4
+   is down, `get_ota_status` is answered by the C6, and the other arms get no reply, so the
+   client's resume retries them. The P4 advertises the welcome feature **`ota_inapp`**: the
+   client (`web/src/net/otaUpdate.ts`, shared with the agent's `update_firmware`) then skips
+   the loader handoff. The transfer is unchanged: `ota_begin` → `RECEIVING` + offset, 4 KB
+   stop-and-wait chunks, resume, `ota_finish` → `INSTALLED`.
+3. **The P4 receiver** (`firmware/player_app/ota_p4.cpp`). It is the C6 loader's logic, run in
+   the app while it keeps rendering:
+   - the signature is checked against the compiled-in ring, with the known-answer self-test,
+     key epochs and the security floor;
+   - the session is the Rust core's, and the image is written into the slot not running;
+   - `ota_finish` reads the slot back through SHA-256, runs `esp_image_verify`, then selects
+     the slot and restarts.
+
+   A pending image refuses a new `ota_begin` (`busy`), and `ota_reboot{LOADER}` answers
+   `no_loader`.
+4. **Health and rollback.** The new P4 boots pending verify, with the RTC watchdog armed.
+   Its link bring-up flashes its C6 images onto the C6. It counts as healthy once the
+   `ota_health` deadlines (boot.rs) are met with all of these true:
+   - frames render;
+   - the link is up;
+   - the C6 runs the front end this P4 carries (`link_c6_current`).
+
+   That last check proves the pair it ships with is in place and can take the next update.
+   A crash, a hang or a missed deadline and the IDF bootloader
+   (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` is set in the P4 SDK) boots the other slot. The
+   old P4 then finds a C6 it doesn't carry and puts its own C6 image back. It reports
+   `last_result = "rolled_back"` in `MODE_APP`, because there is no loader.
+5. **Layout** (`firmware/p4/partitions_p4_ota.csv`, 16 MB). This is huge_app plus `ota_1`:
+   - `nvs`, `otadata`, `app0`/`ota_0` (3 MB at 0x10000), littlefs and `coredump` keep their
+     offsets;
+   - `app1`/`ota_1` (3 MB) is at 0x400000.
+
+   One USB flash of `flash_esp32p4_player_c6` moves a huge_app P4 onto it and keeps its map,
+   effects and name. After that, updates go over the air. The image is 2.5 MB of the 3 MB slot.
+
+What is still open: release packaging (`tools/ota_release.py` emits only the C6 assets), the
+HITL OTA gate for the `esp32p4-c6` SKU (§5.2), and the Python HITL client (`ota_core.py`),
+which doesn't know `ota_inapp` yet.
+
+The original proposal follows. Two of its choices were dropped:
+- a `target` field on the wire: routing by chip makes it unnecessary;
+- updating the C6 by its own loader: the bundle makes the P4 image the C6's source of truth,
+  so a separate C6 update would be undone at the next P4 boot.
+
+**Recommendation (original): each chip updates itself, and the C6 relays the P4's image.** The C6 never
 writes the P4's flash, and the P4 never writes the C6's application flash.
 
 - **C6: unchanged.** The split loader and app, the manifest, the keyring (ids 0 `release`,

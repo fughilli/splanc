@@ -16,6 +16,7 @@ pub const APP_DESC_MAGIC: u32 = 0xABCD_5432;
 /// `esp_chip_id_t` values.
 pub const CHIP_ESP32C3: u16 = 0x0005;
 pub const CHIP_ESP32C6: u16 = 0x000D;
+pub const CHIP_ESP32P4: u16 = 0x0012;
 
 /// Bytes of the image the header check needs.
 pub const CHECK_LEN: usize = APP_DESC_OFFSET + 4;
