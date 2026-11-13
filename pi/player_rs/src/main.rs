@@ -19,7 +19,7 @@ use ledmapper_player::Player;
 use ledmapper_player_rs::render::{render_fpga, tick_fpga, RecordingSink};
 use ledmapper_player_rs::server::{self, SharedPlayer};
 use ledmapper_player_rs::{health, ota};
-use ledmapper_player_rs::output::{Backoff, Event, Output, OUTPUT_PENDING};
+use ledmapper_player_rs::spi_retry::{Backoff, Event, Output, OUTPUT_PENDING};
 use ledmapper_player_rs::session;
 use ledmapper_player_rs::wire::{matched_speed_hz, FpgaCodec, GRB};
 use sink::SpidevSink;
