@@ -551,6 +551,11 @@ impl Tracker {
     }
 }
 
+/// An lhd pose within this of the one adopted is a refinement of the same world (m, rad):
+/// adopted without restarting the track.
+const REFINE_POS_M: lh_kernel::Real = 0.10;
+const REFINE_ROT_RAD: lh_kernel::Real = 3.0 * core::f32::consts::PI as lh_kernel::Real / 180.0;
+
 /// After levelling a station from its gravity, lhd poses of it that disagree by more than
 /// the tilt threshold are ignored for this long.
 const TILT_HOLD_US: i64 = 15_000_000;
@@ -630,12 +635,23 @@ pub unsafe extern "C" fn lh_station_prior(id: u32, p: *const f32) -> i32 {
     for i in 0..6 {
         cov[(i, i)] = 4e-6;
     }
+    // lhd refines its stations as still scenes come in (a centimetre or so each time): the
+    // same world, so the tracker keeps its track on the refined pose. Only a station that is
+    // new here, or one that moved far (lhd solved a new world), restarts it.
+    let refinement = t.stations.iter().find(|(sid, _)| *sid == id).map_or(false, |(_, cur)| {
+        cur.pos.sub(pose.pos).norm() < REFINE_POS_M && rot_angle(cur.rot, pose.rot) < REFINE_ROT_RAD
+    });
     t.kernel.push(Input::StationPrior { id, world_from_station: pose, cov, cal: None }, &mut t.events);
     match t.stations.iter_mut().find(|(sid, _)| *sid == id) {
         Some(e) => e.1 = pose,
         None => t.stations.push((id, pose)),
     }
     t.status.stations = t.stations.len() as u8;
+    if refinement {
+        log(&format!("lh: station {} refined by lhd to ({:.3}, {:.3}, {:.3})", id, v[0], v[1], v[2]));
+        t.drain_events();
+        return 1;
+    }
     // The tracker's filter state is in the old world: start it again in the new one.
     t.kernel.push(Input::DeviceRemoved { dev }, &mut t.events);
     if let Some(d) = t.dec.as_ref() {
