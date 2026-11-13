@@ -1006,7 +1006,16 @@ function stylusPillState(): [PillState, string] {
   }
 }
 
+/** The banner, with the stylus connect problem always in it: a lamp problem above it
+ * must not hide why the device picker came back empty. */
 function banner(): { kind: "warn" | "err"; lines: string[]; action?: HTMLElement } | null {
+  const b = bannerFor();
+  const detail = trackStatus.state === "disconnected" ? trackStatus.detail : undefined;
+  if (b && detail && !b.lines.includes(detail)) return { ...b, lines: [...b.lines, `Stylus: ${detail}`] };
+  return b;
+}
+
+function bannerFor(): { kind: "warn" | "err"; lines: string[]; action?: HTMLElement } | null {
   const problem = lampProblem(lamp);
   if (problem && (appState.client?.isConnected || !MOCK)) {
     if (appState.status.certUrl) return { kind: "warn", lines: ["The lamp's certificate needs trusting first.", problem], action: Button({ label: "Open devices", onClick: () => openDeviceSheet() }) };
