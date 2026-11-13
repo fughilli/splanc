@@ -29,7 +29,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use lh_device::clock::HostClock;
 use lh_device::{Decoder, Link, LinkError, Output};
 use lh_health::{Health, TrackHealth};
-use lh_kernel::kernel::{Event, Input, Kernel, KernelConfig};
+use lh_kernel::kernel::{CalibrationReason, Event, Input, Kernel, KernelConfig};
 use lh_kernel::linalg::Mat;
 use lh_kernel::math::{Pose, Quat, Vec3};
 use lh_protocol::devices::{self, DeviceType};
@@ -188,6 +188,16 @@ struct Tracker {
     /// The station poses the kernel's world is built on: its own calibration, or the
     /// ones adopted from lhd (lh_station_prior).
     stations: Vec<(u32, Pose)>,
+    /// When lhd last sent each station (P4 µs), adopted or not: a station lhd stops
+    /// sending while it sends others is forgotten (it expired there, or lhd solved its
+    /// world afresh without it).
+    sent_us: Vec<(u32, i64)>,
+    /// Stations this kernel levelled again from their gravity (P4 µs): lhd's pose of one
+    /// that still has the old tilt is stale for a while (its trackers hear the new OOTX
+    /// later) and isn't adopted.
+    tilted_us: Vec<(u32, i64)>,
+    /// P4 µs of the last forget check (lh_clock).
+    forget_check_us: i64,
     clock: HostClock,
     /// The newest IMU sample (body frame: g, rad/s), for the pose's rates.
     accel_g: Vec3,
@@ -248,6 +258,9 @@ fn tracker() -> &'static mut Tracker {
                 speculative: 0,
             },
             stations: Vec::new(),
+            sent_us: Vec::new(),
+            tilted_us: Vec::new(),
+            forget_check_us: 0,
             clock: HostClock::new(),
             accel_g: Vec3::new(0.0, 0.0, 1.0),
             gyro: Vec3::ZERO,
@@ -307,6 +320,18 @@ impl Tracker {
                     log(&format!("lh: tracking lost ({:?})", reason));
                 }
                 Event::Calibrated { reason, stations, .. } => {
+                    if reason == CalibrationReason::StationTilted {
+                        let now = unsafe { p4_now_us() };
+                        for s in &stations {
+                            let moved = self.stations.iter().find(|(id, _)| *id == s.id).map_or(false, |(_, p)| {
+                                rot_angle(p.rot, s.world_from_station.rot) > self.kernel.cfg.station_tilt
+                            });
+                            if moved {
+                                self.tilted_us.retain(|x| x.0 != s.id);
+                                self.tilted_us.push((s.id, now));
+                            }
+                        }
+                    }
                     for s in &stations {
                         match self.stations.iter_mut().find(|(id, _)| *id == s.id) {
                             Some(e) => e.1 = s.world_from_station,
@@ -320,6 +345,12 @@ impl Tracker {
                         line += &format!(" {} at ({:.3}, {:.3}, {:.3}) rms {:.0} urad;", s.id, p.x, p.y, p.z, s.rms * 1e6);
                     }
                     log(&line);
+                }
+                Event::StationDropped { id, why } => {
+                    self.stations.retain(|x| x.0 != id);
+                    self.tilted_us.retain(|x| x.0 != id);
+                    self.status.stations = self.stations.len() as u8;
+                    log(&format!("lh: station {} dropped ({:?})", id, why));
                 }
                 Event::StationSeen { slot, info, .. } => {
                     log(&format!("lh: station {} in slot {} (mode {})", info.id, slot, info.mode))
@@ -493,6 +524,42 @@ pub extern "C" fn lh_clock(us: i64) {
     t.trigger_us = us;
     t.push(Input::Clock { dev, time: raw });
     t.timing_counters();
+    if us - t.forget_check_us >= 1_000_000 {
+        t.forget_check_us = us;
+        t.forget_unsent(us);
+    }
+}
+
+/// lhd re-sends its stations every second. While it does (some station within LHD_ALIVE),
+/// one it hasn't sent for FORGET_AFTER is no longer in its world: forget it. lhd gone
+/// altogether forgets nothing (the P4 keeps tracking in the last world it had).
+const LHD_ALIVE_US: i64 = 3_000_000;
+const FORGET_AFTER_US: i64 = 6_000_000;
+
+impl Tracker {
+    fn forget_unsent(&mut self, now: i64) {
+        if !self.sent_us.iter().any(|x| now - x.1 < LHD_ALIVE_US) {
+            return;
+        }
+        let gone: Vec<u32> = self.sent_us.iter().filter(|x| now - x.1 >= FORGET_AFTER_US).map(|x| x.0).collect();
+        for id in gone {
+            self.sent_us.retain(|x| x.0 != id);
+            log(&format!("lh: lhd no longer sends station {}: forgetting it", id));
+            self.push(Input::ForgetStation { id });
+        }
+        self.tilted_us.retain(|x| now - x.1 < TILT_HOLD_US);
+    }
+}
+
+/// After levelling a station from its gravity, lhd poses of it that disagree by more than
+/// the tilt threshold are ignored for this long.
+const TILT_HOLD_US: i64 = 15_000_000;
+
+/// Rotation between two orientations (rad).
+fn rot_angle(a: Quat, b: Quat) -> lh_kernel::Real {
+    use lh_kernel::math::{atan2, fabs, sqrt};
+    let d = a.conj().mul(b);
+    2.0 * atan2(sqrt(d.x * d.x + d.y * d.y + d.z * d.z), fabs(d.w))
 }
 
 /// Stream sweeps into the filter (1, the default) or send each whole (0: at the next sync,
@@ -533,6 +600,21 @@ pub unsafe extern "C" fn lh_station_prior(id: u32, p: *const f32) -> i32 {
         pos: Vec3::new(v[0] as _, v[1] as _, v[2] as _),
         rot: Quat::new(v[3] as _, v[4] as _, v[5] as _, v[6] as _).normalized(),
     };
+    let now = p4_now_us();
+    match t.sent_us.iter_mut().find(|x| x.0 == id) {
+        Some(x) => x.1 = now,
+        None => t.sent_us.push((id, now)),
+    }
+    // Levelled here from its new gravity a moment ago: lhd's pose with the old tilt is
+    // stale (it adopts the tilt once its own trackers hear the new OOTX).
+    if t.tilted_us.iter().any(|x| x.0 == id && now - x.1 < TILT_HOLD_US) {
+        if let Some((_, cur)) = t.stations.iter().find(|(sid, _)| *sid == id) {
+            if rot_angle(cur.rot, pose.rot) > t.kernel.cfg.station_tilt {
+                return 0;
+            }
+        }
+        t.tilted_us.retain(|x| x.0 != id);
+    }
     if let Some((_, cur)) = t.stations.iter().find(|(sid, _)| *sid == id) {
         let d = cur.pos.sub(pose.pos);
         let dq = cur.rot.conj().mul(pose.rot);
