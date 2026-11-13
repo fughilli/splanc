@@ -43,6 +43,14 @@ pub const TPS: i64 = 48_000_000;
 /// drift by then is 7-9 mm for biases up to 0.02 g, 11 mm at 0.05 g.
 pub const POS_SIGMA_LIMIT_M: f32 = 0.02;
 
+/// Hysteresis on that limit: a usable pose turns Uncertain only past POS_SIGMA_ENTER_M, and
+/// an Uncertain one is usable again only under POS_SIGMA_BACK_M. Carried at ~3 m from one
+/// station σ sits right at 2 cm, and a single threshold flipped Locked/Uncertain 226 times
+/// in 95 s (often several times in 10 ms; PixieLamp2, 2026-11-13): the effect flickered
+/// between its shape and its idle look.
+pub const POS_SIGMA_ENTER_M: f32 = 0.025;
+pub const POS_SIGMA_BACK_M: f32 = 0.018;
+
 /// Position uncertainty (m) at which dead reckoning gives up (the kernel's `lost_sigma_pos`
 /// on the P4; its default is POS_SIGMA_LIMIT_M). Between the two the pose is Uncertain: not
 /// usable, but the track goes on, so light back after a short occlusion is fused into it
@@ -82,7 +90,9 @@ impl Health {
 #[derive(Clone, Copy, Debug)]
 pub struct HealthConfig {
     pub fresh_ticks: i64,
+    /// Usable -> Uncertain past this (m); Uncertain -> usable again under `back_sigma_m`.
     pub max_sigma_m: f32,
+    pub back_sigma_m: f32,
     pub coast_max_ticks: i64,
     /// A fresh solve is confirmed after this many poses with light used, spanning at least
     /// `settle_ticks`, with the uncertainty under `max_sigma_m`; until then it's Acquiring.
@@ -94,7 +104,8 @@ impl Default for HealthConfig {
     fn default() -> HealthConfig {
         HealthConfig {
             fresh_ticks: (FRESH_S * TPS as f32) as i64,
-            max_sigma_m: POS_SIGMA_LIMIT_M,
+            max_sigma_m: POS_SIGMA_ENTER_M,
+            back_sigma_m: POS_SIGMA_BACK_M,
             coast_max_ticks: (COAST_MAX_S * TPS as f32) as i64,
             settle_poses: 4,
             settle_ticks: TPS / 20,
@@ -115,6 +126,8 @@ pub struct TrackHealth {
     speculative: bool,
     /// The solve was confirmed (see HealthConfig::settle_poses).
     confirmed: bool,
+    /// σ went past `max_sigma_m` and hasn't come back under `back_sigma_m`.
+    sigma_high: bool,
     /// Counters for the status line: locks gained (fresh solves) and lost, and coasts
     /// (dark stretches the track survived or ended in).
     pub starts: u32,
@@ -141,6 +154,7 @@ impl TrackHealth {
             sigma: 0.0,
             speculative: false,
             confirmed: false,
+            sigma_high: false,
             starts: 0,
             losses: 0,
             coasts: 0,
@@ -178,6 +192,7 @@ impl TrackHealth {
         self.sigma = 0.0;
         self.speculative = false;
         self.confirmed = false;
+        self.sigma_high = false;
         self.starts += 1;
     }
 
@@ -190,6 +205,7 @@ impl TrackHealth {
         self.lit_poses = 0;
         self.last_lit = None;
         self.speculative = false;
+        self.sigma_high = false;
     }
 
     /// A pose from the kernel: `used` hits went into it since the previous one, `sigma_m`
@@ -203,6 +219,11 @@ impl TrackHealth {
             self.coasts += 1;
         }
         self.sigma = sigma_m;
+        if self.sigma_high {
+            self.sigma_high = !(sigma_m <= self.cfg.back_sigma_m);
+        } else {
+            self.sigma_high = !(sigma_m <= self.cfg.max_sigma_m);
+        }
         self.speculative = speculative && used == 0;
         if used > 0 {
             self.lit_poses = self.lit_poses.saturating_add(1);
@@ -210,7 +231,7 @@ impl TrackHealth {
         }
         self.confirmed |= self.lit_poses >= self.cfg.settle_poses
             && self.now - self.started >= self.cfg.settle_ticks
-            && self.sigma <= self.cfg.max_sigma_m;
+            && self.sigma <= self.cfg.back_sigma_m;
     }
 
     /// Time since light last confirmed the pose (ticks), if it ever did since the solve.
@@ -231,7 +252,7 @@ impl TrackHealth {
             return Health::Acquiring;
         }
         let dark = self.now - self.last_lit.unwrap_or(self.started);
-        if !(self.sigma <= self.cfg.max_sigma_m) || dark > self.cfg.coast_max_ticks {
+        if self.sigma_high || dark > self.cfg.coast_max_ticks {
             return Health::Uncertain;
         }
         if self.speculative || dark > self.cfg.fresh_ticks {
@@ -246,6 +267,40 @@ mod tests {
     use super::*;
 
     const MS: u32 = 48_000;
+
+    #[test]
+    fn sigma_near_the_limit_does_not_flicker() {
+        let mut h = TrackHealth::default();
+        let mut t = 0u32;
+        h.clock(t);
+        h.started();
+        for _ in 0..6 {
+            t = t.wrapping_add(10 * MS);
+            h.clock(t);
+            h.pose(5, 0.005, false);
+        }
+        assert_eq!(h.state(), Health::Locked);
+        // Carried one station ~3 m off: sigma wobbles about 2 cm. Stays usable.
+        let mut changes = 0;
+        let mut last = h.state();
+        for i in 0..200 {
+            t = t.wrapping_add(2 * MS);
+            h.clock(t);
+            h.pose(3, if i % 2 == 0 { 0.0195 } else { 0.0205 }, false);
+            if h.state() != last {
+                changes += 1;
+                last = h.state();
+            }
+        }
+        assert_eq!((changes, h.state()), (0, Health::Locked));
+        // Past the enter line: Uncertain, and it stays so above the back line.
+        h.pose(3, 0.026, false);
+        assert_eq!(h.state(), Health::Uncertain);
+        h.pose(3, 0.019, false);
+        assert_eq!(h.state(), Health::Uncertain);
+        h.pose(3, 0.0175, false);
+        assert_eq!(h.state(), Health::Locked);
+    }
 
     #[test]
     fn settles_coasts_in_the_dark_and_relocks() {

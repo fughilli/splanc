@@ -876,13 +876,14 @@ bool netstack_osc_send(const uint8_t *data, size_t len) {
   return true;
 }
 
-bool netstack_log_send(const uint8_t *data, size_t len) {
-  if (!g_leased || g_log_peer_port == 0 || (int32_t)(millis() - g_log_until_ms) > 0) return false;
+int netstack_log_send(const uint8_t *data, size_t len) {
+  if (!g_leased || g_log_peer_port == 0 || (int32_t)(millis() - g_log_until_ms) > 0) return 0;
   if (len > (size_t)(kTxIpCap - kUdpPayloadOff)) len = (size_t)(kTxIpCap - kUdpPayloadOff);
+  const uint32_t refused = g_tx_refused;
   memcpy(tx_ip_slot() + kUdpPayloadOff, data, len);
   send_udp_slot(g_log_peer_ip, kLogUdpPort, g_log_peer_port, (int)len, 64,
                 g_log_peer_mac_ok ? g_log_peer_mac : nullptr);
-  return true;
+  return g_tx_refused == refused ? 1 : -1;  // -1: the radio's buffer pool was full
 }
 
 int netstack_osc_stats(char *buf, size_t cap, bool *run_ended) {

@@ -41,6 +41,8 @@
 
 extern "C" void lm_link_identity(const char *mac, const char *name);  // main.cpp
 
+#include "serial_log.h"
+
 namespace {
 
 constexpr uart_port_t kUart = UART_NUM_0;
@@ -284,7 +286,7 @@ void on_frame(const lk_header &h, const uint8_t *p) {
       lm_netstack_osc_rx(p, h.len);  // as if it had arrived on udp/9000 here
       return;
     case LK_LOG:
-      printf("[c6] %.*s", (int)h.len, (const char *)p);  // the front end's own lines
+      Log().printf("[c6] %.*s", (int)h.len, (const char *)p);  // the front end's own lines (also over Wi-Fi)
       return;
     case LK_LINK:
       if (h.len == 0) return;
