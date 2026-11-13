@@ -10,6 +10,9 @@
  *    come from an LhTracking (./lh): the mock with ?mock=1, else the WebHID one.
  *  - The page deploys its effects through the app's compile/upload path, forwards the
  *    stations as /lh/station once a second, and streams the stylus-driven shape.
+ *  - The stylus button grabs and carries the plane, the sphere and the hot spots
+ *    (grab.ts), and in flashlight mode steps through what rolling the stylus adjusts
+ *    (flashlight.ts). The on-screen buttons do the same for a stylus with no button.
  *
  * Browser-only entry (kept out of the unit-test compile with the other page entries).
  */
@@ -43,7 +46,22 @@ import {
   type Mode,
 } from "./demo";
 import { deployEffect } from "./deploy";
-import { poseFromPQ, tipWorld, type Pose } from "./frames";
+import { poseFromPQ, tipWorld, type Mat3, type Pose } from "./frames";
+import { beginGrab, ClickOrHold, grabLabel, moveGrab, reachable, type Grab, type GrabTarget } from "./grab";
+import {
+  beamColor,
+  beamFromStylus,
+  DECAY_MAX,
+  DECAY_OFF,
+  decaySent,
+  nextRollMode,
+  ROLL_MODE_LABELS,
+  ROLL_MODES,
+  STALE_S,
+  WIDTH_MAX,
+  WIDTH_MIN,
+  type RollMode,
+} from "./flashlight";
 import { pivotProblem, pivotRobust, PIVOT_MIN_SAMPLES, type PivotResult } from "./pivot";
 import { defaultKv, parseStylusTip, StylusTipStore } from "./stylusTip";
 import { View3D } from "./view3d";
@@ -76,6 +94,16 @@ let trackStatus: LhStatus = { state: "disconnected" };
 let stylusSerial: string | null = null;
 const serialsSeen = new Set<string>();
 let stylus: { pose: Pose; ok: boolean; at: number } | null = null;
+/** When the stylus last had a pose to follow (ok), performance.now() ms. */
+let stylusGoodAt = -1e9;
+/** Other trackers the dongle hears (drawn in the 3D view). */
+const others = new Map<string, { pose: Pose; ok: boolean; at: number }>();
+/** What the stylus is carrying. */
+let grab: Grab | null = null;
+const gesture = new ClickOrHold();
+let buttonMask = 0;
+/** The stylus rotation the flashlight's roll is measured from (null after a gap). */
+let beamPrevR: Mat3 | null = null;
 let stationsSent = 0;
 let deployed: { link: LampLink; key: EffectKey } | null = null;
 let deploying: EffectKey | null = null;
@@ -116,6 +144,9 @@ function loadState(): DemoState {
       if (typeof d[k] === "number" && Number.isFinite(d[k])) s[k] = d[k];
     if (Array.isArray(d.glow) && d.glow.length === 3) s.glow = d.glow as Vec3;
     if (Array.isArray(d.spots) && d.spots.length === SPOT_COUNT) s.spots = d.spots;
+    const b = (d.beam ?? {}) as Partial<DemoState["beam"]>;
+    for (const k of ["hue", "sat", "width", "decay"] as const) if (typeof b[k] === "number" && Number.isFinite(b[k])) s.beam[k] = b[k];
+    if (b.roll && (ROLL_MODES as readonly string[]).includes(b.roll)) s.beam.roll = b.roll;
   } catch {
     /* defaults */
   }
@@ -127,7 +158,9 @@ function saveState(): void {
   saveTimer = window.setTimeout(() => {
     try {
       const { width, halo, radius, glow, spots, spotRadius, spotRange } = S;
-      kv?.setItem(STATE_KEY, JSON.stringify({ width, halo, radius, glow, spots, spotRadius, spotRange }));
+      const { hue, sat, width: beamWidth, decay, roll } = S.beam;
+      const beam = { hue, sat, width: beamWidth, decay, roll };
+      kv?.setItem(STATE_KEY, JSON.stringify({ width, halo, radius, glow, spots, spotRadius, spotRange, beam }));
     } catch {
       /* ignore */
     }
@@ -232,7 +265,7 @@ async function runDeploy(key: EffectKey): Promise<void> {
   try {
     await deployEffect(link, key);
     deployed = { link, key };
-    toast(key === "hot_spots" ? "Hot spots effect on the lamp" : "Tracker demo effect on the lamp");
+    toast(`${{ hot_spots: "Hot spots", flashlight: "Flashlight", tracker_demo: "Tracker demo" }[key]} effect on the lamp`);
     streamer.resend(); // the new effect starts from its defaults
   } catch (e) {
     deployError = e instanceof Error ? e.message : String(e);
@@ -260,16 +293,130 @@ tracking.onStatus((s) => {
 });
 tracking.onStations(() => render());
 tracking.onPose((p: LhPose) => {
+  const isNew = !serialsSeen.has(p.serial);
   serialsSeen.add(p.serial);
   if (stylusSerial === null) stylusSerial = p.serial;
-  if (p.serial !== stylusSerial) return;
-  poseCount++;
   const pose = poseFromPQ(p.pos, p.quat);
-  stylus = { pose, ok: p.ok, at: performance.now() };
+  const now = performance.now();
+  if (isNew && serialsSeen.size > 1) buildPanel(); // the stylus card lists the trackers to pick from
+  if (p.serial !== stylusSerial) {
+    others.set(p.serial, { pose, ok: p.ok, at: now });
+    return;
+  }
+  poseCount++;
+  stylus = { pose, ok: p.ok, at: now };
   if (!p.ok) return;
+  stylusGoodAt = now;
   if (pivot && pivot.poses.length < 5000) pivot.poses.push(pose);
-  if ((S.mode === "plane" || S.mode === "sphere") && followStylus(S, pose, tipFor(stylusSerial))) pushState();
+  if (S.mode === "flashlight") {
+    beamPrevR = beamFromStylus(S.beam, beamPrevR, pose, tipFor(stylusSerial));
+    pushState();
+    if (S.beam.roll !== "fixed") saveState();
+  } else if (grab) {
+    moveGrab(S, grab, pose);
+    pushState();
+  } else if ((S.mode === "plane" || S.mode === "sphere") && followStylus(S, pose, tipFor(stylusSerial))) {
+    pushState();
+  }
 });
+
+// The flashlight's stylus gate (flashlight.py Driver.tick): no fresh pose for STALE_S
+// turns the beam off (/stylus_ok 0), and the next pose starts a new roll baseline.
+setInterval(() => {
+  if (S.mode !== "flashlight" || !S.beam.ok) return;
+  if (performance.now() - stylusGoodAt <= STALE_S * 1000) return;
+  S.beam.ok = false;
+  beamPrevR = null;
+  pushState();
+  render();
+}, 100);
+
+// ------------------------------------------------------------------ the stylus button
+
+tracking.onButtons((serial, mask) => {
+  if (serial !== stylusSerial) return;
+  const was = buttonMask;
+  buttonMask = mask;
+  if (!was && mask) buttonDown();
+  else if (was && !mask) buttonUp();
+});
+
+/** The stylus has something in hand: a grabbed object, or the shape following its tip. */
+function holding(): boolean {
+  return grab !== null || ((S.mode === "plane" || S.mode === "sphere") && S.follow);
+}
+
+const targetId = (t: GrabTarget): string => (t.kind === "spot" ? `spot${t.index}` : t.kind);
+
+/** A press of the stylus button (or of the page's own button, which is a short click). */
+function buttonDown(): void {
+  if (pivot) {
+    finishPivot(); // hands-free: press when the calibration says OK
+    return;
+  }
+  if (S.mode === "flashlight") {
+    setRollMode(nextRollMode(S.beam.roll));
+    return;
+  }
+  if (S.mode === "outline") return;
+  if (gesture.down(performance.now(), holding()) === "drop") drop();
+  else take();
+}
+
+function buttonUp(): void {
+  if (gesture.up(performance.now(), holding()) === "drop") drop();
+}
+
+function take(): void {
+  const tip = currentTip();
+  if (!tip || !stylus?.ok) {
+    toast("No live stylus: nothing to grab with", { error: true });
+    return;
+  }
+  grab = beginGrab(S, stylus.pose, tip);
+  if (grab) {
+    toast(`Holding ${grabLabel(grab.target)}: press again to set it down`);
+  } else if (S.mode === "spots") {
+    // Nothing in reach: a press in empty space places the next spot there.
+    const free = S.spots.findIndex((s) => !s.pos);
+    if (free >= 0) placeSpot(free);
+    else toast("No spot within reach of the stylus tip");
+    return;
+  } else {
+    toast(`Bring the stylus tip to the ${S.mode} to grab it`);
+  }
+  buildPanel();
+  render();
+}
+
+function drop(): void {
+  grab = null;
+  if (S.mode === "plane" || S.mode === "sphere") S.follow = false;
+  pushState();
+  saveState();
+  buildPanel();
+  render();
+}
+
+function setRollMode(m: RollMode): void {
+  S.beam.roll = m;
+  saveState();
+  toast(m === "fixed" ? "Rolling the stylus changes nothing" : `Rolling the stylus adjusts: ${ROLL_MODE_LABELS[m].toLowerCase()}`);
+  buildPanel();
+  render();
+}
+
+function useAsStylus(serial: string): void {
+  if (serial === stylusSerial) return;
+  stylusSerial = serial;
+  others.delete(serial);
+  stylus = null;
+  grab = null;
+  beamPrevR = null;
+  buttonMask = 0;
+  buildPanel();
+  render();
+}
 
 async function toggleTracking(): Promise<void> {
   try {
@@ -369,6 +516,11 @@ function importTip(): void {
 function setMode(m: Mode): void {
   if (S.mode === m) return;
   S.mode = m;
+  grab = null;
+  beamPrevR = null;
+  S.beam.ok = false; // the beam comes on with the next fresh stylus pose
+  // A shape starts in hand, at the stylus tip (not wherever it was last set down).
+  if (m === "plane" || m === "sphere") S.follow = true;
   if (stylus && (m === "plane" || m === "sphere")) followStylus(S, stylus.pose, tipFor(stylusSerial));
   pushState();
   maybeDeploy();
@@ -413,6 +565,7 @@ const MODES: { mode: Mode; label: string; sub: string }[] = [
   { mode: "sphere", label: "Sphere", sub: "live" },
   { mode: "outline", label: "Outline", sub: "idle" },
   { mode: "spots", label: "Spots", sub: "game" },
+  { mode: "flashlight", label: "Light", sub: "beam" },
 ];
 const modeButtons = MODES.map(({ mode, label, sub }) => {
   const b = document.createElement("button");
@@ -478,16 +631,25 @@ function shapeControls(): HTMLElement[] {
     label: "Follow the stylus",
     onChange: (on) => {
       S.follow = on;
+      grab = null;
       if (on && stylus) followStylus(S, stylus.pose, tipFor(stylusSerial));
       pushState();
+      buildPanel();
       render();
     },
   });
+  const grabBtn = Button({ label: holding() ? "Set it down here" : "Grab it with the stylus", block: true, onClick: buttonDown });
+  grabBtn.classList.add("p4-big");
   const out: HTMLElement[] = [
     card(
       S.mode === "plane" ? "Plane at the stylus tip" : "Sphere round the stylus tip",
-      text(S.mode === "plane" ? "Perpendicular to the stylus, through its tip." : "Centred on the stylus tip."),
-      row(text("Follow the stylus (off: hold it where it is)", "grow"), follow.el),
+      text(
+        (S.mode === "plane" ? "Following: perpendicular to the stylus, through its tip. " : "Following: centred on the stylus tip. ") +
+          "Click the stylus button to set it down in the room; bring the tip back to it and click again to pick it up and carry it. " +
+          "Holding the button and letting go works too (a tracker's own button powers it off if held for seconds: keep presses short).",
+      ),
+      grabBtn,
+      row(text("Follow the stylus tip (off: it stays where it is)", "grow"), follow.el),
       live("shape-readout", "p4-mono"),
       Slider({
         label: "Width",
@@ -585,7 +747,10 @@ function spotControls(): HTMLElement[] {
   return [
     card(
       "Hot spots",
-      text("Up to four spots in the room. The lamp glows in a spot's colour as it gets near, and blinks inside one."),
+      text(
+        "Up to four spots in the room. The lamp glows in a spot's colour as it gets near, and blinks inside one. " +
+          "The stylus button places the next spot at the tip; with the tip on a spot it picks that spot up, and the next click sets it down.",
+      ),
       next,
       ...rows,
       Slider({
@@ -653,6 +818,9 @@ function setupControls(): HTMLElement[] {
     "Stylus",
     !tipFor(stylusSerial) && stylusSerial !== null,
     live("stylus-info"),
+    ...[...serialsSeen]
+      .filter((s) => s !== stylusSerial)
+      .map((s) => row(text(`${s} is tracked too`, "grow"), Button({ label: "Use as the stylus", variant: "quiet", onClick: () => useAsStylus(s) }))),
     row(
       Button({ label: "Connect / disconnect", variant: "quiet", onClick: () => void toggleTracking() }),
       Button({ label: "Calibrate tip", onClick: startPivot }),
@@ -717,13 +885,69 @@ function setupControls(): HTMLElement[] {
   return [lampCard, stylusCard, trackCard, fixtureCard];
 }
 
+function flashlightControls(): HTMLElement[] {
+  const b = S.beam;
+  const deg = (v: number): string => `${v.toFixed(0)}°`;
+  const changed = (): void => {
+    pushState();
+    saveState();
+    render();
+  };
+  const modes = document.createElement("div");
+  modes.className = "p4-row";
+  for (const m of ROLL_MODES) {
+    const btn = Button({ label: ROLL_MODE_LABELS[m], variant: m === b.roll ? "primary" : "quiet", onClick: () => setRollMode(m) });
+    btn.setAttribute("aria-pressed", String(m === b.roll));
+    modes.append(btn);
+  }
+  return [
+    card(
+      "Flashlight",
+      text(
+        "A cone of light from the stylus tip, along the stylus. Roll the stylus about its own axis to adjust the setting picked below; " +
+          "the stylus button steps to the next one. The beam goes out when the stylus stops tracking.",
+      ),
+      live("beam-readout", "p4-mono"),
+      text("Rolling the stylus adjusts"),
+      modes,
+      Slider({ label: "Hue", min: 0, max: 1, step: 0.01, value: b.hue, format: (v) => deg(v * 360), onInput: (v) => ((b.hue = v), changed()) }).el,
+      Slider({ label: "Saturation", min: 0, max: 1, step: 0.01, value: b.sat, format: (v) => `${(v * 100).toFixed(0)}%`, onInput: (v) => ((b.sat = v), changed()) }).el,
+      Slider({
+        label: "Beam half-angle",
+        min: (WIDTH_MIN * 180) / Math.PI,
+        max: (WIDTH_MAX * 180) / Math.PI,
+        step: 1,
+        value: (b.width * 180) / Math.PI,
+        format: deg,
+        onInput: (v) => ((b.width = (v * Math.PI) / 180), changed()),
+      }).el,
+      Slider({
+        label: "Trail",
+        min: 0,
+        max: DECAY_MAX,
+        step: 0.05,
+        value: decaySent(b),
+        format: (v) => (v <= DECAY_OFF ? "off" : `${v.toFixed(2)} s`),
+        onInput: (v) => ((b.decay = Math.max(v, DECAY_OFF)), changed()),
+      }).el,
+    ),
+  ];
+}
+
 function buildPanel(): void {
   const panel = $("panel");
   // Keep which setup sections are open across rebuilds.
   const open = new Map([...panel.querySelectorAll("details")].map((d) => [d.querySelector("summary")?.textContent ?? "", d.open]));
   panel.innerHTML = "";
   const pivotCard = pivot ? [pivotPanel()] : [];
-  const modeCards = S.mode === "spots" ? spotControls() : S.mode === "outline" ? [card("Outline", text("The lamp shows a faint outline (the idle look). Pick Plane or Sphere to go live."))] : shapeControls();
+  const modeCards =
+    S.mode === "spots"
+      ? spotControls()
+      : S.mode === "flashlight"
+        ? flashlightControls()
+        : S.mode === "outline"
+          ? [card("Outline", text("The lamp shows a faint outline (the idle look). Pick Plane or Sphere to go live."))]
+          : shapeControls();
   panel.append(...pivotCard, ...modeCards, ...setupControls());
   for (const d of panel.querySelectorAll("details")) {
     const k = d.querySelector("summary")?.textContent ?? "";
@@ -822,9 +1046,22 @@ function render(): void {
   const lampFresh = !!lampPose && now - lampPose.at < LAMP_POSE_STALE_MS;
   const tipS = tipFor(stylusSerial);
 
+  // What the stylus holds, and what it could grab with a press.
+  const tipW = stylusFresh && stylus ? tipWorld(stylus.pose, tipS ?? [0, 0, 0]) : null;
+  const held = grab ? targetId(grab.target) : holding() ? S.mode : null;
+  const near = !held && tipW ? reachable(S, tipW) : null;
+  const beamRgb = beamColor(S.beam);
+
   // Live readouts.
-  if (S.mode === "plane") setText("shape-readout", `n ${S.plane.n.map((v) => v.toFixed(2)).join(" ")}  d ${S.plane.d.toFixed(3)} m${S.follow ? "" : "  (held)"}`);
-  if (S.mode === "sphere") setText("shape-readout", `c ${S.sphere.c.map((v) => v.toFixed(2)).join(" ")}  r ${cm(S.radius)}${S.follow ? "" : "  (held)"}`);
+  if (S.mode === "flashlight")
+    setText(
+      "beam-readout",
+      `${S.beam.ok ? "LIVE" : "no live stylus: beam off"} · half-angle ${((S.beam.width * 180) / Math.PI).toFixed(0)}° · ` +
+        `colour ${beamRgb.map((v) => v.toFixed(2)).join(" ")} · trail ${decaySent(S.beam) === 0 ? "off" : `${S.beam.decay.toFixed(2)} s`}`,
+    );
+  const where = grab ? "  (carried)" : S.follow ? "" : "  (set down)";
+  if (S.mode === "plane") setText("shape-readout", `n ${S.plane.n.map((v) => v.toFixed(2)).join(" ")}  d ${S.plane.d.toFixed(3)} m${where}`);
+  if (S.mode === "sphere") setText("shape-readout", `c ${S.sphere.c.map((v) => v.toFixed(2)).join(" ")}  r ${cm(S.radius)}${where}`);
   setText(
     "lamp-info",
     lamp
@@ -862,6 +1099,9 @@ function render(): void {
       `stylus ${stylusFresh ? `${poseRate} Hz` : "—"}${tipS ? "" : " (no tip cal)"}`,
       `lamp   ${lampFresh ? (lampPose!.ok ? "tracking" : "not tracking") : "—"}`,
       `osc    ${oscRate}/s`,
+      grab ? `hold   ${grabLabel(grab.target)}` : near ? `reach  ${grabLabel(near.target)}: press to grab` : "",
+      S.mode === "flashlight" ? `roll   ${ROLL_MODE_LABELS[S.beam.roll].toLowerCase()}` : "",
+      others.size ? `also   ${others.size} tracker${others.size > 1 ? "s" : ""}` : "",
       MOCK ? "MOCK" : "",
     ]
       .filter(Boolean)
@@ -883,18 +1123,32 @@ function render(): void {
     spots: S.spots,
     spotRadius: S.spotRadius,
     pivotPoint: pivot?.live && !pivot.why ? pivot.live.q : null,
+    others: [...others].map(([serial, o]) => ({ serial, pose: o.pose, ok: o.ok, fresh: now - o.at < STYLUS_STALE_MS })),
+    beam: S.mode === "flashlight" ? { origin: S.beam.origin, dir: S.beam.dir, width: S.beam.width, color: beamRgb, live: S.beam.ok } : null,
+    held,
+    inReach: near ? targetId(near.target) : null,
   });
 }
 
 // Redraw at ~20 Hz for the moving parts (poses arrive faster than that).
 setInterval(render, 50);
 
-// ?mode=sphere|outline|spots opens in that mode (a deep link); the default is the plane, live.
+// ?mode=sphere|outline|spots|flashlight opens in that mode (a deep link); the default is the plane, live.
 const startMode = params.get("mode");
-if (startMode === "sphere" || startMode === "outline" || startMode === "spots") S.mode = startMode;
+if (startMode === "sphere" || startMode === "outline" || startMode === "spots" || startMode === "flashlight") S.mode = startMode;
 uiReady = true;
 buildPanel();
 pushState();
 onLampChanged();
 if (MOCK) void tracking.connect();
+// With the simulated stylus, the space bar is its button (held while the key is down).
+if (mock) {
+  const key = (down: boolean) => (e: KeyboardEvent) => {
+    if (e.code !== "Space" || e.repeat || (e.target instanceof HTMLElement && e.target.closest("input, textarea, select"))) return;
+    e.preventDefault();
+    mock.setButtons(down ? 1 << 3 : 0);
+  };
+  window.addEventListener("keydown", key(true));
+  window.addEventListener("keyup", key(false));
+}
 render();
