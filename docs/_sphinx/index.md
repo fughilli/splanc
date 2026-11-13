@@ -129,6 +129,7 @@ subsystems/index
 DEVELOPERS
 Getting started <README>
 Raspberry Pi bridge <docs/pi-bridge>
+Host player: WLED / DDP / Art-Net <docs/host-player>
 Use Splanc from a cloud agent <docs/guides/cloud-agent>
 Run your own relay with Tailscale <docs/guides/relay-tailscale>
 docs/runbook

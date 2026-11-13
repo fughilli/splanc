@@ -16,9 +16,11 @@ package(default_visibility = ["//visibility:public"])
 rust_library(
     name = "player_rs",
     srcs = [
+        "src/fx.rs",
         "src/health.rs",
         "src/lib.rs",
         "src/ota.rs",
+        "src/output.rs",
         "src/render.rs",
         "src/server.rs",
         "src/session.rs",
@@ -29,8 +31,14 @@ rust_library(
     deps = [
         # The reused firmware session/pattern/effects core — host protobuf
         # profile (the Pi has RAM to spare), depended on directly (no FFI).
+        # The effects VM + uniform manifest + map decoding the host player's
+        # effects layer (src/fx.rs) runs: the same crates the device links.
+        "//firmware/fx_vm",
+        "//firmware/keypoint",
         "//firmware/ota",
         "//firmware/player",
+        "//firmware/store",
+        "//oss/pbview",
         # Over-the-air updates (docs/design/max-ota.md): the offer check + the
         # updater's state/inbox formats.
         "//pi/max_ota",
@@ -76,6 +84,21 @@ rust_binary(
     ],
 )
 
+# The player on a desktop host (macOS / Linux): the same WSS player + the
+# effects layer, driving network LED controllers (DDP / Art-Net, src/output.rs)
+# instead of SPI. See docs/host-player.md.
+rust_binary(
+    name = "player_host",
+    srcs = ["src/host_main.rs"],
+    edition = "2021",
+    deps = [
+        ":player_rs",
+        "//firmware/fx_vm",
+        "//firmware/player",
+        "@player_crates//:tokio",
+    ],
+)
+
 rust_test(
     name = "player_rs_test",
     crate = ":player_rs",
@@ -83,4 +106,6 @@ rust_test(
     # Envelope structs carry inline heapless storage (see //shared/protocol/rust)
     # and land on the test thread's stack — same bump the firmware player tests use.
     env = {"RUST_MIN_STACK": "33554432"},
+    # The effects layer's tests compile a real shader.
+    deps = ["//fx_compiler"],
 )
