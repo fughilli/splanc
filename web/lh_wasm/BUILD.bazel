@@ -1,0 +1,144 @@
+"""Lighthouse (Vive tracking) in the browser: @lighthouse's lh_device + lh_kernel
+compiled to wasm, for a page that reads a Watchman dongle (or a wired tracker)
+over WebHID. web/src/p4demo/lh/ is the TypeScript side.
+
+  :lh_web        the pipeline (handshake as request/response steps, report
+                 decoding, kernel, lhd-style events), plain Rust; host-tested
+  :lh_wasm_web   the browser deployment (wasm + JS glue + worker.js), served at
+                 /lh-wasm/ like /fx-vm/ (web/stage_site.lib.sh, web/serve.sh, …)
+  :lh_wasm_node_pkg  the same wasm for Node (CommonJS glue): the web unit test
+                 replays a recording through it (web/tests/lhReplay.test.ts)
+
+The f64 kernel (lh_kernel, as lhd), not the P4's f32 build: wasm has doubles, and
+it makes the replay test comparable with lhd number for number.
+
+lh_kernel / lh_protocol / lh_device are compiled here from the pinned @lighthouse
+sources (the same files and crate names), against @lh_wasm_crates: @lighthouse's own
+crate universe has no wasm32 triple (see //MODULE.bazel). A lighthouse bump that adds,
+removes or renames a source file needs the lists below updated.
+"""
+
+load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_shared_library", "rust_test")
+load("@rules_rust_wasm_bindgen//:defs.bzl", "rust_wasm_bindgen")
+load("//tools/transitions:opt.bzl", "opt_files")
+
+package(default_visibility = ["//visibility:public"])
+
+_LH_KERNEL_SRCS = [
+    "kernel.rs",
+    "lh1.rs",
+    "lib.rs",
+    "linalg.rs",
+    "math.rs",
+    "model.rs",
+    "ootx.rs",
+    "solve.rs",
+    "timing.rs",
+    "track.rs",
+]
+
+_LH_PROTOCOL_SRCS = [
+    "commands.rs",
+    "config.rs",
+    "devices.rs",
+    "imu.rs",
+    "lib.rs",
+    "rf.rs",
+    "usb.rs",
+]
+
+rust_library(
+    name = "lh_kernel",
+    srcs = ["@lighthouse//kernel:src/" + f for f in _LH_KERNEL_SRCS],
+    crate_root = "@lighthouse//kernel:src/lib.rs",
+    edition = "2021",
+    deps = ["@lh_wasm_crates//:libm"],
+)
+
+rust_library(
+    name = "lh_protocol",
+    srcs = ["@lighthouse//protocol:src/" + f for f in _LH_PROTOCOL_SRCS],
+    crate_root = "@lighthouse//protocol:src/lib.rs",
+    edition = "2021",
+    deps = [
+        ":lh_kernel",
+        "@lh_wasm_crates//:miniz_oxide",
+        "@lh_wasm_crates//:serde_json",
+    ],
+)
+
+rust_library(
+    name = "lh_device",
+    srcs = [
+        "@lighthouse//device:src/clock.rs",
+        "@lighthouse//device:src/lib.rs",
+    ],
+    crate_root = "@lighthouse//device:src/lib.rs",
+    edition = "2021",
+    deps = [
+        ":lh_kernel",
+        ":lh_protocol",
+    ],
+)
+
+rust_library(
+    name = "lh_web",
+    srcs = ["src/core.rs"],
+    crate_root = "src/core.rs",
+    edition = "2021",
+    deps = [
+        ":lh_device",
+        ":lh_kernel",
+        ":lh_protocol",
+        "//firmware/p4/tracker:lh_health",
+    ],
+)
+
+rust_test(
+    name = "lh_web_test",
+    size = "small",
+    crate = ":lh_web",
+)
+
+rust_shared_library(
+    name = "lh_wasm",
+    srcs = ["src/wasm.rs"],
+    crate_root = "src/wasm.rs",
+    edition = "2021",
+    deps = [
+        ":lh_web",
+        "@crates//:wasm-bindgen",
+    ],
+)
+
+rust_wasm_bindgen(
+    name = "lh_wasm_pkg",
+    target = "web",
+    wasm_file = ":lh_wasm",
+)
+
+rust_wasm_bindgen(
+    name = "lh_wasm_node_pkg",
+    target = "nodejs",
+    wasm_file = ":lh_wasm",
+)
+
+opt_files(
+    name = "lh_wasm_pkg_opt",
+    srcs = [":lh_wasm_pkg"],
+)
+
+opt_files(
+    name = "lh_wasm_node_pkg_opt",
+    srcs = [":lh_wasm_node_pkg"],
+)
+
+copy_to_directory(
+    name = "lh_wasm_web",
+    srcs = [
+        "worker.js",
+        ":lh_wasm_pkg_opt",
+    ],
+    replace_prefixes = {"lh_wasm_pkg": ""},
+)
