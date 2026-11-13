@@ -98,6 +98,9 @@ void lm_netstack_osc_rx(const uint8_t *data, size_t len);
 // Send one OSC datagram back to the last OSC sender (its address and source port), from
 // udp/9000. Network (loop) task. False when nobody has sent OSC yet or the link is down.
 bool netstack_osc_send(const uint8_t *data, size_t len);
+// Console text to the log subscriber (whoever last sent a datagram to udp/9001, for two
+// minutes after it), from udp/9001. Network (loop) task. False when nobody subscribed.
+bool netstack_log_send(const uint8_t *data, size_t len);
 // OSC out and radio TX counters, one line for the front end's stats; *run_ended is set
 // when a run of TX refusals (the vendor buffer pool full) of 200 ms or more just ended.
 int netstack_osc_stats(char *buf, size_t cap, bool *run_ended);

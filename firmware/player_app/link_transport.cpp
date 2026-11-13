@@ -320,7 +320,13 @@ void (*g_ns_reply_hook)(int outcome) = nullptr;
 
 extern "C" size_t link_log_write(const uint8_t *data, size_t len) {
 #if defined(LM_LINK_SDIO)
-  return fwrite(data, 1, len, stdout);  // the UART is the console's alone
+  // The UART is the console's alone; the lines also go to the C6 as LOG frames, which it
+  // sends on to a subscriber on udp/9001 (netstack_log_send): the console over Wi-Fi.
+  const size_t n = fwrite(data, 1, len, stdout);
+  if (g_up) {
+    for (size_t off = 0; off < n; off += LK_MTU) send_msg(LK_LOG, 0, data + off, n - off < LK_MTU ? n - off : LK_MTU);
+  }
+  return n;
 #endif
   // Before the link is up nothing is taken: the lines wait in serial_log's ring and
   // go out as LOG frames once it is (the boot banner is still on the UART at the ROM's

@@ -815,6 +815,16 @@ static const uint8_t kMdnsMac[6] = {0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb};
 // build's osc_task binds. Datagrams go to the app's latest-wins mailbox.
 constexpr uint16_t kOscUdpPort = 9000;
 constexpr int kUdpPayloadOff = 20 + 8;  // IPv4 (no options) + UDP, in tx_ip_slot()
+// Console over the network: any datagram to udp/9001 subscribes its sender (address and
+// source port) to the log for kLogLeaseMs; it re-sends to stay subscribed. Log text goes
+// out as plain UDP datagrams from udp/9001 (netstack_log_send).
+constexpr uint16_t kLogUdpPort = 9001;
+constexpr uint32_t kLogLeaseMs = 120000;
+static uint8_t g_log_peer_ip[4];
+static uint16_t g_log_peer_port = 0;
+static uint8_t g_log_peer_mac[6];
+static bool g_log_peer_mac_ok = false;
+static uint32_t g_log_until_ms = 0;
 // The last OSC sender (netstack_osc_send replies there); port 0 = none yet.
 static uint8_t g_osc_peer_ip[4];
 static uint16_t g_osc_peer_port = 0;
@@ -863,6 +873,15 @@ bool netstack_osc_send(const uint8_t *data, size_t len) {
   memcpy(tx_ip_slot() + kUdpPayloadOff, data, len);
   send_udp_slot(g_osc_peer_ip, kOscUdpPort, g_osc_peer_port, (int)len, 64,
                 g_osc_peer_mac_ok ? g_osc_peer_mac : nullptr);
+  return true;
+}
+
+bool netstack_log_send(const uint8_t *data, size_t len) {
+  if (!g_leased || g_log_peer_port == 0 || (int32_t)(millis() - g_log_until_ms) > 0) return false;
+  if (len > (size_t)(kTxIpCap - kUdpPayloadOff)) len = (size_t)(kTxIpCap - kUdpPayloadOff);
+  memcpy(tx_ip_slot() + kUdpPayloadOff, data, len);
+  send_udp_slot(g_log_peer_ip, kLogUdpPort, g_log_peer_port, (int)len, 64,
+                g_log_peer_mac_ok ? g_log_peer_mac : nullptr);
   return true;
 }
 
@@ -1179,6 +1198,14 @@ void handle_l3(const uint8_t *pt, int pl) {
       g_osc_peer_mac_ok = g_rx_sa_ok;
       if (g_rx_sa_ok) memcpy(g_osc_peer_mac, g_rx_sa, 6);
       lm_netstack_osc_rx(udp + 8, (size_t)(udplen - 8));
+      return;
+    }
+    if (dport == kLogUdpPort && g_leased) { // log subscription (netstack_log_send)
+      memcpy(g_log_peer_ip, ip + 12, 4);
+      g_log_peer_port = sport;
+      g_log_peer_mac_ok = g_rx_sa_ok;
+      if (g_rx_sa_ok) memcpy(g_log_peer_mac, g_rx_sa, 6);
+      g_log_until_ms = millis() + kLogLeaseMs;
       return;
     }
     if (dport == 5353 && g_leased) { // mDNS query (multicast group or unicast to us)
