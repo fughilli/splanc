@@ -109,12 +109,10 @@ export class ProjectionOverlay {
   private readonly ctx: CanvasRenderingContext2D;
   private solvedById = new Map<number, OverlayLed>();
   private spacingM: number | null = null;
+  private drawOrder: OverlayLed[] = [];
   private lastPose: Pose | null = null;
   private sinceLock = Infinity;
   private frame = 0;
-  /** Label each mark with its id and 1-σ (busier, but the point of watching
-   * the solve live is to see which LEDs are still loose). */
-  showScores = true;
   /** Draw each LED's projected 1-σ ring. Off by default: the interim live
    * solves are loose, so nearly every LED gets a large ring and the view
    * clutters — the marker fill already encodes the variance tier. */
@@ -135,6 +133,9 @@ export class ProjectionOverlay {
     for (const l of leds) m.set(l.id, l);
     this.solvedById = m;
     this.spacingM = spacingM;
+    // Loose LEDs first so the confident marks paint on top of them; sorted
+    // once per solve, not per frame.
+    this.drawOrder = [...m.values()].sort((a, b) => b.sigmaM - a.sigmaM);
   }
 
   get solvedCount(): number {
@@ -214,13 +215,11 @@ export class ProjectionOverlay {
     const dpr = devicePixelRatio;
     const viewW = this.canvas.width;
     const viewH = this.canvas.height;
-    ctx.font = `${11 * dpr}px system-ui`;
-    ctx.textBaseline = "middle";
     // object-fit: cover — image px → view px.
     const viewScale = Math.max(viewW / imgW, viewH / imgH);
-    // Loose LEDs first so the confident marks paint on top of them.
-    const order = [...this.solvedById.values()].sort((a, b) => b.sigmaM - a.sigmaM);
-    for (const led of order) {
+    // No per-LED text: an id / σ label per mark isn't legible at any useful
+    // density and was most of the draw cost.
+    for (const led of this.drawOrder) {
       const pr = project(pose, K, led.xyz);
       if (pr.depth <= 0) continue;
       const { x, y } = imageToView(pr.u, pr.v, imgW, imgH, viewW, viewH);
@@ -239,18 +238,6 @@ export class ProjectionOverlay {
         ctx.globalAlpha = 1;
       }
       drawMarker(ctx, st, x, y, dpr);
-      if (this.showScores) {
-        ctx.fillStyle = "rgb(255 255 255 / 0.85)";
-        ctx.fillText(`${led.id} ±${formatSigma(led.sigmaM)}`, x + (st.sizePx + 4) * dpr, y);
-      }
     }
   }
-}
-
-/** Compact σ label: millimetres below 10 cm, else centimetres. */
-export function formatSigma(sigmaM: number): string {
-  if (!Number.isFinite(sigmaM)) return "∞";
-  const mm = sigmaM * 1000;
-  if (mm < 100) return `${mm < 10 ? mm.toFixed(1) : Math.round(mm)}mm`;
-  return `${Math.round(mm / 10)}cm`;
 }

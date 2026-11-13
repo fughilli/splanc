@@ -36,6 +36,7 @@ import {
   ScriptedCamera,
   ScriptedDecoder,
   SolverWorkerStub,
+  turn,
   until,
 } from "./captureFakes";
 import { asFake, type FakeDomHandle, fire, installFakeDom, textOf } from "./fakeDom";
@@ -129,6 +130,18 @@ interface Run {
 /** Mount the capture screen, walk a capture whose device drops halfway
  * (`frames` camera frames before the drop and as many after), press Stop &
  * finish, and wait for the screen to navigate away. */
+/** Yield until the capture's decode queue is idle (the decoded count stops
+ * changing). */
+async function settleDecode(): Promise<void> {
+  let last = -1;
+  for (let stable = 0; stable < 3; ) {
+    await turn();
+    const n = ScriptedDecoder.decoded.length;
+    stable = n === last ? stable + 1 : 0;
+    last = n;
+  }
+}
+
 async function captureWithDeviceDrop(opts: {
   phoneBenchMs: number;
   hostBenchMs: number | null;
@@ -172,6 +185,9 @@ async function captureWithDeviceDrop(opts: {
     await until("the capture loop", () => cam.registrations === 2);
 
     for (let i = 0; i < frames; i++) cam.emit(2000 + i * 33); // device still up
+    // Decode runs in queued tasks after each frame (ui/taskPriority): on a phone
+    // it keeps up within a frame or two; this burst needs the queue drained.
+    await settleDecode();
     const decodedWhileUp = ScriptedDecoder.decoded.length;
     if (!device.silentStop) device.up = false; // TLS heap exhausted: the player's socket dies mid-walk
     for (let i = 0; i < frames; i++) cam.emit(2000 + (frames + i) * 33);

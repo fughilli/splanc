@@ -88,6 +88,20 @@ export function motionToSample(
 }
 
 /**
+ * A DeviceMotion sample's time: the event's own timeStamp (when the reading
+ * was taken), not when the handler happened to run. A busy main thread
+ * delivers motion events late; stamping them on delivery skews the IMU
+ * timeline the solver integrates. timeStamp shares performance.now()'s clock;
+ * one that isn't finite, or lies in the future or more than 2 s back (a
+ * browser on another clock), falls back to `now`. Pure, tested.
+ */
+export function sampleTime(eventTimeStamp: number, now: number): number {
+  return Number.isFinite(eventTimeStamp) && eventTimeStamp > 0 && eventTimeStamp <= now && now - eventTimeStamp < 2000
+    ? eventTimeStamp
+    : now;
+}
+
+/**
  * DeviceMotion recorder: attaches on start(), batches normalized samples, and
  * hands them to `flush()`'s consumer (~the caller's send cadence). iOS gates
  * motion access behind a permission that must be requested from a user
@@ -103,17 +117,24 @@ export class ImuRecorder {
     private readonly now: () => number = () => performance.now(),
   ) {}
 
+  /** Called with each sample's time as it arrives (the perf counters'
+   * IMU-rate gauge). */
+  onSample: ((tMs: number) => void) | null = null;
+
   start(): void {
     if (this.handler) return;
     const h = (e: DeviceMotionEvent): void => {
       if (!e.rotationRate || !e.accelerationIncludingGravity) return;
       const s = motionToSample(
-        this.now(),
+        sampleTime(e.timeStamp, this.now()),
         e.rotationRate,
         e.accelerationIncludingGravity,
         this.mapping,
       );
-      if (s) this.samples.push(s);
+      if (s) {
+        this.samples.push(s);
+        this.onSample?.(s.t);
+      }
     };
     this.handler = h;
     const dme = DeviceMotionEvent as unknown as { requestPermission?: () => Promise<string> };

@@ -28,7 +28,7 @@ import {
 import { installSettingsStyles } from "./settings.css";
 import { MapView } from "../mapview";
 import { generateFixture } from "../../effects/fixtures";
-import { prefs, DEFAULT_MANUAL_EXPOSURE_CEILING_MS } from "../../store/prefs";
+import { prefs, DEFAULT_MANUAL_EXPOSURE_CEILING_MS, DEFAULT_MIN_CAMERA_DIST_M } from "../../store/prefs";
 import { startTour } from "../guide/tour";
 import { resetTour } from "../guide/tourStore";
 import { openDebugServerConnect } from "./debugServerConnect";
@@ -249,6 +249,27 @@ export function SettingsScreen(router: Router): Screen {
           (v) => prefs.setStripPrior(v === "on"),
         ),
       ),
+    );
+    const floorHint = document.createElement("div");
+    floorHint.className = "settings-row-hint settings-full";
+    floorHint.textContent =
+      "The solver measures a map's size from the phone's motion sensors. When they " +
+      "can't (a slow orbit, a phone too busy to deliver them), the size can collapse. " +
+      "No map is captured from closer than this, so a solve that lands closer is " +
+      "scaled up to it. The shape is unaffected. 0 turns the floor off.";
+    g.append(
+      fullRow(
+        Slider({
+          label: "Closest capture distance",
+          min: 0,
+          max: 100,
+          step: 5,
+          value: Math.round(prefs.getMinCameraDistM() * 100),
+          format: (v) => (v === 0 ? "off" : `${Math.round(v)} cm`),
+          onChange: (v) => prefs.setMinCameraDistM(v / 100),
+        }).el,
+      ),
+      floorHint,
     );
     return g;
   }
@@ -668,6 +689,7 @@ export function SettingsScreen(router: Router): Screen {
     return resetRow("Reset capture settings (incl. diffuse params) to their defaults?", () => {
       prefs.setManualExposureCeilingMs(DEFAULT_MANUAL_EXPOSURE_CEILING_MS);
       prefs.setStripPrior(true);
+      prefs.setMinCameraDistM(DEFAULT_MIN_CAMERA_DIST_M);
       prefs.resetDiffuseParams();
       rerender();
       toast("Capture settings reset");
