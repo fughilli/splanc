@@ -1505,7 +1505,74 @@ OTA (C6 side).</p></li>
 <h2>5. Phase C: OTA, HITL, product<a class="headerlink" href="#phase-c-ota-hitl-product" title="Link to this heading">¶</a></h2>
 <section id="ota-for-both-chips">
 <h3>5.1 OTA for both chips<a class="headerlink" href="#ota-for-both-chips" title="Link to this heading">¶</a></h3>
-<p><strong>Recommendation: each chip updates itself, and the C6 relays the P4’s image.</strong> The C6 never
+<p><strong>As built (2026-11-10): one package updates both chips.</strong> The P4 image already carries the
+C6 front end’s images (<code class="docutils literal notranslate"><span class="pre">//firmware/p4/c6flash</span></code>) and reflashes the C6 over SDIO at boot
+whenever the C6’s ELF SHA-256 differs. So the update is a P4 update, and the C6 follows:</p>
+<ol class="arabic">
+<li><p><strong>Package.</strong> <code class="docutils literal notranslate"><span class="pre">esp32p4-player-&lt;ver&gt;.ota</span></code> = the 108-byte manifest + the P4 image. The board
+is signed into the manifest: flags bits 24..31 = <strong>16</strong> (<code class="docutils literal notranslate"><span class="pre">manifest::BOARD_P4</span></code>), clear of the
+MAX’s 1..4. The receive session picks the board from the chip id (<code class="docutils literal notranslate"><span class="pre">session::board_for_chip</span></code>):</p>
+<ul class="simple">
+<li><p>the P4 (<code class="docutils literal notranslate"><span class="pre">0x0012</span></code>) takes board 16 only;</p></li>
+<li><p>the C6 and C3 take board 0 only.</p></li>
+</ul>
+<p>The image header’s chip id is checked as well, so no chip can install another’s image even
+though they share the keyring. Test-signed build:
+<code class="docutils literal notranslate"><span class="pre">//firmware/player_app:esp32p4_player_c6_ota_test</span></code>; the signer takes <code class="docutils literal notranslate"><span class="pre">--board</span> <span class="pre">16</span></code>.</p>
+</li>
+<li><p><strong>Wire.</strong> The proto is unchanged. The C6 front end forwards <code class="docutils literal notranslate"><span class="pre">ota_*</span></code> 70–75 to the P4
+(<code class="docutils literal notranslate"><span class="pre">main.cpp</span></code>, <code class="docutils literal notranslate"><span class="pre">LM_FRONTEND</span></code>) and never answers them itself while the P4 is up. While the P4
+is down, <code class="docutils literal notranslate"><span class="pre">get_ota_status</span></code> is answered by the C6, and the other arms get no reply, so the
+client’s resume retries them. The P4 advertises the welcome feature <strong><code class="docutils literal notranslate"><span class="pre">ota_inapp</span></code></strong>: the
+client (<code class="docutils literal notranslate"><span class="pre">web/src/net/otaUpdate.ts</span></code>, shared with the agent’s <code class="docutils literal notranslate"><span class="pre">update_firmware</span></code>) then skips
+the loader handoff. The transfer is unchanged: <code class="docutils literal notranslate"><span class="pre">ota_begin</span></code> → <code class="docutils literal notranslate"><span class="pre">RECEIVING</span></code> + offset, 4 KB
+stop-and-wait chunks, resume, <code class="docutils literal notranslate"><span class="pre">ota_finish</span></code> → <code class="docutils literal notranslate"><span class="pre">INSTALLED</span></code>.</p></li>
+<li><p><strong>The P4 receiver</strong> (<code class="docutils literal notranslate"><span class="pre">firmware/player_app/ota_p4.cpp</span></code>). It is the C6 loader’s logic, run in
+the app while it keeps rendering:</p>
+<ul class="simple">
+<li><p>the signature is checked against the compiled-in ring, with the known-answer self-test,
+key epochs and the security floor;</p></li>
+<li><p>the session is the Rust core’s, and the image is written into the slot not running;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ota_finish</span></code> reads the slot back through SHA-256, runs <code class="docutils literal notranslate"><span class="pre">esp_image_verify</span></code>, then selects
+the slot and restarts.</p></li>
+</ul>
+<p>A pending image refuses a new <code class="docutils literal notranslate"><span class="pre">ota_begin</span></code> (<code class="docutils literal notranslate"><span class="pre">busy</span></code>), and <code class="docutils literal notranslate"><span class="pre">ota_reboot{LOADER}</span></code> answers
+<code class="docutils literal notranslate"><span class="pre">no_loader</span></code>.</p>
+</li>
+<li><p><strong>Health and rollback.</strong> The new P4 boots pending verify, with the RTC watchdog armed.
+Its link bring-up flashes its C6 images onto the C6. It counts as healthy once the
+<code class="docutils literal notranslate"><span class="pre">ota_health</span></code> deadlines (boot.rs) are met with all of these true:</p>
+<ul class="simple">
+<li><p>frames render;</p></li>
+<li><p>the link is up;</p></li>
+<li><p>the C6 runs the front end this P4 carries (<code class="docutils literal notranslate"><span class="pre">link_c6_current</span></code>).</p></li>
+</ul>
+<p>That last check proves the pair it ships with is in place and can take the next update.
+A crash, a hang or a missed deadline and the IDF bootloader
+(<code class="docutils literal notranslate"><span class="pre">CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE</span></code> is set in the P4 SDK) boots the other slot. The
+old P4 then finds a C6 it doesn’t carry and puts its own C6 image back. It reports
+<code class="docutils literal notranslate"><span class="pre">last_result</span> <span class="pre">=</span> <span class="pre">&quot;rolled_back&quot;</span></code> in <code class="docutils literal notranslate"><span class="pre">MODE_APP</span></code>, because there is no loader.</p>
+</li>
+<li><p><strong>Layout</strong> (<code class="docutils literal notranslate"><span class="pre">firmware/p4/partitions_p4_ota.csv</span></code>, 16 MB). This is huge_app plus <code class="docutils literal notranslate"><span class="pre">ota_1</span></code>:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">nvs</span></code>, <code class="docutils literal notranslate"><span class="pre">otadata</span></code>, <code class="docutils literal notranslate"><span class="pre">app0</span></code>/<code class="docutils literal notranslate"><span class="pre">ota_0</span></code> (3 MB at 0x10000), littlefs and <code class="docutils literal notranslate"><span class="pre">coredump</span></code> keep their
+offsets;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">app1</span></code>/<code class="docutils literal notranslate"><span class="pre">ota_1</span></code> (3 MB) is at 0x400000.</p></li>
+</ul>
+<p>One USB flash of <code class="docutils literal notranslate"><span class="pre">flash_esp32p4_player_c6</span></code> moves a huge_app P4 onto it and keeps its map,
+effects and name. After that, updates go over the air. The image is 2.5 MB of the 3 MB slot.</p>
+</li>
+</ol>
+<p>What is still open: release packaging (<code class="docutils literal notranslate"><span class="pre">tools/ota_release.py</span></code> emits only the C6 assets), the
+HITL OTA gate for the <code class="docutils literal notranslate"><span class="pre">esp32p4-c6</span></code> SKU (§5.2), and the Python HITL client (<code class="docutils literal notranslate"><span class="pre">ota_core.py</span></code>),
+which doesn’t know <code class="docutils literal notranslate"><span class="pre">ota_inapp</span></code> yet.</p>
+<p>The original proposal follows. Two of its choices were dropped:</p>
+<ul class="simple">
+<li><p>a <code class="docutils literal notranslate"><span class="pre">target</span></code> field on the wire: routing by chip makes it unnecessary;</p></li>
+<li><p>updating the C6 by its own loader: the bundle makes the P4 image the C6’s source of truth,
+so a separate C6 update would be undone at the next P4 boot.</p></li>
+</ul>
+<p><strong>Recommendation (original): each chip updates itself, and the C6 relays the P4’s image.</strong> The C6 never
 writes the P4’s flash, and the P4 never writes the C6’s application flash.</p>
 <ul class="simple">
 <li><p><strong>C6: unchanged.</strong> The split loader and app, the manifest, the keyring (ids 0 <code class="docutils literal notranslate"><span class="pre">release</span></code>,
