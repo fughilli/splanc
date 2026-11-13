@@ -489,6 +489,19 @@ impl Sim {
         self.poses.iter().filter(|p| p.0 >= from && p.0 < to).map(|p| p.2.sub(p.3).norm()).fold(0.0, f64::max)
     }
 
+    /// The largest error of a usable pose (Locked or Coasting) published in [from, to).
+    fn max_usable_err(&self, from: f64, to: f64) -> f64 {
+        self.poses.iter().filter(|p| p.0 >= from && p.0 < to && p.1.usable()).map(|p| p.2.sub(p.3).norm()).fold(0.0, f64::max)
+    }
+
+    /// From the first Uncertain or Lost state at or after `from`, until `to`, nothing usable.
+    fn unusable_once_past_the_limit(&self, from: f64, to: f64) -> bool {
+        let Some(&(start, _)) = self.states.iter().find(|x| x.0 >= from && !x.1.usable() && x.1 != Health::Acquiring) else {
+            return false;
+        };
+        self.states.iter().filter(|x| x.0 >= start && x.0 < to).all(|x| !x.1.usable())
+    }
+
     fn log(&self) -> String {
         let mut s = String::new();
         let mut last = None;
@@ -511,6 +524,7 @@ fn p4_config() -> KernelConfig {
     cfg.timing.stream_sweeps = true;
     cfg.auto_calibrate = false;
     cfg.check_stations = false;
+    cfg.lost_sigma_pos = lh_health::COAST_GIVE_UP_M as Real;
     cfg
 }
 
@@ -700,11 +714,19 @@ fn accelerometer_bias_sets_the_drift_not_the_window() {
         sim.accel_bias = V([bias_g, -bias_g * 0.5, bias_g * 0.75]);
         sim.run(SETTLE + 3.2);
         let (t, why) = sim.loss(dark.0).unwrap_or_else(|| panic!("never lost at {bias_g} g\n{}", sim.log()));
-        let err = sim.max_err(dark.0, t);
-        eprintln!("accel bias {bias_g:.2} g: coasted {:.0} ms, worst error {:.1} mm, {why}", (t - dark.0) * 1e3, err * 1e3);
+        // Past POS_SIGMA_LIMIT_M the coast goes on (Uncertain, not usable) to COAST_GIVE_UP_M:
+        // what must stay close to the truth is what was published as usable.
+        let err = sim.max_usable_err(dark.0, t);
+        eprintln!(
+            "accel bias {bias_g:.2} g: coasted {:.0} ms, worst usable error {:.1} mm (any {:.1} mm), {why}",
+            (t - dark.0) * 1e3,
+            err * 1e3,
+            sim.max_err(dark.0, t) * 1e3
+        );
         if bias_g <= 0.02 {
             assert!(err < COAST_ERR_M, "{bias_g} g: {:.1} mm", err * 1e3);
         }
+        assert!(sim.unusable_once_past_the_limit(dark.0, t), "usable again after Uncertain in the dark\n{}", sim.log());
         windows.push((t - dark.0, err));
     }
     let (w0, e0) = windows[0];
@@ -739,11 +761,12 @@ fn both_occluded_during_a_handoff_relocks_fresh() {
     let mut sim = Sim::new(path, vec![(dark.0, dark.1, &[A, B])]);
     sim.run(SETTLE + 6.0);
     locked_by_settle(&sim);
-    // Coasting, then Lost once the carry's dead reckoning passes the σ limit (Drifted, not
-    // the cap), well before the light is back.
+    // Coasting, Uncertain once the carry's dead reckoning passes the usable σ limit, then
+    // Lost at the give-up line (Drifted) or the dark cap (NoLight), before the light is back.
     let (t, why) = sim.loss(dark.0).unwrap_or_else(|| panic!("never lost in a 2 s dark\n{}", sim.log()));
-    assert!(why.contains("Drifted"), "lost for {why}\n{}", sim.log());
-    assert!(t - dark.0 < lh_health::COAST_MAX_S as f64, "tracking held {:.3} s into the dark\n{}", t - dark.0, sim.log());
+    assert!(why.contains("Drifted") || why.contains("NoLight"), "lost for {why}\n{}", sim.log());
+    assert!(t - dark.0 <= lh_health::COAST_MAX_S as f64 + 0.02, "tracking held {:.3} s into the dark\n{}", t - dark.0, sim.log());
+    assert!(sim.unusable_once_past_the_limit(dark.0, dark.1), "usable again after Uncertain in the dark\n{}", sim.log());
     assert!(
         sim.states.iter().filter(|x| x.0 > dark.0 + 0.13 && x.0 < dark.1).all(|x| x.1 != Health::Locked),
         "{}",
@@ -774,6 +797,33 @@ fn only_the_slave_back_first_is_no_wrong_lock() {
 /// One station alone, at 1, 2 and 3 m from it: still, then carried 0.4 m and turned
 /// 0.9 rad over 2 s. The known constellation gives the full pose; σ must follow the
 /// actual error (no overconfidence) and stay under the limit (Locked) at demo ranges.
+/// PixieLamp2's room: one station ~3 m off, the tracker carried, and the lamp's own body
+/// blocking it for a quarter second. With light the carried σ sits near POS_SIGMA_LIMIT_M,
+/// so dead reckoning passes it within a few tens of ms. Giving up there (the kernel default)
+/// throws the track away on every such occlusion and costs a fresh solve; coasting on to
+/// COAST_GIVE_UP_M keeps the track (Uncertain while past the limit) and fuses the light back.
+#[test]
+fn one_far_station_brief_occlusion_mid_carry_keeps_the_track() {
+    let a = V([2.0, -1.0, 2.2]);
+    let dir = V([-2.0, 1.0, -1.2]).scale(1.0 / V([-2.0, 1.0, -1.2]).norm());
+    let p = a.add(dir.scale(3.0));
+    let q = p.add(V([0.25, 0.3, 0.05]));
+    let path = || Path(vec![key(SETTLE + 1.0, p.0, [0.0, 0.0, 0.3]), key(SETTLE + 3.0, q.0, [0.2, 0.0, 0.9])]);
+    let dark = (SETTLE + 2.0, SETTLE + 2.25);
+    let occl = || vec![(SETTLE + 0.5, SETTLE + 5.0, &[B][..]), (dark.0, dark.1, &[A, B][..])];
+    let mut sim = Sim::new(path(), occl());
+    sim.run(SETTLE + 4.0);
+    locked_by_settle(&sim);
+    assert!(sim.loss(SETTLE + 1.0).is_none(), "lost the track\n{}", sim.log());
+    assert_eq!(sim.starts(dark.0), 0, "a fresh solve: the light wasn't fused into the track\n{}", sim.log());
+    assert!(sim.first(dark.1, Health::Locked).is_some(), "never Locked after the dark\n{}", sim.log());
+    sim.assert_no_jumps(SETTLE);
+    // The kernel's default give-up line (= the usable limit) loses it.
+    let mut old = Sim::with_cfg(path(), occl(), KernelConfig { lost_sigma_pos: lh_health::POS_SIGMA_LIMIT_M as Real, ..p4_config() });
+    old.run(SETTLE + 4.0);
+    assert!(old.loss(dark.0).is_some(), "the 2 cm give-up line kept this track too: the test shows nothing\n{}", old.log());
+}
+
 #[test]
 fn single_station_sigma_follows_the_error() {
     let a = V([2.0, -1.0, 2.2]);

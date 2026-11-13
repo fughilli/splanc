@@ -219,6 +219,8 @@ fn tracker() -> &'static mut Tracker {
             // one every 50 ms while not tracking, or the task falls behind its input.
             kernel: Kernel::new({
                 let mut cfg = KernelConfig { start_interval: 0.05, ..KernelConfig::default() };
+                // Coast on past the usable limit (Uncertain), up to lh_health's give-up line.
+                cfg.lost_sigma_pos = lh_health::COAST_GIVE_UP_M as _;
                 // Hits into the filter as their report comes in, not at the next sync.
                 cfg.timing.stream_sweeps = true;
                 cfg

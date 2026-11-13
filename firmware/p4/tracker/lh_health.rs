@@ -43,6 +43,14 @@ pub const TPS: i64 = 48_000_000;
 /// drift by then is 7-9 mm for biases up to 0.02 g, 11 mm at 0.05 g.
 pub const POS_SIGMA_LIMIT_M: f32 = 0.02;
 
+/// Position uncertainty (m) at which dead reckoning gives up (the kernel's `lost_sigma_pos`
+/// on the P4; its default is POS_SIGMA_LIMIT_M). Between the two the pose is Uncertain: not
+/// usable, but the track goes on, so light back after a short occlusion is fused into it
+/// instead of a fresh solve (~1 s on the P4). With one station ~3 m off a carried tracker
+/// sits near POS_SIGMA_LIMIT_M with light (PixieLamp2, 2026-11-12), so giving up there
+/// turned every 50 ms occlusion into a lost track.
+pub const COAST_GIVE_UP_M: f32 = 0.05;
+
 /// The backstop on dead reckoning (s): the kernel's `lost_after_dark` default. Moving, the
 /// covariance rule ends coasting long before it (~0.24 s). Still, zero-velocity updates
 /// hold the covariance and the simulated drift stays under 1 mm over the whole second, so
