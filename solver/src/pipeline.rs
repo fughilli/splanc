@@ -454,6 +454,21 @@ fn scale_warnings(scale_rel_se: f64, median_camera_dist_m: Option<f64>) -> Vec<S
     out
 }
 
+/// The scale floor set this map's size: the motion sensors' estimate put the
+/// camera path implausibly close, so the size is a lower bound.
+fn floor_warning(median_camera_dist_m: Option<f64>) -> String {
+    let at = median_camera_dist_m
+        .filter(|d| d.is_finite())
+        .map(|d| format!(" ({:.0} cm)", d * 100.0))
+        .unwrap_or_default();
+    format!(
+        "The motion sensors couldn't measure this map's size, so it was set from \
+         the closest capture distance{at}: the true size is likely larger. The \
+         shape is unaffected. For a measured size, include a few brisk side-to-side \
+         sweeps when capturing."
+    )
+}
+
 /// Median distance from the solved camera centers to the LEDs' centroid.
 fn median_camera_distance(cams: &[Vec3], leds: &[Vec3]) -> Option<f64> {
     if cams.is_empty() || leds.is_empty() {
@@ -559,10 +574,18 @@ pub struct StageTrace {
         skip_serializing_if = "std::ops::Not::not"
     )]
     pub init_scale_fallback: bool,
+    /// Factor the scale floor raised this stage's geometry by (absent = 1,
+    /// not applied): its inertial size was implausibly small.
+    #[serde(rename = "scaleFloor", skip_serializing_if = "is_one")]
+    pub scale_floor: f64,
     /// Degeneracy reasons of this stage's raw state (initial solves and
     /// outlier rounds, whose choice is degeneracy-first).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub degenerate: Vec<String>,
+}
+
+fn is_one(x: &f64) -> bool {
+    *x == 1.0
 }
 
 fn trace_stage(stage: &str, frames: &[FrameObservations], r: &VioResult) -> StageTrace {
@@ -578,6 +601,7 @@ fn trace_stage(stage: &str, frames: &[FrameObservations], r: &VioResult) -> Stag
         spread_m: crate::diag::geometry(&r.led_positions, &[]).spread_m,
         init_scale: r.init_scale,
         init_scale_fallback: r.init_scale_fallback,
+        scale_floor: r.scale_floor,
         degenerate: Vec::new(),
     }
 }
@@ -729,10 +753,13 @@ fn assemble(
         .collect();
     // Infinite = the re-anchor couldn't observe scale at all (warned below);
     // only a finite estimate goes on the wire.
-    let warnings = scale_warnings(
+    let mut warnings = scale_warnings(
         result.scale_rel_se,
         median_camera_distance(&leveled_traj, &measured),
     );
+    if result.scale_floor > 1.0 {
+        warnings.push(floor_warning(median_camera_distance(&leveled_traj, &measured)));
+    }
 
     let map = OutputMap {
         map_id: problem
@@ -852,6 +879,7 @@ pub fn reconstruct_vio_diag(
         px_sigma: opts.px_sigma,
         max_nfev: opts.max_nfev,
         init_scale_guard: opts.init_scale_guard,
+        min_camera_dist_m: opts.min_camera_dist_m.max(0.0),
         ..SolveOptions::default()
     };
     // Initial solve. From scratch ("cold") — and, when the caller hands over

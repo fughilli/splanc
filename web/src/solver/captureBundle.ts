@@ -37,6 +37,7 @@
  * which ignores unknown keys, reads both.
  */
 
+import type { CapturePerfSnapshot } from "../cv/capturePerf";
 import type { CodeParams, OutputMap } from "@ledmapper/protocol";
 
 import type { SolveDiag, SolveProblem } from "./agent";
@@ -141,6 +142,10 @@ export interface CaptureParamsSnapshot {
   durationMs: number;
   frameCount: number;
   truncatedFrames: number;
+  /** The capture loop's performance counters at the end (cv/capturePerf):
+   * per-phase frame costs, the live solve's cost, and the IMU rate and gaps.
+   * Absent from bundles recorded before it. */
+  perf?: CapturePerfSnapshot | null;
   fixture: {
     deviceId: string | null;
     name: string | null;

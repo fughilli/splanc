@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULT_IMU_MAPPING, motionToSample, parseImuMapping } from "../src/xr/imu";
+import { DEFAULT_IMU_MAPPING, motionToSample, parseImuMapping, sampleTime } from "../src/xr/imu";
 
 const RR = { alpha: 10, beta: 20, gamma: 30 }; // deg/s
 const AG = { x: 0.1, y: 9.7, z: -0.3 }; // m/s²
@@ -42,4 +42,12 @@ test("signs and axis swaps apply; malformed specs are rejected", () => {
 test("null components (sensor warm-up) yield no sample", () => {
   assert.equal(motionToSample(0, { alpha: null, beta: 1, gamma: 2 }, AG), null);
   assert.equal(motionToSample(0, RR, { x: 1, y: 2, z: null }), null);
+});
+
+test("a sample is stamped with its event time, not its (late) delivery", () => {
+  assert.equal(sampleTime(1000, 1180), 1000, "delivered 180 ms late: the event time");
+  assert.equal(sampleTime(0, 500), 500, "no event time");
+  assert.equal(sampleTime(NaN, 500), 500);
+  assert.equal(sampleTime(600, 500), 500, "a future stamp is another clock");
+  assert.equal(sampleTime(1, 5000), 5000, "far in the past: another clock");
 });

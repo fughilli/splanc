@@ -2690,8 +2690,8 @@ const ARM_GET_WIFI_POLICY: u32 = 91;
 /// The protocol features this firmware serves: welcome.features and the agent
 /// manifest's protocol.features (/.well-known/splanc.json), so a client needn't
 /// infer them from fw_version.
-pub const FEATURES: &[&str] =
-    &[
+macro_rules! features {
+    ($($extra:literal),*) => { &[
         "effects",
         "perf",
         "textures",
@@ -2722,7 +2722,16 @@ pub const FEATURES: &[&str] =
         // Kiosk mode (get_kiosk_status / set_kiosk_config / kiosk_unlock, the
         // kiosk_status push, Error "kiosk_locked"): docs/design/kiosk-mode.md.
         "kiosk",
-    ];
+        $($extra),*
+    ] };
+}
+
+#[cfg(not(lm_ota_inapp))]
+pub const FEATURES: &[&str] = features!();
+/// The ESP32-P4 player (docs/design/p4-c6-split.md §5.1) takes its update in the app
+/// itself, through the C6 front end: no restart into a loader before the transfer.
+#[cfg(lm_ota_inapp)]
+pub const FEATURES: &[&str] = features!("ota_inapp");
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
 /// (The set_texture RLE payload's run lengths; protobuf fields go through

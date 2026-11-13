@@ -1,0 +1,15 @@
+# The ESP32-P4 player's A/B flash layout, 16 MiB (docs/design/p4-c6-split.md §5.1).
+#
+# Arduino's huge_app layout (which the P4 images used before) plus a second app slot:
+# nvs, otadata, slot 0 (huge_app's app0, also ota_0), littlefs ("spiffs", the label the
+# player mounts) and coredump keep their offsets, so flashing this table onto a huge_app
+# P4 keeps its map, effects and name. ota_1 takes the free space above 4 MiB; the IDF
+# bootloader's app rollback (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE in the P4 SDK) brings a
+# bad update back to the other slot. 0x700000.. stays free.
+# Name,   Type, SubType,  Offset,   Size
+nvs,      data, nvs,      0x9000,   0x5000
+otadata,  data, ota,      0xe000,   0x2000
+app0,     app,  ota_0,    0x10000,  0x300000
+spiffs,   data, spiffs,   0x310000, 0xE0000
+coredump, data, coredump, 0x3F0000, 0x10000
+app1,     app,  ota_1,    0x400000, 0x300000

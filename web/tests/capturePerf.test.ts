@@ -136,3 +136,32 @@ test("format lines carry the numbers that matter", () => {
   assert.match(line, /solve n=1 duty 100% last 400ms \(wasm 380 post 0\.5 apply 3\.0\) 500rec thr 100%/);
   assert.match(formatPhaseLine(p.snapshot()), /idle\[prep 1\.0 detect 2\.4 decode 1\.2 overlay 0\.4 max 4\.0 latency 2\.0\]/);
 });
+
+test("a solve that starves the IMU counts as an impact even with every camera frame", () => {
+  let now = 0;
+  const p = new CapturePerf(() => now);
+  // Idle: a 50 Hz IMU and 30 fps camera.
+  for (let t = 0; t < 2000; t += 20) p.imuSample(t);
+  for (let t = 0; t < 2000; t += 33) p.frame(frame(t));
+  now = 2000;
+  p.solveBegin();
+  // During the solve: every camera frame, but the IMU drops to ~12 Hz.
+  for (let t = 2000; t < 3000; t += 33) p.frame(frame(t));
+  for (let t = 2000; t < 3000; t += 80) p.imuSample(t);
+  now = 3000;
+  const ratio = p.solveEnd(solve());
+  assert.ok(ratio !== null && ratio < 0.4, `ratio ${ratio}`);
+  const snap = p.snapshot();
+  assert.ok(snap.imu.idleHz !== null && Math.abs(snap.imu.idleHz - 50) < 1, `idle ${snap.imu.idleHz}`);
+  assert.ok(snap.imu.solvingHz !== null && Math.abs(snap.imu.solvingHz - 12.5) < 1, `solving ${snap.imu.solvingHz}`);
+  assert.equal(snap.imu.gapFrac, 0, "no gap over 100 ms");
+});
+
+test("IMU gaps over 100 ms are counted as dropped time", () => {
+  const p = new CapturePerf(() => 0);
+  for (let t = 0; t <= 1000; t += 20) p.imuSample(t);
+  p.imuSample(1500); // a 500 ms hole
+  for (let t = 1520; t <= 2000; t += 20) p.imuSample(t);
+  const s = p.snapshot().imu;
+  assert.ok(Math.abs(s.gapFrac - 0.25) < 0.01, `gapFrac ${s.gapFrac}`);
+});

@@ -39,7 +39,7 @@ import { DeviceSession, ToolError, summarize, type Curve, type TextureSource } f
 import { buildScene, renderScene, type ColorBy, type SceneFixture } from "./fixtureplot";
 import type { RGB } from "./plot";
 import type { UniformInput } from "./uniforms";
-import { canaryRollout, resolvePackage, type ResolvedPackage } from "./firmware";
+import { canaryRollout, P4_KIND, resolvePackage, type ResolvedPackage } from "./firmware";
 import { registerFxDebugTools } from "./fxdebug";
 import type { TrustVerdict } from "./trust";
 
@@ -455,17 +455,23 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
       guard(async () => {
         // One package per kind of player: the C6 `.ota`, or a Splanc MAX board's
         // signed manifest (the Pi downloads its own image; docs/design/max-ota.md).
-        // Dev overrides: SPLANC_OTA_PACKAGE (a C6 .ota), SPLANC_MAX_OTA_MANIFEST (a MAX
-        // .manifest) + SPLANC_MAX_OTA_SOURCE_URL (where that Pi fetches the image).
+        // An ESP32-P4 player takes its own `.ota` (both of its chips' images).
+        // Dev overrides: SPLANC_OTA_PACKAGE (a C6 .ota), SPLANC_P4_OTA_PACKAGE (a P4
+        // .ota), SPLANC_MAX_OTA_MANIFEST (a MAX .manifest) + SPLANC_MAX_OTA_SOURCE_URL
+        // (where that Pi fetches the image).
         const packages = new Map<string, Promise<ResolvedPackage>>();
         const packageFor = (board: string): Promise<ResolvedPackage> => {
           let p = packages.get(board);
           if (!p) {
             const localC6 = process.env["SPLANC_OTA_PACKAGE"];
+            const localP4 = process.env["SPLANC_P4_OTA_PACKAGE"];
             const localMax = process.env["SPLANC_MAX_OTA_MANIFEST"];
-            p = board
-              ? resolvePackage(localMax ? { board, packagePath: localMax } : { board, version: version ?? "latest" })
-              : resolvePackage(localC6 ? { packagePath: localC6 } : { version: version ?? "latest" });
+            p =
+              board === P4_KIND
+                ? resolvePackage(localP4 ? { packagePath: localP4 } : { p4: true, version: version ?? "latest" })
+                : board
+                  ? resolvePackage(localMax ? { board, packagePath: localMax } : { board, version: version ?? "latest" })
+                  : resolvePackage(localC6 ? { packagePath: localC6 } : { version: version ?? "latest" });
             p.then((pkg) => progress(`installing ${pkg.label} (manifest version ${pkg.version})`)).catch(() => undefined);
             packages.set(board, p);
           }

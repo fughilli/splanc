@@ -15,8 +15,11 @@
  *  - every solve's queue wait, main-thread upload (postMessage clone), worker
  *    compute (serialize / wasm / parse), and main-thread apply, plus the duty
  *    cycle actually achieved;
- *  - `throughputRatio()`: camera throughput during one solve relative to the
- *    idle baseline — what LiveSolveScheduler backs off on.
+ *  - `throughputRatio()`: camera AND IMU throughput during one solve relative
+ *    to the idle baseline (the worse of the two) — what LiveSolveScheduler
+ *    backs off on. The IMU counts because DeviceMotion events share the main
+ *    thread with everything else, and a starved IMU starves the solver's only
+ *    measure of metric scale.
  *
  * Pure apart from the injected clock — unit-tested.
  */
@@ -151,8 +154,12 @@ export interface CapturePerfSnapshot {
   /** Main-thread ms per solve (post + apply), p95: the solver's direct
    * hot-loop cost. */
   solveMainThreadMsP95: number | null;
-  /** Last solve's camera throughput vs the idle baseline (1 = no slowdown). */
+  /** Last solve's throughput vs the idle baseline (1 = no slowdown): the
+   * worse of camera and IMU. */
   lastThroughputRatio: number | null;
+  /** IMU sample rate (Hz) with the solver idle / while a solve ran, and the
+   * share of capture time inside gaps over 100 ms (dropped DeviceMotion). */
+  imu: { idleHz: number | null; solvingHz: number | null; gapFrac: number; samples: number };
 }
 
 function snapLoop(s: LoopStats): LoopSnapshot {
@@ -170,6 +177,14 @@ function snapLoop(s: LoopStats): LoopSnapshot {
     prepMsP95: s.prep.quantile(0.95),
     latencyMsP95: s.latency.quantile(0.95),
   };
+}
+
+/** An IMU gap longer than this is a dropped stretch of DeviceMotion events. */
+const IMU_GAP_MS = 100;
+
+function hz(dt: RollingStat): number | null {
+  const m = dt.count >= 5 ? dt.quantile(0.5) : null;
+  return m !== null && m > 0 ? 1000 / m : null;
 }
 
 /** A capture-time gap this many times the nominal interval counts as drops. */
@@ -190,6 +205,14 @@ export class CapturePerf {
   private solveFailures = 0;
   private lastSolve: SolveTiming | null = null;
   private lastRatio: number | null = null;
+  // IMU accounting.
+  private lastImuT: number | null = null;
+  private readonly imuIdleDt = new RollingStat(256);
+  private readonly imuSolvingDt = new RollingStat(256);
+  private imuSamples = 0;
+  private imuGapMs = 0;
+  private imuFirstT: number | null = null;
+  private solveImu = 0;
   private readonly roundTrip = new RollingStat(64);
   private readonly workerMs = new RollingStat(64);
   private readonly mainMs = new RollingStat(64);
@@ -240,6 +263,21 @@ export class CapturePerf {
     }
   }
 
+  /** Record one IMU sample (its event time, ms). */
+  imuSample(tMs: number): void {
+    this.imuSamples++;
+    if (this.imuFirstT === null) this.imuFirstT = tMs;
+    if (this.lastImuT !== null) {
+      const dt = tMs - this.lastImuT;
+      if (dt > 0) {
+        (this.inFlightSince !== null ? this.imuSolvingDt : this.imuIdleDt).push(dt);
+        if (dt > IMU_GAP_MS) this.imuGapMs += dt;
+      }
+    }
+    this.lastImuT = tMs;
+    if (this.inFlightSince !== null) this.solveImu++;
+  }
+
   /** Median frame interval with the solver idle (falls back to all frames). */
   private nominalIntervalMs(): number | null {
     return this.idle.interval.count >= 5 ? this.idle.interval.quantile(0.5) : this.solving.interval.quantile(0.5);
@@ -251,6 +289,7 @@ export class CapturePerf {
     this.inFlightSince = this.now();
     this.solveFrames = 0;
     this.solveDropped = 0;
+    this.solveImu = 0;
   }
 
   /**
@@ -263,7 +302,8 @@ export class CapturePerf {
   solveEnd(t: SolveTiming): number | null {
     const since = this.inFlightSince;
     this.inFlightSince = null;
-    if (since !== null) this.busyMs += this.now() - since;
+    const solveMs = since !== null ? this.now() - since : 0;
+    if (since !== null) this.busyMs += solveMs;
     this.solves++;
     if (!t.ok) this.solveFailures++;
     this.lastSolve = t;
@@ -273,7 +313,12 @@ export class CapturePerf {
     }
     this.mainMs.push(t.postMs + t.applyMs);
     const expected = this.solveFrames;
-    this.lastRatio = expected >= 4 ? (expected - this.solveDropped) / expected : null;
+    const camera = expected >= 4 ? (expected - this.solveDropped) / expected : null;
+    // IMU: samples received during the solve vs the idle rate's expectation.
+    const idleDt = this.imuIdleDt.count >= 20 ? this.imuIdleDt.quantile(0.5) : null;
+    const imuExpected = idleDt !== null && idleDt > 0 ? solveMs / idleDt : 0;
+    const imu = imuExpected >= 10 ? Math.min(1, this.solveImu / imuExpected) : null;
+    this.lastRatio = camera === null ? imu : imu === null ? camera : Math.min(camera, imu);
     return this.lastRatio;
   }
 
@@ -293,6 +338,15 @@ export class CapturePerf {
       solveWorkerMsP95: this.workerMs.quantile(0.95),
       solveMainThreadMsP95: this.mainMs.quantile(0.95),
       lastThroughputRatio: this.lastRatio,
+      imu: {
+        idleHz: hz(this.imuIdleDt),
+        solvingHz: hz(this.imuSolvingDt),
+        gapFrac:
+          this.imuFirstT !== null && this.lastImuT !== null && this.lastImuT > this.imuFirstT
+            ? this.imuGapMs / (this.lastImuT - this.imuFirstT)
+            : 0,
+        samples: this.imuSamples,
+      },
     };
   }
 }
@@ -315,6 +369,11 @@ export function formatPerfLine(s: CapturePerfSnapshot): string {
           `apply ${f1(ls.applyMs)}) ${ls.records}rec`
         : "") +
       (s.lastThroughputRatio !== null ? ` thr ${Math.round(s.lastThroughputRatio * 100)}%` : "");
+  }
+  // The IMU is the solve's only measure of metric scale: show when it starves.
+  if (s.imu.samples > 0) {
+    line += ` | imu ${f0(s.imu.idleHz)}Hz` + (s.imu.solvingHz !== null ? `/${f0(s.imu.solvingHz)}Hz` : "");
+    if (s.imu.gapFrac >= 0.01) line += ` gaps ${Math.round(s.imu.gapFrac * 100)}%`;
   }
   return line;
 }

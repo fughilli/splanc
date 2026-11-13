@@ -41,6 +41,10 @@ const STRIP_PRIOR_OFF_KEY = "ledmapper.stripPriorOff";
 // well under this, and a high ceiling only wastes slider travel on exposures
 // nobody wants (measured on-device 2026-08-17).
 export const DEFAULT_MANUAL_EXPOSURE_CEILING_MS = 50;
+/** The solver's scale floor (solver vio::MIN_CAMERA_DIST_M): the closest the
+ * solved camera path may sit to the fixture, in meters. */
+export const DEFAULT_MIN_CAMERA_DIST_M = 0.2;
+const MIN_CAMERA_DIST_KEY = "ledmapper.minCameraDistM";
 
 export interface WifiCreds {
   ssid: string;
@@ -153,6 +157,25 @@ export const prefs = {
     if (!Number.isFinite(ms) || ms <= 0) return;
     try {
       localStorage.setItem(EXPOSURE_CEILING_KEY, String(Math.round(ms)));
+    } catch {
+      /* non-fatal */
+    }
+  },
+  /** The solver's scale floor in meters (0 = off): see
+   * DEFAULT_MIN_CAMERA_DIST_M. */
+  getMinCameraDistM(): number {
+    try {
+      const raw = localStorage.getItem(MIN_CAMERA_DIST_KEY);
+      const n = raw === null ? NaN : parseFloat(raw);
+      return Number.isFinite(n) && n >= 0 && n <= 5 ? n : DEFAULT_MIN_CAMERA_DIST_M;
+    } catch {
+      return DEFAULT_MIN_CAMERA_DIST_M;
+    }
+  },
+  setMinCameraDistM(m: number): void {
+    if (!Number.isFinite(m) || m < 0 || m > 5) return;
+    try {
+      localStorage.setItem(MIN_CAMERA_DIST_KEY, String(m));
     } catch {
       /* non-fatal */
     }

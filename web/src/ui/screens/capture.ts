@@ -62,6 +62,7 @@ import { LabelOverlay } from "../labels";
 import { ProjectionOverlay, type Registration } from "../projectionOverlay";
 import { overlayLegend } from "../overlayStyle";
 import { LIVE_SOLVE_OPTIONS, LiveSolveScheduler } from "../../solver/liveSolve";
+import { CoalescedTask, OrderedTaskQueue, postTask } from "../taskPriority";
 import type { SolveDiag, SolveProblem } from "../../solver/agent";
 import {
   buildBundle,
@@ -186,6 +187,9 @@ async function resolveChannelPlan(c: {
 }
 
 const imuMapping = parseImuMapping(qs.get("imumap") ?? "") ?? DEFAULT_IMU_MAPPING;
+/** The overlays redraw at most this often (ms): they show state, and a phone
+ * can't afford them at the camera rate on top of capture + IMU + CV. */
+const OVERLAY_MIN_INTERVAL_MS = 80;
 const forcedFx = ((): number | null => {
   const v = parseFloat(qs.get("fx") ?? "");
   return Number.isFinite(v) && v > 0 ? v : null;
@@ -217,7 +221,7 @@ function finalSolveOptions(perChannel = false): NonNullable<SolveProblem["option
   // across the channel boundary, so it is off there unless forced (the gaps
   // are filled per channel after the solve instead).
   const on = forced === null ? prefs.getStripPrior() && !perChannel : forced === "1";
-  return on ? { stripPrior: true } : {};
+  return { ...(on ? { stripPrior: true } : {}), minCameraDistM: prefs.getMinCameraDistM() };
 }
 const forcedExposure = ((): number | null => {
   const v = parseFloat(qs.get("exposure") ?? "");
@@ -724,6 +728,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   let runLinkSnapshot: LinkTelemetrySnapshot | null = null;
   // Hot-loop + live-solver perf counters for the current capture (cv/capturePerf).
   let perf: CapturePerf | null = null;
+  // The running capture's CV queue and overlay task (ui/taskPriority).
+  let cvQueueRef: OrderedTaskQueue | null = null;
+  let overlayTaskRef: CoalescedTask | null = null;
   let localDetections: DetectionRecord[] = [];
   let localImu: ImuSample[] = [];
   let lastLedCount = 64;
@@ -748,6 +755,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     displayMap = null;
     void liveSolver?.stop();
     liveSolver = null;
+    cvQueueRef?.clear();
+    cvQueueRef = null;
+    overlayTaskRef?.cancel();
+    overlayTaskRef = null;
     liveCanvas.style.display = "none";
     labels.clear();
     projOverlay.clear();
@@ -1377,6 +1388,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           durationMs: performance.now() - startedAt,
           frameCount,
           truncatedFrames,
+          perf: loopPerf.snapshot(),
           fixture: {
             deviceId: activeId,
             name: w?.deviceName || (activeId ? deviceStore.get(activeId)?.label ?? null : null),
@@ -1389,6 +1401,17 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       };
       const loopPerf = new CapturePerf();
       perf = loopPerf;
+      // DeviceMotion samples feed the IMU-rate gauge as they arrive (the live
+      // solve backs off when it starves them). Other IMU sources count at flush.
+      if (imuRecorder !== null) imuRecorder.onSample = (t) => loopPerf.imuSample(t);
+      // Task priorities (ui/taskPriority): the frame callback does image capture
+      // + GPU detect; decode/track runs one frame per queued task so DeviceMotion
+      // events are dispatched in between; overlays draw the latest state at a
+      // capped rate in the background.
+      const cvQueue = new OrderedTaskQueue("user-visible");
+      const overlayTask = new CoalescedTask(OVERLAY_MIN_INTERVAL_MS);
+      cvQueueRef = cvQueue;
+      overlayTaskRef = overlayTask;
       // Reachable from a remote devtools console mid-capture.
       (globalThis as { __capturePerf?: () => unknown }).__capturePerf = () => loopPerf.snapshot();
       startTimer();
@@ -1435,101 +1458,123 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           });
           return;
         }
-        pipeline.step(blobs, {
-          tCaptureMs: f.tCaptureMs,
-          pose: f.pose,
-          K: f.K,
-          imgW: f.imgW,
-          imgH: f.imgH,
-        });
-
-        const tDecoded = performance.now();
-        if (showTracks) labels.draw(pipeline.lastBlobStatus, f.imgW, f.imgH);
-        focalPx = f.K[0];
-        // Registered 3D layer: recover the pose from the decoded-LED
-        // correspondences and project the solved set — base map ∪ live solve —
-        // into the viewport. Also drives the reacquisition chip. Only
-        // meaningful once there is a solved set to register against.
-        if (projOverlay.solvedCount > 0) {
-          const reg = projOverlay.draw(pipeline.lastBlobStatus, f.K, f.imgW, f.imgH, showSolved);
-          updateRegChip(reg);
-          // Calibrate IMU: the registration (the same lock as the chip) is the
-          // capture trigger — every frame, stamped with its capture time.
-          const locked = projOverlay.lockedPose;
-          calFlow?.pushFrame(f.tCaptureMs, locked ? [...locked.q] : null);
-        }
-        const tOverlaid = performance.now();
-
-        if (++frameCount % 15 === 0) {
-          const s = pipeline.stats;
-          const ps = loopPerf.snapshot();
-          const pop = monitor.blobPopulation();
-          const scn = monitor.scene();
-          const br = Math.round((params.brightness ?? 1) * 100);
-          const pct = (x: number): string => `${Math.round(x * 100)}%`;
-          const expLine = servoExposure ? ` · exp ${servoedExposure.toFixed(2)}` : "";
-          const servoLine =
-            (pop
-              ? `LED ${br}% · sat ${pop.satFrac.toFixed(2)} split ${pct(pop.splitFrac)} ` +
-                `gray ${pct(pop.grayFrac)} · medI ${pop.medianIntensity.toFixed(2)}` +
-                (scn ? ` clip ${pct(scn.clipFrac)}` : "")
-              : `LED ${br}%`) + expLine;
-          driverDecodeStats = {
-            ids: s.uniqueIds.size,
-            total: params.ledCount,
-            tracks: s.tracks,
-            observations: localDetections.length,
-            perf: ps,
-          };
-          hudStats.textContent =
-            `decoded ${s.uniqueIds.size}/${params.ledCount} ids · ${s.tracks} tracks · ` +
-            `${blobs.length} blobs · align ${s.alignShiftMs.toFixed(0)} ms · ` +
-            `${c.pendingBatchCount} unsent${liveSolvedText}\n` +
-            servoLine +
-            `\n${formatPerfLine(ps)}`;
-          // Live count chip reads observations · solved, so the user sees more
-          // recording only helps (design doc §4.2).
-          countEl.textContent = `${localDetections.length} obs${liveSolvedText}`;
-          // Mirror the HUD to the console every ~2s: on iOS this is the only way
-          // to see decode health from a device run (tools/iosctl log), and the
-          // numbers that matter — ids, tracks, blobs, align — are already here.
-          if (frameCount % 60 === 0) {
-            const diag =
-              `[capture] ids=${s.uniqueIds.size}/${params.ledCount} tracks=${s.tracks} ` +
-                `blobs=${blobs.length} align=${s.alignShiftMs.toFixed(0)}ms ` +
-                `obs=${localDetections.length} clipped=${truncatedFrames} ` +
-                `bit=${params.bitPeriodMs}ms sym=${params.symbols}` +
-                (pop ? ` sat=${pop.satFrac.toFixed(2)} medI=${pop.medianIntensity.toFixed(2)}` : "");
-            console.info(diag);
-            nativeLog(diag);
-            const perfDiag =
-              `[perf] ${formatPerfLine(ps)}` +
-              (liveSolver !== null
-                ? ` gov duty ${Math.round(liveSolver.dutyCycle * 100)}% impacted ${liveSolver.impacted}` +
-                  (liveSolver.suspended ? " SUSPENDED" : "")
-                : "") +
-              `\n[perf] ${formatPhaseLine(ps)}`;
-            console.info(perfDiag);
-            nativeLog(perfDiag);
+        // Decode + track: queued behind pending DeviceMotion events, in order.
+        const tQueued = performance.now();
+        cvQueue.push(() => {
+          if (!capturing) return;
+          const tCv = performance.now();
+          pipeline.step(blobs, {
+            tCaptureMs: f.tCaptureMs,
+            pose: f.pose,
+            K: f.K,
+            imgW: f.imgW,
+            imgH: f.imgH,
+          });
+          const tDecoded = performance.now();
+          focalPx = f.K[0];
+          let overlayMs = 0;
+          if (calFlow !== null) {
+            // Calibrate IMU pairs every frame's registration lock with its
+            // capture time, so it keeps the per-frame (synchronous) overlay.
+            if (showTracks) labels.draw(pipeline.lastBlobStatus, f.imgW, f.imgH);
+            if (projOverlay.solvedCount > 0) {
+              const reg = projOverlay.draw(pipeline.lastBlobStatus, f.K, f.imgW, f.imgH, showSolved);
+              updateRegChip(reg);
+              const locked = projOverlay.lockedPose;
+              calFlow?.pushFrame(f.tCaptureMs, locked ? [...locked.q] : null);
+            }
+            overlayMs = performance.now() - tDecoded;
+          } else {
+            // Overlays: the newest frame only, at a capped rate, in the background.
+            const K = f.K;
+            const imgW = f.imgW;
+            const imgH = f.imgH;
+            overlayTask.request(() => {
+              if (!capturing) return;
+              if (showTracks) labels.draw(pipeline.lastBlobStatus, imgW, imgH);
+              // Registered 3D layer: recover the pose from the decoded-LED
+              // correspondences and project the solved set — base map ∪ live
+              // solve — into the viewport. Also drives the reacquisition chip.
+              if (projOverlay.solvedCount > 0) {
+                updateRegChip(projOverlay.draw(pipeline.lastBlobStatus, K, imgW, imgH, showSolved));
+              }
+            });
+            overlayMs = overlayTask.lastMs;
           }
-        }
-        // Debug-mode capture bundle: an opt-in downsampled frame every 2 s.
-        if (sampleFrames && previewVideo !== null && bundleFrames.length < 120 && f.tCaptureMs - lastFrameSampleMs >= 2000) {
-          lastFrameSampleMs = f.tCaptureMs;
-          const jpeg = snapshotVideo(previewVideo);
-          if (jpeg !== null) bundleFrames.push({ tMs: f.tCaptureMs, jpeg });
-        }
-        // Everything above is this frame's main-thread cost, HUD included.
-        const tEnd = performance.now();
-        loopPerf.frame({
-          tCaptureMs: f.tCaptureMs,
-          seq: f.seq,
-          prepMs: f.prepMs,
-          latencyMs: tStart - f.tCaptureMs,
-          detectMs: tDetected - tStart,
-          decodeMs: tDecoded - tDetected,
-          overlayMs: tOverlaid - tDecoded,
-          totalMs: tEnd - tStart,
+
+          if (++frameCount % 15 === 0) {
+            const s = pipeline.stats;
+            const ps = loopPerf.snapshot();
+            const pop = monitor.blobPopulation();
+            const scn = monitor.scene();
+            const br = Math.round((params.brightness ?? 1) * 100);
+            const pct = (x: number): string => `${Math.round(x * 100)}%`;
+            const expLine = servoExposure ? ` · exp ${servoedExposure.toFixed(2)}` : "";
+            const servoLine =
+              (pop
+                ? `LED ${br}% · sat ${pop.satFrac.toFixed(2)} split ${pct(pop.splitFrac)} ` +
+                  `gray ${pct(pop.grayFrac)} · medI ${pop.medianIntensity.toFixed(2)}` +
+                  (scn ? ` clip ${pct(scn.clipFrac)}` : "")
+                : `LED ${br}%`) + expLine;
+            driverDecodeStats = {
+              ids: s.uniqueIds.size,
+              total: params.ledCount,
+              tracks: s.tracks,
+              observations: localDetections.length,
+              perf: ps,
+            };
+            hudStats.textContent =
+              `decoded ${s.uniqueIds.size}/${params.ledCount} ids · ${s.tracks} tracks · ` +
+              `${blobs.length} blobs · align ${s.alignShiftMs.toFixed(0)} ms · ` +
+              `${c.pendingBatchCount} unsent${liveSolvedText}\n` +
+              servoLine +
+              `\n${formatPerfLine(ps)}`;
+            // Live count chip reads observations · solved, so the user sees more
+            // recording only helps (design doc §4.2).
+            countEl.textContent = `${localDetections.length} obs${liveSolvedText}`;
+            // Mirror the HUD to the console every ~2s: on iOS this is the only way
+            // to see decode health from a device run (tools/iosctl log), and the
+            // numbers that matter — ids, tracks, blobs, align — are already here.
+            if (frameCount % 60 === 0) {
+              const diag =
+                `[capture] ids=${s.uniqueIds.size}/${params.ledCount} tracks=${s.tracks} ` +
+                  `blobs=${blobs.length} align=${s.alignShiftMs.toFixed(0)}ms ` +
+                  `obs=${localDetections.length} clipped=${truncatedFrames} ` +
+                  `bit=${params.bitPeriodMs}ms sym=${params.symbols}` +
+                  (pop ? ` sat=${pop.satFrac.toFixed(2)} medI=${pop.medianIntensity.toFixed(2)}` : "");
+              console.info(diag);
+              nativeLog(diag);
+              const perfDiag =
+                `[perf] ${formatPerfLine(ps)}` +
+                (liveSolver !== null
+                  ? ` gov duty ${Math.round(liveSolver.dutyCycle * 100)}% impacted ${liveSolver.impacted}` +
+                    (liveSolver.suspended ? " SUSPENDED" : "")
+                  : "") +
+                `\n[perf] ${formatPhaseLine(ps)}`;
+              console.info(perfDiag);
+              nativeLog(perfDiag);
+            }
+          }
+          // Debug-mode capture bundle: an opt-in downsampled frame every 2 s.
+          if (sampleFrames && previewVideo !== null && bundleFrames.length < 120 && f.tCaptureMs - lastFrameSampleMs >= 2000) {
+            lastFrameSampleMs = f.tCaptureMs;
+            const jpeg = snapshotVideo(previewVideo);
+            if (jpeg !== null) bundleFrames.push({ tMs: f.tCaptureMs, jpeg });
+          }
+          // This frame's main-thread cost: the capture task (to tQueued) plus
+          // this decode task, HUD included; the deferred overlay counts the last
+          // run's cost. latencyMs includes the wait in the CV queue.
+          const tEnd = performance.now();
+          loopPerf.frame({
+            tCaptureMs: f.tCaptureMs,
+            seq: f.seq,
+            prepMs: f.prepMs,
+            latencyMs: tCv - f.tCaptureMs,
+            detectMs: tDetected - tStart,
+            decodeMs: tDecoded - tCv,
+            overlayMs,
+            totalMs: tQueued - tStart + (tEnd - tCv),
+          });
         });
       });
 
@@ -1627,7 +1672,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
                 ledCount: lastLedCount,
                 mapId: "live",
                 createdAt: new Date().toISOString(),
-                options: { ...LIVE_SOLVE_OPTIONS },
+                options: { ...LIVE_SOLVE_OPTIONS, minCameraDistM: prefs.getMinCameraDistM() },
               };
               return solverAgent
                 .solveLive({
@@ -1653,12 +1698,18 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
                 );
             },
             (map) => {
-              if (!capturing) return;
-              const t0 = performance.now();
-              liveLeds = map.leds;
-              pipeline.updateSolved(liveLeds);
-              applyLiveSolve(map);
-              if (pending !== null) pending.applyMs = performance.now() - t0;
+              // Below capture, IMU and CV: applied in a background task. Tasks
+              // never interleave, so the pipeline takes the new solve between
+              // two frames.
+              const p = pending;
+              postTask(() => {
+                if (!capturing || liveSolver !== sched) return;
+                const t0 = performance.now();
+                liveLeds = map.leds;
+                pipeline.updateSolved(liveLeds);
+                applyLiveSolve(map);
+                if (p !== null) p.applyMs = performance.now() - t0;
+              }, "background");
             },
             {
               settled: (ok) => {
@@ -1702,6 +1753,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           }
           const samples = rec.flush();
           localImu.push(...samples);
+          // The DeviceMotion recorder counts its samples as they arrive; the
+          // native / synthetic sources only show them here.
+          if (rec !== imuRecorder) for (const smp of samples) loopPerf.imuSample(smp.t);
           calFlow?.pushPhone(samples);
           if (c.hostSolverBenchMs !== null) c.sendImuBatch(samples);
           // Calibrate IMU pairs phone gravity with each frame's lock: flush often
@@ -2051,6 +2105,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     if (!capturing) return;
     const c = client();
     if (c === null) return;
+    // Frames still queued for decode are part of the capture: finish them
+    // before the loop stops (each queued item checks `capturing`).
+    cvQueueRef?.drain();
     capturing = false;
     runLinkSnapshot = runLink?.snapshot(performance.now()) ?? null;
     manualHooks = null;

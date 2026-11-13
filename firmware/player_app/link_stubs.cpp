@@ -1,13 +1,12 @@
 // The LM_LINK (P4 player) build's stand-ins for what the front end owns
-// (docs/design/p4-c6-split.md §2.1): BLE Improv, the TLS identity and its region, and
-// OTA. main.cpp's LM_NETSTACK paths call these; on the P4 they report "not here".
-// P4 OTA (its own A/B slots, the image relayed by the C6) is Phase C (§5.1).
+// (docs/design/p4-c6-split.md §2.1): BLE Improv and the TLS identity and its region.
+// main.cpp's LM_NETSTACK paths call these; on the P4 they report "not here". The P4's
+// own OTA (A/B slots, the image relayed by the C6, §5.1) is ota_p4.cpp.
 #include <stddef.h>
 #include <stdint.h>
 
 #include "device_cert.h"
 #include "improv_ble.h"
-#include "ota_app.h"
 #include "tls_region.h"
 
 void improv_ble_begin(const char *, uint8_t) {}
@@ -48,8 +47,3 @@ uint32_t device_cert_gen_ms() { return 0; }
 
 void tls_region_install() {}
 const TlsRegionStats &tls_region_stats() { return g_tls; }
-
-void ota_app_boot() {}
-void ota_app_poll(bool, bool, bool) {}
-bool ota_app_pending() { return false; }
-int ota_app_dispatch(const uint8_t *, size_t, uint8_t *, size_t) { return 0; }

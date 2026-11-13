@@ -86,6 +86,11 @@ pub struct ProblemOptions {
     /// guard existed; leave it on.
     #[serde(rename = "initScaleGuard")]
     pub init_scale_guard: bool,
+    /// Scale floor (vio::SolveOptions::min_camera_dist_m): the median
+    /// camera-to-fixture distance a solve may not fall below, in meters
+    /// (0 = off). Default vio::MIN_CAMERA_DIST_M.
+    #[serde(rename = "minCameraDistM")]
+    pub min_camera_dist_m: f64,
 }
 
 impl Default for ProblemOptions {
@@ -102,6 +107,7 @@ impl Default for ProblemOptions {
             strip_tolerance: default_strip_tolerance(),
             warm_start: None,
             init_scale_guard: true,
+            min_camera_dist_m: crate::vio::MIN_CAMERA_DIST_M,
         }
     }
 }
