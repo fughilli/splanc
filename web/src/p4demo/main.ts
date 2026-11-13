@@ -83,7 +83,7 @@ const kv = defaultKv();
 const tips = new StylusTipStore(kv);
 const S: DemoState = loadState();
 const prefs = loadPrefs();
-const { tracking, mock } = createTracking({ mock: MOCK });
+const { tracking, mock } = createTracking({ mock: MOCK, anyDevice: params.get("hidall") === "1" });
 const mockLamp = MOCK ? new MockLamp() : null;
 
 let lamp: LampLink | null = null;
