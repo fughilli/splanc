@@ -611,7 +611,9 @@ fn swing_behind_the_body_then_put_down_relocks() {
     locked_by_settle(&sim);
     let lost =
         sim.first(SETTLE + 1.2, Health::Lost).unwrap_or_else(|| panic!("never Lost behind the body\n{}", sim.log()));
-    assert!(lost < SETTLE + 1.2 + 0.7, "{}", sim.log());
+    // Unusable soon after the dark starts, Lost at the give-up line or the 1 s cap.
+    assert!(lost <= SETTLE + 1.2 + lh_health::COAST_MAX_S as f64 + 0.05, "{}", sim.log());
+    assert!(sim.unusable_once_past_the_limit(SETTLE + 1.2, lost), "usable again after Uncertain\n{}", sim.log());
     sim.assert_no_jumps(SETTLE);
     reacquired(&sim, end);
 }
@@ -695,7 +697,10 @@ fn long_occlusion_during_motion_ends_lost_on_variance() {
     locked_by_settle(&sim);
     let (t, why) = sim.loss(dark.0).unwrap_or_else(|| panic!("never lost in a 2 s dark\n{}", sim.log()));
     assert!(why.contains("Drifted"), "lost for {why}, not the covariance\n{}", sim.log());
-    assert!(t - dark.0 < 0.6, "coasted {:.3} s", t - dark.0);
+    // The give-up line (COAST_GIVE_UP_M, 8 cm) comes before the 1 s cap; what was usable in
+    // between is bounded by the coasting limit (lh_health coast_sigma_m), not the give-up.
+    assert!(t - dark.0 < lh_health::COAST_MAX_S as f64, "coasted {:.3} s", t - dark.0);
+    assert!(sim.unusable_once_past_the_limit(dark.0, t), "usable again after Uncertain in the dark\n{}", sim.log());
     assert!(sim.states.iter().filter(|x| x.0 > t && x.0 < dark.1).all(|x| x.1 == Health::Lost), "{}", sim.log());
     sim.assert_no_jumps(SETTLE);
     reacquired(&sim, SETTLE + 2.9);

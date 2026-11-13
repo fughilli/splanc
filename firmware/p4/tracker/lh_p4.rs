@@ -196,10 +196,13 @@ struct Tracker {
     /// sending while it sends others is forgotten (it expired there, or lhd solved its
     /// world afresh without it).
     sent_us: Vec<(u32, i64)>,
-    /// Stations this kernel levelled again from their gravity (P4 µs): lhd's pose of one
-    /// that still has the old tilt is stale for a while (its trackers hear the new OOTX
-    /// later) and isn't adopted.
-    tilted_us: Vec<(u32, i64)>,
+    /// lhd's newest pose of each station it sends.
+    last_sent: Vec<(u32, Pose)>,
+    /// Stations this kernel placed itself since (levelled from their gravity, or solved
+    /// again after they moved under the still tracker), with lhd's pose of them then: lhd
+    /// keeps sending that stale pose until it re-solves them itself (its trackers may not
+    /// see the move at all), so it isn't adopted; a different one from lhd is.
+    stale: Vec<(u32, Pose)>,
     /// P4 µs of the last forget check (lh_clock).
     forget_check_us: i64,
     clock: HostClock,
@@ -267,7 +270,8 @@ fn tracker() -> &'static mut Tracker {
             },
             stations: Vec::new(),
             sent_us: Vec::new(),
-            tilted_us: Vec::new(),
+            last_sent: Vec::new(),
+            stale: Vec::new(),
             forget_check_us: 0,
             clock: HostClock::new(),
             accel_g: Vec3::new(0.0, 0.0, 1.0),
@@ -328,15 +332,15 @@ impl Tracker {
                     log(&format!("lh: tracking lost ({:?})", reason));
                 }
                 Event::Calibrated { reason, stations, .. } => {
-                    if reason == CalibrationReason::StationTilted {
-                        let now = unsafe { p4_now_us() };
+                    if reason == CalibrationReason::StationTilted || reason == CalibrationReason::StationRelocated {
                         for s in &stations {
-                            let moved = self.stations.iter().find(|(id, _)| *id == s.id).map_or(false, |(_, p)| {
-                                rot_angle(p.rot, s.world_from_station.rot) > self.kernel.cfg.station_tilt
+                            let changed = self.stations.iter().find(|(id, _)| *id == s.id).map_or(false, |(_, p)| {
+                                !same_pose(p, &s.world_from_station, 0.005, 0.3f32.to_radians() as _)
                             });
-                            if moved {
-                                self.tilted_us.retain(|x| x.0 != s.id);
-                                self.tilted_us.push((s.id, now));
+                            let lhd = self.last_sent.iter().find(|x| x.0 == s.id).map(|x| x.1);
+                            if let (true, Some(lhd)) = (changed, lhd) {
+                                self.stale.retain(|x| x.0 != s.id);
+                                self.stale.push((s.id, lhd));
                             }
                         }
                     }
@@ -356,7 +360,7 @@ impl Tracker {
                 }
                 Event::StationDropped { id, why } => {
                     self.stations.retain(|x| x.0 != id);
-                    self.tilted_us.retain(|x| x.0 != id);
+                    self.stale.retain(|x| x.0 != id);
                     self.status.stations = self.stations.len() as u8;
                     log(&format!("lh: station {} dropped ({:?})", id, why));
                 }
@@ -557,7 +561,6 @@ impl Tracker {
             log(&format!("lh: lhd no longer sends station {}: forgetting it", id));
             self.push(Input::ForgetStation { id });
         }
-        self.tilted_us.retain(|x| now - x.1 < TILT_HOLD_US);
     }
 }
 
@@ -566,9 +569,10 @@ impl Tracker {
 const REFINE_POS_M: lh_kernel::Real = 0.10;
 const REFINE_ROT_RAD: lh_kernel::Real = 3.0 * core::f32::consts::PI as lh_kernel::Real / 180.0;
 
-/// After levelling a station from its gravity, lhd poses of it that disagree by more than
-/// the tilt threshold are ignored for this long.
-const TILT_HOLD_US: i64 = 15_000_000;
+/// Two poses within `pos` (m) and `rot` (rad) of each other.
+fn same_pose(a: &Pose, b: &Pose, pos: lh_kernel::Real, rot: lh_kernel::Real) -> bool {
+    a.pos.sub(b.pos).norm() < pos && rot_angle(a.rot, b.rot) < rot
+}
 
 /// Rotation between two orientations (rad).
 fn rot_angle(a: Quat, b: Quat) -> lh_kernel::Real {
@@ -620,15 +624,17 @@ pub unsafe extern "C" fn lh_station_prior(id: u32, p: *const f32) -> i32 {
         Some(x) => x.1 = now,
         None => t.sent_us.push((id, now)),
     }
-    // Levelled here from its new gravity a moment ago: lhd's pose with the old tilt is
-    // stale (it adopts the tilt once its own trackers hear the new OOTX).
-    if t.tilted_us.iter().any(|x| x.0 == id && now - x.1 < TILT_HOLD_US) {
-        if let Some((_, cur)) = t.stations.iter().find(|(sid, _)| *sid == id) {
-            if rot_angle(cur.rot, pose.rot) > t.kernel.cfg.station_tilt {
-                return 0;
-            }
+    match t.last_sent.iter_mut().find(|x| x.0 == id) {
+        Some(x) => x.1 = pose,
+        None => t.last_sent.push((id, pose)),
+    }
+    // Placed here since (levelled, or solved again after it moved): lhd's pose from before is
+    // stale until lhd sends a different one (it re-solved the station itself).
+    if let Some(&(_, old)) = t.stale.iter().find(|x| x.0 == id) {
+        if same_pose(&pose, &old, 0.05, 1.0f32.to_radians() as _) {
+            return 0;
         }
-        t.tilted_us.retain(|x| x.0 != id);
+        t.stale.retain(|x| x.0 != id);
     }
     if let Some((_, cur)) = t.stations.iter().find(|(sid, _)| *sid == id) {
         let d = cur.pos.sub(pose.pos);
@@ -662,11 +668,9 @@ pub unsafe extern "C" fn lh_station_prior(id: u32, p: *const f32) -> i32 {
         t.drain_events();
         return 1;
     }
-    // The tracker's filter state is in the old world: start it again in the new one.
-    t.kernel.push(Input::DeviceRemoved { dev }, &mut t.events);
-    if let Some(d) = t.dec.as_ref() {
-        t.kernel.push(d.added(), &mut t.events);
-    }
+    // The tracker's filter state is in the old world: start its track again in the new one,
+    // keeping its sweep-timing lock and station slots (a device reset waited ~6 s for OOTX).
+    t.kernel.push(Input::ResetTrack { dev }, &mut t.events);
     t.status.tracking = 0;
     t.health.lost();
     log(&format!("lh: adopted station {} at ({:.3}, {:.3}, {:.3}) from lhd", id, v[0], v[1], v[2]));
