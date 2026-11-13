@@ -117,47 +117,6 @@ void send_hello() {
   send_frame(LK_LINK, 0, 0, b, sizeof b);
 }
 
-// Log frames the radio refused (its buffer pool full under a burst), retried from
-// frontend_link_poll in order; the oldest goes when it's full. Without this ~15% of the
-// console and of a tracker recording never left the C6.
-constexpr size_t kLogQ = 4, kLogQMax = 1500;
-struct PendingLog {
-  uint16_t len;
-  uint8_t data[kLogQMax];
-};
-PendingLog g_log_q[kLogQ];
-size_t g_log_q_head = 0, g_log_q_n = 0;
-uint32_t g_log_retried = 0, g_log_dropped = 0;
-
-void log_flush() {
-  while (g_log_q_n > 0) {
-    const PendingLog &e = g_log_q[g_log_q_head];
-    const int r = netstack_log_send(e.data, e.len);
-    if (r < 0) return;  // still full: next poll
-    g_log_retried++;
-    g_log_q_head = (g_log_q_head + 1) % kLogQ;
-    g_log_q_n--;
-  }
-}
-
-void log_out(const uint8_t *p, size_t n) {
-  if (n > kLogQMax) n = kLogQMax;
-  log_flush();
-  if (g_log_q_n == 0) {
-    const int r = netstack_log_send(p, n);
-    if (r >= 0) return;  // sent, or nobody to send to
-  }
-  if (g_log_q_n == kLogQ) {
-    g_log_q_head = (g_log_q_head + 1) % kLogQ;
-    g_log_q_n--;
-    g_log_dropped++;
-  }
-  PendingLog &e = g_log_q[(g_log_q_head + g_log_q_n) % kLogQ];
-  e.len = static_cast<uint16_t>(n);
-  memcpy(e.data, p, n);
-  g_log_q_n++;
-}
-
 void on_frame(const lk_header &h, const uint8_t *p) {
   g_stats.rx++;
   g_p4_seen_us = esp_timer_get_time();
@@ -191,7 +150,7 @@ void on_frame(const lk_header &h, const uint8_t *p) {
       // The P4's console, to a subscriber on udp/9001 if any. Not printed here: the P4
       // has its own UART console, and a console write with no host reading can block this
       // (network) task.
-      log_out(p, h.len);
+      netstack_log_send(p, h.len);
       return;
     default:
       return;
@@ -252,7 +211,6 @@ bool frontend_link_begin() {
 void frontend_link_poll() {
   if (!g_up) return;
   pump(0);
-  log_flush();
   reclaim();
   const int64_t now = esp_timer_get_time();
   if (now - g_hello_sent_us >= kHelloUs) {
@@ -265,10 +223,7 @@ void frontend_link_poll() {
     g_stats_sent_us = now;
     char b[160];
     const int n = frontend_link_stats(b, sizeof b - 1);
-    if (n > 0) {
-      p4_log("[link] %s down=%u unsent=%u log_retried=%u log_dropped=%u\n", b, (unsigned)g_stats.fwd_down,
-             (unsigned)g_stats.fwd_unsent, (unsigned)g_log_retried, (unsigned)g_log_dropped);
-    }
+    if (n > 0) p4_log("[link] %s down=%u unsent=%u\n", b, (unsigned)g_stats.fwd_down, (unsigned)g_stats.fwd_unsent);
   }
   {
     static int64_t checked_us = 0;

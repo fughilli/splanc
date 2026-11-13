@@ -286,7 +286,7 @@ void on_frame(const lk_header &h, const uint8_t *p) {
       lm_netstack_osc_rx(p, h.len);  // as if it had arrived on udp/9000 here
       return;
     case LK_LOG:
-      Log().printf("[c6] %.*s", (int)h.len, (const char *)p);  // the front end's own lines (also over Wi-Fi)
+      printf("[c6] %.*s", (int)h.len, (const char *)p);  // the front end's own lines (UART only)
       return;
     case LK_LINK:
       if (h.len == 0) return;
