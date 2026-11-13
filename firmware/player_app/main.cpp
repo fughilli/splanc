@@ -1614,6 +1614,23 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
 // the ws:81, wss:443 and netstack transports — upload-chunk streaming + lm_player_handle +
 // persistence + device-side polling all live here, so a message behaves identically on each.
 static int ws_compute_reply_body(const uint8_t *msg, size_t len) {
+#if defined(LM_FRONTEND)
+  // Firmware updates are the P4's (ota_p4.cpp, docs/design/p4-c6-split.md §5.1): its
+  // package carries this front end's images too, and it reflashes this C6 at its next
+  // boot. Writing a sector and the final read-back verify take a moment, hence the
+  // longer wait. While the P4 is down the status is answered here (a client watching an
+  // update sees the P4 come back); the other arms get no reply, so the client's resume
+  // retries them once it is up.
+  {
+    const int32_t arm = lm_envelope_arm(msg, len);
+    if (arm >= 70 && arm <= 75) {  // ota_begin .. ota_reboot
+      const int n = frontend_forward(1, msg, len, tx, sizeof tx, 10000);
+      if (n > 0) return n;
+      if (n == -2) return -1;  // undelivered: drop the session, the client resumes
+      if (n == 0 || arm != 74) return 0;  // 74: get_ota_status
+    }
+  }
+#endif
   // Firmware update arms (ota_app.cpp): answered here, never by the player core.
   int ota = ota_app_dispatch(msg, len, tx, sizeof tx);
   if (ota != 0) return ota;
