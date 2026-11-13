@@ -35,9 +35,18 @@ import {
 } from "../../flash/webserial";
 import { summarizeEnv } from "../../flash/env";
 import { identifyUsb, formatUsbId } from "../../flash/usb";
-import { getFlasher, type FlashHooks } from "../../flash/flasher";
+import { getFlasher, type FlashHooks, type FlashRequest } from "../../flash/flasher";
 import { isNativePlatform } from "../../net/native";
 import { buildLabel, commitUrl } from "../../buildInfo";
+import {
+  boardLabel,
+  BoardUnsupportedError,
+  candidatesFor,
+  chipLabel,
+  fitProblem,
+  unsupportedMessage,
+  type DetectedBoard,
+} from "../../flash/boardMatch";
 import type { FirmwareEntry, FirmwareIndex } from "../../flash/manifest";
 import { appState } from "../app/state";
 import type { LedMapperClient } from "../../net/client";
@@ -220,7 +229,8 @@ function sourceField(sheet: SheetHandle): HTMLElement {
 }
 
 const FLASH_HELP =
-  "Flashing runs entirely in your browser over USB — desktop Chrome/Edge (Web Serial) or Chrome on Android (WebUSB). Connect the board with a data-capable cable, then keep it plugged in until the write finishes.";
+  "Flashing runs entirely in your browser over USB — desktop Chrome/Edge (Web Serial) or Chrome on Android (WebUSB). Connect the board with a data-capable cable, then keep it plugged in until the write finishes. " +
+  "The board is identified when it connects: it gets the image for its own chip from the selected version, and a board Splanc has no firmware for is left untouched.";
 
 // -- idle: pick an image + flash -------------------------------------------
 
@@ -515,15 +525,37 @@ async function startFlash(
     appendLog(`Firmware: ${fmtKB(totalBytes(req))} across ${req.images.length} image(s).`);
 
     const flasher = await getFlasher(entry.family);
-    const result = await flasher.flash(port, req, hooks);
+    // Once the board says what it is: write the selected image if it fits, else
+    // another image of the same release / build that does, else nothing.
+    const resolve = async (board: DetectedBoard, first: FlashRequest): Promise<FlashRequest> => {
+      let problem: string | null = null;
+      for (const cand of candidatesFor(index, entry, board)) {
+        let r = first;
+        if (cand.id !== entry.id) {
+          status.textContent = `Downloading the ${chipLabel(board.chipName)} firmware…`;
+          r = await loadFlashRequest(cand);
+        }
+        problem = fitProblem(r, board);
+        if (problem) continue;
+        if (cand.id !== entry.id) {
+          appendLog(`The selected firmware (${entry.label}) is for the ${chipLabel(entry.chip)}; this board is an ${boardLabel(board)}.`);
+          appendLog(`Flashing the matching image instead: ${cand.label} (${fmtKB(totalBytes(r))}).`);
+        }
+        return r;
+      }
+      throw new BoardUnsupportedError(unsupportedMessage(index, entry, board, problem));
+    };
+    const result = await flasher.flash(port, req, hooks, { resolve });
 
     fill.style.width = "100%";
     fill.classList.add("flash-bar-fill--done");
-    renderDone(sheet, index, entry, result.chipDescription, result.mac, log.textContent ?? "");
+    renderDone(sheet, index, result.entry, result.chipDescription, result.mac, log.textContent ?? "");
     toast("Firmware flashed");
   } catch (err) {
     appendLog(`\nError: ${errText(err)}`);
-    status.textContent = "Flashing failed.";
+    const unsupported = err instanceof BoardUnsupportedError;
+    status.textContent = unsupported ? "This board isn't supported: nothing was written." : "Flashing failed.";
+    if (unsupported) sheet.body.append(note(errText(err)));
     status.classList.add("flash-status--err");
     fill.classList.add("flash-bar-fill--err");
     sheet.body.append(

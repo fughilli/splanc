@@ -16,6 +16,7 @@
 
 import type { FlashManifest, FirmwareEntry } from "./manifest";
 import type { ChipFamily } from "./usb";
+import type { DetectedBoard } from "./boardMatch";
 
 /** A fetched, ready-to-write image set for one firmware entry. */
 export interface FlashRequest {
@@ -44,12 +45,23 @@ export interface FlashResult {
   chipDescription: string;
   /** The chip MAC, when the backend can read it. */
   mac?: string;
+  /** The firmware entry that was written (the resolved one, which can differ from
+   * the one the flash was started with). */
+  entry: FirmwareEntry;
+}
+
+export interface FlashOptions {
+  /** Called once the board has reported what it is, before anything is written:
+   * returns the image set to write (the one passed in, or another that fits this
+   * board), or throws (BoardUnsupportedError) to leave the board untouched. Whatever
+   * it returns is still checked against the board (boardMatch.fitProblem). */
+  resolve?: (board: DetectedBoard, req: FlashRequest) => Promise<FlashRequest>;
 }
 
 /** Drives one already-selected serial port through detect → write → verify. */
 export interface Flasher {
   readonly family: ChipFamily;
-  flash(port: SerialPort, req: FlashRequest, hooks: FlashHooks): Promise<FlashResult>;
+  flash(port: SerialPort, req: FlashRequest, hooks: FlashHooks, opts?: FlashOptions): Promise<FlashResult>;
 }
 
 type FlasherLoader = () => Promise<Flasher>;

@@ -44,6 +44,10 @@ export interface FlashManifest {
   images: FlashImageSpec[];
   /** The OTA layout's hints (docs/design/ota.md): absent on legacy bundles. */
   ota?: OtaLayoutSpec;
+  /** flash.json `chip_rev`: the silicon revisions the images run on, as
+   * major * 100 + minor (the ESP32-P4 player: 301..399, i.e. v3.1 to v3.99). Absent =
+   * any revision of the chip. */
+  chipRev?: { min?: number; max?: number };
 }
 
 /** flash.json `ota` block: a loader + app layout, and how to migrate a board that
@@ -141,6 +145,14 @@ export function parseFlashManifest(json: unknown): FlashManifest {
     flashSize: str(o, "flash_size", "keep"),
     images,
   };
+  const rev = o["chip_rev"];
+  if (typeof rev === "object" && rev !== null) {
+    const r = rev as Record<string, unknown>;
+    const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : undefined);
+    const min = num(r["min"]);
+    const max = num(r["max"]);
+    if (min !== undefined || max !== undefined) out.chipRev = { ...(min !== undefined ? { min } : {}), ...(max !== undefined ? { max } : {}) };
+  }
   const ota = o["ota"];
   if (typeof ota === "object" && ota !== null) {
     const t = ota as Record<string, unknown>;
