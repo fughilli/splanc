@@ -1169,6 +1169,10 @@ message ClientMessage {
     GetKioskStatus get_kiosk_status = 92;
     SetKioskConfig set_kiosk_config = 93;
     KioskUnlock kiosk_unlock = 94;
+    // One OSC datagram for the player's OSC input, exactly as if it had arrived on
+    // udp/9000 (modules first, e.g. the P4 tracker's /lh/*, then the uniform
+    // mailbox). For clients that can't send UDP (a web page). Feature "osc".
+    OscDatagram osc = 110;
   }
 }
 
@@ -2098,5 +2102,14 @@ message ServerMessage {
     // Reply to get_kiosk_status / set_kiosk_config / kiosk_unlock, and pushed
     // unsolicited when the kiosk state changes (KioskStatus.event says why).
     KioskStatus kiosk_status = 52;
+    // An OSC datagram a player module sent back (lm_module_osc_send, e.g. the P4
+    // tracker's /lh/pose) to a session whose client last sent ClientMessage.osc.
+    // Pushed unsolicited; the player may drop these under backpressure. Feature "osc".
+    OscDatagram osc = 60;
   }
+}
+
+// One raw OSC packet (a message or a bundle), as it would travel in a UDP datagram.
+message OscDatagram {
+  bytes packet = 1;
 }

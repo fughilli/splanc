@@ -2,6 +2,7 @@
  * Vite config — two entry pages:
  *   /            the phone capture app (M5–M8)
  *   /wall.html   the virtual LED wall (laptop test fixture)
+ *   /p4demo.html the ESP32-P4 Vive-tracker demo, run from a phone (also /p4-demo)
  *
  * Dev mode (`pnpm --dir web dev`) proxies the control plane + map routes to a
  * locally running M2 server so the whole flow works against `vite dev`:
@@ -110,6 +111,8 @@ export default defineConfig({
         index: "index.html",
         wall: "wall.html",
         effects: "effects.html",
+        // The P4 tracker demo (phone): published as /p4-demo too (stage_site.lib.sh).
+        p4demo: "p4demo.html",
       },
     },
   },
@@ -125,6 +128,7 @@ export default defineConfig({
       "/pulse": backend, // wasm effects Sim (effects.html workspace)
       "/fx-compiler": backend, // wasm effects compiler (in-shell effect editor)
       "/fx-vm": backend, // wasm effects preview VM (in-shell effect editor)
+      "/lh-wasm": backend, // wasm lighthouse (Vive) tracking + its worker (WebHID)
     },
   },
 });

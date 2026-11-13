@@ -4,11 +4,12 @@
 # The site is the Vite bundle at the root plus the four wasm bundles the app
 # loads at runtime, staged at the SAME paths the Pi M2 server serves them from
 # (see web/serve.sh) so the identical bundle works from every origin:
-#   /             the app (capture PWA + wall + effects pages)
+#   /             the app (capture PWA + wall + effects pages; the P4 demo at /p4-demo)
 #   /solver/      the VIO solver wasm      (//solver:solver_web)
 #   /pulse/       the effects Sim wasm     (//firmware/pulse:pulse_web)
 #   /fx-compiler/ the effect compiler wasm (//fx_compiler:fx_compiler_web)
 #   /fx-vm/       the effect preview VM     (//firmware/fx_vm:fx_vm_web)
+#   /lh-wasm/     lighthouse (Vive) tracking (//web/lh_wasm:lh_wasm_web)
 #   /docs/        the developer docs site   (//docs:build, when staged in)
 #
 # Sourced by both deploy_cloudflare.sh (Cloudflare Pages) and stage_site.sh
@@ -23,6 +24,10 @@ stage_site() {
   rm -rf "$out"
   mkdir -p "$out"
   cp -RL web/dist/. "$out"/
+  # The P4 tracker demo's clean URL: GitHub Pages and Cloudflare Pages both serve
+  # /p4-demo from p4-demo.html. A copy at the same level, so its relative asset
+  # URLs resolve exactly as p4demo.html's do.
+  if [ -f "$out/p4demo.html" ]; then cp "$out/p4demo.html" "$out/p4-demo.html"; fi
   # Cloudflare Pages advanced-mode Worker — the /gh-asset CORS proxy for release
   # firmware downloads. Staged as _worker.js at the deploy root, where Pages always
   # executes it (a nested functions/ dir was NOT compiled by wrangler on this
@@ -33,6 +38,7 @@ stage_site() {
   mkdir -p "$out/pulse" && cp -RL firmware/pulse/pulse_web/. "$out/pulse/"
   mkdir -p "$out/fx-compiler" && cp -RL fx_compiler/fx_compiler_web/. "$out/fx-compiler/"
   mkdir -p "$out/fx-vm" && cp -RL firmware/fx_vm/fx_vm_web/. "$out/fx-vm/"
+  mkdir -p "$out/lh-wasm" && cp -RL web/lh_wasm/lh_wasm_web/. "$out/lh-wasm/"
   # The generated static user guide (FUG-103), served at /user-guide/. Generated
   # from the in-app guide catalog and pinned fresh by //web:user_guide_freshness.
   # index.html + any dedicated flow sub-pages (effect-editor.html, …).
@@ -43,8 +49,10 @@ stage_site() {
   # (the webapp fetches /firmware/manifest.json) — the "This build (dev)" flash
   # source. The flash bundles are NOT built here; CI's firmware job builds them and
   # hands the tar paths in $LEDMAPPER_FLASHBUNDLE_NETSTACK (the shipping netstack
-  # player) and, optionally, $LEDMAPPER_FLASHBUNDLE (the vendor-WiFi player,
-  # deprecated in #171 and no longer built by CI). Each is staged independently:
+  # player), $LEDMAPPER_FLASHBUNDLE_P4 (the ESP32-P4 player with its C6 front end
+  # and the Vive tracker module) and, optionally, $LEDMAPPER_FLASHBUNDLE (the
+  # vendor-WiFi player, deprecated in #171 and no longer built by CI). The first
+  # one staged is the flash sheet's default. Each is staged independently:
   # gating the whole tree on the vendor bundle silently dropped /firmware/ from
   # every site build once CI stopped producing it. A path that is SET but missing
   # is an error — CI asked for firmware and must not ship a preview without it.
@@ -53,7 +61,7 @@ stage_site() {
   # reports "no bundled firmware".
   local -a images=()
   local var id
-  for var in LEDMAPPER_FLASHBUNDLE LEDMAPPER_FLASHBUNDLE_NETSTACK; do
+  for var in LEDMAPPER_FLASHBUNDLE LEDMAPPER_FLASHBUNDLE_NETSTACK LEDMAPPER_FLASHBUNDLE_P4; do
     [[ -n "${!var:-}" ]] || continue
     if [[ ! -f "${!var}" ]]; then
       echo "stage_site: \$$var=${!var} does not exist" >&2
@@ -61,6 +69,7 @@ stage_site() {
     fi
     id=esp32c6
     [[ "$var" == LEDMAPPER_FLASHBUNDLE_NETSTACK ]] && id=esp32c6_netstack
+    [[ "$var" == LEDMAPPER_FLASHBUNDLE_P4 ]] && id=esp32p4_tracker
     images+=(--image "$id=${!var}")
   done
   if ((${#images[@]})); then

@@ -307,6 +307,22 @@ rust_test(
     ],
 )
 
+# OSC over the wss session (feature "osc"): ClientMessage.osc read in place, its packet
+# through the udp/9000 mailbox, the ServerMessage.osc push, the welcome feature and the
+# kiosk class. Own binary: fresh process-global FFI state.
+rust_test(
+    name = "osc_session_test",
+    srcs = ["tests/osc_session.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
 # The FX debugger (fxdbg.rs): pause / step / lease, chunked snapshot sections, and
 # a host replay of a paused frame that must match the device bit-exactly
 # (docs/design/fx-debugger.md). Own binary: fresh process-global FFI state.
@@ -503,6 +519,19 @@ cc_library(
 cc_library(
     name = "player_module_hdr",
     hdrs = ["player_module.h"],
+)
+
+# OSC over the wss session (feature "osc"): the input order (modules, then the
+# mailbox) and where a module's OSC goes back to (UDP or a ServerMessage.osc push, never
+# blocking). Header-only; main.cpp includes it.
+cc_test(
+    name = "osc_route_test",
+    srcs = [
+        "osc_route.h",
+        "osc_route_test.cc",
+        "player_module.h",
+    ],
+    copts = ["-UNDEBUG"],
 )
 
 cc_test(
@@ -745,6 +774,7 @@ NETSTACK_VARIANTS = [
         # with the OTA loader.)
         "led_config.h",
         "main.cpp",
+        "osc_route.h",
         "player_module.h",
         "player_ffi.h",
         "sensor_bus.cpp",
@@ -865,6 +895,7 @@ cc_binary(
         "frontend_link.h",
         "led_config.h",
         "main.cpp",
+        "osc_route.h",
         "player_ffi.h",
         "player_module.h",
         "sensor_bus.h",
@@ -1237,6 +1268,7 @@ cc_binary(
         "link_transport.cpp",
         "main.cpp",
         "netstack_transport.h",
+        "osc_route.h",
         "ota_app.h",
         "ota_p4.cpp",
         "player_ffi.h",
@@ -1291,6 +1323,7 @@ cc_binary(
         "link_transport.cpp",
         "main.cpp",
         "netstack_transport.h",
+        "osc_route.h",
         "ota_app.h",
         "ota_p4.cpp",
         "player_ffi.h",
@@ -1353,6 +1386,17 @@ esptool_flash(
     tags = ["manual"],
 )
 
+# The same flash as a bundle (flash.json + bins), for the app's USB flasher: CI stages
+# it under /firmware/ on PR previews as "This build (dev)" (web/stage_site.lib.sh,
+# $LEDMAPPER_FLASHBUNDLE_P4). One USB flash of the P4 does both chips: the image carries
+# the C6 front end and flashes it onto the board's C6 at boot. Build it with
+# --//firmware/p4:tracker for the wired Vive tracker (what CI stages).
+flash_bundle(
+    name = "esp32p4_player_c6_flashbundle",
+    flash = ":flash_esp32p4_player_c6",
+    tags = ["manual"],
+)
+
 # The P4 player as an update (docs/design/p4-c6-split.md §5.1): `.ota` = the signed
 # manifest (board 16) + the P4 image, which carries the C6 front end's images too, so one
 # package updates both chips. Clients stream it through the C6 like a C6 update, without
@@ -1412,6 +1456,7 @@ cc_binary(
         "improv_ble.h",
         "led_config.h",
         "main.cpp",
+        "osc_route.h",
         "player_ffi.h",
         "player_module.h",
         "serial_log.h",
@@ -1489,6 +1534,7 @@ cc_binary(
         "improv_ble.h",
         "led_config.h",
         "main.cpp",
+        "osc_route.h",
         "player_ffi.h",
         "player_module.h",
         "serial_log.h",
@@ -1840,6 +1886,7 @@ py_test(
     srcs = ["tests/test_stack_bound.py"],
     data = [
         "main.cpp",
+        "osc_route.h",
         "player_module.h",
         "sensor_bus.cpp",
         "serial_log.h",

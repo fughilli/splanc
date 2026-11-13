@@ -5,7 +5,7 @@
  * Strategy, same-origin GET only (everything else passes straight through, so
  * the wss control plane and any dynamic API are untouched):
  *   - navigations: network-first, falling back to the cached app shell offline;
- *   - the wasm bundles under /solver, /fx-vm, /fx-compiler, /pulse, and the
+ *   - the wasm bundles under /solver, /fx-vm, /fx-compiler, /pulse, /lh-wasm, and the
  *     bundled flash images under /firmware: network-first too. These have FIXED
  *     (non-content-hashed) filenames whose bytes change on every deploy, so
  *     stale-while-revalidate would serve last deploy's copy to the current
@@ -47,7 +47,7 @@ function relPath(pathname) {
 const NO_CACHE = [/^maps(\/|$)/, /^healthz$/, /^ws(\/|$)/, /^api(\/|$)/];
 // Fixed-name, version-coupled bundles: serve network-first (fresh online, cache
 // only as the offline fallback) so a deploy's new wasm is never shadowed.
-const NETWORK_FIRST = [/^(fx-vm|fx-compiler|solver|pulse|firmware)\//];
+const NETWORK_FIRST = [/^(fx-vm|fx-compiler|solver|pulse|lh-wasm|firmware)\//];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

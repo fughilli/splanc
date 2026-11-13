@@ -48,7 +48,7 @@ let openHandle: SheetHandle | null = null;
 /** Where firmware comes from: published GitHub releases (default — pick any
  * version × variant) or the same-commit bundle this build staged under /firmware/
  * (the "dev" fallback, e.g. a PR preview flashing its exact-commit firmware). */
-type FwSource = "release" | "bundled";
+export type FwSource = "release" | "bundled";
 let currentSource: FwSource = "release";
 
 /** Ids of firmware versions cached for OFFLINE flashing — refreshed on each picker
@@ -111,8 +111,18 @@ function renderDemoFlash(sheet: SheetHandle): void {
   sheet.body.append(status, bar, log);
 }
 
-export async function openFlashSheet(): Promise<void> {
+/** Where to open the flash sheet: the firmware source, and which of its images to
+ * select first (the first match; else the source's first image). */
+export interface FlashSheetOptions {
+  source?: FwSource;
+  prefer?: (e: FirmwareEntry) => boolean;
+}
+let preferEntry: ((e: FirmwareEntry) => boolean) | null = null;
+
+export async function openFlashSheet(opts: FlashSheetOptions = {}): Promise<void> {
   if (openHandle) return;
+  if (opts.source) currentSource = opts.source;
+  preferEntry = opts.prefer ?? null;
 
   // Warm the offline cache with the latest release in the background (idempotent,
   // no-ops offline) so the newest firmware is flashable without a network even if
@@ -195,7 +205,7 @@ async function showPicker(sheet: SheetHandle): Promise<void> {
     return;
   }
   cachedSet = await cachedIds(); // mark which versions are offline-ready
-  renderIdle(sheet, index, index.entries[0]!);
+  renderIdle(sheet, index, (preferEntry && index.entries.find(preferEntry)) || index.entries[0]!);
 }
 
 /** The "Firmware source" selector (releases vs this build), shown atop the picker. */
@@ -222,6 +232,16 @@ function sourceField(sheet: SheetHandle): HTMLElement {
 const FLASH_HELP =
   "Flashing runs entirely in your browser over USB — desktop Chrome/Edge (Web Serial) or Chrome on Android (WebUSB). Connect the board with a data-capable cable, then keep it plugged in until the write finishes.";
 
+/** What's different about flashing a P4 board (the Waveshare ESP32-P4-WIFI6): which
+ * port, and that the one image does both chips. */
+const P4_FLASH_NOTE =
+  "ESP32-P4 board: plug into its USB-to-UART port (the CH343 one), not the USB OTG port. " +
+  "This one image is for both chips: after the flash the P4 writes the Wi-Fi front end onto the board's ESP32-C6 " +
+  "by itself on the first boot (the C6's BOOT jumper, H4 pin 1 to GPIO4, must be fitted), so keep it powered until it shows up. " +
+  "The flash only writes the firmware: saved maps, effects and settings are not erased.";
+
+const normChipId = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
 // -- idle: pick an image + flash -------------------------------------------
 
 function renderIdle(sheet: SheetHandle, index: FirmwareIndex, selected: FirmwareEntry): void {
@@ -237,6 +257,7 @@ function renderIdle(sheet: SheetHandle, index: FirmwareIndex, selected: Firmware
   if (envNote) sheet.body.append(note(envNote));
 
   // Firmware picker (only shown when there's a real choice).
+  if (normChipId(selected.chip) === "esp32p4") sheet.body.append(note(P4_FLASH_NOTE));
   if (index.entries.length > 1) {
     const sel = document.createElement("select");
     sel.className = "sheet-input";

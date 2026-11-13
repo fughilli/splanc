@@ -338,6 +338,11 @@ bool lm_osc_mailbox_bind(uint8_t *mem);
 bool lm_osc_mailbox_bound(void);
 uint32_t lm_osc_post(const uint8_t *data, size_t len);
 uint32_t lm_osc_drain(void);
+// OSC over the session (feature "osc"): whether `data` is a ClientMessage.osc, and its
+// packet (*pkt / *pkt_len point INTO `data`; empty when malformed). And
+// ServerMessage{osc{packet}} into `out`: its length, -2 when it doesn't fit.
+bool lm_osc_session_packet(const uint8_t *data, size_t len, const uint8_t **pkt, size_t *pkt_len);
+int32_t lm_osc_build_push(const uint8_t *packet, size_t len, uint8_t *out, size_t out_cap);
 // Live-control mailbox (docs/design/live-control.md): lm_live_post stashes a seq'd,
 // uncommitted set_uniforms for the next frame and arms its ControlAck (returns the seq;
 // 0 = not a live move, dispatch normally); lm_live_drain applies the waiting moves at a

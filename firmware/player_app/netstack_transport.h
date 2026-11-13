@@ -95,9 +95,14 @@ bool lm_ws_session_busy(void);
 // (latest value per address). Called on the network task; must not block.
 void lm_netstack_osc_rx(const uint8_t *data, size_t len);
 
-// Send one OSC datagram back to the last OSC sender (its address and source port), from
-// udp/9000. Network (loop) task. False when nobody has sent OSC yet or the link is down.
+// Send one OSC datagram back to the last UDP OSC sender (its address and source port),
+// from udp/9000; on the P4, to the front end as LK_OSC. Network (loop) task. False when
+// nobody has sent OSC yet or the link is down. Modules send through lm_module_osc_send,
+// which picks this or the wss session (osc_route.h).
 bool netstack_osc_send(const uint8_t *data, size_t len);
+// PROVIDED BY main.cpp. The OSC-over-the-session counters (osc_route.h), as
+// " osc_ws=<in>/<out>/<dropped>/<closed>" for a status line.
+int lm_osc_route_stats(char *buf, size_t cap);
 // OSC out and radio TX counters, one line for the front end's stats; *run_ended is set
 // when a run of TX refusals (the vendor buffer pool full) of 200 ms or more just ended.
 int netstack_osc_stats(char *buf, size_t cap, bool *run_ended);

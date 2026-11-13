@@ -1937,6 +1937,17 @@ pub unsafe extern "C" fn lm_player_handle(
         Some(ARM_SUBMIT_EFFECT) => handle_submit_effect(frame),
         Some(ARM_SET_EFFECT) => handle_set_effect(frame),
         Some(ARM_SET_UNIFORMS) => handle_set_uniforms(frame),
+        // OSC over the session: the firmware takes it before this (main.cpp osc_in, with
+        // the modules and the mailbox); a path that doesn't applies it to the uniforms
+        // here. Fire-and-forget, like the UDP datagram it stands for.
+        Some(ARM_OSC) => {
+            let mut pkt: *const u8 = core::ptr::null();
+            let mut n = 0usize;
+            if lm_osc_session_packet(data, len, &mut pkt, &mut n) && n > 0 {
+                lm_osc_ingest(pkt, n);
+            }
+            return 0;
+        }
         // Encoded ZERO-COPY into `out`: the manifest is effect-sized (well past
         // the firmware profile's inline bytes cap), so it's spliced from the .fxb.
         Some(ARM_GET_EFFECT_UNIFORMS) => return handle_get_effect_uniforms(frame, out, out_cap),
@@ -2710,6 +2721,10 @@ macro_rules! features {
         // Kiosk mode (get_kiosk_status / set_kiosk_config / kiosk_unlock, the
         // kiosk_status push, Error "kiosk_locked"): docs/design/kiosk-mode.md.
         "kiosk",
+        // OSC over the session: ClientMessage.osc feeds the udp/9000 input, and what a
+        // module sends back to that session goes out as ServerMessage.osc
+        // (lm_osc_session_packet / lm_osc_build_push; main.cpp osc_in, osc_route.h).
+        "osc",
         $($extra),*
     ] };
 }
@@ -5170,6 +5185,79 @@ pub unsafe extern "C" fn lm_osc_drain() -> u32 {
     let cfg = OscConfig { prefix: "/", by_name: OSC_BY_NAME };
     let table = &*addr_of!(OSC_TABLE);
     mb.drain(&cfg, table, &mut |slot, vals| osc_write(mask, slot, vals)) as u32
+}
+
+// -- OSC over the WebSocket session (feature "osc") ---------------------------
+// A client that can't send UDP (a web page) sends its OSC as ClientMessage.osc; the
+// firmware feeds the packet into the same input as udp/9000 (main.cpp osc_in: modules
+// first, then the mailbox above), and what a module sends back to such a client goes
+// out as ServerMessage.osc. Both are read / written here, never through the generated
+// envelope: the packet stays in the RX buffer, and the push is written in place.
+
+/// ClientMessage.osc's field number.
+pub const ARM_OSC: u32 = 110;
+/// ServerMessage.osc's field number.
+pub const SMSG_OSC: u32 = 60;
+
+/// If `data` is a `ClientMessage.osc`, point `*pkt` / `*pkt_len` at its OSC packet
+/// (inside `data`, not copied) and return true; a malformed one returns true with an
+/// empty packet (the caller drops it). Any other message returns false.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes; `pkt` and `pkt_len` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn lm_osc_session_packet(
+    data: *const u8,
+    len: usize,
+    pkt: *mut *const u8,
+    pkt_len: *mut usize,
+) -> bool {
+    if data.is_null() || len == 0 || pkt.is_null() || pkt_len.is_null() {
+        return false;
+    }
+    let frame = core::slice::from_raw_parts(data, len);
+    if envelope_arm(frame) != Some(ARM_OSC) {
+        return false;
+    }
+    let p: &[u8] = match client_arm(frame) {
+        Some(CArm::Osc(m)) => m.packet(),
+        _ => &[],
+    };
+    *pkt = p.as_ptr();
+    *pkt_len = p.len();
+    true
+}
+
+/// Encode `ServerMessage{osc{packet}}` into `out`; its length, or None when it
+/// doesn't fit.
+pub fn encode_osc_push(packet: &[u8], out: &mut [u8]) -> Option<usize> {
+    let inner = if packet.is_empty() { 0 } else { 1 + varint_len(packet.len() as u64) + packet.len() };
+    let mut o = PbOut { buf: Some(out), n: 0, ok: true };
+    o.key(SMSG_OSC, 2);
+    o.varint(inner as u64);
+    if !packet.is_empty() {
+        o.bytes(1, packet);
+    }
+    if o.ok {
+        Some(o.n)
+    } else {
+        None
+    }
+}
+
+/// [`encode_osc_push`] over the C ABI: the push's length, or -2 when `out_cap` is
+/// too small (-1 for bad arguments).
+///
+/// # Safety
+/// `packet` must point to `len` readable bytes, `out` to `out_cap` writable ones.
+#[no_mangle]
+pub unsafe extern "C" fn lm_osc_build_push(packet: *const u8, len: usize, out: *mut u8, out_cap: usize) -> i32 {
+    if (packet.is_null() && len != 0) || out.is_null() {
+        return -1;
+    }
+    let packet = if len == 0 { &[][..] } else { core::slice::from_raw_parts(packet, len) };
+    let out = core::slice::from_raw_parts_mut(out, out_cap);
+    encode_osc_push(packet, out).map_or(-2, |n| n as i32)
 }
 
 /// The global crossfade (Player::set_crossfade), latched once per frame by
