@@ -931,3 +931,218 @@ fn group_capture_auto_stops() {
     send(&mut player, CMsg::StartMapping(start), 80_000.0);
     assert!(!player.expire_pattern(i64::MAX / 2));
 }
+
+/// docs/design/p4-ethernet-ddp.md: a board descriptor with net_channels (the P4)
+/// adds network LED channels 2.. after the GPIO ones. They join the LED total
+/// (the code book, the max_leds bound, the boot capacity) but not the WS2812
+/// per-channel cap. GPIOs are checked against the descriptor's pin list.
+#[test]
+fn network_channels_join_the_led_space() {
+    use micropb::{MessageEncode, PbEncoder};
+    let mut caps = pb::BoardCapabilities::default();
+    caps.r#board = micropb::heapless::String::try_from("Waveshare ESP32-P4-WIFI6").unwrap();
+    for g in [20u32, 21, 46, 52] {
+        let mut pin = pb::GpioPin::default();
+        pin.r#gpio = g;
+        caps.r#gpio_pins.push(pin).unwrap();
+    }
+    caps.r#net_channels = 6;
+    let encoded: &'static [u8] = {
+        let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, 4096>::new());
+        caps.encode(&mut enc).unwrap();
+        Vec::leak(enc.into_writer().to_vec())
+    };
+    let count = |ch: i32, n: i32| {
+        let mut m = pb::SetLedCount { r#led_count: n, ..Default::default() };
+        m.set_channel(ch);
+        CMsg::SetLedCount(m)
+    };
+    let gpio = |ch: i32, g: i32| {
+        let mut cfg = pb::SetHardwareConfig::default();
+        cfg.set_channel(ch);
+        cfg.set_gpio(g);
+        CMsg::SetHardwareConfig(cfg)
+    };
+
+    let mut player = Player::new("esp32p4-0001", 64);
+    player.set_hw_defaults(0, 20, ledmapper_player::DEFAULT_COLOR_ORDER);
+    player.set_hw_defaults(1, 21, ledmapper_player::DEFAULT_COLOR_ORDER);
+    assert!(player.set_board_caps(encoded));
+    player.set_output_caps(2, 4096);
+    player.set_channel_cap(1024);
+
+    // P4 header pins past the C6's 0..=30 are fine when the descriptor lists them;
+    // an unlisted pin is refused.
+    let Some(SMsg::HardwareConfigState(st)) = send(&mut player, gpio(0, 46), 1.0) else {
+        panic!("GPIO46 is a listed P4 pin");
+    };
+    assert_eq!(st.r#channels[0].r#gpio, 46);
+    expect_error(send(&mut player, gpio(0, 30), 2.0), "bad_message");
+
+    // A WLED board's 1680 LEDs on network channel 2: past the 1024 WS2812 cap,
+    // which doesn't apply to a network channel.
+    let Some(SMsg::LedCountState(s)) = send(&mut player, count(2, 1680), 3.0) else {
+        panic!("1680 on network channel 2 fits");
+    };
+    assert_eq!((s.r#channel, s.r#led_count), (2, 1680));
+    let Some(SMsg::LedCountState(_)) = send(&mut player, count(0, 300), 4.0) else {
+        panic!("300 on channel 0");
+    };
+    let Some(SMsg::Welcome(w)) = send(&mut player, CMsg::Hello(pb::Hello::default()), 5.0) else {
+        panic!("welcome");
+    };
+    assert_eq!(w.r#code_params.r#led_count, 1980, "the code book covers strips and network channels");
+
+    // The shared max_leds bound counts network channels too.
+    expect_error(send(&mut player, count(7, 4096 - 1980 + 1), 6.0), "bad_message");
+    let Some(SMsg::LedCountState(_)) = send(&mut player, count(7, 4096 - 1980), 7.0) else {
+        panic!("exactly max_leds fits");
+    };
+    // Channel 8 doesn't exist.
+    expect_error(send(&mut player, count(8, 1), 8.0), "bad_message");
+
+    // Boot seeding restores network channel counts once the descriptor is in.
+    let mut p2 = Player::new("esp32p4-0001", 64);
+    assert!(p2.set_board_caps(encoded));
+    p2.seed_led_count(2, 1680);
+    assert_eq!(p2.led_count(2), Some(1680));
+}
+
+/// Without net_channels in the descriptor (every board but the P4), channels
+/// past the GPIO ones stay logical: not counted, not bounded.
+#[test]
+fn logical_channels_stay_uncounted_without_net_channels() {
+    let mut player = Player::new("esp32-0001", 64);
+    player.set_output_caps(2, 512);
+    let mut m = pb::SetLedCount { r#led_count: 4000, ..Default::default() };
+    m.set_channel(2);
+    let Some(SMsg::LedCountState(_)) = send(&mut player, CMsg::SetLedCount(m), 1.0) else {
+        panic!("a logical channel isn't bounded");
+    };
+    let mut m = pb::SetLedCount { r#led_count: 100, ..Default::default() };
+    m.set_channel(0);
+    let Some(SMsg::LedCountState(_)) = send(&mut player, CMsg::SetLedCount(m), 2.0) else {
+        panic!("100 on channel 0");
+    };
+    let Some(SMsg::Welcome(w)) = send(&mut player, CMsg::Hello(pb::Hello::default()), 3.0) else {
+        panic!("welcome");
+    };
+    assert_eq!(w.r#code_params.r#led_count, 100);
+}
+
+/// Network channels take an LED count through set_hardware_config (so it
+/// persists like a strip's), refuse GPIO-only fields, and are reported in
+/// hardware_config_state as led_type "ddp" with no GPIO.
+#[test]
+fn network_channels_in_hardware_config() {
+    use micropb::{MessageEncode, PbEncoder};
+    let mut caps = pb::BoardCapabilities::default();
+    caps.r#net_channels = 6;
+    let encoded: &'static [u8] = {
+        let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, 4096>::new());
+        caps.encode(&mut enc).unwrap();
+        Vec::leak(enc.into_writer().to_vec())
+    };
+    let mut player = Player::new("esp32p4-0001", 64);
+    player.set_hw_defaults(0, 20, ledmapper_player::DEFAULT_COLOR_ORDER);
+    player.set_hw_defaults(1, 21, ledmapper_player::DEFAULT_COLOR_ORDER);
+    assert!(player.set_board_caps(encoded));
+    player.set_output_caps(2, 4096);
+
+    let mut cfg = pb::SetHardwareConfig::default();
+    cfg.set_channel(3);
+    cfg.set_led_count(1680);
+    let g0 = player.hw_config_gen();
+    let Some(SMsg::HardwareConfigState(st)) = send(&mut player, CMsg::SetHardwareConfig(cfg), 1.0) else {
+        panic!("hardware_config_state");
+    };
+    assert_ne!(player.hw_config_gen(), g0, "persisted like a strip's count");
+    assert!(player.hw_config_commit());
+    assert_eq!(st.r#channels.len(), 3, "two strips and the network channel");
+    let net = &st.r#channels[2];
+    assert_eq!((net.r#channel, net.r#gpio, net.r#led_count), (3, -1, 1680));
+    assert_eq!(net.r#led_type.as_str(), "ddp");
+    assert_eq!(net.r#color_order.as_str(), "RGB");
+    assert_eq!(player.led_count(3), Some(1680));
+
+    for bad in [
+        {
+            let mut c = pb::SetHardwareConfig::default();
+            c.set_channel(3);
+            c.set_gpio(20);
+            c
+        },
+        {
+            let mut c = pb::SetHardwareConfig::default();
+            c.set_channel(3);
+            c.set_led_type(micropb::heapless::String::try_from("ws281x").unwrap());
+            c
+        },
+        {
+            let mut c = pb::SetHardwareConfig::default();
+            c.set_channel(8);
+            c.set_led_count(1);
+            c
+        },
+    ] {
+        expect_error(send(&mut player, CMsg::SetHardwareConfig(bad), 2.0), "bad_message");
+    }
+    assert_eq!(player.led_count(3), Some(1680), "refusals change nothing");
+
+    // A network channel's color order: RGB by default (WLED applies the strip's
+    // own), settable for a board that needs another, and probeable like a strip.
+    assert_eq!(player.hw_color_order_name(3), "RGB");
+    let mut cfg = pb::SetHardwareConfig::default();
+    cfg.set_channel(3);
+    cfg.set_color_order(micropb::heapless::String::try_from("GRB").unwrap());
+    let Some(SMsg::HardwareConfigState(st)) = send(&mut player, CMsg::SetHardwareConfig(cfg), 2.5) else {
+        panic!("hardware_config_state");
+    };
+    assert_eq!(st.r#channels[2].r#color_order.as_str(), "GRB");
+    assert_eq!(player.hw_color_order_perm(3), [1, 0, 2]);
+    let mut probe = pb::SetCountingPattern::default();
+    let mut block = pb::ColorBlock { r#start: 0, r#count: 3, ..Default::default() };
+    for c in [1.0, 0.0, 0.0] {
+        block.r#rgb.push(c).unwrap();
+    }
+    probe.r#blocks.push(block).unwrap();
+    probe.set_channel(3);
+    probe.set_color_order(micropb::heapless::String::try_from("RGB").unwrap());
+    let Some(SMsg::CountingState(cs)) = send(&mut player, CMsg::SetCountingPattern(probe), 2.6) else {
+        panic!("counting_state");
+    };
+    assert!(cs.r#active);
+    assert_eq!(player.counting_channel(), 3);
+
+    // Clearing the count drops the channel from the state.
+    let mut cfg = pb::SetHardwareConfig::default();
+    cfg.set_channel(3);
+    cfg.set_led_count(0);
+    let Some(SMsg::HardwareConfigState(st)) = send(&mut player, CMsg::SetHardwareConfig(cfg), 3.0) else {
+        panic!("hardware_config_state");
+    };
+    assert_eq!(st.r#channels.len(), 2);
+}
+
+/// While Ethernet is on, its pins are refused as LED data pins.
+#[test]
+fn reserved_gpios_are_refused() {
+    let mut player = Player::new("esp32p4-0001", 64);
+    player.set_hw_defaults(0, 20, ledmapper_player::DEFAULT_COLOR_ORDER);
+    let gpio = |g: i32| {
+        let mut cfg = pb::SetHardwareConfig::default();
+        cfg.set_channel(0);
+        cfg.set_gpio(g);
+        CMsg::SetHardwareConfig(cfg)
+    };
+    player.set_reserved_gpios(&[28, 29, -1, 30]);
+    expect_error(send(&mut player, gpio(29), 1.0), "bad_message");
+    assert_eq!(player.hw_gpio(0), Some(20));
+    let Some(SMsg::HardwareConfigState(_)) = send(&mut player, gpio(21), 2.0) else {
+        panic!("a free pin");
+    };
+    player.set_reserved_gpios(&[]);
+    let Some(SMsg::HardwareConfigState(_)) = send(&mut player, gpio(29), 3.0) else {
+        panic!("Ethernet off: the pin is free again");
+    };
+}

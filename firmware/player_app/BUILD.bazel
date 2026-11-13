@@ -140,6 +140,7 @@ rust_static_library(
         "//firmware/fx_vm",
         "//firmware/keypoint",
         "//firmware/mdns",
+        "//firmware/netout",
         "//firmware/osc",
         "//firmware/ota",
         "//firmware/player:player_fw",
@@ -181,6 +182,7 @@ rust_library(
         "//firmware/fx_vm",
         "//firmware/keypoint",
         "//firmware/mdns",
+        "//firmware/netout",
         "//firmware/osc",
         "//firmware/ota",
         "//firmware/player",
@@ -845,6 +847,7 @@ rust_static_library(
         "//firmware/fx_vm",
         "//firmware/keypoint",
         "//firmware/mdns",
+        "//firmware/netout",
         "//firmware/osc",
         "//firmware/ota",
         "//firmware/player:player_fw",
@@ -1231,11 +1234,17 @@ cc_binary(
     name = "player_app_link",
     srcs = [
         "device_cert.h",
+        "eth_p4.cpp",
+        "eth_p4.h",
         "improv_ble.h",
         "led_config.h",
         "link_stubs.cpp",
         "link_transport.cpp",
         "main.cpp",
+        "net_output.cpp",
+        "net_output.h",
+        "netout_app.cpp",
+        "netout_app.h",
         "netstack_transport.h",
         "ota_app.h",
         "ota_p4.cpp",
@@ -1243,6 +1252,8 @@ cc_binary(
         "player_module.h",
         "serial_log.h",
         "tls_region.h",
+        "wled_discovery.cpp",
+        "wled_discovery.h",
         ":agent_bundle_h",
         ":build_info_h",
         "//firmware/loader:ota_kat.h",
@@ -1254,6 +1265,8 @@ cc_binary(
     local_defines = [
         "LM_NETSTACK",
         "LM_LINK",
+        # Ethernet + network LED outputs (docs/design/p4-ethernet-ddp.md).
+        "LM_NETOUT",
     ] + led_cap_defines(),
     target_compatible_with = select({
         "@embedded//platforms:is_esp32p4": [],
@@ -1267,6 +1280,7 @@ cc_binary(
         ":player_ffi",
         ":ws_codec",
         "//firmware/landing:landing_page",
+        "//firmware/netout:netout_ffi_hdr",
         "//firmware/ota:ota_ffi_hdr",
         "//firmware/ota:ota_key",
         "//firmware/p4/link:link_codec",
@@ -1278,18 +1292,24 @@ cc_binary(
 # Phase B on the Waveshare ESP32-P4-WIFI6: the same player with its link on SDIO to the
 # board's C6, which runs :esp32c6_frontend (Wi-Fi, BLE Improv, wss). This image carries
 # that C6 image and flashes it onto the C6 whenever the C6 runs anything else
-# (//firmware/p4/c6flash; the C6's BOOT needs the H4 pin 1 -> GPIO4 jumper).
+# (//firmware/p4/c6flash; the C6's IO9 (BOOT), pad 4 of J2 next to the C6, needs a jumper to P4 GPIO4).
 #
 #   bazel run -c opt //firmware/player_app:flash_esp32p4_player_c6 -- --port /dev/cu.usbmodem…
 cc_binary(
     name = "player_app_link_sdio",
     srcs = [
         "device_cert.h",
+        "eth_p4.cpp",
+        "eth_p4.h",
         "improv_ble.h",
         "led_config.h",
         "link_stubs.cpp",
         "link_transport.cpp",
         "main.cpp",
+        "net_output.cpp",
+        "net_output.h",
+        "netout_app.cpp",
+        "netout_app.h",
         "netstack_transport.h",
         "ota_app.h",
         "ota_p4.cpp",
@@ -1297,6 +1317,8 @@ cc_binary(
         "player_module.h",
         "serial_log.h",
         "tls_region.h",
+        "wled_discovery.cpp",
+        "wled_discovery.h",
         ":agent_bundle_h",
         ":build_info_h",
         "//firmware/loader:ota_kat.h",
@@ -1306,6 +1328,8 @@ cc_binary(
     local_defines = [
         "LM_NETSTACK",
         "LM_LINK",
+        # Ethernet + network LED outputs (docs/design/p4-ethernet-ddp.md).
+        "LM_NETOUT",
         "LM_LINK_SDIO",
     ] + led_cap_defines(),
     target_compatible_with = select({
@@ -1320,6 +1344,7 @@ cc_binary(
         ":player_ffi",
         ":ws_codec",
         "//firmware/landing:landing_page",
+        "//firmware/netout:netout_ffi_hdr",
         "//firmware/ota:ota_ffi_hdr",
         "//firmware/ota:ota_key",
         "//firmware/p4/c6flash:c6_bundle_frontend_res",
@@ -1383,6 +1408,9 @@ esptool_flash(
     bootloader = "@embedded//libs/board:esp32p4_bootloader_bin",
     bootloader_offset = "0x2000",  # the P4 ROM loads the 2nd-stage bootloader from 0x2000
     chip = "esp32p4",
+    # The 3 MB app slot, as :flash_esp32p4_player_c6 has: with Ethernet (esp_eth,
+    # lwIP, mDNS, the HTTP client) the image is past default.csv's 1.25 MB slot.
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
     tags = ["manual"],
 )
 

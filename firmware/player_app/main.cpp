@@ -78,6 +78,10 @@
 #include "firmware/player_app/ws2812.h"
 #include "firmware/player_app/ws_codec.h"
 #include "firmware/player_app/player_module.h"  // optional hardware modules (e.g. the P4 tracker)
+#if defined(LM_NETOUT)
+// Ethernet + network LED outputs on the P4 (docs/design/p4-ethernet-ddp.md).
+#include "firmware/player_app/netout_app.h"
+#endif
 #if defined(LM_FRONTEND)
 #include "frontend_link.h"  // the C6 front end: player messages go to the P4 over SDIO
 #endif
@@ -994,6 +998,19 @@ static void poll_hardware_config() {
     int32_t n0 = lm_led_count(0), n1 = lm_led_count(1);
     prefs.putInt("hw_len0", n0 > 0 ? n0 : 0);
     prefs.putInt("hw_len1", n1 > 0 ? n1 : 0);
+#if defined(LM_NETOUT)
+    for (int ch = 2; ch < 2 + NET_OUTPUT_CHANNELS; ch++) {
+      char key[8];
+      snprintf(key, sizeof key, "hw_len%d", ch);
+      const int32_t n = lm_led_count((uint32_t)ch);
+      prefs.putInt(key, n > 0 ? n : 0);
+      char ord[8] = {0};
+      if (lm_hw_color_order_name((uint32_t)ch, reinterpret_cast<uint8_t *>(ord), sizeof ord - 1) >= 0) {
+        snprintf(key, sizeof key, "hw_ord%d", ch);
+        prefs.putString(key, ord);
+      }
+    }
+#endif
     char ord0[8] = {0}, ord1[8] = {0};
     if (lm_hw_color_order_name(0, reinterpret_cast<uint8_t *>(ord0), sizeof ord0 - 1) >= 0) {
       prefs.putString("hw_ord0", ord0);
@@ -1050,6 +1067,21 @@ static void hardware_config_begin() {
   lm_hw_seed(1, g1, reinterpret_cast<const uint8_t *>(o1.c_str()), o1.length());
   lm_led_count_seed(0, n0 > 0 ? (uint32_t)n0 : 0);
   lm_led_count_seed(1, n1 > 0 ? (uint32_t)n1 : 0);
+#if defined(LM_NETOUT)
+  // Network LED channels' counts (the core knows them from the board caps'
+  // net_channels, installed before this).
+  for (int ch = 2; ch < 2 + NET_OUTPUT_CHANNELS; ch++) {
+    char key[8];
+    snprintf(key, sizeof key, "hw_len%d", ch);
+    const int n = prefs.getInt(key, 0);
+    lm_led_count_seed((uint32_t)ch, n > 0 ? (uint32_t)n : 0);
+    // Its wire order: RGB unless the color-order check set another (a WLED
+    // board applies its strip's own order).
+    snprintf(key, sizeof key, "hw_ord%d", ch);
+    String ord = prefs.getString(key, "RGB");
+    lm_hw_seed((uint32_t)ch, -1, reinterpret_cast<const uint8_t *>(ord.c_str()), ord.length());
+  }
+#endif
   // Apply the wire color orders to the driver.
   for (int ch = 0; ch < 2; ch++) {
     uint8_t perm[3];
@@ -1633,6 +1665,13 @@ static int ws_compute_reply_body(const uint8_t *msg, size_t len) {
   // Firmware update arms (ota_app.cpp): answered here, never by the player core.
   int ota = ota_app_dispatch(msg, len, tx, sizeof tx);
   if (ota != 0) return ota;
+#if defined(LM_NETOUT)
+  // Ethernet + network outputs (arms 95-98): answered here, never by the core.
+  {
+    const int n = netout_app_dispatch(msg, len, tx, sizeof tx, g_hw_gpio0, g_hw_gpio1);
+    if (n > 0) return n;
+  }
+#endif
 #if defined(LM_FRONTEND)
   // The C6 front end (docs/design/p4-c6-split.md §2.2): the arms it owns are answered
   // here; everything else is the P4's. A rename is applied here too (BLE and mDNS
@@ -2059,7 +2098,21 @@ static uint32_t render_once() {
   int32_t c1 = lm_led_count(1);
   uint32_t ch0_len = c0 > 0 ? (uint32_t)c0 : 0;
   uint32_t ch1_len = c1 > 0 ? (uint32_t)c1 : 0;
-  uint32_t total_cfg = ch0_len + ch1_len;
+  // Network LED channels come after the strips in the global LED order.
+#if defined(LM_NETOUT)
+  uint32_t net_counts[NET_OUTPUT_CHANNELS];
+  netout_app_counts(net_counts);
+  uint32_t net_total = 0;
+  for (uint32_t n : net_counts) net_total += n;
+#else
+  const uint32_t net_total = 0;
+#endif
+  uint32_t total_cfg = ch0_len + ch1_len + net_total;
+#if defined(LM_NETOUT)
+  // A counting probe on a network channel, and the wire order it drives there.
+  bool net_probe = false;
+  uint8_t net_probe_perm[3] = {0, 1, 2};
+#endif
   uint32_t xmit_len = total_cfg > 0 ? total_cfg : g_led_cap;
   if (xmit_len > g_led_cap) xmit_len = g_led_cap;
 
@@ -2130,7 +2183,34 @@ static uint32_t render_once() {
     int64_t d = next_ms - (int64_t)millis();
     next_delay_ms = d <= 1 ? 1 : (d > (int64_t)kStaticPollMs ? kStaticPollMs : (uint32_t)d);
     was_active = true;
-  } else if (lm_counting_color(0, rgb)) {
+  }
+#if defined(LM_NETOUT)
+  else if (lm_counting_channel() >= 2 && lm_counting_color(0, rgb)) {
+    // Counting probe on a NETWORK channel (a WLED board): its blocks are relative
+    // to that channel's first LED, which sits after the strips and the network
+    // channels before it in the global frame. Everything else is black. The probe
+    // drives its own wire order on that channel (net_probe_perm below), never
+    // the committed one.
+    const uint32_t nch = lm_counting_channel() - 2;
+    uint32_t off = ch0_len + ch1_len;
+    for (uint32_t i = 0; i < nch && i < NET_OUTPUT_CHANNELS; i++) off += net_counts[i];
+    uint32_t end = ch0_len + ch1_len + net_total;
+    if (end > g_led_cap) end = g_led_cap;
+    fill_rgb(leds, end, Rgb::Black);
+    uint32_t cn = lm_counting_len();
+    for (uint32_t i = 0; i < cn && off + i < end; i++) {
+      lm_counting_color(i, rgb);
+      leds[off + i] = Rgb(rgb[0], rgb[1], rgb[2]);
+    }
+    xmit_len = end;
+    net_probe = true;
+    lm_counting_color_order(net_probe_perm);
+    show = true;
+    was_active = true;
+    last_shown_frame = 0xffffffff;
+  }
+#endif
+  else if (lm_counting_color(0, rgb)) {
     // Counting probe: static pattern, repaint at the slow static cadence. Its
     // blocks are relative to the START of the probed channel's strip, so the
     // probe is routed straight to that output (bypassing the logical split) and
@@ -2363,9 +2443,13 @@ static uint32_t render_once() {
     // Split the active range across the channels at the channel-0 boundary. With
     // channel 1 unconfigured (ch1_len == 0) this is count0 = xmit_len, count1 = 0
     // — i.e. single-channel, byte-identical to before.
-    uint32_t split = ch1_len > 0 ? ch0_len : xmit_len;
-    uint32_t count0 = xmit_len < split ? xmit_len : split;
-    uint32_t count1 = xmit_len > split ? (xmit_len - split) : 0;
+    // With network channels, the strips take only their own LEDs; the rest of
+    // the frame is the network channels'.
+    uint32_t strip_len = xmit_len;
+    if (net_total > 0 && strip_len > ch0_len + ch1_len) strip_len = ch0_len + ch1_len;
+    uint32_t split = ch1_len > 0 ? ch0_len : strip_len;
+    uint32_t count0 = strip_len < split ? strip_len : split;
+    uint32_t count1 = strip_len > split ? (strip_len - split) : 0;
     if (count1 > ch1_len) count1 = ch1_len;
     if (direct_split) {
       count0 = direct0;
@@ -2376,6 +2460,24 @@ static uint32_t render_once() {
     // longer channel is the wire time — see led_store_begin.)
     wire_leds = count0 > count1 ? count0 : count1;
     led_show_async(fx_frame_rendered, count0, count1, use_frame_order ? frame_order : nullptr);
+#if defined(LM_NETOUT)
+    // The same frame to the network channels. The counting probe (direct_split)
+    // drives a strip only: the network channels go black while it runs.
+    // Each network channel's committed wire order, or the probe's own on the
+    // probed channel.
+    uint8_t net_perms[NET_OUTPUT_CHANNELS][3];
+    for (int i = 0; i < NET_OUTPUT_CHANNELS; i++) {
+      if (lm_hw_color_order_perm((uint32_t)(2 + i), net_perms[i]) != 0) {
+        net_perms[i][0] = 0, net_perms[i][1] = 1, net_perms[i][2] = 2;
+      }
+    }
+    if (net_probe) {
+      const uint32_t nch = lm_counting_channel() - 2;
+      if (nch < NET_OUTPUT_CHANNELS) memcpy(net_perms[nch], net_probe_perm, 3);
+    }
+    net_output_submit(reinterpret_cast<const uint8_t *>(leds), ch0_len + ch1_len, net_counts,
+                      net_perms, direct_split ? 0 : xmit_len);
+#endif
     if (fx_frame_rendered) show_c = g_show_us * (kCpuHz / 1000000u);
   }
 
@@ -3325,6 +3427,17 @@ static void led_store_begin() {
   Preferences boot;
   boot.begin("ledmapper", true);  // read-only peek at the persisted counts
   int n0 = boot.getInt("hw_len0", 0), n1 = boot.getInt("hw_len1", 0);
+  // Network LED channels (P4 Ethernet): sized with the strips' LEDs, but not
+  // bound by the WS2812 per-channel cap and not in the transmit buffer.
+  uint32_t cnet = 0;
+#if defined(LM_NETOUT)
+  for (int ch = 2; ch < 2 + NET_OUTPUT_CHANNELS; ch++) {
+    char key[8];
+    snprintf(key, sizeof key, "hw_len%d", ch);
+    const int n = boot.getInt(key, 0);
+    if (n > 0) cnet += (uint32_t)n;
+  }
+#endif
   boot.end();
   const uint32_t kPerCh = LM_MAX_LEDS_PER_CHANNEL;
   uint32_t c0 = n0 > 0 ? ((uint32_t)n0 < kPerCh ? (uint32_t)n0 : kPerCh) : 0;
@@ -3340,7 +3453,7 @@ static void led_store_begin() {
     if (led_buffer_bytes(mid, mid) <= spare) lo = mid; else hi = mid - 1;
   }
   g_led_max_heap = lo < kDefaultLedCapacity ? kDefaultLedCapacity : lo;
-  uint32_t cap = c0 + c1 > 0 ? c0 + c1 : kDefaultLedCapacity;
+  uint32_t cap = c0 + c1 + cnet > 0 ? c0 + c1 + cnet : kDefaultLedCapacity;
   if (cap > g_led_max_heap) cap = g_led_max_heap;  // a persisted config the heap outgrew
   uint32_t longest = c0 > c1 ? c0 : c1;
   uint32_t dma = 2 * longest > cap ? 2 * longest : cap;
@@ -3682,6 +3795,11 @@ void setup() {
   // configured color order. Runs synchronously — the transmit task is idle until
   // render_task starts, so a GPIO reconfigure here can't race a push.
   hardware_config_begin();
+#if defined(LM_NETOUT)
+  // Ethernet + network outputs: after the hardware config (its LED pins and the
+  // network channels' counts), before the render task.
+  netout_app_begin(g_led_cap, player_mutex);
+#endif
 #if defined(LM_SENSORS)
   // Sensor core (docs/design/sensor-core.md): probe the I2C IMU pins (compile-time
   // defaults, NVS-overridable) and start the sensor task only if one answers.

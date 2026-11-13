@@ -1169,6 +1169,11 @@ message ClientMessage {
     GetKioskStatus get_kiosk_status = 92;
     SetKioskConfig set_kiosk_config = 93;
     KioskUnlock kiosk_unlock = 94;
+    // Ethernet + network LED outputs (docs/design/p4-ethernet-ddp.md).
+    SetEthernetConfig set_ethernet_config = 95;
+    GetEthernetState get_ethernet_state = 96;
+    DiscoverControllers discover_controllers = 97;
+    SetNetworkOutput set_network_output = 98;
   }
 }
 
@@ -1804,6 +1809,161 @@ message BoardCapabilities {
   // frame's wire time is ~30 us per LED of the longest channel. Filled in by the
   // player at runtime when the descriptor leaves it 0.
   uint32 max_leds_per_channel = 6;
+  // Ethernet support (docs/design/p4-ethernet-ddp.md). Unset: the board has no
+  // Ethernet MAC, and the app hides the Ethernet section.
+  EthernetCaps ethernet = 7;
+  // Network output channels (WLED boards over DDP) this firmware drives, as LED
+  // channels 2 .. 2 + net_channels - 1 after the GPIO channels. 0 = none.
+  uint32 net_channels = 8;
+}
+
+// --- Ethernet + network LED outputs (docs/design/p4-ethernet-ddp.md) ----------
+//
+// The P4 player can stream its frames over Ethernet to network pixel controllers
+// (WLED boards in realtime mode, over DDP) as extra LED channels after its GPIO
+// strips. Arms 95-98 and replies 53-54 are hand-coded on the firmware
+// (//firmware/netout, cross-checked by its wire_test), like the OTA arms.
+
+// What the board's Ethernet can do, from its board_caps textproto.
+message EthernetCaps {
+  // PHY ids SetEthernetConfig.config.phy accepts ("ip101", "lan8720", ...).
+  repeated string phys = 1;
+  // The board's default config: the on-board PHY's model and pins, or the usual
+  // wiring for an add-on module. enabled = false.
+  EthernetConfig defaults = 2;
+  // GPIOs the RMII data bus always takes while Ethernet is on (TX_EN, TXD0/1,
+  // RXD0/1, CRS_DV and the reference clock). MDC / MDIO / reset are in the config.
+  repeated uint32 rmii_gpios = 3;
+}
+
+enum RmiiClock {
+  // The PHY (or an oscillator) drives the 50 MHz reference clock into GPIO50.
+  RMII_CLOCK_EXT_IN = 0;
+  // The P4 drives the 50 MHz reference clock out on clock_gpio.
+  RMII_CLOCK_OUT = 1;
+}
+
+enum IpMode {
+  // Get an address from the network's DHCP server.
+  IP_MODE_DHCP_CLIENT = 0;
+  // Use ip / netmask / gateway as given.
+  IP_MODE_STATIC = 1;
+  // Be the LED network's DHCP server at ip / netmask (a private wire to the
+  // controllers, like a Mac sharing its Ethernet port).
+  IP_MODE_DHCP_SERVER = 2;
+}
+
+message EthernetConfig {
+  bool enabled = 1;
+  // PHY model, one of EthernetCaps.phys.
+  string phy = 2;
+  // MDIO address of the PHY; -1 = scan for it.
+  int32 phy_addr = 3;
+  int32 mdc_gpio = 4;
+  int32 mdio_gpio = 5;
+  // GPIO wired to the PHY's reset; -1 = none.
+  int32 phy_reset_gpio = 6;
+  RmiiClock clock = 7;
+  // The clock output pin for RMII_CLOCK_OUT; ignored for RMII_CLOCK_EXT_IN.
+  int32 clock_gpio = 8;
+  IpMode ip_mode = 9;
+  // IPv4 addresses, network byte order packed big-endian into a fixed32
+  // (192.168.50.1 = 0xC0A83201). Used by IP_MODE_STATIC and IP_MODE_DHCP_SERVER.
+  fixed32 ip = 10;
+  fixed32 netmask = 11;
+  fixed32 gateway = 12;
+}
+
+enum NetProtocol {
+  // Distributed Display Protocol to UDP 4048: what WLED takes with no setup.
+  NET_PROTOCOL_DDP = 0;
+  // Art-Net ArtDmx to UDP 6454: 170 RGB pixels per universe, counting up from
+  // NetworkOutput.universe; NetworkOutput.sync adds an ArtSync after each frame.
+  NET_PROTOCOL_ARTNET = 1;
+}
+
+// One network LED output: an LED channel whose pixels go to a controller on the
+// network. Its LED count is set with set_led_count(channel), like any channel.
+message NetworkOutput {
+  // LED channel, 2 .. 2 + BoardCapabilities.net_channels - 1.
+  int32 channel = 1;
+  NetProtocol protocol = 2;
+  // Controller IPv4 (as EthernetConfig.ip); 0 = no target (the channel is off).
+  fixed32 ip = 3;
+  // UDP port; 0 = the protocol's default (4048 for DDP, 6454 for Art-Net).
+  uint32 port = 4;
+  // Display name only (e.g. the WLED name discovery found).
+  string name = 5;
+  // Art-Net: the first universe (a 15-bit port address: net << 8 | subnet << 4 |
+  // universe). The output takes ceil(leds / 170) universes from here.
+  uint32 universe = 6;
+  // Art-Net: send an ArtSync after each frame (for receivers set to wait for it).
+  bool sync = 7;
+}
+
+// Configure (and bring up or take down) the Ethernet port. Reply: ethernet_state.
+message SetEthernetConfig {
+  EthernetConfig config = 1;
+  // Persist to flash (unset/true) or apply from RAM only (false).
+  optional bool commit = 2;
+}
+
+// Reply: ethernet_state.
+message GetEthernetState {}
+
+// Set or clear one network output's target. Reply: ethernet_state.
+message SetNetworkOutput {
+  NetworkOutput output = 1;
+  // Persist to flash (unset/true) or apply from RAM only (false).
+  optional bool commit = 2;
+}
+
+// Reply to set_ethernet_config / get_ethernet_state / set_network_output.
+message EthernetState {
+  EthernetConfig config = 1;
+  // Every network channel with a target.
+  repeated NetworkOutput outputs = 2;
+  bool link_up = 3;
+  uint32 speed_mbps = 4;
+  bool full_duplex = 5;
+  // The running address (from DHCP, or the static one); 0 = none yet.
+  fixed32 ip = 6;
+  fixed32 netmask = 7;
+  fixed32 gateway = 8;
+  // The Ethernet MAC address, 6 bytes.
+  bytes mac = 9;
+  // Empty, or a machine code saying why bring-up failed or a request was
+  // refused: "phy_not_found", "bad_phy", "bad_pin", "pin_in_use", "bad_channel",
+  // "bad_address", "no_ethernet", "emac_init", "netif".
+  string error = 10;
+  // Frames sent to network outputs since boot, and send failures.
+  uint32 tx_frames = 11;
+  uint32 tx_errors = 12;
+}
+
+// Look for pixel controllers on the Ethernet network. Reply: controller_list.
+message DiscoverControllers {
+  // How long to wait for answers. 0 = 600 ms. Capped at 800 ms: a C6 front end
+  // waits 1000 ms for the P4's reply. The P4 keeps what it found between scans.
+  uint32 timeout_ms = 1;
+}
+
+message DiscoveredController {
+  string name = 1;
+  fixed32 ip = 2;
+  // 6 bytes; empty if unknown.
+  bytes mac = 3;
+  // LEDs the controller is configured for; 0 = unknown.
+  uint32 led_count = 4;
+  string version = 5;
+  // "wled".
+  string kind = 6;
+}
+
+message ControllerList {
+  repeated DiscoveredController controllers = 1;
+  // Empty, or why the scan couldn't run ("no_link", "no_ethernet").
+  string error = 2;
 }
 
 // Reply to stop_mapping(solve_on_host=false): stopped + persisted, no host
@@ -2098,5 +2258,9 @@ message ServerMessage {
     // Reply to get_kiosk_status / set_kiosk_config / kiosk_unlock, and pushed
     // unsolicited when the kiosk state changes (KioskStatus.event says why).
     KioskStatus kiosk_status = 52;
+    // Reply to set_ethernet_config / get_ethernet_state / set_network_output.
+    EthernetState ethernet_state = 53;
+    // Reply to discover_controllers.
+    ControllerList controller_list = 54;
   }
 }

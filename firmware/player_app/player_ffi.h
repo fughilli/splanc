@@ -155,6 +155,9 @@ void lm_led_count_seed(uint32_t channel, uint32_t led_count);
 // this board. A null/empty/undecodable blob is ignored (app falls back to a
 // built-in catalog).
 void lm_set_board_caps(const uint8_t *data, size_t len);
+// GPIOs another output owns (the enabled Ethernet's pins, netout_busy_pins):
+// set_hardware_config refuses them as LED data pins. Replaces the previous set.
+void lm_set_reserved_gpios(const int32_t *pins, size_t n);
 uint32_t lm_hw_config_gen(void);
 int32_t lm_hw_config_commit(void);
 int32_t lm_hw_gpio(uint32_t channel);

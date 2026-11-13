@@ -296,10 +296,67 @@ fn color_correction_from(m: pv::SetColorCorrectionView<'_>) -> ColorCorrection {
     cc
 }
 
+/// Whether an encoded `BoardCapabilities` lists `gpio` in its `gpio_pins`
+/// (field 2, each a `GpioPin` whose field 1 is the pin). A malformed descriptor
+/// lists nothing (set_board_caps already refused it).
+fn board_lists_gpio(caps: &[u8], gpio: i32) -> bool {
+    fn varint(b: &[u8], o: &mut usize) -> Option<u64> {
+        let mut v = 0u64;
+        for shift in (0..64).step_by(7) {
+            let c = *b.get(*o)?;
+            *o += 1;
+            v |= u64::from(c & 0x7f) << shift;
+            if c & 0x80 == 0 {
+                return Some(v);
+            }
+        }
+        None
+    }
+    // Skip one field's value; returns the bytes of a length-delimited one.
+    fn value<'a>(b: &'a [u8], o: &mut usize, wt: u64) -> Option<Option<&'a [u8]>> {
+        match wt {
+            0 => varint(b, o).map(|_| None),
+            1 | 5 => {
+                *o = o.checked_add(if wt == 1 { 8 } else { 4 })?;
+                (*o <= b.len()).then_some(None)
+            }
+            2 => {
+                let n = usize::try_from(varint(b, o)?).ok()?;
+                let s = b.get(*o..o.checked_add(n)?)?;
+                *o += n;
+                Some(Some(s))
+            }
+            _ => None,
+        }
+    }
+    let mut o = 0;
+    while o < caps.len() {
+        let Some(key) = varint(caps, &mut o) else { return false };
+        let Some(v) = value(caps, &mut o, key & 7) else { return false };
+        let (2, Some(pin)) = (key >> 3, v) else { continue };
+        let mut p = 0;
+        while p < pin.len() {
+            let Some(k) = varint(pin, &mut p) else { break };
+            if k == 0x08 {
+                if varint(pin, &mut p).map(|g| g as i64) == Some(gpio as i64) {
+                    return true;
+                }
+            } else if value(pin, &mut p, k & 7).is_none() {
+                break;
+            }
+        }
+    }
+    false
+}
+
 /// Hardware output channels the player exposes to the Hardware Setup UI (the
 /// two parallel RMT channels on the C6). Distinct from `MAX_CHANNELS` (the
 /// logical set_led_count fan-out): only these carry a GPIO + color order.
 pub const HW_CHANNELS: usize = 2;
+
+/// Most GPIOs [`Player::set_reserved_gpios`] keeps (the P4's RMII bus, MDC,
+/// MDIO, PHY reset and a clock-out pin are 11).
+pub const MAX_RESERVED_GPIOS: usize = 12;
 
 /// The six wire color orders, each a permutation of "RGB". The `[u8; 3]` is the
 /// SOURCE-INDEX permutation the driver applies: wire byte `i` carries logical
@@ -316,8 +373,23 @@ pub const COLOR_ORDERS: [(&str, [u8; 3]); 6] = [
 ];
 /// Default wire order index into [`COLOR_ORDERS`] — GRB, the WS2812B order.
 pub const DEFAULT_COLOR_ORDER: u8 = 2;
+/// [`COLOR_ORDERS`] index of identity RGB: a network channel's default.
+const RGB_ORDER: u8 = 0;
+/// Every channel's starting order: GRB on the GPIO strips, RGB on the network
+/// channels.
+const DEFAULT_HW_ORDER: [u8; MAX_CHANNELS] = {
+    let mut o = [RGB_ORDER; MAX_CHANNELS];
+    let mut i = 0;
+    while i < HW_CHANNELS {
+        o[i] = DEFAULT_COLOR_ORDER;
+        i += 1;
+    }
+    o
+};
 /// The only LED chip family supported today (WS2811/2812/2812B/SK6812 clockless).
 const LED_TYPE_WS281X: &str = "ws281x";
+/// The LED type a network output channel reports (docs/design/p4-ethernet-ddp.md).
+const LED_TYPE_DDP: &str = "ddp";
 
 /// Match a wire color-order string to its [`COLOR_ORDERS`] index, case-insensitively.
 pub fn color_order_index(s: &str) -> Option<u8> {
@@ -386,7 +458,10 @@ pub struct Player {
     /// [`COLOR_ORDERS`]. A `led_type` other than `ws281x` is rejected (only type
     /// supported today), so it is echoed as a constant rather than stored.
     hw_gpio: [i32; HW_CHANNELS],
-    hw_order: [u8; HW_CHANNELS],
+    /// Per LED channel: the GPIO strips', and the network channels' (which
+    /// default to RGB: a WLED board applies its strip's own order, so the
+    /// player sends plain RGB unless the color-order check says otherwise).
+    hw_order: [u8; MAX_CHANNELS],
     /// Bumped on every `set_hardware_config`; the firmware polls it (like the
     /// color-correction gen) to persist the config + re-apply it to the RMT
     /// driver (color order live, a GPIO change on the transmit task).
@@ -430,6 +505,14 @@ pub struct Player {
     /// LEDs ONE channel can carry (0 = only the total bounds a channel), set at
     /// boot via [`Player::set_channel_cap`].
     out_max_per_channel: u32,
+    /// Network LED channels after the GPIO ones (BoardCapabilities.net_channels,
+    /// from the board descriptor: 6 on the P4, 0 elsewhere). Channels
+    /// `HW_CHANNELS..HW_CHANNELS + net_channels` join the LED total
+    /// (docs/design/p4-ethernet-ddp.md).
+    net_channels: u32,
+    /// GPIOs another output owns (the enabled Ethernet's RMII / MDIO pins),
+    /// refused as LED data pins; -1 = unused slot. Set by the firmware.
+    reserved_gpios: [i32; MAX_RESERVED_GPIOS],
     /// LEDs (summed) this boot's per-LED buffers hold (0 = unbounded / not
     /// reported): a count change past it is accepted, persisted, and asks the
     /// firmware to reboot into the bigger size ([`Player::take_reboot_request`]).
@@ -463,7 +546,7 @@ impl Player {
             crossfade: 0.0,
             crossfade_mode: 0,
             hw_gpio: [-1; HW_CHANNELS],
-            hw_order: [DEFAULT_COLOR_ORDER; HW_CHANNELS],
+            hw_order: DEFAULT_HW_ORDER,
             hw_config_gen: 0,
             hw_config_commit: true,
             board_caps: None,
@@ -477,6 +560,8 @@ impl Player {
             out_channels: 0,
             out_max_leds: 0,
             out_max_per_channel: 0,
+            net_channels: 0,
+            reserved_gpios: [-1; MAX_RESERVED_GPIOS],
             led_capacity: 0,
             reboot_request: false,
         }
@@ -673,7 +758,12 @@ impl Player {
             // The FX debugger lives in the fx layer (player_app ffi) too.
             | CMsg::FxDebugControl(_)
             | CMsg::GetFxSnapshot(_)
-            | CMsg::DebugFxLed(_) => Some(error("unsupported", "handled by the firmware, not the player core")),
+            | CMsg::DebugFxLed(_)
+            // Ethernet + network outputs: the P4's firmware (//firmware/netout).
+            | CMsg::SetEthernetConfig(_)
+            | CMsg::GetEthernetState(_)
+            | CMsg::DiscoverControllers(_)
+            | CMsg::SetNetworkOutput(_) => Some(error("unsupported", "handled by the firmware, not the player core")),
             // Fire-and-forget: Pi-profile telemetry, set_texture (a video frame),
             // and set_jit (the JIT debug/bench toggle) — all handled by the fx
             // layer before they reach here. Dropped.
@@ -927,7 +1017,7 @@ impl Player {
         channel: Option<i32>,
     ) -> pb::ServerMessage {
         let channel = channel.unwrap_or(0);
-        if channel < 0 || channel as usize >= HW_CHANNELS {
+        if channel < 0 || channel as usize >= self.led_channels() {
             return error("bad_message", "channel out of range");
         }
         let mut state = pb::CountingState::default();
@@ -967,9 +1057,10 @@ impl Player {
         if channel < 0 || channel as usize >= MAX_CHANNELS || led_count < 0 {
             return error("bad_message", "channel or ledCount out of range");
         }
-        // A hardware channel is bounded by the output caps like
-        // set_hardware_config (logical channels past the hardware carry no LEDs).
-        if (channel as usize) < HW_CHANNELS {
+        // A hardware or network channel is bounded by the output caps like
+        // set_hardware_config (logical channels past those carry no LEDs).
+        let carries_leds = (channel as usize) < self.led_channels();
+        if carries_leds {
             if let Some(why) = self.led_count_refusal(channel as usize, led_count as u32) {
                 return error("bad_message", why);
             }
@@ -980,7 +1071,7 @@ impl Player {
             r#channel,
             ..Default::default()
         };
-        if (channel as usize) < HW_CHANNELS && self.outgrew_capacity() {
+        if carries_leds && self.outgrew_capacity() {
             // Persist the new counts (the firmware polls the gen) so the reboot
             // comes up sized for them.
             self.hw_config_commit = true;
@@ -992,18 +1083,30 @@ impl Player {
 
     fn set_hardware_config(&mut self, m: pv::SetHardwareConfigView<'_>) -> pb::ServerMessage {
         let channel = m.channel().unwrap_or(0);
-        if channel < 0 || channel as usize >= HW_CHANNELS {
+        if channel < 0 || channel as usize >= self.led_channels() {
             return error("bad_message", "channel out of range");
         }
         let ch = channel as usize;
+        // A network channel has an LED count and a color order here (its target
+        // is set with set_network_output, docs/design/p4-ethernet-ddp.md).
+        if ch >= HW_CHANNELS && (m.gpio().is_some() || m.led_type().is_some()) {
+            return error("bad_message", "a network channel has no gpio or led_type");
+        }
         // Validate everything BEFORE mutating so a bad field leaves the config
         // untouched (and the app sees the real state echoed back).
         if let Some(gpio) = m.gpio() {
-            // Any output-capable C6 GPIO (0..=30 covers the exposed pins; the
-            // RMT peripheral routes through the GPIO matrix). A tighter denylist
-            // lives in the app's curated pin list.
-            if !(0..=30).contains(&gpio) {
+            // A pin the board descriptor lists (its pin picker's catalog, any
+            // safety level). Without a descriptor: any output-capable C6 GPIO
+            // (0..=30; the RMT peripheral routes through the GPIO matrix).
+            let ok = match self.board_caps {
+                Some(caps) => board_lists_gpio(caps, gpio),
+                None => (0..=30).contains(&gpio),
+            };
+            if !ok {
                 return error("bad_message", "gpio out of range");
+            }
+            if self.reserved_gpios.contains(&gpio) {
+                return error("bad_message", "gpio in use by Ethernet");
             }
         }
         if let Some(t) = m.led_type() {
@@ -1207,6 +1310,9 @@ impl Player {
     /// unseeded channel isn't wired up.
     fn hardware_config_state(&self) -> pb::ServerMessage {
         let mut state = pb::HardwareConfigState::default();
+        fn short<const N: usize>(s: &str) -> micropb::heapless::String<N> {
+            micropb::heapless::String::try_from(s).unwrap_or_default()
+        }
         for ch in 0..HW_CHANNELS {
             if self.hw_gpio[ch] < 0 {
                 continue;
@@ -1214,9 +1320,22 @@ impl Player {
             let hc = pb::HardwareChannel {
                 r#channel: ch as i32,
                 r#gpio: self.hw_gpio[ch],
-                r#led_type: s64(LED_TYPE_WS281X),
-                r#color_order: s64(COLOR_ORDERS[self.hw_order[ch] as usize].0),
+                r#led_type: short(LED_TYPE_WS281X),
+                r#color_order: short(COLOR_ORDERS[self.hw_order[ch] as usize].0),
                 r#led_count: self.led_counts[ch].unwrap_or(0) as i32,
+            };
+            let _ = state.r#channels.push(hc);
+        }
+        // Network channels with LEDs (docs/design/p4-ethernet-ddp.md): no GPIO;
+        // their targets are in ethernet_state. RGB is what DDP carries.
+        for ch in HW_CHANNELS..self.led_channels() {
+            let Some(n) = self.led_counts[ch] else { continue };
+            let hc = pb::HardwareChannel {
+                r#channel: ch as i32,
+                r#gpio: -1,
+                r#led_type: short(LED_TYPE_DDP),
+                r#color_order: short(COLOR_ORDERS[self.hw_order[ch] as usize].0),
+                r#led_count: n as i32,
             };
             let _ = state.r#channels.push(hc);
         }
@@ -1418,14 +1537,17 @@ impl Player {
     /// persist. `order` indexes [`COLOR_ORDERS`]; out-of-range falls back to the
     /// WS2812B default.
     pub fn set_hw_defaults(&mut self, channel: usize, gpio: i32, order: u8) {
-        if channel >= HW_CHANNELS {
+        if channel >= MAX_CHANNELS {
             return;
         }
-        self.hw_gpio[channel] = gpio;
+        // A network channel (>= HW_CHANNELS) has no GPIO: only its order seeds.
+        if channel < HW_CHANNELS {
+            self.hw_gpio[channel] = gpio;
+        }
         self.hw_order[channel] = if (order as usize) < COLOR_ORDERS.len() {
             order
         } else {
-            DEFAULT_COLOR_ORDER
+            DEFAULT_HW_ORDER[channel]
         };
     }
 
@@ -1439,6 +1561,7 @@ impl Player {
         // capacity fields the descriptor sets itself (4 = led_channels, 5 = max_leds,
         // 6 = max_leds_per_channel).
         let mut sets = (false, false, false);
+        let mut net_channels = 0u32;
         let mut o = 0;
         let varint = |o: &mut usize| -> Option<u64> {
             let mut v = 0u64;
@@ -1472,6 +1595,7 @@ impl Player {
                 0x20 => sets.0 = v != 0, // led_channels, varint
                 0x28 => sets.1 = v != 0, // max_leds, varint
                 0x30 => sets.2 = v != 0, // max_leds_per_channel, varint
+                0x40 => net_channels = v.min((MAX_CHANNELS - HW_CHANNELS) as u64) as u32, // net_channels
                 _ => {}
             }
         }
@@ -1480,6 +1604,7 @@ impl Player {
         }
         self.board_caps = Some(encoded);
         self.board_caps_sets = sets;
+        self.net_channels = net_channels;
         true
     }
 
@@ -1505,7 +1630,8 @@ impl Player {
     /// Why `n` LEDs on hardware channel `ch` don't fit the output caps, or None
     /// when they do: the per-channel cap, then the channels' shared total.
     fn led_count_refusal(&self, ch: usize, n: u32) -> Option<&'static str> {
-        if self.out_max_per_channel > 0 && n > self.out_max_per_channel {
+        // The per-channel cap is the WS2812 wire time; network channels have none.
+        if ch < HW_CHANNELS && self.out_max_per_channel > 0 && n > self.out_max_per_channel {
             return Some("led_count exceeds the board's max_leds_per_channel");
         }
         if self.out_max_leds > 0 && self.total_with(ch, n) > self.out_max_leds {
@@ -1518,9 +1644,24 @@ impl Player {
         None
     }
 
-    /// The hardware channels' LED total with channel `ch` set to `n`.
+    /// Set the GPIOs another output owns (the enabled Ethernet's pins), which
+    /// set_hardware_config then refuses as LED data pins. Replaces the previous
+    /// set; at most [`MAX_RESERVED_GPIOS`] are kept.
+    pub fn set_reserved_gpios(&mut self, pins: &[i32]) {
+        self.reserved_gpios = [-1; MAX_RESERVED_GPIOS];
+        for (d, s) in self.reserved_gpios.iter_mut().zip(pins.iter().filter(|p| **p >= 0)) {
+            *d = *s;
+        }
+    }
+
+    /// LED channels that carry LEDs: the GPIO channels, then the network ones.
+    fn led_channels(&self) -> usize {
+        (HW_CHANNELS + self.net_channels as usize).min(MAX_CHANNELS)
+    }
+
+    /// The LED channels' total with channel `ch` set to `n`.
     fn total_with(&self, ch: usize, n: u32) -> u32 {
-        (0..HW_CHANNELS)
+        (0..self.led_channels())
             .map(|c| if c == ch { n } else { self.led_counts[c].unwrap_or(0) })
             .fold(0u32, |a, b| a.saturating_add(b))
     }
@@ -1561,7 +1702,7 @@ impl Player {
     /// persisted (0 = not set). Like [`Player::set_hw_defaults`], does NOT bump
     /// `hw_config_gen` — it's the starting state, not a change to persist.
     pub fn seed_led_count(&mut self, channel: usize, n: u32) {
-        if channel < HW_CHANNELS {
+        if channel < self.led_channels() {
             self.apply_led_count(channel, n);
         }
     }
@@ -1572,7 +1713,7 @@ impl Player {
     /// covers every channel's LEDs by default.
     fn apply_led_count(&mut self, ch: usize, n: u32) {
         self.led_counts[ch] = if n > 0 { Some(n) } else { None };
-        let total: u32 = self.led_counts[..HW_CHANNELS].iter().map(|c| c.unwrap_or(0)).sum();
+        let total: u32 = self.led_counts[..self.led_channels()].iter().map(|c| c.unwrap_or(0)).sum();
         if total >= 1 {
             self.default_led_count = total;
         }

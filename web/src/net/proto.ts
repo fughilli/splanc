@@ -93,6 +93,11 @@ const CLIENT_ARMS: Record<string, string> = {
   get_kiosk_status: "getKioskStatus",
   set_kiosk_config: "setKioskConfig",
   kiosk_unlock: "kioskUnlock",
+  // Ethernet + network LED outputs (docs/design/p4-ethernet-ddp.md; net/ethernet.ts).
+  set_ethernet_config: "setEthernetConfig",
+  get_ethernet_state: "getEthernetState",
+  discover_controllers: "discoverControllers",
+  set_network_output: "setNetworkOutput",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -130,6 +135,8 @@ const SERVER_ARMS: Record<string, string> = {
   wifi_policy_state: "wifiPolicyState",
   control_ack: "controlAck",
   kiosk_status: "kioskStatus",
+  ethernet_state: "ethernetState",
+  controller_list: "controllerList",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -502,6 +509,11 @@ export interface BoardCapabilitiesFlat {
   /** Most LEDs ONE channel carries (absent/0 = not reported: only maxLeds bounds
    * a channel). */
   maxLedsPerChannel?: number;
+  /** Ethernet support (proto EthernetCaps; normalized by net/ethernet.ts
+   * capsFromWire). Absent: no Ethernet, and the page hides that section. */
+  ethernet?: unknown;
+  /** Network LED channels after the GPIO ones (0/absent = none). */
+  netChannels?: number;
 }
 
 /** Reply to set/get_hardware_config (proto HardwareConfigState): the per-channel
