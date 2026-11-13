@@ -96,19 +96,74 @@ impl OscMessage<'_> {
     }
 }
 
+/// How deep bundles may nest inside bundles. Nothing we talk to nests them at all
+/// (senders bundle messages, one level); a packet nested deeper is malformed.
+pub const MAX_BUNDLE_DEPTH: usize = 8;
+
 /// Visit every message in an OSC packet (a whole UDP datagram), flattening
-/// bundles. Returns `false` if the packet is malformed (the caller drops it).
+/// bundles, nested ones included (up to [`MAX_BUNDLE_DEPTH`]). Returns `false` if
+/// the packet is malformed (the caller drops it).
+///
+/// Iterative: the open bundles' end offsets are a small fixed array, so the stack
+/// use is bounded whatever the packet says (it runs on the firmware's network
+/// task, whose stack is checked statically).
 pub fn for_each_message(data: &[u8], f: &mut impl FnMut(&OscMessage)) -> bool {
     match data.first() {
-        Some(b'#') => parse_bundle(data, f),
-        Some(b'/') => match parse_message(data) {
-            Some(m) => {
-                f(&m);
-                true
+        Some(b'/') => {
+            return match parse_message(data) {
+                Some(m) => {
+                    f(&m);
+                    true
+                }
+                None => false,
             }
-            None => false,
-        },
-        _ => false,
+        }
+        Some(b'#') => {}
+        _ => return false,
+    }
+    // "#bundle\0" (8) + time tag (8), then length-prefixed elements.
+    let is_bundle = |b: &[u8]| b.len() >= 16 && &b[..8] == b"#bundle\0";
+    if !is_bundle(data) {
+        return false;
+    }
+    let mut ends = [0usize; MAX_BUNDLE_DEPTH];
+    ends[0] = data.len();
+    let mut depth = 1;
+    let mut pos = 16;
+    loop {
+        // Leave every bundle that ends here (an element ends where its bundle does).
+        while pos == ends[depth - 1] {
+            depth -= 1;
+            if depth == 0 {
+                return true;
+            }
+        }
+        let limit = ends[depth - 1];
+        let Some(size) = read_i32(data, pos) else { return false };
+        pos += 4;
+        let Some(end) = pos.checked_add(size as usize) else { return false };
+        if end > limit {
+            return false;
+        }
+        let elem = &data[pos..end];
+        match elem.first() {
+            Some(b'/') => {
+                match parse_message(elem) {
+                    Some(m) => f(&m),
+                    None => return false,
+                }
+                pos = end;
+            }
+            Some(b'#') => {
+                if !is_bundle(elem) || depth == MAX_BUNDLE_DEPTH {
+                    return false;
+                }
+                ends[depth] = end;
+                depth += 1;
+                pos += 16;
+            }
+            _ => return false,
+        }
     }
 }
 
@@ -149,28 +204,6 @@ pub fn for_each_message_shallow(data: &[u8], f: &mut impl FnMut(&OscMessage)) ->
         }
         _ => false,
     }
-}
-
-fn parse_bundle(data: &[u8], f: &mut impl FnMut(&OscMessage)) -> bool {
-    // "#bundle\0" (8) + time tag (8), then length-prefixed elements.
-    if data.len() < 16 || &data[..8] != b"#bundle\0" {
-        return false;
-    }
-    let mut pos = 16;
-    while pos < data.len() {
-        let Some(size) = read_i32(data, pos) else { return false };
-        pos += 4;
-        let size = size as usize;
-        let Some(end) = pos.checked_add(size) else { return false };
-        if end > data.len() {
-            return false;
-        }
-        if !for_each_message(&data[pos..end], f) {
-            return false;
-        }
-        pos = end;
-    }
-    true
 }
 
 fn parse_message(data: &[u8]) -> Option<OscMessage> {
