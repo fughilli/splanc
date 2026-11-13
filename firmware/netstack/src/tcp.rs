@@ -630,6 +630,26 @@ impl TcpConn {
         n
     }
 
+    /// Abort the connection: an RST|ACK to the peer (RFC 793 ABORT), then Done. For
+    /// the server reclaiming its one slot from a peer that holds it without
+    /// talking (a browser's preconnected socket idles after the TLS handshake).
+    /// Abandoning it silently leaves the peer's socket looking alive, so the
+    /// browser later sends its request into a dead connection, gets the
+    /// listener's stale-segment RST, and resends; Chrome gives up after a few of
+    /// those (ERR_TOO_MANY_RETRIES). An RST while it is still idle fails the
+    /// browser's liveness check on the pooled socket, so it opens a fresh one
+    /// instead. Returns the RST's length; 0 when there is no peer to reset.
+    pub fn abort(&mut self, out: &mut [u8]) -> usize {
+        match self.state {
+            State::SynRcvd | State::Established | State::FinWait => {
+                let n = self.build(RST | ACK, self.snd_nxt, &[], out);
+                self.state = State::Done;
+                n
+            }
+            _ => 0,
+        }
+    }
+
     /// Process an inbound IPv4 datagram. Returns the length of any reply to send in
     /// `out` (an ACK, or nothing = 0). Updates state and buffers received data.
     /// `now_ms` is the arrival time (the caller's millis()), used to time the RTT
@@ -1291,6 +1311,40 @@ mod tests {
         let n = cli.connect(&mut a);
         assert!(srv.on_ip(2, &a[..n], &mut b) > 0);
         assert_eq!(srv.state, State::SynRcvd);
+    }
+
+    // A browser preconnect: the peer completes the handshake and then sits idle. When the
+    // server reclaims the slot it must ABORT the connection (RST to the peer) so the peer's
+    // pooled socket is dead before it is reused, instead of discovering it by sending a
+    // request into the void (Chrome's ERR_TOO_MANY_RETRIES).
+    #[test]
+    fn reclaiming_an_idle_peer_resets_it_first() {
+        let cli_ip = [10, 0, 0, 1];
+        let srv_ip = [10, 0, 0, 2];
+        let mut cli = TcpConn::new(cli_ip, srv_ip, 5000, 443, 1000);
+        let mut srv = TcpConn::listen(srv_ip, 443, 9000);
+        let mut a = [0u8; 1600];
+        let mut b = [0u8; 1600];
+        let n = cli.connect(&mut a);
+        let r = srv.on_ip(1, &a[..n], &mut b);
+        let n = cli.on_ip(1, &b[..r], &mut a);
+        let _ = srv.on_ip(1, &a[..n], &mut b);
+        assert_eq!((srv.state, cli.state), (State::Established, State::Established));
+
+        let r = srv.abort(&mut b);
+        assert!(r > 0, "an established peer gets a reset");
+        let ihl = ((b[0] & 0x0f) as usize) * 4;
+        assert_eq!(&b[16..20], &cli_ip, "addressed to the idle peer");
+        assert!(b[ihl + 13] & RST != 0, "carries RST");
+        assert_eq!(srv.state, State::Done);
+        // The client accepts it (in-window RST) and tears down without having sent a byte.
+        let _ = cli.on_ip(2, &b[..r], &mut a);
+        assert_eq!(cli.state, State::Done, "the idle client learns its socket is dead");
+
+        // Nothing to abort on a listener or an already-dead slot.
+        let mut lst = TcpConn::listen(srv_ip, 443, 1);
+        assert_eq!(lst.abort(&mut b), 0);
+        assert_eq!(srv.abort(&mut b), 0);
     }
 
     #[test]

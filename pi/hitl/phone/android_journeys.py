@@ -124,7 +124,13 @@ def _stage_bundle(include_flash: bool) -> str:
         os.makedirs(os.path.join(stage, "fw"))
         shutil.copy(bundle, os.path.join(stage, "fw", "bundle.tar"))
     tar = tempfile.mktemp(prefix="hitl-android-", suffix=".tar")
-    subprocess.run(["tar", "cf", tar, "-C", stage, "."], check=True)
+    # COPYFILE_DISABLE: macOS bsdtar otherwise packs an AppleDouble `._<name>` sidecar
+    # for every file with xattrs, which the in-env loader then tries to parse.
+    subprocess.run(
+        ["tar", "cf", tar, "-C", stage, "."],
+        check=True,
+        env={**os.environ, "COPYFILE_DISABLE": "1"},
+    )
     shutil.rmtree(stage, ignore_errors=True)
     return tar
 
@@ -283,6 +289,29 @@ def _report_dut_log(text: str, failed: bool) -> None:
         _log(f"[dut] {line}")
 
 
+def _dotenv_value(key: str) -> str:
+    """`key` from the workspace's gitignored credentials/.env, for local `bazel run`s
+    from a shell without it exported (CI sets the env from the HITL secret instead).
+    KEY=VALUE lines, '#' comments, optional quotes. Never logs the value."""
+    ws = os.environ.get("BUILD_WORKSPACE_DIRECTORY")
+    if not ws:
+        return ""
+    path = os.path.join(ws, "credentials", ".env")
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return ""
+    for raw in lines:
+        line = raw.strip()
+        if line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        if k.strip().removeprefix("export ").strip() == key:
+            return v.strip().strip("'").strip('"')
+    return ""
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--server", default=DEFAULT_SERVER, help="phone daemon (default amd-rig:8088)")
@@ -314,7 +343,7 @@ def main() -> int:
     ap.add_argument("--require-caps", default="", help=argparse.SUPPRESS)
     args = ap.parse_args()
     ssid, psk = args.wifi_ssid, args.wifi_pass
-    pin = os.environ.get("HITL_ANDROID_PIN", "")
+    pin = os.environ.get("HITL_ANDROID_PIN", "") or _dotenv_value("HITL_ANDROID_PIN")
     prov_timeout = args.prov_timeout
 
     from hitl_client import Reservation
