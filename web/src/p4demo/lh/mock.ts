@@ -18,6 +18,8 @@ export type MockScenario = "wander" | "pivot" | "still";
 
 export interface MockTracking extends LhTracking {
   setScenario(s: MockScenario): void;
+  /** The mock stylus's held buttons (a bitmask; 0 = released). */
+  setButtons(mask: number): void;
   scenario(): MockScenario;
 }
 
@@ -78,6 +80,8 @@ export function createMockTracking(opts: MockOptions = {}): MockTracking {
   const poseSubs = new Set<(p: LhPose) => void>();
   const stationSubs = new Set<(s: LhStation[]) => void>();
   const statusSubs = new Set<(s: LhStatus) => void>();
+  const buttonSubs = new Set<(serial: string, mask: number) => void>();
+  let buttons = 0;
   let timer: unknown = null;
   let scenario: MockScenario = "wander";
   let status: LhStatus = { state: "disconnected" };
@@ -125,6 +129,15 @@ export function createMockTracking(opts: MockOptions = {}): MockTracking {
       statusSubs.add(cb);
       cb(status);
       return () => statusSubs.delete(cb);
+    },
+    onButtons(cb) {
+      buttonSubs.add(cb);
+      return () => buttonSubs.delete(cb);
+    },
+    setButtons(mask: number) {
+      if (mask === buttons) return;
+      buttons = mask;
+      for (const cb of buttonSubs) cb(MOCK_SERIAL, mask);
     },
     stations: () => stations,
     exportCalibration: () => JSON.stringify({ mock: true, stations: STATIONS }, null, 1),
