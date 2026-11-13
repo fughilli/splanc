@@ -133,6 +133,14 @@ pub struct TrackHealth {
     pub starts: u32,
     pub losses: u32,
     pub coasts: u32,
+    /// Device time spent in each state (ms, indexed by Health as u8) and state changes, since
+    /// the start: running totals, so a log line lost on the way (the console over Wi-Fi
+    /// loses some) loses nothing the next one doesn't carry.
+    pub ms_by_health: [u32; 5],
+    pub changes: u32,
+    acct_state: Health,
+    acct_ticks: i64,
+    acct_frac: i64,
 }
 
 impl Default for TrackHealth {
@@ -158,6 +166,30 @@ impl TrackHealth {
             starts: 0,
             losses: 0,
             coasts: 0,
+            ms_by_health: [0; 5],
+            changes: 0,
+            acct_state: Health::Lost,
+            acct_ticks: 0,
+            acct_frac: 0,
+        }
+    }
+
+    /// Books the device time since the last call to the state it was in, then takes the
+    /// state now (a change counts). Called after every input that can change either.
+    fn account(&mut self) {
+        let dt = self.now - self.acct_ticks;
+        if dt > 0 {
+            let t = self.acct_frac + dt;
+            let ms = t / (TPS / 1000);
+            self.acct_frac = t % (TPS / 1000);
+            let slot = &mut self.ms_by_health[self.acct_state as usize];
+            *slot = slot.saturating_add(ms as u32);
+            self.acct_ticks = self.now;
+        }
+        let s = self.state();
+        if s != self.acct_state {
+            self.changes = self.changes.saturating_add(1);
+            self.acct_state = s;
         }
     }
 
@@ -176,6 +208,7 @@ impl TrackHealth {
                 }
             }
         }
+        self.account();
     }
 
     /// Device time now (ticks since the first `clock`).
@@ -194,6 +227,7 @@ impl TrackHealth {
         self.confirmed = false;
         self.sigma_high = false;
         self.starts += 1;
+        self.account();
     }
 
     /// The kernel lost tracking (or the device went away).
@@ -206,6 +240,7 @@ impl TrackHealth {
         self.last_lit = None;
         self.speculative = false;
         self.sigma_high = false;
+        self.account();
     }
 
     /// A pose from the kernel: `used` hits went into it since the previous one, `sigma_m`
@@ -232,6 +267,7 @@ impl TrackHealth {
         self.confirmed |= self.lit_poses >= self.cfg.settle_poses
             && self.now - self.started >= self.cfg.settle_ticks
             && self.sigma <= self.cfg.back_sigma_m;
+        self.account();
     }
 
     /// Time since light last confirmed the pose (ticks), if it ever did since the solve.
@@ -267,6 +303,42 @@ mod tests {
     use super::*;
 
     const MS: u32 = 48_000;
+
+    #[test]
+    fn totals_book_device_time_per_state() {
+        let mut h = TrackHealth::default();
+        let mut t = 0u32;
+        let mut step = |h: &mut TrackHealth, ms: u32| {
+            t = t.wrapping_add(ms * MS);
+            h.clock(t);
+        };
+        step(&mut h, 0);
+        step(&mut h, 500); // 0.5 s lost before any track
+        h.started();
+        for _ in 0..10 {
+            step(&mut h, 10);
+            h.pose(5, 0.004, false);
+        }
+        for _ in 0..100 {
+            step(&mut h, 10); // 1 s locked
+            h.pose(5, 0.004, false);
+        }
+        h.pose(3, 0.03, false); // past the enter line
+        for _ in 0..30 {
+            step(&mut h, 10); // 0.3 s uncertain
+            h.pose(3, 0.03, false);
+        }
+        h.lost();
+        step(&mut h, 200); // 0.2 s lost
+        let [lost, uncertain, acquiring, coasting, locked] = h.ms_by_health;
+        assert!((lost as i32 - 700).abs() <= 10, "lost {lost} ms");
+        assert!((locked as i32 - 1000).abs() <= 60, "locked {locked} ms");
+        assert!((uncertain as i32 - 300).abs() <= 20, "uncertain {uncertain} ms");
+        assert!(acquiring <= 100 && coasting == 0, "acquiring {acquiring}, coasting {coasting}");
+        assert_eq!(lost + uncertain + acquiring + coasting + locked, 2100, "all device time booked");
+        // lost -> acquiring -> locked -> uncertain -> lost
+        assert_eq!(h.changes, 4);
+    }
 
     #[test]
     fn sigma_near_the_limit_does_not_flicker() {

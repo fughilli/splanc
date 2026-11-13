@@ -176,11 +176,14 @@ void lm_register_module(const LmPlayerModule *m) {
 }
 
 void lm_module_log(const char *fmt, ...) {
-  char buf[256];
+  // Big enough for the tracker's status line (~300 B). A longer line is cut, but keeps its
+  // newline: cut without one, the next line was glued onto it.
+  char buf[512];
   va_list ap;
   va_start(ap, fmt);
-  vsnprintf(buf, sizeof buf, fmt, ap);
+  const int n = vsnprintf(buf, sizeof buf, fmt, ap);
   va_end(ap);
+  if (n >= (int)sizeof buf && fmt[0] && fmt[strlen(fmt) - 1] == '\n') buf[sizeof buf - 2] = '\n';
   Log().print(buf);
 }
 

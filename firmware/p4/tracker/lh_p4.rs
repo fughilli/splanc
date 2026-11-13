@@ -147,6 +147,10 @@ pub struct LhStatus {
     pub starts: u32,
     pub losses: u32,
     pub coasts: u32,
+    /// Device time in each health state (ms, indexed by its number) and state changes,
+    /// running totals (lh_health::TrackHealth::ms_by_health).
+    pub ms_by_health: [u32; 5],
+    pub health_changes: u32,
     /// lh_health::Health: 0 lost, 1 uncertain, 2 acquiring (a fresh solve settling),
     /// 3 coasting (dead reckoning on the IMU, no light confirming it, still within the σ
     /// limit), 4 locked. 3 and 4 are poses to follow.
@@ -256,6 +260,8 @@ fn tracker() -> &'static mut Tracker {
                 starts: 0,
                 losses: 0,
                 coasts: 0,
+                ms_by_health: [0; 5],
+                health_changes: 0,
                 health: Health::Lost as u8,
                 speculative: 0,
             },
@@ -384,6 +390,8 @@ impl Tracker {
         s.starts = self.health.starts;
         s.losses = self.health.losses;
         s.coasts = self.health.coasts;
+        s.ms_by_health = self.health.ms_by_health;
+        s.health_changes = self.health.changes;
     }
 }
 

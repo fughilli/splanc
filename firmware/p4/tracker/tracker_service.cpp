@@ -216,6 +216,8 @@ void publish(const LhStatus& s) {
   p.starts = s.starts;
   p.losses = s.losses;
   p.coasts = s.coasts;
+  memcpy(p.ms_by_health, s.ms_by_health, sizeof p.ms_by_health);
+  p.health_changes = s.health_changes;
   p.speculative = s.speculative;
   taskENTER_CRITICAL(&g_mux);
   const bool fresh = s.poses != g_pose.poses;

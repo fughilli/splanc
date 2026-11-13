@@ -433,6 +433,14 @@ void status() {
                 (unsigned)(lag.last_us / 1000), (unsigned)(lag.max_us / 1000), (unsigned)lag.depth_max,
                 (unsigned)lag.dropped, (unsigned)lag.skipped);
   g_poll_gap_max_us = g_send_gap_max_us = 0;
+  // Running totals since boot (device time per health state, changes, locks/losses/coasts):
+  // each line carries the whole history, so lines lost on the way (the console over Wi-Fi
+  // loses some) lose nothing. Differences between two lines give any interval.
+  lm_module_log("[health] totals: locked %.1f s, coasting %.1f s, uncertain %.1f s, acquiring %.1f s, lost %.1f s; "
+                "%u changes; locks %u, lost %u, coasts %u\n",
+                p.ms_by_health[4] / 1e3f, p.ms_by_health[3] / 1e3f, p.ms_by_health[1] / 1e3f,
+                p.ms_by_health[2] / 1e3f, p.ms_by_health[0] / 1e3f, (unsigned)p.health_changes, (unsigned)p.starts,
+                (unsigned)p.losses, (unsigned)p.coasts);
   // Photon to photon over the window (ms, mean/max), per stage of the frames that lit.
   Latency l;
   taskENTER_CRITICAL(&g_lat_mux);
