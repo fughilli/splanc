@@ -16,10 +16,10 @@ export interface TrackingChoice {
   mock: MockTracking | null;
 }
 
-export function createTracking(opts: { mock: boolean }): TrackingChoice {
+export function createTracking(opts: { mock: boolean; anyDevice?: boolean }): TrackingChoice {
   if (opts.mock) {
     const m = createMockTracking();
     return { tracking: m, mock: m };
   }
-  return { tracking: createWebHidTracking(), mock: null };
+  return { tracking: createWebHidTracking({ anyDevice: opts.anyDevice ?? false }), mock: null };
 }
