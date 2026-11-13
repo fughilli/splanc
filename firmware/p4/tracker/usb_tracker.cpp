@@ -131,7 +131,17 @@ static constexpr const char* kLogPrefix = "# ";
 static constexpr const char* kLogPrefix = "";
 #endif
 
-extern "C" void p4_log(const uint8_t* msg, size_t len) { printf("%s%.*s\n", kLogPrefix, (int)len, (const char*)msg); }
+// The player's console (tracker_module.cpp: its ordered ring, which also goes over Wi-Fi);
+// absent in the standalone tracker tools, which print to the UART.
+extern "C" __attribute__((weak)) void lm_tracker_console(const char* msg, size_t len);
+
+extern "C" void p4_log(const uint8_t* msg, size_t len) {
+  if (lm_tracker_console) {
+    lm_tracker_console(reinterpret_cast<const char*>(msg), len);
+    return;
+  }
+  printf("%s%.*s\n", kLogPrefix, (int)len, (const char*)msg);
+}
 
 static void dump_hex(const uint8_t* data, size_t len) {
   static const char kHex[] = "0123456789abcdef";

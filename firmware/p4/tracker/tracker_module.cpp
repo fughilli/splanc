@@ -506,6 +506,14 @@ void poll() {
   }
 }
 
+}  // namespace
+
+// The tracker core's lines (lh_p4.rs, via usb_tracker.cpp's p4_log) into the player's
+// console, so they reach the console over Wi-Fi (udp/9001) too, in order with the rest.
+extern "C" void lm_tracker_console(const char *msg, size_t len) { lm_module_log("%.*s\n", (int)len, msg); }
+
+namespace {
+
 const LmPlayerModule kTrackerModule = {"vive-tracker", begin, nullptr, on_osc, status, poll, frame};
 LM_PLAYER_MODULE(kTrackerModule);
 

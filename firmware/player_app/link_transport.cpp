@@ -149,13 +149,22 @@ constexpr size_t kStreamCap = 5 * (LK_HEADER + LK_MTU);
 void on_frame(const lk_header &h, const uint8_t *p);
 
 // Read what the front end has queued and dispatch the whole frames in it.
+// The SDIO bus takes one transaction at a time: reads here and sends (send_msg, on any
+// task: the log drain, the tracker's OSC out) share g_tx_mux. Held around the bus calls
+// only, never around on_frame (which may send). Unlocked, a send landing in the middle of
+// a read corrupted the receive stream for good (rx noise, host=down until a reset).
 void sdio_rx() {
   if (!g_essl) return;
   uint32_t avail = 0;
-  if (essl_get_rx_data_size(g_essl, &avail, 10) != ESP_OK || avail == 0) return;
+  xSemaphoreTake(g_tx_mux, portMAX_DELAY);
+  const esp_err_t se = essl_get_rx_data_size(g_essl, &avail, 10);
+  xSemaphoreGive(g_tx_mux);
+  if (se != ESP_OK || avail == 0) return;
   for (;;) {
     size_t got = 0;
+    xSemaphoreTake(g_tx_mux, portMAX_DELAY);
     const esp_err_t e = essl_get_packet(g_essl, g_rx_wire + g_stream_len, kStreamCap - g_stream_len, &got, 10);
+    xSemaphoreGive(g_tx_mux);
     if (e != ESP_OK && e != ESP_ERR_NOT_FINISHED) break;
     g_stream_len += got;
     g_stats.rx_bytes += got;
