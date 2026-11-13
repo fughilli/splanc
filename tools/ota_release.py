@@ -12,6 +12,13 @@ Writes, for release X.Y.Z:
                               hints) with the same package inside, so the web app's
                               Flash screen can update over USB or Wi-Fi from one asset.
 
+With --target p4 (the ESP32-P4 player, docs/design/p4-c6-split.md section 5.1), from
+//firmware/player_app:esp32p4_player_c6_flashbundle:
+  esp32p4-player-X.Y.Z.ota    the signed package (manifest with board 16 || the P4
+                              image, which carries its C6 front end's images too), what
+                              update_firmware / "Update over Wi-Fi" stream to a P4;
+  esp32p4-player-X.Y.Z.tar    the P4's USB flash bundle with the same package inside.
+
 Refuses to sign when the key isn't the one whose public half is committed
 (keys/release.pub): a release signed with any other key would be refused by every
 loader in the field. Stdlib only; the signing itself is //firmware/ota:ota_sign.
@@ -32,8 +39,24 @@ def read_pub(path):
     return "".join(lines).lower()
 
 
+# What differs per target. `board` is the manifest's signed board id (0 a C6 app, 16 the
+# ESP32-P4 player): each chip refuses the other's packages. A C6 bundle's flash.json
+# names its app offset in its "ota" block (the loader + app layout); the P4 has no
+# loader and its app is the image at the first app slot.
+TARGETS = {
+    "c6": {"board": 0, "package": "esp32c6-netstack", "bundle": "esp32c6-ota", "app_offset": None},
+    "p4": {
+        "board": 16,
+        "package": "esp32p4-player",
+        "bundle": "esp32p4-player",
+        "app_offset": 0x10000,
+    },
+}
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--target", choices=sorted(TARGETS), default="c6")
     ap.add_argument("--bundle", required=True)
     ap.add_argument("--version", required=True)
     ap.add_argument("--signer", required=True)
@@ -47,6 +70,7 @@ def main():
     # key-epoch.bin so every client sends it with ota_begin (docs/design/ota.md).
     ap.add_argument("--key-epoch", default="")
     a = ap.parse_args()
+    target = TARGETS[a.target]
 
     if not os.environ.get(a.key_env):
         sys.exit(f'ota_release: ${a.key_env} is not set — see docs/design/ota.md "Signing"')
@@ -66,7 +90,15 @@ def main():
     with tarfile.open(a.bundle) as t:
         members = {m.name: t.extractfile(m).read() for m in t.getmembers() if m.isfile()}
     manifest = json.loads(members["flash.json"])
-    app_off = int(manifest["ota"]["app_offset"], 16)
+    want_chip = "esp32" + a.target
+    if manifest.get("chip") != want_chip:
+        sys.exit(
+            f"ota_release: --target {a.target} needs an {want_chip} bundle, not {manifest.get('chip')!r}"
+        )
+    if target["app_offset"] is None:
+        app_off = int(manifest["ota"]["app_offset"], 16)
+    else:
+        app_off = target["app_offset"]
     app = [i for i in manifest["images"] if int(i["offset"], 16) == app_off]
     if len(app) != 1:
         sys.exit("ota_release: the bundle has no app image at the app offset")
@@ -89,6 +121,8 @@ def main():
                 "0",
                 "--security-version",
                 a.security_version,
+                "--board",
+                str(target["board"]),
                 "--in",
                 img_path,
                 "--out",
@@ -105,13 +139,18 @@ def main():
         )
         package = open(man_path, "rb").read() + image
 
-    pkg_name = f"esp32c6-netstack-{a.version}.ota"
+    pkg_name = f"{target['package']}-{a.version}.ota"
     open(os.path.join(a.out_dir, pkg_name), "wb").write(package)
 
-    manifest["ota"]["package"] = "esp32c6-netstack.ota"
-    members["flash.json"] = (json.dumps(manifest, indent=2) + "\n").encode()
-    members["esp32c6-netstack.ota"] = package
-    extra = ["esp32c6-netstack.ota"]
+    inner = target["package"] + ".ota"
+    if "ota" in manifest:
+        # The loader + app layout names its package. A P4 bundle has no "ota" block
+        # (that block tells a USB flasher how to migrate a legacy C6); a client finds
+        # its package as the bundle's one *.ota member.
+        manifest["ota"]["package"] = inner
+        members["flash.json"] = (json.dumps(manifest, indent=2) + "\n").encode()
+    members[inner] = package
+    extra = [inner]
     if a.key_epoch and os.path.exists(a.key_epoch):
         epoch = open(a.key_epoch, "rb").read()
         if len(epoch) != 80:
@@ -119,7 +158,7 @@ def main():
         members["key-epoch.bin"] = epoch
         extra.append("key-epoch.bin")
         open(os.path.join(a.out_dir, "key-epoch.bin"), "wb").write(epoch)
-    tar_path = os.path.join(a.out_dir, f"esp32c6-ota-{a.version}.tar")
+    tar_path = os.path.join(a.out_dir, f"{target['bundle']}-{a.version}.tar")
     order = ["flash.json"] + [i["file"] for i in manifest["images"]] + extra
     with tarfile.open(tar_path, "w") as t:
         for name in order:
