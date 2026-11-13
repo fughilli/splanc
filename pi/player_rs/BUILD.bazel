@@ -19,6 +19,7 @@ rust_library(
         "src/health.rs",
         "src/lib.rs",
         "src/ota.rs",
+        "src/output.rs",
         "src/render.rs",
         "src/server.rs",
         "src/session.rs",

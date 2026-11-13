@@ -107,6 +107,27 @@ let
     off=${fpgaStampOffset}
     wantsha=$($sha "$want" | cut -c1-64)
 
+    # Cold boot races USB enumeration: the unit can start before the Tang's
+    # FT2232 (0403:6010) is on the bus (hitl-rig-1, 2026-11-12: "unable to open
+    # ftdi device: -3" -> stale/no gateware). Wait up to 20 s for it to appear;
+    # still non-fatal if it never does.
+    ft2232_present() {
+      for d in /sys/bus/usb/devices/*; do
+        [ "$(cat "$d/idVendor" 2>/dev/null)" = 0403 ] &&
+          [ "$(cat "$d/idProduct" 2>/dev/null)" = 6010 ] && return 0
+      done
+      return 1
+    }
+    waited=0
+    while ! ft2232_present && [ "$waited" -lt 40 ]; do
+      sleep 0.5; waited=$((waited + 1))
+    done
+    if ft2232_present; then
+      [ "$waited" -gt 0 ] && echo "[fpga-commission] Tang FT2232 enumerated after $((waited / 2)) s" >&2
+    else
+      echo "[fpga-commission] Tang FT2232 (0403:6010) not on USB after 20 s — trying anyway" >&2
+    fi
+
     read_stamp() {
       local d; d=$(mktemp)
       if $ofl -b tangnano9k --freq 10000000 --external-flash --dump-flash \
@@ -191,7 +212,11 @@ in
       ports = pkgs.lib.optionals (ledOutput == "fpga") [ playerRsWssPort ];
       runtimeDirectory = "ledmapper";
       readWritePaths = [ "/run/ledmapper" ];
-      after = [ "local-fs.target" ];
+      # On the FPGA path, also wait for /dev/spidev0.0 (a device unit via the
+      # TAG+="systemd" rule in fpga.nix): a cold boot started the player before
+      # the node existed. Wants= keeps it soft (the player retries spidev itself).
+      after = [ "local-fs.target" ] ++ pkgs.lib.optionals (ledOutput == "fpga") [ "dev-spidev0.0.device" ];
+      wants = pkgs.lib.optionals (ledOutput == "fpga") [ "dev-spidev0.0.device" ];
       # Commission the FPGA (flash the Tang Nano over USB) BEFORE streaming SPI,
       # only when driving the FPGA. `+` runs it as root (bypasses the
       # User=ledmapper sandbox) so it can claim the USB device; the player's own
@@ -199,6 +224,8 @@ in
       # bare eval) from needing SBC_FPGA_BITSTREAM.
       extraServiceConfig = pkgs.lib.optionalAttrs (ledOutput == "fpga") {
         ExecStartPre = "+${fpgaCommission}";
+        # Headroom for the commission's 20 s FT2232 wait + a full reflash.
+        TimeoutStartSec = 180;
       };
     };
 
