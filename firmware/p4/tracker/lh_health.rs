@@ -43,13 +43,17 @@ pub const TPS: i64 = 48_000_000;
 /// drift by then is 7-9 mm for biases up to 0.02 g, 11 mm at 0.05 g.
 pub const POS_SIGMA_LIMIT_M: f32 = 0.02;
 
-/// Hysteresis on that limit: a usable pose turns Uncertain only past POS_SIGMA_ENTER_M, and
-/// an Uncertain one is usable again only under POS_SIGMA_BACK_M. Carried at ~3 m from one
+/// Hysteresis on the usable limit: a usable pose turns Uncertain only past POS_SIGMA_ENTER_M,
+/// and an Uncertain one is usable again only under POS_SIGMA_BACK_M. Set well above
+/// POS_SIGMA_LIMIT_M: sigma is conservative (the recorded sessions' errors run a quarter to
+/// a third of it), and with one station ~3 m off a moving tracker's sigma sits at 20-25 mm:
+/// at 25 / 18 mm it went Uncertain and stayed so for as long as it moved (PixieLamp2,
+/// 2026-11-13). Carried at ~3 m from one
 /// station σ sits right at 2 cm, and a single threshold flipped Locked/Uncertain 226 times
 /// in 95 s (often several times in 10 ms; PixieLamp2, 2026-11-13): the effect flickered
 /// between its shape and its idle look.
-pub const POS_SIGMA_ENTER_M: f32 = 0.025;
-pub const POS_SIGMA_BACK_M: f32 = 0.018;
+pub const POS_SIGMA_ENTER_M: f32 = 0.04;
+pub const POS_SIGMA_BACK_M: f32 = 0.03;
 
 /// Position uncertainty (m) at which dead reckoning gives up (the kernel's `lost_sigma_pos`
 /// on the P4; its default is POS_SIGMA_LIMIT_M). Between the two the pose is Uncertain: not
@@ -57,7 +61,7 @@ pub const POS_SIGMA_BACK_M: f32 = 0.018;
 /// instead of a fresh solve (~1 s on the P4). With one station ~3 m off a carried tracker
 /// sits near POS_SIGMA_LIMIT_M with light (PixieLamp2, 2026-11-12), so giving up there
 /// turned every 50 ms occlusion into a lost track.
-pub const COAST_GIVE_UP_M: f32 = 0.05;
+pub const COAST_GIVE_UP_M: f32 = 0.08;
 
 /// The backstop on dead reckoning (s): the kernel's `lost_after_dark` default. Moving, the
 /// covariance rule ends coasting long before it (~0.24 s). Still, zero-velocity updates
@@ -93,6 +97,9 @@ pub struct HealthConfig {
     /// Usable -> Uncertain past this (m); Uncertain -> usable again under `back_sigma_m`.
     pub max_sigma_m: f32,
     pub back_sigma_m: f32,
+    /// Dead reckoning (no light confirming it) is usable only up to this (m): its sigma is
+    /// the IMU drift model's, not the light fit's conservative one.
+    pub coast_sigma_m: f32,
     pub coast_max_ticks: i64,
     /// A fresh solve is confirmed after this many poses with light used, spanning at least
     /// `settle_ticks`, with the uncertainty under `max_sigma_m`; until then it's Acquiring.
@@ -106,6 +113,7 @@ impl Default for HealthConfig {
             fresh_ticks: (FRESH_S * TPS as f32) as i64,
             max_sigma_m: POS_SIGMA_ENTER_M,
             back_sigma_m: POS_SIGMA_BACK_M,
+            coast_sigma_m: POS_SIGMA_LIMIT_M,
             coast_max_ticks: (COAST_MAX_S * TPS as f32) as i64,
             settle_poses: 4,
             settle_ticks: TPS / 20,
@@ -292,6 +300,9 @@ impl TrackHealth {
             return Health::Uncertain;
         }
         if self.speculative || dark > self.cfg.fresh_ticks {
+            if !(self.sigma <= self.cfg.coast_sigma_m) {
+                return Health::Uncertain;
+            }
             return Health::Coasting;
         }
         Health::Locked
@@ -323,10 +334,10 @@ mod tests {
             step(&mut h, 10); // 1 s locked
             h.pose(5, 0.004, false);
         }
-        h.pose(3, 0.03, false); // past the enter line
+        h.pose(3, POS_SIGMA_ENTER_M + 0.01, false); // past the enter line
         for _ in 0..30 {
             step(&mut h, 10); // 0.3 s uncertain
-            h.pose(3, 0.03, false);
+            h.pose(3, POS_SIGMA_ENTER_M + 0.01, false);
         }
         h.lost();
         step(&mut h, 200); // 0.2 s lost
@@ -358,7 +369,7 @@ mod tests {
         for i in 0..200 {
             t = t.wrapping_add(2 * MS);
             h.clock(t);
-            h.pose(3, if i % 2 == 0 { 0.0195 } else { 0.0205 }, false);
+            h.pose(3, if i % 2 == 0 { POS_SIGMA_ENTER_M - 0.0005 } else { POS_SIGMA_ENTER_M - 0.002 }, false);
             if h.state() != last {
                 changes += 1;
                 last = h.state();
@@ -366,11 +377,11 @@ mod tests {
         }
         assert_eq!((changes, h.state()), (0, Health::Locked));
         // Past the enter line: Uncertain, and it stays so above the back line.
-        h.pose(3, 0.026, false);
+        h.pose(3, POS_SIGMA_ENTER_M + 0.001, false);
         assert_eq!(h.state(), Health::Uncertain);
-        h.pose(3, 0.019, false);
+        h.pose(3, POS_SIGMA_BACK_M + 0.001, false);
         assert_eq!(h.state(), Health::Uncertain);
-        h.pose(3, 0.0175, false);
+        h.pose(3, POS_SIGMA_BACK_M - 0.0005, false);
         assert_eq!(h.state(), Health::Locked);
     }
 
