@@ -10,7 +10,7 @@
     },
     {
       "offset": "0x8000",
-      "file": "partitions_huge_app.bin"
+      "file": "partitions_p4_ota.bin"
     },
     {
       "offset": "0xe000",
