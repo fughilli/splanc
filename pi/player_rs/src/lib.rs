@@ -12,6 +12,7 @@
 
 pub mod health;
 pub mod ota;
+pub mod spi_retry;
 pub mod render;
 pub mod server;
 pub mod session;

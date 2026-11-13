@@ -22,5 +22,8 @@
   services.udev.extraRules = ''
     SUBSYSTEM=="usb", ATTR{idVendor}=="0403", ATTR{idProduct}=="6010", \
       MODE="0660", GROUP="dialout", TAG+="uaccess", SYMLINK+="tangnano9k"
+    # spidev nodes get no systemd device unit by default; tag them so the player
+    # unit (apps.nix) can order After=/Wants= dev-spidev0.0.device.
+    SUBSYSTEM=="spidev", TAG+="systemd"
   '';
 }

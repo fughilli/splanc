@@ -22,6 +22,7 @@ rust_library(
         "src/render.rs",
         "src/server.rs",
         "src/session.rs",
+        "src/spi_retry.rs",
         "src/wire.rs",
     ],
     crate_name = "ledmapper_player_rs",
