@@ -43,6 +43,26 @@ pub const TPS: i64 = 48_000_000;
 /// drift by then is 7-9 mm for biases up to 0.02 g, 11 mm at 0.05 g.
 pub const POS_SIGMA_LIMIT_M: f32 = 0.02;
 
+/// Hysteresis on the usable limit: a usable pose turns Uncertain only past POS_SIGMA_ENTER_M,
+/// and an Uncertain one is usable again only under POS_SIGMA_BACK_M. Set well above
+/// POS_SIGMA_LIMIT_M: sigma is conservative (the recorded sessions' errors run a quarter to
+/// a third of it), and with one station ~3 m off a moving tracker's sigma sits at 20-25 mm:
+/// at 25 / 18 mm it went Uncertain and stayed so for as long as it moved (PixieLamp2,
+/// 2026-11-13). Carried at ~3 m from one
+/// station σ sits right at 2 cm, and a single threshold flipped Locked/Uncertain 226 times
+/// in 95 s (often several times in 10 ms; PixieLamp2, 2026-11-13): the effect flickered
+/// between its shape and its idle look.
+pub const POS_SIGMA_ENTER_M: f32 = 0.04;
+pub const POS_SIGMA_BACK_M: f32 = 0.03;
+
+/// Position uncertainty (m) at which dead reckoning gives up (the kernel's `lost_sigma_pos`
+/// on the P4; its default is POS_SIGMA_LIMIT_M). Between the two the pose is Uncertain: not
+/// usable, but the track goes on, so light back after a short occlusion is fused into it
+/// instead of a fresh solve (~1 s on the P4). With one station ~3 m off a carried tracker
+/// sits near POS_SIGMA_LIMIT_M with light (PixieLamp2, 2026-11-12), so giving up there
+/// turned every 50 ms occlusion into a lost track.
+pub const COAST_GIVE_UP_M: f32 = 0.08;
+
 /// The backstop on dead reckoning (s): the kernel's `lost_after_dark` default. Moving, the
 /// covariance rule ends coasting long before it (~0.24 s). Still, zero-velocity updates
 /// hold the covariance and the simulated drift stays under 1 mm over the whole second, so
@@ -74,7 +94,12 @@ impl Health {
 #[derive(Clone, Copy, Debug)]
 pub struct HealthConfig {
     pub fresh_ticks: i64,
+    /// Usable -> Uncertain past this (m); Uncertain -> usable again under `back_sigma_m`.
     pub max_sigma_m: f32,
+    pub back_sigma_m: f32,
+    /// Dead reckoning (no light confirming it) is usable only up to this (m): its sigma is
+    /// the IMU drift model's, not the light fit's conservative one.
+    pub coast_sigma_m: f32,
     pub coast_max_ticks: i64,
     /// A fresh solve is confirmed after this many poses with light used, spanning at least
     /// `settle_ticks`, with the uncertainty under `max_sigma_m`; until then it's Acquiring.
@@ -86,7 +111,9 @@ impl Default for HealthConfig {
     fn default() -> HealthConfig {
         HealthConfig {
             fresh_ticks: (FRESH_S * TPS as f32) as i64,
-            max_sigma_m: POS_SIGMA_LIMIT_M,
+            max_sigma_m: POS_SIGMA_ENTER_M,
+            back_sigma_m: POS_SIGMA_BACK_M,
+            coast_sigma_m: POS_SIGMA_LIMIT_M,
             coast_max_ticks: (COAST_MAX_S * TPS as f32) as i64,
             settle_poses: 4,
             settle_ticks: TPS / 20,
@@ -107,11 +134,21 @@ pub struct TrackHealth {
     speculative: bool,
     /// The solve was confirmed (see HealthConfig::settle_poses).
     confirmed: bool,
+    /// σ went past `max_sigma_m` and hasn't come back under `back_sigma_m`.
+    sigma_high: bool,
     /// Counters for the status line: locks gained (fresh solves) and lost, and coasts
     /// (dark stretches the track survived or ended in).
     pub starts: u32,
     pub losses: u32,
     pub coasts: u32,
+    /// Device time spent in each state (ms, indexed by Health as u8) and state changes, since
+    /// the start: running totals, so a log line lost on the way (the console over Wi-Fi
+    /// loses some) loses nothing the next one doesn't carry.
+    pub ms_by_health: [u32; 5],
+    pub changes: u32,
+    acct_state: Health,
+    acct_ticks: i64,
+    acct_frac: i64,
 }
 
 impl Default for TrackHealth {
@@ -133,9 +170,34 @@ impl TrackHealth {
             sigma: 0.0,
             speculative: false,
             confirmed: false,
+            sigma_high: false,
             starts: 0,
             losses: 0,
             coasts: 0,
+            ms_by_health: [0; 5],
+            changes: 0,
+            acct_state: Health::Lost,
+            acct_ticks: 0,
+            acct_frac: 0,
+        }
+    }
+
+    /// Books the device time since the last call to the state it was in, then takes the
+    /// state now (a change counts). Called after every input that can change either.
+    fn account(&mut self) {
+        let dt = self.now - self.acct_ticks;
+        if dt > 0 {
+            let t = self.acct_frac + dt;
+            let ms = t / (TPS / 1000);
+            self.acct_frac = t % (TPS / 1000);
+            let slot = &mut self.ms_by_health[self.acct_state as usize];
+            *slot = slot.saturating_add(ms as u32);
+            self.acct_ticks = self.now;
+        }
+        let s = self.state();
+        if s != self.acct_state {
+            self.changes = self.changes.saturating_add(1);
+            self.acct_state = s;
         }
     }
 
@@ -154,6 +216,7 @@ impl TrackHealth {
                 }
             }
         }
+        self.account();
     }
 
     /// Device time now (ticks since the first `clock`).
@@ -170,7 +233,9 @@ impl TrackHealth {
         self.sigma = 0.0;
         self.speculative = false;
         self.confirmed = false;
+        self.sigma_high = false;
         self.starts += 1;
+        self.account();
     }
 
     /// The kernel lost tracking (or the device went away).
@@ -182,6 +247,8 @@ impl TrackHealth {
         self.lit_poses = 0;
         self.last_lit = None;
         self.speculative = false;
+        self.sigma_high = false;
+        self.account();
     }
 
     /// A pose from the kernel: `used` hits went into it since the previous one, `sigma_m`
@@ -195,6 +262,11 @@ impl TrackHealth {
             self.coasts += 1;
         }
         self.sigma = sigma_m;
+        if self.sigma_high {
+            self.sigma_high = !(sigma_m <= self.cfg.back_sigma_m);
+        } else {
+            self.sigma_high = !(sigma_m <= self.cfg.max_sigma_m);
+        }
         self.speculative = speculative && used == 0;
         if used > 0 {
             self.lit_poses = self.lit_poses.saturating_add(1);
@@ -202,7 +274,8 @@ impl TrackHealth {
         }
         self.confirmed |= self.lit_poses >= self.cfg.settle_poses
             && self.now - self.started >= self.cfg.settle_ticks
-            && self.sigma <= self.cfg.max_sigma_m;
+            && self.sigma <= self.cfg.back_sigma_m;
+        self.account();
     }
 
     /// Time since light last confirmed the pose (ticks), if it ever did since the solve.
@@ -223,10 +296,13 @@ impl TrackHealth {
             return Health::Acquiring;
         }
         let dark = self.now - self.last_lit.unwrap_or(self.started);
-        if !(self.sigma <= self.cfg.max_sigma_m) || dark > self.cfg.coast_max_ticks {
+        if self.sigma_high || dark > self.cfg.coast_max_ticks {
             return Health::Uncertain;
         }
         if self.speculative || dark > self.cfg.fresh_ticks {
+            if !(self.sigma <= self.cfg.coast_sigma_m) {
+                return Health::Uncertain;
+            }
             return Health::Coasting;
         }
         Health::Locked
@@ -238,6 +314,76 @@ mod tests {
     use super::*;
 
     const MS: u32 = 48_000;
+
+    #[test]
+    fn totals_book_device_time_per_state() {
+        let mut h = TrackHealth::default();
+        let mut t = 0u32;
+        let mut step = |h: &mut TrackHealth, ms: u32| {
+            t = t.wrapping_add(ms * MS);
+            h.clock(t);
+        };
+        step(&mut h, 0);
+        step(&mut h, 500); // 0.5 s lost before any track
+        h.started();
+        for _ in 0..10 {
+            step(&mut h, 10);
+            h.pose(5, 0.004, false);
+        }
+        for _ in 0..100 {
+            step(&mut h, 10); // 1 s locked
+            h.pose(5, 0.004, false);
+        }
+        h.pose(3, POS_SIGMA_ENTER_M + 0.01, false); // past the enter line
+        for _ in 0..30 {
+            step(&mut h, 10); // 0.3 s uncertain
+            h.pose(3, POS_SIGMA_ENTER_M + 0.01, false);
+        }
+        h.lost();
+        step(&mut h, 200); // 0.2 s lost
+        let [lost, uncertain, acquiring, coasting, locked] = h.ms_by_health;
+        assert!((lost as i32 - 700).abs() <= 10, "lost {lost} ms");
+        assert!((locked as i32 - 1000).abs() <= 60, "locked {locked} ms");
+        assert!((uncertain as i32 - 300).abs() <= 20, "uncertain {uncertain} ms");
+        assert!(acquiring <= 100 && coasting == 0, "acquiring {acquiring}, coasting {coasting}");
+        assert_eq!(lost + uncertain + acquiring + coasting + locked, 2100, "all device time booked");
+        // lost -> acquiring -> locked -> uncertain -> lost
+        assert_eq!(h.changes, 4);
+    }
+
+    #[test]
+    fn sigma_near_the_limit_does_not_flicker() {
+        let mut h = TrackHealth::default();
+        let mut t = 0u32;
+        h.clock(t);
+        h.started();
+        for _ in 0..6 {
+            t = t.wrapping_add(10 * MS);
+            h.clock(t);
+            h.pose(5, 0.005, false);
+        }
+        assert_eq!(h.state(), Health::Locked);
+        // Carried one station ~3 m off: sigma wobbles about 2 cm. Stays usable.
+        let mut changes = 0;
+        let mut last = h.state();
+        for i in 0..200 {
+            t = t.wrapping_add(2 * MS);
+            h.clock(t);
+            h.pose(3, if i % 2 == 0 { POS_SIGMA_ENTER_M - 0.0005 } else { POS_SIGMA_ENTER_M - 0.002 }, false);
+            if h.state() != last {
+                changes += 1;
+                last = h.state();
+            }
+        }
+        assert_eq!((changes, h.state()), (0, Health::Locked));
+        // Past the enter line: Uncertain, and it stays so above the back line.
+        h.pose(3, POS_SIGMA_ENTER_M + 0.001, false);
+        assert_eq!(h.state(), Health::Uncertain);
+        h.pose(3, POS_SIGMA_BACK_M + 0.001, false);
+        assert_eq!(h.state(), Health::Uncertain);
+        h.pose(3, POS_SIGMA_BACK_M - 0.0005, false);
+        assert_eq!(h.state(), Health::Locked);
+    }
 
     #[test]
     fn settles_coasts_in_the_dark_and_relocks() {

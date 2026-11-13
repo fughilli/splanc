@@ -41,6 +41,8 @@
 
 extern "C" void lm_link_identity(const char *mac, const char *name);  // main.cpp
 
+#include "serial_log.h"
+
 namespace {
 
 constexpr uart_port_t kUart = UART_NUM_0;
@@ -149,13 +151,22 @@ constexpr size_t kStreamCap = 5 * (LK_HEADER + LK_MTU);
 void on_frame(const lk_header &h, const uint8_t *p);
 
 // Read what the front end has queued and dispatch the whole frames in it.
+// The SDIO bus takes one transaction at a time: reads here and sends (send_msg, on any
+// task: the log drain, the tracker's OSC out) share g_tx_mux. Held around the bus calls
+// only, never around on_frame (which may send). Unlocked, a send landing in the middle of
+// a read corrupted the receive stream for good (rx noise, host=down until a reset).
 void sdio_rx() {
   if (!g_essl) return;
   uint32_t avail = 0;
-  if (essl_get_rx_data_size(g_essl, &avail, 10) != ESP_OK || avail == 0) return;
+  xSemaphoreTake(g_tx_mux, portMAX_DELAY);
+  const esp_err_t se = essl_get_rx_data_size(g_essl, &avail, 10);
+  xSemaphoreGive(g_tx_mux);
+  if (se != ESP_OK || avail == 0) return;
   for (;;) {
     size_t got = 0;
+    xSemaphoreTake(g_tx_mux, portMAX_DELAY);
     const esp_err_t e = essl_get_packet(g_essl, g_rx_wire + g_stream_len, kStreamCap - g_stream_len, &got, 10);
+    xSemaphoreGive(g_tx_mux);
     if (e != ESP_OK && e != ESP_ERR_NOT_FINISHED) break;
     g_stream_len += got;
     g_stats.rx_bytes += got;
@@ -275,7 +286,7 @@ void on_frame(const lk_header &h, const uint8_t *p) {
       lm_netstack_osc_rx(p, h.len);  // as if it had arrived on udp/9000 here
       return;
     case LK_LOG:
-      printf("[c6] %.*s", (int)h.len, (const char *)p);  // the front end's own lines
+      printf("[c6] %.*s", (int)h.len, (const char *)p);  // the front end's own lines (UART only)
       return;
     case LK_LINK:
       if (h.len == 0) return;
@@ -320,7 +331,13 @@ void (*g_ns_reply_hook)(int outcome) = nullptr;
 
 extern "C" size_t link_log_write(const uint8_t *data, size_t len) {
 #if defined(LM_LINK_SDIO)
-  return fwrite(data, 1, len, stdout);  // the UART is the console's alone
+  // The UART is the console's alone; the lines also go to the C6 as LOG frames, which it
+  // sends on to a subscriber on udp/9001 (netstack_log_send): the console over Wi-Fi.
+  const size_t n = fwrite(data, 1, len, stdout);
+  if (g_up) {
+    for (size_t off = 0; off < n; off += LK_MTU) send_msg(LK_LOG, 0, data + off, n - off < LK_MTU ? n - off : LK_MTU);
+  }
+  return n;
 #endif
   // Before the link is up nothing is taken: the lines wait in serial_log's ring and
   // go out as LOG frames once it is (the boot banner is still on the UART at the ROM's
@@ -328,6 +345,14 @@ extern "C" size_t link_log_write(const uint8_t *data, size_t len) {
   if (!g_up) return 0;
   send_msg(LK_LOG, 0, data, len);
   return len;
+}
+
+// Binary telemetry (the tracker's raw recording) on the console channel: one LOG frame,
+// which the C6 sends to the log subscriber as one datagram. Not on the UART.
+extern "C" bool lm_dump_send(const uint8_t *data, size_t len) {
+  if (!g_up || len > LK_MTU) return false;
+  send_msg(LK_LOG, 0, data, len);
+  return true;
 }
 
 // The P4 has no network of its own: OSC out goes to the front end (or the host bridge),

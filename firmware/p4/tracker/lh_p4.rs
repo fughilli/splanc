@@ -29,7 +29,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use lh_device::clock::HostClock;
 use lh_device::{Decoder, Link, LinkError, Output};
 use lh_health::{Health, TrackHealth};
-use lh_kernel::kernel::{Event, Input, Kernel, KernelConfig};
+use lh_kernel::kernel::{CalibrationReason, Event, Input, Kernel, KernelConfig};
 use lh_kernel::linalg::Mat;
 use lh_kernel::math::{Pose, Quat, Vec3};
 use lh_protocol::devices::{self, DeviceType};
@@ -147,6 +147,10 @@ pub struct LhStatus {
     pub starts: u32,
     pub losses: u32,
     pub coasts: u32,
+    /// Device time in each health state (ms, indexed by its number) and state changes,
+    /// running totals (lh_health::TrackHealth::ms_by_health).
+    pub ms_by_health: [u32; 5],
+    pub health_changes: u32,
     /// lh_health::Health: 0 lost, 1 uncertain, 2 acquiring (a fresh solve settling),
     /// 3 coasting (dead reckoning on the IMU, no light confirming it, still within the σ
     /// limit), 4 locked. 3 and 4 are poses to follow.
@@ -188,6 +192,19 @@ struct Tracker {
     /// The station poses the kernel's world is built on: its own calibration, or the
     /// ones adopted from lhd (lh_station_prior).
     stations: Vec<(u32, Pose)>,
+    /// When lhd last sent each station (P4 µs), adopted or not: a station lhd stops
+    /// sending while it sends others is forgotten (it expired there, or lhd solved its
+    /// world afresh without it).
+    sent_us: Vec<(u32, i64)>,
+    /// lhd's newest pose of each station it sends.
+    last_sent: Vec<(u32, Pose)>,
+    /// Stations this kernel placed itself since (levelled from their gravity, or solved
+    /// again after they moved under the still tracker), with lhd's pose of them then: lhd
+    /// keeps sending that stale pose until it re-solves them itself (its trackers may not
+    /// see the move at all), so it isn't adopted; a different one from lhd is.
+    stale: Vec<(u32, Pose)>,
+    /// P4 µs of the last forget check (lh_clock).
+    forget_check_us: i64,
     clock: HostClock,
     /// The newest IMU sample (body frame: g, rad/s), for the pose's rates.
     accel_g: Vec3,
@@ -209,6 +226,8 @@ fn tracker() -> &'static mut Tracker {
             // one every 50 ms while not tracking, or the task falls behind its input.
             kernel: Kernel::new({
                 let mut cfg = KernelConfig { start_interval: 0.05, ..KernelConfig::default() };
+                // Coast on past the usable limit (Uncertain), up to lh_health's give-up line.
+                cfg.lost_sigma_pos = lh_health::COAST_GIVE_UP_M as _;
                 // Hits into the filter as their report comes in, not at the next sync.
                 cfg.timing.stream_sweeps = true;
                 cfg
@@ -244,10 +263,16 @@ fn tracker() -> &'static mut Tracker {
                 starts: 0,
                 losses: 0,
                 coasts: 0,
+                ms_by_health: [0; 5],
+                health_changes: 0,
                 health: Health::Lost as u8,
                 speculative: 0,
             },
             stations: Vec::new(),
+            sent_us: Vec::new(),
+            last_sent: Vec::new(),
+            stale: Vec::new(),
+            forget_check_us: 0,
             clock: HostClock::new(),
             accel_g: Vec3::new(0.0, 0.0, 1.0),
             gyro: Vec3::ZERO,
@@ -307,6 +332,18 @@ impl Tracker {
                     log(&format!("lh: tracking lost ({:?})", reason));
                 }
                 Event::Calibrated { reason, stations, .. } => {
+                    if reason == CalibrationReason::StationTilted || reason == CalibrationReason::StationRelocated {
+                        for s in &stations {
+                            let changed = self.stations.iter().find(|(id, _)| *id == s.id).map_or(false, |(_, p)| {
+                                !same_pose(p, &s.world_from_station, 0.005, 0.3f32.to_radians() as _)
+                            });
+                            let lhd = self.last_sent.iter().find(|x| x.0 == s.id).map(|x| x.1);
+                            if let (true, Some(lhd)) = (changed, lhd) {
+                                self.stale.retain(|x| x.0 != s.id);
+                                self.stale.push((s.id, lhd));
+                            }
+                        }
+                    }
                     for s in &stations {
                         match self.stations.iter_mut().find(|(id, _)| *id == s.id) {
                             Some(e) => e.1 = s.world_from_station,
@@ -320,6 +357,12 @@ impl Tracker {
                         line += &format!(" {} at ({:.3}, {:.3}, {:.3}) rms {:.0} urad;", s.id, p.x, p.y, p.z, s.rms * 1e6);
                     }
                     log(&line);
+                }
+                Event::StationDropped { id, why } => {
+                    self.stations.retain(|x| x.0 != id);
+                    self.stale.retain(|x| x.0 != id);
+                    self.status.stations = self.stations.len() as u8;
+                    log(&format!("lh: station {} dropped ({:?})", id, why));
                 }
                 Event::StationSeen { slot, info, .. } => {
                     log(&format!("lh: station {} in slot {} (mode {})", info.id, slot, info.mode))
@@ -351,6 +394,8 @@ impl Tracker {
         s.starts = self.health.starts;
         s.losses = self.health.losses;
         s.coasts = self.health.coasts;
+        s.ms_by_health = self.health.ms_by_health;
+        s.health_changes = self.health.changes;
     }
 }
 
@@ -493,6 +538,47 @@ pub extern "C" fn lh_clock(us: i64) {
     t.trigger_us = us;
     t.push(Input::Clock { dev, time: raw });
     t.timing_counters();
+    if us - t.forget_check_us >= 1_000_000 {
+        t.forget_check_us = us;
+        t.forget_unsent(us);
+    }
+}
+
+/// lhd re-sends its stations every second. While it does (some station within LHD_ALIVE),
+/// one it hasn't sent for FORGET_AFTER is no longer in its world: forget it. lhd gone
+/// altogether forgets nothing (the P4 keeps tracking in the last world it had).
+const LHD_ALIVE_US: i64 = 3_000_000;
+const FORGET_AFTER_US: i64 = 6_000_000;
+
+impl Tracker {
+    fn forget_unsent(&mut self, now: i64) {
+        if !self.sent_us.iter().any(|x| now - x.1 < LHD_ALIVE_US) {
+            return;
+        }
+        let gone: Vec<u32> = self.sent_us.iter().filter(|x| now - x.1 >= FORGET_AFTER_US).map(|x| x.0).collect();
+        for id in gone {
+            self.sent_us.retain(|x| x.0 != id);
+            log(&format!("lh: lhd no longer sends station {}: forgetting it", id));
+            self.push(Input::ForgetStation { id });
+        }
+    }
+}
+
+/// An lhd pose within this of the one adopted is a refinement of the same world (m, rad):
+/// adopted without restarting the track.
+const REFINE_POS_M: lh_kernel::Real = 0.10;
+const REFINE_ROT_RAD: lh_kernel::Real = 3.0 * core::f32::consts::PI as lh_kernel::Real / 180.0;
+
+/// Two poses within `pos` (m) and `rot` (rad) of each other.
+fn same_pose(a: &Pose, b: &Pose, pos: lh_kernel::Real, rot: lh_kernel::Real) -> bool {
+    a.pos.sub(b.pos).norm() < pos && rot_angle(a.rot, b.rot) < rot
+}
+
+/// Rotation between two orientations (rad).
+fn rot_angle(a: Quat, b: Quat) -> lh_kernel::Real {
+    use lh_kernel::math::{atan2, fabs, sqrt};
+    let d = a.conj().mul(b);
+    2.0 * atan2(sqrt(d.x * d.x + d.y * d.y + d.z * d.z), fabs(d.w))
 }
 
 /// Stream sweeps into the filter (1, the default) or send each whole (0: at the next sync,
@@ -533,6 +619,23 @@ pub unsafe extern "C" fn lh_station_prior(id: u32, p: *const f32) -> i32 {
         pos: Vec3::new(v[0] as _, v[1] as _, v[2] as _),
         rot: Quat::new(v[3] as _, v[4] as _, v[5] as _, v[6] as _).normalized(),
     };
+    let now = p4_now_us();
+    match t.sent_us.iter_mut().find(|x| x.0 == id) {
+        Some(x) => x.1 = now,
+        None => t.sent_us.push((id, now)),
+    }
+    match t.last_sent.iter_mut().find(|x| x.0 == id) {
+        Some(x) => x.1 = pose,
+        None => t.last_sent.push((id, pose)),
+    }
+    // Placed here since (levelled, or solved again after it moved): lhd's pose from before is
+    // stale until lhd sends a different one (it re-solved the station itself).
+    if let Some(&(_, old)) = t.stale.iter().find(|x| x.0 == id) {
+        if same_pose(&pose, &old, 0.05, 1.0f32.to_radians() as _) {
+            return 0;
+        }
+        t.stale.retain(|x| x.0 != id);
+    }
     if let Some((_, cur)) = t.stations.iter().find(|(sid, _)| *sid == id) {
         let d = cur.pos.sub(pose.pos);
         let dq = cur.rot.conj().mul(pose.rot);
@@ -548,17 +651,26 @@ pub unsafe extern "C" fn lh_station_prior(id: u32, p: *const f32) -> i32 {
     for i in 0..6 {
         cov[(i, i)] = 4e-6;
     }
+    // lhd refines its stations as still scenes come in (a centimetre or so each time): the
+    // same world, so the tracker keeps its track on the refined pose. Only a station that is
+    // new here, or one that moved far (lhd solved a new world), restarts it.
+    let refinement = t.stations.iter().find(|(sid, _)| *sid == id).map_or(false, |(_, cur)| {
+        cur.pos.sub(pose.pos).norm() < REFINE_POS_M && rot_angle(cur.rot, pose.rot) < REFINE_ROT_RAD
+    });
     t.kernel.push(Input::StationPrior { id, world_from_station: pose, cov, cal: None }, &mut t.events);
     match t.stations.iter_mut().find(|(sid, _)| *sid == id) {
         Some(e) => e.1 = pose,
         None => t.stations.push((id, pose)),
     }
     t.status.stations = t.stations.len() as u8;
-    // The tracker's filter state is in the old world: start it again in the new one.
-    t.kernel.push(Input::DeviceRemoved { dev }, &mut t.events);
-    if let Some(d) = t.dec.as_ref() {
-        t.kernel.push(d.added(), &mut t.events);
+    if refinement {
+        log(&format!("lh: station {} refined by lhd to ({:.3}, {:.3}, {:.3})", id, v[0], v[1], v[2]));
+        t.drain_events();
+        return 1;
     }
+    // The tracker's filter state is in the old world: start its track again in the new one,
+    // keeping its sweep-timing lock and station slots (a device reset waited ~6 s for OOTX).
+    t.kernel.push(Input::ResetTrack { dev }, &mut t.events);
     t.status.tracking = 0;
     t.health.lost();
     log(&format!("lh: adopted station {} at ({:.3}, {:.3}, {:.3}) from lhd", id, v[0], v[1], v[2]));

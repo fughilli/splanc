@@ -147,7 +147,10 @@ void on_frame(const lk_header &h, const uint8_t *p) {
       netstack_osc_send(p, h.len);  // the P4's own OSC out (e.g. the tracker's poses)
       return;
     case LK_LOG:
-      printf("[p4] %.*s", (int)h.len, (const char *)p);
+      // The P4's console, to a subscriber on udp/9001 if any. Not printed here: the P4
+      // has its own UART console, and a console write with no host reading can block this
+      // (network) task.
+      netstack_log_send(p, h.len);
       return;
     default:
       return;

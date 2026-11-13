@@ -39,6 +39,18 @@ extern "C" void p4_log(const uint8_t* msg, size_t len);
 extern "C" int64_t p4_now_us();   // esp_timer_get_time()
 extern "C" uint32_t p4_cycles();  // the CPU cycle counter (profiling)
 
+// Every feature exchange since the device was opened (the handshake: config and
+// calibration reads), kept for a recording started later (tracker_service_record).
+struct TrackerFeature {
+  int64_t us;
+  int16_t rtn;
+  uint8_t set;  // 0 GET, 1 SET
+  uint8_t len;
+  uint8_t data[72];
+};
+size_t tracker_feature_count();
+const TrackerFeature* tracker_feature(size_t i);
+
 // LH_DUMP builds (esp32p4_tracker_dump): every feature exchange and input
 // report as a console line, for tools/p4_dump_to_rec.py.
 //   F <GET|SET> <us> <rtn> <hex>

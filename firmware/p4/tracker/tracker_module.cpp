@@ -264,6 +264,8 @@ bool on_osc(const uint8_t *data, size_t len) {
     taskEXIT_CRITICAL(&g_mount_mux);
     save_mount();
     lm_module_log("[tracker] mount cleared\n");
+  } else if (strcmp(o.addr, "/lh/record") == 0) {
+    tracker_service_record();  // (re)starts or extends the raw recording (tracker_service.h)
   } else if (strcmp(o.addr, "/lh/stream") == 0) {
     uint32_t w;
     if (osc_words(o, "f", &w, 1)) {
@@ -431,6 +433,14 @@ void status() {
                 (unsigned)(lag.last_us / 1000), (unsigned)(lag.max_us / 1000), (unsigned)lag.depth_max,
                 (unsigned)lag.dropped, (unsigned)lag.skipped);
   g_poll_gap_max_us = g_send_gap_max_us = 0;
+  // Running totals since boot (device time per health state, changes, locks/losses/coasts):
+  // each line carries the whole history, so lines lost on the way (the console over Wi-Fi
+  // loses some) lose nothing. Differences between two lines give any interval.
+  lm_module_log("[health] totals: locked %.1f s, coasting %.1f s, uncertain %.1f s, acquiring %.1f s, lost %.1f s; "
+                "%u changes; locks %u, lost %u, coasts %u\n",
+                p.ms_by_health[4] / 1e3f, p.ms_by_health[3] / 1e3f, p.ms_by_health[1] / 1e3f,
+                p.ms_by_health[2] / 1e3f, p.ms_by_health[0] / 1e3f, (unsigned)p.health_changes, (unsigned)p.starts,
+                (unsigned)p.losses, (unsigned)p.coasts);
   // Photon to photon over the window (ms, mean/max), per stage of the frames that lit.
   Latency l;
   taskENTER_CRITICAL(&g_lat_mux);
@@ -505,6 +515,14 @@ void poll() {
     lm_module_osc_send(buf, osc_floats(buf, "/lh/fixture_pose", pose, 16));
   }
 }
+
+}  // namespace
+
+// The tracker core's lines (lh_p4.rs, via usb_tracker.cpp's p4_log) into the player's
+// console, so they reach the console over Wi-Fi (udp/9001) too, in order with the rest.
+extern "C" void lm_tracker_console(const char *msg, size_t len) { lm_module_log("%.*s\n", (int)len, msg); }
+
+namespace {
 
 const LmPlayerModule kTrackerModule = {"vive-tracker", begin, nullptr, on_osc, status, poll, frame};
 LM_PLAYER_MODULE(kTrackerModule);

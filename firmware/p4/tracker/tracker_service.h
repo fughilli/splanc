@@ -36,6 +36,8 @@ struct TrackerPose {
   bool speculative;               // the newest pose is dead reckoning
   float pos_sigma;                // position uncertainty of the pose (m)
   uint32_t starts, losses, coasts;  // locks gained (fresh solves) and lost; darks coasted
+  uint32_t ms_by_health[5];         // device time per LH_* health state (ms, running totals)
+  uint32_t health_changes;          // health state changes (running)
 };
 
 // Starts the USB host (its tasks at `usb_prio`, core 0) and the tracker task, pinned to
@@ -57,6 +59,11 @@ void tracker_service_profile(LhProfile* out);
 // Stream sweeps into the filter as their reports come (the default), or whole (any task;
 // the tracker task applies it).
 void tracker_service_stream(bool on);
+// Raw recording over Wi-Fi: while refreshed (every few seconds; it stops 15 s after the
+// last), every input report goes out as binary batches on the console channel
+// (lm_dump_send: udp/9001 to the log subscriber), after the feature exchanges kept since
+// the device was opened. tools/p4_wifi_rec.py turns them into an lhd .rec.gz.
+void tracker_service_record();
 // Adopt a base station's pose from lhd (any task): queued for the tracker task, which
 // hands it to the kernel (lh_station_prior). `p` = x, y, z, qw, qx, qy, qz.
 void tracker_service_adopt(uint32_t id, const float p[7]);
