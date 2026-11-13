@@ -4,12 +4,162 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include <freertos/task.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "firmware/p4/tracker/lh_p4.h"
 #include "firmware/p4/tracker/usb_tracker.h"
+
+
+// ---------------------------------------------------------------- raw recording
+//
+// Batches (one UDP datagram each, <= kBatchMax):
+//   "\0LHD" | seq u32 LE | records...
+//   'F' set u8 | rtn i16 LE | len u8 | us i64 LE | data[len]     a feature exchange
+//   'R' iface u8 | len u8 | us i64 LE | data[len]                 an input report
+//   'D' count u32 LE                                              records dropped here
+// The leading NUL tells them from console text on the same channel; seq shows UDP loss.
+//
+// The tracker task only copies records into a ring (never blocks: a full ring drops the
+// record and counts it); a low-priority sender task packs the batches and sends them,
+// paced, so recording neither slows the tracker nor bursts the radio.
+extern "C" bool lm_dump_send(const uint8_t *data, size_t len);  // link_transport.cpp
+
+namespace {
+constexpr size_t kBatchMax = 1400;
+constexpr size_t kRingCap = 128 * 1024;  // ~2 s of reports at full rate
+constexpr int64_t kRecordHoldUs = 15 * 1000 * 1000;
+constexpr TickType_t kPace = pdMS_TO_TICKS(4);      // at most one datagram per 4 ms
+constexpr TickType_t kMaxWait = pdMS_TO_TICKS(50);  // a part-filled batch waits at most this
+volatile int64_t g_record_until_us = 0;  // set by tracker_service_record (any task)
+bool g_recording = false;                // tracker task
+uint8_t *g_ring = nullptr;               // PSRAM
+volatile size_t g_ring_head = 0, g_ring_tail = 0;  // producer: tracker task; consumer: sender
+volatile uint32_t g_rec_dropped = 0;
+uint32_t g_rec_sent = 0, g_rec_unsent = 0, g_seq = 0;
+
+size_t ring_used() { return (g_ring_head - g_ring_tail) % kRingCap; }
+
+// Tracker task: one whole record (its first byte is its type; lengths follow the format).
+void rec_put(const uint8_t *rec, size_t n) {
+  if (!g_ring || n + 1 >= kRingCap - ring_used()) {
+    g_rec_dropped = g_rec_dropped + 1;
+    return;
+  }
+  size_t h = g_ring_head;
+  for (size_t i = 0; i < n; i++) g_ring[(h + i) % kRingCap] = rec[i];
+  g_ring_head = (h + n) % kRingCap;
+}
+
+// Length of the record at ring offset `t` (its header is in the ring).
+size_t rec_len_at(size_t t) {
+  const uint8_t k = g_ring[t % kRingCap];
+  if (k == 'R') return 11 + g_ring[(t + 2) % kRingCap];
+  if (k == 'F') return 13 + g_ring[(t + 4) % kRingCap];
+  return 5;  // 'D'
+}
+
+void rec_sender(void *) {
+  static uint8_t batch[kBatchMax];
+  uint32_t reported_drops = 0;
+  TickType_t last = xTaskGetTickCount();
+  for (;;) {
+    vTaskDelay(kPace);
+    // A full batch, or what there is after kMaxWait: ~30 datagrams/s at the full report
+    // rate, not one per tick.
+    if (ring_used() == 0) continue;
+    if (ring_used() < kBatchMax - 16 && xTaskGetTickCount() - last < kMaxWait) continue;
+    last = xTaskGetTickCount();
+    memcpy(batch, "\0LHD", 4);
+    memcpy(batch + 4, &g_seq, 4);
+    size_t n = 8;
+    const uint32_t drops = g_rec_dropped;
+    if (drops != reported_drops) {
+      batch[n] = 'D';
+      memcpy(batch + n + 1, &drops, 4);
+      n += 5;
+      reported_drops = drops;
+    }
+    while (ring_used() > 0) {
+      const size_t t = g_ring_tail, len = rec_len_at(t);
+      if (n + len > kBatchMax) break;
+      for (size_t i = 0; i < len; i++) batch[n + i] = g_ring[(t + i) % kRingCap];
+      n += len;
+      g_ring_tail = (t + len) % kRingCap;
+    }
+    if (lm_dump_send(batch, n)) {
+      g_rec_sent++;
+    } else {
+      g_rec_unsent++;
+    }
+    g_seq++;
+  }
+}
+
+void rec_report(const TrackerReport &r) {
+  uint8_t b[11 + 64];
+  b[0] = 'R';
+  b[1] = r.iface;
+  b[2] = r.len;
+  memcpy(b + 3, &r.us, 8);
+  memcpy(b + 11, r.data, r.len);
+  rec_put(b, 11 + r.len);
+}
+
+void rec_log(const char *fmt, unsigned a, unsigned b, unsigned c) {
+  char m[128];
+  const int n = snprintf(m, sizeof m, fmt, a, b, c);
+  p4_log(reinterpret_cast<const uint8_t *>(m), n > 0 ? (size_t)n : 0);
+}
+
+// Tracker task: start / stop as asked.
+void rec_features() {
+  for (size_t i = 0; i < tracker_feature_count(); i++) {
+    const TrackerFeature *f = tracker_feature(i);
+    uint8_t b[13 + 72];
+    b[0] = 'F';
+    b[1] = f->set;
+    memcpy(b + 2, &f->rtn, 2);
+    b[4] = f->len;
+    memcpy(b + 5, &f->us, 8);
+    memcpy(b + 13, f->data, f->len);
+    rec_put(b, 13 + f->len);
+  }
+}
+
+void rec_tick(int64_t now) {
+  const bool want = now < g_record_until_us;
+  // The feature exchanges again every 10 s: a recorder that lost them (UDP) or joined
+  // late still gets the handshake the replay needs (it keeps one copy).
+  static int64_t features_us = 0;
+  if (want && g_recording && now - features_us >= 10 * 1000 * 1000) {
+    features_us = now;
+    rec_features();
+  }
+  if (want && !g_recording) {
+    features_us = now;
+    if (!g_ring) {
+      g_ring = static_cast<uint8_t *>(heap_caps_malloc(kRingCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+      if (!g_ring) return;
+      xTaskCreatePinnedToCore(rec_sender, "lhrec", 3072, nullptr, 2, nullptr, 1);
+    }
+    g_recording = true;
+    g_rec_sent = g_rec_unsent = 0;
+    g_rec_dropped = 0;
+    rec_features();
+    rec_log("[tracker] recording to the log subscriber (%u feature exchanges, ring %u KB, pace %u ms)", (unsigned)tracker_feature_count(), (unsigned)(kRingCap / 1024), 4);
+  } else if (!want && g_recording) {
+    g_recording = false;
+    rec_log("[tracker] recording stopped: %u batches sent, %u not, %u records dropped (ring full)", g_rec_sent,
+            g_rec_unsent, g_rec_dropped);
+  }
+}
+}  // namespace
+
+void tracker_service_record() { g_record_until_us = esp_timer_get_time() + kRecordHoldUs; }
 
 namespace {
 
@@ -23,9 +173,14 @@ portMUX_TYPE g_mux = portMUX_INITIALIZER_UNLOCKED;
 TrackerPose g_pose = {};
 // How far behind the tracker task runs: a report's age when the kernel gets it.
 uint32_t g_lag_us = 0, g_lag_max_us = 0, g_depth_max = 0, g_skipped = 0;
-// A backlog beyond this many reports (~1 ms each) is stale: the oldest are dropped
-// down to kBacklogKeep, so the kernel tracks now rather than seconds ago.
-constexpr UBaseType_t kBacklogMax = 48, kBacklogKeep = 8;
+// While not tracking, a backlog beyond this many reports (~1 ms each) is stale: the oldest
+// are dropped down to kBacklogKeep, so a failed pose bootstrap (~0.6 s of CPU here) doesn't
+// leave the next one further behind. While tracking it is worked off instead: the backlog
+// after a successful bootstrap is the light the new track needs (0.6 s costs ~0.1 s to
+// catch up). Skipping it handed the fresh track a hole: it coasted across it and was lost
+// at once (Drifted), or the sweep timing lost its lock (Silence), every attempt; ~15 s
+// without a lock on PixieLamp2 (2026-11-13). Only a nearly full queue is cut then.
+constexpr UBaseType_t kBacklogMax = 48, kBacklogKeep = 8, kBacklogTrackingMax = 900;
 // The profile, taken from lh_profile once a second on this task and summed here until
 // tracker_service_profile collects it.
 LhProfile g_profile = {};
@@ -116,7 +271,7 @@ void task(void*) {
     // Wait for the first report, then take only what is queued (one arrives every ~1 ms),
     // at most a batch: publish between batches, or a backlog (after anything slow on this
     // task) is worked off with no pose out until the queue is empty.
-    if (uxQueueMessagesWaiting(g_reports) > kBacklogMax) {
+    if (uxQueueMessagesWaiting(g_reports) > (high ? kBacklogTrackingMax : kBacklogMax)) {
       uint32_t k = 0;
       while (uxQueueMessagesWaiting(g_reports) > kBacklogKeep && xQueueReceive(g_reports, &r, 0) == pdTRUE) k++;
       taskENTER_CRITICAL(&g_mux);
@@ -135,10 +290,12 @@ void task(void*) {
       if (lag > g_lag_max_us) g_lag_max_us = lag;
       if (depth > g_depth_max) g_depth_max = depth;
       taskEXIT_CRITICAL(&g_mux);
+      if (g_recording) rec_report(r);
       lh_report(r.iface, r.data, r.len, r.us);
       any = true;
       n++;
     }
+    rec_tick(esp_timer_get_time());
     if (configured) lh_clock(esp_timer_get_time());
     if (configured || any || !open) {
       LhStatus s;

@@ -264,6 +264,8 @@ bool on_osc(const uint8_t *data, size_t len) {
     taskEXIT_CRITICAL(&g_mount_mux);
     save_mount();
     lm_module_log("[tracker] mount cleared\n");
+  } else if (strcmp(o.addr, "/lh/record") == 0) {
+    tracker_service_record();  // (re)starts or extends the raw recording (tracker_service.h)
   } else if (strcmp(o.addr, "/lh/stream") == 0) {
     uint32_t w;
     if (osc_words(o, "f", &w, 1)) {

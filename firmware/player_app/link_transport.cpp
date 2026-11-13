@@ -345,6 +345,14 @@ extern "C" size_t link_log_write(const uint8_t *data, size_t len) {
   return len;
 }
 
+// Binary telemetry (the tracker's raw recording) on the console channel: one LOG frame,
+// which the C6 sends to the log subscriber as one datagram. Not on the UART.
+extern "C" bool lm_dump_send(const uint8_t *data, size_t len) {
+  if (!g_up || len > LK_MTU) return false;
+  send_msg(LK_LOG, 0, data, len);
+  return true;
+}
+
 // The P4 has no network of its own: OSC out goes to the front end (or the host bridge),
 // which sends it to whoever last sent OSC in.
 bool netstack_osc_send(const uint8_t *data, size_t len) {
