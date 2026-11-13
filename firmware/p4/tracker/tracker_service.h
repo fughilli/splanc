@@ -57,6 +57,11 @@ void tracker_service_profile(LhProfile* out);
 // Stream sweeps into the filter as their reports come (the default), or whole (any task;
 // the tracker task applies it).
 void tracker_service_stream(bool on);
+// Raw recording over Wi-Fi: while refreshed (every few seconds; it stops 15 s after the
+// last), every input report goes out as binary batches on the console channel
+// (lm_dump_send: udp/9001 to the log subscriber), after the feature exchanges kept since
+// the device was opened. tools/p4_wifi_rec.py turns them into an lhd .rec.gz.
+void tracker_service_record();
 // Adopt a base station's pose from lhd (any task): queued for the tracker task, which
 // hands it to the kernel (lh_station_prior). `p` = x, y, z, qw, qx, qy, qz.
 void tracker_service_adopt(uint32_t id, const float p[7]);
