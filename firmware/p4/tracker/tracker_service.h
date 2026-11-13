@@ -36,6 +36,8 @@ struct TrackerPose {
   bool speculative;               // the newest pose is dead reckoning
   float pos_sigma;                // position uncertainty of the pose (m)
   uint32_t starts, losses, coasts;  // locks gained (fresh solves) and lost; darks coasted
+  uint32_t ms_by_health[5];         // device time per LH_* health state (ms, running totals)
+  uint32_t health_changes;          // health state changes (running)
 };
 
 // Starts the USB host (its tasks at `usb_prio`, core 0) and the tracker task, pinned to
