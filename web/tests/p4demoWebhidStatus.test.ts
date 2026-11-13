@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createWebHidTracking, describeHidDevice, noDeviceChosenDetail } from "../src/p4demo/lh/webhid";
+import { createWebHidTracking, describeHidDevice, noDeviceChosenDetail, openFailedDetail } from "../src/p4demo/lh/webhid";
 
 test("an empty picker on Android names the system setting and the list-everything switch", () => {
   const detail = noDeviceChosenDetail("Mozilla/5.0 (Linux; Android 16; Pixel 9) Chrome/154.0.0.0 Mobile Safari/537.36");
@@ -36,4 +36,10 @@ test("the list-everything switch asks with no filters and names a picked non-Viv
   assert.deepEqual(asked, []);
   assert.equal(detail, "not a Vive device: USB Mouse (046d:c077)");
   assert.equal(describeHidDevice({ vendorId: 0x28de, productId: 0x2101 }), "unnamed (28de:2101)");
+});
+
+test("a failed open says another program may hold the device", () => {
+  const detail = openFailedDetail("Watchman Dongle", new Error("Failed to open the device."));
+  assert.match(detail, /^opening Watchman Dongle: Failed to open the device\. /);
+  assert.match(detail, /Another program may have it open/);
 });

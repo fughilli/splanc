@@ -92,6 +92,14 @@ export function noDeviceChosenDetail(
   );
 }
 
+/** Why open() failed, plus the usual cause: a HID device opens for one program at a time. */
+export function openFailedDetail(name: string | undefined, e: unknown): string {
+  return (
+    `opening ${name || "device"}: ${e instanceof Error ? e.message : String(e)} ` +
+    "Another program may have it open (SteamVR, a desktop tracking app): quit it, replug, and try again"
+  );
+}
+
 /** "Name (28de:2101)" for a status line. */
 export function describeHidDevice(d: { vendorId: number; productId: number; productName?: string }): string {
   const hex = (n: number) => n.toString(16).padStart(4, "0");
@@ -250,7 +258,7 @@ class WebHidTracking implements LhTracking {
       try {
         for (const d of devices) if (!d.opened) await d.open();
       } catch (e) {
-        this.setStatus({ state: "disconnected", detail: `opening ${first.productName ?? "device"}: ${e instanceof Error ? e.message : String(e)}` });
+        this.setStatus({ state: "disconnected", detail: openFailedDetail(first.productName, e) });
         continue;
       }
       const pid = first.productId;
