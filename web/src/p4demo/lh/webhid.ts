@@ -170,6 +170,7 @@ class WebHidTracking implements LhTracking {
   private readonly poseCbs = new Set<(p: LhPose) => void>();
   private readonly stationCbs = new Set<(s: LhStation[]) => void>();
   private readonly statusCbs = new Set<(s: LhStatus) => void>();
+  private readonly buttonCbs = new Set<(serial: string, mask: number) => void>();
 
   private readonly onDisconnect = (ev: { device: HidDeviceLike }) => {
     const g = this.groups.find((x) => x.devices.includes(ev.device));
@@ -285,6 +286,11 @@ class WebHidTracking implements LhTracking {
     this.statusCbs.add(cb);
     cb(this.status);
     return () => this.statusCbs.delete(cb);
+  }
+
+  onButtons(cb: (serial: string, mask: number) => void): () => void {
+    this.buttonCbs.add(cb);
+    return () => this.buttonCbs.delete(cb);
   }
 
   stations(): LhStation[] {
@@ -515,6 +521,9 @@ class WebHidTracking implements LhTracking {
           for (const cb of this.poseCbs) cb(pose);
           break;
         }
+        case "buttons":
+          for (const cb of this.buttonCbs) cb(e.serial as string, Number(e.buttons) >>> 0);
+          break;
         case "health":
           this.health.set(e.serial as string, e.state as number);
           break;

@@ -11,25 +11,31 @@
  *   sphere   tracker_demo_pose: /pick -1, /shape 1, /sphere c r   (a sphere round the tip)
  *   outline  tracker_demo_pose: /pick -2 (the faint outline; idle)
  *   spots    hot_spots_pose:    /spot0..3, /color0..3, /radius, /range
- * `follow` off holds the shape where it is (the stylus can go away).
+ *   flashlight  flashlight_pose: /origin, /dir, /width (rad), /color, /decay,
+ *            /stylus_ok, /stylus_seq, /stale_after (a port of flashlight.py; see
+ *            flashlight.ts)
+ * `follow` off holds the shape where it is (the stylus can go away); the stylus
+ * button then grabs and carries it (grab.ts).
  */
 
 import type { LhStation, Vec3 } from "./lh/types";
 import { axisWorld, planeFromPointNormal, tipWorld, type Pose } from "./frames";
 import { messageTyped } from "./osc";
 import { PARAM_KEEPALIVE_S } from "./streamer";
+import { beamColor, decaySent, initialBeam, STALE_S, type BeamState } from "./flashlight";
 
-export type Mode = "plane" | "sphere" | "outline" | "spots";
-export type EffectKey = "tracker_demo" | "hot_spots";
+export type Mode = "plane" | "sphere" | "outline" | "spots" | "flashlight";
+export type EffectKey = "tracker_demo" | "hot_spots" | "flashlight";
 
 /** The effect ids the page deploys under (stable, so a redeploy replaces in place). */
 export const EFFECT_IDS: Record<EffectKey, string> = {
   tracker_demo: "p4demo-tracker",
   hot_spots: "p4demo-hot-spots",
+  flashlight: "p4demo-flashlight",
 };
 
 export function effectFor(mode: Mode): EffectKey {
-  return mode === "spots" ? "hot_spots" : "tracker_demo";
+  return mode === "spots" ? "hot_spots" : mode === "flashlight" ? "flashlight" : "tracker_demo";
 }
 
 /** tracker_demo_pose's /pick: -1 shows the live shape, -2 the faint outline. */
@@ -66,6 +72,8 @@ export interface DemoState {
   spotRadius: number;
   /** hot spots: a spot starts to show this far away (m). */
   spotRange: number;
+  /** The flashlight beam (flashlight mode). */
+  beam: BeamState;
 }
 
 export function initialState(): DemoState {
@@ -81,6 +89,7 @@ export function initialState(): DemoState {
     spots: DEFAULT_SPOT_COLORS.map((c) => ({ pos: null, color: [...c] as Vec3 })),
     spotRadius: 0.05,
     spotRange: 0.4,
+    beam: initialBeam(),
   };
 }
 
@@ -106,6 +115,7 @@ export const ALL_ADDRESSES = [
   ...Array.from({ length: SPOT_COUNT }, (_, i) => `/spot${i}`),
   ...Array.from({ length: SPOT_COUNT }, (_, i) => `/color${i}`),
   "/radius", "/range",
+  "/origin", "/dir", "/color", "/decay", "/stylus_ok", "/stylus_seq", "/stale_after",
 ];
 
 /** What the streamer should hold for this state (app.py p4_look + send_plane +
@@ -120,6 +130,19 @@ export function oscFor(s: DemoState): Map<string, OscValue> {
     });
     out.set("/radius", { values: [s.spotRadius], keepalive: k });
     out.set("/range", { values: [s.spotRange], keepalive: k });
+    return out;
+  }
+  if (s.mode === "flashlight") {
+    const b = s.beam;
+    out.set("/origin", { values: [...b.origin] });
+    out.set("/dir", { values: [...b.dir] });
+    out.set("/stylus_seq", { values: [b.seq] });
+    out.set("/stylus_ok", { values: [b.ok ? 1 : 0] });
+    out.set("/width", { values: [b.width], keepalive: k });
+    out.set("/color", { values: [...beamColor(b)], keepalive: k });
+    out.set("/decay", { values: [decaySent(b)], keepalive: k });
+    // The effect's own heartbeat timeout, the same threshold as the page's.
+    out.set("/stale_after", { values: [STALE_S], keepalive: k });
     return out;
   }
   if (s.mode === "outline") {

@@ -7,15 +7,19 @@
  *                           outline), /shape (0 plane, 1 sphere), /plane, /sphere,
  *                           /width, /halo, /glow (world frame)
  *   hot_spots_pose.glsl     the hot-and-cold game: spot0..3, color0..3, range, radius
- *   plane_slice_pose.glsl, sphere_shell_pose.glsl, flashlight_pose.glsl: kept with them
- *                           for reference / later modes; the page doesn't deploy them yet.
+ *   flashlight_pose.glsl    the stylus as a flashlight: /origin, /dir, /width, /color,
+ *                           /decay, /stylus_ok, /stylus_seq, /stale_after
+ *   plane_slice_pose.glsl, sphere_shell_pose.glsl: kept with them for reference; the
+ *                           page doesn't deploy them.
  */
 
 import trackerDemo from "./tracker_demo_pose.glsl?raw";
 import hotSpots from "./hot_spots_pose.glsl?raw";
+import flashlight from "./flashlight_pose.glsl?raw";
 import type { EffectKey } from "../demo";
 
 export const EFFECT_SOURCES: Record<EffectKey, string> = {
   tracker_demo: trackerDemo,
   hot_spots: hotSpots,
+  flashlight,
 };

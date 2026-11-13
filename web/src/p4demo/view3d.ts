@@ -4,8 +4,9 @@
  *
  * One finger drags to orbit, two fingers pinch to zoom (wheel on desktop), a double
  * tap re-centres on the lamp and stylus. Draws the floor grid, the base stations,
- * the stylus and its tip, the lamp's tracker (from /lh/pose), the plane or sphere,
- * and the hot spots.
+ * every tracked device (the stylus and its tip, any other tracker the dongle hears,
+ * and the lamp's own tracker from /lh/pose), the plane or sphere, the hot spots and
+ * the flashlight beam. An object the stylus can grab is ringed; one in hand is drawn bold.
  */
 
 import type { LhStation, Vec3 } from "./lh/types";
@@ -26,6 +27,13 @@ export interface Scene {
   spots: Spot[];
   spotRadius: number;
   pivotPoint: Vec3 | null;
+  /** Trackers other than the stylus that the dongle hears. */
+  others: { serial: string; pose: Pose; ok: boolean; fresh: boolean }[];
+  /** The flashlight beam (flashlight mode): apex, axis, half-angle (rad). */
+  beam: { origin: Vec3; dir: Vec3; width: number; color: Vec3; live: boolean } | null;
+  /** What the stylus holds, and what it could grab now ("plane", "sphere", "spot<i>"). */
+  held: string | null;
+  inReach: string | null;
 }
 
 interface Cam {
@@ -75,16 +83,25 @@ export class View3D {
     this.dirty = true;
   }
 
+  /** Frame the whole workspace: the base stations, the lamp and every tracked device. */
   private autoTarget(): void {
     const s = this.scene;
     if (!s) return;
-    const pts: Vec3[] = [];
+    const pts: Vec3[] = s.stations.map((st) => st.pos);
     if (s.lamp) pts.push(s.lamp.pose.t);
     if (s.tip) pts.push(s.tip);
+    for (const o of s.others) pts.push(o.pose.t);
     if (pts.length === 0) return;
-    const c = scale(pts.reduce(add, [0, 0, 0] as Vec3), 1 / pts.length);
+    const lo = pts.reduce((a, p) => [Math.min(a[0], p[0]), Math.min(a[1], p[1]), Math.min(a[2], p[2])] as Vec3);
+    const hi = pts.reduce((a, p) => [Math.max(a[0], p[0]), Math.max(a[1], p[1]), Math.max(a[2], p[2])] as Vec3);
+    const c = scale(add(lo, hi), 0.5);
+    const radius = Math.max(0.4, ...pts.map((p) => Math.hypot(p[0] - c[0], p[1] - c[1], p[2] - c[2])));
+    // Far enough that the bounding sphere fits the narrower side of the view.
+    const half = Math.atan((0.5 * Math.min(this.w, this.h)) / this.basis().fl);
+    const dist = Math.min(12, Math.max(1, (radius * 1.1) / Math.sin(half)));
     // Ease towards it so the view doesn't jitter with the stylus.
     this.cam.target = add(this.cam.target, scale(sub(c, this.cam.target), 0.05));
+    this.cam.dist += (dist - this.cam.dist) * 0.05;
   }
 
   private resize(): void {
@@ -273,9 +290,25 @@ export class View3D {
       dotAt(o, 4, "#a0aaff", `LH ${st.id}`);
     }
 
-    // The shape.
+    // The shape. In hand: bold; within the stylus's reach: a ring at the tip.
     const glow = rgbToHex(s.glow);
-    if (s.mode === "plane") {
+    const bold = (id: string): number => (s.held === id ? 3 : 1.5);
+    if (s.mode === "flashlight" && s.beam) {
+      const b = s.beam;
+      const col = b.live ? rgbToHex(b.color) : "#555566";
+      const d = normalize(b.dir);
+      const a = normalize(Math.abs(d[2]) < 0.9 ? cross(d, [0, 0, 1]) : cross(d, [1, 0, 0]));
+      const bb = cross(d, a);
+      const len = 0.6;
+      const end = add(b.origin, scale(d, len));
+      const r = len * Math.tan(Math.min(b.width, 1.2));
+      circle(end, a, bb, r, col, 1.5);
+      for (let i = 0; i < 8; i++) {
+        const t = (i / 8) * Math.PI * 2;
+        line(b.origin, add(end, add(scale(a, r * Math.cos(t)), scale(bb, r * Math.sin(t)))), `${col}88`);
+      }
+      line(b.origin, add(b.origin, scale(d, len * 1.6)), `${col}55`);
+    } else if (s.mode === "plane") {
       const n = normalize(s.plane.n);
       // Centre the drawn square where the plane meets the line from the lamp (or the
       // tip) along the normal.
@@ -288,19 +321,20 @@ export class View3D {
         [add(c, add(scale(a, h), scale(b, h))), add(c, add(scale(a, -h), scale(b, h))), add(c, add(scale(a, -h), scale(b, -h))), add(c, add(scale(a, h), scale(b, -h)))],
         glow,
         `${glow}33`,
-        1.5,
+        bold("plane"),
       );
       line(c, add(c, scale(n, 0.1)), glow, 2);
     } else if (s.mode === "sphere") {
       const c = s.sphere.c;
-      circle(c, [1, 0, 0], [0, 1, 0], s.sphere.r, glow, 1.5);
-      circle(c, [1, 0, 0], [0, 0, 1], s.sphere.r, glow, 1.5);
-      circle(c, [0, 1, 0], [0, 0, 1], s.sphere.r, glow, 1.5);
+      circle(c, [1, 0, 0], [0, 1, 0], s.sphere.r, glow, bold("sphere"));
+      circle(c, [1, 0, 0], [0, 0, 1], s.sphere.r, glow, bold("sphere"));
+      circle(c, [0, 1, 0], [0, 0, 1], s.sphere.r, glow, bold("sphere"));
+      dotAt(c, 2.5, glow);
     } else if (s.mode === "spots") {
       s.spots.forEach((sp, i) => {
         if (!sp.pos) return;
         const col = rgbToHex(sp.color);
-        circle(sp.pos, [1, 0, 0], [0, 1, 0], s.spotRadius, col, 1.5);
+        circle(sp.pos, [1, 0, 0], [0, 1, 0], s.spotRadius, col, bold(`spot${i}`));
         circle(sp.pos, [1, 0, 0], [0, 0, 1], s.spotRadius, col, 1);
         line(sp.pos, [sp.pos[0], sp.pos[1], 0], `${col}55`);
         dotAt(sp.pos, 5, col, `spot ${i + 1}`);
@@ -316,13 +350,31 @@ export class View3D {
       line(s.lamp.pose.t, [s.lamp.pose.t[0], s.lamp.pose.t[1], 0], "rgba(55,200,113,0.25)");
     }
 
+    // Other trackers the dongle hears.
+    for (const o of s.others) {
+      const live = o.fresh && o.ok;
+      axes(o.pose, 0.08, live ? 0.9 : 0.3);
+      dotAt(o.pose.t, 5, live ? "#c9a0ff" : "#555", o.serial.replace(/^LHR-/, ""));
+      line(o.pose.t, [o.pose.t[0], o.pose.t[1], 0], "rgba(201,160,255,0.2)");
+    }
+
     // The stylus: tracker origin -> tip, and the tip ball.
     if (s.stylus) {
       const col = s.stylusOk ? "#5ab0ff" : "#555";
       axes(s.stylus, 0.05, s.stylusOk ? 0.8 : 0.3);
       if (s.tip) {
         line(s.stylus.t, s.tip, col, 3);
-        dotAt(s.tip, s.hasTipCal ? 5 : 4, s.hasTipCal ? col : "#e3b341", s.hasTipCal ? undefined : "tip (uncalibrated)");
+        dotAt(s.tip, s.hasTipCal ? 5 : 4, s.hasTipCal ? col : "#e3b341", s.hasTipCal ? "stylus" : "stylus tip (uncalibrated)");
+        line(s.tip, [s.tip[0], s.tip[1], 0], "rgba(90,176,255,0.2)");
+        // A ring round the tip: solid while holding, thin while something is in reach.
+        const q = P(s.tip);
+        if (q && s.stylusOk && (s.held || s.inReach)) {
+          ctx.strokeStyle = s.held ? "#ffffff" : "rgba(255,255,255,0.6)";
+          ctx.lineWidth = s.held ? 2.5 : 1;
+          ctx.beginPath();
+          ctx.arc(q[0], q[1], s.held ? 10 : 12, 0, Math.PI * 2);
+          ctx.stroke();
+        }
       }
     }
     if (s.pivotPoint) dotAt(s.pivotPoint, 6, "#ff8a3c", "pivot");
