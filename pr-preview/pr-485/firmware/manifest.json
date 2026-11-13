@@ -1,0 +1,22 @@
+{
+  "revision": "4e4138e",
+  "builtAt": null,
+  "entries": [
+    {
+      "id": "esp32c6_netstack",
+      "label": "LED Mapper player \u2014 ESP32-C6 (netstack)",
+      "chip": "esp32c6",
+      "family": "esp",
+      "manifest": "flash.json"
+    },
+    {
+      "id": "esp32p4_tracker",
+      "label": "LED Mapper player \u2014 ESP32-P4 (tracker)",
+      "chip": "esp32p4",
+      "family": "esp",
+      "manifest": "flash.json"
+    }
+  ],
+  "version": "0.0.0-dev",
+  "commit": "4e4138e2db79be325a252075b09e017a408faf16"
+}
