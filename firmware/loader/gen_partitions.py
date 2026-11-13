@@ -5,7 +5,8 @@
 Same format as ESP-IDF's gen_esp32part.py (32-byte entries, magic 0xAA50, then the
 0xEBEB MD5 entry over the entries, 0xFF-padded to 0xC00), for the handful of
 types/subtypes this layout uses. Also checks the layout: 4 KiB alignment (64 KiB
-for apps), no overlap, inside 4 MiB, and after the 0x9000 table area. --header
+for apps), no overlap, inside the flash (4 MiB, or --flash-size), and after the 0x9000
+table area. --header
 emits the offsets/sizes for C++ (the loader's migration needs the OLD littlefs
 region, which is not in the new table).
 """
@@ -43,7 +44,7 @@ def parse(path):
     return rows
 
 
-def check(rows):
+def check(rows, flash_size=FLASH_SIZE):
     end = 0x9000
     for name, typ, sub, off, size, _ in sorted(rows, key=lambda r: r[3]):
         align = 0x10000 if typ == "app" else 0x1000
@@ -52,8 +53,11 @@ def check(rows):
         if off < end:
             sys.exit("gen_partitions: %s at 0x%x overlaps the previous partition" % (name, off))
         end = off + size
-        if end > FLASH_SIZE:
-            sys.exit("gen_partitions: %s ends at 0x%x, past 4 MiB" % (name, end))
+        if end > flash_size:
+            sys.exit(
+                "gen_partitions: %s ends at 0x%x, past the %d MiB flash"
+                % (name, end, flash_size >> 20)
+            )
         if len(name) > 15:
             sys.exit("gen_partitions: name %s too long" % name)
 
@@ -83,9 +87,10 @@ def main():
     ap.add_argument("--csv", required=True)
     ap.add_argument("--bin", required=True)
     ap.add_argument("--header")
+    ap.add_argument("--flash-size", type=lambda v: int(v, 0), default=FLASH_SIZE)
     a = ap.parse_args()
     rows = parse(a.csv)
-    check(rows)
+    check(rows, a.flash_size)
     open(a.bin, "wb").write(encode(rows))
     if a.header:
         with open(a.header, "w") as h:

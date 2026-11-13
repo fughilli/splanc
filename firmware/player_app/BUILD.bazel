@@ -117,8 +117,12 @@ rust_static_library(
     # LED cap SSOT (led_caps.bzl): ffi.rs FX_TOPO_CAP reads env!("LM_MAX_LEDS").
     rustc_env = led_cap_rustc_env(),
     # PERF_CPU_HZ: the P4's cycle counter runs at 400 MHz, the C6's and C3's at 160.
+    # lm_ota_inapp: the P4 takes its updates in the app (ota_p4.cpp; welcome "ota_inapp").
     rustc_flags = select({
-        "@embedded//platforms:is_esp32p4": ["--cfg=lm_cpu_400m"],
+        "@embedded//platforms:is_esp32p4": [
+            "--cfg=lm_cpu_400m",
+            "--cfg=lm_ota_inapp",
+        ],
         "//conditions:default": [],
     }),
     # esp32c3 is a build-only target (see //MODULE.bazel + firmware/netstack);
@@ -1249,8 +1253,8 @@ P4_PLAYER_MODULES = select({
 # persistence), with LM_LINK swapping its transport for link_transport.cpp: the player
 # protocol as link frames (//firmware/p4/link) over UART0, the board's USB serial bridge.
 # tools/p4_link_bridge.py serves ws:// on the host and plays the C6's part. Wi-Fi, BLE,
-# TLS and OTA belong to the front end (link_stubs.cpp); the JIT stays off until the
-# scalar digests match (§3.4).
+# TLS belong to the front end (link_stubs.cpp); the P4 takes its own updates in the app
+# (ota_p4.cpp, §5.1); the JIT stays off until the scalar digests match (§3.4).
 #
 #   bazel run -c opt //firmware/player_app:flash_esp32p4_player -- --port /dev/cu.usbmodem…
 #   python3 tools/p4_link_bridge.py --port /dev/cu.usbmodem…   # then ws://127.0.0.1:8081/ws
@@ -1266,12 +1270,14 @@ cc_binary(
         "netstack_transport.h",
         "osc_route.h",
         "ota_app.h",
+        "ota_p4.cpp",
         "player_ffi.h",
         "player_module.h",
         "serial_log.h",
         "tls_region.h",
         ":agent_bundle_h",
         ":build_info_h",
+        "//firmware/loader:ota_kat.h",
     ] + WS2812_SRCS,
     copts = ["-fno-rtti"],
     # Two no_std Rust staticlibs (player_ffi + the tracker's lh_p4) each carry the panic
@@ -1293,6 +1299,8 @@ cc_binary(
         ":player_ffi",
         ":ws_codec",
         "//firmware/landing:landing_page",
+        "//firmware/ota:ota_ffi_hdr",
+        "//firmware/ota:ota_key",
         "//firmware/p4/link:link_codec",
         "@embedded//libs/board:arduino_core",
         "@embedded//libs/vendor:preferences",
@@ -1317,12 +1325,14 @@ cc_binary(
         "netstack_transport.h",
         "osc_route.h",
         "ota_app.h",
+        "ota_p4.cpp",
         "player_ffi.h",
         "player_module.h",
         "serial_log.h",
         "tls_region.h",
         ":agent_bundle_h",
         ":build_info_h",
+        "//firmware/loader:ota_kat.h",
     ] + WS2812_SRCS,
     copts = ["-fno-rtti"],
     linkopts = ["-Wl,--allow-multiple-definition"],
@@ -1343,6 +1353,8 @@ cc_binary(
         ":player_ffi",
         ":ws_codec",
         "//firmware/landing:landing_page",
+        "//firmware/ota:ota_ffi_hdr",
+        "//firmware/ota:ota_key",
         "//firmware/p4/c6flash:c6_bundle_frontend_res",
         "//firmware/p4/c6flash:c6_flasher",
         "//firmware/p4/link:link_codec",
@@ -1366,8 +1378,11 @@ esptool_flash(
     bootloader = "@embedded//libs/board:esp32p4_bootloader_bin",
     bootloader_offset = "0x2000",
     chip = "esp32p4",
-    # 3 MB app slot: the P4 player plus the C6 bundle (~1.2 MB compressed).
-    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    # The A/B layout (//firmware/p4:partitions_p4_ota.csv): two 3 MB app slots, each
+    # the P4 player plus the C6 bundle (~1.2 MB compressed). It keeps huge_app's slot 0,
+    # littlefs and NVS where they were, so flashing it onto a huge_app P4 (the one-time
+    # USB migration) keeps the map, the effects and the device name.
+    partitions = "//firmware/p4:partitions_p4_ota_bin",
     tags = ["manual"],
 )
 
@@ -1380,6 +1395,21 @@ flash_bundle(
     name = "esp32p4_player_c6_flashbundle",
     flash = ":flash_esp32p4_player_c6",
     tags = ["manual"],
+)
+
+# The P4 player as an update (docs/design/p4-c6-split.md §5.1): `.ota` = the signed
+# manifest (board 16) + the P4 image, which carries the C6 front end's images too, so one
+# package updates both chips. Clients stream it through the C6 like a C6 update, without
+# the loader handoff (welcome feature "ota_inapp"). Test-signed here, for HITL and the
+# bench; release packages are signed by the release workflow (tools/ota_release.py).
+#   bazel build -c opt --//firmware/p4:tracker //firmware/player_app:esp32p4_player_c6_ota_test
+ota_package(
+    name = "esp32p4_player_c6_ota_test",
+    app = ":esp32p4_player_c6",
+    board = 16,
+    manifest_key = "//firmware/ota:keys/test.key",
+    tags = ["manual"],
+    version = "900101",
 )
 
 firmware_binary(
