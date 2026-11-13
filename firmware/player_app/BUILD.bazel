@@ -1361,6 +1361,14 @@ esptool_flash(
 # (what releases and PR previews ship).
 flash_bundle(
     name = "esp32p4_player_c6_flashbundle",
+    # The SDK variant this builds against (esp32p4, CONFIG_ESP32P4_REV_MIN_301) runs on
+    # die v3.1 to v3.99 only; v1.x chips need the esp32p4_es variant, which isn't built
+    # (docs/design/p4-c6-split.md §3.0). The app's flasher reads the chip's revision
+    # and refuses to write this bundle outside that range.
+    extra_json = json.encode({"chip_rev": {
+        "max": 399,
+        "min": 301,
+    }}),
     flash = ":flash_esp32p4_player_c6",
     tags = ["manual"],
 )

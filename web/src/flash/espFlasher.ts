@@ -25,7 +25,8 @@ import type {
   FlashSizeValues,
   IEspLoaderTerminal,
 } from "esptool-js";
-import type { Flasher, FlashHooks, FlashRequest, FlashResult } from "./flasher";
+import type { Flasher, FlashHooks, FlashOptions, FlashRequest, FlashResult } from "./flasher";
+import { boardLabel, fitProblem, normChip, type DetectedBoard } from "./boardMatch";
 import { appResetSequence, connectPlanFor, connectWithReconnect, errMessage } from "./reconnect";
 import { isPolyfillActive } from "./webserial";
 import {
@@ -85,15 +86,10 @@ function overallProgress(req: FlashRequest, hooks: FlashHooks) {
   };
 }
 
-/** Normalise "ESP32-C6" / "esp32c6" to a comparable token. */
-function normChip(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
 export function createEspFlasher(): Flasher {
   return {
     family: "esp",
-    async flash(port: SerialPort, req: FlashRequest, hooks: FlashHooks): Promise<FlashResult> {
+    async flash(port: SerialPort, first: FlashRequest, hooks: FlashHooks, opts: FlashOptions = {}): Promise<FlashResult> {
       const terminal: IEspLoaderTerminal = {
         clean: () => {},
         write: (s) => hooks.log(s),
@@ -155,13 +151,25 @@ export function createEspFlasher(): Flasher {
       try {
         let { port: livePort, session: loader } = await connectRom();
 
-        const want = normChip(req.manifest.chip);
-        const got = normChip(loader.chip.CHIP_NAME);
-        if (want && got && want !== got) {
-          throw new Error(
-            `This board is a ${loader.chip.CHIP_NAME}, but the selected firmware is for ${req.manifest.chip}. Aborting to avoid bricking it.`,
-          );
+        // What's on the cable: the chip, its image chip id, and (where esptool-js
+        // reports it as major * 100 + minor: the ESP32-P4, whose v1.x and v3.x need
+        // different images) the silicon revision. Then the image set that fits it:
+        // the caller may swap in another, and whatever comes back is checked again
+        // here, so nothing built for another board is ever written.
+        const chip = loader.chip as unknown as { IMAGE_CHIP_ID?: number; getChipRevision?: (l: ESPLoader) => Promise<number> };
+        const board: DetectedBoard = { chipName: loader.chip.CHIP_NAME };
+        if (typeof chip.IMAGE_CHIP_ID === "number") board.chipId = chip.IMAGE_CHIP_ID;
+        if (normChip(board.chipName) === "esp32p4" && chip.getChipRevision) {
+          try {
+            board.revision = await chip.getChipRevision(loader);
+          } catch {
+            /* unreadable: the chip checks still apply */
+          }
         }
+        hooks.log(`Board: ${boardLabel(board)}`);
+        const req = opts.resolve ? await opts.resolve(board, first) : first;
+        const misfit = fitProblem(req, board);
+        if (misfit) throw new Error(`${misfit} Nothing was written to the board.`);
 
         const chipDescription = await loader.chip.getChipDescription(loader);
         let mac: string | undefined;
@@ -244,7 +252,7 @@ export function createEspFlasher(): Flasher {
         } catch (err) {
           hooks.log(`Port closed during the reset (expected — the board is rebooting): ${errMessage(err)}`);
         }
-        return mac ? { chipDescription, mac } : { chipDescription };
+        return { chipDescription, entry: req.entry, ...(mac ? { mac } : {}) };
       } finally {
         await closeTransport();
       }
