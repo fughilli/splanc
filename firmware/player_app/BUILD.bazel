@@ -1378,6 +1378,18 @@ esptool_flash(
     tags = ["manual"],
 )
 
+# The same flash as a bundle (flash.json + bins), for the app's USB flasher and the
+# release workflow, which signs its app image and publishes both as
+# esp32p4-player-<ver>.tar / .ota (tools/ota_release.py --target p4). One USB flash of
+# the P4 does both chips: the image carries the C6 front end and flashes it onto the
+# board's C6 at boot. Build it with --//firmware/p4:tracker for the wired Vive tracker
+# (what releases and PR previews ship).
+flash_bundle(
+    name = "esp32p4_player_c6_flashbundle",
+    flash = ":flash_esp32p4_player_c6",
+    tags = ["manual"],
+)
+
 # The P4 player as an update (docs/design/p4-c6-split.md §5.1): `.ota` = the signed
 # manifest (board 16) + the P4 image, which carries the C6 front end's images too, so one
 # package updates both chips. Clients stream it through the C6 like a C6 update, without

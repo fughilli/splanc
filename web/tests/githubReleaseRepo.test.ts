@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compareVersionsDesc, proxiedAssetUrl, releasesToFirmwareIndex } from "../src/flash/githubReleaseRepo";
+import { compareVersionsDesc, p4PackageAsset, proxiedAssetUrl, releasesToFirmwareIndex } from "../src/flash/githubReleaseRepo";
 
 function asset(name: string) {
   return { name, browser_download_url: `https://example.test/${name}` };
@@ -99,4 +99,33 @@ test("compareVersionsDesc: numeric parts, missing parts as zero, pre-releases be
   const sorted = ["1.9", "1.10.0", "1.9.10", "1.9.9", "2.0.0-rc2", "2.0.0-rc10", "2.0.0", "dev"].sort(compareVersionsDesc);
   assert.deepEqual(sorted, ["2.0.0", "2.0.0-rc10", "2.0.0-rc2", "1.10.0", "1.9.10", "1.9.9", "1.9", "dev"]);
   assert.equal(compareVersionsDesc("1.10", "1.10.0"), 0);
+});
+
+test("the ESP32-P4 player bundle is listed as its own chip, after the C6 images", () => {
+  const index = releasesToFirmwareIndex([
+    {
+      tag_name: "firmware-v1.9.0",
+      draft: false,
+      assets: [
+        asset("esp32p4-player-1.9.0.tar"),
+        asset("esp32p4-player-1.9.0.ota"), // the package alone is not a flashable entry
+        asset("esp32c6-netstack-1.9.0.tar"),
+        asset("esp32c6-ota-1.9.0.tar"),
+      ],
+    },
+  ]);
+  assert.ok(index);
+  assert.deepEqual(
+    index.entries.map((e) => [e.id, e.chip]),
+    [
+      ["firmware-v1.9.0::ota", "esp32c6"],
+      ["firmware-v1.9.0::netstack", "esp32c6"],
+      ["firmware-v1.9.0::player", "esp32p4"],
+    ],
+  );
+  const p4 = index.entries[2]!;
+  assert.equal(p4.label, "ESP32-P4 player (+ C6 front end) — firmware-v1.9.0");
+  assert.equal(p4.tarUrl, "https://example.test/esp32p4-player-1.9.0.tar");
+  assert.equal(p4.version, "1.9.0");
+  assert.equal(p4PackageAsset("v1.9.0"), "esp32p4-player-1.9.0.ota");
 });
