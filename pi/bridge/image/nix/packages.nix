@@ -14,12 +14,19 @@
 #                //pi/bridge:boot_frames does for the agent bundle), and the fonts
 #                vendored in splanc_display/fonts/ (the same files every other
 #                consumer draws with; pi/bridge/tools/vendor_fonts.py).
+#   splash       splanc-splash (pi/bridge/splash), the early boot splash the
+#                initrd starts (nix/splash.nix): one static C binary (musl) with
+#                the boot frames + stage texts baked in by
+#                pi/bridge/tools/gen_splash_assets.py from splancPy's own
+#                boot_frames.bin and fonts. Its check runs it against a file sink
+#                and compares the SH1106 byte stream with luma.oled's
+#                (pi/bridge/splash/check_stream.py).
 #
 # luma.core / luma.oled / segno come from PyPI at exactly the versions + sha256
 # in pi/bridge/display/requirements.lock (the Pi OS installer's lockfile), so the
 # image and `install.sh` run the same display stack. lgpio (not in nixpkgs) is
 # built from its PyPI sdist with the C library linked in statically.
-{ lib, fetchurl, runCommand, stdenvNoCC, python3, swig }:
+{ lib, fetchurl, runCommand, stdenvNoCC, python3, swig, pkgsStatic }:
 let
   pin = lib.importJSON ../agent-pin.json;
   ps = python3.pkgs;
@@ -121,6 +128,51 @@ let
     PYTHONPATH=$out python3 -c 'from splanc_display import fonts; [fs.fonts(r) for fs in fonts.SETS.values() for r in fonts.ROLES]'
   '';
 
+  splashAssets = runCommand "splanc-splash-assets" { nativeBuildInputs = [ pyEnv ]; } ''
+    mkdir -p $out
+    PYTHONPATH=${splancPy} python3 ${../../tools/gen_splash_assets.py} \
+      --frames ${splancPy}/splanc_display/boot_frames.bin --out $out/splash_assets.h
+  '';
+
+  splash = pkgsStatic.stdenv.mkDerivation {
+    pname = "splanc-splash";
+    version = "1";
+    src = lib.fileset.toSource {
+      root = ../../splash;
+      fileset = ../../splash;
+    };
+    dontConfigure = true;
+    buildPhase = ''
+      runHook preBuild
+      $CC -std=gnu11 -O2 -Wall -Wextra -Werror -static -I${splashAssets} \
+        splanc-splash.c -o splanc-splash
+      $STRIP splanc-splash || true
+      runHook postBuild
+    '';
+    doCheck = true;
+    nativeCheckInputs = [ pyEnv ];
+    checkPhase = ''
+      runHook preCheck
+      ./splanc-splash bench 0.5 --no-rt
+      # Foreground run with a file sink in place of spidev; hand it over like
+      # splanc-display does and check the SH1106 stream against luma.oled.
+      SPLASH_FOREGROUND=1 ./splanc-splash run --oled=file:$TMPDIR/oled.bin --fb=none --no-rt --max=20 &
+      pid=$!
+      sleep 2.6
+      reply=$(./splanc-splash stop)
+      wait $pid
+      echo "$reply"
+      frame=$(echo "$reply" | sed -n 's/.* frame=\([0-9]*\).*/\1/p')
+      stage=$(echo "$reply" | sed -n 's/.* stage=\([0-9]*\).*/\1/p')
+      PYTHONPATH=${splancPy} python3 check_stream.py $TMPDIR/oled.bin "$frame" "$stage"
+      runHook postCheck
+    '';
+    installPhase = ''
+      install -Dm755 splanc-splash $out/bin/splanc-splash
+    '';
+    meta.mainProgram = "splanc-splash";
+  };
+
   agentBundle = stdenvNoCC.mkDerivation {
     pname = "splanc-agent";
     inherit (pin) version;
@@ -146,5 +198,5 @@ let
   };
 in
 {
-  inherit agentBundle pyEnv splancPy lgpio luma-core luma-oled segno pin;
+  inherit agentBundle pyEnv splancPy splash splashAssets lgpio luma-core luma-oled segno pin;
 }
