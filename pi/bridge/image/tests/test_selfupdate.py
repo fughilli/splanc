@@ -196,3 +196,72 @@ def test_main_honours_auto_update_off(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("SPLANC_AUTO_UPDATE", "0")
     assert su.main(["--dir", str(tmp_path), "--auto"]) == 0
     assert "off" in capsys.readouterr().out
+
+
+def status(state):
+    return json.loads((state / "status.json").read_text())
+
+
+def test_check_only_looks_and_records_what_is_available(tmp_path, site):
+    state = tmp_path / "state"
+    state.mkdir()
+    site.publish("1.8.0", make_tgz("1.8.0"))
+    baked = baked_dir(tmp_path)
+    lt = su.check(str(state), baked=baked, fetch=site.fetch)
+    assert lt.version == "1.8.0"
+    assert site.calls == [LATEST]  # latest.json only: the bundle is not downloaded
+    assert not (state / "current").exists() and not (state / ".updated").exists()
+    s = status(state)
+    assert s["state"] == "available" and s["available"] == {"version": "1.8.0"}
+    assert s["current_version"] == "1.7.1" and s["checked_at"]
+    assert oct((state / "status.json").stat().st_mode & 0o777) == "0o644"
+    # The confirmed install: progress ends in "idle", updated, nothing left on offer.
+    r = su.update(str(state), baked=baked, fetch=site.fetch)
+    assert r.updated
+    s = status(state)
+    assert s["state"] == "idle" and s["available"] is None
+    assert s["current_version"] == "1.8.0" and s["last_result"]["result"] == "updated"
+    # Up to date now.
+    assert su.check(str(state), baked=baked, fetch=site.fetch) is None
+    assert status(state)["message"] == "up to date (1.8.0)"
+
+
+def test_check_failure_is_shown(tmp_path, site):
+    state = tmp_path / "state"
+    state.mkdir()
+    site.files[LATEST] = b"<html>502</html>"
+    with pytest.raises(su.UpdateError):
+        su.check(str(state), fetch=site.fetch)
+    s = status(state)
+    assert s["state"] == "failed" and "check failed" in s["message"]
+
+
+def test_main_check_writes_status_and_never_installs(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir()
+    site = FakeSite()
+    site.publish("1.8.0", make_tgz("1.8.0"))
+    monkeypatch.setattr(su, "fetch_url", site.fetch)
+    monkeypatch.delenv("SPLANC_AUTO_UPDATE", raising=False)
+    baked = baked_dir(tmp_path)
+    assert su.main(["--dir", str(state), "--baked", baked, "--check", "--auto"]) == 0
+    assert site.calls == [LATEST] and not (state / "current").exists()
+    assert status(state)["state"] == "available"
+    # The install (the screen's confirmation, or `splanc-bridge update`).
+    assert su.main(["--dir", str(state), "--baked", baked]) == 0
+    assert os.readlink(state / "current") == "agent/1.8.0"
+    # A failed install is shown, and what's available stays on offer to retry.
+    site.publish("1.9.0", make_tgz("1.9.0"), sha="0" * 64)
+    assert su.main(["--dir", str(state), "--baked", baked]) == 1
+    s = status(state)
+    assert s["state"] == "failed" and "sha256" in s["message"]
+    assert s["available"] == {"version": "1.9.0"}
+
+
+def test_auto_off_skips_the_background_check(tmp_path, monkeypatch, capsys):
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setenv("SPLANC_AUTO_UPDATE", "0")
+    assert su.main(["--dir", str(state), "--check", "--auto"]) == 0
+    assert "off" in capsys.readouterr().out
+    assert status(state)["auto_check"] is False

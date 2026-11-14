@@ -5,11 +5,22 @@ else: the NixOS system closure (kernel, systemd units, the display code, any new
 service), the way `nixos-rebuild boot` + reboot would, from releases CI signs and
 publishes as GitHub release assets (nixcache.py has the layout).
 
-    run       (timer, every 15 min) check the channel when due; download the
-              store paths this bridge doesn't have, check every narinfo's
-              signature against the keys baked into the image, import them
-              ("staged"); then, once the bridge is idle (no app connected),
-              apply: set the system profile, install the boot entry, reboot.
+Nothing is downloaded or installed without someone asking for it: the timer only
+looks for an update, and the user confirms the install on the bridge's screen
+(or runs `check`/`apply` over SSH).
+
+    run       (timer, every 15 min) when due (~6 h; never with
+              SPLANC_AUTO_UPDATE=0): fetch the channel pointer and the release
+              manifest (well under 1 MB) and record what's available and how
+              much it would download. Never downloads store paths, never applies.
+    scan      the same, now (the screen's "Check for updates").
+    install   (the screen's confirmed "Install"; = `apply`) download the store
+              paths this bridge doesn't have, check every narinfo's signature
+              against the keys baked into the image, import them ("staged"),
+              then apply: set the system profile, install the boot entry,
+              reboot. The bridge keeps running until that reboot.
+    check     (CLI) the same, but if an app is connected it stops at "staged"
+              and the install waits for a confirmation (screen or `apply`).
     confirm   (every boot) if an update is pending and this is the new system:
               wait for the health check (the health units active and stable,
               the network back if it was up), then commit (make it the default
@@ -17,8 +28,14 @@ publishes as GitHub release assets (nixcache.py has the layout).
               (previous generation back as the boot default, reboot). Booted the
               OLD system with an update pending (the Pi 5's one-shot tryboot
               fell back, power was lost mid-apply): roll back without a reboot.
-    status    print the state; `check` = run now; `apply` = apply a staged update
-              now even if an app is connected.
+    publish   (every boot) write the status file the screens read from the
+              persistent state (what is available/staged, the last result).
+    status    print the state.
+
+The screens read /run/splanc-system-update/status.json (``state``: idle,
+available, checking, downloading, verifying, staged, installing, rebooting,
+confirming, committing, rolling_back, failed, disabled; plus ``current_version``,
+``available``, ``staged``, ``checked_at``, ``last_result``, ``auto_check``).
 
 Boot modes (from the image's config, /etc/splanc-bridge/system-update.json):
   reboot    `<new>/bin/switch-to-configuration boot` makes the new generation
@@ -42,6 +59,8 @@ never retried; a later release is.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -64,6 +83,8 @@ PROFILE = "/nix/var/nix/profiles/system"
 CURRENT = "/run/current-system"
 BOOTED = "/run/booted-system"
 BRIDGE_STATUS = "/run/splanc-bridge/status.json"
+IMAGE_JSON = "/etc/splanc-bridge/image.json"
+FLASH_ENV = "/run/splanc-flash/bridge.env"
 STATUS_OUT = "/run/splanc-system-update/status.json"
 STORE = "/nix/store"
 
@@ -74,6 +95,13 @@ SPACE_MARGIN = 256 << 20
 MAX_BAD = 20
 MAX_BOOT_ATTEMPTS = 3
 NIX = ["nix", "--extra-experimental-features", "nix-command"]
+# The staging cache is always the same file:// URL, and Nix remembers narinfos per
+# store URL (~/.cache/nix): without this, a narinfo from an earlier release (an
+# unsigned or rejected one) could be judged instead of this release's.
+NO_NARINFO_CACHE = [
+    "--option", "narinfo-cache-positive-ttl", "0",
+    "--option", "narinfo-cache-negative-ttl", "0",
+]  # fmt: skip
 
 _GEN_RE = re.compile(r"^system-([0-9]+)-link$")
 
@@ -94,7 +122,6 @@ class Config:
     check_interval: float = 6 * 3600
     check_jitter: float = 3600
     retry_interval: float = 3600
-    max_defer: float = 3 * 86400
     firmware_dir: str = "/boot/firmware"
     allow_http: bool = False
     gc: bool = True
@@ -222,6 +249,27 @@ def _write_atomic(path: str, data: bytes, fsync: bool = True) -> None:
     os.replace(tmp, path)
 
 
+def auto_check_enabled(env_file: str = FLASH_ENV) -> bool:
+    """SPLANC_AUTO_UPDATE (the service environment, else the flash-time settings
+    file): "0" turns the background checks off. Installing always needs a
+    confirmation either way."""
+    v = os.environ.get("SPLANC_AUTO_UPDATE")
+    if v is None:
+        try:
+            with open(env_file, encoding="utf-8") as f:
+                for ln in f:
+                    k, sep, val = ln.strip().partition("=")
+                    if sep and k == "SPLANC_AUTO_UPDATE":
+                        v = val.strip().strip("'\"")
+        except OSError:
+            pass
+    return (v or "1").strip() != "0"
+
+
+class Busy(Exception):
+    """Another updater run holds the lock."""
+
+
 def tryboot_config(config_txt: str, gen_dir: str) -> str:
     """config.txt -> tryboot.txt: the same settings, booting ``gen_dir``."""
     out, n = re.subn(
@@ -248,6 +296,8 @@ class Updater:
         status_out: str = STATUS_OUT,
         store: str = STORE,
         config_path: str = CONFIG_PATH,
+        image_json: str = IMAGE_JSON,
+        auto_check: Optional[bool] = None,
     ):
         self.cfg = cfg
         self.host = host or Host()
@@ -259,8 +309,33 @@ class Updater:
         self.status_out = status_out
         self.store = store
         self.config_path = config_path
+        self.image_json = image_json
+        self.auto_check = auto_check_enabled() if auto_check is None else auto_check
         self.cache_dir = os.path.join(state_dir, "cache")
         self.staged_root = os.path.join(state_dir, "staged-system")
+        self._pub: dict = {}  # the persistent half of the status file (see _sync_pub)
+
+    # ---- lock ----------------------------------------------------------------
+
+    @contextlib.contextmanager
+    def locked(self, wait: float = 0.0):
+        """One run at a time (the timer's scan, a screen request, the CLI). Raises
+        Busy if another run still holds it after ``wait`` seconds."""
+        os.makedirs(self.state_dir, exist_ok=True)
+        fd = os.open(os.path.join(self.state_dir, ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            deadline = self.host.monotonic() + wait
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if self.host.monotonic() >= deadline:
+                        raise Busy("another update run is in progress")
+                    self.host.sleep(2)
+            yield
+        finally:
+            os.close(fd)
 
     # ---- state -------------------------------------------------------------
 
@@ -274,25 +349,91 @@ class Updater:
                 st = json.load(f)
             if isinstance(st, dict) and st.get("v") == 1:
                 st.setdefault("bad", [])
+                st.pop("defer_since", None)  # (older images: the forced apply is gone)
+                self._sync_pub(st)
                 return st
         except (OSError, ValueError):
             pass
-        return {
+        st = {
             "v": 1,
             "next_check": 0,
             "staged": None,
             "pending": None,
+            "available": None,
             "bad": [],
             "last_result": None,
         }
+        self._sync_pub(st)
+        return st
 
     def save_state(self, st: dict) -> None:
         os.makedirs(self.state_dir, exist_ok=True)
         _write_atomic(self._state_file, (json.dumps(st, indent=1, sort_keys=True) + "\n").encode())
+        self._sync_pub(st)
+
+    def _image_rev(self) -> Optional[str]:
+        try:
+            with open(self.image_json, encoding="utf-8") as f:
+                rev = json.load(f).get("rev")
+            return rev if isinstance(rev, str) else None
+        except (OSError, ValueError, AttributeError):
+            return None
+
+    def _sync_pub(self, st: dict) -> None:
+        """What the screens need from the persistent state, merged into every
+        status write: the running version (when known), what is available or
+        already downloaded, when the channel was last looked at, the last result."""
+        running = self._realpath(self.current)
+        cur = st.get("current") or {}
+        avail = st.get("available")
+        staged = st.get("staged")
+        self._pub = {
+            "current_version": cur.get("version") if cur.get("toplevel") == running else None,
+            "image_rev": self._image_rev(),
+            "available": (
+                {
+                    k: avail.get(k)
+                    for k in ("version", "download_bytes", "unpacked_bytes", "paths", "total_paths")
+                }
+                if avail
+                else None
+            ),
+            "staged": {"version": staged.get("version")} if staged else None,
+            "checked_at": st.get("checked_at"),
+            "next_check": st.get("next_check") if self.auto_check else None,
+            "last_result": st.get("last_result"),
+            "auto_check": self.auto_check,
+            "keys": bool(self.cfg.public_keys),
+        }
+
+    def idle_state(self, st: dict) -> str:
+        """The resting state the persistent state implies (nothing running)."""
+        if not self.cfg.public_keys:
+            return "disabled"
+        if st.get("pending"):
+            return "confirming"
+        if st.get("staged"):
+            return "staged"
+        if st.get("available"):
+            return "available"
+        return "idle"
+
+    def publish(self, message: str = "") -> int:
+        """Boot: the status file from the persistent state (no network)."""
+        st = self.load_state()
+        self.status(self.idle_state(st), message)
+        return 0
 
     def status(self, state: str, message: str = "", **extra) -> None:
         """/run/splanc-system-update/status.json: for the screens and the CLI."""
-        doc = {"v": 1, "state": state, "message": message, "updated_at": self.host.now(), **extra}
+        doc = {
+            "v": 1,
+            **self._pub,
+            "state": state,
+            "message": message,
+            "updated_at": self.host.now(),
+            **extra,
+        }
         try:
             os.makedirs(os.path.dirname(self.status_out), exist_ok=True)
             _write_atomic(self.status_out, json.dumps(doc).encode(), fsync=False)
@@ -459,9 +600,7 @@ class Updater:
         if free < need:
             raise UpdateError(f"not enough space: {free >> 20} MB free, {need >> 20} MB needed")
 
-    def check_and_stage(self, st: dict, channel_url: Optional[str] = None) -> Optional[dict]:
-        """Fetch the channel pointer; stage its system if it's new. Returns the
-        staged record (None: up to date / nothing to do)."""
+    def _pointer(self, channel_url: Optional[str]):
         url = channel_url or self.cfg.channel_url
         allow_http = self.cfg.allow_http
         if not (url.startswith("https://") or (allow_http and url.startswith("http://"))):
@@ -472,12 +611,110 @@ class Updater:
             raise UpdateError(str(e)) from e
         if ptr.board != self.cfg.board:
             raise UpdateError(f"channel is for board {ptr.board!r}, this is {self.cfg.board!r}")
-        current = self._realpath(self.current)
-        if ptr.toplevel == current:
-            shutil.rmtree(self.cache_dir, ignore_errors=True)
+        return ptr
+
+    def _manifest(self, ptr):
+        """The release manifest the pointer names (sha256-checked) and its closure."""
+        data = self.host.fetch(ptr.manifest_url, MAX_MANIFEST_BYTES)
+        if hashlib.sha256(data).hexdigest() != ptr.manifest_sha256:
+            raise UpdateError("manifest failed its sha256 check")
+        try:
+            man = nc.parse_manifest(data, allow_http=self.cfg.allow_http)
+            paths = man.closure()
+        except nc.CacheError as e:
+            raise UpdateError(str(e)) from e
+        if (man.board, man.toplevel, man.version) != (ptr.board, ptr.toplevel, ptr.version):
+            raise UpdateError("manifest and channel pointer disagree")
+        return man, paths
+
+    def _up_to_date(self, st: dict, ptr) -> None:
+        st["current"] = {"toplevel": ptr.toplevel, "version": ptr.version}
+        st["available"] = None
+        if st.get("staged") and st["staged"].get("toplevel") != ptr.toplevel:
+            # The channel moved back: an older download is no longer on offer.
+            st["staged"] = None
+            self._drop_staged_root()
+        shutil.rmtree(self.cache_dir, ignore_errors=True)
+
+    def scan(self, st: dict, channel_url: Optional[str] = None) -> Optional[dict]:
+        """Look for an update without downloading it: the channel pointer, and the
+        manifest when the pointer names a release we haven't sized yet (to say how
+        much the install would download). Records ``available``; returns it (None:
+        up to date / nothing to offer)."""
+        self.status("checking", "checking for a system update")
+        ptr = self._pointer(channel_url)
+        st["checked_at"] = self.host.now()
+        if ptr.toplevel == self._realpath(self.current):
+            self._up_to_date(st, ptr)
+            self.save_state(st)
             self.status("idle", f"up to date ({ptr.version})", version=ptr.version)
             return None
         if ptr.toplevel in st.get("bad", []):
+            st["available"] = None
+            self.save_state(st)
+            self.status(
+                "idle",
+                f"skipping {ptr.version}: it failed on this bridge before",
+                version=ptr.version,
+            )
+            return None
+        staged = st.get("staged")
+        if staged and staged.get("toplevel") != ptr.toplevel:
+            st["staged"] = staged = None  # superseded by a newer release
+            self._drop_staged_root()
+        prev = st.get("available") or {}
+        if (
+            prev.get("toplevel") == ptr.toplevel
+            and prev.get("manifest_sha256") == ptr.manifest_sha256
+        ):
+            avail = prev
+        else:
+            man, paths = self._manifest(ptr)
+            missing = set(self._missing([ni.store_path for ni in paths]))
+            todo = [ni for ni in paths if ni.store_path in missing]
+            avail = {
+                "version": ptr.version,
+                "toplevel": ptr.toplevel,
+                "manifest_sha256": ptr.manifest_sha256,
+                "download_bytes": sum(ni.file_size for ni in todo),
+                "unpacked_bytes": sum(ni.nar_size for ni in todo),
+                "paths": len(todo),
+                "total_paths": len(paths),
+            }
+        if staged:
+            avail = dict(avail, download_bytes=0, paths=0)
+        st["available"] = avail
+        self.save_state(st)
+        if staged:
+            self.status(
+                "staged",
+                f"{ptr.version} downloaded and verified; install to apply",
+                version=ptr.version,
+            )
+        else:
+            self.status(
+                "available",
+                f"{ptr.version} available ({avail['download_bytes'] / 1e6:.1f} MB to download)",
+                version=ptr.version,
+            )
+        return avail
+
+    def check_and_stage(self, st: dict, channel_url: Optional[str] = None) -> Optional[dict]:
+        """Fetch the channel pointer; stage its system if it's new. Returns the
+        staged record (None: up to date / nothing to do). Only on request: the
+        screen's confirmed install, or the CLI."""
+        self.status("checking", "checking for a system update")
+        ptr = self._pointer(channel_url)
+        st["checked_at"] = self.host.now()
+        current = self._realpath(self.current)
+        if ptr.toplevel == current:
+            self._up_to_date(st, ptr)
+            self.save_state(st)
+            self.status("idle", f"up to date ({ptr.version})", version=ptr.version)
+            return None
+        if ptr.toplevel in st.get("bad", []):
+            st["available"] = None
+            self.save_state(st)
             self.status(
                 "idle",
                 f"skipping {ptr.version}: it failed on this bridge before",
@@ -488,21 +725,21 @@ class Updater:
         if staged and staged.get("toplevel") == ptr.toplevel and self._valid(ptr.toplevel):
             return staged
 
-        data = self.host.fetch(ptr.manifest_url, MAX_MANIFEST_BYTES)
-        if hashlib.sha256(data).hexdigest() != ptr.manifest_sha256:
-            raise UpdateError("manifest failed its sha256 check")
-        try:
-            man = nc.parse_manifest(data, allow_http=allow_http)
-            paths = man.closure()
-        except nc.CacheError as e:
-            raise UpdateError(str(e)) from e
-        if (man.board, man.toplevel, man.version) != (ptr.board, ptr.toplevel, ptr.version):
-            raise UpdateError("manifest and channel pointer disagree")
-
+        man, paths = self._manifest(ptr)
         missing = set(self._missing([ni.store_path for ni in paths]))
         todo = [ni for ni in paths if ni.store_path in missing]
         dl = sum(ni.file_size for ni in todo)
         unpacked = sum(ni.nar_size for ni in todo)
+        st["available"] = {
+            "version": ptr.version,
+            "toplevel": ptr.toplevel,
+            "manifest_sha256": ptr.manifest_sha256,
+            "download_bytes": dl,
+            "unpacked_bytes": unpacked,
+            "paths": len(todo),
+            "total_paths": len(paths),
+        }
+        self.save_state(st)
         self.status(
             "downloading",
             f"{man.version}: {len(todo)} of {len(paths)} store paths to fetch "
@@ -542,7 +779,8 @@ class Updater:
                 NIX
                 + [
                     "store", "verify", "--store", cache, "--no-contents", "--recursive",
-                    "--sigs-needed", "1", "--option", "trusted-public-keys", keys, man.toplevel,
+                    "--sigs-needed", "1", "--option", "trusted-public-keys", keys,
+                    *NO_NARINFO_CACHE, man.toplevel,
                 ]
             )  # fmt: skip
         except UpdateError as e:
@@ -553,7 +791,7 @@ class Updater:
             NIX
             + [
                 "copy", "--from", cache, "--option", "require-sigs", "true", "--option", "trusted-public-keys", keys,
-                man.toplevel,
+                *NO_NARINFO_CACHE, man.toplevel,
             ]
         )  # fmt: skip
         self.host.run(["nix-store", "--add-root", self.staged_root, "--realise", man.toplevel])
@@ -569,9 +807,8 @@ class Updater:
         }
         st["staged"] = record
         self._result(st, "staged", f"{man.version} downloaded and verified", version=man.version)
-        self.status(
-            "staged", f"{man.version} ready; installs when no app is connected", version=man.version
-        )
+        self.save_state(st)
+        self.status("staged", f"{man.version} downloaded and verified", version=man.version)
         return record
 
     def _valid(self, path: str) -> bool:
@@ -696,6 +933,8 @@ class Updater:
         self._result(st, "rolled_back", reason, version=p.get("version"), toplevel=p["new"])
         st["pending"] = None
         st["staged"] = None
+        if (st.get("available") or {}).get("toplevel") == p["new"]:
+            st["available"] = None  # known bad now: not offered again
 
     # ---- confirm (every boot) ----------------------------------------------
 
@@ -753,6 +992,9 @@ class Updater:
         self._drop_staged_root()
         st["pending"] = None
         st["staged"] = None
+        st["current"] = {"toplevel": p["new"], "version": p.get("version")}
+        if (st.get("available") or {}).get("toplevel") == p["new"]:
+            st["available"] = None
         self._result(
             st,
             "committed",
@@ -763,13 +1005,14 @@ class Updater:
             total_paths=p.get("total_paths"),
         )
         self.save_state(st)
+        # Done as far as the screens are concerned: the GC below can take minutes.
+        self.status("idle", f"updated to {p.get('version')}", version=p.get("version"))
         try:
             self._gc()
         except UpdateError as e:
             _log(f"garbage collection failed (harmless): {e}")
             st["last_result"]["gc_error"] = str(e)
             self.save_state(st)
-        self.status("idle", f"updated to {p.get('version')}", version=p.get("version"))
         return 0
 
     def _rollback(self, st: dict, reason: str) -> int:
@@ -781,63 +1024,121 @@ class Updater:
         self.host.reboot(tryboot=False)
         return 1
 
-    # ---- run (timer) ---------------------------------------------------------
+    # ---- entry points -----------------------------------------------------------
 
-    def run(
-        self,
-        *,
-        check_now: bool = False,
-        apply_now: bool = False,
-        channel_url: Optional[str] = None,
-    ) -> int:
+    def _ready(self) -> Optional[dict]:
+        """Load the state for a run; None (and the status says why) when nothing
+        may run now: no signing key in the image, or an update awaiting its
+        health check."""
         if not self.cfg.public_keys:
+            self.load_state()
             self.status("disabled", "no update signing key in this image: system updates are off")
-            return 0
+            return None
         st = self.load_state()
         if st.get("pending"):
             _log("an update is waiting for its health check (splanc-system-update-confirm)")
-            return 0
+            return None
         staged = st.get("staged")
         if staged and (
             staged["toplevel"] == self._realpath(self.current)
             or not self._valid(staged["toplevel"])
         ):
-            st["staged"] = staged = None
-        now = self.host.now()
-        if check_now or (not staged and now >= float(st.get("next_check") or 0)):
-            try:
-                staged = self.check_and_stage(st, channel_url)
-                st["next_check"] = (
-                    now + self.cfg.check_interval + random.uniform(0, self.cfg.check_jitter)
-                )
-            except (UpdateError, OSError) as e:
-                st["next_check"] = now + self.cfg.retry_interval
-                self._result(st, "failed", str(e))
-                self.save_state(st)
-                self.status("failed", f"update check failed: {e}")
-                return 1
+            st["staged"] = None
             self.save_state(st)
-        if not staged:
-            return 0
-        if self.bridge_busy() and not apply_now:
-            since = float(st.get("defer_since") or now)
-            st["defer_since"] = since
-            if now - since < self.cfg.max_defer:
-                self.save_state(st)
-                self.status(
-                    "staged",
-                    f"{staged['version']} ready; waiting until no app is connected",
-                    version=staged["version"],
-                )
-                return 0
-            _log(f"an app has been connected for {(now - since) / 3600:.0f} h; installing anyway")
-        st["defer_since"] = None
+        return st
+
+    def _scan_failed(self, st: dict, e: Exception) -> int:
+        st["next_check"] = self.host.now() + self.cfg.retry_interval
+        self._result(st, "failed", f"update check failed: {e}")
+        self.save_state(st)
+        self.status("failed", f"update check failed: {e}")
+        return 1
+
+    def run(self, channel_url: Optional[str] = None) -> int:
+        """The timer: look for an update when one is due. Never downloads a
+        release or installs one: that needs a confirmation."""
         try:
-            self.apply(st)
-        except (UpdateError, OSError) as e:
-            self.status("failed", f"install failed: {e}")
+            with self.locked():
+                st = self._ready()
+                if st is None:
+                    return 0
+                if self.host.now() < float(st.get("next_check") or 0):
+                    self.status(self.idle_state(st))
+                    return 0
+                try:
+                    self.scan(st, channel_url)
+                except (UpdateError, OSError) as e:
+                    return self._scan_failed(st, e)
+                st["next_check"] = (
+                    self.host.now()
+                    + self.cfg.check_interval
+                    + random.uniform(0, self.cfg.check_jitter)
+                )
+                self.save_state(st)
+                return 0
+        except Busy as e:
+            _log(e)
+            return 0
+
+    def scan_now(self, channel_url: Optional[str] = None) -> int:
+        """ "Check for updates" (the screen, or `scan`): look now, download nothing."""
+        try:
+            with self.locked():
+                st = self._ready()
+                if st is None:
+                    return 0
+                try:
+                    self.scan(st, channel_url)
+                except (UpdateError, OSError) as e:
+                    return self._scan_failed(st, e)
+                st["next_check"] = (
+                    self.host.now()
+                    + self.cfg.check_interval
+                    + random.uniform(0, self.cfg.check_jitter)
+                )
+                self.save_state(st)
+                return 0
+        except Busy as e:
+            _log(f"{e}; its result will show")  # the running one updates the status
+            return 0
+
+    def install(self, channel_url: Optional[str] = None, *, when_idle: bool = False) -> int:
+        """A confirmed install (the screen's KEY3, `apply`, or `check`): download,
+        verify and stage the channel's system if needed, then apply it and reboot.
+        ``when_idle`` (`check`): with an app connected, stop at "staged"; the
+        install then waits for a confirmation (screen or `apply`), never a timer."""
+        try:
+            with self.locked(wait=120):
+                st = self._ready()
+                if st is None:
+                    return 0
+                try:
+                    staged = self.check_and_stage(st, channel_url)
+                except (UpdateError, OSError) as e:
+                    self._result(st, "failed", f"download failed: {e}")
+                    self.save_state(st)
+                    self.status("failed", f"download failed: {e}")
+                    return 1
+                self.save_state(st)
+                if not staged:
+                    return 0
+                if when_idle and self.bridge_busy():
+                    self.status(
+                        "staged",
+                        f"{staged['version']} ready; an app is connected, so it waits for a "
+                        "confirmation (the screen, or `splanc-system-update apply`)",
+                        version=staged["version"],
+                    )
+                    return 0
+                try:
+                    self.apply(st)
+                except (UpdateError, OSError) as e:
+                    self.status("failed", f"install failed: {e}")
+                    return 1
+                return 0
+        except Busy as e:
+            _log(e)
             return 1
-        return 0
 
 
 def main(argv=None) -> int:
@@ -847,14 +1148,17 @@ def main(argv=None) -> int:
         "--state-dir", default=os.environ.get("STATE_DIRECTORY", STATE_DIR).split(":")[0]
     )
     sub = ap.add_subparsers(dest="cmd", required=True)
-    r = sub.add_parser("run", help="timer: check when due, stage, apply when idle")
+    r = sub.add_parser("run", help="timer: look for an update when due (downloads nothing)")
     r.add_argument("--auto", action="store_true", help="honour SPLANC_AUTO_UPDATE=0")
     r.add_argument("--channel", help="channel pointer URL (default: the image's)")
-    c = sub.add_parser("check", help="check + stage now, apply when idle")
+    s = sub.add_parser("scan", help="look for an update now (downloads nothing)")
+    s.add_argument("--channel")
+    c = sub.add_parser("check", help="download + install now; with an app connected, stage only")
     c.add_argument("--channel")
-    a = sub.add_parser("apply", help="check + stage now, apply even if an app is connected")
+    a = sub.add_parser("apply", help="download + install now, even if an app is connected")
     a.add_argument("--channel")
     sub.add_parser("confirm", help="boot: health-check a pending update; commit or roll back")
+    sub.add_parser("publish", help="boot: write the screens' status file from the saved state")
     sub.add_parser("status", help="print the updater state")
     args = ap.parse_args(argv)
 
@@ -874,6 +1178,7 @@ def main(argv=None) -> int:
         st["running"] = os.path.realpath(CURRENT)
         st["channel"] = cfg.channel_url
         st["keys"] = cfg.public_keys
+        st["auto_check"] = u.auto_check
         print(json.dumps(st, indent=1, sort_keys=True))
         return 0
 
@@ -886,12 +1191,16 @@ def main(argv=None) -> int:
     try:
         if args.cmd == "confirm":
             return u.confirm()
+        if args.cmd == "publish":
+            return u.publish()
         if args.cmd == "run":
-            if args.auto and os.environ.get("SPLANC_AUTO_UPDATE", "1").strip() == "0":
-                print("automatic updates are off (SPLANC_AUTO_UPDATE=0)")
-                return 0
+            if args.auto and not u.auto_check:
+                print("background update checks are off (SPLANC_AUTO_UPDATE=0)")
+                return u.publish("background checks are off (SPLANC_AUTO_UPDATE=0)")
             return u.run(channel_url=args.channel)
-        return u.run(check_now=True, apply_now=(args.cmd == "apply"), channel_url=args.channel)
+        if args.cmd == "scan":
+            return u.scan_now(channel_url=args.channel)
+        return u.install(channel_url=args.channel, when_idle=(args.cmd == "check"))
     except (UpdateError, OSError) as e:
         _log(e)
         return 1

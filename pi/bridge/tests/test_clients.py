@@ -122,13 +122,15 @@ def settle(u, clock, s=1.0):
 
 
 def to_clients(u, clock):
-    u.press("left")  # home -> (wraps to) the last page: Clients
+    u.press("left")  # home -> (wraps to) the last page: Updates
+    assert u.view().page == "updates"
+    u.press("left")  # -> Clients
     assert u.view().page == "clients"
     settle(u, clock)
 
 
-def test_clients_is_the_last_page_and_existing_order_is_kept():
-    assert ui.PAGES == ("home", "qr", "players", "network", "clients")
+def test_page_order_is_kept_and_updates_comes_last():
+    assert ui.PAGES == ("home", "qr", "players", "network", "clients", "updates")
 
 
 def test_client_list_selects_and_scrolls_on_its_own(u, clock):
@@ -138,16 +140,19 @@ def test_client_list_selects_and_scrolls_on_its_own(u, clock):
     v = settle(u, clock)
     assert (v.client_sel, v.client_pos, v.client_top) == (5, 5, 5 - ui.LIST_ROWS + 1)
     assert (v.sel, v.list_pos) == (0, 0)  # the fixture list didn't move
-    u.press("right")  # left/right still page: wraps to home
+    u.press("right")  # left/right still page: Updates, then wraps to home
+    assert u.view().page == "updates"
+    u.press("right")
     assert u.view().page == "home"
 
 
 def test_empty_client_list_pages_like_the_others(d, clock):
     m = ui.OledUI(d, clock)
     m.press("left")
+    m.press("left")
     assert m.view().page == "clients"
-    m.press("down")  # nothing to select: next page (wraps to home)
-    assert m.view().page == "home"
+    m.press("down")  # nothing to select: next page
+    assert m.view().page == "updates"
 
 
 def test_open_a_client_scroll_and_back(u, clock):
@@ -255,6 +260,7 @@ def test_key1_from_a_client_goes_home(u, d, clock):
     u.press("key1")
     assert u.view().page == "home"
     settle(u, clock, anim.PAGE_SECONDS + 0.1)
+    u.press("left")
     u.press("left")
     assert u.view().page == "clients"  # the detail was closed, not left behind
 
@@ -409,7 +415,9 @@ def test_app_revokes_one_client_end_to_end(bridge, tmp_path, buttons, clock):
     )
     app.step()
     btn = buttons.by_pin
-    btn[KEY_PINS["left"]].press()  # home -> Clients
+    btn[KEY_PINS["left"]].press()  # home -> Updates
+    app.step()
+    btn[KEY_PINS["left"]].press()  # -> Clients
     app.step()
     btn[KEY_PINS["down"]].press()  # Kevin's iPhone
     btn[KEY_PINS["press"]].press()

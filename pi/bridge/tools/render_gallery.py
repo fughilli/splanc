@@ -24,11 +24,12 @@ oled-clients-*.png (list, a client's detail, revoking one, none, outdated relay)
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 
 from PIL import Image, ImageDraw
-from splanc_display import boot, fake_bridge, fonts, render_hdmi, render_oled
+from splanc_display import boot, fake_bridge, fake_updates, fonts, render_hdmi, render_oled
 from splanc_display.status import WAITING, Status, parse
 from splanc_display.ui import PAGES, OledUI, View
 
@@ -161,6 +162,8 @@ def menu(out: str) -> list:
     }
     for name, (s, v) in client_views().items():
         shots["oled-clients-" + name] = (s, v)
+    for name, (s, v) in update_views().items():
+        shots["oled-updates-" + name] = (s, v)
     tiles = []
     for name, (s, v) in shots.items():
         o = oled_preview(render_oled.render(s, v, now=NOW))
@@ -213,6 +216,38 @@ def client_views() -> dict:
     }
 
 
+def update_views() -> dict:
+    """The Updates page's screens: name -> (status, view)."""
+    paired = parse(fake_bridge.sample("paired", NOW))
+    ups = fake_updates.sample_updates(NOW)
+
+    def with_(name, clients=None):
+        st = dataclasses.replace(paired, updates=ups[name])
+        return dataclasses.replace(st, clients=clients) if clients is not None else st
+
+    return {
+        "up-to-date": (with_("up-to-date"), View(page="updates")),
+        "available": (with_("both"), View(page="updates")),
+        "checking": (with_("checking"), View(page="updates", update_sel=2, update_pos=2)),
+        "detail": (with_("both"), View(page="update", key="system")),
+        "detail-agent": (with_("both"), View(page="update", key="agent")),
+        "confirm": (
+            with_("both", clients=0),
+            View(
+                page="update",
+                key="system",
+                overlay="confirm",
+                overlay_seconds=8.0,
+                install="system",
+            ),
+        ),
+        "downloading": (with_("downloading"), View(page="update", key="system")),
+        "rebooting": (with_("rebooting"), View(page="update", key="system")),
+        "failed": (with_("failed"), View(page="update", key="system")),
+        "ssh-only": (with_("ssh"), View(page="updates")),
+    }
+
+
 def docs(out: str) -> int:
     """The few images docs/pi-bridge.md embeds (smaller, fixed names)."""
     os.makedirs(out, exist_ok=True)
@@ -229,6 +264,7 @@ def docs(out: str) -> int:
             scale=3,
         )
         for p in PAGES
+        if p != "updates"  # (its own sheet below)
     ]
     over = [
         oled_preview(render_oled.render(st["pairing"], v, now=NOW), scale=3)
@@ -262,6 +298,22 @@ def docs(out: str) -> int:
     sheet([t for _, t in tiles], 3, labels=[n for n, _ in tiles]).save(
         os.path.join(out, "oled-clients.png"), optimize=True
     )
+    uv = update_views()
+    tiles = [
+        (label, oled_preview(render_oled.render(*uv[k], now=NOW), scale=3))
+        for label, k in (
+            ("Updates page", "available"),
+            ("an update", "detail"),
+            ("KEY3: confirm", "confirm"),
+            ("installing", "downloading"),
+        )
+    ]
+    sheet([t for _, t in tiles], 4, labels=[n for n, _ in tiles]).save(
+        os.path.join(out, "oled-updates.png"), optimize=True
+    )
+    render_hdmi.render(uv["available"][0], (1920, 1080), now=NOW, oled=True).resize(
+        (960, 540), Image.LANCZOS
+    ).save(os.path.join(out, "hdmi-update-available.png"), optimize=True)
     print(f"wrote doc images to {out}")
     return 0
 

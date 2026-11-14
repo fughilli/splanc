@@ -33,7 +33,9 @@ display/splanc_display/     the screen service (Python)
   hat.py                      SH1106 via luma.oled, gpiozero DC/RST adapter, keys, detection
   main.py                     the service loop (HDMI on its own thread)
   ctl.py                      CLI backend for status + commands
+  updates.py                  the updaters' status files -> Updates (lenient), update requests
   fake_bridge.py              stand-in bridge for tests and demos
+  fake_updates.py             stand-in updaters + request handler (sim, tests, gallery)
 display/requirements.lock   hash-pinned pure wheels (luma.core, luma.oled, segno)
 tests/                      pytest suite + installer_test.sh
 tools/render_gallery.py     PNGs of every screen (+ boot/menu GIFs), for review and for the docs
@@ -95,7 +97,9 @@ code is shown only while `expires_at` is in the future.
   - From the lockfile: the three pure wheels, with `pip --isolated --require-hashes --no-deps
 --only-binary :all:`. `--isolated` skips Pi OS's piwheels index, whose rebuilt wheels have
     different hashes.
-- **Updates:** `splanc-bridge-update.timer` runs daily and calls `splanc-bridge update --auto`.
+- **Updates:** `splanc-bridge-update.timer` runs daily and calls `splanc-bridge update --auto`
+  (this Raspberry Pi OS path still installs on its own; the SD image only looks and asks first,
+  see [Updates from the screen](#updates-from-the-screen)).
   That downloads and verifies the new bundle, then runs _the new bundle's_ `install.sh --upgrade`,
   which keeps the settings and the previous version.
 - **Pi 5:** GPIO goes through gpiozero (lgpio factory), including the DC/RST lines luma needs.
@@ -113,18 +117,21 @@ NetworkManager, lean firmware) and adds:
 
 ```text
 image/nix/bridge.nix        the appliance: users, splanc-bridge / splanc-display services,
-                            agent self-update timer, optional SSH, read-mostly tuning
+                            agent update check/install units, the screen's update-request
+                            path unit, optional SSH, read-mostly tuning
 image/nix/flash-config.nix  splanc-flash-config.service: applies the flasher's boot-partition files
 image/nix/improv.nix        splanc-improv.service: Improv-over-BLE WiFi provisioning from the phone app
 image/nix/rpi.nix           Pi bits: SPI + I2C + key pull-ups in config.txt, gpiochip perms, image name
 image/nix/lean.nix          size trims (no docs, rescue tools, nixpkgs source, ModemManager, gtk3)
 image/nix/packages.nix      agent bundle (agent-pin.json), Python env (luma from requirements.lock,
                             lgpio from its sdist), the display package with its vendored fonts
-image/nix/system-update.nix full-system OTA: splanc-system-update timer/service, the boot-time
-                            health check + rollback (splanc-system-update-confirm), panic/watchdog
+image/nix/system-update.nix full-system OTA: the background check (timer), scan + install units,
+                            the boot-time status + health check + rollback
+                            (splanc-system-update-confirm), panic/watchdog
 image/nix/system-update-rpi.nix  Pi 5 tryboot mode + FAT generation limit
 image/nix/vm-test.nix       QEMU smoke test (generic aarch64 VM, same appliance modules)
-image/nix/vm-test-ota.nix   QEMU test of the system OTA (A -> B, bad keys, health-check rollback)
+image/nix/vm-test-ota.nix   QEMU test of the system OTA (check -> available -> confirm -> A -> B,
+                            nothing without a confirmation, bad keys, health-check rollback)
 image/splanc_image/         on-device Python: bootconfig.py (boot-partition settings),
                             selfupdate.py (verified agent bundle updates), improv.py +
                             wifi_profiles.py (Improv WiFi provisioning, saved networks),
@@ -153,12 +160,16 @@ image/ota-public-keys.txt   Nix public keys a system update must be signed with
   gets UNABLE_TO_CONNECT. BlueZ + bless/bleak/dbus-fast add about 28 MB
   (uncompressed) to the closure (Python and ICU are already there).
 - **The agent:** the image bakes the bundle named in `agent-pin.json` (a `firmware-v*` release
-  asset, sha256-pinned). `splanc-agent-update.timer` (2 min after boot, then daily) runs
-  `selfupdate.py` as the `splanc-update` user: it fetches `splanc.io/agent/latest.json`, checks the
-  bundle's sha256, unpacks it safely (plain files under one top directory only) into
-  `/var/lib/splanc-agent/agent/<ver>`, flips `current`, keeps the previous version and restarts the
-  bridge. The bridge runs as `splanc` and can only read that directory. A bundle older than the
-  bridge (no `bridge` command) puts an explanatory error on the screens until an update arrives.
+  asset, sha256-pinned). `splanc-agent-auto-check.timer` (2 min after boot, then daily) runs
+  `selfupdate.py --check --auto` as the `splanc-update` user: it fetches only
+  `splanc.io/agent/latest.json` and records in `/var/lib/splanc-agent/status.json` whether a newer
+  bundle is available. Installing it is `splanc-agent-update.service`, started only on request
+  (the screen's confirmation, see [Updates from the screen](#updates-from-the-screen), or
+  `splanc-bridge update`): it checks the bundle's sha256, unpacks it safely (plain files under one
+  top directory only) into `/var/lib/splanc-agent/agent/<ver>`, flips `current`, keeps the
+  previous version and restarts the bridge. The bridge runs as `splanc` and can only read that
+  directory. A bundle older than the bridge (no `bridge` command) puts an explanatory error on the
+  screens (install the agent update) until one is installed.
 - **State:** `/var/lib/splanc-bridge` (bridge identity `bridge.json`, hub config) and
   `/var/lib/splanc-agent` survive reboots; the journal is in RAM, `/tmp` is tmpfs and `/` is mounted
   `noatime`. A fully read-only root wasn't worth it: the first boot grows the root partition and
@@ -231,27 +242,37 @@ largest, the Pi 5 kernel, is 116 MB). CI fails the OTA publish (not the image re
 assets. Without the secret (or on anything but a tag push) nothing is signed or published, and no
 job fails.
 
-**Device (`splanc-system-update.timer`, every 15 min; checks the channel every ~6 h).**
+**Device.** Nothing is downloaded or installed until someone confirms it on the screen (or runs
+the CLI over SSH, see below).
 
-1. Fetch the pointer; nothing to do if it names the running system or one that failed here before.
-2. Fetch the manifest (sha256 from the pointer), compute the closure, ask Nix which store paths are
-   missing, check there's room (else drop old generations + GC), download only those NARs and
-   check each against its narinfo's FileHash/FileSize. A small change is a few MB; a nixpkgs bump
-   is most of the 480 MB.
+1. **Look** (`splanc-system-update.timer`, every 15 min, looking every ~6 h; or the screen's
+   "Check for updates": `splanc-system-update-scan`). Fetch the pointer; nothing to offer if it
+   names the running system or one that failed here before. Otherwise fetch the manifest (sha256
+   from the pointer; only once per release), ask Nix which store paths are missing and record the
+   release as **available** with its download size. Not one NAR is fetched.
+2. **Install** (`splanc-system-update-install`, after the screen's confirmation) = `apply`. Check
+   there's room (else drop old generations + GC), download only the missing NARs and check each
+   against its narinfo's FileHash/FileSize. A small change is a few MB; a nixpkgs bump is most of
+   the 480 MB. The bridge keeps serving meanwhile (the updater runs at `Nice=10`, idle I/O).
 3. `nix store verify --no-contents --sigs-needed 1` with **only** the keys in
    `ota-public-keys.txt`: every path of the closure must be signed by one of them. Then
    `nix copy --from file://...` imports it (Nix checks each NAR's signed NarHash). The imported
-   system must be a bridge system for this board. Nothing so far touches the running system.
-4. Wait while an app is connected through the bridge (`clients` in status.json; at most 3 days),
-   then: `nix-env -p /nix/var/nix/profiles/system --set <new>` (sbc-deploy's `deploy_live` does
-   the same), install the boot entry and reboot. A failure here puts the old profile + boot entry
-   back.
+   system must be a bridge system for this board. Nothing so far touches the running system; the
+   import is **staged** (kept rooted), so a later install doesn't download it again.
+4. `nix-env -p /nix/var/nix/profiles/system --set <new>` (sbc-deploy's `deploy_live` does the
+   same), install the boot entry and reboot. A failure here puts the old profile + boot entry
+   back. Only this step interrupts the bridge.
 5. On the next boot `splanc-system-update-confirm` waits (5 min max) for the health check: the
    health units (`splanc-bridge`, `splanc-display`, `NetworkManager`, plus any a module adds to
    `splancBridge.systemUpdate.healthUnits`) active and up for 30 s without a restart, a default
    route if there was one before, boot finished. A unit that was already failing on the old system
    doesn't count. Pass: keep current + previous generation, GC the rest. Fail: previous
    generation back as the boot default, the new one remembered as bad, reboot.
+
+There is no forced install any more (the old updater installed a staged release after 3 days
+even with an app connected) and no install "when idle": a release is installed only when
+someone asks for it. A failed or interrupted download keeps the release on offer; the NARs
+already fetched stay in the cache, so a retry resumes.
 
 **Boot modes.** Reboot (not a live `switch`): kernel and initrd changes need it anyway, the health
 check then tests exactly what boots next time, and rollback is clean. Downtime is one reboot; the
@@ -296,12 +317,62 @@ PYTHONPATH=pi/bridge/image python3 -m splanc_image.sysrelease pointer \
 gh release upload pi-bridge-ota bridge-system-pi5.json --clobber
 ```
 
-On the bridge: `splanc-system-update status` (state, last result, staged/pending update),
-`sudo splanc-system-update check` (check now; installs when idle), `... apply` (install now even if
-an app is connected), `... logs`. `SPLANC_AUTO_UPDATE=0` in `splanc-bridge.conf` turns the
-automatic checks off, as for the agent. Progress goes to `/run/splanc-system-update/status.json`
-(`state`: downloading, verifying, staged, installing, rebooting, confirming, committing,
-rolling_back, idle, failed, disabled) for the screens to show.
+On the bridge: `splanc-system-update status` (state, last result, available/staged/pending
+update), `sudo splanc-system-update scan` (look now; downloads nothing), `... apply` (download +
+install now: running it is the confirmation), `... check` (the same, but with an app connected it
+stops at "staged" and waits for a confirmation), `... logs`. `SPLANC_AUTO_UPDATE=0` in
+`splanc-bridge.conf` turns the background checks off (system and agent); checking by hand, from
+the screen or the CLI, still works. The status for the screens is
+`/run/splanc-system-update/status.json` (`state`: idle, available, checking, downloading,
+verifying, staged, installing, rebooting, confirming, committing, rolling_back, failed,
+disabled; plus `current_version` (once the channel has named the running system, or after an
+update), `image_rev`, `available` {version, download_bytes, ...}, `staged`, `checked_at`,
+`last_result`, `auto_check`), rewritten from the saved state at every boot by
+`splanc-system-update-status`.
+
+### Updates from the screen
+
+The display service (`splanc-display`, user `splanc`, no privileges) shows both updaters' status
+files (`display/splanc_display/updates.py`): the OLED's **Updates** page (System, Agent, Check for
+updates; each opens a detail with the running and offered versions, the download size, what
+installing does, when it last looked and the last result) and, on HDMI, an "Update available" pill
+with a line per update under the headline, and the progress while one installs.
+
+Installing a system update needs root, so the screen can only _ask_, through a narrow, root-owned
+trigger (`nix/bridge.nix`):
+
+- `/run/splanc-update-request/` is `0770 root:splanc` (tmpfiles). Of the `splanc` user's
+  services only `splanc-display` uses it; the bridge runs as the same user, so its unit hides the
+  directory outright (`InaccessiblePaths`; `ProtectSystem=strict` alone leaves `/run` writable)
+  and a compromised bridge (Node, on the network) can't ask for updates. The VM test checks both
+  from inside each unit's sandbox.
+- The screen creates an empty file named `check`, `install-agent` or `install-system`.
+  `splanc-update-request.path` (`DirectoryNotEmpty=`) starts `splanc-update-request.service`
+  (root, no network, `ProtectSystem=strict`), which deletes every entry and maps each known
+  _name_ to fixed units: `check` → `splanc-system-update-scan` + `splanc-agent-check`,
+  `install-system` → `splanc-system-update-install`, `install-agent` → `splanc-agent-update`.
+  File contents are never read and no arguments cross over: the display can start exactly those
+  four units and nothing else (no polkit rule, no sudo, no general root). The worst a request can
+  do is install the release the signed channel already offers, which is what the old timer did
+  on its own.
+
+Agent vs system: two separate installs, because they are two separate artefacts. The agent
+bundle (from `firmware-v*` releases via splanc.io) ships far more often than images, is ~1 MB
+and needs only a bridge restart; a system release (`pi-bridge-v*`) can be hundreds of MB and
+reboots. A system release does carry an agent (`agent-pin.json`, baked into the store), but only
+as the fallback: once an agent update has been installed, `splanc-bridge-run` keeps running
+`/var/lib/splanc-agent/current`, whatever the image bakes, so a system update doesn't update the
+agent and the agent needs its own install either way.
+
+OLED flow: joystick left from home (or wait for the page cycle) → **Updates**; up/down picks a
+row; press on **Check for updates** looks now (toast: "Up to date (1.2.0)" / "New: system
+1.3.0" / "Check failed"); press on **System** or **Agent** opens its detail; there **KEY3** (a
+press, no hold) shows **INSTALL UPDATE?** (from → to, size or "bridge restarts", how many apps
+drop) and **KEY3** again installs; any other key or 10 s cancels. While it runs the detail shows
+the phase (downloading with %, verifying, installing, restarting, health check) and a bar. A
+failure shows the error first and **KEY3** retries; a run that stopped reporting for 15 min
+shows as interrupted, also retryable. On the Updates list itself KEY3 still holds to revoke all
+clients.
 
 ## The flasher
 
@@ -449,26 +520,29 @@ under Bazel, which has neither; run it in a venv that has the lockfile plus `gpi
 
 ## What is tested where
 
-| Covered                                                                                                                                                                                                                | How                                                                                                                                                |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status parsing, watcher, button state machine (KEY1/2, KEY3 hold → confirm → revoke, paging, dim/sleep)                                                                                                                | `display_test` (pytest, fake clock and dispatcher)                                                                                                 |
-| Fixture menu (list scroll, detail, back, fixtures appearing/vanishing), slide timing and interruption, boot hand-off, frame pacing                                                                                     | `display_test` (`test_menu.py`, `test_anim.py`, `test_app.py`; fake clock)                                                                         |
-| Fixture detail text (missing fields, long names, IPv4/link-local/IPv6, unreachable), boot frames (built file, SVG rasterizer)                                                                                          | `display_test` (`test_fixture_detail.py`, `test_menu_render.py`)                                                                                   |
-| HDMI + OLED rendering of every state and overlay, at several framebuffer sizes                                                                                                                                         | `display_test`; PNGs go to the test's `outputs.zip`                                                                                                |
-| Framebuffer ioctl parsing, RGB565/XRGB packing, stride, VT takeover                                                                                                                                                    | `display_test` (faked ioctls on a regular file)                                                                                                    |
-| Buttons → socket → bridge → status → screens                                                                                                                                                                           | `display_test` end to end against `fake_bridge` (real AF_UNIX socket)                                                                              |
-| luma.oled SH1106 over SPI with the gpiozero DC/RST adapter; gpiozero Buttons                                                                                                                                           | `test_luma_gpiozero.py` with gpiozero MockFactory and a fake spidev, on Bookworm's versions (Python 3.11, Pillow 9.4, gpiozero 2.0.1, cbor2 5.4.6) |
-| Installer: install, upgrade, prune, settings kept, sha256/no-pi-bridge refusals, I2C, uninstall/purge                                                                                                                  | `installer_test` (fake root)                                                                                                                       |
-| Real downloads: latest.json → bundle sha256, pinned Node tarball sha256, venv + hash-locked pip                                                                                                                        | manual dry run into a fake root, with the display then run against the fake bridge                                                                 |
-| Image: boot-partition settings parsing/validation, keyfile move off the FAT partition, SSH key merge                                                                                                                   | `//pi/bridge/image:image_py_test`                                                                                                                  |
-| Image: self-update (sha256, hostile tarballs, rollback by publishing an older version, pruning)                                                                                                                        | `//pi/bridge/image:image_py_test`                                                                                                                  |
-| Image: Improv WiFi: phone-app RPC bytes -> Pi codec -> keyfile byte-identical to the flasher's (tricky SSIDs/PSKs), add vs dedupe, fresh scan + join, hidden fallback, rollback on failure                             | `//pi/bridge/image:image_py_test` (fake nmcli)                                                                                                     |
-| Image: boots; flash config applied; bridge on the baked bundle, then self-updated onto a newer one with the flash-time relay; NetworkManager reads the flasher's tricky keyfile exactly; HDMI page renders; CLI        | `checks.aarch64-linux.vm` (QEMU, generic aarch64; CI `vm-test` job)                                                                                |
-| Image: Improv-stored networks read back exactly by NetworkManager; real-nmcli failed join leaves the store untouched; no BT adapter, no service                                                                        | `checks.aarch64-linux.vm`                                                                                                                          |
-| Image: every board evaluates and builds; config.txt has SPI/I2C/pull-ups; size budget                                                                                                                                  | CI `image` job (and `nix eval` locally)                                                                                                            |
-| Flasher: disk filtering, raw write + read-back, progress protocol, elevation wrappers, keyfile/conf rendering round-tripped through the image's parser, release lookup, download + checksum + unpack, sidecar protocol | `//pi/bridge/flasher:flasher_test`; again on each OS before packaging                                                                              |
-| Units                                                                                                                                                                                                                  | `systemd-analyze verify` with Bookworm's systemd 252 (clean), plus `security --offline`                                                            |
-| Shell                                                                                                                                                                                                                  | shellcheck (prek)                                                                                                                                  |
+| Covered                                                                                                                                                                                                                                                            | How                                                                                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status parsing, watcher, button state machine (KEY1/2, KEY3 hold → confirm → revoke, paging, dim/sleep)                                                                                                                                                            | `display_test` (pytest, fake clock and dispatcher)                                                                                                 |
+| Fixture menu (list scroll, detail, back, fixtures appearing/vanishing), slide timing and interruption, boot hand-off, frame pacing                                                                                                                                 | `display_test` (`test_menu.py`, `test_anim.py`, `test_app.py`; fake clock)                                                                         |
+| Fixture detail text (missing fields, long names, IPv4/link-local/IPv6, unreachable), boot frames (built file, SVG rasterizer)                                                                                                                                      | `display_test` (`test_fixture_detail.py`, `test_menu_render.py`)                                                                                   |
+| HDMI + OLED rendering of every state and overlay, at several framebuffer sizes                                                                                                                                                                                     | `display_test`; PNGs go to the test's `outputs.zip`                                                                                                |
+| Framebuffer ioctl parsing, RGB565/XRGB packing, stride, VT takeover                                                                                                                                                                                                | `display_test` (faked ioctls on a regular file)                                                                                                    |
+| Buttons → socket → bridge → status → screens                                                                                                                                                                                                                       | `display_test` end to end against `fake_bridge` (real AF_UNIX socket)                                                                              |
+| luma.oled SH1106 over SPI with the gpiozero DC/RST adapter; gpiozero Buttons                                                                                                                                                                                       | `test_luma_gpiozero.py` with gpiozero MockFactory and a fake spidev, on Bookworm's versions (Python 3.11, Pillow 9.4, gpiozero 2.0.1, cbor2 5.4.6) |
+| Installer: install, upgrade, prune, settings kept, sha256/no-pi-bridge refusals, I2C, uninstall/purge                                                                                                                                                              | `installer_test` (fake root)                                                                                                                       |
+| Real downloads: latest.json → bundle sha256, pinned Node tarball sha256, venv + hash-locked pip                                                                                                                                                                    | manual dry run into a fake root, with the display then run against the fake bridge                                                                 |
+| Image: boot-partition settings parsing/validation, keyfile move off the FAT partition, SSH key merge                                                                                                                                                               | `//pi/bridge/image:image_py_test`                                                                                                                  |
+| Image: self-update (sha256, hostile tarballs, rollback by publishing an older version, pruning); `--check` fetches latest.json only; status.json                                                                                                                   | `//pi/bridge/image:image_py_test`                                                                                                                  |
+| Image: system update decisions: the timer/scan only discovers (no NAR, no apply, ever, also after days idle), confirmed install, CLI `check` stops at staged while busy, lock, publish at boot, SPLANC_AUTO_UPDATE                                                 | `//pi/bridge/image:image_py_test` (fake Nix/systemd/network)                                                                                       |
+| Updates on the screens: status parsing + staleness, request files, Updates page/detail/confirm flow, every state in every font set, service end to end against the fake updater                                                                                    | `display_test` (`test_updates.py`, `test_font_sets.py`)                                                                                            |
+| Image: system OTA end to end: check → available → confirmed (request file as the display) → A → B → health check; nothing applies without a confirmation; only the display's sandbox can write requests                                                            | `checks.aarch64-linux.vm-ota` (QEMU)                                                                                                               |
+| Image: Improv WiFi: phone-app RPC bytes -> Pi codec -> keyfile byte-identical to the flasher's (tricky SSIDs/PSKs), add vs dedupe, fresh scan + join, hidden fallback, rollback on failure                                                                         | `//pi/bridge/image:image_py_test` (fake nmcli)                                                                                                     |
+| Image: boots; flash config applied; bridge on the baked bundle; the agent check only reports, the install (a request file, as the display) updates it with the flash-time relay; NetworkManager reads the flasher's tricky keyfile exactly; HDMI page renders; CLI | `checks.aarch64-linux.vm` (QEMU, generic aarch64; CI `vm-test` job)                                                                                |
+| Image: Improv-stored networks read back exactly by NetworkManager; real-nmcli failed join leaves the store untouched; no BT adapter, no service                                                                                                                    | `checks.aarch64-linux.vm`                                                                                                                          |
+| Image: every board evaluates and builds; config.txt has SPI/I2C/pull-ups; size budget                                                                                                                                                                              | CI `image` job (and `nix eval` locally)                                                                                                            |
+| Flasher: disk filtering, raw write + read-back, progress protocol, elevation wrappers, keyfile/conf rendering round-tripped through the image's parser, release lookup, download + checksum + unpack, sidecar protocol                                             | `//pi/bridge/flasher:flasher_test`; again on each OS before packaging                                                                              |
+| Units                                                                                                                                                                                                                                                              | `systemd-analyze verify` with Bookworm's systemd 252 (clean), plus `security --offline`                                                            |
+| Shell                                                                                                                                                                                                                                                              | shellcheck (prek)                                                                                                                                  |
 
 Not yet verified on hardware:
 

@@ -1,12 +1,13 @@
 """Bundled fonts + OLED font sets: every set lays out every screen without text
 leaving its box or running into other text."""
 
+import dataclasses
 import hashlib
 import os
 
 import pytest
 from PIL import Image, ImageDraw
-from splanc_display import draw, fake_bridge, fonts, render_oled
+from splanc_display import draw, fake_bridge, fake_updates, fonts, render_oled
 from splanc_display.status import parse
 from splanc_display.ui import LIST_ROWS, View
 
@@ -123,6 +124,10 @@ def _statuses():
             "and check the clock, the network and the relay URL in bridge.env",
         )
     )
+    # The Updates page and each update's detail, in every updater state.
+    paired = parse(fake_bridge.sample("paired", NOW))
+    for name, u in fake_updates.sample_updates(NOW).items():
+        out[f"updates-{name}"] = dataclasses.replace(paired, updates=u)
     return out
 
 
@@ -153,6 +158,19 @@ def _views(s):
         for scroll in range(0, max(1, rows - 3)):
             yield f"client-{c.key}-{scroll}", View(page="client", key=c.key, client_scroll=scroll)
     yield "client-gone", View(page="client", key="no-such-client")
+    if s.updates is not None:
+        comps = s.updates.components
+        n = len(comps) + 1
+        for sel in range(n):
+            yield f"updates-{sel}", View(page="updates", update_sel=sel, update_pos=sel)
+        yield "updates-checking", View(page="updates", update_sel=n - 1, checking=True)
+        for c in comps:
+            rows = render_oled.update_row_count(c, NOW)
+            for scroll in range(0, max(1, rows - 3)):
+                yield f"update-{c.kind}-{scroll}", View(
+                    page="update", key=c.kind, update_scroll=scroll
+                )
+        yield "update-gone", View(page="update", key="nope")
 
 
 def _overlaps(a, b):
@@ -208,6 +226,20 @@ def test_overlays_fit(name):
         fake_bridge.sample("paired", NOW, paired_clients=fake_bridge.sample_clients(NOW) + [long])
     )
     short = s.paired[0].key
+    ups = fake_updates.sample_updates(NOW)
+    for uname in ("both", "staged", "up-to-date"):
+        for kind in ("system", "agent"):
+            for clients in (0, 1, 3):
+                us = dataclasses.replace(s, updates=ups[uname], clients=clients)
+                v = View(
+                    page="update", key=kind, overlay="confirm", overlay_seconds=9.4, install=kind
+                )
+                img = Image.new("1", (W, H))
+                dr = ImageDraw.Draw(img)
+                dr.fontmode = "1"
+                draw.TRACE = []
+                render_oled._overlay(img, dr, v, us)
+                _check(draw.TRACE, img, f"{name}/install-confirm-{uname}-{kind}-{clients}")
     for v in (
         View(page="home", overlay="hold", overlay_seconds=4.0),
         View(page="home", overlay="confirm", overlay_seconds=9.0),
@@ -219,6 +251,9 @@ def test_overlays_fit(name):
         View(page="client", overlay="confirm", overlay_seconds=3.0, revoke=long["id"]),
         View(page="client", overlay="confirm", overlay_seconds=3.0, revoke="gone"),
         View(page="clients", overlay="toast", overlay_text="Client revoked"),
+        View(page="updates", overlay="toast", overlay_text="Checking for updates…"),
+        View(page="updates", overlay="toast", overlay_text="New: system + agent"),
+        View(page="update", overlay="toast", overlay_text="Install started"),
     ):
         img = Image.new("1", (W, H))
         dr = ImageDraw.Draw(img)

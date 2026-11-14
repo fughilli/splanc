@@ -16,6 +16,7 @@ from PIL import Image, ImageChops, ImageDraw
 from . import boot as boot_mod
 from . import draw as d
 from . import fonts
+from . import updates as upd
 from .anim import Scene, SlideView
 from .status import (
     WAITING,
@@ -270,9 +271,12 @@ BODY_H = H - BODY_Y
 
 
 def _glyph(dr: ImageDraw.ImageDraw, x: int, y: int, cond: str, fill=ON) -> None:
-    """A fixture's state, 7x7 at (x, y): ● connected, ○ idle, ◐ reconnecting, ✕ unreachable."""
+    """A fixture's state, 7x7 at (x, y): ● connected, ○ idle, ◐ reconnecting, ✕ unreachable
+    (and ▸ for an action row)."""
     box = [x, y, x + 6, y + 6]
-    if cond == "connected":
+    if cond == "action":
+        dr.polygon([(x + 1, y), (x + 5, y + 3), (x + 1, y + 6)], fill=fill)
+    elif cond == "connected":
         dr.ellipse(box, fill=fill)
     elif cond == "idle":
         dr.ellipse(box, outline=fill)
@@ -526,6 +530,190 @@ def _rows(img: Image.Image, dr: ImageDraw.ImageDraw, rows: list, top: float, lab
         _scrollbar(dr, top, len(rows), DETAIL_ROWS, body_y + 1, body_h - 2)
 
 
+# --- updates -----------------------------------------------------------------------
+
+
+def _update_cond(c: upd.Component) -> str:
+    """The row glyph: ● an update to install, ◐ running, ✕ failed, ○ up to date."""
+    if c.failed:
+        return "unreachable"
+    if c.busy:
+        return "reconnecting"
+    return "connected" if c.available and c.state != "disabled" else "idle"
+
+
+def _update_hint(c: upd.Component) -> str:
+    if c.progress is not None:
+        return f"{c.progress * 100:.0f}%"
+    if c.state == "checking":
+        return "…"
+    if c.busy:
+        return "busy"
+    if c.failed:
+        return "failed"
+    if c.state == "disabled":
+        return "off"
+    if c.available:
+        return "ready" if c.staged else "new"
+    return "?" if c.state == "unknown" else "ok"
+
+
+def _mb(n: Optional[int]) -> str:
+    if n is None:
+        return "-"
+    if n < 1_000_000:
+        return f"{max(1, round(n / 1000))} kB" if n else "0 MB"
+    return f"{n / 1e6:.0f} MB" if n >= 10_000_000 else f"{n / 1e6:.1f} MB"
+
+
+def _updates_page(
+    img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v: View
+) -> None:
+    info = s.updates
+    comps = info.components if info is not None else ()
+    n = len(info.available) if info is not None else 0
+    _header(dr, "Updates", f"{n} new" if n else "")
+    small = F("small")
+    if not comps:
+        lines = ["Updates over SSH:", "splanc-bridge update"]
+        if d.is_bitmap(small):
+            _stack(dr, _body_y(), H, [(t, small) for t in lines])
+        else:
+            _center(dr, 26, lines[0], small)
+            _center(dr, 40, lines[1], small)
+        return
+    rows = []
+    for c in comps:
+        version = c.available if c.available and c.state != "disabled" else c.current
+        rows.append((_update_cond(c), f"{c.label} {version}".strip(), _update_hint(c)))
+    if info.can_request:
+        checking = v.checking or info.checking
+        rows.append(("action", "Checking…" if checking else "Check for updates", ""))
+    _list(img, dr, rows, v.update_top, v.update_pos)
+
+
+UPDATE_LABELS = ("Now", "New", "Size", "Does", "What", "Check", "Last", "Error")
+
+
+def update_rows(c: Optional[upd.Component], now: float, fs: Optional[fonts.FontSet] = None) -> list:
+    """(label, value) rows of an update's detail screen; the last one (label None)
+    says what KEY3 does there."""
+    if c is None:
+        return [("", "Update info is gone")]
+    rows = [("Now", c.current_text)]
+    problem = c.message if c.failed else ""
+    if c.state == "interrupted":
+        problem = "the last run stopped part way"
+    last = ""
+    if not problem and c.last_result in ("rolled_back", "failed"):
+        last = c.last_message
+    elif c.last_result in ("committed", "updated") and c.last_at and now - c.last_at < 86400:
+        last = c.last_message
+    note = []
+    if problem or last:
+        probe = ImageDraw.Draw(Image.new("1", (1, 1)))
+        f = (fs or fonts.active()).get("small")
+        vx = VALUE_X
+        if d.is_bitmap(f):
+            vx = max(VALUE_X, M + max(f.width(k) for k in UPDATE_LABELS) + 5)
+        lines = _wrap(probe, problem or last, f, W - vx - 6, 3)
+        label = "Error" if problem else "Last"
+        note = [(label if i == 0 else "", ln) for i, ln in enumerate(lines)]
+    if problem:  # what went wrong first: that's what the screen is about now
+        rows += note
+    if c.state == "disabled":
+        rows.append(("New", "updates off"))
+    elif c.available:
+        rows.append(("New", c.available))
+        if c.staged:
+            size = "downloaded"
+        elif c.download_bytes is not None:
+            size = _mb(c.download_bytes)
+        else:
+            size = "about 1 MB" if c.kind == "agent" else "-"
+        rows.append(("Size", size))
+    else:
+        rows.append(("New", "not checked" if c.state == "unknown" else "none"))
+    rows.append(("Does", "reboot ~2 min" if c.kind == "system" else "bridge restart"))
+    rows.append(("What", upd.WHAT.get(c.kind, c.kind)))
+    checked = fmt_ago(None if c.checked_at is None else max(0.0, now - c.checked_at))
+    rows.append(("Check", checked + ("" if c.auto_check else ", auto off")))
+    if not problem:
+        rows += note
+    if c.busy:
+        rows.append((None, "Update in progress"))
+    elif c.installable:
+        rows.append((None, "KEY3: retry" if c.failed else "KEY3: install"))
+    else:
+        rows.append((None, "Up to date" if c.state not in ("unknown", "disabled") else ""))
+    return rows
+
+
+def update_row_count(c: Optional[upd.Component], now: float) -> int:
+    return len(update_rows(c, now))
+
+
+PROGRESS_NOTE = {
+    "checking": "looking for updates",
+    "downloading": "bridge keeps running",
+    "verifying": "bridge keeps running",
+    "installing": "setting up next boot",
+    "rebooting": "back in about 2 min",
+    "confirming": "health check",
+    "committing": "keeping the new one",
+    "rolling_back": "back to the old one",
+}
+
+
+def _update_progress(dr: ImageDraw.ImageDraw, c: upd.Component, now: float) -> None:
+    """A running install, under the header: the phase (with % while downloading),
+    a bar, and what's going on."""
+    small = F("small")
+    title = F("title")
+    if c.state == "downloading":
+        p = c.progress or 0.0
+        phase = f"{c.phase} {p * 100:.0f}%"
+    else:
+        p = 1.0 if c.state in ("installing", "rebooting", "confirming", "committing") else None
+        phase = c.phase
+    if c.kind == "agent" and c.state == "installing":
+        note = "bridge restarts"
+    else:
+        note = PROGRESS_NOTE.get(c.state, c.message)
+    th = title.height if d.is_bitmap(title) else 11
+    sh = small.height if d.is_bitmap(small) else 10
+    top = _body_y()
+    room = H - top - th - 9 - sh  # what's left for the gaps
+    gap = max(1, room // 4)
+    y_phase = top + gap
+    y_bar = y_phase + th + gap
+    y_note = min(H - sh, y_bar + 9 + gap)
+    _center(dr, y_phase, d.ellipsize(dr, phase, title, W - 2 * M), title)
+    dr.rectangle([8, y_bar, W - 9, y_bar + 8], outline=ON)
+    if p is not None:
+        dr.rectangle([10, y_bar + 2, 10 + int((W - 21) * p), y_bar + 6], fill=ON)
+    else:  # no measure of progress: a block that moves on each redraw
+        x = 10 + int((now * 24) % (W - 32))
+        dr.rectangle([x, y_bar + 2, x + 10, y_bar + 6], fill=ON)
+    _center(dr, y_note, d.ellipsize(dr, note, small, W - 2 * M), small)
+
+
+def _update_detail(
+    img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v: View
+) -> None:
+    c = s.updates.get(v.key) if s.updates is not None else None
+    name = c.label if c else "Update"
+    if c is not None and c.installing:
+        _header(dr, f"{name} update", c.target or c.available)
+        _update_progress(dr, c, now)
+        return
+    ink = _header(dr, f"{name} update")
+    if c:
+        gy = (_rule_y() + 1 - 7) // 2 if ink == OFF else max(1, _rule_y() - 10)
+        _glyph(dr, W - M - 7, gy, _update_cond(c), fill=ink)
+    _rows(img, dr, update_rows(c, now, _fs), v.update_scroll, UPDATE_LABELS)
+
+
 def _network(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
     _header(dr, "Network")
     small = F("small")
@@ -544,8 +732,15 @@ def _network(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
 
 
 PAGE_RENDERERS = {"home": _home, "qr": _qr, "network": _network}
-LIST_RENDERERS = {"players": _players, "detail": _detail, "clients": _clients, "client": _client}
-DETAIL_PAGES = ("detail", "client")
+LIST_RENDERERS = {
+    "players": _players,
+    "detail": _detail,
+    "clients": _clients,
+    "client": _client,
+    "updates": _updates_page,
+    "update": _update_detail,
+}
+DETAIL_PAGES = ("detail", "client", "update")
 
 
 def _boot(img: Image.Image, dr: ImageDraw.ImageDraw, t: Optional[float], frames) -> None:
@@ -573,6 +768,10 @@ def _scene_key(status: Status, scene: Scene, view: View, now: float, frames):
         extra = (view.client_sel, view.client_pos, view.client_top)
     elif scene.page == "client":
         extra = (view.client_scroll,)
+    elif scene.page == "updates":
+        extra = (view.update_sel, view.update_pos, view.update_top, view.checking)
+    elif scene.page == "update":
+        extra = (view.update_scroll,)
     else:
         extra = ()
     return (scene, status, extra, int(now), _fs.name)
@@ -665,6 +864,8 @@ def _overlay(
         dr.rectangle([8, 33, W - 9, 42], outline=ON)
         dr.rectangle([10, 35, 10 + int((W - 21) * frac), 40], fill=ON)
         _center(dr, 49, f"{max(0, v.overlay_seconds):.0f} s", small)
+    elif v.overlay == "confirm" and v.install:
+        _install_confirm(dr, v, s)
     elif v.overlay == "confirm":
         dr.rectangle([0, 0, W - 1, H - 1], fill=OFF)
         dr.rectangle([0, 0, W - 1, 13], fill=ON)
@@ -694,6 +895,45 @@ def _overlay(
         top = min(H - 16, H - 4 - f.height) if d.is_bitmap(f) else H - 16
         dr.rectangle([0, top, W - 1, H - 1], fill=ON)
         d.text(dr, ((W - tw) // 2, top + 2), text, f, OFF)
+
+
+def _install_confirm(dr: ImageDraw.ImageDraw, v: View, s: Optional[Status]) -> None:
+    """INSTALL UPDATE? -- which one (from -> to), what it costs, KEY3 = yes."""
+    small = F("small")
+    title = F("title")
+    c = s.updates.get(v.install) if s is not None and s.updates is not None else None
+    dr.rectangle([0, 0, W - 1, H - 1], fill=OFF)
+    dr.rectangle([0, 0, W - 1, 13], fill=ON)
+    _center(
+        dr,
+        max(0, (14 - d.line_height(dr, title)) // 2) if d.is_bitmap(title) else 1,
+        "INSTALL UPDATE?",
+        title,
+        OFF,
+    )
+    label = c.label if c else v.install.capitalize()
+    what = f"{label} {c.current if c and c.current else ''} → {c.available if c else ''}"
+    what = " ".join(what.split())
+    if c is not None and c.kind == "system":
+        apps = s.clients if s is not None else 0
+        cost = (
+            f"reboots, drops {apps} app{'s' if apps != 1 else ''}"
+            if apps
+            else ("reboots" if c.staged else f"{_mb(c.download_bytes)}, reboots")
+        )
+    else:
+        cost = "bridge restarts"
+    lines = [
+        (d.ellipsize(dr, what, small, W - 2 * M), small),
+        (d.ellipsize(dr, cost, small, W - 2 * M), small),
+        ("KEY3 = yes", title),
+        (f"other key = no ({max(0, v.overlay_seconds):.0f} s)", small),
+    ]
+    if not d.is_bitmap(small):
+        for (text, f), y in zip(lines, (17, 29, 41, 53)):
+            _center(dr, y, text, f)
+        return
+    _stack(dr, 15, H, lines)
 
 
 _DEFAULT_FRAMES = []

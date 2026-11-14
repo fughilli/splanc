@@ -159,6 +159,15 @@ td.n { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowr
           <button class="b" data-a="client_list" data-v="none">none</button>
           <button class="b" data-a="client_list" data-v="outdated" id="outdated">relay outdated</button></div>
         <table id="pclients"></table>
+        <div class="row"><label>Updates</label>
+          <button class="b" data-a="upd_preset" data-v="none">up to date</button>
+          <button class="b" data-a="upd_preset" data-v="system">system</button>
+          <button class="b" data-a="upd_preset" data-v="agent">agent</button>
+          <button class="b" data-a="upd_preset" data-v="both">both</button></div>
+        <div class="row"><label></label>
+          <button class="b" data-a="upd_fail" data-v="toggle" id="updfail">installs fail</button>
+          <button class="b" data-a="upd_auto" data-v="toggle" id="updauto">auto-check off</button>
+          <span class="mono" id="updstate"></span></div>
       </div>
       <div id="breal" hidden>
         <div class="row"><label>Relay</label>
@@ -280,6 +289,11 @@ function showInfo() {
       `<td><button class="b" data-a="client_remove" data-v="${esc(c.id)}">` +
       `revoke (elsewhere)</button></td></tr>`).join("");
     if ($("pclients").dataset.rows !== crows) { $("pclients").innerHTML = crows; $("pclients").dataset.rows = crows; }
+    const u = b.updates || {};
+    mark("upd_preset", u.preset);
+    $("updfail").classList.toggle("on", !!u.fail);
+    $("updauto").classList.toggle("on", u.auto === false);
+    $("updstate").textContent = `system ${u.system || "?"} · agent ${u.agent || "?"}`;
   } else {
     mark("relay", String(b.relay_up));
     $("relayurl").textContent = b.relay + (b.bridge_running ? "" : " · bridge exited");

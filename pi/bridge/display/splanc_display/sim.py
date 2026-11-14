@@ -19,7 +19,10 @@ and, for the bridge, either
                    (fixtures, relay up/down, pairing code, connected sessions,
                    paired clients with names/kinds/last use (add, remove, toggle
                    live, an outdated relay), failing commands), with every knob
-                   on the page; the Clients page's revoke works against it
+                   on the page; the Clients page's revoke works against it. Its
+                   updaters are fake_updates.FakeUpdater: updates on offer or
+                   not, a check, an install with progress, a failure
+                   (screen requests go to its request directory)
     --bridge real  the actual ``splanc-agent bridge`` (Node) with its status file
                    and control socket in a temp dir, against a local
                    ``splanc-agent relay`` it starts (or --relay URL). Fixtures
@@ -52,7 +55,7 @@ from typing import Callable, Dict, List, Optional
 
 from PIL import Image
 
-from . import boot, control, fake_bridge, fonts, main, render_oled
+from . import boot, control, fake_bridge, fake_updates, fonts, main, render_oled
 from .hat import KEY_PINS
 
 PIN_KEYS = {pin: key for key, pin in KEY_PINS.items()}
@@ -293,6 +296,7 @@ class FakeModel(fake_bridge.FakeBridge):
         self._ago: Dict[str, float] = {}  # player key -> seconds since seen
         for p in self.players:
             self._ago[self._key(p)] = now - p.get("seen", now)
+        self.updater = fake_updates.FakeUpdater(os.path.dirname(os.path.abspath(status_path)))
 
     @staticmethod
     def _key(p: dict) -> str:
@@ -353,6 +357,7 @@ class FakeModel(fake_bridge.FakeBridge):
 
     def start(self) -> "FakeModel":
         super().start()
+        self.updater.start()
         self.publish()
         self._hb = threading.Thread(target=self._heartbeat, daemon=True)
         self._hb.start()
@@ -360,6 +365,7 @@ class FakeModel(fake_bridge.FakeBridge):
 
     def stop(self) -> None:
         self._hb_stop.set()
+        self.updater.stop()
         super().stop()
 
     def _heartbeat(self) -> None:
@@ -446,6 +452,7 @@ class FakeModel(fake_bridge.FakeBridge):
                 for p in self.players
             ],
             "relay_outdated": self.relay_outdated,
+            "updates": self.updater.snapshot(),
             "paired_clients": [
                 {
                     "id": c["id"],
@@ -467,6 +474,8 @@ class FakeModel(fake_bridge.FakeBridge):
 
     def act(self, action: str, arg=None) -> None:
         now = time.time()
+        if action.startswith("upd_"):
+            return self.updater.act(action, arg)
         if action == "phase":
             if arg not in ("starting", "running", "error"):
                 raise ValueError(arg)
@@ -790,6 +799,23 @@ class Sim:
             boot_frames=self.boot_frames,
             oled_device=lambda: SimOled(self.frames, self.push_seconds),
             hdmi_device=lambda: SimHdmi(self.frames, self.hdmi_size),
+            **self._update_paths(),
+        )
+
+    def _update_paths(self) -> dict:
+        """The fake updaters' files; none for --bridge real (no updater there)."""
+        up = getattr(self.bridge, "updater", None)
+        if up is None:
+            missing = os.path.join(os.path.dirname(self.bridge.status_path), "no-updater")
+            return dict(
+                system_update_status=missing,
+                agent_update_status=missing,
+                update_request=missing,
+            )
+        return dict(
+            system_update_status=up.system_path,
+            agent_update_status=up.agent_path,
+            update_request=up.request_dir,
         )
 
     def start(self) -> "Sim":
@@ -828,7 +854,7 @@ class Sim:
         app = self.app
         if app is None:
             raise LookupError("the display service is not running")
-        st, view = app.watcher.status, app.ui.view()
+        st, view = app.status, app.ui.view()
         names = list(fonts.SETS)
         tw, th, lab = 128 * scale, 64 * scale, 18
         label_font = fonts.ttf("sans", 13)

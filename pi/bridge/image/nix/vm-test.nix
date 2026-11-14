@@ -12,9 +12,11 @@
 #      WiFi profile moved into NetworkManager (0600 root) and off the FAT
 #      partition, settings -> bridge.env (unknown keys dropped), SSH keys ->
 #      sshd starts;
-#   3. the self-update installs a newer bundle from latest.json (sha256-checked),
-#      restarts the bridge onto it with the flash-time relay, and is a no-op the
-#      second time; the bridge user can't modify the updated code;
+#   3. the background check only records the newer bundle latest.json names
+#      (status.json "available", nothing downloaded or switched); the screen's
+#      confirmation (a request file, as the display's user) installs it
+#      (sha256-checked), restarts the bridge onto it with the flash-time relay;
+#      a second install is a no-op; the bridge user can't modify the updated code;
 #   4. NetworkManager reads a WiFi profile rendered by the flasher's own code for
 #      an SSID/PSK full of keyfile-hostile characters back exactly (nmcli);
 #   5. Improv (no BT/WiFi hardware in the VM): a network from the phone app is
@@ -90,7 +92,7 @@ pkgs.testers.runNixOSTest {
       serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 -m http.server -b 127.0.0.1 -d ${stubBundle} 8000";
     };
     # Don't let the timer race the test's explicit runs.
-    systemd.timers.splanc-agent-update.enable = lib.mkForce false;
+    systemd.timers.splanc-agent-auto-check.enable = lib.mkForce false;
   };
 
   testScript = ''
@@ -137,7 +139,18 @@ pkgs.testers.runNixOSTest {
         machine.succeed("grep -q vm@test /var/lib/splanc-ssh/authorized_keys")
 
     with subtest("self-update to a newer bundle, onto the flash-time relay"):
-        machine.succeed("systemctl start splanc-agent-update.service")
+        machine.succeed("systemctl start splanc-agent-auto-check.service")
+        st = json.loads(machine.succeed("cat /var/lib/splanc-agent/status.json"))
+        assert st["state"] == "available" and st["available"]["version"] == "9.9.9", st
+        machine.fail("test -e /var/lib/splanc-agent/current")
+        # Confirmed on the screen: the display drops a request; root starts the install.
+        machine.succeed("runuser -u splanc -- touch /run/splanc-update-request/install-agent")
+        machine.wait_until_succeeds("test -L /var/lib/splanc-agent/current", timeout=120)
+        # (ran, ExecStartPost restarted the bridge, finished)
+        machine.wait_until_succeeds(
+            "systemctl show -p ActiveState --value splanc-agent-update.service | grep -qx inactive", timeout=60
+        )
+        machine.succeed("grep -q '\"state\": \"idle\"' /var/lib/splanc-agent/status.json")
         assert machine.succeed("readlink /var/lib/splanc-agent/current").strip() == "agent/9.9.9"
         machine.wait_until_succeeds("grep -q '\"state\": *\"pairing\"' /run/splanc-bridge/status.json", timeout=60)
         st = json.loads(machine.succeed("cat /run/splanc-bridge/status.json"))

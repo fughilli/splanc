@@ -176,7 +176,8 @@ def render_conf(
         "#   OLED=auto                  OLED HAT: auto | spi | i2c | off",
         "#   OLED_ROTATE=2              0-3 (x90 degrees)",
         "#   SPLANC_DISPLAY_HDMI=auto   HDMI status page: auto | off",
-        "#   SPLANC_AUTO_UPDATE=1       daily Splanc agent updates: 1 | 0",
+        "#   SPLANC_AUTO_UPDATE=1       look for updates in the background: 1 | 0 (installing",
+        "#                              always asks first, on the screen; 0 = check by hand only)",
         "",
     ]
     if hostname:

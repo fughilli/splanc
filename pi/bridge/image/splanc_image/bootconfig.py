@@ -32,7 +32,8 @@ Settings (unknown keys and bad values are ignored, with a log line):
     OLED=auto                       auto | spi | i2c | off
     OLED_ROTATE=2                   0-3 (x90 degrees)
     SPLANC_DISPLAY_HDMI=auto        auto | off
-    SPLANC_AUTO_UPDATE=1            1 | 0 (daily agent bundle updates)
+    SPLANC_AUTO_UPDATE=1            1 | 0 (background checks for agent + system updates;
+                                    installing always needs a confirmation)
 
 Nothing here can fail the boot: every step is guarded and logged.
 """

@@ -8,6 +8,7 @@ from typing import Optional
 from PIL import Image, ImageDraw
 
 from . import draw as d
+from . import updates as upd
 from .status import WAITING, Status, fmt_age, fmt_remaining, short_url
 
 BASE_W, BASE_H = 1920, 1080
@@ -18,6 +19,7 @@ TEXT = (232, 236, 241)
 MUTED = (138, 148, 166)
 OK = (74, 222, 128)
 BAD = (248, 113, 113)
+UPDATE = (76, 201, 240)
 
 ACCENT = {
     WAITING: (148, 163, 184),
@@ -82,8 +84,72 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}" + ("" if n == 1 else "s")
 
 
+def _mb(n) -> str:
+    if not n:
+        return ""
+    return f"{n / 1e6:.0f} MB" if n >= 10_000_000 else f"{n / 1e6:.1f} MB"
+
+
+def _install_headline(c: upd.Component):
+    """(big line, sub line) while an update installs."""
+    v = c.target or c.available
+    what = f"{c.label.lower()} update {v}"
+    if c.state == "downloading":
+        pct = f"{(c.progress or 0) * 100:.0f}%"
+        size = _mb(c.bytes_total)
+        sub = f"Downloading the {what}: {pct}" + (f" of {size}" if size else "") + "."
+    elif c.state == "verifying":
+        sub = f"Checking the signatures of the {what}."
+    elif c.state == "installing":
+        sub = f"Installing the {what}."
+    elif c.state == "rebooting":
+        sub = f"Restarting into {v}. Back in about two minutes."
+    elif c.state in ("confirming", "committing"):
+        sub = f"Checking that {v} runs well; otherwise the bridge goes back to the old one."
+    else:  # rolling_back
+        sub = f"{v} did not pass its health check: going back to the previous version."
+    if c.state in ("downloading", "verifying"):
+        sub += " The bridge keeps running meanwhile."
+    elif c.kind == "agent":
+        sub += " The bridge restarts in a moment."
+    return "Updating the bridge", sub
+
+
+def _update_pill(c: _Canvas, s: Status, oled: bool, x_right: float) -> None:
+    """An update on offer (or installing), in the header left of the state pill."""
+    info = s.updates
+    if info is None:
+        return
+    busy = info.installing
+    failed = [x for x in info.available if x.failed]
+    if busy is not None:
+        pct = f" {(busy.progress or 0) * 100:.0f}%" if busy.state == "downloading" else ""
+        text = f"Updating {busy.label.lower()} {busy.target or busy.available}{pct}"
+    elif failed:
+        how = "retry: Updates page" if (oled and info.can_request) else "see splanc-bridge updates"
+        text = f"Update failed ({failed[0].label.lower()} {failed[0].available}) · {how}"
+    elif info.available:
+        names = ", ".join(f"{x.label.lower()} {x.available}" for x in info.available)
+        how = "Updates page" if (oled and info.can_request) else "splanc-bridge updates"
+        text = f"Update available: {names} · {how}"
+    else:
+        return
+    x0_min = 640
+    max_w = x_right - x0_min - 90
+    size = c.fit(text, "bold", 30, max_w)
+    text = c.ell(text, "bold", size, max_w)
+    w = c.width(text, "bold", size)
+    x1 = x_right
+    x0 = x1 - w - 90
+    c.rect([x0, 42, x1, 94], fill=PANEL, radius=26, outline=UPDATE, width=3)
+    c.dot(x0 + 34, 68, 9, UPDATE)
+    c.text((x0 + 58, 68), text, "bold", size, TEXT, anchor="lm")
+
+
 def _headline(s: Status, now: float, oled: bool):
     """(big line, sub line) for when no pairing code is showing."""
+    if s.updates is not None and s.updates.installing is not None:
+        return _install_headline(s.updates.installing)
     how = (
         "Press KEY1, or run: splanc-bridge new-code"
         if oled
@@ -109,7 +175,7 @@ def _headline(s: Status, now: float, oled: bool):
     ].lower() + how[1:]
 
 
-def _header(c: _Canvas, s: Status) -> None:
+def _header(c: _Canvas, s: Status, oled: bool = False) -> None:
     c.text((80, 86), "splanc", "bold", 60, TEXT, anchor="ls")
     c.text((80 + c.width("splanc ", "bold", 60), 86), "bridge", "sans", 60, MUTED, anchor="ls")
     accent = ACCENT.get(s.state, MUTED)
@@ -121,6 +187,7 @@ def _header(c: _Canvas, s: Status) -> None:
     c.dot(x0 + 42, 68, 12, accent)
     c.text((x0 + 70, 68), label, "bold", 36, TEXT, anchor="lm")
     c.rect([80, 128, BASE_W - 80, 130], fill=PANEL)
+    _update_pill(c, s, oled, x0 - 24)
 
 
 def _pairing(c: _Canvas, s: Status, now: float) -> None:
@@ -161,9 +228,37 @@ def _pairing(c: _Canvas, s: Status, now: float) -> None:
         d.draw_qr(c.dr, matrix, x, top, box, dark=(0, 0, 0), quiet=4)
 
 
+def _offer_lines(s: Status, oled: bool) -> list:
+    """Under the headline: each update on offer, from which version, what it is,
+    what installing it costs, and how to install it."""
+    info = s.updates
+    if info is None or info.installing is not None or not info.available:
+        return []
+    out = []
+    for x in info.available:
+        cost = (
+            "restarts the bridge"
+            if x.kind == "agent"
+            else ("downloaded, reboots" if x.staged else f"{_mb(x.download_bytes)}, reboots")
+        )
+        out.append(
+            f"{x.label} {x.available} (now {x.current_text}): "
+            f"{upd.WHAT_LONG.get(x.kind, x.kind)}, {cost.lstrip(', ')}."
+        )
+    if oled and info.can_request:
+        out.append("To install: joystick to Updates, open it, press KEY3.")
+    else:
+        out.append("To install: sudo splanc-system-update apply / splanc-bridge update (SSH).")
+    return out
+
+
 def _message(c: _Canvas, s: Status, now: float, oled: bool) -> None:
     big, sub = _headline(s, now, oled)
     accent = ACCENT.get(s.state, MUTED)
+    busy = s.updates.installing if s.updates is not None else None
+    if busy is not None:
+        accent = UPDATE
+    offers = _offer_lines(s, oled)
     size = c.fit(big, "bold", 120, BASE_W - 260)
     # wrap the sub line onto up to 3 lines
     words, lines, cur = sub.split(), [], ""
@@ -176,12 +271,32 @@ def _message(c: _Canvas, s: Status, now: float, oled: bool) -> None:
             cur = w
     lines.append(cur)
     lines = lines[:3]
-    block = size * 1.3 + len(lines) * 60
+    if offers:
+        size = min(size, 96)
+        lines = lines[:2]
+    block = size * 1.3 + len(lines) * 60 + (24 + len(offers) * 46 if offers else 0)
     top = 150 + (590 - block) / 2  # centred between the header and the panels
     c.rect([80, top, 92, top + block], fill=accent)
     c.text((130, top), big, "bold", size, TEXT)
     for i, line in enumerate(lines):
         c.text((130, top + size * 1.3 + i * 60), line, "sans", 44, MUTED)
+    y = top + size * 1.3 + len(lines) * 60 + 24
+    for i, line in enumerate(offers):
+        last = i == len(offers) - 1 and len(offers) > 1
+        c.dot(142, y + i * 46 + 18, 7, MUTED if last else UPDATE)
+        c.text(
+            (164, y + i * 46),
+            c.ell(line, "sans", 34, BASE_W - 300),
+            "sans",
+            34,
+            MUTED if last else TEXT,
+        )
+    if busy is not None and busy.progress is not None:
+        y = top + block + 24
+        c.rect([130, y, BASE_W - 130, y + 22], fill=PANEL, radius=11)
+        x1 = 130 + (BASE_W - 260) * busy.progress
+        if x1 > 130 + 22:
+            c.rect([130, y, x1, y + 22], fill=UPDATE, radius=11)
 
 
 def _clients_panel(c: _Canvas, s: Status, x: float, top: float, w: float, now: float) -> None:
@@ -310,7 +425,7 @@ def render(
     cw, ch = max(1, int(BASE_W * k)), max(1, int(BASE_H * k))
     inner = Image.new("RGB", (cw, ch), BG)
     c = _Canvas(inner, k)
-    _header(c, status)
+    _header(c, status, oled)
     if status.active_code(now):
         _pairing(c, status, now)
     else:
