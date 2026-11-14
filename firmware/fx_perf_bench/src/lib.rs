@@ -33,7 +33,7 @@ pub mod micro;
 mod effects_gen;
 #[cfg(test)]
 mod host_test;
-pub use effects_gen::EFFECTS;
+pub use effects_gen::{EFFECTS, SIG_CASES, SIG_OTHER_FXB};
 
 /// One embedded effect, from gen_effects.rs.
 pub struct EffectDesc {
@@ -47,6 +47,14 @@ pub struct EffectDesc {
     pub uniforms: &'static [(u8, &'static [f32])],
     /// Compile diagnostics (empty fxb) — reported, never run.
     pub err: &'static str,
+    /// Whether the AOT lowering (firmware/fx_aot) produced a native image for
+    /// this effect (false ⇒ it falls back to the VM).
+    pub aot_ok: bool,
+    /// The host-lowered image as a dev-key-signed `.fxn` (firmware/fx_sig):
+    /// header + RV32 words + the defused operand bytes. The device verifies
+    /// the tag against `fxb` before copying the code into its exec region.
+    /// Empty when `!aot_ok`.
+    pub aot_fxn: &'static [u8],
 }
 
 pub const GROUP_STUDY: u8 = 0;

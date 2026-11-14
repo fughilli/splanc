@@ -21,6 +21,8 @@ fn desc(path: &str) -> &'static EffectDesc {
         fxb: Box::leak(c.fxb.into_boxed_slice()),
         uniforms: Box::leak(uniforms.into_boxed_slice()),
         err: "",
+        aot_ok: false,
+        aot_fxn: &[],
     }))
 }
 

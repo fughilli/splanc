@@ -91,7 +91,32 @@ def main() -> int:
         f.write("\n".join(lines) + "\n")
     done = any(ln.strip() == "fxpb done" for ln in lines)
     print(f"{len(lines)} result lines, complete={done} -> {args.out}")
-    return 0 if done else 1
+    sig_ok = sig_verdict(lines)
+    return 0 if done and sig_ok else 1
+
+
+def sig_verdict(lines: list[str]) -> bool:
+    """The native-image signature pass (firmware/fx_sig, device.rs `sig_pass`):
+    every case gave its expected reason, the backoff engaged, the tampered blob
+    stayed on the VM and the good one ran native and matched the VM."""
+    summ = [ln for ln in lines if ln.startswith("fxpb sig summary")]
+    if not summ:
+        print("sig: no summary line")
+        return False
+    kv = dict(f.split("=", 1) for f in summ[-1].split()[3:] if "=" in f)
+    tampered = any("reason=sig:bad_tag" in ln and ln.startswith("fxpb aot") for ln in lines)
+    native = any(ln.startswith("fxpb aot") and " ok=1 " in ln and "maxdiff=0" in ln for ln in lines)
+    ok = (
+        kv.get("cases") == kv.get("pass")
+        and int(kv.get("cases", "0")) > 0
+        and kv.get("ratelimit") == "1"
+        and tampered
+        and native
+    )
+    print(
+        f"sig: {summ[-1]} tampered_fallback={tampered} native_match={native} -> {'PASS' if ok else 'FAIL'}"
+    )
+    return ok
 
 
 if __name__ == "__main__":
