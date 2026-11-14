@@ -1,8 +1,10 @@
 /**
- * Hue-code cycle logic (design doc §8.1, hue-only revision) — the TypeScript
- * mirror of `pi/led_driver/led_driver/graycode.py`. The two implementations
- * MUST agree frame-for-frame; `tests/gray.test.ts` checks this against
- * Python-generated golden fixtures (both alphabets).
+ * Hue-code cycle logic (design doc §8.1, hue-only revision): thin typed
+ * wrappers over the Rust hue-code kernel (//firmware/pattern, loaded as wasm by
+ * ./kernel.ts). The kernel is the ONE implementation — the players link the
+ * same crate — so the phone cannot disagree with the firmware about a
+ * codeword, a symbol or a palette colour. Only argument validation, the
+ * normalized palette the CV code measures against, and CSS helpers live here.
  *
  * The cycle is:
  *
@@ -10,73 +12,81 @@
  *     [ symbol 0 ] … [ symbol D-1 ]             data, log2(symbols) bits each
  *
  * Every LED is lit EVERY frame at constant brightness — the code is carried
- * entirely by COLOR. This is the only carrier: the old intensity ("gray")
- * blink code was removed because its dark frames made blobs disappear, which
- * broke cross-frame track association (the tracker had to coast blind
- * through every 0-bit). White is the per-track color reference (cancels
- * white balance / color correction exactly); green is the chroma sync; the
- * data palette depends on the negotiated alphabet:
+ * entirely by COLOR. White is the per-track color reference (cancels white
+ * balance / color correction exactly); green is the chroma sync; the data
+ * palette depends on the negotiated alphabet:
  *
  *  - symbols=2: bit 1 → red, bit 0 → blue (maximum hue separation).
  *  - symbols=4: 2 bits/frame from the hue-adjacent path blue → magenta →
  *    red → yellow carrying binary-reflected-Gray bit pairs 00 → 01 → 11 →
  *    10, so the DOMINANT misread (confusing adjacent hues) flips exactly
- *    one bit — which SEC-DED corrects. Halves the data frames; negotiated
- *    when the measured chroma SNR is good.
+ *    one bit — which SEC-DED corrects.
  *
  * With fec="secded" (the default code-book) the codeword is gray(i+1)
  * wrapped in an extended-Hamming distance-4 code (./fec.ts): one decisively
  * misread BIT is corrected, two are detected and the cycle rejected.
  *
  * Codewords carry `id + CODE_OFFSET`, never the raw id: the all-zero data
- * word is RESERVED-INVALID (without the offset, LED 0 is a decode magnet
- * for blinking artifacts — see docs/decisions.md).
+ * word is RESERVED-INVALID (see docs/decisions.md).
  */
 
 import type { CodeParams } from "@ledmapper/protocol";
-import { secdedDecode, secdedEncode, secdedTotalBits } from "./fec";
+import {
+  FLAG_CORRECTED,
+  FLAG_MALFORMED,
+  FLAG_UNCORRECTABLE,
+  FLAG_VALUE,
+  kernel,
+  SYMBOL_BUF_LEN,
+  VALUE_MASK,
+} from "./kernel";
+
+const secded = (params: CodeParams): number => ((params.fec ?? "none") === "secded" ? 1 : 0);
+
+/** SEC-DED encodes gray(id+1) as a dataBits(ledCount)-bit word: an id whose
+ * word does not fit is a caller bug (fec.ts secdedEncode's RangeError). */
+function checkEncodable(ledId: number, params: CodeParams): void {
+  if (!secded(params)) return;
+  const k = kernel();
+  const data = k.pk_gray(ledId + CODE_OFFSET);
+  const bits = k.pk_data_bits(params.ledCount);
+  if (data < 0 || data >>> bits !== 0) {
+    throw new RangeError(`data word ${data} does not fit in ${bits} bits`);
+  }
+}
 
 /** Binary-reflected Gray code of `i`. */
 export function gray(i: number): number {
-  return i ^ (i >> 1);
+  return kernel().pk_gray(i);
 }
 
 /** Inverse of {@link gray} — recover the index from its Gray code. */
 export function decodeGray(value: number): number {
-  let result = 0;
-  while (value) {
-    result ^= value;
-    value >>= 1;
-  }
-  return result;
+  return kernel().pk_decode_gray(value);
 }
 
-/** Codewords are gray(id + CODE_OFFSET); the all-zero word is reserved-invalid. */
+/** Codewords are gray(id + CODE_OFFSET); the all-zero word is reserved-invalid.
+ * (A protocol constant, pinned to the kernel's by tests/gray.test.ts.) */
 export const CODE_OFFSET = 1;
 
 /** Gray data-word width for `ledCount` LEDs (codewords carry id+1). */
 export function dataBits(ledCount: number): number {
-  return Math.max(1, Math.ceil(Math.log2(ledCount + CODE_OFFSET)));
+  return kernel().pk_data_bits(ledCount);
 }
 
 /**
  * The TRANSMITTED codeword for `ledId`: the Gray data word, wrapped in the
- * extended-Hamming d=4 code with fec="secded" (see ./fec.ts). Bits are sent
- * log2(symbols) per data frame, least-significant first. Mirrors
- * `graycode.codeword` in the Python driver.
+ * extended-Hamming d=4 code with fec="secded". Bits are sent log2(symbols)
+ * per data frame, least-significant first.
  */
 export function codewordForId(ledId: number, params: CodeParams): number {
-  const data = gray(ledId + CODE_OFFSET);
-  if ((params.fec ?? "none") === "secded") {
-    return secdedEncode(data, dataBits(params.ledCount));
-  }
-  return data;
+  checkEncodable(ledId, params);
+  return kernel().pk_codeword(ledId, params.ledCount, secded(params));
 }
 
 /** Transmitted code-bit count implied by ledCount + fec (consistency). */
 export function expectedBits(params: CodeParams): number {
-  const k = dataBits(params.ledCount);
-  return (params.fec ?? "none") === "secded" ? secdedTotalBits(k) : k;
+  return kernel().pk_expected_bits(params.ledCount, secded(params));
 }
 
 /** Bits carried per data frame: log2 of the symbol alphabet. */
@@ -90,16 +100,19 @@ export function bitsPerSymbol(params: CodeParams): number {
 /** Data-frame count: ceil(bits / bitsPerSymbol); the last frame's high bit
  * is zero-padded when bits is odd. */
 export function dataFrames(params: CodeParams): number {
-  return Math.ceil(params.bits / bitsPerSymbol(params));
+  bitsPerSymbol(params); // validate the alphabet
+  return kernel().pk_data_frames(params.bits, params.symbols);
 }
 
 /** The symbol VALUE `ledId` transmits in data frame `frame`. */
 export function symbolAt(ledId: number, frame: number, params: CodeParams): number {
-  const bps = bitsPerSymbol(params);
-  return (codewordForId(ledId, params) >> (frame * bps)) & ((1 << bps) - 1);
+  bitsPerSymbol(params);
+  checkEncodable(ledId, params);
+  return kernel().pk_symbol_at(ledId, frame, params.ledCount, params.symbols, secded(params));
 }
 
-/** Cycle-frame indices of the sync delimiter; data frame d is frame 2 + d. */
+/** Cycle-frame indices of the sync delimiter; data frame d is frame 2 + d.
+ * (Protocol constants, pinned to the kernel's by tests/gray.test.ts.) */
 export const FRAME_ALL_ON = 0;
 export const FRAME_ALL_OFF = 1;
 export const DATA_FRAME_OFFSET = 2;
@@ -115,17 +128,35 @@ export const COLOR_BLUE: Rgb = [0, 0, 1];
 export const COLOR_MAGENTA: Rgb = [1, 0, 1];
 export const COLOR_YELLOW: Rgb = [1, 1, 0];
 
+/** The kernel's `Color` discriminants (firmware/pattern/src/lib.rs) -> the
+ * normalized colour the CV code measures against. */
+const COLOR_BY_INDEX: readonly Rgb[] = [
+  COLOR_WHITE,
+  COLOR_GREEN,
+  COLOR_RED,
+  COLOR_BLUE,
+  COLOR_MAGENTA,
+  COLOR_YELLOW,
+];
+
 /**
- * Symbol value → palette color, per alphabet. symbols=4 assigns values
- * along the hue-adjacent path blue(240°) → magenta(300°) → red(0°) →
- * yellow(60°) in binary-reflected Gray order (00, 01, 11, 10): adjacent-hue
- * confusion flips one bit. Mirrors `graycode.SYMBOL_COLORS`; pinned by the
- * goldens.
+ * Symbol value → palette color, per alphabet: the decoder's classification
+ * targets. symbols=4 assigns values along the hue-adjacent path blue(240°) →
+ * magenta(300°) → red(0°) → yellow(60°) in binary-reflected Gray order
+ * (00, 01, 11, 10). Pinned to the kernel's `symbol_color` by
+ * tests/gray.test.ts.
  */
 export const SYMBOL_COLORS: Record<number, readonly Rgb[]> = {
   2: [COLOR_BLUE, COLOR_RED],
   4: [COLOR_BLUE, COLOR_MAGENTA, COLOR_YELLOW, COLOR_RED],
 };
+
+/** The normalized colour for a kernel `Color` discriminant. */
+export function colorOfIndex(index: number): Rgb {
+  const c = COLOR_BY_INDEX[index];
+  if (c === undefined) throw new RangeError(`kernel returned unknown color ${index}`);
+  return c;
+}
 
 /** CSS hex for a normalized palette color (wall page rendering). */
 export function cssColor(c: Rgb): string {
@@ -133,18 +164,18 @@ export function cssColor(c: Rgb): string {
   return `#${h(c[0])}${h(c[1])}${h(c[2])}`;
 }
 
-/**
- * The color `ledId` shows in cycle frame `frameIndex` (0-based within one
- * cycle). Mirrors `graycode.color_for_frame` in the Python driver.
- */
+/** The color `ledId` shows in cycle frame `frameIndex` (0-based within one cycle). */
 export function colorForFrame(ledId: number, frameIndex: number, params: CodeParams): Rgb {
   if (frameIndex < 0 || frameIndex >= params.cycleFrames) {
     throw new RangeError(`frameIndex ${frameIndex} outside cycle of ${params.cycleFrames}`);
   }
-  if (frameIndex === FRAME_ALL_ON) return COLOR_WHITE;
-  if (frameIndex === FRAME_ALL_OFF) return COLOR_GREEN;
-  const value = symbolAt(ledId, frameIndex - DATA_FRAME_OFFSET, params);
-  return SYMBOL_COLORS[params.symbols]![value]!;
+  if (frameIndex >= DATA_FRAME_OFFSET) {
+    bitsPerSymbol(params);
+    checkEncodable(ledId, params);
+  }
+  return colorOfIndex(
+    kernel().pk_color_index(ledId, frameIndex, params.ledCount, params.symbols, secded(params)),
+  );
 }
 
 export interface CycleDecode {
@@ -164,25 +195,19 @@ export interface CycleDecode {
  */
 export function decodeCycleSymbols(symbols: readonly number[], params: CodeParams): CycleDecode {
   const none: CycleDecode = { id: null, corrected: false, uncorrectable: false };
-  if (symbols.length !== dataFrames(params)) return none;
-  const bps = bitsPerSymbol(params);
-  let code = 0;
-  for (let d = 0; d < symbols.length; d++) {
-    code |= symbols[d]! << (d * bps);
+  if (symbols.length !== dataFrames(params) || symbols.length > SYMBOL_BUF_LEN) return none;
+  const k = kernel();
+  const buf = new Uint8Array(k.memory.buffer, k.pk_symbol_buf(), symbols.length);
+  for (let d = 0; d < symbols.length; d++) buf[d] = symbols[d]!;
+  const r = k.pk_decode_cycle(symbols.length, params.ledCount, params.bits, params.symbols, secded(params));
+  if ((r & FLAG_MALFORMED) !== 0) {
+    // The code-book's `bits` exceed the SEC-DED width its ledCount implies.
+    const width = k.pk_secded_total_bits(k.pk_data_bits(params.ledCount));
+    throw new RangeError(`codeword ${r & (FLAG_MALFORMED - 1)} does not fit in ${width} bits`);
   }
-  code &= (1 << params.bits) - 1; // drop the zero-padded high bit
-  let corrected = false;
-  if ((params.fec ?? "none") === "secded") {
-    const res = secdedDecode(code, dataBits(params.ledCount));
-    if (res.data === null) return { id: null, corrected: false, uncorrectable: true };
-    code = res.data;
-    corrected = res.corrected;
-  }
-  const id = decodeGray(code) - CODE_OFFSET;
-  // id < 0 is the reserved all-zero word — a dark/noise artifact.
   return {
-    id: id >= 0 && id < params.ledCount ? id : null,
-    corrected,
-    uncorrectable: false,
+    id: (r & FLAG_VALUE) !== 0 ? r & VALUE_MASK : null,
+    corrected: (r & FLAG_CORRECTED) !== 0,
+    uncorrectable: (r & FLAG_UNCORRECTABLE) !== 0,
   };
 }

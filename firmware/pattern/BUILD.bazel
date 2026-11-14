@@ -1,15 +1,31 @@
-"""Firmware hue-code pattern generator (Phase 4a, pulled forward host-side).
+"""The hue-code kernel: the ONE implementation of Splanc's LED colour code
+(Gray/SEC-DED codewords, symbol palette, code-book sizing, cycle decode,
+stride schedule, pattern-clock timing).
 
-no_std, zero-dependency — buildable for the ESP32-C6 triple. The golden test
-pins it to the SAME fixtures the phone decoder verifies (web/tests/
-golden_secded16{,_sym4}.json): what the firmware emits is what the phone is
-tested to decode.
+  :pattern        the no_std, zero-dependency crate (`ledmapper_pattern`) every
+                  Rust player links (C6/P4 firmware, pi/player_rs, mac player):
+                  the RENDER path only
+  :pattern_app    the same crate + the `app` feature (decode side, timing)
+  :kernel_abi     a flat `extern "C"` shim over it, built two ways:
+  :kernel_wasm      wasm32, -c opt: the phone app embeds it (//web:code_kernel_wasm
+                    -> web/src/code/kernel_wasm.ts, wrapped by web/src/code/*.ts)
+  :kernel_abi       host cdylib: the Python dev backend's codebook.py (ctypes)
+  :gen_golden     emits testdata/*.json from the kernel; :goldens diff-tests the
+                  checked-in fixtures (bazel run //firmware/pattern:goldens to
+                  regenerate after a deliberate wire change)
+
+Hue-code v2 (docs/design/hue-code-v2.md) lands here, once.
 """
 
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@aspect_bazel_lib//lib:write_source_files.bzl", "write_source_files")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_shared_library", "rust_test")
+load("//tools/transitions:wasm.bzl", "wasm32_cdylib")
 
 package(default_visibility = ["//visibility:public"])
 
+# What firmware links: the render path only (codeword -> symbol -> palette
+# colour per (LED, frame), the stride mask, and the code-book derivation the
+# player runs today). No decode side.
 rust_library(
     name = "pattern",
     srcs = ["src/lib.rs"],
@@ -17,20 +33,97 @@ rust_library(
     edition = "2021",
 )
 
+# The same crate with the `app` feature: + Gray inverse, SEC-DED decode, cycle
+# decode and the phone's float pattern clock. App-side consumers only (the
+# wasm/ctypes ABI, the golden generator, tests) — never a firmware image.
+rust_library(
+    name = "pattern_app",
+    srcs = ["src/lib.rs"],
+    crate_features = ["app"],
+    crate_name = "ledmapper_pattern",
+    edition = "2021",
+)
+
+rust_test(
+    name = "pattern_unit_test",
+    crate = ":pattern_app",
+    crate_features = ["app"],
+    edition = "2021",
+)
+
+# The C ABI. Size flags apply to the wasm build only (it is embedded in the
+# phone bundle and compiled synchronously at import, so it stays a few KB): a
+# small shadow stack instead of wasm-ld's 1 MiB default, symbols stripped.
+rust_shared_library(
+    name = "kernel_abi",
+    srcs = ["abi/kernel_abi.rs"],
+    crate_name = "ledmapper_pattern_abi",
+    edition = "2021",
+    rustc_flags = select({
+        "@platforms//cpu:wasm32": [
+            "-Copt-level=z",
+            "-Ccodegen-units=1",
+            "-Cstrip=symbols",
+            "-Clink-arg=-zstack-size=16384",
+        ],
+        "//conditions:default": [],
+    }),
+    deps = [":pattern_app"],
+)
+
+wasm32_cdylib(
+    name = "kernel_wasm",
+    lib = ":kernel_abi",
+)
+
+rust_binary(
+    name = "gen_golden",
+    srcs = ["bin/gen_golden.rs"],
+    edition = "2021",
+    deps = [":pattern_app"],
+)
+
+_GOLDENS = {
+    "secded16": "golden_secded16.json",
+    "secded16_sym4": "golden_secded16_sym4.json",
+    "stride": "golden_stride.json",
+}
+
+[
+    genrule(
+        name = "gen_" + which,
+        outs = ["gen/" + out],
+        cmd = "$(execpath :gen_golden) {} > $@".format(which),
+        tools = [":gen_golden"],
+    )
+    for which, out in _GOLDENS.items()
+]
+
+# The checked-in fixtures ARE the kernel's output: `bazel test` diff-tests them,
+# `bazel run //firmware/pattern:goldens` rewrites them.
+write_source_files(
+    name = "goldens",
+    files = {"testdata/" + out: ":gen_" + which for which, out in _GOLDENS.items()},
+)
+
+exports_files(["testdata/" + out for out in _GOLDENS.values()])
+
+# Behavioural checks of the kernel against its pinned fixtures (+ the SEC-DED
+# corruption properties at the fixture geometry).
 rust_test(
     name = "golden_pattern_test",
     srcs = ["tests/golden_pattern.rs"],
     data = [
-        "//web:tests/golden_secded16.json",
-        "//web:tests/golden_secded16_sym4.json",
+        "testdata/golden_secded16.json",
+        "testdata/golden_secded16_sym4.json",
     ],
     edition = "2021",
     env = {
-        "GOLDEN_SECDED16": "$(rootpath //web:tests/golden_secded16.json)",
-        "GOLDEN_SECDED16_SYM4": "$(rootpath //web:tests/golden_secded16_sym4.json)",
+        "GOLDEN_SECDED16": "$(rootpath testdata/golden_secded16.json)",
+        "GOLDEN_SECDED16_SYM4": "$(rootpath testdata/golden_secded16_sym4.json)",
     },
     deps = [
-        ":pattern",
+        ":pattern_app",
         "@crates//:serde_json",
     ],
 )
@@ -38,11 +131,11 @@ rust_test(
 rust_test(
     name = "golden_stride_test",
     srcs = ["tests/golden_stride.rs"],
-    data = ["//web:tests/golden_stride.json"],
+    data = ["testdata/golden_stride.json"],
     edition = "2021",
-    env = {"GOLDEN_STRIDE": "$(rootpath //web:tests/golden_stride.json)"},
+    env = {"GOLDEN_STRIDE": "$(rootpath testdata/golden_stride.json)"},
     deps = [
-        ":pattern",
+        ":pattern_app",
         "@crates//:serde_json",
     ],
 )

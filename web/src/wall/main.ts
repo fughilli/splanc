@@ -26,6 +26,7 @@
 
 import type { CodeParams } from "@ledmapper/protocol";
 import { colorForFrame } from "../code/gray";
+import { codeKernelReady } from "../code/kernel";
 import { frameIndexAt } from "../code/timing";
 import { defaultWsUrl, LedMapperClient } from "../net/client";
 
@@ -260,6 +261,7 @@ document.addEventListener("fullscreenchange", () => {
 // -- control plane ------------------------------------------------------------
 
 async function main(): Promise<void> {
+  await codeKernelReady; // the hue-code kernel (wasm) paints every wall frame
   const client = new LedMapperClient(OPT.wsUrl, { clientName: "virtual-wall" });
   client.events = {
     onConnected: () => {
