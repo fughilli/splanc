@@ -28,6 +28,9 @@ use ledmapper_view::ledmapper::v1 as pv;
 use pb::ServerMessage_::Msg as SMsg;
 use pv::client_message::Msg as CMsg;
 
+/// Scheduled control changes (apply_at_ms): the bounded frame queue.
+pub mod apply_queue;
+
 /// design doc §12 default: frame period >= ~3 camera frame intervals.
 pub const DEFAULT_BIT_PERIOD_MS: f64 = 100.0;
 /// A group capture's epoch must be within this of the player clock (ms).
@@ -682,14 +685,11 @@ impl Player {
             // FX deck crossfade: store the clamped position + mode (runtime only);
             // echoed in welcome for UI hydration.
             CMsg::SetCrossfade(m) => {
-                let pos = m.position();
-                self.crossfade = if pos.is_finite() { (pos as f32).clamp(0.0, 1.0) } else { 0.0 };
-                self.crossfade_mode = m.mode().min(1);
+                self.set_crossfade(m.position(), m.mode());
                 Some(self.welcome())
             }
             CMsg::SetBrightness(m) => {
-                self.output_brightness = (m.brightness() as f32).clamp(0.0, 1.0);
-                self.output_brightness_gen = self.output_brightness_gen.wrapping_add(1);
+                self.set_output_brightness(m.brightness());
                 Some(self.welcome())
             }
             // Hardware wiring config: GPIO / LED type / wire color order per
@@ -1266,6 +1266,26 @@ impl Player {
     /// The FX deck crossfade colour space (0 = linear RGB, 1 = HSV).
     pub fn crossfade_mode(&self) -> u32 {
         self.crossfade_mode
+    }
+
+    /// The welcome reply (what set_crossfade / set_brightness answer), for a
+    /// scheduled one the firmware answers on arrival.
+    pub fn welcome_reply(&self) -> pb::ServerMessage {
+        self.welcome()
+    }
+
+    /// Apply a set_crossfade (clamped; non-finite = 0). Also the scheduled
+    /// (apply_at) path, which applies it at a frame boundary without a reply.
+    pub fn set_crossfade(&mut self, position: f64, mode: u32) {
+        self.crossfade = if position.is_finite() { (position as f32).clamp(0.0, 1.0) } else { 0.0 };
+        self.crossfade_mode = mode.min(1);
+    }
+
+    /// Apply a set_brightness: store the clamped scale and bump the gen the
+    /// firmware polls. Also the scheduled (apply_at) path.
+    pub fn set_output_brightness(&mut self, brightness: f64) {
+        self.output_brightness = (brightness as f32).clamp(0.0, 1.0);
+        self.output_brightness_gen = self.output_brightness_gen.wrapping_add(1);
     }
 
     pub fn output_brightness(&self) -> f32 {

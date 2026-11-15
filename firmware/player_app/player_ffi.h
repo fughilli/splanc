@@ -77,6 +77,11 @@ void lm_tex_present(uint32_t now_ms);
 // Device-clock step guard, every render frame under the player mutex: a millis() step
 // back > 1 s shifts the time base + queued video times by it. Returns the shift (0 = none).
 int64_t lm_clock_observe(int64_t now_ms);
+// Scheduled changes (apply_at_ms on set_uniforms / set_effect / set_crossfade /
+// set_brightness): apply those due by `now_ms` (millis), in order. Every render frame
+// at its start, under the player mutex. Bits: 1 = applied, 2 = brightness changed
+// (re-run poll_brightness).
+uint32_t lm_sched_apply(int64_t now_ms);
 // Lock-free video ingest (network task, under the texture-queue lock only): decode +
 // queue a set_texture for lm_tex_present. Returns the TextureAck length in `out`
 // (0 = none), -2 = not a set_texture, -3 = can't be queued (dispatch it normally).

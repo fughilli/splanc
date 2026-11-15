@@ -42,6 +42,15 @@ import type { UniformInput } from "./uniforms";
 import { canaryRollout, P4_KIND, resolvePackage, type ResolvedPackage } from "./firmware";
 import { registerFxDebugTools } from "./fxdebug";
 import type { TrustVerdict } from "./trust";
+import {
+  MAX_LEAD_MS,
+  needsAlign,
+  planSchedule,
+  scheduleReport,
+  type ScheduleCandidate,
+  type Scheduled,
+  type SchedulePlan,
+} from "./schedule";
 
 export const VERSION = "0.2.0";
 
@@ -72,6 +81,17 @@ const players = z
   .union([z.string(), z.array(z.string())])
   .optional()
   .describe('Which players: a name, MAC, room, "all", or a list. Default: the only player / the one room.');
+
+const leadMs = z
+  .number()
+  .min(0)
+  .max(MAX_LEAD_MS)
+  .optional()
+  .describe(
+    "Apply the change this many ms from now, on every selected player at the same render frame (shared time " +
+      "base; firmware feature apply_at). Default: 150 when several players are targeted and all support it, " +
+      "else on arrival. 0 = on arrival.",
+  );
 
 /** Sources compiled or deployed this session, by effect id (for preview_effect). */
 const knownSources = new Map<string, string>();
@@ -432,11 +452,19 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
   server.registerTool(
     "set_brightness",
     {
-      description: "Set output brightness 0..1. Runtime-only: a reboot restores full brightness.",
-      inputSchema: { level: z.number().min(0).max(1), players },
+      description:
+        "Set output brightness 0..1. Runtime-only: a reboot restores full brightness. Several players change " +
+        "on the same frame (lead_ms).",
+      inputSchema: { level: z.number().min(0).max(1), lead_ms: leadMs, players },
     },
-    ({ level, players: sel }) =>
-      guard(async () => ok(await fan(sel, async (s) => ({ brightness: await s.setBrightness(level) })))),
+    ({ level, lead_ms, players: sel }) =>
+      guard(async () =>
+        ok(
+          await scheduled(hub, sel, lead_ms, (at) =>
+            fan(sel, async (s) => ({ brightness: await s.setBrightness(level, at(s)) })),
+          ),
+        ),
+      ),
   );
   server.registerTool(
     "update_firmware",
@@ -509,11 +537,23 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
       description:
         "Set uniforms on the active effect by NAME (on every selected player). Values are checked against each " +
         "uniform's width and (per-component, possibly negative) range; a mat4 is 16 numbers, column-major. " +
-        "commit=true persists them across reboots (use sparingly: flash wear).",
-      inputSchema: { values: z.record(z.string(), uniformValue), commit: z.boolean().optional(), players },
+        "commit=true persists them across reboots (use sparingly: flash wear). Several players change on the " +
+        "same frame (lead_ms).",
+      inputSchema: {
+        values: z.record(z.string(), uniformValue),
+        commit: z.boolean().optional(),
+        lead_ms: leadMs,
+        players,
+      },
     },
-    ({ values, commit, players: sel }) =>
-      guard(async () => ok(await fan(sel, async (s) => ({ sent: await s.setUniforms(values, commit ?? false) })))),
+    ({ values, commit, lead_ms, players: sel }) =>
+      guard(async () =>
+        ok(
+          await scheduled(hub, sel, lead_ms, (at) =>
+            fan(sel, async (s) => ({ sent: await s.setUniforms(values, commit ?? false, at(s)) })),
+          ),
+        ),
+      ),
   );
   server.registerTool(
     "ramp_uniforms",
@@ -523,10 +563,26 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
         "stream rate, uncommitted, then commits the final values once). The way to change a mood smoothly: e.g. " +
         "{rain: 0.8} over 20 s. Returns when the ramp is done. Vectors and matrices are interpolated " +
         "component-wise (a matrix ramp is element-wise, NOT a rotation interpolation: halfway between two " +
-        "rotations is not a rotation; ramp angles in the effect instead if that matters).",
-      inputSchema: { targets: z.record(z.string(), uniformValue), seconds: z.number().min(0).max(600), players },
+        "rotations is not a rotation; ramp angles in the effect instead if that matters). Several players run " +
+        "the ramp on one shared timeline, every step on the same frame (lead_ms).",
+      inputSchema: {
+        targets: z.record(z.string(), uniformValue),
+        seconds: z.number().min(0).max(600),
+        lead_ms: leadMs,
+        players,
+      },
     },
-    ({ targets, seconds, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.rampUniforms(targets, seconds)))),
+    ({ targets, seconds, lead_ms, players: sel }) =>
+      guard(async () =>
+        ok(
+          await scheduled(hub, sel, lead_ms, (at) =>
+            fan(sel, (s) => {
+              const a = at(s);
+              return s.rampUniforms(targets, seconds, a ? { at: a } : {});
+            }),
+          ),
+        ),
+      ),
   );
 
   // -- uniform keypoints -----------------------------------------------------------------
@@ -1020,8 +1076,15 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
       })();
   server.registerTool(
     "set_effect",
-    { description: 'Activate the loaded effect by id, or "off" to clear it.', inputSchema: { effect_id: z.string(), players } },
-    ({ effect_id, players: sel }) => guard(async () => ok(await fan(sel, (s) => s.setEffect(effect_id)))),
+    {
+      description:
+        'Activate the loaded effect by id, or "off" to clear it. Several players switch on the same frame (lead_ms).',
+      inputSchema: { effect_id: z.string(), lead_ms: leadMs, players },
+    },
+    ({ effect_id, lead_ms, players: sel }) =>
+      guard(async () =>
+        ok(await scheduled(hub, sel, lead_ms, (at) => fan(sel, (s) => s.setEffect(effect_id, at(s))))),
+      ),
   );
   server.registerTool(
     "rollback_effect",
@@ -1055,6 +1118,7 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
         color_mode: z.enum(["rgb", "hsv"]).optional().describe("Blend colour space (default rgb)"),
         uniforms: z.record(z.string(), uniformValue).optional().describe("Start values for the incoming effect"),
         force: z.boolean().optional(),
+        lead_ms: leadMs,
         players,
       },
     },
@@ -1418,6 +1482,7 @@ interface CrossfadeArgs {
   color_mode?: "rgb" | "hsv" | undefined;
   uniforms?: Record<string, unknown> | undefined;
   force?: boolean | undefined;
+  lead_ms?: number | undefined;
   players?: Selector;
 }
 
@@ -1494,7 +1559,9 @@ async function crossfadeTo(hub: Hub, a: CrossfadeArgs): Promise<unknown> {
     progress(`aligning ${okIds.length} clocks…`);
     time = await hub.alignTime(okIds, hub.sharedEpoch(okIds) ?? performance.now());
   }
-  // 4. Fade together.
+  // 4. Fade together: on firmware with apply_at every step is scheduled on the shared
+  // time base (the same mix on the same frame everywhere); else one hub clock.
+  const sched = okIds.length ? await prepareSchedule(hub, okIds, a.lead_ms) : undefined;
   if (okIds.length && seconds > 0) progress(`crossfading ${okIds.length} player(s) over ${seconds} s…`);
   const t0 = performance.now() + (okIds.length > 1 ? 150 : 0);
   const cueOf = new Map(cued.map((c) => [c.player.id, c.result!]));
@@ -1502,9 +1569,11 @@ async function crossfadeTo(hub: Hub, a: CrossfadeArgs): Promise<unknown> {
   const fades = okIds.length
     ? await hub.each(okIds, async (s, p) => {
         const cue = cueOf.get(p.id)!;
+        const at = sched?.bySession.get(s);
         const f = await s.fadeCrossfade(cue.to, cue.from === cue.to ? 0 : seconds, {
           curve: a.curve ?? "ease",
           t0,
+          ...(at ? { at } : {}),
           from: cue.from,
           ...(mode !== undefined ? { mode } : {}),
         });
@@ -1529,9 +1598,74 @@ async function crossfadeTo(hub: Hub, a: CrossfadeArgs): Promise<unknown> {
       ? { persistence: "the new effect is on deck B, which is runtime-only: a reboot resumes deck A's effect" }
       : {}),
   };
+  const sch = sched ? scheduleReport(sched.plan) : {};
   return sel === undefined && results.length === 1
-    ? { ...out, ...extra }
-    : { ...out, ...(estimates ? { estimates } : {}), ...(time ? { time_base: time } : {}), ...extra };
+    ? { ...out, ...extra, ...sch }
+    : { ...out, ...(estimates ? { estimates } : {}), ...(time ? { time_base: time } : {}), ...extra, ...sch };
+}
+
+// -- scheduled changes (schedule.ts; docs/design/synced-show.md) ---------------------------
+
+interface PreparedSchedule {
+  plan: SchedulePlan;
+  bySession: Map<DeviceSession, Scheduled>;
+  time?: Record<string, unknown>;
+}
+
+/**
+ * Plan a change on several players for one instant on the shared time base: who
+ * supports apply_at, aligning the time base first when a target that could take it
+ * has none (re-using the room epoch the others already share, so their effects
+ * don't jump), then one apply instant `lead` ahead.
+ */
+async function prepareSchedule(hub: Hub, sel: Selector, lead: number | undefined): Promise<PreparedSchedule> {
+  const empty: PreparedSchedule = { plan: planSchedule([], 0, 0), bySession: new Map() };
+  if (lead === 0) return empty;
+  const targets = await hub.select(sel);
+  if (lead === undefined && targets.length < 2) return empty;
+  const sessions = new Map<string, DeviceSession>();
+  const candidates = () =>
+    Promise.all(
+      targets.map(async (p): Promise<ScheduleCandidate> => {
+        const s = await hub.session(p).catch(() => undefined);
+        if (s) sessions.set(p.id, s);
+        return { id: p.id, name: p.name, applyAt: s?.canApplyAt() ?? false, epochHubMs: hub.epochOf(p.id) };
+      }),
+    );
+  let c = await candidates();
+  let time: Record<string, unknown> | undefined;
+  if (needsAlign(c, lead)) {
+    const ids = targets.map((p) => p.id);
+    progress(`aligning ${ids.length} clocks…`);
+    time = await hub.alignTime(ids, hub.sharedEpoch(ids) ?? performance.now());
+    c = await candidates();
+  }
+  const plan = planSchedule(c, lead, performance.now());
+  const bySession = new Map<DeviceSession, Scheduled>();
+  for (const [id, at] of plan.scheduled) {
+    const s = sessions.get(id);
+    if (s) bySession.set(s, at);
+  }
+  return { plan, bySession, ...(time ? { time } : {}) };
+}
+
+/** Run a fan-out with each player's scheduled instant (undefined: on arrival), and
+ * report the schedule (and any time-base alignment) beside its result. */
+async function scheduled<R>(
+  hub: Hub,
+  sel: Selector,
+  lead: number | undefined,
+  run: (at: (s: DeviceSession) => Scheduled | undefined) => Promise<R>,
+): Promise<unknown> {
+  const p = await prepareSchedule(hub, sel, lead);
+  const r = await run((s) => p.bySession.get(s));
+  return withSchedule(r, p);
+}
+
+function withSchedule(r: unknown, p: PreparedSchedule): unknown {
+  const extra = { ...scheduleReport(p.plan), ...(p.time ? { time_base: p.time } : {}) };
+  if (Object.keys(extra).length === 0) return r;
+  return r && typeof r === "object" && !Array.isArray(r) ? { ...r, ...extra } : { result: r, ...extra };
 }
 
 // -- fixture plot ---------------------------------------------------------------------------

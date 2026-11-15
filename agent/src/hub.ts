@@ -845,6 +845,11 @@ export class Hub {
 
   // -- time base ----------------------------------------------------------------------
 
+  /** The room epoch (hub ms) alignTime last gave this player (undefined: none). */
+  epochOf(id: string): number | undefined {
+    return this.epochs.get(id);
+  }
+
   /** The most recent room epoch alignTime gave any of `ids` (undefined: none).
    * Re-aligning with it keeps effects that already share it from jumping in time
    * (crossfade_to), while bringing the others onto it. */

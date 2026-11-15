@@ -13,7 +13,10 @@ package(default_visibility = ["//visibility:public"])
 
 rust_library(
     name = "player",
-    srcs = ["src/lib.rs"],
+    srcs = [
+        "src/apply_queue.rs",
+        "src/lib.rs",
+    ],
     crate_name = "ledmapper_player",
     edition = "2021",
     deps = [
@@ -29,7 +32,10 @@ rust_library(
 # tests use :player; never depend on both (same crate name, by design).
 rust_library(
     name = "player_fw",
-    srcs = ["src/lib.rs"],
+    srcs = [
+        "src/apply_queue.rs",
+        "src/lib.rs",
+    ],
     crate_name = "ledmapper_player",
     edition = "2021",
     deps = [
@@ -114,4 +120,12 @@ rust_test(
         "@crates//:micropb",
         "@crates//:serde_json",
     ],
+)
+
+# The scheduled-change queue (apply_at_ms): ordering, late, overflow.
+rust_test(
+    name = "apply_queue_test",
+    srcs = ["tests/apply_queue.rs"],
+    edition = "2021",
+    deps = [":player"],
 )

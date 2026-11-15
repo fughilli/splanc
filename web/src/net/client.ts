@@ -74,7 +74,8 @@ import {
 import type { ColorBlock } from "@ledmapper/protocol";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
 import { decodeServer, encodeClient, type KioskStatusMessage, type SetKioskConfigMessage } from "./proto";
-import { LiveControl } from "./liveControl";
+import { LiveControl, applyAt } from "./liveControl";
+export { applyAt } from "./liveControl";
 import type { CaptureProfileFlat } from "../capture/captureProfile";
 import { normalizeWifiPolicy, wifiPolicyMessage, type WifiPolicy, type WifiPolicyRequest } from "./wifiPolicy";
 import {
@@ -869,11 +870,13 @@ export class LedMapperClient {
   }
 
   /** Select the active effect by id ("" or "off" clears it). `deck` (FUG-110)
-   * targets deck A (0, default) or B (1). Reply: playback_state. */
-  async setEffect(effectId: string, deck = 0): Promise<PlaybackStateMessage> {
+   * targets deck A (0, default) or B (1). `applyAtMs` (firmware feature
+   * "apply_at") schedules it on the shared time base instead of on arrival.
+   * Reply: playback_state. */
+  async setEffect(effectId: string, deck = 0, applyAtMs?: number): Promise<PlaybackStateMessage> {
     this.live.resetDeck(deck);
     return (await this.request(
-      { type: "set_effect", effectId, deck } as unknown as ClientMessage,
+      { type: "set_effect", effectId, deck, ...applyAt(applyAtMs) } as unknown as ClientMessage,
       "playback_state",
     )) as PlaybackStateMessage;
   }
@@ -906,11 +909,12 @@ export class LedMapperClient {
   /** Set the global FX crossfade: `position` 0.0 (all deck A) .. 1.0 (all deck
    * B), `mode` 0 = linear RGB, 1 = HSV. The device blends the two decks' per-LED
    * output. Runtime-only (a reboot returns to 0.0 / RGB). Reply: welcome (echoes
-   * the applied crossfade). */
-  async setCrossfade(position: number, mode = 0): Promise<WelcomeMessage> {
+   * the applied crossfade; a scheduled one — `applyAtMs`, as setEffect — echoes
+   * the position before it). */
+  async setCrossfade(position: number, mode = 0, applyAtMs?: number): Promise<WelcomeMessage> {
     const p = Math.min(1, Math.max(0, position));
     return (await this.request(
-      { type: "set_crossfade", position: p, mode } as unknown as ClientMessage,
+      { type: "set_crossfade", position: p, mode, ...applyAt(applyAtMs) } as unknown as ClientMessage,
       "welcome",
     )) as unknown as WelcomeMessage;
   }
@@ -1032,9 +1036,9 @@ export class LedMapperClient {
    * while it runs the calibration effects (so a fixture on a low-ampacity supply
    * doesn't brown out and drop its link) and restores the user setpoint after.
    * Reply: welcome (echoes the applied brightness). */
-  async setBrightness(brightness: number): Promise<WelcomeMessage> {
+  async setBrightness(brightness: number, applyAtMs?: number): Promise<WelcomeMessage> {
     const b = Math.min(1, Math.max(0, brightness));
-    const msg: Record<string, unknown> = { type: "set_brightness", brightness: b };
+    const msg: Record<string, unknown> = { type: "set_brightness", brightness: b, ...applyAt(applyAtMs) };
     return (await this.request(
       msg as unknown as ClientMessage,
       "welcome",

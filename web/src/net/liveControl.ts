@@ -23,6 +23,13 @@ import { LatestWinsSender, type LiveTimer } from "./liveSender";
 import type { BlendOptions, KeypointWeightFlat, UniformValueFlat } from "./proto";
 import { chunkUniformValues } from "./uniformWire";
 
+/** The `applyAtMs` field of a scheduled message (ms on the shared time base, a
+ * uint32), or nothing when unscheduled. (client.ts re-exports it.) */
+export function applyAt(applyAtMs: number | undefined): { applyAtMs?: number } {
+  if (applyAtMs === undefined || !Number.isFinite(applyAtMs)) return {};
+  return { applyAtMs: Math.min(0xffffffff, Math.max(0, Math.round(applyAtMs))) };
+}
+
 /** What the channel needs from its connection (LedMapperClient implements it). */
 export interface LiveHost {
   /** Write one flat client message; false when the socket isn't open. */
@@ -62,9 +69,9 @@ interface Flight {
 }
 
 type Item =
-  | { kind: "u"; deck: number; slot: number; value: number[] }
+  | { kind: "u"; deck: number; slot: number; value: number[]; at?: number | undefined }
   | { kind: "commit"; deck: number }
-  | { kind: "xf"; position: number; mode: number }
+  | { kind: "xf"; position: number; mode: number; at?: number | undefined }
   | { kind: "kb"; weights: KeypointWeightFlat[]; opts: BlendOptions };
 
 type Matcher = (msg: { type: string } & Record<string, unknown>) => boolean;
@@ -129,8 +136,13 @@ export class LiveControl {
     this.setUniforms([{ slot, value }], { deck });
   }
 
-  /** Move several uniforms live; `commit` persists them right away (a release). */
-  setUniforms(values: UniformValueFlat[], opts: { deck?: number; commit?: boolean } = {}): void {
+  /** Move several uniforms live; `commit` persists them right away (a release).
+   * `applyAtMs` schedules them on the shared time base (firmware "apply_at"); a
+   * batch that merges scheduled moves goes out at the latest of their times. */
+  setUniforms(
+    values: UniformValueFlat[],
+    opts: { deck?: number; commit?: boolean; applyAtMs?: number | undefined } = {},
+  ): void {
     const deck = opts.deck === 1 ? 1 : 0;
     const k = this.knownFor(deck);
     // Key by wire chunk (a mat4 = 4 slot-consecutive chunks), so a later full-
@@ -138,16 +150,17 @@ export class LiveControl {
     for (const v of chunkUniformValues(values)) {
       const value = [...v.value];
       k.set(v.slot, value);
-      this.sender.push(`u|${deck}|${v.slot}`, { kind: "u", deck, slot: v.slot, value });
+      this.sender.push(`u|${deck}|${v.slot}`, { kind: "u", deck, slot: v.slot, value, at: opts.applyAtMs });
     }
     if (opts.commit) this.commit(deck);
     else this.markDirty(deck);
   }
 
-  /** Move the deck crossfade live (0 = all A .. 1 = all B; mode 0 RGB, 1 HSV). */
-  setCrossfade(position: number, mode = 0): void {
+  /** Move the deck crossfade live (0 = all A .. 1 = all B; mode 0 RGB, 1 HSV);
+   * `applyAtMs` as {@link setUniforms}. */
+  setCrossfade(position: number, mode = 0, applyAtMs?: number): void {
     const p = Number.isFinite(position) ? Math.min(1, Math.max(0, position)) : 0;
-    this.sender.push("xf", { kind: "xf", position: p, mode: mode === 1 ? 1 : 0 });
+    this.sender.push("xf", { kind: "xf", position: p, mode: mode === 1 ? 1 : 0, at: applyAtMs });
   }
 
   /** Blend a deck toward weighted keypoints, live (the last blend per deck wins). */
@@ -287,7 +300,7 @@ export class LiveControl {
     while (this.flights.length >= bound) this.flights.shift()!.resolve();
     const acks = this.has("control_ack");
     const commitOk = this.has("uniform_commit");
-    const perDeck = new Map<number, { values: Map<number, number[]>; commit: boolean }>();
+    const perDeck = new Map<number, { values: Map<number, number[]>; commit: boolean; at?: number }>();
     let xf: Extract<Item, { kind: "xf" }> | null = null;
     const blends: Extract<Item, { kind: "kb" }>[] = [];
     for (const it of batch.values()) {
@@ -297,8 +310,10 @@ export class LiveControl {
           d = { values: new Map(), commit: false };
           perDeck.set(it.deck, d);
         }
-        if (it.kind === "u") d.values.set(it.slot, it.value);
-        else d.commit = true;
+        if (it.kind === "u") {
+          d.values.set(it.slot, it.value);
+          if (it.at !== undefined) d.at = Math.max(d.at ?? it.at, it.at);
+        } else d.commit = true;
       } else if (it.kind === "xf") xf = it;
       else blends.push(it);
     }
@@ -329,9 +344,12 @@ export class LiveControl {
       };
       if (commitOk) msg.commit = d.commit;
       if (deck) msg.deck = deck;
+      Object.assign(msg, applyAt(d.at));
       if (!out(msg, "playback_state")) return null;
     }
-    if (xf && !out({ type: "set_crossfade", position: xf.position, mode: xf.mode }, "welcome")) return null;
+    if (xf && !out({ type: "set_crossfade", position: xf.position, mode: xf.mode, ...applyAt(xf.at) }, "welcome")) {
+      return null;
+    }
     for (const kb of blends) {
       const o = kb.opts;
       const msg: Record<string, unknown> = {

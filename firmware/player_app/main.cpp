@@ -2140,6 +2140,10 @@ static uint32_t render_once() {
       Log().printf("[clock] millis() stepped %lld ms; time base + video queue shifted\n",
                    (long long)clock_step);
   }
+  // Control changes scheduled on the shared time base (apply_at_ms) land now, at the
+  // frame boundary, before anything below reads the effect / crossfade / brightness —
+  // so fixtures given the same apply time change on the same frame.
+  if (lm_sched_apply((int64_t)millis()) & 2) poll_brightness();
   // An active mapping capture (the gray-code flashing) and the counting probe
   // are deliberate, transient device takeovers for the phone's camera, so they
   // MUST preempt whatever show is playing. A persisted effect resumed on boot

@@ -21,7 +21,7 @@
  */
 
 import { ClientMessageSchema, SetUniformsSchema } from "../../web/src/gen/ledmapper_pb";
-import { LedMapperClient, ServerErrorReply, type SocketFactory } from "../../web/src/net/client";
+import { applyAt, LedMapperClient, ServerErrorReply, type SocketFactory } from "../../web/src/net/client";
 import type { ClientMessage } from "@ledmapper/protocol";
 import {
   encodeClient,
@@ -55,6 +55,7 @@ import { FxDebugger } from "../../web/src/fx/fxDebug";
 import { compile, type CompileOutcome, type Toolchain } from "./fxhost";
 import { cancellation, progress } from "./progress";
 import type { ClockSync } from "./timesync";
+import { applyAtOf, type Scheduled } from "./schedule";
 import {
   currentByName,
   describe,
@@ -119,6 +120,7 @@ export type Feature =
   | "sensors"
   | "drivers"
   | "wifi_policy"
+  | "apply_at"
   | (string & {});
 
 export type Deck = 0 | 1;
@@ -1011,12 +1013,25 @@ export class DeviceSession {
 
   // -- control -----------------------------------------------------------------
 
-  async setBrightness(level: number): Promise<number> {
+  /** `at` schedules it on the shared time base (see {@link canApplyAt}). */
+  async setBrightness(level: number, at?: Scheduled): Promise<number> {
     this.assertUnlocked();
     if (!(level >= 0 && level <= 1)) throw new ToolError("level must be within 0..1");
-    const w = await this.run(() => this.client.setBrightness(level));
-    this.lastBrightness = (w as unknown as { brightness?: number }).brightness ?? level;
+    const w = await this.run(() => this.client.setBrightness(level, this.applyAtMs(at)));
+    // A scheduled one is echoed before it applies: report the level asked for.
+    this.lastBrightness = at ? level : ((w as unknown as { brightness?: number }).brightness ?? level);
     return this.lastBrightness;
+  }
+
+  /** Whether this player takes scheduled changes (apply_at_ms on the shared time
+   * base): the firmware advertises "apply_at" and this bundle's proto has it. */
+  canApplyAt(): boolean {
+    return this.has("apply_at") && DeviceSession.encodable({ type: "set_brightness", brightness: 1, applyAtMs: 1 });
+  }
+
+  /** `at` as this player's apply_at_ms (undefined: on arrival, or it can't). */
+  private applyAtMs(at: Scheduled | undefined, hubMs?: number): number | undefined {
+    return at && this.canApplyAt() ? applyAtOf(at, hubMs) : undefined;
   }
 
   /** The brightness last set through this session (Welcome's is from connect time). */
@@ -1039,12 +1054,12 @@ export class DeviceSession {
   }
 
   /** Resolve + send uniform values. `commit` persists them (when supported). */
-  async setUniforms(values: Record<string, UniformInput>, commit = false): Promise<UniformValueFlat[]> {
+  async setUniforms(values: Record<string, UniformInput>, commit = false, at?: Scheduled): Promise<UniformValueFlat[]> {
     this.assertUnlocked();
     const a = await this.activeEffect();
     if (!a.effectId) throw new ToolError("no effect is loaded; deploy one first");
     const wire = resolve(a.uniforms, values);
-    await this.run(async () => this.sendUniforms(wire, commit));
+    await this.run(async () => this.sendUniforms(wire, commit, this.liveDeck(), this.applyAtMs(at)));
     return wire;
   }
 
@@ -1056,12 +1071,12 @@ export class DeviceSession {
    * device — a C6 fed fire-and-forget sets falls seconds behind under a heavy
    * effect. `commit` persists them where the firmware understands it (false while
    * dragging, true on release; the channel also commits on its own once idle). */
-  async sendLiveUniforms(values: UniformValueFlat[], commit: boolean, deck?: Deck): Promise<void> {
+  async sendLiveUniforms(values: UniformValueFlat[], commit: boolean, deck?: Deck, applyAtMs?: number): Promise<void> {
     this.assertUnlocked();
     await this.run(async () => {
       const d = deck ?? this.liveDeck();
       if (!this.client.isConnected) throw new ToolError("the player connection is down");
-      this.client.live.setUniforms(values, { deck: d, commit });
+      this.client.live.setUniforms(values, { deck: d, commit, applyAtMs });
       this.noteSent(values, d);
       await this.client.live.settled();
     });
@@ -1074,7 +1089,7 @@ export class DeviceSession {
   }
 
   /** `deck` default: the live deck. Deck B is never persisted (commit ignored). */
-  private sendUniforms(values: UniformValueFlat[], commit: boolean, deck: Deck = this.liveDeck()): void {
+  private sendUniforms(values: UniformValueFlat[], commit: boolean, deck: Deck = this.liveDeck(), applyAtMs?: number): void {
     // `commit` is a newer SetUniforms field (device-side spec work). Only send it
     // when the firmware says it understands it; older firmware commits on its
     // own coalesced schedule, so a ramp's final set still persists there.
@@ -1084,6 +1099,7 @@ export class DeviceSession {
     const msg: Record<string, unknown> = { type: "set_uniforms", values };
     if (this.has("uniform_commit") && COMMIT_IN_PROTO) msg["commit"] = commit;
     if (deck !== 0) msg["deck"] = deck;
+    Object.assign(msg, applyAt(applyAtMs));
     const ok = (this.client as unknown as { send(m: unknown): boolean }).send(msg);
     if (!ok) throw new ToolError("the player connection is down");
     this.client.live.noteValues(values, deck);
@@ -1107,12 +1123,16 @@ export class DeviceSession {
   }
 
   /** Interpolate uniforms to `targets` over `seconds`, uncommitted, at the
-   * stream rate; then one committed set of the targets. */
+   * stream rate; then one committed set of the targets. `at` (several players)
+   * runs the ramp on the shared time base: it starts at `at.atHubMs` and each step
+   * is scheduled for its own instant on the ramp's timeline (sent a lead ahead),
+   * so every player shows the same step on the same frame; a player that falls
+   * behind skips steps rather than drifting late. */
   async rampUniforms(
     targets: Record<string, UniformInput>,
     seconds: number,
-    opts: { hz?: number; sleep?: (ms: number) => Promise<void> } = {},
-  ): Promise<{ steps: number; final: UniformValueFlat[] }> {
+    opts: { hz?: number; sleep?: (ms: number) => Promise<void>; at?: Scheduled; now?: () => number } = {},
+  ): Promise<{ steps: number; final: UniformValueFlat[]; scheduled?: boolean }> {
     this.assertUnlocked();
     if (!(seconds >= 0 && seconds <= 600)) throw new ToolError("seconds must be within 0..600");
     const a = await this.activeEffect();
@@ -1129,6 +1149,8 @@ export class DeviceSession {
     const names = Object.keys(targets);
     const from = names.map((n) => a.current.get(n) ?? byName.get(n)!.default);
     if (seconds >= 2) progress(`ramping ${names.join(", ")} over ${seconds} s…`);
+    const at = opts.at && this.canApplyAt() ? opts.at : undefined;
+    if (at) return this.rampScheduled(at, names, byName, from, final, seconds, hz, steps, sleep, opts.now);
     for (let i = 1; i < steps; i++) {
       if (seconds >= 2 && i % Math.max(1, Math.round(hz * Math.max(1, seconds / 5))) === 0) {
         progress(`ramp ${Math.round((100 * i) / steps)}%`);
@@ -1144,6 +1166,47 @@ export class DeviceSession {
     }
     await this.run(async () => this.sendUniforms(final, true));
     return { steps, final };
+  }
+
+  /** rampUniforms on the shared time base: step i lands at at + i/hz s, sent the
+   * schedule's lead ahead of that (paced on the player's ack); the final committed
+   * set lands at at + seconds. */
+  private async rampScheduled(
+    at: Scheduled,
+    names: string[],
+    byName: Map<string, ManifestUniform>,
+    from: number[][],
+    final: UniformValueFlat[],
+    seconds: number,
+    hz: number,
+    steps: number,
+    sleep: (ms: number) => Promise<void>,
+    now: () => number = () => performance.now(),
+  ): Promise<{ steps: number; final: UniformValueFlat[]; scheduled: boolean }> {
+    const lead = at.leadMs ?? Math.max(0, at.atHubMs - now());
+    const stepMs = (seconds * 1000) / steps;
+    let sent = 0;
+    for (let i = 1; i < steps; ) {
+      // The step that should be on air one lead from now (skip any we fell behind on).
+      const due = Math.floor((now() + lead - at.atHubMs) / stepMs);
+      if (due > i) i = Math.min(due, steps - 1);
+      const tHub = at.atHubMs + i * stepMs;
+      const wait = tHub - lead - now();
+      if (wait > 1) await sleep(wait);
+      const t = i / steps;
+      const vals = names.map((n, k) => ({
+        slot: byName.get(n)!.slot,
+        value: lerpValues(byName.get(n)!, from[k]!, final[k]!.value, t),
+      }));
+      await this.sendLiveUniforms(vals, false, undefined, applyAtOf(at, tHub));
+      sent++;
+      i++;
+    }
+    const end = at.atHubMs + seconds * 1000;
+    const wait = end - lead - now();
+    if (wait > 1) await sleep(wait);
+    await this.run(async () => this.sendUniforms(final, true, this.liveDeck(), applyAtOf(at, end)));
+    return { steps: sent + 1, final, scheduled: true };
   }
 
   /** Resolves this player's toolchain on first compile (the hub sets it: picking
@@ -1192,33 +1255,35 @@ export class DeviceSession {
   /** Select the active effect ("off" clears it). An id activates the effect
    * loaded under it — on the live deck, or on the other deck when that is where
    * it is parked (then the crossfade snaps to it). */
-  async setEffect(effectId: string): Promise<Record<string, unknown>> {
+  async setEffect(effectId: string, at?: Scheduled): Promise<Record<string, unknown>> {
     this.assertUnlocked();
     this.effectGen++;
     const id = effectId === "off" ? "" : effectId;
     this.activatedAt = performance.now();
+    // Every message of this switch lands on the same frame when scheduled.
+    const t = this.applyAtMs(at);
     if (id === "") {
       if (this.current) {
         this.previous = { ...this.current, onDevice: false };
         this.current = null;
       }
-      await this.run(() => this.client.setEffect("", 0));
+      await this.run(() => this.client.setEffect("", 0, t));
       // Deck B: the first "" parks it, so the effect shown there goes dark too.
-      if (this.decksUsable() && this.liveDeck() === 1) await this.run(() => this.client.setEffect("", 1));
+      if (this.decksUsable() && this.liveDeck() === 1) await this.run(() => this.client.setEffect("", 1, t));
       this.live = 0;
-      if ((this.xf ?? 0) > 0 && this.decksUsable()) await this.snapCrossfade(0);
+      if ((this.xf ?? 0) > 0 && this.decksUsable()) await this.snapCrossfade(0, undefined, t);
     } else if (this.decksUsable()) {
       const st = await this.deckStatus();
       const on = st.decks.find((d) => d.effect_id === id);
       const deck: Deck = on?.deck ?? st.live ?? 0;
-      await this.run(() => this.client.setEffect(id, deck));
+      await this.run(() => this.client.setEffect(id, deck, t));
       if (deck !== (st.live ?? 0)) {
-        await this.snapCrossfade(deck === 1 ? 1 : 0);
+        await this.snapCrossfade(deck === 1 ? 1 : 0, undefined, t);
         this.swapIfParked(deck);
       }
       this.live = deck;
     } else {
-      await this.run(() => this.client.setEffect(id));
+      await this.run(() => this.client.setEffect(id, 0, t));
     }
     const a = await this.activeEffect().catch(() => null);
     return { active_effect: a?.effectId || null, ...(this.decksUsable() ? { deck: this.live === 1 ? "B" : "A" } : {}) };
@@ -1518,10 +1583,11 @@ export class DeviceSession {
     return this.liveLock ? this.asLive(this.liveLock.key, fn) : fn();
   }
 
-  /** Set the crossfade at once (and wait for the device's ack). */
-  async snapCrossfade(position: number, mode?: number): Promise<void> {
+  /** Set the crossfade at once — or at `applyAtMs` on the shared time base — and
+   * wait for the device's ack. */
+  async snapCrossfade(position: number, mode?: number, applyAtMs?: number): Promise<void> {
     const m = mode ?? this.crossfadeMode();
-    await this.run(() => this.client.setCrossfade(position, m));
+    await this.run(() => this.client.setCrossfade(position, m, applyAtMs));
     this.xf = Math.min(1, Math.max(0, position));
     this.xfMode = m;
   }
@@ -1545,6 +1611,10 @@ export class DeviceSession {
       from?: number;
       hz?: number;
       sleep?: (ms: number) => Promise<void>;
+      /** Run the fade on the shared time base: it starts at `at.atHubMs` (which
+       * replaces t0) and each step is scheduled for the instant its position is
+       * for, sent the lead ahead — every player shows the same mix on the same frame. */
+      at?: Scheduled;
     } = {},
   ): Promise<{ from: number; to: number; seconds: number; steps: number }> {
     this.assertUnlocked();
@@ -1552,7 +1622,10 @@ export class DeviceSession {
     if (!(seconds >= 0 && seconds <= 600)) throw new ToolError("seconds must be within 0..600");
     const mode = opts.mode ?? this.crossfadeMode();
     const from = opts.from ?? this.crossfadePosition();
-    const t0 = opts.t0 ?? performance.now();
+    const at = opts.at && this.canApplyAt() ? opts.at : undefined;
+    const t0 = at?.atHubMs ?? opts.t0 ?? performance.now();
+    // Scheduled: each position is for one lead from now, and goes out that early.
+    const lead = at ? (at.leadMs ?? Math.max(0, t0 - performance.now())) : 0;
     const hz = Math.max(1, Math.min(opts.hz ?? this.streamHz, 60));
     const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
     const curve = opts.curve ?? "ease";
@@ -1561,10 +1634,11 @@ export class DeviceSession {
       let lastPct = 0;
       for (;;) {
         const tStep = performance.now();
-        const u = (tStep - t0) / (seconds * 1000);
+        const u = (tStep + lead - t0) / (seconds * 1000);
         if (u >= 1) break;
         const pos = from + (target - from) * curveAt(curve, u);
-        await this.run(() => this.client.setCrossfade(pos, mode));
+        const stepAt = at ? applyAtOf(at, tStep + lead) : undefined;
+        await this.run(() => this.client.setCrossfade(pos, mode, stepAt));
         this.xf = pos;
         steps++;
         const pct = Math.floor(u * 4) * 25;
@@ -1576,7 +1650,7 @@ export class DeviceSession {
         if (wait > 0) await sleep(wait);
       }
     }
-    await this.snapCrossfade(target, mode);
+    await this.snapCrossfade(target, mode, at ? applyAtOf(at, t0 + seconds * 1000) : undefined);
     this.live = target >= 0.5 ? 1 : 0;
     return { from: +from.toFixed(3), to: target, seconds, steps: steps + 1 };
   }
