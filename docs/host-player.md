@@ -76,9 +76,9 @@ applied on top of that.
 1. Start `player_host`. It logs `add it in the app at wss://<this host>:8443`.
 2. In the app, choose **Add device → Enter address** and enter
    `wss://<mac-hostname-or-ip>:8443`. The player uses a self-signed certificate,
-   like the devices do. The first time, open `https://<host>:8443` in the same
-   browser and accept the warning. The page itself then shows an error, which is
-   expected.
+   like the devices do. The app offers to trust it the first time (or open
+   `https://<host>:8443` in the same browser and accept the warning); the page
+   then confirms the certificate and shows the address to enter.
 3. Map it the usual way: set the LED count, run the capture with the phone
    camera, and solve. The player shows the mapping patterns over DDP or Art-Net
    and reports back which frame it showed, as the devices do. Effects need the
@@ -112,6 +112,62 @@ offer them:
 Uniform values are not saved. After a restart the effect starts from its
 manifest defaults.
 
+## Virtual LED wall: map a screen from the phone app
+
+`//pi/player_rs:wall` turns a laptop screen into a fixture the installed phone
+app adds by address, with no LED hardware:
+
+```sh
+bazel run //pi/player_rs:wall -- --leds 400
+```
+
+It runs `player_host` with no LED output (`--output null`) and has it serve the
+built web app's virtual wall (`web/wall.html`) on its own WSS port
+(`--web-root`). It prints the two URLs and a QR code:
+
+1. **On the laptop**, open `https://localhost:8443/wall.html`, accept the
+   certificate warning, and press **Fullscreen**. The wall idles (dim dots)
+   until the phone starts mapping.
+2. **On the phone**, in the Splanc app: **Device** tab → link icon (_Enter
+   address manually_) → **Enter address** (the Wi-Fi fields can stay empty) →
+   `wss://<laptop IP>:8443`. The app shows its "trust the certificate" card the
+   first time, as for a real player; its popup lands on the player's trust page,
+   which hands the app back. Scanning the printed QR code opens that trust page
+   directly instead.
+3. **Map it**: LED count = the `--leds` value, point the camera at the wall,
+   capture and solve as usual.
+
+How it works. The player is the real session core, so the phone sees an
+ordinary fixture: `start_mapping` sets the code book and stamps the pattern
+epoch on the player's clock. The wall page is a second client of the same
+player. Loaded from the player's origin, it connects same-origin to
+`wss://localhost:8443/ws` with the certificate the browser already accepted.
+It syncs to the player clock (`time_sync`), polls `get_pattern` for the code
+book and epoch, and renders every frame itself with the WASM hue-code kernel at
+the display's refresh rate. Nothing is streamed over the network, so frame
+timing is the browser's vsync on the player's clock, as on a real fixture.
+
+Notes:
+
+- A firewall prompt on the Mac must allow incoming connections for
+  `player_host`. The phone and the laptop must be on the same network.
+- The wall's own flags still work: `wall.html?cols=20&dot=0.5`, and
+  `?url=wss://host:port/ws` points a wall page served elsewhere (e.g.
+  `bazel run //web:serve`) at any control plane, as before.
+- Only mapping is rendered: LED counting, effects and brightness from the app
+  reach the player but do not show on the wall.
+- Any `player_host` flag passes through (`--serve-port`, `--name`, …). Giving an
+  `--output` drives real LEDs too, in step with the wall.
+- Every Pi and host player now answers a plain `https://<player>/` with the
+  trust page (it posts `ledmapper-cert-ok` back to the app's popup, like the
+  netstack firmware) instead of an empty response.
+
+Headless check: `bazel run //pi/player_rs:wall_smoke` starts the wall player,
+opens the wall in headless Chromium and starts a mapping from a second client
+(standing in for the phone). It checks that the canvas, sampled at every LED
+centre, matches the kernel's colours for one frame of the cycle, and that this
+frame is the one the player's clock has due.
+
 ## Testing
 
 - Unit tests: `bazel test //pi/player_rs:player_rs_test`. These cover the DDP and
@@ -138,9 +194,9 @@ It was written and tested in the Linux dev container, then run on a Mac:
   non-bypassable `ERR_SSL_KEY_USAGE_INCOMPATIBLE`, because the self-signed cert
   was built as a CA (key usage `keyCertSign` / `cRLSign` only). It is now an
   end-entity cert with `digitalSignature` (`server.rs`, `self_signed_config`).
-  This fixes the Pi player too. After you accept the warning, the browser shows
-  `ERR_EMPTY_RESPONSE`, which is expected: the player only answers WebSocket
-  upgrades.
+  This fixes the Pi player too. After you accept the warning, the browser
+  showed `ERR_EMPTY_RESPONSE`, because the player only answered WebSocket
+  upgrades. It now serves the trust page there (see "Virtual LED wall").
 
 Next steps:
 
