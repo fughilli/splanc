@@ -1,7 +1,9 @@
 # Hue code v2: staggered cycles, stronger codewords, faster alphabets
 
 Status: decided. Phase 1 (measurement) is implemented. Phase 0 (one Rust
-kernel) is PR #488. The owner has confirmed the pilot sequence and the other
+kernel) is PR #488 (merged). Phase 2 is implemented wall-first (kernel,
+virtual wall, phone decoder; no firmware advertisement yet): see "Phase 2 as
+built" below. The owner has confirmed the pilot sequence and the other
 decisions below; phases 2 and 3 are ready for implementation.
 
 ## Why
@@ -159,11 +161,203 @@ scan rather than replace it.
 **Pilot vs white.** Before the decoder rewrite lands, the link sim compares the
 pilot with a staggered white delimiter on the same scenes (dense fixture, dark
 room, heavy veil): records, hop rejects, false delimiters and servo
-trajectories.
+trajectories. The results, and the pilot hues chosen from them, are under
+"Phase 2 as built".
 
 Also affected: the server codebook (`pi/server/server/codebook.py`), the host
 player, the wall page and the mock devices. They pick up the change through the
 kernel.
+
+## Phase 2 as built (wall-first)
+
+The wire value is `syncPattern: "stagger_pilot"`. v1 (`"on_off"`) is still the
+default everywhere. Every existing player sends `"on_off"`, and the phone decodes
+it with the v1 decoder (`web/src/cv/decoder.ts`), which this phase does not
+change. The staggered decoder runs only when the code-book the phone receives
+says `"stagger_pilot"`.
+
+**The stagger step.** The kernel computes S as the integer coprime with C that
+is nearest to C/Φ (Φ is the golden ratio):
+
+- Being coprime with C, `id·S mod C` lands on every phase equally often. The
+  number of LEDs in their pilot is the same on every frame (unit-tested for 16,
+  64 and 1260 LEDs).
+- Using the golden ratio puts consecutive ids far apart in phase.
+
+This rule gives the pinned values (11, 7, 5, 5 for C = 18, 10, 8, 6). It also
+covers every other C a code-book can have. The table for C = 3 to 34 is pinned
+in the kernel test and in the golden (`staggerSteps`).
+
+**The pilot: green, then magenta.** The sync position shows pure green for one
+frame and magenta (red + blue) for the next. Reasons:
+
+- **Channel separation.** Green and magenta are complementary and use disjoint
+  channels: G alone, then R and B together. Each channel is driven in exactly
+  one of the two frames, so the sum of the two pilot windows is a full
+  white-equivalent calibration. The decoder divides each data window by that
+  sum, which is exactly the v1 white-reference normalisation. It is refreshed on
+  every cycle for every track, and no LED ever has to show white.
+- **A richer calibration than white.** Each channel is on in one pilot window
+  and off in the other. The pilot therefore measures every channel's on level
+  and its off level (ambient veil, sensor black level, glare). The decoder
+  normalises each data window per channel as `(x − off) / (on − off)`. v1's
+  white frame measures only the gains. A veil that v1 divides into every
+  window, the pilot subtracts out. This is why the pilot beats v1 in the heavy
+  veil below.
+- **No white, no bloom.** At most two channels are lit in any pilot frame,
+  never more than in the data frames (magenta and yellow are already
+  two-channel). Combined with the stagger, the peak drive of the whole fixture
+  is flat: there is no frame where every LED shows white, and no frame where
+  any LED does.
+- **The forbidden transition.** Green appears in neither data palette (2
+  symbols: blue/red; 4 symbols: blue/magenta/yellow/red). So the transition
+  "into green, then magenta" never occurs in data, and data keeps its full
+  alphabet. The pilot score normalises the two windows by their own sum.
+  Per-channel gain, white balance and colour correction therefore cancel
+  exactly, and no locked white balance is assumed. An ideal pilot scores 1.
+  The data pair that looks most like a pilot is yellow then magenta, and it
+  scores at most 0.5. A veil v at LED level L lowers a real pilot's score to
+  L/(L + 2v). A candidate is therefore accepted when it scores at least 0.15
+  (v1's green-sync floor, translated) and is the best pair within ±C/2
+  windows. Uniqueness comes from that local maximum, together with FEC and
+  the φ check.
+- **Robust to hue bias.** The score depends only on which channels dominate
+  each window, not on hue angles, so a camera that rotates hues by tens of
+  degrees still sees the pilot.
+
+Two parts of the decided design are deferred:
+
+- **Constant luminance.** Pure green and magenta are not iso-luminant on a
+  real LED. The design calls for app-computed drive levels sent with the code
+  parameters, which needs a wire field and firmware. Until then the pilot uses
+  the same full-drive 1- and 2-channel colours as the data. Its peak drive
+  stays within the data's, so it does not flash brighter than the data.
+- **Phase 3 alphabets.** The 8- and 16-hue alphabets will include green, so the
+  "into green" rule stops holding there. Phase 3 must either keep a gap at
+  green on the hue circle or rely on the φ check plus Golay for delimiter
+  uniqueness. That choice belongs to phase 3.
+
+**Decoder** (`web/src/cv/staggerDecoder.ts`). Per track, on its own cycle
+boundary:
+
+1. Bucket the track's samples into absolute frame windows, with v1's
+   centrality weights.
+2. Score every adjacent window pair as a pilot, and take the best one per
+   cycle.
+3. Calibrate from the pilot (per-channel off and span) and classify the C − 2 data windows that follow
+   against the palette. Margins and the confidence gate are the same as v1.
+4. Decode with SEC-DED.
+5. Run the phase check `(a − φ(id)) mod C = k`, where `a` is the pilot's
+   absolute frame.
+
+Alignment works in two parts:
+
+- **Sub-frame part.** Chromaticity scatter is pooled within windows across up
+  to 160 tracks, and the decoder takes the shift (mod bitPeriod) that minimises
+  it. The shift is kept continuous, never wrapped.
+- **Whole-frame part k.** k comes from a decaying histogram of
+  `(a − φ(id)) mod C` over decodes that pass FEC and the confidence gate. It
+  locks once the top bin has at least 4 votes and at least 50% of the mass.
+  Records are emitted only after k locks, and every record is phase-checked.
+
+Records anchor at the sample nearest mid-cycle. Their pose is paired at the
+exposure time, corrected by shift + k·bitPeriod. Reflections are deduplicated
+per id and per pilot frame.
+
+**The 11 consumers, for the wall test:**
+
+| #   | Consumer                       | Status                                                                                                                                                                                                                     |
+| --- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Alignment                      | Done: pooled consistency plus the k histogram. `get_frame_timing` is not wired in yet (deferred).                                                                                                                          |
+| 2   | Green census, no-cyan rule     | Unused under stagger: the pipeline still computes the census, and only the v1 decoder reads it. The no-cyan rule stays, because cyan would sit between the green pilot and the data palette.                               |
+| 3   | Cycle framing, dedup, pruning  | Done: per-track rolling decode, dedup per (id, pilot frame), pruning at the oldest window a pending decode can still need (`pruneCutoffServerMs`).                                                                          |
+| 4   | White reference → pilot        | Done: per-channel on and off levels from the pilot, per track and per cycle. `channelQuality` receives the same pilot-normalised colour.                                                                                   |
+| 5   | Record anchor, latency         | Done: mid-cycle anchor, latency = shift + k·bitPeriod. The design's median of window centroids is replaced by the mid-cycle sample, which pairs with one pose.                                                              |
+| 6   | Exposure and brightness servos | No change needed: pilot windows are saturated hues, so they never count as gray. A staggered white would put about 1/C gray blobs into every frame. The servo comparison is in the table below.                           |
+| 7   | Split-blob colour (`haloHue`)  | Deferred. Splits come from bloom, which the pilot removes.                                                                                                                                                                 |
+| 8   | Tracker, 3D overlay, IMU lock  | None needed.                                                                                                                                                                                                               |
+| 9   | Group capture                  | Deferred. The φ check uses the coded id, so it holds across fixtures, but k is a single value. Fixtures whose latencies differ by a whole frame need a k per fixture.                                                      |
+| 10  | Generators and renderers       | Done in the kernel (`color_index_for_frame`). The wall, the phone's synthetic source and the Python binding (`sync_pattern=`) render it. Firmware players and `pi/player_rs` still build v1 specs (no advertisement yet). |
+| 11  | Telemetry                      | Done: `pilotCycles`, `delimiterMisses`, `phaseRejects`, `rejectedPhaseUnlocked` and `phaseK`. The first three are folded into link telemetry. The HUD shows `pilot k … cyc … miss … φrej …`.                               |
+
+**Wire, for now.** No player advertises the staggered code, and the phone never
+asks for it. To test against the wall, the dev server hands it out
+(`bazel run //web:serve -- --sync-pattern stagger_pilot`), or both pages force
+it with `?sync=stagger_pilot`. The `welcome` feature advertisement, the request
+in `start_mapping`, and firmware support come next.
+
+### Simulation results
+
+Two simulators run the production pipeline and negotiation. They compare v1,
+the staggered green/magenta pilot, and a staggered white/green delimiter (the
+comparator, `"stagger_white"`, which is not a wire value).
+
+**Dense fixture** (`web/tests/denseFixture_sim.test.ts`): radiolarian
+geometry, 1260-LED code with C = 18 and S = 11, hand-held camera, 15% blob
+dropout, and 225 ms of camera latency, so the whole-frame k is exercised. A
+bloom of about one pitch merges spots: in v1 every LED blooms on the global
+white frame; under the staggered white each LED blooms on its own white frame;
+the pilot has no white frame.
+
+| Run                         | Wrong (> 4 px) | Gross (> 12 px) | Good records / LED / s |
+| --------------------------- | -------------- | --------------- | ---------------------- |
+| v1, no bloom                | 2.7%           | 0.1%            | 2.49                   |
+| Pilot, no bloom             | 2.6%           | 0.0%            | 2.50                   |
+| v1, 14 px bloom             | 12.3%          | 4.2%            | 0.55                   |
+| Staggered white, 14 px bloom | 0.0%          | 0.0%            | 0.50                   |
+| Pilot, 14 px bloom          | 2.6%           | 0.0%            | 2.50                   |
+
+- **Phase lock.** k locked, and the total latency estimate (shift + k·140 ms)
+  came out at 224 ms against the true 225 ms.
+- **The pilot under bloom.** The pilot is unaffected by bloom: its result
+  equals the bloom-free one, 4.5× v1's yield, which closes failure mode 1. A
+  staggered white avoids v1's wrong ids, but its yield is as bad as v1's: an
+  LED blooms on its own white frame, so its window carries a merged colour,
+  and FEC rejects the cycle.
+- **Hops.** Of 686 neighbour-hop stitches that SEC-DED accepts as a third id,
+  17 also pass the φ check (2.5%; random chance is 1/C = 5.6%). The forced
+  hop through the pipeline is rejected by the phase check, and both real ids
+  still land.
+
+**Link sim** (`web/tests/staggerLink_sim.test.ts`): helix fixture, 120 LEDs,
+30 s per scene, 140 ms camera latency, the measured alphabet rule, and the
+exposure servo running.
+
+| Scene        | Sync            | Records | Wrong ids | t90    | Delimiter misses | Exposure median / max |
+| ------------ | --------------- | ------- | --------- | ------ | ---------------- | --------------------- |
+| hold-dark    | v1              | 11139   | 0         | 4.1 s  | –                | 0.29 / 0.65           |
+| hold-dark    | pilot           | 11425   | 0         | 4.3 s  | 98               | 0.37 / 0.65           |
+| hold-dark    | staggered white | 11425   | 0         | 4.3 s  | 86               | 0.29 / 0.65           |
+| orbit-dark   | v1              | 9845    | 0         | 21.9 s | –                | 0.29 / 0.65           |
+| orbit-dark   | pilot           | 10185   | 0         | 21.4 s | 185              | 0.39 / 0.65           |
+| orbit-dark   | staggered white | 10190   | 0         | 21.4 s | 176              | 0.29 / 0.65           |
+| orbit-lit    | v1              | 11822   | 0         | 19.3 s | –                | 0.25 / 0.25           |
+| orbit-lit    | pilot           | 11980   | 0         | 19.0 s | 141              | 0.25 / 0.25           |
+| orbit-lit    | staggered white | 11966   | 0         | 19.0 s | 134              | 0.25 / 0.25           |
+| bright-veil  | v1              | 6911    | 0         | never  | –                | 0.13 / 0.25           |
+| bright-veil  | pilot           | 8437    | 0         | 28.5 s | 177              | 0.13 / 0.25           |
+| bright-veil  | staggered white | 7939    | 0         | 26.5 s | 222              | 0.13 / 0.25           |
+| ambient-ramp | v1              | 8782    | 0         | 20.1 s | –                | 0.25 / 0.25           |
+| ambient-ramp | pilot           | 8815    | 0         | 19.0 s | 172              | 0.25 / 0.25           |
+| ambient-ramp | staggered white | 8723    | 0         | 19.4 s | 169              | 0.25 / 0.25           |
+
+- **Wrong ids and phase rejects.** No scene produced a wrong id or a phase
+  reject. On this sparse fixture, hops and false delimiters do not reach the
+  φ check.
+- **Heavy veil.** The pilot's on/off calibration gives 22% more records than
+  v1. It also reaches 90% coverage, which v1 never does.
+- **Servo trajectories.** In the dark scenes the servo settles on a longer
+  exposure under the pilot (median 0.37–0.39 against 0.29). v1's global white
+  frame and the staggered white keep about 1/C of the blobs gray, which holds
+  the servo back. The pilot has no gray windows.
+- **Delimiter misses.** Misses are cycles in which a fully lit track found no
+  pilot (motion smear across the pilot pair, or blobs entering the frame).
+  They cost nothing measurable here.
+
+**Decision.** The green/magenta pilot. It matches or beats v1 in every scene.
+It beats the staggered white under bloom (5× the yield) and under veil
+(+6% records, the on/off calibration). It also leaves the exposure servo free
+of the white frame's gray floor.
 
 ## Phase 3: stronger codewords and faster alphabets
 
