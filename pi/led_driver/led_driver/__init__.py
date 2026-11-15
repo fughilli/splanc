@@ -5,6 +5,12 @@ cycle (constant brightness, per-LED colors carry the code) with a
 white/green sync delimiter, and exposes a local control socket so M2 can
 ``start``/``stop`` the pattern and read the pattern clock.
 
+The hue code itself is NOT implemented here: ``pattern.color_plan`` renders each
+frame with the Rust kernel ``//firmware/pattern`` (the one implementation),
+through its Python binding ``ledmapper_pattern``. This package owns only the
+output side: APA102/SK9822 framing (``spi``), spi_ws281x FPGA framing
+(``fpga_spi``), the frame loop/pattern clock (``driver``) and the control socket.
+
 Public surface:
 
     from led_driver import LedDriver, ControlServer, ControlClient
@@ -15,14 +21,7 @@ from __future__ import annotations
 
 from .control import ControlClient, ControlServer, handle_line
 from .driver import MODE_CYCLE, MODE_OFF, MODE_SINGLE, LedDriver
-from .graycode import (
-    color_for_frame,
-    color_plan,
-    decode_gray,
-    default_code_params,
-    gray,
-    symbol_at,
-)
+from .pattern import check_code_params, color_plan, default_code_params
 from .spi import (
     RecordingSink,
     SpidevSink,
@@ -41,13 +40,10 @@ __all__ = [
     "ControlClient",
     "handle_line",
     "color_plan",
-    "color_for_frame",
-    "symbol_at",
+    "check_code_params",
     "frame_bytes",
     "frame_bytes_colors",
     "buffer_len",
-    "gray",
-    "decode_gray",
     "default_code_params",
     "SpiSink",
     "RecordingSink",

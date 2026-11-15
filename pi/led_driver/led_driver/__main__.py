@@ -19,7 +19,7 @@ from pathlib import Path
 from led_driver.control import ControlServer
 from led_driver.driver import LedDriver
 from led_driver.fpga_spi import FpgaCodec, matched_speed_hz
-from led_driver.graycode import default_code_params
+from led_driver.pattern import default_code_params
 from led_driver.spi import RecordingSink, SpidevSink
 
 

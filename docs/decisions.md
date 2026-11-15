@@ -478,3 +478,43 @@ HTML tree or a wiki. Rationale:
   (like other `bazel run` outputs); only the sources under `docs/_sphinx/`, the
   generators (`docs/build_docs.py`, `docs/gen_figures.py`), and the folded-in
   markdown are tracked. `docs/site/` should be git-ignored.
+
+## One hue-code kernel: Rust everywhere (hue-code v2 phase 0, 2026-11-12)
+
+The LED colour code (Gray/SEC-DED codewords, symbol palette, code-book sizing,
+cycle decode, stride schedule, pattern-clock timing) has ONE implementation, the
+Rust crate `//firmware/pattern` (`ledmapper_pattern`). It replaces three
+hand-synced copies (Rust, `web/src/code/*.ts`, Python `graycode.py` + `fec.py`)
+that were held together by cross-language goldens.
+
+- **Firmware links the render path only.** The decode side (Gray inverse,
+  SEC-DED decode, cycle decode, the phone's float clock) is behind the crate's
+  `app` feature, enabled only by `//firmware/pattern:pattern_app` (the ABI, the
+  golden generator, tests); `:pattern`, which every player links, compiles
+  without it.
+- **Phone: the kernel as wasm.** A flat `extern "C"` ABI
+  (`firmware/pattern/abi/kernel_abi.rs`, numbers only, no wasm-bindgen glue)
+  built for wasm32 at `-c opt` and embedded as base64
+  (`web/src/code/kernel_wasm.ts`, checked in, diff-tested by
+  `//web:code_kernel_wasm`). It compiles synchronously at import where the engine
+  allows; otherwise the page entries `await codeKernelReady`. The CV/tracker
+  stays TS; only the code moved.
+- **Python: one ctypes binding, two callers.** `graycode.py` and
+  `ledmapper_protocol.fec` (the Python copies) were deleted. The kernel's C ABI,
+  built as the host cdylib `//firmware/pattern:kernel_abi`, is loaded by ONE
+  Python module, `ledmapper_pattern` (`//firmware/pattern:pattern_py`). The M2
+  dev backend's `codebook.py` sizes code-books through it, and the APA102/SK9822
+  M1 driver (`//pi/led_driver`, the Pi image's `ledOutput = "apa102"` path) is
+  KEPT: it renders every pattern frame through it (`led_driver.pattern`) and
+  owns only the output side (APA102 framing, the frame loop, the control
+  socket). In the Pi image the vendored `pi/provisioning/nix/ledapp` copy is
+  replaced by `//pi/led_driver:ledapp_bundle` (build_data): the driver, the
+  binding and the kernel's Rust sources, from which `apps.nix` compiles the same
+  cdylib with rustc. `//pi/led_driver:led_driver_test` pins the driver's APA102
+  SPI frames to the kernel's golden colour plan.
+- **Goldens are regression pins, not contracts.** `firmware/pattern/testdata/*`
+  are emitted by `//firmware/pattern:gen_golden` and diff-tested
+  (`//firmware/pattern:goldens`); the TS/Python equivalence tests against them
+  were removed (there is nothing left to be equivalent to).
+- **Consequence:** hue-code v2 (staggered cycles, Golay [24,12,8], 8/16-hue
+  alphabets) is written once, in Rust.

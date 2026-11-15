@@ -1,6 +1,5 @@
 /**
- * SEC-DED codeword logic (code/fec.ts) vs the Python driver golden, plus the
- * distance-4 guarantees the decoder relies on: every single bit error is
+ * SEC-DED through the wasm kernel (code/fec.ts): the distance-4 guarantees the decoder relies on: every single bit error is
  * corrected, every double is detected — NEVER miscorrected into a valid
  * wrong id. The symbols=4 alphabet adds one more guarantee: misreading a
  * symbol as its NEAREST hue neighbor flips exactly one bit (Gray-ordered
@@ -24,37 +23,37 @@ import {
   SYMBOL_COLORS,
   symbolAt,
 } from "../src/code/gray";
-import golden from "./golden_secded16.json";
-import golden4 from "./golden_secded16_sym4.json";
-
+// The 16-LED SEC-DED code-book (k = 5 data bits, 10 coded bits).
 const params: CodeParams = {
-  ledCount: golden.ledCount,
-  bits: golden.bits,
+  ledCount: 16,
+  bits: 10,
   encoding: "hue",
   symbols: 2,
   bitPeriodMs: 100,
   syncPattern: "on_off",
-  cycleFrames: golden.cycleFrames,
+  cycleFrames: 12,
   fec: "secded",
 };
 
 const params4: CodeParams = {
   ...params,
   symbols: 4,
-  cycleFrames: golden4.cycleFrames,
+  cycleFrames: 7,
 };
 
-test("code sizes match the Python driver golden", () => {
-  assert.equal(secdedTotalBits(golden.dataBits), golden.bits);
+test("code sizes", () => {
+  assert.equal(secdedTotalBits(5), 10);
   assert.equal(secdedParityBits(6), 4); // 63 LEDs -> 11 total
   assert.equal(secdedTotalBits(11), 16); // 2047 LEDs -> 16 total
+  assert.throws(() => secdedParityBits(0), RangeError);
 });
 
-test("codewords match the Python driver golden, id for id", () => {
-  for (let id = 0; id < golden.ledCount; id++) {
-    assert.equal(codewordForId(id, params), golden.codewords[id], `id ${id}`);
-    assert.equal(secdedEncode(gray(id + 1), golden.dataBits), golden.codewords[id]);
+test("codewordForId is secdedEncode(gray(id + 1), k), and range-checked", () => {
+  for (let id = 0; id < params.ledCount; id++) {
+    assert.equal(codewordForId(id, params), secdedEncode(gray(id + 1), 5), `id ${id}`);
   }
+  assert.throws(() => secdedEncode(32, 5), RangeError);
+  assert.throws(() => secdedDecode(1 << 10, 5), RangeError);
 });
 
 function symbolsFor(id: number, p: CodeParams): number[] {
