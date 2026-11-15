@@ -98,10 +98,14 @@ and the Pi player advertise the `time_base` feature and take part like a C6:
   process started), the same clock the render loop reads.
 - While a time base is set, effect `time` = (now − epoch) / 1000 s, held at 0
   before the epoch, and update()'s `dt` = this frame's time − the previous
-  frame's, so `phase += dt * speed` comes out the same on every synced player.
-  The first frame after the time base is set, changed or cleared takes the
-  normal frame interval as `dt` (time jumps there). `set_time_base` with
-  `clear` goes back to the free-running clock.
+  frame's, in whole Q16.16 ticks, so `phase += dt * speed` comes out the same
+  on every synced player. The bridge's small drift-slewing epoch nudges (1–2 ms)
+  flow into `dt` the same way they move `time`. The rule is the C6's
+  (`time_base_frame` in `firmware/player_app/ffi.rs`, ported to
+  `pi/player_rs/src/clock.rs`): `dt` is 0 before the epoch and 0 when shared
+  time steps back, and when it jumps forward by more than a frame + 250 ms (a
+  re-align) `dt` is the normal frame period. `set_time_base` with `clear` goes
+  back to the free-running clock.
 
 The Pi player only shows mapping and counting patterns today, so its time base
 has nothing to drive yet. It is kept so an effects layer can use it.

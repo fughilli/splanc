@@ -456,10 +456,14 @@ and the Pi player advertise the <code class="docutils literal notranslate"><span
 process started), the same clock the render loop reads.</p></li>
 <li><p>While a time base is set, effect <code class="docutils literal notranslate"><span class="pre">time</span></code> = (now − epoch) / 1000 s, held at 0
 before the epoch, and update()’s <code class="docutils literal notranslate"><span class="pre">dt</span></code> = this frame’s time − the previous
-frame’s, so <code class="docutils literal notranslate"><span class="pre">phase</span> <span class="pre">+=</span> <span class="pre">dt</span> <span class="pre">*</span> <span class="pre">speed</span></code> comes out the same on every synced player.
-The first frame after the time base is set, changed or cleared takes the
-normal frame interval as <code class="docutils literal notranslate"><span class="pre">dt</span></code> (time jumps there). <code class="docutils literal notranslate"><span class="pre">set_time_base</span></code> with
-<code class="docutils literal notranslate"><span class="pre">clear</span></code> goes back to the free-running clock.</p></li>
+frame’s, in whole Q16.16 ticks, so <code class="docutils literal notranslate"><span class="pre">phase</span> <span class="pre">+=</span> <span class="pre">dt</span> <span class="pre">*</span> <span class="pre">speed</span></code> comes out the same
+on every synced player. The bridge’s small drift-slewing epoch nudges (1–2 ms)
+flow into <code class="docutils literal notranslate"><span class="pre">dt</span></code> the same way they move <code class="docutils literal notranslate"><span class="pre">time</span></code>. The rule is the C6’s
+(<code class="docutils literal notranslate"><span class="pre">time_base_frame</span></code> in <code class="docutils literal notranslate"><span class="pre">firmware/player_app/ffi.rs</span></code>, ported to
+<code class="docutils literal notranslate"><span class="pre">pi/player_rs/src/clock.rs</span></code>): <code class="docutils literal notranslate"><span class="pre">dt</span></code> is 0 before the epoch and 0 when shared
+time steps back, and when it jumps forward by more than a frame + 250 ms (a
+re-align) <code class="docutils literal notranslate"><span class="pre">dt</span></code> is the normal frame period. <code class="docutils literal notranslate"><span class="pre">set_time_base</span></code> with <code class="docutils literal notranslate"><span class="pre">clear</span></code> goes
+back to the free-running clock.</p></li>
 </ul>
 <p>The Pi player only shows mapping and counting patterns today, so its time base
 has nothing to drive yet. It is kept so an effects layer can use it.</p>
