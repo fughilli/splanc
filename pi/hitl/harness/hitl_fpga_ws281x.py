@@ -179,8 +179,37 @@ async def _rpc(sock, flat: dict[str, Any], expect: str, timeout: float = 15.0) -
         # ignore unsolicited frames until the awaited reply arrives.
 
 
+_HELLO = {"type": "hello", "client": "hitl_fpga_ws281x", "app_version": "1"}
+
+# Welcome feature the Rust player advertises while its render loop has no working
+# output (spidev missing / failing writes; pi/player_rs/src/output.rs). Without
+# this check a player that never opened spidev looks healthy over WSS and the run
+# dies 90 s later in a silent analyzer capture.
+OUTPUT_PENDING = "output_pending"
+
+
+def output_pending(welcome: dict[str, Any]) -> bool:
+    return OUTPUT_PENDING in (welcome.get("features") or [])
+
+
+async def _wait_output_ready(sock, welcome: dict[str, Any], deadline: float) -> None:
+    """Re-hello until the player's output is ready, or fail fast with the reason."""
+    while output_pending(welcome):
+        if time.monotonic() >= deadline:
+            raise SystemExit(
+                "[fpga] FAIL: player is up but its LED output is not ready "
+                f"(welcome features {welcome.get('features')}): spidev never opened "
+                "or SPI writes fail — check `journalctl -u sbc-led-driver` on the DUT "
+                "(fpga-commission / 'output not ready' lines). Not capturing a silent wire."
+            )
+        print("[fpga] player output pending (spidev not open yet); waiting…", flush=True)
+        await asyncio.sleep(2.0)
+        welcome = await _rpc(sock, _HELLO, "welcome")
+
+
 async def _open_ws(ws_url: str, settle_deadline: float):
     """Open the player WSS + hello->welcome, retrying until `settle_deadline`.
+    Returns `(sock, welcome)`.
 
     Mirrors //pi/hitl/harness:map_upload `_open_ws`: the tunnel may beat the
     player's TLS listener (fresh boot / just-restarted service), so a first
@@ -194,10 +223,8 @@ async def _open_ws(ws_url: str, settle_deadline: float):
     while True:
         try:
             sock = await websockets.connect(ws_url, ssl=ssl_ctx, open_timeout=8)
-            await _rpc(
-                sock, {"type": "hello", "client": "hitl_fpga_ws281x", "app_version": "1"}, "welcome"
-            )
-            return sock
+            welcome = await _rpc(sock, _HELLO, "welcome")
+            return sock, welcome
         except (OSError, TimeoutError, websockets.exceptions.WebSocketException) as e:
             if time.monotonic() >= settle_deadline:
                 raise SystemExit(
@@ -214,8 +241,10 @@ async def _drive_counting(ws_url: str, num_ports: int, leds_per_port: int) -> No
     and `color_order="GRB"` so the render's counting path (render.rs, which honours
     `counting_color_order`) emits WS2812-order bytes on the wire.
     """
-    sock = await _open_ws(ws_url, time.monotonic() + 30.0)
+    sock, welcome = await _open_ws(ws_url, time.monotonic() + 30.0)
     try:
+        # The player retries spidev with <= 5 s backoff; give it a little longer.
+        await _wait_output_ready(sock, welcome, time.monotonic() + 20.0)
         await _rpc(
             sock,
             {
