@@ -967,10 +967,16 @@ fn staggered_pilot_only_when_advertised() {
     let cp = start(&mut host, Some("stagger_pilot"));
     assert_eq!(cp.r#sync_pattern.as_str(), "stagger_pilot");
     let spec = pat::CodeSpec::derive(16, 2, true).with_sync(pat::SyncPattern::StaggerPilot);
+    assert_eq!(cp.r#cycle_frames as u32, spec.cycle_frames);
+    assert_eq!(cp.r#bits as u32, spec.bits);
     for led in 0..16 {
         for f in 0..spec.cycle_frames {
             assert_eq!(host.pattern_color(led, f), Some(pat::color_for_frame(led, f, &spec)), "led {led} f{f}");
         }
+    }
+    // Out of order (the memoised id -> index walk restarts on a jump back).
+    for led in (0..16).rev() {
+        assert_eq!(host.pattern_color(led, 3), Some(pat::color_for_frame(led, 3, &spec)), "led {led}");
     }
     let mut copts = pb::ConfigureOptions::default();
     copts.set_brightness(0.5);

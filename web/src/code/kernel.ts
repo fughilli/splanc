@@ -39,16 +39,34 @@ export interface KernelExports {
   pk_symbol_at(ledId: number, frame: number, ledCount: number, symbols: number, secded: number): number;
   pk_color_index(ledId: number, frameIndex: number, ledCount: number, symbols: number, secded: number): number;
   pk_symbol_color(symbols: number, value: number): number;
-  pk_color_index_sync(
+  pk_color_index_coded(
     ledId: number,
+    n: number,
     frameIndex: number,
     ledCount: number,
+    bits: number,
+    symbols: number,
+    secded: number,
+    sync: number,
+  ): number;
+  pk_symbol_at_coded(
+    n: number,
+    frame: number,
+    ledCount: number,
+    bits: number,
     symbols: number,
     secded: number,
     sync: number,
   ): number;
   pk_stagger_step(cycleFrames: number): number;
-  pk_stagger_phase(ledId: number, ledCount: number, symbols: number, secded: number, sync: number): number;
+  pk_stagger_phase(ledId: number, ledCount: number, bits: number, symbols: number, secded: number, sync: number): number;
+  pk_sync_frames(symbols: number, sync: number): number;
+  pk_sync_color(sync: number, symbols: number, j: number): number;
+  pk_expected_bits_sync(ledCount: number, symbols: number, secded: number, sync: number): number;
+  pk_cycle_frames_sync(ledCount: number, symbols: number, secded: number, sync: number): number;
+  pk_stagger_ids_buf(): number;
+  pk_stagger_fill(count: number, ledCount: number, bits: number, symbols: number, secded: number, sync: number): number;
+  pk_decode_cycle_sync(n: number, ledCount: number, bits: number, symbols: number, secded: number, sync: number): number;
   pk_symbol_buf(): number;
   pk_decode_cycle(n: number, ledCount: number, bits: number, symbols: number, secded: number): number;
   pk_stride_phase_count(spacing: number): number;

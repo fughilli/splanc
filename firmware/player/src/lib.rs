@@ -22,7 +22,7 @@
 
 #![no_std]
 
-use ledmapper_pattern::{color_for_frame, stride_lit, CodeSpec, Rgb, SyncPattern};
+use ledmapper_pattern::{color_for_frame, color_index_for_frame_coded, stride_lit, CodeSpec, Rgb, SyncPattern};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_view::ledmapper::v1 as pv;
 use pb::ServerMessage_::Msg as SMsg;
@@ -418,6 +418,10 @@ pub struct Player {
     fw_version: Str64,
     default_led_count: u32,
     active: Option<ActiveCapture>,
+    /// Hue code v2 pruned book: (coded id, coded index) of the last LED
+    /// pattern_color rendered, so a render loop walking LEDs in order steps the
+    /// id -> index walk once per LED. (0, 0) = empty; reset per capture.
+    stagger_memo: core::cell::Cell<(u32, u32)>,
     counting: Option<(i64, CountingBlocks)>,
     /// Wire color order applied to the counting probe ONLY — a source-index
     /// permutation like [`COLOR_ORDERS`] (identity [0,1,2] = raw). Set per
@@ -532,6 +536,7 @@ impl Player {
             fw_version: Str64::new(),
             default_led_count,
             active: None,
+            stagger_memo: core::cell::Cell::new((0, 0)),
             counting: None,
             counting_order: [0, 1, 2],
             counting_channel: 0,
@@ -871,6 +876,7 @@ impl Player {
             stop_at_ms,
         };
         self.active = Some(active);
+        self.stagger_memo.set((0, 0));
         let mut started = pb::MappingStarted {
             r#pattern_clock_epoch: epoch_ms as f64,
             ..Default::default()
@@ -933,6 +939,7 @@ impl Player {
         }
         // A renegotiation keeps the sync pattern the capture started with.
         let spec = CodeSpec::derive(code_space, symbols, true).with_sync(active.spec.sync);
+        self.stagger_memo.set((0, 0));
         self.active = Some(ActiveCapture {
             epoch_ms: now_ms,
             spec,
@@ -1783,7 +1790,26 @@ impl Player {
         if led >= active.led_count {
             return Some((0, 0, 0));
         }
-        let (r, g, b) = color_for_frame(led + active.code_offset, frame_index, &active.spec);
+        let coded = led + active.code_offset;
+        let (r, g, b) = if active.spec.sync.pruned() {
+            // Hue code v2 pruned book: the coded index comes from a walk the
+            // render loop drives in LED order (one stagger_next per LED,
+            // amortised), memoised here; a jump re-walks from the start.
+            let (memo_id, memo_n) = self.stagger_memo.get();
+            let mut n = if memo_n != 0 && memo_id <= coded { memo_n } else { 0 };
+            let mut id = if n != 0 { memo_id } else { u32::MAX };
+            while id != coded {
+                n = ledmapper_pattern::stagger_next(n, &active.spec);
+                id = id.wrapping_add(1);
+                if n == u32::MAX {
+                    return Some((0, 0, 0));
+                }
+            }
+            self.stagger_memo.set((coded, n));
+            color_index_for_frame_coded(coded, n, frame_index, &active.spec).rgb()
+        } else {
+            color_for_frame(coded, frame_index, &active.spec)
+        };
         // Integer Q8 scale (v * q8 / 256, rounded) — no f64 in the per-LED,
         // per-frame hot path. q8 == 256 is exact identity.
         let q8 = active.brightness_q8 as u32;

@@ -45,12 +45,14 @@ _SIGNATURES = {
     "pk_color_rgb_sync": ([_U32] * 6, _U32),
     "pk_frame_rgb_sync": ([_U32] * 5 + [ctypes.c_void_p, _U32], _U32),
     "pk_stagger_step": ([_U32], _U32),
-    "pk_stagger_phase": ([_U32] * 5, _U32),
+    "pk_stagger_phase": ([_U32] * 6, _U32),
+    "pk_expected_bits_sync": ([_U32] * 4, _U32),
+    "pk_cycle_frames_sync": ([_U32] * 4, _U32),
 }
 
-# CodeParams.syncPattern -> the kernel's SyncPattern code. "stagger_white" is
-# the link simulator's comparator, not a wire value.
-SYNC_CODES = {"on_off": 0, "stagger_pilot": 1, "stagger_white": 2}
+# CodeParams.syncPattern -> the kernel's SyncPattern code. "stagger_white" and
+# "stagger_gm" are the link simulator's comparators, not wire values.
+SYNC_CODES = {"on_off": 0, "stagger_pilot": 1, "stagger_white": 2, "stagger_gm": 3}
 
 
 def library_path() -> str:
@@ -116,15 +118,24 @@ def secded_total_bits(k: int) -> int:
     return kernel().pk_secded_total_bits(k)
 
 
-def expected_bits(led_count: int, fec: str) -> int:
-    """Transmitted code-bit count implied by ``led_count`` + ``fec``."""
-    return kernel().pk_expected_bits(led_count, _secded(fec))
-
-
-def cycle_frames(led_count: int, symbols: int, fec: str) -> int:
-    """Full cycle length: the 2-frame sync delimiter + the data frames."""
+def expected_bits(led_count: int, fec: str, symbols: int = 2, sync_pattern: str = "on_off") -> int:
+    """Transmitted code-bit count implied by ``led_count`` + ``fec`` (and, for
+    the pruned hue code v2 book, the alphabet + sync pattern)."""
+    sync = _sync(sync_pattern)
+    if sync == 0:
+        return kernel().pk_expected_bits(led_count, _secded(fec))
     _check_symbols(symbols)
-    return kernel().pk_cycle_frames(led_count, symbols, _secded(fec))
+    return kernel().pk_expected_bits_sync(led_count, symbols, _secded(fec), sync)
+
+
+def cycle_frames(led_count: int, symbols: int, fec: str, sync_pattern: str = "on_off") -> int:
+    """Full cycle length: the sync position (2 frames, or the hue code v2
+    palette pilot) + the data frames."""
+    _check_symbols(symbols)
+    sync = _sync(sync_pattern)
+    if sync == 0:
+        return kernel().pk_cycle_frames(led_count, symbols, _secded(fec))
+    return kernel().pk_cycle_frames_sync(led_count, symbols, _secded(fec), sync)
 
 
 # --- render -----------------------------------------------------------------
@@ -181,4 +192,7 @@ def stagger_step(cycle_frames: int) -> int:
 def stagger_phase(led_id: int, led_count: int, symbols: int, fec: str, sync_pattern: str) -> int:
     """Coded id ``led_id``'s phase rotation, ``(id * S) mod C`` (0 under on_off)."""
     _check_symbols(symbols)
-    return kernel().pk_stagger_phase(led_id, led_count, symbols, _secded(fec), _sync(sync_pattern))
+    bits = expected_bits(led_count, fec, symbols, sync_pattern)
+    return kernel().pk_stagger_phase(
+        led_id, led_count, bits, symbols, _secded(fec), _sync(sync_pattern)
+    )

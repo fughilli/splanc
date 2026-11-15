@@ -120,6 +120,19 @@ pub const fn secded_total_bits(k: u32) -> u32 {
     k + secded_parity_bits(k) + 1
 }
 
+/// Inverse of [`secded_total_bits`]: the data width k of a `total`-bit
+/// SEC-DED codeword (0 if no k gives exactly `total`).
+pub const fn secded_data_bits(total: u32) -> u32 {
+    let mut k = 1;
+    while k < total {
+        if secded_total_bits(k) == total {
+            return k;
+        }
+        k += 1;
+    }
+    0
+}
+
 const fn is_pow2(x: u32) -> bool {
     x & (x - 1) == 0
 }
@@ -219,11 +232,14 @@ pub fn secded_decode(mut word: u32, k: u32) -> (Option<u32>, bool) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CodeSpec {
     pub led_count: u32,
+    /// Data-word width k (the Gray word FEC wraps): `data_bits(led_count)`,
+    /// or wider for a pruned code book ([`SyncPattern::StaggerPilot`]).
+    pub data_bits: u32,
     /// Coded BITS per cycle (data + FEC parity), sent log2(symbols) per frame.
     pub bits: u32,
     /// Data alphabet size: 2 or 4.
     pub symbols: u8,
-    /// 2 (sync delimiter) + ceil(bits / log2(symbols)).
+    /// Sync frames ([`CodeSpec::sync_frames`]) + ceil(bits / log2(symbols)).
     pub cycle_frames: u32,
     /// SEC-DED FEC around the Gray data word.
     pub secded: bool,
@@ -239,6 +255,7 @@ impl CodeSpec {
         let bits = expected_bits(led_count, secded);
         CodeSpec {
             led_count,
+            data_bits: data_bits(led_count),
             bits,
             symbols,
             cycle_frames: DATA_FRAME_OFFSET + data_frames(bits, symbols),
@@ -247,9 +264,58 @@ impl CodeSpec {
         }
     }
 
-    /// The same code-book with another sync pattern (`CodeParams.syncPattern`).
-    pub const fn with_sync(self, sync: SyncPattern) -> Self {
-        CodeSpec { sync, ..self }
+    /// The same fixture's code book under another sync pattern
+    /// (`CodeParams.syncPattern`): [`CodeSpec::derive_sync`].
+    pub fn with_sync(self, sync: SyncPattern) -> Self {
+        CodeSpec::derive_sync(self.led_count, self.symbols, self.secded, sync)
+    }
+
+    /// The code-book derivation under a sync pattern. Unpruned patterns are
+    /// [`CodeSpec::derive`] with the pattern set (same bits, same cycle).
+    /// [`SyncPattern::StaggerPilot`] prunes the code book
+    /// ([`stagger_valid`]): the data word widens one bit at a time until enough
+    /// words survive for `led_count` ids, and the cycle is the palette pilot +
+    /// the data frames. Counting costs one validity check per word of the
+    /// final width (2^k; ~4096 for 1260 LEDs at 2 symbols) — once per capture.
+    pub fn derive_sync(led_count: u32, symbols: u8, secded: bool, sync: SyncPattern) -> Self {
+        let mut spec = CodeSpec { sync, ..CodeSpec::derive(led_count, symbols, secded) };
+        if !sync.pruned() {
+            return spec;
+        }
+        let mut k = spec.data_bits;
+        loop {
+            spec = CodeSpec::from_parts(led_count, k, symbols, secded, sync);
+            if k >= 24 || stagger_count_valid(&spec) >= led_count {
+                return spec;
+            }
+            k += 1;
+        }
+    }
+
+    /// The code book a received `CodeParams` describes (`bits` as received;
+    /// the data width k is recovered from it): no counting, O(1).
+    pub const fn from_params(led_count: u32, bits: u32, symbols: u8, secded: bool, sync: SyncPattern) -> Self {
+        let k = if secded { secded_data_bits(bits) } else { bits };
+        CodeSpec {
+            led_count,
+            data_bits: k,
+            bits,
+            symbols,
+            cycle_frames: sync_frames(sync, symbols) + data_frames(bits, symbols),
+            secded,
+            sync,
+        }
+    }
+
+    const fn from_parts(led_count: u32, k: u32, symbols: u8, secded: bool, sync: SyncPattern) -> Self {
+        let bits = if secded { secded_total_bits(k) } else { k };
+        CodeSpec::from_params(led_count, bits, symbols, secded, sync)
+    }
+
+    /// Frames of the sync position: 2 (v1 white/green and the comparators), or
+    /// the palette pilot's length ([`palette_pilot`]).
+    pub const fn sync_frames(&self) -> u32 {
+        sync_frames(self.sync, self.symbols)
     }
 
     pub const fn bits_per_symbol(&self) -> u32 {
@@ -291,10 +357,30 @@ pub const fn data_frames(bits: u32, symbols: u8) -> u32 {
 
 /// The TRANSMITTED codeword for `led_id`: `gray(id+1)`, SEC-DED-wrapped when
 /// the spec says so. Bits are sent log2(symbols) per data frame, LSB first.
+///
+/// Under a pruned code book ([`SyncPattern::StaggerPilot`]) id `i` carries the
+/// (i+1)-th valid coded index instead of `i + 1` ([`coded_index`]).
 pub fn codeword(led_id: u32, spec: &CodeSpec) -> u32 {
-    let data = gray(led_id + CODE_OFFSET);
+    codeword_coded(coded_index(led_id, spec), spec)
+}
+
+/// The coded index `n` id `led_id` transmits as `gray(n)`: `id + 1`, or under
+/// a pruned code book the (id+1)-th valid index ([`stagger_unrank`]; O(id) —
+/// renderers walk ids in order with [`stagger_next`] instead).
+pub fn coded_index(led_id: u32, spec: &CodeSpec) -> u32 {
+    if spec.sync.pruned() {
+        stagger_unrank(led_id, spec)
+    } else {
+        led_id + CODE_OFFSET
+    }
+}
+
+/// The transmitted codeword of coded index `n`: `gray(n)`, SEC-DED-wrapped
+/// when the spec says so.
+pub fn codeword_coded(n: u32, spec: &CodeSpec) -> u32 {
+    let data = gray(n);
     if spec.secded {
-        secded_encode(data, data_bits(spec.led_count))
+        secded_encode(data, spec.data_bits)
     } else {
         data
     }
@@ -302,10 +388,19 @@ pub fn codeword(led_id: u32, spec: &CodeSpec) -> u32 {
 
 /// The symbol VALUE `led_id` transmits in data frame `frame`.
 pub fn symbol_at(led_id: u32, frame: u32, spec: &CodeSpec) -> u8 {
+    symbol_of(codeword(led_id, spec), frame, spec)
+}
+
+/// The symbol VALUE coded index `n` transmits in data frame `frame`.
+pub fn symbol_at_coded(n: u32, frame: u32, spec: &CodeSpec) -> u8 {
+    symbol_of(codeword_coded(n, spec), frame, spec)
+}
+
+const fn symbol_of(cw: u32, frame: u32, spec: &CodeSpec) -> u8 {
     let bps = spec.bits_per_symbol();
     // Wrapping shift: a frame past the codeword is a caller bug; this keeps the
     // result well-defined (and identical to the JS `>>` the phone used to run).
-    ((codeword(led_id, spec).wrapping_shr(frame.wrapping_mul(bps))) & ((1 << bps) - 1)) as u8
+    ((cw.wrapping_shr(frame.wrapping_mul(bps))) & ((1 << bps) - 1)) as u8
 }
 
 #[cfg(feature = "app")]
@@ -350,7 +445,7 @@ pub fn decode_cycle_symbols(symbols: &[u8], spec: &CodeSpec) -> CycleDecode {
     let mut code = cycle_code(symbols, spec);
     let mut corrected = false;
     if spec.secded {
-        match secded_decode(code, data_bits(spec.led_count)) {
+        match secded_decode(code, spec.data_bits) {
             (Some(data), c) => {
                 code = data;
                 corrected = c;
@@ -361,7 +456,11 @@ pub fn decode_cycle_symbols(symbols: &[u8], spec: &CodeSpec) -> CycleDecode {
         }
     }
     // decode_gray(code) == 0 is the reserved all-zero word: a dark/noise artifact.
-    let id = match decode_gray(code).checked_sub(CODE_OFFSET) {
+    // A pruned code book maps the coded index back to its rank (an index the
+    // book excludes is not an id).
+    let n = decode_gray(code);
+    let id = if spec.sync.pruned() { stagger_rank(n, spec) } else { n.checked_sub(CODE_OFFSET) };
+    let id = match id {
         Some(id) if id < spec.led_count => Some(id),
         _ => None,
     };
@@ -427,24 +526,27 @@ pub fn stride_lit(led: u32, phase: u32, spacing: u32, anchor_density: u32) -> bo
 // Hue code v2 phase 2: staggered cycles with a pilot (docs/design/hue-code-v2.md).
 //
 // v1 (`SyncPattern::OnOff`) shows the white/green sync delimiter on EVERY LED
-// at the same frame. Under a staggered pattern LED `id` runs the same cycle
-// rotated by `phase(id) = (id * S) mod C` (C = cycle_frames, S =
-// [`stagger_step`]), so at any frame only ~2/C of the LEDs are in their sync
-// position, and that position shows a PILOT instead of white:
+// at the same frame. Under a staggered pattern LED `id` runs its cycle rotated
+// by `phase(id) = (id * S) mod C` (C = cycle_frames, S = [`stagger_step`]), so
+// at any frame only ~L/C of the LEDs are in their sync position, and that
+// position shows a PILOT instead of white:
 //
-//   - `StaggerPilot` (the wire value "stagger_pilot"): GREEN then MAGENTA.
-//     Complementary, on disjoint channels (G, then R+B), so the two pilot
-//     windows together measure the track's white-equivalent channel gains with
-//     no LED ever showing white (no three-channel peak, no bloom), and green
-//     never occurs in the 2- or 4-symbol data palettes, so "-> green -> magenta"
-//     is a transition data cannot produce.
-//   - `StaggerWhite`: the v1 white -> green delimiter, merely staggered. NOT a
-//     wire value: the link simulator's comparator for the pilot.
+//   - `StaggerPilot` (the wire value "stagger_pilot"): a short fixed sequence
+//     of symbols FROM THE ACTIVE PALETTE ([`palette_pilot`]), at the data's own
+//     drive. No hue is reserved: data keeps the full alphabet. Every channel
+//     the palette uses is lit in one pilot frame and dark in another, so each
+//     pilot gives a per-channel on/off calibration. The pilot is unique by
+//     CODE-BOOK PRUNING ([`stagger_valid`]): an id whose whole cycle, read
+//     cyclically, contains the pilot anywhere but at its sync position is
+//     excluded, and ids map to the surviving coded indices in order
+//     ([`stagger_unrank`] / [`stagger_rank`]).
+//   - `StaggerWhite` / `StaggerGreenMagenta`: simulator comparators only (no
+//     wire values): v1's white -> green, and the first phase-2 draft's green ->
+//     magenta (a reserved hue), both staggered over the unpruned v1 book.
 //
 // The rotation lives here, inside `color_index_for_frame`, on the CODED id
 // (the id the LED transmits, i.e. `led + code_offset`): callers keep passing
-// the global cycle frame. Firmware pays one multiply and one mod per LED per
-// frame.
+// the global cycle frame.
 // ---------------------------------------------------------------------------
 
 /// The sync layout of a cycle (`CodeParams.syncPattern`).
@@ -454,20 +556,22 @@ pub enum SyncPattern {
     /// v1, "on_off": every LED shows white then green in cycle frames 0, 1.
     OnOff = 0,
     /// "stagger_pilot": per-LED phase rotation; the sync position shows the
-    /// green -> magenta pilot.
+    /// palette pilot; the code book is pruned so the pilot is unique.
     StaggerPilot = 1,
-    /// Simulation comparator only (no wire value): per-LED phase rotation, the
-    /// sync position shows v1's white -> green.
+    /// Simulation comparator only: staggered v1 white -> green.
     StaggerWhite = 2,
+    /// Simulation comparator only: staggered green -> magenta.
+    StaggerGreenMagenta = 3,
 }
 
 impl SyncPattern {
-    /// The ABI / wire code: 0 on_off, 1 stagger_pilot, 2 stagger_white
-    /// (anything else is treated as on_off).
+    /// The ABI code: 0 on_off, 1 stagger_pilot, 2 stagger_white,
+    /// 3 stagger_gm (anything else is treated as on_off).
     pub const fn from_code(code: u32) -> Self {
         match code {
             1 => SyncPattern::StaggerPilot,
             2 => SyncPattern::StaggerWhite,
+            3 => SyncPattern::StaggerGreenMagenta,
             _ => SyncPattern::OnOff,
         }
     }
@@ -476,13 +580,156 @@ impl SyncPattern {
         !matches!(self, SyncPattern::OnOff)
     }
 
-    /// The two sync-position colours, in order.
-    pub const fn pilot(self) -> [Color; 2] {
-        match self {
-            SyncPattern::StaggerPilot => [Color::Green, Color::Magenta],
-            _ => [Color::White, Color::Green],
+    /// The code book is pruned for pilot uniqueness ([`stagger_valid`]).
+    pub const fn pruned(self) -> bool {
+        matches!(self, SyncPattern::StaggerPilot)
+    }
+}
+
+/// The 2-symbol palette pilot: blue, blue, red, red, blue (symbol values of
+/// [`SYMBOL_COLORS_2`]). Red and blue are each lit in one pilot frame and dark
+/// in another. Five frames: the shortest binary pilot that leaves
+/// comfortably more than 1260 ids (2443 of a 12-bit book; 4 frames would need
+/// a 13-bit one and give a cycle as long).
+pub const PILOT_2: [u8; 5] = [0, 0, 1, 1, 0];
+/// The 4-symbol palette pilot: blue, yellow, magenta (values of
+/// [`SYMBOL_COLORS_4`]). Blue and yellow are complementary (every channel lit
+/// in one, dark in the other); magenta makes it three frames, which keeps
+/// 1863 of the 11-bit book's 2047 ids (a 2-frame pilot keeps 1265).
+pub const PILOT_4: [u8; 3] = [0, 2, 1];
+
+/// The palette pilot (symbol values) for an alphabet; anything but 2 is 4.
+pub const fn palette_pilot(symbols: u8) -> &'static [u8] {
+    if symbols == 2 {
+        &PILOT_2
+    } else {
+        &PILOT_4
+    }
+}
+
+/// Sync-position frames of a cycle: the palette pilot's length under
+/// `StaggerPilot`, 2 otherwise.
+pub const fn sync_frames(sync: SyncPattern, symbols: u8) -> u32 {
+    match sync {
+        SyncPattern::StaggerPilot => palette_pilot(symbols).len() as u32,
+        _ => DATA_FRAME_OFFSET,
+    }
+}
+
+/// The colour of sync-position frame `j` (< [`sync_frames`]).
+pub const fn sync_color(sync: SyncPattern, symbols: u8, j: u32) -> Color {
+    match sync {
+        SyncPattern::StaggerPilot => symbol_color(symbols, palette_pilot(symbols)[j as usize]),
+        SyncPattern::StaggerGreenMagenta => {
+            if j == 0 {
+                Color::Green
+            } else {
+                Color::Magenta
+            }
+        }
+        _ => {
+            if j == 0 {
+                Color::White
+            } else {
+                Color::Green
+            }
         }
     }
+}
+
+/// Is coded index `n` in the pruned code book? Its cycle stream (the pilot,
+/// then the data symbols of `codeword_coded(n)`) must not contain the pilot
+/// at any cyclic offset other than 0, so a track that finds the pilot has
+/// found its sync position. `n = 0` (the reserved all-zero word) never is.
+/// O(C) for almost every offset (the first symbol already differs).
+pub fn stagger_valid(n: u32, spec: &CodeSpec) -> bool {
+    if n == 0 || (spec.data_bits < 32 && n >> spec.data_bits != 0) {
+        return false;
+    }
+    let pilot = palette_pilot(spec.symbols);
+    let l = pilot.len() as u32;
+    let c = spec.cycle_frames;
+    let cw = codeword_coded(n, spec);
+    let at = |p: u32| -> u8 {
+        if p < l {
+            pilot[p as usize]
+        } else {
+            symbol_of(cw, p - l, spec)
+        }
+    };
+    let mut o = 1;
+    while o < c {
+        let mut j = 0;
+        while j < l && at((o + j) % c) == pilot[j as usize] {
+            j += 1;
+        }
+        if j == l {
+            return false;
+        }
+        o += 1;
+    }
+    true
+}
+
+/// The next valid coded index after `n` (the walk renderers use: id `i+1`
+/// carries `stagger_next(index of id i)`), or `u32::MAX` past the book.
+pub fn stagger_next(mut n: u32, spec: &CodeSpec) -> u32 {
+    let end = if spec.data_bits >= 32 { u32::MAX } else { 1u32 << spec.data_bits };
+    loop {
+        n += 1;
+        if n >= end {
+            return u32::MAX;
+        }
+        if stagger_valid(n, spec) {
+            return n;
+        }
+    }
+}
+
+/// The coded index of id `id` in a pruned book: the (id+1)-th valid index.
+/// O(id) validity checks; `u32::MAX` past the book.
+pub fn stagger_unrank(id: u32, spec: &CodeSpec) -> u32 {
+    let mut n = 0;
+    let mut i = 0;
+    while i <= id {
+        n = stagger_next(n, spec);
+        if n == u32::MAX {
+            return n;
+        }
+        i += 1;
+    }
+    n
+}
+
+/// The id coded index `n` carries in a pruned book (its rank among the valid
+/// indices), or `None` if the book excludes it. O(n) validity checks.
+pub fn stagger_rank(n: u32, spec: &CodeSpec) -> Option<u32> {
+    if !stagger_valid(n, spec) {
+        return None;
+    }
+    let mut r = 0;
+    let mut m = 1;
+    while m < n {
+        if stagger_valid(m, spec) {
+            r += 1;
+        }
+        m += 1;
+    }
+    Some(r)
+}
+
+/// How many ids a pruned book of this width holds.
+pub fn stagger_count_valid(spec: &CodeSpec) -> u32 {
+    let end = if spec.data_bits >= 32 { u32::MAX } else { 1u32 << spec.data_bits };
+    let mut count = 0;
+    let mut n = 1;
+    while n < end {
+        if stagger_valid(n, spec) {
+            count += 1;
+        }
+        n += 1;
+    }
+    count
 }
 
 const fn gcd(mut a: u32, mut b: u32) -> u32 {
@@ -592,12 +839,22 @@ pub const fn symbol_color(symbols: u8, value: u8) -> Color {
 ///
 /// `frame_index` is the GLOBAL cycle frame; under a staggered
 /// [`SyncPattern`] the LED's own frame is rotated by [`stagger_phase`] first.
+/// A pruned book looks the id's coded index up in O(id)
+/// ([`coded_index`]); renderers that walk every LED use
+/// [`color_index_for_frame_coded`] with [`stagger_next`].
 pub fn color_index_for_frame(led_id: u32, frame_index: u32, spec: &CodeSpec) -> Color {
-    let [p0, p1] = spec.sync.pilot();
-    match local_frame(led_id, frame_index, spec) {
-        FRAME_ALL_ON => p0,
-        FRAME_ALL_OFF => p1,
-        j => symbol_color(spec.symbols, symbol_at(led_id, j - DATA_FRAME_OFFSET, spec)),
+    color_index_for_frame_coded(led_id, coded_index(led_id, spec), frame_index, spec)
+}
+
+/// [`color_index_for_frame`] with the id's coded index `n` supplied by the
+/// caller (`coded_index(led_id, spec)`).
+pub fn color_index_for_frame_coded(led_id: u32, n: u32, frame_index: u32, spec: &CodeSpec) -> Color {
+    let l = spec.sync_frames();
+    let j = local_frame(led_id, frame_index, spec);
+    if j < l {
+        sync_color(spec.sync, spec.symbols, j)
+    } else {
+        symbol_color(spec.symbols, symbol_at_coded(n, j - l, spec))
     }
 }
 
@@ -844,52 +1101,133 @@ mod tests {
     }
 
     #[test]
-    fn stagger_rotates_the_v1_cycle_per_led_and_v1_is_untouched() {
+    fn the_comparators_are_v1_rotated_and_v1_is_untouched() {
         for &symbols in &[2u8, 4] {
             let v1 = CodeSpec::derive(40, symbols, true);
-            let st = v1.with_sync(SyncPattern::StaggerPilot);
-            let sw = v1.with_sync(SyncPattern::StaggerWhite);
             assert_eq!(v1.sync, SyncPattern::OnOff, "derive keeps v1");
-            let c = v1.cycle_frames;
-            for id in 0..40 {
-                assert_eq!(stagger_phase(id, &v1), 0);
-                let ph = stagger_phase(id, &st);
-                assert_eq!(ph, (id * stagger_step(c)) % c);
-                for f in 0..c {
-                    let j = (f + c - ph) % c;
-                    let want_pilot = match j {
-                        0 => Some(Color::Green),
-                        1 => Some(Color::Magenta),
-                        _ => None,
-                    };
-                    let got = color_index_for_frame(id, f, &st);
-                    match want_pilot {
-                        Some(p) => assert_eq!(got, p),
-                        None => assert_eq!(got, color_index_for_frame(id, j, &v1), "data frames are v1's, rotated"),
+            assert_eq!(v1.data_bits, data_bits(40));
+            for (sync, p0, p1) in [
+                (SyncPattern::StaggerWhite, Color::White, Color::Green),
+                (SyncPattern::StaggerGreenMagenta, Color::Green, Color::Magenta),
+            ] {
+                let st = v1.with_sync(sync);
+                assert_eq!((st.bits, st.cycle_frames), (v1.bits, v1.cycle_frames), "unpruned: v1's book");
+                let c = v1.cycle_frames;
+                for id in 0..40 {
+                    assert_eq!(stagger_phase(id, &v1), 0);
+                    let ph = stagger_phase(id, &st);
+                    assert_eq!(ph, (id * stagger_step(c)) % c);
+                    for f in 0..c {
+                        let j = (f + c - ph) % c;
+                        let want = match j {
+                            0 => p0,
+                            1 => p1,
+                            _ => color_index_for_frame(id, j, &v1),
+                        };
+                        assert_eq!(color_index_for_frame(id, f, &st), want, "{sync:?} id {id} f {f}");
                     }
-                    // The staggered-white comparator is v1 rotated, exactly.
-                    assert_eq!(color_index_for_frame(id, f, &sw), color_index_for_frame(id, j, &v1));
                 }
             }
         }
     }
 
+    /// The palette pilot's cycle, read cyclically from the LED's own frame 0.
+    fn cycle_symbols(id: u32, spec: &CodeSpec) -> Vec<u8> {
+        let pilot = palette_pilot(spec.symbols);
+        let n = coded_index(id, spec);
+        let mut out: Vec<u8> = pilot.to_vec();
+        out.extend((0..spec.data_frames()).map(|d| symbol_at_coded(n, d, spec)));
+        out
+    }
+
     #[test]
-    fn stagger_flattens_the_sync_census_and_green_never_appears_in_data() {
+    fn the_palette_pilot_uses_only_data_colours_and_calibrates_every_channel() {
         for &symbols in &[2u8, 4] {
-            for &n in &[16u32, 64, 1260] {
-                let spec = CodeSpec::derive(n, symbols, true).with_sync(SyncPattern::StaggerPilot);
+            let pilot = palette_pilot(symbols);
+            let rgb: Vec<Rgb> = pilot.iter().map(|&v| symbol_color(symbols, v).rgb()).collect();
+            for ch in 0..3 {
+                let get = |c: &Rgb| [c.0, c.1, c.2][ch];
+                let used = (0..symbols).any(|v| get(&symbol_color(symbols, v).rgb()) > 0);
+                if used {
+                    assert!(rgb.iter().any(|c| get(c) == 255), "channel {ch} lit in the pilot");
+                    assert!(rgb.iter().any(|c| get(c) == 0), "channel {ch} dark in the pilot");
+                }
+            }
+            for f in 0..pilot.len() as u32 {
+                assert_eq!(sync_color(SyncPattern::StaggerPilot, symbols, f), symbol_color(symbols, pilot[f as usize]));
+            }
+        }
+    }
+
+    #[test]
+    fn the_pruned_book_holds_the_largest_fixture_and_the_pilot_is_unique() {
+        // Capacity pins (docs/design/hue-code-v2.md): 1260 LEDs, SEC-DED.
+        let s2 = CodeSpec::derive_sync(1260, 2, true, SyncPattern::StaggerPilot);
+        assert_eq!((s2.data_bits, s2.bits, s2.cycle_frames), (12, 18, 23));
+        assert_eq!(stagger_count_valid(&s2), 2443);
+        let s4 = CodeSpec::derive_sync(1260, 4, true, SyncPattern::StaggerPilot);
+        assert_eq!((s4.data_bits, s4.bits, s4.cycle_frames), (11, 16, 11));
+        assert_eq!(stagger_count_valid(&s4), 1863);
+        assert_eq!(CodeSpec::from_params(1260, s2.bits, 2, true, SyncPattern::StaggerPilot), s2);
+        assert_eq!(CodeSpec::from_params(1260, s4.bits, 4, true, SyncPattern::StaggerPilot), s4);
+        for spec in [s2, s4] {
+            let pilot = palette_pilot(spec.symbols);
+            let c = spec.cycle_frames as usize;
+            let mut n = 0;
+            for id in (0..1260u32).step_by(1) {
+                n = stagger_next(n, &spec);
+                if id % 37 != 0 {
+                    continue;
+                }
+                assert_eq!(coded_index(id, &spec), n, "the walk and the unrank agree");
+                assert_eq!(stagger_rank(n, &spec), Some(id));
+                let cyc = cycle_symbols(id, &spec);
+                let hits = (0..c).filter(|&o| (0..pilot.len()).all(|j| cyc[(o + j) % c] == pilot[j])).count();
+                assert_eq!(hits, 1, "id {id}: the pilot occurs once, at the sync position");
+            }
+        }
+    }
+
+    #[test]
+    fn pruned_decode_round_trips_and_rejects_excluded_words() {
+        for &symbols in &[2u8, 4] {
+            for &n in &[16u32, 64, 300] {
+                let spec = CodeSpec::derive_sync(n, symbols, true, SyncPattern::StaggerPilot);
+                assert!(stagger_count_valid(&spec) >= n);
+                for id in 0..n {
+                    let d = decode_cycle_symbols(&observed(id, &spec), &spec);
+                    assert_eq!((d.id, d.corrected), (Some(id), false), "n={n} symbols={symbols} id={id}");
+                }
+            }
+        }
+        // An excluded coded index decodes to no id.
+        let spec = CodeSpec::derive_sync(64, 2, true, SyncPattern::StaggerPilot);
+        let bad = (1..1u32 << spec.data_bits).find(|&m| !stagger_valid(m, &spec)).unwrap();
+        let syms: Vec<u8> = (0..spec.data_frames()).map(|d| symbol_at_coded(bad, d, &spec)).collect();
+        assert_eq!(decode_cycle_symbols(&syms, &spec).id, None);
+    }
+
+    #[test]
+    fn stagger_flattens_the_sync_census_and_never_shows_white() {
+        for &symbols in &[2u8, 4] {
+            for &n in &[16u32, 64, 300] {
+                let spec = CodeSpec::derive_sync(n, symbols, true, SyncPattern::StaggerPilot);
                 let c = spec.cycle_frames;
+                let mut ns = std::vec![0u32; n as usize];
+                let mut m = 0;
+                for x in ns.iter_mut() {
+                    m = stagger_next(m, &spec);
+                    *x = m;
+                }
                 for f in 0..c {
-                    let greens = (0..n).filter(|&id| color_index_for_frame(id, f, &spec) == Color::Green).count() as u32;
+                    let in_pilot = (0..n).filter(|&id| local_frame(id, f, &spec) < spec.sync_frames()).count() as u32;
+                    let want = n * spec.sync_frames();
                     // Every phase is equally occupied (S coprime with C).
-                    assert!(greens == n / c || greens == n / c + 1, "n={n} f={f} greens={greens}");
+                    assert!(in_pilot * c >= want - c * spec.sync_frames() && in_pilot * c <= want + c * spec.sync_frames());
                     for id in 0..n {
-                        let col = color_index_for_frame(id, f, &spec);
+                        let col = color_index_for_frame_coded(id, ns[id as usize], f, &spec);
                         assert_ne!(col, Color::White, "no LED ever shows white");
-                        if local_frame(id, f, &spec) >= DATA_FRAME_OFFSET {
-                            assert_ne!(col, Color::Green, "green is pilot-only");
-                        }
+                        assert!((0..symbols).any(|v| symbol_color(symbols, v) == col), "palette colours only");
                     }
                 }
             }
