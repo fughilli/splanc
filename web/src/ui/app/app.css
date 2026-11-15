@@ -3516,6 +3516,18 @@ input.device-name-input {
   gap: var(--sp-1);
   flex: 0 0 auto;
 }
+/* Stale home-screen icon: longer text, so the actions wrap under it. */
+.pwa-banner--stale {
+  flex-wrap: wrap;
+  border-color: var(--warn);
+}
+.pwa-banner--stale .pwa-banner-text {
+  flex: 1 1 calc(100% - 40px - var(--sp-3));
+}
+.pwa-banner--stale .pwa-banner-actions {
+  flex: 1 1 100%;
+  justify-content: flex-end;
+}
 
 /* --- iOS Add-to-Home-Screen guide --- */
 .pwa-ios-lead {

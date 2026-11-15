@@ -223,6 +223,9 @@ test('splanc.pages.dev is retired: app paths 301 to splanc.io/app, agent files t
   assert.equal(await loc('https://splanc.pages.dev/?url=wss://10.0.0.5/ws'), 'https://splanc.io/app/?url=wss://10.0.0.5/ws');
   assert.equal(await loc('https://splanc.pages.dev/fx-vm/fx_vm_wasm_pkg_bg.wasm'), 'https://splanc.io/app/fx-vm/fx_vm_wasm_pkg_bg.wasm');
   assert.equal(await loc('https://abc123.splanc.pages.dev/user-guide/'), 'https://splanc.io/app/user-guide/');
+  // A launch from an icon installed on the old origin is tagged so the app can offer a reinstall.
+  assert.equal(await loc('https://splanc.pages.dev/?source=pwa'), 'https://splanc.io/app/?source=pwa&retired=1');
+  assert.equal(await loc('https://splanc.pages.dev/?source=pwa&retired=1'), 'https://splanc.io/app/?source=pwa&retired=1');
   assert.equal(await loc('https://splanc.pages.dev/AGENTS.md'), 'https://splanc.io/AGENTS.md');
   assert.equal(await loc('https://splanc.pages.dev/agent/latest.json'), 'https://splanc.io/agent/latest.json');
   assert.equal(await loc('https://splanc.pages.dev/.well-known/mcp/server.json'), 'https://splanc.io/.well-known/mcp/server.json');
