@@ -53,6 +53,7 @@ def create_app(
     default_led_count: int = 1024,
     bit_period_ms: float = DEFAULT_BIT_PERIOD_MS,
     symbols: int = 2,
+    sync_pattern: str = "on_off",
     context: Optional[ServerContext] = None,
     run_solver_benchmark: bool = True,
 ) -> FastAPI:
@@ -81,6 +82,7 @@ def create_app(
             bit_period_ms=bit_period_ms,
             symbols=symbols,
             map_store=maps,
+            sync_pattern=sync_pattern,
         )
         if run_solver_benchmark:
             # Host solver-placement score (§7 welcome.solverBenchMs): measure

@@ -85,3 +85,15 @@ def test_secded_total_bits():
     assert [secded_total_bits(k) for k in (1, 4, 5, 11, 12)] == [4, 8, 10, 16, 18]
     with pytest.raises(ValueError):
         secded_total_bits(0)
+
+
+def test_sync_pattern_defaults_to_v1_and_stagger_keeps_the_cycle():
+    """Hue code v2 phase 2: the staggered pilot is a syncPattern value, opt-in
+    (--sync-pattern); the cycle length is the v1 one (the kernel rotates it)."""
+    v1 = code_params_for(1260)
+    assert v1.syncPattern == "on_off"
+    st = code_params_for(1260, sync_pattern="stagger_pilot")
+    assert st.syncPattern == "stagger_pilot"
+    assert (st.bits, st.cycleFrames) == (v1.bits, v1.cycleFrames) == (16, 18)
+    with pytest.raises(ValueError):
+        code_params_for(16, sync_pattern="stagger_white")  # sim-only, not a wire value
