@@ -22,7 +22,8 @@ from this process (a second client, like the phone next to the wall). Then:
    hue_stagger_pilot) gets it: the wall reports `sync stagger_pilot`, and its
    canvas decodes the same way against the kernel's STAGGERED frames (each LED's
    cycle rotated by its own phase, green/magenta in place of white/green) — no
-   frame is all-white, and a v1 frame never matches.
+   frame is all-white, and a v1 frame never matches;
+6. the player also serves this build of the phone app at /app/, and it loads.
 
 Not part of `bazel test //...` (it needs a browser); Chromium is installed into
 the Playwright cache on first run.
@@ -154,7 +155,8 @@ def decode_cycles(page, t_send: float, sync: str) -> None:
         got = matching_frames(px, frames)
         if not got:
             check(False, f"[{sync}] snapshot matches a kernel frame: {px[:6]}...")
-        check(not matching_frames(px, wrong), f"[{sync}] snapshot is not a {other} frame")
+        if matching_frames(px, wrong):
+            check(False, f"[{sync}] snapshot is not a {other} frame")
         white += all(tuple(p) == (255, 255, 255) for p in px)
         pilots += sum(1 for p in px if tuple(p) in ((0, 255, 0), (255, 0, 255)))
         due = {
@@ -271,6 +273,17 @@ def main() -> None:
             phone.send(STOP)
             check(arm(phone.recv(timeout=5)) == 10, "phone stop_mapping -> mapping_stopped")
             phone.close()
+
+            # 6. This build of the phone app, served by the player at /app/ (what
+            # the owner opens on the phone for the phase 2 test), loads cleanly.
+            app = ctx.new_page()
+            app_errors = []
+            app.on("pageerror", lambda e: app_errors.append(str(e)))
+            app.goto(f"https://localhost:{port}/app/?sync=stagger_pilot")
+            app.wait_for_load_state("load")
+            app.wait_for_timeout(1500)
+            check(app.title() != "", f"the app loads from the player at /app/: {app.title()!r}")
+            check(not app_errors, f"no app page errors: {app_errors}")
             check(not [e for e in errors if not re.search("truth", e)], f"no page errors: {errors}")
             browser.close()
     finally:
