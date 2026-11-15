@@ -450,8 +450,10 @@ a short pilot of known hues on different colour channels:</p>
 <li><p>Every pilot hue has the same luminance as the data hues, so an LED in its
 pilot does not flash. Combined with the stagger, there is no luminance spike
 anywhere in the frame, so no bloom.</p></li>
-<li><p>The pilot is unique because it contains a transition that never occurs in
-data. No hue is reserved, so data keeps the full alphabet.</p></li>
+<li><p>The pilot is made of the active alphabet’s own colours and is unique by
+structure: the code book is pruned of every id whose cycle contains the pilot
+anywhere but at its sync position. No hue is reserved, so data keeps the full
+alphabet (see “Phase 2 as built”).</p></li>
 <li><p>Each pilot gives the decoder a fresh colour calibration for that track, every
 cycle: the camera-space centroids of the palette. This replaces the white
 reference and absorbs white-balance drift, which the decoder must assume is
@@ -519,65 +521,193 @@ number of LEDs in their pilot is the same on every frame (unit-tested for 16,
 <p>This rule gives the pinned values (11, 7, 5, 5 for C = 18, 10, 8, 6). It also
 covers every other C a code-book can have. The table for C = 3 to 34 is pinned
 in the kernel test and in the golden (<code class="docutils literal notranslate"><span class="pre">staggerSteps</span></code>).</p>
-<p><strong>The pilot: green, then magenta.</strong> The sync position shows pure green for one
-frame and magenta (red + blue) for the next. Reasons:</p>
+<p><strong>The pilot: a fixed run of palette colours, unique by code-book pruning.</strong>
+The sync position shows a short, fixed sequence of symbols from the active
+alphabet, at the same drive as the data:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Alphabet</p></th>
+<th class="head"><p>Pilot</p></th>
+<th class="head"><p>Frames</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>2 symbols</p></td>
+<td><p>blue, blue, red, red, blue</p></td>
+<td><p>5</p></td>
+</tr>
+<tr class="row-odd"><td><p>4 symbols</p></td>
+<td><p>blue, yellow, magenta</p></td>
+<td><p>3</p></td>
+</tr>
+</tbody>
+</table>
+</div>
 <ul class="simple">
-<li><p><strong>Channel separation.</strong> Green and magenta are complementary and use disjoint
-channels: G alone, then R and B together. Each channel is driven in exactly
-one of the two frames, so the sum of the two pilot windows is a full
-white-equivalent calibration. The decoder divides each data window by that
-sum, which is exactly the v1 white-reference normalisation. It is refreshed on
-every cycle for every track, and no LED ever has to show white.</p></li>
-<li><p><strong>A richer calibration than white.</strong> Each channel is on in one pilot window
-and off in the other. The pilot therefore measures every channel’s on level
-and its off level (ambient veil, sensor black level, glare). The decoder
-normalises each data window per channel as <code class="docutils literal notranslate"><span class="pre">(x</span> <span class="pre">−</span> <span class="pre">off)</span> <span class="pre">/</span> <span class="pre">(on</span> <span class="pre">−</span> <span class="pre">off)</span></code>. v1’s
-white frame measures only the gains. A veil that v1 divides into every
-window, the pilot subtracts out. This is why the pilot beats v1 in the heavy
-veil below.</p></li>
-<li><p><strong>No white, no bloom.</strong> At most two channels are lit in any pilot frame,
-never more than in the data frames (magenta and yellow are already
-two-channel). Combined with the stagger, the peak drive of the whole fixture
-is flat: there is no frame where every LED shows white, and no frame where
-any LED does.</p></li>
-<li><p><strong>The forbidden transition.</strong> Green appears in neither data palette (2
-symbols: blue/red; 4 symbols: blue/magenta/yellow/red). So the transition
-“into green, then magenta” never occurs in data, and data keeps its full
-alphabet. The pilot score normalises the two windows by their own sum.
-Per-channel gain, white balance and colour correction therefore cancel
-exactly, and no locked white balance is assumed. An ideal pilot scores 1.
-The data pair that looks most like a pilot is yellow then magenta, and it
-scores at most 0.5. A veil v at LED level L lowers a real pilot’s score to
-L/(L + 2v). A candidate is therefore accepted when it scores at least 0.15
-(v1’s green-sync floor, translated) and is the best pair within ±C/2
-windows. Uniqueness comes from that local maximum, together with FEC and
-the φ check.</p></li>
-<li><p><strong>Robust to hue bias.</strong> The score depends only on which channels dominate
-each window, not on hue angles, so a camera that rotates hues by tens of
-degrees still sees the pilot.</p></li>
+<li><p><strong>No reserved hue.</strong> Every pilot colour is a data colour, and data keeps the
+full alphabet. This holds for any alphabet, including phase 3’s 8 and 16
+hues.</p></li>
+<li><p><strong>Per-channel on/off calibration.</strong> Every channel the palette uses is lit in
+some pilot frame and dark in another. Blue and yellow are complementary, and
+red and blue cover the binary palette. Green is never lit at 2 symbols; it
+reads relative to its pilot mean. The decoder normalises each data window per
+channel as <code class="docutils literal notranslate"><span class="pre">(x</span> <span class="pre">−</span> <span class="pre">off)</span> <span class="pre">/</span> <span class="pre">(on</span> <span class="pre">−</span> <span class="pre">off)</span></code>. v1’s white frame measures only the
+gains, so a veil that v1 divides into every window, the pilot subtracts out.</p></li>
+<li><p><strong>No white, no bloom.</strong> No LED ever shows white, and no frame’s drive exceeds
+the data’s. Combined with the stagger, the fixture never flashes.</p></li>
+<li><p><strong>Robust to hue bias and white balance.</strong> The pilot score is per-channel
+contrast between the pilot’s lit and dark frames: (min lit − max dark) /
+(min lit + max dark), taking the worst channel. Per-channel gain and colour
+correction cancel out of it, so no locked white balance is assumed. A veil v
+at LED level L lowers the score to L / (L + 2v).</p></li>
 </ul>
-<p>Two parts of the decided design are deferred:</p>
+<p><strong>Uniqueness by pruning, not by symbol constraints.</strong> Each LED’s cycle content
+is fixed: its pilot, then its id’s codeword. The kernel therefore drops every
+coded index whose whole cycle, read cyclically and including the pilot,
+contains the pilot at any offset other than the sync position
+(<code class="docutils literal notranslate"><span class="pre">stagger_valid</span></code>).</p>
 <ul class="simple">
-<li><p><strong>Constant luminance.</strong> Pure green and magenta are not iso-luminant on a
-real LED. The design calls for app-computed drive levels sent with the code
-parameters, which needs a wire field and firmware. Until then the pilot uses
-the same full-drive 1- and 2-channel colours as the data. Its peak drive
-stays within the data’s, so it does not flash brighter than the data.</p></li>
-<li><p><strong>Phase 3 alphabets.</strong> The 8- and 16-hue alphabets will include green, so the
-“into green” rule stops holding there. Phase 3 must either keep a gap at
-green on the hue circle or rely on the φ check plus Golay for delimiter
-uniqueness. That choice belongs to phase 3.</p></li>
+<li><p><strong>The id map.</strong> Ids map in order onto the coded indices that survive. Id i
+carries the (i+1)-th valid index n, transmitted as SEC-DED(gray(n)).</p></li>
+<li><p><strong>Data width.</strong> The data word widens one bit at a time until enough indices
+survive for the fixture (<code class="docutils literal notranslate"><span class="pre">CodeSpec::derive_sync</span></code>).</p></li>
+<li><p><strong>Decoding.</strong> A track that finds the pilot has found its sync position. The
+decoder takes the best-scoring pilot within ±C/2 windows, so the true pilot
+is the only exact candidate in the cycle. An excluded index decodes to no
+id.</p></li>
+<li><p><strong>Safety net.</strong> Wider margins come from the φ(id) check and FEC.</p></li>
 </ul>
+<p>Near-matches (one symbol off the pilot at another offset) are <strong>not</strong> pruned.
+At 2 symbols, pruning them leaves 28 of 4095 indices; at 4 symbols, 504 of
+2047. Fewer than 1260 either way. They score low by construction: changing one
+symbol of the pilot breaks a channel’s lit/dark contrast. Uniqueness among them
+is left to the best-in-cycle rule, φ and FEC.</p>
+<p><strong>Capacity and cost.</strong> The table below is for the largest fixture (1260 LEDs).
+Rows for SEC-DED at 2 and 4 symbols are pinned by kernel tests. Rows for 8 and
+16 hues (hue circle, Gray order) and for Golay [24,12,8] are a phase 3
+prototype, computed with the same rule.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Alphabet</p></th>
+<th class="head"><p>Code</p></th>
+<th class="head"><p>Pilot (values)</p></th>
+<th class="head"><p>L</p></th>
+<th class="head"><p>Data bits k</p></th>
+<th class="head"><p>Ids left / book</p></th>
+<th class="head"><p>Cycle C (v1 C)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>2</p></td>
+<td><p>SEC-DED</p></td>
+<td><p>0,0,1,1,0</p></td>
+<td><p>5</p></td>
+<td><p>12</p></td>
+<td><p>2443 / 4095</p></td>
+<td><p>23 (18)</p></td>
+</tr>
+<tr class="row-odd"><td><p>4</p></td>
+<td><p>SEC-DED</p></td>
+<td><p>0,2,1</p></td>
+<td><p>3</p></td>
+<td><p>11</p></td>
+<td><p>1863 / 2047</p></td>
+<td><p>11 (10)</p></td>
+</tr>
+<tr class="row-even"><td><p>8</p></td>
+<td><p>SEC-DED</p></td>
+<td><p>2,5</p></td>
+<td><p>2</p></td>
+<td><p>11</p></td>
+<td><p>1923 / 2047</p></td>
+<td><p>8 (8)</p></td>
+</tr>
+<tr class="row-odd"><td><p>16</p></td>
+<td><p>SEC-DED</p></td>
+<td><p>0,15</p></td>
+<td><p>2</p></td>
+<td><p>11</p></td>
+<td><p>2024 / 2047</p></td>
+<td><p>6 (6)</p></td>
+</tr>
+<tr class="row-even"><td><p>2</p></td>
+<td><p>Golay</p></td>
+<td><p>0,0,1,1,1</p></td>
+<td><p>5</p></td>
+<td><p>12</p></td>
+<td><p>2002 / 4095</p></td>
+<td><p>29 (26)</p></td>
+</tr>
+<tr class="row-odd"><td><p>4</p></td>
+<td><p>Golay</p></td>
+<td><p>2,0</p></td>
+<td><p>2</p></td>
+<td><p>12</p></td>
+<td><p>1924 / 4095</p></td>
+<td><p>14 (14)</p></td>
+</tr>
+<tr class="row-even"><td><p>8</p></td>
+<td><p>Golay</p></td>
+<td><p>1,6</p></td>
+<td><p>2</p></td>
+<td><p>12</p></td>
+<td><p>3663 / 4095</p></td>
+<td><p>10 (10)</p></td>
+</tr>
+<tr class="row-odd"><td><p>16</p></td>
+<td><p>Golay</p></td>
+<td><p>4,11</p></td>
+<td><p>2</p></td>
+<td><p>12</p></td>
+<td><p>4016 / 4095</p></td>
+<td><p>8 (8)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p><strong>Choosing the pilots.</strong> Each pilot is the one with the most surviving
+indices among all pilots of its length that cover every channel. Its length
+is the shortest that leaves comfortably more than 1260 ids at the code’s
+natural k.</p></li>
+<li><p><strong>The binary price.</strong> A short binary pattern recurs in almost every random
+codeword: 2 frames leave 0 ids, 3 leave 602 even at k = 13, and 4 need
+k = 13. So the 2-symbol pilot costs 5 frames and one extra data bit, giving
+23 frames per cycle instead of 18.</p></li>
+<li><p><strong>The 4-symbol choice.</strong> At 4 symbols a 2-frame pilot (blue, yellow) keeps
+only 1265 ids, so the pilot takes 3 frames.</p></li>
+<li><p><strong>Phase 3 alphabets.</strong> At 8 and 16 hues, 2 frames are enough.</p></li>
+<li><p><strong>Stagger step.</strong> The S rule simply takes the new C: S = 14 for C = 23 and
+S = 7 for C = 11.</p></li>
+</ul>
+<p>Costs:</p>
+<ul class="simple">
+<li><p><strong>Validity check.</strong> One cycle-stream scan, O(C) (the first compared symbol
+almost always differs).</p></li>
+<li><p><strong>Code-book derivation.</strong> Counts the book once per capture: 4095 checks for
+1260 LEDs at 2 symbols.</p></li>
+<li><p><strong>Renderers.</strong> They walk ids in order with <code class="docutils literal notranslate"><span class="pre">stagger_next</span></code>: about 1/0.6 checks
+per LED, amortised, with no table and no allocation. The host player memoises
+the walk inside <code class="docutils literal notranslate"><span class="pre">pattern_color</span></code>. The phone builds an id ↔ index table once
+per code book (<code class="docutils literal notranslate"><span class="pre">pk_stagger_fill</span></code>, 4 bytes per id).</p></li>
+<li><p><strong>Decode.</strong> Maps the index back by rank, O(n) checks, in the app only.</p></li>
+<li><p><strong>Firmware.</strong> C6/P4 firmware never runs this path today. It would need the
+same in-order walk.</p></li>
+</ul>
+<p>One part of the decided design is deferred: <strong>constant luminance</strong>. The pilot
+and data use the same full-drive palette colours. The app-computed drive
+levels need a wire field and firmware.</p>
 <p><strong>Decoder</strong> (<code class="docutils literal notranslate"><span class="pre">web/src/cv/staggerDecoder.ts</span></code>). Per track, on its own cycle
 boundary:</p>
 <ol class="arabic simple">
 <li><p>Bucket the track’s samples into absolute frame windows, with v1’s
 centrality weights.</p></li>
-<li><p>Score every adjacent window pair as a pilot, and take the best one per
-cycle.</p></li>
-<li><p>Calibrate from the pilot (per-channel off and span) and classify the C − 2 data windows that follow
-against the palette. Margins and the confidence gate are the same as v1.</p></li>
-<li><p>Decode with SEC-DED.</p></li>
+<li><p>Score every run of L windows as a pilot, and take the best one per cycle.</p></li>
+<li><p>Calibrate from the pilot (per-channel off and span) and classify the C − L
+data windows that follow against the palette. Margins and the confidence gate are the same as v1.</p></li>
+<li><p>Decode with SEC-DED, and map the index back to its id by rank.</p></li>
 <li><p>Run the phase check <code class="docutils literal notranslate"><span class="pre">(a</span> <span class="pre">−</span> <span class="pre">φ(id))</span> <span class="pre">mod</span> <span class="pre">C</span> <span class="pre">=</span> <span class="pre">k</span></code>, where <code class="docutils literal notranslate"><span class="pre">a</span></code> is the pilot’s
 absolute frame.</p></li>
 </ol>
@@ -610,7 +740,7 @@ per id and per pilot frame.</p>
 </tr>
 <tr class="row-odd"><td><p>2</p></td>
 <td><p>Green census, no-cyan rule</p></td>
-<td><p>Unused under stagger: the pipeline still computes the census, and only the v1 decoder reads it. The no-cyan rule stays, because cyan would sit between the green pilot and the data palette.</p></td>
+<td><p>Unused under stagger: the pipeline still computes the census, and only the v1 decoder reads it. The no-cyan palette rule is v1’s and untouched; the pilot needs no reserved colour.</p></td>
 </tr>
 <tr class="row-even"><td><p>3</p></td>
 <td><p>Cycle framing, dedup, pruning</p></td>
@@ -670,14 +800,16 @@ and firmware support.</p></li>
 <section id="simulation-results">
 <h3>Simulation results<a class="headerlink" href="#simulation-results" title="Link to this heading">¶</a></h3>
 <p>Two simulators run the production pipeline and negotiation. They compare v1,
-the staggered green/magenta pilot, and a staggered white/green delimiter (the
-comparator, <code class="docutils literal notranslate"><span class="pre">&quot;stagger_white&quot;</span></code>, which is not a wire value).</p>
+the staggered palette pilot (the wire value), and two sim-only comparators over
+the unpruned v1 book: a staggered white/green delimiter (<code class="docutils literal notranslate"><span class="pre">&quot;stagger_white&quot;</span></code>) and
+the first draft’s green/magenta pilot, which reserves a hue (<code class="docutils literal notranslate"><span class="pre">&quot;stagger_gm&quot;</span></code>).</p>
 <p><strong>Dense fixture</strong> (<code class="docutils literal notranslate"><span class="pre">web/tests/denseFixture_sim.test.ts</span></code>): radiolarian
-geometry, 1260-LED code with C = 18 and S = 11, hand-held camera, 15% blob
-dropout, and 225 ms of camera latency, so the whole-frame k is exercised. A
-bloom of about one pitch merges spots: in v1 every LED blooms on the global
-white frame; under the staggered white each LED blooms on its own white frame;
-the pilot has no white frame.</p>
+geometry with the 1260-LED, 2-symbol code. That is a 23-frame cycle for the
+palette pilot (12-bit pruned book, S = 14) and 18 frames for the others. The
+camera is hand-held, 15% of blobs drop out, and the latency is 225 ms, so the
+whole-frame k is exercised. A bloom of about one pitch merges spots: in v1
+every LED blooms on the global white frame, and under the staggered white each
+LED blooms on its own white frame. Neither pilot has a white frame.</p>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
 <thead>
@@ -693,10 +825,10 @@ the pilot has no white frame.</p>
 <td><p>0.1%</p></td>
 <td><p>2.49</p></td>
 </tr>
-<tr class="row-odd"><td><p>Pilot, no bloom</p></td>
-<td><p>2.6%</p></td>
+<tr class="row-odd"><td><p>Palette pilot, no bloom</p></td>
+<td><p>1.2%</p></td>
 <td><p>0.0%</p></td>
-<td><p>2.50</p></td>
+<td><p>2.02</p></td>
 </tr>
 <tr class="row-even"><td><p>v1, 14 px bloom</p></td>
 <td><p>12.3%</p></td>
@@ -704,188 +836,107 @@ the pilot has no white frame.</p>
 <td><p>0.55</p></td>
 </tr>
 <tr class="row-odd"><td><p>Staggered white, 14 px bloom</p></td>
+<td><p>0.1%</p></td>
 <td><p>0.0%</p></td>
-<td><p>0.0%</p></td>
-<td><p>0.50</p></td>
+<td><p>0.51</p></td>
 </tr>
-<tr class="row-even"><td><p>Pilot, 14 px bloom</p></td>
+<tr class="row-even"><td><p>Green/magenta draft, 14 px bloom</p></td>
 <td><p>2.6%</p></td>
 <td><p>0.0%</p></td>
-<td><p>2.50</p></td>
+<td><p>2.49</p></td>
+</tr>
+<tr class="row-odd"><td><p>Palette pilot, 14 px bloom</p></td>
+<td><p>1.2%</p></td>
+<td><p>0.0%</p></td>
+<td><p>2.02</p></td>
 </tr>
 </tbody>
 </table>
 </div>
 <ul class="simple">
-<li><p><strong>Phase lock.</strong> k locked, and the total latency estimate (shift + k·140 ms)
-came out at 224 ms against the true 225 ms.</p></li>
-<li><p><strong>The pilot under bloom.</strong> The pilot is unaffected by bloom: its result
-equals the bloom-free one, 4.5× v1’s yield, which closes failure mode 1. A
-staggered white avoids v1’s wrong ids, but its yield is as bad as v1’s: an
-LED blooms on its own white frame, so its window carries a merged colour,
-and FEC rejects the cycle.</p></li>
-<li><p><strong>Hops.</strong> Of 686 neighbour-hop stitches that SEC-DED accepts as a third id,
-17 also pass the φ check (2.5%; random chance is 1/C = 5.6%). The forced
-hop through the pipeline is rejected by the phase check, and both real ids
-still land.</p></li>
+<li><p><strong>Phase lock.</strong> k locked, and the latency estimate came out at 224 ms against
+the true 225 ms.</p></li>
+<li><p><strong>Bloom.</strong> The palette pilot is unaffected by bloom (3.7× v1’s yield under
+bloom), and it halves the wrong records.</p></li>
+<li><p><strong>The cost.</strong> Its yield is 19% below the bloom-free v1 and the green/magenta
+draft: 23-frame cycles against 18 (the 5-frame binary pilot plus one data
+bit).</p></li>
+<li><p><strong>Hops.</strong> Of 179 neighbour-hop stitches that SEC-DED accepts as a third id,
+25 also pass the φ check (14%; 1/C would be 4.3%). Because φ is linear in the
+id, a stitch family that lands at a fixed id offset passes for every pair or
+for none. In this neighbourhood one family, at offset −414 = −18·23,
+dominates. The forced hop through the pipeline is rejected (phase check plus
+confirmation), and both real ids still land.</p></li>
 </ul>
 <p><strong>Link sim</strong> (<code class="docutils literal notranslate"><span class="pre">web/tests/staggerLink_sim.test.ts</span></code>): helix fixture, 120 LEDs,
 30 s per scene, 140 ms camera latency, the measured alphabet rule, and the
-exposure servo running.</p>
+exposure servo running. Records by scene:</p>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
 <thead>
 <tr class="row-odd"><th class="head"><p>Scene</p></th>
-<th class="head"><p>Sync</p></th>
-<th class="head"><p>Records</p></th>
-<th class="head"><p>Wrong ids</p></th>
-<th class="head"><p>t90</p></th>
-<th class="head"><p>Delimiter misses</p></th>
-<th class="head"><p>Exposure median / max</p></th>
+<th class="head"><p>v1</p></th>
+<th class="head"><p>Palette pilot</p></th>
+<th class="head"><p>Staggered white</p></th>
+<th class="head"><p>Green/magenta</p></th>
 </tr>
 </thead>
 <tbody>
 <tr class="row-even"><td><p>hold-dark</p></td>
-<td><p>v1</p></td>
-<td><p>11139</p></td>
-<td><p>0</p></td>
-<td><p>4.1 s</p></td>
-<td><p>–</p></td>
-<td><p>0.29 / 0.65</p></td>
-</tr>
-<tr class="row-odd"><td><p>hold-dark</p></td>
-<td><p>pilot</p></td>
-<td><p>11425</p></td>
-<td><p>0</p></td>
-<td><p>4.3 s</p></td>
-<td><p>98</p></td>
-<td><p>0.37 / 0.65</p></td>
-</tr>
-<tr class="row-even"><td><p>hold-dark</p></td>
-<td><p>staggered white</p></td>
-<td><p>11425</p></td>
-<td><p>0</p></td>
-<td><p>4.3 s</p></td>
-<td><p>86</p></td>
-<td><p>0.29 / 0.65</p></td>
+<td><p>11139 (t90 4.1 s)</p></td>
+<td><p>10731 (5.5 s)</p></td>
+<td><p>11425 (4.3 s)</p></td>
+<td><p>11425 (4.3 s)</p></td>
 </tr>
 <tr class="row-odd"><td><p>orbit-dark</p></td>
-<td><p>v1</p></td>
-<td><p>9845</p></td>
-<td><p>0</p></td>
-<td><p>21.9 s</p></td>
-<td><p>–</p></td>
-<td><p>0.29 / 0.65</p></td>
-</tr>
-<tr class="row-even"><td><p>orbit-dark</p></td>
-<td><p>pilot</p></td>
-<td><p>10185</p></td>
-<td><p>0</p></td>
-<td><p>21.4 s</p></td>
-<td><p>185</p></td>
-<td><p>0.39 / 0.65</p></td>
-</tr>
-<tr class="row-odd"><td><p>orbit-dark</p></td>
-<td><p>staggered white</p></td>
-<td><p>10190</p></td>
-<td><p>0</p></td>
-<td><p>21.4 s</p></td>
-<td><p>176</p></td>
-<td><p>0.29 / 0.65</p></td>
+<td><p>9845 (21.9 s)</p></td>
+<td><p>9031 (23.5 s)</p></td>
+<td><p>10190 (21.4 s)</p></td>
+<td><p>10185 (21.4 s)</p></td>
 </tr>
 <tr class="row-even"><td><p>orbit-lit</p></td>
-<td><p>v1</p></td>
-<td><p>11822</p></td>
-<td><p>0</p></td>
-<td><p>19.3 s</p></td>
-<td><p>–</p></td>
-<td><p>0.25 / 0.25</p></td>
-</tr>
-<tr class="row-odd"><td><p>orbit-lit</p></td>
-<td><p>pilot</p></td>
-<td><p>11980</p></td>
-<td><p>0</p></td>
-<td><p>19.0 s</p></td>
-<td><p>141</p></td>
-<td><p>0.25 / 0.25</p></td>
-</tr>
-<tr class="row-even"><td><p>orbit-lit</p></td>
-<td><p>staggered white</p></td>
-<td><p>11966</p></td>
-<td><p>0</p></td>
-<td><p>19.0 s</p></td>
-<td><p>134</p></td>
-<td><p>0.25 / 0.25</p></td>
+<td><p>11822 (19.3 s)</p></td>
+<td><p>11403 (20.3 s)</p></td>
+<td><p>11980 (19.0 s)</p></td>
+<td><p>11980 (19.0 s)</p></td>
 </tr>
 <tr class="row-odd"><td><p>bright-veil</p></td>
-<td><p>v1</p></td>
-<td><p>6911</p></td>
-<td><p>0</p></td>
-<td><p>never</p></td>
-<td><p>–</p></td>
-<td><p>0.13 / 0.25</p></td>
-</tr>
-<tr class="row-even"><td><p>bright-veil</p></td>
-<td><p>pilot</p></td>
-<td><p>8437</p></td>
-<td><p>0</p></td>
-<td><p>28.5 s</p></td>
-<td><p>177</p></td>
-<td><p>0.13 / 0.25</p></td>
-</tr>
-<tr class="row-odd"><td><p>bright-veil</p></td>
-<td><p>staggered white</p></td>
-<td><p>7939</p></td>
-<td><p>0</p></td>
-<td><p>26.5 s</p></td>
-<td><p>222</p></td>
-<td><p>0.13 / 0.25</p></td>
+<td><p>6911 (never)</p></td>
+<td><p>11143 (21.3 s)</p></td>
+<td><p>5095 (never)</p></td>
+<td><p>11869 (19.7 s)</p></td>
 </tr>
 <tr class="row-even"><td><p>ambient-ramp</p></td>
-<td><p>v1</p></td>
-<td><p>8782</p></td>
-<td><p>0</p></td>
-<td><p>20.1 s</p></td>
-<td><p>–</p></td>
-<td><p>0.25 / 0.25</p></td>
-</tr>
-<tr class="row-odd"><td><p>ambient-ramp</p></td>
-<td><p>pilot</p></td>
-<td><p>8815</p></td>
-<td><p>0</p></td>
-<td><p>19.0 s</p></td>
-<td><p>172</p></td>
-<td><p>0.25 / 0.25</p></td>
-</tr>
-<tr class="row-even"><td><p>ambient-ramp</p></td>
-<td><p>staggered white</p></td>
-<td><p>8723</p></td>
-<td><p>0</p></td>
-<td><p>19.4 s</p></td>
-<td><p>169</p></td>
-<td><p>0.25 / 0.25</p></td>
+<td><p>8782 (20.1 s)</p></td>
+<td><p>8143 (20.3 s)</p></td>
+<td><p>8791 (19.0 s)</p></td>
+<td><p>8815 (19.0 s)</p></td>
 </tr>
 </tbody>
 </table>
 </div>
 <ul class="simple">
-<li><p><strong>Wrong ids and phase rejects.</strong> No scene produced a wrong id or a phase
-reject. On this sparse fixture, hops and false delimiters do not reach the
-φ check.</p></li>
-<li><p><strong>Heavy veil.</strong> The pilot’s on/off calibration gives 22% more records than
-v1. It also reaches 90% coverage, which v1 never does.</p></li>
-<li><p><strong>Servo trajectories.</strong> In the dark scenes the servo settles on a longer
-exposure under the pilot (median 0.37–0.39 against 0.29). v1’s global white
-frame and the staggered white keep about 1/C of the blobs gray, which holds
-the servo back. The pilot has no gray windows.</p></li>
-<li><p><strong>Delimiter misses.</strong> Misses are cycles in which a fully lit track found no
-pilot (motion smear across the pilot pair, or blobs entering the frame).
-They cost nothing measurable here.</p></li>
+<li><p><strong>Wrong ids and phase rejects.</strong> No scene produced either.</p></li>
+<li><p><strong>Heavy veil.</strong> The pilots’ on/off calibration gives +61% records over v1,
+and both pilots reach 90% coverage, which v1 and the staggered white never
+do. Folding the pilot score into the confidence cut those records down while
+the calibration was already removing the veil, so it was dropped: the score
+gates the delimiter, and the data margins set the confidence.</p></li>
+<li><p><strong>Other scenes.</strong> The palette pilot runs 4–8% fewer records than v1, again
+the longer cycle.</p></li>
+<li><p><strong>Servo trajectories.</strong> In the dark the exposure servo settles longer under
+both pilots (median 0.37–0.39 against 0.29). The white frames keep about
+1/C of the blobs gray, which holds the servo back; the pilots show no gray.</p></li>
 </ul>
-<p><strong>Decision.</strong> The green/magenta pilot. It matches or beats v1 in every scene.
-It beats the staggered white under bloom (5× the yield) and under veil
-(+6% records, the on/off calibration). It also leaves the exposure servo free
-of the white frame’s gray floor.</p>
+<p><strong>Decision.</strong> The palette pilot, for these reasons:</p>
+<ul class="simple">
+<li><p>It reserves no hue, so it works unchanged for the phase 3 alphabets.</p></li>
+<li><p>It keeps the green/magenta draft’s wins over v1: bloom, veil and the servo.</p></li>
+<li><p>It halves the dense-fixture wrong records.</p></li>
+</ul>
+<p>Its price is the binary pilot’s length: 23 frames instead of 18 at 2 symbols,
+and 11 instead of 10 at 4. The price disappears at 8 and 16 hues, where 2
+frames are enough (table above).</p>
 </section>
 </section>
 <section id="phase-3-stronger-codewords-and-faster-alphabets">
@@ -964,7 +1015,7 @@ under the stagger:</p>
 </tr>
 <tr class="row-odd"><td><p>2</p></td>
 <td><p>Pipeline green census and the no-cyan palette rule</p></td>
-<td><p>Delete both. The pilot’s forbidden transition is the delimiter.</p></td>
+<td><p>Delete both. The pilot, unique by code-book pruning, is the delimiter.</p></td>
 </tr>
 <tr class="row-even"><td><p>3</p></td>
 <td><p>Decoder cycle framing, reflection dedup, sample pruning</p></td>
