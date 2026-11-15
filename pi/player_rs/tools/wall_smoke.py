@@ -21,8 +21,9 @@ from this process (a second client, like the phone next to the wall). Then:
    (start_mapping syncPattern "stagger_pilot"; the host player advertises
    hue_stagger_pilot) gets it: the wall reports `sync stagger_pilot`, and its
    canvas decodes the same way against the kernel's STAGGERED frames (each LED's
-   cycle rotated by its own phase, green/magenta in place of white/green) — no
-   frame is all-white, and a v1 frame never matches;
+   cycle rotated by its own phase, a pilot of palette colours in place of
+   white/green, over the pruned code book) — no frame is all-white, every dot
+   is a palette colour, and a v1 frame never matches;
 6. the player also serves this build of the phone app at /app/, and it loads.
 
 Not part of `bazel test //...` (it needs a browser); Chromium is installed into
@@ -142,11 +143,13 @@ def matching_frames(px, frames):
 def decode_cycles(page, t_send: float, sync: str) -> None:
     """Snapshot the canvas for >= 1.5 cycles: every snapshot must be exactly one
     of the kernel's frames for `sync` (and the one the player clock has due)."""
-    cycle = pattern.cycle_frames(LEDS, SYMBOLS, "secded")
+    cycle = pattern.cycle_frames(LEDS, SYMBOLS, "secded", sync)
     frames = [pattern.frame_rgb(f, LEDS, SYMBOLS, "secded", sync) for f in range(cycle)]
     other = "on_off" if sync != "on_off" else "stagger_pilot"
-    wrong = [pattern.frame_rgb(f, LEDS, SYMBOLS, "secded", other) for f in range(cycle)]
-    seen, late, white, pilots = set(), [], 0, 0
+    other_cycle = pattern.cycle_frames(LEDS, SYMBOLS, "secded", other)
+    wrong = [pattern.frame_rgb(f, LEDS, SYMBOLS, "secded", other) for f in range(other_cycle)]
+    palette = {(0, 0, 255), (255, 0, 0)}  # SYMBOLS = 2: blue / red
+    seen, late, white, off_palette = set(), [], 0, 0
     deadline = time.monotonic() + max(6.0, 1.5 * cycle * BIT_PERIOD_MS / 1000)
     while time.monotonic() < deadline:
         t0 = time.monotonic()
@@ -158,7 +161,7 @@ def decode_cycles(page, t_send: float, sync: str) -> None:
         if matching_frames(px, wrong):
             check(False, f"[{sync}] snapshot is not a {other} frame")
         white += all(tuple(p) == (255, 255, 255) for p in px)
-        pilots += sum(1 for p in px if tuple(p) in ((0, 255, 0), (255, 0, 255)))
+        off_palette += sum(1 for p in px if tuple(p) not in palette)
         due = {
             int(((t - t_send) * 1000) // BIT_PERIOD_MS) % cycle
             for t in (t0 - BIT_PERIOD_MS / 1000, t0, t1, t1 + BIT_PERIOD_MS / 1000)
@@ -173,7 +176,10 @@ def decode_cycles(page, t_send: float, sync: str) -> None:
     )
     check(not late, f"[{sync}] every frame was the one the player clock had due (+/-1): {late[:3]}")
     if sync == "stagger_pilot":
-        check(white == 0 and pilots > 0, f"[{sync}] no all-white frame; {pilots} pilot dots seen")
+        check(
+            white == 0 and off_palette == 0,
+            f"[{sync}] no white frame, and every dot (pilot included) is a palette colour",
+        )
     else:
         check(white > 0, f"[{sync}] v1 shows its all-white sync frame")
 
