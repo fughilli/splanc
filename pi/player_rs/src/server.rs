@@ -98,10 +98,19 @@ pub fn self_signed_config() -> Result<ServerConfig, Box<dyn std::error::Error + 
     Ok(cfg)
 }
 
+/// Frames queued to apply later (crate::schedule): the `apply_at` seam. Empty
+/// until a control arm carries an apply time.
+pub static SCHEDULE: Mutex<crate::schedule::Schedule> = Mutex::new(crate::schedule::Schedule::new());
+
 /// Decode one binary WS frame (a protobuf ClientMessage), run it through the
 /// shared Player, and encode the reply (a ServerMessage), if any. This is the
 /// exact transport contract the C++ `lm_player_handle` implements — done
 /// natively here. Returns `Ok(None)` for fire-and-forget arms (no reply).
+///
+/// The single entry for client frames. A scheduled apply time (`apply_at`)
+/// belongs HERE: a control frame due later goes to [`SCHEDULE`] (due on the
+/// player clock, `recv_ms`'s domain) and is acked now; everything else is
+/// dispatched at once.
 pub fn handle_frame(
     player: &SharedPlayer,
     frame: &[u8],
@@ -113,6 +122,37 @@ pub fn handle_frame(
     if ClientMessageView::parse(frame).is_err() {
         return Err("decode");
     }
+    dispatch(player, frame, recv_ms, send_ms)
+}
+
+/// Run every scheduled frame due at `render_ms` (the render loop's time: the
+/// player clock plus any output latency offset) through [`dispatch`], dropping
+/// the replies. Call at a frame boundary, holding neither the player nor the
+/// effects lock. Returns how many were applied.
+pub fn apply_due(player: &SharedPlayer, render_ms: i64) -> usize {
+    let due = {
+        let mut s = SCHEDULE.lock().expect("schedule mutex poisoned");
+        if s.is_empty() {
+            return 0;
+        }
+        s.take_due(render_ms)
+    };
+    for f in &due {
+        if let Err(e) = dispatch(player, f, render_ms, render_ms) {
+            eprintln!("player_rs: scheduled frame failed ({e})");
+        }
+    }
+    due.len()
+}
+
+/// Apply one already-validated client frame now (the OTA arms, the host
+/// effects layer, then the session core) and encode its reply.
+pub fn dispatch(
+    player: &SharedPlayer,
+    frame: &[u8],
+    recv_ms: i64,
+    send_ms: i64,
+) -> Result<Option<Vec<u8>>, &'static str> {
     // OTA arms: answered here from the MAX updater's state (crate::ota), not by the
     // shared core (which has no updater).
     if let Some(ota) = OTA.get() {
@@ -250,6 +290,67 @@ mod tests {
             matches!(reply.r#msg, Some(pb::ServerMessage_::Msg::Welcome(_))),
             "hello must produce welcome"
         );
+    }
+
+    fn call(player: &SharedPlayer, msg: pb::ClientMessage_::Msg, recv_ms: i64, send_ms: i64) -> Option<pb::ServerMessage> {
+        let m = pb::ClientMessage { r#msg: Some(msg) };
+        let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, 512>::new());
+        m.encode(&mut enc).unwrap();
+        let frame = enc.into_writer().to_vec();
+        let out = handle_frame(player, &frame, recv_ms, send_ms).unwrap()?;
+        let mut reply = pb::ServerMessage::default();
+        reply.decode(&mut PbDecoder::new(out.as_slice()), out.len()).unwrap();
+        Some(reply)
+    }
+
+    #[test]
+    fn time_sync_pong_is_on_the_player_clock() {
+        // t0 (the bridge's clock) echoes verbatim; t1/t2 are the recv/send stamps
+        // the WS task takes with now_ms(epoch) — the clock effect time reads.
+        let player: SharedPlayer = Arc::new(Mutex::new(Player::new("host-0001", 8)));
+        let ping = pb::ClientMessage_::Msg::TimeSyncPing(pb::TimeSyncPing { r#t0: 1.7e12 + 0.25 });
+        let r = call(&player, ping, 41_000, 41_002).expect("pong");
+        let Some(pb::ServerMessage_::Msg::TimeSyncPong(p)) = r.r#msg else { panic!("expected pong") };
+        assert_eq!((p.r#t0, p.r#t1, p.r#t2), (1.7e12 + 0.25, 41_000.0, 41_002.0));
+    }
+
+    #[test]
+    fn set_time_base_sets_and_clears_the_epoch() {
+        let player: SharedPlayer = Arc::new(Mutex::new(Player::new("host-0001", 8)));
+        player.lock().unwrap().set_features(crate::fx::FEATURES, 0);
+        let set = pb::ClientMessage_::Msg::SetTimeBase(pb::SetTimeBase { r#epoch_ms: 12_345, r#clear: false });
+        let Some(pb::ServerMessage_::Msg::Welcome(w)) = call(&player, set, 1, 1).unwrap().r#msg else {
+            panic!("set_time_base replies with a welcome")
+        };
+        assert_eq!(w.time_base_ms().copied(), Some(12_345));
+        assert!(w.r#features.iter().any(|f| f.as_str() == "time_base"), "welcome advertises time_base");
+        assert_eq!(player.lock().unwrap().time_base_ms(), Some(12_345));
+        // The render loop's frame time follows it.
+        let t = crate::clock::FrameTime::sample(13_345_000, player.lock().unwrap().time_base_ms(), 0);
+        assert_eq!(t.shared.unwrap().time_s, 1.0);
+
+        let clear = pb::ClientMessage_::Msg::SetTimeBase(pb::SetTimeBase { r#epoch_ms: 0, r#clear: true });
+        let Some(pb::ServerMessage_::Msg::Welcome(w)) = call(&player, clear, 1, 1).unwrap().r#msg else {
+            panic!("welcome")
+        };
+        assert_eq!(w.time_base_ms(), None);
+        assert_eq!(player.lock().unwrap().time_base_ms(), None);
+    }
+
+    #[test]
+    fn scheduled_frames_apply_at_their_due_time() {
+        // The apply_at seam: a queued frame runs through dispatch once due.
+        let player: SharedPlayer = Arc::new(Mutex::new(Player::new("host-0001", 8)));
+        let m = pb::ClientMessage {
+            r#msg: Some(pb::ClientMessage_::Msg::SetTimeBase(pb::SetTimeBase { r#epoch_ms: 777, r#clear: false })),
+        };
+        let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, 512>::new());
+        m.encode(&mut enc).unwrap();
+        SCHEDULE.lock().unwrap().push(5_000, enc.into_writer().to_vec());
+        assert_eq!(apply_due(&player, 4_999), 0);
+        assert_eq!(player.lock().unwrap().time_base_ms(), None);
+        assert_eq!(apply_due(&player, 5_000), 1);
+        assert_eq!(player.lock().unwrap().time_base_ms(), Some(777));
     }
 
     // A client cert verifier that trusts the server's self-signed cert (the phone

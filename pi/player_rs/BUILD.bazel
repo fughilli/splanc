@@ -16,12 +16,14 @@ package(default_visibility = ["//visibility:public"])
 rust_library(
     name = "player_rs",
     srcs = [
+        "src/clock.rs",
         "src/fx.rs",
         "src/health.rs",
         "src/lib.rs",
         "src/ota.rs",
         "src/output.rs",
         "src/render.rs",
+        "src/schedule.rs",
         "src/server.rs",
         "src/session.rs",
         "src/spi_retry.rs",

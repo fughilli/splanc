@@ -29,15 +29,16 @@ bazel-bin/pi/player_rs/player_host --output ddp://wled-desk.local --leds 300 --n
 
 `bazel run //pi/player_rs:player_host -- --output … --leds …` works too.
 
-| Flag              | Meaning                                                                                                                                                                                               |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--output SPEC`   | An output driver. Repeat it to split one strip across several controllers, in order. Default `null`.                                                                                                  |
-| `--leds N`        | The strip length. Defaults to the outputs' `#N` counts added together.                                                                                                                                |
-| `--fps F`         | The output frame rate. Default 40.                                                                                                                                                                    |
-| `--name NAME`     | The device name the app shows. Default "Splanc Host".                                                                                                                                                 |
-| `--serve-port P`  | The WSS port. Default 8443. Use a different port for each process.                                                                                                                                    |
-| `--state-dir DIR` | Where the map and effect are saved (`""` keeps them in memory only). Default `~/Library/Application Support/Splanc/player_host/<port>` on macOS, `~/.local/state/splanc/player_host/<port>` on Linux. |
-| `--start N`       | Show an N-LED mapping pattern at startup without the app, to check wiring.                                                                                                                            |
+| Flag                     | Meaning                                                                                                                                                                                                   |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--output SPEC`          | An output driver. Repeat it to split one strip across several controllers, in order. Default `null`.                                                                                                      |
+| `--leds N`               | The strip length. Defaults to the outputs' `#N` counts added together.                                                                                                                                    |
+| `--fps F`                | The output frame rate. Default 40.                                                                                                                                                                        |
+| `--name NAME`            | The device name the app shows. Default "Splanc Host".                                                                                                                                                     |
+| `--serve-port P`         | The WSS port. Default 8443. Use a different port for each process.                                                                                                                                        |
+| `--state-dir DIR`        | Where the map and effect are saved (`""` keeps them in memory only). Default `~/Library/Application Support/Splanc/player_host/<port>` on macOS, `~/.local/state/splanc/player_host/<port>` on Linux.     |
+| `--start N`              | Show an N-LED mapping pattern at startup without the app, to check wiring.                                                                                                                                |
+| `--output-latency-ms MS` | Render effects MS milliseconds ahead of the shared time base, to cancel the network and controller latency to the LEDs. Default 0. See [Shared time and output latency](#shared-time-and-output-latency). |
 
 ### Output specs (`pi/player_rs/src/output.rs`)
 
@@ -86,6 +87,62 @@ applied on top of that.
 4. Push effects from the Effects tab. The map and the active effect are saved to
    the state directory and come back after a restart.
 
+## Shared time and output latency
+
+The bridge's `align_time` (agent `alignTime`) gives every player the same effect
+clock: it syncs each player's clock with `time_sync_ping` and sends
+`set_time_base` with a common epoch in that player's own clock. The host player
+and the Pi player advertise the `time_base` feature and take part like a C6:
+
+- `time_sync_pong` is stamped with the player's monotonic clock (ms since the
+  process started), the same clock the render loop reads.
+- While a time base is set, effect `time` = (now − epoch) / 1000 s, held at 0
+  before the epoch, and update()'s `dt` = this frame's time − the previous
+  frame's, so `phase += dt * speed` comes out the same on every synced player.
+  The first frame after the time base is set, changed or cleared takes the
+  normal frame interval as `dt` (time jumps there). `set_time_base` with
+  `clear` goes back to the free-running clock.
+
+The Pi player only shows mapping and counting patterns today, so its time base
+has nothing to drive yet. It is kept so an effects layer can use it.
+
+### Output latency (`--output-latency-ms`)
+
+A C6 lights its LEDs right after it renders a frame. A host player's frame goes
+over UDP to a WLED board, which buffers it and drives the strip, so it lights
+some milliseconds later. On the same effect time, the WLED fixture is behind.
+`--output-latency-ms MS` makes the player render at shared time + MS. Set MS to
+the measured latency and the two fixtures line up. Negative values work too.
+The offset applies only while a time base is set. It is per player: run one
+`player_host` per controller if two controllers need different offsets. The
+welcome reports it as the feature string `output_latency_ms=MS`, and the
+player logs it at startup.
+
+How to measure it:
+
+1. Put a C6 fixture and the WLED fixture side by side and run `align_time` on
+   both.
+2. Deploy an effect with a sharp edge in time, for example a full white flash for
+   one frame each second: `vec3 shade(Led led) { return vec3(fract(time) < 0.05 ? 1.0 : 0.0); }`.
+3. Record both with something that resolves a few ms:
+   - A logic analyser on both data lines (the C6's LED GPIO and the WLED board's
+     output pin). The gap between the starts of the two bursts is the latency,
+     plus the difference in strip transfer time (about 30 µs per LED for
+     WS2812). Compare the first LED of each strip.
+   - Or a phone in slow-motion video (240 fps is about 4 ms per frame). Count the
+     frames between the two flashes over a few flashes and average.
+4. Restart `player_host` with `--output-latency-ms <gap>` and check again: the
+   flashes should start in the same frame.
+
+Typical values on wired Ethernet are about 10–40 ms. Wi-Fi adds more and varies
+more. The latency changes with the frame rate, the LED count and WLED's settings,
+so measure again when you change those.
+
+Scheduled commands: `pi/player_rs/src/schedule.rs` and `server::apply_due` hold
+the seam for an `apply_at` time on control commands. The render loop applies due
+commands at each frame boundary, at now + the output latency, so a scheduled
+change lands ahead by the same offset as the effect clock.
+
 ## What is supported
 
 The effects layer is `pi/player_rs/src/fx.rs`. These are served:
@@ -97,6 +154,7 @@ The effects layer is `pi/player_rs/src/fx.rs`. These are served:
 - On one deck: `submit_effect`, `set_effect`, `set_uniforms` (with
   `control_ack`), `get_effect_uniforms` and `list_effects`.
 - Output brightness.
+- Shared time (`time_sync_ping`, `set_time_base`) and the output latency offset.
 
 Not served yet. The welcome's feature list leaves these out, so the app doesn't
 offer them:
@@ -117,7 +175,8 @@ manifest defaults.
 - Unit tests: `bazel test //pi/player_rs:player_rs_test`. These cover the DDP and
   Art-Net packet formats, output specs and pixel layout, and the effects layer
   end to end with a real compiled shader (map, chunked upload, uniforms,
-  uniforms manifest, restore).
+  uniforms manifest, restore), plus time sync, the time base (effect time and
+  `dt`) and the output latency offset.
 - Live smoke test, no hardware needed: `pi/player_rs/tools/smoke_host.py` (usage
   in its header). It runs the real binary, connects over real WSS and checks the
   DDP pixels that come out.
