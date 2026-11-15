@@ -327,7 +327,7 @@ mod tests {
         assert_eq!(player.lock().unwrap().time_base_ms(), Some(12_345));
         // The render loop's frame time follows it.
         let t = crate::clock::FrameTime::sample(13_345_000, player.lock().unwrap().time_base_ms(), 0);
-        assert_eq!(t.shared.unwrap().time_s, 1.0);
+        assert_eq!(t.shared.unwrap().time_s(), 1.0);
 
         let clear = pb::ClientMessage_::Msg::SetTimeBase(pb::SetTimeBase { r#epoch_ms: 0, r#clear: true });
         let Some(pb::ServerMessage_::Msg::Welcome(w)) = call(&player, clear, 1, 1).unwrap().r#msg else {
