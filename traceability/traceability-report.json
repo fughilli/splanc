@@ -18,7 +18,7 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 2897,
+    "test_cases": 2892,
     "gaps": 36
   },
   "levels": [
@@ -830,121 +830,49 @@
       "description": "The mapping workflow shall support capture, reconstruction, upload, import, export, and conflict handling for topology maps.",
       "evidence": [
         {
-          "name": "pi.led_driver.tests.test_graycode::test_adjacent_hue_confusion_is_a_single_bit_error",
+          "name": "pi.led_driver.tests.test_kernel_equivalence::test_apa102_spi_frames_equal_kernel_golden[GOLDEN_SECDED16]",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/led_driver:led_driver_test"
         },
         {
-          "name": "pi.led_driver.tests.test_graycode::test_adjacent_indices_differ_by_one_bit",
+          "name": "pi.led_driver.tests.test_kernel_equivalence::test_apa102_spi_frames_equal_kernel_golden[GOLDEN_SECDED16_SYM4]",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/led_driver:led_driver_test"
         },
         {
-          "name": "pi.led_driver.tests.test_graycode::test_code_survives_any_single_bit_error",
+          "name": "pi.led_driver.tests.test_kernel_equivalence::test_frame_outside_cycle_is_rejected",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/led_driver:led_driver_test"
         },
         {
-          "name": "pi.led_driver.tests.test_graycode::test_color_plan_reconstructs_every_led_id",
+          "name": "pi.led_driver.tests.test_kernel_equivalence::test_inconsistent_code_book_is_rejected",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/led_driver:led_driver_test"
         },
         {
-          "name": "pi.led_driver.tests.test_graycode::test_color_plan_rejects_inconsistent_codebook",
+          "name": "pi.led_driver.tests.test_kernel_equivalence::test_whole_frame_render_matches_per_led_kernel[none-2]",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/led_driver:led_driver_test"
         },
         {
-          "name": "pi.led_driver.tests.test_graycode::test_color_plan_rejects_wrong_bits_for_fec",
+          "name": "pi.led_driver.tests.test_kernel_equivalence::test_whole_frame_render_matches_per_led_kernel[none-4]",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/led_driver:led_driver_test"
         },
         {
-          "name": "pi.led_driver.tests.test_graycode::test_color_plan_structure_sym2",
+          "name": "pi.led_driver.tests.test_kernel_equivalence::test_whole_frame_render_matches_per_led_kernel[secded-2]",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/led_driver:led_driver_test"
         },
         {
-          "name": "pi.led_driver.tests.test_graycode::test_color_plan_structure_sym4",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_default_code_params[1-4]",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_default_code_params[1024-16]",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_default_code_params[2-6]",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_default_code_params[3-6]",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_default_code_params[63-11]",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_default_code_params[64-12]",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_default_code_params_sym4[1-4-2]",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_default_code_params_sym4[1024-16-8]",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_default_code_params_sym4[64-12-6]",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_gray_is_invertible",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_gray_sequence_first_values",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_symbols4_palette_is_gray_ordered_along_the_hue_path",
+          "name": "pi.led_driver.tests.test_kernel_equivalence::test_whole_frame_render_matches_per_led_kernel[secded-4]",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/led_driver:led_driver_test"
@@ -1136,6 +1064,12 @@
           "target": "//pi/server:server_test"
         },
         {
+          "name": "pi.server.tests.test_codebook::test_four_symbol_alphabet_halves_the_data_frames",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
           "name": "pi.server.tests.test_codebook::test_invalid_led_count_raises",
           "status": "passed",
           "level": "simulation",
@@ -1143,6 +1077,12 @@
         },
         {
           "name": "pi.server.tests.test_codebook::test_matches_design_doc_example",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_codebook::test_secded_total_bits",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/server:server_test"
@@ -1783,7 +1723,7 @@
           ],
           "relation": "implements",
           "path": "pi/led_driver/BUILD.bazel",
-          "line": 11,
+          "line": 15,
           "text": "implemented in this package (see requirements/requirements.yaml)"
         },
         {
@@ -1868,12 +1808,11 @@
       "verified_in": [
         {
           "ids": [
-            "PR-11",
-            "PR-34"
+            "PR-11"
           ],
           "relation": "verifies",
-          "path": "pi/led_driver/tests/test_graycode.py",
-          "line": 25
+          "path": "pi/led_driver/tests/test_kernel_equivalence.py",
+          "line": 23
         },
         {
           "ids": [
@@ -1916,7 +1855,7 @@
           ],
           "relation": "verifies",
           "path": "pi/server/tests/test_codebook.py",
-          "line": 10
+          "line": 14
         },
         {
           "ids": [
@@ -5910,126 +5849,6 @@
       "category": "risk-control",
       "evidence": [
         {
-          "name": "pi.led_driver.tests.test_graycode::test_adjacent_hue_confusion_is_a_single_bit_error",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_adjacent_indices_differ_by_one_bit",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_code_survives_any_single_bit_error",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_color_plan_reconstructs_every_led_id",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_color_plan_rejects_inconsistent_codebook",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_color_plan_rejects_wrong_bits_for_fec",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_color_plan_structure_sym2",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_color_plan_structure_sym4",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_default_code_params[1-4]",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_default_code_params[1024-16]",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_default_code_params[2-6]",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_default_code_params[3-6]",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_default_code_params[63-11]",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_default_code_params[64-12]",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_default_code_params_sym4[1-4-2]",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_default_code_params_sym4[1024-16-8]",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_default_code_params_sym4[64-12-6]",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_gray_is_invertible",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_gray_sequence_first_values",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
-          "name": "pi.led_driver.tests.test_graycode::test_symbols4_palette_is_gray_ordered_along_the_hue_path",
-          "status": "passed",
-          "level": "simulation",
-          "target": "//pi/led_driver:led_driver_test"
-        },
-        {
           "name": "pi.reconstruction.tests.test_rust_parity::test_rust_benchmark_mode_reports_score",
           "status": "passed",
           "level": "simulation",
@@ -6446,15 +6265,6 @@
         }
       ],
       "verified_in": [
-        {
-          "ids": [
-            "PR-11",
-            "PR-34"
-          ],
-          "relation": "verifies",
-          "path": "pi/led_driver/tests/test_graycode.py",
-          "line": 25
-        },
         {
           "ids": [
             "PR-11",
