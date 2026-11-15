@@ -39,7 +39,9 @@ rust_test(
 # lh_health: honest states, reacquisition time, no jumps.
 rust_test(
     name = "reacquire_test",
-    size = "small",
+    # A closed-loop tracker simulation: 5 s on Linux, but 13-53 s on the macOS CI
+    # runners, which tipped it over "small"'s 60 s limit (TIMEOUT on #482, #489).
+    size = "medium",
     srcs = ["tests/reacquire.rs"],
     edition = "2021",
     deps = [
