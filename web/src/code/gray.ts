@@ -164,10 +164,83 @@ export function cssColor(c: Rgb): string {
   return `#${h(c[0])}${h(c[1])}${h(c[2])}`;
 }
 
-/** The color `ledId` shows in cycle frame `frameIndex` (0-based within one cycle). */
+// -- hue code v2 phase 2: staggered cycles with a pilot ---------------------
+//
+// Under `syncPattern: "stagger_pilot"` LED `id` (the CODED id: LED +
+// codeOffset) runs the cycle above rotated by `staggerPhase(id)` =
+// (id * S) mod cycleFrames, and its sync position shows the pilot GREEN then
+// MAGENTA instead of white/green (docs/design/hue-code-v2.md). The rotation is
+// the kernel's, inside its colour plan: callers keep passing the GLOBAL cycle
+// frame. "stagger_white" (v1's white/green, merely staggered) is NOT a wire
+// value: it exists for the link simulator's pilot-vs-white comparison.
+
+/** The staggered-pilot wire value of `CodeParams.syncPattern`. */
+export const SYNC_STAGGER_PILOT = "stagger_pilot";
+/** Simulation-only comparator (not on the wire): v1's white/green, staggered. */
+export const SYNC_STAGGER_WHITE = "stagger_white";
+
+/** The kernel's sync-pattern code (kernel_abi.rs `SyncPattern::from_code`). */
+export function syncCode(params: CodeParams): number {
+  const s = params.syncPattern as string;
+  if (s === SYNC_STAGGER_PILOT) return 1;
+  if (s === SYNC_STAGGER_WHITE) return 2;
+  return 0; // "on_off" (v1), and anything unknown
+}
+
+/** True when the code-book's sync positions are staggered per LED. */
+export function isStaggered(params: CodeParams): boolean {
+  return syncCode(params) !== 0;
+}
+
+/** The stagger step S for a cycle of `cycleFrames` frames (11, 7, 5, 5 for 18, 10, 8, 6). */
+export function staggerStep(cycleFrames: number): number {
+  return kernel().pk_stagger_step(cycleFrames);
+}
+
+/** Coded id `ledId`'s phase rotation: its sync position starts at global
+ * cycle frame `staggerPhase` (0 under v1). */
+export function staggerPhase(ledId: number, params: CodeParams): number {
+  return kernel().pk_stagger_phase(ledId, params.ledCount, params.symbols, secded(params), syncCode(params));
+}
+
+/**
+ * A `?sync=` query value as a sync-pattern override (test pages: the wall and
+ * the capture screen). Null when absent or not a known pattern ("v1" is
+ * accepted for "on_off"); "stagger_white" is accepted for simulation only.
+ */
+export function forcedSyncPattern(value: string | null): CodeParams["syncPattern"] | null {
+  if (value === null) return null;
+  const v = value.trim().toLowerCase().replace(/-/g, "_");
+  if (v === "on_off" || v === "v1") return "on_off";
+  if (v === SYNC_STAGGER_PILOT || v === "stagger" || v === "pilot") return SYNC_STAGGER_PILOT;
+  if (v === SYNC_STAGGER_WHITE) return SYNC_STAGGER_WHITE as CodeParams["syncPattern"];
+  return null;
+}
+
+/** `params` with its sync pattern replaced (null = unchanged). */
+export function withSyncPattern(params: CodeParams, sync: CodeParams["syncPattern"] | null): CodeParams {
+  return sync === null || sync === params.syncPattern ? params : { ...params, syncPattern: sync };
+}
+
+/** The two sync-position colours in order: v1 / stagger_white white → green,
+ * stagger_pilot green → magenta. */
+export function syncColors(params: CodeParams): readonly [Rgb, Rgb] {
+  return syncCode(params) === 1 ? [COLOR_GREEN, COLOR_MAGENTA] : [COLOR_WHITE, COLOR_GREEN];
+}
+
+/** The color `ledId` shows in cycle frame `frameIndex` (0-based within one
+ * cycle; the GLOBAL frame under a staggered pattern). */
 export function colorForFrame(ledId: number, frameIndex: number, params: CodeParams): Rgb {
   if (frameIndex < 0 || frameIndex >= params.cycleFrames) {
     throw new RangeError(`frameIndex ${frameIndex} outside cycle of ${params.cycleFrames}`);
+  }
+  const sync = syncCode(params);
+  if (sync !== 0) {
+    bitsPerSymbol(params);
+    checkEncodable(ledId, params);
+    return colorOfIndex(
+      kernel().pk_color_index_sync(ledId, frameIndex, params.ledCount, params.symbols, secded(params), sync),
+    );
   }
   if (frameIndex >= DATA_FRAME_OFFSET) {
     bitsPerSymbol(params);

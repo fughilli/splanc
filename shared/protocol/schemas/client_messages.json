@@ -112,6 +112,11 @@
             "stopAfterMs": {
               "type": ["integer", "null"],
               "description": "Auto-stop: the pattern ends by itself this many ms after start_mapping (a dead phone can't leave fixtures flashing). Null/<=0 -> until stop_mapping."
+            },
+            "syncPattern": {
+              "type": ["string", "null"],
+              "enum": ["on_off", "stagger_pilot", null],
+              "description": "Requested sync pattern (see code_params.json; hue code v2 phase 2). A player that does not support 'stagger_pilot' runs v1 'on_off' and says so in mapping_started.codeParams.syncPattern, which is what the client decodes. Null/omitted -> 'on_off'."
             }
           }
         }

@@ -37,6 +37,7 @@
  * which ignores unknown keys, reads both.
  */
 
+import type { ChannelSnapshot } from "../cv/channelQuality";
 import type { CapturePerfSnapshot } from "../cv/capturePerf";
 import type { CodeParams, OutputMap } from "@ledmapper/protocol";
 
@@ -146,6 +147,11 @@ export interface CaptureParamsSnapshot {
    * per-phase frame costs, the live solve's cost, and the IMU rate and gaps.
    * Absent from bundles recorded before it. */
   perf?: CapturePerfSnapshot | null;
+  /** The data-aided channel measurement at the end (cv/channelQuality): hue
+   * noise and bias, washed-out share, decode yield, and the predicted cycle
+   * success per alphabet (including ones players don't speak yet). Absent
+   * from bundles recorded before it. */
+  channel?: ChannelSnapshot | null;
   fixture: {
     deviceId: string | null;
     name: string | null;

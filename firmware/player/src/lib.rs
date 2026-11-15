@@ -22,7 +22,7 @@
 
 #![no_std]
 
-use ledmapper_pattern::{color_for_frame, stride_lit, CodeSpec, Rgb};
+use ledmapper_pattern::{color_for_frame, stride_lit, CodeSpec, Rgb, SyncPattern};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_view::ledmapper::v1 as pv;
 use pb::ServerMessage_::Msg as SMsg;
@@ -848,7 +848,16 @@ impl Player {
             Some(ms) if ms > 0 => Some(now_ms + ms as i64),
             _ => None,
         };
-        let spec = CodeSpec::derive(code_space, symbols, true);
+        // Hue code v2 phase 2: the staggered pilot runs only when asked for AND
+        // this build advertises it (FEATURE_STAGGER_PILOT); otherwise v1, and the
+        // reply's codeParams.syncPattern tells the phone which one it got.
+        let sync = match options.sync_pattern() {
+            Some(s) if s == "stagger_pilot" && self.features.contains(&FEATURE_STAGGER_PILOT) => {
+                SyncPattern::StaggerPilot
+            }
+            _ => SyncPattern::OnOff,
+        };
+        let spec = CodeSpec::derive(code_space, symbols, true).with_sync(sync);
         let active = ActiveCapture {
             epoch_ms,
             spec,
@@ -922,7 +931,8 @@ impl Player {
         if code_space > MAX_CODE_SPACE {
             return error("bad_message", "codeSpace too large");
         }
-        let spec = CodeSpec::derive(code_space, symbols, true);
+        // A renegotiation keeps the sync pattern the capture started with.
+        let spec = CodeSpec::derive(code_space, symbols, true).with_sync(active.spec.sync);
         self.active = Some(ActiveCapture {
             epoch_ms: now_ms,
             spec,
@@ -1907,6 +1917,11 @@ pub fn upload_malformed() -> pb::ServerMessage {
     error("bad_message", "upload violates the map/topology contract")
 }
 
+/// The welcome feature a player advertises when it can run the hue code v2
+/// staggered pilot (`start_mapping` `syncPattern: "stagger_pilot"`). Only the
+/// host player sets it today; firmware players keep v1.
+pub const FEATURE_STAGGER_PILOT: &str = "hue_stagger_pilot";
+
 /// pb CodeParams from a derived spec (mirrors codebook.py code_params_for;
 /// the derivation itself lives in ledmapper_pattern so the pattern generator
 /// and the advertised code-book cannot disagree).
@@ -1917,7 +1932,11 @@ pub fn code_params_msg(spec: &CodeSpec, bit_period_ms: f64, brightness: f64) -> 
         r#bits: spec.bits as i32,
         r#encoding: s64("hue"),
         r#bit_period_ms,
-        r#sync_pattern: s64("on_off"),
+        r#sync_pattern: s64(match spec.sync {
+            SyncPattern::StaggerPilot => "stagger_pilot",
+            // StaggerWhite is a simulator comparator, never built from the wire.
+            _ => "on_off",
+        }),
         r#cycle_frames: spec.cycle_frames as i32,
         r#fec: s64(if spec.secded { "secded" } else { "none" }),
         r#symbols: spec.symbols as i32,

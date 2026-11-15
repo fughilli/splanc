@@ -48,8 +48,8 @@
     },
     "syncPattern": {
       "type": "string",
-      "enum": ["on_off"],
-      "description": "Sync delimiter pattern. Currently only 'on_off' (one all-on/white frame, one all-off/green frame); modeled as enum so it remains extensible."
+      "enum": ["on_off", "stagger_pilot"],
+      "description": "Sync delimiter pattern. 'on_off' (v1, the default): every LED shows one all-on/white frame then one all-off/green frame at the same time. 'stagger_pilot' (hue code v2 phase 2, docs/design/hue-code-v2.md): LED id runs the same cycle rotated by phase (id * S) mod cycleFrames (S pinned per cycleFrames by the kernel's stagger_step: 11, 7, 5, 5 for 18, 10, 8, 6), the rotation applied to the coded id (LED + codeOffset), and its sync position shows a green then magenta pilot instead of white/green. Only sent to clients/players that support it; old players keep 'on_off'."
     },
     "cycleFrames": {
       "type": "integer",

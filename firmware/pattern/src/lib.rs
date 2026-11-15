@@ -24,7 +24,9 @@
 //! crate and pin it against accidental change.
 //!
 //! The cycle: `[white ALL_ON][green ALL_OFF]` sync delimiter, then
-//! `ceil(bits / log2(symbols))` data frames. Every LED is lit EVERY frame at
+//! `ceil(bits / log2(symbols))` data frames. Under the hue-code v2 staggered
+//! pattern ([`SyncPattern::StaggerPilot`]) each LED runs that cycle rotated by
+//! its own phase, with a green/magenta pilot in place of white/green. Every LED is lit EVERY frame at
 //! constant brightness — the code is carried entirely by color, which is
 //! exactly the per-LED-RGB shape the ESP32 RMT output wants.
 
@@ -225,6 +227,9 @@ pub struct CodeSpec {
     pub cycle_frames: u32,
     /// SEC-DED FEC around the Gray data word.
     pub secded: bool,
+    /// Where each LED's sync frames sit (`CodeParams.syncPattern`). v1
+    /// ([`SyncPattern::OnOff`]) is the default from [`CodeSpec::derive`].
+    pub sync: SyncPattern,
 }
 
 impl CodeSpec {
@@ -238,7 +243,13 @@ impl CodeSpec {
             symbols,
             cycle_frames: DATA_FRAME_OFFSET + data_frames(bits, symbols),
             secded,
+            sync: SyncPattern::OnOff,
         }
+    }
+
+    /// The same code-book with another sync pattern (`CodeParams.syncPattern`).
+    pub const fn with_sync(self, sync: SyncPattern) -> Self {
+        CodeSpec { sync, ..self }
     }
 
     pub const fn bits_per_symbol(&self) -> u32 {
@@ -412,6 +423,129 @@ pub fn stride_lit(led: u32, phase: u32, spacing: u32, anchor_density: u32) -> bo
     m == 0 || m == (a / 2) * s + j
 }
 
+// ---------------------------------------------------------------------------
+// Hue code v2 phase 2: staggered cycles with a pilot (docs/design/hue-code-v2.md).
+//
+// v1 (`SyncPattern::OnOff`) shows the white/green sync delimiter on EVERY LED
+// at the same frame. Under a staggered pattern LED `id` runs the same cycle
+// rotated by `phase(id) = (id * S) mod C` (C = cycle_frames, S =
+// [`stagger_step`]), so at any frame only ~2/C of the LEDs are in their sync
+// position, and that position shows a PILOT instead of white:
+//
+//   - `StaggerPilot` (the wire value "stagger_pilot"): GREEN then MAGENTA.
+//     Complementary, on disjoint channels (G, then R+B), so the two pilot
+//     windows together measure the track's white-equivalent channel gains with
+//     no LED ever showing white (no three-channel peak, no bloom), and green
+//     never occurs in the 2- or 4-symbol data palettes, so "-> green -> magenta"
+//     is a transition data cannot produce.
+//   - `StaggerWhite`: the v1 white -> green delimiter, merely staggered. NOT a
+//     wire value: the link simulator's comparator for the pilot.
+//
+// The rotation lives here, inside `color_index_for_frame`, on the CODED id
+// (the id the LED transmits, i.e. `led + code_offset`): callers keep passing
+// the global cycle frame. Firmware pays one multiply and one mod per LED per
+// frame.
+// ---------------------------------------------------------------------------
+
+/// The sync layout of a cycle (`CodeParams.syncPattern`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SyncPattern {
+    /// v1, "on_off": every LED shows white then green in cycle frames 0, 1.
+    OnOff = 0,
+    /// "stagger_pilot": per-LED phase rotation; the sync position shows the
+    /// green -> magenta pilot.
+    StaggerPilot = 1,
+    /// Simulation comparator only (no wire value): per-LED phase rotation, the
+    /// sync position shows v1's white -> green.
+    StaggerWhite = 2,
+}
+
+impl SyncPattern {
+    /// The ABI / wire code: 0 on_off, 1 stagger_pilot, 2 stagger_white
+    /// (anything else is treated as on_off).
+    pub const fn from_code(code: u32) -> Self {
+        match code {
+            1 => SyncPattern::StaggerPilot,
+            2 => SyncPattern::StaggerWhite,
+            _ => SyncPattern::OnOff,
+        }
+    }
+
+    pub const fn is_staggered(self) -> bool {
+        !matches!(self, SyncPattern::OnOff)
+    }
+
+    /// The two sync-position colours, in order.
+    pub const fn pilot(self) -> [Color; 2] {
+        match self {
+            SyncPattern::StaggerPilot => [Color::Green, Color::Magenta],
+            _ => [Color::White, Color::Green],
+        }
+    }
+}
+
+const fn gcd(mut a: u32, mut b: u32) -> u32 {
+    while b != 0 {
+        let t = a % b;
+        a = b;
+        b = t;
+    }
+    a
+}
+
+/// The stagger step S for a cycle of `cycle_frames` frames: the integer
+/// coprime with C nearest C/Φ (Φ the golden ratio). Coprime, so `id * S mod C`
+/// visits every phase equally often (a flat per-frame pilot census);
+/// golden-ratio, so ids that are neighbours on a strip land far apart in phase.
+/// The design pins S = 11, 7, 5, 5 for C = 18, 10, 8, 6; this rule reproduces
+/// them and extends to every C (the test pins the table). C < 2 -> 1.
+pub const fn stagger_step(cycle_frames: u32) -> u32 {
+    let c = cycle_frames;
+    if c < 2 {
+        return 1;
+    }
+    // C/Φ = C * 0.6180339887…, compared in 1e9 fixed point (no floats on the
+    // firmware path; C is far below the overflow bound).
+    let target = c as u64 * 618_033_989;
+    let mut best = 1u32;
+    let mut best_err = u64::MAX;
+    let mut s = 1;
+    while s < c {
+        if gcd(s, c) == 1 {
+            let v = s as u64 * 1_000_000_000;
+            let err = if v > target { v - target } else { target - v };
+            if err < best_err {
+                best_err = err;
+                best = s;
+            }
+        }
+        s += 1;
+    }
+    best
+}
+
+/// The phase rotation of coded id `led_id`: `(id * S) mod C` under a staggered
+/// pattern (its sync position starts at global cycle frame `phase`), 0 for v1.
+pub const fn stagger_phase(led_id: u32, spec: &CodeSpec) -> u32 {
+    if !spec.sync.is_staggered() || spec.cycle_frames == 0 {
+        return 0;
+    }
+    let c = spec.cycle_frames;
+    ((led_id % c) * stagger_step(c)) % c
+}
+
+/// The LED's own cycle frame at global cycle frame `frame_index`: 0, 1 = the
+/// sync position, `DATA_FRAME_OFFSET + d` = data frame `d`. Equals
+/// `frame_index` under v1.
+pub const fn local_frame(led_id: u32, frame_index: u32, spec: &CodeSpec) -> u32 {
+    let c = spec.cycle_frames;
+    if !spec.sync.is_staggered() || c == 0 {
+        return frame_index;
+    }
+    (frame_index % c + c - stagger_phase(led_id, spec)) % c
+}
+
 /// A palette entry. The data palette per alphabet is [`symbol_color`]; white
 /// and green are reserved for the sync delimiter (cyan is unused: it scores on
 /// the green sync axis).
@@ -455,11 +589,15 @@ pub const fn symbol_color(symbols: u8, value: u8) -> Color {
 /// The palette entry `led_id` shows in cycle frame `frame_index` (the phone
 /// renders this onto its virtual wall; the player maps it through
 /// [`Color::rgb`]).
+///
+/// `frame_index` is the GLOBAL cycle frame; under a staggered
+/// [`SyncPattern`] the LED's own frame is rotated by [`stagger_phase`] first.
 pub fn color_index_for_frame(led_id: u32, frame_index: u32, spec: &CodeSpec) -> Color {
-    match frame_index {
-        FRAME_ALL_ON => Color::White,
-        FRAME_ALL_OFF => Color::Green,
-        _ => symbol_color(spec.symbols, symbol_at(led_id, frame_index - DATA_FRAME_OFFSET, spec)),
+    let [p0, p1] = spec.sync.pilot();
+    match local_frame(led_id, frame_index, spec) {
+        FRAME_ALL_ON => p0,
+        FRAME_ALL_OFF => p1,
+        j => symbol_color(spec.symbols, symbol_at(led_id, j - DATA_FRAME_OFFSET, spec)),
     }
 }
 
@@ -679,6 +817,80 @@ mod tests {
                     let want = if symbols == 2 { SYMBOL_COLORS_2[v] } else { SYMBOL_COLORS_4[v] };
                     assert_eq!(color_for_frame(id, f, &spec), want);
                     assert_eq!(color_index_for_frame(id, f, &spec).rgb(), want);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stagger_step_matches_the_spec_table_and_is_coprime() {
+        // The design's pinned values.
+        for (c, s) in [(18u32, 11u32), (10, 7), (8, 5), (6, 5)] {
+            assert_eq!(stagger_step(c), s, "C={c}");
+        }
+        // The rule's table for every cycle length a code-book can have (pinned
+        // here so a change to the rule is a visible wire change).
+        let table: Vec<u32> = (3..=34).map(stagger_step).collect();
+        assert_eq!(
+            table,
+            std::vec![
+                2, 3, 3, 5, 4, 5, 5, 7, 7, 7, 8, 9, 8, 9, 11, 11, 12, 13, 13, 13, 14, 13, 16, 17, 17, 17, 18, 19,
+                19, 19, 20, 21
+            ]
+        );
+        for c in 2..64u32 {
+            assert_eq!(gcd(stagger_step(c), c), 1, "C={c}");
+        }
+    }
+
+    #[test]
+    fn stagger_rotates_the_v1_cycle_per_led_and_v1_is_untouched() {
+        for &symbols in &[2u8, 4] {
+            let v1 = CodeSpec::derive(40, symbols, true);
+            let st = v1.with_sync(SyncPattern::StaggerPilot);
+            let sw = v1.with_sync(SyncPattern::StaggerWhite);
+            assert_eq!(v1.sync, SyncPattern::OnOff, "derive keeps v1");
+            let c = v1.cycle_frames;
+            for id in 0..40 {
+                assert_eq!(stagger_phase(id, &v1), 0);
+                let ph = stagger_phase(id, &st);
+                assert_eq!(ph, (id * stagger_step(c)) % c);
+                for f in 0..c {
+                    let j = (f + c - ph) % c;
+                    let want_pilot = match j {
+                        0 => Some(Color::Green),
+                        1 => Some(Color::Magenta),
+                        _ => None,
+                    };
+                    let got = color_index_for_frame(id, f, &st);
+                    match want_pilot {
+                        Some(p) => assert_eq!(got, p),
+                        None => assert_eq!(got, color_index_for_frame(id, j, &v1), "data frames are v1's, rotated"),
+                    }
+                    // The staggered-white comparator is v1 rotated, exactly.
+                    assert_eq!(color_index_for_frame(id, f, &sw), color_index_for_frame(id, j, &v1));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stagger_flattens_the_sync_census_and_green_never_appears_in_data() {
+        for &symbols in &[2u8, 4] {
+            for &n in &[16u32, 64, 1260] {
+                let spec = CodeSpec::derive(n, symbols, true).with_sync(SyncPattern::StaggerPilot);
+                let c = spec.cycle_frames;
+                for f in 0..c {
+                    let greens = (0..n).filter(|&id| color_index_for_frame(id, f, &spec) == Color::Green).count() as u32;
+                    // Every phase is equally occupied (S coprime with C).
+                    assert!(greens == n / c || greens == n / c + 1, "n={n} f={f} greens={greens}");
+                    for id in 0..n {
+                        let col = color_index_for_frame(id, f, &spec);
+                        assert_ne!(col, Color::White, "no LED ever shows white");
+                        if local_frame(id, f, &spec) >= DATA_FRAME_OFFSET {
+                            assert_ne!(col, Color::Green, "green is pilot-only");
+                        }
+                    }
                 }
             }
         }

@@ -40,6 +40,7 @@ import {
   SYMBOL_DOWNGRADE_MARGIN,
   SYMBOL_UPGRADE_MARGIN,
 } from "../src/cv/exposure";
+import { AlphabetPlanner, ChannelQuality } from "../src/cv/channelQuality";
 import { LinkTelemetry, type LinkTelemetrySnapshot } from "../src/cv/linkTelemetry";
 import { CvPipeline } from "../src/cv/pipeline";
 import type { Blob } from "../src/cv/types";
@@ -82,9 +83,16 @@ export interface LinkPolicy {
   /** Mid-capture alphabet-switch margin band (planSymbolSwitch). */
   downgradeMargin?: number;
   upgradeMargin?: number;
+  /** Mid-capture alphabet rule: the decoder-margin band with its scene-luma
+   * gate (planSymbolSwitch, the default), or the data-aided channel
+   * measurement (cv/channelQuality.ts planAlphabet). */
+  symbolRule?: "margin" | "measured";
   /** Scene-luma gate on the 2 → 4 upgrade (default HUE4_MIN_MEAN_LUMA). */
   upgradeMinLuma?: number;
   brightness?: number;
+  /** Sync pattern the LEDs run (default v1 "on_off"; "stagger_pilot", or the
+   * sim-only "stagger_white" comparator — hue code v2 phase 2). */
+  sync?: string;
 }
 
 export const BASELINE_POLICY: LinkPolicy = {
@@ -128,14 +136,20 @@ export function helixFixture(n: number): { pos: Vec3[]; normal: Vec3[] } {
   return { pos, normal };
 }
 
-export function codeParams(ledCount: number, symbols: 2 | 4, bitPeriodMs: number, brightness?: number): CodeParams {
+export function codeParams(
+  ledCount: number,
+  symbols: 2 | 4,
+  bitPeriodMs: number,
+  brightness?: number,
+  sync = "on_off",
+): CodeParams {
   const p: CodeParams = {
     ledCount,
     bits: 0,
     encoding: "hue",
     symbols,
     bitPeriodMs,
-    syncPattern: "on_off",
+    syncPattern: sync as CodeParams["syncPattern"],
     cycleFrames: 0,
     fec: "secded",
     ...(brightness !== undefined ? { brightness } : {}),
@@ -222,7 +236,7 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
   };
 
   const epochs: CodeEpoch[] = [
-    { fromLocalMs: -Infinity, params: codeParams(sc.ledCount, symbols, bitMs, brightness), epochServer: EPOCH0 },
+    { fromLocalMs: -Infinity, params: codeParams(sc.ledCount, symbols, bitMs, brightness, policy.sync), epochServer: EPOCH0 },
   ];
   const ledCodeAt = (tLocal: number): CodeEpoch => {
     for (let i = epochs.length - 1; i >= 0; i--) if (tLocal >= epochs[i]!.fromLocalMs) return epochs[i]!;
@@ -238,8 +252,10 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
     truth: (r: DetectionRecord) => frameTruth.get(key(r.tCaptureMs, r.u, r.v)) ?? null,
   });
   let records = 0;
+  const quality = new ChannelQuality();
+  const planner = new AlphabetPlanner([2, 4]);
   const makePipeline = (e: CodeEpoch): CvPipeline => {
-    const pl = new CvPipeline(e.params, e.epochServer, (t) => t + CLOCK_OFFSET, { denseRecords: true });
+    const pl = new CvPipeline(e.params, e.epochServer, (t) => t + CLOCK_OFFSET, { denseRecords: true, decoder: { quality } });
     pl.onDetections((rs) => {
       records += rs.length;
       tel.recordsEmitted(rs);
@@ -275,6 +291,7 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
     // capture page rebuilds its pipeline on the configure reply).
     if (pendingSwitch !== null && tFrame >= pendingSwitch.atLocal) {
       epochs.push(pendingSwitch.e);
+      if (pendingSwitch.e.params.symbols !== pipeline.params.symbols) quality.resetYield();
       pipeline = makePipeline(pendingSwitch.e);
       tel.attachDecoder(pipeline.decoder.stats);
       tel.config(tFrame, pendingSwitch.e.params, "reconfigure", median(diffs(recentT)) ?? interval);
@@ -410,7 +427,9 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
         const wantBit = policy.bitPeriodMs === "auto" ? planReconfigure(curP.bitPeriodMs, fi) : null;
         const wantSym =
           policy.symbols === "auto"
-            ? planSymbolSwitch(curP.symbols as 2 | 4, scene, pipeline.stats.marginEma, band)
+            ? policy.symbolRule === "measured"
+              ? (planner.plan(curP.symbols, quality.estimate(), curP, quality.decodeYield(), tFrame) as 2 | 4 | null)
+              : planSymbolSwitch(curP.symbols as 2 | 4, scene, pipeline.stats.marginEma, band)
             : null;
         const confirmed = (wantBit !== null && wantBit === pendingBit) || (wantSym !== null && wantSym === pendingSym);
         if (confirmed) {
@@ -421,7 +440,13 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
             atLocal: at,
             e: {
               fromLocalMs: at,
-              params: codeParams(sc.ledCount, symbols, Math.min(BIT_PERIOD_MAX_MS, Math.max(BIT_PERIOD_MIN_MS, bitMs)), brightness),
+              params: codeParams(
+                sc.ledCount,
+                symbols,
+                Math.min(BIT_PERIOD_MAX_MS, Math.max(BIT_PERIOD_MIN_MS, bitMs)),
+                brightness,
+                policy.sync,
+              ),
               epochServer: at + CLOCK_OFFSET,
             },
           };

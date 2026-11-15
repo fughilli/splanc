@@ -53,7 +53,7 @@ export interface DetectionRecord {
 // ---------------------------------------------------------------------------
 
 export type Encoding = "hue";
-export type SyncPattern = "on_off";
+export type SyncPattern = "on_off" | "stagger_pilot";
 export type Fec = "none" | "secded";
 
 export interface CodeParams {
@@ -231,6 +231,9 @@ export interface StartMappingOptions {
   epochMs?: number;
   /** Auto-stop after this many ms (null/<=0: until stop_mapping). */
   stopAfterMs?: number;
+  /** Requested sync pattern (hue code v2 phase 2). A player that does not
+   * support it runs v1 and says so in the reply's codeParams.syncPattern. */
+  syncPattern?: SyncPattern;
 }
 
 export interface StartMappingMessage {

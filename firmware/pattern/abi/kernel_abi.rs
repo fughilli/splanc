@@ -49,6 +49,12 @@ fn spec(led_count: u32, symbols: u32, secded: u32) -> k::CodeSpec {
     k::CodeSpec::derive(led_count, symbols as u8, secded != 0)
 }
 
+/// The code-book with a sync pattern code (0 on_off, 1 stagger_pilot,
+/// 2 stagger_white — [`k::SyncPattern::from_code`]).
+fn spec_sync(led_count: u32, symbols: u32, secded: u32, sync: u32) -> k::CodeSpec {
+    spec(led_count, symbols, secded).with_sync(k::SyncPattern::from_code(sync))
+}
+
 // --- constants ------------------------------------------------------------
 
 #[no_mangle]
@@ -140,6 +146,32 @@ pub extern "C" fn pk_symbol_color(symbols: u32, value: u32) -> u32 {
     k::symbol_color(symbols as u8, value as u8) as u32
 }
 
+/// [`pk_color_index`] under sync pattern `sync` (hue code v2 phase 2):
+/// `frame_index` is the GLOBAL cycle frame, rotated per LED inside the kernel.
+#[no_mangle]
+pub extern "C" fn pk_color_index_sync(
+    led_id: u32,
+    frame_index: u32,
+    led_count: u32,
+    symbols: u32,
+    secded: u32,
+    sync: u32,
+) -> u32 {
+    k::color_index_for_frame(led_id, frame_index, &spec_sync(led_count, symbols, secded, sync)) as u32
+}
+
+/// The stagger step S for a cycle of `cycle_frames` frames.
+#[no_mangle]
+pub extern "C" fn pk_stagger_step(cycle_frames: u32) -> u32 {
+    k::stagger_step(cycle_frames)
+}
+
+/// The phase rotation `(id * S) mod C` of coded id `led_id` (0 under on_off).
+#[no_mangle]
+pub extern "C" fn pk_stagger_phase(led_id: u32, led_count: u32, symbols: u32, secded: u32, sync: u32) -> u32 {
+    k::stagger_phase(led_id, &spec_sync(led_count, symbols, secded, sync))
+}
+
 /// Packed `0xRRGGBB` of the palette entry `led_id` shows in cycle frame
 /// `frame_index` (the RGB the player renders; [`k::Color::rgb`]). Host-only,
 /// like [`pk_frame_rgb`]: the phone's wasm keeps palette indices.
@@ -148,6 +180,36 @@ pub extern "C" fn pk_symbol_color(symbols: u32, value: u32) -> u32 {
 pub extern "C" fn pk_color_rgb(led_id: u32, frame_index: u32, led_count: u32, symbols: u32, secded: u32) -> u32 {
     let (r, g, b) = k::color_index_for_frame(led_id, frame_index, &spec(led_count, symbols, secded)).rgb();
     (r as u32) << 16 | (g as u32) << 8 | b as u32
+}
+
+/// [`pk_color_rgb`] under sync pattern `sync`. Host-only.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn pk_color_rgb_sync(
+    led_id: u32,
+    frame_index: u32,
+    led_count: u32,
+    symbols: u32,
+    secded: u32,
+    sync: u32,
+) -> u32 {
+    let (r, g, b) = k::color_index_for_frame(led_id, frame_index, &spec_sync(led_count, symbols, secded, sync)).rgb();
+    (r as u32) << 16 | (g as u32) << 8 | b as u32
+}
+
+/// [`pk_frame_rgb`] under sync pattern `sync`. Host-only.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub unsafe extern "C" fn pk_frame_rgb_sync(
+    frame_index: u32,
+    led_count: u32,
+    symbols: u32,
+    secded: u32,
+    sync: u32,
+    out: *mut u8,
+    out_len: u32,
+) -> u32 {
+    frame_rgb(&spec_sync(led_count, symbols, secded, sync), frame_index, out, out_len)
 }
 
 /// Host-only (not in the phone's wasm): write cycle frame `frame_index` for
@@ -165,7 +227,12 @@ pub unsafe extern "C" fn pk_frame_rgb(
     out: *mut u8,
     out_len: u32,
 ) -> u32 {
-    let spec = spec(led_count, symbols, secded);
+    frame_rgb(&spec(led_count, symbols, secded), frame_index, out, out_len)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe fn frame_rgb(spec: &k::CodeSpec, frame_index: u32, out: *mut u8, out_len: u32) -> u32 {
+    let led_count = spec.led_count;
     let need = led_count as usize * 3;
     if out.is_null() || (out_len as usize) < need || frame_index >= spec.cycle_frames {
         return 0;
@@ -173,7 +240,7 @@ pub unsafe extern "C" fn pk_frame_rgb(
     // SAFETY: the caller owns `out_len >= need` writable bytes at `out`.
     let buf = core::slice::from_raw_parts_mut(out, need);
     for (id, px) in buf.chunks_exact_mut(3).enumerate() {
-        let (r, g, b) = k::color_index_for_frame(id as u32, frame_index, &spec).rgb();
+        let (r, g, b) = k::color_index_for_frame(id as u32, frame_index, spec).rgb();
         px.copy_from_slice(&[r, g, b]);
     }
     need as u32
@@ -201,6 +268,7 @@ pub extern "C" fn pk_decode_cycle(n: u32, led_count: u32, bits: u32, symbols: u3
         symbols: symbols as u8,
         cycle_frames: k::DATA_FRAME_OFFSET + k::data_frames(bits, symbols as u8),
         secded: secded != 0,
+        sync: k::SyncPattern::OnOff, // decoding a cycle's data is sync-independent
     };
     // SAFETY: single-threaded callers (one wasm instance / the GIL); the buffer
     // is only read here, after the caller filled it.

@@ -357,6 +357,21 @@ def test_start_mapping_without_options_uses_server_defaults(tmp_path):
     assert m["codeParams"]["bitPeriodMs"] == 100.0  # ctx default
 
 
+def test_start_mapping_honours_a_requested_sync_pattern(tmp_path):
+    """Hue code v2 phase 2: the phone asks for the staggered pilot; this backend
+    runs it, configure keeps it, and followers (the wall) see it."""
+    handler, _ctx, _ = _make_handler(tmp_path)
+    m = _dump(_run(handler, '{"type":"start_mapping","options":{"ledCount":64}}')[0])
+    assert m["codeParams"]["syncPattern"] == "on_off"
+    raw = '{"type":"start_mapping","options":{"ledCount":64,"syncPattern":"stagger_pilot"}}'
+    m = _dump(_run(handler, raw)[0])
+    assert m["codeParams"]["syncPattern"] == "stagger_pilot"
+    c = _dump(_run(handler, '{"type":"configure","options":{"symbols":4}}')[0])
+    assert c["codeParams"]["syncPattern"] == "stagger_pilot"
+    p = _dump(_run(handler, '{"type":"get_pattern"}')[0])
+    assert p["codeParams"]["syncPattern"] == "stagger_pilot"
+
+
 def test_configure_renegotiates_mid_capture(tmp_path):
     handler, ctx, _ = _make_handler(tmp_path)
     _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')

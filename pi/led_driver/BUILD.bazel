@@ -56,10 +56,14 @@ py_test(
     data = [
         "//firmware/pattern:testdata/golden_secded16.json",
         "//firmware/pattern:testdata/golden_secded16_sym4.json",
+        "//firmware/pattern:testdata/golden_stagger16.json",
+        "//firmware/pattern:testdata/golden_stagger16_sym4.json",
     ],
     env = {
         "GOLDEN_SECDED16": "$(rootpath //firmware/pattern:testdata/golden_secded16.json)",
         "GOLDEN_SECDED16_SYM4": "$(rootpath //firmware/pattern:testdata/golden_secded16_sym4.json)",
+        "GOLDEN_STAGGER16": "$(rootpath //firmware/pattern:testdata/golden_stagger16.json)",
+        "GOLDEN_STAGGER16_SYM4": "$(rootpath //firmware/pattern:testdata/golden_stagger16_sym4.json)",
     },
     imports = ["."],
     legacy_create_init = False,

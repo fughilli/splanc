@@ -122,3 +122,19 @@ def test_inconsistent_code_book_is_rejected():
 def test_frame_outside_cycle_is_rejected():
     with pytest.raises(ValueError):
         kernel.frame_rgb(kernel.cycle_frames(16, 2, "secded"), 16, 2, "secded")
+
+
+@pytest.mark.parametrize("env", ["GOLDEN_STAGGER16", "GOLDEN_STAGGER16_SYM4"])
+def test_python_binding_renders_the_stagger_golden(env):
+    """Hue code v2 phase 2 through the ctypes binding: the staggered-pilot
+    colour plan (per-LED rotation inside the kernel) is the golden's."""
+    g = _golden(env)
+    n, sym, fec, sync = g["ledCount"], g["symbols"], g["fec"], g["syncPattern"]
+    assert kernel.stagger_step(g["cycleFrames"]) == g["staggerStep"]
+    assert [kernel.stagger_phase(i, n, sym, fec, sync) for i in range(n)] == g["phases"]
+    for f, row in enumerate(g["colorPlan"]):
+        want = [LETTER_RGB[ch] for ch in row]
+        assert kernel.frame_rgb(f, n, sym, fec, sync) == want, f"frame {f}"
+        assert [kernel.color_rgb(i, f, n, sym, fec, sync) for i in range(n)] == want
+    # v1 stays the default.
+    assert kernel.stagger_phase(5, n, sym, fec, "on_off") == 0
