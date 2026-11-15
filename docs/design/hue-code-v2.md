@@ -114,8 +114,10 @@ a short pilot of known hues on different colour channels:
 - Every pilot hue has the same luminance as the data hues, so an LED in its
   pilot does not flash. Combined with the stagger, there is no luminance spike
   anywhere in the frame, so no bloom.
-- The pilot is unique because it contains a transition that never occurs in
-  data. No hue is reserved, so data keeps the full alphabet.
+- The pilot is made of the active alphabet's own colours and is unique by
+  structure: the code book is pruned of every id whose cycle contains the pilot
+  anywhere but at its sync position. No hue is reserved, so data keeps the full
+  alphabet (see "Phase 2 as built").
 - Each pilot gives the decoder a fresh colour calibration for that track, every
   cycle: the camera-space centroids of the palette. This replaces the white
   reference and absorbs white-balance drift, which the decoder must assume is
@@ -188,65 +190,111 @@ This rule gives the pinned values (11, 7, 5, 5 for C = 18, 10, 8, 6). It also
 covers every other C a code-book can have. The table for C = 3 to 34 is pinned
 in the kernel test and in the golden (`staggerSteps`).
 
-**The pilot: green, then magenta.** The sync position shows pure green for one
-frame and magenta (red + blue) for the next. Reasons:
+**The pilot: a fixed run of palette colours, unique by code-book pruning.**
+The sync position shows a short, fixed sequence of symbols from the active
+alphabet, at the same drive as the data:
 
-- **Channel separation.** Green and magenta are complementary and use disjoint
-  channels: G alone, then R and B together. Each channel is driven in exactly
-  one of the two frames, so the sum of the two pilot windows is a full
-  white-equivalent calibration. The decoder divides each data window by that
-  sum, which is exactly the v1 white-reference normalisation. It is refreshed on
-  every cycle for every track, and no LED ever has to show white.
-- **A richer calibration than white.** Each channel is on in one pilot window
-  and off in the other. The pilot therefore measures every channel's on level
-  and its off level (ambient veil, sensor black level, glare). The decoder
-  normalises each data window per channel as `(x − off) / (on − off)`. v1's
-  white frame measures only the gains. A veil that v1 divides into every
-  window, the pilot subtracts out. This is why the pilot beats v1 in the heavy
-  veil below.
-- **No white, no bloom.** At most two channels are lit in any pilot frame,
-  never more than in the data frames (magenta and yellow are already
-  two-channel). Combined with the stagger, the peak drive of the whole fixture
-  is flat: there is no frame where every LED shows white, and no frame where
-  any LED does.
-- **The forbidden transition.** Green appears in neither data palette (2
-  symbols: blue/red; 4 symbols: blue/magenta/yellow/red). So the transition
-  "into green, then magenta" never occurs in data, and data keeps its full
-  alphabet. The pilot score normalises the two windows by their own sum.
-  Per-channel gain, white balance and colour correction therefore cancel
-  exactly, and no locked white balance is assumed. An ideal pilot scores 1.
-  The data pair that looks most like a pilot is yellow then magenta, and it
-  scores at most 0.5. A veil v at LED level L lowers a real pilot's score to
-  L/(L + 2v). A candidate is therefore accepted when it scores at least 0.15
-  (v1's green-sync floor, translated) and is the best pair within ±C/2
-  windows. Uniqueness comes from that local maximum, together with FEC and
-  the φ check.
-- **Robust to hue bias.** The score depends only on which channels dominate
-  each window, not on hue angles, so a camera that rotates hues by tens of
-  degrees still sees the pilot.
+| Alphabet  | Pilot                                | Frames |
+| --------- | ------------------------------------ | ------ |
+| 2 symbols | blue, blue, red, red, blue           | 5      |
+| 4 symbols | blue, yellow, magenta                | 3      |
 
-Two parts of the decided design are deferred:
+- **No reserved hue.** Every pilot colour is a data colour, and data keeps the
+  full alphabet. This holds for any alphabet, including phase 3's 8 and 16
+  hues.
+- **Per-channel on/off calibration.** Every channel the palette uses is lit in
+  some pilot frame and dark in another. Blue and yellow are complementary, and
+  red and blue cover the binary palette. Green is never lit at 2 symbols; it
+  reads relative to its pilot mean. The decoder normalises each data window per
+  channel as `(x − off) / (on − off)`. v1's white frame measures only the
+  gains, so a veil that v1 divides into every window, the pilot subtracts out.
+- **No white, no bloom.** No LED ever shows white, and no frame's drive exceeds
+  the data's. Combined with the stagger, the fixture never flashes.
+- **Robust to hue bias and white balance.** The pilot score is per-channel
+  contrast between the pilot's lit and dark frames: (min lit − max dark) /
+  (min lit + max dark), taking the worst channel. Per-channel gain and colour
+  correction cancel out of it, so no locked white balance is assumed. A veil v
+  at LED level L lowers the score to L / (L + 2v).
 
-- **Constant luminance.** Pure green and magenta are not iso-luminant on a
-  real LED. The design calls for app-computed drive levels sent with the code
-  parameters, which needs a wire field and firmware. Until then the pilot uses
-  the same full-drive 1- and 2-channel colours as the data. Its peak drive
-  stays within the data's, so it does not flash brighter than the data.
-- **Phase 3 alphabets.** The 8- and 16-hue alphabets will include green, so the
-  "into green" rule stops holding there. Phase 3 must either keep a gap at
-  green on the hue circle or rely on the φ check plus Golay for delimiter
-  uniqueness. That choice belongs to phase 3.
+**Uniqueness by pruning, not by symbol constraints.** Each LED's cycle content
+is fixed: its pilot, then its id's codeword. The kernel therefore drops every
+coded index whose whole cycle, read cyclically and including the pilot,
+contains the pilot at any offset other than the sync position
+(`stagger_valid`).
+
+- **The id map.** Ids map in order onto the coded indices that survive. Id i
+  carries the (i+1)-th valid index n, transmitted as SEC-DED(gray(n)).
+- **Data width.** The data word widens one bit at a time until enough indices
+  survive for the fixture (`CodeSpec::derive_sync`).
+- **Decoding.** A track that finds the pilot has found its sync position. The
+  decoder takes the best-scoring pilot within ±C/2 windows, so the true pilot
+  is the only exact candidate in the cycle. An excluded index decodes to no
+  id.
+- **Safety net.** Wider margins come from the φ(id) check and FEC.
+
+Near-matches (one symbol off the pilot at another offset) are **not** pruned.
+At 2 symbols, pruning them leaves 28 of 4095 indices; at 4 symbols, 504 of
+2047. Fewer than 1260 either way. They score low by construction: changing one
+symbol of the pilot breaks a channel's lit/dark contrast. Uniqueness among them
+is left to the best-in-cycle rule, φ and FEC.
+
+**Capacity and cost.** The table below is for the largest fixture (1260 LEDs).
+Rows for SEC-DED at 2 and 4 symbols are pinned by kernel tests. Rows for 8 and
+16 hues (hue circle, Gray order) and for Golay [24,12,8] are a phase 3
+prototype, computed with the same rule.
+
+| Alphabet | Code    | Pilot (values) | L   | Data bits k | Ids left / book | Cycle C (v1 C) |
+| -------- | ------- | -------------- | --- | ----------- | --------------- | -------------- |
+| 2        | SEC-DED | 0,0,1,1,0      | 5   | 12          | 2443 / 4095     | 23 (18)        |
+| 4        | SEC-DED | 0,2,1          | 3   | 11          | 1863 / 2047     | 11 (10)        |
+| 8        | SEC-DED | 2,5            | 2   | 11          | 1923 / 2047     | 8 (8)          |
+| 16       | SEC-DED | 0,15           | 2   | 11          | 2024 / 2047     | 6 (6)          |
+| 2        | Golay   | 0,0,1,1,1      | 5   | 12          | 2002 / 4095     | 29 (26)        |
+| 4        | Golay   | 2,0            | 2   | 12          | 1924 / 4095     | 14 (14)        |
+| 8        | Golay   | 1,6            | 2   | 12          | 3663 / 4095     | 10 (10)        |
+| 16       | Golay   | 4,11           | 2   | 12          | 4016 / 4095     | 8 (8)          |
+
+- **Choosing the pilots.** Each pilot is the one with the most surviving
+  indices among all pilots of its length that cover every channel. Its length
+  is the shortest that leaves comfortably more than 1260 ids at the code's
+  natural k.
+- **The binary price.** A short binary pattern recurs in almost every random
+  codeword: 2 frames leave 0 ids, 3 leave 602 even at k = 13, and 4 need
+  k = 13. So the 2-symbol pilot costs 5 frames and one extra data bit, giving
+  23 frames per cycle instead of 18.
+- **The 4-symbol choice.** At 4 symbols a 2-frame pilot (blue, yellow) keeps
+  only 1265 ids, so the pilot takes 3 frames.
+- **Phase 3 alphabets.** At 8 and 16 hues, 2 frames are enough.
+- **Stagger step.** The S rule simply takes the new C: S = 14 for C = 23 and
+  S = 7 for C = 11.
+
+Costs:
+
+- **Validity check.** One cycle-stream scan, O(C) (the first compared symbol
+  almost always differs).
+- **Code-book derivation.** Counts the book once per capture: 4095 checks for
+  1260 LEDs at 2 symbols.
+- **Renderers.** They walk ids in order with `stagger_next`: about 1/0.6 checks
+  per LED, amortised, with no table and no allocation. The host player memoises
+  the walk inside `pattern_color`. The phone builds an id ↔ index table once
+  per code book (`pk_stagger_fill`, 4 bytes per id).
+- **Decode.** Maps the index back by rank, O(n) checks, in the app only.
+- **Firmware.** C6/P4 firmware never runs this path today. It would need the
+  same in-order walk.
+
+One part of the decided design is deferred: **constant luminance**. The pilot
+and data use the same full-drive palette colours. The app-computed drive
+levels need a wire field and firmware.
 
 **Decoder** (`web/src/cv/staggerDecoder.ts`). Per track, on its own cycle
 boundary:
 
 1. Bucket the track's samples into absolute frame windows, with v1's
    centrality weights.
-2. Score every adjacent window pair as a pilot, and take the best one per
-   cycle.
-3. Calibrate from the pilot (per-channel off and span) and classify the C − 2 data windows that follow
-   against the palette. Margins and the confidence gate are the same as v1.
-4. Decode with SEC-DED.
+2. Score every run of L windows as a pilot, and take the best one per cycle.
+3. Calibrate from the pilot (per-channel off and span) and classify the C − L
+   data windows that follow against the palette. Margins and the confidence gate are the same as v1.
+4. Decode with SEC-DED, and map the index back to its id by rank.
 5. Run the phase check `(a − φ(id)) mod C = k`, where `a` is the pilot's
    absolute frame.
 
@@ -269,7 +317,7 @@ per id and per pilot frame.
 | #   | Consumer                       | Status                                                                                                                                                                                                                     |
 | --- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Alignment                      | Done: pooled consistency plus the k histogram. `get_frame_timing` is not wired in yet (deferred).                                                                                                                          |
-| 2   | Green census, no-cyan rule     | Unused under stagger: the pipeline still computes the census, and only the v1 decoder reads it. The no-cyan rule stays, because cyan would sit between the green pilot and the data palette.                               |
+| 2   | Green census, no-cyan rule     | Unused under stagger: the pipeline still computes the census, and only the v1 decoder reads it. The no-cyan palette rule is v1's and untouched; the pilot needs no reserved colour.                               |
 | 3   | Cycle framing, dedup, pruning  | Done: per-track rolling decode, dedup per (id, pilot frame), pruning at the oldest window a pending decode can still need (`pruneCutoffServerMs`).                                                                          |
 | 4   | White reference → pilot        | Done: per-channel on and off levels from the pilot, per track and per cycle. `channelQuality` receives the same pilot-normalised colour.                                                                                   |
 | 5   | Record anchor, latency         | Done: mid-cycle anchor, latency = shift + k·bitPeriod. The design's median of window centroids is replaced by the mid-cycle sample, which pairs with one pose.                                                              |
@@ -300,75 +348,74 @@ per id and per pilot frame.
 ### Simulation results
 
 Two simulators run the production pipeline and negotiation. They compare v1,
-the staggered green/magenta pilot, and a staggered white/green delimiter (the
-comparator, `"stagger_white"`, which is not a wire value).
+the staggered palette pilot (the wire value), and two sim-only comparators over
+the unpruned v1 book: a staggered white/green delimiter (`"stagger_white"`) and
+the first draft's green/magenta pilot, which reserves a hue (`"stagger_gm"`).
 
 **Dense fixture** (`web/tests/denseFixture_sim.test.ts`): radiolarian
-geometry, 1260-LED code with C = 18 and S = 11, hand-held camera, 15% blob
-dropout, and 225 ms of camera latency, so the whole-frame k is exercised. A
-bloom of about one pitch merges spots: in v1 every LED blooms on the global
-white frame; under the staggered white each LED blooms on its own white frame;
-the pilot has no white frame.
+geometry with the 1260-LED, 2-symbol code. That is a 23-frame cycle for the
+palette pilot (12-bit pruned book, S = 14) and 18 frames for the others. The
+camera is hand-held, 15% of blobs drop out, and the latency is 225 ms, so the
+whole-frame k is exercised. A bloom of about one pitch merges spots: in v1
+every LED blooms on the global white frame, and under the staggered white each
+LED blooms on its own white frame. Neither pilot has a white frame.
 
-| Run                         | Wrong (> 4 px) | Gross (> 12 px) | Good records / LED / s |
-| --------------------------- | -------------- | --------------- | ---------------------- |
-| v1, no bloom                | 2.7%           | 0.1%            | 2.49                   |
-| Pilot, no bloom             | 2.6%           | 0.0%            | 2.50                   |
-| v1, 14 px bloom             | 12.3%          | 4.2%            | 0.55                   |
-| Staggered white, 14 px bloom | 0.0%          | 0.0%            | 0.50                   |
-| Pilot, 14 px bloom          | 2.6%           | 0.0%            | 2.50                   |
+| Run                                 | Wrong (> 4 px) | Gross (> 12 px) | Good records / LED / s |
+| ----------------------------------- | -------------- | --------------- | ---------------------- |
+| v1, no bloom                        | 2.7%           | 0.1%            | 2.49                   |
+| Palette pilot, no bloom             | 1.2%           | 0.0%            | 2.02                   |
+| v1, 14 px bloom                     | 12.3%          | 4.2%            | 0.55                   |
+| Staggered white, 14 px bloom        | 0.1%           | 0.0%            | 0.51                   |
+| Green/magenta draft, 14 px bloom    | 2.6%           | 0.0%            | 2.49                   |
+| Palette pilot, 14 px bloom          | 1.2%           | 0.0%            | 2.02                   |
 
-- **Phase lock.** k locked, and the total latency estimate (shift + k·140 ms)
-  came out at 224 ms against the true 225 ms.
-- **The pilot under bloom.** The pilot is unaffected by bloom: its result
-  equals the bloom-free one, 4.5× v1's yield, which closes failure mode 1. A
-  staggered white avoids v1's wrong ids, but its yield is as bad as v1's: an
-  LED blooms on its own white frame, so its window carries a merged colour,
-  and FEC rejects the cycle.
-- **Hops.** Of 686 neighbour-hop stitches that SEC-DED accepts as a third id,
-  17 also pass the φ check (2.5%; random chance is 1/C = 5.6%). The forced
-  hop through the pipeline is rejected by the phase check, and both real ids
-  still land.
+- **Phase lock.** k locked, and the latency estimate came out at 224 ms against
+  the true 225 ms.
+- **Bloom.** The palette pilot is unaffected by bloom (3.7× v1's yield under
+  bloom), and it halves the wrong records.
+- **The cost.** Its yield is 19% below the bloom-free v1 and the green/magenta
+  draft: 23-frame cycles against 18 (the 5-frame binary pilot plus one data
+  bit).
+- **Hops.** Of 179 neighbour-hop stitches that SEC-DED accepts as a third id,
+  25 also pass the φ check (14%; 1/C would be 4.3%). Because φ is linear in the
+  id, a stitch family that lands at a fixed id offset passes for every pair or
+  for none. In this neighbourhood one family, at offset −414 = −18·23,
+  dominates. The forced hop through the pipeline is rejected (phase check plus
+  confirmation), and both real ids still land.
 
 **Link sim** (`web/tests/staggerLink_sim.test.ts`): helix fixture, 120 LEDs,
 30 s per scene, 140 ms camera latency, the measured alphabet rule, and the
-exposure servo running.
+exposure servo running. Records by scene:
 
-| Scene        | Sync            | Records | Wrong ids | t90    | Delimiter misses | Exposure median / max |
-| ------------ | --------------- | ------- | --------- | ------ | ---------------- | --------------------- |
-| hold-dark    | v1              | 11139   | 0         | 4.1 s  | –                | 0.29 / 0.65           |
-| hold-dark    | pilot           | 11425   | 0         | 4.3 s  | 98               | 0.37 / 0.65           |
-| hold-dark    | staggered white | 11425   | 0         | 4.3 s  | 86               | 0.29 / 0.65           |
-| orbit-dark   | v1              | 9845    | 0         | 21.9 s | –                | 0.29 / 0.65           |
-| orbit-dark   | pilot           | 10185   | 0         | 21.4 s | 185              | 0.39 / 0.65           |
-| orbit-dark   | staggered white | 10190   | 0         | 21.4 s | 176              | 0.29 / 0.65           |
-| orbit-lit    | v1              | 11822   | 0         | 19.3 s | –                | 0.25 / 0.25           |
-| orbit-lit    | pilot           | 11980   | 0         | 19.0 s | 141              | 0.25 / 0.25           |
-| orbit-lit    | staggered white | 11966   | 0         | 19.0 s | 134              | 0.25 / 0.25           |
-| bright-veil  | v1              | 6911    | 0         | never  | –                | 0.13 / 0.25           |
-| bright-veil  | pilot           | 8437    | 0         | 28.5 s | 177              | 0.13 / 0.25           |
-| bright-veil  | staggered white | 7939    | 0         | 26.5 s | 222              | 0.13 / 0.25           |
-| ambient-ramp | v1              | 8782    | 0         | 20.1 s | –                | 0.25 / 0.25           |
-| ambient-ramp | pilot           | 8815    | 0         | 19.0 s | 172              | 0.25 / 0.25           |
-| ambient-ramp | staggered white | 8723    | 0         | 19.4 s | 169              | 0.25 / 0.25           |
+| Scene        | v1                 | Palette pilot      | Staggered white    | Green/magenta      |
+| ------------ | ------------------ | ------------------ | ------------------ | ------------------ |
+| hold-dark    | 11139 (t90 4.1 s)  | 10731 (5.5 s)      | 11425 (4.3 s)      | 11425 (4.3 s)      |
+| orbit-dark   | 9845 (21.9 s)      | 9031 (23.5 s)      | 10190 (21.4 s)     | 10185 (21.4 s)     |
+| orbit-lit    | 11822 (19.3 s)     | 11403 (20.3 s)     | 11980 (19.0 s)     | 11980 (19.0 s)     |
+| bright-veil  | 6911 (never)       | 11143 (21.3 s)     | 5095 (never)       | 11869 (19.7 s)     |
+| ambient-ramp | 8782 (20.1 s)      | 8143 (20.3 s)      | 8791 (19.0 s)      | 8815 (19.0 s)      |
 
-- **Wrong ids and phase rejects.** No scene produced a wrong id or a phase
-  reject. On this sparse fixture, hops and false delimiters do not reach the
-  φ check.
-- **Heavy veil.** The pilot's on/off calibration gives 22% more records than
-  v1. It also reaches 90% coverage, which v1 never does.
-- **Servo trajectories.** In the dark scenes the servo settles on a longer
-  exposure under the pilot (median 0.37–0.39 against 0.29). v1's global white
-  frame and the staggered white keep about 1/C of the blobs gray, which holds
-  the servo back. The pilot has no gray windows.
-- **Delimiter misses.** Misses are cycles in which a fully lit track found no
-  pilot (motion smear across the pilot pair, or blobs entering the frame).
-  They cost nothing measurable here.
+- **Wrong ids and phase rejects.** No scene produced either.
+- **Heavy veil.** The pilots' on/off calibration gives +61% records over v1,
+  and both pilots reach 90% coverage, which v1 and the staggered white never
+  do. Folding the pilot score into the confidence cut those records down while
+  the calibration was already removing the veil, so it was dropped: the score
+  gates the delimiter, and the data margins set the confidence.
+- **Other scenes.** The palette pilot runs 4–8% fewer records than v1, again
+  the longer cycle.
+- **Servo trajectories.** In the dark the exposure servo settles longer under
+  both pilots (median 0.37–0.39 against 0.29). The white frames keep about
+  1/C of the blobs gray, which holds the servo back; the pilots show no gray.
 
-**Decision.** The green/magenta pilot. It matches or beats v1 in every scene.
-It beats the staggered white under bloom (5× the yield) and under veil
-(+6% records, the on/off calibration). It also leaves the exposure servo free
-of the white frame's gray floor.
+**Decision.** The palette pilot, for these reasons:
+
+- It reserves no hue, so it works unchanged for the phase 3 alphabets.
+- It keeps the green/magenta draft's wins over v1: bloom, veil and the servo.
+- It halves the dense-fixture wrong records.
+
+Its price is the binary pilot's length: 23 frames instead of 18 at 2 symbols,
+and 11 instead of 10 at 4. The price disappears at 8 and 16 hues, where 2
+frames are enough (table above).
 
 ## Phase 3: stronger codewords and faster alphabets
 
@@ -417,7 +464,7 @@ under the stagger:
 | #   | Consumer                                                     | Replacement                                                                                                                                                                                                           |
 | --- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Decoder sub-frame alignment (`decoder.ts` `updateAlignment`) | Consistency score pooled over tracks. It finds latency only modulo bitPeriod, so add the integer-frame k from the (observed phase − φ(id)) histogram before enforcing the φ check. `get_frame_timing` supplements it. |
-| 2   | Pipeline green census and the no-cyan palette rule           | Delete both. The pilot's forbidden transition is the delimiter.                                                                                                                                                       |
+| 2   | Pipeline green census and the no-cyan palette rule           | Delete both. The pilot, unique by code-book pruning, is the delimiter.                                                                                                                                                       |
 | 3   | Decoder cycle framing, reflection dedup, sample pruning      | Per-track cycle framing: a rolling decode per track, dedup per id over one cycle, prune at `now − 2·cycleMs`.                                                                                                         |
 | 4   | Per-track white reference (decoder, `channelQuality`)        | Per-track pilot calibration (palette centroids), refreshed every cycle.                                                                                                                                               |
 | 5   | Record anchor and pose-pairing latency                       | Latency = sub-frame shift + k·bitPeriod. Anchor on the median of the cycle's window centroids.                                                                                                                        |

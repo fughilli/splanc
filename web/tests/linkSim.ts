@@ -27,7 +27,7 @@
  */
 
 import type { CodeParams, DetectionRecord, Pose, Vec3 } from "@ledmapper/protocol";
-import { colorForFrame, DATA_FRAME_OFFSET, dataFrames, expectedBits } from "../src/code/gray";
+import { codeBookFor, colorForFrame } from "../src/code/gray";
 import { frameIndexAt } from "../src/code/timing";
 import {
   BIT_PERIOD_MAX_MS,
@@ -154,8 +154,9 @@ export function codeParams(
     fec: "secded",
     ...(brightness !== undefined ? { brightness } : {}),
   };
-  p.bits = expectedBits(p);
-  p.cycleFrames = DATA_FRAME_OFFSET + dataFrames(p);
+  const book = codeBookFor(ledCount, symbols, "secded", sync);
+  p.bits = book.bits;
+  p.cycleFrames = book.cycleFrames;
   return p;
 }
 

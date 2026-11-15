@@ -13,17 +13,16 @@
  *   1. Windows. The track's samples are bucketed into ABSOLUTE frame windows
  *      (frame n = floor((t_server − shift − epoch) / bitPeriod)) with v1's
  *      centrality weights (near-transition samples barely vote).
- *   2. Pilot. Every adjacent window pair is scored as a pilot: for
- *      "stagger_pilot" GREEN then MAGENTA, normalised by their own sum (the
- *      two pilot colours are complementary, so G + M is the white-equivalent
- *      channel gain — the score is invariant to white balance and per-channel
- *      gain, which is never assumed locked). Green never occurs in the 2- or
- *      4-symbol data palettes, so the best data pair (yellow → magenta) scores
- *      at most half an ideal pilot. A cycle starting at window `a` is decoded
- *      once its last data window completes, if its pilot score clears
- *      `minPilotScore` and is the best within ±C/2 windows.
- *   3. Calibration. Each pilot channel is ON in one pilot window and OFF in
- *      the other, so the pilot measures every channel's on AND off level: a
+ *   2. Pilot. Every run of L windows is scored as a pilot (the palette pilot:
+ *      a fixed run of the active alphabet's own colours, e.g. blue, yellow,
+ *      magenta at 4 symbols): per channel lit in some pilot frame and dark in
+ *      another, the on/off contrast, invariant to white balance and
+ *      per-channel gain (never assumed locked). The kernel prunes the code
+ *      book so no id's cycle contains the pilot anywhere but at its sync
+ *      position, so the true pilot is the best candidate in its cycle. A cycle
+ *      starting at window `a` is decoded once its last data window completes,
+ *      if its pilot score clears `minPilotScore` and is the best within ±C/2.
+ *   3. Calibration. The pilot measures every channel's on AND off level: a
  *      per-channel (x − off) / (on − off) normalisation that replaces v1's
  *      white reference and also removes the ambient veil, refreshed every
  *      cycle per track. Data windows are then classified against the palette
@@ -50,11 +49,12 @@ import type { CodeParams, DetectionRecord } from "@ledmapper/protocol";
 import {
   dataFrames,
   decodeCycleSymbols,
-  DATA_FRAME_OFFSET,
   staggerPhase,
   SYMBOL_COLORS,
   symbolAt,
   syncCode,
+  syncColors,
+  type Rgb,
 } from "../code/gray";
 import { cycleMs } from "../code/timing";
 import { ChannelQuality } from "./channelQuality";
@@ -62,8 +62,7 @@ import { type CodeDecoder, type DecodeStats, type DecoderOptions, MAX_HELD, newD
 import type { Track, TrackSample } from "./tracker";
 
 export interface StaggerDecoderOptions extends DecoderOptions {
-  /** Minimum pilot score (1 = an ideal pilot; the best data pair, yellow →
-   * magenta, scores 0.5 ideally). */
+  /** Minimum pilot score (1 = an ideal pilot). */
   minPilotScore?: number;
   /** Phase-lock: votes the leading (phase − φ) bin needs, and its share. */
   kMinVotes?: number;
@@ -107,8 +106,13 @@ export class StaggerDecoder implements CodeDecoder {
   private readonly bp: number;
   private readonly half: number;
   private readonly nDataFrames: number;
-  /** 1 = green/magenta pilot, 2 = staggered white/green (sim comparator). */
-  private readonly pilotKind: number;
+  /** The sync-position colours (the palette pilot, or a comparator's). */
+  private readonly pilot: readonly Rgb[];
+  /** Pilot length L (data window d is frame a + L + d). */
+  private readonly L: number;
+  /** Per channel: pilot frames where it is lit / dark (calibration + score). */
+  private readonly lit: number[][];
+  private readonly dark: number[][];
 
   /** Sub-frame shift (ms), continuous (never wrapped, so k stays meaningful). */
   private subShift = 0;
@@ -147,8 +151,11 @@ export class StaggerDecoder implements CodeDecoder {
     this.bp = params.bitPeriodMs;
     this.half = Math.floor(this.C / 2);
     this.nDataFrames = dataFrames(params);
-    this.pilotKind = syncCode(params);
-    if (this.pilotKind === 0) throw new RangeError("StaggerDecoder needs a staggered syncPattern");
+    if (syncCode(params) === 0) throw new RangeError("StaggerDecoder needs a staggered syncPattern");
+    this.pilot = syncColors(params);
+    this.L = this.pilot.length;
+    this.lit = [0, 1, 2].map((c) => this.pilot.flatMap((col, j) => (col[c]! >= 0.5 ? [j] : [])));
+    this.dark = [0, 1, 2].map((c) => this.pilot.flatMap((col, j) => (col[c]! < 0.5 ? [j] : [])));
     this.kHist = new Float64Array(this.C);
   }
 
@@ -278,58 +285,68 @@ export class StaggerDecoder implements CodeDecoder {
     return [win.r[i]! / w, win.g[i]! / w, win.b[i]! / w];
   }
 
-  /** How much windows (f, f+1) look like the pilot; 1 = ideal, null = empty. */
+  /**
+   * How much windows f .. f+L-1 look like the pilot; 1 = ideal, null = a
+   * window is empty. Per channel lit in some pilot frame and dark in another:
+   * the contrast (min lit − max dark) / (min lit + max dark), which per-channel
+   * gain, white balance and colour correction cancel out of; the score is the
+   * worst channel's. A veil v at LED level L lowers it to L / (L + 2v).
+   */
   private pilotScore(win: Windows, f: number): number | null {
-    const c0 = this.mean(win, f);
-    const c1 = this.mean(win, f + 1);
-    if (c0 === null || c1 === null) return null;
-    if (this.pilotKind === 1) {
-      // Green then magenta, normalised by their sum (the white equivalent):
-      // invariant to any per-channel gain.
-      const wr = c0[0] + c1[0];
-      const wg = c0[1] + c1[1];
-      const wb = c0[2] + c1[2];
-      if (Math.min(wr, wg, wb) <= 1e-6) return -1;
-      const gR = c0[0] / wr;
-      const gG = c0[1] / wg;
-      const gB = c0[2] / wb;
-      const mR = c1[0] / wr;
-      const mG = c1[1] / wg;
-      const mB = c1[2] / wb;
-      return Math.min(gG - Math.max(gR, gB), Math.min(mR, mB) - mG);
+    const cs: [number, number, number][] = [];
+    for (let j = 0; j < this.L; j++) {
+      const c = this.mean(win, f + j);
+      if (c === null) return null;
+      cs.push(c);
     }
-    // Staggered white then green: green relative to the white window, and the
-    // white window must be near-neutral (whiteness = min/max channel) — data
-    // windows of the 2-channel hues would otherwise pass as "white".
-    const [wr, wg, wb] = c0;
-    const wmx = Math.max(wr, wg, wb);
-    if (Math.min(wr, wg, wb) < 0.02 || wmx <= 0) return -1;
-    const rr = c1[0] / wr;
-    const gg = c1[1] / wg;
-    const bb = c1[2] / wb;
-    const mx = Math.max(rr, gg, bb, 1e-6);
-    const gScore = (gg - (rr + bb) / 2) / mx;
-    return Math.min(gScore, Math.min(wr, wg, wb) / wmx);
+    let score = Infinity;
+    for (let ch = 0; ch < 3; ch++) {
+      const lit = this.lit[ch]!;
+      const dark = this.dark[ch]!;
+      if (lit.length === 0 || dark.length === 0) continue;
+      let on = Infinity;
+      let off = -Infinity;
+      for (const j of lit) on = Math.min(on, cs[j]![ch]!);
+      for (const j of dark) off = Math.max(off, cs[j]![ch]!);
+      score = Math.min(score, on + off <= 1e-6 ? -1 : (on - off) / (on + off));
+    }
+    return Number.isFinite(score) ? score : -1;
   }
 
   /**
-   * The per-channel calibration the pilot at `a` measured, as (off, span):
-   * a data window reads `(x − off) / span` per channel. The green/magenta
-   * pilot lights every channel in exactly one of its two windows and leaves
-   * it dark in the other, so it measures each channel's ON level and its OFF
-   * level (ambient veil, sensor black, glare) — v1's white frame gave only the
-   * gains. The staggered-white comparator has the white window only (off = 0).
+   * The per-channel calibration the pilot at `a` measured, as (off, span): a
+   * data window reads `(x − off) / span` per channel. The palette pilot lights
+   * every channel the palette uses in one of its frames and leaves it dark in
+   * another, so it measures each channel's ON level and its OFF level (ambient
+   * veil, sensor black, glare) — v1's white frame gave only the gains. A
+   * channel the pilot never lights (green under the red/blue alphabet) reads
+   * relative to its pilot mean, at the other channels' mean span; one it never
+   * darkens (a white comparator frame) has off = 0.
    */
   private calibration(win: Windows, a: number): { off: [number, number, number]; span: [number, number, number] } | null {
-    const c0 = this.mean(win, a);
-    const c1 = this.mean(win, a + 1);
-    if (c0 === null || c1 === null) return null;
-    if (this.pilotKind !== 1) return { off: [0, 0, 0], span: c0 };
-    // Green window: G on, R/B off. Magenta window: R/B on, G off.
-    return {
-      off: [c0[0], c1[1], c0[2]],
-      span: [c1[0] - c0[0], c0[1] - c1[1], c1[2] - c0[2]],
-    };
+    const cs: [number, number, number][] = [];
+    for (let j = 0; j < this.L; j++) {
+      const c = this.mean(win, a + j);
+      if (c === null) return null;
+      cs.push(c);
+    }
+    const mean = (js: number[], ch: number): number => js.reduce((t, j) => t + cs[j]![ch]!, 0) / js.length;
+    const off: [number, number, number] = [0, 0, 0];
+    const span: [number, number, number] = [NaN, NaN, NaN];
+    for (let ch = 0; ch < 3; ch++) {
+      const lit = this.lit[ch]!;
+      const dark = this.dark[ch]!;
+      if (lit.length > 0) {
+        off[ch] = dark.length > 0 ? mean(dark, ch) : 0;
+        span[ch] = mean(lit, ch) - off[ch]!;
+      } else {
+        off[ch] = mean(dark, ch);
+      }
+    }
+    const known = span.filter((x) => !Number.isNaN(x));
+    const fill = known.length > 0 ? known.reduce((t, x) => t + x, 0) / known.length : 0;
+    for (let ch = 0; ch < 3; ch++) if (Number.isNaN(span[ch])) span[ch] = fill;
+    return { off, span };
   }
 
   private decodeTrackAt(
@@ -351,7 +368,7 @@ export class StaggerDecoder implements CodeDecoder {
       return null;
     }
     for (let x = a - h; x <= a + h; x++) {
-      if (x === a || x + 1 > e) continue;
+      if (x === a || x + this.L - 1 > e) continue;
       const sx = this.pilotScore(win, x);
       if (sx !== null && (sx > sa || (x < a && sx === sa))) {
         this.noteMiss(track, win, a, e);
@@ -372,11 +389,14 @@ export class StaggerDecoder implements CodeDecoder {
     const palette = SYMBOL_COLORS[p.symbols]!;
     const minPairDist = p.symbols === 2 ? 2 : 1;
     let missing = 0;
-    let minMargin = Math.min(1, sa);
+    // Confidence is the calibrated data windows' margins: the pilot score falls
+    // with the veil (L / (L + 2v)) that its on/off calibration removes, so it
+    // gates the delimiter (minPilotScore) but does not cap the confidence.
+    let minMargin = 1;
     const symbols: number[] = new Array(this.nDataFrames).fill(0);
     const seen: ([number, number, number] | null)[] = new Array(this.nDataFrames).fill(null);
     for (let d = 0; d < this.nDataFrames; d++) {
-      const c = this.mean(win, a + DATA_FRAME_OFFSET + d);
+      const c = this.mean(win, a + this.L + d);
       if (c === null) {
         missing++;
         continue;

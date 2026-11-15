@@ -63,8 +63,9 @@ def code_params_for(
     blue/magenta/red/yellow palette that halves the data frames);
     ``cycleFrames`` adds the 2-frame white/green sync delimiter.
     ``sync_pattern`` is ``"on_off"`` (v1) or ``"stagger_pilot"`` (hue code v2
-    phase 2: per-LED rotated cycles with a green/magenta pilot — the cycle
-    length is unchanged, the kernel does the rotation).
+    phase 2: per-LED rotated cycles behind a pilot of palette colours, over a
+    code book the kernel prunes so the pilot is unique — a wider data word and
+    a longer cycle; the kernel does the rotation).
     """
     if led_count < 1:
         raise ValueError(f"led_count must be ≥ 1, got {led_count}")
@@ -78,12 +79,12 @@ def code_params_for(
         raise ValueError(f"brightness must be in [0, 1], got {brightness}")
     return CodeParams(
         ledCount=led_count,
-        bits=pattern.expected_bits(led_count, fec),
+        bits=pattern.expected_bits(led_count, fec, symbols, sync_pattern),
         encoding="hue",
         symbols=symbols,
         bitPeriodMs=bit_period_ms,
         syncPattern=sync_pattern,
-        cycleFrames=pattern.cycle_frames(led_count, symbols, fec),
+        cycleFrames=pattern.cycle_frames(led_count, symbols, fec, sync_pattern),
         fec=fec,
         # None (= 1.0 on the wire) unless the phone servoed it down against
         # measured bloom/wash-out (exposure.ts planLedBrightness).

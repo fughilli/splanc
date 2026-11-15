@@ -5,14 +5,15 @@
  * an ambient ramp that drives the exposure servo) are run three ways — v1
  * "on_off", the staggered green/magenta pilot ("stagger_pilot", the wire
  * value) and a staggered white/green delimiter ("stagger_white", sim-only) —
- * through the production pipeline and negotiation. Every record is checked
+ * through the production pipeline and negotiation, plus the first draft's
+ * green -> magenta pilot ("stagger_gm", a reserved hue; sim-only). Every record is checked
  * against the truth, so hops and false delimiters that get through show up as
  * wrong ids. The table printed here is the one in the design doc.
  */
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { SYNC_STAGGER_PILOT, SYNC_STAGGER_WHITE } from "../src/code/gray";
+import { SYNC_STAGGER_GM, SYNC_STAGGER_PILOT, SYNC_STAGGER_WHITE } from "../src/code/gray";
 import { linkReport, type LinkReport } from "../src/cv/linkReport";
 import { BASELINE_POLICY, type LinkPolicy, runLinkSim, standardScenarios } from "./linkSim";
 
@@ -20,6 +21,7 @@ const POLICIES: LinkPolicy[] = [
   { ...BASELINE_POLICY, name: "v1 on_off", symbolRule: "measured" },
   { ...BASELINE_POLICY, name: "stagger pilot", symbolRule: "measured", sync: SYNC_STAGGER_PILOT },
   { ...BASELINE_POLICY, name: "stagger white", symbolRule: "measured", sync: SYNC_STAGGER_WHITE },
+  { ...BASELINE_POLICY, name: "stagger green/magenta", symbolRule: "measured", sync: SYNC_STAGGER_GM },
 ];
 
 const SCENES = ["hold-dark", "orbit-dark", "orbit-lit", "bright-veil", "ambient-ramp"];
@@ -62,11 +64,11 @@ test("link sim: staggered pilot vs staggered white vs v1 (records, wrong ids, fa
     );
   }
   for (const scene of SCENES) {
-    const [v1, pilot, white] = POLICIES.map((p) => rows.find((x) => x.scene === scene && x.policy === p.name)!);
+    const [v1, pilot, white, gm] = POLICIES.map((p) => rows.find((x) => x.scene === scene && x.policy === p.name)!);
     // The pilot never lands more wrong ids than v1, and keeps the yield.
     assert.ok(pilot!.r.truth!.wrong <= Math.max(v1!.r.truth!.wrong, 0), `${scene}: pilot wrong ${pilot!.r.truth!.wrong}`);
     assert.ok(pilot!.r.records >= 0.8 * v1!.r.records, `${scene}: pilot records ${pilot!.r.records} vs v1 ${v1!.r.records}`);
     assert.ok(pilot!.r.finalCoverage >= v1!.r.finalCoverage - 0.05, `${scene}: coverage`);
-    assert.ok(white !== undefined);
+    assert.ok(white !== undefined && gm !== undefined);
   }
 });
