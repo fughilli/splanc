@@ -53,7 +53,7 @@ export interface DetectionRecord {
 // ---------------------------------------------------------------------------
 
 export type Encoding = "hue";
-export type SyncPattern = "on_off";
+export type SyncPattern = "on_off" | "stagger_pilot";
 export type Fec = "none" | "secded";
 
 export interface CodeParams {

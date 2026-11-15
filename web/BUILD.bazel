@@ -16,6 +16,7 @@ Targets:
 @rr(PR-1, PR-2, PR-3, PR-4, PR-5, PR-6, PR-7, PR-8, PR-9, PR-10, PR-11, PR-12, PR-13, PR-15, PR-16, PR-18, PR-20, PR-22, PR-27, PR-29, PR-31, PR-32, PR-33, PR-34, PR-35, PR-37): implemented in this package (see requirements/requirements.yaml)
 """
 
+load("@aspect_bazel_lib//lib:copy_file.bzl", "copy_file")
 load("@aspect_bazel_lib//lib:copy_to_bin.bzl", "copy_to_bin")
 load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("@aspect_bazel_lib//lib:write_source_files.bzl", "write_source_files")
@@ -252,7 +253,28 @@ _TEST_SOURCE_DATA = {
         "src/effects/editor/videoTexture.ts",
         "src/ui/app/app.css",
     ],
+    # The hue-code kernel's staggered-pilot goldens (hue code v2 phase 2),
+    # checked through the wasm binding.
+    "tests/staggerCode.test.ts": [
+        ":kernel_golden_stagger16",
+        ":kernel_golden_stagger16_sym4",
+    ],
 }
+
+# The kernel's staggered-pilot goldens, copied into this package (a js_test's
+# data must live in the bin tree of its own package): tests/staggerCode.test.ts
+# reads them from kernel_goldens/.
+[
+    copy_file(
+        name = "kernel_" + g,
+        src = "//firmware/pattern:testdata/{}.json".format(g),
+        out = "kernel_goldens/{}.json".format(g),
+    )
+    for g in [
+        "golden_stagger16",
+        "golden_stagger16_sym4",
+    ]
+]
 
 # One js_test per tests/*.test.ts file, running the emitted CJS under
 # node:test (registering tests at require-time sets the exit code), wrapped by

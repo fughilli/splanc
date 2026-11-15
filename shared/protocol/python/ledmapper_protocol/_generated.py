@@ -66,7 +66,7 @@ class DetectionRecord(_StrictModel):
 
 
 Encoding = Literal["hue"]
-SyncPattern = Literal["on_off"]
+SyncPattern = Literal["on_off", "stagger_pilot"]
 Fec = Literal["none", "secded"]
 
 

@@ -1,4 +1,4 @@
-//! The kernel vs its pinned fixtures (`testdata/golden_secded16{,_sym4}.json`,
+//! The kernel vs its pinned fixtures (`testdata/golden_{secded,stagger}16{,_sym4}.json`,
 //! emitted by `:gen_golden` and diff-tested by `:goldens`). The fixtures are a
 //! regression pin on the wire: what every player emits and the phone (running
 //! this same kernel as wasm) decodes.
@@ -105,4 +105,52 @@ fn secded_corrects_single_and_rejects_double_errors() {
             }
         }
     }
+}
+
+/// The staggered-pilot goldens, checked against the kernel AND against the v1
+/// golden of the same code-book: stagger frame f of LED id is v1 frame
+/// (f - phase) mod C, with the pilot G, M in place of v1's W, G.
+fn check_stagger_golden(g: &serde_json::Value, v1: &serde_json::Value) {
+    let led_count = g["ledCount"].as_u64().unwrap() as u32;
+    let symbols = g["symbols"].as_u64().unwrap() as u8;
+    assert_eq!(g["syncPattern"].as_str().unwrap(), "stagger_pilot");
+    let spec = pat::CodeSpec::derive(led_count, symbols, true).with_sync(pat::SyncPattern::StaggerPilot);
+    let c = spec.cycle_frames;
+    assert_eq!(c as u64, g["cycleFrames"].as_u64().unwrap());
+    let step = g["staggerStep"].as_u64().unwrap() as u32;
+    assert_eq!(pat::stagger_step(c), step);
+    for (i, v) in g["staggerSteps"].as_array().unwrap().iter().enumerate() {
+        assert_eq!(pat::stagger_step(i as u32 + 3) as u64, v.as_u64().unwrap(), "S(C={})", i + 3);
+    }
+    let phases: Vec<u32> = g["phases"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u32).collect();
+    let v1_plan: Vec<Vec<char>> =
+        v1["colorPlan"].as_array().unwrap().iter().map(|r| r.as_str().unwrap().chars().collect()).collect();
+    let plan = g["colorPlan"].as_array().unwrap();
+    assert_eq!(plan.len() as u32, c);
+    for (f, row) in plan.iter().enumerate() {
+        for (id, expected) in row.as_str().unwrap().chars().enumerate() {
+            let ph = phases[id];
+            assert_eq!(ph, (id as u32 * step) % c);
+            assert_eq!(pat::stagger_phase(id as u32, &spec), ph);
+            let got = letter(pat::color_for_frame(id as u32, f as u32, &spec));
+            assert_eq!(got, expected, "frame {f}, LED {id}");
+            let j = ((f as u32 + c - ph) % c) as usize;
+            let from_v1 = match j {
+                0 => 'G',
+                1 => 'M',
+                _ => v1_plan[j][id],
+            };
+            assert_eq!(expected, from_v1, "frame {f}, LED {id} vs the v1 golden");
+        }
+    }
+}
+
+#[test]
+fn matches_the_two_symbol_stagger_golden() {
+    check_stagger_golden(&golden("GOLDEN_STAGGER16"), &golden("GOLDEN_SECDED16"));
+}
+
+#[test]
+fn matches_the_four_symbol_stagger_golden() {
+    check_stagger_golden(&golden("GOLDEN_STAGGER16_SYM4"), &golden("GOLDEN_SECDED16_SYM4"));
 }

@@ -39,6 +39,16 @@ export interface KernelExports {
   pk_symbol_at(ledId: number, frame: number, ledCount: number, symbols: number, secded: number): number;
   pk_color_index(ledId: number, frameIndex: number, ledCount: number, symbols: number, secded: number): number;
   pk_symbol_color(symbols: number, value: number): number;
+  pk_color_index_sync(
+    ledId: number,
+    frameIndex: number,
+    ledCount: number,
+    symbols: number,
+    secded: number,
+    sync: number,
+  ): number;
+  pk_stagger_step(cycleFrames: number): number;
+  pk_stagger_phase(ledId: number, ledCount: number, symbols: number, secded: number, sync: number): number;
   pk_symbol_buf(): number;
   pk_decode_cycle(n: number, ledCount: number, bits: number, symbols: number, secded: number): number;
   pk_stride_phase_count(spacing: number): number;

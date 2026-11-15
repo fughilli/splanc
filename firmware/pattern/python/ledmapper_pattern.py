@@ -42,7 +42,15 @@ _SIGNATURES = {
     "pk_secded_total_bits": ([_U32], _U32),
     "pk_color_rgb": ([_U32] * 5, _U32),
     "pk_frame_rgb": ([_U32] * 4 + [ctypes.c_void_p, _U32], _U32),
+    "pk_color_rgb_sync": ([_U32] * 6, _U32),
+    "pk_frame_rgb_sync": ([_U32] * 5 + [ctypes.c_void_p, _U32], _U32),
+    "pk_stagger_step": ([_U32], _U32),
+    "pk_stagger_phase": ([_U32] * 5, _U32),
 }
+
+# CodeParams.syncPattern -> the kernel's SyncPattern code. "stagger_white" is
+# the link simulator's comparator, not a wire value.
+SYNC_CODES = {"on_off": 0, "stagger_pilot": 1, "stagger_white": 2}
 
 
 def library_path() -> str:
@@ -81,6 +89,13 @@ def _secded(fec: str) -> int:
     return 1 if fec == "secded" else 0
 
 
+def _sync(sync_pattern: str) -> int:
+    try:
+        return SYNC_CODES[sync_pattern]
+    except KeyError:
+        raise ValueError(f"unknown sync pattern {sync_pattern!r}") from None
+
+
 def _check_symbols(symbols: int) -> None:
     if symbols not in (2, 4):
         raise ValueError(f"unsupported symbol alphabet {symbols}")
@@ -115,19 +130,40 @@ def cycle_frames(led_count: int, symbols: int, fec: str) -> int:
 # --- render -----------------------------------------------------------------
 
 
-def color_rgb(led_id: int, frame_index: int, led_count: int, symbols: int, fec: str) -> RGB:
-    """The RGB ``led_id`` shows in cycle frame ``frame_index``."""
+def color_rgb(
+    led_id: int,
+    frame_index: int,
+    led_count: int,
+    symbols: int,
+    fec: str,
+    sync_pattern: str = "on_off",
+) -> RGB:
+    """The RGB ``led_id`` shows in cycle frame ``frame_index`` (the GLOBAL
+    frame under a staggered ``sync_pattern``)."""
     _check_symbols(symbols)
-    v = kernel().pk_color_rgb(led_id, frame_index, led_count, symbols, _secded(fec))
+    k = kernel()
+    sync = _sync(sync_pattern)
+    if sync == 0:
+        v = k.pk_color_rgb(led_id, frame_index, led_count, symbols, _secded(fec))
+    else:
+        v = k.pk_color_rgb_sync(led_id, frame_index, led_count, symbols, _secded(fec), sync)
     return ((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF)
 
 
-def frame_rgb(frame_index: int, led_count: int, symbols: int, fec: str) -> List[RGB]:
+def frame_rgb(
+    frame_index: int, led_count: int, symbols: int, fec: str, sync_pattern: str = "on_off"
+) -> List[RGB]:
     """Every LED's RGB in cycle frame ``frame_index`` (one kernel call)."""
     _check_symbols(symbols)
     n = led_count * 3
     buf = (ctypes.c_uint8 * max(n, 1))()
-    wrote = kernel().pk_frame_rgb(frame_index, led_count, symbols, _secded(fec), buf, n)
+    sync = _sync(sync_pattern)
+    if sync == 0:
+        wrote = kernel().pk_frame_rgb(frame_index, led_count, symbols, _secded(fec), buf, n)
+    else:
+        wrote = kernel().pk_frame_rgb_sync(
+            frame_index, led_count, symbols, _secded(fec), sync, buf, n
+        )
     if wrote != n:
         raise ValueError(
             f"frame_index {frame_index} outside the cycle of "
@@ -135,3 +171,14 @@ def frame_rgb(frame_index: int, led_count: int, symbols: int, fec: str) -> List[
         )
     raw = bytes(buf)[:n]
     return [(raw[i], raw[i + 1], raw[i + 2]) for i in range(0, n, 3)]
+
+
+def stagger_step(cycle_frames: int) -> int:
+    """The stagger step S for a cycle of ``cycle_frames`` frames."""
+    return kernel().pk_stagger_step(cycle_frames)
+
+
+def stagger_phase(led_id: int, led_count: int, symbols: int, fec: str, sync_pattern: str) -> int:
+    """Coded id ``led_id``'s phase rotation, ``(id * S) mod C`` (0 under on_off)."""
+    _check_symbols(symbols)
+    return kernel().pk_stagger_phase(led_id, led_count, symbols, _secded(fec), _sync(sync_pattern))
