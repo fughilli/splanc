@@ -231,6 +231,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
 <li class="toctree-l1"><a class="reference internal" href="pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Runbook</a></li>
@@ -391,13 +392,24 @@ sandbox.</p>
 </section>
 <section id="the-led-driver-m1">
 <h2>The LED driver (M1)<a class="headerlink" href="#the-led-driver-m1" title="Link to this heading">¶</a></h2>
-<p>On the Pi, M1 is the Rust player (<code class="docutils literal notranslate"><span class="pre">//pi/player_rs</span></code>): one process that serves the
-protocol over WSS and renders the hue-code pattern onto the FPGA, from the same
-pattern kernel (<code class="docutils literal notranslate"><span class="pre">//firmware/pattern</span></code>) the ESP32 firmware links. The old Python
-M1 driver (<code class="docutils literal notranslate"><span class="pre">//pi/led_driver:drive</span></code>, APA102 over SPI with a control socket) was
-retired; <code class="docutils literal notranslate"><span class="pre">pi/led_driver</span></code> now only holds the spi_ws281x reference encoder the
-HITL harness uses. Real cadence verification (±10% per §9 Phase 1) needs a logic
-analyzer on a bench (<code class="docutils literal notranslate"><span class="pre">//pi/tools/la_probe</span></code>) and is not covered by CI.</p>
+<p>On the Pi, M1 is picked by <code class="docutils literal notranslate"><span class="pre">ledOutput</span></code> in <code class="docutils literal notranslate"><span class="pre">pi/provisioning/nix/apps.nix</span></code> (or
+<code class="docutils literal notranslate"><span class="pre">SPLANC_LED_OUTPUT</span></code> at build time): <code class="docutils literal notranslate"><span class="pre">fpga</span></code> runs the Rust player
+(<code class="docutils literal notranslate"><span class="pre">//pi/player_rs</span></code>, WSS protocol + spi_ws281x FPGA render), <code class="docutils literal notranslate"><span class="pre">apa102</span></code> runs the
+Python driver (<code class="docutils literal notranslate"><span class="pre">//pi/led_driver</span></code>), which owns the SPI bus and the pattern clock,
+drives an APA102/SK9822 strip directly and exposes a Unix-socket control plane
+for M2. Both render the hue code with the one Rust kernel (<code class="docutils literal notranslate"><span class="pre">//firmware/pattern</span></code>;
+the Python driver calls it through <code class="docutils literal notranslate"><span class="pre">//firmware/pattern:pattern_py</span></code>).</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span><span class="c1"># On the Pi (real hardware):</span>
+bazelisk<span class="w"> </span>run<span class="w"> </span>//pi/led_driver:drive<span class="w"> </span>--<span class="w"> </span>--socket<span class="w"> </span>/run/ledmapper/control.sock
+
+<span class="c1"># Hardware-free dry run (in-memory sink), lighting a 16-LED cycle:</span>
+bazelisk<span class="w"> </span>run<span class="w"> </span>//pi/led_driver:drive<span class="w"> </span>--<span class="w"> </span>--dry-run<span class="w"> </span>--socket<span class="w"> </span>/tmp/control.sock<span class="w"> </span>--start<span class="w"> </span><span class="m">16</span>
+</pre></div>
+</div>
+<p>The control commands (<code class="docutils literal notranslate"><span class="pre">start</span></code>/<code class="docutils literal notranslate"><span class="pre">stop</span></code>/<code class="docutils literal notranslate"><span class="pre">get_clock</span></code>/<code class="docutils literal notranslate"><span class="pre">set_debug</span></code>) and the wire format
+are documented in <a class="reference internal" href="#../pi/led_driver/README.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">pi/led_driver/README.md</span></code></span></a>. Real
+cadence verification (±10% per §9 Phase 1) needs a logic analyzer on a bench
+(<code class="docutils literal notranslate"><span class="pre">//pi/tools/la_probe</span></code>) and is not covered by CI.</p>
 </section>
 <section id="the-pi-server-m2">
 <h2>The Pi server (M2)<a class="headerlink" href="#the-pi-server-m2" title="Link to this heading">¶</a></h2>

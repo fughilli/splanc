@@ -231,6 +231,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
 <li class="toctree-l1"><a class="reference internal" href="pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
 <li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
@@ -1028,13 +1029,19 @@ built for wasm32 at <code class="docutils literal notranslate"><span class="pre"
 <code class="docutils literal notranslate"><span class="pre">//web:code_kernel_wasm</span></code>). It compiles synchronously at import where the engine
 allows; otherwise the page entries <code class="docutils literal notranslate"><span class="pre">await</span> <span class="pre">codeKernelReady</span></code>. The CV/tracker
 stays TS; only the code moved.</p></li>
-<li><p><strong>Python: the Python M1 driver is retired, codebook.py binds the kernel.</strong> The
-Pi image runs the Rust player (the <code class="docutils literal notranslate"><span class="pre">apa102</span></code> Python path was never selected),
-so <code class="docutils literal notranslate"><span class="pre">graycode.py</span></code>, the M1 driver/control socket, <code class="docutils literal notranslate"><span class="pre">ledmapper_protocol.fec</span></code> and
-the vendored <code class="docutils literal notranslate"><span class="pre">pi/provisioning/nix/ledapp</span></code> copy were deleted. The M2 dev
-backend (<code class="docutils literal notranslate"><span class="pre">//pi/server</span></code>, used by <code class="docutils literal notranslate"><span class="pre">//web:dev</span></code> and the HITL harness) still issues
-code-books, so <code class="docutils literal notranslate"><span class="pre">codebook.py</span></code> calls the kernel’s C ABI from the host cdylib
-<code class="docutils literal notranslate"><span class="pre">//firmware/pattern:kernel_abi</span></code> via ctypes rather than re-deriving them.</p></li>
+<li><p><strong>Python: one ctypes binding, two callers.</strong> <code class="docutils literal notranslate"><span class="pre">graycode.py</span></code> and
+<code class="docutils literal notranslate"><span class="pre">ledmapper_protocol.fec</span></code> (the Python copies) were deleted. The kernel’s C ABI,
+built as the host cdylib <code class="docutils literal notranslate"><span class="pre">//firmware/pattern:kernel_abi</span></code>, is loaded by ONE
+Python module, <code class="docutils literal notranslate"><span class="pre">ledmapper_pattern</span></code> (<code class="docutils literal notranslate"><span class="pre">//firmware/pattern:pattern_py</span></code>). The M2
+dev backend’s <code class="docutils literal notranslate"><span class="pre">codebook.py</span></code> sizes code-books through it, and the APA102/SK9822
+M1 driver (<code class="docutils literal notranslate"><span class="pre">//pi/led_driver</span></code>, the Pi image’s <code class="docutils literal notranslate"><span class="pre">ledOutput</span> <span class="pre">=</span> <span class="pre">&quot;apa102&quot;</span></code> path) is
+KEPT: it renders every pattern frame through it (<code class="docutils literal notranslate"><span class="pre">led_driver.pattern</span></code>) and
+owns only the output side (APA102 framing, the frame loop, the control
+socket). In the Pi image the vendored <code class="docutils literal notranslate"><span class="pre">pi/provisioning/nix/ledapp</span></code> copy is
+replaced by <code class="docutils literal notranslate"><span class="pre">//pi/led_driver:ledapp_bundle</span></code> (build_data): the driver, the
+binding and the kernel’s Rust sources, from which <code class="docutils literal notranslate"><span class="pre">apps.nix</span></code> compiles the same
+cdylib with rustc. <code class="docutils literal notranslate"><span class="pre">//pi/led_driver:led_driver_test</span></code> pins the driver’s APA102
+SPI frames to the kernel’s golden colour plan.</p></li>
 <li><p><strong>Goldens are regression pins, not contracts.</strong> <code class="docutils literal notranslate"><span class="pre">firmware/pattern/testdata/*</span></code>
 are emitted by <code class="docutils literal notranslate"><span class="pre">//firmware/pattern:gen_golden</span></code> and diff-tested
 (<code class="docutils literal notranslate"><span class="pre">//firmware/pattern:goldens</span></code>); the TS/Python equivalence tests against them
