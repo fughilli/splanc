@@ -4379,6 +4379,83 @@ pub unsafe extern "C" fn lm_time_base(epoch_ms: *mut i64) -> bool {
     }
 }
 
+/// The previous effect frame's `now - epoch` (ms, >= 0) under the shared time base,
+/// for update()'s dt ([`lm_fx_clock`]); None off the time base.
+static mut FX_TB_PREV_SINCE: Option<i64> = None;
+
+/// A shared-time-base frame whose `now - epoch` moved further than its wall-clock
+/// frame period plus this (ms) is a re-align, not elapsed time: update() gets the
+/// wall period instead of fast-forwarding its integrators by the jump.
+pub const TB_JUMP_SLACK_MS: i64 = 250;
+
+/// Effect `time` and update()'s `dt` (seconds) for one frame on the shared time
+/// base (docs/design/synced-show.md, "Stateful effects"). `since_ms` = now - epoch
+/// this frame, `prev_since_ms` = the last frame's (None: first frame on the base),
+/// `wall_dt_ms` = the frame period main.cpp measured.
+///
+/// time = since / 1000 (held at 0 before the epoch), as before. dt is the change
+/// in that time since the last frame — not the local crystal's frame period — so
+/// an effect that integrates (`phase += dt * speed`) accumulates the same deltas
+/// on every player: a drift-correcting epoch nudge (1-2 ms) moves its phase the
+/// way it moves `time`, and players stay in step instead of each integrating its
+/// own ppm. A step back (epoch moved later by more than the frame) holds (dt = 0)
+/// rather than running integrators backwards; a jump forward by more than the
+/// frame + [`TB_JUMP_SLACK_MS`] (a re-align) gets the wall period.
+///
+/// dt is a whole number of Q16.16 ticks (2^-16 s), the difference of the shared
+/// time's tick counts: exact in f32 AND in the VM's `dt_fix` mirror, and the sum
+/// over frames telescopes to the elapsed shared time. (A plain `ms / 1000` would
+/// lose its sub-tick remainder in `fixed(dt)` every frame — ~1 s/hour at 30 fps,
+/// different at each player's frame rate.)
+pub fn time_base_frame(prev_since_ms: Option<i64>, since_ms: i64, wall_dt_ms: u32) -> (f32, f32) {
+    if since_ms <= 0 {
+        return (0.0, 0.0);
+    }
+    // Q16.16 ticks of `ms` milliseconds, floored.
+    let ticks = |ms: i64| (ms << 16).div_euclid(1000);
+    let time = since_ms as f32 / 1000.0;
+    let wall = wall_dt_ms as i64;
+    let dt_ticks = match prev_since_ms {
+        None => ticks(since_ms) - ticks(since_ms - wall.min(since_ms)),
+        Some(p) => {
+            let p = p.max(0);
+            let d = since_ms - p;
+            if d < 0 {
+                0
+            } else if d > wall + TB_JUMP_SLACK_MS {
+                ticks(wall)
+            } else {
+                ticks(since_ms) - ticks(p)
+            }
+        }
+    };
+    (time, dt_ticks as f32 / 65536.0)
+}
+
+/// The render loop's effect clock on the shared time base: when one is set,
+/// overwrite `*time_s` / `*dt_s` with [`time_base_frame`] (now = millis(),
+/// `wall_dt_ms` = this frame's measured period) and return true; else leave
+/// them (the local clock) and return false.
+///
+/// # Safety
+/// Render task, under the player mutex; `time_s` / `dt_s` writable.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_clock(now_ms: i64, wall_dt_ms: u32, time_s: *mut f32, dt_s: *mut f32) -> bool {
+    let Some(epoch) = player().time_base_ms() else {
+        FX_TB_PREV_SINCE = None;
+        return false;
+    };
+    if time_s.is_null() || dt_s.is_null() {
+        return false;
+    }
+    let since = now_ms - epoch;
+    let (t, dt) = time_base_frame(FX_TB_PREV_SINCE, since, wall_dt_ms);
+    FX_TB_PREV_SINCE = Some(since.max(0));
+    *time_s = t;
+    *dt_s = dt;
+    true
+}
+
 /// Rebuild [`FX_LED_TOPO`] from the stored map + topology (in map-index order),
 /// deriving each LED's segment index, normalized arclength and junction flag
 /// from its [`StoredAssociation`]. Cheap to call every frame — it early-returns
