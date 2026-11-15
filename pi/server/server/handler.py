@@ -199,7 +199,9 @@ class ConnectionHandler:
             options.bitPeriodMs if options.bitPeriodMs is not None else self.ctx.bit_period_ms,
             options.symbols if options.symbols is not None else self.ctx.symbols,
             brightness=options.brightness,
-            sync_pattern=self.ctx.sync_pattern,
+            # The client's request (hue code v2 phase 2) wins over the
+            # --sync-pattern fallback; this backend supports both patterns.
+            sync_pattern=options.syncPattern or self.ctx.sync_pattern,
         )
         epoch = self.ctx.sessions.start(capture_id, params)
         return MappingStartedMessage(

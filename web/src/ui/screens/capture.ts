@@ -38,7 +38,7 @@ import {
   driverFixtureScene,
   setDriverCaptureError,
 } from "../../driver/guard";
-import { forcedSyncPattern, isStaggered, withSyncPattern } from "../../code/gray";
+import { forcedSyncPattern, isStaggered } from "../../code/gray";
 import { phaseCount as stridePhaseCount } from "../../code/stride";
 import {
   fillChannelGaps,
@@ -200,10 +200,10 @@ const forcedSymbols = ((): 2 | 4 | null => {
   const v = qs.get("symbols");
   return v === "2" ? 2 : v === "4" ? 4 : null;
 })();
-// `?sync=stagger_pilot` FORCES the decoder's sync pattern (hue code v2 phase 2
-// wall test), overriding what the device negotiated; the wall page takes the
-// same param. Without it the phone decodes whatever CodeParams.syncPattern the
-// device sends — v1 "on_off" from every existing player.
+// `?sync=stagger_pilot` REQUESTS the hue code v2 staggered pilot in
+// start_mapping (phase 2 wall test). The phone always decodes the
+// CodeParams.syncPattern the device answers with: a player that doesn't support
+// the request (every C6/P4 today) runs v1 "on_off" and the phone decodes v1.
 const forcedSync = forcedSyncPattern(qs.get("sync"));
 const forcedBitMs = ((): number | null => {
   const v = parseFloat(qs.get("bitms") ?? "");
@@ -1274,6 +1274,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // Per-channel capture: the code book covers the WHOLE fixture from the
         // start, so ids + code timing never change between stages.
         ...(channelPlan !== null ? { codeSpace: channelPlan.total } : {}),
+        ...(forcedSync !== null ? { syncPattern: forcedSync } : {}),
       };
 
       abandonIfDisposed();
@@ -1290,13 +1291,13 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       mappingStarted = true;
       abandonIfDisposed();
       if (calibrateId !== null) startCalibrationUi(c);
-      let params: CodeParams = withSyncPattern(started.codeParams, forcedSync);
+      let params: CodeParams = started.codeParams;
       let epoch: number = started.patternClockEpoch;
       if (blankFirst && stage0 !== undefined) {
         await new Promise((r) => setTimeout(r, Math.max(300, 3 * params.bitPeriodMs)));
         const ps = await c.configure({ ledCount: stage0.ledCount, brightness: config.brightness ?? 1 });
         if (!ps.active || ps.patternClockEpoch === null) throw new Error("the device dropped the capture pattern");
-        params = withSyncPattern(ps.codeParams, forcedSync);
+        params = ps.codeParams;
         epoch = ps.patternClockEpoch;
       }
       profileDraft = {
@@ -1824,7 +1825,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             if (!capturing || !ps.active || ps.patternClockEpoch === null) return;
             onApplied?.();
             if (ps.codeParams.symbols !== params.symbols) channelQuality.resetYield();
-            params = withSyncPattern(ps.codeParams, forcedSync);
+            params = ps.codeParams;
             epoch = ps.patternClockEpoch;
             pipeline = makePipeline(params, epoch);
             pipeline.updateSolved(liveLeds);

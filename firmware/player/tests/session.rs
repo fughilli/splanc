@@ -932,6 +932,56 @@ fn group_capture_auto_stops() {
     assert!(!player.expire_pattern(i64::MAX / 2));
 }
 
+/// Hue code v2 phase 2: start_mapping's syncPattern "stagger_pilot" runs the
+/// staggered pilot only on a player advertising FEATURE_STAGGER_PILOT (the host
+/// player); every other player keeps v1 and says so in codeParams.syncPattern.
+/// A Configure keeps the capture's pattern.
+#[test]
+fn staggered_pilot_only_when_advertised() {
+    fn start(player: &mut Player, sync: Option<&str>) -> pb::CodeParams {
+        let mut opts = pb::StartMappingOptions::default();
+        opts.r#led_count = 16;
+        if let Some(s) = sync {
+            opts.set_sync_pattern(micropb::heapless::String::try_from(s).unwrap());
+        }
+        let mut start = pb::StartMapping::default();
+        start.set_options(opts);
+        let Some(SMsg::MappingStarted(started)) = send(player, CMsg::StartMapping(start), 1000.0) else {
+            panic!("mapping_started");
+        };
+        started.r#code_params
+    }
+    // A firmware player (no feature): the request falls back to v1.
+    let mut fw = Player::new("esp32-0005", 64);
+    send(&mut fw, CMsg::Hello(pb::Hello::default()), 1.0);
+    let cp = start(&mut fw, Some("stagger_pilot"));
+    assert_eq!(cp.r#sync_pattern.as_str(), "on_off");
+    assert_eq!(fw.pattern_color(3, 0), Some(pat::WHITE), "v1: frame 0 is white on every LED");
+
+    // The host player advertises it: the pattern is the kernel's staggered plan.
+    static FEATS: &[&str] = &[ledmapper_player::FEATURE_STAGGER_PILOT];
+    let mut host = Player::new("host-0001", 64);
+    host.set_features(FEATS, 0);
+    send(&mut host, CMsg::Hello(pb::Hello::default()), 1.0);
+    assert_eq!(start(&mut host, None).r#sync_pattern.as_str(), "on_off", "unrequested: v1");
+    let cp = start(&mut host, Some("stagger_pilot"));
+    assert_eq!(cp.r#sync_pattern.as_str(), "stagger_pilot");
+    let spec = pat::CodeSpec::derive(16, 2, true).with_sync(pat::SyncPattern::StaggerPilot);
+    for led in 0..16 {
+        for f in 0..spec.cycle_frames {
+            assert_eq!(host.pattern_color(led, f), Some(pat::color_for_frame(led, f, &spec)), "led {led} f{f}");
+        }
+    }
+    let mut copts = pb::ConfigureOptions::default();
+    copts.set_brightness(0.5);
+    let mut configure = pb::Configure::default();
+    configure.set_options(copts);
+    let Some(SMsg::PatternState(ps)) = send(&mut host, CMsg::Configure(configure), 2000.0) else {
+        panic!("pattern_state");
+    };
+    assert_eq!(ps.r#code_params.r#sync_pattern.as_str(), "stagger_pilot");
+}
+
 /// docs/design/p4-ethernet-ddp.md: a board descriptor with net_channels (the P4)
 /// adds network LED channels 2.. after the GPIO ones. They join the LED total
 /// (the code book, the max_leds bound, the boot capacity) but not the WS2812

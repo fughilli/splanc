@@ -207,33 +207,33 @@ skipping auto-negotiation for that field), `?imumap=+a,+b,+g;+x,+y,+z`
 `bazelisk run //pi/reconstruction:vio_replay -- <trace> <decoded> --diagnose`),
 `?fx=` (focal seed; otherwise a cached calibration, otherwise a 70°-FOV
 guess — fx error shifts metric scale ~1:1, shape is unaffected),
-`?sync=stagger_pilot|on_off` (FORCE the decoder's sync pattern; see below). Wall
+`?sync=stagger_pilot` (REQUEST the hue code v2 staggered pilot; see below). Wall
 page: `?cols=N`, `?gap`, `?margin`, `?dot` (dot diameter as a fraction of
 pitch), `?sync=stagger_pilot|on_off` (FORCE the rendered sync pattern).
 
 ### Testing hue code v2 (staggered pilot) against the wall
 
 The staggered-pilot code (`syncPattern: "stagger_pilot"`,
-docs/design/hue-code-v2.md phase 2) is opt-in: no player advertises it yet, so
-the phone only decodes it when the code-book it is handed says so. The wall
-renders whatever the server's `pattern_state` says, so the simplest run is to
-make the dev server hand it out:
+docs/design/hue-code-v2.md phase 2) is opt-in. The phone asks for it when the
+capture page is opened with `?sync=stagger_pilot`: start_mapping carries
+`syncPattern`, and the phone decodes whatever `codeParams.syncPattern` the
+device answers with. A player that doesn't support it (every C6/P4 today) keeps
+v1 and says so. Supporting devices: the virtual wall player (`bazel run
+//pi/player_rs:wall`, docs/host-player.md; it advertises `hue_stagger_pilot`)
+and this dev server. The dev server can also hand the code out to every
+capture without the request: `bazelisk run //web:serve -- --sync-pattern
+stagger_pilot`.
 
-```sh
-bazelisk run //web:serve -- --sync-pattern stagger_pilot   # https on :8443
-```
+The wall renders what the device runs. Its status line reads
+`sync stagger_pilot`. The phone HUD adds `pilot k … · cyc … miss … φrej …`:
 
-then follow the steps above unchanged (wall on the laptop at
-`https://localhost:8443/wall.html`, phone at `https://<laptop-LAN-IP>:8443`).
-The wall's status line reads `sync stagger_pilot`; the phone HUD adds
-`pilot k … · cyc … miss … φrej …` (the locked whole-frame latency, per-track
-pilots found, delimiter misses, phase-check rejects). Without the flag the
-server keeps v1 (`on_off`), exactly as before.
+- `pilot k`: the locked whole-frame latency;
+- `cyc`: per-track pilots found;
+- `miss`: delimiter misses;
+- `φrej`: phase-check rejects.
 
-Without restarting the server, force both ends instead: open the wall as
-`wall.html?sync=stagger_pilot` and the phone app as `/?sync=stagger_pilot`
-(both must match: the override is local to each page). `?sync=on_off` forces
-v1 back.
+`wall.html?sync=…` forces the wall's rendering only (debugging); the phone must
+then be decoding the same pattern.
 
 ### The hue code + auto-negotiated capture configuration
 

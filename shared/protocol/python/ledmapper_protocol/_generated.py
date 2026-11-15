@@ -223,6 +223,8 @@ class StartMappingOptions(_StrictModel):
     codeSpace: Union[int, None] = Field(default=None, ge=1)
     epochMs: Union[float, None] = None
     stopAfterMs: Union[int, None] = None
+    # Requested sync pattern (hue code v2); the reply's codeParams say what runs.
+    syncPattern: Union[SyncPattern, None] = None
 
 
 class StartMappingMessage(_StrictModel):
