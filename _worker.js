@@ -469,6 +469,13 @@ self.addEventListener("activate", (e) => e.waitUntil((async () => {
 })()));
 `;
 
+// A home-screen icon installed from this origin launches its start_url (?source=pwa).
+// The redirect tags that launch with retired=1: the app then opens inside the old
+// icon's window, which reports display-mode standalone and can't install, and this
+// tag is the only way the app can tell it apart from a real install
+// (src/ui/app/pwa.ts launchMode()).
+const RETIRED_PARAM = "retired";
+
 export function retiredOrigin(url) {
   if (!RETIRED_HOST.test(url.hostname)) return null;
   if (url.pathname === "/sw.js") {
@@ -477,9 +484,13 @@ export function retiredOrigin(url) {
     });
   }
   const base = SITE_ROOT_PATH.test(url.pathname) ? "https://splanc.io" : "https://splanc.io/app";
+  let search = url.search;
+  if (url.searchParams.get("source") === "pwa" && !url.searchParams.has(RETIRED_PARAM)) {
+    search += `&${RETIRED_PARAM}=1`;
+  }
   return new Response(null, {
     status: 301,
-    headers: { location: `${base}${url.pathname}${url.search}`, "cache-control": "public, max-age=86400" },
+    headers: { location: `${base}${url.pathname}${search}`, "cache-control": "public, max-age=86400" },
   });
 }
 
