@@ -11,7 +11,8 @@
 //! | 8   | 32   | sha256    | of the image                                  |
 //! | 40  | 4    | flags     | u32 LE; bit 0 = loader image (reserved),      |
 //! |     |      |           | 8..15 key id, 16..23 security version,        |
-//! |     |      |           | 24..31 board (0 = a C6 app; else Splanc MAX)  |
+//! |     |      |           | 24..31 board (0 = a C6 app, 16 = an ESP32-P4  |
+//! |     |      |           | player, 1..4 = a Splanc MAX)                  |
 //! | 44  | 64   | signature | ECDSA P-256 r‖s over SHA-256 of bytes 0..44   |
 //!
 //! The signature is checked by the caller (mbedtls on the device, the `p256`
@@ -29,11 +30,16 @@ pub const FLAG_LOADER: u32 = 1 << 0;
 
 /// The board an image is for, in flags bits 24..31 (signed, so it can't be
 /// swapped): 0 = a C6 app image; 1.. = a Splanc MAX board (pi/max_ota `Board`,
-/// docs/design/max-ota.md). The C6 and the MAX trust the SAME signing keys, so
-/// this field is what keeps each from installing the other's images: the C6
-/// refuses any board but 0, the MAX refuses 0 and any board but its own.
+/// docs/design/max-ota.md), 16 = the ESP32-P4 player. All of them trust the SAME
+/// signing keys, so this field is what keeps each from installing another's
+/// images: the C6 refuses any board but 0, the P4 any but 16, the MAX 0 and any
+/// board but its own.
 pub const BOARD_SHIFT: u32 = 24;
 pub const BOARD_C6: u8 = 0;
+/// The ESP32-P4 player (docs/design/p4-c6-split.md §5.1): the P4's app image, which
+/// carries the C6 front end's images too, so one package updates both chips. Clear
+/// of the MAX's ids (1..4, pi/max_ota `Board`).
+pub const BOARD_P4: u8 = 16;
 
 /// The board id in `flags` (bits 24..31).
 pub fn board(flags: u32) -> u8 {

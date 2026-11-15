@@ -40,8 +40,16 @@ import {
   type WifiPolicy,
   type WifiPolicyRequest,
 } from "../../web/src/net/wifiPolicy";
-import { OtaError, pullsImage, updateFirmware, type OtaPhase, type OtaProgress } from "../../web/src/net/otaUpdate";
+import {
+  OtaError,
+  pullsImage,
+  updateFirmware,
+  updatesInApp,
+  type OtaPhase,
+  type OtaProgress,
+} from "../../web/src/net/otaUpdate";
 import { renderedChannels } from "./channels";
+import { P4_KIND } from "./firmware";
 import type { Pose } from "./config";
 import { FxDebugger } from "../../web/src/fx/fxDebug";
 import { compile, type CompileOutcome, type Toolchain } from "./fxhost";
@@ -1771,9 +1779,11 @@ export class DeviceSession {
   /** Install a signed `.ota` package over the air (docs/design/ota.md): the player
    * hands over to its updater, takes the image, and must come back healthy — else it
    * rolls back by itself and this rejects with the reason. */
-  /** "" for a C6 (it takes the `.ota`), or a Splanc MAX's board ("pi3", …): it
+  /** "" for a C6 (it takes the `.ota`), P4_KIND for an ESP32-P4 player (its own
+   * `.ota`, docs/design/p4-c6-split.md §5.1), or a Splanc MAX's board ("pi3", …): it
    * pulls its own image and takes only that board's manifest (docs/design/max-ota.md). */
   async otaBoard(): Promise<string> {
+    if (updatesInApp(this.client.welcome)) return P4_KIND;
     if (!pullsImage(this.client.welcome)) return "";
     const st = await this.run(() => this.client.getOtaStatus());
     if (!st.board) throw new ToolError(`${this.client.welcome?.deviceName || this.opts.url}: a pull device that reports no board`);

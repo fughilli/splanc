@@ -196,7 +196,7 @@ def load_journeys(dir_path: str) -> dict[str, dict[str, Any]]:
     """Load all *.json journeys in `dir_path`, keyed by their "name"."""
     registry: dict[str, dict[str, Any]] = {}
     for fn in sorted(os.listdir(dir_path)):
-        if fn.endswith(".json"):
+        if fn.endswith(".json") and not fn.startswith("."):  # skip macOS ._ sidecars
             with open(os.path.join(dir_path, fn), encoding="utf-8") as f:
                 j = json.load(f)
             registry[j["name"]] = j

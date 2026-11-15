@@ -10,8 +10,10 @@
 //!   ota_sign pubkey [--key-env VAR | --key-file F]
 //!       The public key for a private key.
 //!   ota_sign sign --version 1.9.0|1009000 --in app.bin --out app.manifest
-//!                 [--key-env VAR | --key-file F] [--flags N]
+//!                 [--key-env VAR | --key-file F] [--flags N] [--board N]
 //!       The 108-byte signed manifest (the swarm loader's layout) for an image.
+//!       --board sets flags bits 24..31 (0 a C6 app, the default; 16 the ESP32-P4
+//!       player, whose image carries the C6 front end's too).
 //!   ota_sign verify --pubkey HEX|--pubkey-file F --manifest M --in app.bin
 //!       Exit 0 when the manifest is signed by that key and matches the image.
 //!   ota_sign corrupt --in M --out M2
@@ -104,9 +106,10 @@ fn sign(a: &Args) -> Result<(), String> {
     let key_id: u8 = a.opt("--key-id").map(|f| f.parse().map_err(|_| "bad --key-id")).transpose()?.unwrap_or(0);
     let secv: u8 =
         a.opt("--security-version").map(|f| f.parse().map_err(|_| "bad --security-version")).transpose()?.unwrap_or(0);
+    let board: u8 = a.opt("--board").map(|f| f.parse().map_err(|_| "bad --board")).transpose()?.unwrap_or(0);
     let flags: u32 = match a.opt("--flags") {
         Some(f) => f.parse().map_err(|_| "bad --flags")?,
-        None => keyring::flags(key_id, secv),
+        None => keyring::flags(key_id, secv) | ((board as u32) << manifest::BOARD_SHIFT),
     };
     let mut m = Manifest::unsigned(version, image.len() as u32, sha256(&image), flags);
     let sig: Signature = key.sign(&m.signed_bytes());

@@ -7,7 +7,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { canaryRollout, releaseEpochUrl, releaseMaxManifestUrl, releasePackageUrl, resolvePackage } from "../src/firmware";
+import {
+  canaryRollout,
+  releaseEpochUrl,
+  releaseMaxManifestUrl,
+  releaseP4PackageUrl,
+  releasePackageUrl,
+  resolvePackage,
+} from "../src/firmware";
 
 function otaPackage(version: number, size = 64): Uint8Array {
   const out = new Uint8Array(108 + size);
@@ -47,6 +54,20 @@ test("a release without an OTA package says so", async () => {
   const f = fakeFetch({});
   await assert.rejects(resolvePackage({ version: "1.8.2" }, f.impl), /no over-the-air package/);
   await assert.rejects(resolvePackage({ version: "banana" }, f.impl), /isn't a release version/);
+});
+
+test("an ESP32-P4 player gets the release's P4 package, not the C6 one", async () => {
+  const pkg = otaPackage(1_014_000);
+  const f = fakeFetch({ [releaseP4PackageUrl("1.14.0")]: pkg, [releasePackageUrl("1.14.0")]: otaPackage(1) });
+  const r = await resolvePackage({ p4: true, version: "1.14.0" }, f.impl);
+  assert.equal(r.version, 1_014_000);
+  assert.equal(r.label, "firmware 1.14.0 (ESP32-P4 player)");
+  assert.equal(
+    releaseP4PackageUrl("v1.14.0"),
+    "https://github.com/fughilli/splanc/releases/download/firmware-v1.14.0/esp32p4-player-1.14.0.ota",
+  );
+  assert.ok(!f.seen.includes(releasePackageUrl("1.14.0")));
+  await assert.rejects(resolvePackage({ p4: true, version: "1.13.0" }, fakeFetch({}).impl), /no ESP32-P4 player package/);
 });
 
 test("a local package is read and checked", async () => {

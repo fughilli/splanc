@@ -267,6 +267,40 @@ fn main() -> std::io::Result<()> {
     ] {
         g.configure(field, Config::new().max_bytes(if firmware { 1 } else { 64 }));
     }
+    // Hardware channels: the 2 GPIO channels plus the P4's 6 network ones
+    // (docs/design/p4-ethernet-ddp.md). The strings are an LED type id
+    // ("ws281x", "ddp") and a color order ("GRB"), sized to fit them, which keeps
+    // the 8-channel state smaller than the old 4-channel one with 64-byte strings.
+    g.configure(".ledmapper.v1.HardwareConfigState.channels", Config::new().max_len(8));
+    g.configure(".ledmapper.v1.HardwareChannel.led_type", Config::new().max_bytes(16));
+    g.configure(".ledmapper.v1.HardwareChannel.color_order", Config::new().max_bytes(8));
+    // Ethernet + network outputs (docs/design/p4-ethernet-ddp.md): the P4 answers
+    // arms 95-98 with the hand-coded codec in //firmware/netout (cross-checked by
+    // //firmware/netout:wire_test), so the firmware profile stubs every
+    // variable-size field of those messages out of the by-value envelopes.
+    g.configure(".ledmapper.v1.EthernetConfig.phy", Config::new().max_bytes(16));
+    g.configure(".ledmapper.v1.EthernetCaps.phys", Config::new().max_len(8).max_bytes(16));
+    g.configure(".ledmapper.v1.EthernetCaps.rmii_gpios", Config::new().max_len(8));
+    for (field, host_len, bytes) in [
+        (".ledmapper.v1.EthernetState.outputs", 6, false),
+        (".ledmapper.v1.EthernetState.mac", 6, true),
+        (".ledmapper.v1.EthernetState.error", 32, true),
+        (".ledmapper.v1.NetworkOutput.name", 32, true),
+        (".ledmapper.v1.ControllerList.controllers", 16, false),
+        (".ledmapper.v1.ControllerList.error", 32, true),
+        (".ledmapper.v1.DiscoveredController.name", 32, true),
+        (".ledmapper.v1.DiscoveredController.mac", 6, true),
+        (".ledmapper.v1.DiscoveredController.version", 16, true),
+        (".ledmapper.v1.DiscoveredController.kind", 8, true),
+    ] {
+        if firmware {
+            g.configure(field, Config::new().skip(true));
+        } else if bytes {
+            g.configure(field, Config::new().max_bytes(host_len));
+        } else {
+            g.configure(field, Config::new().max_len(host_len));
+        }
+    }
     // Welcome.ota is skipped in BOTH profiles: Welcome sits inside every by-value
     // ServerMessage, and an inline OtaStatus (4 strings) there grew the host test
     // stacks past their limit. Nothing Rust-side reads it (wire_test decodes it from

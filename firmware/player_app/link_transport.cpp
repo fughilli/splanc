@@ -500,6 +500,18 @@ bool netstack_ws_send(uint8_t *data, size_t len) {
 
 bool netstack_ws_open(void) { return g_up && g_session != 0 && host_alive(esp_timer_get_time()); }
 
+// The OTA health check (ota_p4.cpp): the link is up to a front end running the image this
+// P4 carries (SDIO: the ELF SHA-256 in the C6's HELLO). Over the UART the host bridge
+// plays the front end, so being up is enough.
+bool link_c6_current() {
+#if defined(LM_LINK_SDIO)
+  const uint8_t *want = c6_bundle_app_sha({reinterpret_cast<const uint8_t *>(c6_bundle_bin), c6_bundle_bin_len});
+  return g_up && g_c6_sha_valid && want && memcmp(g_c6_sha, want, 32) == 0;
+#else
+  return g_up;
+#endif
+}
+
 // The link is this player's network: "leased" while the host side is there.
 bool netstack_creds_ready(void) { return true; }
 bool netstack_leased(void) { return g_up && host_alive(esp_timer_get_time()); }

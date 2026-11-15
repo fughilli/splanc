@@ -48,11 +48,25 @@ class FakeDevice implements OtaDevice {
   private listeners: ((w: WelcomeMessage) => void)[] = [];
   legacy = false;
   failNextChunkAt = -1;
+  /** An ESP32-P4 player: it takes the image in the app (welcome feature "ota_inapp")
+   * and a bad image rolls back to the previous app, not a loader. */
+  inApp = false;
 
   makeWelcome(): WelcomeMessage {
-    const w = { type: "welcome", fwVersion: "1.0" } as unknown as WelcomeMessage & { ota?: { mode: string } };
+    const w = { type: "welcome", fwVersion: "1.0" } as unknown as WelcomeMessage & {
+      ota?: { mode: string };
+      features?: string[];
+    };
     if (this.mode === "loader") w.ota = { mode: "MODE_LOADER" };
+    if (this.inApp) w.features = ["effects", "ota", "ota_inapp"];
     return w;
+  }
+
+  static inAppDevice(): FakeDevice {
+    const d = new FakeDevice();
+    d.inApp = true;
+    d.welcome = d.makeWelcome();
+    return d;
   }
 
   // -- the browser-path hazards (the real-device failures behind the web OTA fix) --
@@ -111,7 +125,7 @@ class FakeDevice implements OtaDevice {
       const p = this.pending!;
       const crashes = p.image[0] === 0x43; // "C"
       if (crashes) {
-        this.mode = "loader";
+        this.mode = this.inApp ? "app" : "loader";
         this.last = "rolled_back";
         this.pending = null;
       } else {
@@ -181,7 +195,7 @@ class FakeDevice implements OtaDevice {
 
   async otaBegin(manifest: Uint8Array): Promise<OtaStatusFlat> {
     this.live();
-    if (this.mode === "app") {
+    if (this.mode === "app" && !this.inApp) {
       this.mode = "handoff";
       setTimeout(() => this.reboot(), 1);
       return this.status("STATE_REBOOTING");
@@ -246,6 +260,46 @@ test("an update hands over to the loader, streams, and waits for health", async 
   assert.deepEqual(dev.slot.subarray(0, image.length), image);
   assert.equal(phases[0], "handoff");
   for (const p of ["transfer", "verify", "reboot", "health", "done"]) assert.ok(phases.includes(p), p);
+});
+
+test("an in-app device (the P4 player) takes the image without a loader handoff", async () => {
+  const dev = FakeDevice.inAppDevice();
+  const image = new Uint8Array(150_000).map((_, i) => (i * 5) & 255);
+  image[0] = 0xe9;
+  const phases: string[] = [];
+  const r = await updateFirmware(dev, pkg(image, 1_014_000), {
+    ...fast,
+    onProgress: (p: OtaProgress) => phases.push(p.phase),
+  });
+  assert.equal(r.outcome, "ok");
+  assert.equal(dev.handoffs, 0);
+  assert.equal(dev.appVersion, 1_014_000);
+  assert.deepEqual(dev.slot.subarray(0, image.length), image);
+  assert.ok(!phases.includes("handoff"), "no handoff");
+  for (const p of ["transfer", "verify", "reboot", "health", "done"]) assert.ok(phases.includes(p), p);
+});
+
+test("an in-app device resumes in the app after a reset mid-transfer", async () => {
+  const dev = FakeDevice.inAppDevice();
+  const image = new Uint8Array(300_000).map((_, i) => (i * 11) & 255);
+  image[0] = 0xe9;
+  dev.failNextChunkAt = 150_000;
+  const r = await updateFirmware(dev, pkg(image, 5), fast);
+  assert.equal(r.outcome, "ok");
+  assert.equal(r.resumes, 1);
+  assert.equal(dev.handoffs, 0);
+  assert.deepEqual(dev.slot.subarray(0, image.length), image);
+});
+
+test("an in-app device that goes back to its previous image is reported as rolled back", async () => {
+  const image = new Uint8Array(20_000);
+  image[0] = 0x43; // the fake's "crashes at boot" marker
+  const dev = FakeDevice.inAppDevice();
+  dev.appVersion = 1_013_000;
+  const r = await updateFirmware(dev, pkg(image, 1_014_000), { ...fast, expectHealthy: false });
+  assert.equal(r.outcome, "rolled_back");
+  assert.equal(r.final?.mode, "MODE_APP");
+  assert.equal(dev.appVersion, 1_013_000, "the previous image runs");
 });
 
 test("a reset mid-transfer resumes from the persisted offset", async () => {

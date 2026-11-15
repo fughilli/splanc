@@ -33,8 +33,11 @@ pub struct DwellHop {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(default)]
 pub struct ScenarioSpec {
-    /// "coil" (helix, 7 cm radius), "wall" (planar grid) or "strip" (a
-    /// straight run along x).
+    /// "coil" (helix, 7 cm radius), "wall" (planar grid), "strip" (a
+    /// straight run along x) or "dodecahedron" (the radiolarian: a closed
+    /// dodecahedron of pentagonal panels, LEDs on concentric rings `pitch`
+    /// apart, `ledCount` spread over the 12 faces innermost ring first; LEDs
+    /// on faces turned away from the camera are hidden).
     pub fixture: String,
     #[serde(rename = "ledCount")]
     pub led_count: usize,
@@ -55,6 +58,14 @@ pub struct ScenarioSpec {
     pub frame_hz: f64,
     #[serde(rename = "imuHz")]
     pub imu_hz: f64,
+    /// IMU starvation: the share of the capture inside DeviceMotion gaps (the
+    /// browser drops motion events while the main thread is busy), each gap
+    /// uniform in [0.1, `imuGapMaxS`] s (a new one may start as one ends).
+    /// 0 = none.
+    #[serde(rename = "imuGapFrac")]
+    pub imu_gap_frac: f64,
+    #[serde(rename = "imuGapMaxS")]
+    pub imu_gap_max_s: f64,
     #[serde(rename = "pxNoise")]
     pub px_noise: f64,
     /// Per-observation drop probability.
@@ -95,6 +106,8 @@ impl Default for ScenarioSpec {
             dwell_hop: None,
             frame_hz: 10.0,
             imu_hz: 100.0,
+            imu_gap_frac: 0.0,
+            imu_gap_max_s: 0.6,
             px_noise: 1.0,
             drop_p: 0.05,
             stride: 1,
@@ -126,6 +139,7 @@ pub fn fixture_leds(spec: &ScenarioSpec) -> Vec<Vec3> {
                 })
                 .collect()
         }
+        "dodecahedron" => dodecahedron_leds(n, spec.pitch).0,
         "strip" => (0..n)
             .map(|i| [(i as f64 - (n as f64 - 1.0) / 2.0) * spec.pitch, 0.0, 0.0])
             .collect(),
@@ -137,6 +151,57 @@ pub fn fixture_leds(spec: &ScenarioSpec) -> Vec<Vec3> {
             })
             .collect(),
     }
+}
+
+/// Inradius of the radiolarian's dodecahedron (panel centre to body centre).
+pub const DODECA_INRADIUS_M: f64 = 0.105;
+
+/// The radiolarian fixture: `n` LEDs over a dodecahedron's 12 pentagonal
+/// faces, each face's LEDs on concentric rings `pitch` apart (1, 6, 12, 18,
+/// 24, 44 LEDs: 105 per face, 1260 in all), innermost first. Returns the LEDs
+/// and each one's outward face normal (for back-face hiding).
+pub fn dodecahedron_leds(n: usize, pitch: f64) -> (Vec<Vec3>, Vec<Vec3>) {
+    const RINGS: [usize; 6] = [1, 6, 12, 18, 24, 44];
+    let ring_pos: Vec<(f64, f64)> = RINGS
+        .iter()
+        .enumerate()
+        .flat_map(|(ring, &count)| {
+            (0..count).map(move |k| {
+                let a = std::f64::consts::TAU * k as f64 / count as f64 + ring as f64 * 0.3;
+                let r = ring as f64 * pitch;
+                (r * a.cos(), r * a.sin())
+            })
+        })
+        .collect();
+    // Face normals: the icosahedron's vertices.
+    let phi = (1.0 + 5f64.sqrt()) / 2.0;
+    let mut normals: Vec<Vec3> = Vec::new();
+    for a in [-1.0, 1.0] {
+        for b in [-phi, phi] {
+            normals.push([0.0, a, b]);
+            normals.push([a, b, 0.0]);
+            normals.push([b, 0.0, a]);
+        }
+    }
+    let per_face = n.div_ceil(12).min(ring_pos.len());
+    let (mut leds, mut ns) = (Vec::new(), Vec::new());
+    for nrm in &normals {
+        let nn = scale(*nrm, 1.0 / crate::linalg::norm(*nrm));
+        // An in-plane basis for the face.
+        let helper = if nn[1].abs() < 0.9 { [0.0, 1.0, 0.0] } else { [1.0, 0.0, 0.0] };
+        let e1 = crate::linalg::normalize(crate::linalg::cross(helper, nn));
+        let e2 = crate::linalg::cross(nn, e1);
+        for &(x, y) in ring_pos.iter().take(per_face) {
+            leds.push(add(
+                scale(nn, DODECA_INRADIUS_M),
+                add(scale(e1, x), scale(e2, y)),
+            ));
+            ns.push(nn);
+        }
+    }
+    leds.truncate(n);
+    ns.truncate(n);
+    (leds, ns)
 }
 
 /// Port of web/src/code/stride.ts `strideLit`.
@@ -163,6 +228,9 @@ pub struct Scenario {
 
 pub fn generate(spec: &ScenarioSpec) -> Scenario {
     let leds = fixture_leds(spec);
+    // Closed fixtures hide the LEDs on faces turned away from the camera.
+    let normals: Option<Vec<Vec3>> = (spec.fixture == "dodecahedron")
+        .then(|| dodecahedron_leds(spec.led_count.max(2), spec.pitch).1);
     let dur = spec.duration;
     let ph: Vec<f64> = {
         let mut r = Rng::new(spec.seed ^ 77);
@@ -209,9 +277,29 @@ pub fn generate(spec: &ScenarioSpec) -> Scenario {
     let mut rng = Rng::new(spec.seed);
     let h = 1e-4;
     let (gyro_bias, accel_bias) = ([2e-3, -1e-3, 1.5e-3], [0.03, -0.02, 0.04]);
-    let imu: Vec<Value> = (0..(dur * spec.imu_hz) as usize)
-        .map(|i| {
-            let t = i as f64 / spec.imu_hz;
+    // IMU starvation: gaps start as a Poisson process whose rate makes them
+    // cover `imu_gap_frac` of the capture on average.
+    let mut gap_rng = Rng::new(spec.seed ^ 0x1u64.rotate_left(40));
+    let gap_mean = 0.5 * (0.1 + spec.imu_gap_max_s.max(0.1));
+    let gap_frac = spec.imu_gap_frac.clamp(0.0, 0.95);
+    let gap_start_p = gap_frac / ((1.0 - gap_frac) * gap_mean) / spec.imu_hz;
+    let mut gap_until = f64::NEG_INFINITY;
+    let imu_times: Vec<f64> = (0..(dur * spec.imu_hz) as usize)
+        .map(|i| i as f64 / spec.imu_hz)
+        .filter(|&t| {
+            if t < gap_until {
+                return false;
+            }
+            if gap_frac > 0.0 && gap_rng.uniform() < gap_start_p {
+                gap_until = t + 0.1 + gap_rng.uniform() * (spec.imu_gap_max_s.max(0.1) - 0.1);
+                return false;
+            }
+            true
+        })
+        .collect();
+    let imu: Vec<Value> = imu_times
+        .into_iter()
+        .map(|t| {
             let r = rot(t);
             let mut gyro = scale(so3_log(&mat_mul(&transpose(&r), &rot(t + h))), 1.0 / h);
             let a = scale(
@@ -244,6 +332,11 @@ pub fn generate(spec: &ScenarioSpec) -> Scenario {
             if !stride_lit(j, phase, stride, spec.anchor_density) {
                 continue;
             }
+            if let Some(ns) = &normals {
+                if crate::linalg::dot(ns[j], sub(p, *l)) <= 0.0 {
+                    continue; // on a face turned away
+                }
+            }
             let (u, v, d) = project(&r, p, spec.k, *l);
             let inside = d > 0.0
                 && (0.0..2.0 * spec.k[2]).contains(&u)
@@ -273,5 +366,63 @@ pub fn generate(spec: &ScenarioSpec) -> Scenario {
             "createdAt": "1970-01-01T00:00:00Z",
         }),
         truth: leds,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::linalg::{norm, sub};
+
+    #[test]
+    fn the_dodecahedron_is_the_radiolarian() {
+        let (leds, normals) = dodecahedron_leds(1260, 0.0135);
+        assert_eq!(leds.len(), 1260, "105 LEDs on each of 12 faces");
+        // Every LED sits on its face's plane, at the inradius.
+        for (l, n) in leds.iter().zip(&normals) {
+            assert!((crate::linalg::dot(*l, *n) - DODECA_INRADIUS_M).abs() < 1e-12);
+        }
+        // Neighbours on a face are about a ring pitch apart.
+        let face = &leds[..105];
+        let nn: Vec<f64> = face
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                face.iter()
+                    .enumerate()
+                    .filter(|(j, _)| *j != i)
+                    .map(|(_, b)| norm(sub(*a, *b)))
+                    .fold(f64::INFINITY, f64::min)
+            })
+            .collect();
+        let mean = nn.iter().sum::<f64>() / nn.len() as f64;
+        assert!((0.009..0.014).contains(&mean), "mean NN {mean:.4} m");
+    }
+
+    #[test]
+    fn imu_gaps_starve_the_stream_as_asked() {
+        let sc = generate(&serde_json::from_value(serde_json::json!({
+            "duration": 120, "imuHz": 15, "imuGapFrac": 0.3, "imuGapMaxS": 0.6,
+            "frameHz": 1,
+        }))
+        .unwrap());
+        let ts: Vec<f64> = sc.problem["imu"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["t"].as_f64().unwrap() / 1000.0)
+            .collect();
+        // Time lost to gaps: each long interval minus the one it replaces.
+        let gap: f64 = ts
+            .windows(2)
+            .map(|w| w[1] - w[0])
+            .filter(|&d| d > 0.1)
+            .map(|d| d - 1.0 / 15.0)
+            .sum();
+        let frac = gap / 120.0;
+        assert!((0.2..0.4).contains(&frac), "{:.0}% in gaps", frac * 100.0);
+        // Gaps are up to 0.6 s each (back-to-back ones can chain).
+        let longest = ts.windows(2).map(|w| w[1] - w[0]).fold(0.0, f64::max);
+        assert!((0.45..2.0).contains(&longest), "longest gap {longest:.2} s");
     }
 }

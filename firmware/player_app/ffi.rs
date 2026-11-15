@@ -19,6 +19,9 @@
 // The OTA core's C ABI (ota_ffi.h) rides in this staticlib for the app's
 // update hooks (ota_app.cpp): linked here, not referenced from Rust.
 extern crate splanc_ota;
+// Likewise the Ethernet + network outputs core (netout_ffi.h) for the P4's
+// netout_app.cpp (docs/design/p4-ethernet-ddp.md).
+extern crate splanc_netout;
 
 use core::convert::Infallible;
 use core::ffi::c_void;
@@ -1804,6 +1807,15 @@ pub unsafe extern "C" fn lm_led_count_seed(channel: u32, led_count: u32) {
     player().seed_led_count(channel as usize, led_count);
 }
 
+/// GPIOs another output owns (the enabled Ethernet's pins, netout_busy_pins),
+/// which `set_hardware_config` then refuses as LED data pins. Replaces the
+/// previous set; `n == 0` clears it.
+#[no_mangle]
+pub unsafe extern "C" fn lm_set_reserved_gpios(pins: *const i32, n: usize) {
+    let pins: &[i32] = if pins.is_null() || n == 0 { &[] } else { core::slice::from_raw_parts(pins, n) };
+    player().set_reserved_gpios(pins);
+}
+
 /// Install this board's static capability descriptor: `data` is a serialized
 /// `BoardCapabilities` (the board textproto compiled to a binaryproto at build
 /// time and embedded in the image). Kept encoded and echoed in
@@ -2678,8 +2690,8 @@ const ARM_GET_WIFI_POLICY: u32 = 91;
 /// The protocol features this firmware serves: welcome.features and the agent
 /// manifest's protocol.features (/.well-known/splanc.json), so a client needn't
 /// infer them from fw_version.
-pub const FEATURES: &[&str] =
-    &[
+macro_rules! features {
+    ($($extra:literal),*) => { &[
         "effects",
         "perf",
         "textures",
@@ -2710,7 +2722,16 @@ pub const FEATURES: &[&str] =
         // Kiosk mode (get_kiosk_status / set_kiosk_config / kiosk_unlock, the
         // kiosk_status push, Error "kiosk_locked"): docs/design/kiosk-mode.md.
         "kiosk",
-    ];
+        $($extra),*
+    ] };
+}
+
+#[cfg(not(lm_ota_inapp))]
+pub const FEATURES: &[&str] = features!();
+/// The ESP32-P4 player (docs/design/p4-c6-split.md §5.1) takes its update in the app
+/// itself, through the C6 front end: no restart into a loader before the transfer.
+#[cfg(lm_ota_inapp)]
+pub const FEATURES: &[&str] = features!("ota_inapp");
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
 /// (The set_texture RLE payload's run lengths; protobuf fields go through

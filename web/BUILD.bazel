@@ -97,6 +97,7 @@ copy_to_bin(
         "src/net/bridgeLive.ts",  # the app's live-VJ client (the bridge's live e2e test drives it)
         "src/net/client.ts",
         "src/net/clocksync.ts",
+        "src/net/ethernet.ts",  # P4 Ethernet + network outputs (get/set_ethernet_*)
         "src/net/fxbTextures.ts",
         "src/net/liveControl.ts",  # the client's real-time control channel
         "src/net/liveProtocol.ts",

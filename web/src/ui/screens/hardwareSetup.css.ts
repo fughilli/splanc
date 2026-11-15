@@ -104,4 +104,7 @@ const CSS = `
   font-size: var(--f-caption);
 }
 .hw-test-actions { display: flex; gap: var(--sp-2); margin-top: var(--sp-2); flex-wrap: wrap; }
+.hw-test-actions .hw-row-hint { align-self: center; }
+.hw-details { margin-top: var(--sp-2); }
+.hw-details > summary { cursor: pointer; padding: var(--sp-1) 0; }
 `;

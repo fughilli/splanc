@@ -84,3 +84,22 @@ esptool_flash(
     chip = "esp32p4",
     tags = ["manual"],
 )
+
+# The P4 player's A/B partition table (partitions_p4_ota.csv; §5.1) at 0x8000.
+genrule(
+    name = "partitions_p4_ota",
+    srcs = ["partitions_p4_ota.csv"],
+    outs = [
+        "partitions_p4_ota.bin",
+        "partitions_p4_ota.h",
+    ],
+    cmd = "$(execpath //firmware/loader:gen_partitions) --flash-size 0x1000000 --csv $< " +
+          "--bin $(location partitions_p4_ota.bin) " +
+          "--header $(location partitions_p4_ota.h)",
+    tools = ["//firmware/loader:gen_partitions"],
+)
+
+filegroup(
+    name = "partitions_p4_ota_bin",
+    srcs = ["partitions_p4_ota.bin"],
+)

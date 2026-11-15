@@ -94,6 +94,7 @@ uint32_t ns_tcp_tx_pending(void);  // send side holds queued/unacked data (RTO +
 uint32_t ns_tcp_window_ack(uint8_t *out, uint32_t cap); // window-update ACK after draining rx
 uint32_t ns_tcp_recv(uint8_t *out, uint32_t cap);
 void ns_tcp_listen(const uint8_t *src, uint16_t sport, uint32_t iss); // passive open (server)
+uint32_t ns_tcp_abort(uint8_t *out, uint32_t cap); // RST|ACK to the current peer (0 = none)
 uint32_t ns_tcp_state();
 uint32_t ns_tcp_snd_una(); // oldest unacked seq — advances on peer ACK (TX forward progress)
 uint32_t ns_tcp_rcv_nxt(); // next expected seq — advances on peer data (RX forward progress)
@@ -3118,6 +3119,16 @@ void netstack_loop() {
           last_prog = prog;
         } else if (millis() - hs_since > 4000) {
           Serial.println("*** SERVER handshake wedge (peer silent pre-WS) — reclaiming ***");
+          // Reset the silent peer before taking its slot. A browser's preconnected socket
+          // looks exactly like this (TLS done, no request yet); left alive on its side,
+          // Chrome later sends the request into the dead connection, gets the listener's
+          // stale-segment RST, resends, and gives up (ERR_TOO_MANY_RETRIES on Android).
+          // Reset now, while it's idle, so Chrome discards it and dials a fresh socket.
+          {
+            uint8_t rst[80];
+            uint32_t rn = ns_tcp_abort(rst, sizeof rst);
+            if (rn > 0) send_ip(rst, rn);
+          }
           static uint32_t riss = 0x5000;
           ns_tcp_listen(g_offer_ip, SERVER_PORT, riss);
           riss += 0x1000;

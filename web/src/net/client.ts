@@ -77,6 +77,16 @@ import { decodeServer, encodeClient, type KioskStatusMessage, type SetKioskConfi
 import { LiveControl } from "./liveControl";
 import type { CaptureProfileFlat } from "../capture/captureProfile";
 import { normalizeWifiPolicy, wifiPolicyMessage, type WifiPolicy, type WifiPolicyRequest } from "./wifiPolicy";
+import {
+  configToWire as ethConfigToWire,
+  controllersFromWire,
+  protocolToWire as ethProtocolToWire,
+  stateFromWire as ethStateFromWire,
+  type DiscoveredController,
+  type EthernetConfig,
+  type EthernetState,
+  type NetworkOutput,
+} from "./ethernet";
 
 /** The subset of the WebSocket API the client uses (fakeable in tests). */
 export interface SocketLike {
@@ -1191,6 +1201,65 @@ export class LedMapperClient {
   /** Restart into the app or (recovery) the loader. */
   otaReboot(target: "TARGET_APP" | "TARGET_LOADER"): Promise<OtaStatusMessage> {
     return this.ota({ type: "ota_reboot", target });
+  }
+
+  // -- Ethernet + network LED outputs (docs/design/p4-ethernet-ddp.md; net/ethernet.ts) --
+
+  /** The P4's Ethernet config, link state and network outputs. Older firmware
+   * (and non-P4 players) never reply: this times out with RequestTimeoutError. */
+  async getEthernetState(): Promise<EthernetState> {
+    const r = await this.request(
+      { type: "get_ethernet_state" } as unknown as ClientMessage,
+      "ethernet_state",
+      this.requestTimeoutMs,
+    );
+    return ethStateFromWire(r);
+  }
+
+  /** Replace the Ethernet config (the player restarts Ethernet if it changed).
+   * Reply: the resulting state; `error` says why a config was refused. */
+  async setEthernetConfig(config: EthernetConfig, commit = true): Promise<EthernetState> {
+    const r = await this.request(
+      { type: "set_ethernet_config", config: ethConfigToWire(config), commit } as unknown as ClientMessage,
+      "ethernet_state",
+      this.requestTimeoutMs,
+    );
+    return ethStateFromWire(r);
+  }
+
+  /** Point LED channel `channel` (2..) at a controller; ip 0 clears it. Its LED
+   * count is set with setHardwareConfig({channel, ledCount}). */
+  async setNetworkOutput(output: NetworkOutput, commit = true): Promise<EthernetState> {
+    const r = await this.request(
+      {
+        type: "set_network_output",
+        output: {
+          channel: output.channel,
+          protocol: ethProtocolToWire(output.protocol),
+          ip: output.ip >>> 0,
+          port: output.port,
+          name: output.name,
+          universe: output.universe,
+          sync: output.sync,
+        },
+        commit,
+      } as unknown as ClientMessage,
+      "ethernet_state",
+      this.requestTimeoutMs,
+    );
+    return ethStateFromWire(r);
+  }
+
+  /** Look for WLED boards on the Ethernet network. The player waits up to
+   * `timeoutMs` (capped at 800) and returns every board it knows, so a second
+   * call picks up boards that answered late. */
+  async discoverControllers(timeoutMs = 600): Promise<{ controllers: DiscoveredController[]; error: string }> {
+    const r = await this.request(
+      { type: "discover_controllers", timeoutMs } as unknown as ClientMessage,
+      "controller_list",
+      Math.max(this.requestTimeoutMs, timeoutMs + 2000),
+    );
+    return controllersFromWire(r);
   }
 
   // -- Wi-Fi rejoin policy (docs/design/wifi-rejoin-policy.md; net/wifiPolicy.ts) --

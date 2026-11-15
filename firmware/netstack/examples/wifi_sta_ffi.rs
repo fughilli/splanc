@@ -182,6 +182,18 @@ pub extern "C" fn ns_tcp_connect(src: *const u8, dst: *const u8, sport: u16, dpo
     }
 }
 
+/// Abort the current connection: writes an RST|ACK to its peer into `out` (0 when there
+/// is no peer). Call before `ns_tcp_listen` reclaims the slot, so the peer learns its
+/// socket is dead instead of finding out when it next sends (see TcpConn::abort).
+#[no_mangle]
+pub extern "C" fn ns_tcp_abort(out: *mut u8, cap: u32) -> u32 {
+    unsafe {
+        let Some(c) = TCP.as_mut() else { return 0 };
+        let o = core::slice::from_raw_parts_mut(out, cap as usize);
+        c.abort(o) as u32
+    }
+}
+
 /// Open a passive TCP listener bound to `src`:`sport` (the WSS/TLS server path). The peer
 /// is latched from the first inbound SYN; drive it with `ns_tcp_on_ip`.
 #[no_mangle]

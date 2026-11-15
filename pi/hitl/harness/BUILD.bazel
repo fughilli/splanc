@@ -553,6 +553,37 @@ py_test(
 # one and sheds the rest — excess SYNs are never accepted, so there is no multi-session heap
 # pressure; the anti-wedge gate is that a clean wss handshake recovers within --recover-window
 # (the dead-peer RTO re-listen frees a vanished client's slot well inside the default 40s).
+# A browser's preconnected socket must not wedge the cert-trust page (Android Chrome
+# ERR_TOO_MANY_RETRIES): a TLS connection idling past the netstack's silent-peer reclaim
+# must be served or visibly reset, never silently dropped. The probe runs in the
+# reservation env, next to the DUT (a tunnel would hide the DUT's TCP behaviour).
+py_test(
+    name = "preconnect_netstack",
+    timeout = "eternal",
+    srcs = [
+        "hitl_preconnect.py",
+        "preconnect_probe.py",
+    ],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_preconnect.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "@rules_python//python/runfiles",
+    ],
+)
+
 py_test(
     name = "tls_churn_netstack",
     timeout = "eternal",

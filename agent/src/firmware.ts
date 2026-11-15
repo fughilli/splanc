@@ -25,7 +25,14 @@ export interface PackageSource {
   /** A Splanc MAX board ("pi3", …: ota_status.board) — the release's
    * `max-<board>-<ver>.manifest` instead of the C6 `.ota` (docs/design/max-ota.md). */
   board?: string;
+  /** An ESP32-P4 player (welcome feature "ota_inapp"): the release's
+   * `esp32p4-player-<ver>.ota`, which carries its C6 front end's images too
+   * (docs/design/p4-c6-split.md §5.1). */
+  p4?: boolean;
 }
+
+/** otaBoard()'s answer for an ESP32-P4 player (not a MAX board: it takes a whole `.ota`). */
+export const P4_KIND = "esp32p4";
 
 export interface ResolvedPackage {
   bytes: Uint8Array;
@@ -46,6 +53,12 @@ type Fetch = (url: string, init?: { headers?: Record<string, string> }) => Promi
 export function releasePackageUrl(version: string): string {
   const v = version.replace(/^v/, "");
   return `https://github.com/${REPO}/releases/download/firmware-v${v}/esp32c6-netstack-${v}.ota`;
+}
+
+/** Where a release's ESP32-P4 player package lives (both chips' images, one manifest). */
+export function releaseP4PackageUrl(version: string): string {
+  const v = version.replace(/^v/, "");
+  return `https://github.com/${REPO}/releases/download/firmware-v${v}/esp32p4-player-${v}.ota`;
 }
 
 /** A release's key-epoch record, if it ships one (docs/design/ota.md "Key rotation"). */
@@ -104,15 +117,17 @@ export async function resolvePackage(src: PackageSource, fetchImpl: Fetch = fetc
     let version = src.version ?? "latest";
     if (version === "latest") version = await latestVersion(fetchImpl);
     if (versionNumber(version) === null) throw new Error(`"${version}" isn't a release version (X.Y.Z or "latest")`);
-    const url = releasePackageUrl(version);
+    const url = src.p4 ? releaseP4PackageUrl(version) : releasePackageUrl(version);
     const res = await fetchImpl(url);
     if (!res.ok) {
       throw new Error(
-        `firmware ${version} has no over-the-air package (HTTP ${res.status} for ${url}); releases before the OTA loader need a USB flash`,
+        src.p4
+          ? `firmware ${version} has no ESP32-P4 player package (HTTP ${res.status} for ${url})`
+          : `firmware ${version} has no over-the-air package (HTTP ${res.status} for ${url}); releases before the OTA loader need a USB flash`,
       );
     }
     bytes = new Uint8Array(await res.arrayBuffer());
-    label = `firmware ${version}`;
+    label = src.p4 ? `firmware ${version} (ESP32-P4 player)` : `firmware ${version}`;
     const er = await fetchImpl(releaseEpochUrl(version));
     if (er.ok) {
       const { info } = splitPackage(bytes);

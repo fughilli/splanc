@@ -51,6 +51,20 @@ import type { ColorBlock } from "@ledmapper/protocol";
 import { installHardwareSetupStyles } from "./hardwareSetup.css";
 import { wireFpsCeiling } from "../../net/ledWire";
 import { openCurtainLayoutSheet } from "../../halloween/layoutSheet";
+import { busyPins, capsFromWire, describeOutput, type EthernetCaps, type EthernetState } from "../../net/ethernet";
+import {
+  addOutputCard,
+  ethernetCard,
+  networkChannels,
+  outputCard,
+  resetNetworkSection,
+  type NetworkDeps,
+} from "./hardwareSetupNetwork";
+
+/** Network output channels (WLED over DDP, docs/design/p4-ethernet-ddp.md)
+ * report this LED type and have no GPIO. */
+const NET_LED_TYPE = "ddp";
+const isNet = (c: HardwareChannel): boolean => c.ledType === NET_LED_TYPE;
 
 // Output-capable C6 GPIOs for LED data, grouped by how safe they are to use.
 // Categories + caveats follow the ESP32-C6 SuperMini pinout published at
@@ -248,6 +262,11 @@ export function HardwareSetupScreen(_router: Router): Screen {
   let pendingOrder: ColorOrder | null = null;
   // How many pixels of each primary the color-order test lights (see TEST_COUNTS).
   let testCount = 3;
+  // The P4's Ethernet (null when the board has none or it hasn't answered yet).
+  let ethState: EthernetState | null = null;
+  const ethCaps = (): EthernetCaps | null => capsFromWire(boardCaps?.ethernet);
+  // Pins the enabled Ethernet takes: shown as unavailable in the strip pin pickers.
+  const ethBusy = (): number[] => (ethState ? busyPins(ethState.config, ethCaps()) : []);
 
   // Active pin/LED-type catalog: the board's own when it reports one, else the
   // built-in SuperMini fallback.
@@ -310,6 +329,14 @@ export function HardwareSetupScreen(_router: Router): Screen {
       boardCaps = st.board ?? null;
       configState = channels.length > 0 ? "ok" : "empty";
       render();
+      if (ethCaps()) {
+        try {
+          ethState = await c.getEthernetState();
+        } catch {
+          ethState = null;
+        }
+        render();
+      }
     } catch (err) {
       // The firmware didn't answer get_hardware_config. A RequestTimeoutError
       // (it never replied) is the classic signature of firmware too old to know
@@ -460,18 +487,77 @@ export function HardwareSetupScreen(_router: Router): Screen {
 
   // -- rendering ------------------------------------------------------------
 
+  /** The network-output hooks, or null on a board without network channels. */
+  function netDeps(): NetworkDeps | null {
+    const netChannels = boardCaps?.netChannels ?? 0;
+    if (netChannels <= 0) return null;
+    return {
+      client: connectedClient,
+      caps: ethCaps(),
+      netChannels,
+      state: ethState,
+      channels,
+      maxLeds: boardCaps?.maxLeds ?? 0,
+      setLedCount,
+      onState: (st) => {
+        ethState = st;
+        render();
+      },
+      rerender: render,
+      captureModeRow,
+      appendColorOrder,
+    };
+  }
+
+  // Unused strips on a board with network outputs fold to one line until opened.
+  const openStrips = new Set<number>();
+
   function render(): void {
     const parts: HTMLElement[] = [];
     if (channels.length === 0) parts.push(emptyNote());
     else {
-      parts.push(...channels.map(channelCard));
-      parts.push(layoutGroup());
+      const net = netDeps();
+      parts.push(outputsGroup(net));
+      for (const x of channels.filter((c) => !isNet(c))) {
+        const folded =
+          net !== null && (x.ledCount || 0) === 0 && activeTest !== x.channel && !openStrips.has(x.channel);
+        parts.push(folded ? foldedStripCard(x) : channelCard(x));
+      }
+      if (net) {
+        parts.push(...networkChannels(net).map((ch) => outputCard(net, ch)));
+        parts.push(addOutputCard(net));
+        const eth = ethernetCard(net);
+        if (eth) parts.push(eth);
+      }
     }
     // The per-device stride is local (persisted with the device), so surface it
     // whenever a device is selected — even if its firmware didn't report channels.
     const sg = strideGroup();
     if (sg) parts.push(sg);
     body.replaceChildren(...parts);
+  }
+
+  /** An unused GPIO strip on a board that also drives network outputs. */
+  function foldedStripCard(cfg: HardwareChannel): HTMLElement {
+    const g = group(`Channel ${cfg.channel} · GPIO ${cfg.gpio} strip`);
+    const r = document.createElement("div");
+    r.className = "hw-test-actions";
+    const note = document.createElement("span");
+    note.className = "hw-row-hint";
+    note.textContent = "Not used (no LEDs set).";
+    r.append(
+      note,
+      Button({
+        label: "Set up",
+        variant: "quiet",
+        onClick: () => {
+          openStrips.add(cfg.channel);
+          render();
+        },
+      }),
+    );
+    g.append(r);
+    return g;
   }
 
   /** The empty-state note, worded by why there are no channels. Matching c6/c3
@@ -626,49 +712,75 @@ export function HardwareSetupScreen(_router: Router): Screen {
   }
 
   /** How the channels' LEDs combine into the one strip mapping + effects use. */
-  function layoutGroup(): HTMLElement {
-    const g = group("LED layout");
-    const note = document.createElement("div");
-    note.className = "hw-hint";
+  /** Every output in LED order: what drives each range of the one strip that
+   * mapping and effects address. */
+  function outputsGroup(net: NetworkDeps | null): HTMLElement {
+    const g = group("Outputs");
     const max = boardCaps?.maxLeds ?? 0;
     const perChannel = boardCaps?.maxLedsPerChannel ?? 0;
-    const total = totalLeds();
-    const longest = Math.max(0, ...channels.map((x) => x.ledCount || 0));
-    const ranges: string[] = [];
+    // Every channel in use, in order: the strips, then network channels with a
+    // target or LEDs.
+    const ids = new Set<number>(channels.map((c) => c.channel));
+    if (net) for (const ch of networkChannels(net)) ids.add(ch);
     let start = 0;
-    for (const x of [...channels].sort((a, b) => a.channel - b.channel)) {
-      const n = Math.max(0, x.ledCount || 0);
-      ranges.push(
-        n > 0 ? `channel ${x.channel} = LEDs ${start}–${start + n - 1}` : `channel ${x.channel} not set`,
-      );
+    let total = 0;
+    for (const ch of [...ids].sort((a, b) => a - b)) {
+      const cfg = channels.find((c) => c.channel === ch);
+      const n = Math.max(0, cfg?.ledCount ?? 0);
+      const isNetCh = cfg ? isNet(cfg) : true;
+      if (!isNetCh && n === 0 && net) continue; // an unused strip on a networked board
+      const out = ethState?.outputs.find((o) => o.channel === ch);
+      const what = isNetCh
+        ? out
+          ? `${out.name ? `${out.name}: ` : ""}${describeOutput(out, n)}`
+          : "network output, no controller set"
+        : `GPIO ${cfg?.gpio} strip, ${cfg?.colorOrder}`;
+      const line = document.createElement("div");
+      line.className = "hw-row";
+      const label = document.createElement("div");
+      label.className = "hw-row-label";
+      const name = document.createElement("div");
+      name.className = "hw-row-name";
+      name.textContent = n > 0 ? `LEDs ${start}–${start + n - 1}` : "No LEDs set";
+      const hint = document.createElement("div");
+      hint.className = "hw-row-hint";
+      hint.textContent = `Channel ${ch} · ${what}`;
+      label.append(name, hint);
+      line.append(label);
+      g.append(line);
       start += n;
+      total += n;
     }
+    const note = document.createElement("div");
+    note.className = "hw-hint";
+    const longest = Math.max(0, ...channels.filter((x) => !isNet(x)).map((x) => x.ledCount || 0));
     note.textContent =
       total > 0
-        ? `Mapping and effects treat the channels as one strip of ${total} LEDs` +
+        ? `Mapping and effects treat these as one strip of ${total} LEDs` +
           (max > 0
             ? perChannel > 0
-              ? ` (this board drives up to ${perChannel} per channel, ${max} in all)`
+              ? ` (this board drives up to ${max}; ${perChannel} per GPIO strip)`
               : ` (this board drives up to ${max})`
             : "") +
-          `: ${ranges.join(", ")}. Map with ${total} LEDs to cover every channel.` +
+          `. Map with ${total} LEDs to cover every output.` +
           (longest > 0
-            ? ` The channels clock out in parallel, so the longest (${longest} LEDs) ` +
-              `caps effects at about ${wireFpsCeiling(longest)} fps.`
+            ? ` The strips clock out in parallel, so the longest (${longest} LEDs) caps effects ` +
+              `at about ${wireFpsCeiling(longest)} fps; network outputs don't.`
             : "")
-        : "Set each channel's LED count so mapping covers every channel. " +
-          "Channels are numbered in order: channel 0's LEDs first, then channel 1's.";
+        : "Set each output's LED count so mapping covers it. Outputs are numbered in order: " +
+          "channel 0's LEDs first, then channel 1's, and so on.";
     g.append(note);
     // Fallback for a curtain (CH0) + rope (CH1) fixture that can't be camera-mapped.
-    const ledsOn = (ch: number): number =>
-      Math.max(0, channels.find((x) => x.channel === ch)?.ledCount ?? 0);
-    g.append(
-      Button({
-        label: "Generate a curtain + rope map…",
-        variant: "quiet",
-        onClick: () => openCurtainLayoutSheet(ledsOn(0), ledsOn(1)),
-      }),
-    );
+    if (!net) {
+      const ledsOn = (ch: number): number => Math.max(0, channels.find((x) => x.channel === ch)?.ledCount ?? 0);
+      g.append(
+        Button({
+          label: "Generate a curtain + rope map…",
+          variant: "quiet",
+          onClick: () => openCurtainLayoutSheet(ledsOn(0), ledsOn(1)),
+        }),
+      );
+    }
     return g;
   }
 
@@ -731,7 +843,12 @@ export function HardwareSetupScreen(_router: Router): Screen {
     );
     const cap = captureModeRow(cfg.channel);
     if (cap) g.append(cap);
+    appendColorOrder(g, cfg);
+    return g;
+  }
 
+  /** The color-order row and its check / confirm flow, for any channel. */
+  function appendColorOrder(g: HTMLElement, cfg: HardwareChannel): void {
     // Color order: current value + the test/confirm flow.
     const orderRow = document.createElement("div");
     orderRow.className = "hw-row";
@@ -809,7 +926,6 @@ export function HardwareSetupScreen(_router: Router): Screen {
       );
       g.append(actions);
     }
-    return g;
   }
 
   /** "N per color" picker sitting next to the check button. Retunes the live
@@ -861,6 +977,7 @@ export function HardwareSetupScreen(_router: Router): Screen {
    * select snaps back to the previously-set pin so nothing is committed. */
   function gpioSelect(cfg: HardwareChannel): HTMLElement {
     const cat = catalog();
+    const busy = ethBusy();
     const sel = document.createElement("select");
     sel.className = "hw-select";
     for (const grp of gpioGroupsFor(cat, cfg.gpio)) {
@@ -870,6 +987,10 @@ export function HardwareSetupScreen(_router: Router): Screen {
         const o = document.createElement("option");
         o.value = String(gpio);
         o.textContent = `GPIO ${gpio}`;
+        if (busy.includes(gpio) && gpio !== cfg.gpio) {
+          o.disabled = true;
+          o.textContent = `GPIO ${gpio} (Ethernet)`;
+        }
         if (gpio === cfg.gpio) o.selected = true;
         og.appendChild(o);
       }
@@ -908,6 +1029,7 @@ export function HardwareSetupScreen(_router: Router): Screen {
     onUnmount: () => {
       // Leave the strip clean: clear any in-progress color test.
       if (activeTest !== null) void stopTest(activeTest);
+      resetNetworkSection();
     },
   };
 }
