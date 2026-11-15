@@ -245,6 +245,16 @@ its next `get_pattern` poll, the phone rebuilds its decode pipeline, and
 detections already collected stay valid. Two consecutive 2 s ticks must
 agree before a renegotiation fires (hysteresis).
 
+Every run's link behavior — each negotiated config (symbols, bit period,
+frames/bit), the selected exposure per tick, frame timing + dropouts, decode
+coverage over time and the decoded-ID error signals — is recorded by
+`src/cv/linkTelemetry.ts` into the debug capture bundle (`link`, bundle v2).
+`bazel run //web:link_bench` reports time-to-coverage / ID error rate /
+dropouts from those bundles, or from a moving-camera simulation
+(`tests/linkSim.ts`) per tuning policy, and rejects any candidate that raises
+the wrong-ID rate or signals under 3 frames/bit (see
+`pi/hitl/phone/MOVING_CAMERA_RIG.md` for the real-camera rig).
+
 ### How the wall stays in sync
 
 The wall never owns the pattern: it connects to the same `/ws` control plane,

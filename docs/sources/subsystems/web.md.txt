@@ -33,7 +33,13 @@ loaded at runtime, plus the solver wasm worker.
   the exact device VM in-browser over a map's LED positions). The AI chat has
   `estimate_performance` (offline cost model) and, while a fixture with `perf`
   is connected, `measure_on_device` (`effects/devicePerf.ts`), which reads the
-  device's perf stream.
+  device's perf stream. The agent's context lists the effective live uniform
+  values next to the source defaults, and `set_live_uniforms`
+  (`effects/ai/liveUniforms.ts`) sets or resets named live values in the preview
+  and, when it runs this effect, on the fixture. A turn that runs out of tool
+  steps ends as `exhausted` (`runChatTurn`), with a Continue action, and an AI
+  draft over its frame budget is held from auto-push and flagged as not ready
+  (`effects/ai/agentDraft.ts`).
 - **Show Mode & keypoints (`ui/screens/showMode.ts`, `keypointStrip.ts`)** —
   two decks, the crossfader and per-deck keypoint pads with a morph fader;
   `midi/showRouter.ts` maps every control to MIDI. The editor reuses the

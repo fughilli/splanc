@@ -11,7 +11,9 @@ That target (`docs/build_docs.py`) does two things, in order:
 1. **Regenerates the figures and animations.** It runs the _real_ `shared/simulator`
    → `pi/reconstruction` code path (`docs/gen_figures.py`) to render the fixture
    gallery, the synthetic camera-walk animation, and the reconstruction-accuracy
-   figure. Nothing is hand-drawn, so the visuals can't drift from the code.
+   figure, plus the strided-capture schedule (drawn from the stride golden the
+   phone and firmware are tested against). Nothing is hand-drawn, so the visuals
+   can't drift from the code.
 2. **Builds the HTML.** It assembles a staging source tree that mirrors the repo
    layout — so the relative links between the existing markdown docs keep
    resolving — drops in the hand-written overview / architecture / subsystem
@@ -23,6 +25,9 @@ over HTTP:
 ```sh
 bazel run //docs:serve       # serves docs/site/html on http://localhost:8000
 ```
+
+CI publishes the site from `main` at
+<https://fughilli.github.io/splanc/docs/>.
 
 ## What's hand-written vs folded in
 

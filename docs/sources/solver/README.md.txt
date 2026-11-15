@@ -54,6 +54,12 @@ a floating focal is a scale-drift channel; calibration studies keep the
 Python solver, which also remains the automatic fallback when the binary is
 missing from runfiles).
 
+One deliberate difference: the outlier loop's best-round rollback ranks
+rounds degeneracy-first (diag.rs `better`: non-degenerate, then solved LEDs,
+then rms), where the Python reference ranks (solved, rms) only. They agree
+unless a round goes degenerate — a scale collapse keeps most LEDs within
+8 px, since reprojection is scale-invariant, so (solved, rms) can't see it.
+
 ## Strip prior (`options.stripPrior`, off by default)
 
 Most fixtures are a strip, rope or string wired in id order, so LED `i` and
@@ -76,6 +82,17 @@ stripTolerance)`, linear past it (a pitch of overshoot ≈ a 20σ pixel
    neighbours at equal spacing. End runs stay unmapped. Placed LEDs are
    emitted as ordinary entries with `nViews = 0, confidence = 0` (the web app's
    `geom/inferred.ts` keys on that), so any real measurement outranks them.
+4. **Candidate protection** — the rope solve does not replace the
+   pre-strip state outright. Both are assembled (demote + fill, each with
+   its own pitch/breaks) and assessed on their measured LEDs (diag.rs), and
+   `strip_candidate_policy` decides: a strip result that is degenerate (e.g.
+   a scale collapse) while the retained one is not is rolled back
+   (`rollback-to-pre-strip` stage); otherwise the strip result stands, even
+   with fewer measured LEDs or a higher residual — demoting off-chain LEDs
+   is the prior's job. Both candidates (measured/removed/inferred counts,
+   camera distance, spread, rms, degeneracy) and the decision are in the
+   diagnostics' `stripCandidates`. The scale warnings come from whichever
+   candidate is returned.
 
 Rust-only: the Python reference doesn't implement it, and with the option off
 (the default) the solve is unchanged, so `rust_parity_test` is unaffected. The

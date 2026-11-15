@@ -93,7 +93,9 @@ manually**. More: [Connecting a device](user-guide.md#connecting-a-device).
    complete, then tap **Stop & finish**.
 4. LEDs behind a diffuser? Turn on **Diffuse capture** on the capture screen.
    It lights every Nth LED per phase (the **Stride length**, default 4, set in
-   **Hardware**) so neighbouring spots don't bleed together.
+   **Hardware**) so neighbouring spots don't bleed together. Keep moving slowly
+   through the whole capture: every phase needs its own range of angles (how it
+   works: [strided capture](design/strided-capture.md)).
 
 You get a **3D map** of every LED, in metres with +Y up, plus a topology
 skeleton (strands, junctions, loops). Tidy it in the mapping workspace, send
@@ -202,7 +204,8 @@ The technical documentation behind each step:
   [MIDI](user-guide.md#midi-controllers).
 - **How mapping works**: [the design spec](../led-mapper-design.md), and
   [mapping-solve-paths.md](design/mapping-solve-paths.md) on the live-preview and
-  final solves.
+  final solves, and [strided-capture.md](design/strided-capture.md) on mapping
+  fixtures behind a diffuser.
 - **Effects**: [EFFECTS.md](../EFFECTS.md) covers the effects language, the
   bytecode VM, uniforms, textures and MIDI. See also
   [effects-runtime.md](design/effects-runtime.md),

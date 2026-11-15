@@ -21,6 +21,7 @@ FX debugger: pause, inspect, replay <../docs/design/fx-debugger>
 :maxdepth: 1
 
 VIO solver exploration <../docs/vio-exploration>
+Strided (diffuse) capture <../docs/design/strided-capture>
 Blob-detection playbook <../docs/blob-detection-playbook>
 ESP32 LED-mapping plan <../docs/esp32-led-mapping-plan>
 ```
