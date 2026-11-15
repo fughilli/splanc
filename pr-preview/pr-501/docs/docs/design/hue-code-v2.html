@@ -642,7 +642,7 @@ per id and per pilot frame.</p>
 </tr>
 <tr class="row-odd"><td><p>10</p></td>
 <td><p>Generators and renderers</p></td>
-<td><p>Done in the kernel (<code class="docutils literal notranslate"><span class="pre">color_index_for_frame</span></code>). The wall, the phone’s synthetic source and the Python binding (<code class="docutils literal notranslate"><span class="pre">sync_pattern=</span></code>) render it. Firmware players and <code class="docutils literal notranslate"><span class="pre">pi/player_rs</span></code> still build v1 specs (no advertisement yet).</p></td>
+<td><p>Done in the kernel (<code class="docutils literal notranslate"><span class="pre">color_index_for_frame</span></code>). The host player (<code class="docutils literal notranslate"><span class="pre">pi/player_rs</span></code>, the wall player), the wall page, the phone’s synthetic source and the Python binding (<code class="docutils literal notranslate"><span class="pre">sync_pattern=</span></code>) render it. C6/P4 firmware links the same core but does not advertise the feature, so it stays on v1.</p></td>
 </tr>
 <tr class="row-even"><td><p>11</p></td>
 <td><p>Telemetry</p></td>
@@ -651,11 +651,22 @@ per id and per pilot frame.</p>
 </tbody>
 </table>
 </div>
-<p><strong>Wire, for now.</strong> No player advertises the staggered code, and the phone never
-asks for it. To test against the wall, the dev server hands it out
-(<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//web:serve</span> <span class="pre">--</span> <span class="pre">--sync-pattern</span> <span class="pre">stagger_pilot</span></code>), or both pages force
-it with <code class="docutils literal notranslate"><span class="pre">?sync=stagger_pilot</span></code>. The <code class="docutils literal notranslate"><span class="pre">welcome</span></code> feature advertisement, the request
-in <code class="docutils literal notranslate"><span class="pre">start_mapping</span></code>, and firmware support come next.</p>
+<p><strong>Wire, for now.</strong></p>
+<ul class="simple">
+<li><p><strong>Request.</strong> <code class="docutils literal notranslate"><span class="pre">StartMappingOptions.sync_pattern</span></code> (field 12) asks for
+<code class="docutils literal notranslate"><span class="pre">&quot;stagger_pilot&quot;</span></code>. The phone sends it only when the capture page is opened
+with <code class="docutils literal notranslate"><span class="pre">?sync=stagger_pilot</span></code>.</p></li>
+<li><p><strong>Who honours it.</strong> The shared player core (<code class="docutils literal notranslate"><span class="pre">firmware/player</span></code>) runs the
+staggered pilot only if the build advertises the <code class="docutils literal notranslate"><span class="pre">hue_stagger_pilot</span></code> feature.
+Only the host player (<code class="docutils literal notranslate"><span class="pre">pi/player_rs</span></code> <code class="docutils literal notranslate"><span class="pre">player_host</span></code>, and so the virtual wall
+player) advertises it. C6 and P4 firmware do not, so they reply with
+<code class="docutils literal notranslate"><span class="pre">&quot;on_off&quot;</span></code>. The dev backend honours it too, and its <code class="docutils literal notranslate"><span class="pre">--sync-pattern</span> <span class="pre">stagger_pilot</span></code> flag can hand the code out unrequested.</p></li>
+<li><p><strong>What the phone decodes.</strong> Whatever the reply’s <code class="docutils literal notranslate"><span class="pre">codeParams.syncPattern</span></code>
+says, so an unsupported request is v1 end to end. A configure keeps the
+capture’s pattern.</p></li>
+<li><p><strong>Next.</strong> Requesting the code automatically from players that advertise it,
+and firmware support.</p></li>
+</ul>
 <section id="simulation-results">
 <h3>Simulation results<a class="headerlink" href="#simulation-results" title="Link to this heading">¶</a></h3>
 <p>Two simulators run the production pipeline and negotiation. They compare v1,

@@ -529,29 +529,29 @@ skipping auto-negotiation for that field), <code class="docutils literal notrans
 <code class="docutils literal notranslate"><span class="pre">bazelisk</span> <span class="pre">run</span> <span class="pre">//pi/reconstruction:vio_replay</span> <span class="pre">--</span> <span class="pre">&lt;trace&gt;</span> <span class="pre">&lt;decoded&gt;</span> <span class="pre">--diagnose</span></code>),
 <code class="docutils literal notranslate"><span class="pre">?fx=</span></code> (focal seed; otherwise a cached calibration, otherwise a 70°-FOV
 guess — fx error shifts metric scale ~1:1, shape is unaffected),
-<code class="docutils literal notranslate"><span class="pre">?sync=stagger_pilot|on_off</span></code> (FORCE the decoder’s sync pattern; see below). Wall
+<code class="docutils literal notranslate"><span class="pre">?sync=stagger_pilot</span></code> (REQUEST the hue code v2 staggered pilot; see below). Wall
 page: <code class="docutils literal notranslate"><span class="pre">?cols=N</span></code>, <code class="docutils literal notranslate"><span class="pre">?gap</span></code>, <code class="docutils literal notranslate"><span class="pre">?margin</span></code>, <code class="docutils literal notranslate"><span class="pre">?dot</span></code> (dot diameter as a fraction of
 pitch), <code class="docutils literal notranslate"><span class="pre">?sync=stagger_pilot|on_off</span></code> (FORCE the rendered sync pattern).</p>
 <section id="testing-hue-code-v2-staggered-pilot-against-the-wall">
 <h3>Testing hue code v2 (staggered pilot) against the wall<a class="headerlink" href="#testing-hue-code-v2-staggered-pilot-against-the-wall" title="Link to this heading">¶</a></h3>
 <p>The staggered-pilot code (<code class="docutils literal notranslate"><span class="pre">syncPattern:</span> <span class="pre">&quot;stagger_pilot&quot;</span></code>,
-docs/design/hue-code-v2.md phase 2) is opt-in: no player advertises it yet, so
-the phone only decodes it when the code-book it is handed says so. The wall
-renders whatever the server’s <code class="docutils literal notranslate"><span class="pre">pattern_state</span></code> says, so the simplest run is to
-make the dev server hand it out:</p>
-<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazelisk<span class="w"> </span>run<span class="w"> </span>//web:serve<span class="w"> </span>--<span class="w"> </span>--sync-pattern<span class="w"> </span>stagger_pilot<span class="w">   </span><span class="c1"># https on :8443</span>
-</pre></div>
-</div>
-<p>then follow the steps above unchanged (wall on the laptop at
-<code class="docutils literal notranslate"><span class="pre">https://localhost:8443/wall.html</span></code>, phone at <code class="docutils literal notranslate"><span class="pre">https://&lt;laptop-LAN-IP&gt;:8443</span></code>).
-The wall’s status line reads <code class="docutils literal notranslate"><span class="pre">sync</span> <span class="pre">stagger_pilot</span></code>; the phone HUD adds
-<code class="docutils literal notranslate"><span class="pre">pilot</span> <span class="pre">k</span> <span class="pre">…</span> <span class="pre">·</span> <span class="pre">cyc</span> <span class="pre">…</span> <span class="pre">miss</span> <span class="pre">…</span> <span class="pre">φrej</span> <span class="pre">…</span></code> (the locked whole-frame latency, per-track
-pilots found, delimiter misses, phase-check rejects). Without the flag the
-server keeps v1 (<code class="docutils literal notranslate"><span class="pre">on_off</span></code>), exactly as before.</p>
-<p>Without restarting the server, force both ends instead: open the wall as
-<code class="docutils literal notranslate"><span class="pre">wall.html?sync=stagger_pilot</span></code> and the phone app as <code class="docutils literal notranslate"><span class="pre">/?sync=stagger_pilot</span></code>
-(both must match: the override is local to each page). <code class="docutils literal notranslate"><span class="pre">?sync=on_off</span></code> forces
-v1 back.</p>
+docs/design/hue-code-v2.md phase 2) is opt-in. The phone asks for it when the
+capture page is opened with <code class="docutils literal notranslate"><span class="pre">?sync=stagger_pilot</span></code>: start_mapping carries
+<code class="docutils literal notranslate"><span class="pre">syncPattern</span></code>, and the phone decodes whatever <code class="docutils literal notranslate"><span class="pre">codeParams.syncPattern</span></code> the
+device answers with. A player that doesn’t support it (every C6/P4 today) keeps
+v1 and says so. Supporting devices: the virtual wall player (<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//pi/player_rs:wall</span></code>, docs/host-player.md; it advertises <code class="docutils literal notranslate"><span class="pre">hue_stagger_pilot</span></code>)
+and this dev server. The dev server can also hand the code out to every
+capture without the request: <code class="docutils literal notranslate"><span class="pre">bazelisk</span> <span class="pre">run</span> <span class="pre">//web:serve</span> <span class="pre">--</span> <span class="pre">--sync-pattern</span> <span class="pre">stagger_pilot</span></code>.</p>
+<p>The wall renders what the device runs. Its status line reads
+<code class="docutils literal notranslate"><span class="pre">sync</span> <span class="pre">stagger_pilot</span></code>. The phone HUD adds <code class="docutils literal notranslate"><span class="pre">pilot</span> <span class="pre">k</span> <span class="pre">…</span> <span class="pre">·</span> <span class="pre">cyc</span> <span class="pre">…</span> <span class="pre">miss</span> <span class="pre">…</span> <span class="pre">φrej</span> <span class="pre">…</span></code>:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">pilot</span> <span class="pre">k</span></code>: the locked whole-frame latency;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">cyc</span></code>: per-track pilots found;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">miss</span></code>: delimiter misses;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">φrej</span></code>: phase-check rejects.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">wall.html?sync=…</span></code> forces the wall’s rendering only (debugging); the phone must
+then be decoding the same pattern.</p>
 </section>
 <section id="the-hue-code-auto-negotiated-capture-configuration">
 <h3>The hue code + auto-negotiated capture configuration<a class="headerlink" href="#the-hue-code-auto-negotiated-capture-configuration" title="Link to this heading">¶</a></h3>
