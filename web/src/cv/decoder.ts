@@ -122,36 +122,24 @@ export interface DecodeStats {
    * upgrade. Null until the first sync-valid cycle.
    */
   marginEma: number | null;
+  /** Staggered codes (hue code v2 phase 2; 0 under v1): per-track cycles
+   * whose pilot was found. */
+  pilotCycles: number;
+  /** Staggered: a track lit through a whole cycle with no pilot found. */
+  delimiterMisses: number;
+  /** Staggered: FEC-valid decodes whose pilot phase disagreed with φ(id) + k
+   * (hops, false delimiters). */
+  phaseRejects: number;
+  /** Staggered: valid decodes held back while the whole-frame latency k was
+   * still unlocked. */
+  rejectedPhaseUnlocked: number;
+  /** Staggered: the locked whole-frame latency k (null until locked / v1). */
+  phaseK: number | null;
 }
 
-interface GlobalSample {
-  tServerMs: number;
-  greenCount: number;
-}
-
-/** Cap on records a track holds while its id awaits confirmation. */
-export const MAX_HELD = 64;
-
-/** EMA factor for the margin statistic (~10 cycles of memory). */
-const MARGIN_EMA_BLEND = 0.2;
-
-export class Decoder {
-  private readonly guard: number;
-  private readonly maxMissing: number;
-  private readonly alignBlend: number;
-  private readonly alignStep: number;
-  private readonly minConfidence: number;
-  private readonly minOnSamples: number;
-  private readonly confirmCycles: number;
-  readonly quality: ChannelQuality;
-  private readonly nDataFrames: number;
-
-  private lastCompletedCycle: number | null = null;
-  private globalSamples: GlobalSample[] = [];
-  private alignShift = 0;
-  private alignInitialized = false;
-
-  readonly stats: DecodeStats = {
+/** A fresh, all-zero {@link DecodeStats}. */
+export function newDecodeStats(): DecodeStats {
+  return {
     cyclesCompleted: 0,
     recordsEmitted: 0,
     uniqueIds: new Set<number>(),
@@ -168,7 +156,55 @@ export class Decoder {
     rejectedUnconfirmed: 0,
     idFlips: 0,
     marginEma: null,
+    pilotCycles: 0,
+    delimiterMisses: 0,
+    phaseRejects: 0,
+    rejectedPhaseUnlocked: 0,
+    phaseK: null,
   };
+}
+
+/** What the pipeline drives: the v1 {@link Decoder} or the staggered one
+ * (./staggerDecoder.ts), chosen by `CodeParams.syncPattern`. */
+export interface CodeDecoder {
+  readonly stats: DecodeStats;
+  readonly quality: ChannelQuality;
+  /** Feed one frame (after tracker.step); returns the records it decoded. */
+  step(tracks: readonly Track[], tLocalMs: number, chromaSyncCount: number): DetectionRecord[];
+  readonly lastCycle: number | null;
+  cycleStartServerMs(cycleIndex: number): number;
+  /** Track samples older than this (server ms) are no longer needed. */
+  pruneCutoffServerMs(): number | null;
+}
+
+interface GlobalSample {
+  tServerMs: number;
+  greenCount: number;
+}
+
+/** Cap on records a track holds while its id awaits confirmation. */
+export const MAX_HELD = 64;
+
+/** EMA factor for the margin statistic (~10 cycles of memory). */
+const MARGIN_EMA_BLEND = 0.2;
+
+export class Decoder implements CodeDecoder {
+  private readonly guard: number;
+  private readonly maxMissing: number;
+  private readonly alignBlend: number;
+  private readonly alignStep: number;
+  private readonly minConfidence: number;
+  private readonly minOnSamples: number;
+  private readonly confirmCycles: number;
+  readonly quality: ChannelQuality;
+  private readonly nDataFrames: number;
+
+  private lastCompletedCycle: number | null = null;
+  private globalSamples: GlobalSample[] = [];
+  private alignShift = 0;
+  private alignInitialized = false;
+
+  readonly stats: DecodeStats = newDecodeStats();
 
   constructor(
     private readonly params: CodeParams,
@@ -258,6 +294,13 @@ export class Decoder {
 
   get lastCycle(): number | null {
     return this.lastCompletedCycle;
+  }
+
+  /** The start of the cycle before the last completed one (what the pipeline
+   * has always pruned at). */
+  pruneCutoffServerMs(): number | null {
+    const last = this.lastCompletedCycle;
+    return last === null ? null : this.cycleStartServerMs(last - 1);
   }
 
   // -- internals ----------------------------------------------------------

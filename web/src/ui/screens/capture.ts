@@ -38,6 +38,7 @@ import {
   driverFixtureScene,
   setDriverCaptureError,
 } from "../../driver/guard";
+import { forcedSyncPattern, isStaggered, withSyncPattern } from "../../code/gray";
 import { phaseCount as stridePhaseCount } from "../../code/stride";
 import {
   fillChannelGaps,
@@ -199,6 +200,11 @@ const forcedSymbols = ((): 2 | 4 | null => {
   const v = qs.get("symbols");
   return v === "2" ? 2 : v === "4" ? 4 : null;
 })();
+// `?sync=stagger_pilot` FORCES the decoder's sync pattern (hue code v2 phase 2
+// wall test), overriding what the device negotiated; the wall page takes the
+// same param. Without it the phone decodes whatever CodeParams.syncPattern the
+// device sends — v1 "on_off" from every existing player.
+const forcedSync = forcedSyncPattern(qs.get("sync"));
 const forcedBitMs = ((): number | null => {
   const v = parseFloat(qs.get("bitms") ?? "");
   return Number.isFinite(v) && v > 0 ? v : null;
@@ -1284,13 +1290,13 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       mappingStarted = true;
       abandonIfDisposed();
       if (calibrateId !== null) startCalibrationUi(c);
-      let params: CodeParams = started.codeParams;
+      let params: CodeParams = withSyncPattern(started.codeParams, forcedSync);
       let epoch: number = started.patternClockEpoch;
       if (blankFirst && stage0 !== undefined) {
         await new Promise((r) => setTimeout(r, Math.max(300, 3 * params.bitPeriodMs)));
         const ps = await c.configure({ ledCount: stage0.ledCount, brightness: config.brightness ?? 1 });
         if (!ps.active || ps.patternClockEpoch === null) throw new Error("the device dropped the capture pattern");
-        params = ps.codeParams;
+        params = withSyncPattern(ps.codeParams, forcedSync);
         epoch = ps.patternClockEpoch;
       }
       profileDraft = {
@@ -1553,6 +1559,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             hudStats.textContent =
               `decoded ${s.uniqueIds.size}/${params.ledCount} ids · ${s.tracks} tracks · ` +
               `${blobs.length} blobs · align ${s.alignShiftMs.toFixed(0)} ms · ` +
+              (isStaggered(params)
+                ? `pilot k ${s.phaseK ?? "–"} · cyc ${s.pilotCycles} miss ${s.delimiterMisses} φrej ${s.phaseRejects} · `
+                : "") +
               `jerk ${motionGuide.pitchesPerFrame?.toFixed(2) ?? "–"} pitch/frame · ` +
               `${c.pendingBatchCount} unsent${liveSolvedText}\n` +
               servoLine +
@@ -1815,7 +1824,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             if (!capturing || !ps.active || ps.patternClockEpoch === null) return;
             onApplied?.();
             if (ps.codeParams.symbols !== params.symbols) channelQuality.resetYield();
-            params = ps.codeParams;
+            params = withSyncPattern(ps.codeParams, forcedSync);
             epoch = ps.patternClockEpoch;
             pipeline = makePipeline(params, epoch);
             pipeline.updateSolved(liveLeds);

@@ -41,6 +41,11 @@ function stats(over: Partial<DecodeStats> = {}): DecodeStats {
     rejectedUnconfirmed: 0,
     idFlips: 0,
     marginEma: null,
+    pilotCycles: 0,
+    delimiterMisses: 0,
+    phaseRejects: 0,
+    rejectedPhaseUnlocked: 0,
+    phaseK: null,
     ...over,
   };
 }

@@ -90,6 +90,9 @@ export interface LinkPolicy {
   /** Scene-luma gate on the 2 → 4 upgrade (default HUE4_MIN_MEAN_LUMA). */
   upgradeMinLuma?: number;
   brightness?: number;
+  /** Sync pattern the LEDs run (default v1 "on_off"; "stagger_pilot", or the
+   * sim-only "stagger_white" comparator — hue code v2 phase 2). */
+  sync?: string;
 }
 
 export const BASELINE_POLICY: LinkPolicy = {
@@ -133,14 +136,20 @@ export function helixFixture(n: number): { pos: Vec3[]; normal: Vec3[] } {
   return { pos, normal };
 }
 
-export function codeParams(ledCount: number, symbols: 2 | 4, bitPeriodMs: number, brightness?: number): CodeParams {
+export function codeParams(
+  ledCount: number,
+  symbols: 2 | 4,
+  bitPeriodMs: number,
+  brightness?: number,
+  sync = "on_off",
+): CodeParams {
   const p: CodeParams = {
     ledCount,
     bits: 0,
     encoding: "hue",
     symbols,
     bitPeriodMs,
-    syncPattern: "on_off",
+    syncPattern: sync as CodeParams["syncPattern"],
     cycleFrames: 0,
     fec: "secded",
     ...(brightness !== undefined ? { brightness } : {}),
@@ -227,7 +236,7 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
   };
 
   const epochs: CodeEpoch[] = [
-    { fromLocalMs: -Infinity, params: codeParams(sc.ledCount, symbols, bitMs, brightness), epochServer: EPOCH0 },
+    { fromLocalMs: -Infinity, params: codeParams(sc.ledCount, symbols, bitMs, brightness, policy.sync), epochServer: EPOCH0 },
   ];
   const ledCodeAt = (tLocal: number): CodeEpoch => {
     for (let i = epochs.length - 1; i >= 0; i--) if (tLocal >= epochs[i]!.fromLocalMs) return epochs[i]!;
@@ -431,7 +440,13 @@ export function runLinkSim(sc: LinkScenario, policy: LinkPolicy): LinkSimResult 
             atLocal: at,
             e: {
               fromLocalMs: at,
-              params: codeParams(sc.ledCount, symbols, Math.min(BIT_PERIOD_MAX_MS, Math.max(BIT_PERIOD_MIN_MS, bitMs)), brightness),
+              params: codeParams(
+                sc.ledCount,
+                symbols,
+                Math.min(BIT_PERIOD_MAX_MS, Math.max(BIT_PERIOD_MIN_MS, bitMs)),
+                brightness,
+                policy.sync,
+              ),
               epochServer: at + CLOCK_OFFSET,
             },
           };

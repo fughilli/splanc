@@ -10,13 +10,16 @@
 
 import type { CodeParams, DetectionRecord } from "@ledmapper/protocol";
 import { cycleMs } from "../code/timing";
-import { Decoder, type DecoderOptions, MAX_HELD } from "./decoder";
+import { isStaggered } from "../code/gray";
+import { type CodeDecoder, Decoder, type DecoderOptions, MAX_HELD } from "./decoder";
+import { StaggerDecoder, type StaggerDecoderOptions } from "./staggerDecoder";
 import { Tracker, type TrackerOptions } from "./tracker";
 import type { Blob, FrameMeta } from "./types";
 
 export interface PipelineOptions {
   tracker?: TrackerOptions;
-  decoder?: DecoderOptions;
+  /** Decoder options (the staggered-pilot extras apply only when the code is staggered). */
+  decoder?: StaggerDecoderOptions;
   /**
    * WebXR-free capture mode (docs/vio-exploration.md): emit DENSE records —
    * one per identified blob per sampled frame, pose from the frame meta
@@ -46,7 +49,8 @@ export interface BlobStatus {
 
 export class CvPipeline {
   readonly tracker: Tracker;
-  readonly decoder: Decoder;
+  /** v1 {@link Decoder} for "on_off", {@link StaggerDecoder} for a staggered syncPattern. */
+  readonly decoder: CodeDecoder;
   /** 2D-stage feedback for the frame most recently passed to step(). */
   lastBlobStatus: BlobStatus[] = [];
   private cb: ((records: DetectionRecord[]) => void) | null = null;
@@ -69,7 +73,9 @@ export class CvPipeline {
     // track that survives a full cycle re-acquires its identity instantly.
     const coast = opts.tracker?.maxCoastMs ?? 1.25 * cycleMs(params);
     this.tracker = new Tracker({ ...opts.tracker, maxCoastMs: coast });
-    this.decoder = new Decoder(params, epochMs, toServerTime, opts.decoder);
+    this.decoder = isStaggered(params)
+      ? new StaggerDecoder(params, epochMs, toServerTime, opts.decoder)
+      : new Decoder(params, epochMs, toServerTime, opts.decoder as DecoderOptions | undefined);
   }
 
   onDetections(cb: (records: DetectionRecord[]) => void): void {
@@ -92,7 +98,7 @@ export class CvPipeline {
       const tr = this.tracker.lastAssignment[i] ?? null;
       return { u: b.u, v: b.v, area: b.area, matched: tr !== null, ledId: tr?.ledId ?? null };
     });
-    // The saturated-GREEN census is the global delimiter signal the
+    // The saturated-GREEN census is the v1 global delimiter signal the
     // decoder's self-clocking alignment keys on (ALL_OFF renders green;
     // no data symbol is green — yellow has r≈g, cyan is unused).
     let greens = 0;
@@ -166,9 +172,8 @@ export class CvPipeline {
     }
 
     // Bound memory: drop samples older than the last two cycles.
-    const lastCycle = this.decoder.lastCycle;
-    if (lastCycle !== null) {
-      const cutoffServer = this.decoder.cycleStartServerMs(lastCycle - 1);
+    const cutoffServer = this.decoder.pruneCutoffServerMs();
+    if (cutoffServer !== null) {
       // Convert back to local time via the current (constant) offset.
       const offset = this.toServerTime(0);
       for (const t of this.tracker.tracks) t.pruneBefore(cutoffServer - offset);

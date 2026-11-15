@@ -19,13 +19,18 @@
  * Query params: ?cols=N (default ~square), &gap=px, &margin=px, &dot=frac,
  * &only=id (single-LED study mode: only that LED renders, the rest stay
  * dark — layout/ids unchanged), &url=ws://... (defaults to this page's
- * origin). The blink code itself is the hue carrier: every dot stays LIT at
- * constant brightness and the code is in COLOR (ALL_ON white, ALL_OFF
- * green, data frames from the negotiated symbol palette — see code/gray.ts).
+ * origin), &sync=stagger_pilot|on_off (FORCE the sync pattern, overriding the
+ * negotiated CodeParams.syncPattern — the phone must decode the same one:
+ * give it the same ?sync=, or run the server with --sync-pattern instead). The
+ * blink code itself is the hue carrier: every dot stays LIT at constant
+ * brightness and the code is in COLOR (v1 "on_off": ALL_ON white, ALL_OFF
+ * green, data frames from the negotiated symbol palette; hue code v2
+ * "stagger_pilot": each LED's cycle rotated by its own phase, with a
+ * green → magenta pilot in place of white/green — see code/gray.ts).
  */
 
 import type { CodeParams } from "@ledmapper/protocol";
-import { colorForFrame } from "../code/gray";
+import { colorForFrame, forcedSyncPattern, withSyncPattern } from "../code/gray";
 import { codeKernelReady } from "../code/kernel";
 import { frameIndexAt } from "../code/timing";
 import { defaultWsUrl, LedMapperClient } from "../net/client";
@@ -38,7 +43,13 @@ const OPT = {
   dotFrac: floatParam("dot", 0.35), // LED diameter as a fraction of cell pitch
   only: intParam("only", -1), // >= 0: single-LED study mode
   wsUrl: qs.get("url") ?? defaultWsUrl(),
+  sync: forcedSyncPattern(qs.get("sync")), // null = follow the negotiated CodeParams
 };
+
+/** The code-book the wall renders: the negotiated one, with ?sync= applied. */
+function renderParams(p: CodeParams | null): CodeParams | null {
+  return p === null ? null : withSyncPattern(p, OPT.sync);
+}
 
 // The palette lives with the coding logic (code/gray.ts), shared with the
 // phone decoder's expectations and golden-pinned to the Python driver.
@@ -144,7 +155,7 @@ function cssScaled(c: readonly [number, number, number], brightness: number): st
 }
 
 function draw(frameIndex: number): void {
-  const params = state.params;
+  const params = renderParams(state.params);
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   if (!params) return;
@@ -199,7 +210,8 @@ function updateStatus(): void {
     bits.push(`${state.params.ledCount} LEDs (${l.cols}×${l.rows})`);
   }
   if (OPT.only >= 0) bits.push(`STUDY MODE: only LED #${OPT.only}`);
-  if (state.params) bits.push(`${state.params.symbols}-symbol hue code`);
+  const rp = renderParams(state.params);
+  if (rp) bits.push(`${rp.symbols}-symbol hue code · sync ${rp.syncPattern}${OPT.sync !== null ? " (forced)" : ""}`);
   bits.push(state.active ? "PATTERN RUNNING" : "idle — start mapping from the phone");
   statusEl.textContent = bits.join("  ·  ");
 }

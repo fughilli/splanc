@@ -52,6 +52,10 @@ export const DECODE_COUNTERS = [
   "rejectedDuplicate",
   "rejectedUnconfirmed",
   "idFlips",
+  // Hue code v2 phase 2 (staggered codes; always 0 under v1).
+  "pilotCycles",
+  "delimiterMisses",
+  "phaseRejects",
 ] as const;
 export type DecodeCounter = (typeof DECODE_COUNTERS)[number];
 export type DecodeCounters = Record<DecodeCounter, number>;

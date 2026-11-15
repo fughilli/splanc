@@ -22,7 +22,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CodeParams, DetectionRecord, Intrinsics, Pose, Vec3 } from "@ledmapper/protocol";
-import { colorForFrame, DATA_FRAME_OFFSET, dataFrames, decodeCycleSymbols, FRAME_ALL_ON, symbolAt } from "../src/code/gray";
+import {
+  colorForFrame,
+  DATA_FRAME_OFFSET,
+  dataFrames,
+  decodeCycleSymbols,
+  FRAME_ALL_ON,
+  isStaggered,
+  staggerPhase,
+  SYNC_STAGGER_PILOT,
+  SYNC_STAGGER_WHITE,
+  symbolAt,
+  withSyncPattern,
+} from "../src/code/gray";
 import { cycleIndexAt, frameIndexAt } from "../src/code/timing";
 import type { DecoderOptions } from "../src/cv/decoder";
 import { AlphabetPlanner, formatPrediction } from "../src/cv/channelQuality";
@@ -130,6 +142,38 @@ interface Walk {
   /** Per-channel colour noise (std, on [0, 1] channels): a dark room's
    * sensor noise on dim spots. 0 = off. */
   colorNoise?: number;
+  /** Sync pattern the fixture runs (default v1 "on_off"). Under a staggered
+   * pattern each LED blooms on ITS OWN white frame ("stagger_white"); the
+   * pilot ("stagger_pilot") shows no white, so nothing blooms. */
+  sync?: string;
+  /** Camera → display latency (ms): the camera sees the frame shown this long
+   * before its capture time (whole frames exercise the staggered phase lock). */
+  latencyMs?: number;
+}
+
+/** Staggered bloom: a spot showing white swells to `bloomPx` and swallows the
+ * spots it reaches (they merge at the bloom); other spots merge as usual. */
+function mergeBloomed(blobs: Blob[], white: boolean[], bloomPx: number): void {
+  for (let i = 0; i < blobs.length; i++) {
+    for (let j = i + 1; j < blobs.length; j++) {
+      const a = blobs[i]!;
+      const b = blobs[j]!;
+      const reach = white[i] || white[j] ? Math.max(MERGE_PX, bloomPx) : MERGE_PX;
+      if (Math.hypot(a.u - b.u, a.v - b.v) >= reach) continue;
+      blobs[i] = {
+        ...a,
+        u: (a.u + b.u) / 2,
+        v: (a.v + b.v) / 2,
+        r: ((a.r ?? 0) + (b.r ?? 0)) / 2,
+        g: ((a.g ?? 0) + (b.g ?? 0)) / 2,
+        b: ((a.b ?? 0) + (b.b ?? 0)) / 2,
+      };
+      white[i] = white[i]! || white[j]!;
+      blobs.splice(j, 1);
+      white.splice(j, 1);
+      j = i;
+    }
+  }
 }
 
 interface Result {
@@ -156,7 +200,10 @@ function run(walk: Walk, tracker: TrackerOptions = {}, decoder: DecoderOptions =
   const gauss = (): number => (rand() + rand() + rand() + rand() - 2) * Math.SQRT2;
   const sway = walk.swayM ?? 0.12;
   const dist = 0.9 + INRADIUS_M;
-  const pipeline = new CvPipeline(PARAMS, EPOCH, (t) => t + OFFSET, { tracker, decoder, denseRecords: true, denseStride: 3 });
+  const params = withSyncPattern(PARAMS, (walk.sync ?? null) as CodeParams["syncPattern"] | null);
+  const staggered = isStaggered(params);
+  const latency = walk.latencyMs ?? 0;
+  const pipeline = new CvPipeline(params, EPOCH, (t) => t + OFFSET, { tracker, decoder, denseRecords: true, denseStride: 3 });
   const guide = new MotionGuide();
   // Records are scored against the pose at THEIR capture time: ones held
   // until their id was confirmed arrive frames later.
@@ -177,18 +224,21 @@ function run(walk: Walk, tracker: TrackerOptions = {}, decoder: DecoderOptions =
     roll = 0.9 * roll + walk.jitterRad * gauss();
     const pose: Pose = { p: eye, q: lookAtQuat(eye, [gx, gy, 0], [Math.sin(roll), Math.cos(roll), 0]) };
     poseAt.set(t, pose);
-    const frameIdx = frameIndexAt(t + OFFSET, EPOCH, PARAMS);
+    const frameIdx = frameIndexAt(t - latency + OFFSET, EPOCH, params);
     const blobs: Blob[] = [];
+    const white: boolean[] = [];
     for (let i = 0; i < leds.length; i++) {
       const pr = project(pose, K, leds[i]!);
       if (pr.depth <= 0 || pr.u < 0 || pr.u >= IMG_W || pr.v < 0 || pr.v >= IMG_H) continue;
       if (rand() < DROP_P) continue;
-      const c = colorForFrame(FIRST_ID + i, frameIdx, PARAMS);
+      const c = colorForFrame(FIRST_ID + i, frameIdx, params);
       const n = walk.colorNoise ?? 0;
       const ch = (x: number): number => (n > 0 ? Math.min(1, Math.max(0, x + n * gauss())) : x);
       blobs.push({ u: pr.u + 0.4 * gauss(), v: pr.v + 0.4 * gauss(), intensity: 0.9, area: 20, r: ch(c[0]), g: ch(c[1]), b: ch(c[2]) });
+      white.push(c[0] === 1 && c[1] === 1 && c[2] === 1);
     }
-    mergeClose(blobs, frameIdx === FRAME_ALL_ON ? Math.max(MERGE_PX, walk.bloomPx ?? 0) : MERGE_PX);
+    if (staggered) mergeBloomed(blobs, white, walk.bloomPx ?? 0);
+    else mergeClose(blobs, frameIdx === FRAME_ALL_ON ? Math.max(MERGE_PX, walk.bloomPx ?? 0) : MERGE_PX);
     pipeline.step(blobs, { tCaptureMs: t, pose: null, K, imgW: IMG_W, imgH: IMG_H });
     if (guide.update(pipeline.tracker.lastStats, t)) flagged++;
     frames++;
@@ -389,18 +439,140 @@ test("dark room, dense fixture: the alphabet is no longer stuck at 2 symbols", (
   assert.equal(new AlphabetPlanner().plan(2, mq.estimate(), PARAMS, mq.decodeYield(), DURATION_MS), null);
 });
 
-test(
-  "sync bloom with staggered sync: identities and yield survive (hue code v2 phase 2)",
-  { todo: "phase 2 (staggered cycles) is not built yet; see docs/design/hue-code-v2.md" },
-  () => {
-    // Failure mode 1: today every LED shows the white sync frame at once, so a
-    // bloom of about a pitch costs every track its blob on the same frame
-    // (12% wrong, 4% gross, a fifth of the bloom-free yield). Phase 2's target
-    // is the bloom-free result. Running the sim with staggered rendering is
-    // part of phase 2; until then this records the gap.
-    const r = run({ jitterRad: 0.006, bloomPx: BLOOM_PX });
-    console.log(`sync bloom, all-in-phase sync: ${fmt(r)}`);
-    assert.ok(r.grossFrac < 0.01, `gross ${r.grossFrac}`);
-    assert.ok(r.goodPerLedSec > 1.5, `yield ${r.goodPerLedSec}`);
-  },
-);
+/** The staggered codes on the radiolarian geometry: the pilot (wire value)
+ * and the staggered-white comparator, with a camera latency of 1.6 frames so
+ * the whole-frame phase lock k is exercised. */
+const STAGGER_PILOT = { sync: SYNC_STAGGER_PILOT, latencyMs: 225 };
+const STAGGER_WHITE = { sync: SYNC_STAGGER_WHITE, latencyMs: 225 };
+
+test("staggered pilot, dense fixture: decodes as cleanly as v1, the phase locks", () => {
+  const v1 = run({ jitterRad: 0.006 });
+  const r = run({ jitterRad: 0.006, ...STAGGER_PILOT });
+  const st = r.pipeline.stats;
+  console.log(
+    `hand-held: v1 ${fmt(v1)} | pilot ${fmt(r)} · k ${st.phaseK} pilots ${st.pilotCycles} ` +
+      `misses ${st.delimiterMisses} φ-rejects ${st.phaseRejects} align ${st.alignShiftMs.toFixed(0)} ms`,
+  );
+  // 225 ms = 1 frame + 85 ms of 140 ms frames: k = 1 (or 2 with the shift
+  // folded the other way), and the total latency estimate lands near 225.
+  assert.ok(st.phaseK !== null, "k locked");
+  assert.ok(Math.abs(st.alignShiftMs - 225) < 30, `latency ${st.alignShiftMs}`);
+  assert.ok(r.grossFrac < 0.01, `gross ${r.grossFrac}`);
+  assert.ok(r.wrongFrac < 0.05, `wrong ${r.wrongFrac}`);
+  assert.ok(r.goodPerLedSec > 0.8 * v1.goodPerLedSec, `yield ${r.goodPerLedSec} vs v1 ${v1.goodPerLedSec}`);
+});
+
+test("sync bloom with staggered sync: identities and yield survive (hue code v2 phase 2)", () => {
+  // Failure mode 1: v1 shows the white sync frame on every LED at once, so a
+  // bloom of about a pitch costs every track its blob on the same frame. The
+  // pilot shows no white at all; a staggered WHITE still blooms, per LED.
+  const v1 = run({ jitterRad: 0.006, bloomPx: BLOOM_PX });
+  const clean = run({ jitterRad: 0.006, ...STAGGER_PILOT });
+  const pilot = run({ jitterRad: 0.006, bloomPx: BLOOM_PX, ...STAGGER_PILOT });
+  const white = run({ jitterRad: 0.006, bloomPx: BLOOM_PX, ...STAGGER_WHITE });
+  console.log(`sync bloom ${BLOOM_PX} px: v1 ${fmt(v1)}`);
+  console.log(`sync bloom ${BLOOM_PX} px: staggered white ${fmt(white)}`);
+  console.log(`sync bloom ${BLOOM_PX} px: staggered pilot ${fmt(pilot)} (bloom-free pilot ${fmt(clean)})`);
+  assert.ok(pilot.grossFrac < 0.01, `gross ${pilot.grossFrac}`);
+  assert.ok(pilot.goodPerLedSec > 1.5, `yield ${pilot.goodPerLedSec}`);
+  assert.ok(pilot.goodPerLedSec > 0.9 * clean.goodPerLedSec, "the bloom-free result");
+  assert.ok(pilot.goodPerLedSec > 2 * v1.goodPerLedSec, "well above v1 under bloom");
+  assert.ok(pilot.goodPerLedSec > white.goodPerLedSec, "and above a staggered white");
+});
+
+/**
+ * Staggered hops: a track that moves from LED `a` to a neighbour `b` partway
+ * through `a`'s cycle reads `a`'s pilot and first data windows, then `b`'s
+ * colours at the same global frames — `b`'s own rotated cycle. Every stitch
+ * whose windows all land on `b`'s DATA frames is a symbol sequence the
+ * decoder could read; returns those that FEC-decode to a third id `c`, and
+ * whether `c`'s phase φ(c) matches the pilot's (the ≈ 1/C chance the phase
+ * check lets a hop through).
+ */
+function staggerStitches(): { a: number; b: number; split: number; c: number; phaseOk: boolean }[] {
+  const p = withSyncPattern(PARAMS, SYNC_STAGGER_PILOT);
+  const C = p.cycleFrames;
+  const n = dataFrames(p);
+  const panel = panelLeds();
+  const out: { a: number; b: number; split: number; c: number; phaseOk: boolean }[] = [];
+  for (let i = 0; i < panel.length; i++) {
+    for (let j = 0; j < panel.length; j++) {
+      const gap = Math.hypot(panel[i]![0] - panel[j]![0], panel[i]![1] - panel[j]![1]);
+      if (i === j || gap > 1.5 * PITCH_M) continue;
+      const [a, b] = [FIRST_ID + i, FIRST_ID + j];
+      const pa = staggerPhase(a, p);
+      const pb = staggerPhase(b, p);
+      for (let split = 1; split < n; split++) {
+        const syms: number[] = [];
+        let ok = true;
+        for (let d = 0; d < n && ok; d++) {
+          if (d < split) syms.push(symbolAt(a, d, p));
+          else {
+            const jb = (((pa + DATA_FRAME_OFFSET + d - pb) % C) + C) % C;
+            if (jb < DATA_FRAME_OFFSET) ok = false;
+            else syms.push(symbolAt(b, jb - DATA_FRAME_OFFSET, p));
+          }
+        }
+        if (!ok) continue;
+        const { id } = decodeCycleSymbols(syms, p);
+        if (id === null || id === a || id === b) continue;
+        out.push({ a, b, split, c: id, phaseOk: staggerPhase(id, p) === pa });
+      }
+    }
+  }
+  return out;
+}
+
+test("staggered hops: the phase check rejects the stitches SEC-DED lets through", () => {
+  const all = staggerStitches();
+  const passed = all.filter((s) => s.phaseOk).length;
+  const C = PARAMS.cycleFrames;
+  console.log(`stagger stitches decoding to a third id: ${all.length}; passing φ: ${passed} (${pct(passed / Math.max(1, all.length))}, 1/C = ${pct(1 / C)})`);
+  assert.ok(all.length > 20, "SEC-DED alone accepts stitched codewords");
+  assert.ok(passed / all.length < 2.5 / C, "φ(id) passes about 1 in C of them");
+});
+
+/** The forced hop of runForcedHop, under the staggered pilot: one spot shows
+ * `a`'s stream, then `b`'s from the stitch onward (both rotated cycles), with
+ * `a` and `b` alternating long enough first for k to lock. */
+function runStaggerHop(hop: { a: number; b: number; split: number; c: number }): { ids: number[]; phaseRejects: number } {
+  const p = withSyncPattern(PARAMS, SYNC_STAGGER_PILOT);
+  const C = p.cycleFrames;
+  const bp = p.bitPeriodMs;
+  const lockMs = 6 * C * bp;
+  const pa = staggerPhase(hop.a, p);
+  // The stitch: a's cycle starting at the first a-pilot after lockMs; b takes
+  // over `split` data windows into it.
+  const f0 = Math.ceil((lockMs + OFFSET - EPOCH) / bp);
+  const fPilot = f0 + ((((pa - f0) % C) + C) % C);
+  const tSwitch = EPOCH - OFFSET + (fPilot + DATA_FRAME_OFFSET + hop.split) * bp;
+  const pipeline = new CvPipeline(p, EPOCH, (t) => t + OFFSET);
+  const ids: number[] = [];
+  pipeline.onDetections((rs) => ids.push(...rs.map((r) => r.ledId)));
+  // Two still spots (a and b, far apart) until lockMs give k; then the spot
+  // at a's position hops onto b.
+  for (let t = 0; t < tSwitch + 5 * C * bp; t += 35) {
+    const f = frameIndexAt(t + OFFSET, EPOCH, p);
+    const blobs: Blob[] = [];
+    const led = t < tSwitch ? hop.a : hop.b;
+    const c = colorForFrame(led, f, p);
+    blobs.push({ u: 360, v: 640, intensity: 0.9, area: 20, r: c[0], g: c[1], b: c[2] });
+    if (t < lockMs) {
+      for (const [k, other] of [FIRST_ID + 50, FIRST_ID + 80, FIRST_ID + 99].entries()) {
+        const o = colorForFrame(other, f, p);
+        blobs.push({ u: 100 + 200 * k, v: 200, intensity: 0.9, area: 20, r: o[0], g: o[1], b: o[2] });
+      }
+    }
+    pipeline.step(blobs, { tCaptureMs: t, pose: null, K, imgW: IMG_W, imgH: IMG_H });
+  }
+  return { ids, phaseRejects: pipeline.stats.phaseRejects };
+}
+
+test("a staggered stitched hop doesn't put a third LED's id on the map", () => {
+  const hop = staggerStitches().find((s) => !s.phaseOk);
+  assert.ok(hop !== undefined);
+  const r = runStaggerHop(hop);
+  console.log(`stagger stitch ${hop.a}→${hop.b} (split ${hop.split}) decodes as ${hop.c}; records ${[...new Set(r.ids)].join(",")}; φ-rejects ${r.phaseRejects}`);
+  assert.ok(!r.ids.includes(hop.c), "the stitched id never lands");
+  assert.ok(r.ids.includes(hop.a) && r.ids.includes(hop.b), "both real ids still land");
+});
