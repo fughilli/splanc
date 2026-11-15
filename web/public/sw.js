@@ -33,7 +33,9 @@ const BASE = new URL(self.registration.scope).pathname;
 // manifest + icons so updated clients re-fetch the new brand.
 // v6: /firmware/ moved to network-first; evicts the stale-while-revalidate copies
 // that kept serving an old "This build (dev)" image.
-const VERSION = "v6";
+// v7: the SVG app icons were invalid XML (unbound inkscape: prefix), so Android
+// Chrome refused to install the app; evicts the cached broken app-icon.svg.
+const VERSION = "v7";
 const CACHE = `ledmapper-${VERSION}`;
 const SHELL = [BASE, BASE + "index.html", BASE + "manifest.webmanifest", BASE + "icons/app-icon.svg"];
 
