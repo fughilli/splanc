@@ -1,0 +1,1097 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html">
+        <link rel="prefetch" href="../../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Hue code v2: staggered cycles, stronger codewords, faster alphabets - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="strided-capture.html">Strided (diffuse) capture</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
+<li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
+<li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-demo.html">Effects demo</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../requirements-driven-development.html">Requirements-driven development</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/design/hue-code-v2.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/design/hue-code-v2.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="hue-code-v2-staggered-cycles-stronger-codewords-faster-alphabets">
+<h1>Hue code v2: staggered cycles, stronger codewords, faster alphabets<a class="headerlink" href="#hue-code-v2-staggered-cycles-stronger-codewords-faster-alphabets" title="Link to this heading">¶</a></h1>
+<p>Status: decided. Phase 1 (measurement) is implemented. Phase 0 (one Rust
+kernel) is PR #488 (merged). Phase 2 is implemented wall-first (kernel,
+virtual wall, phone decoder; no firmware advertisement yet): see “Phase 2 as
+built” below. The owner has confirmed the pilot sequence and the other
+decisions below; phases 2 and 3 are ready for implementation.</p>
+<section id="why">
+<h2>Why<a class="headerlink" href="#why" title="Link to this heading">¶</a></h2>
+<p>The radiolarian captures (2026-11-12, 1260 LEDs on dodecahedra, rings ~13 px
+apart) exposed three limits of the v1 code:</p>
+<ol class="arabic simple">
+<li><p><strong>All LEDs sync together.</strong> Every cycle opens with a white frame then a green
+frame on every LED at once. On a dense fixture the white frame blooms and
+merges neighbouring blobs, so every track loses its blob in the same frame.
+The 3D overlay’s registration fails at every sync, and the tracker has no
+reliable track left to recover from.</p></li>
+<li><p><strong>A track hop can pass as a valid decode.</strong> A cycle stitched from two LEDs’
+colours (a track that hopped mid-cycle) is checked only by SEC-DED (distance
+4). Shifting cycle boundaries give it no further check.</p></li>
+<li><p><strong>The rate gets stuck at 1 bit/symbol.</strong> The upgrade needed a bright scene
+(mean luma ≥ 0.12) and a healthy decode-margin average. A dark room never
+passes the first, and on dense fixtures track hops dragged down the second.
+All five radiolarian captures ran at 2 symbols. Only 2 and 4 symbols exist.</p></li>
+</ol>
+</section>
+<section id="decisions">
+<h2>Decisions<a class="headerlink" href="#decisions" title="Link to this heading">¶</a></h2>
+<p>The owner settled these points:</p>
+<ul>
+<li><p><strong>One kernel.</strong> The colour code lives in one Rust kernel (phase 0). Phases 2
+and 3 are written only there.</p></li>
+<li><p><strong>Pilot, not white.</strong> The global white sync frame is replaced by a per-LED
+pilot sequence (phase 2).</p></li>
+<li><p><strong>S is in the spec.</strong> The stagger step S is pinned per cycle length C:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>C</p></th>
+<th class="head"><p>18</p></th>
+<th class="head"><p>10</p></th>
+<th class="head"><p>8</p></th>
+<th class="head"><p>6</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>S</p></td>
+<td><p>11</p></td>
+<td><p>7</p></td>
+<td><p>5</p></td>
+<td><p>5</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</li>
+<li><p><strong>No new wire field.</strong> The stagger is carried by the existing
+<code class="docutils literal notranslate"><span class="pre">CodeParams.syncPattern</span></code>.</p></li>
+<li><p><strong>Golay ships with the new alphabets.</strong> The Golay code and the 8/16-hue
+alphabets land together in phase 3. SEC-DED stays for low bit rates.</p></li>
+<li><p><strong>White balance is never assumed locked.</strong> Not all phones expose a lock. The
+decoder recalibrates every cycle instead.</p></li>
+<li><p><strong>Complexity stays in the app.</strong> Firmware plays the palette it is given. The
+app does calibration, drive levels and rate choice.</p></li>
+<li><p><strong>Frame telemetry is used.</strong> The player’s <code class="docutils literal notranslate"><span class="pre">get_frame_timing</span></code> reports are wired
+into the capture screen.</p></li>
+</ul>
+</section>
+<section id="phase-0-one-colour-code-kernel-pr-488">
+<h2>Phase 0: one colour-code kernel (PR #488)<a class="headerlink" href="#phase-0-one-colour-code-kernel-pr-488" title="Link to this heading">¶</a></h2>
+<p>Today the code has three implementations kept in step by hand:
+<code class="docutils literal notranslate"><span class="pre">pi/led_driver/graycode.py</span></code>, <code class="docutils literal notranslate"><span class="pre">firmware/pattern</span></code> and <code class="docutils literal notranslate"><span class="pre">web/src/code/gray.ts</span></code>. A
+fourth copy of the Python sits in <code class="docutils literal notranslate"><span class="pre">pi/provisioning/nix/ledapp/</span></code>.</p>
+<p>Phase 0 converges them into one Rust kernel in <code class="docutils literal notranslate"><span class="pre">firmware/pattern</span></code> (no_std):</p>
+<ul class="simple">
+<li><p>firmware links it directly;</p></li>
+<li><p>the web app loads it as WASM;</p></li>
+<li><p>Python binds it through ctypes.</p></li>
+</ul>
+<p>Golden fixtures are pinned in the kernel. Binding tests check that the WASM and
+ctypes builds match them. From here on, phases 2 and 3 change only the kernel
+and its callers.</p>
+</section>
+<section id="phase-1-measure-the-channel-done-pr-on-agent-hue-code-v2">
+<h2>Phase 1: measure the channel (done; PR on <code class="docutils literal notranslate"><span class="pre">agent/hue-code-v2</span></code>)<a class="headerlink" href="#phase-1-measure-the-channel-done-pr-on-agent-hue-code-v2" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">web/src/cv/channelQuality.ts</span></code>. Once a track’s id is confirmed, the symbol each
+window carried is known. Each data window’s white-normalised colour then gives a
+hue error against the sent symbol. Pooled over tracks, the errors give a hue
+bias per target, a robust noise σ around it, and the share of washed-out
+windows. None of these depends on the alphabet in use.</p>
+<ul class="simple">
+<li><p><strong>Prediction:</strong> for every alphabet (2, 4, 8, 16), predict the per-window
+chance of a confidence-gate reject and of a decisive misread, and from those
+the chance a whole cycle decodes under the code’s FEC.</p></li>
+<li><p><strong>Choice:</strong> the planner picks the alphabet with the best decoded-cycle
+throughput. Upgrading needs a 25% gain. Downgrading happens when fewer than
+35% of cycles would decode, or when the decode yield is starved (under 10% of
+at least 40 sync-valid cycles, with nothing left to measure).</p></li>
+<li><p><strong>Backoff:</strong> an abandoned alphabet is blocked for an exponential backoff (10
+s, doubling up to 80 s), so an over-optimistic prediction costs one probe
+rather than an oscillation.</p></li>
+</ul>
+<p>Link-sim results compared with the old rule:</p>
+<ul class="simple">
+<li><p>Dark scenes are no longer pinned at 2 symbols (orbit-dark: 90% of the run on 4
+symbols, 14% more records).</p></li>
+<li><p>Lit scenes are unchanged.</p></li>
+<li><p>In a heavy veil, one failed probe delays 90% coverage by 2 s.</p></li>
+</ul>
+<p>The HUD shows <code class="docutils literal notranslate"><span class="pre">chan</span> <span class="pre">σ…</span> <span class="pre">bias…</span> <span class="pre">·</span> <span class="pre">2:…%</span> <span class="pre">4:…%</span> <span class="pre">8:…%</span> <span class="pre">16:…%</span></code>, and capture bundles record
+the same figures (<code class="docutils literal notranslate"><span class="pre">capture.channel</span></code>). <strong>Those numbers from real captures decide
+phase 3’s alphabets.</strong></p>
+</section>
+<section id="phase-2-staggered-cycles-with-a-pilot-sequence">
+<h2>Phase 2: staggered cycles with a pilot sequence<a class="headerlink" href="#phase-2-staggered-cycles-with-a-pilot-sequence" title="Link to this heading">¶</a></h2>
+<p><strong>Schedule.</strong> LED <code class="docutils literal notranslate"><span class="pre">id</span></code> runs the same cycle as before, rotated by a phase
+<code class="docutils literal notranslate"><span class="pre">φ(id)</span> <span class="pre">=</span> <span class="pre">(id</span> <span class="pre">·</span> <span class="pre">S)</span> <span class="pre">mod</span> <span class="pre">C</span></code>, where C = cycleFrames and S is the spec value for that
+C (see Decisions). Consecutive ids, which are usually physical neighbours on a
+strip, therefore land far apart in phase. At any frame, only about 2/C of the
+LEDs are in their pilot (2 of 18 today). The rest keep showing data colours, so
+they stay detected and tracked through every frame.</p>
+<p>The rotation happens inside the kernel’s <code class="docutils literal notranslate"><span class="pre">color_for_frame</span></code>, on the coded id
+(<code class="docutils literal notranslate"><span class="pre">led</span> <span class="pre">+</span> <span class="pre">code_offset</span></code>). Callers keep passing the global frame index. Firmware
+does one multiply and one mod per LED per frame.</p>
+<p><strong>Pilot sequence.</strong> The sync position no longer shows white then green. It shows
+a short pilot of known hues on different colour channels:</p>
+<ul class="simple">
+<li><p>Every pilot hue has the same luminance as the data hues, so an LED in its
+pilot does not flash. Combined with the stagger, there is no luminance spike
+anywhere in the frame, so no bloom.</p></li>
+<li><p>The pilot is unique because it contains a transition that never occurs in
+data. No hue is reserved, so data keeps the full alphabet.</p></li>
+<li><p>Each pilot gives the decoder a fresh colour calibration for that track, every
+cycle: the camera-space centroids of the palette. This replaces the white
+reference and absorbs white-balance drift, which the decoder must assume is
+present.</p></li>
+</ul>
+<p><strong>Palette.</strong> The app computes the per-hue drive levels that give constant
+luminance on this fixture. The calibration lives in the app. Firmware just plays
+<code class="docutils literal notranslate"><span class="pre">palette[symbol]</span></code>, rotated by the LED’s phase.</p>
+<p><strong>Decoding.</strong></p>
+<ul class="simple">
+<li><p>Each track looks for its own pilot.</p></li>
+<li><p>It decodes the data windows that follow, cyclically, against the centroids
+that pilot gave.</p></li>
+<li><p>The decoded id must satisfy <code class="docutils literal notranslate"><span class="pre">φ(id)</span> <span class="pre">+</span> <span class="pre">k</span> <span class="pre">≡</span> <span class="pre">observed</span> <span class="pre">phase</span> <span class="pre">(mod</span> <span class="pre">C)</span></code>, where k is
+the whole-frame part of the latency (see Alignment). This adds about log2(C)
+bits of check (1 in 18 random acceptances) that FEC can’t provide.</p></li>
+<li><p>A hop produces either two pilots at the wrong spacing or a phase that
+disagrees with the id, and is rejected.</p></li>
+<li><p>Decodes happen continuously, on each track’s own boundary, rather than for
+everyone at the global cycle end.</p></li>
+</ul>
+<p><strong>Alignment.</strong> Today’s sub-frame alignment scans for the frame shift that
+maximises the global green census. A staggered fixture has a flat census, so
+the scan instead scores within-window colour consistency, pooled over tracks.
+Every LED changes colour on the same frame grid, so this finds the camera →
+display latency, but only modulo bitPeriod. The φ check also needs the
+whole-frame part k. The decoder gets it from FEC-only decodes: the mode of
+(observed pilot phase − φ(id)) mod C. Once enough decodes agree, k locks and the
+φ check is enforced. The player’s <code class="docutils literal notranslate"><span class="pre">get_frame_timing</span></code> reports give display-side
+frame times on the player clock, which removes render jitter and clock drift
+from this estimate. They do not measure camera latency, so they supplement the
+scan rather than replace it.</p>
+<p><strong>Wire.</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">CodeParams.syncPattern</span></code> gains a staggered value next to today’s <code class="docutils literal notranslate"><span class="pre">&quot;on_off&quot;</span></code>.
+No new field. S follows from C by the spec table.</p></li>
+<li><p>Players advertise support in <code class="docutils literal notranslate"><span class="pre">welcome</span></code>. The app asks for the staggered pattern
+only from players that advertise it. Old players keep v1.</p></li>
+<li><p>The app sends the palette’s drive levels with the code parameters.</p></li>
+</ul>
+<p><strong>Pilot vs white.</strong> Before the decoder rewrite lands, the link sim compares the
+pilot with a staggered white delimiter on the same scenes (dense fixture, dark
+room, heavy veil): records, hop rejects, false delimiters and servo
+trajectories. The results, and the pilot hues chosen from them, are under
+“Phase 2 as built”.</p>
+<p>Also affected: the server codebook (<code class="docutils literal notranslate"><span class="pre">pi/server/server/codebook.py</span></code>), the host
+player, the wall page and the mock devices. They pick up the change through the
+kernel.</p>
+</section>
+<section id="phase-2-as-built-wall-first">
+<h2>Phase 2 as built (wall-first)<a class="headerlink" href="#phase-2-as-built-wall-first" title="Link to this heading">¶</a></h2>
+<p>The wire value is <code class="docutils literal notranslate"><span class="pre">syncPattern:</span> <span class="pre">&quot;stagger_pilot&quot;</span></code>. v1 (<code class="docutils literal notranslate"><span class="pre">&quot;on_off&quot;</span></code>) is still the
+default everywhere. Every existing player sends <code class="docutils literal notranslate"><span class="pre">&quot;on_off&quot;</span></code>, and the phone decodes
+it with the v1 decoder (<code class="docutils literal notranslate"><span class="pre">web/src/cv/decoder.ts</span></code>), which this phase does not
+change. The staggered decoder runs only when the code-book the phone receives
+says <code class="docutils literal notranslate"><span class="pre">&quot;stagger_pilot&quot;</span></code>.</p>
+<p><strong>The stagger step.</strong> The kernel computes S as the integer coprime with C that
+is nearest to C/Φ (Φ is the golden ratio):</p>
+<ul class="simple">
+<li><p>Being coprime with C, <code class="docutils literal notranslate"><span class="pre">id·S</span> <span class="pre">mod</span> <span class="pre">C</span></code> lands on every phase equally often. The
+number of LEDs in their pilot is the same on every frame (unit-tested for 16,
+64 and 1260 LEDs).</p></li>
+<li><p>Using the golden ratio puts consecutive ids far apart in phase.</p></li>
+</ul>
+<p>This rule gives the pinned values (11, 7, 5, 5 for C = 18, 10, 8, 6). It also
+covers every other C a code-book can have. The table for C = 3 to 34 is pinned
+in the kernel test and in the golden (<code class="docutils literal notranslate"><span class="pre">staggerSteps</span></code>).</p>
+<p><strong>The pilot: green, then magenta.</strong> The sync position shows pure green for one
+frame and magenta (red + blue) for the next. Reasons:</p>
+<ul class="simple">
+<li><p><strong>Channel separation.</strong> Green and magenta are complementary and use disjoint
+channels: G alone, then R and B together. Each channel is driven in exactly
+one of the two frames, so the sum of the two pilot windows is a full
+white-equivalent calibration. The decoder divides each data window by that
+sum, which is exactly the v1 white-reference normalisation. It is refreshed on
+every cycle for every track, and no LED ever has to show white.</p></li>
+<li><p><strong>A richer calibration than white.</strong> Each channel is on in one pilot window
+and off in the other. The pilot therefore measures every channel’s on level
+and its off level (ambient veil, sensor black level, glare). The decoder
+normalises each data window per channel as <code class="docutils literal notranslate"><span class="pre">(x</span> <span class="pre">−</span> <span class="pre">off)</span> <span class="pre">/</span> <span class="pre">(on</span> <span class="pre">−</span> <span class="pre">off)</span></code>. v1’s
+white frame measures only the gains. A veil that v1 divides into every
+window, the pilot subtracts out. This is why the pilot beats v1 in the heavy
+veil below.</p></li>
+<li><p><strong>No white, no bloom.</strong> At most two channels are lit in any pilot frame,
+never more than in the data frames (magenta and yellow are already
+two-channel). Combined with the stagger, the peak drive of the whole fixture
+is flat: there is no frame where every LED shows white, and no frame where
+any LED does.</p></li>
+<li><p><strong>The forbidden transition.</strong> Green appears in neither data palette (2
+symbols: blue/red; 4 symbols: blue/magenta/yellow/red). So the transition
+“into green, then magenta” never occurs in data, and data keeps its full
+alphabet. The pilot score normalises the two windows by their own sum.
+Per-channel gain, white balance and colour correction therefore cancel
+exactly, and no locked white balance is assumed. An ideal pilot scores 1.
+The data pair that looks most like a pilot is yellow then magenta, and it
+scores at most 0.5. A veil v at LED level L lowers a real pilot’s score to
+L/(L + 2v). A candidate is therefore accepted when it scores at least 0.15
+(v1’s green-sync floor, translated) and is the best pair within ±C/2
+windows. Uniqueness comes from that local maximum, together with FEC and
+the φ check.</p></li>
+<li><p><strong>Robust to hue bias.</strong> The score depends only on which channels dominate
+each window, not on hue angles, so a camera that rotates hues by tens of
+degrees still sees the pilot.</p></li>
+</ul>
+<p>Two parts of the decided design are deferred:</p>
+<ul class="simple">
+<li><p><strong>Constant luminance.</strong> Pure green and magenta are not iso-luminant on a
+real LED. The design calls for app-computed drive levels sent with the code
+parameters, which needs a wire field and firmware. Until then the pilot uses
+the same full-drive 1- and 2-channel colours as the data. Its peak drive
+stays within the data’s, so it does not flash brighter than the data.</p></li>
+<li><p><strong>Phase 3 alphabets.</strong> The 8- and 16-hue alphabets will include green, so the
+“into green” rule stops holding there. Phase 3 must either keep a gap at
+green on the hue circle or rely on the φ check plus Golay for delimiter
+uniqueness. That choice belongs to phase 3.</p></li>
+</ul>
+<p><strong>Decoder</strong> (<code class="docutils literal notranslate"><span class="pre">web/src/cv/staggerDecoder.ts</span></code>). Per track, on its own cycle
+boundary:</p>
+<ol class="arabic simple">
+<li><p>Bucket the track’s samples into absolute frame windows, with v1’s
+centrality weights.</p></li>
+<li><p>Score every adjacent window pair as a pilot, and take the best one per
+cycle.</p></li>
+<li><p>Calibrate from the pilot (per-channel off and span) and classify the C − 2 data windows that follow
+against the palette. Margins and the confidence gate are the same as v1.</p></li>
+<li><p>Decode with SEC-DED.</p></li>
+<li><p>Run the phase check <code class="docutils literal notranslate"><span class="pre">(a</span> <span class="pre">−</span> <span class="pre">φ(id))</span> <span class="pre">mod</span> <span class="pre">C</span> <span class="pre">=</span> <span class="pre">k</span></code>, where <code class="docutils literal notranslate"><span class="pre">a</span></code> is the pilot’s
+absolute frame.</p></li>
+</ol>
+<p>Alignment works in two parts:</p>
+<ul class="simple">
+<li><p><strong>Sub-frame part.</strong> Chromaticity scatter is pooled within windows across up
+to 160 tracks, and the decoder takes the shift (mod bitPeriod) that minimises
+it. The shift is kept continuous, never wrapped.</p></li>
+<li><p><strong>Whole-frame part k.</strong> k comes from a decaying histogram of
+<code class="docutils literal notranslate"><span class="pre">(a</span> <span class="pre">−</span> <span class="pre">φ(id))</span> <span class="pre">mod</span> <span class="pre">C</span></code> over decodes that pass FEC and the confidence gate. It
+locks once the top bin has at least 4 votes and at least 50% of the mass.
+Records are emitted only after k locks, and every record is phase-checked.</p></li>
+</ul>
+<p>Records anchor at the sample nearest mid-cycle. Their pose is paired at the
+exposure time, corrected by shift + k·bitPeriod. Reflections are deduplicated
+per id and per pilot frame.</p>
+<p><strong>The 11 consumers, for the wall test:</strong></p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>#</p></th>
+<th class="head"><p>Consumer</p></th>
+<th class="head"><p>Status</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>1</p></td>
+<td><p>Alignment</p></td>
+<td><p>Done: pooled consistency plus the k histogram. <code class="docutils literal notranslate"><span class="pre">get_frame_timing</span></code> is not wired in yet (deferred).</p></td>
+</tr>
+<tr class="row-odd"><td><p>2</p></td>
+<td><p>Green census, no-cyan rule</p></td>
+<td><p>Unused under stagger: the pipeline still computes the census, and only the v1 decoder reads it. The no-cyan rule stays, because cyan would sit between the green pilot and the data palette.</p></td>
+</tr>
+<tr class="row-even"><td><p>3</p></td>
+<td><p>Cycle framing, dedup, pruning</p></td>
+<td><p>Done: per-track rolling decode, dedup per (id, pilot frame), pruning at the oldest window a pending decode can still need (<code class="docutils literal notranslate"><span class="pre">pruneCutoffServerMs</span></code>).</p></td>
+</tr>
+<tr class="row-odd"><td><p>4</p></td>
+<td><p>White reference → pilot</p></td>
+<td><p>Done: per-channel on and off levels from the pilot, per track and per cycle. <code class="docutils literal notranslate"><span class="pre">channelQuality</span></code> receives the same pilot-normalised colour.</p></td>
+</tr>
+<tr class="row-even"><td><p>5</p></td>
+<td><p>Record anchor, latency</p></td>
+<td><p>Done: mid-cycle anchor, latency = shift + k·bitPeriod. The design’s median of window centroids is replaced by the mid-cycle sample, which pairs with one pose.</p></td>
+</tr>
+<tr class="row-odd"><td><p>6</p></td>
+<td><p>Exposure and brightness servos</p></td>
+<td><p>No change needed: pilot windows are saturated hues, so they never count as gray. A staggered white would put about 1/C gray blobs into every frame. The servo comparison is in the table below.</p></td>
+</tr>
+<tr class="row-even"><td><p>7</p></td>
+<td><p>Split-blob colour (<code class="docutils literal notranslate"><span class="pre">haloHue</span></code>)</p></td>
+<td><p>Deferred. Splits come from bloom, which the pilot removes.</p></td>
+</tr>
+<tr class="row-odd"><td><p>8</p></td>
+<td><p>Tracker, 3D overlay, IMU lock</p></td>
+<td><p>None needed.</p></td>
+</tr>
+<tr class="row-even"><td><p>9</p></td>
+<td><p>Group capture</p></td>
+<td><p>Deferred. The φ check uses the coded id, so it holds across fixtures, but k is a single value. Fixtures whose latencies differ by a whole frame need a k per fixture.</p></td>
+</tr>
+<tr class="row-odd"><td><p>10</p></td>
+<td><p>Generators and renderers</p></td>
+<td><p>Done in the kernel (<code class="docutils literal notranslate"><span class="pre">color_index_for_frame</span></code>). The wall, the phone’s synthetic source and the Python binding (<code class="docutils literal notranslate"><span class="pre">sync_pattern=</span></code>) render it. Firmware players and <code class="docutils literal notranslate"><span class="pre">pi/player_rs</span></code> still build v1 specs (no advertisement yet).</p></td>
+</tr>
+<tr class="row-even"><td><p>11</p></td>
+<td><p>Telemetry</p></td>
+<td><p>Done: <code class="docutils literal notranslate"><span class="pre">pilotCycles</span></code>, <code class="docutils literal notranslate"><span class="pre">delimiterMisses</span></code>, <code class="docutils literal notranslate"><span class="pre">phaseRejects</span></code>, <code class="docutils literal notranslate"><span class="pre">rejectedPhaseUnlocked</span></code> and <code class="docutils literal notranslate"><span class="pre">phaseK</span></code>. The first three are folded into link telemetry. The HUD shows <code class="docutils literal notranslate"><span class="pre">pilot</span> <span class="pre">k</span> <span class="pre">…</span> <span class="pre">cyc</span> <span class="pre">…</span> <span class="pre">miss</span> <span class="pre">…</span> <span class="pre">φrej</span> <span class="pre">…</span></code>.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Wire, for now.</strong> No player advertises the staggered code, and the phone never
+asks for it. To test against the wall, the dev server hands it out
+(<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//web:serve</span> <span class="pre">--</span> <span class="pre">--sync-pattern</span> <span class="pre">stagger_pilot</span></code>), or both pages force
+it with <code class="docutils literal notranslate"><span class="pre">?sync=stagger_pilot</span></code>. The <code class="docutils literal notranslate"><span class="pre">welcome</span></code> feature advertisement, the request
+in <code class="docutils literal notranslate"><span class="pre">start_mapping</span></code>, and firmware support come next.</p>
+<section id="simulation-results">
+<h3>Simulation results<a class="headerlink" href="#simulation-results" title="Link to this heading">¶</a></h3>
+<p>Two simulators run the production pipeline and negotiation. They compare v1,
+the staggered green/magenta pilot, and a staggered white/green delimiter (the
+comparator, <code class="docutils literal notranslate"><span class="pre">&quot;stagger_white&quot;</span></code>, which is not a wire value).</p>
+<p><strong>Dense fixture</strong> (<code class="docutils literal notranslate"><span class="pre">web/tests/denseFixture_sim.test.ts</span></code>): radiolarian
+geometry, 1260-LED code with C = 18 and S = 11, hand-held camera, 15% blob
+dropout, and 225 ms of camera latency, so the whole-frame k is exercised. A
+bloom of about one pitch merges spots: in v1 every LED blooms on the global
+white frame; under the staggered white each LED blooms on its own white frame;
+the pilot has no white frame.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Run</p></th>
+<th class="head"><p>Wrong (&gt; 4 px)</p></th>
+<th class="head"><p>Gross (&gt; 12 px)</p></th>
+<th class="head"><p>Good records / LED / s</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>v1, no bloom</p></td>
+<td><p>2.7%</p></td>
+<td><p>0.1%</p></td>
+<td><p>2.49</p></td>
+</tr>
+<tr class="row-odd"><td><p>Pilot, no bloom</p></td>
+<td><p>2.6%</p></td>
+<td><p>0.0%</p></td>
+<td><p>2.50</p></td>
+</tr>
+<tr class="row-even"><td><p>v1, 14 px bloom</p></td>
+<td><p>12.3%</p></td>
+<td><p>4.2%</p></td>
+<td><p>0.55</p></td>
+</tr>
+<tr class="row-odd"><td><p>Staggered white, 14 px bloom</p></td>
+<td><p>0.0%</p></td>
+<td><p>0.0%</p></td>
+<td><p>0.50</p></td>
+</tr>
+<tr class="row-even"><td><p>Pilot, 14 px bloom</p></td>
+<td><p>2.6%</p></td>
+<td><p>0.0%</p></td>
+<td><p>2.50</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p><strong>Phase lock.</strong> k locked, and the total latency estimate (shift + k·140 ms)
+came out at 224 ms against the true 225 ms.</p></li>
+<li><p><strong>The pilot under bloom.</strong> The pilot is unaffected by bloom: its result
+equals the bloom-free one, 4.5× v1’s yield, which closes failure mode 1. A
+staggered white avoids v1’s wrong ids, but its yield is as bad as v1’s: an
+LED blooms on its own white frame, so its window carries a merged colour,
+and FEC rejects the cycle.</p></li>
+<li><p><strong>Hops.</strong> Of 686 neighbour-hop stitches that SEC-DED accepts as a third id,
+17 also pass the φ check (2.5%; random chance is 1/C = 5.6%). The forced
+hop through the pipeline is rejected by the phase check, and both real ids
+still land.</p></li>
+</ul>
+<p><strong>Link sim</strong> (<code class="docutils literal notranslate"><span class="pre">web/tests/staggerLink_sim.test.ts</span></code>): helix fixture, 120 LEDs,
+30 s per scene, 140 ms camera latency, the measured alphabet rule, and the
+exposure servo running.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Scene</p></th>
+<th class="head"><p>Sync</p></th>
+<th class="head"><p>Records</p></th>
+<th class="head"><p>Wrong ids</p></th>
+<th class="head"><p>t90</p></th>
+<th class="head"><p>Delimiter misses</p></th>
+<th class="head"><p>Exposure median / max</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>hold-dark</p></td>
+<td><p>v1</p></td>
+<td><p>11139</p></td>
+<td><p>0</p></td>
+<td><p>4.1 s</p></td>
+<td><p>–</p></td>
+<td><p>0.29 / 0.65</p></td>
+</tr>
+<tr class="row-odd"><td><p>hold-dark</p></td>
+<td><p>pilot</p></td>
+<td><p>11425</p></td>
+<td><p>0</p></td>
+<td><p>4.3 s</p></td>
+<td><p>98</p></td>
+<td><p>0.37 / 0.65</p></td>
+</tr>
+<tr class="row-even"><td><p>hold-dark</p></td>
+<td><p>staggered white</p></td>
+<td><p>11425</p></td>
+<td><p>0</p></td>
+<td><p>4.3 s</p></td>
+<td><p>86</p></td>
+<td><p>0.29 / 0.65</p></td>
+</tr>
+<tr class="row-odd"><td><p>orbit-dark</p></td>
+<td><p>v1</p></td>
+<td><p>9845</p></td>
+<td><p>0</p></td>
+<td><p>21.9 s</p></td>
+<td><p>–</p></td>
+<td><p>0.29 / 0.65</p></td>
+</tr>
+<tr class="row-even"><td><p>orbit-dark</p></td>
+<td><p>pilot</p></td>
+<td><p>10185</p></td>
+<td><p>0</p></td>
+<td><p>21.4 s</p></td>
+<td><p>185</p></td>
+<td><p>0.39 / 0.65</p></td>
+</tr>
+<tr class="row-odd"><td><p>orbit-dark</p></td>
+<td><p>staggered white</p></td>
+<td><p>10190</p></td>
+<td><p>0</p></td>
+<td><p>21.4 s</p></td>
+<td><p>176</p></td>
+<td><p>0.29 / 0.65</p></td>
+</tr>
+<tr class="row-even"><td><p>orbit-lit</p></td>
+<td><p>v1</p></td>
+<td><p>11822</p></td>
+<td><p>0</p></td>
+<td><p>19.3 s</p></td>
+<td><p>–</p></td>
+<td><p>0.25 / 0.25</p></td>
+</tr>
+<tr class="row-odd"><td><p>orbit-lit</p></td>
+<td><p>pilot</p></td>
+<td><p>11980</p></td>
+<td><p>0</p></td>
+<td><p>19.0 s</p></td>
+<td><p>141</p></td>
+<td><p>0.25 / 0.25</p></td>
+</tr>
+<tr class="row-even"><td><p>orbit-lit</p></td>
+<td><p>staggered white</p></td>
+<td><p>11966</p></td>
+<td><p>0</p></td>
+<td><p>19.0 s</p></td>
+<td><p>134</p></td>
+<td><p>0.25 / 0.25</p></td>
+</tr>
+<tr class="row-odd"><td><p>bright-veil</p></td>
+<td><p>v1</p></td>
+<td><p>6911</p></td>
+<td><p>0</p></td>
+<td><p>never</p></td>
+<td><p>–</p></td>
+<td><p>0.13 / 0.25</p></td>
+</tr>
+<tr class="row-even"><td><p>bright-veil</p></td>
+<td><p>pilot</p></td>
+<td><p>8437</p></td>
+<td><p>0</p></td>
+<td><p>28.5 s</p></td>
+<td><p>177</p></td>
+<td><p>0.13 / 0.25</p></td>
+</tr>
+<tr class="row-odd"><td><p>bright-veil</p></td>
+<td><p>staggered white</p></td>
+<td><p>7939</p></td>
+<td><p>0</p></td>
+<td><p>26.5 s</p></td>
+<td><p>222</p></td>
+<td><p>0.13 / 0.25</p></td>
+</tr>
+<tr class="row-even"><td><p>ambient-ramp</p></td>
+<td><p>v1</p></td>
+<td><p>8782</p></td>
+<td><p>0</p></td>
+<td><p>20.1 s</p></td>
+<td><p>–</p></td>
+<td><p>0.25 / 0.25</p></td>
+</tr>
+<tr class="row-odd"><td><p>ambient-ramp</p></td>
+<td><p>pilot</p></td>
+<td><p>8815</p></td>
+<td><p>0</p></td>
+<td><p>19.0 s</p></td>
+<td><p>172</p></td>
+<td><p>0.25 / 0.25</p></td>
+</tr>
+<tr class="row-even"><td><p>ambient-ramp</p></td>
+<td><p>staggered white</p></td>
+<td><p>8723</p></td>
+<td><p>0</p></td>
+<td><p>19.4 s</p></td>
+<td><p>169</p></td>
+<td><p>0.25 / 0.25</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p><strong>Wrong ids and phase rejects.</strong> No scene produced a wrong id or a phase
+reject. On this sparse fixture, hops and false delimiters do not reach the
+φ check.</p></li>
+<li><p><strong>Heavy veil.</strong> The pilot’s on/off calibration gives 22% more records than
+v1. It also reaches 90% coverage, which v1 never does.</p></li>
+<li><p><strong>Servo trajectories.</strong> In the dark scenes the servo settles on a longer
+exposure under the pilot (median 0.37–0.39 against 0.29). v1’s global white
+frame and the staggered white keep about 1/C of the blobs gray, which holds
+the servo back. The pilot has no gray windows.</p></li>
+<li><p><strong>Delimiter misses.</strong> Misses are cycles in which a fully lit track found no
+pilot (motion smear across the pilot pair, or blobs entering the frame).
+They cost nothing measurable here.</p></li>
+</ul>
+<p><strong>Decision.</strong> The green/magenta pilot. It matches or beats v1 in every scene.
+It beats the staggered white under bloom (5× the yield) and under veil
+(+6% records, the on/off calibration). It also leaves the exposure servo free
+of the white frame’s gray floor.</p>
+</section>
+</section>
+<section id="phase-3-stronger-codewords-and-faster-alphabets">
+<h2>Phase 3: stronger codewords and faster alphabets<a class="headerlink" href="#phase-3-stronger-codewords-and-faster-alphabets" title="Link to this heading">¶</a></h2>
+<p><strong>Code book.</strong> The extended Golay code <strong>[24,12,8]</strong>:</p>
+<ul class="simple">
+<li><p>12 data bits, which covers 4094 LEDs with the id+1 offset (the largest fixture
+today is 1260);</p></li>
+<li><p>corrects 3 bit errors and detects up to 7, against SEC-DED’s 1 and 3;</p></li>
+<li><p>a stitched cycle from a hop is far less likely to land on a valid codeword.</p></li>
+</ul>
+<p>Encode and decode are table-free and cheap enough for the C6. Golay ships
+together with the 8- and 16-hue alphabets. SEC-DED stays for low bit rates,
+where cycle length matters more.</p>
+<p><strong>Alphabets.</strong></p>
+<ul class="simple">
+<li><p>8 hues (3 bits/symbol) and 16 hues (4 bits/symbol) on the hue circle, in Gray
+order, so an adjacent-hue misread flips one bit.</p></li>
+<li><p>Data uses the full alphabet. Only the pilot’s forbidden transition marks the
+sync position.</p></li>
+<li><p>The classifier uses the palette centroids from each track’s latest pilot,
+absorbing the camera’s hue bias that phase 1 measures, instead of assuming
+ideal targets.</p></li>
+<li><p>16 hues is likely viable only close up and in good light. Phase 1’s <code class="docutils literal notranslate"><span class="pre">16:…%</span></code>
+figure says whether it ever is.</p></li>
+</ul>
+<p><strong>Cycle lengths</strong> (frames, 2 sync + data):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p></p></th>
+<th class="head"><p>1 bit</p></th>
+<th class="head"><p>2 bits</p></th>
+<th class="head"><p>3 bits</p></th>
+<th class="head"><p>4 bits</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>SEC-DED [16,11,4] (today)</p></td>
+<td><p>18</p></td>
+<td><p>10</p></td>
+<td><p>8</p></td>
+<td><p>6</p></td>
+</tr>
+<tr class="row-odd"><td><p>Golay [24,12,8]</p></td>
+<td><p>26</p></td>
+<td><p>14</p></td>
+<td><p>10</p></td>
+<td><p>8</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Golay at 3 bits/symbol is 10 frames: shorter than today’s 18, with 3-error
+correction. The spec pins S for every cycle length in use.</p>
+<p><strong>Rate selection.</strong> Phase 1’s planner extends to (alphabet × code) pairs. The
+prediction already accounts for the code’s correction capability.</p>
+</section>
+<section id="replacing-the-global-flash">
+<h2>Replacing the global flash<a class="headerlink" href="#replacing-the-global-flash" title="Link to this heading">¶</a></h2>
+<p>The v1 code relies on every LED showing white at the same frame. A survey of
+this branch found 11 consumers of that global flash. Each needs a replacement
+under the stagger:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>#</p></th>
+<th class="head"><p>Consumer</p></th>
+<th class="head"><p>Replacement</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>1</p></td>
+<td><p>Decoder sub-frame alignment (<code class="docutils literal notranslate"><span class="pre">decoder.ts</span></code> <code class="docutils literal notranslate"><span class="pre">updateAlignment</span></code>)</p></td>
+<td><p>Consistency score pooled over tracks. It finds latency only modulo bitPeriod, so add the integer-frame k from the (observed phase − φ(id)) histogram before enforcing the φ check. <code class="docutils literal notranslate"><span class="pre">get_frame_timing</span></code> supplements it.</p></td>
+</tr>
+<tr class="row-odd"><td><p>2</p></td>
+<td><p>Pipeline green census and the no-cyan palette rule</p></td>
+<td><p>Delete both. The pilot’s forbidden transition is the delimiter.</p></td>
+</tr>
+<tr class="row-even"><td><p>3</p></td>
+<td><p>Decoder cycle framing, reflection dedup, sample pruning</p></td>
+<td><p>Per-track cycle framing: a rolling decode per track, dedup per id over one cycle, prune at <code class="docutils literal notranslate"><span class="pre">now</span> <span class="pre">−</span> <span class="pre">2·cycleMs</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>4</p></td>
+<td><p>Per-track white reference (decoder, <code class="docutils literal notranslate"><span class="pre">channelQuality</span></code>)</p></td>
+<td><p>Per-track pilot calibration (palette centroids), refreshed every cycle.</p></td>
+</tr>
+<tr class="row-even"><td><p>5</p></td>
+<td><p>Record anchor and pose-pairing latency</p></td>
+<td><p>Latency = sub-frame shift + k·bitPeriod. Anchor on the median of the cycle’s window centroids.</p></td>
+</tr>
+<tr class="row-odd"><td><p>6</p></td>
+<td><p>Exposure and brightness servos (<code class="docutils literal notranslate"><span class="pre">exposure.ts</span></code>)</p></td>
+<td><p>Phase-aware populations that skip pilot windows. A staggered white would give grayFrac a ≈1/C baseline (6% at C = 18, 17% at C = 6); the pilot avoids that, and replay checks the servo trajectories.</p></td>
+</tr>
+<tr class="row-even"><td><p>7</p></td>
+<td><p>Split-blob colour (<code class="docutils literal notranslate"><span class="pre">ccl.ts</span></code> <code class="docutils literal notranslate"><span class="pre">haloHue</span></code>)</p></td>
+<td><p>Keep the member-mean colour alongside the halo hue. Use the member mean for pilot detection and calibration.</p></td>
+</tr>
+<tr class="row-odd"><td><p>8</p></td>
+<td><p>Tracker, 3D overlay, IMU-cal lock gate</p></td>
+<td><p>None needed. They only tolerated the blackout, and it is gone.</p></td>
+</tr>
+<tr class="row-even"><td><p>9</p></td>
+<td><p>Group capture (one shared alignment)</p></td>
+<td><p>Per-fixture k from the same histogram. φ is computed on the coded id, so every fixture’s check passes.</p></td>
+</tr>
+<tr class="row-odd"><td><p>10</p></td>
+<td><p>Pattern generators and renderers</p></td>
+<td><p>Rotate inside the kernel’s <code class="docutils literal notranslate"><span class="pre">color_for_frame</span></code>. The 5 tests that assert frame 0 is all white change.</p></td>
+</tr>
+<tr class="row-even"><td><p>11</p></td>
+<td><p>Telemetry (<code class="docutils literal notranslate"><span class="pre">cyclesCompleted</span></code>, sync-valid yield)</p></td>
+<td><p>Counters redefined per track, plus <code class="docutils literal notranslate"><span class="pre">delimiterMisses</span></code> and <code class="docutils literal notranslate"><span class="pre">phaseRejects</span></code>.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Notes:</p>
+<ul class="simple">
+<li><p><strong>Tests asserting frame 0 is all white:</strong> <code class="docutils literal notranslate"><span class="pre">test_graycode.py</span></code>,
+<code class="docutils literal notranslate"><span class="pre">test_driver.py</span></code>, <code class="docutils literal notranslate"><span class="pre">firmware/player_app/tests/ffi.rs</span></code>,
+<code class="docutils literal notranslate"><span class="pre">pi/player_rs/src/render.rs</span></code>, and the golden in
+<code class="docutils literal notranslate"><span class="pre">firmware/player/tests/session.rs</span></code>. The golden survives if the rotation lives
+inside <code class="docutils literal notranslate"><span class="pre">color_for_frame</span></code>.</p></li>
+<li><p><strong>False delimiters.</strong> A washed-out data window could mimic part of the pilot.
+The φ check and FEC must reject it, and the link sim injects this case.</p></li>
+<li><p><strong>Power.</strong> v1 drives every LED at full RGB at once, the peak supply current.
+The stagger and the constant-luminance pilot flatten that peak.</p></li>
+</ul>
+</section>
+<section id="order-and-testing">
+<h2>Order and testing<a class="headerlink" href="#order-and-testing" title="Link to this heading">¶</a></h2>
+<p>Phase 0 goes first: it gives phases 2 and 3 one place to change. Phase 2 goes
+next. It fixes the sync-time registration loss and adds the hop check
+independently of phase 3, and it is the largest change (decoder rewrite).</p>
+<p>Each phase gets:</p>
+<ul class="simple">
+<li><p>golden fixtures in the kernel, checked through the WASM and ctypes bindings;</p></li>
+<li><p>the dense-fixture simulator (<code class="docutils literal notranslate"><span class="pre">web/tests/denseFixture_sim.test.ts</span></code>) extended
+with staggered rendering (no simultaneous sync blackout) and hop injection;</p></li>
+<li><p>link-sim policies for the new code and alphabets, including the pilot vs white
+comparison;</p></li>
+<li><p>HITL: the C6 and P4 players on the rigs, with the Android journeys on the
+phone bench.</p></li>
+</ul>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Hue code v2: staggered cycles, stronger codewords, faster alphabets</a><ul>
+<li><a class="reference internal" href="#why">Why</a></li>
+<li><a class="reference internal" href="#decisions">Decisions</a></li>
+<li><a class="reference internal" href="#phase-0-one-colour-code-kernel-pr-488">Phase 0: one colour-code kernel (PR #488)</a></li>
+<li><a class="reference internal" href="#phase-1-measure-the-channel-done-pr-on-agent-hue-code-v2">Phase 1: measure the channel (done; PR on <code class="docutils literal notranslate"><span class="pre">agent/hue-code-v2</span></code>)</a></li>
+<li><a class="reference internal" href="#phase-2-staggered-cycles-with-a-pilot-sequence">Phase 2: staggered cycles with a pilot sequence</a></li>
+<li><a class="reference internal" href="#phase-2-as-built-wall-first">Phase 2 as built (wall-first)</a><ul>
+<li><a class="reference internal" href="#simulation-results">Simulation results</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#phase-3-stronger-codewords-and-faster-alphabets">Phase 3: stronger codewords and faster alphabets</a></li>
+<li><a class="reference internal" href="#replacing-the-global-flash">Replacing the global flash</a></li>
+<li><a class="reference internal" href="#order-and-testing">Order and testing</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../../static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>
