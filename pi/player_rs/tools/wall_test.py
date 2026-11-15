@@ -32,6 +32,19 @@ class WallArgs(unittest.TestCase):
         self.assertIn("https://localhost:8443/wall.html", text)
         self.assertIn("wss://192.168.1.20:8443", text)
         self.assertIn("<this computer's IP>", wall.instructions("8443", None, "400"))
+        self.assertIn("https://192.168.1.20:8443/app/", text)
+
+    def test_web_root_stages_the_solver_next_to_the_app(self):
+        import os
+        import tempfile
+
+        dist = tempfile.mkdtemp()
+        solver = tempfile.mkdtemp()
+        open(os.path.join(dist, "index.html"), "w").close()
+        root = wall.stage_web_root(dist, solver)
+        self.assertTrue(os.path.isfile(os.path.join(root, "index.html")))
+        self.assertEqual(os.path.realpath(os.path.join(root, "solver")), os.path.realpath(solver))
+        self.assertEqual(wall.stage_web_root(dist, None), dist)
 
 
 if __name__ == "__main__":

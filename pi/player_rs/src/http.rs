@@ -140,6 +140,20 @@ pub fn resolve(root: &Path, url_path: &str) -> Option<PathBuf> {
     Some(out)
 }
 
+fn redirect(location: &str, head_only: bool) -> Vec<u8> {
+    let body = format!("see {location}\n");
+    let mut out = format!(
+        "HTTP/1.1 301 Moved Permanently\r\nLocation: {location}\r\nContent-Type: text/plain; charset=utf-8\r\n\
+         Content-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+        body.len()
+    )
+    .into_bytes();
+    if !head_only {
+        out.extend_from_slice(body.as_bytes());
+    }
+    out
+}
+
 fn response(status: &str, ctype: &str, body: &[u8], head_only: bool) -> Vec<u8> {
     let mut out = format!(
         "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\n\
@@ -174,7 +188,15 @@ pub fn respond(head: &Head, web_root: Option<&Path>) -> Vec<u8> {
     }
     let not_found = || response("404 Not Found", text, b"not found\n", head_only);
     let Some(root) = web_root else { return not_found() };
-    let Some(mut file) = resolve(root, &head.path) else { return not_found() };
+    // The phone app itself, from the same web root, under /app/ (`/` is the
+    // trust page): a phone can open https://<player>/app/ to run THIS build of
+    // the app (e.g. ahead of a release) against this player. The app resolves
+    // its wasm bundles against its document, so the subpath just works.
+    if head.path == "/app" {
+        return redirect("/app/", head_only);
+    }
+    let path = head.path.strip_prefix("/app").filter(|p| p.starts_with('/')).unwrap_or(&head.path);
+    let Some(mut file) = resolve(root, path) else { return not_found() };
     if file.is_dir() {
         file.push("index.html");
     }
@@ -311,6 +333,24 @@ mod tests {
         let r = respond(&head("GET /nope.js HTTP/1.1\r\n\r\n"), Some(root.as_path()));
         assert_eq!(status(&r), "HTTP/1.1 404 Not Found");
         let r = respond(&head("GET /wall.html HTTP/1.1\r\n\r\n"), None);
+        assert_eq!(status(&r), "HTTP/1.1 404 Not Found");
+    }
+
+    #[test]
+    fn serves_the_app_under_app() {
+        let root = tree("app");
+        std::fs::write(root.join("index.html"), "<title>app</title>").unwrap();
+        let r = respond(&head("GET /app HTTP/1.1\r\n\r\n"), Some(root.as_path()));
+        assert!(String::from_utf8_lossy(&r).starts_with("HTTP/1.1 301"));
+        assert!(String::from_utf8_lossy(&r).contains("Location: /app/"));
+        let r = respond(&head("GET /app/?sync=stagger_pilot HTTP/1.1\r\n\r\n"), Some(root.as_path()));
+        assert_eq!(body(&r), b"<title>app</title>");
+        let r = respond(&head("GET /app/wall.html HTTP/1.1\r\n\r\n"), Some(root.as_path()));
+        assert_eq!(body(&r), b"<canvas id=wall>");
+        // `/` stays the trust page; /application is not the app.
+        assert!(String::from_utf8_lossy(body(&respond(&head("GET / HTTP/1.1\r\n\r\n"), Some(root.as_path())))).contains("cert-ok"));
+        assert_eq!(status(&respond(&head("GET /application HTTP/1.1\r\n\r\n"), Some(root.as_path()))), "HTTP/1.1 404 Not Found");
+        let r = respond(&head("GET /app/../../etc/passwd HTTP/1.1\r\n\r\n"), Some(root.as_path()));
         assert_eq!(status(&r), "HTTP/1.1 404 Not Found");
     }
 

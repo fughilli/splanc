@@ -16,7 +16,13 @@ from this process (a second client, like the phone next to the wall). Then:
    driver uses) prescribes for one frame of the cycle, and that frame is the one
    the PLAYER's clock says is due (+/- 1 frame), so the wall shows the phone's
    pattern, phase-locked to the player's pattern clock;
-4. stop_mapping takes the wall back to idle.
+4. stop_mapping takes the wall back to idle;
+5. hue code v2 phase 2: a second capture that asks for the staggered pilot
+   (start_mapping syncPattern "stagger_pilot"; the host player advertises
+   hue_stagger_pilot) gets it: the wall reports `sync stagger_pilot`, and its
+   canvas decodes the same way against the kernel's STAGGERED frames (each LED's
+   cycle rotated by its own phase, green/magenta in place of white/green) — no
+   frame is all-white, and a v1 frame never matches.
 
 Not part of `bazel test //...` (it needs a browser); Chromium is installed into
 the Playwright cache on first run.
@@ -87,7 +93,10 @@ def arm(reply: bytes) -> int:
 
 
 HELLO = ld(1, b"")
-START = ld(3, ld(1, vi(1, LEDS) + vi(2, SYMBOLS) + dbl(3, BIT_PERIOD_MS) + dbl(4, 1.0)))
+START_OPTS = vi(1, LEDS) + vi(2, SYMBOLS) + dbl(3, BIT_PERIOD_MS) + dbl(4, 1.0)
+START = ld(3, ld(1, START_OPTS))
+# StartMappingOptions.sync_pattern = 12: ask for the hue code v2 staggered pilot.
+START_STAGGER = ld(3, ld(1, START_OPTS + ld(12, b"stagger_pilot")))
 STOP = ld(5, vi(1, 0))  # solveOnHost=false: this player has no solver
 
 
@@ -127,6 +136,44 @@ def matching_frames(px, frames):
         return all(abs(x - y) <= 3 for x, y in zip(a, b))
 
     return [f for f, want in enumerate(frames) if all(close(p, w) for p, w in zip(px, want))]
+
+
+def decode_cycles(page, t_send: float, sync: str) -> None:
+    """Snapshot the canvas for >= 1.5 cycles: every snapshot must be exactly one
+    of the kernel's frames for `sync` (and the one the player clock has due)."""
+    cycle = pattern.cycle_frames(LEDS, SYMBOLS, "secded")
+    frames = [pattern.frame_rgb(f, LEDS, SYMBOLS, "secded", sync) for f in range(cycle)]
+    other = "on_off" if sync != "on_off" else "stagger_pilot"
+    wrong = [pattern.frame_rgb(f, LEDS, SYMBOLS, "secded", other) for f in range(cycle)]
+    seen, late, white, pilots = set(), [], 0, 0
+    deadline = time.monotonic() + max(6.0, 1.5 * cycle * BIT_PERIOD_MS / 1000)
+    while time.monotonic() < deadline:
+        t0 = time.monotonic()
+        px = page.evaluate(SAMPLE_JS, [LEDS, COLS])
+        t1 = time.monotonic()
+        got = matching_frames(px, frames)
+        if not got:
+            check(False, f"[{sync}] snapshot matches a kernel frame: {px[:6]}...")
+        check(not matching_frames(px, wrong), f"[{sync}] snapshot is not a {other} frame")
+        white += all(tuple(p) == (255, 255, 255) for p in px)
+        pilots += sum(1 for p in px if tuple(p) in ((0, 255, 0), (255, 0, 255)))
+        due = {
+            int(((t - t_send) * 1000) // BIT_PERIOD_MS) % cycle
+            for t in (t0 - BIT_PERIOD_MS / 1000, t0, t1, t1 + BIT_PERIOD_MS / 1000)
+        }
+        if not set(got) & due:
+            late.append((got, sorted(due)))
+        seen.update(got)
+        time.sleep(BIT_PERIOD_MS / 1000 / 3)
+    check(
+        len(seen) >= min(cycle, 8),
+        f"[{sync}] wall stepped through {len(seen)}/{cycle} distinct kernel frames",
+    )
+    check(not late, f"[{sync}] every frame was the one the player clock had due (+/-1): {late[:3]}")
+    if sync == "stagger_pilot":
+        check(white == 0 and pilots > 0, f"[{sync}] no all-white frame; {pilots} pilot dots seen")
+    else:
+        check(white > 0, f"[{sync}] v1 shows its all-white sync frame")
 
 
 def main() -> None:
@@ -198,31 +245,7 @@ def main() -> None:
             )
 
             # 3. Decode the canvas against the kernel, frame by frame.
-            cycle = pattern.cycle_frames(LEDS, SYMBOLS, "secded")
-            frames = [pattern.frame_rgb(f, LEDS, SYMBOLS, "secded") for f in range(cycle)]
-            seen, late = set(), []
-            deadline = time.monotonic() + max(6.0, 1.5 * cycle * BIT_PERIOD_MS / 1000)
-            while time.monotonic() < deadline:
-                t0 = time.monotonic()
-                px = page.evaluate(SAMPLE_JS, [LEDS, COLS])
-                t1 = time.monotonic()
-                got = matching_frames(px, frames)
-                if not got:
-                    check(False, f"snapshot matches a kernel frame: {px[:6]}...")
-                due = {
-                    int(((t - t_send) * 1000) // BIT_PERIOD_MS) % cycle
-                    for t in (t0 - BIT_PERIOD_MS / 1000, t0, t1, t1 + BIT_PERIOD_MS / 1000)
-                }
-                if not set(got) & due:
-                    late.append((got, sorted(due)))
-                seen.update(got)
-                time.sleep(BIT_PERIOD_MS / 1000 / 3)
-            check(
-                len(seen) >= min(cycle, 8),
-                f"wall stepped through {len(seen)}/{cycle} distinct kernel frames",
-            )
-            check(not late, f"every frame was the one the player clock had due (+/-1): {late[:3]}")
-
+            decode_cycles(page, t_send, "on_off")
             # 4. Stop: back to idle.
             phone.send(STOP)
             check(arm(phone.recv(timeout=5)) == 10, "phone stop_mapping -> mapping_stopped")
@@ -230,6 +253,23 @@ def main() -> None:
                 "document.getElementById('status').textContent.includes('idle')", timeout=10000
             )
             check(True, "wall back to idle after stop_mapping")
+
+            # 5. Hue code v2 phase 2: the staggered pilot, requested by the phone.
+            t_send = time.monotonic()
+            phone.send(START_STAGGER)
+            reply = phone.recv(timeout=5)
+            check(
+                arm(reply) == 3, "phone start_mapping(syncPattern=stagger_pilot) -> mapping_started"
+            )
+            check(b"stagger_pilot" in reply, "the player granted the staggered pilot (codeParams)")
+            page.wait_for_function(
+                "document.getElementById('status').textContent.includes('sync stagger_pilot')",
+                timeout=10000,
+            )
+            check(True, f"wall renders the staggered pilot: {status.text_content()!r}")
+            decode_cycles(page, t_send, "stagger_pilot")
+            phone.send(STOP)
+            check(arm(phone.recv(timeout=5)) == 10, "phone stop_mapping -> mapping_stopped")
             phone.close()
             check(not [e for e in errors if not re.search("truth", e)], f"no page errors: {errors}")
             browser.close()

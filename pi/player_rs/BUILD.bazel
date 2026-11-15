@@ -123,6 +123,8 @@ py_binary(
     srcs = ["tools/wall.py"],
     data = [
         ":player_host",
+        # The wasm solver, staged next to the app served at /app/.
+        "//solver:solver_web",
         "//web:dist",
     ],
     main = "tools/wall.py",

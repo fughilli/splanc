@@ -16,6 +16,12 @@ wss://<this laptop>:<port>. The certificate is self-signed, exactly like a real
 player's, and the app's trust flow handles it (the player answers the trust
 popup at https://<this laptop>:<port>/).
 
+The same origin also serves THIS build of the phone app at
+https://<this laptop>:<port>/app/ (with the wasm solver next to it), for testing
+app changes that the installed app doesn't have yet, e.g. hue code v2 phase 2:
+https://<this laptop>:<port>/app/?sync=stagger_pilot asks the player for the
+staggered pilot (this host player advertises hue_stagger_pilot).
+
 Flags are passed through to player_host (see docs/host-player.md); defaults here:
 --output null, --name "Virtual wall", --state-dir "" (memory only), port 8443.
 """
@@ -23,6 +29,7 @@ Flags are passed through to player_host (see docs/host-player.md); defaults here
 import os
 import socket
 import sys
+import tempfile
 
 
 def lan_ip() -> str | None:
@@ -74,8 +81,26 @@ def instructions(port: str, ip: str | None, leds: str) -> str:
             "",
             "3. Point the phone at the wall and map it as usual (LED count = the --leds value).",
             "",
+            "To run THIS build of the app instead of the installed one (e.g. hue code v2:",
+            "append ?sync=stagger_pilot), open on the phone",
+            f"       https://{phone_host}/app/",
+            "",
         ]
     )
+
+
+def stage_web_root(dist: str, solver: str | None) -> str:
+    """A web root of the built app (web/dist) plus the wasm solver at solver/,
+    as the site deploys it (web/stage_site.lib.sh), so the app served at /app/
+    can solve on the phone. Symlinks into the runfiles; nothing is copied."""
+    if not solver or not os.path.isdir(solver):
+        return dist
+    root = tempfile.mkdtemp(prefix="splanc_wall_root_")
+    for name in os.listdir(dist):
+        os.symlink(os.path.join(dist, name), os.path.join(root, name))
+    if not os.path.exists(os.path.join(root, "solver")):
+        os.symlink(solver, os.path.join(root, "solver"))
+    return root
 
 
 def main() -> None:
@@ -87,6 +112,7 @@ def main() -> None:
     web_root = r.Rlocation("_main/web/dist")
     if not (host_bin and os.path.exists(host_bin)) or not (web_root and os.path.isdir(web_root)):
         sys.exit("wall: player_host or web/dist missing from runfiles; run via bazel run")
+    web_root = stage_web_root(web_root, r.Rlocation("_main/solver/solver_web"))
 
     port = flag(args, "--serve-port", "8443")
     ip = lan_ip()
