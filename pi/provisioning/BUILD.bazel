@@ -23,6 +23,9 @@ sbc_application(
         "//pi/player_rs/musl:player_musl",
         # The over-the-air updater (nix/ota.nix, docs/design/max-ota.md).
         "//pi/max_ota:splanc_max_ota_musl",
+        # The APA102/SK9822 Python driver + the hue-code kernel's sources
+        # (ledOutput = "apa102"; -> sbcBuildData."ledapp.tar" in apps.nix).
+        "//pi/led_driver:ledapp_bundle",
     ],
     flake = "pi/provisioning/nix",
     hostname = "ledmapper",
@@ -46,6 +49,9 @@ sbc_application(
         "//pi/player_rs/musl:player_musl",
         # The over-the-air updater (nix/ota.nix, docs/design/max-ota.md).
         "//pi/max_ota:splanc_max_ota_musl",
+        # The APA102/SK9822 Python driver + the hue-code kernel's sources
+        # (ledOutput = "apa102"; -> sbcBuildData."ledapp.tar" in apps.nix).
+        "//pi/led_driver:ledapp_bundle",
     ],
     flake = "pi/provisioning/nix",
     hostname = "ledmapper",

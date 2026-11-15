@@ -9,7 +9,11 @@ stride schedule, pattern-clock timing).
   :kernel_abi     a flat `extern "C"` shim over it, built two ways:
   :kernel_wasm      wasm32, -c opt: the phone app embeds it (//web:code_kernel_wasm
                     -> web/src/code/kernel_wasm.ts, wrapped by web/src/code/*.ts)
-  :kernel_abi       host cdylib: the Python dev backend's codebook.py (ctypes)
+  :kernel_abi       host cdylib, loaded by ctypes through
+  :pattern_py         the ONE Python binding (python/ledmapper_pattern.py):
+                      pi/server codebook.py + the APA102 driver pi/led_driver
+  (src/lib.rs + abi/kernel_abi.rs also ride in //pi/led_driver:ledapp_bundle:
+   the Pi image's Nix build compiles the same cdylib for the APA102 driver)
   :gen_golden     emits testdata/*.json from the kernel; :goldens diff-tests the
                   checked-in fixtures (bazel run //firmware/pattern:goldens to
                   regenerate after a deliberate wire change)
@@ -18,6 +22,7 @@ Hue-code v2 (docs/design/hue-code-v2.md) lands here, once.
 """
 
 load("@aspect_bazel_lib//lib:write_source_files.bzl", "write_source_files")
+load("@rules_python//python:defs.bzl", "py_library")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_shared_library", "rust_test")
 load("//tools/transitions:wasm.bzl", "wasm32_cdylib")
 
@@ -75,6 +80,25 @@ wasm32_cdylib(
     name = "kernel_wasm",
     lib = ":kernel_abi",
 )
+
+# The one Python binding of the kernel (ctypes over :kernel_abi). Stdlib only;
+# the runfiles helper is only imported when $LEDMAPPER_PATTERN_LIB is unset.
+py_library(
+    name = "pattern_py",
+    srcs = ["python/ledmapper_pattern.py"],
+    data = [":kernel_abi"],
+    imports = ["python"],
+    deps = ["@rules_python//python/runfiles"],
+)
+
+# The kernel's sources, for the Pi image's APA102 driver bundle
+# (//pi/led_driver:ledapp_bundle -> build_data): its Nix build compiles THESE
+# files with rustc into the same cdylib, so there is no vendored copy.
+exports_files([
+    "abi/kernel_abi.rs",
+    "python/ledmapper_pattern.py",
+    "src/lib.rs",
+])
 
 rust_binary(
     name = "gen_golden",

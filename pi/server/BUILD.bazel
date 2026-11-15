@@ -18,10 +18,10 @@ package(default_visibility = ["//visibility:public"])
 py_library(
     name = "server",
     srcs = glob(["server/*.py"]),
-    # codebook.py sizes code-books through the hue-code kernel's C ABI (ctypes).
-    data = ["//firmware/pattern:kernel_abi"],
     imports = ["."],
     deps = [
+        # codebook.py sizes code-books through the hue-code kernel's binding.
+        "//firmware/pattern:pattern_py",
         "//pi/reconstruction",
         "//shared/protocol",
         "//shared/protocol/proto:ledmapper_py_proto",

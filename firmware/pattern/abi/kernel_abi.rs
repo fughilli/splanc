@@ -5,8 +5,11 @@
 //! - wasm32 (`//firmware/pattern:kernel_wasm`): the phone app instantiates the
 //!   few-KB module synchronously (`web/src/code/kernel.ts`); every export is a
 //!   wasm function of i32/f64, so the import object is empty.
-//! - host cdylib (`//firmware/pattern:kernel_abi`): the Python dev backend
-//!   loads it with ctypes (`pi/server/server/codebook.py`).
+//! - host cdylib (`//firmware/pattern:kernel_abi`): Python loads it with ctypes
+//!   through ONE binding, `firmware/pattern/python/ledmapper_pattern.py`
+//!   (`//firmware/pattern:pattern_py`): the M2 dev backend's code-book sizing
+//!   (`pi/server/server/codebook.py`) and the APA102 M1 driver's frames
+//!   (`pi/led_driver`, also built for the Pi image by `pi/provisioning/nix`).
 //!
 //! Only marshalling lives here — every rule is in `src/lib.rs`. Packed results:
 //! [`pk_secded_decode`] and [`pk_decode_cycle`] return flag bits above a value
@@ -135,6 +138,45 @@ pub extern "C" fn pk_color_index(led_id: u32, frame_index: u32, led_count: u32, 
 #[no_mangle]
 pub extern "C" fn pk_symbol_color(symbols: u32, value: u32) -> u32 {
     k::symbol_color(symbols as u8, value as u8) as u32
+}
+
+/// Packed `0xRRGGBB` of the palette entry `led_id` shows in cycle frame
+/// `frame_index` (the RGB the player renders; [`k::Color::rgb`]). Host-only,
+/// like [`pk_frame_rgb`]: the phone's wasm keeps palette indices.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn pk_color_rgb(led_id: u32, frame_index: u32, led_count: u32, symbols: u32, secded: u32) -> u32 {
+    let (r, g, b) = k::color_index_for_frame(led_id, frame_index, &spec(led_count, symbols, secded)).rgb();
+    (r as u32) << 16 | (g as u32) << 8 | b as u32
+}
+
+/// Host-only (not in the phone's wasm): write cycle frame `frame_index` for
+/// every LED as `led_count` R,G,B byte triplets into `out` (capacity `out_len`
+/// bytes) — the APA102 Python driver's whole-frame render (`led_driver.pattern`)
+/// in one call. Returns the bytes written, or `0` if `out` is too small or
+/// `frame_index` is outside the cycle.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub unsafe extern "C" fn pk_frame_rgb(
+    frame_index: u32,
+    led_count: u32,
+    symbols: u32,
+    secded: u32,
+    out: *mut u8,
+    out_len: u32,
+) -> u32 {
+    let spec = spec(led_count, symbols, secded);
+    let need = led_count as usize * 3;
+    if out.is_null() || (out_len as usize) < need || frame_index >= spec.cycle_frames {
+        return 0;
+    }
+    // SAFETY: the caller owns `out_len >= need` writable bytes at `out`.
+    let buf = core::slice::from_raw_parts_mut(out, need);
+    for (id, px) in buf.chunks_exact_mut(3).enumerate() {
+        let (r, g, b) = k::color_index_for_frame(id as u32, frame_index, &spec).rgb();
+        px.copy_from_slice(&[r, g, b]);
+    }
+    need as u32
 }
 
 // --- decode ---------------------------------------------------------------------

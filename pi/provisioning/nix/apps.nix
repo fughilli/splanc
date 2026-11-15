@@ -5,27 +5,88 @@
 #   * led-server (M2) — FastAPI/uvicorn web server; depends on the driver's
 #     control socket, binds :80, serves the web app.
 #
-# M1 (led-driver) is the Rust player (//pi/player_rs) driving the FPGA; the
-# Python M1 driver (the old apa102 path) was retired. M2 (led-server) is still
-# an inert stub. The unit shape, service user, dirs, capabilities, and firewall
-# openings here are already correct.
+# M1 (led-driver) is one of two REAL packages, picked by `ledOutput`: the Rust
+# player (//pi/player_rs) driving the spi_ws281x FPGA, or the Python APA102/SK9822
+# driver (//pi/led_driver) over hardware SPI. Both render the hue code with the
+# same Rust kernel (//firmware/pattern). M2 (led-server) is still an inert stub.
+# The unit shape, service user, dirs, capabilities, and firewall openings here
+# are already correct.
 { pkgs, sbcBuildData ? { }, ... }:
 let
   # Output backend baked into this image. Both current test boards are Raspberry
   # Pi 3s: splanc-max-2 (the FPGA rig, Tang Nano 9K attached) drives the
   # //fpga/spi_ws281x streaming WS281x FPGA over SPI, and splanc-max-1 is the same
-  # config. `fpga` (the Rust player) is the only backend: the Python apa102 driver
-  # and its own hue-code copy were retired (one Rust kernel, //firmware/pattern).
-  # (The Pi 3/Pi 5 split is a BOARD choice, not tied to a specific host — deploy
-  # the matching sbc_application variant; deploy_live's board guard refuses a
-  # mismatched closure.) --start N
-  # self-drives a default cycle at boot so the SPI wire is always active for the
-  # logic-analyzer probe (//pi/tools/la_probe) without needing a client.
-  ledOutput = "fpga";
+  # config. `fpga` needs the Tang wired to the board; a board without one runs
+  # APA102/SK9822 strips with ledOutput = "apa102" (the Python driver, clock+data
+  # straight off hardware SPI). Flip the default here, or per build with
+  # SPLANC_LED_OUTPUT=apa102 (read --impure, like every sbc-deploy seam). (The
+  # Pi 3/Pi 5 split is a BOARD choice, not tied to a specific host — deploy the
+  # matching sbc_application variant; deploy_live's board guard refuses a
+  # mismatched closure.) --start N self-drives a default cycle at boot so the SPI
+  # wire is always active for the logic-analyzer probe (//pi/tools/la_probe)
+  # without needing a client.
+  ledOutputEnv = builtins.getEnv "SPLANC_LED_OUTPUT";
+  ledOutput =
+    let o = if ledOutputEnv == "" then "fpga" else ledOutputEnv; in
+    if builtins.elem o [ "fpga" "apa102" ] then o
+    else throw "ledOutput \"${o}\": expected \"fpga\" (Rust player + FPGA) or \"apa102\" (Python APA102/SK9822 driver)";
   ledFpgaPorts = 4;
   ledStartLeds = 2200; # 4 ports x 550 LEDs (60Hz max-length HITL case)
   ledFps = 60;
 
+  # --- apa102: the Python M1 driver (//pi/led_driver) -------------------------
+  # Its runtime deps: spidev (native, lazy-imported, Pi-only) and pydantic v2
+  # (ledmapper_protocol's models). Everything else is stdlib.
+  ledPyEnv = pkgs.python3.withPackages (ps: [ ps.spidev ps.pydantic ]);
+
+  # The driver's sources arrive as ONE Bazel build_data file,
+  # //pi/led_driver:ledapp_bundle (the deploy builds the flake as
+  # `path:pi/provisioning/nix`, whose tree can't reach the repo): led_driver/,
+  # ledmapper_protocol/, the kernel binding ledmapper_pattern.py and the hue-code
+  # kernel's Rust sources kernel/{lib,kernel_abi}.rs. Nothing is vendored here.
+  ledAppBundle = sbcBuildData."ledapp.tar" or (throw
+    "APA102 driver bundle missing from build_data — add //pi/led_driver:ledapp_bundle "
+  + "to sbc_application(build_data=…).");
+
+  # The hue-code kernel's C ABI as a native cdylib — the SAME crate + shim
+  # (//firmware/pattern:kernel_abi) the Bazel side builds for the dev backend,
+  # compiled here by rustc (no_std crate, zero deps; the shim links std, so the
+  # cdylib link needs cc: runCommandCC).
+  # The driver renders every pattern frame through it, so the APA102 path has no
+  # copy of the colour code. Built for the image's own platform (the closure is
+  # built natively on aarch64, like the rest of the system).
+  ledPatternKernel = pkgs.runCommandCC "ledmapper-pattern-kernel"
+    { nativeBuildInputs = [ pkgs.rustc ]; } ''
+    tar -xf ${ledAppBundle} kernel/lib.rs kernel/kernel_abi.rs
+    rustc --edition 2021 --crate-type rlib --crate-name ledmapper_pattern \
+      --cfg 'feature="app"' -C opt-level=3 \
+      -o libledmapper_pattern.rlib kernel/lib.rs
+    mkdir -p "$out/lib"
+    rustc --edition 2021 --crate-type cdylib --crate-name ledmapper_pattern_abi \
+      -C opt-level=3 --extern ledmapper_pattern=libledmapper_pattern.rlib \
+      -o "$out/lib/libledmapper_pattern_abi.so" kernel/kernel_abi.rs
+  '';
+
+  ledDriverPkg = pkgs.runCommand "led-mapper-driver"
+    { nativeBuildInputs = [ pkgs.makeWrapper ]; } ''
+    mkdir -p "$out/bin" "$out/libexec"
+    tar -xf ${ledAppBundle} -C "$out/libexec" --exclude 'kernel/*'
+    # Smoke: the driver renders a kernel frame (fails the build, not the boot).
+    LEDMAPPER_PATTERN_LIB=${ledPatternKernel}/lib/libledmapper_pattern_abi.so \
+      PYTHONPATH="$out/libexec" ${ledPyEnv}/bin/python3 -c \
+      'from led_driver.pattern import color_plan, default_code_params as d; assert len(color_plan(d(16))) == 12'
+    makeWrapper ${ledPyEnv}/bin/python3 "$out/bin/led-driver" \
+      --set PYTHONPATH "$out/libexec" \
+      --set PYTHONUNBUFFERED 1 \
+      --set LEDMAPPER_PATTERN_LIB ${ledPatternKernel}/lib/libledmapper_pattern_abi.so \
+      --add-flags "-m led_driver" \
+      --add-flags "--output ${ledOutput}" \
+      --add-flags "--fpga-ports ${toString ledFpgaPorts}" \
+      --add-flags "--start ${toString ledStartLeds}" \
+      --add-flags "--fps ${toString ledFps}"
+  '';
+
+  # --- fpga: the Rust player ------------------------------------------------
   # The Rust player (//pi/player_rs:player) — the unified aarch64/std sibling of
   # the ESP32 firmware: ONE process that serves the protocol over WSS AND drives
   # the FPGA from the reused core, replacing the Python M1 driver + M2 server on
@@ -155,14 +216,14 @@ in
     # exposes the control socket under /run/ledmapper. Creates the shared
     # `ledmapper` service user (member of spi/gpio via extraGroups).
     led-driver = {
-      # The unified Rust player (WSS protocol + FPGA render, the firmware's
-      # model). The unit name stays sbc-led-driver.service for continuity (HITL
-      # harness restarts it).
+      # On the FPGA path this is the unified Rust player (WSS protocol + FPGA
+      # render, the firmware's model); the apa102 path runs the Python M1 driver
+      # (the Rust render loop is FPGA-only so far). Both render the hue code with
+      # the one Rust kernel. The unit name stays sbc-led-driver.service for
+      # continuity (HITL harness restarts it).
       description = "LED Mapper player — WSS protocol + LED render";
-      package =
-        if ledOutput == "fpga" then playerRsPkg
-        else throw "ledOutput \"${ledOutput}\": only \"fpga\" (the Rust player) remains; the Python apa102 driver was retired";
-      exec = "bin/player";
+      package = if ledOutput == "fpga" then playerRsPkg else ledDriverPkg;
+      exec = if ledOutput == "fpga" then "bin/player" else "bin/led-driver";
       user = "ledmapper";
       extraGroups = [ "spi" "gpio" ];
       realtime = true;

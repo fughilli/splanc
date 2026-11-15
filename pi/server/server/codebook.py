@@ -9,19 +9,14 @@ both the ``welcome`` and ``mapping_started`` messages.
 
 The arithmetic is NOT reimplemented here: it is the Rust hue-code kernel
 (``//firmware/pattern``, the one implementation the players link and the phone
-runs as wasm), called through its C ABI (``firmware/pattern/abi/kernel_abi.rs``)
-from the host cdylib ``//firmware/pattern:kernel_abi``, loaded with ctypes on
-first use. This module only validates arguments and assembles the message.
+runs as wasm), called through the one Python binding of its C ABI,
+``ledmapper_pattern`` (``//firmware/pattern:pattern_py``, ctypes over the host
+cdylib). This module only validates arguments and assembles the message.
 """
 
 from __future__ import annotations
 
-import ctypes
-import os
-import sys
-from pathlib import Path
-from typing import Optional
-
+import ledmapper_pattern as pattern
 from ledmapper_protocol import CodeParams
 
 # design doc §12 default: frame period ≥ ~3 camera frame intervals at 30 fps.
@@ -32,44 +27,6 @@ DEFAULT_BIT_PERIOD_MS = 100.0
 # SNR supports the finer palette.
 DEFAULT_SYMBOLS = 2
 
-_LIB_NAME = "libledmapper_pattern_abi" + (".dylib" if sys.platform == "darwin" else ".so")
-_kernel: Optional[ctypes.CDLL] = None
-
-
-def _kernel_path() -> str:
-    """$LEDMAPPER_PATTERN_LIB, else the cdylib in this target's runfiles."""
-    env = os.environ.get("LEDMAPPER_PATTERN_LIB")
-    if env:
-        return env
-    from python.runfiles import runfiles
-
-    r = runfiles.Create()
-    path = r.Rlocation(f"_main/firmware/pattern/{_LIB_NAME}") if r else None
-    if not path or not Path(path).exists():
-        raise RuntimeError(
-            f"hue-code kernel {_LIB_NAME} not found in runfiles "
-            "(depend on //pi/server, or set LEDMAPPER_PATTERN_LIB)"
-        )
-    return path
-
-
-def kernel() -> ctypes.CDLL:
-    """The loaded hue-code kernel (C ABI, every argument/result a u32)."""
-    global _kernel
-    if _kernel is None:
-        lib = ctypes.CDLL(_kernel_path())
-        for name, argc in (
-            ("pk_data_bits", 1),
-            ("pk_expected_bits", 2),
-            ("pk_cycle_frames", 3),
-            ("pk_secded_total_bits", 1),
-        ):
-            fn = getattr(lib, name)
-            fn.argtypes = [ctypes.c_uint32] * argc
-            fn.restype = ctypes.c_uint32
-        _kernel = lib
-    return _kernel
-
 
 def data_bits_for(led_count: int) -> int:
     """Gray data-word width: ``ceil(log2(ledCount + 1))``, minimum 1.
@@ -77,14 +34,10 @@ def data_bits_for(led_count: int) -> int:
     +1: codewords carry id + 1 (the kernel's CODE_OFFSET — the all-zero word is
     reserved-invalid), so the code space is [1, ledCount].
     """
-    return kernel().pk_data_bits(led_count)
+    return pattern.data_bits(led_count)
 
 
-def secded_total_bits(k: int) -> int:
-    """Transmitted bits of the SEC-DED code around a ``k``-bit data word."""
-    if k < 1:
-        raise ValueError(f"k must be >= 1, got {k}")
-    return kernel().pk_secded_total_bits(k)
+secded_total_bits = pattern.secded_total_bits
 
 
 def code_params_for(
@@ -114,16 +67,14 @@ def code_params_for(
         raise ValueError(f"symbols must be 2 or 4, got {symbols}")
     if brightness is not None and not 0.0 <= brightness <= 1.0:
         raise ValueError(f"brightness must be in [0, 1], got {brightness}")
-    k = kernel()
-    secded = 1 if fec == "secded" else 0
     return CodeParams(
         ledCount=led_count,
-        bits=k.pk_expected_bits(led_count, secded),
+        bits=pattern.expected_bits(led_count, fec),
         encoding="hue",
         symbols=symbols,
         bitPeriodMs=bit_period_ms,
         syncPattern="on_off",
-        cycleFrames=k.pk_cycle_frames(led_count, symbols, secded),
+        cycleFrames=pattern.cycle_frames(led_count, symbols, fec),
         fec=fec,
         # None (= 1.0 on the wire) unless the phone servoed it down against
         # measured bloom/wash-out (exposure.ts planLedBrightness).
