@@ -131,6 +131,16 @@ fn check_stagger_golden(g: &serde_json::Value) {
         assert_eq!(pat::stagger_step(i as u32 + 3) as u64, v.as_u64().unwrap(), "S(C={})", i + 3);
     }
     let phases: Vec<u32> = g["phases"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u32).collect();
+    // The non-linear phase map over many id blocks (and within a block, the
+    // golden-ratio step).
+    for (id, v) in g["phasesWide"].as_array().unwrap().iter().enumerate() {
+        let id = id as u32;
+        let ph = pat::stagger_phase(id, &spec);
+        assert_eq!(ph as u64, v.as_u64().unwrap(), "phasesWide[{id}]");
+        if id % c != 0 {
+            assert_eq!(ph, (pat::stagger_phase(id - 1, &spec) + step) % c, "in-block step at id {id}");
+        }
+    }
     let coded: Vec<u32> = g["codedIndex"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u32).collect();
     let plan: Vec<Vec<char>> =
         g["colorPlan"].as_array().unwrap().iter().map(|r| r.as_str().unwrap().chars().collect()).collect();
@@ -138,7 +148,6 @@ fn check_stagger_golden(g: &serde_json::Value) {
     let palette: Vec<char> = (0..symbols).map(|v| letter(pat::symbol_color(symbols, v).rgb())).collect();
     for id in 0..led_count {
         let ph = phases[id as usize];
-        assert_eq!(ph, (id * step) % c);
         assert_eq!(pat::stagger_phase(id, &spec), ph);
         assert_eq!(pat::coded_index(id, &spec), coded[id as usize]);
         assert_eq!(pat::stagger_rank(coded[id as usize], &spec), Some(id));

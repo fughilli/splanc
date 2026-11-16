@@ -527,7 +527,8 @@ pub fn stride_lit(led: u32, phase: u32, spacing: u32, anchor_density: u32) -> bo
 //
 // v1 (`SyncPattern::OnOff`) shows the white/green sync delimiter on EVERY LED
 // at the same frame. Under a staggered pattern LED `id` runs its cycle rotated
-// by `phase(id) = (id * S) mod C` (C = cycle_frames, S = [`stagger_step`]), so
+// by `phase(id) = (id * S + h(id / C)) mod C` (C = cycle_frames, S =
+// [`stagger_step`], h a per-block offset: [`stagger_phase`]), so
 // at any frame only ~L/C of the LEDs are in their sync position, and that
 // position shows a PILOT instead of white:
 //
@@ -772,14 +773,88 @@ pub const fn stagger_step(cycle_frames: u32) -> u32 {
     best
 }
 
-/// The phase rotation of coded id `led_id`: `(id * S) mod C` under a staggered
-/// pattern (its sync position starts at global cycle frame `phase`), 0 for v1.
+/// lowbias32 (C. Wellons' 32-bit integer finaliser): a fixed, well-mixed
+/// u32 -> u32 bijection. Integer-only, so it runs as is on the firmware path.
+const fn mix32(mut x: u32) -> u32 {
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x7feb_352d);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x846c_a68b);
+    x ^= x >> 16;
+    x
+}
+
+/// The key the block offsets are drawn under. Part of the wire format: a
+/// change re-phases every staggered LED (the goldens pin it).
+const PHASE_KEY: u32 = 0x5eed;
+
+/// Circular distance between phases `a` and `b` in Z_c.
+const fn circ_dist(a: u32, b: u32, c: u32) -> u32 {
+    let d = (a % c + c - b % c) % c;
+    if d < c - d {
+        d
+    } else {
+        c - d
+    }
+}
+
+/// The free (unconstrained) offset of block `q`: a keyed hash mod C.
+const fn block_offset_free(q: u32, c: u32) -> u32 {
+    mix32(q ^ PHASE_KEY) % c
+}
+
+/// The phase offset `h(q)` of id block `q` (ids `q*C .. q*C + C - 1`).
+///
+/// Even blocks take the keyed hash ([`block_offset_free`]). An odd block takes
+/// the first value of its own hash-ordered probe sequence that keeps both of
+/// its block boundaries spread: the last id of block `q - 1` and the first id
+/// of block `q` (and the last of `q` and the first of `q + 1`) land at least
+/// `C/8 + 1` frames apart in phase. Its neighbours are even, so this needs no
+/// recursion: O(1) hashes and at most C probes (each constraint excludes at
+/// most `2d - 1` of the C values, and `2(2d - 1) < C` for every C >= 3, so a
+/// value always exists; C < 3 falls back to the hash).
+const fn block_offset(q: u32, c: u32, s: u32) -> u32 {
+    let v = block_offset_free(q, c);
+    if q % 2 == 0 {
+        return v;
+    }
+    let lo = block_offset_free(q - 1, c);
+    let hi = block_offset_free(q + 1, c);
+    let d = c / 8 + 1;
+    let mut t = 0;
+    while t < c {
+        let x = (v + t) % c;
+        // Boundary phase steps: (last of q-1) -> (first of q) is s + x - lo,
+        // (last of q) -> (first of q+1) is s + hi - x (the in-block step is s).
+        if circ_dist(s + x, lo, c) >= d && circ_dist(s + hi, x, c) >= d {
+            return x;
+        }
+        t += 1;
+    }
+    v
+}
+
+/// The phase rotation of id `led_id` under a staggered pattern (its sync
+/// position starts at global cycle frame `phase`), 0 for v1:
+///
+/// `φ(id) = (id·S + h(id div C)) mod C`
+///
+/// Within a block of C consecutive ids it is the golden-ratio stagger (ids
+/// one apart are S apart in phase, and the block covers every phase once:
+/// a flat pilot census). The per-block offset `h` ([`block_offset`]) makes φ
+/// NON-LINEAR across blocks: the linear `(id·S) mod C` gave every pair of
+/// ids a multiple of C apart the same phase, and the SEC-DED stitches that
+/// decode to a wrong id cluster at exactly those offsets, so the phase check
+/// passed them 2.5x more often than chance (docs/design/hue-code-v2.md,
+/// "Non-linear pilot phase"). Any φ that is a function of `id mod C` (a
+/// permutation of the linear phase, say) keeps that flaw.
 pub const fn stagger_phase(led_id: u32, spec: &CodeSpec) -> u32 {
     if !spec.sync.is_staggered() || spec.cycle_frames == 0 {
         return 0;
     }
     let c = spec.cycle_frames;
-    ((led_id % c) * stagger_step(c)) % c
+    let s = stagger_step(c);
+    ((led_id % c) * s + block_offset(led_id / c, c, s)) % c
 }
 
 /// The LED's own cycle frame at global cycle frame `frame_index`: 0, 1 = the
@@ -1101,6 +1176,49 @@ mod tests {
     }
 
     #[test]
+    fn stagger_phase_is_the_golden_stagger_per_block_with_spread_boundaries() {
+        for &(symbols, leds) in &[(2u8, 1260u32), (4, 1260), (2, 40), (4, 300)] {
+            let spec = CodeSpec::derive_sync(leds, symbols, true, SyncPattern::StaggerPilot);
+            let c = spec.cycle_frames;
+            let s = stagger_step(c);
+            let d = c / 8 + 1;
+            let n = 1u32 << 16;
+            for id in 0..n {
+                let ph = stagger_phase(id, &spec);
+                assert!(ph < c);
+                let next = stagger_phase(id + 1, &spec);
+                if (id + 1) % c != 0 {
+                    // In a block: the golden-ratio step.
+                    assert_eq!(next, (ph + s) % c, "C={c} id {id}");
+                } else {
+                    // Across a block boundary: still at least d apart.
+                    assert!(circ_dist(next, ph, c) >= d, "C={c} boundary after id {id}");
+                }
+            }
+            // Every complete block covers every phase once (a flat census).
+            for q in 0..(n / c) {
+                let mut seen = std::vec![false; c as usize];
+                for r in 0..c {
+                    seen[stagger_phase(q * c + r, &spec) as usize] = true;
+                }
+                assert!(seen.iter().all(|&x| x), "C={c} block {q}");
+            }
+            // Non-linear: ids a multiple of C apart do NOT share a phase (the
+            // linear map's flaw); about 1 in C pairs do, by chance.
+            let same = (0..2000u32).filter(|&id| stagger_phase(id, &spec) == stagger_phase(id + c, &spec)).count();
+            assert!(same < 2000 * 2 / c as usize, "C={c}: {same}/2000 share a phase one block apart");
+        }
+        // Every cycle length gets a valid map (and v1 is untouched).
+        for c in 3..40u32 {
+            let s = stagger_step(c);
+            for q in 0..200u32 {
+                let x = block_offset(q, c, s);
+                assert!(x < c);
+            }
+        }
+    }
+
+    #[test]
     fn the_comparators_are_v1_rotated_and_v1_is_untouched() {
         for &symbols in &[2u8, 4] {
             let v1 = CodeSpec::derive(40, symbols, true);
@@ -1116,7 +1234,7 @@ mod tests {
                 for id in 0..40 {
                     assert_eq!(stagger_phase(id, &v1), 0);
                     let ph = stagger_phase(id, &st);
-                    assert_eq!(ph, (id * stagger_step(c)) % c);
+                    assert!(ph < c);
                     for f in 0..c {
                         let j = (f + c - ph) % c;
                         let want = match j {

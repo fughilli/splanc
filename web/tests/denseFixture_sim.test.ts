@@ -188,6 +188,10 @@ interface Result {
   goodPerLedSec: number;
   /** Frames the motion guide showed its jerky-motion hint on. */
   flaggedFrac: number;
+  /** LEDs with at least one correct record. */
+  coverage: number;
+  /** Records whose id is not on the fixture at all (a stitched third id). */
+  foreign: number;
   /** The pipeline after the run (decoder telemetry, channel measurement). */
   pipeline: CvPipeline;
 }
@@ -247,11 +251,15 @@ function run(walk: Walk, tracker: TrackerOptions = {}, decoder: DecoderOptions =
   }
   let wrong = 0;
   let gross = 0;
+  let foreign = 0;
+  const covered = new Set<number>();
   for (const rec of records) {
     const xyz = leds[rec.ledId - FIRST_ID];
+    if (xyz === undefined) foreign++;
     const pr = xyz === undefined ? null : project(poseAt.get(rec.tCaptureMs)!, K, xyz);
     const err = pr === null ? Infinity : Math.hypot(pr.u - rec.u, pr.v - rec.v);
     if (err > 4) wrong++;
+    else covered.add(rec.ledId);
     if (err > 12) gross++;
   }
   const n = Math.max(1, records.length);
@@ -260,6 +268,8 @@ function run(walk: Walk, tracker: TrackerOptions = {}, decoder: DecoderOptions =
     grossFrac: gross / n,
     goodPerLedSec: (records.length - wrong) / leds.length / (DURATION_MS / 1000),
     flaggedFrac: flagged / frames,
+    coverage: covered.size / leds.length,
+    foreign,
     pipeline,
   };
 }
@@ -272,7 +282,8 @@ const BEFORE: [TrackerOptions, DecoderOptions] = [
 
 const pct = (x: number): string => `${(100 * x).toFixed(1)}%`;
 const fmt = (r: Result): string =>
-  `wrong ${pct(r.wrongFrac)} (gross ${pct(r.grossFrac)}) · ${r.goodPerLedSec.toFixed(2)} good/LED/s · hint ${pct(r.flaggedFrac)}`;
+  `wrong ${pct(r.wrongFrac)} (gross ${pct(r.grossFrac)}) · ${r.goodPerLedSec.toFixed(2)} good/LED/s · hint ${pct(r.flaggedFrac)} · ` +
+  `coverage ${pct(r.coverage)} · off-fixture ids ${r.foreign}`;
 
 test("the panel geometry is the dense case: ~13 px pitch at capture distance", () => {
   const pose: Pose = { p: [0, 0, 0.9], q: lookAtQuat([0, 0, 0.9], [0, 0, 0]) };
@@ -494,37 +505,42 @@ test("sync bloom with staggered sync: identities and yield survive (hue code v2 
  * whose windows all land on `b`'s DATA frames is a symbol sequence the
  * decoder could read; returns those that FEC-decode to a third id `c`, and
  * whether `c`'s phase φ(c) matches the pilot's (the ≈ 1/C chance the phase
- * check lets a hop through).
+ * check lets a hop through). `bases` are the panels' first ids (default: the
+ * fixture's first panel).
  */
-function staggerStitches(): { a: number; b: number; split: number; c: number; phaseOk: boolean }[] {
+function staggerStitches(
+  bases: readonly number[] = [FIRST_ID],
+): { a: number; b: number; split: number; c: number; phaseOk: boolean }[] {
   const p = withSyncPattern(PARAMS, SYNC_STAGGER_PILOT);
   const C = p.cycleFrames;
   const L = syncFrames(p);
   const n = dataFrames(p);
   const panel = panelLeds();
   const out: { a: number; b: number; split: number; c: number; phaseOk: boolean }[] = [];
-  for (let i = 0; i < panel.length; i++) {
-    for (let j = 0; j < panel.length; j++) {
-      const gap = Math.hypot(panel[i]![0] - panel[j]![0], panel[i]![1] - panel[j]![1]);
-      if (i === j || gap > 1.5 * PITCH_M) continue;
-      const [a, b] = [FIRST_ID + i, FIRST_ID + j];
-      const pa = staggerPhase(a, p);
-      const pb = staggerPhase(b, p);
-      for (let split = 1; split < n; split++) {
-        const syms: number[] = [];
-        let ok = true;
-        for (let d = 0; d < n && ok; d++) {
-          if (d < split) syms.push(symbolAt(a, d, p));
-          else {
-            const jb = (((pa + L + d - pb) % C) + C) % C;
-            if (jb < L) ok = false;
-            else syms.push(symbolAt(b, jb - L, p));
+  for (const base of bases) {
+    for (let i = 0; i < panel.length; i++) {
+      for (let j = 0; j < panel.length; j++) {
+        const gap = Math.hypot(panel[i]![0] - panel[j]![0], panel[i]![1] - panel[j]![1]);
+        if (i === j || gap > 1.5 * PITCH_M) continue;
+        const [a, b] = [base + i, base + j];
+        const pa = staggerPhase(a, p);
+        const pb = staggerPhase(b, p);
+        for (let split = 1; split < n; split++) {
+          const syms: number[] = [];
+          let ok = true;
+          for (let d = 0; d < n && ok; d++) {
+            if (d < split) syms.push(symbolAt(a, d, p));
+            else {
+              const jb = (((pa + L + d - pb) % C) + C) % C;
+              if (jb < L) ok = false;
+              else syms.push(symbolAt(b, jb - L, p));
+            }
           }
+          if (!ok) continue;
+          const { id } = decodeCycleSymbols(syms, p);
+          if (id === null || id === a || id === b) continue;
+          out.push({ a, b, split, c: id, phaseOk: staggerPhase(id, p) === pa });
         }
-        if (!ok) continue;
-        const { id } = decodeCycleSymbols(syms, p);
-        if (id === null || id === a || id === b) continue;
-        out.push({ a, b, split, c: id, phaseOk: staggerPhase(id, p) === pa });
       }
     }
   }
@@ -537,11 +553,24 @@ test("staggered hops: the phase check rejects the stitches SEC-DED lets through"
   const C = withSyncPattern(PARAMS, SYNC_STAGGER_PILOT).cycleFrames;
   console.log(`stagger stitches decoding to a third id: ${all.length}; passing φ: ${passed} (${pct(passed / Math.max(1, all.length))}, 1/C = ${pct(1 / C)})`);
   assert.ok(all.length > 20, "SEC-DED alone accepts stitched codewords");
-  // Not exactly 1 in C: φ is linear in the id, so a stitch family that lands a
-  // fixed id offset from `a` passes for every pair or for none, and a few such
-  // families dominate a small neighbourhood. The rest of the safety net
-  // (confirmation, best-in-cycle pilot) is in the end-to-end hop test below.
-  assert.ok(passed / all.length < 0.2, "φ(id) rejects most of them");
+  // The stitches SEC-DED accepts cluster at id offsets that are multiples of
+  // C, and the old linear φ = (id·S) mod C gave all of those the pilot's
+  // phase (14% of these, 2.5× chance over every panel). The kernel's φ adds a
+  // keyed per-block offset, so a wrong id one or more blocks away matches the
+  // pilot at the chance rate and one in the same block never does. The rest
+  // of the safety net (confirmation, best-in-cycle pilot) is in the
+  // end-to-end hop test below.
+  assert.ok(passed / all.length < 2 / C, "φ(id) rejects all but ~1/C of them");
+  // Over every panel of the fixture (1260 ids, 12 panels): a sample big
+  // enough that a structured family can't hide.
+  const wide = staggerStitches(Array.from({ length: PARAMS.ledCount / 105 }, (_, k) => k * 105));
+  const widePassed = wide.filter((s) => s.phaseOk).length;
+  const blockMultiples = wide.filter((s) => (s.c - s.a) % C === 0).length;
+  console.log(
+    `all 12 panels: ${wide.length} stitches decode to a third id, ${blockMultiples} of them a multiple of C away; ` +
+      `passing φ: ${widePassed} (${pct(widePassed / wide.length)}, 1/C = ${pct(1 / C)})`,
+  );
+  assert.ok(widePassed / wide.length < 1.5 / C, `wide: ${widePassed}/${wide.length}`);
 });
 
 /** The forced hop of runForcedHop, under the staggered pilot: one spot shows

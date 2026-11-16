@@ -179,7 +179,10 @@ export function cssColor(c: Rgb): string {
 //
 // Under `syncPattern: "stagger_pilot"` LED `id` (the CODED id: LED +
 // codeOffset) runs its cycle rotated by `staggerPhase(id)` =
-// (id * S) mod cycleFrames, and its sync position shows the PALETTE PILOT: a
+// (id * S + h(id div C)) mod C (C = cycleFrames; h the kernel's keyed
+// per-block offset, which makes the map non-linear across blocks of C ids so
+// the decoder's phase check passes a wrong id at the ~1/C chance rate), and
+// its sync position shows the PALETTE PILOT: a
 // short fixed run of the active alphabet's own colours (2 symbols: blue, blue,
 // red, red, blue; 4 symbols: blue, yellow, magenta), so no hue is reserved
 // (docs/design/hue-code-v2.md). The pilot is unique by code-book PRUNING: ids

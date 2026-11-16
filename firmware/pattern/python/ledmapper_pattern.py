@@ -190,7 +190,8 @@ def stagger_step(cycle_frames: int) -> int:
 
 
 def stagger_phase(led_id: int, led_count: int, symbols: int, fec: str, sync_pattern: str) -> int:
-    """Coded id ``led_id``'s phase rotation, ``(id * S) mod C`` (0 under on_off)."""
+    """Coded id ``led_id``'s phase rotation, ``(id * S + h(id div C)) mod C``
+    (h: the kernel's keyed per-block offset; 0 under on_off)."""
     _check_symbols(symbols)
     bits = expected_bits(led_count, fec, symbols, sync_pattern)
     return kernel().pk_stagger_phase(

@@ -196,7 +196,8 @@ pub extern "C" fn pk_stagger_step(cycle_frames: u32) -> u32 {
     k::stagger_step(cycle_frames)
 }
 
-/// The phase rotation `(id * S) mod C` of coded id `led_id` (0 under on_off).
+/// The phase rotation `(id * S + h(id / C)) mod C` of coded id `led_id`
+/// (h: the per-block offset of `stagger_phase`; 0 under on_off).
 #[no_mangle]
 pub extern "C" fn pk_stagger_phase(led_id: u32, led_count: u32, bits: u32, symbols: u32, secded: u32, sync: u32) -> u32 {
     k::stagger_phase(led_id, &spec_params(led_count, bits, symbols, secded, sync))
