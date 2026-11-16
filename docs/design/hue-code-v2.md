@@ -98,15 +98,17 @@ phase 3's alphabets.**
 ## Phase 2: staggered cycles with a pilot sequence
 
 **Schedule.** LED `id` runs the same cycle as before, rotated by a phase
-`φ(id) = (id · S) mod C`, where C = cycleFrames and S is the spec value for that
-C (see Decisions). Consecutive ids, which are usually physical neighbours on a
-strip, therefore land far apart in phase. At any frame, only about 2/C of the
+`φ(id) = (id · S + h(id div C)) mod C`, where C = cycleFrames, S is the spec
+value for that C (see Decisions) and h is a keyed per-block offset (see
+"Non-linear pilot phase"). Consecutive ids, which are usually physical
+neighbours on a strip, therefore land far apart in phase. At any frame, only about 2/C of the
 LEDs are in their pilot (2 of 18 today). The rest keep showing data colours, so
 they stay detected and tracked through every frame.
 
 The rotation happens inside the kernel's `color_for_frame`, on the coded id
 (`led + code_offset`). Callers keep passing the global frame index. Firmware
-does one multiply and one mod per LED per frame.
+does one multiply, two mods and one to three integer hashes per LED per frame
+(no floats).
 
 **Pilot sequence.** The sync position no longer shows white then green. It shows
 a short pilot of known hues on different colour channels:
@@ -185,6 +187,9 @@ is nearest to C/Φ (Φ is the golden ratio):
   number of LEDs in their pilot is the same on every frame (unit-tested for 16,
   64 and 1260 LEDs).
 - Using the golden ratio puts consecutive ids far apart in phase.
+- S is applied within each block of C consecutive ids; a keyed offset per block
+  makes φ non-linear across blocks (next section). Each complete block still
+  covers every phase once, so the census stays flat.
 
 This rule gives the pinned values (11, 7, 5, 5 for C = 18, 10, 8, 6). It also
 covers every other C a code-book can have. The table for C = 3 to 34 is pinned
@@ -351,6 +356,9 @@ Two simulators run the production pipeline and negotiation. They compare v1,
 the staggered palette pilot (the wire value), and two sim-only comparators over
 the unpruned v1 book: a staggered white/green delimiter (`"stagger_white"`) and
 the first draft's green/magenta pilot, which reserves a hue (`"stagger_gm"`).
+The tables in this section were measured with the first, linear φ; the
+non-linear φ that replaced it changes them by at most about 1% (see
+"Non-linear pilot phase").
 
 **Dense fixture** (`web/tests/denseFixture_sim.test.ts`): radiolarian
 geometry with the 1260-LED, 2-symbol code. That is a 23-frame cycle for the
@@ -376,11 +384,10 @@ LED blooms on its own white frame. Neither pilot has a white frame.
 - **The cost.** Its yield is 19% below the bloom-free v1 and the green/magenta
   draft: 23-frame cycles against 18 (the 5-frame binary pilot plus one data
   bit).
-- **Hops.** Of 179 neighbour-hop stitches that SEC-DED accepts as a third id,
-  25 also pass the φ check (14%; 1/C would be 4.3%). Because φ is linear in the
-  id, a stitch family that lands at a fixed id offset passes for every pair or
-  for none. In this neighbourhood one family, at offset −414 = −18·23,
-  dominates. The forced hop through the pipeline is rejected (phase check plus
+- **Hops.** Under the first, linear φ, 25 of the 179 neighbour-hop stitches
+  that SEC-DED accepts as a third id also passed the φ check (14%; 1/C is
+  4.3%). The non-linear φ cuts this to 2 of 177 (see "Non-linear pilot
+  phase"). The forced hop through the pipeline is rejected (phase check plus
   confirmation), and both real ids still land.
 
 **Link sim** (`web/tests/staggerLink_sim.test.ts`): helix fixture, 120 LEDs,
@@ -416,6 +423,100 @@ exposure servo running. Records by scene:
 Its price is the binary pilot's length: 23 frames instead of 18 at 2 symbols,
 and 11 instead of 10 at 4. The price disappears at 8 and 16 hues, where 2
 frames are enough (table above).
+
+### Non-linear pilot phase
+
+**The problem.** The first φ was linear: `φ(id) = (id·S) mod C`. Then
+φ(c) − φ(a) = (c − a)·S mod C, so a wrong id c passes the phase check exactly
+when c − a is a multiple of C. The stitches SEC-DED accepts cluster at those
+offsets. In the dense-fixture neighbourhood one family at −414 = −18·23
+dominated, so 14% of the FEC-accepted wrong ids passed φ (1/C is 4.3%). Over
+all 12 panels of the 1260-LED fixture, every one of the 355 wrong ids that
+passed was a multiple of C away (10.7%, 2.5× chance).
+
+**The map.** The kernel (`stagger_phase`, firmware/pattern/src/lib.rs) now
+computes
+
+`φ(id) = (r·S + h(q)) mod C`, with q = id div C and r = id mod C.
+
+- **Within a block** of C consecutive ids it is the golden-ratio stagger. Ids
+  one apart are S apart in phase, and the block covers every phase once, so the
+  pilot census stays flat (54–55 ids per phase for 1260 LEDs at C = 23, the same
+  as before).
+- **Across blocks** the offset h(q) is a keyed integer hash:
+  lowbias32(q ⊕ 0x5eed) mod C. A wrong id in the same block as the true id never
+  matches its phase. One a block or more away matches by chance, about 1 in C.
+- **Block boundaries stay spread.** Even blocks take the hash. An odd block takes
+  the first value of its own hash-ordered probe that keeps both of its
+  boundaries at least d = C/8 + 1 frames apart in phase (3 at C = 23, 2 at
+  C = 11). Its neighbours are even blocks, so there is no recursion. Each
+  boundary excludes at most 2d − 1 values, and 2(2d − 1) < C for every C ≥ 3,
+  so a value always exists.
+- **Integer only, one implementation.** u32 multiply, xor-shift and mod, a
+  `const fn` in the kernel. The phone gets it through the wasm binding
+  (`pk_stagger_phase`) and Python through ctypes; neither has a port. The
+  goldens pin it over 512 ids (`phasesWide`), and the TS, Python and Rust golden
+  tests check every binding against them. S and the cycle lengths are
+  unchanged: C = 23 (S = 14, k = 12) at 2 symbols and C = 11 (S = 7) at 4. So
+  is the palette pilot.
+
+**Chosen by measurement.** Candidates were scored on the dense-fixture stitch
+analysis (`staggerStitches`), widened from one panel to all 12 (2-symbol,
+C = 23):
+
+| φ                                       | Wrong ids passing φ, 1 panel | All 12 panels    | Consecutive-id phase distance (min / mean / ≤ 1) | Census per phase |
+| --------------------------------------- | ---------------------------- | ---------------- | ------------------------------------------------ | ---------------- |
+| Linear (id·S) mod C (before)            | 25/179 (14.0%)               | 355/3323 (10.7%) | 9 / 9.00 / 0%                                    | 54–55            |
+| Permutation P[(id·S) mod C], 3 seeds    | 23–37 (10–18%)               | 8.4–8.9%         | 1 / 4.7–6.7 / 4–17%                              | 54–55            |
+| Full hash mix32(id) mod C               | 9/209 (4.3%)                 | 134/3542 (3.8%)  | 0 / 6.00 / 12.9%                                 | 41–73            |
+| Block offset, unconstrained             | 3/158 (1.9%)                 | 117/3101 (3.8%)  | 0 / 8.89 / 0.4%                                  | 54–55            |
+| **Block offset, spread boundaries**     | **2/177 (1.1%)**             | **94/3260 (2.9%)** | **3 / 8.88 / 0%**                              | **54–55**        |
+
+- **Permutation of the linear phase.** This was the first suggestion, and it
+  does not help. It is still a function of id mod C, so the multiple-of-C
+  family keeps passing. It also loses the golden spread.
+- **Full hash.** It reaches chance, but neighbour spread becomes random (13% of
+  consecutive ids are within one frame) and the census is no longer flat.
+- **Block offset.** It reaches chance with the spread and the flat census
+  intact. Constraining the boundaries removes the remaining close neighbours.
+- **±1 frame.** The decoder's check is exact (dk must equal k). If it allowed
+  ±1 frame, the chosen map would pass 9.9% (3/C is 13%), against 17.5% for the
+  linear map.
+- **4 symbols** (C = 11). The linear map was already at chance (9.7%, 1/C =
+  9.1%). The new map gives 9.1%, with consecutive-id distance min 2 and mean
+  3.93 (it was a constant 4).
+- **Physical neighbours** on a panel (within 1.5 pitches, which are not
+  consecutive ids): mean phase distance 6.57 against 6.60, and 8.2% within one
+  frame against 8.1%. The ring geometry put some neighbours at equal phase
+  before too.
+
+**Before and after, end to end** (production pipeline, same seeds):
+
+| Sim                                         | Metric                              | Linear φ      | Non-linear φ  |
+| ------------------------------------------- | ----------------------------------- | ------------- | ------------- |
+| Dense fixture, hand-held (palette pilot)    | Good records / LED / s              | 2.02          | 2.01          |
+|                                             | Wrong (> 4 px) / gross (> 12 px)    | 1.2% / 0.0%   | 0.8% / 0.0%   |
+|                                             | Coverage (LEDs with a good record)  | 41.3%         | 41.9%         |
+|                                             | Off-fixture ids recorded            | 0             | 0             |
+|                                             | φ-rejects, k, latency               | 3, 2, 224 ms  | 3, 2, 224 ms  |
+| Dense fixture, 14 px bloom (palette pilot)  | Good records / LED / s, wrong       | 2.02, 1.2%    | 2.01, 0.8%    |
+| Dense stitches (FEC-accepted wrong ids)     | Passing φ, one panel                | 25/179 (14.0%)| 2/177 (1.1%)  |
+|                                             | Passing φ, all 12 panels            | 355/3323 (10.7%) | 94/3260 (2.9%) |
+| Link sim, palette pilot: hold-dark          | Records (t90), coverage             | 10731 (5.5 s), 100% | 10692 (5.5 s), 100% |
+| orbit-dark                                  |                                     | 9031 (23.5 s), 100% | 8956 (23.8 s), 100% |
+| orbit-lit                                   |                                     | 11403 (20.3 s), 100% | 11410 (19.7 s), 100% |
+| bright-veil (heavy veil)                    |                                     | 11143 (21.3 s), 100% | 11122 (20.6 s), 100% |
+| ambient-ramp                                |                                     | 8143 (20.3 s), 100% | 8179 (19.7 s), 99.2% |
+| Link sim, every scene                       | Wrong ids, φ-rejects                | 0, 0          | 0, 0          |
+
+- **Yield and coverage.** These move by less than 1% either way. The sims are
+  deterministic given φ, and φ changes which LEDs pilot on which frame, so this
+  is reshuffling, not a trend.
+- **ambient-ramp coverage** drops from 100% to 99.2%: one of 120 LEDs got no
+  record in the 30 s run. t90 improves (19.7 s against 20.3 s).
+- **The test** (`staggered hops`, denseFixture_sim) now asserts a pass rate
+  below 2/C on the panel and below 1.5/C over all 12 panels. The linear map
+  fails the second.
 
 ## Phase 3: stronger codewords and faster alphabets
 
