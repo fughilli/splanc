@@ -438,6 +438,29 @@ pub fn cycle_code(symbols: &[u8], spec: &CodeSpec) -> u32 {
 /// frame count is wrong, the FEC detects an uncorrectable error, or the decoded
 /// id is the reserved all-zero word / out of range.
 pub fn decode_cycle_symbols(symbols: &[u8], spec: &CodeSpec) -> CycleDecode {
+    let d = decode_cycle_coded(symbols, spec);
+    // decode_gray(code) == 0 is the reserved all-zero word: a dark/noise artifact.
+    // A pruned code book maps the coded index back to its rank (an index the
+    // book excludes is not an id).
+    let id = match d.id {
+        Some(n) if spec.sync.pruned() => stagger_rank(n, spec),
+        Some(n) => n.checked_sub(CODE_OFFSET),
+        None => None,
+    };
+    let id = match id {
+        Some(id) if id < spec.led_count => Some(id),
+        _ => None,
+    };
+    CycleDecode { id, ..d }
+}
+
+#[cfg(feature = "app")]
+/// [`decode_cycle_symbols`] up to the CODED INDEX: `id` holds `n` (the word
+/// gray(n) carried, after SEC-DED), not mapped to an LED id. For a pruned book
+/// the id is `n`'s rank, which [`stagger_rank`] finds by walking the book
+/// (O(n) validity checks); a decoder that holds the book's id <-> index table
+/// (the phone does, from [`stagger_unrank`]'s walk) maps `n` itself in O(1).
+pub fn decode_cycle_coded(symbols: &[u8], spec: &CodeSpec) -> CycleDecode {
     let none = CycleDecode { id: None, corrected: false, uncorrectable: false };
     if symbols.len() as u32 != spec.data_frames() {
         return none;
@@ -455,16 +478,7 @@ pub fn decode_cycle_symbols(symbols: &[u8], spec: &CodeSpec) -> CycleDecode {
             }
         }
     }
-    // decode_gray(code) == 0 is the reserved all-zero word: a dark/noise artifact.
-    // A pruned code book maps the coded index back to its rank (an index the
-    // book excludes is not an id).
-    let n = decode_gray(code);
-    let id = if spec.sync.pruned() { stagger_rank(n, spec) } else { n.checked_sub(CODE_OFFSET) };
-    let id = match id {
-        Some(id) if id < spec.led_count => Some(id),
-        _ => None,
-    };
-    CycleDecode { id, corrected, uncorrectable: false }
+    CycleDecode { id: Some(decode_gray(code)), corrected, uncorrectable: false }
 }
 
 // ---------------------------------------------------------------------------
@@ -1302,6 +1316,32 @@ mod tests {
                 let cyc = cycle_symbols(id, &spec);
                 let hits = (0..c).filter(|&o| (0..pilot.len()).all(|j| cyc[(o + j) % c] == pilot[j])).count();
                 assert_eq!(hits, 1, "id {id}: the pilot occurs once, at the sync position");
+            }
+        }
+    }
+
+    #[test]
+    fn coded_decode_is_the_decode_before_the_rank() {
+        for &symbols in &[2u8, 4] {
+            for &n in &[16u32, 300, 2000] {
+                for sync in [SyncPattern::StaggerPilot, SyncPattern::OnOff] {
+                    let spec = CodeSpec::derive_sync(n, symbols, true, sync);
+                    let df = spec.data_frames() as usize;
+                    // Every id's word, plus single- and double-symbol errors.
+                    for id in (0..n).step_by(7) {
+                        let mut w = observed(id, &spec);
+                        for flip in [None, Some(0usize), Some(df / 2)] {
+                            if let Some(i) = flip {
+                                w[i] = (w[i] + 1) % symbols;
+                            }
+                            let full = decode_cycle_symbols(&w, &spec);
+                            let coded = decode_cycle_coded(&w, &spec);
+                            assert_eq!((coded.corrected, coded.uncorrectable), (full.corrected, full.uncorrectable));
+                            let mapped = coded.id.and_then(|c| if sync.pruned() { stagger_rank(c, &spec) } else { c.checked_sub(CODE_OFFSET) });
+                            assert_eq!(mapped.filter(|&i| i < n), full.id, "n={n} symbols={symbols} id={id}");
+                        }
+                    }
+                }
             }
         }
     }

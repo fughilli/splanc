@@ -67,6 +67,7 @@ export interface KernelExports {
   pk_stagger_ids_buf(): number;
   pk_stagger_fill(count: number, ledCount: number, bits: number, symbols: number, secded: number, sync: number): number;
   pk_decode_cycle_sync(n: number, ledCount: number, bits: number, symbols: number, secded: number, sync: number): number;
+  pk_decode_cycle_coded(n: number, ledCount: number, bits: number, symbols: number, secded: number, sync: number): number;
   pk_symbol_buf(): number;
   pk_decode_cycle(n: number, ledCount: number, bits: number, symbols: number, secded: number): number;
   pk_stride_phase_count(spacing: number): number;

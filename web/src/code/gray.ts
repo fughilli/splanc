@@ -367,6 +367,20 @@ export function decodeCycleSymbols(symbols: readonly number[], params: CodeParam
   const buf = new Uint8Array(k.memory.buffer, k.pk_symbol_buf(), symbols.length);
   for (let d = 0; d < symbols.length; d++) buf[d] = symbols[d]!;
   const sync = syncCode(params);
+  if (isPruned(params)) {
+    // The kernel ranks a pruned book's coded index by walking the book (O(n)
+    // validity checks, ~0.2 ms at 2000 LEDs, once per track per cycle); the
+    // id <-> index table this side already holds maps it in O(1). Same ids:
+    // the table is the kernel's own walk (pk_stagger_fill), and an index it
+    // lacks is excluded by the book or ranks past ledCount.
+    const c = k.pk_decode_cycle_coded(symbols.length, params.ledCount, params.bits, params.symbols, secded(params), sync);
+    const n = (c & FLAG_VALUE) !== 0 ? c & VALUE_MASK : null;
+    return {
+      id: n === null ? null : (codedTable(params).nToId.get(n) ?? null),
+      corrected: (c & FLAG_CORRECTED) !== 0,
+      uncorrectable: (c & FLAG_UNCORRECTABLE) !== 0,
+    };
+  }
   const r =
     sync === 0
       ? k.pk_decode_cycle(symbols.length, params.ledCount, params.bits, params.symbols, secded(params))
