@@ -4,7 +4,8 @@ Starts the real binary with a DDP output aimed at a local UDP socket, drives the
 app protocol over real WSS (stdlib ssl + a hand-rolled RFC 6455 client, so it
 needs nothing beyond Python 3), and checks the pixels that come out: welcome,
 submit_map, a submit_effect sharded into upload_chunks, live set_uniforms,
-restore from the state dir after a restart, and the --start mapping pattern.
+restore from the state dir after a restart, the --start mapping pattern, and
+the shared time base (time_sync_ping -> set_time_base) with --output-latency-ms.
 Uses WSS port 18443. No hardware needed.
 
     bazel build //pi/player_rs:player_host //fx_compiler:fx_compile
@@ -58,6 +59,13 @@ open(os.path.join(work, "ramp.fx"), "w").write(
 fxb_path = os.path.join(work, "ramp.fxb")
 subprocess.run([fxc, os.path.join(work, "ramp.fx"), fxb_path], check=True)
 fxb = open(fxb_path, "rb").read()
+# Effect time made visible: red = time * 0.1.
+open(os.path.join(work, "clock.fx"), "w").write(
+    "vec3 shade(Led led) { return vec3(time * 0.1, 0.0, 0.0); }\n"
+)
+clock_path = os.path.join(work, "clock.fxb")
+subprocess.run([fxc, os.path.join(work, "clock.fx"), clock_path], check=True)
+clock_fxb = open(clock_path, "rb").read()
 
 N = 8
 udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -266,6 +274,42 @@ try:
         "mapping pattern drives DDP (white sync frame seen)",
     )
     check(len({tuple(f) for f in seen}) > 2, "mapping pattern advances frame to frame")
+finally:
+    p.terminate()
+    p.wait()
+# Shared time: sync to the player clock (time_sync_ping), set a time base 1 s in
+# the past, render 1 s ahead (--output-latency-ms) -> effect time = 2 s + elapsed.
+subprocess.run(["rm", "-rf", state])
+p = start(["--output-latency-ms", "1000"])
+try:
+    ws = WS()
+    tag, r = ws.call(ld(1, b""))
+    check(
+        b"time_base" in r and b"output_latency_ms=1000" in r,
+        "welcome advertises time_base + the output latency offset",
+    )
+    tag, r = ws.call(ld(2, key(1, 1) + struct.pack("<d", 1234.5)))
+    check(tag == 2, f"time_sync_ping -> time_sync_pong (arm {tag})")
+    body = r[2:]  # tag + 1-byte length, then t0/t1/t2 as fixed64 doubles
+    t = dict(
+        (body[i] >> 3, struct.unpack("<d", body[i + 1 : i + 9])[0]) for i in range(0, len(body), 9)
+    )
+    check(t.get(1) == 1234.5, f"pong echoes t0: {t}")
+    t_sync = time.time()
+    t1 = int(t[2])
+    tag, r = ws.call(ld(13, ld(1, ld(1, b"clock-map") + vi(5, N) + leds)))
+    check(tag == 8, f"submit_map -> result_ready (arm {tag})")
+    tag, r = ws.call(ld(21, ld(1, b"clock") + ld(2, clock_fxb) + vi(3, 1)))
+    check(tag == 8, f"submit_effect(clock) -> result_ready (arm {tag})")
+    tag, r = ws.call(ld(38, vi(1, (t1 - 1000) & 0xFFFFFFFFFFFFFFFF)))
+    check(tag == 1, f"set_time_base -> welcome (arm {tag})")
+    time.sleep(0.3)
+    px = frame_px()
+    want = (2.0 + time.time() - t_sync) * 0.1 * 255
+    check(
+        abs(px[0][0] - want) <= 8,
+        f"effect time = shared time + latency: red {px[0][0]} ~ {want:.0f}",
+    )
 finally:
     p.terminate()
     p.wait()

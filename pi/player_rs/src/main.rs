@@ -38,8 +38,13 @@ const HANDLER_STACK: usize = 32 * 1024 * 1024;
 /// Welcome features: the protocol features this player serves, plus
 /// [`OUTPUT_PENDING`] while the render loop has no working output (spidev missing
 /// or failing) — so a client can tell "connected, but nothing reaches the LEDs".
-const FEATURES_READY: &[&str] = &["ota", "ota_pull"];
-const FEATURES_PENDING: &[&str] = &["ota", "ota_pull", OUTPUT_PENDING];
+/// `time_base`: the core keeps the shared epoch (SetTimeBase) and TimeSyncPong
+/// is stamped on the render loop's clock (server::now_ms over the same `epoch`),
+/// so the bridge's alignTime applies here too. This player runs no effects yet
+/// (mapping/counting only, which have their own phase lock); an effects layer
+/// added here takes its time from crate::clock::FrameTime like player_host.
+const FEATURES_READY: &[&str] = &["ota", "ota_pull", ledmapper_player_rs::clock::FEATURE_TIME_BASE];
+const FEATURES_PENDING: &[&str] = &["ota", "ota_pull", ledmapper_player_rs::clock::FEATURE_TIME_BASE, OUTPUT_PENDING];
 
 /// Advertise the output state in the welcome, on change only; true if it changed.
 fn set_output_ready(player: &SharedPlayer, ready: bool) -> bool {
