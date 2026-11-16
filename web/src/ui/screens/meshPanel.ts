@@ -67,7 +67,11 @@ export function MeshPanel(
     check.type = "checkbox"; check.checked = mesh.visible;
     visible.append(check, " Show mesh");
     check.addEventListener("change", () => { if (mesh) { mesh.visible = check.checked; change(); } });
-    fields.append(visible, Button({ label: "Reset alignment", onClick: () => {
+    visible.className = "mesh-visible";
+    const btns = document.createElement("div");
+    btns.className = "topo-btns mesh-btns";
+    fields.append(visible, btns);
+    btns.append(Button({ label: "Reset alignment", onClick: () => {
       if (!mesh) return;
       mesh.translation = [0, 0, 0]; mesh.rotation = [0, 0, 0]; mesh.scale = 1;
       rebuild(); change();

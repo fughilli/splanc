@@ -572,6 +572,15 @@ body.is-locked {
   margin-top: var(--sp-3);
   align-items: center;
 }
+.mesh-btns {
+  flex-wrap: wrap;
+}
+.mesh-visible {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin: var(--sp-2) 0;
+}
 
 /* --- topology diagnostics (Debug section) --- */
 .topo-debug {
