@@ -13,6 +13,7 @@
 pub mod clock;
 pub mod fx;
 pub mod health;
+pub mod http;
 pub mod ota;
 pub mod output;
 pub mod spi_retry;
