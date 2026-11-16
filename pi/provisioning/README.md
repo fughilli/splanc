@@ -128,8 +128,10 @@ Details: [docs/design/max-ota.md](../../docs/design/max-ota.md).
   programs it via `openFPGALoader`. `journalctl -u led-driver` shows the load step.
 - **More/fewer strips, longer runs, or different rate:** `ledFpgaPorts`,
   `ledStartLeds`, `ledFps` live in `nix/apps.nix`; rebuild the image to change them.
-- **APA102 instead of WS281x:** flip `ledOutput` to `apa102` in `nix/apps.nix`
-  (drives APA102/SK9822 clock+data over SPI directly, no FPGA).
+- **APA102 instead of WS281x:** flip `ledOutput` to `apa102` in `nix/apps.nix`,
+  or build with `SPLANC_LED_OUTPUT=apa102` in the environment (drives
+  APA102/SK9822 clock+data over SPI directly with the Python driver
+  `//pi/led_driver`, no FPGA; its pattern frames come from the same Rust kernel).
 
 ---
 

@@ -169,9 +169,11 @@ before any hardware exists:
 
 - `//firmware/pattern` (`ledmapper_pattern`): no_std, zero-dep port of the
   hue-code generator, SEC-DED FEC, and the code-book derivation
-  (graycode.py, fec.py and codebook.py in one crate). Golden test pins it to
-  `web/tests/golden_secded16{,_sym4}.json` — the same fixtures the phone
-  decoder is verified against — plus exhaustive single-flip-corrects /
+  (graycode.py, fec.py and codebook.py in one crate). Since phase 0 of
+  hue-code v2 it is the ONE implementation: the phone runs it as wasm and the
+  Python copies are gone. Golden test pins it to
+  `firmware/pattern/testdata/golden_secded16{,_sym4}.json` (emitted by the
+  kernel's `gen_golden`) — plus exhaustive single-flip-corrects /
   double-flip-rejects FEC property checks. **Phase 4a's remaining scope is
   the RMT/driver integration, not the pattern math.**
 - `//firmware/player` (`ledmapper_player`): no_std, transport-free session
@@ -260,8 +262,9 @@ tail).
   - FEC, `symbols` = 2 and 4) → no_std Rust. Every frame is per-LED RGB
     (white/green sync + the Gray-ordered symbol palette); there are no on/off
     sets anymore, which is exactly the shape the RMT path wants. **Accept:**
-    frame-for-frame match vs the Python goldens
-    (`web/tests/golden_secded16.json` AND `golden_secded16_sym4.json`).
+    frame-for-frame match vs the Python goldens (now
+    `firmware/pattern/testdata/golden_secded16{,_sym4}.json`, emitted by the
+    kernel itself since the Python generator was retired).
 - 4b **SNTP clock** on `esp_timer` (SDK bundles lwip SNTP); **accept:** offset
   convergence + a **documented drift bound / re-sync cadence**.
 - 4c **WSS transport**: RFC6455 over `esp_https_server` + mbedtls. SDK has
@@ -443,9 +446,10 @@ has a domain and can create A records; when picked up:
 - Solver (landed): `solver/src/{vio.rs,pipeline.rs,lm.rs,sparse.rs,imu.rs,
 synth.rs}`, `solver/worker.js`, `web/src/solver/{agent.ts,placement.ts}`,
   parity `pi/reconstruction/tests/test_rust_parity.py`
-- Pattern gen (hue): `pi/led_driver/led_driver/{graycode.py,driver.py,spi.py,
-clock.py}`, `gen_golden.py`, TS mirror `web/src/code/gray.ts`, goldens
-  `web/tests/golden_secded16{,_sym4}.json`
+- Pattern gen (hue): the one kernel `firmware/pattern` (render path for
+  firmware; decode/timing behind its `app` feature), phone wrappers
+  `web/src/code/{gray,fec,stride,timing}.ts` over its wasm build, goldens
+  `firmware/pattern/testdata/golden_secded16{,_sym4}.json`
 - Wire seams: `web/src/net/client.ts`, `pi/server/server/{app.py,handler.py}`
 - Firmware (vendored): `third_party/embedded/{MODULE.bazel,rules/firmware.bzl,
 apps/rainbow/rainbow.cpp,rust/blink_timing/,libs/{board,pins}/,nix/arduino_esp32.BUILD}`

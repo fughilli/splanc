@@ -1,9 +1,13 @@
-"""pi/led_driver — M1. SK9822/APA102 Gray-code pattern driver + control socket.
+"""pi/led_driver — M1. SK9822/APA102 hue-code pattern driver + control socket.
 
-Continuous Gray-code cycle (design doc §8.1) over hardware SPI, with a local Unix
-socket so M2 can start/stop the pattern and read the pattern clock. The framing
-and cycle logic are pure (hardware-free), so they're unit-tested with a recording
-sink; `spidev` is imported lazily and is only present on the Pi.
+Continuous hue-code cycle (design doc §8.1) over hardware SPI, with a local Unix
+socket so M2 can start/stop the pattern and read the pattern clock. The driver
+owns the OUTPUT side only — APA102/SK9822 framing (`spi.py`), spi_ws281x FPGA
+framing (`fpga_spi.py`), the frame loop and the control socket. Every pattern
+frame comes from the Rust hue-code kernel //firmware/pattern through its one
+Python binding (//firmware/pattern:pattern_py, ctypes): there is no Python copy
+of the colour code. The framing and loop are pure (hardware-free), unit-tested
+with a recording sink; `spidev` is imported lazily and is only present on the Pi.
 
 `imports = ["."]` exposes the nested `led_driver/` package as `led_driver` (and
 runnable as `python -m led_driver`).
@@ -16,11 +20,17 @@ load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
+filegroup(
+    name = "led_driver_srcs",
+    srcs = glob(["led_driver/*.py"]),
+)
+
 py_library(
     name = "led_driver",
-    srcs = glob(["led_driver/*.py"]),
+    srcs = [":led_driver_srcs"],
     imports = ["."],
     deps = [
+        "//firmware/pattern:pattern_py",
         "//shared/protocol",
     ],
 )
@@ -33,15 +43,6 @@ py_binary(
     deps = [":led_driver"],
 )
 
-# Emits the cross-language goldens pinning the TS code mirrors to this
-# driver's logic:  bazelisk run //pi/led_driver:gen_golden -- secded16
-py_binary(
-    name = "gen_golden",
-    srcs = ["gen_golden.py"],
-    imports = ["."],
-    deps = [":led_driver"],
-)
-
 py_test(
     name = "led_driver_test",
     srcs = [
@@ -49,16 +50,62 @@ py_test(
         "tests/test_control.py",
         "tests/test_driver.py",
         "tests/test_fpga_spi.py",
-        "tests/test_graycode.py",
+        "tests/test_kernel_equivalence.py",
         "tests/test_spi.py",
     ],
+    data = [
+        "//firmware/pattern:testdata/golden_secded16.json",
+        "//firmware/pattern:testdata/golden_secded16_sym4.json",
+        "//firmware/pattern:testdata/golden_stagger16.json",
+        "//firmware/pattern:testdata/golden_stagger16_sym4.json",
+    ],
+    env = {
+        "GOLDEN_SECDED16": "$(rootpath //firmware/pattern:testdata/golden_secded16.json)",
+        "GOLDEN_SECDED16_SYM4": "$(rootpath //firmware/pattern:testdata/golden_secded16_sym4.json)",
+        "GOLDEN_STAGGER16": "$(rootpath //firmware/pattern:testdata/golden_stagger16.json)",
+        "GOLDEN_STAGGER16_SYM4": "$(rootpath //firmware/pattern:testdata/golden_stagger16_sym4.json)",
+    },
     imports = ["."],
     legacy_create_init = False,
     main = "tests/pytest_main.py",
     deps = [
         ":led_driver",
+        "//firmware/pattern:pattern_py",
         "//shared/protocol",
         "@rules_requirements//python",
         requirement("pytest"),
     ],
+)
+
+# The Pi image's APA102 driver, as ONE build_data file (sbc-deploy keys build_data
+# by basename): this package, ledmapper_protocol, the kernel binding and the
+# kernel's Rust sources. pi/provisioning/nix/apps.nix unpacks it and compiles the
+# kernel cdylib from kernel/*.rs with rustc, so the image carries no vendored
+# copy of anything (replaces the old pi/provisioning/nix/ledapp tree).
+py_binary(
+    name = "bundle",
+    srcs = ["bundle.py"],
+    main = "bundle.py",
+    visibility = ["//visibility:private"],
+)
+
+genrule(
+    name = "ledapp_bundle",
+    srcs = [
+        ":led_driver_srcs",
+        "//firmware/pattern:abi/kernel_abi.rs",
+        "//firmware/pattern:python/ledmapper_pattern.py",
+        "//firmware/pattern:src/lib.rs",
+        "//shared/protocol",
+    ],
+    outs = ["ledapp.tar"],
+    cmd = " ".join([
+        "$(execpath :bundle) $@",
+        "led_driver $(locations :led_driver_srcs)",
+        "-- ledmapper_protocol $(locations //shared/protocol)",
+        "-- . $(location //firmware/pattern:python/ledmapper_pattern.py)",
+        "-- kernel $(location //firmware/pattern:src/lib.rs)",
+        "$(location //firmware/pattern:abi/kernel_abi.rs)",
+    ]),
+    tools = [":bundle"],
 )

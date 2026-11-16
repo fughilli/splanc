@@ -38,8 +38,14 @@ function stats(over: Partial<DecodeStats> = {}): DecodeStats {
     rejectedSupport: 0,
     rejectedPoseGap: 0,
     rejectedDuplicate: 0,
+    rejectedUnconfirmed: 0,
     idFlips: 0,
     marginEma: null,
+    pilotCycles: 0,
+    delimiterMisses: 0,
+    phaseRejects: 0,
+    rejectedPhaseUnlocked: 0,
+    phaseK: null,
     ...over,
   };
 }

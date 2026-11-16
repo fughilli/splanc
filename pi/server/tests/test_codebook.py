@@ -3,15 +3,19 @@
 import math
 
 import pytest
-from ledmapper_protocol.fec import secded_total_bits
-from server.codebook import DEFAULT_BIT_PERIOD_MS, code_params_for, data_bits_for
+from server.codebook import (
+    DEFAULT_BIT_PERIOD_MS,
+    code_params_for,
+    data_bits_for,
+    secded_total_bits,
+)
 
 # Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
 pytestmark = pytest.mark.requirements("PR-11")
 
 
-# Codewords carry id + 1 (the all-zero word is reserved-invalid, see
-# led_driver.graycode.CODE_OFFSET), so the DATA word is
+# Codewords carry id + 1 (the all-zero word is reserved-invalid, the hue-code
+# kernel's CODE_OFFSET), so the DATA word is
 # ceil(log2(ledCount + 1)) bits; the default code-book wraps it in SEC-DED.
 @pytest.mark.parametrize(
     "led_count,data_bits",
@@ -64,3 +68,36 @@ def test_matches_design_doc_example():
     cp = code_params_for(1024)
     assert data_bits_for(1024) == 11 == math.ceil(math.log2(1024 + 1))
     assert (cp.bits, cp.cycleFrames) == (16, 18)
+
+
+def test_four_symbol_alphabet_halves_the_data_frames():
+    # 16 LEDs: 5 data bits -> 10 SEC-DED bits -> 5 two-bit frames + 2 sync.
+    assert code_params_for(16, symbols=4).cycleFrames == 7
+    assert code_params_for(16, symbols=2).cycleFrames == 12
+    # Odd width zero-pads the last frame: 4094 LEDs -> 18 bits -> 9 frames.
+    assert (
+        code_params_for(4094, symbols=4).bits,
+        code_params_for(4094, symbols=4).cycleFrames,
+    ) == (18, 11)
+
+
+def test_secded_total_bits():
+    assert [secded_total_bits(k) for k in (1, 4, 5, 11, 12)] == [4, 8, 10, 16, 18]
+    with pytest.raises(ValueError):
+        secded_total_bits(0)
+
+
+def test_sync_pattern_defaults_to_v1_and_stagger_keeps_the_cycle():
+    """Hue code v2 phase 2: the staggered pilot is a syncPattern value, opt-in.
+    Its code book is the kernel's pruned one: 1260 LEDs at 2 symbols need a
+    12-bit data word (18 coded bits) behind the 5-frame palette pilot."""
+    v1 = code_params_for(1260)
+    assert v1.syncPattern == "on_off"
+    assert (v1.bits, v1.cycleFrames) == (16, 18)
+    st = code_params_for(1260, sync_pattern="stagger_pilot")
+    assert st.syncPattern == "stagger_pilot"
+    assert (st.bits, st.cycleFrames) == (18, 23)
+    st4 = code_params_for(1260, symbols=4, sync_pattern="stagger_pilot")
+    assert (st4.bits, st4.cycleFrames) == (16, 11)
+    with pytest.raises(ValueError):
+        code_params_for(16, sync_pattern="stagger_white")  # sim-only, not a wire value

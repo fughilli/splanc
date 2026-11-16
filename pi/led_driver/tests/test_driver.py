@@ -2,7 +2,7 @@
 
 import pytest
 from led_driver.driver import LedDriver
-from led_driver.graycode import color_plan, default_code_params
+from led_driver.pattern import color_plan, default_code_params
 from led_driver.spi import RecordingSink, frame_bytes, frame_bytes_colors
 
 

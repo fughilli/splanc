@@ -52,3 +52,39 @@ test("a coalesced task runs only the latest request", async () => {
   await turns(5);
   assert.deepEqual(ran, ["c"], "cancelled");
 });
+
+test("runIfStarved draws a starved overlay in the caller's task, once", async () => {
+  let now = 0;
+  const t = new CoalescedTask(80, "background", () => now);
+  const ran: number[] = [];
+  t.request(() => ran.push(1));
+  // Never ran: starved by definition, so the busy stage draws it now.
+  assert.equal(t.runIfStarved(250), true);
+  assert.deepEqual(ran, [1]);
+  // The scheduled background task finds nothing left to do.
+  await turns(5);
+  assert.deepEqual(ran, [1]);
+  now = 100;
+  t.request(() => ran.push(2));
+  assert.equal(t.runIfStarved(250), false, "within the staleness bound it waits for its task");
+  now = 400;
+  t.request(() => ran.push(3)); // replaces 2: only the newest state is drawn
+  assert.equal(t.runIfStarved(250), true);
+  assert.deepEqual(ran, [1, 3]);
+  assert.equal(t.runIfStarved(250), false, "nothing pending");
+  await turns(5);
+  assert.deepEqual(ran, [1, 3]);
+});
+
+test("an ordered queue reports how long its oldest item has waited", () => {
+  let now = 0;
+  const q = new OrderedTaskQueue("user-visible", () => now);
+  assert.equal(q.oldestWaitMs, 0);
+  q.push(() => undefined);
+  now = 40;
+  q.push(() => undefined);
+  now = 300;
+  assert.equal(q.oldestWaitMs, 300);
+  q.drain();
+  assert.equal(q.oldestWaitMs, 0);
+});

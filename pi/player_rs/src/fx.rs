@@ -27,8 +27,11 @@ use std::path::PathBuf;
 
 /// The protocol features this player serves (welcome.features). `time_base`:
 /// effect time follows the shared epoch (crate::clock); host_main appends the
-/// `output_latency_ms=N` report.
-pub const FEATURES: &[&str] = &["effects", "list_effects", "uniform_commit", "control_ack", crate::clock::FEATURE_TIME_BASE];
+/// `output_latency_ms=N` report. `hue_stagger_pilot`: this host player runs the
+/// hue code v2 staggered pilot when a start_mapping asks for it
+/// (ledmapper_player::FEATURE_STAGGER_PILOT).
+pub const FEATURES: &[&str] =
+    &["effects", "list_effects", "uniform_commit", "control_ack", crate::clock::FEATURE_TIME_BASE, "hue_stagger_pilot"];
 
 /// ClientMessage oneof field numbers this layer handles.
 const ARM_SUBMIT_MAP: u32 = 13;
