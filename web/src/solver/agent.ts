@@ -15,6 +15,7 @@ import type { DetectionRecord, ImuSample, OutputMap, SolveLed } from "@ledmapper
 
 import { assetUrl } from "../assetBase";
 import type { Assessment } from "./degeneracy";
+import type { PlannedStage } from "./solveProgress";
 
 /** Problem JSON for the Rust solver (solver/src/types.rs). */
 export interface SolveProblem {
@@ -143,12 +144,18 @@ export interface SolveStats {
   worker: WorkerSolveTiming | null;
 }
 
-/** One progress snapshot — the shape of §7 solve_status content. */
+/** One progress snapshot — the shape of §7 solve_status content. `progress`
+ * is the current optimizer PASS's fraction (it restarts at every pass);
+ * `stage`/`stageIndex`/`plan` place the pass in the solve — feed snapshots to
+ * solveProgress.ts SolveProgress for one bar over the whole solve. */
 export interface SolveSnapshot {
   progress: number;
   rmsPx: number;
   leds: SolveLed[];
   trajectory: [number, number, number][];
+  stage?: string;
+  stageIndex?: number;
+  plan?: PlannedStage[];
 }
 
 type WorkerMsg =

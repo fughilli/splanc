@@ -58,6 +58,7 @@ import {
 } from "../../xr/nativeCaptureSource";
 import { SolverAgent, type SolveSnapshot, type SolveStats } from "../../solver/agent";
 import { chooseSolvePlacement } from "../../solver/placement";
+import { SolveProgress, type ProgressView, type StageSnapshot } from "../../solver/solveProgress";
 import { LabelOverlay } from "../labels";
 import { ProjectionOverlay, type Registration } from "../projectionOverlay";
 import { overlayLegend } from "../overlayStyle";
@@ -450,6 +451,14 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   progBar.className = "capture-solveprog-bar";
   progBar.append(progFill);
   progWrap.append(progBar, progText);
+  // The final solve's ONE bar across its passes and phases (each solver pass
+  // reports its own 0→1; solveProgress.ts). Interim live solves never feed it.
+  let finalProgress = new SolveProgress();
+  const paintSolveProgress = (v: ProgressView, rmsPx: number | null = null): void => {
+    const pct = Math.floor(v.fraction * 100);
+    progFill.style.width = `${pct}%`;
+    progText.textContent = `${v.label} · ${pct} %` + (rmsPx !== null ? ` · reproj ${rmsPx.toFixed(1)} px` : "");
+  };
 
   // Calibrate-IMU panel (only in ?calibrate= mode).
   const calPanel = document.createElement("div");
@@ -2098,6 +2107,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       await client()?.stopMappingNoSolve().catch(() => undefined);
     }
     resetLiveFeedback();
+    el.classList.remove("capture--solving");
     go(router.origin() ?? "/maps");
   }
 
@@ -2189,10 +2199,23 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       return;
     }
 
-    // Solve progress: bar + the converging interim map in the live inset.
+    // Solve progress: one bar for the whole solve + the converging map, full
+    // screen (the viewfinder is gone; capture--solving in app.css).
+    // A supplemental scan solves twice: the scan alone, then jointly with the
+    // original capture (reviewSupplement) — weighted by their record counts.
+    const jointPlanned =
+      solveOnPhone && supplementId !== null && priorMap !== null && priorObs !== null && solverAgent.available;
+    finalProgress = new SolveProgress(
+      jointPlanned
+        ? [
+            { label: "Solving the scan", weight: localDetections.length },
+            { label: "Joint re-solve", weight: localDetections.length + priorObs!.detections.length },
+          ]
+        : [{ label: "Solving", weight: 1 }],
+    );
+    el.classList.add("capture--solving");
     progWrap.style.display = "";
-    progFill.style.width = "0%";
-    progText.textContent = "solving…";
+    paintSolveProgress(finalProgress.view());
     liveCanvas.style.display = "block";
     const preview: { view: MapView | null } = { view: null };
     const renderSolveSnapshot = (st: {
@@ -2200,12 +2223,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       rmsPx: number | null;
       leds: { id: number; xyz: [number, number, number] }[] | null;
       trajectory: [number, number, number][] | null;
-    }): void => {
+    } & Omit<StageSnapshot, "progress">): void => {
       if (st.progress !== null) {
-        progFill.style.width = `${Math.round(st.progress * 100)}%`;
-        progText.textContent =
-          `solving… ${Math.round(st.progress * 100)} %` +
-          (st.rmsPx !== null ? ` · reproj ${st.rmsPx.toFixed(1)} px` : "");
+        paintSolveProgress(finalProgress.update({ ...st, progress: st.progress }), st.rmsPx);
       }
       if (st.leds !== null && st.leds.length >= 3) {
         const interim = interimMap(st.leds, st.trajectory);
@@ -2361,6 +2381,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             `[solve] host solve FAILED (${hostErr instanceof Error ? hostErr.message : String(hostErr)})` +
               " — falling back to the phone solver",
           );
+          paintSolveProgress(finalProgress.restart());
           map = await solveOnPhoneNow();
           nativeLog(`[solve] fallback phone solve done: ${map.leds.length} leds`);
           // A supplemental scan's raw solve is not the map — the fused result is,
@@ -2372,6 +2393,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       preview.view?.stop();
       if (solvePoll !== null) clearInterval(solvePoll);
       if (supplementId !== null && priorMap !== null) {
+        paintSolveProgress(finalProgress.complete());
         // Supplemental: register + fuse into the prior map, then let the user
         // accept or reject the fused result before it is committed (FUG-112).
         await reviewSupplement(map);
@@ -2379,6 +2401,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // First-time capture: save the solved result as a NEW library map
         // (design doc §4.2) — keeping the raw observations so it can later be
         // supplemented — and navigate to Map Detail.
+        paintSolveProgress(finalProgress.complete());
         const observations: CaptureObservations = {
           detections: localDetections,
           imu: localImu,
@@ -2418,6 +2441,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     } finally {
       if (solvePoll !== null) clearInterval(solvePoll);
       progWrap.style.display = "none";
+      el.classList.remove("capture--solving");
       stopBtn.disabled = false;
       void saveRunBundle();
     }
@@ -2555,8 +2579,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     let joint: OutputMap | null = null;
     if (mergedObs !== null && solverAgent.available && localDetections.length > 0) {
       progWrap.style.display = "";
-      progFill.style.width = "0%";
-      progText.textContent = "re-solving with the original capture…";
+      // Planned as phase 2 when the scan was solved on the phone; otherwise
+      // (host solve) it takes over the rest of the bar.
+      paintSolveProgress(finalProgress.phaseCount > 1 ? finalProgress.beginPhase(1) : finalProgress.restart());
       joint = await solverAgent
         .solve(
           {
@@ -2567,10 +2592,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             createdAt: new Date().toISOString(),
             options: finalSolveOptions(),
           },
-          (snap) => {
-            progFill.style.width = `${Math.round(snap.progress * 100)}%`;
-            progText.textContent = `re-solving with the original capture… ${Math.round(snap.progress * 100)} %`;
-          },
+          (snap) => paintSolveProgress(finalProgress.update(snap), snap.rmsPx),
         )
         .then((m) => recenterToCentroid(m).map)
         .catch((e: unknown) => {
@@ -2599,7 +2621,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       `[solve] supplement fusion: method=${fusion.report.method} registered=${fusion.report.registered} ` +
         `jointRejected=${fusion.report.jointRejected ?? "-"} — ${fusion.report.summary}`,
     );
+    paintSolveProgress(finalProgress.complete());
     progWrap.style.display = "none";
+    el.classList.remove("capture--solving");
     guideEl.style.display = "none";
     layerBar.style.display = "none";
 

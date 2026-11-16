@@ -208,6 +208,28 @@ pub struct ProgressSnapshot {
     pub rms_px: f64,
     pub leds: Vec<ProgressLed>,
     pub trajectory: Vec<[f64; 3]>,
+    /// The optimizer pass this snapshot comes from (e.g. "initial-cold",
+    /// "outlier-round-1", "strip-prior"). `progress` is that PASS's own
+    /// 0→1 fraction: a solve runs several passes in sequence, so `progress`
+    /// restarts at every pass. Carriers that show one bar for the whole solve
+    /// combine `progress` with `stageIndex` and `plan`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
+    /// Position of `stage` in `plan`.
+    #[serde(rename = "stageIndex", skip_serializing_if = "Option::is_none")]
+    pub stage_index: Option<u32>,
+    /// Every pass the solve may run, in order, each with its evaluation
+    /// budget as a relative weight. An upper bound: adaptive passes (later
+    /// outlier rounds, the strip prior) can be skipped.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub plan: Vec<PlannedStage>,
+}
+
+/// One pass of a solve's plan (ProgressSnapshot::plan).
+#[derive(Serialize, Debug, Clone, PartialEq)]
+pub struct PlannedStage {
+    pub name: String,
+    pub weight: f64,
 }
 
 #[derive(Serialize, Debug, Clone)]
