@@ -76,8 +76,9 @@ through three stages:
   off the right edge comes back at the left 5 rows lower, so each pass precesses down
   the panel. Life runs at 6 generations/s, slow enough to watch each glider change
   shape. Every glider flies the same diagonal at c/4, so the pattern is one translation
-  of that space: gliders placed at least 6 cells apart never meet. With an odd skew, that diagonal step visits every cell position, so over
-  each 8192-generation cycle (~23 min) every pixel is lit exactly as often as every other.
+  of that space: gliders placed at least 6 cells apart never meet. With an odd skew, that
+  diagonal step visits every cell position, so over each 8192-generation cycle (~23 min)
+  every pixel is lit exactly as often as every other.
   Up to 33 fit; a fixture connecting adds a glider without moving the others.
   `tests/test_gliders.py` steps real Life rules on the same torus and checks the pixels.
 
