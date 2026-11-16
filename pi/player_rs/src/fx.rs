@@ -15,6 +15,7 @@
 //! features advertised in the welcome ([`FEATURES`]) say so, so the app doesn't
 //! offer them.
 
+use crate::clock::{EffectClock, FrameTime};
 use crate::wire::Rgb;
 use ledmapper_fx_vm::{Frame, Led, Program, Vm};
 use ledmapper_pb::ledmapper_::v1_ as pb;
@@ -24,10 +25,13 @@ use pb::ServerMessage_::Msg as SMsg;
 use pv::client_message::Msg as CArm;
 use std::path::PathBuf;
 
-/// The protocol features this player serves (welcome.features).
-/// (+ `hue_stagger_pilot`: this host player runs the hue code v2 staggered pilot
-/// when a start_mapping asks for it — ledmapper_player::FEATURE_STAGGER_PILOT.)
-pub const FEATURES: &[&str] = &["effects", "list_effects", "uniform_commit", "control_ack", "hue_stagger_pilot"];
+/// The protocol features this player serves (welcome.features). `time_base`:
+/// effect time follows the shared epoch (crate::clock); host_main appends the
+/// `output_latency_ms=N` report. `hue_stagger_pilot`: this host player runs the
+/// hue code v2 staggered pilot when a start_mapping asks for it
+/// (ledmapper_player::FEATURE_STAGGER_PILOT).
+pub const FEATURES: &[&str] =
+    &["effects", "list_effects", "uniform_commit", "control_ack", crate::clock::FEATURE_TIME_BASE, "hue_stagger_pilot"];
 
 /// ClientMessage oneof field numbers this layer handles.
 const ARM_SUBMIT_MAP: u32 = 13;
@@ -61,9 +65,8 @@ struct Effect {
     vm: Box<Vm>,
     /// Hidden buffers / textures (Program::arena_bytes), persisting across frames.
     arena: Vec<u8>,
-    /// Seconds of effect time at the last frame, and the frame counter.
-    last_s: Option<f64>,
-    time: f64,
+    /// Effect time + dt across frames (shared time base aware), and the frame counter.
+    clock: EffectClock,
     frame: u32,
 }
 
@@ -147,16 +150,15 @@ impl HostFx {
         self.positions.len()
     }
 
-    /// Render one effect frame for an `n`-LED strip at `now_s` seconds (any
-    /// monotonic clock), or None when no effect is active. LEDs past the stored
-    /// map shade at the origin.
-    pub fn render(&mut self, now_s: f64, n: usize, brightness: f32) -> Option<Vec<Rgb>> {
+    /// Render one effect frame for an `n`-LED strip at frame time `t` (the
+    /// render loop's [`FrameTime`]: shared effect time when a time base is set,
+    /// else the local clock), or None when no effect is active. LEDs past the
+    /// stored map shade at the origin.
+    pub fn render(&mut self, t: FrameTime, n: usize, brightness: f32) -> Option<Vec<Rgb>> {
         let positions = &self.positions;
         let e = self.effect.as_mut().filter(|e| e.active)?;
         let prog = Program::parse(&e.bytes).ok()?;
-        let dt = e.last_s.map_or(0.0, |t| (now_s - t).clamp(0.0, 0.25));
-        e.last_s = Some(now_s);
-        e.time += dt;
+        let (time, dt) = e.clock.advance(t);
         e.frame = e.frame.wrapping_add(1);
 
         let q16 = |x: f32| (x * 65536.0) as i32;
@@ -173,11 +175,11 @@ impl HostFx {
             (mn, mx) = ([0.0; 3], [0.0; 3]);
         }
         let mut frame = Frame {
-            time: e.time as f32,
+            time: time as f32,
             dt: dt as f32,
             frame: e.frame,
             led_count: n as u32,
-            time_fix: q16(e.time as f32),
+            time_fix: q16(time as f32),
             dt_fix: q16(dt as f32),
             ..Default::default()
         };
@@ -320,8 +322,7 @@ impl HostFx {
             active: m.activate(),
             vm,
             arena: Vec::new(),
-            last_s: None,
-            time: 0.0,
+            clock: EffectClock::default(),
             frame: 0,
         });
         if persist {
@@ -597,6 +598,57 @@ mod tests {
         ledmapper_fx_compiler::compile(SHADER).expect("test shader compiles").fxb
     }
 
+    /// A free-running frame at `s` seconds on the local clock.
+    fn local(s: f64) -> FrameTime {
+        FrameTime { local_s: s, shared: None }
+    }
+
+    /// Red = time / 4, green = the dt sum / 4 (both in 0..1 for a few seconds).
+    const CLOCK_SHADER: &str = "state float phase;\n\
+        void update() { phase = phase + dt; }\n\
+        vec3 shade(Led led) { return vec3(time * 0.25, phase * 0.25, 0.0); }\n";
+
+    fn clock_player() -> (Player, HostFx) {
+        let mut player = Player::new("host-0001", 1);
+        let mut fx = HostFx::new(None);
+        let map = map_frame(1, &[(0, [0.0, 0.0, 0.0])]);
+        assert!(matches!(reply_msg(fx.handle(&mut player, &map)), SMsg::ResultReady(_)));
+        let fxb = ledmapper_fx_compiler::compile(CLOCK_SHADER).expect("clock shader compiles").fxb;
+        assert!(matches!(reply_msg(fx.handle(&mut player, &effect_frame("clock", &fxb))), SMsg::ResultReady(_)));
+        (player, fx)
+    }
+
+    #[test]
+    fn shared_time_base_drives_effect_time_and_dt() {
+        // Two players whose local clocks disagree by 7 s, given the SAME shared
+        // epoch (as alignTime does, each in its own clock), render the same
+        // effect time and the same integrated phase.
+        let (_pa, mut a) = clock_player();
+        let (_pb, mut b) = clock_player();
+        // Both were already running free before the epoch landed.
+        a.render(FrameTime::sample(1_000_000, None, 0), 1, 1.0);
+        b.render(FrameTime::sample(8_000_000, None, 0), 1, 1.0);
+        // Epoch = 1.0 s ago on each clock; then 2 s of 40 ms frames.
+        let (ea, eb) = (0, 7_000);
+        let mut last = (Vec::new(), Vec::new());
+        for k in 0..=50 {
+            let us = 1_000_000 + k * 40_000;
+            last.0 = a.render(FrameTime::sample(us, Some(ea), 0), 1, 1.0).unwrap();
+            last.1 = b.render(FrameTime::sample(us + 7_000_000, Some(eb), 0), 1, 1.0).unwrap();
+        }
+        // time = 1 + 2 = 3 s -> red 0.75 * 255.
+        assert!((190..=192).contains(&last.0[0][0]), "time follows the epoch: {:?}", last.0);
+        assert_eq!(last.0, last.1, "synced players render identically");
+        // phase = the dt sum: 2 s of shared dt + the first-on-epoch local dt
+        // (the 0 s frame gap here) -> green = 0.5 * 255 on both.
+        assert!((127..=128).contains(&last.0[0][1]), "dt = time difference: {:?}", last.0);
+
+        // A latency offset renders ahead: +500 ms -> time 3.5 s -> red 0.875.
+        let (_pc, mut c) = clock_player();
+        let px = c.render(FrameTime::sample(3_000_000, Some(0), 500), 1, 1.0).unwrap();
+        assert!((222..=224).contains(&px[0][0]), "render ahead by the offset: {px:?}");
+    }
+
     fn reply_msg(h: Handled) -> SMsg {
         match h {
             Handled::Reply(r) => r.r#msg.expect("a reply"),
@@ -619,22 +671,22 @@ mod tests {
     fn renders_the_effect_over_the_map() {
         let mut player = Player::new("host-0001", 3);
         let mut fx = HostFx::new(None);
-        assert_eq!(fx.render(0.0, 3, 1.0), None, "no effect yet");
+        assert_eq!(fx.render(local(0.0), 3, 1.0), None, "no effect yet");
         mapped_with_effect(&mut fx, &mut player);
 
-        let px = fx.render(0.0, 3, 1.0).expect("active effect renders");
+        let px = fx.render(local(0.0), 3, 1.0).expect("active effect renders");
         assert_eq!(px[0], [0, 0, 255]);
         assert!((120..=136).contains(&px[1][0]), "LED 1 is unmapped: interpolated to x=0.5, got {:?}", px[1]);
         assert_eq!(px[2], [255, 0, 255]);
 
         // Output brightness scales the effect.
-        let dim = fx.render(0.1, 3, 0.5).unwrap();
+        let dim = fx.render(local(0.1), 3, 0.5).unwrap();
         assert_eq!(dim[2], [128, 0, 128]);
 
         // A live uniform (with a control-ack seq) takes effect on the next frame.
         let set = uniforms_frame(0, 0.0, 7);
         assert!(matches!(reply_msg(fx.handle(&mut player, &set)), SMsg::ControlAck(a) if a.r#seq == 7));
-        assert_eq!(fx.render(0.2, 3, 1.0).unwrap()[2], [0, 0, 255]);
+        assert_eq!(fx.render(local(0.2), 3, 1.0).unwrap()[2], [0, 0, 255]);
 
         // "off" clears it.
         let off = envelope(ARM_SET_EFFECT, &[]);
@@ -699,7 +751,7 @@ mod tests {
         fx.restore(&mut player);
         assert_eq!(fx.mapped_leds(), 3);
         assert!(fx.active());
-        assert_eq!(fx.render(0.0, 3, 1.0).unwrap()[2], [255, 0, 255]);
+        assert_eq!(fx.render(local(0.0), 3, 1.0).unwrap()[2], [255, 0, 255]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

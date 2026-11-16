@@ -5,11 +5,13 @@
 # is likewise generated (protobuf-es, via shared/protocol/proto/gen_ts.sh).
 # docs/design/ are long-form specs (like led-mapper-design.md, already exempt in
 # .markdownlintignore) — kept out of the auto-reflow/line-length hooks.
+# The approved splash JSON is byte-pinned by pi/bridge/tests/test_splash_source.py.
 exclude: |
   (?x)^(
     \.claude-container-overlay/skills/.*|
     shared/protocol/python/ledmapper_protocol/_generated\.py|
     shared/protocol/ts/generated/.*|
+    shared/brand/splash/frames\.json|
     web/src/gen/ledmapper_pb\.ts|
     docs/design/.*\.md|
     web/tests/golden_.*\.json|

@@ -35,12 +35,16 @@ pub fn solve_json(
 ) -> Result<String, String> {
     let problem: Problem =
         serde_json::from_str(input).map_err(|e| format!("bad problem JSON: {e}"))?;
-    let mut cb =
-        |frac: f64, rms: f64, ids: &[u32], leds: &[linalg::Vec3], cams: &[linalg::Vec3]| {
-            if let Some(p) = progress.as_mut() {
-                p(&pipeline::snapshot(frac, rms, ids, leds, cams));
-            }
-        };
+    let mut cb = |stage: &pipeline::StagePos,
+                  frac: f64,
+                  rms: f64,
+                  ids: &[u32],
+                  leds: &[linalg::Vec3],
+                  cams: &[linalg::Vec3]| {
+        if let Some(p) = progress.as_mut() {
+            p(&pipeline::snapshot(Some(stage), frac, rms, ids, leds, cams));
+        }
+    };
     let map = pipeline::reconstruct_vio(&problem, Some(&mut cb))?;
     serde_json::to_string(&map).map_err(|e| format!("serialize: {e}"))
 }
@@ -55,12 +59,16 @@ pub fn solve_json_diag(
 ) -> Result<String, String> {
     let problem: Problem =
         serde_json::from_str(input).map_err(|e| format!("bad problem JSON: {e}"))?;
-    let mut cb =
-        |frac: f64, rms: f64, ids: &[u32], leds: &[linalg::Vec3], cams: &[linalg::Vec3]| {
-            if let Some(p) = progress.as_mut() {
-                p(&pipeline::snapshot(frac, rms, ids, leds, cams));
-            }
-        };
+    let mut cb = |stage: &pipeline::StagePos,
+                  frac: f64,
+                  rms: f64,
+                  ids: &[u32],
+                  leds: &[linalg::Vec3],
+                  cams: &[linalg::Vec3]| {
+        if let Some(p) = progress.as_mut() {
+            p(&pipeline::snapshot(Some(stage), frac, rms, ids, leds, cams));
+        }
+    };
     let (map, diag) = pipeline::reconstruct_vio_diag(&problem, Some(&mut cb))?;
     serde_json::to_string(&serde_json::json!({"map": map, "diag": diag}))
         .map_err(|e| format!("serialize: {e}"))

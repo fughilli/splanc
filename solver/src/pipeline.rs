@@ -13,7 +13,8 @@ use crate::linalg::{
 use crate::quat::{back_project_dir, quat_to_rotmat};
 use crate::strip;
 use crate::types::{
-    LedEntry, OutputMap, OutputMapStats, Problem, ProgressLed, ProgressSnapshot, WarmState,
+    LedEntry, OutputMap, OutputMapStats, PlannedStage, Problem, ProblemOptions, ProgressLed,
+    ProgressSnapshot, WarmState,
 };
 use crate::vio::{solve_vio, FrameObservations, ProgressFn, SolveOptions, VioResult};
 
@@ -758,7 +759,10 @@ fn assemble(
         median_camera_distance(&leveled_traj, &measured),
     );
     if result.scale_floor > 1.0 {
-        warnings.push(floor_warning(median_camera_distance(&leveled_traj, &measured)));
+        warnings.push(floor_warning(median_camera_distance(
+            &leveled_traj,
+            &measured,
+        )));
     }
 
     let map = OutputMap {
@@ -798,9 +802,65 @@ fn assemble(
 /// the rejection loop's job.
 pub fn reconstruct_vio(
     problem: &Problem,
-    progress: Option<ProgressFn>,
+    progress: Option<PipelineProgressFn>,
 ) -> Result<OutputMap, String> {
     reconstruct_vio_diag(problem, progress).map(|(map, _diag)| map)
+}
+
+/// Where a progress report sits in the solve: the pass running now and the
+/// whole (upper-bound) pass plan, so a carrier can draw one bar for the solve
+/// rather than one per pass (each pass's own fraction restarts at 0).
+pub struct StagePos<'a> {
+    pub index: usize,
+    pub plan: &'a [PlannedStage],
+}
+
+/// The pipeline's progress hook: the pass position, then vio::ProgressFn's
+/// (frac, rms_px, led_ids, led_positions, camera_positions) for that pass.
+pub type PipelineProgressFn<'a> = &'a mut dyn FnMut(&StagePos, f64, f64, &[u32], &[Vec3], &[Vec3]);
+
+/// Evaluation budget of outlier-rejection round `round` (0-based).
+fn outlier_round_nfev(max_nfev: usize, round: usize) -> usize {
+    if round == 0 {
+        (max_nfev / 2).max(30)
+    } else {
+        (max_nfev / 4).max(15)
+    }
+}
+
+/// Evaluation budget of the strip-prior re-solve.
+fn strip_nfev(max_nfev: usize) -> usize {
+    (max_nfev / 2).max(30)
+}
+
+const OUTLIER_ROUNDS: usize = 3;
+
+/// Every optimizer pass `reconstruct_vio_diag` may run for these options, in
+/// order, weighted by evaluation budget (an LM pass's cost and its progress
+/// denominator both scale with it). An upper bound: an unusable warm start,
+/// outlier rounds that find nothing to drop, and a strip prior with no pitch
+/// skip their passes.
+pub fn stage_plan(opts: &ProblemOptions) -> Vec<PlannedStage> {
+    let st = |name: String, nfev: usize| PlannedStage {
+        name,
+        weight: nfev.max(1) as f64,
+    };
+    let mut plan = vec![st("initial-cold".into(), opts.max_nfev)];
+    if opts.warm_start.is_some() {
+        plan.push(st("initial-warm".into(), opts.max_nfev));
+    }
+    if opts.reject_outliers {
+        for round in 0..OUTLIER_ROUNDS {
+            plan.push(st(
+                format!("outlier-round-{round}"),
+                outlier_round_nfev(opts.max_nfev, round),
+            ));
+        }
+    }
+    if opts.strip_prior {
+        plan.push(st("strip-prior".into(), strip_nfev(opts.max_nfev)));
+    }
+    plan
 }
 
 /// What a solve did, beside its map: the capture bundle's diagnostics.
@@ -829,27 +889,38 @@ pub struct SolveDiagnostics {
 /// and the final solver state.
 pub fn reconstruct_vio_diag(
     problem: &Problem,
-    mut progress: Option<ProgressFn>,
+    mut progress: Option<PipelineProgressFn>,
 ) -> Result<(OutputMap, SolveDiagnostics), String> {
     let mut trace: Vec<StageTrace> = Vec::new();
+    let opts = &problem.options;
+    // The pass plan, and which pass is running: every progress report carries
+    // both, so carriers can show one monotonic bar for the whole solve.
+    let plan = stage_plan(opts);
+    let stage = std::cell::Cell::new(0usize);
+    let stage_at = |name: &str| plan.iter().position(|s| s.name == name).unwrap_or(0);
     // `&mut dyn` is invariant, so the Option can't be reborrowed per solve
     // call; route every solve through one concrete relay closure instead.
     let has_progress = progress.is_some();
     let mut relay = |frac: f64, rms: f64, ids: &[u32], leds: &[Vec3], cams: &[Vec3]| {
         if let Some(p) = progress.as_mut() {
-            p(frac, rms, ids, leds, cams);
+            let pos = StagePos {
+                index: stage.get(),
+                plan: &plan,
+            };
+            p(&pos, frac, rms, ids, leds, cams);
         }
     };
+    // `prog!("stage-name")`: the progress hook for the pass about to run.
     macro_rules! prog {
-        () => {
+        ($name:expr) => {{
+            stage.set(stage_at($name));
             if has_progress {
                 Some(&mut relay as ProgressFn)
             } else {
                 None
             }
-        };
+        }};
     }
-    let opts = &problem.options;
     let mut frames = frames_from_records(&problem.detections, opts.max_keyframes);
     let mut imu: Vec<crate::imu::ImuSample> = problem
         .imu
@@ -890,7 +961,7 @@ pub fn reconstruct_vio_diag(
     // never saw; the warm start guarantees the final solve begins no worse
     // than what the user was shown.
     let observable = crate::diag::observable_leds(&problem.detections);
-    let cold = solve_vio(&frames, &imu, &solve_opts, None, prog!());
+    let cold = solve_vio(&frames, &imu, &solve_opts, None, prog!("initial-cold"));
     let mut start = "cold";
     let mut warm_start_error = None;
     let cold_q = assess_state(&cold, solved_led_count(&frames, &cold, 8.0), observable);
@@ -901,7 +972,7 @@ pub fn reconstruct_vio_diag(
     if let Some(ws) = &opts.warm_start {
         match crate::diag::from_warm_state(ws) {
             Ok(ws) => {
-                let warm = solve_vio(&frames, &imu, &solve_opts, Some(&ws), prog!());
+                let warm = solve_vio(&frames, &imu, &solve_opts, Some(&ws), prog!("initial-warm"));
                 let warm_q = assess_state(&warm, solved_led_count(&frames, &warm, 8.0), observable);
                 let mut warm_trace = trace_stage("initial-warm", &frames, &warm);
                 warm_trace.degenerate = warm_q.reasons.clone();
@@ -928,7 +999,7 @@ pub fn reconstruct_vio_diag(
         let mut best_frames = frames.clone();
         let mut best_q = assess(&result, &frames);
         let mut cur_q = best_q.clone();
-        for round in 0..3 {
+        for round in 0..OUTLIER_ROUNDS {
             let (kept, outliers_dropped) =
                 reject_outlier_observations(&frames, &result, opts.outlier_sigma, 3.0);
             if outliers_dropped == 0 || kept.len() < 8 {
@@ -937,15 +1008,18 @@ pub fn reconstruct_vio_diag(
             frames = kept;
             let first_resolve = round == 0;
             let resolve_opts = SolveOptions {
-                max_nfev: if first_resolve {
-                    (opts.max_nfev / 2).max(30)
-                } else {
-                    (opts.max_nfev / 4).max(15)
-                },
+                max_nfev: outlier_round_nfev(opts.max_nfev, round),
                 ftol: if first_resolve { 1e-5 } else { 1e-4 },
                 ..solve_opts.clone()
             };
-            result = solve_vio(&frames, &imu, &resolve_opts, Some(&result), prog!());
+            let stage_name = format!("outlier-round-{round}");
+            result = solve_vio(
+                &frames,
+                &imu,
+                &resolve_opts,
+                Some(&result),
+                prog!(&stage_name),
+            );
             cur_q = assess(&result, &frames);
             let mut t = trace_stage(&format!("outlier-round-{round}"), &frames, &result);
             t.degenerate = cur_q.reasons.clone();
@@ -997,13 +1071,19 @@ pub fn reconstruct_vio_diag(
             let (links, _breaks) = strip::chain_links(&ids, &pos, &conf, spacing, strip_tol);
             if !links.is_empty() {
                 let chain_opts = SolveOptions {
-                    max_nfev: (opts.max_nfev / 2).max(30),
+                    max_nfev: strip_nfev(opts.max_nfev),
                     ftol: 1e-5,
                     chain: links.iter().map(|l| (l.a, l.b, l.max_dist)).collect(),
                     chain_sigma: CHAIN_SIGMA_PITCH * spacing,
                     ..solve_opts.clone()
                 };
-                let roped = solve_vio(&frames, &imu, &chain_opts, Some(&result), prog!());
+                let roped = solve_vio(
+                    &frames,
+                    &imu,
+                    &chain_opts,
+                    Some(&result),
+                    prog!("strip-prior"),
+                );
                 trace.push(trace_stage("strip-prior", &frames, &roped));
                 retained = Some((std::mem::replace(&mut result, roped), pre_strip_ctx));
             }
@@ -1060,6 +1140,7 @@ pub fn reconstruct_vio_diag(
 
 /// Progress snapshot assembly shared by the carriers.
 pub fn snapshot(
+    stage: Option<&StagePos>,
     frac: f64,
     rms_px: f64,
     led_ids: &[u32],
@@ -1067,6 +1148,11 @@ pub fn snapshot(
     cams: &[Vec3],
 ) -> ProgressSnapshot {
     ProgressSnapshot {
+        stage: stage
+            .and_then(|s| s.plan.get(s.index))
+            .map(|p| p.name.clone()),
+        stage_index: stage.map(|s| s.index as u32),
+        plan: stage.map(|s| s.plan.to_vec()).unwrap_or_default(),
         progress: (frac * 1e4).round() / 1e4,
         rms_px,
         leds: led_ids
@@ -1292,6 +1378,68 @@ mod tests {
         // seeds 1–12 all pass, with the prior's measured-LED rms at or below
         // the plain solve's on every one.
         check_strip_prior_on_hostile_strip(4);
+    }
+
+    #[test]
+    fn stage_plan_lists_every_pass_in_order() {
+        let mut opts = ProblemOptions::default();
+        opts.max_nfev = 60;
+        opts.reject_outliers = true;
+        opts.strip_prior = false;
+        let names = |p: &[PlannedStage]| p.iter().map(|s| s.name.clone()).collect::<Vec<_>>();
+        let plan = stage_plan(&opts);
+        assert_eq!(
+            names(&plan),
+            [
+                "initial-cold",
+                "outlier-round-0",
+                "outlier-round-1",
+                "outlier-round-2"
+            ]
+        );
+        assert_eq!(
+            plan.iter().map(|s| s.weight).collect::<Vec<_>>(),
+            [60.0, 30.0, 15.0, 15.0]
+        );
+        opts.strip_prior = true;
+        opts.reject_outliers = false;
+        assert_eq!(names(&stage_plan(&opts)), ["initial-cold", "strip-prior"]);
+    }
+
+    /// Progress reports name their pass, and passes run in plan order — what
+    /// lets the app draw ONE monotonic bar instead of one 0→1 per pass.
+    #[test]
+    fn progress_reports_stage_positions_in_plan_order() {
+        let (_truth, mut problem) = hostile_strip_problem(4);
+        problem.options.strip_prior = true;
+        let mut seen: Vec<(usize, String, f64)> = Vec::new();
+        let mut plan_seen: Vec<PlannedStage> = Vec::new();
+        let mut cb = |st: &StagePos, frac: f64, _: f64, _: &[u32], _: &[Vec3], _: &[Vec3]| {
+            plan_seen = st.plan.to_vec();
+            seen.push((st.index, st.plan[st.index].name.clone(), frac));
+        };
+        let (_map, diag) = reconstruct_vio_diag(&problem, Some(&mut cb)).unwrap();
+        assert_eq!(plan_seen, stage_plan(&problem.options));
+        assert!(!seen.is_empty());
+        assert!(
+            seen.windows(2).all(|w| w[1].0 >= w[0].0),
+            "stage index went backwards"
+        );
+        // The per-pass fraction DOES restart at each new pass (the reported
+        // reset): that is what the stage position exists to disambiguate.
+        let passes: std::collections::BTreeSet<usize> = seen.iter().map(|s| s.0).collect();
+        let solved: Vec<&str> = diag
+            .trace
+            .iter()
+            .map(|t| t.stage.as_str())
+            .filter(|n| plan_seen.iter().any(|p| p.name == *n))
+            .collect();
+        assert_eq!(
+            passes.len(),
+            solved.len(),
+            "one stage per optimizer pass: {solved:?}"
+        );
+        assert_eq!(seen[0].1, "initial-cold");
     }
 
     fn check_strip_prior_on_hostile_strip(seed: u64) {

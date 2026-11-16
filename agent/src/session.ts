@@ -288,6 +288,8 @@ export class DeviceSession {
    * is attached) that keep the Wi-Fi session open. The netstack player serves ONE wss
    * session, so a bridge that keeps it while idle locks the phone out. */
   private lastActivity = performance.now();
+  /** True while a quiet send (the drift discipline's epoch nudge) is on the wire. */
+  private quietWire = false;
   private inflight = 0;
   private readonly holds = new Map<symbol, string>();
   /** Until when (performance.now) the FX debugger holds a pause (0 = not paused). */
@@ -309,7 +311,7 @@ export class DeviceSession {
         const t = sniffType(data);
         // Activity for the idle release, except the heartbeat's own pings (they'd keep an
         // unused session open forever; a tool's clock sync runs under its call's hold).
-        if (t !== "time_sync_ping") this.lastActivity = performance.now();
+        if (t !== "time_sync_ping" && !this.quietWire) this.lastActivity = performance.now();
         if (t !== null) {
           if (FORBIDDEN_TYPES.has(t) && !(this.groupScope > 0 && GROUP_CAPTURE_TYPES.has(t))) {
             this.blockedTypes.push(t);
@@ -461,9 +463,14 @@ export class DeviceSession {
    * whose tool call was cancelled meanwhile (its caller stopped or superseded it)
    * is dropped when its turn comes, never delivered late: behind a slow request
    * an old deploy could otherwise land long after the caller moved on (#447). */
-  run<T>(fn: () => Promise<T>): Promise<T> {
-    this.inflight++;
-    this.lastActivity = performance.now();
+  run<T>(fn: () => Promise<T>, quiet = false): Promise<T> {
+    // quiet: background upkeep (the drift discipline's clock samples and epoch nudges,
+    // timesync.ts) — serialized with the calls, but not activity: it never keeps an idle
+    // session from being released (#444).
+    if (!quiet) {
+      this.inflight++;
+      this.lastActivity = performance.now();
+    }
     const cancelled = cancellation();
     const step = (): Promise<T> =>
       cancelled()
@@ -472,6 +479,7 @@ export class DeviceSession {
     const next = this.queue.then(step, step);
     this.queue = next.catch(() => undefined);
     const done = (): void => {
+      if (quiet) return;
       this.inflight--;
       this.lastActivity = performance.now();
     };
@@ -1808,6 +1816,33 @@ export class DeviceSession {
     return this.clock;
   }
 
+  /** A background clock sample for the drift discipline (timesync.ts): like
+   * {@link syncClock} (min-RTT of `rounds`), but quiet (not activity, #444) and bounded:
+   * null when the session is released or down, or the pongs don't come in `timeoutMs`. */
+  async sampleClock(rounds: number, timeoutMs: number): Promise<ClockSync | null> {
+    if (this.released || !this.client.isConnected) return null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const s = await this.run(
+        () =>
+          Promise.race([
+            this.client.syncClock(rounds),
+            new Promise<null>((r) => {
+              timer = setTimeout(() => r(null), timeoutMs);
+            }),
+          ]),
+        true,
+      );
+      if (!s) return null;
+      const at = performance.now() - s.rttMs / 2;
+      return { offsetMs: s.offsetMs, rttMs: s.rttMs, at };
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   /** Whether this build's protocol can encode a message (newer device-side arms
    * are feature-detected on BOTH ends: the firmware advertises the feature, and
    * this bundle's regenerated proto + CLIENT_ARMS carry the arm and its fields). */
@@ -1821,12 +1856,18 @@ export class DeviceSession {
   }
 
   /** Fire-and-forget a feature-gated message; false when either end can't. */
-  private async sendGated(feature: string, msg: Record<string, unknown> & { type: string }): Promise<boolean> {
+  private async sendGated(feature: string, msg: Record<string, unknown> & { type: string }, quiet = false): Promise<boolean> {
     if (!this.has(feature) || !DeviceSession.encodable(msg)) return false;
     await this.run(async () => {
-      const ok = (this.client as unknown as { send(m: unknown): boolean }).send(msg);
+      this.quietWire = quiet;
+      let ok: boolean;
+      try {
+        ok = (this.client as unknown as { send(m: unknown): boolean }).send(msg);
+      } finally {
+        this.quietWire = false;
+      }
       if (!ok) throw new ToolError("the player connection is down");
-    });
+    }, quiet);
     return true;
   }
 
@@ -1834,6 +1875,18 @@ export class DeviceSession {
    * Returns false when the firmware or this bundle's protocol can't. */
   setTimeBase(epochDeviceMs: number): Promise<boolean> {
     return this.sendGated("time_base", { type: "set_time_base", epochMs: Math.round(epochDeviceMs) });
+  }
+
+  /** The drift discipline's epoch correction: {@link setTimeBase}, quietly (not activity).
+   * The firmware applies it on its next frame — a 1-2 ms slew step is a 1-2 ms step in
+   * effect time (and in update()'s dt). False when the session is down or can't. */
+  async nudgeTimeBase(epochDeviceMs: number): Promise<boolean> {
+    if (this.released || !this.client.isConnected) return false;
+    try {
+      return await this.sendGated("time_base", { type: "set_time_base", epochMs: Math.round(epochDeviceMs) }, true);
+    } catch {
+      return false;
+    }
   }
 
   /** Store the fixture's room pose ON the device (feature `fixture_pose`). Returns

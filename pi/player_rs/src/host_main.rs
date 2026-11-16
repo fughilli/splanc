@@ -21,8 +21,15 @@
 //!   --serve-port P    WSS port (default 8443).
 //!   --state-dir DIR   where the map + effect persist ("" = memory only).
 //!   --start N         self-drive an N-LED mapping pattern at boot (bring-up).
+//!   --output-latency-ms MS
+//!                     render ahead of the shared time base by MS (the network +
+//!                     controller latency to the LEDs; see docs/host-player.md).
+//!                     Default 0. Reported in the welcome as output_latency_ms=MS.
+//!   --web-root DIR    also serve DIR's files over HTTPS on the WSS port (the
+//!                     virtual LED wall: `bazel run //pi/player_rs:wall`).
 
 use ledmapper_player::{color_order_index, Player};
+use ledmapper_player_rs::clock::{self, FrameTime};
 use ledmapper_player_rs::fx::{self, HostFx};
 use ledmapper_player_rs::output::{self, Outputs};
 use ledmapper_player_rs::render::render_colors;
@@ -50,7 +57,8 @@ fn usage(msg: &str) -> ! {
     eprintln!("player_host: {msg}");
     eprintln!(
         "usage: player_host --output ddp://HOST[:PORT][#N] | artnet://HOST[:PORT][?universe=U&sync=1][#N] | null \
-         [--output ...] [--leds N] [--fps F] [--name NAME] [--serve-port P] [--state-dir DIR] [--start N]"
+         [--output ...] [--leds N] [--fps F] [--name NAME] [--serve-port P] [--state-dir DIR] [--start N] \
+         [--output-latency-ms MS] [--web-root DIR]"
     );
     std::process::exit(2);
 }
@@ -76,6 +84,16 @@ fn pseudo_mac(name: &str, port: u16) -> String {
     format!("02:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}", b[0], b[1], b[2], b[3], b[4])
 }
 
+/// This host's address on the LAN the default route leads to (no packet is
+/// sent: connecting a UDP socket only picks the source address), for the log
+/// line that tells the user what to type into the app.
+fn lan_ip() -> Option<std::net::IpAddr> {
+    let s = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    s.connect("192.0.2.1:9").ok()?; // TEST-NET-1: routed like any public address
+    let ip = s.local_addr().ok()?.ip();
+    (!ip.is_unspecified() && !ip.is_loopback()).then_some(ip)
+}
+
 fn real_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut specs = Vec::new();
@@ -85,7 +103,8 @@ fn real_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let Some(v) = it.next() else { usage(&format!("{a} needs a value")) };
         match a.as_str() {
             "--output" => specs.push(output::parse_spec(v).unwrap_or_else(|e| usage(&e))),
-            "--leds" | "--fps" | "--name" | "--serve-port" | "--state-dir" | "--start" => {
+            "--leds" | "--fps" | "--name" | "--serve-port" | "--state-dir" | "--start" | "--output-latency-ms"
+            | "--web-root" => {
                 flags.insert(a.as_str(), v.clone());
             }
             _ => usage(&format!("unknown flag {a}")),
@@ -109,6 +128,7 @@ fn real_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let fps = num("--fps", "40").clamp(1.0, 240.0);
     let port = num("--serve-port", "8443") as u16;
     let start_leds = num("--start", "0") as u32;
+    let latency_ms = num("--output-latency-ms", "0").round() as i64;
     let name = flags.get("--name").cloned().unwrap_or_else(|| "Splanc Host".into());
     let state_dir = match flags.get("--state-dir") {
         Some(d) if d.is_empty() => None,
@@ -129,7 +149,10 @@ fn real_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let epoch = Instant::now();
     let mut core = Player::new("host-player-0001", leds as u32);
     core.set_identity(&pseudo_mac(&name, port), &name);
-    core.set_features(fx::FEATURES, u32::from(ledmapper_fx_vm::FORMAT_VERSION));
+    // The effects features (incl. time_base) + the output latency report.
+    let features: Vec<&'static str> = fx::FEATURES.iter().copied().chain([clock::latency_feature(latency_ms)]).collect();
+    core.set_features(Vec::leak(features), u32::from(ledmapper_fx_vm::FORMAT_VERSION));
+    eprintln!("player_host: output latency offset {latency_ms} ms (renders ahead of the shared time base)");
     // One logical channel carrying the whole strip; the controllers do their
     // own colour order, so the default here is RGB (pass-through).
     core.set_output_caps(1, leds.max(8192) as u32);
@@ -164,20 +187,26 @@ fn real_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let mut next = Instant::now();
                 let mut err_logged = false;
                 loop {
-                    let now = epoch.elapsed();
-                    let now_us = now.as_micros() as i64;
-                    let (pattern, n, order, brightness) = {
+                    // The player clock: the SAME epoch the WS task stamps
+                    // TimeSyncPong with (server::now_ms), so a time base the
+                    // bridge set is on this clock.
+                    let now_us = epoch.elapsed().as_micros() as i64;
+                    // Frame boundary: scheduled commands (apply_at) due by the
+                    // time this frame lights, i.e. now + the output latency.
+                    server::apply_due(&player, now_us / 1000 + latency_ms);
+                    let (pattern, n, order, brightness, time_base) = {
                         let mut p = player.lock().unwrap();
                         let pattern = render_colors(&p, now_us);
                         if let Some((_, Some(seq))) = &pattern {
                             p.record_frame_shown(*seq, now_us as u32);
                         }
                         let n = p.led_count(0).map_or(leds, |c| c as usize).min(leds);
-                        (pattern, n, p.hw_color_order_perm(0), p.output_brightness())
+                        (pattern, n, p.hw_color_order_perm(0), p.output_brightness(), p.time_base_ms())
                     };
+                    let t = FrameTime::sample(now_us, time_base, latency_ms);
                     let frame = match pattern {
                         Some((px, _)) => px,
-                        None => match fx.lock().unwrap().render(now.as_secs_f64(), n, brightness) {
+                        None => match fx.lock().unwrap().render(t, n, brightness) {
                             Some(px) => px.into_iter().map(|c| to_wire(c, order)).collect(),
                             None => Vec::new(), // idle: dark
                         },
@@ -201,13 +230,20 @@ fn real_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             })?;
     }
 
+    if let Some(root) = flags.get("--web-root") {
+        let root = std::fs::canonicalize(root).unwrap_or_else(|e| usage(&format!("--web-root {root}: {e}")));
+        eprintln!("player_host: serving {} over https", root.display());
+        let _ = server::WEB_ROOT.set(root);
+    }
+
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     let config = server::self_signed_config()?;
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(HANDLER_STACK)
         .build()?;
-    eprintln!("player_host: \"{name}\" — add it in the app at wss://<this host>:{port}");
+    let host = lan_ip().map_or_else(|| "<this host>".to_string(), |ip| ip.to_string());
+    eprintln!("player_host: \"{name}\" — add it in the app at wss://{host}:{port}");
     rt.block_on(server::serve(player, addr, config, epoch))?;
     Ok(())
 }

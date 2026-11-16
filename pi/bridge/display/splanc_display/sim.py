@@ -732,7 +732,7 @@ class RealBridge:
 
 
 def load_boot_frames():
-    """The build's boot_frames.bin, else rendered now from the checkout's logo."""
+    """The build's boot_frames.bin, else rendered from the checkout's brand assets."""
     frames = boot.load()
     if frames is not None:
         return frames
@@ -741,14 +741,17 @@ def load_boot_frames():
     svg = os.path.normpath(
         os.path.join(here, "..", "..", "..", "..", "web/public/icons/splanc.svg")
     )
-    if not (os.path.exists(os.path.join(tools, "gen_boot_frames.py")) and os.path.exists(svg)):
-        log("no boot_frames.bin and no logo to render one from: no boot animation")
+    splash = os.path.normpath(
+        os.path.join(here, "..", "..", "..", "..", "shared/brand/splash/frames.json")
+    )
+    if not all(os.path.exists(p) for p in (os.path.join(tools, "gen_boot_frames.py"), svg, splash)):
+        log("no boot_frames.bin and no brand assets to render one from: no boot animation")
         return None
     sys.path.insert(0, tools)
     try:
         import gen_boot_frames
 
-        return boot.unpack(gen_boot_frames.pack(gen_boot_frames.build_frames(svg)))
+        return boot.unpack(gen_boot_frames.pack(gen_boot_frames.build_frames(svg, splash)))
     except Exception as e:  # never stop the sim over the logo
         log(f"boot frames: {e}")
         return None

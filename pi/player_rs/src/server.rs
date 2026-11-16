@@ -34,6 +34,11 @@ pub static OTA: std::sync::OnceLock<crate::ota::Ota> = std::sync::OnceLock::new(
 /// "unsupported".
 pub static HOST_FX: std::sync::OnceLock<Arc<Mutex<crate::fx::HostFx>>> = std::sync::OnceLock::new();
 
+/// Static files served on the WSS port for plain HTTPS GETs (`player_host
+/// --web-root`, e.g. the virtual LED wall), set once at startup. Unset: only the
+/// certificate-trust page at `/` (crate::http).
+pub static WEB_ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
 /// The player's monotonic clock: whole milliseconds since a shared epoch. The WS
 /// task stamps recv/send with it (so a start_mapping's pattern epoch is on this
 /// clock) and the render loop derives its frame index from the SAME epoch, so
@@ -98,10 +103,19 @@ pub fn self_signed_config() -> Result<ServerConfig, Box<dyn std::error::Error + 
     Ok(cfg)
 }
 
+/// Frames queued to apply later (crate::schedule): the `apply_at` seam. Empty
+/// until a control arm carries an apply time.
+pub static SCHEDULE: Mutex<crate::schedule::Schedule> = Mutex::new(crate::schedule::Schedule::new());
+
 /// Decode one binary WS frame (a protobuf ClientMessage), run it through the
 /// shared Player, and encode the reply (a ServerMessage), if any. This is the
 /// exact transport contract the C++ `lm_player_handle` implements — done
 /// natively here. Returns `Ok(None)` for fire-and-forget arms (no reply).
+///
+/// The single entry for client frames. A scheduled apply time (`apply_at`)
+/// belongs HERE: a control frame due later goes to [`SCHEDULE`] (due on the
+/// player clock, `recv_ms`'s domain) and is acked now; everything else is
+/// dispatched at once.
 pub fn handle_frame(
     player: &SharedPlayer,
     frame: &[u8],
@@ -113,6 +127,37 @@ pub fn handle_frame(
     if ClientMessageView::parse(frame).is_err() {
         return Err("decode");
     }
+    dispatch(player, frame, recv_ms, send_ms)
+}
+
+/// Run every scheduled frame due at `render_ms` (the render loop's time: the
+/// player clock plus any output latency offset) through [`dispatch`], dropping
+/// the replies. Call at a frame boundary, holding neither the player nor the
+/// effects lock. Returns how many were applied.
+pub fn apply_due(player: &SharedPlayer, render_ms: i64) -> usize {
+    let due = {
+        let mut s = SCHEDULE.lock().expect("schedule mutex poisoned");
+        if s.is_empty() {
+            return 0;
+        }
+        s.take_due(render_ms)
+    };
+    for f in &due {
+        if let Err(e) = dispatch(player, f, render_ms, render_ms) {
+            eprintln!("player_rs: scheduled frame failed ({e})");
+        }
+    }
+    due.len()
+}
+
+/// Apply one already-validated client frame now (the OTA arms, the host
+/// effects layer, then the session core) and encode its reply.
+pub fn dispatch(
+    player: &SharedPlayer,
+    frame: &[u8],
+    recv_ms: i64,
+    send_ms: i64,
+) -> Result<Option<Vec<u8>>, &'static str> {
     // OTA arms: answered here from the MAX updater's state (crate::ota), not by the
     // shared core (which has no updater).
     if let Some(ota) = OTA.get() {
@@ -195,8 +240,52 @@ async fn handle_conn(
     tcp: TcpStream,
     epoch: Instant,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let tls = acceptor.accept(tcp).await?;
-    let mut ws = tokio_tungstenite::accept_async(tls).await?;
+    use crate::http;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut tls = acceptor.accept(tcp).await?;
+    // Read the request head to route it: a WebSocket upgrade goes to the player,
+    // anything else gets a plain HTTPS answer (the trust page, the web root).
+    let mut buf = Vec::with_capacity(1024);
+    let head_len = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let mut chunk = [0u8; 2048];
+        loop {
+            if let Some(n) = http::head_len(&buf) {
+                return Ok::<_, std::io::Error>(Some(n));
+            }
+            if buf.len() > http::MAX_HEAD {
+                return Ok(None);
+            }
+            let n = tls.read(&mut chunk).await?;
+            if n == 0 {
+                return Ok(None);
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        }
+    })
+    .await
+    .map_err(|_| "request head timed out")??;
+    let Some(head) = head_len.and_then(|n| http::parse_head(&buf[..n])) else {
+        return Err("not an HTTP request".into());
+    };
+    if !head.websocket {
+        // Drain a (small) request body first: closing with unread bytes makes the
+        // kernel reset the connection before the browser reads the response.
+        let mut left = head.content_length.min(1 << 20).saturating_sub(buf.len() - head_len.unwrap_or(0));
+        let mut chunk = [0u8; 4096];
+        while left > 0 {
+            let n = tls.read(&mut chunk).await?;
+            if n == 0 {
+                break;
+            }
+            left = left.saturating_sub(n);
+        }
+        let resp = http::respond(&head, WEB_ROOT.get().map(|p| p.as_path()));
+        tls.write_all(&resp).await?;
+        tls.shutdown().await?;
+        return Ok(());
+    }
+    let stream = http::Prefixed::new(buf, tls);
+    let mut ws = tokio_tungstenite::accept_async(stream).await?;
     while let Some(msg) = ws.next().await {
         match msg? {
             Message::Binary(data) => {
@@ -252,6 +341,67 @@ mod tests {
         );
     }
 
+    fn call(player: &SharedPlayer, msg: pb::ClientMessage_::Msg, recv_ms: i64, send_ms: i64) -> Option<pb::ServerMessage> {
+        let m = pb::ClientMessage { r#msg: Some(msg) };
+        let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, 512>::new());
+        m.encode(&mut enc).unwrap();
+        let frame = enc.into_writer().to_vec();
+        let out = handle_frame(player, &frame, recv_ms, send_ms).unwrap()?;
+        let mut reply = pb::ServerMessage::default();
+        reply.decode(&mut PbDecoder::new(out.as_slice()), out.len()).unwrap();
+        Some(reply)
+    }
+
+    #[test]
+    fn time_sync_pong_is_on_the_player_clock() {
+        // t0 (the bridge's clock) echoes verbatim; t1/t2 are the recv/send stamps
+        // the WS task takes with now_ms(epoch) — the clock effect time reads.
+        let player: SharedPlayer = Arc::new(Mutex::new(Player::new("host-0001", 8)));
+        let ping = pb::ClientMessage_::Msg::TimeSyncPing(pb::TimeSyncPing { r#t0: 1.7e12 + 0.25 });
+        let r = call(&player, ping, 41_000, 41_002).expect("pong");
+        let Some(pb::ServerMessage_::Msg::TimeSyncPong(p)) = r.r#msg else { panic!("expected pong") };
+        assert_eq!((p.r#t0, p.r#t1, p.r#t2), (1.7e12 + 0.25, 41_000.0, 41_002.0));
+    }
+
+    #[test]
+    fn set_time_base_sets_and_clears_the_epoch() {
+        let player: SharedPlayer = Arc::new(Mutex::new(Player::new("host-0001", 8)));
+        player.lock().unwrap().set_features(crate::fx::FEATURES, 0);
+        let set = pb::ClientMessage_::Msg::SetTimeBase(pb::SetTimeBase { r#epoch_ms: 12_345, r#clear: false });
+        let Some(pb::ServerMessage_::Msg::Welcome(w)) = call(&player, set, 1, 1).unwrap().r#msg else {
+            panic!("set_time_base replies with a welcome")
+        };
+        assert_eq!(w.time_base_ms().copied(), Some(12_345));
+        assert!(w.r#features.iter().any(|f| f.as_str() == "time_base"), "welcome advertises time_base");
+        assert_eq!(player.lock().unwrap().time_base_ms(), Some(12_345));
+        // The render loop's frame time follows it.
+        let t = crate::clock::FrameTime::sample(13_345_000, player.lock().unwrap().time_base_ms(), 0);
+        assert_eq!(t.shared.unwrap().time_s(), 1.0);
+
+        let clear = pb::ClientMessage_::Msg::SetTimeBase(pb::SetTimeBase { r#epoch_ms: 0, r#clear: true });
+        let Some(pb::ServerMessage_::Msg::Welcome(w)) = call(&player, clear, 1, 1).unwrap().r#msg else {
+            panic!("welcome")
+        };
+        assert_eq!(w.time_base_ms(), None);
+        assert_eq!(player.lock().unwrap().time_base_ms(), None);
+    }
+
+    #[test]
+    fn scheduled_frames_apply_at_their_due_time() {
+        // The apply_at seam: a queued frame runs through dispatch once due.
+        let player: SharedPlayer = Arc::new(Mutex::new(Player::new("host-0001", 8)));
+        let m = pb::ClientMessage {
+            r#msg: Some(pb::ClientMessage_::Msg::SetTimeBase(pb::SetTimeBase { r#epoch_ms: 777, r#clear: false })),
+        };
+        let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, 512>::new());
+        m.encode(&mut enc).unwrap();
+        SCHEDULE.lock().unwrap().push(5_000, enc.into_writer().to_vec());
+        assert_eq!(apply_due(&player, 4_999), 0);
+        assert_eq!(player.lock().unwrap().time_base_ms(), None);
+        assert_eq!(apply_due(&player, 5_000), 1);
+        assert_eq!(player.lock().unwrap().time_base_ms(), Some(777));
+    }
+
     // A client cert verifier that trusts the server's self-signed cert (the phone
     // does the same). Signature checks still run via the ring provider.
     #[derive(Debug)]
@@ -303,6 +453,53 @@ mod tests {
         fn supported_verify_schemes(&self) -> Vec<tokio_rustls::rustls::SignatureScheme> {
             self.0.signature_verification_algorithms.supported_schemes()
         }
+    }
+
+    async fn tls_client(
+        addr: SocketAddr,
+    ) -> tokio_rustls::client::TlsStream<tokio::net::TcpStream> {
+        let provider = Arc::new(rustls_rustcrypto::provider());
+        let client_cfg = tokio_rustls::rustls::ClientConfig::builder_with_provider(provider.clone())
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(TrustAny(provider)))
+            .with_no_client_auth();
+        let connector = tokio_rustls::TlsConnector::from(Arc::new(client_cfg));
+        let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let name = tokio_rustls::rustls::pki_types::ServerName::try_from("localhost").unwrap();
+        connector.connect(name, tcp).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn plain_https_get_is_answered_with_the_trust_page() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // The app's cert-trust popup opens https://<player>/ and waits for the page
+        // to postMessage 'ledmapper-cert-ok'; the WS port must answer it (it used to
+        // close the connection: ERR_EMPTY_RESPONSE), and still take upgrades after.
+        let player: SharedPlayer = Arc::new(Mutex::new(Player::new("pi-0001", 64)));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(serve_on(player, listener, self_signed_config().unwrap(), Instant::now()));
+
+        let mut tls = tls_client(addr).await;
+        tls.write_all(b"GET /?from=app HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut resp = Vec::new();
+        tls.read_to_end(&mut resp).await.unwrap();
+        let resp = String::from_utf8_lossy(&resp);
+        assert!(resp.starts_with("HTTP/1.1 200 OK"), "{resp}");
+        assert!(resp.contains("ledmapper-cert-ok"), "{resp}");
+
+        // A POST with a body (the wall's /truth publish) is drained and answered.
+        let mut tls = tls_client(addr).await;
+        tls.write_all(b"POST /truth HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}")
+            .await
+            .unwrap();
+        let mut resp = Vec::new();
+        tls.read_to_end(&mut resp).await.unwrap();
+        assert!(String::from_utf8_lossy(&resp).starts_with("HTTP/1.1 204"));
     }
 
     #[tokio::test]

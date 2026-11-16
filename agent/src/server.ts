@@ -447,6 +447,17 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     },
     ({ players: sel }) => guard(async () => ok(await hub.alignTime(sel))),
   );
+  server.registerTool(
+    "time_sync_status",
+    {
+      description:
+        "How well the players that share a time base are staying in step: per player the clock offset, drift " +
+        "(ppm), the error left after the last correction, that correction, and the worst skew between any two " +
+        "(ms). The bridge re-syncs each one every ~30 s and slews its effect clock (≤2 ms steps); read-only.",
+      inputSchema: {},
+    },
+    () => guard(async () => ok(hub.driftStatus())),
+  );
 
   // -- device control ------------------------------------------------------------------
   server.registerTool(

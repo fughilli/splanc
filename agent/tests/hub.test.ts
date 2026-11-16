@@ -400,6 +400,60 @@ describe("time base", () => {
   });
 });
 
+describe("drift discipline through the hub", () => {
+  test("align adopts; a step error is slewed in ≤2 ms set_time_base nudges, quietly", async () => {
+    const ps = await startPlayers(2);
+    for (const p of ps) p.features.push("time_base");
+    ps[0]!.clockOffsetMs = 50_000;
+    ps[1]!.clockOffsetMs = -3_000;
+    const hub = hubFor(ps, { drift: {} });
+    try {
+      const t = await hub.alignTime("all");
+      assert.equal(t["time_base"], "applied");
+      const drift = t["drift"] as { players: { name: string; samples: number }[]; skew_bound_ms: number | null };
+      assert.deepEqual(drift.players.map((p) => p.name).sort(), ["Fixture A", "Fixture B"]);
+      const id = (t["players"] as { id: string; name: string }[]).find((p) => p.name === "Fixture A")!.id;
+      assert.ok(hub.timeSync.has(id));
+      await new Promise((r) => setTimeout(r, 50)); // set_time_base is fire-and-forget
+      const first = ps[0]!.timeBase!;
+      assert.ok(first !== null);
+      // Fixture A's clock steps 9 ms forward (below the re-align threshold): its epoch
+      // must follow in ≤ 2 ms steps.
+      ps[0]!.clockOffsetMs += 9;
+      const session = (hub as unknown as { sessions: Map<string, { idleMs: number }> }).sessions.get(id)!;
+      const seen = [first];
+      for (let i = 0; i < 8; i++) {
+        const before = session.idleMs;
+        await hub.timeSync.step(id);
+        await new Promise((r) => setTimeout(r, 20)); // the nudge is fire-and-forget
+        // Quiet: a discipline round is not activity (#444 idle release still applies).
+        assert.ok(session.idleMs >= before, `idle reset by the discipline (${session.idleMs} < ${before})`);
+        if (ps[0]!.timeBase !== seen.at(-1)) seen.push(ps[0]!.timeBase!);
+      }
+      for (let i = 1; i < seen.length; i++) assert.ok(Math.abs(seen[i]! - seen[i - 1]!) <= 2, JSON.stringify(seen));
+      assert.ok(Math.abs(ps[0]!.timeBase! - first - 9) <= 2, `epoch moved ${ps[0]!.timeBase! - first} of 9`);
+      const st = hub.driftStatus() as { players: { id: string; slews: number; realigns: number }[] };
+      const a = st.players.find((p) => p.id === id)!;
+      assert.ok(a.slews >= 3 && a.realigns === 0, JSON.stringify(a));
+      // A jump (a reboot / re-flash) is re-aligned at once.
+      ps[0]!.clockOffsetMs -= 40_000;
+      await hub.timeSync.step(id);
+      await new Promise((r) => setTimeout(r, 20));
+      assert.ok(Math.abs(ps[0]!.timeBase! - (first + 9 - 40_000)) <= 3, `re-aligned to ${ps[0]!.timeBase}`);
+      const st2 = hub.driftStatus() as { players: { id: string; realigns: number }[] };
+      assert.equal(st2.players.find((p) => p.id === id)!.realigns, 1);
+      // The status tool.
+      const c = await mcp(hub);
+      const r = await call(c, "time_sync_status");
+      assert.equal(r.json.players.length, 2);
+      assert.ok("skew_bound_ms" in r.json && r.json.policy.max_step_ms === 2);
+    } finally {
+      hub.close();
+      for (const p of ps) await p.stop();
+    }
+  });
+});
+
 describe("room math", () => {
   test("pose transform and side-by-side layout of unposed fixtures", () => {
     const p = applyPose({ room: "r", translation: [1, 0, 0], rotation: yaw(90), scale: 2 }, [1, 0, 0]);

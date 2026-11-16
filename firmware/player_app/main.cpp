@@ -2292,12 +2292,11 @@ static uint32_t render_once() {
     fx_time_s += dt_s;
     // A shared time base (set_time_base, multi-fixture) pins effect time to a
     // common epoch in OUR clock: time = (now - epoch) / 1000, held at 0 before the
-    // epoch, so fixtures the host synced animate in step. Runtime only.
-    int64_t tb_epoch = 0;
-    if (lm_time_base(&tb_epoch)) {
-      int64_t since = (int64_t)now - tb_epoch;
-      fx_time_s = since > 0 ? (float)since / 1000.0f : 0.0f;
-    }
+    // epoch, so fixtures the host synced animate in step. Runtime only. update()'s
+    // dt is then the change in that time since the last frame (not our crystal's
+    // frame period), so effects that integrate (phase += dt * speed) stay in step
+    // too, through the bridge's drift-correcting epoch nudges (synced-show.md).
+    lm_fx_clock((int64_t)now, dt_ms, &fx_time_s, &dt_s);
     // TODO(hw): arm an esp_timer/systimer one-shot here for a frame-relative
     // wall-time deadline that calls lm_fx_set_deadline(true); the VM already
     // polls that flag and unwinds to a timeout branch. lm_fx_update clears the

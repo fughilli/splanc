@@ -195,7 +195,10 @@ def test_generator_matches_the_logo_svg():
         pytest.skip("logo svg not reachable")
     shapes = g.logo_shapes(svg)
     assert len(shapes["mark"]) == 2 and len(shapes["word"]) == 1
-    frames = g.build_frames(svg)
+    splash = os.path.join(
+        os.path.dirname(svg), "..", "..", "..", "shared", "brand", "splash", "frames.json"
+    )
+    frames = g.build_frames(svg, splash)
     assert len(frames) == int(g.SECONDS * g.FPS)
     assert boot.unpack(g.pack(frames)).frames[-1].tobytes() == frames[-1].tobytes()
 

@@ -53,6 +53,8 @@ export const STAGE_TOOLS: ReadonlySet<string> = new Set([
   "list_textures",
   "search_effects",
   "get_effect",
+  // Read-only: how far apart the fixtures' effect clocks are (synced-show.md).
+  "time_sync_status",
 ]);
 
 const PERSONA = `

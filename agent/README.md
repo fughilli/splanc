@@ -186,7 +186,9 @@ cloud relay the relay serves them; stdio and the CLI keep the library in
 Hub tools: `list_players`, `refresh_players` (`sweep`), `add_player`,
 `forget_player`, `trust_player` (re-trust after a factory reset), `identify_player`
 (blinks), `set_room`, `set_fixture_pose`,
-`align_time`. One player + no selector keeps #274's flat result shape;
+`align_time` (its `drift` field and `time_sync_status` show the drift discipline
+that keeps aligned players in step: docs/design/synced-show.md). One player + no
+selector keeps #274's flat result shape;
 otherwise `{results: [{player, ok, result|error}], summary}`.
 
 Wi-Fi rejoin policy (forward-deployed units): `set_wifi_policy` picks how a

@@ -23,7 +23,7 @@ import { ms, progress } from "./progress";
 import { Registry, isMacId, type PlayerRecord, type RefreshOptions, type RegistryDeps } from "./registry";
 import { DeviceSession, ToolError } from "./session";
 import { nodeSocketFactory } from "./socket";
-import { RESYNC_MS, deviceEpochs, skewBoundMs, type ClockSync } from "./timesync";
+import { RESYNC_MS, TimeDiscipline, deviceEpochs, skewBoundMs, type ClockSync, type DriftOptions } from "./timesync";
 import { Toolchains, type ToolchainChoice } from "./toolchain";
 import { decideTrust, trustError, trusted } from "./trust";
 
@@ -64,6 +64,8 @@ export interface HubOptions {
   /** Release a player's Wi-Fi session after this long with nothing sent and no call in
    * flight (ms; default {@link IDLE_RELEASE_MS}; 0 = never). The next call reconnects. */
   idleReleaseMs?: number;
+  /** Drift discipline tuning (timesync.ts); `false` turns it off. */
+  drift?: Partial<DriftOptions> | false;
 }
 
 /**
@@ -103,6 +105,8 @@ export class Hub {
   private readonly choice = new Map<string, ToolchainChoice>();
   /** The room epoch (hub clock, ms) last applied to each player by alignTime. */
   private readonly epochs = new Map<string, number>();
+  /** Keeps players that share a time base in step after alignTime (clock drift). */
+  readonly timeSync: TimeDiscipline;
   private refreshed: Promise<unknown> | null = null;
   private readonly log: (...a: unknown[]) => void;
   /** Each session's heartbeat (liveness.ts) and the host it was opened to. */
@@ -148,6 +152,23 @@ export class Hub {
     this.toolchains = opts.toolchains ?? new Toolchains(opts.root);
     this.log = opts.log ?? (() => undefined);
     this.persistConfig = () => persist(this.config);
+    this.timeSync = new TimeDiscipline(
+      {
+        now: () => performance.now(),
+        // Only a live session: the discipline never reopens a released one (#444).
+        sample: async (id, rounds, timeoutMs) => {
+          const s = this.sessions.get(id);
+          return s && this.alive(s) ? s.sampleClock(rounds, timeoutMs) : null;
+        },
+        apply: async (id, epoch) => {
+          const s = this.sessions.get(id);
+          return s !== undefined && this.alive(s) && (await s.nudgeTimeBase(epoch));
+        },
+        log: (m) => this.log(m),
+      },
+      opts.drift || {},
+      opts.drift !== false,
+    );
   }
 
   private readonly persistConfig: () => void;
@@ -770,6 +791,7 @@ export class Hub {
     this.huntTimer = null;
     if (this.idleTimer) clearInterval(this.idleTimer);
     this.idleTimer = null;
+    this.timeSync.stop();
     for (const s of new Set([...this.sessions.values(), ...this.dialed.values()])) this.forgetSession(s);
     this.sessions.clear();
     this.dialed.clear();
@@ -862,6 +884,18 @@ export class Hub {
     return best;
   }
 
+  /** The drift discipline per player (time_sync_status; align_time's `drift`): clock
+   * offset and rate, the error left, the last correction, and the skew bound. */
+  driftStatus(ids?: string[]): Record<string, unknown> {
+    const st = this.timeSync.status(ids);
+    const o = this.timeSync.o;
+    return {
+      ...st,
+      players: st.players.map((p) => ({ name: this.registry.get(p.id)?.name ?? p.id, ...p })),
+      policy: { interval_s: o.intervalMs / 1000, max_step_ms: o.maxStepMs, realign_above_ms: o.realignMs },
+    };
+  }
+
   /**
    * Give every selected player the same effect-clock epoch ("now", unless an
    * epoch on the hub clock is passed): sync clocks (re-using a fresh sync), then
@@ -871,7 +905,10 @@ export class Hub {
   async alignTime(sel: Selector, hubEpochMs = performance.now()): Promise<Record<string, unknown>> {
     const syncs = new Map<string, ClockSync>();
     const per = await this.each(sel, async (s, p) => {
-      const c = s.clock && performance.now() - s.clock.at < RESYNC_MS ? s.clock : await s.syncClock();
+      // A disciplined player's drift model beats a one-shot sync (it tracks the rate).
+      const c =
+        this.timeSync.clockFor(p.id) ??
+        (s.clock && performance.now() - s.clock.at < RESYNC_MS ? s.clock : await s.syncClock());
       syncs.set(p.id, c);
       return c;
     });
@@ -880,7 +917,13 @@ export class Hub {
       const e = epochs.get(p.id);
       return e === undefined ? false : s.setTimeBase(e);
     });
-    for (const r of applied) if (r.ok && r.result === true) this.epochs.set(r.player.id, hubEpochMs);
+    for (const r of applied) {
+      const id = r.player.id;
+      if (r.ok && r.result === true) {
+        this.epochs.set(id, hubEpochMs);
+        this.timeSync.adopt(id, hubEpochMs, epochs.get(id)!, syncs.get(id));
+      } else this.timeSync.drop(id);
+    }
     const unsupported = applied.filter((r) => r.ok && r.result === false).map((r) => r.player.name);
     return {
       players: per.map((r) => ({
@@ -890,6 +933,8 @@ export class Hub {
       })),
       time_base: unsupported.length === 0 ? "applied" : unsupported.length === applied.length ? "unsupported" : "partial",
       skew_bound_ms: +skewBoundMs(syncs.values()).toFixed(1),
+      // From here on the drift discipline keeps them there (time_sync_status).
+      drift: this.driftStatus(applied.filter((r) => r.ok && r.result === true).map((r) => r.player.id)),
       ...(unsupported.length
         ? {
             note:
