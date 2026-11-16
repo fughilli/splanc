@@ -38,7 +38,12 @@ from .ui import OledUI
 
 TICK = 0.1  # OLED/UI loop period when nothing moves (s)
 IDLE_TICK = TICK
-MAX_FPS = 30.0  # animation frame-rate cap
+# The SH1106's own scan rate (datasheet v2.2): fFRM = fOSC / (divide ratio * 54
+# DCLKs per row * 64 rows) = 104 Hz at the nominal 360 kHz. luma.oled's init sends
+# D5h 0xF0 (divide ratio 1, oscillator +50%): 540 kHz -> ~156 Hz (137-182 Hz over the
+# RC oscillator's 315-420 kHz spread). Drawing faster than the panel scans is wasted.
+PANEL_HZ = 360_000 * 1.5 / (54 * 64)
+MAX_FPS = PANEL_HZ  # animation frame-rate cap: the panel's native rate
 FRAME_CPU_SHARE = 0.5  # at most this much of a core goes to drawing animation frames
 HDMI_RETRY = 15.0
 OLED_RETRY = 60.0
