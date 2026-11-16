@@ -206,8 +206,34 @@ skipping auto-negotiation for that field), `?imumap=+a,+b,+g;+x,+y,+z`
 (DeviceMotion axis-mapping override — fit a new device with
 `bazelisk run //pi/reconstruction:vio_replay -- <trace> <decoded> --diagnose`),
 `?fx=` (focal seed; otherwise a cached calibration, otherwise a 70°-FOV
-guess — fx error shifts metric scale ~1:1, shape is unaffected). Wall page:
-`?cols=N`, `?gap`, `?margin`, `?dot` (dot diameter as a fraction of pitch).
+guess — fx error shifts metric scale ~1:1, shape is unaffected),
+`?sync=stagger_pilot` (REQUEST the hue code v2 staggered pilot; see below). Wall
+page: `?cols=N`, `?gap`, `?margin`, `?dot` (dot diameter as a fraction of
+pitch), `?sync=stagger_pilot|on_off` (FORCE the rendered sync pattern).
+
+### Testing hue code v2 (staggered pilot) against the wall
+
+The staggered-pilot code (`syncPattern: "stagger_pilot"`,
+docs/design/hue-code-v2.md phase 2) is opt-in. The phone asks for it when the
+capture page is opened with `?sync=stagger_pilot`: start_mapping carries
+`syncPattern`, and the phone decodes whatever `codeParams.syncPattern` the
+device answers with. A player that doesn't support it (every C6/P4 today) keeps
+v1 and says so. Supporting devices: the virtual wall player (`bazel run
+//pi/player_rs:wall`, docs/host-player.md; it advertises `hue_stagger_pilot`)
+and this dev server. The dev server can also hand the code out to every
+capture without the request: `bazelisk run //web:serve -- --sync-pattern
+stagger_pilot`.
+
+The wall renders what the device runs. Its status line reads
+`sync stagger_pilot`. The phone HUD adds `pilot k … · cyc … miss … φrej …`:
+
+- `pilot k`: the locked whole-frame latency;
+- `cyc`: per-track pilots found;
+- `miss`: delimiter misses;
+- `φrej`: phase-check rejects.
+
+`wall.html?sync=…` forces the wall's rendering only (debugging); the phone must
+then be decoding the same pattern.
 
 ### The hue code + auto-negotiated capture configuration
 
