@@ -18,7 +18,7 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 2894,
+    "test_cases": 2936,
     "gaps": 36
   },
   "levels": [
@@ -854,6 +854,18 @@
           "target": "//pi/led_driver:led_driver_test"
         },
         {
+          "name": "pi.led_driver.tests.test_kernel_equivalence::test_python_binding_renders_the_stagger_golden[GOLDEN_STAGGER16]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/led_driver:led_driver_test"
+        },
+        {
+          "name": "pi.led_driver.tests.test_kernel_equivalence::test_python_binding_renders_the_stagger_golden[GOLDEN_STAGGER16_SYM4]",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/led_driver:led_driver_test"
+        },
+        {
           "name": "pi.led_driver.tests.test_kernel_equivalence::test_whole_frame_render_matches_per_led_kernel[none-2]",
           "status": "passed",
           "level": "simulation",
@@ -1088,6 +1100,12 @@
           "target": "//pi/server:server_test"
         },
         {
+          "name": "pi.server.tests.test_codebook::test_sync_pattern_defaults_to_v1_and_stagger_keeps_the_cycle",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
           "name": "pi.server.tests.test_codebook::test_unknown_fec_raises",
           "status": "passed",
           "level": "simulation",
@@ -1227,6 +1245,12 @@
         },
         {
           "name": "pi.server.tests.test_handler::test_start_mapping_adopts_client_symbols_and_rate",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_start_mapping_honours_a_requested_sync_pattern",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/server:server_test"
@@ -2474,6 +2498,12 @@
         },
         {
           "name": "pi.server.tests.test_handler::test_start_mapping_adopts_client_symbols_and_rate",
+          "status": "passed",
+          "level": "simulation",
+          "target": "//pi/server:server_test"
+        },
+        {
+          "name": "pi.server.tests.test_handler::test_start_mapping_honours_a_requested_sync_pattern",
           "status": "passed",
           "level": "simulation",
           "target": "//pi/server:server_test"
