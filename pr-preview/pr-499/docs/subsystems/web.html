@@ -559,6 +559,9 @@ scope-relative. The same tree still works when served from an origin <strong>roo
 </section>
 <section id="testing-with-a-phone-against-the-virtual-wall-no-led-hardware">
 <h3>Testing with a phone against the virtual wall (no LED hardware)<a class="headerlink" href="#testing-with-a-phone-against-the-virtual-wall-no-led-hardware" title="Link to this heading">¶</a></h3>
+<p>To test with the <strong>installed</strong> phone app (add the wall by address like any
+player, including hue-code captures), use <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//pi/player_rs:wall</span> <span class="pre">--</span> <span class="pre">--leds</span> <span class="pre">400</span></code> instead: see docs/host-player.md “Virtual LED wall”. The flow below
+serves the app itself from the M2 dev server.</p>
 <p>One command serves everything (M2 + built app, HTTPS with a persistent
 self-signed cert under <code class="docutils literal notranslate"><span class="pre">.ledmapper/</span></code>):</p>
 <div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazelisk<span class="w"> </span>run<span class="w"> </span>//web:serve<span class="w">            </span><span class="c1"># https on 0.0.0.0:8443</span>

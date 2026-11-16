@@ -168,6 +168,11 @@ The publish tree is staged the same way for both targets — the layout lives in
 
 ## Testing with a phone against the virtual wall (no LED hardware)
 
+To test with the **installed** phone app (add the wall by address like any
+player, including hue-code captures), use `bazel run //pi/player_rs:wall --
+--leds 400` instead: see docs/host-player.md "Virtual LED wall". The flow below
+serves the app itself from the M2 dev server.
+
 One command serves everything (M2 + built app, HTTPS with a persistent
 self-signed cert under `.ledmapper/`):
 

@@ -7,7 +7,7 @@
         <link rel="prefetch" href="../../static/splanc-icon.svg" as="image">
 
     <link rel="shortcut icon" href="../../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
-        <title>Synced show - splanc developer docs</title>
+        <title>A synced show: ~10 fixtures in step for hours - splanc developer docs</title>
       <link rel="stylesheet" type="text/css" href="../../static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="../../static/styles/furo.css?v=7bdb33bb" />
     <link rel="stylesheet" type="text/css" href="../../static/copybutton.css?v=76b2166b" />
@@ -320,8 +320,185 @@
           </label>
         </div>
         <article role="main" id="furo-main-content">
-          <section id="synced-show">
-<h1>Synced show<a class="headerlink" href="#synced-show" title="Link to this heading">¶</a></h1>
+          <section id="a-synced-show-10-fixtures-in-step-for-hours">
+<h1>A synced show: ~10 fixtures in step for hours<a class="headerlink" href="#a-synced-show-10-fixtures-in-step-for-hours" title="Link to this heading">¶</a></h1>
+<p>Status: drift correction (bridge), shared-time <code class="docutils literal notranslate"><span class="pre">dt</span></code> (firmware) and scheduled
+changes (<code class="docutils literal notranslate"><span class="pre">apply_at</span></code>, C6/P4 firmware + bridge) implemented; the Pi/host player has
+the time base but doesn’t schedule changes yet; the HITL long-run measurement is
+planned (below).</p>
+<section id="goal">
+<h2>Goal<a class="headerlink" href="#goal" title="Link to this heading">¶</a></h2>
+<p>A live poetry reading. A speech recogniser turns the reader’s voice into text; a
+fast LLM scores each phrase semantically (mood, intensity, imagery) and the agent
+bridge turns the scores into uniform changes (<code class="docutils literal notranslate"><span class="pre">set_uniforms</span></code>, <code class="docutils literal notranslate"><span class="pre">ramp_uniforms</span></code>,
+<code class="docutils literal notranslate"><span class="pre">crossfade_to</span></code>, <code class="docutils literal notranslate"><span class="pre">set_brightness</span></code>) on about ten fixtures (ESP32-C6 and P4 players)
+in one room. Every fixture runs the same effect or complementary ones, and the room
+must read as ONE light: a pulse that crosses the room, a hue that shifts on every
+fixture at once. That has to hold for the whole show — hours — with the bridge,
+the Wi-Fi and the players’ crystals all imperfect.</p>
+</section>
+<section id="sync-budget">
+<h2>Sync budget<a class="headerlink" href="#sync-budget" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Effect</p></th>
+<th class="head"><p>Visible skew</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Slow washes, breathing (≥ 2 s periods)</p></td>
+<td><p>~50 ms</p></td>
+</tr>
+<tr class="row-odd"><td><p>Chases and pulses travelling across fixtures</p></td>
+<td><p>~20 ms</p></td>
+</tr>
+<tr class="row-even"><td><p>Fast strobes, beat-locked flashes</p></td>
+<td><p>&lt; 10 ms</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Target: &lt; 10 ms between any two fixtures, all show long</strong>, so the fast effects
+are safe. The shares of that budget:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Source</p></th>
+<th class="head"><p>Bound</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Clock-offset estimate</p></td>
+<td><p>≈ min-RTT / 2 per player (3-10 ms on a quiet C6 link)</p></td>
+<td><p>time_sync min-RTT; asymmetry is invisible to it</p></td>
+</tr>
+<tr class="row-odd"><td><p>Drift between corrections</p></td>
+<td><p>≤ <code class="docutils literal notranslate"><span class="pre">maxStepMs</span></code> (2 ms) once locked</p></td>
+<td><p>the discipline below</p></td>
+</tr>
+<tr class="row-even"><td><p>Render phase (frames not phase-locked)</p></td>
+<td><p>up to one frame (16-33 ms)</p></td>
+<td><p><strong>gap</strong>, see below</p></td>
+</tr>
+<tr class="row-odd"><td><p>Uniform-change arrival</p></td>
+<td><p>Wi-Fi delivery spread (5-100 ms)</p></td>
+<td><p>fixed by scheduled changes (<code class="docutils literal notranslate"><span class="pre">apply_at</span></code>)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The render phase is the biggest term left: two players at 30 fps sample the same
+effect time up to 33 ms apart. A shared <em>time</em> makes each frame show the right
+picture for when it is drawn; it does not make the frames coincide.</p>
+</section>
+<section id="clock-sync-and-drift-correction">
+<h2>Clock sync and drift correction<a class="headerlink" href="#clock-sync-and-drift-correction" title="Link to this heading">¶</a></h2>
+<p><strong>Once (existing, #3 of <a class="reference internal" href="agent-multi-fixture.html"><span class="std std-doc">agent-multi-fixture.md</span></a>).</strong>
+<code class="docutils literal notranslate"><span class="pre">align_time</span></code> (and every multi-player deploy / crossfade) estimates each player’s
+clock offset with TimeSyncPing/Pong (min-RTT of several rounds), picks ONE room
+epoch on the bridge’s monotonic clock and gives each player that epoch in its own
+clock (<code class="docutils literal notranslate"><span class="pre">SetTimeBase</span></code>). The firmware renders <code class="docutils literal notranslate"><span class="pre">time</span> <span class="pre">=</span> <span class="pre">(now</span> <span class="pre">-</span> <span class="pre">epoch)</span> <span class="pre">/</span> <span class="pre">1000</span></code>.</p>
+<p><strong>Then nothing corrected drift.</strong> Device crystals differ by tens of ppm (±40 ppm is
+normal for the C6’s 40 MHz crystal): 0.1-0.3 s apart per hour.</p>
+<p><strong>The discipline (agent/src/timesync.ts, <code class="docutils literal notranslate"><span class="pre">TimeDiscipline</span></code>).</strong> Every player that
+took a time base is adopted by the hub’s discipline and, from then on:</p>
+<ul class="simple">
+<li><p><strong>Re-sampled every 30 s</strong> (4 ping rounds, min-RTT; <code class="docutils literal notranslate"><span class="pre">intervalMs</span></code>), every 5 s while
+a slew is still under way (<code class="docutils literal notranslate"><span class="pre">slewIntervalMs</span></code>). The pings are the session’s traffic:
+they count as signs of life for the heartbeat (liveness.ts), so a disciplined
+session doesn’t also need its idle heartbeat. They are <em>quiet</em>: serialized with
+tool calls but not counted as activity, so they never keep an idle session open
+against the phone app (#444).</p></li>
+<li><p><strong>Fitted</strong> (<code class="docutils literal notranslate"><span class="pre">DriftEstimator</span></code>): weighted least squares of offset over hub time on
+the last 10 minutes (≤ 24 samples), weights 1/rtt². A sample whose round trip is
+above 1.5 × the window’s best + 2 ms is kept but not fitted (a retransmit makes
+its offset wrong by up to rtt/2). The drift rate is only fitted once samples
+span ≥ 60 s, and clamped to ±500 ppm. A sample off the line by more than its
+round trip can explain (&gt; 50 ms beyond rtt/2 + the fit’s uncertainty) is a clock
+<strong>discontinuity</strong> — a reboot, a reconnect to a re-flashed player, the firmware’s
+own millis() step guard (<code class="docutils literal notranslate"><span class="pre">lm_clock_observe</span></code>) — and restarts the model.</p></li>
+<li><p><strong>Corrected by slewing</strong>: the wanted epoch is <code class="docutils literal notranslate"><span class="pre">room</span> <span class="pre">epoch</span> <span class="pre">+</span> <span class="pre">predicted</span> <span class="pre">offset</span></code>;
+the error is <code class="docutils literal notranslate"><span class="pre">applied</span> <span class="pre">-</span> <span class="pre">wanted</span></code>. Below 1 ms (<code class="docutils literal notranslate"><span class="pre">deadbandMs</span></code>; epochs are integer
+ms): nothing. Up to 50 ms: move the epoch by at most <strong>2 ms</strong> per correction
+(<code class="docutils literal notranslate"><span class="pre">maxStepMs</span></code>) with a plain <code class="docutils literal notranslate"><span class="pre">SetTimeBase</span></code>. Each such step is a 1-2 ms step of
+effect time — invisible — and at one step per 5 s the slew absorbs up to 400 ppm.
+Above 50 ms (<code class="docutils literal notranslate"><span class="pre">realignMs</span></code>) or after a discontinuity: <strong>re-align at once</strong> (one
+<code class="docutils literal notranslate"><span class="pre">SetTimeBase</span></code> to the wanted epoch; a reboot has lost the time base anyway).</p></li>
+</ul>
+<p>The protocol has no “adjust the epoch smoothly” message, and it doesn’t need one:
+firmware <code class="docutils literal notranslate"><span class="pre">shift_time_base(delta)</span></code> is internal (only the clock-step guard calls it),
+and <code class="docutils literal notranslate"><span class="pre">SetTimeBase</span></code> with an epoch 1-2 ms off the last is exactly that shift. Each
+<code class="docutils literal notranslate"><span class="pre">SetTimeBase</span></code> costs one small message (and a welcome back); in lock that is one
+per player per 30 s at most.</p>
+<p><strong>What the bridge reports.</strong> <code class="docutils literal notranslate"><span class="pre">align_time</span></code>’s result carries <code class="docutils literal notranslate"><span class="pre">drift</span></code> and the new
+read-only <code class="docutils literal notranslate"><span class="pre">time_sync_status</span></code> tool (also offered to the stage agent) returns, per
+player: <code class="docutils literal notranslate"><span class="pre">offset_ms</span></code>, <code class="docutils literal notranslate"><span class="pre">drift_ppm</span></code>, <code class="docutils literal notranslate"><span class="pre">error_ms</span></code> (applied - wanted epoch now, with the
+model’s drift since the last correction), <code class="docutils literal notranslate"><span class="pre">uncertainty_ms</span></code> (best rtt/2 + fit
+residual), <code class="docutils literal notranslate"><span class="pre">samples</span></code>, <code class="docutils literal notranslate"><span class="pre">last_sample_age_s</span></code>, <code class="docutils literal notranslate"><span class="pre">last_correction</span></code> (<code class="docutils literal notranslate"><span class="pre">slew</span></code> / <code class="docutils literal notranslate"><span class="pre">realign</span></code>,
+step, error, age), counts of slews / re-aligns / failed samples; and
+<code class="docutils literal notranslate"><span class="pre">skew_bound_ms</span></code>, the worst pair: the sum of the two largest <code class="docutils literal notranslate"><span class="pre">|error|</span> <span class="pre">+</span> <span class="pre">uncertainty</span></code>. <code class="docutils literal notranslate"><span class="pre">align_time</span></code> also uses a fresh model’s offset instead of a new
+one-shot sync (<code class="docutils literal notranslate"><span class="pre">clockFor</span></code>), so re-aligns (crossfade_to onto the shared epoch) don’t
+reintroduce a single noisy sample’s error.</p>
+<p>The simulation in agent/tests/timesync.test.ts runs ten players at -80..+75 ppm
+through exponential Wi-Fi jitter with 5 % retransmit spikes for three hours: worst
+error stays &lt; 10 ms (the same show uncorrected is &gt; 200 ms apart after one hour),
+every correction is ≤ 2 ms, the fitted rates are within 5 ppm, and a reboot
+re-aligns within one interval without moving anyone else.</p>
+<p><strong>Limits of the discipline.</strong></p>
+<ul class="simple">
+<li><p>A released session (idle &gt; 45 s with no call, #444) isn’t sampled: the bridge
+never reopens a socket just to sync. During a show something is always sent
+(uniform changes, a live show lock, an attached app); after a long silence the
+first samples slew the accumulated error out (50 ppm × 5 min = 15 ms: ~40 s at
+2 ms / 5 s), or re-align when it is beyond 50 ms.</p></li>
+<li><p>Path asymmetry (an AP that buffers one direction) biases a player’s offset by up
+to rtt/2 and no ping can see it; the HITL measurement below is the check.</p></li>
+</ul>
+</section>
+<section id="stateful-effects">
+<h2>Stateful effects<a class="headerlink" href="#stateful-effects" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">time</span></code> is shared, but an effect that keeps state in <code class="docutils literal notranslate"><span class="pre">update()</span></code> integrates <code class="docutils literal notranslate"><span class="pre">dt</span></code>:</p>
+<div class="highlight-glsl notranslate"><div class="highlight"><pre><span></span><span class="n">state</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">ph</span><span class="p">;</span>
+<span class="kt">void</span><span class="w"> </span><span class="n">update</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">ph</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fract</span><span class="p">(</span><span class="n">ph</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">dt</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">speed</span><span class="p">);</span><span class="w"> </span><span class="p">}</span><span class="w">   </span><span class="c1">// the skill&#39;s recommended form</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">dt</span></code> used to be the local frame period (millis() deltas, main.cpp). Two players on
+one epoch then integrate their own crystals (the same tens of ppm the epoch was
+meant to cancel), and the drift corrections move <code class="docutils literal notranslate"><span class="pre">time</span></code> but never <code class="docutils literal notranslate"><span class="pre">ph</span></code>: the
+phases walk apart exactly as unsynced <code class="docutils literal notranslate"><span class="pre">time</span></code> used to. And with <code class="docutils literal notranslate"><span class="pre">fixed(dt)</span></code> (the
+fast path on the C6) every frame’s dt is truncated to Q16.16, losing ~0.5 tick
+(8 µs) per frame — ~1 s/hour at 30 fps, a different amount at each player’s frame
+rate.</p>
+<p><strong>Fix (firmware, minimal): <code class="docutils literal notranslate"><span class="pre">dt</span></code> derives from the shared time base.</strong> When a time
+base is set, main.cpp now asks <code class="docutils literal notranslate"><span class="pre">lm_fx_clock(now,</span> <span class="pre">wall_dt,</span> <span class="pre">&amp;time,</span> <span class="pre">&amp;dt)</span></code>
+(firmware/player_app/ffi.rs, <code class="docutils literal notranslate"><span class="pre">time_base_frame</span></code>) instead of computing <code class="docutils literal notranslate"><span class="pre">time</span></code> alone:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">time</span> <span class="pre">=</span> <span class="pre">(now</span> <span class="pre">-</span> <span class="pre">epoch)</span> <span class="pre">/</span> <span class="pre">1000</span></code>, held at 0 before the epoch — unchanged;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">dt</span> <span class="pre">=</span> <span class="pre">(now</span> <span class="pre">-</span> <span class="pre">epoch)</span> <span class="pre">-</span> <span class="pre">(previous</span> <span class="pre">frame's</span> <span class="pre">now</span> <span class="pre">-</span> <span class="pre">epoch)</span></code>, i.e. the change of the
+<em>shared</em> time, so <code class="docutils literal notranslate"><span class="pre">Σ</span> <span class="pre">dt</span></code> over the show is the elapsed shared time on every player
+— including the bridge’s 1-2 ms slew steps, which move integrated phases exactly
+as they move <code class="docutils literal notranslate"><span class="pre">time</span></code>;</p></li>
+<li><p>dt is a whole number of Q16.16 ticks (difference of the shared time’s tick
+counts), so <code class="docutils literal notranslate"><span class="pre">dt</span></code> and the VM’s <code class="docutils literal notranslate"><span class="pre">dt_fix</span></code> mirror are both exact and both telescope:
+<code class="docutils literal notranslate"><span class="pre">fixed(dt)</span></code> integrators no longer leak per frame;</p></li>
+<li><p>held at 0 before the epoch (so an epoch set slightly in the future starts every
+player’s integration at the same instant); 0 on a step back (an epoch moved later
+by more than a frame: integrators hold instead of rewinding); the wall frame
+period on a jump forward beyond the frame + 250 ms (a re-align onto an older
+epoch must not fast-forward an exponential smoother by an hour).</p></li>
+</ul>
+<p>What it changes: only frames rendered while a time base is set, and only <code class="docutils literal notranslate"><span class="pre">dt</span></code> (the
+frame-period statistics, the autoscaler, the debugger’s step keep the wall
+period). Single-fixture use (no time base) is untouched.</p>
+<p><strong>What it does not do alone.</strong> Integrated state matches only if every player starts
+integrating at the same shared instant and sees every uniform change (<code class="docutils literal notranslate"><span class="pre">speed</span></code>) at
+the same shared instant. The first holds for players that loaded the effect before
+one epoch; an effect deployed while the epoch is already running starts on each
+player when its upload lands (a constant offset of <code class="docutils literal notranslate"><span class="pre">speed</span> <span class="pre">×</span> <span class="pre">arrival</span> <span class="pre">skew</span></code>, no
+longer growing). Both need scheduled changes — the section below.</p>
+</section>
 <section id="scheduled-changes-apply-at">
 <h2>Scheduled changes (apply_at)<a class="headerlink" href="#scheduled-changes-apply-at" title="Link to this heading">¶</a></h2>
 <p>A control change sent to N players applies on arrival, so a room changes spread
@@ -360,6 +537,68 @@ Ramps and crossfades run on one shared timeline: step <em>i</em> is scheduled fo
 falls behind skips steps instead of drifting late. The final committed set or
 landing position is scheduled too. Residual skew is the time-base skew (half the
 clock-sync round trips) plus at most one render frame.</p>
+</section>
+<section id="gaps-not-covered-yet">
+<h2>Gaps not covered yet<a class="headerlink" href="#gaps-not-covered-yet" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>Pi player_rs and the host player don’t schedule changes yet.</strong> They follow the
+shared time base (#498, with <code class="docutils literal notranslate"><span class="pre">--output-latency-ms</span></code> for DDP/WLED latency) but
+don’t advertise <code class="docutils literal notranslate"><span class="pre">apply_at</span></code>, so the bridge sends them changes on arrival.</p></li>
+<li><p><strong>Render frames are not phase-locked.</strong> Each player renders on its own frame
+clock, so two players sample the shared time up to one frame apart (33 ms at
+30 fps). For strobes this is the dominant error. A fix would align frame starts
+to the shared time (render when <code class="docutils literal notranslate"><span class="pre">(now</span> <span class="pre">-</span> <span class="pre">epoch)</span> <span class="pre">mod</span> <span class="pre">period</span> <span class="pre">≈</span> <span class="pre">0</span></code>, a PLL on the
+frame timer); not attempted here.</p></li>
+<li><p><strong>float32 effect time loses precision.</strong> <code class="docutils literal notranslate"><span class="pre">time</span></code> is f32 seconds: its resolution is
+0.24 ms at 1 h, 1 ms from 2.3 h, 2 ms from 4.6 h, 8 ms at 1.5 days. Effects that use <code class="docutils literal notranslate"><span class="pre">time</span></code>
+directly (<code class="docutils literal notranslate"><span class="pre">sin(time</span> <span class="pre">*</span> <span class="pre">30)</span></code>) get visibly coarser after a day of uptime on one
+epoch. Re-aligning to a new epoch between sets (crossfade with a fresh epoch)
+resets it; a real fix is a wrapped time or an f64/Q32.32 time mirror.</p></li>
+<li><p><strong>millis() is 32-bit</strong>: the device clock wraps after 49.7 days; the epoch math
+(int64 from a u32 now) breaks across the wrap.</p></li>
+<li><p><strong>Asymmetric Wi-Fi paths</strong> bias the offset estimate (see Limits above).</p></li>
+<li><p><strong>Released sessions</strong> aren’t disciplined (see Limits above).</p></li>
+</ul>
+</section>
+<section id="test-plan">
+<h2>Test plan<a class="headerlink" href="#test-plan" title="Link to this heading">¶</a></h2>
+<p><strong>Unit (done).</strong></p>
+<ul class="simple">
+<li><p>agent/tests/timesync.test.ts: the estimator (rate fit through jitter, retransmit
+outliers, discontinuity reset, rate clamp) and the discipline on simulated clocks:
+ten players for three hours with ppm drift and heavy-tailed RTT (worst &lt; 10 ms,
+every step ≤ 2 ms); the uncorrected control (&gt; 200 ms); a mid-show reboot
+(re-aligned within one interval, others untouched); a 30 ms error slewed in
+≤ 2 ms steps; a 400 ms error re-aligned in one; a silent player retried.</p></li>
+<li><p>firmware/player_app/tests/shared_dt.rs: <code class="docutils literal notranslate"><span class="pre">time_base_frame</span></code> (held before the epoch,
+slew-step dts, re-align clamps, dt in whole Q16.16 ticks summing exactly to the
+elapsed shared time where truncation loses thousands of ticks), three simulated
+players with different crystals and frame cadences integrating <code class="docutils literal notranslate"><span class="pre">phase</span> <span class="pre">+=</span> <span class="pre">dt</span></code> for
+an hour (in step to &lt; 6 ms vs &gt; 200 ms with local dt), and the C ABI path
+(SetTimeBase → lm_fx_clock → lm_fx_update) integrating <code class="docutils literal notranslate"><span class="pre">phase</span></code> equal to <code class="docutils literal notranslate"><span class="pre">time</span></code>
+through an epoch nudge.</p></li>
+</ul>
+<p><strong>HITL (planned).</strong> Extend <code class="docutils literal notranslate"><span class="pre">pi/hitl/harness/hitl_time_base_skew.py</span></code> (today: two
+analyzer-tapped DUTs, one capture, <code class="docutils literal notranslate"><span class="pre">timeBaseClock.fx</span></code> binary clock) into a long run:</p>
+<ol class="arabic simple">
+<li><p>Hold every analyzer-tapped DUT the rigs allow (two per rig today; more needs a
+wider analyzer tap), flash the build under test, load the binary-clock effect
+and a <strong>stateful</strong> twin (<code class="docutils literal notranslate"><span class="pre">ph</span> <span class="pre">=</span> <span class="pre">fract(ph</span> <span class="pre">+</span> <span class="pre">fixed(dt)</span> <span class="pre">*</span> <span class="pre">speed)</span></code> shown as the bit
+clock) on alternate LEDs.</p></li>
+<li><p>Align once through the bridge’s hub (not the harness’s own sync), then let the
+discipline run.</p></li>
+<li><p>Every 5 minutes for ≥ 3 hours, one analyzer capture of all taps: per DUT the
+wire-time minus effect-time offset (time_base_skew_core), for both the <code class="docutils literal notranslate"><span class="pre">time</span></code>
+clock and the integrated one; record <code class="docutils literal notranslate"><span class="pre">time_sync_status</span></code> alongside.</p></li>
+<li><p>Pass: p99 pairwise skew of both clocks &lt; 10 ms + one frame period at every
+capture, no growth over the run, every reported <code class="docutils literal notranslate"><span class="pre">skew_bound_ms</span></code> ≥ the measured
+skew. Mid-run, reset one DUT and check it is back within budget after one
+interval while the others’ captures don’t move.</p></li>
+<li><p>Control run with the discipline off (<code class="docutils literal notranslate"><span class="pre">drift:</span> <span class="pre">false</span></code>): the skew grows ~ppm × t.</p></li>
+</ol>
+<p>Cross-rig DUTs share no analyzer clock, so a ten-player run needs either one rig
+with a wider tap or a common reference (a photodiode or GPIO pulse captured on both
+analyzers).</p>
 </section>
 </section>
 
@@ -400,8 +639,14 @@ clock-sync round trips) plus at most one render frame.</p>
         <div class="toc-tree-container">
           <div class="toc-tree">
             <ul>
-<li><a class="reference internal" href="#">Synced show</a><ul>
+<li><a class="reference internal" href="#">A synced show: ~10 fixtures in step for hours</a><ul>
+<li><a class="reference internal" href="#goal">Goal</a></li>
+<li><a class="reference internal" href="#sync-budget">Sync budget</a></li>
+<li><a class="reference internal" href="#clock-sync-and-drift-correction">Clock sync and drift correction</a></li>
+<li><a class="reference internal" href="#stateful-effects">Stateful effects</a></li>
 <li><a class="reference internal" href="#scheduled-changes-apply-at">Scheduled changes (apply_at)</a></li>
+<li><a class="reference internal" href="#gaps-not-covered-yet">Gaps not covered yet</a></li>
+<li><a class="reference internal" href="#test-plan">Test plan</a></li>
 </ul>
 </li>
 </ul>
