@@ -2657,6 +2657,61 @@ body.is-locked {
   margin-top: var(--sp-1);
 }
 
+/* Final solve: the converging map takes the whole screen. The camera is off
+ * by then, so the overlay goes opaque over the (frozen) viewfinder and the
+ * capture-only chrome steps aside; the progress panel docks at the bottom.
+ * Removed again on error / cancel / when the result view takes over. */
+.screen--capture.capture--solving .capture-overlay {
+  background: #0a0a0e;
+}
+.screen--capture.capture--solving :is(
+    .capture-labels,
+    .capture-proj,
+    .capture-layers,
+    .capture-legend,
+    .capture-advanced,
+    .capture-hud,
+    .capture-stop,
+    .capture-next-stage
+  ) {
+  display: none;
+}
+/* A canvas is a replaced element: left/right/top/bottom alone don't stretch
+ * it (it falls back to its backing-store size, which MapView's resize observer
+ * then grows without bound), so width/height are explicit. */
+.screen--capture.capture--solving .capture-live {
+  --solve-top: calc(env(safe-area-inset-top, 0px) + 3.5rem);
+  --solve-bottom: calc(env(safe-area-inset-bottom, 0px) + 6.5rem);
+  top: var(--solve-top);
+  left: env(safe-area-inset-left, 0px);
+  bottom: auto;
+  width: calc(100% - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+  height: calc(100% - var(--solve-top) - var(--solve-bottom));
+  max-width: none;
+  aspect-ratio: auto;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+.screen--capture.capture--solving .capture-solveprog {
+  left: calc(env(safe-area-inset-left, 0px) + var(--sp-4));
+  right: calc(env(safe-area-inset-right, 0px) + var(--sp-4));
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--sp-4));
+}
+.screen--capture.capture--solving .capture-guide {
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 5.5rem);
+}
+/* Landscape phone: little height — a slimmer top margin for the map. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .screen--capture.capture--solving .capture-live {
+    --solve-top: calc(env(safe-area-inset-top, 0px) + 3rem);
+    --solve-bottom: calc(env(safe-area-inset-bottom, 0px) + 5.5rem);
+  }
+  .screen--capture.capture--solving .capture-guide {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 4.5rem);
+  }
+}
+
 /* --- FUG-112: registered projection layer, layer toggles + review --- */
 .capture-proj {
   position: absolute;
