@@ -1,0 +1,6 @@
+"""Approved, reusable Splanc impact/splash motion (see README.md)."""
+
+exports_files(
+    ["frames.json"],
+    visibility = ["//visibility:public"],
+)

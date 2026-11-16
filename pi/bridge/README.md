@@ -37,7 +37,7 @@ display/splanc_display/     the screen service (Python)
 display/requirements.lock   hash-pinned pure wheels (luma.core, luma.oled, segno)
 tests/                      pytest suite + installer_test.sh
 tools/render_gallery.py     PNGs of every screen (+ boot/menu GIFs), for review and for the docs
-tools/gen_boot_frames.py    the boot animation from web/public/icons/splanc.svg -> 1-bit frames
+tools/gen_boot_frames.py    shared/brand/splash + web/public/icons/splanc.svg -> 1-bit boot frames
                             (a build step: //pi/bridge:boot_frames, and the image's splancPy)
 ```
 
@@ -379,7 +379,9 @@ logo plays again). A clock-rate menu slows everything down (0.25x) to inspect tr
 ![The display simulator: the OLED HAT with its keys, the HDMI page, and the fake bridge's knobs](../../docs/img/pi-bridge/display-sim.png)
 
 On a Mac without Bazel (Python 3.9+; Pillow and segno are the only dependencies, and the boot
-logo is rendered from `web/public/icons/splanc.svg` on the fly):
+logo is rendered from `shared/brand/splash/frames.json` and
+`web/public/icons/splanc.svg` on the fly; see the
+[canonical splash source and regeneration guide](../../shared/brand/splash/README.md)):
 
 ```sh
 python3 -m venv /tmp/splanc-sim && /tmp/splanc-sim/bin/pip install pillow segno==1.6.6

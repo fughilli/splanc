@@ -17,8 +17,8 @@ Targets:
   :render_gallery   `bazel run //pi/bridge:render_gallery -- <dir>`: review PNGs
   :sim              `bazel run //pi/bridge:sim`: the display service on mocked
                     OLED/keys/HDMI, driven from a web page (splanc_display/sim.py)
-  :boot_frames      the OLED boot animation, pre-rendered from the Splanc logo
-                    (web/public/icons/splanc.svg) by tools/gen_boot_frames.py with
+  :boot_frames      the OLED boot animation, pre-rendered from shared/brand/splash
+                    and web/public/icons/splanc.svg by tools/gen_boot_frames.py with
                     only Pillow: generated here (and in the NixOS image's
                     splancPy), never committed
   :bundle_files     what //agent:bundle packs as pi-bridge/
@@ -47,9 +47,12 @@ py_library(
 
 genrule(
     name = "boot_frames",
-    srcs = ["//web:public/icons/splanc.svg"],
+    srcs = [
+        "//shared/brand/splash:frames.json",
+        "//web:public/icons/splanc.svg",
+    ],
     outs = ["display/splanc_display/boot_frames.bin"],
-    cmd = "$(location :gen_boot_frames) --svg $< --out $@",
+    cmd = "$(location :gen_boot_frames) --svg $(location //web:public/icons/splanc.svg) --splash $(location //shared/brand/splash:frames.json) --out $@",
     tools = [":gen_boot_frames"],
 )
 
@@ -70,7 +73,10 @@ py_test(
     name = "display_test",
     size = "small",
     srcs = glob(["tests/*.py"]),
-    data = ["//web:public/icons/splanc.svg"],
+    data = [
+        "//shared/brand/splash:frames.json",
+        "//web:public/icons/splanc.svg",
+    ],
     imports = ["."],
     legacy_create_init = False,
     main = "tests/pytest_main.py",
