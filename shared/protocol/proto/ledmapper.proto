@@ -306,6 +306,12 @@ message StartMappingOptions {
   // start_mapping, so a phone that dies (or loses its socket) mid-capture
   // doesn't leave fixtures flashing. Unset/<=0 = run until stop_mapping.
   optional int32 stop_after_ms = 11;
+  // Requested sync pattern (CodeParams.sync_pattern; hue code v2 phase 2):
+  // "stagger_pilot" asks for the staggered cycles with the green/magenta pilot.
+  // A player that does not support it runs "on_off" (v1) and says so in the
+  // reply's code_params.sync_pattern, which is what the client decodes.
+  // Unset = "on_off".
+  optional string sync_pattern = 12;
 }
 
 message StartMapping {

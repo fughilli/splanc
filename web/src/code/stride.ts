@@ -1,28 +1,20 @@
 /**
- * Diffuse-capture striding schedule (design: diffuse_capture plan §"The striding
- * scheme"). On a diffused fixture, lighting every LED every frame blends adjacent
- * spots into one blob. Instead we light only a SPARSE, spatially-separated subset
- * per epoch ("phase") and rotate the phase to eventually cover every LED.
+ * Diffuse-capture striding schedule (docs/design/strided-capture.md): thin
+ * typed wrappers over the Rust hue-code kernel (//firmware/pattern
+ * `stride_lit`, loaded as wasm by ./kernel.ts) — the SAME function the players
+ * run to mask their output, so the phone's capture rotation and the fixture
+ * can never disagree about which LEDs a phase lights.
  *
- * Two jobs, deliberately split (overloading one formula either under-covers or
- * collides the shared anchor with its adjacent fill):
- *
- *   1. COVERAGE — `S` phases, uniform stride-`S`, offset +1 per phase. Phase `o`
- *      lights `{o, o+S, o+2S, …}`: spacing exactly `S`, and the union over
- *      `o = 0..S-1` is every LED.
- *   2. FUSION — `S-1` sparse "bridge" phases forming a star through class 0. Bridge
- *      for class `j` co-lights class-0 anchor reps (every `A·S`-th LED) AND class-`j`
- *      reps placed in class-0's GAPS, so all lit spots stay ≥ `S` apart (needs
- *      `A ≥ 3`). Class 0 is thereby co-observed with every class ⇒ the LED
- *      co-observation graph has diameter 2 (the "bounded degrees of intraframe
- *      association" the fixture registration needs).
- *
- * Each lit LED still transmits its own full hue code (gray.ts), so ledIds are
- * absolute and fuse automatically across phases — striding only changes WHICH LEDs
- * are lit in a given phase, never the code. This module is the authority the phone
- * (capture rotation) shares with the firmware pattern generator; Stage B mirrors it
- * in the Rust `pattern` crate against a golden fixture.
+ * On a diffused fixture, lighting every LED every frame blends adjacent spots
+ * into one blob. Instead only a SPARSE, spatially-separated subset is lit per
+ * epoch ("phase"), rotating to cover every LED: `S` COVERAGE phases (uniform
+ * stride-`S`, offset +1 per phase) plus `S-1` FUSION "bridge" phases forming a
+ * registration star through class 0 (anchor reps every `A·S` LEDs + a class-`j`
+ * rep in each block's gap, all ≥ `S` apart for `A ≥ 3`). Each lit LED still
+ * transmits its own full hue code, so ids stay absolute.
  */
+
+import { kernel } from "./kernel";
 
 export interface StrideParams {
   /**
@@ -34,14 +26,14 @@ export interface StrideParams {
   /**
    * `A`: anchor density — one class-0 anchor rep per `A·S` LEDs (and one class-`j`
    * rep per bridge, placed in that block's gap). `A ≥ 3` guarantees every bridge's
-   * lit spots stay ≥ `S` apart; smaller values are clamped up.
+   * lit spots stay ≥ `S` apart; smaller values are clamped up (by the kernel).
    */
   anchorDensity: number;
 }
 
-/** `A` clamped to its valid floor (see StrideParams.anchorDensity). */
-function anchor(p: StrideParams): number {
-  return Math.max(3, Math.floor(p.anchorDensity));
+/** `S` as the kernel takes it: integral, and <= 1 (striding off) for anything below 2. */
+function spacingOf(p: StrideParams): number {
+  return Math.max(0, Math.floor(p.spacing));
 }
 
 /**
@@ -49,8 +41,7 @@ function anchor(p: StrideParams): number {
  * `1` when striding is disabled (`S <= 1`).
  */
 export function phaseCount(p: StrideParams): number {
-  const s = Math.floor(p.spacing);
-  return s <= 1 ? 1 : 2 * s - 1;
+  return kernel().pk_stride_phase_count(spacingOf(p));
 }
 
 /** True for the coverage phases (`0 .. S-1`); the rest are bridges. */
@@ -61,26 +52,16 @@ export function isCoveragePhase(phase: number, p: StrideParams): boolean {
 /**
  * Is `led` lit in phase `phase` (`0 .. phaseCount-1`)?
  *
- * `S <= 1` ⇒ always lit (striding disabled). Out-of-range phases wrap via modulo
- * so the caller can advance a running counter without bounds-checking.
+ * `S <= 1` ⇒ always lit (striding disabled). Out-of-range phases wrap (a
+ * negative phase counts back from the end) so the caller can advance a running
+ * counter without bounds-checking. `led` is a non-negative LED index.
  */
 export function strideLit(led: number, phase: number, p: StrideParams): boolean {
-  const S = Math.floor(p.spacing);
-  if (S <= 1) return true;
-  const nPhases = 2 * S - 1;
-  const ph = ((phase % nPhases) + nPhases) % nPhases;
-
-  if (ph < S) {
-    // Coverage: uniform stride-S grid at offset `ph`.
-    return ((led % S) + S) % S === ph;
-  }
-  // Bridge linking class 0 with class j (j = 1 .. S-1).
-  const j = ph - S + 1;
-  const A = anchor(p);
-  const period = A * S;
-  const m = ((led % period) + period) % period;
-  // Class-0 anchor rep at the block start; class-j rep in the block's mid gap.
-  return m === 0 || m === Math.floor(A / 2) * S + j;
+  const s = spacingOf(p);
+  const k = kernel();
+  const n = k.pk_stride_phase_count(s);
+  const ph = ((phase % n) + n) % n;
+  return k.pk_stride_lit(led, ph, s, Math.max(0, Math.floor(p.anchorDensity))) !== 0;
 }
 
 /** The lit LED indices of `[0, ledCount)` in `phase` (helper for tests/UI). */

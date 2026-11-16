@@ -20,6 +20,8 @@ py_library(
     srcs = glob(["server/*.py"]),
     imports = ["."],
     deps = [
+        # codebook.py sizes code-books through the hue-code kernel's binding.
+        "//firmware/pattern:pattern_py",
         "//pi/reconstruction",
         "//shared/protocol",
         "//shared/protocol/proto:ledmapper_py_proto",

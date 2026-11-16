@@ -4,17 +4,20 @@ The temporal hue cycle is fully determined by the LED count, the symbol
 alphabet, the frame period and the FEC mode: ``ceil(log2(ledCount+1))`` Gray
 data bits, wrapped in an extended-Hamming SEC-DED code by default
 (``fec="secded"``), transmitted ``log2(symbols)`` bits per color frame, plus
-the 2-frame white/green sync delimiter. M2 owns this derivation so the same
-:class:`CodeParams` go into both the ``welcome`` and ``mapping_started``
-messages and (eventually) to the M1 driver.
+the 2-frame white/green sync delimiter. The same :class:`CodeParams` go into
+both the ``welcome`` and ``mapping_started`` messages.
+
+The arithmetic is NOT reimplemented here: it is the Rust hue-code kernel
+(``//firmware/pattern``, the one implementation the players link and the phone
+runs as wasm), called through the one Python binding of its C ABI,
+``ledmapper_pattern`` (``//firmware/pattern:pattern_py``, ctypes over the host
+cdylib). This module only validates arguments and assembles the message.
 """
 
 from __future__ import annotations
 
-import math
-
+import ledmapper_pattern as pattern
 from ledmapper_protocol import CodeParams
-from ledmapper_protocol.fec import secded_total_bits
 
 # design doc §12 default: frame period ≥ ~3 camera frame intervals at 30 fps.
 DEFAULT_BIT_PERIOD_MS = 100.0
@@ -24,14 +27,20 @@ DEFAULT_BIT_PERIOD_MS = 100.0
 # SNR supports the finer palette.
 DEFAULT_SYMBOLS = 2
 
+# CodeParams.syncPattern values the dev backend can run (schema enum).
+SYNC_PATTERNS = ("on_off", "stagger_pilot")
+
 
 def data_bits_for(led_count: int) -> int:
     """Gray data-word width: ``ceil(log2(ledCount + 1))``, minimum 1.
 
-    +1: codewords carry id + 1 (led_driver.graycode.CODE_OFFSET — the
-    all-zero word is reserved-invalid), so the code space is [1, ledCount].
+    +1: codewords carry id + 1 (the kernel's CODE_OFFSET — the all-zero word is
+    reserved-invalid), so the code space is [1, ledCount].
     """
-    return max(1, math.ceil(math.log2(led_count + 1)))
+    return pattern.data_bits(led_count)
+
+
+secded_total_bits = pattern.secded_total_bits
 
 
 def code_params_for(
@@ -40,6 +49,7 @@ def code_params_for(
     symbols: int = DEFAULT_SYMBOLS,
     fec: str = "secded",
     brightness: float | None = None,
+    sync_pattern: str = "on_off",
 ) -> CodeParams:
     """Build the :class:`CodeParams` code-book for a fixture of ``led_count`` LEDs.
 
@@ -52,6 +62,10 @@ def code_params_for(
     data alphabet: 2 = red/blue, 4 = the Gray-ordered
     blue/magenta/red/yellow palette that halves the data frames);
     ``cycleFrames`` adds the 2-frame white/green sync delimiter.
+    ``sync_pattern`` is ``"on_off"`` (v1) or ``"stagger_pilot"`` (hue code v2
+    phase 2: per-LED rotated cycles behind a pilot of palette colours, over a
+    code book the kernel prunes so the pilot is unique — a wider data word and
+    a longer cycle; the kernel does the rotation).
     """
     if led_count < 1:
         raise ValueError(f"led_count must be ≥ 1, got {led_count}")
@@ -59,19 +73,18 @@ def code_params_for(
         raise ValueError(f"unknown fec {fec!r}")
     if symbols not in (2, 4):
         raise ValueError(f"symbols must be 2 or 4, got {symbols}")
+    if sync_pattern not in SYNC_PATTERNS:
+        raise ValueError(f"unknown sync pattern {sync_pattern!r}")
     if brightness is not None and not 0.0 <= brightness <= 1.0:
         raise ValueError(f"brightness must be in [0, 1], got {brightness}")
-    k = data_bits_for(led_count)
-    bits = k if fec == "none" else secded_total_bits(k)
-    bits_per_frame = 1 if symbols == 2 else 2
     return CodeParams(
         ledCount=led_count,
-        bits=bits,
+        bits=pattern.expected_bits(led_count, fec, symbols, sync_pattern),
         encoding="hue",
         symbols=symbols,
         bitPeriodMs=bit_period_ms,
-        syncPattern="on_off",
-        cycleFrames=2 + math.ceil(bits / bits_per_frame),
+        syncPattern=sync_pattern,
+        cycleFrames=pattern.cycle_frames(led_count, symbols, fec, sync_pattern),
         fec=fec,
         # None (= 1.0 on the wire) unless the phone servoed it down against
         # measured bloom/wash-out (exposure.ts planLedBrightness).

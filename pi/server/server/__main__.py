@@ -85,6 +85,15 @@ def main(argv=None) -> int:
         "needed",
     )
     parser.add_argument(
+        "--sync-pattern",
+        choices=["on_off", "stagger_pilot"],
+        default="on_off",
+        help="sync pattern every capture runs (CodeParams.syncPattern): on_off = "
+        "v1 white/green on every LED at once; stagger_pilot = hue code v2 phase 2 "
+        "(per-LED staggered cycles, green/magenta pilot) — for testing the new "
+        "code against the virtual wall; the phone decodes whatever this says",
+    )
+    parser.add_argument(
         "--ssl-dir",
         type=Path,
         default=None,
@@ -115,6 +124,7 @@ def main(argv=None) -> int:
         default_led_count=args.led_count,
         bit_period_ms=args.bit_period_ms,
         symbols=args.symbols,
+        sync_pattern=args.sync_pattern,
     )
     uvicorn.run(
         app,

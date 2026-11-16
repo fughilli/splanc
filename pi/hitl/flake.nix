@@ -39,7 +39,7 @@
     # d531698 (PR #17: priority classes + queue progress/ETA + /queue + capacity
     # metrics; see the MODULE.bazel comment).
     hitl-reserve = {
-      url = "github:fughilli/hitl-reserve/d5316982b10668b73affed44a2c8f155f751d081";
+      url = "github:fughilli/hitl-reserve/eaec330534df23ea764bbb96acbac0df58d135b5";
       flake = false;
     };
   };

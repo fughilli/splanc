@@ -7,7 +7,7 @@ import tempfile
 
 from led_driver.control import ControlClient, ControlServer, handle_line
 from led_driver.driver import LedDriver
-from led_driver.graycode import default_code_params
+from led_driver.pattern import default_code_params
 from led_driver.spi import RecordingSink
 
 

@@ -25,7 +25,9 @@ use pv::client_message::Msg as CArm;
 use std::path::PathBuf;
 
 /// The protocol features this player serves (welcome.features).
-pub const FEATURES: &[&str] = &["effects", "list_effects", "uniform_commit", "control_ack"];
+/// (+ `hue_stagger_pilot`: this host player runs the hue code v2 staggered pilot
+/// when a start_mapping asks for it — ledmapper_player::FEATURE_STAGGER_PILOT.)
+pub const FEATURES: &[&str] = &["effects", "list_effects", "uniform_commit", "control_ack", "hue_stagger_pilot"];
 
 /// ClientMessage oneof field numbers this layer handles.
 const ARM_SUBMIT_MAP: u32 = 13;

@@ -22,7 +22,7 @@ from ledmapper_protocol import CodeParams
 
 from .clock import now_ms
 from .fpga_spi import FpgaCodec
-from .graycode import color_plan
+from .pattern import color_plan
 from .spi import RGB, SpiSink, frame_bytes, frame_bytes_colors
 
 # Debug modes for set_debug (design doc M1 "debug single-LED mode").
