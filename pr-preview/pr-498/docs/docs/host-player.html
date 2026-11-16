@@ -434,9 +434,9 @@ brightness is the only one that applies.</p></li>
 <li><p>Start <code class="docutils literal notranslate"><span class="pre">player_host</span></code>. It logs <code class="docutils literal notranslate"><span class="pre">add</span> <span class="pre">it</span> <span class="pre">in</span> <span class="pre">the</span> <span class="pre">app</span> <span class="pre">at</span> <span class="pre">wss://&lt;this</span> <span class="pre">host&gt;:8443</span></code>.</p></li>
 <li><p>In the app, choose <strong>Add device → Enter address</strong> and enter
 <code class="docutils literal notranslate"><span class="pre">wss://&lt;mac-hostname-or-ip&gt;:8443</span></code>. The player uses a self-signed certificate,
-like the devices do. The first time, open <code class="docutils literal notranslate"><span class="pre">https://&lt;host&gt;:8443</span></code> in the same
-browser and accept the warning. The page itself then shows an error, which is
-expected.</p></li>
+like the devices do. The app offers to trust it the first time (or open
+<code class="docutils literal notranslate"><span class="pre">https://&lt;host&gt;:8443</span></code> in the same browser and accept the warning); the page
+then confirms the certificate and shows the address to enter.</p></li>
 <li><p>Map it the usual way: set the LED count, run the capture with the phone
 camera, and solve. The player shows the mapping patterns over DDP or Art-Net
 and reports back which frame it showed, as the devices do. Effects need the
@@ -533,6 +533,59 @@ offer them:</p>
 <p>Uniform values are not saved. After a restart the effect starts from its
 manifest defaults.</p>
 </section>
+<section id="virtual-led-wall-map-a-screen-from-the-phone-app">
+<h2>Virtual LED wall: map a screen from the phone app<a class="headerlink" href="#virtual-led-wall-map-a-screen-from-the-phone-app" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">//pi/player_rs:wall</span></code> turns a laptop screen into a fixture the installed phone
+app adds by address, with no LED hardware:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazel<span class="w"> </span>run<span class="w"> </span>//pi/player_rs:wall<span class="w"> </span>--<span class="w"> </span>--leds<span class="w"> </span><span class="m">400</span>
+</pre></div>
+</div>
+<p>It runs <code class="docutils literal notranslate"><span class="pre">player_host</span></code> with no LED output (<code class="docutils literal notranslate"><span class="pre">--output</span> <span class="pre">null</span></code>) and has it serve the
+built web app’s virtual wall (<code class="docutils literal notranslate"><span class="pre">web/wall.html</span></code>) on its own WSS port
+(<code class="docutils literal notranslate"><span class="pre">--web-root</span></code>). It prints the two URLs and a QR code:</p>
+<ol class="arabic simple">
+<li><p><strong>On the laptop</strong>, open <code class="docutils literal notranslate"><span class="pre">https://localhost:8443/wall.html</span></code>, accept the
+certificate warning, and press <strong>Fullscreen</strong>. The wall idles (dim dots)
+until the phone starts mapping.</p></li>
+<li><p><strong>On the phone</strong>, in the Splanc app: <strong>Device</strong> tab → link icon (<em>Enter
+address manually</em>) → <strong>Enter address</strong> (the Wi-Fi fields can stay empty) →
+<code class="docutils literal notranslate"><span class="pre">wss://&lt;laptop</span> <span class="pre">IP&gt;:8443</span></code>. The app shows its “trust the certificate” card the
+first time, as for a real player; its popup lands on the player’s trust page,
+which hands the app back. Scanning the printed QR code opens that trust page
+directly instead.</p></li>
+<li><p><strong>Map it</strong>: LED count = the <code class="docutils literal notranslate"><span class="pre">--leds</span></code> value, point the camera at the wall,
+capture and solve as usual.</p></li>
+</ol>
+<p>How it works. The player is the real session core, so the phone sees an
+ordinary fixture: <code class="docutils literal notranslate"><span class="pre">start_mapping</span></code> sets the code book and stamps the pattern
+epoch on the player’s clock. The wall page is a second client of the same
+player. Loaded from the player’s origin, it connects same-origin to
+<code class="docutils literal notranslate"><span class="pre">wss://localhost:8443/ws</span></code> with the certificate the browser already accepted.
+It syncs to the player clock (<code class="docutils literal notranslate"><span class="pre">time_sync</span></code>), polls <code class="docutils literal notranslate"><span class="pre">get_pattern</span></code> for the code
+book and epoch, and renders every frame itself with the WASM hue-code kernel at
+the display’s refresh rate. Nothing is streamed over the network, so frame
+timing is the browser’s vsync on the player’s clock, as on a real fixture.</p>
+<p>Notes:</p>
+<ul class="simple">
+<li><p>A firewall prompt on the Mac must allow incoming connections for
+<code class="docutils literal notranslate"><span class="pre">player_host</span></code>. The phone and the laptop must be on the same network.</p></li>
+<li><p>The wall’s own flags still work: <code class="docutils literal notranslate"><span class="pre">wall.html?cols=20&amp;dot=0.5</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">?url=wss://host:port/ws</span></code> points a wall page served elsewhere (e.g.
+<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//web:serve</span></code>) at any control plane, as before.</p></li>
+<li><p>Only mapping is rendered: LED counting, effects and brightness from the app
+reach the player but do not show on the wall.</p></li>
+<li><p>Any <code class="docutils literal notranslate"><span class="pre">player_host</span></code> flag passes through (<code class="docutils literal notranslate"><span class="pre">--serve-port</span></code>, <code class="docutils literal notranslate"><span class="pre">--name</span></code>, …). Giving an
+<code class="docutils literal notranslate"><span class="pre">--output</span></code> drives real LEDs too, in step with the wall.</p></li>
+<li><p>Every Pi and host player now answers a plain <code class="docutils literal notranslate"><span class="pre">https://&lt;player&gt;/</span></code> with the
+trust page (it posts <code class="docutils literal notranslate"><span class="pre">ledmapper-cert-ok</span></code> back to the app’s popup, like the
+netstack firmware) instead of an empty response.</p></li>
+</ul>
+<p>Headless check: <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//pi/player_rs:wall_smoke</span></code> starts the wall player,
+opens the wall in headless Chromium and starts a mapping from a second client
+(standing in for the phone). It checks that the canvas, sampled at every LED
+centre, matches the kernel’s colours for one frame of the cycle, and that this
+frame is the one the player’s clock has due.</p>
+</section>
 <section id="testing">
 <h2>Testing<a class="headerlink" href="#testing" title="Link to this heading">¶</a></h2>
 <ul class="simple">
@@ -562,9 +615,9 @@ certificate, and the setup was reported working. The first run hit Chrome’s
 non-bypassable <code class="docutils literal notranslate"><span class="pre">ERR_SSL_KEY_USAGE_INCOMPATIBLE</span></code>, because the self-signed cert
 was built as a CA (key usage <code class="docutils literal notranslate"><span class="pre">keyCertSign</span></code> / <code class="docutils literal notranslate"><span class="pre">cRLSign</span></code> only). It is now an
 end-entity cert with <code class="docutils literal notranslate"><span class="pre">digitalSignature</span></code> (<code class="docutils literal notranslate"><span class="pre">server.rs</span></code>, <code class="docutils literal notranslate"><span class="pre">self_signed_config</span></code>).
-This fixes the Pi player too. After you accept the warning, the browser shows
-<code class="docutils literal notranslate"><span class="pre">ERR_EMPTY_RESPONSE</span></code>, which is expected: the player only answers WebSocket
-upgrades.</p></li>
+This fixes the Pi player too. After you accept the warning, the browser
+showed <code class="docutils literal notranslate"><span class="pre">ERR_EMPTY_RESPONSE</span></code>, because the player only answered WebSocket
+upgrades. It now serves the trust page there (see “Virtual LED wall”).</p></li>
 </ul>
 <p>Next steps:</p>
 <ol class="arabic simple">
@@ -650,6 +703,7 @@ at login.</p></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#what-is-supported">What is supported</a></li>
+<li><a class="reference internal" href="#virtual-led-wall-map-a-screen-from-the-phone-app">Virtual LED wall: map a screen from the phone app</a></li>
 <li><a class="reference internal" href="#testing">Testing</a></li>
 <li><a class="reference internal" href="#handoff-where-this-stands-2026-11-11">Handoff: where this stands (2026-11-11)</a></li>
 </ul>
