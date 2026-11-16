@@ -27,7 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from . import anim
+from . import anim, gliders
 from .anim import Scene, SlideView, Tween
 
 PAGES = ("home", "qr", "players", "network", "clients")
@@ -40,14 +40,17 @@ TOAST_SECONDS = 2.5
 AUTO_CYCLE_SECONDS = 8.0  # page dwell when nobody is pressing buttons
 MANUAL_HOLD_SECONDS = 30.0  # a joystick page change pauses auto-cycling this long
 DETAIL_IDLE_SECONDS = 300.0  # an untouched fixture detail goes back to the list
-DIM_AFTER_SECONDS = 120.0  # contrast drops after this long without input/changes
-SLEEP_AFTER_SECONDS = 1800.0  # blank after this long — only when no code is up
+# Three stages: active (bright) -> passive (dimmed) -> the screensaver (dimmed gliders,
+# one per online fixture; gliders.py), which a pairing code on screen holds off.
+DIM_AFTER_SECONDS = 120.0  # passive: contrast drops after this long without input/changes
+SAVER_AFTER_SECONDS = 1800.0  # the screensaver, after this long — only when no code is up
 SHIFT_PERIOD_SECONDS = 60.0  # burn-in: move the whole image by a pixel this often
 
 LIST_ROWS = 4  # fixture rows on screen at once
 DETAIL_ROWS = 4  # detail rows on screen at once
 
-# (dx, dy) pixel-shift cycle — small enough to never clip the layout.
+# (dx, dy) pixel-shift cycle. The UI is laid out 1 px narrower and shorter than the
+# panel (render_oled.W x H), so every shift shows all of it.
 SHIFTS = ((0, 0), (1, 0), (1, 1), (0, 1))
 
 KEYS = ("key1", "key2", "key3", "up", "down", "left", "right", "press")
@@ -73,7 +76,8 @@ class View:
     overlay_seconds: float = 0.0  # countdown for hold/confirm
     shift: tuple = (0, 0)
     dimmed: bool = False
-    asleep: bool = False
+    saver: bool = False  # the screensaver (only ``saver_t`` and ``dimmed`` apply)
+    saver_t: float = 0.0  # seconds into it
     key: str = ""  # the item shown by "detail" (a fixture) or "client" (a grant id)
     slide: Optional[SlideView] = None  # a screen change in progress
     sel: int = 0  # the fixture list's selected row
@@ -87,6 +91,7 @@ class View:
     revoke: str = ""  # hold/confirm: the client (grant id) being revoked; "" = all
     boot_t: Optional[float] = None  # seconds into the boot animation (while it shows)
     animating: bool = False  # something is moving: draw at the animation frame rate
+    frame_period: float = 0.0  # while animating, wait at least this long (s; 0 = the panel's rate)
 
 
 class _Menu:
@@ -170,6 +175,11 @@ class OledUI:
         self._slide = anim.retarget(self._slide, before, after, direction, now, duration, style)
 
     # --- inputs ----------------------------------------------------------------
+    def idle_for(self, seconds: float) -> None:
+        """Act as if nothing happened for the last ``seconds`` (the simulator's
+        shortcut to the passive stage and the screensaver)."""
+        self._last_activity = self.clock() - seconds
+
     def activity(self) -> None:
         """Something worth looking at changed (status update): wake + undim."""
         self._last_activity = self.clock()
@@ -230,7 +240,7 @@ class OledUI:
         if key not in KEYS:
             return
         now = self.clock() if at is None else at
-        was_asleep = self._asleep(now)
+        was_saver = self._saver_since(now) is not None
         self._last_activity = now
         if self._confirm_until is not None:
             self._confirm_until = None
@@ -242,7 +252,7 @@ class OledUI:
             else:
                 self._run("revoke_all", now)
             return
-        if was_asleep:
+        if was_saver:
             return  # the wake-up press does nothing else
         if self._boot_until is not None:
             self._end_boot(now)  # any key skips the logo, then does its job
@@ -317,6 +327,19 @@ class OledUI:
         now = self.clock()
         shift = SHIFTS[int(now // SHIFT_PERIOD_SECONDS) % len(SHIFTS)]
         idle = now - self._last_activity
+        saver_since = self._saver_since(now)
+        if saver_since is not None:
+            t = now - saver_since
+            rate = gliders.GENS_PER_SECOND
+            return View(
+                page=self.scene.page,
+                dimmed=True,
+                saver=True,
+                saver_t=t,
+                animating=True,
+                # Wake at the next generation (a fixed period would drift and skip some).
+                frame_period=(int(t * rate) + 1) / rate - t,
+            )
         scene = self.scene
         slide = (
             self._slide.view(now) if self._slide is not None and not self._slide.done(now) else None
@@ -337,7 +360,6 @@ class OledUI:
             key=scene.key,
             shift=shift,
             dimmed=idle >= DIM_AFTER_SECONDS,
-            asleep=self._asleep(now),
             slide=slide,
             sel=self._fx.sel,
             list_pos=self._fx.pos.value(now),
@@ -375,10 +397,12 @@ class OledUI:
         return self._busy is not None
 
     # --- internals -------------------------------------------------------------
-    def _asleep(self, now: float) -> bool:
-        if self._boot_until is not None:
-            return False
-        return not self.code_visible and now - self._last_activity >= SLEEP_AFTER_SECONDS
+    def _saver_since(self, now: float) -> Optional[float]:
+        """When the screensaver started (None: not showing)."""
+        if self._boot_until is not None or self.code_visible:
+            return None
+        start = self._last_activity + SAVER_AFTER_SECONDS
+        return start if now >= start else None
 
     def _end_boot(self, now: float) -> None:
         before = self.scene

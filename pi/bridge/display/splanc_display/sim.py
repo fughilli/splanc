@@ -52,7 +52,7 @@ from typing import Callable, Dict, List, Optional
 
 from PIL import Image
 
-from . import boot, control, fake_bridge, fonts, main, render_oled
+from . import boot, control, fake_bridge, fonts, main, render_oled, ui
 from .hat import KEY_PINS
 
 PIN_KEYS = {pin: key for key, pin in KEY_PINS.items()}
@@ -857,6 +857,14 @@ class Sim:
         out.save(buf, "PNG")
         return buf.getvalue()
 
+    def idle(self, stage: str) -> None:
+        """Jump to an idle stage: "passive" (dimmed) or "saver" (the screensaver)."""
+        seconds = {"passive": ui.DIM_AFTER_SECONDS, "saver": ui.SAVER_AFTER_SECONDS}[stage]
+        app = self.app
+        if app is not None:
+            app.ui.idle_for(seconds)
+            app.wake.set()
+
     def restart(self) -> None:
         """Like `systemctl restart splanc-display`: a fresh service, boot logo first."""
         self.stop()
@@ -890,7 +898,7 @@ class Sim:
                     "sel": v.sel,
                     "animating": v.animating,
                     "dimmed": v.dimmed,
-                    "asleep": v.asleep,
+                    "saver": v.saver,
                 }
             except Exception:  # the UI thread is mid-update; skip this one
                 view = None
@@ -1023,6 +1031,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.sim.buttons.release_all()
             elif path == "/restart":
                 self.sim.restart()
+            elif path == "/idle":
+                self.sim.idle(str(body.get("stage")))
             elif path == "/fonts":
                 self.sim.set_fonts(str(body.get("name")))
             elif path == "/speed":

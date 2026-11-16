@@ -15,7 +15,8 @@ screen going) with no HDMI attached, no HAT, or no bridge running yet.
 Frame pacing (OLED): while something moves (a slide, the list highlight, the
 boot logo) the loop draws at up to MAX_FPS, slowed so that drawing + pushing a
 frame takes at most half of one core (FRAME_CPU_SHARE of the measured cost);
-otherwise it polls every IDLE_TICK and only draws when what's shown changed.
+otherwise it polls every IDLE_TICK and only draws when what's shown changed. The
+screensaver animates at its own generation rate (View.frame_period), not the panel's.
 A button press wakes the loop at once. The unit runs it at Nice=10, so the
 bridge's own work always wins the CPU.
 """
@@ -211,13 +212,13 @@ class App:
         self.ui.code_visible = st.active_code(now) is not None
         view = self.ui.view()
         try:
-            want = (CONTRAST_DIM if view.dimmed else CONTRAST_NORMAL, view.asleep)
+            # Dimmed for the passive stage and the screensaver; the panel is never
+            # switched off (the screensaver is what an idle panel shows).
+            want = (CONTRAST_DIM if view.dimmed else CONTRAST_NORMAL, False)
             if want != self._oled_state:
                 self.oled.contrast(want[0])
-                (self.oled.hide if view.asleep else self.oled.show)()
+                self.oled.show()
                 self._oled_state = want
-            if view.asleep:
-                return view
             # Idle: draw only when what's shown changed (the clock ticks it once a
             # second for the countdowns and "12 s ago" texts).
             key = (st, view, int(now))
@@ -331,7 +332,9 @@ class App:
         self.ui.tick()
         self._open_oled()
         view = self._oled_frame()
-        return self.frame_interval() if view is not None and view.animating else IDLE_TICK
+        if view is None or not view.animating:
+            return IDLE_TICK
+        return max(self.frame_interval(), view.frame_period)
 
     def run(self) -> None:
         t = None

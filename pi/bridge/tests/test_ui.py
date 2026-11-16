@@ -127,18 +127,24 @@ def test_no_auto_cycle_during_hold_or_confirm(u, clock):
     assert u.view().page == "home" and u.view().overlay == "confirm"
 
 
-def test_dim_sleep_and_wake(u, d, clock):
+def test_active_passive_screensaver_and_wake(u, d, clock):
+    v = u.view()
+    assert not v.dimmed and not v.saver  # active
     clock.advance(ui.DIM_AFTER_SECONDS)
-    assert u.view().dimmed and not u.view().asleep
+    assert u.view().dimmed and not u.view().saver  # passive
     u.activity()  # a status change undims
     assert not u.view().dimmed
     u.code_visible = True
-    clock.advance(ui.SLEEP_AFTER_SECONDS)
-    assert not u.view().asleep  # a pairing code on screen keeps it awake
+    clock.advance(ui.SAVER_AFTER_SECONDS)
+    assert not u.view().saver  # a pairing code on screen keeps the UI up
     u.code_visible = False
-    assert u.view().asleep
+    v = u.view()
+    assert v.saver and v.dimmed and v.animating  # the screensaver, already running
+    assert v.saver_t == pytest.approx(0.0) and v.frame_period > 0
+    clock.advance(2.0)
+    assert u.view().saver_t == pytest.approx(2.0)
     u.press("key1")  # the wake-up press does nothing else
-    assert d.calls == [] and not u.view().asleep
+    assert d.calls == [] and not u.view().saver and not u.view().dimmed
     u.press("key1")
     assert d.calls == ["new_pairing_code"]
 

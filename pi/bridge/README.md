@@ -24,11 +24,13 @@ display/splanc_display/     the screen service (Python)
   status.py                   status.json contract -> Status (lenient), file watcher
   control.py                  control.sock client
   ui.py                       OLED/button state machine (pages, fixture list + detail menu,
-                              KEY3 hold+confirm, dim/sleep, boot hand-off)
+                              KEY3 hold+confirm, active/passive/screensaver, boot hand-off)
   anim.py                     easing, gliding values, scene slides (retarget, never queue)
   boot.py                     loads the pre-rendered boot animation (boot_frames.bin)
   render_hdmi.py              1920x1080-grid status page, scaled to any framebuffer
-  render_oled.py              128x64 1-bit pages, fixture list/detail, slides + overlays
+  render_oled.py              1-bit pages on a 127x63 canvas (shifted on the 128x64 panel),
+                              fixture list/detail, slides + overlays
+  gliders.py                  the screensaver: Life gliders on a twisted torus, one per fixture
   fb.py                       /dev/fb0 writer (RGB565/XRGB8888, stride), VT 8 takeover
   hat.py                      SH1106 via luma.oled, gpiozero DC/RST adapter, keys, detection
   main.py                     the service loop (HDMI on its own thread)
@@ -58,6 +60,29 @@ gives 50–100 fps, so a 120–250 ms slide (`anim.py`) shows ~6–25 frames. No
 while nothing moves (the loop polls at 10 Hz and redraws once a second for the "12 s ago"
 texts), a press wakes the loop at once, and `splanc-display.service` runs at `Nice=10` with
 idle I/O priority, below the bridge.
+
+## Burn-in: the pixel shift and the idle stages
+
+The UI is laid out on a 127x63 canvas and pasted onto the 128x64 panel at a shift that
+steps through (0,0), (1,0), (1,1), (0,1) once a minute, so nothing is ever clipped and
+static rules and text don't sit on the same pixels for hours. The panel then goes
+through three stages:
+
+- **Active:** full contrast, while someone uses it or the status changes.
+- **Passive:** after 2 minutes idle, the same screens dimmed.
+- **Screensaver:** after 30 minutes idle (never while a pairing code is up), dimmed
+  Conway's Life gliders cross the panel, one per online fixture (`gliders.py`). The
+  board is 64x32 cells of 2x2 px on a twisted torus: off the bottom wraps to the top,
+  off the right edge comes back at the left 5 rows lower, so each pass precesses down
+  the panel. Life runs at 6 generations/s, slow enough to watch each glider change
+  shape. Every glider flies the same diagonal at c/4, so the pattern is one translation
+  of that space: gliders placed at least 6 cells apart never meet. With an odd skew, that diagonal step visits every cell position, so over
+  each 8192-generation cycle (~23 min) every pixel is lit exactly as often as every other.
+  Up to 33 fit; a fixture connecting adds a glider without moving the others.
+  `tests/test_gliders.py` steps real Life rules on the same torus and checks the pixels.
+
+The first key press out of the screensaver only wakes it. In the simulator, the
+Passive and Screensaver buttons jump straight to those stages.
 
 ## The bridge contract
 
@@ -457,7 +482,7 @@ under Bazel, which has neither; run it in a venv that has the lockfile plus `gpi
 
 | Covered                                                                                                                                                                                                                | How                                                                                                                                                |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status parsing, watcher, button state machine (KEY1/2, KEY3 hold → confirm → revoke, paging, dim/sleep)                                                                                                                | `display_test` (pytest, fake clock and dispatcher)                                                                                                 |
+| Status parsing, watcher, button state machine (KEY1/2, KEY3 hold → confirm → revoke, paging, active/passive/screensaver)                                                                                               | `display_test` (pytest, fake clock and dispatcher)                                                                                                 |
 | Fixture menu (list scroll, detail, back, fixtures appearing/vanishing), slide timing and interruption, boot hand-off, frame pacing                                                                                     | `display_test` (`test_menu.py`, `test_anim.py`, `test_app.py`; fake clock)                                                                         |
 | Fixture detail text (missing fields, long names, IPv4/link-local/IPv6, unreachable), boot frames (built file, SVG rasterizer)                                                                                          | `display_test` (`test_fixture_detail.py`, `test_menu_render.py`)                                                                                   |
 | HDMI + OLED rendering of every state and overlay, at several framebuffer sizes                                                                                                                                         | `display_test`; PNGs go to the test's `outputs.zip`                                                                                                |
