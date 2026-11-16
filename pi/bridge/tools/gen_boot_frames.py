@@ -1,11 +1,11 @@
-"""Pre-render the OLED boot animation from the Splanc logo (build step).
+"""Pre-render the OLED boot animation from the canonical splash and logo (build step).
 
-    gen_boot_frames.py --svg web/public/icons/splanc.svg --out boot_frames.bin [--png-dir DIR]
+    gen_boot_frames.py --svg web/public/icons/splanc.svg \
+        --splash shared/brand/splash/frames.json --out boot_frames.bin [--png-dir DIR]
 
 Bazel runs it (//pi/bridge:boot_frames, a genrule) and so does the NixOS image's
 splancPy derivation, each with only Pillow: this file carries its own tiny SVG
-path rasterizer (the logo is three filled paths: the splash mark's two and the
-"Splanc" wordmark already converted to outlines), so no cairo, no fonts, no
+path/circle rasterizer (the logo wordmark is already converted to outlines), so no cairo, no fonts, no
 network. The output is the panel's own format, 1-bit 128x64 frames, so the Pi
 only unpacks bytes at boot (splanc_display/boot.py reads it).
 
@@ -13,8 +13,8 @@ File format (little endian):
     b"SPLB" | u8 version=1 | u8 fps | u8 width | u8 height | u16 frames
     | zlib(frames * (width*height/8) bytes, each a PIL mode "1" tobytes())
 
-The animation (2 s at 30 fps): the splash mark opens out of a ring at the
-centre, glides to its place as the wordmark is wiped out of it behind a scan line, a row of
+The animation (2 s at 30 fps): after one black frame, the approved 0.3 s splash
+plays at the centre, then glides to its place as the wordmark is wiped out of it behind a scan line, a row of
 "LEDs" chases on underneath, and a glint crosses the logo. The display holds the
 last frame until it hands off (a slide) to the first status screen.
 """
@@ -22,6 +22,7 @@ last frame until it hands off (a slide) to the first status screen.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import re
@@ -215,6 +216,54 @@ def logo_shapes(svg_path: str):
     return out
 
 
+def splash_shapes(markup: str):
+    """Rasterization geometry from an approved sample; never regenerate its contour.
+
+    This deliberately supports only the filled paths, circles and transformed
+    groups in the canonical source. Colour is mapped to white for the OLED.
+    """
+    paths = []
+
+    def walk(el, m):
+        m = _mat_mul(m, parse_transform(el.get("transform", "")))
+        tag = el.tag.rsplit("}", 1)[-1]
+        if tag == "path":
+            subs = flatten_path(el.attrib["d"])
+        elif tag == "circle":
+            cx, cy, r = (float(el.attrib[k]) for k in ("cx", "cy", "r"))
+            subs = [
+                [
+                    (cx + r * math.cos(i * math.tau / 64), cy + r * math.sin(i * math.tau / 64))
+                    for i in range(64)
+                ]
+            ]
+        elif tag in ("svg", "g"):
+            subs = []
+        else:
+            raise ValueError(f"unsupported splash element {tag}")
+        if subs:
+            paths.append(
+                [
+                    [(m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]) for x, y in sub]
+                    for sub in subs
+                ]
+            )
+        for child in el:
+            walk(child, m)
+
+    walk(ET.fromstring(f"<svg>{markup}</svg>"), IDENT)
+    return paths
+
+
+def splash_sample(samples, t: float):
+    """Nearest saved timestamp, clamped at either end; no contour interpolation.
+
+    The 30 fps boot frames land on every eighth 240 fps sample. Other consumers
+    can use the exact 60000/1001 fps titleFrames saved alongside these samples.
+    """
+    return min(samples, key=lambda frame: abs(frame["time"] - t))
+
+
 def raster(paths, scale: float, ox: float, oy: float, size) -> Image.Image:
     """Fill ``paths`` (each even-odd over its subpaths; paths unioned) into a 1-bit
     image of ``size``: supersampled, then thresholded."""
@@ -258,7 +307,9 @@ def _phase(t, a, b):
     return max(0.0, min(1.0, (t - a) / (b - a)))
 
 
-def build_frames(svg_path: str):
+def build_frames(svg_path: str, splash_path: str):
+    with open(splash_path, encoding="utf-8") as source:
+        samples = json.load(source)["frames"]
     shapes = logo_shapes(svg_path)
     x0, y0, x1, y1 = bbox(shapes["mark"] + shapes["word"])
     scale = LOGO_W / (x1 - x0)
@@ -269,7 +320,7 @@ def build_frames(svg_path: str):
     word = raster(shapes["word"], scale, ox, oy, (W, H))
     mx0, my0, mx1, my1 = mark.getbbox()
     wx0, wy0, wx1, wy1 = word.getbbox()
-    mcx, mcy = (mx0 + mx1) / 2, (my0 + my1) / 2
+    mcx = (mx0 + mx1) / 2
     start_dx = W / 2 - mcx  # the mark starts centred on the panel
     full = ImageChops.logical_or(mark, word)
 
@@ -286,19 +337,14 @@ def build_frames(svg_path: str):
         img = Image.new("1", (W, H), 0)
         dr = ImageDraw.Draw(img)
 
-        # 1. The mark opens out of a ring (0 - 0.5 s), then glides left (0.45 - 0.9 s).
+        # 1. Keep the initial black frame, then play the approved 0.3 s splash.
+        # Its final vectors share the logo's coordinate system. Hold that exact
+        # mark afterwards, then keep the existing glide (0.45 - 0.9 s).
         dx = round(start_dx * (1 - _ease_in_out(_phase(t, 0.45, 0.9))))
-        reveal = _ease_out(_phase(t, 0.0, 0.5))
-        radius = reveal * (max(mx1 - mx0, my1 - my0) * 0.62 + 1)
-        cx, cy = mcx + dx, mcy
-        mask = Image.new("1", (W, H), 0)
-        ImageDraw.Draw(mask).ellipse([cx - radius, cy - radius, cx + radius, cy + radius], fill=1)
-        moved = Image.new("1", (W, H), 0)
-        moved.paste(mark, (dx, 0))
-        img.paste(ImageChops.logical_and(moved, mask), (0, 0))
-        if 0 < reveal < 1:
-            r = radius + 2
-            dr.ellipse([cx - r, cy - r, cx + r, cy + r], outline=1)
+        if f > 0:
+            sample = splash_sample(samples, (f - 1) / FPS)
+            moving_mark = raster(splash_shapes(sample["markup"]), scale, ox, oy, (W, H))
+            img.paste(moving_mark, (dx, 0))
 
         # 2. The wordmark wipes in behind a scan line (0.7 - 1.25 s).
         wipe = _ease_out(_phase(t, 0.7, 1.25))
@@ -349,10 +395,11 @@ def pack(frames, fps: int = FPS) -> bytes:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--svg", required=True)
+    ap.add_argument("--splash", required=True, help="canonical shared/brand/splash/frames.json")
     ap.add_argument("--out", required=True)
     ap.add_argument("--png-dir", help="also write every frame as a PNG (review)")
     a = ap.parse_args(argv)
-    frames = build_frames(a.svg)
+    frames = build_frames(a.svg, a.splash)
     data = pack(frames)
     tmp = a.out + ".tmp"
     with open(tmp, "wb") as f:

@@ -114,6 +114,7 @@ let
     }}/splanc_image $out/
     chmod -R u+w $out
     python3 ${../../tools/gen_boot_frames.py} --svg ${../../../../web/public/icons/splanc.svg} \
+      --splash ${../../../../shared/brand/splash/frames.json} \
       --out $out/splanc_display/boot_frames.bin
     python3 -m compileall -q $out
     # Smoke: the modules import with this exact environment.
