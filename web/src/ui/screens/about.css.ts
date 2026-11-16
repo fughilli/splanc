@@ -91,6 +91,15 @@ a.about-doc:hover .about-doc-title { color: var(--accent); }
   font-size: var(--f-caption);
   color: var(--text-dim);
 }
+.about-version { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); }
+.about-whatsnew {
+  display: inline-flex; align-items: center; gap: var(--sp-1);
+  min-height: 32px; padding: 0; border: 0; background: none;
+  color: var(--accent); font: inherit; font-size: var(--f-caption); cursor: pointer;
+}
+.about-whatsnew svg { width: 16px; height: 16px; }
+.about-whatsnew:hover { text-decoration: underline; }
+.about-whatsnew:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 
 .about-contributors { list-style: none; margin: 0; padding: 0; }
 .about-contributors li { padding: var(--sp-1) 0; }

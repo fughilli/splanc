@@ -141,6 +141,62 @@ the in-app flasher. The splanc.io site (Studio-Fug/splanc.io,
 <https://splanc.io/app>. It re-checks on a schedule, so a new app release
 reaches splanc.io without a manual pin bump.
 
+## Release notes and "What's new"
+
+The app shows each release's notes in a **What's new** card. After an update, a
+sparkle bubble appears in the lower-left corner on the first launch of the new
+version, including a PWA pull-to-refresh that loaded a new deploy. The bubble
+sits where the tour hint sits; a fresh install gets the tour hint instead. The
+card is always available from **About → Version → What's new**. It lists every
+version since the one the user last ran, plus any newer firmware release.
+
+The notes are the **GitHub release of the `app-vX.Y.Z` tag**. The app never
+calls GitHub. `tools/whatsnew/whatsnew_mirror.py` copies the newest 10 app
+releases and 3 firmware releases into `whatsnew/index.json`, and every image or
+video they show into `whatsnew/media/`, both next to the app. The mirror runs
+in three places:
+
+- the `app-v*` Release workflow, after it creates the release with generated
+  notes (for Pages and Cloudflare, and in the webapp tarball);
+- the Test workflow's site build (main and PR previews);
+- every splanc.io deploy (Studio-Fug/splanc.io `scripts/stage-app.mjs`), which
+  re-mirrors at the staged tag. Its scheduled check also redeploys when the
+  notes changed, by comparing the live index's `digest`.
+
+To write notes:
+
+1. Edit the release on GitHub (Releases → `app-vX.Y.Z` → Edit). The generated
+   PR list is a starting point; rewrite it for users. Markdown is fine.
+2. For images or short videos, drag them into the editor. GitHub uploads them
+   as `github.com/user-attachments/...` links, and the mirror downloads them.
+   You can also attach PNG/JPEG/GIF/WebP/MP4/WebM files as release assets;
+   any that the text doesn't reference appear under the notes. Keep each file
+   under 25 MB.
+3. Save. splanc.io picks up the change on its next scheduled check (about every
+   30 minutes). To publish it right away, run splanc.io's **Deploy GitHub
+   Pages** workflow (Actions → Run workflow), or push an empty commit there.
+   Pages and Cloudflare get the edit with the next app release.
+
+To have the notes in place from the first deploy, write them before tagging:
+Releases → Draft a new release, type the new tag name (`app-vX.Y.Z`; a draft
+does not create the tag), write the notes and **Save draft**. Then push the tag. The
+Release workflow finds the draft, keeps its notes, mirrors them, attaches the
+webapp tarball and publishes it. Without a draft, the workflow creates the
+release with generated notes, and you edit them afterwards (step 3 above).
+
+What survives: headings, paragraphs, lists, links (http, https and mailto),
+bold, italic, code, quotes, tables, `<details>`, images and videos. Scripts,
+styles, iframes, forms and inline event handlers are removed. Media are always
+served from the local copy.
+
+To preview offline:
+
+```sh
+python3 tools/whatsnew/whatsnew_mirror.py --out /tmp/whatsnew           # live releases
+python3 tools/whatsnew/whatsnew_mirror.py --print-digest                # fingerprint only
+LEDMAPPER_WHATSNEW_DIR=/tmp/whatsnew bazel run //web:stage_site -- /tmp/site
+```
+
 ## Deploying to GitHub Pages (CI, FUG-26)
 
 CI publishes the same static site to GitHub Pages off the `gh-pages` branch

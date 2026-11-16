@@ -12,7 +12,8 @@
 
 import { assetUrl } from "../../assetBase";
 import { appBuildInfo, buildLabel, commitUrl } from "../../buildInfo";
-import { Card } from "../kit";
+import { Card, icon } from "../kit";
+import { openWhatsNew } from "../whatsnew/whatsNew";
 import { installAboutStyles } from "./about.css";
 import type { Router, Screen } from "../app/router";
 
@@ -213,7 +214,7 @@ function aboutBody(): HTMLElement {
   links.append(
     linkRow("Source code", extLink("github.com/fughilli/splanc", GITHUB_URL)),
     linkRow("Studio", extLink("fug.studio", STUDIO_URL)),
-    linkRow("Version", textValue(appBuildInfo.version || "unknown")),
+    linkRow("Version", versionValue(appBuildInfo.version || "unknown")),
     linkRow("Build", buildValue(appBuildInfo.gitCommit, appBuildInfo.gitDirty)),
   );
 
@@ -341,6 +342,21 @@ function textValue(text: string): HTMLElement {
   span.className = "about-link-value";
   span.textContent = text;
   return span;
+}
+
+/** The version, with the always-available "What's new" link under it (the
+ * same card the post-update sparkle bubble opens, with the release history). */
+function versionValue(version: string): HTMLElement {
+  const wrap = document.createElement("span");
+  wrap.className = "about-version";
+  const link = document.createElement("button");
+  link.type = "button";
+  link.className = "about-whatsnew";
+  link.setAttribute("aria-haspopup", "dialog");
+  link.append(icon("sparkles"), "What's new");
+  link.addEventListener("click", () => openWhatsNew({ kind: "history" }, link));
+  wrap.append(textValue(version), link);
+  return wrap;
 }
 
 function linkRow(label: string, value: HTMLElement): HTMLElement {

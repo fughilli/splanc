@@ -59,7 +59,10 @@ function relPath(pathname) {
 const NO_CACHE = [/^maps(\/|$)/, /^healthz$/, /^ws(\/|$)/, /^api(\/|$)/];
 // Fixed-name, version-coupled bundles: serve network-first (fresh online, cache
 // only as the offline fallback) so a deploy's new wasm is never shadowed.
-const NETWORK_FIRST = [/^(fx-vm|fx-compiler|solver|pulse|firmware)\//];
+// whatsnew/index.json (the mirrored release notes) is fixed-name too and is
+// re-mirrored on every deploy; its media/ files are content-hashed, so they take
+// the stale-while-revalidate path below and stay readable offline.
+const NETWORK_FIRST = [/^(fx-vm|fx-compiler|solver|pulse|firmware)\//, /^whatsnew\/index\.json$/];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

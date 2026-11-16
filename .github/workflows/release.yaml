@@ -437,9 +437,34 @@ jobs:
       - name: Build developer docs
         run: bazel run //docs:build --disk_cache="$HOME/.cache/bazel-disk"
 
+      # The Release is created (as a draft) BEFORE the site is staged so its notes
+      # can be mirrored into the app's "What's new?" card; "Publish app Release"
+      # below attaches the tarball and publishes it. An existing release keeps its
+      # notes (and its draft/published state) — so notes written beforehand on a
+      # draft release for this tag ship in the first mirror. make_latest=false
+      # keeps releases/latest pointing at firmware.
+      - name: Create app Release (draft)
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          make_latest: false
+          target_commitish: ${{ github.sha }}
+
+      # Mirror the newest app releases' notes (+ their images/videos) into
+      # whatsnew/ for the in-app card (tools/whatsnew/whatsnew_mirror.py). Best
+      # effort: without it the app just says the notes aren't available.
+      # splanc.io re-mirrors on each deploy, which is how edited notes land.
+      - name: Mirror release notes (What's new)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/whatsnew/whatsnew_mirror.py --repo "$GITHUB_REPOSITORY" --up-to "$GITHUB_REF_NAME" --out "$GITHUB_WORKSPACE/_whatsnew"
+
       - name: Stage site
         env:
           LEDMAPPER_DOCS_SITE: ${{ github.workspace }}/docs/site/html
+          LEDMAPPER_WHATSNEW_DIR: ${{ github.workspace }}/_whatsnew
         run: bazel run //web:stage_site --disk_cache="$HOME/.cache/bazel-disk" -- "$GITHUB_WORKSPACE/_site"
 
       # splanc.io/app consumes this exact release tree, including its version
@@ -455,7 +480,6 @@ jobs:
       # A durable copy of the same tree as a Release asset: workflow artifacts
       # expire (90 days), and splanc.io/app follows the newest app-v* release by
       # downloading this asset (Studio-Fug/splanc.io scripts/stage-app.mjs).
-      # make_latest=false keeps releases/latest pointing at firmware.
       - name: Package released webapp
         run: |
           VER="${GITHUB_REF_NAME#app-v}"
@@ -463,13 +487,15 @@ jobs:
           tar -C _site -czf "_assets/splanc-webapp-${VER}.tar.gz" .
           (cd _assets && sha256sum "splanc-webapp-${VER}.tar.gz" > "splanc-webapp-${VER}.tar.gz.sha256")
 
+      # Attach the tarball to the Release created above, then publish it (the
+      # notes are left as they are).
       - name: Publish app Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             _assets/splanc-webapp-*.tar.gz
             _assets/splanc-webapp-*.tar.gz.sha256
-          generate_release_notes: true
+          draft: false
           make_latest: false
           target_commitish: ${{ github.sha }}
 
@@ -487,4 +513,5 @@ jobs:
         if: env.CLOUDFLARE_API_TOKEN != ''
         env:
           LEDMAPPER_DOCS_SITE: ${{ github.workspace }}/docs/site/html
+          LEDMAPPER_WHATSNEW_DIR: ${{ github.workspace }}/_whatsnew
         run: bazel run //web:deploy_cloudflare --disk_cache="$HOME/.cache/bazel-disk"

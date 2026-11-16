@@ -90,6 +90,14 @@ stage_site() {
   if [[ -n "${LEDMAPPER_DOCS_SITE:-}" && -d "${LEDMAPPER_DOCS_SITE}" ]]; then
     mkdir -p "$out/docs" && cp -RL "${LEDMAPPER_DOCS_SITE}/." "$out/docs/"
   fi
+  # "What's new?" release notes (whatsnew/index.json + media/), mirrored from the
+  # GitHub releases by tools/whatsnew/whatsnew_mirror.py before staging and handed
+  # in via $LEDMAPPER_WHATSNEW_DIR. Absent (a dev build, or the mirror failed) →
+  # skipped; the app then says the notes aren't available. splanc.io re-mirrors
+  # on every deploy (see "Release notes and What's new" in web/README.md).
+  if [[ -n "${LEDMAPPER_WHATSNEW_DIR:-}" && -f "${LEDMAPPER_WHATSNEW_DIR}/index.json" ]]; then
+    mkdir -p "$out/whatsnew" && cp -RL "${LEDMAPPER_WHATSNEW_DIR}/." "$out/whatsnew/"
+  fi
   # Bazel outputs arrive read-only; the staging copy is ours to prune.
   chmod -R u+w "$out"
   # Dev-only artifacts that have no business on a CDN.

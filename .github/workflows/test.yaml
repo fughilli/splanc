@@ -407,6 +407,14 @@ jobs:
       # Materialize the publish tree into ./_site (bundle at /, wasm bundles at
       # /solver /pulse /fx-compiler /fx-vm, docs at /docs — same layout
       # Cloudflare/the Pi serve).
+      # The release notes for the "What's new?" card (About → What's new), so
+      # main builds and PR previews carry the current notes too. Best effort.
+      - name: Mirror release notes (What's new)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/whatsnew/whatsnew_mirror.py --repo "$GITHUB_REPOSITORY" --out "$GITHUB_WORKSPACE/_whatsnew"
+
       - name: Stage site
         # LEDMAPPER_FLASHBUNDLE(_NETSTACK) point stage_site.lib.sh at the downloaded
         # flash bundles so both variants are staged under /firmware/ as the "This
@@ -415,6 +423,7 @@ jobs:
         env:
           LEDMAPPER_FLASHBUNDLE_NETSTACK: ${{ github.workspace }}/_flashbundle/esp32c6_netstack_flashbundle.tar
           LEDMAPPER_DOCS_SITE: ${{ github.workspace }}/docs/site/html
+          LEDMAPPER_WHATSNEW_DIR: ${{ github.workspace }}/_whatsnew
         run: bazel run //web:stage_site --disk_cache="$HOME/.cache/bazel-disk" -- "$GITHUB_WORKSPACE/_site"
 
       - name: Upload site artifact
