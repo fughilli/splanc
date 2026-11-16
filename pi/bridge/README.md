@@ -56,8 +56,8 @@ and each frame drawn is the one for the current time, so it plays at whatever ra
 loop reaches. On a Pi the half-core limit, not the panel, sets the rate: a 5–10 ms frame
 gives 50–100 fps, so a 120–250 ms slide (`anim.py`) shows ~6–25 frames. Nothing is drawn
 while nothing moves (the loop polls at 10 Hz and redraws once a second for the "12 s ago"
-texts), a press wakes the loop at once, and `splanc-display.service` runs at `Nice=10` with idle I/O priority, below the
-bridge.
+texts), a press wakes the loop at once, and `splanc-display.service` runs at `Nice=10` with
+idle I/O priority, below the bridge.
 
 ## The bridge contract
 
