@@ -71,7 +71,9 @@ py_library(
 
 py_test(
     name = "display_test",
-    size = "small",
+    # medium: the suite grew (boot frames at 240 fps, the Life screensaver) and ran
+    # past small's 60 s on the macOS runner (TIMEOUT at 62 s on aada6610b).
+    size = "medium",
     srcs = glob(["tests/*.py"]),
     data = [
         "//shared/brand/splash:frames.json",
