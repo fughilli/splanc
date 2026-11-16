@@ -107,6 +107,17 @@ export function dataFrames(params: CodeParams): number {
 /** The symbol VALUE `ledId` transmits in data frame `frame`. */
 export function symbolAt(ledId: number, frame: number, params: CodeParams): number {
   bitsPerSymbol(params);
+  if (isPruned(params)) {
+    return kernel().pk_symbol_at_coded(
+      codedIndex(ledId, params),
+      frame,
+      params.ledCount,
+      params.bits,
+      params.symbols,
+      secded(params),
+      syncCode(params),
+    );
+  }
   checkEncodable(ledId, params);
   return kernel().pk_symbol_at(ledId, frame, params.ledCount, params.symbols, secded(params));
 }
@@ -164,10 +175,166 @@ export function cssColor(c: Rgb): string {
   return `#${h(c[0])}${h(c[1])}${h(c[2])}`;
 }
 
-/** The color `ledId` shows in cycle frame `frameIndex` (0-based within one cycle). */
+// -- hue code v2 phase 2: staggered cycles with a pilot ---------------------
+//
+// Under `syncPattern: "stagger_pilot"` LED `id` (the CODED id: LED +
+// codeOffset) runs its cycle rotated by `staggerPhase(id)` =
+// (id * S + h(id div C)) mod C (C = cycleFrames; h the kernel's keyed
+// per-block offset, which makes the map non-linear across blocks of C ids so
+// the decoder's phase check passes a wrong id at the ~1/C chance rate), and
+// its sync position shows the PALETTE PILOT: a
+// short fixed run of the active alphabet's own colours (2 symbols: blue, blue,
+// red, red, blue; 4 symbols: blue, yellow, magenta), so no hue is reserved
+// (docs/design/hue-code-v2.md). The pilot is unique by code-book PRUNING: ids
+// map, in order, to the coded indices whose whole cycle contains the pilot
+// only at its sync position — a wider data word, so `bits` / `cycleFrames`
+// come from the kernel's pruned derivation (codeBookFor). All of it — the
+// rotation, the pilot, the pruning and the id <-> index map — is the kernel's;
+// callers keep passing the GLOBAL cycle frame. "stagger_white" (v1's
+// white/green) and "stagger_gm" (green/magenta, the first draft) are NOT wire
+// values: the link simulator's comparators, over the unpruned v1 book.
+
+/** The staggered-pilot wire value of `CodeParams.syncPattern`. */
+export const SYNC_STAGGER_PILOT = "stagger_pilot";
+/** Simulation-only comparator (not on the wire): v1's white/green, staggered. */
+export const SYNC_STAGGER_WHITE = "stagger_white";
+/** Simulation-only comparator (not on the wire): green/magenta, staggered. */
+export const SYNC_STAGGER_GM = "stagger_gm";
+
+/** The kernel's sync-pattern code (kernel_abi.rs `SyncPattern::from_code`). */
+export function syncCode(params: CodeParams): number {
+  const s = params.syncPattern as string;
+  if (s === SYNC_STAGGER_PILOT) return 1;
+  if (s === SYNC_STAGGER_WHITE) return 2;
+  if (s === SYNC_STAGGER_GM) return 3;
+  return 0; // "on_off" (v1), and anything unknown
+}
+
+/** True when the code-book's sync positions are staggered per LED. */
+export function isStaggered(params: CodeParams): boolean {
+  return syncCode(params) !== 0;
+}
+
+/** True when the code book is pruned for pilot uniqueness (stagger_pilot). */
+export function isPruned(params: CodeParams): boolean {
+  return syncCode(params) === 1;
+}
+
+/** The stagger step S for a cycle of `cycleFrames` frames. */
+export function staggerStep(cycleFrames: number): number {
+  return kernel().pk_stagger_step(cycleFrames);
+}
+
+/** Coded id `ledId`'s phase rotation: its sync position starts at global
+ * cycle frame `staggerPhase` (0 under v1). */
+export function staggerPhase(ledId: number, params: CodeParams): number {
+  return kernel().pk_stagger_phase(ledId, params.ledCount, params.bits, params.symbols, secded(params), syncCode(params));
+}
+
+/** Frames of the sync position: the palette pilot's length under
+ * stagger_pilot (5 at 2 symbols, 3 at 4), else 2. */
+export function syncFrames(params: CodeParams): number {
+  return kernel().pk_sync_frames(params.symbols, syncCode(params));
+}
+
+/** The sync-position colours in order: v1 / stagger_white white → green,
+ * stagger_gm green → magenta, stagger_pilot the palette pilot. */
+export function syncColors(params: CodeParams): readonly Rgb[] {
+  const k = kernel();
+  const sync = syncCode(params);
+  const out: Rgb[] = [];
+  for (let j = 0; j < syncFrames(params); j++) out.push(colorOfIndex(k.pk_sync_color(sync, params.symbols, j)));
+  return out;
+}
+
+/** The code book (bits, cycleFrames) a fixture gets under `sync`: the v1 one
+ * for every unpruned pattern, the kernel's pruned derivation for
+ * stagger_pilot (it counts the book once: call per capture, not per frame). */
+export function codeBookFor(
+  ledCount: number,
+  symbols: number,
+  fec: string,
+  sync: string,
+): { bits: number; cycleFrames: number } {
+  const k = kernel();
+  const sd = fec === "secded" ? 1 : 0;
+  const code = syncCode({ syncPattern: sync } as unknown as CodeParams);
+  if (code === 0) return { bits: k.pk_expected_bits(ledCount, sd), cycleFrames: k.pk_cycle_frames(ledCount, symbols, sd) };
+  return {
+    bits: k.pk_expected_bits_sync(ledCount, symbols, sd, code),
+    cycleFrames: k.pk_cycle_frames_sync(ledCount, symbols, sd, code),
+  };
+}
+
+/**
+ * A `?sync=` query value as a sync-pattern request/override (test pages: the
+ * capture screen requests it, the wall forces its rendering). Null when absent
+ * or unknown ("v1" is accepted for "on_off"); the comparators are accepted for
+ * simulation only.
+ */
+export function forcedSyncPattern(value: string | null): CodeParams["syncPattern"] | null {
+  if (value === null) return null;
+  const v = value.trim().toLowerCase().replace(/-/g, "_");
+  if (v === "on_off" || v === "v1") return "on_off";
+  if (v === SYNC_STAGGER_PILOT || v === "stagger" || v === "pilot") return SYNC_STAGGER_PILOT;
+  if (v === SYNC_STAGGER_WHITE || v === SYNC_STAGGER_GM) return v as CodeParams["syncPattern"];
+  return null;
+}
+
+/** `params` under another sync pattern (null = unchanged): the code book is
+ * re-derived (a pruned book is wider). */
+export function withSyncPattern(params: CodeParams, sync: CodeParams["syncPattern"] | null): CodeParams {
+  if (sync === null || sync === params.syncPattern) return params;
+  const book = codeBookFor(params.ledCount, params.symbols, params.fec ?? "none", sync);
+  return { ...params, syncPattern: sync, ...book };
+}
+
+/** id -> coded index tables of pruned books, from the kernel's walk
+ * (pk_stagger_fill), keyed by the code book. */
+const codedTables = new Map<string, { idToN: Uint32Array; nToId: Map<number, number> }>();
+
+function codedTable(params: CodeParams): { idToN: Uint32Array; nToId: Map<number, number> } {
+  const key = `${params.ledCount}|${params.bits}|${params.symbols}|${params.fec ?? "none"}|${params.syncPattern}`;
+  let t = codedTables.get(key);
+  if (t === undefined) {
+    const k = kernel();
+    const n = params.ledCount;
+    const sync = syncCode(params);
+    if (k.pk_stagger_fill(n, params.ledCount, params.bits, params.symbols, secded(params), sync) !== n) {
+      throw new RangeError(`code book of ${params.bits} bits holds fewer than ${n} ids`);
+    }
+    const idToN = new Uint32Array(k.memory.buffer, k.pk_stagger_ids_buf(), n).slice();
+    const nToId = new Map<number, number>();
+    idToN.forEach((v, i) => nToId.set(v, i));
+    t = { idToN, nToId };
+    codedTables.set(key, t);
+  }
+  return t;
+}
+
+/** The coded index id `ledId` transmits as gray(n): `ledId + 1`, or its entry
+ * in a pruned book. */
+export function codedIndex(ledId: number, params: CodeParams): number {
+  if (!isPruned(params)) return ledId + CODE_OFFSET;
+  const n = codedTable(params).idToN[ledId];
+  if (n === undefined) throw new RangeError(`id ${ledId} outside the code book of ${params.ledCount}`);
+  return n;
+}
+
+/** The color `ledId` shows in cycle frame `frameIndex` (0-based within one
+ * cycle; the GLOBAL frame under a staggered pattern). */
 export function colorForFrame(ledId: number, frameIndex: number, params: CodeParams): Rgb {
   if (frameIndex < 0 || frameIndex >= params.cycleFrames) {
     throw new RangeError(`frameIndex ${frameIndex} outside cycle of ${params.cycleFrames}`);
+  }
+  const sync = syncCode(params);
+  if (sync !== 0) {
+    bitsPerSymbol(params);
+    if (sync !== 1) checkEncodable(ledId, params);
+    const n = codedIndex(ledId, params);
+    return colorOfIndex(
+      kernel().pk_color_index_coded(ledId, n, frameIndex, params.ledCount, params.bits, params.symbols, secded(params), sync),
+    );
   }
   if (frameIndex >= DATA_FRAME_OFFSET) {
     bitsPerSymbol(params);
@@ -199,7 +366,25 @@ export function decodeCycleSymbols(symbols: readonly number[], params: CodeParam
   const k = kernel();
   const buf = new Uint8Array(k.memory.buffer, k.pk_symbol_buf(), symbols.length);
   for (let d = 0; d < symbols.length; d++) buf[d] = symbols[d]!;
-  const r = k.pk_decode_cycle(symbols.length, params.ledCount, params.bits, params.symbols, secded(params));
+  const sync = syncCode(params);
+  if (isPruned(params)) {
+    // The kernel ranks a pruned book's coded index by walking the book (O(n)
+    // validity checks, ~0.2 ms at 2000 LEDs, once per track per cycle); the
+    // id <-> index table this side already holds maps it in O(1). Same ids:
+    // the table is the kernel's own walk (pk_stagger_fill), and an index it
+    // lacks is excluded by the book or ranks past ledCount.
+    const c = k.pk_decode_cycle_coded(symbols.length, params.ledCount, params.bits, params.symbols, secded(params), sync);
+    const n = (c & FLAG_VALUE) !== 0 ? c & VALUE_MASK : null;
+    return {
+      id: n === null ? null : (codedTable(params).nToId.get(n) ?? null),
+      corrected: (c & FLAG_CORRECTED) !== 0,
+      uncorrectable: (c & FLAG_UNCORRECTABLE) !== 0,
+    };
+  }
+  const r =
+    sync === 0
+      ? k.pk_decode_cycle(symbols.length, params.ledCount, params.bits, params.symbols, secded(params))
+      : k.pk_decode_cycle_sync(symbols.length, params.ledCount, params.bits, params.symbols, secded(params), sync);
   if ((r & FLAG_MALFORMED) !== 0) {
     // The code-book's `bits` exceed the SEC-DED width its ledCount implies.
     const width = k.pk_secded_total_bits(k.pk_data_bits(params.ledCount));

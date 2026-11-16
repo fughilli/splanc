@@ -21,8 +21,9 @@
  * fall back to constant-velocity coasting.
  */
 
-import type { Vec3 } from "@ledmapper/protocol";
+import type { DetectionRecord, Vec3 } from "@ledmapper/protocol";
 import { project } from "../geom/pinhole";
+import { medianInPlace } from "./select";
 import type { Blob, FrameMeta } from "./types";
 
 export interface TrackSample {
@@ -48,9 +49,63 @@ export interface TrackerOptions {
   maxCoastMs?: number;
   /** EMA factor for velocity updates (0..1, weight of the new estimate). */
   velocityBlend?: number;
+  /**
+   * Adaptive gate: a blob is only matched within this fraction of ITS
+   * nearest-neighbour distance in the frame (capped by `gatePx`). On dense
+   * fixtures (LEDs ~13 px apart) a fixed 40 px gate reached ~3 neighbours, so
+   * a track grabbed the LED next door whenever the phone moved. 0 disables.
+   */
+  gateSpacingFrac?: number;
+  /** Floor for the adaptive gate (detector centroid noise). */
+  minGatePx?: number;
+  /**
+   * Ambiguity rejection: a match is refused when another blob is nearly as
+   * close to the track's prediction (best ≥ ratio × second-best). The track
+   * coasts instead of guessing — a coin-flip match is how a wrong id lands on
+   * a neighbour's position. 1 disables.
+   */
+  ambiguityRatio?: number;
+  /**
+   * Global image-motion compensation: estimate the frame's common 2D shift
+   * (the camera turning moves every LED together) by voting over
+   * prediction→blob offsets, and add it to every prediction. Handles motion
+   * the per-track constant-velocity model can't — a jerk or a change of
+   * direction — so the adaptive gate can be tight without losing tracks.
+   */
+  globalMotion?: boolean;
+  /**
+   * Local consistency: refuse a match whose residual differs from the median
+   * of its neighbours' (within a few pitches) by more than this fraction of
+   * the LED spacing. 0 disables.
+   */
+  localConsistencyFrac?: number;
+}
+
+/** Per-frame association telemetry (capture guidance, perf HUD). */
+export interface TrackerFrameStats {
+  /** Median blob nearest-neighbour distance this frame (px), null if < 2 blobs. */
+  spacingPx: number | null;
+  /** Global shift applied on top of the per-track predictions (px): the
+   * image motion the tracks did NOT predict. */
+  shiftPx: number;
+  /** Established tracks (seen in the previous frame) considered this frame. */
+  live: number;
+  /** Of those, matched to a blob. */
+  matched: number;
+  /** Of those, refused as ambiguous. */
+  ambiguous: number;
+  /** Matches refused by the local-consistency check (a hop to a neighbour). */
+  inconsistent: number;
 }
 
 let nextTrackId = 1;
+
+/** A global shift must out-vote the zero shift by this factor (see estimateShift). */
+const SHIFT_MARGIN = 1.5;
+/** Local-consistency neighbourhood: radius in LED pitches, and the fewest
+ * matched neighbours that make a verdict. */
+const LOCAL_RADIUS_PITCHES = 3;
+const LOCAL_MIN_NEIGHBOURS = 4;
 
 export class Track {
   readonly id = nextTrackId++;
@@ -66,6 +121,15 @@ export class Track {
   ledId: number | null = null;
   /** Decode confidence of that attribution, in [0, 1]. */
   ledConfidence = 0;
+  /** The id this track's most recent decodes agree on, and how many in a row
+   * (the decoder's confirmation; `ledId` is only set once confirmed). */
+  pendingId: number | null = null;
+  pendingCount = 0;
+  /** Records made while `pendingId` awaited confirmation: released once it
+   * is confirmed, discarded if a disagreeing decode replaces it. */
+  held: DetectionRecord[] = [];
+  /** The same for the pipeline's dense (per-frame) records. */
+  heldDense: DetectionRecord[] = [];
 
   constructor(blob: Blob, meta: FrameMeta) {
     this.u = blob.u;
@@ -97,7 +161,13 @@ export class Track {
   pruneBefore(tMs: number): void {
     let firstKept = 0;
     while (firstKept < this.samples.length && this.samples[firstKept]!.tCaptureMs < tMs) firstKept++;
-    if (firstKept > 0) this.samples.splice(0, firstKept);
+    if (firstKept > 0) {
+      // In place (splice allocates the removed run; this runs per track per frame).
+      const xs = this.samples;
+      const n = xs.length - firstKept;
+      for (let i = 0; i < n; i++) xs[i] = xs[i + firstKept]!;
+      xs.length = n;
+    }
   }
 }
 
@@ -105,7 +175,14 @@ export class Tracker {
   private readonly gatePx: number;
   private readonly maxCoastMs: number;
   private readonly velocityBlend: number;
+  private readonly gateSpacingFrac: number;
+  private readonly minGatePx: number;
+  private readonly ambiguityRatio: number;
+  private readonly globalMotion: boolean;
+  private readonly localConsistencyFrac: number;
   private solved: Map<number, Vec3> | null = null;
+  /** Capture time of the previous step (common-velocity bookkeeping). */
+  private prevT: number | null = null;
   tracks: Track[] = [];
   /**
    * Per-blob association from the most recent step, aligned with that step's
@@ -114,6 +191,8 @@ export class Tracker {
    * matched nothing and spawned a fresh track. UI feedback for the 2D stage.
    */
   lastAssignment: (Track | null)[] = [];
+  /** Association telemetry for the most recent step. */
+  lastStats: TrackerFrameStats = { spacingPx: null, shiftPx: 0, live: 0, matched: 0, ambiguous: 0, inconsistent: 0 };
 
   constructor(opts: TrackerOptions = {}) {
     // 60 px was ~3× the observed inter-LED spacing (median 22 px, p90 34 px in
@@ -127,6 +206,11 @@ export class Tracker {
     this.gatePx = opts.gatePx ?? 40;
     this.maxCoastMs = opts.maxCoastMs ?? 2500;
     this.velocityBlend = opts.velocityBlend ?? 0.3;
+    this.gateSpacingFrac = opts.gateSpacingFrac ?? 0.6;
+    this.minGatePx = opts.minGatePx ?? 3;
+    this.ambiguityRatio = opts.ambiguityRatio ?? 0.7;
+    this.globalMotion = opts.globalMotion ?? true;
+    this.localConsistencyFrac = opts.localConsistencyFrac ?? 0.45;
   }
 
   /**
@@ -141,7 +225,7 @@ export class Tracker {
 
   /** Pose-aware prediction when identified + solved + posed; constant
    * velocity otherwise (incl. the pose-less WebXR-free capture path). */
-  private predictTrack(tr: Track, meta: FrameMeta): { u: number; v: number } {
+  private predictTrack(tr: Track, meta: FrameMeta, common: { u: number; v: number } | null): { u: number; v: number } {
     if (tr.ledId !== null && this.solved !== null && meta.pose !== null) {
       const xyz = this.solved.get(tr.ledId);
       if (xyz !== undefined) {
@@ -149,46 +233,222 @@ export class Tracker {
         if (pr.depth > 0) return { u: pr.u, v: pr.v };
       }
     }
+    if (common !== null) {
+      const dt = meta.tCaptureMs - tr.lastStepMs;
+      return { u: tr.u + common.u * dt, v: tr.v + common.v * dt };
+    }
     return tr.predict(meta.tCaptureMs);
+  }
+
+  /**
+   * The image's common velocity (px/ms): the median over tracks matched in
+   * the previous frame. With global motion on, every track is predicted with
+   * it rather than its own: one track's velocity is a noisy EMA that goes
+   * stale while it coasts, and a stale prediction drifting toward a
+   * neighbour is exactly how a track whose blob dropped out grabs the LED
+   * next door. Null without enough tracks to agree on.
+   */
+  private commonVelocity(): { u: number; v: number } | null {
+    if (!this.globalMotion || this.prevT === null) return null;
+    const us: number[] = [];
+    const vs: number[] = [];
+    for (const tr of this.tracks) {
+      if (tr.lastSeenMs !== this.prevT || tr.samples.length < 2) continue;
+      us.push(tr.velU);
+      vs.push(tr.velV);
+    }
+    if (us.length < 3) return null;
+    return { u: medianOf(us.length, (i) => us[i]!)!, v: medianOf(vs.length, (i) => vs[i]!)! };
   }
 
   /** Ingest one frame's blobs. Returns the number of matched tracks. */
   step(blobs: readonly Blob[], meta: FrameMeta): number {
     const t = meta.tCaptureMs;
+    const nT = this.tracks.length;
+    const nB = blobs.length;
+    const grid = new BlobGrid(blobs, Math.max(8, this.gatePx));
 
-    // All candidate (track, blob) pairs within the gate, best-first greedy.
+    // Local spacing: each blob's nearest-neighbour distance this frame.
+    const nn = new Float64Array(nB).fill(Infinity);
+    const gu = grid.us;
+    const gv = grid.vs;
+    for (let bi = 0; bi < nB; bi++) {
+      const u = gu[bi]!;
+      const v = gv[bi]!;
+      const nh = grid.query(u, v);
+      const hits = grid.hits;
+      let best = Infinity;
+      for (let x = 0; x < nh; x++) {
+        const bj = hits[x]!;
+        const du = gu[bj]! - u;
+        const dv = gv[bj]! - v;
+        const d2 = du * du + dv * dv;
+        if (bj !== bi && d2 < best * best) best = Math.sqrt(d2);
+      }
+      nn[bi] = best;
+    }
+    const finiteNn = nn.filter(Number.isFinite);
+    const spacingPx = medianOf(finiteNn.length, (i) => finiteNn[i]!);
+    const gateFor = (bi: number): number => {
+      if (this.gateSpacingFrac <= 0 || !Number.isFinite(nn[bi]!)) return this.gatePx;
+      return Math.min(this.gatePx, Math.max(this.minGatePx, this.gateSpacingFrac * nn[bi]!));
+    };
+
+    const common = this.commonVelocity();
+    const predictions = this.tracks.map((tr) => this.predictTrack(tr, meta, common));
+    const shift = this.globalMotion ? this.estimateShift(predictions, blobs, grid, spacingPx) : { du: 0, dv: 0 };
+    for (const p of predictions) {
+      p.u += shift.du;
+      p.v += shift.dv;
+    }
+
+    // All candidate (track, blob) pairs within the (per-blob) gate,
+    // best-first greedy — minus tracks whose best match is ambiguous.
     interface Cand {
       d2: number;
       ti: number;
       bi: number;
     }
     const cands: Cand[] = [];
-    const gate2 = this.gatePx * this.gatePx;
-    const predictions = this.tracks.map((tr) => this.predictTrack(tr, meta));
-    for (let ti = 0; ti < this.tracks.length; ti++) {
+    const ambiguousTrack = new Uint8Array(nT);
+    const contested = new Uint8Array(nB);
+    for (let ti = 0; ti < nT; ti++) {
       const pred = predictions[ti]!;
-      for (let bi = 0; bi < blobs.length; bi++) {
-        const b = blobs[bi]!;
-        const du = b.u - pred.u;
-        const dv = b.v - pred.v;
+      let best = Infinity;
+      let second = Infinity;
+      let bestBi = -1;
+      // One query serves the three passes below (same points, same order).
+      const nh = grid.query(pred.u, pred.v);
+      const hits = grid.hits;
+      const d2s = scratchD2(nh);
+      for (let x = 0; x < nh; x++) {
+        const bi = hits[x]!;
+        const du = gu[bi]! - pred.u;
+        const dv = gv[bi]! - pred.v;
         const d2 = du * du + dv * dv;
-        if (d2 <= gate2) cands.push({ d2, ti, bi });
+        d2s[x] = d2;
+        if (d2 < best) {
+          second = best;
+          best = d2;
+          bestBi = bi;
+        } else if (d2 < second) second = d2;
+      }
+      if (bestBi < 0) continue;
+      const g = gateFor(bestBi);
+      if (best > g * g) continue;
+      // Squared distances: best ≥ ratio² × second ⇔ dist ≥ ratio × dist.
+      if (this.ambiguityRatio < 1 && best >= this.ambiguityRatio * this.ambiguityRatio * second) {
+        ambiguousTrack[ti] = 1;
+        // Neither candidate may found a duplicate track while this one is
+        // undecided: it is (one of) them.
+        for (let x = 0; x < nh; x++) if (d2s[x]! <= second) contested[hits[x]!] = 1;
+        continue;
+      }
+      cands.push({ d2: best, ti, bi: bestBi });
+      // Lower-ranked alternatives stay eligible for when the best is taken.
+      for (let x = 0; x < nh; x++) {
+        const bi = hits[x]!;
+        if (bi === bestBi) continue;
+        const gb = gateFor(bi);
+        if (d2s[x]! <= gb * gb) cands.push({ d2: d2s[x]!, ti, bi });
       }
     }
     cands.sort((a, b) => a.d2 - b.d2);
 
-    const trackTaken = new Uint8Array(this.tracks.length);
-    const blobTaken = new Uint8Array(blobs.length);
-    const assignment: (Track | null)[] = new Array(blobs.length).fill(null);
-    let matched = 0;
+    const trackTaken = new Uint8Array(nT);
+    const blobTaken = new Uint8Array(nB);
+    const pairBlob = new Int32Array(nT).fill(-1);
     for (const c of cands) {
       if (trackTaken[c.ti] || blobTaken[c.bi]) continue;
       trackTaken[c.ti] = 1;
       blobTaken[c.bi] = 1;
+      pairBlob[c.ti] = c.bi;
+    }
+
+    // Local consistency: neighbouring LEDs move together (one rigid fixture,
+    // one camera), so a match whose residual disagrees with its neighbours'
+    // by a good fraction of a pitch is a track that hopped onto the LED next
+    // door. Refuse it: the track coasts on its neighbours' correction, which
+    // is also what re-aims unmatched tracks under motion the global shift
+    // can't express (roll, parallax between faces at different depths).
+    const localCorr: ({ u: number; v: number } | null)[] = new Array(nT).fill(null);
+    let inconsistent = 0;
+    if (this.localConsistencyFrac > 0 && spacingPx !== null) {
+      const radius = LOCAL_RADIUS_PITCHES * spacingPx;
+      const at: Blob[] = [];
+      const atTi: number[] = [];
+      for (let ti = 0; ti < nT; ti++) {
+        if (pairBlob[ti]! < 0) continue;
+        at.push({ u: predictions[ti]!.u, v: predictions[ti]!.v, intensity: 0, area: 0 });
+        atTi.push(ti);
+      }
+      const near = new BlobGrid(at, Math.max(8, radius));
+      const resU = (ti: number): number => blobs[pairBlob[ti]!]!.u - predictions[ti]!.u;
+      const resV = (ti: number): number => blobs[pairBlob[ti]!]!.v - predictions[ti]!.v;
+      // Matched tracks' residuals, by their index in `at`.
+      const atRu = new Float64Array(atTi.length);
+      const atRv = new Float64Array(atTi.length);
+      for (let k = 0; k < atTi.length; k++) {
+        atRu[k] = resU(atTi[k]!);
+        atRv[k] = resV(atTi[k]!);
+      }
+      let nu = new Float64Array(64);
+      let nv = new Float64Array(64);
+      const neighbourhood = (ti: number): { u: number; v: number } | null => {
+        const p = predictions[ti]!;
+        const nh = near.query(p.u, p.v);
+        const hits = near.hits;
+        let m = 0;
+        for (let x = 0; x < nh; x++) {
+          const k = hits[x]!;
+          if (atTi[k] === ti) continue;
+          const du = near.us[k]! - p.u;
+          const dv = near.vs[k]! - p.v;
+          if (du * du + dv * dv > radius * radius) continue;
+          if (m === nu.length) {
+            const gu2 = new Float64Array(2 * m);
+            const gv2 = new Float64Array(2 * m);
+            gu2.set(nu);
+            gv2.set(nv);
+            nu = gu2;
+            nv = gv2;
+          }
+          nu[m] = atRu[k]!;
+          nv[m] = atRv[k]!;
+          m++;
+        }
+        if (m < LOCAL_MIN_NEIGHBOURS) return null;
+        return { u: medianInPlace(nu, m)!, v: medianInPlace(nv, m)! };
+      };
+      const limit = this.localConsistencyFrac * spacingPx;
+      const refused: number[] = [];
+      for (let ti = 0; ti < nT; ti++) {
+        const m = neighbourhood(ti);
+        localCorr[ti] = m;
+        if (m === null || pairBlob[ti]! < 0) continue;
+        if (Math.hypot(resU(ti) - m.u, resV(ti) - m.v) > limit) refused.push(ti);
+      }
+      // Refuse after scoring every track, so one refusal can't change the
+      // neighbourhood another was judged against.
+      for (const ti of refused) {
+        const bi = pairBlob[ti]!;
+        pairBlob[ti] = -1;
+        trackTaken[ti] = 0;
+        blobTaken[bi] = 0;
+        contested[bi] = 1;
+        inconsistent++;
+      }
+    }
+
+    const assignment: (Track | null)[] = new Array(nB).fill(null);
+    let matched = 0;
+    for (let ti = 0; ti < nT; ti++) {
+      const bi = pairBlob[ti]!;
+      if (bi < 0) continue;
       matched++;
-      const tr = this.tracks[c.ti]!;
-      assignment[c.bi] = tr;
-      const b = blobs[c.bi]!;
+      const tr = this.tracks[ti]!;
+      assignment[bi] = tr;
+      const b = blobs[bi]!;
       const dt = t - tr.lastSeenMs;
       if (dt > 0) {
         const instU = (b.u - tr.u) / dt;
@@ -203,13 +463,19 @@ export class Tracker {
       tr.record(true, b.u, b.v, b.intensity, meta, b.r, b.g, b.b);
     }
 
-    // Unmatched tracks coast on their prediction; stale ones die.
+    // Unmatched tracks coast on their prediction (plus their neighbours'
+    // correction, when they have one); stale ones die.
     const survivors: Track[] = [];
-    for (let ti = 0; ti < this.tracks.length; ti++) {
+    for (let ti = 0; ti < nT; ti++) {
       const tr = this.tracks[ti]!;
       if (!trackTaken[ti]) {
         if (t - tr.lastSeenMs > this.maxCoastMs) continue; // dead
         const pred = predictions[ti]!;
+        const corr = localCorr[ti];
+        if (corr != null) {
+          pred.u += corr.u;
+          pred.v += corr.v;
+        }
         tr.u = pred.u;
         tr.v = pred.v;
         tr.lastStepMs = t;
@@ -218,13 +484,298 @@ export class Tracker {
       survivors.push(tr);
     }
 
-    // Unmatched blobs found new tracks.
+    // Unmatched blobs found new tracks — except where an established track
+    // went unmatched within a pitch of it this frame: that blob is most
+    // likely the track's own LED after a jump the prediction missed. A
+    // duplicate founded there would split the LED's code cycle between two
+    // tracks (neither decodes) and compete with the original for identity;
+    // left alone, the original re-acquires once the motion settles.
+    const claimR = spacingPx ?? this.gatePx;
+    const orphans = new BlobGrid(
+      this.tracks.length === 0
+        ? []
+        : predictions.filter((_, ti) => !trackTaken[ti] && this.tracks[ti]!.samples.length >= 2).map((p) => ({ u: p.u, v: p.v, intensity: 0, area: 0 })),
+      Math.max(8, claimR),
+    );
     for (let bi = 0; bi < blobs.length; bi++) {
-      if (!blobTaken[bi]) survivors.push(new Track(blobs[bi]!, meta));
+      if (blobTaken[bi] || contested[bi]) continue;
+      let claimed = false;
+      const nh = orphans.query(gu[bi]!, gv[bi]!);
+      for (let x = 0; x < nh && !claimed; x++) {
+        const k = orphans.hits[x]!;
+        const du = orphans.us[k]! - gu[bi]!;
+        const dv = orphans.vs[k]! - gv[bi]!;
+        if (du * du + dv * dv <= claimR * claimR) claimed = true;
+      }
+      if (!claimed) survivors.push(new Track(blobs[bi]!, meta));
     }
 
+    let live = 0;
+    let liveMatched = 0;
+    let liveAmbiguous = 0;
+    for (let ti = 0; ti < nT; ti++) {
+      const tr = this.tracks[ti]!;
+      if (tr.samples.length < 2) continue; // founded last frame: no history yet
+      live++;
+      if (trackTaken[ti]) liveMatched++;
+      else if (ambiguousTrack[ti]) liveAmbiguous++;
+    }
     this.tracks = survivors;
     this.lastAssignment = assignment;
+    this.prevT = t;
+    this.lastStats = {
+      spacingPx,
+      shiftPx: Math.hypot(shift.du, shift.dv),
+      live,
+      matched: liveMatched,
+      ambiguous: liveAmbiguous,
+      inconsistent,
+    };
     return matched;
+  }
+
+  /**
+   * The frame's common image shift relative to the per-track predictions:
+   * every (prediction, nearby blob) offset votes in a 2D histogram whose bins
+   * are a fraction of the LED spacing; the fullest bin (ties: the smaller
+   * shift — on a periodic grid a one-pitch shift scores as well as the
+   * truth) is refined by its members' mean. Needs a quorum, else no shift.
+   */
+  private estimateShift(
+    predictions: readonly { u: number; v: number }[],
+    blobs: readonly Blob[],
+    grid: BlobGrid,
+    spacingPx: number | null,
+  ): { du: number; dv: number } {
+    const none = { du: 0, dv: 0 };
+    if (predictions.length < 3 || blobs.length < 3 || spacingPx === null) return none;
+    // Offsets from each prediction to every blob near it. The true shift is
+    // one tight cluster (every track agrees); offsets to NEIGHBOURS scatter
+    // over ~a pitch in every direction, so they form no comparable peak.
+    const r2 = this.gatePx * this.gatePx;
+    let offs = offsScratch;
+    let nOffs = 0;
+    for (const p of predictions) {
+      const nh = grid.query(p.u, p.v);
+      for (let x = 0; x < nh; x++) {
+        const bi = grid.hits[x]!;
+        const du = grid.us[bi]! - p.u;
+        const dv = grid.vs[bi]! - p.v;
+        if (du * du + dv * dv > r2) continue;
+        if (nOffs + 2 > offs.length) {
+          const g = new Float64Array(2 * offs.length);
+          g.set(offs);
+          offs = offsScratch = g;
+        }
+        offs[nOffs++] = du;
+        offs[nOffs++] = dv;
+      }
+    }
+    const bin = Math.max(1, 0.25 * spacingPx);
+    const votes = new Map<number, number>();
+    const key = (i: number, j: number): number => (i + 4096) * 8192 + (j + 4096);
+    for (let k = 0; k < nOffs; k += 2) {
+      const kk = key(Math.round(offs[k]! / bin), Math.round(offs[k + 1]! / bin));
+      votes.set(kk, (votes.get(kk) ?? 0) + 1);
+    }
+    let bestK = key(0, 0);
+    let bestN = votes.get(bestK) ?? 0;
+    for (const [k, n] of votes) {
+      if (n > bestN) {
+        bestN = n;
+        bestK = k;
+      }
+    }
+    // Mean-shift from the peak: average the offsets within a third of a
+    // pitch, twice — sub-bin accuracy, and immune to the bin grid.
+    let du = (Math.floor(bestK / 8192) - 4096) * bin;
+    let dv = ((bestK % 8192) - 4096) * bin;
+    const near2 = (spacingPx / 3) ** 2;
+    const support = (cu: number, cv: number): { n: number; su: number; sv: number } => {
+      let n = 0;
+      let su = 0;
+      let sv = 0;
+      for (let k = 0; k < nOffs; k += 2) {
+        const a = offs[k]! - cu;
+        const b = offs[k + 1]! - cv;
+        if (a * a + b * b <= near2) {
+          n++;
+          su += offs[k]!;
+          sv += offs[k + 1]!;
+        }
+      }
+      return { n, su, sv };
+    };
+    let sup = support(du, dv);
+    for (let it = 0; it < 2 && sup.n > 0; it++) {
+      du = sup.su / sup.n;
+      dv = sup.sv / sup.n;
+      sup = support(du, dv);
+    }
+    const quorum = Math.max(3, 0.3 * Math.min(predictions.length, blobs.length));
+    if (sup.n < quorum) return none;
+    // The tracks' own predictions are the prior: a shift of half a pitch or
+    // more must CLEARLY out-vote "no extra shift". On a periodic layout (a
+    // strip, a ring) a one-pitch shift scores within a few votes of the
+    // truth, and adopting it would move every track onto its neighbour at
+    // once. Smaller shifts can't alias onto a neighbour.
+    if (Math.hypot(du, dv) >= 0.5 * spacingPx && sup.n < SHIFT_MARGIN * support(0, 0).n) return none;
+    return { du, dv };
+  }
+
+}
+
+/** Scratch for estimateShift's offsets. */
+let offsScratch = new Float64Array(4096);
+
+/** Scratch for the association pass's per-query distances. */
+let d2Scratch = new Float64Array(64);
+function scratchD2(n: number): Float64Array {
+  if (d2Scratch.length < n) d2Scratch = new Float64Array(Math.max(n, 2 * d2Scratch.length));
+  return d2Scratch;
+}
+
+/** Scratch for {@link medianOf}: grown, never shrunk. */
+let medianScratch = new Float64Array(256);
+
+/** The median of `n` values `at(0..n-1)` (the middle value, or the mean of the two middle ones),
+ * without allocating: a typed-array numeric sort of a shared scratch. */
+function medianOf(n: number, at: (i: number) => number): number | null {
+  if (n === 0) return null;
+  if (medianScratch.length < n) medianScratch = new Float64Array(Math.max(n, 2 * medianScratch.length));
+  const s = medianScratch;
+  for (let i = 0; i < n; i++) s[i] = at(i);
+  return medianInPlace(s, n);
+}
+
+/**
+ * Uniform-grid spatial index over one frame's points: radius queries in O(k).
+ * Cells are `cell` px; {@link query} returns every point in the 3×3 cells
+ * around (u, v) — cells scanned row-major (i, then j), points in index order
+ * within a cell. Stored as a dense CSR table over the points' bounding box
+ * (a hash only when that box is huge): at 2000 LEDs the tracker makes ~10k
+ * queries a frame, and the old Map-of-arrays + per-point callback was a
+ * third of the capture loop's CPU.
+ */
+class BlobGrid {
+  private readonly i0: number;
+  private readonly j0: number;
+  private readonly ni: number;
+  private readonly nj: number;
+  /** Dense: cell c's points are order[start[c] .. start[c+1]). */
+  private readonly start: Int32Array | null;
+  private readonly order: Int32Array;
+  /** Sparse fallback (bounding box too large for a dense table). */
+  private readonly cells: Map<number, number[]> | null;
+  readonly us: Float64Array;
+  readonly vs: Float64Array;
+  /** Indices from the last {@link query}. */
+  hits = new Int32Array(64);
+
+  constructor(
+    points: readonly { u: number; v: number }[],
+    private readonly cell: number,
+  ) {
+    const n = points.length;
+    this.us = new Float64Array(n);
+    this.vs = new Float64Array(n);
+    let i0 = Infinity;
+    let i1 = -Infinity;
+    let j0 = Infinity;
+    let j1 = -Infinity;
+    const ci = new Float64Array(n);
+    const cj = new Float64Array(n);
+    for (let k = 0; k < n; k++) {
+      const p = points[k]!;
+      this.us[k] = p.u;
+      this.vs[k] = p.v;
+      const a = Math.floor(p.u / cell);
+      const b = Math.floor(p.v / cell);
+      ci[k] = a;
+      cj[k] = b;
+      if (!Number.isFinite(a) || !Number.isFinite(b)) continue; // never found by a query
+      if (a < i0) i0 = a;
+      if (a > i1) i1 = a;
+      if (b < j0) j0 = b;
+      if (b > j1) j1 = b;
+    }
+    this.order = new Int32Array(n);
+    if (i0 > i1) {
+      this.i0 = this.j0 = 0;
+      this.ni = this.nj = 0;
+      this.start = new Int32Array(1);
+      this.cells = null;
+      return;
+    }
+    this.i0 = i0;
+    this.j0 = j0;
+    this.ni = i1 - i0 + 1;
+    this.nj = j1 - j0 + 1;
+    const nCells = this.ni * this.nj;
+    if (Number.isFinite(nCells) && nCells <= 4 * n + 4096) {
+      const start = new Int32Array(nCells + 1);
+      const placed = (k: number): boolean => Number.isFinite(ci[k]!) && Number.isFinite(cj[k]!);
+      for (let k = 0; k < n; k++) if (placed(k)) start[(ci[k]! - i0) * this.nj + (cj[k]! - j0) + 1]!++;
+      for (let c = 0; c < nCells; c++) start[c + 1]! += start[c]!;
+      const fill = start.slice(0, nCells);
+      for (let k = 0; k < n; k++) if (placed(k)) this.order[fill[(ci[k]! - i0) * this.nj + (cj[k]! - j0)]!++] = k;
+      this.start = start;
+      this.cells = null;
+    } else {
+      this.start = null;
+      this.cells = new Map();
+      for (let k = 0; k < n; k++) {
+        if (!Number.isFinite(ci[k]!) || !Number.isFinite(cj[k]!)) continue;
+        const key = BlobGrid.key(ci[k]!, cj[k]!);
+        const c = this.cells.get(key);
+        if (c === undefined) this.cells.set(key, [k]);
+        else c.push(k);
+      }
+    }
+  }
+
+  private static key(i: number, j: number): number {
+    return (i + 32768) * 65536 + (j + 32768);
+  }
+
+  private push(count: number, k: number): number {
+    if (count === this.hits.length) {
+      const h = new Int32Array(2 * count);
+      h.set(this.hits);
+      this.hits = h;
+    }
+    this.hits[count] = k;
+    return count + 1;
+  }
+
+  /** Every point within one cell (≥ the radius it was built for) of (u, v),
+   * into {@link hits}; returns how many. */
+  query(u: number, v: number): number {
+    const ci = Math.floor(u / this.cell);
+    const cj = Math.floor(v / this.cell);
+    let count = 0;
+    if (this.start !== null) {
+      const start = this.start;
+      const order = this.order;
+      for (let i = ci - 1; i <= ci + 1; i++) {
+        const ii = i - this.i0;
+        if (ii < 0 || ii >= this.ni) continue;
+        for (let j = cj - 1; j <= cj + 1; j++) {
+          const jj = j - this.j0;
+          if (jj < 0 || jj >= this.nj) continue;
+          const c = ii * this.nj + jj;
+          for (let x = start[c]!, end = start[c + 1]!; x < end; x++) count = this.push(count, order[x]!);
+        }
+      }
+      return count;
+    }
+    for (let i = ci - 1; i <= ci + 1; i++) {
+      for (let j = cj - 1; j <= cj + 1; j++) {
+        const c = this.cells!.get(BlobGrid.key(i, j));
+        if (c === undefined) continue;
+        for (const k of c) count = this.push(count, k);
+      }
+    }
+    return count;
   }
 }

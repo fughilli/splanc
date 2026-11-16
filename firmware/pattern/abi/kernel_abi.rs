@@ -49,6 +49,23 @@ fn spec(led_count: u32, symbols: u32, secded: u32) -> k::CodeSpec {
     k::CodeSpec::derive(led_count, symbols as u8, secded != 0)
 }
 
+/// The code-book DERIVED under a sync pattern code (0 on_off, 1 stagger_pilot,
+/// 2 stagger_white, 3 stagger_gm — [`k::SyncPattern::from_code`]). A pruned
+/// book counts its words (2^k validity checks): code-book sizing only.
+fn spec_sync(led_count: u32, symbols: u32, secded: u32, sync: u32) -> k::CodeSpec {
+    k::CodeSpec::derive_sync(led_count, symbols as u8, secded != 0, k::SyncPattern::from_code(sync))
+}
+
+/// The code-book a received CodeParams describes (`bits` as received): O(1),
+/// for the per-LED / per-frame calls.
+fn spec_params(led_count: u32, bits: u32, symbols: u32, secded: u32, sync: u32) -> k::CodeSpec {
+    k::CodeSpec::from_params(led_count, bits, symbols as u8, secded != 0, k::SyncPattern::from_code(sync))
+}
+
+/// Capacity of the coded-index buffer [`pk_stagger_fill`] writes.
+pub const IDS_BUF_LEN: u32 = 8192;
+static mut IDS_BUF: [u32; IDS_BUF_LEN as usize] = [0; IDS_BUF_LEN as usize];
+
 // --- constants ------------------------------------------------------------
 
 #[no_mangle]
@@ -140,6 +157,106 @@ pub extern "C" fn pk_symbol_color(symbols: u32, value: u32) -> u32 {
     k::symbol_color(symbols as u8, value as u8) as u32
 }
 
+/// The [`k::Color`] discriminant id `led_id`, whose coded index is `n`
+/// ([`pk_stagger_fill`]; `led_id + 1` for an unpruned book), shows in GLOBAL
+/// cycle frame `frame_index` under sync pattern `sync` (rotated per LED inside
+/// the kernel). `bits` is the code-book's, as received.
+#[no_mangle]
+pub extern "C" fn pk_color_index_coded(
+    led_id: u32,
+    n: u32,
+    frame_index: u32,
+    led_count: u32,
+    bits: u32,
+    symbols: u32,
+    secded: u32,
+    sync: u32,
+) -> u32 {
+    let spec = spec_params(led_count, bits, symbols, secded, sync);
+    k::color_index_for_frame_coded(led_id, n, frame_index, &spec) as u32
+}
+
+/// The symbol value coded index `n` transmits in data frame `frame`.
+#[no_mangle]
+pub extern "C" fn pk_symbol_at_coded(
+    n: u32,
+    frame: u32,
+    led_count: u32,
+    bits: u32,
+    symbols: u32,
+    secded: u32,
+    sync: u32,
+) -> u32 {
+    k::symbol_at_coded(n, frame, &spec_params(led_count, bits, symbols, secded, sync)) as u32
+}
+
+/// The stagger step S for a cycle of `cycle_frames` frames.
+#[no_mangle]
+pub extern "C" fn pk_stagger_step(cycle_frames: u32) -> u32 {
+    k::stagger_step(cycle_frames)
+}
+
+/// The phase rotation `(id * S + h(id / C)) mod C` of coded id `led_id`
+/// (h: the per-block offset of `stagger_phase`; 0 under on_off).
+#[no_mangle]
+pub extern "C" fn pk_stagger_phase(led_id: u32, led_count: u32, bits: u32, symbols: u32, secded: u32, sync: u32) -> u32 {
+    k::stagger_phase(led_id, &spec_params(led_count, bits, symbols, secded, sync))
+}
+
+/// Sync-position frames: the palette pilot's length under stagger_pilot, else 2.
+#[no_mangle]
+pub extern "C" fn pk_sync_frames(symbols: u32, sync: u32) -> u32 {
+    k::sync_frames(k::SyncPattern::from_code(sync), symbols as u8)
+}
+
+/// The [`k::Color`] discriminant of sync-position frame `j`.
+#[no_mangle]
+pub extern "C" fn pk_sync_color(sync: u32, symbols: u32, j: u32) -> u32 {
+    k::sync_color(k::SyncPattern::from_code(sync), symbols as u8, j) as u32
+}
+
+/// Coded bits of the code book DERIVED under `sync` (a pruned book may need a
+/// wider data word than `pk_expected_bits`).
+#[no_mangle]
+pub extern "C" fn pk_expected_bits_sync(led_count: u32, symbols: u32, secded: u32, sync: u32) -> u32 {
+    spec_sync(led_count, symbols, secded, sync).bits
+}
+
+/// Cycle frames of the code book DERIVED under `sync`.
+#[no_mangle]
+pub extern "C" fn pk_cycle_frames_sync(led_count: u32, symbols: u32, secded: u32, sync: u32) -> u32 {
+    spec_sync(led_count, symbols, secded, sync).cycle_frames
+}
+
+/// The buffer [`pk_stagger_fill`] writes coded indices into.
+#[no_mangle]
+pub extern "C" fn pk_stagger_ids_buf() -> *mut u32 {
+    core::ptr::addr_of_mut!(IDS_BUF) as *mut u32
+}
+
+/// Write the coded index of ids `0..count` (the id -> codeword table of a
+/// pruned book, walked with [`k::stagger_next`]; `id + 1` otherwise) into
+/// [`pk_stagger_ids_buf`]. Returns `count`, or 0 if it exceeds the buffer or
+/// the book.
+#[no_mangle]
+pub extern "C" fn pk_stagger_fill(count: u32, led_count: u32, bits: u32, symbols: u32, secded: u32, sync: u32) -> u32 {
+    if count > IDS_BUF_LEN {
+        return 0;
+    }
+    let spec = spec_params(led_count, bits, symbols, secded, sync);
+    // SAFETY: single-threaded callers (one wasm instance / the GIL).
+    let buf = unsafe { &mut *core::ptr::addr_of_mut!(IDS_BUF) };
+    let mut n = 0;
+    for slot in buf.iter_mut().take(count as usize) {
+        n = if spec.sync.pruned() { k::stagger_next(n, &spec) } else { n + 1 };
+        if n == u32::MAX {
+            return 0;
+        }
+        *slot = n;
+    }
+    count
+}
+
 /// Packed `0xRRGGBB` of the palette entry `led_id` shows in cycle frame
 /// `frame_index` (the RGB the player renders; [`k::Color::rgb`]). Host-only,
 /// like [`pk_frame_rgb`]: the phone's wasm keeps palette indices.
@@ -148,6 +265,37 @@ pub extern "C" fn pk_symbol_color(symbols: u32, value: u32) -> u32 {
 pub extern "C" fn pk_color_rgb(led_id: u32, frame_index: u32, led_count: u32, symbols: u32, secded: u32) -> u32 {
     let (r, g, b) = k::color_index_for_frame(led_id, frame_index, &spec(led_count, symbols, secded)).rgb();
     (r as u32) << 16 | (g as u32) << 8 | b as u32
+}
+
+/// [`pk_color_rgb`] under sync pattern `sync`. Host-only.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn pk_color_rgb_sync(
+    led_id: u32,
+    frame_index: u32,
+    led_count: u32,
+    symbols: u32,
+    secded: u32,
+    sync: u32,
+) -> u32 {
+    // Derives (and for a pruned book counts) per call: goldens / tests only.
+    let (r, g, b) = k::color_index_for_frame(led_id, frame_index, &spec_sync(led_count, symbols, secded, sync)).rgb();
+    (r as u32) << 16 | (g as u32) << 8 | b as u32
+}
+
+/// [`pk_frame_rgb`] under sync pattern `sync`. Host-only.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub unsafe extern "C" fn pk_frame_rgb_sync(
+    frame_index: u32,
+    led_count: u32,
+    symbols: u32,
+    secded: u32,
+    sync: u32,
+    out: *mut u8,
+    out_len: u32,
+) -> u32 {
+    frame_rgb(&spec_sync(led_count, symbols, secded, sync), frame_index, out, out_len)
 }
 
 /// Host-only (not in the phone's wasm): write cycle frame `frame_index` for
@@ -165,15 +313,24 @@ pub unsafe extern "C" fn pk_frame_rgb(
     out: *mut u8,
     out_len: u32,
 ) -> u32 {
-    let spec = spec(led_count, symbols, secded);
+    frame_rgb(&spec(led_count, symbols, secded), frame_index, out, out_len)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe fn frame_rgb(spec: &k::CodeSpec, frame_index: u32, out: *mut u8, out_len: u32) -> u32 {
+    let led_count = spec.led_count;
     let need = led_count as usize * 3;
     if out.is_null() || (out_len as usize) < need || frame_index >= spec.cycle_frames {
         return 0;
     }
     // SAFETY: the caller owns `out_len >= need` writable bytes at `out`.
     let buf = core::slice::from_raw_parts_mut(out, need);
+    // Walk the ids in order: a pruned book's coded indices come from
+    // stagger_next (O(1) amortised per LED), never a per-LED unrank.
+    let mut n = 0;
     for (id, px) in buf.chunks_exact_mut(3).enumerate() {
-        let (r, g, b) = k::color_index_for_frame(id as u32, frame_index, &spec).rgb();
+        n = if spec.sync.pruned() { k::stagger_next(n, spec) } else { id as u32 + k::CODE_OFFSET };
+        let (r, g, b) = k::color_index_for_frame_coded(id as u32, n, frame_index, spec).rgb();
         px.copy_from_slice(&[r, g, b]);
     }
     need as u32
@@ -197,10 +354,12 @@ pub extern "C" fn pk_decode_cycle(n: u32, led_count: u32, bits: u32, symbols: u3
     }
     let spec = k::CodeSpec {
         led_count,
+        data_bits: k::data_bits(led_count),
         bits,
         symbols: symbols as u8,
         cycle_frames: k::DATA_FRAME_OFFSET + k::data_frames(bits, symbols as u8),
         secded: secded != 0,
+        sync: k::SyncPattern::OnOff, // decoding a cycle's data is sync-independent
     };
     // SAFETY: single-threaded callers (one wasm instance / the GIL); the buffer
     // is only read here, after the caller filled it.
@@ -216,6 +375,57 @@ pub extern "C" fn pk_decode_cycle(n: u32, led_count: u32, bits: u32, symbols: u3
     let d = k::decode_cycle_symbols(symbols, &spec);
     let mut out = match d.id {
         Some(id) => FLAG_VALUE | (id & VALUE_MASK),
+        None => 0,
+    };
+    if d.corrected {
+        out |= FLAG_CORRECTED;
+    }
+    if d.uncorrectable {
+        out |= FLAG_UNCORRECTABLE;
+    }
+    out
+}
+
+/// [`pk_decode_cycle`] for a code book under sync pattern `sync` (the book a
+/// received CodeParams describes: `bits` as received). A pruned book maps the
+/// decoded word back to its id by rank (O(2^k) validity checks at worst).
+#[no_mangle]
+pub extern "C" fn pk_decode_cycle_sync(n: u32, led_count: u32, bits: u32, symbols: u32, secded: u32, sync: u32) -> u32 {
+    if n > SYMBOL_BUF_LEN {
+        return 0;
+    }
+    let spec = spec_params(led_count, bits, symbols, secded, sync);
+    // SAFETY: as pk_decode_cycle.
+    let buf = unsafe { &*core::ptr::addr_of!(SYMBOL_BUF) };
+    let d = k::decode_cycle_symbols(&buf[..n as usize], &spec);
+    let mut out = match d.id {
+        Some(id) => FLAG_VALUE | (id & VALUE_MASK),
+        None => 0,
+    };
+    if d.corrected {
+        out |= FLAG_CORRECTED;
+    }
+    if d.uncorrectable {
+        out |= FLAG_UNCORRECTABLE;
+    }
+    out
+}
+
+/// [`pk_decode_cycle_sync`] up to the coded index: `FLAG_VALUE | n` for the
+/// index the word carries (not ranked to an id — the caller maps it with the
+/// table [`pk_stagger_fill`] wrote, O(1) where the rank walks the book), plus
+/// the same correction flags. 0 / `FLAG_UNCORRECTABLE` as pk_decode_cycle_sync.
+#[no_mangle]
+pub extern "C" fn pk_decode_cycle_coded(n: u32, led_count: u32, bits: u32, symbols: u32, secded: u32, sync: u32) -> u32 {
+    if n > SYMBOL_BUF_LEN {
+        return 0;
+    }
+    let spec = spec_params(led_count, bits, symbols, secded, sync);
+    // SAFETY: as pk_decode_cycle.
+    let buf = unsafe { &*core::ptr::addr_of!(SYMBOL_BUF) };
+    let d = k::decode_cycle_coded(&buf[..n as usize], &spec);
+    let mut out = match d.id {
+        Some(c) => FLAG_VALUE | (c & VALUE_MASK),
         None => 0,
     };
     if d.corrected {

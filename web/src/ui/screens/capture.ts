@@ -22,11 +22,12 @@ import {
   planExposureServo,
   planLedBrightness,
   planReconfigure,
-  planSymbolSwitch,
   recommendConfig,
 } from "../../cv/exposure";
 import { CapturePerf, formatPerfLine, formatPhaseLine } from "../../cv/capturePerf";
 import { LinkTelemetry, type LinkTelemetrySnapshot } from "../../cv/linkTelemetry";
+import { AlphabetPlanner, ChannelQuality, channelSnapshot, formatPrediction } from "../../cv/channelQuality";
+import { JERKY_MOTION_HINT, MotionGuide } from "../../cv/motionGuide";
 import { CvPipeline } from "../../cv/pipeline";
 import { DetectorGL } from "../../cv/detect";
 import {
@@ -37,6 +38,7 @@ import {
   driverFixtureScene,
   setDriverCaptureError,
 } from "../../driver/guard";
+import { forcedSyncPattern, isStaggered } from "../../code/gray";
 import { phaseCount as stridePhaseCount } from "../../code/stride";
 import {
   fillChannelGaps,
@@ -190,6 +192,22 @@ const imuMapping = parseImuMapping(qs.get("imumap") ?? "") ?? DEFAULT_IMU_MAPPIN
 /** The overlays redraw at most this often (ms): they show state, and a phone
  * can't afford them at the camera rate on top of capture + IMU + CV. */
 const OVERLAY_MIN_INTERVAL_MS = 80;
+/** ...and at least this often: past it the CV task draws them itself (a
+ * background task never runs while the CV queue is busy, see runIfStarved). */
+const OVERLAY_MAX_STALE_MS = 250;
+/**
+ * When the CV queue holds at least MAX_CV_BACKLOG frames AND its oldest has
+ * waited MAX_CV_LAG_MS, a new camera frame is skipped (not detected, not
+ * decoded) rather than queued. A phone that can't decode at the camera rate
+ * otherwise falls further behind every frame — the overlay and the "decoded"
+ * marks lag by seconds and grow (the 2000-LED wall froze). Skipping is a
+ * lower effective frame rate, which the decoder already handles (a dropped
+ * camera frame) and the capture's cadence measurement reports, so the
+ * bit-period servo slows the code to the rate the phone actually keeps. A
+ * short burst the queue absorbs in time is never shed.
+ */
+const MAX_CV_BACKLOG = 3;
+const MAX_CV_LAG_MS = 250;
 const forcedFx = ((): number | null => {
   const v = parseFloat(qs.get("fx") ?? "");
   return Number.isFinite(v) && v > 0 ? v : null;
@@ -198,6 +216,11 @@ const forcedSymbols = ((): 2 | 4 | null => {
   const v = qs.get("symbols");
   return v === "2" ? 2 : v === "4" ? 4 : null;
 })();
+// `?sync=stagger_pilot` REQUESTS the hue code v2 staggered pilot in
+// start_mapping (phase 2 wall test). The phone always decodes the
+// CodeParams.syncPattern the device answers with: a player that doesn't support
+// the request (every C6/P4 today) runs v1 "on_off" and the phone decodes v1.
+const forcedSync = forcedSyncPattern(qs.get("sync"));
 const forcedBitMs = ((): number | null => {
   const v = parseFloat(qs.get("bitms") ?? "");
   return Number.isFinite(v) && v > 0 ? v : null;
@@ -1267,6 +1290,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // Per-channel capture: the code book covers the WHOLE fixture from the
         // start, so ids + code timing never change between stages.
         ...(channelPlan !== null ? { codeSpace: channelPlan.total } : {}),
+        ...(forcedSync !== null ? { syncPattern: forcedSync } : {}),
       };
 
       abandonIfDisposed();
@@ -1311,8 +1335,16 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       }
       // Every LED id decoded so far this run (drives the per-channel stage switch).
       const decodedIds = new Set<number>();
+      // Data-aided channel measurement (cv/channelQuality.ts): shared across
+      // pipeline rebuilds, since the hue-noise estimate doesn't depend on the
+      // alphabet. It drives the alphabet both ways (no scene-luma gate).
+      const channelQuality = new ChannelQuality();
+      const alphabetPlanner = new AlphabetPlanner([2, 4]);
       const makePipeline = (p: CodeParams, e: number): CvPipeline => {
-        const pl = new CvPipeline(p, e, (t) => c.clock.toServerTime(t), { denseRecords: true });
+        const pl = new CvPipeline(p, e, (t) => c.clock.toServerTime(t), {
+          denseRecords: true,
+          decoder: { quality: channelQuality },
+        });
         pl.onDetections((records: DetectionRecord[]) => {
           for (const r of records) decodedIds.add(r.ledId);
           // Embedded players discard capture telemetry and have no host solver.
@@ -1325,6 +1357,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         return pl;
       };
       let pipeline = makePipeline(params, epoch);
+      // Jerky-motion hint (cv/motionGuide.ts): while the image moves more than
+      // the tracker can predict, the guide line asks for SMOOTHER motion —
+      // never less of it (IMU scale needs the movement) — and the line it
+      // replaced comes back once the motion settles.
+      const motionGuide = new MotionGuide();
+      let guideBeforeJerk: string | null = null;
       // Hand the synthetic scene the negotiated code-book so it renders the exact
       // hue-code + frame timing the decoder expects (matches the device side).
       syntheticSource?.setCode(params, epoch, (t) => c.clock.toServerTime(t));
@@ -1389,6 +1427,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           frameCount,
           truncatedFrames,
           perf: loopPerf.snapshot(),
+          channel: channelSnapshot(channelQuality, params),
           fixture: {
             deviceId: activeId,
             name: w?.deviceName || (activeId ? deviceStore.get(activeId)?.label ?? null : null),
@@ -1419,9 +1458,15 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // Frames the capture source had to clip (see the onFrame handler). Counted
       // so a run that quietly threw away half its frames says so.
       let truncatedFrames = 0;
+      // Camera frames skipped because the CV queue was behind (MAX_CV_BACKLOG).
+      let shedFrames = 0;
 
       capture.onFrame((f) => {
         if (!capturing || !capture) return;
+        if (cvQueue.backlog >= MAX_CV_BACKLOG && cvQueue.oldestWaitMs >= MAX_CV_LAG_MS) {
+          shedFrames++;
+          return;
+        }
         const tStart = performance.now();
         const blobs = detector.detectFrame(f, {});
         const tDetected = performance.now();
@@ -1470,6 +1515,17 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             imgW: f.imgW,
             imgH: f.imgH,
           });
+          if (motionGuide.update(pipeline.tracker.lastStats, f.tCaptureMs)) {
+            // Re-asserted every frame: other guidance (coverage, stages) may
+            // have written the line since; that text is what comes back.
+            if (guideEl.textContent !== JERKY_MOTION_HINT) {
+              guideBeforeJerk = guideEl.textContent ?? "";
+              guideEl.textContent = JERKY_MOTION_HINT;
+            }
+          } else if (guideBeforeJerk !== null) {
+            if (guideEl.textContent === JERKY_MOTION_HINT) guideEl.textContent = guideBeforeJerk;
+            guideBeforeJerk = null;
+          }
           const tDecoded = performance.now();
           focalPx = f.K[0];
           let overlayMs = 0;
@@ -1499,6 +1555,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
                 updateRegChip(projOverlay.draw(pipeline.lastBlobStatus, K, imgW, imgH, showSolved));
               }
             });
+            overlayTask.runIfStarved(OVERLAY_MAX_STALE_MS);
             overlayMs = overlayTask.lastMs;
           }
 
@@ -1526,8 +1583,13 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             hudStats.textContent =
               `decoded ${s.uniqueIds.size}/${params.ledCount} ids · ${s.tracks} tracks · ` +
               `${blobs.length} blobs · align ${s.alignShiftMs.toFixed(0)} ms · ` +
+              (isStaggered(params)
+                ? `pilot k ${s.phaseK ?? "–"} · cyc ${s.pilotCycles} miss ${s.delimiterMisses} φrej ${s.phaseRejects} · `
+                : "") +
+              `jerk ${motionGuide.pitchesPerFrame?.toFixed(2) ?? "–"} pitch/frame · ` +
               `${c.pendingBatchCount} unsent${liveSolvedText}\n` +
               servoLine +
+              `\n${formatPrediction(channelQuality.estimate(), params)}` +
               `\n${formatPerfLine(ps)}`;
             // Live count chip reads observations · solved, so the user sees more
             // recording only helps (design doc §4.2).
@@ -1539,7 +1601,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
               const diag =
                 `[capture] ids=${s.uniqueIds.size}/${params.ledCount} tracks=${s.tracks} ` +
                   `blobs=${blobs.length} align=${s.alignShiftMs.toFixed(0)}ms ` +
-                  `obs=${localDetections.length} clipped=${truncatedFrames} ` +
+                  `obs=${localDetections.length} clipped=${truncatedFrames} shed=${shedFrames} ` +
                   `bit=${params.bitPeriodMs}ms sym=${params.symbols}` +
                   (pop ? ` sat=${pop.satFrac.toFixed(2)} medI=${pop.medianIntensity.toFixed(2)}` : "");
               console.info(diag);
@@ -1785,6 +1847,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           .then((ps) => {
             if (!capturing || !ps.active || ps.patternClockEpoch === null) return;
             onApplied?.();
+            if (ps.codeParams.symbols !== params.symbols) channelQuality.resetYield();
             params = ps.codeParams;
             epoch = ps.patternClockEpoch;
             pipeline = makePipeline(params, epoch);
@@ -1969,11 +2032,13 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         const wantBit = forcedBitMs === null ? planReconfigure(params.bitPeriodMs, report.frameIntervalMs) : null;
         const wantSym =
           forcedSymbols === null
-            ? planSymbolSwitch(
-                params.symbols as 2 | 4,
-                { meanLuma: report.meanLuma, clipFrac: report.clipFrac },
-                pipeline.stats.marginEma,
-              )
+            ? (alphabetPlanner.plan(
+                params.symbols,
+                channelQuality.estimate(),
+                params,
+                channelQuality.decodeYield(),
+                performance.now(),
+              ) as 2 | 4 | null)
             : null;
         const pop = monitor.blobPopulation();
         if (servoExposure && !manualMode && pop !== null) {

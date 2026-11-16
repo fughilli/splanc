@@ -10,13 +10,16 @@
 
 import type { CodeParams, DetectionRecord } from "@ledmapper/protocol";
 import { cycleMs } from "../code/timing";
-import { Decoder, type DecoderOptions } from "./decoder";
+import { isStaggered } from "../code/gray";
+import { type CodeDecoder, Decoder, type DecoderOptions, MAX_HELD } from "./decoder";
+import { StaggerDecoder, type StaggerDecoderOptions } from "./staggerDecoder";
 import { Tracker, type TrackerOptions } from "./tracker";
 import type { Blob, FrameMeta } from "./types";
 
 export interface PipelineOptions {
   tracker?: TrackerOptions;
-  decoder?: DecoderOptions;
+  /** Decoder options (the staggered-pilot extras apply only when the code is staggered). */
+  decoder?: StaggerDecoderOptions;
   /**
    * WebXR-free capture mode (docs/vio-exploration.md): emit DENSE records —
    * one per identified blob per sampled frame, pose from the frame meta
@@ -46,7 +49,8 @@ export interface BlobStatus {
 
 export class CvPipeline {
   readonly tracker: Tracker;
-  readonly decoder: Decoder;
+  /** v1 {@link Decoder} for "on_off", {@link StaggerDecoder} for a staggered syncPattern. */
+  readonly decoder: CodeDecoder;
   /** 2D-stage feedback for the frame most recently passed to step(). */
   lastBlobStatus: BlobStatus[] = [];
   private cb: ((records: DetectionRecord[]) => void) | null = null;
@@ -69,7 +73,9 @@ export class CvPipeline {
     // track that survives a full cycle re-acquires its identity instantly.
     const coast = opts.tracker?.maxCoastMs ?? 1.25 * cycleMs(params);
     this.tracker = new Tracker({ ...opts.tracker, maxCoastMs: coast });
-    this.decoder = new Decoder(params, epochMs, toServerTime, opts.decoder);
+    this.decoder = isStaggered(params)
+      ? new StaggerDecoder(params, epochMs, toServerTime, opts.decoder)
+      : new Decoder(params, epochMs, toServerTime, opts.decoder as DecoderOptions | undefined);
   }
 
   onDetections(cb: (records: DetectionRecord[]) => void): void {
@@ -92,7 +98,7 @@ export class CvPipeline {
       const tr = this.tracker.lastAssignment[i] ?? null;
       return { u: b.u, v: b.v, area: b.area, matched: tr !== null, ledId: tr?.ledId ?? null };
     });
-    // The saturated-GREEN census is the global delimiter signal the
+    // The saturated-GREEN census is the v1 global delimiter signal the
     // decoder's self-clocking alignment keys on (ALL_OFF renders green;
     // no data symbol is green — yellow has r≈g, cyan is unused).
     let greens = 0;
@@ -113,10 +119,33 @@ export class CvPipeline {
       // reflection dedup at frame granularity.
       if (this.frameIndex % this.denseStride === 0) {
         const best = new Map<number, { rec: DetectionRecord; intensity: number }>();
+        const released: DetectionRecord[] = [];
         for (let i = 0; i < blobs.length; i++) {
           const tr = this.tracker.lastAssignment[i] ?? null;
-          if (tr === null || tr.ledId === null) continue;
+          if (tr === null) continue;
           const b = blobs[i]!;
+          if (tr.ledId === null) {
+            // Id decoded but not yet confirmed: hold this sighting under it
+            // (the decoder releases or discards the track's held records).
+            if (tr.pendingId !== null && tr.heldDense.length < MAX_HELD) {
+              tr.heldDense.push({
+                ledId: tr.pendingId,
+                tCaptureMs: meta.tCaptureMs,
+                u: b.u,
+                v: b.v,
+                imgW: meta.imgW,
+                imgH: meta.imgH,
+                K: meta.K,
+                pose: meta.pose,
+                confidence: tr.ledConfidence ?? 0.5,
+              });
+            }
+            continue;
+          }
+          // Confirmed: anything still held for this id goes out now.
+          if (tr.heldDense.length > 0) {
+            for (const h of tr.heldDense.splice(0)) if (h.ledId === tr.ledId) released.push(h);
+          }
           const prev = best.get(tr.ledId);
           if (prev !== undefined && prev.intensity >= b.intensity) continue;
           best.set(tr.ledId, {
@@ -134,7 +163,8 @@ export class CvPipeline {
             },
           });
         }
-        if (best.size > 0) this.cb?.([...best.values()].map((e) => e.rec));
+        const out = [...released, ...[...best.values()].map((e) => e.rec)];
+        if (out.length > 0) this.cb?.(out);
       }
       this.frameIndex++;
     } else if (records.length > 0) {
@@ -142,9 +172,8 @@ export class CvPipeline {
     }
 
     // Bound memory: drop samples older than the last two cycles.
-    const lastCycle = this.decoder.lastCycle;
-    if (lastCycle !== null) {
-      const cutoffServer = this.decoder.cycleStartServerMs(lastCycle - 1);
+    const cutoffServer = this.decoder.pruneCutoffServerMs();
+    if (cutoffServer !== null) {
       // Convert back to local time via the current (constant) offset.
       const offset = this.toServerTime(0);
       for (const t of this.tracker.tracks) t.pruneBefore(cutoffServer - offset);

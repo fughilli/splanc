@@ -27,6 +27,9 @@ DEFAULT_BIT_PERIOD_MS = 100.0
 # SNR supports the finer palette.
 DEFAULT_SYMBOLS = 2
 
+# CodeParams.syncPattern values the dev backend can run (schema enum).
+SYNC_PATTERNS = ("on_off", "stagger_pilot")
+
 
 def data_bits_for(led_count: int) -> int:
     """Gray data-word width: ``ceil(log2(ledCount + 1))``, minimum 1.
@@ -46,6 +49,7 @@ def code_params_for(
     symbols: int = DEFAULT_SYMBOLS,
     fec: str = "secded",
     brightness: float | None = None,
+    sync_pattern: str = "on_off",
 ) -> CodeParams:
     """Build the :class:`CodeParams` code-book for a fixture of ``led_count`` LEDs.
 
@@ -58,6 +62,10 @@ def code_params_for(
     data alphabet: 2 = red/blue, 4 = the Gray-ordered
     blue/magenta/red/yellow palette that halves the data frames);
     ``cycleFrames`` adds the 2-frame white/green sync delimiter.
+    ``sync_pattern`` is ``"on_off"`` (v1) or ``"stagger_pilot"`` (hue code v2
+    phase 2: per-LED rotated cycles behind a pilot of palette colours, over a
+    code book the kernel prunes so the pilot is unique — a wider data word and
+    a longer cycle; the kernel does the rotation).
     """
     if led_count < 1:
         raise ValueError(f"led_count must be ≥ 1, got {led_count}")
@@ -65,16 +73,18 @@ def code_params_for(
         raise ValueError(f"unknown fec {fec!r}")
     if symbols not in (2, 4):
         raise ValueError(f"symbols must be 2 or 4, got {symbols}")
+    if sync_pattern not in SYNC_PATTERNS:
+        raise ValueError(f"unknown sync pattern {sync_pattern!r}")
     if brightness is not None and not 0.0 <= brightness <= 1.0:
         raise ValueError(f"brightness must be in [0, 1], got {brightness}")
     return CodeParams(
         ledCount=led_count,
-        bits=pattern.expected_bits(led_count, fec),
+        bits=pattern.expected_bits(led_count, fec, symbols, sync_pattern),
         encoding="hue",
         symbols=symbols,
         bitPeriodMs=bit_period_ms,
-        syncPattern="on_off",
-        cycleFrames=pattern.cycle_frames(led_count, symbols, fec),
+        syncPattern=sync_pattern,
+        cycleFrames=pattern.cycle_frames(led_count, symbols, fec, sync_pattern),
         fec=fec,
         # None (= 1.0 on the wire) unless the phone servoed it down against
         # measured bloom/wash-out (exposure.ts planLedBrightness).

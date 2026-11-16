@@ -24,7 +24,9 @@
 //! crate and pin it against accidental change.
 //!
 //! The cycle: `[white ALL_ON][green ALL_OFF]` sync delimiter, then
-//! `ceil(bits / log2(symbols))` data frames. Every LED is lit EVERY frame at
+//! `ceil(bits / log2(symbols))` data frames. Under the hue-code v2 staggered
+//! pattern ([`SyncPattern::StaggerPilot`]) each LED runs that cycle rotated by
+//! its own phase, with a green/magenta pilot in place of white/green. Every LED is lit EVERY frame at
 //! constant brightness — the code is carried entirely by color, which is
 //! exactly the per-LED-RGB shape the ESP32 RMT output wants.
 
@@ -116,6 +118,19 @@ pub const fn secded_parity_bits(k: u32) -> u32 {
 /// Total transmitted code bits for `k` data bits: `k + r + 1`.
 pub const fn secded_total_bits(k: u32) -> u32 {
     k + secded_parity_bits(k) + 1
+}
+
+/// Inverse of [`secded_total_bits`]: the data width k of a `total`-bit
+/// SEC-DED codeword (0 if no k gives exactly `total`).
+pub const fn secded_data_bits(total: u32) -> u32 {
+    let mut k = 1;
+    while k < total {
+        if secded_total_bits(k) == total {
+            return k;
+        }
+        k += 1;
+    }
+    0
 }
 
 const fn is_pow2(x: u32) -> bool {
@@ -217,14 +232,20 @@ pub fn secded_decode(mut word: u32, k: u32) -> (Option<u32>, bool) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CodeSpec {
     pub led_count: u32,
+    /// Data-word width k (the Gray word FEC wraps): `data_bits(led_count)`,
+    /// or wider for a pruned code book ([`SyncPattern::StaggerPilot`]).
+    pub data_bits: u32,
     /// Coded BITS per cycle (data + FEC parity), sent log2(symbols) per frame.
     pub bits: u32,
     /// Data alphabet size: 2 or 4.
     pub symbols: u8,
-    /// 2 (sync delimiter) + ceil(bits / log2(symbols)).
+    /// Sync frames ([`CodeSpec::sync_frames`]) + ceil(bits / log2(symbols)).
     pub cycle_frames: u32,
     /// SEC-DED FEC around the Gray data word.
     pub secded: bool,
+    /// Where each LED's sync frames sit (`CodeParams.syncPattern`). v1
+    /// ([`SyncPattern::OnOff`]) is the default from [`CodeSpec::derive`].
+    pub sync: SyncPattern,
 }
 
 impl CodeSpec {
@@ -234,11 +255,67 @@ impl CodeSpec {
         let bits = expected_bits(led_count, secded);
         CodeSpec {
             led_count,
+            data_bits: data_bits(led_count),
             bits,
             symbols,
             cycle_frames: DATA_FRAME_OFFSET + data_frames(bits, symbols),
             secded,
+            sync: SyncPattern::OnOff,
         }
+    }
+
+    /// The same fixture's code book under another sync pattern
+    /// (`CodeParams.syncPattern`): [`CodeSpec::derive_sync`].
+    pub fn with_sync(self, sync: SyncPattern) -> Self {
+        CodeSpec::derive_sync(self.led_count, self.symbols, self.secded, sync)
+    }
+
+    /// The code-book derivation under a sync pattern. Unpruned patterns are
+    /// [`CodeSpec::derive`] with the pattern set (same bits, same cycle).
+    /// [`SyncPattern::StaggerPilot`] prunes the code book
+    /// ([`stagger_valid`]): the data word widens one bit at a time until enough
+    /// words survive for `led_count` ids, and the cycle is the palette pilot +
+    /// the data frames. Counting costs one validity check per word of the
+    /// final width (2^k; ~4096 for 1260 LEDs at 2 symbols) — once per capture.
+    pub fn derive_sync(led_count: u32, symbols: u8, secded: bool, sync: SyncPattern) -> Self {
+        let mut spec = CodeSpec { sync, ..CodeSpec::derive(led_count, symbols, secded) };
+        if !sync.pruned() {
+            return spec;
+        }
+        let mut k = spec.data_bits;
+        loop {
+            spec = CodeSpec::from_parts(led_count, k, symbols, secded, sync);
+            if k >= 24 || stagger_count_valid(&spec) >= led_count {
+                return spec;
+            }
+            k += 1;
+        }
+    }
+
+    /// The code book a received `CodeParams` describes (`bits` as received;
+    /// the data width k is recovered from it): no counting, O(1).
+    pub const fn from_params(led_count: u32, bits: u32, symbols: u8, secded: bool, sync: SyncPattern) -> Self {
+        let k = if secded { secded_data_bits(bits) } else { bits };
+        CodeSpec {
+            led_count,
+            data_bits: k,
+            bits,
+            symbols,
+            cycle_frames: sync_frames(sync, symbols) + data_frames(bits, symbols),
+            secded,
+            sync,
+        }
+    }
+
+    const fn from_parts(led_count: u32, k: u32, symbols: u8, secded: bool, sync: SyncPattern) -> Self {
+        let bits = if secded { secded_total_bits(k) } else { k };
+        CodeSpec::from_params(led_count, bits, symbols, secded, sync)
+    }
+
+    /// Frames of the sync position: 2 (v1 white/green and the comparators), or
+    /// the palette pilot's length ([`palette_pilot`]).
+    pub const fn sync_frames(&self) -> u32 {
+        sync_frames(self.sync, self.symbols)
     }
 
     pub const fn bits_per_symbol(&self) -> u32 {
@@ -280,10 +357,30 @@ pub const fn data_frames(bits: u32, symbols: u8) -> u32 {
 
 /// The TRANSMITTED codeword for `led_id`: `gray(id+1)`, SEC-DED-wrapped when
 /// the spec says so. Bits are sent log2(symbols) per data frame, LSB first.
+///
+/// Under a pruned code book ([`SyncPattern::StaggerPilot`]) id `i` carries the
+/// (i+1)-th valid coded index instead of `i + 1` ([`coded_index`]).
 pub fn codeword(led_id: u32, spec: &CodeSpec) -> u32 {
-    let data = gray(led_id + CODE_OFFSET);
+    codeword_coded(coded_index(led_id, spec), spec)
+}
+
+/// The coded index `n` id `led_id` transmits as `gray(n)`: `id + 1`, or under
+/// a pruned code book the (id+1)-th valid index ([`stagger_unrank`]; O(id) —
+/// renderers walk ids in order with [`stagger_next`] instead).
+pub fn coded_index(led_id: u32, spec: &CodeSpec) -> u32 {
+    if spec.sync.pruned() {
+        stagger_unrank(led_id, spec)
+    } else {
+        led_id + CODE_OFFSET
+    }
+}
+
+/// The transmitted codeword of coded index `n`: `gray(n)`, SEC-DED-wrapped
+/// when the spec says so.
+pub fn codeword_coded(n: u32, spec: &CodeSpec) -> u32 {
+    let data = gray(n);
     if spec.secded {
-        secded_encode(data, data_bits(spec.led_count))
+        secded_encode(data, spec.data_bits)
     } else {
         data
     }
@@ -291,10 +388,19 @@ pub fn codeword(led_id: u32, spec: &CodeSpec) -> u32 {
 
 /// The symbol VALUE `led_id` transmits in data frame `frame`.
 pub fn symbol_at(led_id: u32, frame: u32, spec: &CodeSpec) -> u8 {
+    symbol_of(codeword(led_id, spec), frame, spec)
+}
+
+/// The symbol VALUE coded index `n` transmits in data frame `frame`.
+pub fn symbol_at_coded(n: u32, frame: u32, spec: &CodeSpec) -> u8 {
+    symbol_of(codeword_coded(n, spec), frame, spec)
+}
+
+const fn symbol_of(cw: u32, frame: u32, spec: &CodeSpec) -> u8 {
     let bps = spec.bits_per_symbol();
     // Wrapping shift: a frame past the codeword is a caller bug; this keeps the
     // result well-defined (and identical to the JS `>>` the phone used to run).
-    ((codeword(led_id, spec).wrapping_shr(frame.wrapping_mul(bps))) & ((1 << bps) - 1)) as u8
+    ((cw.wrapping_shr(frame.wrapping_mul(bps))) & ((1 << bps) - 1)) as u8
 }
 
 #[cfg(feature = "app")]
@@ -332,6 +438,29 @@ pub fn cycle_code(symbols: &[u8], spec: &CodeSpec) -> u32 {
 /// frame count is wrong, the FEC detects an uncorrectable error, or the decoded
 /// id is the reserved all-zero word / out of range.
 pub fn decode_cycle_symbols(symbols: &[u8], spec: &CodeSpec) -> CycleDecode {
+    let d = decode_cycle_coded(symbols, spec);
+    // decode_gray(code) == 0 is the reserved all-zero word: a dark/noise artifact.
+    // A pruned code book maps the coded index back to its rank (an index the
+    // book excludes is not an id).
+    let id = match d.id {
+        Some(n) if spec.sync.pruned() => stagger_rank(n, spec),
+        Some(n) => n.checked_sub(CODE_OFFSET),
+        None => None,
+    };
+    let id = match id {
+        Some(id) if id < spec.led_count => Some(id),
+        _ => None,
+    };
+    CycleDecode { id, ..d }
+}
+
+#[cfg(feature = "app")]
+/// [`decode_cycle_symbols`] up to the CODED INDEX: `id` holds `n` (the word
+/// gray(n) carried, after SEC-DED), not mapped to an LED id. For a pruned book
+/// the id is `n`'s rank, which [`stagger_rank`] finds by walking the book
+/// (O(n) validity checks); a decoder that holds the book's id <-> index table
+/// (the phone does, from [`stagger_unrank`]'s walk) maps `n` itself in O(1).
+pub fn decode_cycle_coded(symbols: &[u8], spec: &CodeSpec) -> CycleDecode {
     let none = CycleDecode { id: None, corrected: false, uncorrectable: false };
     if symbols.len() as u32 != spec.data_frames() {
         return none;
@@ -339,7 +468,7 @@ pub fn decode_cycle_symbols(symbols: &[u8], spec: &CodeSpec) -> CycleDecode {
     let mut code = cycle_code(symbols, spec);
     let mut corrected = false;
     if spec.secded {
-        match secded_decode(code, data_bits(spec.led_count)) {
+        match secded_decode(code, spec.data_bits) {
             (Some(data), c) => {
                 code = data;
                 corrected = c;
@@ -349,12 +478,7 @@ pub fn decode_cycle_symbols(symbols: &[u8], spec: &CodeSpec) -> CycleDecode {
             }
         }
     }
-    // decode_gray(code) == 0 is the reserved all-zero word: a dark/noise artifact.
-    let id = match decode_gray(code).checked_sub(CODE_OFFSET) {
-        Some(id) if id < spec.led_count => Some(id),
-        _ => None,
-    };
-    CycleDecode { id, corrected, uncorrectable: false }
+    CycleDecode { id: Some(decode_gray(code)), corrected, uncorrectable: false }
 }
 
 // ---------------------------------------------------------------------------
@@ -412,6 +536,352 @@ pub fn stride_lit(led: u32, phase: u32, spacing: u32, anchor_density: u32) -> bo
     m == 0 || m == (a / 2) * s + j
 }
 
+// ---------------------------------------------------------------------------
+// Hue code v2 phase 2: staggered cycles with a pilot (docs/design/hue-code-v2.md).
+//
+// v1 (`SyncPattern::OnOff`) shows the white/green sync delimiter on EVERY LED
+// at the same frame. Under a staggered pattern LED `id` runs its cycle rotated
+// by `phase(id) = (id * S + h(id / C)) mod C` (C = cycle_frames, S =
+// [`stagger_step`], h a per-block offset: [`stagger_phase`]), so
+// at any frame only ~L/C of the LEDs are in their sync position, and that
+// position shows a PILOT instead of white:
+//
+//   - `StaggerPilot` (the wire value "stagger_pilot"): a short fixed sequence
+//     of symbols FROM THE ACTIVE PALETTE ([`palette_pilot`]), at the data's own
+//     drive. No hue is reserved: data keeps the full alphabet. Every channel
+//     the palette uses is lit in one pilot frame and dark in another, so each
+//     pilot gives a per-channel on/off calibration. The pilot is unique by
+//     CODE-BOOK PRUNING ([`stagger_valid`]): an id whose whole cycle, read
+//     cyclically, contains the pilot anywhere but at its sync position is
+//     excluded, and ids map to the surviving coded indices in order
+//     ([`stagger_unrank`] / [`stagger_rank`]).
+//   - `StaggerWhite` / `StaggerGreenMagenta`: simulator comparators only (no
+//     wire values): v1's white -> green, and the first phase-2 draft's green ->
+//     magenta (a reserved hue), both staggered over the unpruned v1 book.
+//
+// The rotation lives here, inside `color_index_for_frame`, on the CODED id
+// (the id the LED transmits, i.e. `led + code_offset`): callers keep passing
+// the global cycle frame.
+// ---------------------------------------------------------------------------
+
+/// The sync layout of a cycle (`CodeParams.syncPattern`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SyncPattern {
+    /// v1, "on_off": every LED shows white then green in cycle frames 0, 1.
+    OnOff = 0,
+    /// "stagger_pilot": per-LED phase rotation; the sync position shows the
+    /// palette pilot; the code book is pruned so the pilot is unique.
+    StaggerPilot = 1,
+    /// Simulation comparator only: staggered v1 white -> green.
+    StaggerWhite = 2,
+    /// Simulation comparator only: staggered green -> magenta.
+    StaggerGreenMagenta = 3,
+}
+
+impl SyncPattern {
+    /// The ABI code: 0 on_off, 1 stagger_pilot, 2 stagger_white,
+    /// 3 stagger_gm (anything else is treated as on_off).
+    pub const fn from_code(code: u32) -> Self {
+        match code {
+            1 => SyncPattern::StaggerPilot,
+            2 => SyncPattern::StaggerWhite,
+            3 => SyncPattern::StaggerGreenMagenta,
+            _ => SyncPattern::OnOff,
+        }
+    }
+
+    pub const fn is_staggered(self) -> bool {
+        !matches!(self, SyncPattern::OnOff)
+    }
+
+    /// The code book is pruned for pilot uniqueness ([`stagger_valid`]).
+    pub const fn pruned(self) -> bool {
+        matches!(self, SyncPattern::StaggerPilot)
+    }
+}
+
+/// The 2-symbol palette pilot: blue, blue, red, red, blue (symbol values of
+/// [`SYMBOL_COLORS_2`]). Red and blue are each lit in one pilot frame and dark
+/// in another. Five frames: the shortest binary pilot that leaves
+/// comfortably more than 1260 ids (2443 of a 12-bit book; 4 frames would need
+/// a 13-bit one and give a cycle as long).
+pub const PILOT_2: [u8; 5] = [0, 0, 1, 1, 0];
+/// The 4-symbol palette pilot: blue, yellow, magenta (values of
+/// [`SYMBOL_COLORS_4`]). Blue and yellow are complementary (every channel lit
+/// in one, dark in the other); magenta makes it three frames, which keeps
+/// 1863 of the 11-bit book's 2047 ids (a 2-frame pilot keeps 1265).
+pub const PILOT_4: [u8; 3] = [0, 2, 1];
+
+/// The palette pilot (symbol values) for an alphabet; anything but 2 is 4.
+pub const fn palette_pilot(symbols: u8) -> &'static [u8] {
+    if symbols == 2 {
+        &PILOT_2
+    } else {
+        &PILOT_4
+    }
+}
+
+/// Sync-position frames of a cycle: the palette pilot's length under
+/// `StaggerPilot`, 2 otherwise.
+pub const fn sync_frames(sync: SyncPattern, symbols: u8) -> u32 {
+    match sync {
+        SyncPattern::StaggerPilot => palette_pilot(symbols).len() as u32,
+        _ => DATA_FRAME_OFFSET,
+    }
+}
+
+/// The colour of sync-position frame `j` (< [`sync_frames`]).
+pub const fn sync_color(sync: SyncPattern, symbols: u8, j: u32) -> Color {
+    match sync {
+        SyncPattern::StaggerPilot => symbol_color(symbols, palette_pilot(symbols)[j as usize]),
+        SyncPattern::StaggerGreenMagenta => {
+            if j == 0 {
+                Color::Green
+            } else {
+                Color::Magenta
+            }
+        }
+        _ => {
+            if j == 0 {
+                Color::White
+            } else {
+                Color::Green
+            }
+        }
+    }
+}
+
+/// Is coded index `n` in the pruned code book? Its cycle stream (the pilot,
+/// then the data symbols of `codeword_coded(n)`) must not contain the pilot
+/// at any cyclic offset other than 0, so a track that finds the pilot has
+/// found its sync position. `n = 0` (the reserved all-zero word) never is.
+/// O(C) for almost every offset (the first symbol already differs).
+pub fn stagger_valid(n: u32, spec: &CodeSpec) -> bool {
+    if n == 0 || (spec.data_bits < 32 && n >> spec.data_bits != 0) {
+        return false;
+    }
+    let pilot = palette_pilot(spec.symbols);
+    let l = pilot.len() as u32;
+    let c = spec.cycle_frames;
+    let cw = codeword_coded(n, spec);
+    let at = |p: u32| -> u8 {
+        if p < l {
+            pilot[p as usize]
+        } else {
+            symbol_of(cw, p - l, spec)
+        }
+    };
+    let mut o = 1;
+    while o < c {
+        let mut j = 0;
+        while j < l && at((o + j) % c) == pilot[j as usize] {
+            j += 1;
+        }
+        if j == l {
+            return false;
+        }
+        o += 1;
+    }
+    true
+}
+
+/// The next valid coded index after `n` (the walk renderers use: id `i+1`
+/// carries `stagger_next(index of id i)`), or `u32::MAX` past the book.
+pub fn stagger_next(mut n: u32, spec: &CodeSpec) -> u32 {
+    let end = if spec.data_bits >= 32 { u32::MAX } else { 1u32 << spec.data_bits };
+    loop {
+        n += 1;
+        if n >= end {
+            return u32::MAX;
+        }
+        if stagger_valid(n, spec) {
+            return n;
+        }
+    }
+}
+
+/// The coded index of id `id` in a pruned book: the (id+1)-th valid index.
+/// O(id) validity checks; `u32::MAX` past the book.
+pub fn stagger_unrank(id: u32, spec: &CodeSpec) -> u32 {
+    let mut n = 0;
+    let mut i = 0;
+    while i <= id {
+        n = stagger_next(n, spec);
+        if n == u32::MAX {
+            return n;
+        }
+        i += 1;
+    }
+    n
+}
+
+/// The id coded index `n` carries in a pruned book (its rank among the valid
+/// indices), or `None` if the book excludes it. O(n) validity checks.
+pub fn stagger_rank(n: u32, spec: &CodeSpec) -> Option<u32> {
+    if !stagger_valid(n, spec) {
+        return None;
+    }
+    let mut r = 0;
+    let mut m = 1;
+    while m < n {
+        if stagger_valid(m, spec) {
+            r += 1;
+        }
+        m += 1;
+    }
+    Some(r)
+}
+
+/// How many ids a pruned book of this width holds.
+pub fn stagger_count_valid(spec: &CodeSpec) -> u32 {
+    let end = if spec.data_bits >= 32 { u32::MAX } else { 1u32 << spec.data_bits };
+    let mut count = 0;
+    let mut n = 1;
+    while n < end {
+        if stagger_valid(n, spec) {
+            count += 1;
+        }
+        n += 1;
+    }
+    count
+}
+
+const fn gcd(mut a: u32, mut b: u32) -> u32 {
+    while b != 0 {
+        let t = a % b;
+        a = b;
+        b = t;
+    }
+    a
+}
+
+/// The stagger step S for a cycle of `cycle_frames` frames: the integer
+/// coprime with C nearest C/Φ (Φ the golden ratio). Coprime, so `id * S mod C`
+/// visits every phase equally often (a flat per-frame pilot census);
+/// golden-ratio, so ids that are neighbours on a strip land far apart in phase.
+/// The design pins S = 11, 7, 5, 5 for C = 18, 10, 8, 6; this rule reproduces
+/// them and extends to every C (the test pins the table). C < 2 -> 1.
+pub const fn stagger_step(cycle_frames: u32) -> u32 {
+    let c = cycle_frames;
+    if c < 2 {
+        return 1;
+    }
+    // C/Φ = C * 0.6180339887…, compared in 1e9 fixed point (no floats on the
+    // firmware path; C is far below the overflow bound).
+    let target = c as u64 * 618_033_989;
+    let mut best = 1u32;
+    let mut best_err = u64::MAX;
+    let mut s = 1;
+    while s < c {
+        if gcd(s, c) == 1 {
+            let v = s as u64 * 1_000_000_000;
+            let err = if v > target { v - target } else { target - v };
+            if err < best_err {
+                best_err = err;
+                best = s;
+            }
+        }
+        s += 1;
+    }
+    best
+}
+
+/// lowbias32 (C. Wellons' 32-bit integer finaliser): a fixed, well-mixed
+/// u32 -> u32 bijection. Integer-only, so it runs as is on the firmware path.
+const fn mix32(mut x: u32) -> u32 {
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x7feb_352d);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x846c_a68b);
+    x ^= x >> 16;
+    x
+}
+
+/// The key the block offsets are drawn under. Part of the wire format: a
+/// change re-phases every staggered LED (the goldens pin it).
+const PHASE_KEY: u32 = 0x5eed;
+
+/// Circular distance between phases `a` and `b` in Z_c.
+const fn circ_dist(a: u32, b: u32, c: u32) -> u32 {
+    let d = (a % c + c - b % c) % c;
+    if d < c - d {
+        d
+    } else {
+        c - d
+    }
+}
+
+/// The free (unconstrained) offset of block `q`: a keyed hash mod C.
+const fn block_offset_free(q: u32, c: u32) -> u32 {
+    mix32(q ^ PHASE_KEY) % c
+}
+
+/// The phase offset `h(q)` of id block `q` (ids `q*C .. q*C + C - 1`).
+///
+/// Even blocks take the keyed hash ([`block_offset_free`]). An odd block takes
+/// the first value of its own hash-ordered probe sequence that keeps both of
+/// its block boundaries spread: the last id of block `q - 1` and the first id
+/// of block `q` (and the last of `q` and the first of `q + 1`) land at least
+/// `C/8 + 1` frames apart in phase. Its neighbours are even, so this needs no
+/// recursion: O(1) hashes and at most C probes (each constraint excludes at
+/// most `2d - 1` of the C values, and `2(2d - 1) < C` for every C >= 3, so a
+/// value always exists; C < 3 falls back to the hash).
+const fn block_offset(q: u32, c: u32, s: u32) -> u32 {
+    let v = block_offset_free(q, c);
+    if q % 2 == 0 {
+        return v;
+    }
+    let lo = block_offset_free(q - 1, c);
+    let hi = block_offset_free(q + 1, c);
+    let d = c / 8 + 1;
+    let mut t = 0;
+    while t < c {
+        let x = (v + t) % c;
+        // Boundary phase steps: (last of q-1) -> (first of q) is s + x - lo,
+        // (last of q) -> (first of q+1) is s + hi - x (the in-block step is s).
+        if circ_dist(s + x, lo, c) >= d && circ_dist(s + hi, x, c) >= d {
+            return x;
+        }
+        t += 1;
+    }
+    v
+}
+
+/// The phase rotation of id `led_id` under a staggered pattern (its sync
+/// position starts at global cycle frame `phase`), 0 for v1:
+///
+/// `φ(id) = (id·S + h(id div C)) mod C`
+///
+/// Within a block of C consecutive ids it is the golden-ratio stagger (ids
+/// one apart are S apart in phase, and the block covers every phase once:
+/// a flat pilot census). The per-block offset `h` ([`block_offset`]) makes φ
+/// NON-LINEAR across blocks: the linear `(id·S) mod C` gave every pair of
+/// ids a multiple of C apart the same phase, and the SEC-DED stitches that
+/// decode to a wrong id cluster at exactly those offsets, so the phase check
+/// passed them 2.5x more often than chance (docs/design/hue-code-v2.md,
+/// "Non-linear pilot phase"). Any φ that is a function of `id mod C` (a
+/// permutation of the linear phase, say) keeps that flaw.
+pub const fn stagger_phase(led_id: u32, spec: &CodeSpec) -> u32 {
+    if !spec.sync.is_staggered() || spec.cycle_frames == 0 {
+        return 0;
+    }
+    let c = spec.cycle_frames;
+    let s = stagger_step(c);
+    ((led_id % c) * s + block_offset(led_id / c, c, s)) % c
+}
+
+/// The LED's own cycle frame at global cycle frame `frame_index`: 0, 1 = the
+/// sync position, `DATA_FRAME_OFFSET + d` = data frame `d`. Equals
+/// `frame_index` under v1.
+pub const fn local_frame(led_id: u32, frame_index: u32, spec: &CodeSpec) -> u32 {
+    let c = spec.cycle_frames;
+    if !spec.sync.is_staggered() || c == 0 {
+        return frame_index;
+    }
+    (frame_index % c + c - stagger_phase(led_id, spec)) % c
+}
+
 /// A palette entry. The data palette per alphabet is [`symbol_color`]; white
 /// and green are reserved for the sync delimiter (cyan is unused: it scores on
 /// the green sync axis).
@@ -455,11 +925,25 @@ pub const fn symbol_color(symbols: u8, value: u8) -> Color {
 /// The palette entry `led_id` shows in cycle frame `frame_index` (the phone
 /// renders this onto its virtual wall; the player maps it through
 /// [`Color::rgb`]).
+///
+/// `frame_index` is the GLOBAL cycle frame; under a staggered
+/// [`SyncPattern`] the LED's own frame is rotated by [`stagger_phase`] first.
+/// A pruned book looks the id's coded index up in O(id)
+/// ([`coded_index`]); renderers that walk every LED use
+/// [`color_index_for_frame_coded`] with [`stagger_next`].
 pub fn color_index_for_frame(led_id: u32, frame_index: u32, spec: &CodeSpec) -> Color {
-    match frame_index {
-        FRAME_ALL_ON => Color::White,
-        FRAME_ALL_OFF => Color::Green,
-        _ => symbol_color(spec.symbols, symbol_at(led_id, frame_index - DATA_FRAME_OFFSET, spec)),
+    color_index_for_frame_coded(led_id, coded_index(led_id, spec), frame_index, spec)
+}
+
+/// [`color_index_for_frame`] with the id's coded index `n` supplied by the
+/// caller (`coded_index(led_id, spec)`).
+pub fn color_index_for_frame_coded(led_id: u32, n: u32, frame_index: u32, spec: &CodeSpec) -> Color {
+    let l = spec.sync_frames();
+    let j = local_frame(led_id, frame_index, spec);
+    if j < l {
+        sync_color(spec.sync, spec.symbols, j)
+    } else {
+        symbol_color(spec.symbols, symbol_at_coded(n, j - l, spec))
     }
 }
 
@@ -679,6 +1163,230 @@ mod tests {
                     let want = if symbols == 2 { SYMBOL_COLORS_2[v] } else { SYMBOL_COLORS_4[v] };
                     assert_eq!(color_for_frame(id, f, &spec), want);
                     assert_eq!(color_index_for_frame(id, f, &spec).rgb(), want);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stagger_step_matches_the_spec_table_and_is_coprime() {
+        // The design's pinned values.
+        for (c, s) in [(18u32, 11u32), (10, 7), (8, 5), (6, 5)] {
+            assert_eq!(stagger_step(c), s, "C={c}");
+        }
+        // The rule's table for every cycle length a code-book can have (pinned
+        // here so a change to the rule is a visible wire change).
+        let table: Vec<u32> = (3..=34).map(stagger_step).collect();
+        assert_eq!(
+            table,
+            std::vec![
+                2, 3, 3, 5, 4, 5, 5, 7, 7, 7, 8, 9, 8, 9, 11, 11, 12, 13, 13, 13, 14, 13, 16, 17, 17, 17, 18, 19,
+                19, 19, 20, 21
+            ]
+        );
+        for c in 2..64u32 {
+            assert_eq!(gcd(stagger_step(c), c), 1, "C={c}");
+        }
+    }
+
+    #[test]
+    fn stagger_phase_is_the_golden_stagger_per_block_with_spread_boundaries() {
+        for &(symbols, leds) in &[(2u8, 1260u32), (4, 1260), (2, 40), (4, 300)] {
+            let spec = CodeSpec::derive_sync(leds, symbols, true, SyncPattern::StaggerPilot);
+            let c = spec.cycle_frames;
+            let s = stagger_step(c);
+            let d = c / 8 + 1;
+            let n = 1u32 << 16;
+            for id in 0..n {
+                let ph = stagger_phase(id, &spec);
+                assert!(ph < c);
+                let next = stagger_phase(id + 1, &spec);
+                if (id + 1) % c != 0 {
+                    // In a block: the golden-ratio step.
+                    assert_eq!(next, (ph + s) % c, "C={c} id {id}");
+                } else {
+                    // Across a block boundary: still at least d apart.
+                    assert!(circ_dist(next, ph, c) >= d, "C={c} boundary after id {id}");
+                }
+            }
+            // Every complete block covers every phase once (a flat census).
+            for q in 0..(n / c) {
+                let mut seen = std::vec![false; c as usize];
+                for r in 0..c {
+                    seen[stagger_phase(q * c + r, &spec) as usize] = true;
+                }
+                assert!(seen.iter().all(|&x| x), "C={c} block {q}");
+            }
+            // Non-linear: ids a multiple of C apart do NOT share a phase (the
+            // linear map's flaw); about 1 in C pairs do, by chance.
+            let same = (0..2000u32).filter(|&id| stagger_phase(id, &spec) == stagger_phase(id + c, &spec)).count();
+            assert!(same < 2000 * 2 / c as usize, "C={c}: {same}/2000 share a phase one block apart");
+        }
+        // Every cycle length gets a valid map (and v1 is untouched).
+        for c in 3..40u32 {
+            let s = stagger_step(c);
+            for q in 0..200u32 {
+                let x = block_offset(q, c, s);
+                assert!(x < c);
+            }
+        }
+    }
+
+    #[test]
+    fn the_comparators_are_v1_rotated_and_v1_is_untouched() {
+        for &symbols in &[2u8, 4] {
+            let v1 = CodeSpec::derive(40, symbols, true);
+            assert_eq!(v1.sync, SyncPattern::OnOff, "derive keeps v1");
+            assert_eq!(v1.data_bits, data_bits(40));
+            for (sync, p0, p1) in [
+                (SyncPattern::StaggerWhite, Color::White, Color::Green),
+                (SyncPattern::StaggerGreenMagenta, Color::Green, Color::Magenta),
+            ] {
+                let st = v1.with_sync(sync);
+                assert_eq!((st.bits, st.cycle_frames), (v1.bits, v1.cycle_frames), "unpruned: v1's book");
+                let c = v1.cycle_frames;
+                for id in 0..40 {
+                    assert_eq!(stagger_phase(id, &v1), 0);
+                    let ph = stagger_phase(id, &st);
+                    assert!(ph < c);
+                    for f in 0..c {
+                        let j = (f + c - ph) % c;
+                        let want = match j {
+                            0 => p0,
+                            1 => p1,
+                            _ => color_index_for_frame(id, j, &v1),
+                        };
+                        assert_eq!(color_index_for_frame(id, f, &st), want, "{sync:?} id {id} f {f}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// The palette pilot's cycle, read cyclically from the LED's own frame 0.
+    fn cycle_symbols(id: u32, spec: &CodeSpec) -> Vec<u8> {
+        let pilot = palette_pilot(spec.symbols);
+        let n = coded_index(id, spec);
+        let mut out: Vec<u8> = pilot.to_vec();
+        out.extend((0..spec.data_frames()).map(|d| symbol_at_coded(n, d, spec)));
+        out
+    }
+
+    #[test]
+    fn the_palette_pilot_uses_only_data_colours_and_calibrates_every_channel() {
+        for &symbols in &[2u8, 4] {
+            let pilot = palette_pilot(symbols);
+            let rgb: Vec<Rgb> = pilot.iter().map(|&v| symbol_color(symbols, v).rgb()).collect();
+            for ch in 0..3 {
+                let get = |c: &Rgb| [c.0, c.1, c.2][ch];
+                let used = (0..symbols).any(|v| get(&symbol_color(symbols, v).rgb()) > 0);
+                if used {
+                    assert!(rgb.iter().any(|c| get(c) == 255), "channel {ch} lit in the pilot");
+                    assert!(rgb.iter().any(|c| get(c) == 0), "channel {ch} dark in the pilot");
+                }
+            }
+            for f in 0..pilot.len() as u32 {
+                assert_eq!(sync_color(SyncPattern::StaggerPilot, symbols, f), symbol_color(symbols, pilot[f as usize]));
+            }
+        }
+    }
+
+    #[test]
+    fn the_pruned_book_holds_the_largest_fixture_and_the_pilot_is_unique() {
+        // Capacity pins (docs/design/hue-code-v2.md): 1260 LEDs, SEC-DED.
+        let s2 = CodeSpec::derive_sync(1260, 2, true, SyncPattern::StaggerPilot);
+        assert_eq!((s2.data_bits, s2.bits, s2.cycle_frames), (12, 18, 23));
+        assert_eq!(stagger_count_valid(&s2), 2443);
+        let s4 = CodeSpec::derive_sync(1260, 4, true, SyncPattern::StaggerPilot);
+        assert_eq!((s4.data_bits, s4.bits, s4.cycle_frames), (11, 16, 11));
+        assert_eq!(stagger_count_valid(&s4), 1863);
+        assert_eq!(CodeSpec::from_params(1260, s2.bits, 2, true, SyncPattern::StaggerPilot), s2);
+        assert_eq!(CodeSpec::from_params(1260, s4.bits, 4, true, SyncPattern::StaggerPilot), s4);
+        for spec in [s2, s4] {
+            let pilot = palette_pilot(spec.symbols);
+            let c = spec.cycle_frames as usize;
+            let mut n = 0;
+            for id in (0..1260u32).step_by(1) {
+                n = stagger_next(n, &spec);
+                if id % 37 != 0 {
+                    continue;
+                }
+                assert_eq!(coded_index(id, &spec), n, "the walk and the unrank agree");
+                assert_eq!(stagger_rank(n, &spec), Some(id));
+                let cyc = cycle_symbols(id, &spec);
+                let hits = (0..c).filter(|&o| (0..pilot.len()).all(|j| cyc[(o + j) % c] == pilot[j])).count();
+                assert_eq!(hits, 1, "id {id}: the pilot occurs once, at the sync position");
+            }
+        }
+    }
+
+    #[test]
+    fn coded_decode_is_the_decode_before_the_rank() {
+        for &symbols in &[2u8, 4] {
+            for &n in &[16u32, 300, 2000] {
+                for sync in [SyncPattern::StaggerPilot, SyncPattern::OnOff] {
+                    let spec = CodeSpec::derive_sync(n, symbols, true, sync);
+                    let df = spec.data_frames() as usize;
+                    // Every id's word, plus single- and double-symbol errors.
+                    for id in (0..n).step_by(7) {
+                        let mut w = observed(id, &spec);
+                        for flip in [None, Some(0usize), Some(df / 2)] {
+                            if let Some(i) = flip {
+                                w[i] = (w[i] + 1) % symbols;
+                            }
+                            let full = decode_cycle_symbols(&w, &spec);
+                            let coded = decode_cycle_coded(&w, &spec);
+                            assert_eq!((coded.corrected, coded.uncorrectable), (full.corrected, full.uncorrectable));
+                            let mapped = coded.id.and_then(|c| if sync.pruned() { stagger_rank(c, &spec) } else { c.checked_sub(CODE_OFFSET) });
+                            assert_eq!(mapped.filter(|&i| i < n), full.id, "n={n} symbols={symbols} id={id}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pruned_decode_round_trips_and_rejects_excluded_words() {
+        for &symbols in &[2u8, 4] {
+            for &n in &[16u32, 64, 300] {
+                let spec = CodeSpec::derive_sync(n, symbols, true, SyncPattern::StaggerPilot);
+                assert!(stagger_count_valid(&spec) >= n);
+                for id in 0..n {
+                    let d = decode_cycle_symbols(&observed(id, &spec), &spec);
+                    assert_eq!((d.id, d.corrected), (Some(id), false), "n={n} symbols={symbols} id={id}");
+                }
+            }
+        }
+        // An excluded coded index decodes to no id.
+        let spec = CodeSpec::derive_sync(64, 2, true, SyncPattern::StaggerPilot);
+        let bad = (1..1u32 << spec.data_bits).find(|&m| !stagger_valid(m, &spec)).unwrap();
+        let syms: Vec<u8> = (0..spec.data_frames()).map(|d| symbol_at_coded(bad, d, &spec)).collect();
+        assert_eq!(decode_cycle_symbols(&syms, &spec).id, None);
+    }
+
+    #[test]
+    fn stagger_flattens_the_sync_census_and_never_shows_white() {
+        for &symbols in &[2u8, 4] {
+            for &n in &[16u32, 64, 300] {
+                let spec = CodeSpec::derive_sync(n, symbols, true, SyncPattern::StaggerPilot);
+                let c = spec.cycle_frames;
+                let mut ns = std::vec![0u32; n as usize];
+                let mut m = 0;
+                for x in ns.iter_mut() {
+                    m = stagger_next(m, &spec);
+                    *x = m;
+                }
+                for f in 0..c {
+                    let in_pilot = (0..n).filter(|&id| local_frame(id, f, &spec) < spec.sync_frames()).count() as u32;
+                    let want = n * spec.sync_frames();
+                    // Every phase is equally occupied (S coprime with C).
+                    assert!(in_pilot * c >= want - c * spec.sync_frames() && in_pilot * c <= want + c * spec.sync_frames());
+                    for id in 0..n {
+                        let col = color_index_for_frame_coded(id, ns[id as usize], f, &spec);
+                        assert_ne!(col, Color::White, "no LED ever shows white");
+                        assert!((0..symbols).any(|v| symbol_color(symbols, v) == col), "palette colours only");
+                    }
                 }
             }
         }
