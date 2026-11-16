@@ -467,3 +467,29 @@ test("backlog model: naive per-event sends fall behind; the live channel stays b
     "live lag does not grow over time",
   );
 });
+
+test("LiveControl: scheduled moves carry applyAtMs; a merged batch goes at the latest time", async () => {
+  const clk = new Clock();
+  const { host, sent } = fakeHost(["control_ack", "uniform_commit", "apply_at"]);
+  const live = new LiveControl(host, { now: clk.now, schedule: clk.schedule });
+  live.setUniforms([{ slot: 0, value: [0.1] }], { applyAtMs: 1000.4 });
+  assert.equal(sent[0]!.applyAtMs, 1000, "whole ms on the time base");
+  // While that one is in flight, two scheduled moves merge into the next batch.
+  live.setUniforms([{ slot: 0, value: [0.2] }], { applyAtMs: 1050 });
+  live.setUniforms([{ slot: 1, value: [0.3] }], { applyAtMs: 1100 });
+  live.setCrossfade(0.5, 0, 1100);
+  live.onServerMessage({ type: "control_ack", seq: sent[0]!.seq as number });
+  await flush();
+  clk.run(25);
+  const next = sent.filter((m) => m.type === "set_uniforms")[1]!;
+  assert.equal(next.applyAtMs, 1100);
+  assert.equal(sent.find((m) => m.type === "set_crossfade")!.applyAtMs, 1100);
+  // Unscheduled: no field at all (older firmware's proto never sees it).
+  for (const m of sent.slice(1)) live.onServerMessage({ type: "control_ack", seq: m.seq as number });
+  await flush();
+  clk.run(25);
+  live.setUniforms([{ slot: 2, value: [0.4] }]);
+  const last = sent[sent.length - 1]!;
+  assert.deepEqual(last.values, [{ slot: 2, value: [0.4] }]);
+  assert.equal("applyAtMs" in last, false);
+});

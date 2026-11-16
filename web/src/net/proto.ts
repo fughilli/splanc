@@ -387,6 +387,9 @@ export interface SetEffectMessage {
   type: "set_effect";
   effectId: string;
   deck?: number;
+  /** Firmware feature "apply_at": apply at this time, ms on the shared effect
+   * time base (set_time_base), instead of on arrival. */
+  applyAtMs?: number;
 }
 
 /** Push live uniform values on a deck's effect (proto SetUniforms). `deck`
@@ -399,6 +402,9 @@ export interface SetUniformsMessage {
    * "uniform_commit" feature honours it; older firmware always persists. */
   commit?: boolean;
   deck?: number;
+  /** Firmware feature "apply_at": apply at this time, ms on the shared effect
+   * time base (set_time_base), instead of on arrival. */
+  applyAtMs?: number;
 }
 
 /** Request an effect's manifest + current values (proto GetEffectUniforms).
@@ -427,6 +433,9 @@ export interface SetCrossfadeMessage {
   type: "set_crossfade";
   position: number;
   mode: number;
+  /** Firmware feature "apply_at": apply at this time, ms on the shared effect
+   * time base (set_time_base), instead of on arrival. */
+  applyAtMs?: number;
 }
 
 // -- Hardware-config arms (flat shapes) -------------------------------------

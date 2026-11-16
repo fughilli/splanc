@@ -97,7 +97,7 @@ fn set_gain(src: u8, now: u32, gain: f32) -> Option<SMsg> {
 }
 
 fn brightness(src: u8, now: u32, b: f64) -> Option<SMsg> {
-    send(src, now, CMsg::SetBrightness(pb::SetBrightness { r#brightness: b }))
+    send(src, now, CMsg::SetBrightness(pb::SetBrightness { r#brightness: b, ..Default::default() }))
 }
 
 fn cfg(enabled: Option<bool>, timeout: Option<u32>, capture: bool, secret: Option<&str>) -> CMsg {

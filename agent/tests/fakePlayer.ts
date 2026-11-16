@@ -48,6 +48,9 @@ export class FakePlayer {
   readonly crossfades: { position: number; mode: number; at: number }[] = [];
   /** A slow player: delay each set_crossfade's apply + ack (ms). */
   crossfadeDelayMs = 0;
+  /** Scheduled changes received (apply_at_ms): the instant each is for and when it
+   * arrived, both on this process's clock (performance.now()). */
+  readonly scheduled: { type: string; dueHubMs: number; at: number }[] = [];
   /** The last set_time_base epoch (device ms). */
   timeBase: number | null = null;
   /** The running mapping pattern (start_mapping options + the epoch it used), or null. */
@@ -281,6 +284,12 @@ export class FakePlayer {
 
   private handle(ws: WebSocket, m: Msg): void {
     this.received.push(m);
+    // A scheduled change (apply_at_ms on the shared time base): note the instant it
+    // is for, on this process's clock. The fake applies it on arrival regardless.
+    if (typeof m["applyAtMs"] === "number" && this.timeBase !== null) {
+      const due = this.timeBase + (m["applyAtMs"] as number) - this.clockOffsetMs;
+      this.scheduled.push({ type: m.type, dueHubMs: due, at: performance.now() });
+    }
     const refusal = this.refuse.get(m.type);
     if (refusal) {
       this.reply(ws, { type: "error", ...refusal });

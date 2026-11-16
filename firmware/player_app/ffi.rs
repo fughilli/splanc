@@ -39,6 +39,7 @@ use ledmapper_fx_vm::{
 use ledmapper_keypoint::{self as kp, Morph};
 use ledmapper_osc::{self as osc, Config as OscConfig, PortTable};
 use ledmapper_pb::ledmapper_::v1_ as pb;
+use ledmapper_player::apply_queue::{apply_due, ApplyQueue};
 use ledmapper_player::{upload_malformed, upload_too_large, Player};
 use ledmapper_view::ledmapper::v1 as pv;
 use pv::client_message::Msg as CArm;
@@ -757,6 +758,7 @@ pub unsafe extern "C" fn lm_clock_observe(now_ms: i64) -> i64 {
     if dt < -1000 {
         let shift = dt - CLOCK_LAST_DT;
         player().shift_time_base(shift);
+        (*addr_of_mut!(SCHED)).shift(shift);
         let cap = tex_q_cap(TEX_Q.total);
         for k in 0..TEX_Q.len {
             let i = (TEX_Q.head + k) % cap.max(1);
@@ -1935,7 +1937,12 @@ pub unsafe extern "C" fn lm_player_handle(
         return -1;
     }
     let frame = core::slice::from_raw_parts(data, len);
-    note_live_control(frame);
+    note_live_control(frame, recv_ms);
+    // A control change scheduled on the shared time base (apply_at_ms) waits in
+    // SCHED for its frame boundary; the reply goes now.
+    if let Some(n) = sched_intercept(frame, recv_ms, out, out_cap) {
+        return n;
+    }
     let reply = match envelope_arm(frame) {
         Some(ARM_SUBMIT_MAP) => handle_map_upload(frame, frame.len()),
         Some(ARM_SUBMIT_TOPOLOGY) => handle_topology_upload(frame, |r: &mut &[u8]| *r = frame, frame.len()),
@@ -2078,7 +2085,8 @@ pub unsafe extern "C" fn lm_live_post(data: *const u8, len: usize) -> u32 {
     let Some(CArm::SetUniforms(m)) = client_arm(frame) else {
         return 0;
     };
-    if m.seq() == 0 || m.commit() != Some(false) {
+    // A scheduled move (apply_at_ms) takes the locked path, which queues it.
+    if m.seq() == 0 || m.commit() != Some(false) || m.apply_at_ms().is_some() {
         return 0;
     }
     let d = deck_index(m.deck()) as u8;
@@ -2155,6 +2163,109 @@ pub unsafe extern "C" fn lm_live_drain() -> u32 {
     live_apply()
 }
 
+// -- scheduled changes (apply_at_ms; docs/design/synced-show.md) -------------
+// set_uniforms / set_effect / set_crossfade / set_brightness may carry an apply
+// time on the shared effect time base. One still ahead waits here as its raw frame
+// (ledmapper_player::apply_queue) and the render task applies it at the first frame
+// boundary at/after its due time (lm_sched_apply), in order, so fixtures given the
+// same time change on the same frame. Late ones apply on arrival; a full queue
+// applies its earliest early — nothing is dropped. The reply is sent on arrival.
+// Under the player lock (lm_player_handle / the render task's frame start).
+
+/// Frames that can wait, and the bytes they share. A scheduled ramp step is
+/// ~20-60 B and a hub leads by ~150 ms, so a C6 holds a few at a time.
+#[cfg(not(lm_cpu_400m))]
+const SCHED_N: usize = 8;
+#[cfg(not(lm_cpu_400m))]
+const SCHED_BYTES: usize = 512;
+#[cfg(lm_cpu_400m)]
+const SCHED_N: usize = 16;
+#[cfg(lm_cpu_400m)]
+const SCHED_BYTES: usize = 2048;
+
+static mut SCHED: ApplyQueue<SCHED_N, SCHED_BYTES> = ApplyQueue::new();
+
+/// lm_sched_apply result bits: something applied / the output brightness changed
+/// (main.cpp re-reads it, as after a handled set_brightness).
+pub const SCHED_APPLIED: u32 = 1;
+pub const SCHED_BRIGHTNESS: u32 = 2;
+
+/// A scheduled arm whose time is still ahead: queue it and answer as the arm does
+/// (playback_state / welcome — the state before the change) into `out`, recording
+/// what main.cpp's persist step keys on. Returns the reply length; None: not one,
+/// dispatch normally. Out of line, encoding its own reply, so lm_player_handle's
+/// frame gains no ServerMessage-sized slot (its stack bound is tight).
+#[inline(never)]
+unsafe fn sched_intercept(frame: &[u8], now_ms: i64, out: *mut u8, out_cap: usize) -> Option<i32> {
+    let at = match client_arm(frame)? {
+        CArm::SetUniforms(m) => m.apply_at_ms(),
+        CArm::SetEffect(m) => m.apply_at_ms(),
+        CArm::SetCrossfade(m) => m.apply_at_ms(),
+        CArm::SetBrightness(m) => m.apply_at_ms(),
+        _ => return None,
+    };
+    let due = apply_due(at, player().time_base_ms(), now_ms)?;
+    let reply = match client_arm(frame)? {
+        CArm::SetUniforms(_) => {
+            note_set_uniforms(frame);
+            player().playback_reply()
+        }
+        CArm::SetEffect(m) => {
+            FX_LAST_DECK = deck_index(m.deck()) as u32;
+            player().playback_reply()
+        }
+        _ => player().welcome_reply(),
+    };
+    let q = &mut *addr_of_mut!(SCHED);
+    q.push(due, frame, |f| {
+        sched_apply_frame(f);
+    });
+    Some(encode_reply(&reply, out, out_cap))
+}
+
+/// Apply one scheduled frame's change (no reply). Returns SCHED_* bits.
+unsafe fn sched_apply_frame(frame: &[u8]) -> u32 {
+    match client_arm(frame) {
+        Some(CArm::SetUniforms(_)) => apply_set_uniforms(frame),
+        Some(CArm::SetEffect(m)) => apply_set_effect(m.effect_id(), deck_index(m.deck())),
+        Some(CArm::SetCrossfade(m)) => {
+            note_xf_toward(m.position());
+            player().set_crossfade(m.position(), m.mode());
+        }
+        Some(CArm::SetBrightness(m)) => {
+            player().set_output_brightness(m.brightness());
+            return SCHED_APPLIED | SCHED_BRIGHTNESS;
+        }
+        _ => return 0,
+    }
+    SCHED_APPLIED
+}
+
+/// Render task, at the start of every frame (before update()): apply the scheduled
+/// changes due by `now_ms` (device clock, millis), in order. Returns SCHED_* bits.
+///
+/// # Safety
+/// Under the player lock.
+#[no_mangle]
+pub unsafe extern "C" fn lm_sched_apply(now_ms: i64) -> u32 {
+    let q = &mut *addr_of_mut!(SCHED);
+    if q.next_due().map_or(true, |d| d > now_ms) {
+        return 0;
+    }
+    let mut bits = 0;
+    q.pop_due(now_ms, |f| bits |= sched_apply_frame(f));
+    bits
+}
+
+/// Scheduled changes waiting (diagnostics / tests).
+///
+/// # Safety
+/// Under the player lock.
+#[no_mangle]
+pub unsafe extern "C" fn lm_sched_len() -> u32 {
+    (*addr_of!(SCHED)).len() as u32
+}
+
 // -- live-control acks (docs/design/live-control.md) ------------------------
 // A live update (set_uniforms / set_crossfade) carrying a non-zero `seq` is
 // answered with a tiny ControlAck{seq} instead of its legacy reply (playback_state
@@ -2172,7 +2283,7 @@ static mut LIVE_CONTROL: bool = false;
 /// ServerMessage.control_ack's field number.
 const SMSG_CONTROL_ACK: u32 = 41;
 
-unsafe fn note_live_control(frame: &[u8]) {
+unsafe fn note_live_control(frame: &[u8], now_ms: i64) {
     CONTROL_ACK_SEQ = 0;
     LIVE_CONTROL = false;
     match client_arm(frame) {
@@ -2184,14 +2295,21 @@ unsafe fn note_live_control(frame: &[u8]) {
             LIVE_CONTROL = true;
             CONTROL_ACK_SEQ = m.seq();
             // Before the session core applies it: which way the fade moves picks
-            // the deck OSC drives mid-fade (the incoming one, #402).
-            let pos = m.position();
-            let new = if pos.is_finite() { (pos as f32).clamp(0.0, 1.0) } else { 0.0 };
-            OSC_XF_TOWARD = osc_xf_toward(player().crossfade(), new, OSC_XF_TOWARD);
+            // the deck OSC drives mid-fade (the incoming one, #402). A scheduled
+            // one decides that when it applies (sched_apply_frame).
+            if apply_due(m.apply_at_ms(), player().time_base_ms(), now_ms).is_none() {
+                note_xf_toward(m.position());
+            }
         }
         Some(CArm::BlendKeypoints(_)) => LIVE_CONTROL = true,
         _ => {}
     }
+}
+
+/// Which deck OSC drives once the crossfade moves to `pos` (#402).
+unsafe fn note_xf_toward(pos: f64) {
+    let new = if pos.is_finite() { (pos as f32).clamp(0.0, 1.0) } else { 0.0 };
+    OSC_XF_TOWARD = osc_xf_toward(player().crossfade(), new, OSC_XF_TOWARD);
 }
 
 /// Encode `ServerMessage{control_ack{seq}}` into `out`; its length (<= 8 bytes),
@@ -2722,6 +2840,9 @@ macro_rules! features {
         // Kiosk mode (get_kiosk_status / set_kiosk_config / kiosk_unlock, the
         // kiosk_status push, Error "kiosk_locked"): docs/design/kiosk-mode.md.
         "kiosk",
+        // Scheduled changes: set_uniforms / set_effect / set_crossfade /
+        // set_brightness apply_at_ms on the shared time base (lm_sched_apply).
+        "apply_at",
         $($extra),*
     ] };
 }
@@ -3248,6 +3369,13 @@ unsafe fn handle_set_effect(frame: &[u8]) -> pb::ServerMessage {
         _ => ("", DECK_A_IDX),
     };
     FX_LAST_DECK = d as u32;
+    apply_set_effect(id, d);
+    // Ack with the session's playback state so the app's playback UI stays put.
+    player().playback_reply()
+}
+
+/// set_effect's device side (also the scheduled path, at a frame boundary).
+unsafe fn apply_set_effect(id: &str, d: usize) {
     if id.is_empty() || id == "off" {
         if d == DECK_B_IDX && deck_renders(DECK_B_IDX) {
             fx_set_active(DECK_B_IDX, false);
@@ -3257,8 +3385,6 @@ unsafe fn handle_set_effect(frame: &[u8]) -> pb::ServerMessage {
     } else {
         fx_set_active(d, true);
     }
-    // Ack with the session's playback state so the app's playback UI stays put.
-    player().playback_reply()
 }
 
 /// Whether the last set_uniforms asked to be persisted (SetUniforms.commit; unset =
@@ -3282,6 +3408,14 @@ unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
     // Live moves still waiting for the next frame are OLDER than this set: apply them
     // first so this one wins (loop task, under the player lock: no drain can race).
     live_apply();
+    note_set_uniforms(frame);
+    apply_set_uniforms(frame);
+    player().playback_reply()
+}
+
+/// What main.cpp's persist step reads after a set_uniforms (the deck, and whether to
+/// save it) — on arrival, also for a scheduled one.
+unsafe fn note_set_uniforms(frame: &[u8]) {
     UNIFORMS_COMMIT = true;
     FX_LAST_DECK = 0;
     if let Some(CArm::SetUniforms(m)) = client_arm(frame) {
@@ -3290,6 +3424,14 @@ unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
         // SetUniforms.commit: unset = persist (the old always-persist behaviour).
         // Deck B is never persisted.
         UNIFORMS_COMMIT = m.commit().unwrap_or(true) && d == DECK_A_IDX;
+    }
+}
+
+/// set_uniforms' device side (also the scheduled path, at a frame boundary): every
+/// value onto the deck's VM; a running keypoint morph on that deck stops.
+unsafe fn apply_set_uniforms(frame: &[u8]) {
+    if let Some(CArm::SetUniforms(m)) = client_arm(frame) {
+        let d = deck_index(m.deck());
         if let Some(p) = deck(d) {
             (*p).morph.cancel();
         }
@@ -3307,7 +3449,6 @@ unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
             }
         }
     }
-    player().playback_reply()
 }
 
 /// A protobuf writer over the reply buffer that can also just count (for the

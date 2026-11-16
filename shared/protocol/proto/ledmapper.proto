@@ -492,6 +492,8 @@ message SetEffect {
   string effect_id = 1;
   // FX deck to target: 0 = A (default), 1 = B.
   uint32 deck = 2;
+  // Scheduled apply time: as SetUniforms.apply_at_ms.
+  optional uint32 apply_at_ms = 3;
 }
 
 // Set live uniform values on the active effect (slider drags). Coalesced and
@@ -513,6 +515,14 @@ message SetUniforms {
   // live update in flight and paces on it — and, when its send window is full,
   // may drop that ack rather than stall (the client times out and moves on).
   uint32 seq = 4;
+  // When to apply it, in ms on the shared effect time base (the set_time_base
+  // epoch, like SetTexture.present_at_ms; firmware feature "apply_at"). Fixtures
+  // given the same epoch and the same apply_at change at the same render frame.
+  // The device holds it in a small queue and applies it at the first frame
+  // boundary at/after that time, in order; one already due (or no time base,
+  // or more than 10 s ahead) applies on arrival. Unset: on arrival, as before.
+  // The reply is sent on arrival (the state before the change).
+  optional uint32 apply_at_ms = 5;
 }
 
 // Ask for the device's TLS identity state (docs/design/per-device-cert.md). Works over
@@ -954,6 +964,8 @@ message SetCrossfade {
   // Live-control sequence number, as SetUniforms.seq: non-zero answers with a
   // ControlAck{seq} instead of the (much larger) welcome.
   uint32 seq = 3;
+  // Scheduled apply time: as SetUniforms.apply_at_ms.
+  optional uint32 apply_at_ms = 4;
 }
 
 // -- Uniform keypoints (docs/design/uniform-keypoints.md) --------------------
@@ -1708,6 +1720,8 @@ message ColorCorrectionState {
 message SetBrightness {
   // Output scale in 0.0 .. 1.0 (clamped by the player). 1.0 is unattenuated.
   double brightness = 1;
+  // Scheduled apply time: as SetUniforms.apply_at_ms.
+  optional uint32 apply_at_ms = 2;
 }
 
 // Configure an LED output channel's HARDWARE wiring: which GPIO drives its data
