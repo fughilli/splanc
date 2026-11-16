@@ -2,12 +2,23 @@ import { parseMesh, type MeshOverlay } from "../../geom/mesh";
 import { mapStore } from "../../store/mapStore";
 import { Button, toast } from "../kit";
 
-/** Manual digital-twin alignment; no changes to the measured LED coordinates. */
-export function MeshPanel(id: string, initial: MeshOverlay | null, preview: (mesh: MeshOverlay | null) => void): HTMLElement {
+/**
+ * Manual digital-twin alignment; no changes to the measured LED coordinates.
+ * Returns the panel body: the map detail screen hosts it in its editor-panel
+ * region behind the "Digital twin" tile, beside Transform and Topology.
+ * `onLayout` fires after the content changes height (mesh imported/removed).
+ */
+export function MeshPanel(
+  id: string,
+  initial: MeshOverlay | null,
+  preview: (mesh: MeshOverlay | null) => void,
+  onLayout: () => void = () => {},
+): HTMLElement {
   let mesh = initial ? structuredClone(initial) : null;
-  const panel = document.createElement("details");
-  panel.className = "k-card";
-  const title = document.createElement("summary");
+  const panel = document.createElement("div");
+  panel.className = "mesh-panel";
+  const title = document.createElement("div");
+  title.className = "topo-head";
   title.textContent = "Digital twin · mesh overlay";
   const help = document.createElement("p");
   help.textContent = "Import an OBJ or STL after scanning. Align the gray mesh manually; positions are in meters and rotations in degrees. Materials and colors are ignored. Export the library to include the mesh; device maps contain LEDs and topology only.";
@@ -25,7 +36,7 @@ export function MeshPanel(id: string, initial: MeshOverlay | null, preview: (mes
   };
   function rebuild(): void {
     fields.replaceChildren();
-    if (!mesh) { status.textContent = "No mesh attached"; return; }
+    if (!mesh) { status.textContent = "No mesh attached"; onLayout(); return; }
     status.textContent = `${mesh.name} · ${mesh.triangles.length.toLocaleString()} triangles`;
     for (const key of ["translation", "rotation", "scale"] as const) {
       const count = key === "scale" ? 1 : 3;
@@ -65,6 +76,7 @@ export function MeshPanel(id: string, initial: MeshOverlay | null, preview: (mes
     } }), Button({ label: "Remove mesh", variant: "danger", onClick: () => {
       void mapStore.setMesh(id, null).then(() => { mesh = null; preview(null); rebuild(); }).catch(e => toast(String(e), { error: true }));
     } }));
+    onLayout();
   }
   file.addEventListener("change", () => {
     const selected = file.files?.[0];
