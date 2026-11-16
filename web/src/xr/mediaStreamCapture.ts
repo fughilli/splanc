@@ -148,6 +148,20 @@ export class MediaStreamCaptureSource implements CaptureSource {
    * `maxExposureMs` (Nyquist cap = bitPeriodMs/2) bounds the longest exposure.
    * Public so the exposure servo can retune it live. Best effort: records the
    * outcome in exposureApplied and never throws. */
+  /** True when the track takes a hard manual exposure lock (Image-Capture
+   * `exposureMode: "manual"` + an `exposureTime` range) — what the
+   * exposure-first light servo (cv/lightServo.ts) needs. The compensation-only
+   * fallback doesn't count: the AE still owns the gain. False on iOS WebKit. */
+  manualExposureSupported(): boolean {
+    const track = this.stream?.getVideoTracks()[0];
+    try {
+      const caps = track?.getCapabilities?.() as ExposureCapabilities | undefined;
+      return caps?.exposureMode?.includes("manual") === true && caps.exposureTime !== undefined;
+    } catch {
+      return false;
+    }
+  }
+
   async setExposure(target01: number, maxExposureMs?: number): Promise<void> {
     // NOTE iOS: this is a no-op there, and cannot be otherwise on this capture
     // path. WebKit implements none of the Image-Capture exposure extensions
