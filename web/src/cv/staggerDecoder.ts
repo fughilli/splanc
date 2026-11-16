@@ -81,6 +81,8 @@ const K_DECAY = 0.99;
 interface Windows {
   /** First absolute frame held. */
   lo: number;
+  /** Windows held (the arrays may be longer: a reused scratch). */
+  len: number;
   w: Float64Array;
   n: Int32Array;
   r: Float64Array;
@@ -127,6 +129,10 @@ export class StaggerDecoder implements CodeDecoder {
   private readonly lastPilot = new WeakMap<Track, number>();
   private readonly lastMiss = new WeakMap<Track, number>();
   private readonly lastEmitted = new Map<number, number>();
+  /** Each confirmed id's transmitted data symbols (the quality model's truth). */
+  private readonly expected = new Map<number, Uint8Array>();
+  /** Window scratch, reused by every track (see windows()). */
+  private scratch: Windows | null = null;
 
   readonly stats: DecodeStats = newDecodeStats();
 
@@ -250,39 +256,71 @@ export class StaggerDecoder implements CodeDecoder {
     return p;
   }
 
-  /** Bucket a track's samples into absolute windows [lo, hi]. */
+  /**
+   * Bucket a track's samples into absolute windows [lo, hi], into the shared
+   * scratch (valid until the next call). Samples are in capture order and the
+   * frame index is monotone in capture time, so only the samples inside
+   * [lo, hi] are visited (binary search for the first): the same sums, in the
+   * same order, as a scan of every sample, at a fraction of the cost (every
+   * track is checked on every frame, ~2000 of them at once on a big wall).
+   */
   private windows(track: Track, lo: number, hi: number): Windows {
     const n = hi - lo + 1;
-    const out: Windows = {
-      lo,
-      w: new Float64Array(n),
-      n: new Int32Array(n),
-      r: new Float64Array(n),
-      g: new Float64Array(n),
-      b: new Float64Array(n),
-    };
-    for (const s of track.samples) {
-      if (!s.on) continue;
-      const x = (this.toServerTime(s.tCaptureMs) - this.subShift - this.epochMs) / this.bp;
+    let out: Windows | null = this.scratch;
+    if (out === null || out.w.length < n) {
+      const cap = Math.max(n, 2 * (out?.w.length ?? 0), 64);
+      out = {
+        lo,
+        len: n,
+        w: new Float64Array(cap),
+        n: new Int32Array(cap),
+        r: new Float64Array(cap),
+        g: new Float64Array(cap),
+        b: new Float64Array(cap),
+      };
+      this.scratch = out;
+    }
+    out.lo = lo;
+    out.w.fill(0, 0, n);
+    out.n.fill(0, 0, n);
+    out.r.fill(0, 0, n);
+    out.g.fill(0, 0, n);
+    out.b.fill(0, 0, n);
+    out.len = n;
+    const samples = track.samples;
+    const frameOf = (s: TrackSample): number => (this.toServerTime(s.tCaptureMs) - this.subShift - this.epochMs) / this.bp;
+    // First sample whose frame is >= lo.
+    let i0 = 0;
+    let i1 = samples.length;
+    while (i0 < i1) {
+      const m = (i0 + i1) >> 1;
+      if (Math.floor(frameOf(samples[m]!)) < lo) i0 = m + 1;
+      else i1 = m;
+    }
+    for (let i = i0; i < samples.length; i++) {
+      const s = samples[i]!;
+      const x = frameOf(s);
       const f = Math.floor(x);
-      if (f < lo || f > hi) continue;
+      if (f > hi) break;
+      if (!s.on || f < lo) continue;
       const frac = x - f;
       const w = Math.min(frac, 1 - frac) - this.guard;
       if (w <= 0) continue;
-      const i = f - lo;
-      out.w[i]! += w;
-      out.n[i]!++;
-      out.r[i]! += w * s.r;
-      out.g[i]! += w * s.g;
-      out.b[i]! += w * s.b;
+      const k = f - lo;
+      out.w[k]! += w;
+      out.n[k]!++;
+      out.r[k]! += w * s.r;
+      out.g[k]! += w * s.g;
+      out.b[k]! += w * s.b;
     }
     return out;
   }
 
   private mean(win: Windows, f: number): [number, number, number] | null {
     const i = f - win.lo;
-    const w = win.w[i];
-    if (w === undefined || w === 0) return null;
+    if (i < 0 || i >= win.len) return null;
+    const w = win.w[i]!;
+    if (w === 0) return null;
     return [win.r[i]! / w, win.g[i]! / w, win.b[i]! / w];
   }
 
@@ -294,21 +332,21 @@ export class StaggerDecoder implements CodeDecoder {
    * worst channel's. A veil v at LED level L lowers it to L / (L + 2v).
    */
   private pilotScore(win: Windows, f: number): number | null {
-    const cs: [number, number, number][] = [];
-    for (let j = 0; j < this.L; j++) {
-      const c = this.mean(win, f + j);
-      if (c === null) return null;
-      cs.push(c);
-    }
+    // Allocation-free: called for every track on every frame. Reads the same
+    // window means mean() would.
+    const i0 = f - win.lo;
+    if (i0 < 0 || i0 + this.L > win.len) return null;
+    for (let j = 0; j < this.L; j++) if (win.w[i0 + j] === 0) return null;
     let score = Infinity;
     for (let ch = 0; ch < 3; ch++) {
       const lit = this.lit[ch]!;
       const dark = this.dark[ch]!;
       if (lit.length === 0 || dark.length === 0) continue;
+      const sum = ch === 0 ? win.r : ch === 1 ? win.g : win.b;
       let on = Infinity;
       let off = -Infinity;
-      for (const j of lit) on = Math.min(on, cs[j]![ch]!);
-      for (const j of dark) off = Math.max(off, cs[j]![ch]!);
+      for (const j of lit) on = Math.min(on, sum[i0 + j]! / win.w[i0 + j]!);
+      for (const j of dark) off = Math.max(off, sum[i0 + j]! / win.w[i0 + j]!);
       score = Math.min(score, on + off <= 1e-6 ? -1 : (on - off) / (on + off));
     }
     return Number.isFinite(score) ? score : -1;
@@ -358,21 +396,23 @@ export class StaggerDecoder implements CodeDecoder {
     const p = this.params;
     const C = this.C;
     const h = this.half;
-    const win = this.windows(track, a - h, e);
-
     // Pilot: the candidate must clear the floor and be the best pair within
     // ±C/2 (the true pilot recurs every C; data repeats every C too, so a
-    // false delimiter is only ever a weaker local candidate).
-    const sa = this.pilotScore(win, a);
+    // false delimiter is only ever a weaker local candidate). Most tracks'
+    // pilot is elsewhere in the cycle, so the floor is checked on the pilot's
+    // own L windows before the whole span is bucketed.
+    const pre = this.windows(track, a, a + this.L - 1);
+    const sa = this.pilotScore(pre, a);
     if (sa === null || sa < this.minPilotScore) {
-      this.noteMiss(track, win, a, e);
+      this.noteMiss(track, a, e);
       return null;
     }
+    const win = this.windows(track, a - h, e);
     for (let x = a - h; x <= a + h; x++) {
       if (x === a || x + this.L - 1 > e) continue;
       const sx = this.pilotScore(win, x);
       if (sx !== null && (sx > sa || (x < a && sx === sa))) {
-        this.noteMiss(track, win, a, e);
+        this.noteMiss(track, a, e);
         return null;
       }
     }
@@ -503,7 +543,7 @@ export class StaggerDecoder implements CodeDecoder {
     if (confirmed) {
       for (let d = 0; d < this.nDataFrames; d++) {
         const o = seen[d];
-        if (o != null) this.quality.add(o, symbolAt(ledId, d, p), symbols[d]!, p.symbols);
+        if (o != null) this.quality.add(o, this.expectedSymbols(ledId)[d]!, symbols[d]!, p.symbols);
       }
       this.stats.uniqueIds.add(ledId);
       track.ledId = ledId;
@@ -548,11 +588,24 @@ export class StaggerDecoder implements CodeDecoder {
     return { rec, intensity: anchor.intensity, released };
   }
 
+  /** symbolAt for every data frame of `ledId`, once per id (a kernel call
+   * per window of every confirmed decode otherwise). */
+  private expectedSymbols(ledId: number): Uint8Array {
+    let e = this.expected.get(ledId);
+    if (e === undefined) {
+      e = new Uint8Array(this.nDataFrames);
+      for (let d = 0; d < this.nDataFrames; d++) e[d] = symbolAt(ledId, d, this.params);
+      this.expected.set(ledId, e);
+    }
+    return e;
+  }
+
   /** Telemetry: a track lit through a whole cycle with no pilot found. */
-  private noteMiss(track: Track, win: Windows, a: number, e: number): void {
+  private noteMiss(track: Track, a: number, e: number): void {
     const last = this.lastPilot.get(track) ?? -Infinity;
     const lastMiss = this.lastMiss.get(track) ?? -Infinity;
     if (last >= a - this.C || lastMiss > a - this.C) return;
+    const win = this.windows(track, a, e);
     for (let f = a; f <= e; f++) if (win.w[f - win.lo] === 0) return;
     this.lastMiss.set(track, a);
     this.stats.delimiterMisses++;

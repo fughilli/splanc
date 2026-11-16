@@ -23,6 +23,7 @@
 
 import type { DetectionRecord, Vec3 } from "@ledmapper/protocol";
 import { project } from "../geom/pinhole";
+import { medianInPlace } from "./select";
 import type { Blob, FrameMeta } from "./types";
 
 export interface TrackSample {
@@ -160,7 +161,13 @@ export class Track {
   pruneBefore(tMs: number): void {
     let firstKept = 0;
     while (firstKept < this.samples.length && this.samples[firstKept]!.tCaptureMs < tMs) firstKept++;
-    if (firstKept > 0) this.samples.splice(0, firstKept);
+    if (firstKept > 0) {
+      // In place (splice allocates the removed run; this runs per track per frame).
+      const xs = this.samples;
+      const n = xs.length - firstKept;
+      for (let i = 0; i < n; i++) xs[i] = xs[i + firstKept]!;
+      xs.length = n;
+    }
   }
 }
 
@@ -251,7 +258,7 @@ export class Tracker {
       vs.push(tr.velV);
     }
     if (us.length < 3) return null;
-    return { u: median(us)!, v: median(vs)! };
+    return { u: medianOf(us.length, (i) => us[i]!)!, v: medianOf(vs.length, (i) => vs[i]!)! };
   }
 
   /** Ingest one frame's blobs. Returns the number of matched tracks. */
@@ -263,13 +270,25 @@ export class Tracker {
 
     // Local spacing: each blob's nearest-neighbour distance this frame.
     const nn = new Float64Array(nB).fill(Infinity);
+    const gu = grid.us;
+    const gv = grid.vs;
     for (let bi = 0; bi < nB; bi++) {
-      const b = blobs[bi]!;
-      grid.forNear(b.u, b.v, (bj, d2) => {
-        if (bj !== bi && d2 < nn[bi]! * nn[bi]!) nn[bi] = Math.sqrt(d2);
-      });
+      const u = gu[bi]!;
+      const v = gv[bi]!;
+      const nh = grid.query(u, v);
+      const hits = grid.hits;
+      let best = Infinity;
+      for (let x = 0; x < nh; x++) {
+        const bj = hits[x]!;
+        const du = gu[bj]! - u;
+        const dv = gv[bj]! - v;
+        const d2 = du * du + dv * dv;
+        if (bj !== bi && d2 < best * best) best = Math.sqrt(d2);
+      }
+      nn[bi] = best;
     }
-    const spacingPx = median(Array.from(nn).filter(Number.isFinite));
+    const finiteNn = nn.filter(Number.isFinite);
+    const spacingPx = medianOf(finiteNn.length, (i) => finiteNn[i]!);
     const gateFor = (bi: number): number => {
       if (this.gateSpacingFrac <= 0 || !Number.isFinite(nn[bi]!)) return this.gatePx;
       return Math.min(this.gatePx, Math.max(this.minGatePx, this.gateSpacingFrac * nn[bi]!));
@@ -298,13 +317,22 @@ export class Tracker {
       let best = Infinity;
       let second = Infinity;
       let bestBi = -1;
-      grid.forNear(pred.u, pred.v, (bi, d2) => {
+      // One query serves the three passes below (same points, same order).
+      const nh = grid.query(pred.u, pred.v);
+      const hits = grid.hits;
+      const d2s = scratchD2(nh);
+      for (let x = 0; x < nh; x++) {
+        const bi = hits[x]!;
+        const du = gu[bi]! - pred.u;
+        const dv = gv[bi]! - pred.v;
+        const d2 = du * du + dv * dv;
+        d2s[x] = d2;
         if (d2 < best) {
           second = best;
           best = d2;
           bestBi = bi;
         } else if (d2 < second) second = d2;
-      });
+      }
       if (bestBi < 0) continue;
       const g = gateFor(bestBi);
       if (best > g * g) continue;
@@ -313,18 +341,17 @@ export class Tracker {
         ambiguousTrack[ti] = 1;
         // Neither candidate may found a duplicate track while this one is
         // undecided: it is (one of) them.
-        grid.forNear(pred.u, pred.v, (bi, d2) => {
-          if (d2 <= second) contested[bi] = 1;
-        });
+        for (let x = 0; x < nh; x++) if (d2s[x]! <= second) contested[hits[x]!] = 1;
         continue;
       }
       cands.push({ d2: best, ti, bi: bestBi });
       // Lower-ranked alternatives stay eligible for when the best is taken.
-      grid.forNear(pred.u, pred.v, (bi, d2) => {
-        if (bi === bestBi) return;
+      for (let x = 0; x < nh; x++) {
+        const bi = hits[x]!;
+        if (bi === bestBi) continue;
         const gb = gateFor(bi);
-        if (d2 <= gb * gb) cands.push({ d2, ti, bi });
-      });
+        if (d2s[x]! <= gb * gb) cands.push({ d2: d2s[x]!, ti, bi });
+      }
     }
     cands.sort((a, b) => a.d2 - b.d2);
 
@@ -358,17 +385,40 @@ export class Tracker {
       const near = new BlobGrid(at, Math.max(8, radius));
       const resU = (ti: number): number => blobs[pairBlob[ti]!]!.u - predictions[ti]!.u;
       const resV = (ti: number): number => blobs[pairBlob[ti]!]!.v - predictions[ti]!.v;
+      // Matched tracks' residuals, by their index in `at`.
+      const atRu = new Float64Array(atTi.length);
+      const atRv = new Float64Array(atTi.length);
+      for (let k = 0; k < atTi.length; k++) {
+        atRu[k] = resU(atTi[k]!);
+        atRv[k] = resV(atTi[k]!);
+      }
+      let nu = new Float64Array(64);
+      let nv = new Float64Array(64);
       const neighbourhood = (ti: number): { u: number; v: number } | null => {
         const p = predictions[ti]!;
-        const us: number[] = [];
-        const vs: number[] = [];
-        near.forNear(p.u, p.v, (k, d2) => {
-          const tj = atTi[k]!;
-          if (tj === ti || d2 > radius * radius) return;
-          us.push(resU(tj));
-          vs.push(resV(tj));
-        });
-        return us.length >= LOCAL_MIN_NEIGHBOURS ? { u: median(us)!, v: median(vs)! } : null;
+        const nh = near.query(p.u, p.v);
+        const hits = near.hits;
+        let m = 0;
+        for (let x = 0; x < nh; x++) {
+          const k = hits[x]!;
+          if (atTi[k] === ti) continue;
+          const du = near.us[k]! - p.u;
+          const dv = near.vs[k]! - p.v;
+          if (du * du + dv * dv > radius * radius) continue;
+          if (m === nu.length) {
+            const gu2 = new Float64Array(2 * m);
+            const gv2 = new Float64Array(2 * m);
+            gu2.set(nu);
+            gv2.set(nv);
+            nu = gu2;
+            nv = gv2;
+          }
+          nu[m] = atRu[k]!;
+          nv[m] = atRv[k]!;
+          m++;
+        }
+        if (m < LOCAL_MIN_NEIGHBOURS) return null;
+        return { u: medianInPlace(nu, m)!, v: medianInPlace(nv, m)! };
       };
       const limit = this.localConsistencyFrac * spacingPx;
       const refused: number[] = [];
@@ -450,9 +500,13 @@ export class Tracker {
     for (let bi = 0; bi < blobs.length; bi++) {
       if (blobTaken[bi] || contested[bi]) continue;
       let claimed = false;
-      orphans.forNear(blobs[bi]!.u, blobs[bi]!.v, (_, d2) => {
-        if (d2 <= claimR * claimR) claimed = true;
-      });
+      const nh = orphans.query(gu[bi]!, gv[bi]!);
+      for (let x = 0; x < nh && !claimed; x++) {
+        const k = orphans.hits[x]!;
+        const du = orphans.us[k]! - gu[bi]!;
+        const dv = orphans.vs[k]! - gv[bi]!;
+        if (du * du + dv * dv <= claimR * claimR) claimed = true;
+      }
       if (!claimed) survivors.push(new Track(blobs[bi]!, meta));
     }
 
@@ -499,17 +553,28 @@ export class Tracker {
     // one tight cluster (every track agrees); offsets to NEIGHBOURS scatter
     // over ~a pitch in every direction, so they form no comparable peak.
     const r2 = this.gatePx * this.gatePx;
-    const offs: number[] = [];
+    let offs = offsScratch;
+    let nOffs = 0;
     for (const p of predictions) {
-      grid.forNear(p.u, p.v, (bi, d2) => {
-        if (d2 > r2) return;
-        offs.push(blobs[bi]!.u - p.u, blobs[bi]!.v - p.v);
-      });
+      const nh = grid.query(p.u, p.v);
+      for (let x = 0; x < nh; x++) {
+        const bi = grid.hits[x]!;
+        const du = grid.us[bi]! - p.u;
+        const dv = grid.vs[bi]! - p.v;
+        if (du * du + dv * dv > r2) continue;
+        if (nOffs + 2 > offs.length) {
+          const g = new Float64Array(2 * offs.length);
+          g.set(offs);
+          offs = offsScratch = g;
+        }
+        offs[nOffs++] = du;
+        offs[nOffs++] = dv;
+      }
     }
     const bin = Math.max(1, 0.25 * spacingPx);
     const votes = new Map<number, number>();
     const key = (i: number, j: number): number => (i + 4096) * 8192 + (j + 4096);
-    for (let k = 0; k < offs.length; k += 2) {
+    for (let k = 0; k < nOffs; k += 2) {
       const kk = key(Math.round(offs[k]! / bin), Math.round(offs[k + 1]! / bin));
       votes.set(kk, (votes.get(kk) ?? 0) + 1);
     }
@@ -530,7 +595,7 @@ export class Tracker {
       let n = 0;
       let su = 0;
       let sv = 0;
-      for (let k = 0; k < offs.length; k += 2) {
+      for (let k = 0; k < nOffs; k += 2) {
         const a = offs[k]! - cu;
         const b = offs[k + 1]! - cv;
         if (a * a + b * b <= near2) {
@@ -560,45 +625,157 @@ export class Tracker {
 
 }
 
-function median(xs: number[]): number | null {
-  if (xs.length === 0) return null;
-  xs.sort((a, b) => a - b);
-  const m = xs.length >> 1;
-  return xs.length % 2 ? xs[m]! : (xs[m - 1]! + xs[m]!) / 2;
+/** Scratch for estimateShift's offsets. */
+let offsScratch = new Float64Array(4096);
+
+/** Scratch for the association pass's per-query distances. */
+let d2Scratch = new Float64Array(64);
+function scratchD2(n: number): Float64Array {
+  if (d2Scratch.length < n) d2Scratch = new Float64Array(Math.max(n, 2 * d2Scratch.length));
+  return d2Scratch;
 }
 
-/** Uniform-grid spatial index over one frame's blobs: radius queries in O(k). */
+/** Scratch for {@link medianOf}: grown, never shrunk. */
+let medianScratch = new Float64Array(256);
+
+/** The median of `n` values `at(0..n-1)` (the middle value, or the mean of the two middle ones),
+ * without allocating: a typed-array numeric sort of a shared scratch. */
+function medianOf(n: number, at: (i: number) => number): number | null {
+  if (n === 0) return null;
+  if (medianScratch.length < n) medianScratch = new Float64Array(Math.max(n, 2 * medianScratch.length));
+  const s = medianScratch;
+  for (let i = 0; i < n; i++) s[i] = at(i);
+  return medianInPlace(s, n);
+}
+
+/**
+ * Uniform-grid spatial index over one frame's points: radius queries in O(k).
+ * Cells are `cell` px; {@link query} returns every point in the 3×3 cells
+ * around (u, v) — cells scanned row-major (i, then j), points in index order
+ * within a cell. Stored as a dense CSR table over the points' bounding box
+ * (a hash only when that box is huge): at 2000 LEDs the tracker makes ~10k
+ * queries a frame, and the old Map-of-arrays + per-point callback was a
+ * third of the capture loop's CPU.
+ */
 class BlobGrid {
-  private readonly cells = new Map<number, number[]>();
+  private readonly i0: number;
+  private readonly j0: number;
+  private readonly ni: number;
+  private readonly nj: number;
+  /** Dense: cell c's points are order[start[c] .. start[c+1]). */
+  private readonly start: Int32Array | null;
+  private readonly order: Int32Array;
+  /** Sparse fallback (bounding box too large for a dense table). */
+  private readonly cells: Map<number, number[]> | null;
+  readonly us: Float64Array;
+  readonly vs: Float64Array;
+  /** Indices from the last {@link query}. */
+  hits = new Int32Array(64);
+
   constructor(
-    private readonly blobs: readonly Blob[],
+    points: readonly { u: number; v: number }[],
     private readonly cell: number,
   ) {
-    for (let i = 0; i < blobs.length; i++) {
-      const k = this.key(Math.floor(blobs[i]!.u / cell), Math.floor(blobs[i]!.v / cell));
-      const c = this.cells.get(k);
-      if (c === undefined) this.cells.set(k, [i]);
-      else c.push(i);
+    const n = points.length;
+    this.us = new Float64Array(n);
+    this.vs = new Float64Array(n);
+    let i0 = Infinity;
+    let i1 = -Infinity;
+    let j0 = Infinity;
+    let j1 = -Infinity;
+    const ci = new Float64Array(n);
+    const cj = new Float64Array(n);
+    for (let k = 0; k < n; k++) {
+      const p = points[k]!;
+      this.us[k] = p.u;
+      this.vs[k] = p.v;
+      const a = Math.floor(p.u / cell);
+      const b = Math.floor(p.v / cell);
+      ci[k] = a;
+      cj[k] = b;
+      if (!Number.isFinite(a) || !Number.isFinite(b)) continue; // never found by a query
+      if (a < i0) i0 = a;
+      if (a > i1) i1 = a;
+      if (b < j0) j0 = b;
+      if (b > j1) j1 = b;
     }
-  }
-  private key(i: number, j: number): number {
-    return (i + 32768) * 65536 + (j + 32768);
-  }
-  /** Visit every blob within one cell (≥ the radius it was built for) of (u, v). */
-  forNear(u: number, v: number, fn: (bi: number, d2: number) => void): void {
-    const ci = Math.floor(u / this.cell);
-    const cj = Math.floor(v / this.cell);
-    for (let i = ci - 1; i <= ci + 1; i++) {
-      for (let j = cj - 1; j <= cj + 1; j++) {
-        const c = this.cells.get(this.key(i, j));
-        if (c === undefined) continue;
-        for (const bi of c) {
-          const b = this.blobs[bi]!;
-          const du = b.u - u;
-          const dv = b.v - v;
-          fn(bi, du * du + dv * dv);
-        }
+    this.order = new Int32Array(n);
+    if (i0 > i1) {
+      this.i0 = this.j0 = 0;
+      this.ni = this.nj = 0;
+      this.start = new Int32Array(1);
+      this.cells = null;
+      return;
+    }
+    this.i0 = i0;
+    this.j0 = j0;
+    this.ni = i1 - i0 + 1;
+    this.nj = j1 - j0 + 1;
+    const nCells = this.ni * this.nj;
+    if (Number.isFinite(nCells) && nCells <= 4 * n + 4096) {
+      const start = new Int32Array(nCells + 1);
+      const placed = (k: number): boolean => Number.isFinite(ci[k]!) && Number.isFinite(cj[k]!);
+      for (let k = 0; k < n; k++) if (placed(k)) start[(ci[k]! - i0) * this.nj + (cj[k]! - j0) + 1]!++;
+      for (let c = 0; c < nCells; c++) start[c + 1]! += start[c]!;
+      const fill = start.slice(0, nCells);
+      for (let k = 0; k < n; k++) if (placed(k)) this.order[fill[(ci[k]! - i0) * this.nj + (cj[k]! - j0)]!++] = k;
+      this.start = start;
+      this.cells = null;
+    } else {
+      this.start = null;
+      this.cells = new Map();
+      for (let k = 0; k < n; k++) {
+        if (!Number.isFinite(ci[k]!) || !Number.isFinite(cj[k]!)) continue;
+        const key = BlobGrid.key(ci[k]!, cj[k]!);
+        const c = this.cells.get(key);
+        if (c === undefined) this.cells.set(key, [k]);
+        else c.push(k);
       }
     }
+  }
+
+  private static key(i: number, j: number): number {
+    return (i + 32768) * 65536 + (j + 32768);
+  }
+
+  private push(count: number, k: number): number {
+    if (count === this.hits.length) {
+      const h = new Int32Array(2 * count);
+      h.set(this.hits);
+      this.hits = h;
+    }
+    this.hits[count] = k;
+    return count + 1;
+  }
+
+  /** Every point within one cell (≥ the radius it was built for) of (u, v),
+   * into {@link hits}; returns how many. */
+  query(u: number, v: number): number {
+    const ci = Math.floor(u / this.cell);
+    const cj = Math.floor(v / this.cell);
+    let count = 0;
+    if (this.start !== null) {
+      const start = this.start;
+      const order = this.order;
+      for (let i = ci - 1; i <= ci + 1; i++) {
+        const ii = i - this.i0;
+        if (ii < 0 || ii >= this.ni) continue;
+        for (let j = cj - 1; j <= cj + 1; j++) {
+          const jj = j - this.j0;
+          if (jj < 0 || jj >= this.nj) continue;
+          const c = ii * this.nj + jj;
+          for (let x = start[c]!, end = start[c + 1]!; x < end; x++) count = this.push(count, order[x]!);
+        }
+      }
+      return count;
+    }
+    for (let i = ci - 1; i <= ci + 1; i++) {
+      for (let j = cj - 1; j <= cj + 1; j++) {
+        const c = this.cells!.get(BlobGrid.key(i, j));
+        if (c === undefined) continue;
+        for (const k of c) count = this.push(count, k);
+      }
+    }
+    return count;
   }
 }
