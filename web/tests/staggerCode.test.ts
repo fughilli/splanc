@@ -57,6 +57,7 @@ interface StaggerGolden {
   codedIndex: number[];
   staggerStep: number;
   staggerSteps: number[];
+  phasesWide: number[];
   phases: number[];
   colorPlan: string[];
 }
@@ -106,6 +107,9 @@ for (const name of ["golden_stagger16.json", "golden_stagger16_sym4.json"]) {
       assert.equal(staggerPhase(id, p), g.phases[id]);
       assert.equal(codedIndex(id, p), g.codedIndex[id]);
     }
+    // The non-linear phase map over many id blocks (hue code v2, "Non-linear
+    // pilot phase"): the decoder's φ check reads it through this binding.
+    g.phasesWide.forEach((ph, id) => assert.equal(staggerPhase(id, p), ph, `phasesWide[${id}]`));
     assert.deepEqual(syncColors(p), [...g.pilotColors].map((ch) => LETTER[ch]));
     g.colorPlan.forEach((row, f) => {
       [...row].forEach((ch, id) => assert.deepEqual(colorForFrame(id, f, p), LETTER[ch], `frame ${f} LED ${id}`));
@@ -135,7 +139,8 @@ test("the palette pilot uses only the alphabet's colours; ids decode back throug
     assert.equal(C, L + dataFrames(st));
     for (let id = 0; id < 300; id += 7) {
       const ph = staggerPhase(id, st);
-      assert.equal(ph, (id * staggerStep(C)) % C);
+      // In a block of C ids, the golden-ratio step; across blocks, the keyed offset.
+      if (id % C !== 0) assert.equal(ph, (staggerPhase(id - 1, st) + staggerStep(C)) % C);
       const own: Rgb[] = [];
       for (let j = 0; j < C; j++) {
         const got = colorForFrame(id, (j + ph) % C, st);

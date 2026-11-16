@@ -53,14 +53,14 @@ const ms = (x: number | null): string => (x === null ? "never" : `${(x / 1000).t
 
 test("link sim: staggered pilot vs staggered white vs v1 (records, wrong ids, false delimiters, servo)", () => {
   const rows = runAll();
-  console.log("| scene | sync | records | wrong ids | t90 | φ-rejects | delimiter misses | exposure median/max |");
-  console.log("| --- | --- | --- | --- | --- | --- | --- | --- |");
+  console.log("| scene | sync | records | wrong ids | t90 | φ-rejects | delimiter misses | exposure median/max | coverage |");
+  console.log("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const x of rows) {
     const t90 = x.r.timeToCoverage.find((c) => Math.abs(c.frac - 0.9) < 1e-9)?.tMs ?? null;
     const e = x.r.exposure;
     console.log(
       `| ${x.scene} | ${x.policy} | ${x.r.records} | ${x.r.truth!.wrong} | ${ms(t90)} | ${x.phaseRejects} | ${x.misses} | ` +
-        `${e.median?.toFixed(2) ?? "–"}/${e.max?.toFixed(2) ?? "–"} |`,
+        `${e.median?.toFixed(2) ?? "–"}/${e.max?.toFixed(2) ?? "–"} | ${(100 * x.r.finalCoverage).toFixed(1)}% |`,
     );
   }
   for (const scene of SCENES) {

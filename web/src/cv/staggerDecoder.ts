@@ -6,9 +6,10 @@
  * player.
  *
  * Under the staggered pattern LED `id` runs the v1 cycle rotated by
- * φ(id) = (id·S) mod C, so there is no global sync frame: every track finds
- * its OWN cycle boundary, and decodes happen continuously, on each track's
- * boundary, rather than for everyone at a global cycle end. Per track:
+ * φ(id) = (id·S + h(id div C)) mod C (the kernel's, via wasm), so there is
+ * no global sync frame: every track finds its OWN cycle boundary, and
+ * decodes happen continuously, on each track's boundary, rather than for
+ * everyone at a global cycle end. Per track:
  *
  *   1. Windows. The track's samples are bucketed into ABSOLUTE frame windows
  *      (frame n = floor((t_server − shift − epoch) / bitPeriod)) with v1's

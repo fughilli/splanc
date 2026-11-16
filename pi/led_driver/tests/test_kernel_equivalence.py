@@ -132,6 +132,9 @@ def test_python_binding_renders_the_stagger_golden(env):
     n, sym, fec, sync = g["ledCount"], g["symbols"], g["fec"], g["syncPattern"]
     assert kernel.stagger_step(g["cycleFrames"]) == g["staggerStep"]
     assert [kernel.stagger_phase(i, n, sym, fec, sync) for i in range(n)] == g["phases"]
+    # The non-linear phase map over many id blocks.
+    wide = g["phasesWide"]
+    assert [kernel.stagger_phase(i, n, sym, fec, sync) for i in range(len(wide))] == wide
     for f, row in enumerate(g["colorPlan"]):
         want = [LETTER_RGB[ch] for ch in row]
         assert kernel.frame_rgb(f, n, sym, fec, sync) == want, f"frame {f}"
