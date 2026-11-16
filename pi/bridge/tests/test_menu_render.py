@@ -116,8 +116,10 @@ def test_vertical_handoff_from_the_boot_logo():
         page="home", boot_t=5.0, slide=SlideView(Scene("boot"), Scene("home"), "up", "slide", 0.5)
     )
     img = render_oled.render(st, v, now=NOW, frames=frames)
-    assert lit(img, (0, 0, 128, 32)) == 128 * 32  # the logo's lower half, moved up
-    assert lit(img, (0, 32, 128, 64)) < 128 * 32  # the home page coming in under it
+    w, h = render_oled.W, render_oled.H  # the UI canvas, at shift (0, 0)
+    assert lit(img, (0, 0, w, h // 2)) == w * (h // 2)  # the logo's lower half, moved up
+    assert lit(img, (0, h // 2 + 1, w, h)) < w * (h // 2)  # the home page coming in under it
+    assert lit(img, (w, 0, 128, 64)) == 0 and lit(img, (0, h, 128, 64)) == 0  # shift margin
 
 
 def test_boot_frames_round_trip_and_hold_the_last():

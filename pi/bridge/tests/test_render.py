@@ -124,12 +124,27 @@ def test_oled_confirm_hides_the_page_behind():
     assert conf.tobytes() == conf_other.tobytes()
 
 
-def test_oled_asleep_is_black_and_shift_moves():
+def test_shift_moves_the_whole_ui_without_clipping():
     s = status("pairing")
-    assert render_oled.render(s, View(page="home", asleep=True), now=NOW).histogram()[255] == 0
     a = render_oled.render(s, View(page="home"), now=NOW)
-    b = render_oled.render(s, View(page="home", shift=(1, 1)), now=NOW)
-    # The shift moves the picture; a full-width lit title bar (inverse sets) loses at most
-    # the one column and row pushed off the edge.
-    assert abs(a.histogram()[255] - b.histogram()[255]) <= a.width + a.height
-    assert a.tobytes() != b.tobytes()
+    assert a.size == (128, 64)
+    for shift in ((1, 0), (1, 1), (0, 1)):
+        b = render_oled.render(s, View(page="home", shift=shift), now=NOW)
+        assert b.size == (128, 64) and b.tobytes() != a.tobytes()
+        # Every lit pixel is still there, moved: the UI is 1 px under the panel each way.
+        assert b.histogram()[255] == a.histogram()[255]
+        assert b.crop((shift[0], shift[1], shift[0] + 127, shift[1] + 63)).tobytes() == (
+            a.crop((0, 0, 127, 63)).tobytes()
+        )
+
+
+def test_screensaver_flies_one_glider_per_online_fixture():
+    from splanc_display import gliders
+
+    s = status("paired")
+    connected = s.players_ok
+    assert connected == 2 and len(s.players) == 3  # the sample: 2 online, 1 offline
+    img = render_oled.render(s, View(page="home", saver=True, dimmed=True, saver_t=1.0), now=NOW)
+    gen = int(1.0 * gliders.GENS_PER_SECOND)
+    assert img.tobytes() == gliders.render(connected, gen).tobytes()
+    assert img.histogram()[255] == connected * 5 * gliders.CELL**2

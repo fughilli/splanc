@@ -93,6 +93,8 @@ td.n { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowr
       <div class="row" style="margin-top:10px">
         <label>Display</label>
         <button class="b" id="restart">Restart service (boot logo)</button>
+        <button class="b" id="passive" title="as if idle for 2 minutes">Passive (dim)</button>
+        <button class="b" id="saver" title="as if idle for 30 minutes">Screensaver</button>
         <select id="speed" title="clock rate handed to the service">
           <option value="1">1× speed</option><option value="0.5">0.5×</option>
           <option value="0.25">0.25× slow-mo</option><option value="0.1">0.1×</option>
@@ -252,7 +254,7 @@ function showInfo() {
   $("stats").textContent = `${info.fps ? info.fps.toFixed(0) + " fps" : "idle"} · ` +
     `frame interval ${info.frame_interval_ms} ms · ` +
     `${info.speed}× clock · page ${v.page || "?"}${v.overlay ? " + " + v.overlay : ""}` +
-    `${v.animating ? " · animating" : ""}${v.dimmed ? " · dimmed" : ""}${v.asleep ? " · asleep" : ""}`;
+    `${v.animating ? " · animating" : ""}${v.dimmed ? " · dimmed" : ""}${v.saver ? " · screensaver" : ""}`;
   $("view").textContent = Object.entries(v).map(([k, x]) => `${k}: ${x}`).join("\n");
   showFonts(info.fonts);
   refreshSheet(false);
@@ -340,6 +342,8 @@ addEventListener("blur", () => { [...down].forEach(keyUp); keyChain = keyChain.t
 
 // Display controls.
 $("restart").onclick = () => post("/restart");
+$("passive").onclick = () => post("/idle", { stage: "passive" });
+$("saver").onclick = () => post("/idle", { stage: "saver" });
 $("fontset").onchange = (e) => { setFonts(e.target.value); e.target.blur(); };
 $("allsets").onclick = (e) => {
   sheetOn = !sheetOn; e.target.classList.toggle("on", sheetOn); $("sheet").hidden = !sheetOn; refreshSheet(true);

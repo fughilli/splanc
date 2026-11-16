@@ -11,7 +11,7 @@ from splanc_display.status import parse
 from splanc_display.ui import LIST_ROWS, View
 
 NOW = 1_760_000_000.0
-W, H = 128, 64
+W, H = render_oled.W, render_oled.H  # the UI canvas (1 px under the panel)
 
 
 @pytest.fixture(autouse=True)

@@ -2,7 +2,9 @@
 
 Each screen (a "scene": a top-level page, a fixture's detail, the boot logo) is
 drawn whole; a slide between two scenes (anim.py) draws both and offsets them.
-Overlays (toasts, the revoke hold/confirm) go on top, then the burn-in shift.
+Overlays (toasts, the revoke hold/confirm) go on top. Everything is laid out on a
+127x63 canvas, pasted onto the 128x64 panel at the burn-in shift (ui.SHIFTS), so the
+shift never clips. The screensaver (gliders.py) draws the whole panel itself.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from PIL import Image, ImageChops, ImageDraw
 
 from . import boot as boot_mod
 from . import draw as d
-from . import fonts
+from . import fonts, gliders
 from .anim import Scene, SlideView
 from .status import (
     WAITING,
@@ -31,7 +33,10 @@ from .status import (
 )
 from .ui import DETAIL_ROWS, LIST_ROWS, View
 
-W, H = 128, 64
+PANEL_W, PANEL_H = 128, 64
+# The UI's canvas: 1 px under the panel each way, so the burn-in shift (ui.SHIFTS)
+# moves all of it around the panel without ever clipping a column or row.
+W, H = PANEL_W - 1, PANEL_H - 1
 ON, OFF = 255, 0
 M = 2  # margin: the 1 px burn-in shift never clips anything
 
@@ -50,7 +55,7 @@ def _fit(dr: ImageDraw.ImageDraw, text: str, role: str, max_w: int):
 
 def _rule_y() -> int:
     """The header rule: under the title (12 for TrueType; a bitmap title gets a 1 px
-    gap above it, pushing the body down, up to 14 so four rows still fit)."""
+    gap above it, pushing the body down, up to 14)."""
     f = F("title")
     if not d.is_bitmap(f):
         return 12
@@ -60,7 +65,8 @@ def _rule_y() -> int:
 
 
 def _body_y() -> int:
-    return _rule_y() + 2
+    """Two px under the rule, or one when that's all the 63 px canvas leaves for four rows."""
+    return min(_rule_y() + 2, H - LIST_ROWS * ROW_H)
 
 
 def _row_dy(f) -> int:
@@ -726,8 +732,9 @@ def render(
 
 def _render(status: Status, view: View, now: Optional[float], frames) -> Image.Image:
     now = time.time() if now is None else now
-    if view.asleep:
-        return Image.new("1", (W, H), OFF)
+    if view.saver:
+        # One per online fixture: the same count as the Fixtures header's "n/m ok".
+        return gliders.render(status.players_ok, int(view.saver_t * gliders.GENS_PER_SECOND))
     if frames is None and (
         view.page == "boot" or (view.slide and "boot" in (view.slide.src.page, view.slide.dst.page))
     ):
@@ -744,9 +751,6 @@ def _render(status: Status, view: View, now: Optional[float], frames) -> Image.I
     dr = ImageDraw.Draw(img)
     dr.fontmode = "1"
     _overlay(img, dr, view, status)
-    dx, dy = view.shift
-    if dx or dy:
-        shifted = Image.new("1", (W, H), OFF)
-        shifted.paste(img, (dx, dy))
-        img = shifted
-    return img
+    panel = Image.new("1", (PANEL_W, PANEL_H), OFF)
+    panel.paste(img, view.shift)
+    return panel
