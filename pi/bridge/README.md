@@ -49,10 +49,14 @@ about 1 ms on the wire at the 8 MHz SPI clock (`hat.py`), or ~25 ms over I2C at 
 0.25–0.6 ms (a slide reuses both screens' images: ~0.02 ms) and luma's 1-bit packing ~0.23 ms;
 a Pi 3 / Zero 2 W core is roughly 10–15x slower, so a frame costs ~5–10 ms there, plus a few ms
 of spidev/GPIO calls. `main.py` measures the real cost (render + push, EWMA) and draws animation
-frames at `max(1/30 s, cost / 0.5)`: at most 30 fps, and never more than half a core. Slides last
-120–250 ms (`anim.py`), so a Pi shows 4–7 frames per slide. Nothing is drawn while nothing moves
-(the loop polls at 10 Hz and redraws once a second for the "12 s ago" texts), a press wakes the
-loop at once, and `splanc-display.service` runs at `Nice=10` with idle I/O priority, below the
+frames at `max(1 / PANEL_HZ, cost / 0.5)`: at most the panel's own scan rate (~156 Hz:
+the SH1106 datasheet's 104 Hz at the nominal 360 kHz oscillator, +50% from luma's
+`D5h 0xF0`), and never more than half a core. The boot animation is stored at 240 fps
+and each frame drawn is the one for the current time, so it plays at whatever rate this
+loop reaches. On a Pi the half-core limit, not the panel, sets the rate: a 5–10 ms frame
+gives 50–100 fps, so a 120–250 ms slide (`anim.py`) shows ~6–25 frames. Nothing is drawn
+while nothing moves (the loop polls at 10 Hz and redraws once a second for the "12 s ago"
+texts), a press wakes the loop at once, and `splanc-display.service` runs at `Nice=10` with idle I/O priority, below the
 bridge.
 
 ## The bridge contract

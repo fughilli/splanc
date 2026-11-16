@@ -13,7 +13,9 @@ File format (little endian):
     b"SPLB" | u8 version=1 | u8 fps | u8 width | u8 height | u16 frames
     | zlib(frames * (width*height/8) bytes, each a PIL mode "1" tobytes())
 
-The animation (2 s at 30 fps): after one black frame, the approved 0.3 s splash
+The animation (2 s at 240 fps, the splash source's own sample rate and above the
+SH1106's ~156 Hz scan, so every panel refresh can get a fresh frame; the display
+shows whichever frame matches the current time): after 1/30 s of black, the approved 0.3 s splash
 plays at the centre, then glides to its place as the wordmark is wiped out of it behind a scan line, a row of
 "LEDs" chases on underneath, and a glint crosses the logo. The display holds the
 last frame until it hands off (a slide) to the first status screen.
@@ -34,7 +36,8 @@ import zlib
 from PIL import Image, ImageChops, ImageDraw
 
 W, H = 128, 64
-FPS = 30
+FPS = 240  # SPLB stores fps in a u8: at most 255
+BLACK = 1 / 30  # the initial black hold (s)
 SECONDS = 2.0
 SS = 4  # supersampling for the logo's edges
 VERSION = 1
@@ -258,7 +261,7 @@ def splash_shapes(markup: str):
 def splash_sample(samples, t: float):
     """Nearest saved timestamp, clamped at either end; no contour interpolation.
 
-    The 30 fps boot frames land on every eighth 240 fps sample. Other consumers
+    The 240 fps boot frames land on the 240 fps samples one for one. Other consumers
     can use the exact 60000/1001 fps titleFrames saved alongside these samples.
     """
     return min(samples, key=lambda frame: abs(frame["time"] - t))
@@ -337,12 +340,12 @@ def build_frames(svg_path: str, splash_path: str):
         img = Image.new("1", (W, H), 0)
         dr = ImageDraw.Draw(img)
 
-        # 1. Keep the initial black frame, then play the approved 0.3 s splash.
+        # 1. Keep the initial black hold, then play the approved 0.3 s splash.
         # Its final vectors share the logo's coordinate system. Hold that exact
         # mark afterwards, then keep the existing glide (0.45 - 0.9 s).
         dx = round(start_dx * (1 - _ease_in_out(_phase(t, 0.45, 0.9))))
-        if f > 0:
-            sample = splash_sample(samples, (f - 1) / FPS)
+        if t >= BLACK - 1e-9:
+            sample = splash_sample(samples, t - BLACK)
             moving_mark = raster(splash_shapes(sample["markup"]), scale, ox, oy, (W, H))
             img.paste(moving_mark, (dx, 0))
 

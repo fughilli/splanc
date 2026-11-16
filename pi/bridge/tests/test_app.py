@@ -186,7 +186,7 @@ def test_frame_interval_backs_off_on_a_slow_panel(bridge, tmp_path, clock):
     app = main.App(
         hdmi="off", oled="off", clock=clock, status_path=bridge.status_path, boot_frames=None
     )
-    app.frame_cost = 0.005
+    app.frame_cost = 0.002
     assert app.frame_interval() == pytest.approx(1 / main.MAX_FPS)
     app.frame_cost = 0.040  # a slow Pi: keep drawing to half a core
     assert app.frame_interval() == pytest.approx(0.040 / main.FRAME_CPU_SHARE)

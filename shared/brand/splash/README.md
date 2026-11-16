@@ -65,14 +65,16 @@ and circles, transformed to logo coordinates, white on black, 4× supersampling,
 then the existing one-bit threshold. No SVG browser, fonts or new runtime
 dependency is needed.
 
-The existing initial black frame is retained. The approved pass starts at
-1/30 s and finishes at 1/3 s, selecting every eighth 240 fps sample without
+The existing 1/30 s black hold is retained. The approved pass starts at
+1/30 s and finishes at 1/3 s, taking every 240 fps sample in turn without
 interpolation. The mark holds until the existing glide. The wordmark wipe,
-LED chase and glint retain their schedules. Frames from 0.5 s onward remain
-pixel-identical to the previous generator.
+LED chase and glint retain their schedules. At the previous generator's 30 fps
+frame times from 0.5 s onward (every eighth frame), the output is pixel-identical.
 
-The output remains SPLB v1: 128×64, one bit per pixel, 60 frames at 30 fps,
-two seconds total, with the same zlib payload. `boot.py` still holds the final
+The output remains SPLB v1: 128×64, one bit per pixel, now 480 frames at 240 fps
+(the source's own rate, above the SH1106's ~156 Hz scan), two seconds total.
+The display shows whichever frame matches the current time, so it plays at
+whatever rate the panel loop reaches. `boot.py` still holds the final
 frame and the display service retains its existing status-screen handoff.
 The unmerged initrd/C splash pipeline is not a dependency of this asset.
 

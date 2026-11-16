@@ -40,9 +40,9 @@ def test_boot_uses_saved_samples_at_the_approved_speed():
     samples = json.loads(SOURCE.read_bytes())["frames"]
     assert g.splash_sample(samples, -1) is samples[0]
     assert g.splash_sample(samples, 100) is samples[-1]
-    # After the initial black frame, nine 30 Hz intervals cover the 0.3 s pass.
-    for i in range(10):
-        assert g.splash_sample(samples, i / 30) is samples[i * 8]
+    # After the initial black hold, the 240 fps boot frames take every sample in turn.
+    for i in range(len(samples)):
+        assert g.splash_sample(samples, i / g.FPS) is samples[i]
     assert g.splash_sample(samples, 4 / 30)["time"] == pytest.approx(0.8 / 6)
 
 
@@ -66,20 +66,23 @@ def test_deterministic_generation_and_v1_compatibility(tmp_path):
         assert g.main(["--svg", str(LOGO), "--splash", str(SOURCE), "--out", str(output)]) == 0
     data = outputs[0].read_bytes()
     assert data == outputs[1].read_bytes()
-    assert data[:10] == b"SPLB\x01\x1e\x80\x40\x3c\x00"
+    assert data[:10] == b"SPLB\x01\xf0\x80\x40\xe0\x01"  # v1, 240 fps, 128x64, 480 frames
     animation = boot.unpack(data)
-    assert animation.fps == 30 and animation.duration == 2
-    assert len(animation.frames) == 60
+    assert animation.fps == 240 and animation.duration == 2
+    assert len(animation.frames) == 480
+    assert all(animation.frames[i].getbbox() is None for i in range(8))  # 1/30 s of black
     assert animation.at(200).tobytes() == animation.frames[-1].tobytes()
     assert animation.frames[0].getbbox() is None
     for i, frame in enumerate(animation.frames[1:], start=1):
         assert frame.mode == "1" and frame.size == (128, 64)
-        if i < 15:  # The splash fits; the later scan line intentionally exits the panel.
+        if 8 <= i < 120:  # The splash fits; the later scan line intentionally exits the panel.
             x0, y0, x1, y1 = frame.getbbox()
             assert 0 < x0 < x1 < 128 and 0 < y0 < y1 < 64
-    # Pixel baseline from main 4da9640: glide, wordmark, LEDs, glint and last
-    # held frame from 0.5 s onward must remain byte-identical.
-    assert hashlib.sha256(b"".join(f.tobytes() for f in animation.frames[15:])).hexdigest() == (
+    # Pixel baseline from main 4da9640 (then 30 fps): at each of its frame times from
+    # 0.5 s onward (every eighth 240 fps frame) the glide, wordmark, LEDs, glint and
+    # last held frame must remain byte-identical.
+    old_times = animation.frames[120::8]
+    assert hashlib.sha256(b"".join(f.tobytes() for f in old_times)).hexdigest() == (
         "73adc3b7b93b4ccd24d502053728d84241f4487ca523b685b7d46259657f15ef"
     )
 
