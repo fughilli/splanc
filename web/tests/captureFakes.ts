@@ -40,6 +40,9 @@ export class ScriptedCamera {
   }
   onEnd(): void {}
   async setExposure(): Promise<void> {}
+  manualExposureSupported(): boolean {
+    return false;
+  }
   emit(tCaptureMs: number): void {
     this.handler?.({
       texture: null,

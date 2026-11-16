@@ -135,6 +135,10 @@ export interface CaptureParamsSnapshot {
   lastExposure: number | null;
   /** The LED brightness the servo ended on (0..1), when known. */
   lastBrightness: number | null;
+  /** Exposure-first light servo at the end of the run (cv/lightServo.ts):
+   * mode, the measured exposure floor and the last step's reason. Null on
+   * the legacy `?exposure=auto` path; absent in older bundles. */
+  lightServo?: { mode: string; exposureFloor: number; lastReason: string } | null;
   stripPrior: boolean;
   liveSolve: boolean;
   /** Where the final solve ran. */

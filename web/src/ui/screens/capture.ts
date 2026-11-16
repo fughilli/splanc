@@ -19,7 +19,6 @@ import {
   blobPopulation,
   EXPOSURE_SERVO_START,
   ExposureMonitor,
-  planExposureServo,
   planLedBrightness,
   planReconfigure,
   recommendConfig,
@@ -30,6 +29,7 @@ import { AlphabetPlanner, ChannelQuality, channelSnapshot, formatPrediction } fr
 import { JERKY_MOTION_HINT, MotionGuide } from "../../cv/motionGuide";
 import { CvPipeline } from "../../cv/pipeline";
 import { DetectorGL } from "../../cv/detect";
+import { blobCrowding, CrowdingWindow, formatLightServo, initialLightServo, planLightServo } from "../../cv/lightServo";
 import {
   type DriverCaptureResult,
   type DriverDecodeStats,
@@ -229,7 +229,12 @@ const forcedBrightness = ((): number | null => {
   const v = parseFloat(qs.get("brightness") ?? "");
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : null;
 })();
+// Exposure-first light servo (cv/lightServo.ts) is the default wherever the
+// camera takes a manual exposure lock. `?exposure=servo` forces it on;
+// `?exposure=auto` keeps the old camera auto-exposure + LED-brightness servo
+// (planLedBrightness) for A/B comparison.
 const servoExposure = qs.get("exposure") === "servo";
+const legacyLightServo = qs.get("exposure") === "auto";
 // Interim phone solves during capture feed the live overlay on devices without
 // a host solver (FUG-112); `?livesolve=0` turns them off.
 const liveSolveEnabled = qs.get("livesolve") !== "0";
@@ -1157,7 +1162,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       localDetections = [];
       localImu = [];
       const cached = prefs.getCalibratedK();
-      const initialExposure =
+      let initialExposure =
         profileRun?.exposure ?? (servoExposure ? EXPOSURE_SERVO_START : forcedExposure);
       let servoedExposure = initialExposure ?? EXPOSURE_SERVO_START;
       // iOS takes the camera natively: WebKit's getUserMedia offers no exposure
@@ -1165,7 +1170,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // app owns an AVCaptureSession instead (design doc §4.6/§4.7). Everything
       // downstream of `onFrame` is identical — the native source pre-runs the
       // detector's threshold pass and ships the sparse result.
-      let exposureTarget: { setExposure(t: number, capMs?: number): unknown };
+      let exposureTarget: { setExposure(t: number, capMs?: number): unknown; manualExposureSupported?(): boolean };
       let detectGl: WebGL2RenderingContext;
       if (driverActive()) {
         // HITL app-driver: a hardware-free synthetic scene. Like the native path it
@@ -1212,6 +1217,19 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         exposureTarget = ms;
         detectGl = ms.gl;
       }
+      // The camera exposure is ours (servoed) unless pinned (URL / recorded
+      // profile), opted out, or the camera has no manual lock (then: AE +
+      // brightness-only, today's behaviour minus the ratchet).
+      const exposureServoOn =
+        !legacyLightServo && (servoExposure || (initialExposure === null && exposureTarget.manualExposureSupported?.() === true));
+      if (exposureServoOn) initialExposure ??= EXPOSURE_SERVO_START;
+      let lightServo = initialLightServo({
+        exposureSupported: exposureServoOn,
+        exposure: initialExposure ?? EXPOSURE_SERVO_START,
+        brightness: 1,
+        brightnessLocked: forcedBrightness !== null,
+      });
+      const crowding = new CrowdingWindow();
       // IMU: on iOS it comes from CoreMotion via the capture plugin, whose axes
       // are documented and already in the camera frame — ImuRecorder's
       // DeviceMotion mapping was fitted on an Android handset and has never been
@@ -1417,7 +1435,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           },
           forced: { exposure: forcedExposure, brightness: forcedBrightness, symbols: forcedSymbols, bitMs: forcedBitMs },
           codeParams: params,
-          lastExposure: servoExposure || initialExposure !== null ? servoedExposure : null,
+          lastExposure: exposureServoOn || initialExposure !== null ? servoedExposure : null,
+          lightServo: legacyLightServo
+            ? null
+            : { mode: lightServo.mode, exposureFloor: lightServo.exposureFloor, lastReason: lightServo.lastReason },
           lastBrightness: params.brightness ?? null,
           stripPrior: finalSolveOptions(runChannelPlan !== null).stripPrior === true,
           liveSolve: liveSolveEnabled,
@@ -1485,6 +1506,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           scene: measured,
           blobs: blobPopulation(blobs),
         });
+        if (measured !== undefined) crowding.push(f.tCaptureMs, blobCrowding(blobs));
         lastAmbient = f.ambientIntensity ?? lastAmbient;
         runLink?.frame(f.tCaptureMs, clipped);
 
@@ -1566,7 +1588,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             const scn = monitor.scene();
             const br = Math.round((params.brightness ?? 1) * 100);
             const pct = (x: number): string => `${Math.round(x * 100)}%`;
-            const expLine = servoExposure ? ` · exp ${servoedExposure.toFixed(2)}` : "";
+            const expLine = legacyLightServo ? " · legacy AE" : `\n${formatLightServo(lightServo)}`;
             const servoLine =
               (pop
                 ? `LED ${br}% · sat ${pop.satFrac.toFixed(2)} split ${pct(pop.splitFrac)} ` +
@@ -2019,7 +2041,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // Link telemetry: the settings in effect over the window this report
         // measured (before this tick's servo steps change them).
         runLink?.exposure(performance.now(), {
-          exposure: servoExposure || manualMode || initialExposure !== null ? servoedExposure : null,
+          exposure: exposureServoOn || manualMode || initialExposure !== null ? servoedExposure : null,
+          servo: legacyLightServo ? null : lightServo.lastReason,
           brightness: params.brightness ?? null,
           threshold: detector.threshold,
           frameIntervalMs: report.frameIntervalMs,
@@ -2041,21 +2064,26 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
               ) as 2 | 4 | null)
             : null;
         const pop = monitor.blobPopulation();
-        if (servoExposure && !manualMode && pop !== null) {
-          const nextExp = planExposureServo(servoedExposure, {
-            blobCount: report.blobCount,
-            ledCount,
-            satFrac: pop.satFrac,
-            grayFrac: pop.grayFrac,
-            medianIntensity: pop.medianIntensity,
-          });
-          if (nextExp !== null) {
-            servoedExposure = nextExp;
-            void exposureTarget.setExposure(nextExp, params.bitPeriodMs / 2);
+        // One controller: exposure first, LED brightness only once exposure is
+        // on its measured floor (cv/lightServo.ts). Exposure applies now;
+        // brightness goes through the two-tick confirmation below.
+        let servoBright: number | null = null;
+        if (!legacyLightServo && !manualMode && pop !== null) {
+          const step = planLightServo(
+            { ...lightServo, exposure: servoedExposure },
+            { blobCount: report.blobCount, ledCount, ...pop, clipFrac: report.clipFrac, crowding: crowding.value() },
+            params.brightness ?? 1,
+          );
+          lightServo = step.state;
+          servoBright = step.brightness;
+          if (step.exposure !== null) {
+            servoedExposure = step.exposure;
+            void exposureTarget.setExposure(step.exposure, params.bitPeriodMs / 2);
           }
         }
-        const wantBright =
-          !servoExposure && forcedBrightness === null && !manualMode && pop !== null
+        const wantBright = !legacyLightServo
+          ? servoBright
+          : forcedBrightness === null && !manualMode && pop !== null
             ? planLedBrightness(params.brightness ?? 1, {
                 blobCount: report.blobCount,
                 ledCount,

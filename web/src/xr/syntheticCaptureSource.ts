@@ -150,6 +150,10 @@ export class SyntheticCaptureSource implements CaptureSource {
 
   /** No-op: the synthetic source has no real exposure to steer. */
   setExposure(_t: number, _capMs?: number): void {}
+  /** Nothing to lock: the light servo runs brightness-only here. */
+  manualExposureSupported(): boolean {
+    return false;
+  }
 
   /** The synthetic scene never ends on its own (no camera track to drop); it stops
    * only when the harness ends the capture. Kept for parity with the real sources. */
