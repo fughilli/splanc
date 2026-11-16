@@ -120,7 +120,9 @@ export class ChannelQuality {
     this.target.push(Math.round((targetHue * 180) / Math.PI));
     this.washed.push(sat < WASHED_SAT);
     this.misread.push(sent !== read);
-    if (this.err.length > WINDOW_CAP) {
+    // Trimmed in batches (four front splices per window cost ~5% of a 2000-LED
+    // capture loop); estimate() reads only the newest WINDOW_CAP.
+    if (this.err.length > 2 * WINDOW_CAP) {
       const drop = this.err.length - WINDOW_CAP;
       this.err.splice(0, drop);
       this.target.splice(0, drop);
@@ -151,10 +153,12 @@ export class ChannelQuality {
   }
 
   estimate(): ChannelEstimate | null {
-    const n = this.err.length;
+    const end = this.err.length;
+    const start = Math.max(0, end - WINDOW_CAP);
+    const n = end - start;
     if (n === 0) return null;
     const byTarget = new Map<number, number[]>();
-    for (let i = 0; i < n; i++) {
+    for (let i = start; i < end; i++) {
       const e = this.err[i]!;
       if (Number.isNaN(e)) continue;
       const k = this.target[i]!;
@@ -172,7 +176,7 @@ export class ChannelQuality {
     const sigma = resid.length > 0 ? 1.4826 * median(resid) : Math.PI;
     let washed = 0;
     let misread = 0;
-    for (let i = 0; i < n; i++) {
+    for (let i = start; i < end; i++) {
       if (this.washed[i]) washed++;
       if (this.misread[i]) misread++;
     }

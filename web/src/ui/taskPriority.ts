@@ -74,18 +74,29 @@ export function postTask(fn: () => void, priority: Priority, delayMs = 0): void 
  */
 export class OrderedTaskQueue {
   private readonly items: Array<() => void> = [];
+  /** When each pending item was pushed (`now()` ms), parallel to `items`. */
+  private readonly pushedAt: number[] = [];
   private scheduled = false;
   /** Most items waiting at once (a backlog means the stage can't keep up). */
   maxBacklog = 0;
 
-  constructor(private readonly priority: Priority = "user-visible") {}
+  constructor(
+    private readonly priority: Priority = "user-visible",
+    private readonly now: () => number = () => performance.now(),
+  ) {}
 
   get backlog(): number {
     return this.items.length;
   }
 
+  /** How long the oldest pending item has waited (ms); 0 when empty. */
+  get oldestWaitMs(): number {
+    return this.pushedAt.length > 0 ? this.now() - this.pushedAt[0]! : 0;
+  }
+
   push(item: () => void): void {
     this.items.push(item);
+    this.pushedAt.push(this.now());
     this.maxBacklog = Math.max(this.maxBacklog, this.items.length);
     this.kick();
   }
@@ -93,6 +104,7 @@ export class OrderedTaskQueue {
   /** Drop pending items (the capture was torn down). */
   clear(): void {
     this.items.length = 0;
+    this.pushedAt.length = 0;
   }
 
   /** Run every pending item now, in order (the capture is stopping and its
@@ -100,6 +112,7 @@ export class OrderedTaskQueue {
   drain(): void {
     while (this.items.length > 0) {
       const item = this.items.shift()!;
+      this.pushedAt.shift();
       try {
         item();
       } catch (e) {
@@ -114,6 +127,7 @@ export class OrderedTaskQueue {
     postTask(() => {
       this.scheduled = false;
       const item = this.items.shift();
+      this.pushedAt.shift();
       item?.();
       this.kick();
     }, this.priority);
@@ -154,6 +168,25 @@ export class CoalescedTask {
       f();
       this.lastMs = this.now() - t0;
     }, this.priority, wait);
+  }
+
+  /**
+   * Run the pending work NOW, in the caller's task, if it has waited more than
+   * `maxWaitMs` since the last run (or has never run). Background tasks only
+   * get the thread when nothing more urgent is queued, so a CV stage that
+   * can't keep up starved them completely: the 2000-LED wall's overlay froze
+   * for as long as the capture ran. Called from that stage, this bounds the
+   * staleness instead. Returns whether it ran.
+   */
+  runIfStarved(maxWaitMs: number): boolean {
+    const f = this.pending;
+    if (f === null || this.now() - this.lastRun < maxWaitMs) return false;
+    this.pending = null; // the scheduled task, when it gets to run, finds nothing
+    const t0 = this.now();
+    this.lastRun = t0;
+    f();
+    this.lastMs = this.now() - t0;
+    return true;
   }
 
   cancel(): void {

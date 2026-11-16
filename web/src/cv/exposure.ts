@@ -30,6 +30,7 @@
 
 import type { ExposureStats } from "@ledmapper/protocol";
 import type { Blob } from "./types";
+import { select } from "./select";
 
 /** Scene luminance statistics from one unthresholded downsampled frame. */
 export interface SceneStats {
@@ -64,28 +65,33 @@ export const GRAY_CHROMA_FRAC = 0.25;
 
 /** Summarize one frame's blobs for the servo. */
 export function blobPopulation(blobs: readonly Blob[]): BlobPopulation {
+  // Per frame on every blob (thousands on a big wall): order statistics in
+  // shared scratch instead of two allocating sorts.
   let split = 0;
   let gray = 0;
-  const intensities: number[] = [];
-  const satFracs: number[] = [];
-  for (const b of blobs) {
+  const n = blobs.length;
+  if (popI.length < n) {
+    popI = new Float64Array(Math.max(n, 2 * popI.length));
+    popS = new Float64Array(popI.length);
+  }
+  for (let i = 0; i < n; i++) {
+    const b = blobs[i]!;
     if (b.split === true) split++;
     const mx = Math.max(b.r ?? 0, b.g ?? 0, b.b ?? 0);
     const mn = Math.min(b.r ?? 0, b.g ?? 0, b.b ?? 0);
     if (mx === 0 || (mx - mn) / mx < GRAY_CHROMA_FRAC) gray++;
-    intensities.push(b.intensity);
-    satFracs.push(b.satFrac ?? 0);
+    popI[i] = b.intensity;
+    popS[i] = b.satFrac ?? 0;
   }
-  intensities.sort((a, b) => a - b);
-  satFracs.sort((a, b) => a - b);
-  const n = blobs.length;
   return {
     splitFrac: n > 0 ? split / n : 0,
     grayFrac: n > 0 ? gray / n : 0,
-    medianIntensity: n > 0 ? intensities[n >> 1]! : 0,
-    satFrac: n > 0 ? satFracs[n >> 1]! : 0,
+    medianIntensity: n > 0 ? select(popI, n, n >> 1) : 0,
+    satFrac: n > 0 ? select(popS, n, n >> 1) : 0,
   };
 }
+let popI = new Float64Array(256);
+let popS = new Float64Array(256);
 
 export interface FrameSample {
   tMs: number;

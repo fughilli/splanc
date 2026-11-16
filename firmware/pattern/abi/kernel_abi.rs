@@ -411,6 +411,32 @@ pub extern "C" fn pk_decode_cycle_sync(n: u32, led_count: u32, bits: u32, symbol
     out
 }
 
+/// [`pk_decode_cycle_sync`] up to the coded index: `FLAG_VALUE | n` for the
+/// index the word carries (not ranked to an id — the caller maps it with the
+/// table [`pk_stagger_fill`] wrote, O(1) where the rank walks the book), plus
+/// the same correction flags. 0 / `FLAG_UNCORRECTABLE` as pk_decode_cycle_sync.
+#[no_mangle]
+pub extern "C" fn pk_decode_cycle_coded(n: u32, led_count: u32, bits: u32, symbols: u32, secded: u32, sync: u32) -> u32 {
+    if n > SYMBOL_BUF_LEN {
+        return 0;
+    }
+    let spec = spec_params(led_count, bits, symbols, secded, sync);
+    // SAFETY: as pk_decode_cycle.
+    let buf = unsafe { &*core::ptr::addr_of!(SYMBOL_BUF) };
+    let d = k::decode_cycle_coded(&buf[..n as usize], &spec);
+    let mut out = match d.id {
+        Some(c) => FLAG_VALUE | (c & VALUE_MASK),
+        None => 0,
+    };
+    if d.corrected {
+        out |= FLAG_CORRECTED;
+    }
+    if d.uncorrectable {
+        out |= FLAG_UNCORRECTABLE;
+    }
+    out
+}
+
 // --- stride ----------------------------------------------------------------------
 
 #[no_mangle]
