@@ -236,6 +236,44 @@ export function updatesInApp(w: WelcomeMessage | null): boolean {
   return ((w?.features as string[] | undefined) ?? []).includes("ota_inapp");
 }
 
+/** The kind of player, as far as firmware packages are concerned (the board its
+ * signed manifest must name: firmware/ota/src/manifest.rs). */
+export type DeviceBoard = "esp32c6" | "esp32p4" | "max";
+
+/** Manifest board ids (flags bits 24..31). */
+export const MANIFEST_BOARD_C6 = 0;
+export const MANIFEST_BOARD_P4 = 16;
+
+const BOARD_LABEL: Record<DeviceBoard, string> = { esp32c6: "ESP32-C6", esp32p4: "ESP32-P4", max: "Splanc MAX" };
+
+export function boardLabel(b: DeviceBoard): string {
+  return BOARD_LABEL[b];
+}
+
+/** The connected device's board, from its welcome: "ota_pull" = a Splanc MAX,
+ * "ota_inapp" = an ESP32-P4 player, otherwise an ESP32-C6 player. */
+export function deviceBoard(w: WelcomeMessage | null | undefined): DeviceBoard {
+  if (pullsImage(w ?? null)) return "max";
+  if (updatesInApp(w ?? null)) return "esp32p4";
+  return "esp32c6";
+}
+
+/** The board id signed into a manifest's flags (bits 24..31). */
+export function manifestBoard(flags: number): number {
+  return (flags >>> 24) & 0xff;
+}
+
+/** Why a package whose manifest has `flags` can't go to a device of `board`, or
+ * null when it fits (0 = C6/C3, 16 = P4, 1..4 = MAX). */
+export function packageBoardMismatch(flags: number, board: DeviceBoard): string | null {
+  const b = manifestBoard(flags);
+  const fits = board === "esp32p4" ? b === MANIFEST_BOARD_P4 : board === "esp32c6" ? b === MANIFEST_BOARD_C6 : b >= 1 && b <= 4;
+  if (fits) return null;
+  const pkgBoard =
+    b === MANIFEST_BOARD_P4 ? "ESP32-P4" : b === MANIFEST_BOARD_C6 ? "ESP32-C6" : b <= 4 ? "Splanc MAX" : `board ${b}`;
+  return `This firmware is for the ${pkgBoard}, but the connected device is the ${boardLabel(board)}: nothing was sent.`;
+}
+
 /** The release asset holding a pull device's manifest (`board` from ota_status.board). */
 export function maxManifestAsset(board: string, version: string): string {
   const v = version.replace(/^v/, "");
@@ -245,6 +283,12 @@ export function maxManifestAsset(board: string, version: string): string {
 /** Install `pkg` on `dev`. Throws OtaError with the device's refusal code. A pull
  * device takes just the manifest (the first 108 bytes of `pkg`). */
 export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaOptions = {}): Promise<OtaResult> {
+  // Never send a package built for another board (the device would refuse it
+  // too — the board is signed into the manifest — but only after the transfer).
+  if (pkg.length >= MANIFEST_LEN) {
+    const wrong = packageBoardMismatch(parseManifest(pkg.slice(0, MANIFEST_LEN)).flags, deviceBoard(dev.welcome));
+    if (wrong) throw new OtaError("wrong_board", wrong);
+  }
   if (pullsImage(dev.welcome)) {
     if (pkg.length < MANIFEST_LEN) throw new OtaError("bad_package", "package too short");
     return pullUpdate(dev, pkg.slice(0, MANIFEST_LEN), opts);

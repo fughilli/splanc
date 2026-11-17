@@ -22,10 +22,11 @@ function u32le(n: number): number[] {
   return [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255];
 }
 
-function pkg(image: Uint8Array, version: number, goodSig = true): Uint8Array {
+function pkg(image: Uint8Array, version: number, goodSig = true, board = 0): Uint8Array {
   const m = new Uint8Array(MANIFEST_LEN);
   m.set(u32le(version), 0);
   m.set(u32le(image.length), 4);
+  m.set(u32le((board & 0xff) << 24), 40); // flags: the signed board id (16 = P4)
   m.fill(goodSig ? 1 : 0xee, 44);
   const out = new Uint8Array(MANIFEST_LEN + image.length);
   out.set(m);
@@ -267,7 +268,7 @@ test("an in-app device (the P4 player) takes the image without a loader handoff"
   const image = new Uint8Array(150_000).map((_, i) => (i * 5) & 255);
   image[0] = 0xe9;
   const phases: string[] = [];
-  const r = await updateFirmware(dev, pkg(image, 1_014_000), {
+  const r = await updateFirmware(dev, pkg(image, 1_014_000, true, 16), {
     ...fast,
     onProgress: (p: OtaProgress) => phases.push(p.phase),
   });
@@ -284,7 +285,7 @@ test("an in-app device resumes in the app after a reset mid-transfer", async () 
   const image = new Uint8Array(300_000).map((_, i) => (i * 11) & 255);
   image[0] = 0xe9;
   dev.failNextChunkAt = 150_000;
-  const r = await updateFirmware(dev, pkg(image, 5), fast);
+  const r = await updateFirmware(dev, pkg(image, 5, true, 16), fast);
   assert.equal(r.outcome, "ok");
   assert.equal(r.resumes, 1);
   assert.equal(dev.handoffs, 0);
@@ -296,7 +297,7 @@ test("an in-app device that goes back to its previous image is reported as rolle
   image[0] = 0x43; // the fake's "crashes at boot" marker
   const dev = FakeDevice.inAppDevice();
   dev.appVersion = 1_013_000;
-  const r = await updateFirmware(dev, pkg(image, 1_014_000), { ...fast, expectHealthy: false });
+  const r = await updateFirmware(dev, pkg(image, 1_014_000, true, 16), { ...fast, expectHealthy: false });
   assert.equal(r.outcome, "rolled_back");
   assert.equal(r.final?.mode, "MODE_APP");
   assert.equal(dev.appVersion, 1_013_000, "the previous image runs");
@@ -437,4 +438,27 @@ test("a stalled chunk (no reply, socket open) resumes on a fresh connection", as
   assert.equal(r.resumes, 1);
   assert.ok(dev.restartsExpected >= 1);
   assert.deepEqual(dev.slot.subarray(0, img.length), img);
+});
+
+test("a package signed for another board is refused before anything is sent", async () => {
+  const image = new Uint8Array(5000);
+  image[0] = 0xe9;
+  // The C6 bundle offered to a P4 player (the reported bug)…
+  const p4 = FakeDevice.inAppDevice();
+  await assert.rejects(updateFirmware(p4, pkg(image, 1_014_000), fast), (e: unknown) => {
+    assert.ok(e instanceof OtaError);
+    assert.equal(e.code, "wrong_board");
+    assert.match(e.message, /for the ESP32-C6, but the connected device is the ESP32-P4/);
+    return true;
+  });
+  assert.equal(p4.appVersion, 0);
+  assert.equal(p4.handoffs, 0);
+  // …and the P4 package offered to a C6.
+  const c6 = new FakeDevice();
+  await assert.rejects(updateFirmware(c6, pkg(image, 1_014_000, true, 16), fast), (e: unknown) => {
+    assert.ok(e instanceof OtaError);
+    assert.equal(e.code, "wrong_board");
+    return true;
+  });
+  assert.equal(c6.handoffs, 0);
 });
