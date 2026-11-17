@@ -1,0 +1,2081 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html">
+        <link rel="prefetch" href="../../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Mesh networking: one app connection manages every fixture - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../quickstart.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../manifesto.html">The manifesto</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../whats-new.html">What's new</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/agent.html">The agent bridge (<code class="docutils literal notranslate"><span class="pre">agent/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html">Quickstart</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#ask-an-ai-agent">Ask an AI agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../pi-bridge.html">Raspberry Pi bridge</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="uniform-keypoints.html">FX decks, crossfade &amp; uniform keypoints</a></li>
+<li class="toctree-l2"><a class="reference internal" href="fx-debugger.html">FX debugger: pause, inspect, replay</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="strided-capture.html">Strided (diffuse) capture</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ram-budget.html">RAM budget</a></li>
+<li class="toctree-l2"><a class="reference internal" href="memory-regions.html">Memory regions &amp; the mode model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="heap-census.html">Post-boot heap census</a></li>
+<li class="toctree-l2"><a class="reference internal" href="kani-bazel.html">Kani under Bazel</a></li>
+<li class="toctree-l2"><a class="reference internal" href="mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="p4-c6-split.html">ESP32-P4 + ESP32-C6 split player</a></li>
+<li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
+<li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-demo.html">Effects demo</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../decisions.html">Decision log</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../requirements-driven-development.html">Requirements-driven development</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/design/mesh.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/design/mesh.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="mesh-networking-one-app-connection-manages-every-fixture">
+<h1>Mesh networking: one app connection manages every fixture<a class="headerlink" href="#mesh-networking-one-app-connection-manages-every-fixture" title="Link to this heading">¶</a></h1>
+<p>Status: design (this document). Nothing is implemented yet. Phase 1 (the
+application backhaul) is the critical path for the radiolarians install.</p>
+<section id="owner-s-request">
+<h2>Owner’s request<a class="headerlink" href="#owner-s-request" title="Link to this heading">¶</a></h2>
+<blockquote>
+<div><p>“It’s time to start building mesh networking :) We should support two mesh backhauls. One is
+UWB and the other is ESP-NOW style P2P. Since we have our custom C6 netstack, we should build
+ESP-NOW (or something like it) in the netstack. This mesh backhaul should enable distributing
+uniforms and effects programs, such that a single connection (BLE or WiFi) from the app can
+allow management of all devices in the mesh. The mesh networking needs to support assigning
+devices to groups and freezing membership, in addition to free association (devices arriving
+at an existing mesh and being automatically peered in).”</p>
+</div></blockquote>
+<p>Follow-up directions from the owner, folded into this design:</p>
+<ol class="arabic simple">
+<li><p>The UWB mesh in <code class="docutils literal notranslate"><span class="pre">fughilli/indoor_localization</span></code> (the “swarm”) is the basis. Splanc adopts its
+model, frame formats and transport. The 802.11 backhaul carries the same mesh layer.</p></li>
+<li><p>Realtime localization (IMU + ranging fusion, as in indoor_localization) comes later.</p></li>
+<li><p>BLE ranging on the C6 should be evaluated, including a self-built Channel Sounding-like
+ranging on top of our own radio work.</p></li>
+<li><p><strong>Priority: the application backhaul ships first</strong>, for the radiolarians deployment. Their
+fixtures are heavy and static, so the existing room localization is enough to provision the
+install. Ranging, fusion and channel sounding are later, independent tracks.</p></li>
+</ol>
+</section>
+<section id="contents">
+<h2>Contents<a class="headerlink" href="#contents" title="Link to this heading">¶</a></h2>
+<ol class="arabic simple">
+<li><p><a class="reference internal" href="#summary">Summary</a></p></li>
+<li><p><a class="reference internal" href="#what-exists-today">What exists today</a></p></li>
+<li><p><a class="reference internal" href="#architecture">Architecture</a></p></li>
+<li><p><a class="reference internal" href="#the-802-11-p2p-backhaul-in-the-netstack">The 802.11 P2P backhaul in the netstack</a></p></li>
+<li><p><a class="reference internal" href="#protocol">Protocol</a></p></li>
+<li><p><a class="reference internal" href="#time-sync-and-apply-at-across-the-mesh">Time sync and apply_at across the mesh</a></p></li>
+<li><p><a class="reference internal" href="#membership-groups-and-security">Membership, groups and security</a></p></li>
+<li><p><a class="reference internal" href="#gateway-one-connection-the-whole-mesh">Gateway: one connection, the whole mesh</a></p></li>
+<li><p><a class="reference internal" href="#app-and-bridge-ux">App and bridge UX</a></p></li>
+<li><p><a class="reference internal" href="#the-radiolarians-deployment-sizing">The radiolarians deployment: sizing</a></p></li>
+<li><p><a class="reference internal" href="#uwb-backhaul-later">UWB backhaul (later)</a></p></li>
+<li><p><a class="reference internal" href="#ranging-and-realtime-localization-later">Ranging and realtime localization (later)</a></p></li>
+<li><p><a class="reference internal" href="#ranging-over-the-c6-s-own-radio-research-track">Ranging over the C6’s own radio (research track)</a></p></li>
+<li><p><a class="reference internal" href="#testing">Testing</a></p></li>
+<li><p><a class="reference internal" href="#staged-pr-plan">Staged PR plan</a></p></li>
+<li><p><a class="reference internal" href="#risks">Risks</a></p></li>
+<li><p><a class="reference internal" href="#open-questions-for-the-owner">Open questions for the owner</a></p></li>
+<li><p><a class="reference internal" href="#sources">Sources</a></p></li>
+</ol>
+</section>
+<section id="summary">
+<h2>1. Summary<a class="headerlink" href="#summary" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>One mesh layer, several backhauls.</strong> The mesh layer is the swarm’s <code class="docutils literal notranslate"><span class="pre">swarm_net</span></code> crate
+(<code class="docutils literal notranslate"><span class="pre">swarm/net</span></code> in indoor_localization): managed flooding with dedup and TTL, want-ack unicast,
+authenticated generation-numbered state, and a Deluge-style page protocol for blobs. Splanc
+adds a security envelope, membership and groups, and Splanc ports on top. Backhauls plug in
+under a small <code class="docutils literal notranslate"><span class="pre">Backhaul</span></code> trait.</p></li>
+<li><p><strong>Phase 1 backhaul: 802.11 vendor action frames in our netstack</strong> (ESP-NOW framing). The
+netstack already sends raw management frames (<code class="docutils literal notranslate"><span class="pre">ns_mac_send</span></code>) and receives every frame on the
+channel. Mesh frames share the AP’s channel when associated, and a fixed mesh channel when
+not.</p></li>
+<li><p><strong>The gateway</strong> is whichever fixture the app (or bridge) is connected to, over BLE or wss. It
+relays wrapped <code class="docutils literal notranslate"><span class="pre">ClientMessage</span></code>s to any member, group or the whole mesh, and aggregates acks
+and status.</p></li>
+<li><p><strong>Effects</strong> (<code class="docutils literal notranslate"><span class="pre">.fxb</span></code>, at most 4 KiB, <code class="docutils literal notranslate"><span class="pre">FX_MAX_BYTES</span></code> in <code class="docutils literal notranslate"><span class="pre">firmware/player_app/ffi.rs</span></code>) travel as
+content-addressed blobs over the page protocol. Uniforms, brightness and crossfade travel as
+small flooded packets.</p></li>
+<li><p><strong>Mesh time</strong> is disciplined from beacons. The app’s <code class="docutils literal notranslate"><span class="pre">SetTimeBase</span></code> epoch is mapped into mesh
+time, so <code class="docutils literal notranslate"><span class="pre">apply_at_ms</span></code> (<code class="docutils literal notranslate"><span class="pre">docs/design/synced-show.md</span></code>) lands a relayed change on the same
+frame on every member.</p></li>
+<li><p><strong>Membership:</strong> a mesh has an id, a key and an epoch. Groups target messages. The mesh is
+either <strong>open</strong> (devices holding the site credentials auto-join) or <strong>frozen</strong> (only listed
+ids are accepted; removal rotates the key).</p></li>
+<li><p><strong>Later tracks:</strong> UWB (a hardware revision: no current Splanc board has UWB), ranging plus
+IMU fusion, and a research track on CS-like phase ranging using the C6’s undocumented raw I/Q
+capture.</p></li>
+</ul>
+</section>
+<section id="what-exists-today">
+<h2>2. What exists today<a class="headerlink" href="#what-exists-today" title="Link to this heading">¶</a></h2>
+<section id="splanc">
+<h3>2.1 Splanc<a class="headerlink" href="#splanc" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Piece</p></th>
+<th class="head"><p>Where</p></th>
+<th class="head"><p>What matters for the mesh</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Heapless 802.11 + BLE stack</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">firmware/netstack/</span></code> (<code class="docutils literal notranslate"><span class="pre">DESIGN.md</span></code>), driven from <code class="docutils literal notranslate"><span class="pre">firmware/player_app/netstack_transport.cpp</span></code></p></td>
+<td><p>Our own MAC TX (<code class="docutils literal notranslate"><span class="pre">ns_mac_send</span></code>, direct submission), our own RX ring (<code class="docutils literal notranslate"><span class="pre">ns_mac_rx_install</span></code>, <code class="docutils literal notranslate"><span class="pre">ns_mac_recv</span></code>); every frame on the channel reaches the ring</p></td>
+</tr>
+<tr class="row-odd"><td><p>RX vector</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">firmware/netstack/src/mac.rs</span></code> <code class="docutils literal notranslate"><span class="pre">RX_VECTOR_HDR</span> <span class="pre">=</span> <span class="pre">92</span></code></p></td>
+<td><p>92 bytes of hardware RX metadata precede each frame. We strip them today. RSSI and the RX timestamp are in there, not yet decoded</p></td>
+</tr>
+<tr class="row-even"><td><p>TX pacing</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">tx_pace_before/after</span></code> in <code class="docutils literal notranslate"><span class="pre">netstack_transport.cpp</span></code></p></td>
+<td><p>No TX completion signal; frames are paced on worst-case airtime (#358)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Channel handling</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">g_chan</span></code>, <code class="docutils literal notranslate"><span class="pre">scan_latch_ap</span></code>, <code class="docutils literal notranslate"><span class="pre">ChannelHop</span></code> in <code class="docutils literal notranslate"><span class="pre">firmware/player_app/wifi_scan.h</span></code> (channels 1–13, 120 ms dwell)</p></td>
+<td><p>Background sweeps leave the channel for ~1.6 s</p></td>
+</tr>
+<tr class="row-even"><td><p>Wi-Fi policy</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">kModeAuto/Fixed/Manual/Offline</span></code> in <code class="docutils literal notranslate"><span class="pre">wifi_scan.h</span></code>; <code class="docutils literal notranslate"><span class="pre">docs/design/wifi-rejoin-policy.md</span></code></p></td>
+<td><p>No “radio up, not associated” mode yet</p></td>
+</tr>
+<tr class="row-odd"><td><p>Coexistence</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">firmware/netstack/src/coex.rs</span></code>, <code class="docutils literal notranslate"><span class="pre">coex_timer_cb</span></code></p></td>
+<td><p>BLE and Wi-Fi share one antenna; the arbiter lends the radio to BLE</p></td>
+</tr>
+<tr class="row-even"><td><p>BLE host</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">firmware/blehost/blehost.cpp</span></code> (our host over the vendor controller’s HCI)</p></td>
+<td><p>The app’s BLE link to the gateway</p></td>
+</tr>
+<tr class="row-odd"><td><p>Protocol</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">shared/protocol/proto/ledmapper.proto</span></code> <code class="docutils literal notranslate"><span class="pre">ClientMessage</span></code> / <code class="docutils literal notranslate"><span class="pre">ServerMessage</span></code></p></td>
+<td><p>Arms 99+ are free for mesh arms</p></td>
+</tr>
+<tr class="row-even"><td><p>Dispatch seam</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">lm_ws_dispatch</span></code> (<code class="docutils literal notranslate"><span class="pre">netstack_transport.h</span></code>) → <code class="docutils literal notranslate"><span class="pre">lm_player_handle</span></code> (<code class="docutils literal notranslate"><span class="pre">player_ffi.h</span></code>)</p></td>
+<td><p>The gateway and members dispatch relayed messages through the same seam</p></td>
+</tr>
+<tr class="row-odd"><td><p>Scheduled changes</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">firmware/player/src/apply_queue.rs</span></code> (<code class="docutils literal notranslate"><span class="pre">SCHED</span></code>: 8 frames in 512 B on the C6)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">apply_at_ms</span></code> on <code class="docutils literal notranslate"><span class="pre">SetUniforms</span></code>, <code class="docutils literal notranslate"><span class="pre">SetEffect</span></code>, <code class="docutils literal notranslate"><span class="pre">SetCrossfade</span></code>, <code class="docutils literal notranslate"><span class="pre">SetBrightness</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p>Time discipline</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">agent/src/timesync.ts</span></code> (<code class="docutils literal notranslate"><span class="pre">TimeDiscipline</span></code>, <code class="docutils literal notranslate"><span class="pre">DriftEstimator</span></code>)</p></td>
+<td><p>Bridge-side drift fit. Its method ports to the mesh</p></td>
+</tr>
+<tr class="row-odd"><td><p>Multi-socket limit</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">web/src/net/connectionRegistry.ts</span></code></p></td>
+<td><p>The player serves TLS from two slots. The app holds one device at a time</p></td>
+</tr>
+<tr class="row-even"><td><p>P4 front end</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">firmware/player_app/frontend_link.cpp</span></code>, <code class="docutils literal notranslate"><span class="pre">docs/design/p4-c6-split.md</span></code></p></td>
+<td><p>The C6 already forwards player messages to another processor and waits for a reply. A gateway is the same pattern over the air</p></td>
+</tr>
+<tr class="row-odd"><td><p>Device trust</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">web/src/net/deviceTrust.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">agent/src/trust.ts</span></code></p></td>
+<td><p>TOFU pin of each device’s P-256 certificate, keyed by MAC</p></td>
+</tr>
+<tr class="row-even"><td><p>Room localization</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">docs/design/multi-fixture-localization.md</span></code>, <code class="docutils literal notranslate"><span class="pre">web/src/geom/multiFixture.ts</span></code></p></td>
+<td><p>One phone capture places several fixtures; enough for static installs</p></td>
+</tr>
+<tr class="row-odd"><td><p>Heap</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">docs/design/ram-budget.md</span></code></p></td>
+<td><p>24 KB floor at the 2048-LED max config; every KB of mesh state counts</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="indoor-localization-the-swarm">
+<h3>2.2 indoor_localization (the swarm)<a class="headerlink" href="#indoor-localization-the-swarm" title="Link to this heading">¶</a></h3>
+<p>Read at <code class="docutils literal notranslate"><span class="pre">master</span></code> <code class="docutils literal notranslate"><span class="pre">5a906e78</span></code> (2026-11-10). The repo is the owner’s. Its root <code class="docutils literal notranslate"><span class="pre">LICENSE</span></code> is GPL-3.0
+because <code class="docutils literal notranslate"><span class="pre">libs/dw3000</span></code> derives from CircuitDigest’s driver; <code class="docutils literal notranslate"><span class="pre">swarm/</span></code> is the owner’s own code.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Piece</p></th>
+<th class="head"><p>Where</p></th>
+<th class="head"><p>Status</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Spec</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">docs/swarm-network.md</span></code> (Layers, Mesh packets, Authentication, Live settings, Firmware update), <code class="docutils literal notranslate"><span class="pre">docs/swarm-wire.md</span></code> (budgets)</p></td>
+<td><p>Design + implementation, deployed on 4 boards</p></td>
+</tr>
+<tr class="row-odd"><td><p>Wire format</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">swarm/proto/swarm_wire.proto</span></code> (<code class="docutils literal notranslate"><span class="pre">swarm.v1</span></code>): <code class="docutils literal notranslate"><span class="pre">LinkFrame</span></code>, <code class="docutils literal notranslate"><span class="pre">MeshPacket</span></code>, <code class="docutils literal notranslate"><span class="pre">Summary</span></code>, <code class="docutils literal notranslate"><span class="pre">Manifest</span></code>, <code class="docutils literal notranslate"><span class="pre">FwRequest</span></code>, <code class="docutils literal notranslate"><span class="pre">FwData</span></code>, settings <code class="docutils literal notranslate"><span class="pre">Bundle</span></code>/<code class="docutils literal notranslate"><span class="pre">Override</span></code></p></td>
+<td><p>Protobuf; worst cases asserted at compile time (<code class="docutils literal notranslate"><span class="pre">swarm/net/src/budget.rs</span></code>)</p></td>
+</tr>
+<tr class="row-even"><td><p>Mesh layer</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">swarm/net</span></code> (<code class="docutils literal notranslate"><span class="pre">swarm_net</span></code>, 4.2 k lines, <code class="docutils literal notranslate"><span class="pre">no_std</span></code>, no alloc)</p></td>
+<td><p>~50 host tests incl. golden vectors</p></td>
+</tr>
+<tr class="row-odd"><td><p>Radio + TDMA + DS-TWR</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">apps/common/radio.cpp</span></code>, <code class="docutils literal notranslate"><span class="pre">protocol.h</span></code>, <code class="docutils literal notranslate"><span class="pre">libs/dw3000</span></code> (C++)</p></td>
+<td><p>5 ms slots, 6 per 30 ms superframe</p></td>
+</tr>
+<tr class="row-even"><td><p>Fusion</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">swarm/core</span></code> (ESKF: <code class="docutils literal notranslate"><span class="pre">predict</span></code>, <code class="docutils literal notranslate"><span class="pre">update_range</span></code>, <code class="docutils literal notranslate"><span class="pre">update_aoa</span></code>, …), <code class="docutils literal notranslate"><span class="pre">swarm/core</span></code> <code class="docutils literal notranslate"><span class="pre">coop</span></code></p></td>
+<td><p>Sim 6–14 cm RMSE; hardware walks still tuning range bias and NLOS</p></td>
+</tr>
+<tr class="row-odd"><td><p>Hardware</p></td>
+<td><p>Classic ESP32 + Qorvo DWM3000 (DW3110), SPI at 8 MHz; MPU-6050 + QMC5883L</p></td>
+<td><p>No C6 port, no AoA (single antenna)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The parts Splanc adopts:</p>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">MeshPacket</span></code></strong> header (≤ 24 B): origin u16, id u16, dest (absent = broadcast), hop_limit,
+hop_start, flags (want-ack, is-ack), attempt, port, payload (≤ 88 B on UWB).</p></li>
+<li><p><strong>Managed flooding</strong> (<code class="docutils literal notranslate"><span class="pre">swarm/net/src/mesh.rs</span></code> <code class="docutils literal notranslate"><span class="pre">MeshConfig</span></code>): hop limit 3; dedup on
+(origin, id, attempt) over a 64-entry ring; relay after 0–3 of the node’s own slots, sooner
+the weaker the RSSI; cancel a pending relay on overhearing it; want-ack unicast retried 3 times,
+1 s apart.</p></li>
+<li><p><strong>Generations and catch-up</strong> (“Live settings”): every swarm-wide change carries a host
+generation; <code class="docutils literal notranslate"><span class="pre">Summary.generation</span></code> in each node’s beacon lets a late joiner fetch what it missed.</p></li>
+<li><p><strong>Page protocol</strong> (<code class="docutils literal notranslate"><span class="pre">swarm/net/src/update.rs</span></code>): 4 KB pages, 96 B chunks, NACK bitmaps to the
+most advanced neighbour, overheard-request suppression, the canary rule.</p></li>
+<li><p><strong>Seam</strong>: <code class="docutils literal notranslate"><span class="pre">Net::on_mesh(t_us,</span> <span class="pre">bytes,</span> <span class="pre">rssi,</span> <span class="pre">flash)</span></code>, <code class="docutils literal notranslate"><span class="pre">Net::on_my_slot()</span></code>, <code class="docutils literal notranslate"><span class="pre">Net::poll(t_us)</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Net::next_tx(t_us,</span> <span class="pre">out,</span> <span class="pre">flash)</span> <span class="pre">-&gt;</span> <span class="pre">Option&lt;(FrameKind,</span> <span class="pre">usize)&gt;</span></code>, <code class="docutils literal notranslate"><span class="pre">Net::send(dest,</span> <span class="pre">port,</span> <span class="pre">payload,</span> <span class="pre">want_ack)</span></code>, plus <code class="docutils literal notranslate"><span class="pre">trait</span> <span class="pre">Flash</span></code>. There is no radio trait yet. Splanc adds one (§3.2).</p></li>
+</ul>
+<p>What does <strong>not</strong> carry over as is:</p>
+<ul class="simple">
+<li><p>The swarm authenticates only settings (4-byte truncated HMAC-SHA256) and firmware (ECDSA).
+Reports and acks are unauthenticated. Lights in someone’s home need every control frame
+authenticated (§7.4).</p></li>
+<li><p>Membership is implicit (a node’s slot is its rank among heard ids). There is no join, no
+groups, no freeze (§7).</p></li>
+<li><p>Time sync is coarse (superframes align to the lowest id’s POLL). Splanc needs ms-level shared
+time for <code class="docutils literal notranslate"><span class="pre">apply_at</span></code> (§6).</p></li>
+<li><p>The 88 B payload is a UWB budget. The 802.11 backhaul allows more (§5.2).</p></li>
+</ul>
+</section>
+</section>
+<section id="architecture">
+<h2>3. Architecture<a class="headerlink" href="#architecture" title="Link to this heading">¶</a></h2>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span> app / bridge ──BLE or wss──▶ gateway fixture
+                                  │  MeshSend{targets, ClientMessage bytes}
+                                  ▼
+ ┌─────────────────────────── firmware/mesh (Splanc) ─────────────────────────────┐
+ │ ports: control · reply · status · membership · scene · blobs · time            │
+ │ membership: mesh id, key epoch, members, groups, open / frozen                 │
+ │ security envelope: AES-128-CCM, per-source replay window                       │
+ ├──────────────────────────── swarm_net (shared) ─────────────────────────────────┤
+ │ MeshPacket flood + dedup + TTL · want-ack · generations · page protocol         │
+ ├──────────────────────────── Backhaul trait ─────────────────────────────────────┤
+ │ wifi_p2p (netstack action frames) │ ip (UDP on the LAN, later) │ uwb (later)    │
+ └─────────────────────────────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼  each member: lm_player_handle (same as wss/BLE)
+</pre></div>
+</div>
+<section id="where-the-code-lives-extract-then-depend">
+<h3>3.1 Where the code lives: extract, then depend<a class="headerlink" href="#where-the-code-lives-extract-then-depend" title="Link to this heading">¶</a></h3>
+<p><strong>Recommendation: extract <code class="docutils literal notranslate"><span class="pre">swarm/net</span></code> and <code class="docutils literal notranslate"><span class="pre">swarm/proto</span></code> from indoor_localization into their own
+repository and consume it from both projects with a pinned <code class="docutils literal notranslate"><span class="pre">archive_override</span></code>.</strong> This is how
+<code class="docutils literal notranslate"><span class="pre">fughilli/lighthouse</span></code> was handled: it started in indoor_localization (<code class="docutils literal notranslate"><span class="pre">lighthouse/</span></code>) and Splanc
+now pins it in <code class="docutils literal notranslate"><span class="pre">MODULE.bazel</span></code> (“re-sync, not fork: bump the commit”).</p>
+<p>Why this option:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Option</p></th>
+<th class="head"><p>Verdict</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">git_override</span></code> on indoor_localization directly</p></td>
+<td><p><strong>No.</strong> The repo is private and GPL-3.0 at the root (the DW3000 driver). A public Splanc build can’t fetch it</p></td>
+</tr>
+<tr class="row-odd"><td><p>Vendor a copy into Splanc</p></td>
+<td><p><strong>No.</strong> Two copies of the wire format drift; golden vectors stop meaning anything</p></td>
+</tr>
+<tr class="row-even"><td><p>Move it into Splanc’s <code class="docutils literal notranslate"><span class="pre">oss/</span></code> (like <code class="docutils literal notranslate"><span class="pre">oss/pbview</span></code>) and have indoor_localization depend on Splanc</p></td>
+<td><p>Possible, but makes the swarm depend on a much larger repo</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Extract to <code class="docutils literal notranslate"><span class="pre">fughilli/swarm-net</span></code></strong> (name to choose), license it for both</p></td>
+<td><p><strong>Yes.</strong> One wire format, one set of golden vectors, both projects bump a pin</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Licensing: <code class="docutils literal notranslate"><span class="pre">swarm/</span></code> is the owner’s own code, so the owner can license the extracted repo freely.
+Splanc is AGPL-3.0; GPL-3.0 §13 allows combining with AGPL-3.0 code anyway. The DW3000 driver
+stays in indoor_localization; Splanc’s future UWB driver (§11) is a separate question.</p>
+<p>Changes Splanc needs upstream in the extracted crate (each a small PR there, keeping the swarm
+working):</p>
+<ol class="arabic simple">
+<li><p>A <code class="docutils literal notranslate"><span class="pre">Backhaul</span></code>-friendly entry point: <code class="docutils literal notranslate"><span class="pre">on_rx(t_us,</span> <span class="pre">frame,</span> <span class="pre">RxMeta)</span></code> and a slot tick that a
+backhaul without TDMA can drive from a timer.</p></li>
+<li><p>A per-instance <code class="docutils literal notranslate"><span class="pre">MAX_PAYLOAD</span></code> (88 on UWB, larger on 802.11; §5.2) instead of one constant.</p></li>
+<li><p>Blob kinds on the page protocol: <code class="docutils literal notranslate"><span class="pre">Summary</span></code>/<code class="docutils literal notranslate"><span class="pre">FwRequest</span></code>/<code class="docutils literal notranslate"><span class="pre">FwData</span></code> gain a <code class="docutils literal notranslate"><span class="pre">kind</span></code> (firmware,
+effect) and a content id, so the same <code class="docutils literal notranslate"><span class="pre">Updater</span></code> serves effects (§5.5).</p></li>
+<li><p>An optional security envelope hook (§7.4), so the swarm can adopt it too.</p></li>
+<li><p>A riscv32imac (C6) build in its CI. The crate is already <code class="docutils literal notranslate"><span class="pre">no_std</span></code>; the swarm’s build patches
+rules_rust for Xtensa only.</p></li>
+</ol>
+</section>
+<section id="the-backhaul-seam">
+<h3>3.2 The backhaul seam<a class="headerlink" href="#the-backhaul-seam" title="Link to this heading">¶</a></h3>
+<div class="highlight-rust notranslate"><div class="highlight"><pre><span></span><span class="sd">/// One radio (or link) that carries mesh frames. Implementations own framing,</span>
+<span class="sd">/// channel, rate and pacing; the mesh layer sees opaque frames.</span>
+<span class="k">pub</span><span class="w"> </span><span class="k">trait</span><span class="w"> </span><span class="n">Backhaul</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="sd">/// Largest mesh frame (after the security envelope) this backhaul carries.</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">mtu</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kt">usize</span><span class="p">;</span>
+<span class="w">    </span><span class="sd">/// Queue a frame. `dst = None` broadcasts. Never blocks; Busy is back-pressure.</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">send</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">frame</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="p">[</span><span class="kt">u8</span><span class="p">],</span><span class="w"> </span><span class="n">dst</span><span class="p">:</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">NodeId</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">Busy</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="w">    </span><span class="sd">/// Next received frame, with its metadata.</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">recv</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">buf</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">mut</span><span class="w"> </span><span class="p">[</span><span class="kt">u8</span><span class="p">])</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Option</span><span class="o">&lt;</span><span class="n">RxMeta</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="w">    </span><span class="sd">/// Whether this node may transmit now (TDMA slot on UWB, always on 802.11).</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">may_send</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">now_us</span><span class="p">:</span><span class="w"> </span><span class="kt">i64</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="kt">bool</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="k">pub</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">RxMeta</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">len</span><span class="p">:</span><span class="w"> </span><span class="kt">usize</span><span class="p">,</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">rssi_dbm</span><span class="p">:</span><span class="w"> </span><span class="kt">i8</span><span class="p">,</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">rx_us</span><span class="p">:</span><span class="w"> </span><span class="kt">i64</span><span class="p">,</span><span class="w">          </span><span class="c1">// hardware RX timestamp on this node&#39;s clock</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">src_mac</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="kt">u8</span><span class="p">;</span><span class="w"> </span><span class="mi">6</span><span class="p">],</span><span class="w">    </span><span class="c1">// link address, for unicast replies</span>
+<span class="w">    </span><span class="k">pub</span><span class="w"> </span><span class="n">backhaul</span><span class="p">:</span><span class="w"> </span><span class="nc">BackhaulId</span><span class="p">,</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The mesh layer drives <code class="docutils literal notranslate"><span class="pre">swarm_net</span></code> from these calls. On UWB, <code class="docutils literal notranslate"><span class="pre">on_my_slot</span></code> comes from the TDMA
+schedule. On 802.11 there is no TDMA: a 5 ms virtual slot timer drives the relay delays, and
+the MAC’s CSMA handles collisions.</p>
+<p>A node with two backhauls relays across them. The dedup ring makes that safe: a packet seen on
+both is relayed once per backhaul at most.</p>
+</section>
+<section id="addressing">
+<h3>3.3 Addressing<a class="headerlink" href="#addressing" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Node id</strong>: u16, derived from the factory MAC like the swarm’s <code class="docutils literal notranslate"><span class="pre">IdFromMac()</span></code>. Collisions are
+possible (16 bits of a 48-bit MAC). The gateway detects them from the members’ full MACs in
+<code class="docutils literal notranslate"><span class="pre">MeshStatus</span></code> (§5.4) and the app reassigns one id, persisted on the device.</p></li>
+<li><p><strong>Device id</strong> in the app stays the MAC (<code class="docutils literal notranslate"><span class="pre">welcome</span></code> MAC, <code class="docutils literal notranslate"><span class="pre">deviceTrust.ts</span></code>). The app maps MAC to
+node id from status reports.</p></li>
+<li><p><strong>Targets</strong>: one node, a list of up to 8 nodes, a group (u8), or all.</p></li>
+</ul>
+</section>
+</section>
+<section id="the-802-11-p2p-backhaul-in-the-netstack">
+<h2>4. The 802.11 P2P backhaul in the netstack<a class="headerlink" href="#the-802-11-p2p-backhaul-in-the-netstack" title="Link to this heading">¶</a></h2>
+<section id="frames">
+<h3>4.1 Frames<a class="headerlink" href="#frames" title="Link to this heading">¶</a></h3>
+<p>ESP-NOW is a vendor-specific Action frame. We use the same framing, so stock ESP-IDF devices
+and sniffers recognise it, and fill the body with our envelope:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>802.11 header (24 B)
+  FC 0xd0 0x00 (Action), duration, A1 = ff:ff:ff:ff:ff:ff or the peer&#39;s MAC,
+  A2 = own MAC, A3 = ff:ff:ff:ff:ff:ff, sequence (our SeqCounter)
+Action body
+  category 127 (vendor-specific)
+  OUI 18:fe:34, 4 random bytes                         (ESP-NOW framing)
+  vendor element: id 221, len, OUI 18:fe:34, type 4, version 1
+  mesh envelope (§5.1)                                 (our payload)
+FCS (hardware)
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><strong>TX</strong>: <code class="docutils literal notranslate"><span class="pre">ns_mac_send(frame,</span> <span class="pre">len,</span> <span class="pre">queue)</span></code> already submits unprotected management frames (Auth,
+Assoc use it). Mesh frames go through the same path, after <code class="docutils literal notranslate"><span class="pre">tx_pace_before()</span></code>, so they never
+arm on top of a frame still on air. Broadcast frames get no ACK; unicast frames to a peer’s
+MAC get the peer’s hardware auto-ACK (<code class="docutils literal notranslate"><span class="pre">mac_own_bssid</span></code> keeps own-MAC valid).</p></li>
+<li><p><strong>RX</strong>: <code class="docutils literal notranslate"><span class="pre">netstack_loop</span></code> drains <code class="docutils literal notranslate"><span class="pre">ns_mac_recv</span></code>. A mesh frame is identified before the BSSID
+gate: <code class="docutils literal notranslate"><span class="pre">rx[0]</span> <span class="pre">==</span> <span class="pre">0xd0</span></code>, category 127, the ESP-NOW OUI, element type 4, then our envelope magic.
+It is handed to the mesh layer and never to the STA path.</p></li>
+<li><p><strong>RX metadata</strong>: decode RSSI and the RX timestamp from the 92-byte RX vector
+(<code class="docutils literal notranslate"><span class="pre">RX_VECTOR_HDR</span></code>). The layout is undocumented. Spike M3a finds the fields on silicon by
+comparing against the vendor <code class="docutils literal notranslate"><span class="pre">wifi_pkt_rx_ctrl_t</span></code> in promiscuous mode.</p></li>
+<li><p><strong>Rate</strong>: start with 1 Mb/s DSSS for broadcast (ESP-NOW’s default: robust, long range) and
+measure 6 Mb/s OFDM. A 250-byte frame is ~2.2 ms at 1 Mb/s and ~0.4 ms at 6 Mb/s. The pacing
+formula in <code class="docutils literal notranslate"><span class="pre">tx_pace_after</span></code> must use the rate actually sent.</p></li>
+<li><p><strong>Payload</strong>: ESP-NOW v1 caps the body at 250 B and v2 at 1470 B. We start at 250 B per frame
+(compatible with every ESP-NOW peer) and raise the MTU only if measurements say it pays.</p></li>
+</ul>
+</section>
+<section id="channels">
+<h3>4.2 Channels<a class="headerlink" href="#channels" title="Link to this heading">¶</a></h3>
+<p>The mesh needs every member on one channel. Our netstack has one radio, tuned to one channel.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Situation</p></th>
+<th class="head"><p>Mesh channel</p></th>
+<th class="head"><p>What members do</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>AP-anchored</strong> (the usual home/venue case): the gateway is on the site AP</p></td>
+<td><p>The AP’s channel</p></td>
+<td><p>Associated members are there already. Members that can’t reach the AP camp on the channel the mesh beacons announce</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>AP-less</strong> (no Wi-Fi at the site; app over BLE)</p></td>
+<td><p>Chosen at mesh creation (1, 6 or 11, least busy)</p></td>
+<td><p>Every member camps on it, radio up, not associated</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>Several APs on different channels</strong> (an ESS)</p></td>
+<td><p>The anchor AP’s channel</p></td>
+<td><p>Members prefer a BSSID on the mesh channel when latching (<code class="docutils literal notranslate"><span class="pre">scan_latch_ap</span></code>). A member that must use another channel is an IP <strong>island</strong>: reachable by IP, bridged by the IP backhaul (Phase 2)</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>The AP changes channel</strong> (auto-channel)</p></td>
+<td><p>Follows the AP</p></td>
+<td><p>Associated members rejoin (existing rejoin path) and flood a <code class="docutils literal notranslate"><span class="pre">ChannelMove</span></code> first if they can. Members that lose mesh beacons for 10 s sweep (<code class="docutils literal notranslate"><span class="pre">ChannelHop</span></code>) for mesh beacons</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Rules that keep effects running (<code class="docutils literal notranslate"><span class="pre">effects-must-keep-running</span></code>): a member never reboots to find the
+mesh, and a sweep happens in place, like today’s background rescan.</p>
+<p>New Wi-Fi mode: <strong><code class="docutils literal notranslate"><span class="pre">kModeMesh</span></code></strong>, radio up, MAC awake, no association, fixed channel. Offline
+mode stays fully radio-off.</p>
+<p>Background sweeps take a member off-channel for ~1.6 s (13 channels × 120 ms). While mesh
+peers are healthy, a member skips scheduled sweeps unless the rejoin policy needs one. Before
+leaving it floods <code class="docutils literal notranslate"><span class="pre">Away{ms}</span></code>; relays don’t count it missing, and on return it catches up through
+generations (§5.3).</p>
+</section>
+<section id="coexistence-with-ble">
+<h3>4.3 Coexistence with BLE<a class="headerlink" href="#coexistence-with-ble" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>The gateway may hold the app’s BLE link while it relays. <code class="docutils literal notranslate"><span class="pre">coex.rs</span></code> grants the antenna by
+priority with bounded starvation, and <code class="docutils literal notranslate"><span class="pre">coex_timer_cb</span></code> yields to BLE. A mesh broadcast can be
+lost while BLE holds the radio.</p></li>
+<li><p>Loss is handled the same way as any loss: relays give redundancy, want-ack retries cover
+unicast, and generations cover state. No new coex priority at first; HITL measures the loss
+with a BLE session open (§14.2).</p></li>
+<li><p>Mesh traffic is light (§10.3), so it does not starve BLE.</p></li>
+</ul>
+</section>
+<section id="spike-before-committing-m3a">
+<h3>4.4 Spike before committing (M3a)<a class="headerlink" href="#spike-before-committing-m3a" title="Link to this heading">¶</a></h3>
+<p>Two C6s on a rig, with and without an AP:</p>
+<ol class="arabic simple">
+<li><p>Broadcast a vendor action frame from one netstack image; receive it on the other while that
+one is associated to the rig AP. Confirms the RX path and that the AP association survives.</p></li>
+<li><p>Unicast with hardware ACK: check retries on a missed ACK, and whether the MAC retries
+management frames at all on the direct-submission path.</p></li>
+<li><p>Decode RSSI and the RX timestamp from the RX vector.</p></li>
+<li><p>Measure delivery while the gateway holds a BLE connection.</p></li>
+</ol>
+<p>Exit: frames flow both ways in both cases with ≥ 95 % delivery at one hop, and the RX
+timestamp is found.</p>
+</section>
+</section>
+<section id="protocol">
+<h2>5. Protocol<a class="headerlink" href="#protocol" title="Link to this heading">¶</a></h2>
+<section id="envelope">
+<h3>5.1 Envelope<a class="headerlink" href="#envelope" title="Link to this heading">¶</a></h3>
+<p>Every mesh frame, on every backhaul:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Size</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>magic <code class="docutils literal notranslate"><span class="pre">&quot;SM&quot;</span></code></p></td>
+<td><p>2</p></td>
+<td><p>Splanc mesh</p></td>
+</tr>
+<tr class="row-odd"><td><p>version</p></td>
+<td><p>1</p></td>
+<td><p>1. Unknown versions are dropped and counted</p></td>
+</tr>
+<tr class="row-even"><td><p>mesh id</p></td>
+<td><p>4</p></td>
+<td><p>Random at creation</p></td>
+</tr>
+<tr class="row-odd"><td><p>key epoch</p></td>
+<td><p>1</p></td>
+<td><p>Which mesh key (§7.4)</p></td>
+</tr>
+<tr class="row-even"><td><p>source node id</p></td>
+<td><p>2</p></td>
+<td><p>For the nonce and the replay window</p></td>
+</tr>
+<tr class="row-odd"><td><p>frame counter</p></td>
+<td><p>4</p></td>
+<td><p>Per source, strictly increasing (§7.4)</p></td>
+</tr>
+<tr class="row-even"><td><p>ciphertext</p></td>
+<td><p>n</p></td>
+<td><p>A <code class="docutils literal notranslate"><span class="pre">swarm.v1</span></code> <code class="docutils literal notranslate"><span class="pre">LinkFrame</span></code> (as on UWB), AES-128-CCM encrypted</p></td>
+</tr>
+<tr class="row-odd"><td><p>MIC</p></td>
+<td><p>8 (802.11), 4 (UWB)</p></td>
+<td><p>CCM tag over the header and the ciphertext</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Overhead: 14 B + MIC. Join requests (§7.2) use the same envelope with epoch 0 and no
+encryption, and carry only join payloads.</p>
+</section>
+<section id="mtu-per-backhaul">
+<h3>5.2 MTU per backhaul<a class="headerlink" href="#mtu-per-backhaul" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Backhaul</p></th>
+<th class="head"><p>Frame</p></th>
+<th class="head"><p>Envelope</p></th>
+<th class="head"><p>MeshPacket header</p></th>
+<th class="head"><p>App payload</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>UWB (DW3000, standard PHR)</p></td>
+<td><p>125 B</p></td>
+<td><p>18 B</p></td>
+<td><p>24 B</p></td>
+<td><p>~80 B (the swarm’s 88 less the envelope; §11)</p></td>
+</tr>
+<tr class="row-odd"><td><p>802.11 ESP-NOW v1</p></td>
+<td><p>250 B</p></td>
+<td><p>22 B</p></td>
+<td><p>24 B</p></td>
+<td><p><strong>200 B</strong> (LinkFrame tags take a few bytes)</p></td>
+</tr>
+<tr class="row-even"><td><p>802.11 ESP-NOW v2 (later)</p></td>
+<td><p>1470 B</p></td>
+<td><p>22 B</p></td>
+<td><p>24 B</p></td>
+<td><p>~1400 B</p></td>
+</tr>
+<tr class="row-odd"><td><p>IP / UDP (later)</p></td>
+<td><p>1400 B</p></td>
+<td><p>22 B</p></td>
+<td><p>24 B</p></td>
+<td><p>~1300 B</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>A mixed mesh uses the smallest MTU of the backhauls in use; the mesh beacon advertises it.
+Messages larger than the payload are fragmented at the port layer (like the swarm’s
+<code class="docutils literal notranslate"><span class="pre">BundleFragment</span></code>), not in the mesh layer.</p>
+</section>
+<section id="ports">
+<h3>5.3 Ports<a class="headerlink" href="#ports" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">PORT_APP</span> <span class="pre">=</span> <span class="pre">16</span></code> and up are the application’s (<code class="docutils literal notranslate"><span class="pre">swarm/net/src/net.rs</span></code>). Splanc’s:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Port</p></th>
+<th class="head"><p>Name</p></th>
+<th class="head"><p>Flood</p></th>
+<th class="head"><p>Payload</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>16</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CONTROL</span></code></p></td>
+<td><p>to targets (broadcast with a target filter, or unicast)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MeshControl{op_id,</span> <span class="pre">targets,</span> <span class="pre">apply_at?,</span> <span class="pre">inner</span> <span class="pre">ClientMessage</span> <span class="pre">bytes}</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>17</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">REPLY</span></code></p></td>
+<td><p>unicast to the gateway</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MeshReply{op_id,</span> <span class="pre">status,</span> <span class="pre">small</span> <span class="pre">ServerMessage</span> <span class="pre">bytes}</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p>18</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">STATUS</span></code></p></td>
+<td><p>broadcast, every 10 s and on change</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MeshStatus</span></code> (§5.4)</p></td>
+</tr>
+<tr class="row-odd"><td><p>19</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MEMBERSHIP</span></code></p></td>
+<td><p>broadcast or unicast</p></td>
+<td><p>join, admit, assign groups, freeze, rekey (§7)</p></td>
+</tr>
+<tr class="row-even"><td><p>20</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">SCENE</span></code></p></td>
+<td><p>broadcast</p></td>
+<td><p>per-group scene generation and its state (§5.6)</p></td>
+</tr>
+<tr class="row-odd"><td><p>21</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">TIME_BASE</span></code></p></td>
+<td><p>broadcast</p></td>
+<td><p>the show epoch in mesh time (§6.3)</p></td>
+</tr>
+<tr class="row-even"><td><p>22–31</p></td>
+<td><p>reserved</p></td>
+<td><p></p></td>
+<td><p></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Link frame types beyond the swarm’s (new <code class="docutils literal notranslate"><span class="pre">FrameType</span></code> values, upstream):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Type</p></th>
+<th class="head"><p>Purpose</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">BEACON</span></code></p></td>
+<td><p>Every second: mesh id, channel, MTU, the swarm <code class="docutils literal notranslate"><span class="pre">Summary</span></code> (generations, blob progress), member count, mesh time (§6)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">BLOB_*</span></code></p></td>
+<td><p>The page protocol for blobs (generalised <code class="docutils literal notranslate"><span class="pre">FW_REQUEST</span></code>/<code class="docutils literal notranslate"><span class="pre">FW_DATA</span></code>/<code class="docutils literal notranslate"><span class="pre">FW_MANIFEST</span></code>, §5.5)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Time beacons are not flooded through the managed flood (its random relay delay ruins
+timestamps). Each node re-stamps and re-broadcasts the time in its own <code class="docutils literal notranslate"><span class="pre">BEACON</span></code> (§6.2).</p>
+</section>
+<section id="what-the-mesh-carries">
+<h3>5.4 What the mesh carries<a class="headerlink" href="#what-the-mesh-carries" title="Link to this heading">¶</a></h3>
+<p>Relayed control (<code class="docutils literal notranslate"><span class="pre">CONTROL</span></code> port), an allow-list of <code class="docutils literal notranslate"><span class="pre">ClientMessage</span></code> arms dispatched on members
+through <code class="docutils literal notranslate"><span class="pre">lm_player_handle</span></code>, exactly as if they arrived over wss:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Arm</p></th>
+<th class="head"><p>Size (typical)</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">set_uniforms</span></code></p></td>
+<td><p>20–150 B</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">seq</span></code> and <code class="docutils literal notranslate"><span class="pre">commit</span></code> work as today; <code class="docutils literal notranslate"><span class="pre">apply_at_ms</span></code> keeps its meaning (§6.3)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">set_effect</span></code>, <code class="docutils literal notranslate"><span class="pre">set_crossfade</span></code>, <code class="docutils literal notranslate"><span class="pre">set_brightness</span></code></p></td>
+<td><p>10–30 B</p></td>
+<td><p>with <code class="docutils literal notranslate"><span class="pre">apply_at_ms</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">blend_keypoints</span></code>, <code class="docutils literal notranslate"><span class="pre">save_keypoint</span></code>, <code class="docutils literal notranslate"><span class="pre">delete_keypoint</span></code></p></td>
+<td><p>20–200 B</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">set_device_name</span></code>, <code class="docutils literal notranslate"><span class="pre">set_fixture_pose</span></code>, <code class="docutils literal notranslate"><span class="pre">set_color_correction</span></code>, <code class="docutils literal notranslate"><span class="pre">set_fps</span></code></p></td>
+<td><p>10–80 B</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">get_status</span></code>, <code class="docutils literal notranslate"><span class="pre">get_effect_uniforms</span></code>, <code class="docutils literal notranslate"><span class="pre">list_effects</span></code>, <code class="docutils literal notranslate"><span class="pre">list_keypoints</span></code></p></td>
+<td><p>small</p></td>
+<td><p>the reply must fit one <code class="docutils literal notranslate"><span class="pre">REPLY</span></code> (§8.2)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Not relayed: mapping capture, <code class="docutils literal notranslate"><span class="pre">set_texture</span></code> (video), <code class="docutils literal notranslate"><span class="pre">fx_debug_*</span></code>, stored-map download, TLS
+info, Wi-Fi policy for another member (dangerous over the mesh; per-device only), and OTA in
+Phase 1. A member answers anything else with <code class="docutils literal notranslate"><span class="pre">error{unsupported_over_mesh}</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">MeshStatus</span></code> (one packet, ~60 B): node id, full MAC, firmware version, uptime, active effect
+content id per deck, brightness, scene generation per group, free and min heap, fps, the
+parent it hears best (id + RSSI), time-sync error estimate, Wi-Fi state (associated / mesh-only),
+the hash of its certificate (8 B prefix; full pin on request).</p>
+</section>
+<section id="effect-programs-content-addressed-blobs">
+<h3>5.5 Effect programs: content-addressed blobs<a class="headerlink" href="#effect-programs-content-addressed-blobs" title="Link to this heading">¶</a></h3>
+<ol class="arabic simple">
+<li><p>The app sends <code class="docutils literal notranslate"><span class="pre">SubmitEffect</span></code> to the gateway as today (BLE uses <code class="docutils literal notranslate"><span class="pre">UploadChunk</span></code> reassembly).</p></li>
+<li><p>The gateway stores it (existing path), computes <code class="docutils literal notranslate"><span class="pre">blob_id</span> <span class="pre">=</span> <span class="pre">SHA-256(fxb)[0..8]</span></code> and starts
+serving it on the page protocol (<code class="docutils literal notranslate"><span class="pre">swarm/net/src/update.rs</span></code>, generalised with a blob kind).
+A 4 KiB effect is <strong>one page</strong> of up to 43 chunks of 96 B (on 802.11, fewer and larger
+chunks fit one 200 B payload).</p></li>
+<li><p>A <code class="docutils literal notranslate"><span class="pre">MeshControl{set_effect</span> <span class="pre">by</span> <span class="pre">blob_id,</span> <span class="pre">apply_at}</span></code> tells targets what to load. A target that
+lacks the blob requests its missing chunks (NACK bitmap) from the most advanced neighbour.
+It writes chunks into the effect store under <code class="docutils literal notranslate"><span class="pre">effect_id</span></code> (littlefs), not into RAM.</p></li>
+<li><p>Once complete and the SHA-256 matches, the member loads it. A scheduled <code class="docutils literal notranslate"><span class="pre">set_effect</span></code>
+applies at its <code class="docutils literal notranslate"><span class="pre">apply_at</span></code>; one that arrives before the blob is complete is held until it
+completes (a late member then starts late, as on wss today).</p></li>
+</ol>
+<p>The canary rule (serve only what you validated) maps to: serve only blobs whose hash checks.</p>
+</section>
+<section id="scene-state-and-late-joiners">
+<h3>5.6 Scene state and late joiners<a class="headerlink" href="#scene-state-and-late-joiners" title="Link to this heading">¶</a></h3>
+<p>The swarm’s “late joiners catch up” rule, applied to looks. Each group has a <strong>scene</strong>: active
+effect blob id per deck, committed uniforms, brightness, crossfade, with a generation the
+gateway increments on every committed change. Members put <code class="docutils literal notranslate"><span class="pre">(group,</span> <span class="pre">generation)</span></code> pairs in their
+<code class="docutils literal notranslate"><span class="pre">BEACON</span></code> summary. A member that hears a newer generation for one of its groups asks that
+neighbour for the scene (a few packets) and applies it. A fixture powered on after the show
+started is showing the room’s look within seconds.</p>
+<p>Live (uncommitted) moves such as a fader drag are not part of the scene; the final committed
+value is.</p>
+</section>
+<section id="versioning">
+<h3>5.7 Versioning<a class="headerlink" href="#versioning" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Envelope <code class="docutils literal notranslate"><span class="pre">version</span></code> for the frame format; <code class="docutils literal notranslate"><span class="pre">LinkFrame.ver</span></code> for the swarm wire format.</p></li>
+<li><p>Mesh features are advertised in <code class="docutils literal notranslate"><span class="pre">welcome.features</span></code> (<code class="docutils literal notranslate"><span class="pre">mesh</span></code>, <code class="docutils literal notranslate"><span class="pre">mesh_gateway</span></code>) and in
+<code class="docutils literal notranslate"><span class="pre">MeshStatus</span></code>. The gateway does not send a member an arm its firmware version lacks.</p></li>
+<li><p>A member with an unknown envelope version is reported in the gateway’s list as
+“incompatible”, so the app can offer an update over a direct connection.</p></li>
+</ul>
+</section>
+</section>
+<section id="time-sync-and-apply-at-across-the-mesh">
+<h2>6. Time sync and apply_at across the mesh<a class="headerlink" href="#time-sync-and-apply-at-across-the-mesh" title="Link to this heading">¶</a></h2>
+<section id="budget">
+<h3>6.1 Budget<a class="headerlink" href="#budget" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">docs/design/synced-show.md</span></code> targets &lt; 10 ms between fixtures. Across the mesh, the shares are:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Source</p></th>
+<th class="head"><p>Target</p></th>
+<th class="head"><p>How</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Mesh time offset</p></td>
+<td><p>&lt; 1 ms per hop</p></td>
+<td><p>beacons, hardware RX timestamps</p></td>
+</tr>
+<tr class="row-odd"><td><p>Drift</p></td>
+<td><p>absorbed</p></td>
+<td><p>per-neighbour linear fit (the <code class="docutils literal notranslate"><span class="pre">DriftEstimator</span></code> method, in Rust)</p></td>
+</tr>
+<tr class="row-even"><td><p>Delivery spread</p></td>
+<td><p>hidden</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">apply_at</span></code> with a lead larger than the worst delivery</p></td>
+</tr>
+<tr class="row-odd"><td><p>Render phase</p></td>
+<td><p>one frame</p></td>
+<td><p>as today (not solved here)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="mesh-time">
+<h3>6.2 Mesh time<a class="headerlink" href="#mesh-time" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Root</strong>: the gateway that holds the app’s session, or, without one, the lowest node id that
+has been up longest (stable across app reconnects; the root changes only when it disappears).</p></li>
+<li><p>Every <code class="docutils literal notranslate"><span class="pre">BEACON</span></code> carries the sender’s estimate of mesh time at its TX instant (<code class="docutils literal notranslate"><span class="pre">t_mesh</span></code>) and its
+hop distance from the root.</p></li>
+<li><p>A receiver takes the hardware RX timestamp (<code class="docutils literal notranslate"><span class="pre">RxMeta.rx_us</span></code>, §4.1) and records the pair
+<code class="docutils literal notranslate"><span class="pre">(rx_us,</span> <span class="pre">t_mesh)</span></code>. It fits offset and rate against its best parent (fewest hops, then
+strongest RSSI) over a 5 min window, rejecting outliers by residual, like <code class="docutils literal notranslate"><span class="pre">TimeDiscipline</span></code>.</p></li>
+<li><p>Error per hop: the TX instant is the time just before <code class="docutils literal notranslate"><span class="pre">ns_mac_send</span></code>, so the queue and pacing
+delay add jitter. Each beacon carries the previous beacon’s measured TX-to-air correction if
+the hardware exposes a TX timestamp (M3a looks for one). Expect tens of µs per hop.</p></li>
+<li><p><strong>AP-anchored bonus</strong>: members associated to one AP all hear its beacons, whose TSF is a
+common clock (reference-broadcast sync). The fit can use AP beacons as extra observations.</p></li>
+</ul>
+</section>
+<section id="mapping-the-show-clock">
+<h3>6.3 Mapping the show clock<a class="headerlink" href="#mapping-the-show-clock" title="Link to this heading">¶</a></h3>
+<ol class="arabic simple">
+<li><p>The app syncs with the gateway as today (<code class="docutils literal notranslate"><span class="pre">TimeSyncPing</span></code>/<code class="docutils literal notranslate"><span class="pre">Pong</span></code>, <code class="docutils literal notranslate"><span class="pre">web/src/net/clocksync.ts</span></code>)
+and sends the gateway <code class="docutils literal notranslate"><span class="pre">SetTimeBase{epoch_ms}</span></code> in the gateway’s clock.</p></li>
+<li><p>The gateway converts it to mesh time and floods <code class="docutils literal notranslate"><span class="pre">TIME_BASE{epoch_mesh_us,</span> <span class="pre">generation}</span></code>.</p></li>
+<li><p>Each member converts mesh time to its own <code class="docutils literal notranslate"><span class="pre">millis()</span></code> and applies the epoch through the same
+internal path as <code class="docutils literal notranslate"><span class="pre">SetTimeBase</span></code>. The bridge’s slews (≤ 2 ms steps) become new <code class="docutils literal notranslate"><span class="pre">TIME_BASE</span></code>
+generations, flooded the same way.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">apply_at_ms</span></code> is ms on that epoch, the same number on every member. So a relayed
+<code class="docutils literal notranslate"><span class="pre">SetUniforms{apply_at_ms}</span></code> lands on the same frame everywhere, unchanged.</p></li>
+</ol>
+<p>Lead: <code class="docutils literal notranslate"><span class="pre">apply_at</span></code> must be later than the slowest delivery. One hop with relay delay is under
+25 ms (0–3 virtual slots of 5 ms plus airtime); three hops under ~75 ms; a missed broadcast
+plus one want-ack retry adds 1 s. The default lead stays the bridge’s 150 ms for one or two
+hops, and 300 ms when the target set is three hops out. A member that receives a change after
+its <code class="docutils literal notranslate"><span class="pre">apply_at</span></code> applies it on arrival and counts it late (reported in <code class="docutils literal notranslate"><span class="pre">MeshStatus</span></code>).</p>
+</section>
+</section>
+<section id="membership-groups-and-security">
+<h2>7. Membership, groups and security<a class="headerlink" href="#membership-groups-and-security" title="Link to this heading">¶</a></h2>
+<section id="state-on-each-member">
+<h3>7.1 State on each member<a class="headerlink" href="#state-on-each-member" title="Link to this heading">¶</a></h3>
+<p>Persisted in littlefs (one small file, written only on membership changes):</p>
+<ul class="simple">
+<li><p>mesh id, mesh name, channel, mode (open or frozen), membership generation;</p></li>
+<li><p>current key and epoch, plus the previous key during a rotation (§7.5);</p></li>
+<li><p>its own groups (≤ 8 group ids);</p></li>
+<li><p>in frozen mode, the member list (≤ 64 node ids + MAC prefixes);</p></li>
+<li><p>its pairwise key with the mesh (from its join, §7.3), for rekeys.</p></li>
+</ul>
+</section>
+<section id="joining-the-three-paths">
+<h3>7.2 Joining: the three paths<a class="headerlink" href="#joining-the-three-paths" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Path</p></th>
+<th class="head"><p>When</p></th>
+<th class="head"><p>How</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>App-provisioned</strong></p></td>
+<td><p>The app can talk to the device directly (BLE Improv during setup, or wss)</p></td>
+<td><p>The app sends <code class="docutils literal notranslate"><span class="pre">MeshJoin{mesh</span> <span class="pre">id,</span> <span class="pre">key,</span> <span class="pre">epoch,</span> <span class="pre">channel,</span> <span class="pre">mode,</span> <span class="pre">groups}</span></code> over the trusted link (BLE pairing/TLS with the pinned cert). This is the Phase 1 path</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Free association</strong> (open mode)</p></td>
+<td><p>A device holding the site credentials appears near the mesh</p></td>
+<td><p>It broadcasts <code class="docutils literal notranslate"><span class="pre">JoinRequest{node</span> <span class="pre">id,</span> <span class="pre">MAC,</span> <span class="pre">cert</span> <span class="pre">public</span> <span class="pre">key,</span> <span class="pre">firmware,</span> <span class="pre">proof}</span></code>. A member that hears it forwards it to the gateway. If the proof checks (below), any member admits it automatically</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>Approval</strong> (open or frozen)</p></td>
+<td><p>A device without the site credentials appears</p></td>
+<td><p>The request reaches the app as “New fixture nearby: admit?” One tap admits it</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>The site secret.</strong> Free association must not mean “anyone with Splanc firmware nearby joins
+and controls the lights”. The app creates a 32-byte site secret per installation and hands it to
+every device it provisions (Improv) or joins. A newcomer proves it holds the secret with
+<code class="docutils literal notranslate"><span class="pre">proof</span> <span class="pre">=</span> <span class="pre">HMAC(site_secret,</span> <span class="pre">&quot;join&quot;</span> <span class="pre">‖</span> <span class="pre">mesh</span> <span class="pre">nonce</span> <span class="pre">‖</span> <span class="pre">node</span> <span class="pre">id)</span></code>. The mesh nonce comes from the
+latest beacon, so a recorded proof can’t be replayed later.</p>
+<p>The admitting member then wraps the mesh key for the newcomer: ECDH between its P-256 device key
+(the per-device TLS key, <code class="docutils literal notranslate"><span class="pre">docs/design/per-device-cert.md</span></code>) and the newcomer’s, HKDF, AES-CCM.
+The C6 has an ECC accelerator; even in software one P-256 ECDH is a one-off per join. The
+shared secret also becomes the newcomer’s pairwise key.</p>
+</section>
+<section id="frozen-membership">
+<h3>7.3 Frozen membership<a class="headerlink" href="#frozen-membership" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>The app freezes the mesh: the gateway floods <code class="docutils literal notranslate"><span class="pre">Freeze{member</span> <span class="pre">list,</span> <span class="pre">membership</span> <span class="pre">generation}</span></code>,
+authenticated by the mesh key.</p></li>
+<li><p>Frozen members drop frames from node ids not on the list, even with a valid MIC, and ignore
+<code class="docutils literal notranslate"><span class="pre">JoinRequest</span></code>s except to report them to the gateway (the app shows them).</p></li>
+<li><p>Adding a member while frozen is an explicit app action (the approval path with the list
+updated).</p></li>
+<li><p><strong>Removing a member rotates the key</strong> (§7.5). Without rotation the removed device still holds
+the key and could forge another id. Unfreezing goes back to open mode.</p></li>
+</ul>
+</section>
+<section id="frame-protection">
+<h3>7.4 Frame protection<a class="headerlink" href="#frame-protection" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>AES-128-CCM</strong> over every frame (§5.1), keyed by <code class="docutils literal notranslate"><span class="pre">HKDF(mesh</span> <span class="pre">key,</span> <span class="pre">epoch,</span> <span class="pre">&quot;frame&quot;)</span></code>. The C6’s
+AES accelerator already runs our software CCMP (<code class="docutils literal notranslate"><span class="pre">firmware/netstack/src/ccmp.rs</span></code>, which is
+CCM); the mesh reuses it. Cost is a few AES blocks per frame.</p></li>
+<li><p><strong>Nonce</strong>: mesh id ‖ source id ‖ epoch ‖ counter (13 B). Unique while counters never repeat.</p></li>
+<li><p><strong>Counter</strong>: <code class="docutils literal notranslate"><span class="pre">boot_count</span> <span class="pre">&lt;&lt;</span> <span class="pre">20</span> <span class="pre">|</span> <span class="pre">n</span></code>. <code class="docutils literal notranslate"><span class="pre">boot_count</span></code> is persisted once per boot (no per-frame
+flash writes); <code class="docutils literal notranslate"><span class="pre">n</span></code> counts frames this boot. A member that would exceed 2^20 frames in one
+boot bumps <code class="docutils literal notranslate"><span class="pre">boot_count</span></code> (one write).</p></li>
+<li><p><strong>Replay</strong>: per source, the highest counter seen plus a 32-frame bitmap window. 64 sources
+× 12 B ≈ 0.8 KB. A counter below the window is dropped.</p></li>
+<li><p><strong>MIC</strong>: 8 B on 802.11; 4 B on UWB, where every byte counts. The swarm argues 4 B is enough
+for settings (2^31 tries on average, one per frame on air).</p></li>
+<li><p>This replaces the swarm’s per-message HMAC for Splanc traffic. Upstreaming it lets the swarm
+authenticate its reports and acks too.</p></li>
+</ul>
+</section>
+<section id="key-rotation">
+<h3>7.5 Key rotation<a class="headerlink" href="#key-rotation" title="Link to this heading">¶</a></h3>
+<ol class="arabic simple">
+<li><p>The gateway picks a new key and epoch.</p></li>
+<li><p>It sends <code class="docutils literal notranslate"><span class="pre">Rekey{epoch,</span> <span class="pre">key}</span></code> to every listed member, unicast with want-ack, wrapped with that
+member’s pairwise key.</p></li>
+<li><p>Members accept both epochs for a grace period (60 s), then only the new one.</p></li>
+<li><p>A member that was off during the rotation hears beacons in an epoch it lacks and sends a
+<code class="docutils literal notranslate"><span class="pre">RekeyRequest</span></code> under its pairwise key; any member holding the new key answers, if the
+requester is still listed.</p></li>
+</ol>
+</section>
+<section id="groups">
+<h3>7.6 Groups<a class="headerlink" href="#groups" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Group ids are u8 (0 = none). Names live in the app and the hub config; members store ids only.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">AssignGroups{node,</span> <span class="pre">groups}</span></code> (membership port, authenticated) sets a member’s groups,
+persisted.</p></li>
+<li><p>A <code class="docutils literal notranslate"><span class="pre">MeshControl</span></code> with a group target is broadcast; members not in the group drop it after
+decrypting the header. Scenes are per group (§5.6).</p></li>
+<li><p>The hub/app may also target an ad-hoc list (≤ 8 ids) without creating a group.</p></li>
+</ul>
+</section>
+<section id="how-this-relates-to-device-trust">
+<h3>7.7 How this relates to device trust<a class="headerlink" href="#how-this-relates-to-device-trust" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>The app still pins each device’s certificate by MAC (<code class="docutils literal notranslate"><span class="pre">deviceTrust.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">trust.ts</span></code>). A mesh
+member reports its certificate hash in <code class="docutils literal notranslate"><span class="pre">MeshStatus</span></code> and <code class="docutils literal notranslate"><span class="pre">JoinRequest</span></code>; the app pins it at
+first sight, and warns on a change, as for a direct connection.</p></li>
+<li><p>The app-to-gateway leg is TLS or BLE as today. Gateway-to-member traffic is protected by the
+mesh key, not TLS. A member trusts the gateway because the gateway holds the mesh key.</p></li>
+</ul>
+</section>
+</section>
+<section id="gateway-one-connection-the-whole-mesh">
+<h2>8. Gateway: one connection, the whole mesh<a class="headerlink" href="#gateway-one-connection-the-whole-mesh" title="Link to this heading">¶</a></h2>
+<section id="new-protocol-arms">
+<h3>8.1 New protocol arms<a class="headerlink" href="#new-protocol-arms" title="Link to this heading">¶</a></h3>
+<p>In <code class="docutils literal notranslate"><span class="pre">ledmapper.proto</span></code> (arm numbers from 99 up; the exact numbers are chosen in the PR):</p>
+<div class="highlight-protobuf notranslate"><div class="highlight"><pre><span></span><span class="kd">message</span><span class="w"> </span><span class="nc">MeshTargets</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">repeated</span><span class="w"> </span><span class="kt">uint32</span><span class="w"> </span><span class="na">nodes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span><span class="w">   </span><span class="c1">// empty and group == 0: all members</span>
+<span class="w">  </span><span class="kt">uint32</span><span class="w"> </span><span class="kd">group</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">bool</span><span class="w"> </span><span class="na">include_gateway</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w">    </span><span class="c1">// dispatch locally too (default true for &quot;all&quot;)</span>
+<span class="p">}</span>
+
+<span class="c1">// ClientMessage arm: relay one ClientMessage to mesh members.</span>
+<span class="kd">message</span><span class="w"> </span><span class="nc">MeshSend</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">uint32</span><span class="w"> </span><span class="na">op_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">  </span><span class="n">MeshTargets</span><span class="w"> </span><span class="na">targets</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">bytes</span><span class="w"> </span><span class="na">inner</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w">             </span><span class="c1">// an encoded ClientMessage from the allow-list (§5.4)</span>
+<span class="w">  </span><span class="kt">bool</span><span class="w"> </span><span class="na">want_reply</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4</span><span class="p">;</span><span class="w">         </span><span class="c1">// collect per-member replies</span>
+<span class="w">  </span><span class="kt">uint32</span><span class="w"> </span><span class="na">timeout_ms</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5</span><span class="p">;</span><span class="w">       </span><span class="c1">// default 2000</span>
+<span class="p">}</span>
+
+<span class="c1">// ServerMessage arm: the aggregated result of a MeshSend.</span>
+<span class="kd">message</span><span class="w"> </span><span class="nc">MeshResult</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">uint32</span><span class="w"> </span><span class="na">op_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">  </span><span class="k">repeated</span><span class="w"> </span><span class="kt">uint32</span><span class="w"> </span><span class="na">acked</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span>
+<span class="w">  </span><span class="k">repeated</span><span class="w"> </span><span class="kt">uint32</span><span class="w"> </span><span class="na">missing</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span><span class="w"> </span><span class="c1">// no reply before the timeout</span>
+<span class="w">  </span><span class="k">repeated</span><span class="w"> </span><span class="n">MeshMemberReply</span><span class="w"> </span><span class="na">replies</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4</span><span class="p">;</span><span class="w">  </span><span class="c1">// when want_reply: small replies only</span>
+<span class="p">}</span>
+
+<span class="c1">// Membership and listing: GetMesh / MeshState (members, groups, mode, pending joins),</span>
+<span class="c1">// CreateMesh, JoinMesh (direct), AdmitDevice, SetGroups, FreezeMesh, RotateMeshKey.</span>
+</pre></div>
+</div>
+</section>
+<section id="behaviour">
+<h3>8.2 Behaviour<a class="headerlink" href="#behaviour" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Fan-out</strong>: the gateway checks the inner arm against the allow-list, dispatches locally if
+targeted (<code class="docutils literal notranslate"><span class="pre">lm_ws_dispatch</span></code>), and floods one <code class="docutils literal notranslate"><span class="pre">MeshControl</span></code>. One broadcast reaches every target;
+per-member unicast is only for a short explicit node list.</p></li>
+<li><p><strong>Replies</strong>: each target sends <code class="docutils literal notranslate"><span class="pre">MeshReply</span></code> unicast to the gateway with the <code class="docutils literal notranslate"><span class="pre">op_id</span></code> and a
+status (ok, error code, or a small reply under 150 B). Large replies (<code class="docutils literal notranslate"><span class="pre">welcome</span></code>, effect
+uniforms of a big effect) are not relayed; the app uses <code class="docutils literal notranslate"><span class="pre">MeshStatus</span></code> and targeted <code class="docutils literal notranslate"><span class="pre">get_*</span></code>
+calls whose replies fit.</p></li>
+<li><p><strong>Aggregation</strong>: the gateway collects replies for <code class="docutils literal notranslate"><span class="pre">timeout_ms</span></code> and returns one <code class="docutils literal notranslate"><span class="pre">MeshResult</span></code>.
+For live control (<code class="docutils literal notranslate"><span class="pre">seq</span></code> set, a fader stream) it does not wait: it acks the app on its own
+dispatch, like <code class="docutils literal notranslate"><span class="pre">ControlAck</span></code>, and reports stragglers in <code class="docutils literal notranslate"><span class="pre">MeshStatus</span></code>.</p></li>
+<li><p><strong>Listing</strong>: the gateway keeps the latest <code class="docutils literal notranslate"><span class="pre">MeshStatus</span></code> of each member (64 × ~60 B ≈ 4 KB; on a
+C6 gateway this is the largest new RAM cost, so it may keep a compact 24 B subset instead).
+<code class="docutils literal notranslate"><span class="pre">GetMesh</span></code> returns it.</p></li>
+<li><p><strong>Gateway change</strong>: any member can be the gateway; there is no special role in the mesh
+itself. A gateway with no app session is just a member.</p></li>
+<li><p><strong>P4 + C6 boards</strong>: the C6 front end runs the mesh layer and forwards control for its own P4
+through the existing link (<code class="docutils literal notranslate"><span class="pre">frontend_link.cpp</span></code>), so a P4 fixture is a normal mesh member.</p></li>
+</ul>
+</section>
+</section>
+<section id="app-and-bridge-ux">
+<h2>9. App and bridge UX<a class="headerlink" href="#app-and-bridge-ux" title="Link to this heading">¶</a></h2>
+<section id="app">
+<h3>9.1 App<a class="headerlink" href="#app" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Device list</strong>: members appear under the gateway: “via Lamp A · 2 hops · −61 dBm · seen
+3 s ago”. Members are controllable like directly connected devices for everything in the
+allow-list. Features that need a direct link (mapping, video, debugger, OTA in Phase 1) show
+“connect directly”.</p></li>
+<li><p><strong>Mesh screen</strong> (Devices ▸ Mesh): mesh name, channel, mode (Open / Frozen toggle), members
+(status, firmware, heap, fps, time-sync error, last seen), pending join requests (Admit /
+Ignore), groups (create, rename, assign by multi-select), “Rotate key”, “Leave mesh”.</p></li>
+<li><p><strong>Targets</strong>: the live-control and effect screens gain a target picker: this device, a group,
+all. <code class="docutils literal notranslate"><span class="pre">web/src/net/liveControl.ts</span></code> sends <code class="docutils literal notranslate"><span class="pre">MeshSend</span></code> instead of per-device sockets.</p></li>
+<li><p><strong>Setup</strong>: “Create mesh” on the first fixture; every fixture provisioned afterwards (Improv)
+is joined with the site secret and the mesh key automatically. “Join this fixture” for one
+already set up.</p></li>
+<li><p><strong>Room</strong>: room localization (<code class="docutils literal notranslate"><span class="pre">#/room</span></code>) is unchanged and enough for static installs. Its
+<code class="docutils literal notranslate"><span class="pre">group_capture</span></code> arming can later go over the mesh (one connection arms all), replacing the
+per-fixture connect-arm-disconnect fallback.</p></li>
+</ul>
+</section>
+<section id="bridge-and-agent">
+<h3>9.2 Bridge and agent<a class="headerlink" href="#bridge-and-agent" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">agent/src/hub.ts</span></code> gains a mesh route: a player reachable “via gateway G” is addressed with
+<code class="docutils literal notranslate"><span class="pre">MeshSend</span></code>. Tools (<code class="docutils literal notranslate"><span class="pre">set_uniforms</span></code>, <code class="docutils literal notranslate"><span class="pre">crossfade_to</span></code>, <code class="docutils literal notranslate"><span class="pre">set_brightness</span></code>, …) keep their signatures;
+<code class="docutils literal notranslate"><span class="pre">list_players</span></code> shows members with their gateway and hop count.</p></li>
+<li><p>The time discipline (<code class="docutils literal notranslate"><span class="pre">timesync.ts</span></code>) disciplines the gateway only; mesh time carries the rest
+(§6). <code class="docutils literal notranslate"><span class="pre">lead_ms</span></code> defaults follow §6.3.</p></li>
+<li><p>The bridge keeps one socket to the gateway instead of one per fixture, which also removes
+the two-TLS-slot pressure per device.</p></li>
+</ul>
+</section>
+</section>
+<section id="the-radiolarians-deployment-sizing">
+<h2>10. The radiolarians deployment: sizing<a class="headerlink" href="#the-radiolarians-deployment-sizing" title="Link to this heading">¶</a></h2>
+<section id="what-the-repo-says">
+<h3>10.1 What the repo says<a class="headerlink" href="#what-the-repo-says" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Fact</p></th>
+<th class="head"><p>Source</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Fixture: a dodecahedron of 12 pentagonal panels, LEDs on concentric rings (1, 6, 12, 18, 24, 44 = 105 per panel), <strong>1260 LEDs</strong>, inradius 10.5 cm</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">solver/src/scenario.rs</span></code> <code class="docutils literal notranslate"><span class="pre">dodecahedron_leds</span></code>, <code class="docutils literal notranslate"><span class="pre">DODECA_INRADIUS_M</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>Wired as <strong>three strings of 420 LEDs</strong></p></td>
+<td><p>issue #479 (“Each 420-LED string fits the whole 265 s capture”)</p></td>
+</tr>
+<tr class="row-even"><td><p>Five customer captures on 2026-11-12, mapped with the phone app</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">docs/design/hue-code-v2.md</span></code>, <code class="docutils literal notranslate"><span class="pre">solver/src/regression_tests.rs</span></code>, #484</p></td>
+</tr>
+<tr class="row-odd"><td><p>Heavy, static after install (owner)</p></td>
+<td><p>owner’s direction</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Not in the repo (open questions, §17): how many fixtures, the venue size and layout, which
+board drives a fixture (1260 LEDs is above the C6’s 1024-per-channel cap from #335, and three
+strings need three outputs, so possibly a P4 + C6 board), whether the site has Wi-Fi, and
+whether they manage it from the app or a bridge.</p>
+</section>
+<section id="assumptions-for-sizing">
+<h3>10.2 Assumptions for sizing<a class="headerlink" href="#assumptions-for-sizing" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Up to <strong>32 fixtures</strong> in one venue (the design allows 64).</p></li>
+<li><p>Most fixtures one hop from the gateway; <strong>≤ 3 hops</strong> (the swarm’s default hop limit).</p></li>
+<li><p>Indoors, 802.11 at 1 Mb/s reaches 20–50 m per hop.</p></li>
+</ul>
+</section>
+<section id="traffic">
+<h3>10.3 Traffic<a class="headerlink" href="#traffic" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Traffic</p></th>
+<th class="head"><p>Size</p></th>
+<th class="head"><p>Rate</p></th>
+<th class="head"><p>Airtime (1 Mb/s, worst: 1 TX + 2 relays)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Beacons</p></td>
+<td><p>~80 B frame</p></td>
+<td><p>1 Hz × 32 nodes</p></td>
+<td><p>~1 ms each → ~3 % of the channel</p></td>
+</tr>
+<tr class="row-odd"><td><p>Status</p></td>
+<td><p>~110 B frame</p></td>
+<td><p>every 10 s × 32</p></td>
+<td><p>&lt; 0.5 %</p></td>
+</tr>
+<tr class="row-even"><td><p>Uniform fader stream</p></td>
+<td><p>~150 B frame</p></td>
+<td><p>30 Hz while dragging</p></td>
+<td><p>~1.5 ms × 3 × 30 ≈ 14 % while dragging</p></td>
+</tr>
+<tr class="row-odd"><td><p>One effect push (4 KiB)</p></td>
+<td><p>~21 frames of 200 B</p></td>
+<td><p>once</p></td>
+<td><p>~50 ms per hop; &lt; 1 s to all</p></td>
+</tr>
+<tr class="row-even"><td><p>Scene catch-up</p></td>
+<td><p>2–6 packets</p></td>
+<td><p>per late joiner</p></td>
+<td><p>negligible</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>At 6 Mb/s OFDM the same traffic costs about a fifth. A fader stream at 1 Mb/s is the heaviest
+load; the gateway coalesces fader updates to 15 Hz over the mesh if measurements show loss.
+With <code class="docutils literal notranslate"><span class="pre">apply_at</span></code> the visible result is the same.</p>
+</section>
+<section id="ram-per-member-c6-estimate-to-be-measured">
+<h3>10.4 RAM per member (C6), estimate to be measured<a class="headerlink" href="#ram-per-member-c6-estimate-to-be-measured" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Item</p></th>
+<th class="head"><p>Bytes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">swarm_net</span></code> state (dedup rings, TX queue, page state, neighbours)</p></td>
+<td><p>~4 K</p></td>
+</tr>
+<tr class="row-odd"><td><p>Replay table (64 sources)</p></td>
+<td><p>~0.8 K</p></td>
+</tr>
+<tr class="row-even"><td><p>Membership + groups</p></td>
+<td><p>~0.5 K</p></td>
+</tr>
+<tr class="row-odd"><td><p>Frame buffers (one RX, one TX at 250 B)</p></td>
+<td><p>~0.5 K</p></td>
+</tr>
+<tr class="row-even"><td><p>Gateway member table (compact)</p></td>
+<td><p>~1.5 K</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Total</strong></p></td>
+<td><p><strong>~7 K</strong> static, no heap</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Blobs go to littlefs, not RAM. The ~7 KB matters at the 2048-LED max config (24 KB floor);
+the PR that adds the crate reports <code class="docutils literal notranslate"><span class="pre">size</span> <span class="pre">-A</span></code> against main, as <code class="docutils literal notranslate"><span class="pre">docs/design/ram-budget.md</span></code> asks.</p>
+</section>
+<section id="minimum-set-that-ships-radiolarians">
+<h3>10.5 Minimum set that ships radiolarians<a class="headerlink" href="#minimum-set-that-ships-radiolarians" title="Link to this heading">¶</a></h3>
+<p>From the PR plan (§15): M1–M8 plus HITL M9a. Specifically:</p>
+<ul class="simple">
+<li><p>the shared mesh crate and the Splanc layer (M1, M2);</p></li>
+<li><p>the 802.11 backhaul with AP-anchored and mesh-only modes (M3);</p></li>
+<li><p>mesh time and <code class="docutils literal notranslate"><span class="pre">apply_at</span></code> across the mesh (M4);</p></li>
+<li><p>the gateway with uniforms, effect/crossfade/brightness and status (M5);</p></li>
+<li><p>effect blobs and scene catch-up (M6);</p></li>
+<li><p>app-provisioned membership, groups, freeze and the site-secret free association (M7);</p></li>
+<li><p>the app’s member list, target picker, mesh screen (M8);</p></li>
+<li><p>a 4-DUT HITL gate (M9a).</p></li>
+</ul>
+<p>What can follow the first install: approval joins for strangers, key rotation, the IP backhaul
+for multi-AP islands, bridge integration (if they use the app), OTA over the mesh.</p>
+</section>
+</section>
+<section id="uwb-backhaul-later">
+<h2>11. UWB backhaul (later)<a class="headerlink" href="#uwb-backhaul-later" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>Hardware</strong>: no current Splanc board has UWB. The C6 boards, <code class="docutils literal notranslate"><span class="pre">splanc-mini</span></code> and the P4 + C6
+design (<code class="docutils literal notranslate"><span class="pre">docs/design/p4-c6-split.md</span></code>) have no UWB radio.</p></li>
+<li><p><strong>Board change</strong>: add a Qorvo DWM3000 module (DW3110; what the swarm uses) or a QM33120 (two
+antennas, PDoA/AoA) on SPI, with IRQ, RST and WAKE: about 6 GPIOs. On the C6 that competes
+with LED outputs and the IMU pins (6, 7, 21 in <code class="docutils literal notranslate"><span class="pre">docs/design/sensor-core.md</span></code>), so it is a new
+board revision (the atopile boards under <code class="docutils literal notranslate"><span class="pre">hardware/</span></code>). On P4 + C6 boards the UWB part could
+hang off the P4 instead.</p></li>
+<li><p><strong>Rates</strong>: 6.8 Mb/s PHY, 125 B frames. The swarm’s TDMA gives each node ~2.5 ms of spare
+airtime per 30 ms superframe (~6 frames); its design estimate is ~19 KB/s per hop for pages,
+and it moved a 450 KB image to 3 nodes in ~3.5 min. Enough for control and effects, slow for
+Splanc’s 2 MB images.</p></li>
+<li><p><strong>Software</strong>: the swarm’s TDMA, DS-TWR and radio loop are C++ in <code class="docutils literal notranslate"><span class="pre">apps/common/radio.cpp</span></code>; the
+driver is GPL-derived. A Splanc UWB backhaul implements <code class="docutils literal notranslate"><span class="pre">Backhaul</span></code> (§3.2) with TDMA driving
+<code class="docutils literal notranslate"><span class="pre">may_send</span></code>, and needs a C6 port of the driver.</p></li>
+<li><p><strong>What it adds</strong>: ranging between every pair at ~20 Hz (§12), a backhaul on a different band
+from Wi-Fi and BLE (no coex), and µs-level time sync from DS-TWR timestamps.</p></li>
+</ul>
+</section>
+<section id="ranging-and-realtime-localization-later">
+<h2>12. Ranging and realtime localization (later)<a class="headerlink" href="#ranging-and-realtime-localization-later" title="Link to this heading">¶</a></h2>
+<p>Not needed for radiolarians: their fixtures are static and the phone-based room localization
+(<code class="docutils literal notranslate"><span class="pre">docs/design/multi-fixture-localization.md</span></code>) places them.</p>
+<p>When moving fixtures matter:</p>
+<ul class="simple">
+<li><p><strong>Ranges</strong> come from UWB DS-TWR (§11), or from the research track (§13).</p></li>
+<li><p><strong>Fusion</strong> is <code class="docutils literal notranslate"><span class="pre">swarm_core</span></code>’s ESKF (<code class="docutils literal notranslate"><span class="pre">predict</span></code>, <code class="docutils literal notranslate"><span class="pre">update_range</span></code>, <code class="docutils literal notranslate"><span class="pre">update_aoa</span></code>, <code class="docutils literal notranslate"><span class="pre">update_gravity</span></code>,
+the <code class="docutils literal notranslate"><span class="pre">coop</span></code> rules). <code class="docutils literal notranslate"><span class="pre">docs/design/sensor-core.md</span></code> §2.2 found the full filter costs ~50 % of a C6
+at 100 Hz. Options: run it at a lower rate, run it on the P4, or run the position part on the
+bridge with ranges and attitude streamed from the fixtures. The attitude part already has a
+seam (<code class="docutils literal notranslate"><span class="pre">firmware/sensor/src/fusion.rs</span></code> <code class="docutils literal notranslate"><span class="pre">AttitudeFilter</span></code>).</p></li>
+<li><p><strong>Room frame</strong>: fused positions update <code class="docutils literal notranslate"><span class="pre">FixturePose</span></code> (<code class="docutils literal notranslate"><span class="pre">set_fixture_pose</span></code>) so <code class="docutils literal notranslate"><span class="pre">led.room</span></code>
+effects follow a moving fixture; the room solver’s result seeds the filter and anchors its
+frame.</p></li>
+<li><p><strong>Ranges as constraints</strong>: even for static installs, inter-fixture ranges can check or refine
+the room solve (<code class="docutils literal notranslate"><span class="pre">web/src/geom/multiFixture.ts</span></code>) and catch a fixture that was moved.</p></li>
+</ul>
+</section>
+<section id="ranging-over-the-c6-s-own-radio-research-track">
+<h2>13. Ranging over the C6’s own radio (research track)<a class="headerlink" href="#ranging-over-the-c6-s-own-radio-research-track" title="Link to this heading">¶</a></h2>
+<p>An independent track. Nothing in the mesh depends on it.</p>
+<section id="stock-ble-ranging-on-the-c6-no">
+<h3>13.1 Stock BLE ranging on the C6: no<a class="headerlink" href="#stock-ble-ranging-on-the-c6-no" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Espressif’s ESP-IDF v6.1 feature table for the ESP32-C6 controller lists <strong>Channel Sounding:
+unsupported</strong> and <strong>AoA/AoD: unsupported</strong>. The host stacks list Channel Sounding as
+experimental, but a host can’t sound without a controller that supports it.</p></li>
+<li><p>What remains with the stock controller is RSSI: meter-level error indoors, worse with
+multipath and bodies. Usable for “which fixture is nearest”, not for placement.</p></li>
+<li><p>Our BLE host (<code class="docutils literal notranslate"><span class="pre">firmware/blehost</span></code>) runs over the vendor controller’s HCI, so it inherits these
+limits. The #166 bench work (memory note “amd-rig SDR BLE PHY RE”) showed how far from-source
+BLE radio control is: the RF TX key is set in a timer ISR we could not trace, and from-source
+BLE transmission never radiated. A self-built BLE CS through the BLE controller is a dead end
+for now.</p></li>
+</ul>
+</section>
+<section id="wi-fi-ftm-a-hardware-rtt-that-our-stack-bypasses">
+<h3>13.2 Wi-Fi FTM: a hardware RTT that our stack bypasses<a class="headerlink" href="#wi-fi-ftm-a-hardware-rtt-that-our-stack-bypasses" title="Link to this heading">¶</a></h3>
+<p>The C6 supports 802.11mc FTM (initiator as a station, responder as an AP), with an erratum:
+revisions v0.0 and v0.1 cannot be initiators (WIFI-9686). FTM is typically 1–2 m indoors. It
+runs inside the vendor Wi-Fi stack, which our netstack replaces, so using it means either
+reverse-engineering its fine timestamps or a vendor-stack ranging mode. Noted as a fallback,
+not planned.</p>
+</section>
+<section id="what-a-self-built-cs-needs">
+<h3>13.3 What a self-built CS needs<a class="headerlink" href="#what-a-self-built-cs-needs" title="Link to this heading">¶</a></h3>
+<p>Bluetooth Channel Sounding has two measurements:</p>
+<ul class="simple">
+<li><p><strong>Phase-based ranging (PBR)</strong>: the initiator sends an unmodulated tone on channel k; the
+reflector measures its phase, then sends a tone back that the initiator measures. The product
+of the two measurements cancels both LO phases, if each device’s LO stays phase-continuous
+between its RX and TX on that channel. Stepping over up to 72 channels at 1 MHz (~78 MHz
+span) gives the distance from the slope of phase against frequency: unambiguous to ~150 m,
+with decimetre-level precision in line of sight.</p></li>
+<li><p><strong>Round-trip time (RTT)</strong>: needs TX/RX timestamps at ns resolution. The C6’s RX timestamp is
+in µs (300 m per tick), so RTT is out unless the FTM timestamp hardware is reverse-engineered.</p></li>
+</ul>
+<p>So the question is whether the C6 can (a) emit a clean tone at 1 MHz steps, (b) capture
+coherent I/Q of a received tone, and (c) keep LO phase across a TX/RX turnaround.</p>
+</section>
+<section id="what-the-public-reverse-engineering-work-gives-us">
+<h3>13.4 What the public reverse-engineering work gives us<a class="headerlink" href="#what-the-public-reverse-engineering-work-gives-us" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>Raw I/Q capture (RX)</strong>: ESP-SDR (ESPARGOS, GPL-3.0) found an undocumented “dump engine” in
+the modem, used by Espressif’s factory RF test (<code class="docutils literal notranslate"><span class="pre">librftest.a</span></code>, <code class="docutils literal notranslate"><span class="pre">adctrig</span></code>). It copies baseband
+samples into SRAM: signed 10-bit I and Q plus the gain index in each 32-bit word, at 80, 40 or
+16 MS/s, up to 16,380 samples (~205 µs at 80 MS/s). <strong>The C6 is supported</strong>: capture memory
+<code class="docutils literal notranslate"><span class="pre">0x40840000</span></code>, SRAM owner register <code class="docutils literal notranslate"><span class="pre">0x60095004</span></code>, dump control <code class="docutils literal notranslate"><span class="pre">0x600a9004</span></code>, lane select
+<code class="docutils literal notranslate"><span class="pre">0x600a9014</span></code> (their <code class="docutils literal notranslate"><span class="pre">main/targets/esp32c6/chip.h</span></code>). Tuning off the Wi-Fi grid goes through
+<code class="docutils literal notranslate"><span class="pre">phy_set_freq(mhz,</span> <span class="pre">offset_khz)</span></code>, so 1 MHz steps are possible. It needs the vendor PHY
+initialised, which our netstack already does before it takes over the MAC.</p></li>
+<li><p><strong>Tone TX</strong>: the C6 PHY library has the RF-test tone functions (ESP-SDR calls
+<code class="docutils literal notranslate"><span class="pre">ram_stop_tx_tone</span></code>; the start counterpart is in the same library), and <code class="docutils literal notranslate"><span class="pre">espdr-tx</span></code> steers the
+PHY test tone in frequency and amplitude on the ESP32-S3 to transmit voice. ESPARGOS states
+that arbitrary, even phase-coherent, transmission is possible but does not publish it. I did
+not find public raw I/Q <strong>write</strong> for the C6; the owner mentions such work exists, so it is
+an open question (§17) where it lives and whether it covers the C6. A CW tone is all PBR
+needs, so the test tone may be enough.</p></li>
+<li><p><strong>Our own MAC/PHY work</strong>: the netstack’s register map (<code class="docutils literal notranslate"><span class="pre">firmware/netstack/src/regs.rs</span></code>) and
+the #166 bench (a C6 cabled to a HackRF One through 40 dB, with a demod oracle) are where the
+spikes run.</p></li>
+</ul>
+</section>
+<section id="the-real-risks-after-the-i-q-path">
+<h3>13.5 The real risks, after the I/Q path<a class="headerlink" href="#the-real-risks-after-the-i-q-path" title="Link to this heading">¶</a></h3>
+<p>With RX phase available, the risk moves to:</p>
+<ol class="arabic simple">
+<li><p><strong>Phase continuity across a turnaround.</strong> PBR needs the LO phase on channel k to be the same
+when a device receives and when it transmits. ESP-SDR re-calibrates on each new frequency
+and waits 3 ms after selecting an LO. If the TX/RX switch re-locks the PLL or re-runs a
+calibration, the phase is random per step and PBR fails.</p></li>
+<li><p><strong>LO and sample-clock coherence between two C6s.</strong> Separate 40 MHz crystals (±10–40 ppm)
+give up to ~100 kHz of carrier offset at 2.4 GHz. Each step must estimate it from the
+captured tone (a 205 µs capture gives ~5 kHz bins; phase-slope refinement goes below) and
+the two devices’ steps must be scheduled to µs-level (mesh time gives tens of µs).</p></li>
+<li><p><strong>Capture length and step rate.</strong> 16,380 samples per capture is enough for a tone. But each
+capture hands a whole SRAM block to the dump engine: ESP-SDR’s C6 build reserves
+<code class="docutils literal notranslate"><span class="pre">0x40820000</span></code>–<code class="docutils literal notranslate"><span class="pre">0x40860000</span></code> (256 KB). A standalone C6 player has nowhere near that free. So
+on a C6 player this only works in a dedicated ranging mode, or on <strong>P4 + C6 boards</strong> where
+the C6 front end does not render and has the RAM.</p></li>
+<li><p><strong>Hop latency.</strong> With a 3 ms LO settle, 72 steps × 2 turnarounds is ~0.5 s per pair. Fine
+for static fixtures, too slow for tracking.</p></li>
+<li><p><strong>The radio is shared</strong> with the Wi-Fi link and BLE. A ranging session takes the radio
+off-channel; it must be scheduled like a background sweep.</p></li>
+</ol>
+</section>
+<section id="spikes">
+<h3>13.6 Spikes<a class="headerlink" href="#spikes" title="Link to this heading">¶</a></h3>
+<p>All on the amd-rig <code class="docutils literal notranslate"><span class="pre">c6-sdr</span></code> unit (memory note “amd-rig SDR BLE PHY RE”: HackRF + C6 over
+40 dB, reserved via <code class="docutils literal notranslate"><span class="pre">pi/hitl/harness/hitl_client.py</span></code>). The HackRF cannot inject into the C6’s
+RX at useful levels on that bench (found in #166), so S1’s RX tests use a second C6 or a rewired
+path.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Spike</p></th>
+<th class="head"><p>Question</p></th>
+<th class="head"><p>Method</p></th>
+<th class="head"><p>Exit</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>S1a</strong></p></td>
+<td><p>Does the dump engine work in our image?</p></td>
+<td><p>Port ESP-SDR’s C6 capture into a bench-only image (<code class="docutils literal notranslate"><span class="pre">firmware/rangespike</span></code>, not the player). Capture known tones</p></td>
+<td><p>Clean I/Q, measured noise and gain behaviour</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>S1b</strong></p></td>
+<td><p>Can the C6 emit a stepped CW tone?</p></td>
+<td><p>PHY test tone at 2402–2480 MHz in 1 MHz steps, observed on the HackRF</p></td>
+<td><p>Tone within ±50 kHz of plan, step time measured</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>S1c</strong></p></td>
+<td><p>Is the LO phase continuous across TX→RX on one channel?</p></td>
+<td><p>C6 transmits a tone, switches to RX and captures the HackRF’s CW (or a second C6’s); HackRF measures the C6 tone phase before the switch</p></td>
+<td><p>Phase repeatable within 10° over 100 turnarounds</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>S2</strong></p></td>
+<td><p>Two-C6 PBR on a few channels</p></td>
+<td><p>Two C6s through a splitter and coax of known lengths (0.5 m, 3 m) as ground truth; 5–10 channels; HackRF watches both tones</p></td>
+<td><p>Distance difference recovered within 20 cm</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>S3</strong></p></td>
+<td><p>Accuracy over the air</p></td>
+<td><p>Full 40–72 steps in a room vs a tape measure, and vs a DWM3000 pair from indoor_localization if available</p></td>
+<td><p>Error, precision, time per pair, RAM cost; go or no-go</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Stop at the first failed exit. If S1c fails, the fallback is Wi-Fi CSI two-way phase on the
+home channel (the C6 reports HE-LTF CSI through the vendor path) or RSSI, both much coarser.</p>
+</section>
+</section>
+<section id="testing">
+<h2>14. Testing<a class="headerlink" href="#testing" title="Link to this heading">¶</a></h2>
+<section id="host-simulation-rust-no-radio">
+<h3>14.1 Host simulation (Rust, no radio)<a class="headerlink" href="#host-simulation-rust-no-radio" title="Link to this heading">¶</a></h3>
+<p>A <code class="docutils literal notranslate"><span class="pre">meshsim</span></code> crate in <code class="docutils literal notranslate"><span class="pre">firmware/mesh</span></code>:</p>
+<ul class="simple">
+<li><p>N nodes running the real <code class="docutils literal notranslate"><span class="pre">swarm_net</span></code> and the Splanc layer, over simulated backhauls: an
+802.11 model (CSMA with collisions, per-link loss and RSSI from a topology, 1 or 6 Mb/s
+airtime, BLE coex outages) and later a TDMA UWB model.</p></li>
+<li><p>Each node has a clock with ppm drift and an RX timestamp jitter model.</p></li>
+<li><p>Scenarios, as <code class="docutils literal notranslate"><span class="pre">rust_test</span></code>s:</p>
+<ul>
+<li><p>flood delivery and latency on line, star and grid topologies up to 64 nodes and 3 hops;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">apply_at</span></code> skew: the frame at which each node applies a relayed change, &lt; 2 ms across
+3 hops over a simulated hour;</p></li>
+<li><p>effect blob to 32 nodes with 10 % loss; resume after a node restarts mid-transfer;</p></li>
+<li><p>late joiner catches the scene; partition and heal;</p></li>
+<li><p>open join with and without the site secret; frozen rejects; removal plus rekey; a member
+offline during the rekey recovers;</p></li>
+<li><p>replay and forgery attempts are dropped and counted.</p></li>
+</ul>
+</li>
+<li><p>Golden vectors for the envelope, shared with the extracted swarm repo.</p></li>
+</ul>
+</section>
+<section id="hitl">
+<h3>14.2 HITL<a class="headerlink" href="#hitl" title="Link to this heading">¶</a></h3>
+<p>Rigs carry several C6s each (<code class="docutils literal notranslate"><span class="pre">pi/hitl</span></code>, multi-DUT reservations; see the memory notes on rig
+USB power and shared-DUT gotchas).</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Test</p></th>
+<th class="head"><p>DUTs</p></th>
+<th class="head"><p>Checks</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">mesh_smoke</span></code></p></td>
+<td><p>2</p></td>
+<td><p>M3a’s exit criteria; associated and mesh-only</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mesh_gateway</span></code></p></td>
+<td><p>4</p></td>
+<td><p>App-side client (harness) on one DUT’s wss: <code class="docutils literal notranslate"><span class="pre">MeshSend</span></code> set_uniforms to all, <code class="docutils literal notranslate"><span class="pre">MeshResult</span></code> acks all; group targeting; status listing</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">mesh_effect</span></code></p></td>
+<td><p>4</p></td>
+<td><p>Push a <code class="docutils literal notranslate"><span class="pre">.fxb</span></code>, every member runs it (serial log + <code class="docutils literal notranslate"><span class="pre">get_status</span></code> via the mesh)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mesh_apply_at_skew</span></code></p></td>
+<td><p>2 analyzer-tapped + 2</p></td>
+<td><p>Extends <code class="docutils literal notranslate"><span class="pre">pi/hitl/harness/hitl_time_base_skew.py</span></code>: tapped DUTs reached only via the mesh; p99 skew &lt; 10 ms + one frame</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">mesh_ble_gateway</span></code></p></td>
+<td><p>3</p></td>
+<td><p>Same as <code class="docutils literal notranslate"><span class="pre">mesh_gateway</span></code> with the gateway on BLE (coex)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mesh_join_freeze</span></code></p></td>
+<td><p>4</p></td>
+<td><p>Open join, freeze, a removed DUT can’t control others, rekey</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">mesh_multihop</span></code></p></td>
+<td><p>4</p></td>
+<td><p>Forced topology (a test-only neighbour deny-list in firmware), 3 hops</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mesh_soak</span></code></p></td>
+<td><p>4</p></td>
+<td><p>2 h, fader streams every 5 min, heap minimum and render fps unchanged</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Every failure attaches each DUT’s serial log (the HITL logging standard). The shared rig AP
+(flock #228) means associated tests compete for airtime; mesh-only tests do not need the AP.</p>
+</section>
+<section id="metrics">
+<h3>14.3 Metrics<a class="headerlink" href="#metrics" title="Link to this heading">¶</a></h3>
+<p>Reported by members in <code class="docutils literal notranslate"><span class="pre">MeshStatus</span></code> and collected by HITL: delivery ratio per port, latency per
+hop (p50, p99), late <code class="docutils literal notranslate"><span class="pre">apply_at</span></code> count, time-sync error estimate, relay count per packet, airtime
+share, free and minimum heap, render fps.</p>
+</section>
+</section>
+<section id="staged-pr-plan">
+<h2>15. Staged PR plan<a class="headerlink" href="#staged-pr-plan" title="Link to this heading">¶</a></h2>
+<p>Phase 1 is the radiolarians critical path. Each PR is small and reviewable; spikes gate the
+ones that depend on unknown hardware behaviour.</p>
+<section id="phase-1-application-backhaul-ships-radiolarians">
+<h3>Phase 1: application backhaul (ships radiolarians)<a class="headerlink" href="#phase-1-application-backhaul-ships-radiolarians" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>PR</p></th>
+<th class="head"><p>Content</p></th>
+<th class="head"><p>Gate</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>M0</strong></p></td>
+<td><p>This design</p></td>
+<td><p>owner review</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>M1</strong></p></td>
+<td><p>Extract <code class="docutils literal notranslate"><span class="pre">swarm/net</span></code> + <code class="docutils literal notranslate"><span class="pre">swarm/proto</span></code> into a shared repo (indoor_localization keeps building against it); upstream PRs there for the backhaul entry point, per-instance MTU and the C6 build; Splanc pins it (<code class="docutils literal notranslate"><span class="pre">archive_override</span></code>) and builds it for riscv32imac + host tests in CI</p></td>
+<td><p>swarm tests pass in both repos</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>M2</strong></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">firmware/mesh</span></code>: <code class="docutils literal notranslate"><span class="pre">Backhaul</span></code> trait, envelope (AES-CCM via <code class="docutils literal notranslate"><span class="pre">ccmp.rs</span></code>, replay window), membership state, ports, <code class="docutils literal notranslate"><span class="pre">meshsim</span></code> with the first scenarios</p></td>
+<td><p>host tests only</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>M3a</strong></p></td>
+<td><p>Spike: vendor action frames TX/RX between two C6s, RX vector RSSI + timestamp, BLE coex loss</p></td>
+<td><p>§4.4 exit</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>M3</strong></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">wifi_p2p</span></code> backhaul in the netstack transport; <code class="docutils literal notranslate"><span class="pre">kModeMesh</span></code>; channel rules (§4.2); mesh beacons; <code class="docutils literal notranslate"><span class="pre">mesh_smoke</span></code> HITL</p></td>
+<td><p>M3a passed</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>M4</strong></p></td>
+<td><p>Mesh time (beacon fit) + <code class="docutils literal notranslate"><span class="pre">TIME_BASE</span></code> mapped to the existing time base; meshsim skew test; <code class="docutils literal notranslate"><span class="pre">mesh_apply_at_skew</span></code> HITL</p></td>
+<td><p>skew &lt; 10 ms</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>M5</strong></p></td>
+<td><p>Protocol arms (<code class="docutils literal notranslate"><span class="pre">MeshSend</span></code>, <code class="docutils literal notranslate"><span class="pre">MeshResult</span></code>, <code class="docutils literal notranslate"><span class="pre">GetMesh</span></code>/<code class="docutils literal notranslate"><span class="pre">MeshState</span></code>), gateway fan-out + aggregation, member dispatch allow-list, <code class="docutils literal notranslate"><span class="pre">MeshStatus</span></code>; <code class="docutils literal notranslate"><span class="pre">mesh_gateway</span></code> HITL</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>M6</strong></p></td>
+<td><p>Blob kind on the page protocol (upstream) + effect distribution + scenes and catch-up; <code class="docutils literal notranslate"><span class="pre">mesh_effect</span></code> HITL</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p><strong>M7</strong></p></td>
+<td><p>Membership: create/join over BLE or wss, site secret + free association, groups, freeze; <code class="docutils literal notranslate"><span class="pre">mesh_join_freeze</span></code> HITL</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>M8</strong></p></td>
+<td><p>App: member list via gateway, target picker in live control and effects, mesh screen</p></td>
+<td><p>web unit tests + manual run</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>M9a</strong></p></td>
+<td><p>HITL gate: the 4-DUT suite in CI (<code class="docutils literal notranslate"><span class="pre">mesh_*</span></code> above)</p></td>
+<td><p></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="phase-2-hardening-and-reach">
+<h3>Phase 2: hardening and reach<a class="headerlink" href="#phase-2-hardening-and-reach" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>PR</p></th>
+<th class="head"><p>Content</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>M9b</p></td>
+<td><p>Key rotation, approval joins for devices without the site secret</p></td>
+</tr>
+<tr class="row-odd"><td><p>M10</p></td>
+<td><p>IP backhaul (UDP on the LAN) to bridge islands on other APs</p></td>
+</tr>
+<tr class="row-even"><td><p>M11</p></td>
+<td><p>Bridge/agent mesh route (<code class="docutils literal notranslate"><span class="pre">hub.ts</span></code>), <code class="docutils literal notranslate"><span class="pre">list_players</span></code> via gateways</p></td>
+</tr>
+<tr class="row-odd"><td><p>M12</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">group_capture</span></code> arming over the mesh (one connection arms the room)</p></td>
+</tr>
+<tr class="row-even"><td><p>M13</p></td>
+<td><p>OTA over the mesh (page protocol with the firmware kind; Splanc’s manifest, <code class="docutils literal notranslate"><span class="pre">docs/design/ota.md</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p>M14</p></td>
+<td><p>ESP-NOW v2 payloads (1470 B) if measurements justify them</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="phase-3-and-research-deferred-independent">
+<h3>Phase 3 and research (deferred, independent)<a class="headerlink" href="#phase-3-and-research-deferred-independent" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Track</p></th>
+<th class="head"><p>Content</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>U1</p></td>
+<td><p>UWB board revision (DWM3000 or QM33120) — needs the owner’s hardware decision</p></td>
+</tr>
+<tr class="row-odd"><td><p>U2</p></td>
+<td><p>UWB backhaul (TDMA, DS-TWR) behind <code class="docutils literal notranslate"><span class="pre">Backhaul</span></code>; C6 driver port</p></td>
+</tr>
+<tr class="row-even"><td><p>L1</p></td>
+<td><p>Ranges into the room solver as constraints</p></td>
+</tr>
+<tr class="row-odd"><td><p>L2</p></td>
+<td><p>IMU + range fusion (<code class="docutils literal notranslate"><span class="pre">swarm_core</span></code>), placement of the filter (C6 rate, P4, or bridge)</p></td>
+</tr>
+<tr class="row-even"><td><p>R1–R3</p></td>
+<td><p>§13.6 spikes S1a–S3 on the amd-rig</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+<section id="risks">
+<h2>16. Risks<a class="headerlink" href="#risks" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Risk</p></th>
+<th class="head"><p>Impact</p></th>
+<th class="head"><p>Mitigation</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Action-frame TX on our direct-submission path behaves differently from Auth/Assoc (rate, retries, no completion)</p></td>
+<td><p>M3 slips</p></td>
+<td><p>M3a spike first; pacing already exists</p></td>
+</tr>
+<tr class="row-odd"><td><p>RX vector timestamp not found or too coarse</p></td>
+<td><p>time sync worse</p></td>
+<td><p>fall back to loop-time stamping (jitter of the loop period) plus AP beacon TSF</p></td>
+</tr>
+<tr class="row-even"><td><p>Mesh channel conflicts with multi-AP sites</p></td>
+<td><p>islands</p></td>
+<td><p>prefer same-channel BSSIDs; IP backhaul (M10)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Background sweeps make members deaf</p></td>
+<td><p>missed changes</p></td>
+<td><p>skip sweeps while the mesh is healthy; <code class="docutils literal notranslate"><span class="pre">Away</span></code>; generation catch-up</p></td>
+</tr>
+<tr class="row-even"><td><p>BLE coex loses broadcasts at the gateway</p></td>
+<td><p>slower fan-out</p></td>
+<td><p>relays and retries; HITL measures; a coex priority bump for mesh TX if needed</p></td>
+</tr>
+<tr class="row-odd"><td><p>C6 RAM at large LED configs</p></td>
+<td><p>can’t fit</p></td>
+<td><p>~7 KB static budget, measured in M2/M3; compact gateway table</p></td>
+</tr>
+<tr class="row-even"><td><p>Two copies of the swarm crate drift</p></td>
+<td><p>wire incompatibility</p></td>
+<td><p>extract once (M1); shared golden vectors</p></td>
+</tr>
+<tr class="row-odd"><td><p>Node-id collisions (u16 from MAC)</p></td>
+<td><p>misrouting</p></td>
+<td><p>detect via full MAC in status; app reassigns</p></td>
+</tr>
+<tr class="row-even"><td><p>Site secret leaks (a lost fixture holds it)</p></td>
+<td><p>open mesh joinable</p></td>
+<td><p>freeze the mesh after install; rotate the site secret from the app</p></td>
+</tr>
+<tr class="row-odd"><td><p>The research track fails (no phase continuity)</p></td>
+<td><p>no self-built ranging</p></td>
+<td><p>independent of the mesh; UWB remains the ranging path</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="open-questions-for-the-owner">
+<h2>17. Open questions for the owner<a class="headerlink" href="#open-questions-for-the-owner" title="Link to this heading">¶</a></h2>
+<p><strong>Radiolarians (blocking sizing and the first install):</strong></p>
+<ul class="simple">
+<li><p><strong>Q1.</strong> How many fixtures, and how far apart (largest hop distance, walls or metal in between)?</p></li>
+<li><p><strong>Q2.</strong> Which board drives a fixture? 1260 LEDs in three 420-LED strings exceed one C6 channel
+(1024 cap) and need three outputs. Is it a P4 + C6 board, or something else?</p></li>
+<li><p><strong>Q3.</strong> Does the venue have Wi-Fi the fixtures may join (and how many APs, which channels), or is it
+mesh-only with the app over BLE?</p></li>
+<li><p><strong>Q4.</strong> Will they manage it from the phone app, a bridge, or both? Do they need agent/MCP control?</p></li>
+<li><p><strong>Q5.</strong> Should they get the mesh before or after OTA over the mesh (how will their firmware be
+updated on site)?</p></li>
+</ul>
+<p><strong>Security and admission:</strong></p>
+<ul class="simple">
+<li><p><strong>Q6.</strong> Is the site-secret model right for free association (devices provisioned by the same app
+auto-join), with one-tap approval for everything else? Or should free association be
+stricter (always approve) or looser (any Splanc device)?</p></li>
+<li><p><strong>Q7.</strong> Should a frozen mesh be the default after setup (install flow ends with “Freeze”)?</p></li>
+<li><p><strong>Q8.</strong> Who may be a gateway: any member, or only devices the user marked?</p></li>
+</ul>
+<p><strong>Architecture:</strong></p>
+<ul class="simple">
+<li><p><strong>Q9.</strong> Extracting <code class="docutils literal notranslate"><span class="pre">swarm/net</span></code> + <code class="docutils literal notranslate"><span class="pre">swarm/proto</span></code> into a standalone repo (like lighthouse): name, public
+or private, license (Splanc is AGPL-3.0)?</p></li>
+<li><p><strong>Q10.</strong> OK to use the ESP-NOW framing (Espressif’s OUI) for interop, versus our own OUI?</p></li>
+<li><p><strong>Q11.</strong> Should the swarm adopt the Splanc envelope (authenticated reports and acks), so the two
+projects share one wire format end to end?</p></li>
+</ul>
+<p><strong>UWB and ranging:</strong></p>
+<ul class="simple">
+<li><p><strong>Q12.</strong> UWB hardware: DWM3000 (what the swarm has, single antenna) or QM33120 (PDoA/AoA)? On the C6
+board, the P4 + C6 board, or both? Is a board revision planned?</p></li>
+<li><p><strong>Q13.</strong> Which public raw I/Q <strong>TX</strong> work did you mean for the C6? I found raw I/Q RX (ESP-SDR, which
+supports the C6) and PHY test-tone TX (shown on the S3), but no public C6 I/Q write.</p></li>
+<li><p><strong>Q14.</strong> Is the self-built ranging meant for P4 + C6 boards only? The dump engine needs a whole SRAM
+block, which a C6 player rendering effects does not have.</p></li>
+</ul>
+</section>
+<section id="sources">
+<h2>18. Sources<a class="headerlink" href="#sources" title="Link to this heading">¶</a></h2>
+<p>Splanc (files read): <code class="docutils literal notranslate"><span class="pre">firmware/netstack/DESIGN.md</span></code>, <code class="docutils literal notranslate"><span class="pre">firmware/netstack/src/{mac,coex,ccmp}.rs</span></code>,
+<code class="docutils literal notranslate"><span class="pre">firmware/player_app/netstack_transport.cpp</span></code> (<code class="docutils literal notranslate"><span class="pre">tx_l2</span></code>, <code class="docutils literal notranslate"><span class="pre">tx_pace_*</span></code>, <code class="docutils literal notranslate"><span class="pre">netstack_loop</span></code>,
+<code class="docutils literal notranslate"><span class="pre">scan_latch_ap</span></code>, <code class="docutils literal notranslate"><span class="pre">bgscan_*</span></code>), <code class="docutils literal notranslate"><span class="pre">firmware/player_app/wifi_scan.h</span></code>, <code class="docutils literal notranslate"><span class="pre">firmware/player_app/ffi.rs</span></code>
+(<code class="docutils literal notranslate"><span class="pre">FX_MAX_BYTES</span></code>), <code class="docutils literal notranslate"><span class="pre">firmware/player_app/frontend_link.cpp</span></code>, <code class="docutils literal notranslate"><span class="pre">firmware/blehost/blehost.cpp</span></code>,
+<code class="docutils literal notranslate"><span class="pre">shared/protocol/proto/ledmapper.proto</span></code>, <code class="docutils literal notranslate"><span class="pre">docs/design/{synced-show,ota,sensor-core,</span> <span class="pre">multi-fixture-localization,p4-c6-split,ram-budget,hue-code-v2}.md</span></code>,
+<code class="docutils literal notranslate"><span class="pre">web/src/net/{connectionRegistry,deviceTrust}.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">agent/src/trust.ts</span></code>,
+<code class="docutils literal notranslate"><span class="pre">solver/src/{scenario,regression_tests}.rs</span></code>, issue #479, <code class="docutils literal notranslate"><span class="pre">MODULE.bazel</span></code> (lighthouse, embedded).</p>
+<p>indoor_localization &#64; <code class="docutils literal notranslate"><span class="pre">5a906e78</span></code>: <code class="docutils literal notranslate"><span class="pre">docs/swarm-network.md</span></code>, <code class="docutils literal notranslate"><span class="pre">docs/swarm-wire.md</span></code>,
+<code class="docutils literal notranslate"><span class="pre">docs/uwb-landmarks.md</span></code>, <code class="docutils literal notranslate"><span class="pre">docs/uwb-sync-experiment.md</span></code>, <code class="docutils literal notranslate"><span class="pre">swarm/proto/swarm_wire.proto</span></code>,
+<code class="docutils literal notranslate"><span class="pre">swarm/net/src/{mesh,net,update}.rs</span></code>, <code class="docutils literal notranslate"><span class="pre">swarm/net/BUILD.bazel</span></code>, <code class="docutils literal notranslate"><span class="pre">apps/common/{radio.cpp,</span> <span class="pre">protocol.h,pins.h}</span></code>, <code class="docutils literal notranslate"><span class="pre">LICENSE</span></code>.</p>
+<p>External:</p>
+<ul class="simple">
+<li><p>Espressif, ESP-IDF v6.1 ESP32-C6 “Major Feature Support Status” (controller: Channel
+Sounding and AoA/AoD unsupported):
+<a class="reference external" href="https://docs.espressif.com/projects/esp-idf/en/release-v6.1/esp32c6/api-guides/ble/ble-feature-support-status.html">https://docs.espressif.com/projects/esp-idf/en/release-v6.1/esp32c6/api-guides/ble/ble-feature-support-status.html</a></p></li>
+<li><p>Espressif, ESP-IDF v6.1 ESP32-C6 “ESP Host Major Feature Support Status” (Channel Sounding
+experimental on the hosts):
+<a class="reference external" href="https://docs.espressif.com/projects/esp-idf/en/release-v6.1/esp32c6/api-guides/ble/host-feature-support-status.html">https://docs.espressif.com/projects/esp-idf/en/release-v6.1/esp32c6/api-guides/ble/host-feature-support-status.html</a></p></li>
+<li><p>Espressif, ESP32-C6 erratum WIFI-9686 (FTM initiator):
+<a class="reference external" href="https://docs.espressif.com/projects/esp-chip-errata/en/latest/esp32c6/03-errata-description/esp32c6/wifi-ftm.html">https://docs.espressif.com/projects/esp-chip-errata/en/latest/esp32c6/03-errata-description/esp32c6/wifi-ftm.html</a></p></li>
+<li><p>Espressif, ESP32-C6 Wi-Fi security and roaming (FTM roles):
+<a class="reference external" href="https://docs.espressif.com/projects/esp-idf/en/v6.0/esp32c6/api-guides/wifi-driver/security-and-roaming.html">https://docs.espressif.com/projects/esp-idf/en/v6.0/esp32c6/api-guides/wifi-driver/security-and-roaming.html</a></p></li>
+<li><p>ESPARGOS, ESP-SDR (raw I/Q capture, per-chip registers, C6 support):
+<a class="reference external" href="https://github.com/ESPARGOS/esp-sdr">https://github.com/ESPARGOS/esp-sdr</a>, <a class="reference external" href="https://espargos.net/espsdr/">https://espargos.net/espsdr/</a></p></li>
+<li><p>RTL-SDR.com, “Various Projects Independently Find Hidden SDR Capabilities in ESP32
+Microcontrollers” (espdr-tx test-tone TX on the S3):
+<a class="reference external" href="https://www.rtl-sdr.com/various-projects-independently-find-hidden-sdr-capabilities-in-esp32-microcontrollers/">https://www.rtl-sdr.com/various-projects-independently-find-hidden-sdr-capabilities-in-esp32-microcontrollers/</a></p></li>
+<li><p>ESP32 open MAC project: <a class="reference external" href="https://esp32-open-mac.be/posts/0005-the-road-ahead/">https://esp32-open-mac.be/posts/0005-the-road-ahead/</a></p></li>
+<li><p>FTM accuracy survey (arXiv 2509.03901): <a class="reference external" href="https://arxiv.org/pdf/2509.03901">https://arxiv.org/pdf/2509.03901</a></p></li>
+</ul>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Mesh networking: one app connection manages every fixture</a><ul>
+<li><a class="reference internal" href="#owner-s-request">Owner’s request</a></li>
+<li><a class="reference internal" href="#contents">Contents</a></li>
+<li><a class="reference internal" href="#summary">1. Summary</a></li>
+<li><a class="reference internal" href="#what-exists-today">2. What exists today</a><ul>
+<li><a class="reference internal" href="#splanc">2.1 Splanc</a></li>
+<li><a class="reference internal" href="#indoor-localization-the-swarm">2.2 indoor_localization (the swarm)</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#architecture">3. Architecture</a><ul>
+<li><a class="reference internal" href="#where-the-code-lives-extract-then-depend">3.1 Where the code lives: extract, then depend</a></li>
+<li><a class="reference internal" href="#the-backhaul-seam">3.2 The backhaul seam</a></li>
+<li><a class="reference internal" href="#addressing">3.3 Addressing</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#the-802-11-p2p-backhaul-in-the-netstack">4. The 802.11 P2P backhaul in the netstack</a><ul>
+<li><a class="reference internal" href="#frames">4.1 Frames</a></li>
+<li><a class="reference internal" href="#channels">4.2 Channels</a></li>
+<li><a class="reference internal" href="#coexistence-with-ble">4.3 Coexistence with BLE</a></li>
+<li><a class="reference internal" href="#spike-before-committing-m3a">4.4 Spike before committing (M3a)</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#protocol">5. Protocol</a><ul>
+<li><a class="reference internal" href="#envelope">5.1 Envelope</a></li>
+<li><a class="reference internal" href="#mtu-per-backhaul">5.2 MTU per backhaul</a></li>
+<li><a class="reference internal" href="#ports">5.3 Ports</a></li>
+<li><a class="reference internal" href="#what-the-mesh-carries">5.4 What the mesh carries</a></li>
+<li><a class="reference internal" href="#effect-programs-content-addressed-blobs">5.5 Effect programs: content-addressed blobs</a></li>
+<li><a class="reference internal" href="#scene-state-and-late-joiners">5.6 Scene state and late joiners</a></li>
+<li><a class="reference internal" href="#versioning">5.7 Versioning</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#time-sync-and-apply-at-across-the-mesh">6. Time sync and apply_at across the mesh</a><ul>
+<li><a class="reference internal" href="#budget">6.1 Budget</a></li>
+<li><a class="reference internal" href="#mesh-time">6.2 Mesh time</a></li>
+<li><a class="reference internal" href="#mapping-the-show-clock">6.3 Mapping the show clock</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#membership-groups-and-security">7. Membership, groups and security</a><ul>
+<li><a class="reference internal" href="#state-on-each-member">7.1 State on each member</a></li>
+<li><a class="reference internal" href="#joining-the-three-paths">7.2 Joining: the three paths</a></li>
+<li><a class="reference internal" href="#frozen-membership">7.3 Frozen membership</a></li>
+<li><a class="reference internal" href="#frame-protection">7.4 Frame protection</a></li>
+<li><a class="reference internal" href="#key-rotation">7.5 Key rotation</a></li>
+<li><a class="reference internal" href="#groups">7.6 Groups</a></li>
+<li><a class="reference internal" href="#how-this-relates-to-device-trust">7.7 How this relates to device trust</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#gateway-one-connection-the-whole-mesh">8. Gateway: one connection, the whole mesh</a><ul>
+<li><a class="reference internal" href="#new-protocol-arms">8.1 New protocol arms</a></li>
+<li><a class="reference internal" href="#behaviour">8.2 Behaviour</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#app-and-bridge-ux">9. App and bridge UX</a><ul>
+<li><a class="reference internal" href="#app">9.1 App</a></li>
+<li><a class="reference internal" href="#bridge-and-agent">9.2 Bridge and agent</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#the-radiolarians-deployment-sizing">10. The radiolarians deployment: sizing</a><ul>
+<li><a class="reference internal" href="#what-the-repo-says">10.1 What the repo says</a></li>
+<li><a class="reference internal" href="#assumptions-for-sizing">10.2 Assumptions for sizing</a></li>
+<li><a class="reference internal" href="#traffic">10.3 Traffic</a></li>
+<li><a class="reference internal" href="#ram-per-member-c6-estimate-to-be-measured">10.4 RAM per member (C6), estimate to be measured</a></li>
+<li><a class="reference internal" href="#minimum-set-that-ships-radiolarians">10.5 Minimum set that ships radiolarians</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#uwb-backhaul-later">11. UWB backhaul (later)</a></li>
+<li><a class="reference internal" href="#ranging-and-realtime-localization-later">12. Ranging and realtime localization (later)</a></li>
+<li><a class="reference internal" href="#ranging-over-the-c6-s-own-radio-research-track">13. Ranging over the C6’s own radio (research track)</a><ul>
+<li><a class="reference internal" href="#stock-ble-ranging-on-the-c6-no">13.1 Stock BLE ranging on the C6: no</a></li>
+<li><a class="reference internal" href="#wi-fi-ftm-a-hardware-rtt-that-our-stack-bypasses">13.2 Wi-Fi FTM: a hardware RTT that our stack bypasses</a></li>
+<li><a class="reference internal" href="#what-a-self-built-cs-needs">13.3 What a self-built CS needs</a></li>
+<li><a class="reference internal" href="#what-the-public-reverse-engineering-work-gives-us">13.4 What the public reverse-engineering work gives us</a></li>
+<li><a class="reference internal" href="#the-real-risks-after-the-i-q-path">13.5 The real risks, after the I/Q path</a></li>
+<li><a class="reference internal" href="#spikes">13.6 Spikes</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#testing">14. Testing</a><ul>
+<li><a class="reference internal" href="#host-simulation-rust-no-radio">14.1 Host simulation (Rust, no radio)</a></li>
+<li><a class="reference internal" href="#hitl">14.2 HITL</a></li>
+<li><a class="reference internal" href="#metrics">14.3 Metrics</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#staged-pr-plan">15. Staged PR plan</a><ul>
+<li><a class="reference internal" href="#phase-1-application-backhaul-ships-radiolarians">Phase 1: application backhaul (ships radiolarians)</a></li>
+<li><a class="reference internal" href="#phase-2-hardening-and-reach">Phase 2: hardening and reach</a></li>
+<li><a class="reference internal" href="#phase-3-and-research-deferred-independent">Phase 3 and research (deferred, independent)</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#risks">16. Risks</a></li>
+<li><a class="reference internal" href="#open-questions-for-the-owner">17. Open questions for the owner</a></li>
+<li><a class="reference internal" href="#sources">18. Sources</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../../static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>
