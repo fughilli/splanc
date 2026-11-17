@@ -57,9 +57,13 @@ pub const PORT_ACK: u8 = 0;
 
 const SEEN_LEN: usize = 64;
 const DELIVERED_LEN: usize = 32;
-const RELAY_LEN: usize = 8;
-const OUTBOX_LEN: usize = 8;
-const EVENTS_LEN: usize = 8;
+// Splanc: sized for the real traffic (docs/design/mesh.md §10.3: one fader stream, beacons,
+// status; bulk is pull-based from flash), not 8 worst-case packets each (upstream).
+/// Relay slots.
+pub const RELAY_LEN: usize = 4;
+/// Originated packets awaiting their send or ack.
+pub const OUTBOX_LEN: usize = 4;
+const EVENTS_LEN: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MeshConfig {

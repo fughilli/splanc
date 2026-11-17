@@ -80,7 +80,8 @@ pub struct AppPacketOf<const P: usize> {
 /// The swarm's app packet (88-byte payload).
 pub type AppPacket = AppPacketOf<MAX_PAYLOAD>;
 
-const APP_QUEUE: usize = 8;
+// Splanc: 4 (upstream 8): the application drains it every tick (docs/design/mesh.md §10.3).
+const APP_QUEUE: usize = 4;
 
 /// One node's network stack over a mesh of payload capacity `P` (Splanc: a parameter so a
 /// backhaul with a larger MTU carries larger app packets; the swarm's own traffic stays

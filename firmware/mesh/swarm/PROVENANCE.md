@@ -71,5 +71,9 @@ shim (UWB radio, TDMA, DS-TWR, fusion).
 7. **Clippy.** `Default` for the MbedTLS `Sha256`; scoped `allow`s for the test simulators'
    index loops and `budget.rs`'s constant asserts.
 
+8. **Queues sized for the real traffic.** `RELAY_LEN`, `OUTBOX_LEN`, `EVENTS_LEN` and the
+   app queue go from 8 to 4 (docs/design/mesh.md §10.3: one fader stream, beacons, status;
+   bulk is pull-based from flash): C6 RAM 12.6 KB → 9.1 KB at P = 200.
+
 The Splanc layer on top (backhaul trait, link frame codec, node driver, loopback backhaul)
 is `//firmware/mesh`, outside this directory.
