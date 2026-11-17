@@ -426,22 +426,30 @@ measurement is the check.
 
 ### 5.1 Envelope
 
-Every mesh frame, on every backhaul:
+Every mesh frame, on every backhaul (implemented in `firmware/mesh/src/envelope.rs`):
 
-| Field          | Size                | Notes                                                       |
-| -------------- | ------------------- | ----------------------------------------------------------- |
-| magic `"SM"`   | 2                   | Splanc mesh                                                 |
-| version        | 1                   | 1. Unknown versions are dropped and counted                 |
-| mesh id        | 4                   | Random at creation                                          |
-| key epoch      | 1                   | Which mesh key (§7.5)                                       |
-| source node id | 2                   | For the nonce and the replay window                         |
-| frame counter  | 4                   | Per source, strictly increasing (§7.5)                      |
-| ciphertext     | n                   | A `swarm.v1` `LinkFrame` (as on UWB), AES-128-CCM encrypted |
-| MIC            | 8 (802.11), 4 (UWB) | CCM tag over the header and the ciphertext                  |
+| Field          | Size                | Notes                                                                                    |
+| -------------- | ------------------- | ---------------------------------------------------------------------------------------- |
+| magic          | 2                   | `"SM"` (short header) or `"SL"` (long header)                                            |
+| version        | 1                   | 1. Unknown versions are dropped and counted                                              |
+| mesh id        | 4                   | Random at creation                                                                       |
+| key epoch      | 1                   | 0 = plain (join traffic), 0xFF = open follow stream, 1..=254 = mesh key epoch (§7.5)     |
+| source node id | 2                   | For the nonce and the replay window                                                      |
+| frame counter  | 4 (short), 8 (long) | The low 32 bits, or all 64, of the sender's 64-bit counter (§7.5)                        |
+| ciphertext     | n                   | A `swarm.v1` `LinkFrame`, AES-128-CCM encrypted                                          |
+| MIC            | 8 (802.11), 4 (UWB) | CCM tag over the header (the AAD) and the ciphertext                                     |
 
-Overhead: 14 B + MIC. Join requests and guest hellos (§7.3) use the same envelope with epoch 0
-and no encryption, and carry only join payloads. The open-mode follow stream uses a reserved
-epoch and the public open key (§7.4).
+Overhead: 14 B + MIC (22 B on 802.11) for the short header, which almost every frame uses. A
+sender puts its full counter in a long header (18 B) at least once a second, when the frame has
+the 4 bytes to spare, so receivers without state for it learn the high bits. Packets are sized
+for the short header, so the long one costs no payload.
+
+The CCM nonce is source (2) ‖ counter (8, all 64 bits) ‖ epoch ‖ version ‖ MIC length = 13 B.
+The mesh id is in the key derivation and the AAD, so the nonce does not need it.
+
+Join requests, adverts and guest hellos (§7.3) use the short header with epoch 0 and no
+encryption. They carry only membership payloads and never enter the flood. The open-mode
+follow stream uses epoch 0xFF and the public open key (§7.4).
 
 ### 5.2 MTU per backhaul
 
@@ -468,7 +476,9 @@ Messages larger than the payload are fragmented at the port layer (like the swar
 | 19    | `MEMBERSHIP` | broadcast or unicast                                    | join, admit, assign groups, mode, rekey (§7)                        |
 | 20    | `SCENE`      | broadcast                                               | per-group scene generation and its state (§5.6)                     |
 | 21    | `TIME_BASE`  | broadcast                                               | the show epoch in mesh time (§6.3)                                  |
-| 22–31 | reserved     |                                                         |                                                                     |
+| 22    | `FRESHNESS`  | unicast or broadcast                                    | session grants, acks, confirms, rekeys (§7.6, §7.9); own auth       |
+| 23    | `BULK`       | broadcast                                               | bulk transfers (blob catch-up, M6); lowest relay priority (§10.6)   |
+| 24–31 | reserved     |                                                         |                                                                     |
 
 Link frame types beyond the swarm's (new `FrameType` values in the ported proto):
 
@@ -553,16 +563,31 @@ value is.
 
 ### 6.2 Mesh time
 
-- **Root**: the gateway that holds the app's session, or, without one, the lowest node id that
-  has been up longest (stable across app reconnects; the root changes only when it disappears).
-- Every `BEACON` carries the sender's estimate of mesh time at its TX instant (`t_mesh`) and its
-  hop distance from the root.
-- A receiver takes the hardware RX timestamp (`RxMeta.rx_us`, §4.1) and records the pair
-  `(rx_us, t_mesh)`. It fits offset and rate against its best parent (fewest hops, then
-  strongest RSSI) over a 5 min window, rejecting outliers by residual, like `TimeDiscipline`.
-- Error per hop: the TX instant is the time just before `ns_mac_send`, so the queue and pacing
-  delay add jitter. Each beacon carries the previous beacon's measured TX-to-air correction if
-  the hardware exposes a TX timestamp (M3a looks for one). Expect tens of µs per hop.
+Mesh time must not depend on any single peer (owner, 2026-11-17).
+
+- Every `BEACON` carries the sender's estimate of mesh time at its TX instant (`t_mesh`). A
+  receiver pairs it with the hardware RX timestamp (`RxMeta.rx_us`, §4.1). That gives one
+  **sample per neighbour**: the neighbour's offset from this node's clock, with an error
+  bound from timestamp jitter, the sender's own uncertainty and the fit residual.
+- **Robust aggregation** (`firmware/mesh/src/timesync.rs`, wired in by M4):
+  - Samples from all neighbours heard in the last window are intersected with Marzullo's
+    algorithm. With `n ≥ 2f + 1` sources and at least `n - f` of them agreeing, up to `f`
+    liars cannot move the estimate.
+  - Without such a quorum the estimate falls back to the median at **low confidence**.
+  - Per-peer rate is still fitted over a 5 min window, rejecting outliers by residual, like
+    `TimeDiscipline`.
+- **Steps and slews**:
+  - A correction larger than 50 ms is applied as a step only at high confidence and with at
+    least three agreeing peers.
+  - Everything else slews, at most 500 ppm. A node that sees a single peer (low confidence)
+    can be moved only 0.5 ms per second, which `MeshStatus` reports.
+- **Effects keep running** whatever mesh time does. The renderer's clock never stops or
+  waits; a correction only shifts where future `apply_at` deadlines land.
+- No root is elected. A gateway with an app session does not get to define time either; it
+  is one source among its neighbours.
+- Error per hop: the TX instant is the time just before `ns_mac_send`, so queueing and pacing
+  add jitter. Each beacon carries the previous beacon's measured TX-to-air correction if the
+  hardware exposes a TX timestamp (M3a looks for one). Expect tens of µs per hop.
 - **AP-anchored bonus**: members associated to one AP all hear its beacons, whose TSF is a
   common clock (reference-broadcast sync). The fit can use AP beacons as extra observations.
 
@@ -673,21 +698,43 @@ anything to them. Two layers:
 The open groups are chosen by the owner (default: the "all" scene). A guest follows a group
 named in the beacon; it does not join groups itself.
 
-### 7.5 Frame protection (members)
+### 7.5 Frame protection, counters and freshness (members)
 
-- **AES-128-CCM** over every member frame (§5.1), keyed by `HKDF(mesh key, epoch, "frame")`.
-  The C6's AES accelerator already runs our software CCMP (`firmware/netstack/src/ccmp.rs`,
-  which is CCM); the mesh reuses it. Cost is a few AES blocks per frame.
-- **Nonce**: mesh id ‖ source id ‖ epoch ‖ counter (13 B). Unique while counters never repeat.
-- **Counter**: `boot_count << 20 | n`. `boot_count` is persisted once per boot (no per-frame
-  flash writes); `n` counts frames this boot. A member that would exceed 2^20 frames in one
-  boot bumps `boot_count` (one write).
-- **Replay**: per source, the highest counter seen plus a 32-frame bitmap window. 64 sources
-  × 12 B ≈ 0.8 KB. A counter below the window is dropped.
-- **MIC**: 8 B on 802.11; 4 B on UWB, where every byte counts. The swarm argues 4 B is enough
-  for settings (2^31 tries on average, one per frame on air).
-- This replaces the swarm's per-message HMAC for Splanc traffic. Offering it back to the swarm
-  would let it authenticate its reports and acks too.
+Implemented in `firmware/mesh/src/{envelope,replay,security}.rs`.
+
+- **AES-128-CCM** over every member frame (§5.1), keyed by `HKDF(mesh key, epoch, "frame")`
+  salted with the mesh id. It reuses the netstack's CCM (`firmware/netstack/src/ccmp.rs`, on
+  the C6's AES accelerator). M2 made that CCM generic over the tag length, streamed the AAD
+  and compares tags in constant time; RFC 3610 vector #1 and an equivalence test with the old
+  code cover it.
+- **The counter never rolls over.** Each sender has a 64-bit logical counter. The nonce uses
+  all 64 bits; the short header sends the low 32.
+  - A receiver rebuilds the high bits from the highest counter it has seen from that sender
+    (SRTP's rollover guess: the candidate nearest the last one). A wrong guess makes the
+    nonce wrong, so the MIC fails. A guess can lose a frame; it can never accept a forged or
+    replayed one.
+  - Tests cover 2^32 boundaries in both directions, reboot jumps, and wrong guesses.
+- **Persistence: blocks reserved ahead.**
+  - The device persists a high-water mark (every counter below it may have been used) one
+    block of 2^16 frames ahead. The next reservation is asked for when half the block is
+    spent, so the write lands long before it is needed and nothing stalls.
+  - At boot the counter jumps to the stored mark. A counter is never reused, and flash sees
+    one small write per 65,536 frames plus one per boot.
+- **Replay window, independent of time.** Per source, the receiver keeps the highest counter,
+  a 32-frame bitmap and a *synced* flag: 16 B per source, 64 members = 1 KB. It checks before
+  decrypting and commits only after the MIC verifies, so a forged frame cannot move the window.
+  - **A source the receiver has no state for** (after a fresh join, or the receiver's own
+    reboot) is learned from its next long header. That is only group-key authenticated, so
+    the source is *unsynced*. Its security-relevant traffic (admin commands, membership,
+    rekeys) is held until a **freshness exchange** syncs it: the receiver sends a nonce; the
+    sender returns its current full counter, bound to the nonce by a MAC under their pairwise
+    key (§7.9).
+  - After a sync, only higher counters are fresh. A sync also undoes an insider who inflated
+    a sender's counter with group-key frames to starve it.
+  - As a fallback, receivers persist their high-water marks occasionally and restore them at
+    boot as a floor.
+- **MIC**: 8 B on 802.11; 4 B on UWB.
+- This replaces the swarm's per-message HMAC for Splanc traffic.
 
 ### 7.6 Mode transitions and key rotation
 
@@ -697,17 +744,46 @@ named in the beacon; it does not join groups itself.
 | closed → locked                    | The app shows the current members as the proposed allow-list; the owner confirms or unticks some. Then a **key rotation** to the listed members | listed: unchanged; unticked: dropped by the rotation | n/a                                                                                |
 | locked → closed                    | Allow-list dropped; site-secret joins accepted again. No rotation needed                                                                        | unchanged                                            | n/a                                                                                |
 | closed or locked → open            | The follow stream starts on the open groups                                                                                                     | unchanged                                            | new guests may follow                                                              |
-| remove a member (closed or locked) | Key rotation without it (in closed mode the site secret also needs rotating, or the device can rejoin; the app says so)                         | others: new key                                      | n/a                                                                                |
+| remove a member (closed or locked) | Key rotation without it, rotating the **site secret too**, plus an admin-signed revocation of its device key                                    | others: new key and site secret                      | n/a                                                                                |
 
-Key rotation:
+**Rotation on removal** (`firmware/mesh/src/rekey.rs`; one broadcast, AES only on members):
 
-1. The gateway (on the app's command) picks a new key and epoch.
-2. It sends `Rekey{epoch, key}` to every remaining member, unicast with want-ack, wrapped with
-   that member's pairwise key.
-3. Members accept both epochs for 60 s, then only the new one.
-4. A member that was off during the rotation hears beacons in an epoch it lacks and sends a
-   `RekeyRequest` under its pairwise key; any member holding the new key answers, if the
-   requester is still a member (on the allow-list when locked).
+1. The app, which holds the admin secret, picks a new mesh key **and a new site secret**. It
+   signs a `RekeyOrder` with the admin key: mesh id, new epoch, a 16-byte commitment to the
+   new keys, and the revocation list (device-key hashes of removed devices). It hands the
+   order and the keys to its gateway.
+2. The gateway picks a transport key `K_t` and encrypts the new keys under it once. The order
+   plus the encrypted keys is a 185 B head. It then wraps `K_t` for every remaining member in
+   its session roster under that member's cached pairwise key: **26 B per member** (node id +
+   AES-CCM of 16 B + 8 B tag), 7 per packet. Removed members get no wrap.
+3. A member with the head and its wrap unwraps `K_t`, decrypts, checks the commitment against
+   the signed order (one ECDSA verify), installs the new keys **for receive only**, and acks
+   under its pairwise key.
+4. **Staged switch.** Everyone keeps sending under the old key, so members without the new one
+   can still read everything, relays of the rekey included.
+   - The gateway switches once every member has acked, or after 20 s.
+   - Every other member switches as soon as it hears any frame under the new key. Only key
+     holders can make one.
+   - The old key stays accepted for 60 s after each node's switch.
+   - The gateway re-sends the head and the wraps of members that have not acked once a
+     second. A member re-acks only when a re-sent wrap still names it, which avoids an ack
+     storm.
+5. Members store the revocation list (8 entries) and refuse joins from revoked keys, even
+   with a valid proof or allow-list entry.
+
+Measured in meshsim:
+
+| Fixtures         | Rekey message                | All acked | All sending under the new key |
+| ---------------- | ---------------------------- | --------- | ----------------------------- |
+| 6 (radiolarians) | 296 B in 2 packets           | 80 ms     | 0.8 s                         |
+| 64 (8×8 grid)    | 1,860 B in 10 packets        | 11.1 s    | 11.7 s                        |
+
+- **Spares and absent members.** Unjoined spares holding the old site secret can no longer
+  join by proof: the epoch-1 key and the join proofs use the old secret. They need
+  re-provisioning with the new secret, or an approval join.
+- A member that was away during the rotation hears adverts at the new epoch. With the old
+  site secret its proof fails, so it is listed for approval. A pairwise-MAC'd `RekeyRequest`
+  that lets it recover without the app is staged for M7c.
 
 ### 7.7 Groups
 
@@ -730,10 +806,10 @@ Key rotation:
 - The mesh owner key is new: it lives with the app's site data (backed up with it,
   `web/src/store/backup.ts`) and is copied to the bridge when one manages the site.
 
-### 7.9 Administration: a kiosk-style admin secret
+### 7.9 Administration: kiosk-style unlocking, insider-resistant authority
 
 The radiolarians' mesh is **closed** (the site secret admits members), and administering it is
-**unlocked with an admin secret, the same way kiosk mode works**. Kiosk mode today
+**unlocked with an admin secret, the way kiosk mode works**. Kiosk mode today
 (`docs/design/kiosk-mode.md`):
 
 - firmware: `firmware/player_app/kiosk_ffi.rs` (`lm_kiosk_gate` classifies every arm before
@@ -744,54 +820,93 @@ The radiolarians' mesh is **closed** (the site secret admits members), and admin
   `localStorage` (`splanc.kioskSecrets.v1`), and `web/src/ui/screens/kioskSection.ts` offers
   "Copy owner secret"; the key is in the app backup (`web/src/store/backupFormat.ts`).
 
-The mesh admin secret reuses all of it, with one difference: it is **per mesh, not per device**.
+**The hole in the first draft.** The first draft used a shared HMAC admin key `K_admin` held
+by every member. Every member could therefore verify, and so forge, admin commands; and any
+holder of the group mesh key could impersonate any member. The design now gives no member a
+key that can create authority.
 
-|                          | Kiosk                                 | Mesh admin                                                                                             |
-| ------------------------ | ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Scope                    | one device                            | every member of one mesh                                                                               |
-| Generated                | by the app, 128-bit                   | by the app at mesh creation, 128-bit                                                                   |
-| Kept                     | `localStorage`, keyed by MAC          | `localStorage` (`splanc.meshAdmin.v1`), keyed by mesh id; in the app backup                            |
-| Shared with other admins | "Copy owner secret"                   | "Export admin secret": copy, QR code, or a file; "Import" on the other phone or into the bridge config |
-| On the device            | the secret, plain, on flash           | a verifier and the derived admin key (below)                                                           |
-| Unlock                   | `kiosk_unlock{secret}` per connection | `mesh_unlock{secret}` per connection, same lockout, same per-connection scope                          |
-| Recovery                 | USB console `kiosk off`               | USB console `mesh admin reset` (clears the admin key on that device; the app re-provisions it)         |
+**Who holds what** (`firmware/mesh/src/admin.rs`):
 
-**What a locked connection can do.** A connection to any fixture that has not sent
-`mesh_unlock` gets read-only mesh access (`GetMesh`, status) and whatever the fixture's own
-policy allows locally. `MeshSend`, membership, groups, mode changes and mesh-wide scenes need
-an unlocked connection. If kiosk mode is on too, its gate runs first, unchanged.
+|                         | App and bridge                                                         | Gateway (any fixture an admin is connected to)       | Every member                                                           |
+| ----------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------- |
+| Admin secret (128 bit)  | yes (`splanc.meshAdmin.v1`, exportable: copy, QR, file, backup)        | no                                                   | no                                                                     |
+| Admin signing key (P-256) | derived from the secret and the mesh id                              | no                                                   | no                                                                     |
+| Admin public key        | yes                                                                    | yes                                                  | yes (provisioned, or delivered authenticated in the join wrap)         |
+| Session grant           | signs it                                                               | presents and broadcasts it                           | verifies it once per session                                           |
+| Pairwise keys           | no                                                                     | one per roster member (ECDH of device keys)          | one per gateway it has a session with                                 |
 
-**How the gateway proves admin commands to members.** The admin secret never crosses the mesh.
+1. **Unlock = a signed session grant.**
+   - The app signs "gateway G (its device key) may issue commands for session S until T".
+     `mesh_unlock{grant}` unlocks only the connection that presented it, with kiosk's 2 s
+     device-wide lockout on a bad one.
+   - The gateway broadcasts the grant. Each member verifies the signature **once per
+     session** and derives a pairwise key with G.
+   - "Until T" is in mesh time; an expired grant is refused. A bad clock can only expire a
+     grant early (denial), never extend authority, because the grant's T is signed.
+2. **Freshness by challenge-response.**
+   - Each member answers the grant with `Ack{session, its device key, nonce, MAC}`. The MAC is
+     under the pairwise key, so it proves the member holds that device key.
+   - G replies `Confirm{nonce, its current 64-bit counter, MAC}`.
+   - From then on the member accepts only command sequences above the last one it accepted,
+     and none more than 64 of G's frames below the confirmed counter.
+   - A member with no session (fresh join, reboot) **holds** G's command, asks for the grant,
+     syncs, and only then judges it. A command captured earlier is refused.
+3. **Per-receiver MACs.**
+   - Every admin-class packet (`CONTROL`, `MEMBERSHIP`, `SCENE`, `TIME_BASE`) carries, for
+     each recipient, its node id and a 6-byte MAC under that recipient's pairwise key with G.
+   - No other member holds those keys, so no member can forge, alter or redirect a command,
+     even with the mesh key and its own session.
+   - A packet carries at most `(payload − 13 − body) / 8` recipients (19 at a 20 B body), so
+     larger targets take several packets.
+4. **Member reports bound to device keys.** Grant acks, rekey acks and freshness replies are
+   pairwise-MAC'd. `PendingJoin` (a member telling gateways about a joiner) is advisory: a
+   forged one only adds a prompt to the app, and admission still needs the admin's command.
 
-- Each member stores `K_admin = HKDF(admin secret, mesh id, "admin")`, delivered with the mesh
-  key at join (wrapped, §7.3) and on rotation.
-- The gateway checks `mesh_unlock` against its stored verifier. For an unlocked connection it
-  adds an **admin tag** to every admin-class packet it originates: `HMAC-SHA256(K_admin,
-envelope header ‖ payload)`, truncated to 8 B, inside the encrypted payload.
-- Members check two things: the envelope MIC under the mesh key (any member could have sent the
-  frame) and, on admin-class ports (`CONTROL`, `MEMBERSHIP`, `SCENE`, `TIME_BASE`), the admin tag
-  (an unlocked gateway sent it). A member that holds the site secret but not the admin secret
-  can follow and relay but cannot command.
+**Costs.**
 
-**Threat model, honestly.** Like the kiosk secret, `K_admin` sits on every fixture's flash, so
-someone who takes a fixture apart can extract it. That matches kiosk mode ("keeps visitors out;
-does not resist an attacker with the board"). The upgrade path, if needed later, is asymmetric:
-derive a P-256 key pair from the admin secret in the app, give members only the public key, and
-sign admin packets (the open-mode owner key of §7.4 is that key). Same secret, no
-re-provisioning.
+| What                                     | Bytes                                    | CPU on the C6 (estimate; measure in M3a)                                    |
+| ---------------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------- |
+| Session grant (once per admin session)   | 144 B, broadcast                         | 1 ECDSA-P256 verify + 1 ECDH per member: ~5–15 ms with the ECC accelerator (~60–120 ms in software); P4 ~2–6 ms |
+| Ack / Confirm (once per member)          | 88 B / 31 B, unicast                     | 2 HMAC-SHA256 (tens of µs)                                                  |
+| Per command                              | 13 B + 8 B per recipient: 61 B for 6, 141 B for 16, 4 packets for 64 | receiver: 1 HMAC over ~40 B + body (~20–40 µs, SHA accelerator); gateway: 1 per recipient (6: ~0.2 ms; 64: ~2 ms) |
+| Per frame (envelope)                     | 22 B (short header), 26 B (long)         | AES-CCM of a 200 B frame: ~28 AES blocks, ~30–60 µs on the AES accelerator  |
 
-**Self-configuring installs.** The radiolarians are plugged in and left to form their mesh:
+The ECDSA figures are estimates. The C6's ECC accelerator does the P-256 point
+multiplications; a verify is two of them plus MbedTLS overhead. M3a measures them on the bench.
+The verify runs in the mesh task, once per session, never in the render task. It does not
+touch effects as long as the render task keeps its higher priority on the single C6 core.
 
-1. Before shipping (or once on site), each fixture is provisioned from the app: the site secret,
-   the mesh id, the admin key, and Wi-Fi credentials if the venue has Wi-Fi.
-2. At power-up a fixture with a site secret looks for its mesh: it listens for the mesh's
-   beacons on the venue AP's channel if it has one, otherwise on a channel derived from the mesh
-   id (one of 1, 6, 11). No beacon within 5 s: it starts beaconing itself. Members find each
-   other, the first one up becomes the time root, and scenes catch up by generation.
-3. Nobody has to connect for the show to run: the last committed scene is persisted on each
-   fixture and resumes at boot.
-4. An admin connects to any fixture (BLE or Wi-Fi, app or bridge), unlocks with the admin
-   secret, and manages the whole mesh through it.
+**Recovery.** USB console `mesh admin reset` clears the admin public key on that device; the
+app re-provisions it.
+
+**Threat model.**
+- An attacker with a board extracts its device key and the mesh key. It can then act as that
+  one member: read mesh traffic, send group-key data traffic, and receive commands addressed
+  to it. It cannot command anyone, because the admin signing key exists only in the app and
+  the bridge.
+- A stolen phone or bridge holds the admin secret. Rotate it from another admin's app
+  (staged as M9b).
+
+### 7.10 What remains unresolvable
+
+- **An eclipsed node** (its only neighbours are malicious) can be **desynced and starved**.
+  - Its mesh time moves at most 500 ppm on a single peer's word (0.5 ms per second).
+  - Its traffic can be dropped, and it can be kept from syncing a session.
+  - It **cannot be made to accept a forged or replayed command**. Commands need the gateway's
+    per-receiver MAC, and freshness is counter-based, not time-based. Forged frames fail the
+    MIC (outsiders) or the pairwise MAC (insiders).
+- **A replay inside the freshness window right after a reboot.** A command captured at most
+  64 of the gateway's frames before the member's sync (about 1 s while it streams control,
+  up to about 30 s when idle) is accepted once.
+- **Group-key data traffic** (status, replies, bulk) can be sent by any member under any
+  source id, and an insider can inflate a sender's counter to starve it until the next sync.
+  These are availability problems, not authority ones. Per-sender pairwise sync for non-gateway
+  peers is staged for M7.
+- **Node id ↔ device key binding is trust on first use** at each gateway (an Ack for a node id
+  already bound to another key is refused and reported). An admin-signed roster certificate per
+  member would close this; it is staged for M7.
+- **Approval joins** trust the first wrap they receive (the joiner has no secret to check it
+  against), as the app's device pinning does today.
 
 ## 8. Gateway: one connection, the whole mesh
 
@@ -940,19 +1055,33 @@ limit is the BLE gateway's share (§4.3), not the mesh.
 
 ### 10.4 RAM
 
-On the radiolarians' C6 front ends the mesh's ~7 KB static is not a concern (no render task, no
-LED buffers). On a standalone C6 player it still matters at large LED configs:
+The C6 front ends of the radiolarians have no render task and no LED buffers, so the mesh's RAM
+is not a concern there. On a standalone C6 player it still matters at large LED configs.
 
-| Item                                                              | Bytes                      |
-| ----------------------------------------------------------------- | -------------------------- |
-| `swarm_net` state (dedup rings, TX queue, page state, neighbours) | ~4 K                       |
-| Replay table (64 members + 16 guests)                             | ~1 K                       |
-| Membership + groups                                               | ~0.5 K                     |
-| Frame buffers (one RX, one TX at 250 B)                           | ~0.5 K                     |
-| Gateway member table (compact)                                    | ~1.5 K                     |
-| **Total**                                                         | **~7.5 K** static, no heap |
+Measured in M2: `size` of each piece as a `.bss` static on the C6 (riscv32imac, `-c opt`,
+`nm -S` on `//firmware/mesh:mesh_ram_probe`), at the 802.11 payload `P = 200`:
 
-The PR that adds the crate reports `size -A` against main, as `docs/design/ram-budget.md` asks.
+| Item                                                                         | M2, first draft | M2 now     |
+| ---------------------------------------------------------------------------- | --------------- | ---------- |
+| `swarm_net` (relays, outbox, events and app queue: 8 → 4 each; dedup; pages) | 12,648 B        | 9,360 B    |
+| Envelope: keys, 64-bit counter, replay table (64 × 16 B)                     | 1,152 B         | 1,264 B    |
+| Membership: state (804 B, persisted), pending joins, gateway's pending list  | 2,688 B         | 1,752 B    |
+| Admin sessions (member) / gateway roster (16 members, pairwise keys)         | —               | 200 / 608 B |
+| Rotation: gateway rekeyer / member side                                      | —               | 496 / 240 B |
+| Router, admin gate, held command, neighbours, plain-frame buffers            | ~600 B          | ~1,100 B   |
+| **Whole `MeshStack` (gateway roster 16)**                                    | **17,232 B**    | **15,080 B** |
+| Open mode (feature `open_mode`, M7b): guest table 1,040 + guest replay 272 + follower 56 | in the above | **+1,368 B** when compiled in |
+
+There is no heap. `tick()` also takes a caller-provided scratch of about 0.7 KB.
+
+- The **gateway roster** grows with the mesh: 16 entries = 608 B, 64 = 1,952 B. A standalone
+  C6 player keeps 16. A P4 + C6 front end can keep 64 or more, or keep the roster on the P4.
+- **Open mode's budget is 1.4 KB.** About 0.6 KB of that can be saved with 32-bit timestamps
+  and compact rate buckets in the guest table. It must fit within the current figure when
+  M7b turns it on.
+- The design's first estimate (~7.5 KB) assumed `swarm_net` at ~4 KB. At `P = 200` its packet
+  slots dominate. Shrinking further means fewer slots (each holds a full 200 B packet) or a
+  byte ring instead of fixed slots. That is the next lever if a C6 player needs it.
 
 ### 10.5 Minimum set that ships radiolarians
 
@@ -976,6 +1105,101 @@ From the PR plan (§15):
 Firmware updates use per-device OTA over Wi-Fi. Locked mode, open mode (M7b), key rotation, the
 IP backhaul and OTA over the mesh can follow the first install.
 
+### 10.6 Mixed-capacity meshes: C6, P4 + C6, Pi
+
+Meshes mix very different devices. A standalone C6 player has a tight heap. A P4 + C6 fixture
+runs the mesh on the C6 front end but can keep deep queues on the P4, reached over the C6↔P4
+SDIO link. A Raspberry Pi has effectively unlimited RAM, runs Linux, and may also be on the
+LAN. The mesh uses the difference instead of sizing everyone for the weakest node.
+
+**Mechanisms** (implemented in M2, host code: `firmware/mesh/src/stack.rs`, `swarm/src/mesh.rs`):
+
+- **Capacity advertised.** Every advert carries the node's class (C6, P4, Pi) and its current
+  relay credit (free relay slots).
+- **Standalone C6: small queues, a drop policy.** It keeps 4 relay and 4 outbox slots and
+  forwards promptly. With no room, it evicts the oldest relay of the lowest class below the
+  new one: bulk (port ≥ 23) before status and replies, before control, membership, time and
+  freshness (`Port::HIGH_PRIORITY`). Control is never starved by bulk.
+- **Custodians (P4, Pi): depth on the big side.**
+  - What a custodian's C6-side queue cannot hold spills into a deep store: P4 RAM over SDIO
+    (modelled as 100 µs + 20 MB/s per transfer, each way), or the Pi's RAM.
+  - A stored relay is released only while the neighbours advertise credit (credit-based
+    backpressure).
+  - **Only bulk and normal-priority traffic is spilled.** Live control relayed late is worse
+    than not relayed. The first sweep spilled it, and 64-node p99 latency rose to 1.9 s.
+- **Bulk toward custodians.**
+  - Custodians relay bulk floods early and C6s late, so a custodian's relay usually cancels
+    the C6's.
+  - Page requests (effect blobs, firmware, catch-up) prefer a custodian among equally advanced
+    neighbours, so custodians carry the retransmissions.
+  - Live control is untouched: it relays with the normal RSSI-based delay.
+- **Pi radio path** is a parameter in the model: extra per-frame latency (2 ms in the sweep,
+  for nl80211 action frames or USB injection), or an attached C6 as the radio. The Pi runs
+  the same crates' std build (`//firmware/mesh` feature `host`). The Backhaul trait and the
+  frame format are host-portable.
+  - Nothing blocks a std/Linux build.
+  - A Pi needs its own `DeviceKey` (its TLS key file instead of `host_keys`), a real
+    `Entropy` (getrandom), a file-backed `Flash` for the page protocol, and its `Backhaul`
+    implementation.
+  - A Pi bridging islands over IP is the IP backhaul (M10).
+
+**Sweep** (`//firmware/mesh/meshsim:sweep`; script and plots `firmware/mesh/meshsim/sweep/`;
+results `docs/design/mesh/sweep.csv`, 150 runs). It varies:
+- class mix (C6/P4/Pi from 100 % C6 to 100 % Pi),
+- node count (6, 16, 32, 64),
+- topology (line, grid, random geometric, clustered with single-custodian bridges),
+- loss (0, 10, 30 %),
+- traffic (live control to all at 30/60 Hz, a 4 KiB effect blob, 32 KiB firmware, late-joiner
+  catch-up, a blob during live control),
+- capacity-aware relaying versus the uniform-small-queue baseline (every node a C6).
+
+![live control vs nodes, 1 vs 6 Mb/s](mesh/airtime.png)
+![delivery, latency and blob time vs nodes](mesh/nodes.png)
+![class mix: control p99 and blob time](mesh/mix.png)
+![topologies at 32 nodes](mesh/topology.png)
+![queue occupancy and drops per class](mesh/queues.png)
+
+What it shows:
+
+1. **Airtime, not queue RAM, is the limit for live control.**
+   - At 1 Mb/s DSSS, 60 Hz control to every member (one flood plus per-receiver MACs)
+     delivers 100 % at 6 fixtures, 53 % at 16, 18 % at 32 and 15 % at 64.
+   - At **6 Mb/s OFDM**: 100 / 98 / 92 / 57 %. At 6 Mb/s and 30 Hz: 100 / 99 / 98 / 72 %.
+   - The radiolarians (6 fixtures) are fine at either rate. Larger meshes need OFDM for mesh
+     frames (M3a must check its range through the enclosures) and live moves coalesced to
+     ≤ 30 Hz. Past ~32 nodes, live moves need a broadcast authenticator instead of
+     per-receiver MACs (§17 Q14).
+2. **Bulk is pull-based and flash-backed, so queues barely matter for it.**
+   - A 4 KiB blob reaches 16 nodes in 0.7–1.7 s and 64 in 3.4–4.1 s. 32 KiB firmware reaches
+     16 nodes in 9–16 s.
+   - Every run with bulk completed, and no bulk was dropped at a C6.
+   - The biggest effect is **where the source is**: a central custodian (a Pi or P4 seeding the
+     blob) beats a corner C6 gateway. That favours custodians as bulk sources.
+   - Capacity-aware relaying changed firmware times by −24 % to +23 % against the baseline,
+     in both directions. That is within the noise of source placement: no consistent gain.
+3. **Single-custodian bottleneck.** In the clustered topology with the only custodian on a
+   bridge, the blob reached all 32 nodes in 4.5 s (all-C6: 4.3 s). There is no bottleneck,
+   because bulk is not queued at the bridge.
+4. **Where it degrades, and what mitigates it.**
+   - **Saturation (≥ 16 nodes at 1 Mb/s and 60 Hz):** C6s drop live control at full queues
+     (686 drops in 5 s at 32 nodes). Use OFDM and ≤ 30 Hz.
+   - **Line and chain venues:** 32 in a line reach only 32 % of control, because the hop
+     limit is 3. Raise the hop limit per install (Q15), or add custodians as bridges with the
+     IP backhaul.
+   - **Random dense layouts** saturate like the grid.
+   - **100 % C6** is not worse than the mixes for control (same airtime). It is slightly
+     slower for bulk only when the gateway that seeds the blob sits at the edge.
+5. **Queue occupancy.**
+   - C6 relay queues reach their budget (4) only when live control saturates the channel.
+   - In this traffic mix **no bulk or normal-priority relay was ever dropped at a C6**, so the
+     custodian stores stayed empty. The first sweep, which still spilled live control, filled
+     a P4 store to 227 of 256.
+   - The custodian store and credit pacing are therefore implemented and unit-tested but not
+     exercised by today's traffic. They start to matter if M6 pushes blobs as floods instead
+     of pulling pages, or for status bursts in large meshes. The sweep keeps them in the model
+     for that.
+   - What the classes buy today: **Pis and P4s as bulk sources and page servers**, plus
+     deeper gateway rosters.
 ## 11. UWB backhaul (later)
 
 - **Hardware**: no current Splanc board has UWB. The C6 boards, `splanc-mini` and the P4 + C6
@@ -1150,7 +1374,7 @@ USB power and shared-DUT gotchas).
 | `mesh_effect`        | 4                     | Push a `.fxb`, every member runs it (serial log + `get_status` via the mesh)                                                                                                                                   |
 | `mesh_apply_at_skew` | 2 analyzer-tapped + 2 | Extends `pi/hitl/harness/hitl_time_base_skew.py`: tapped DUTs reached only via the mesh; p99 skew < 10 ms + one frame                                                                                          |
 | `mesh_ble_gateway`   | 3                     | Same as `mesh_gateway` with the gateway on BLE (coex)                                                                                                                                                          |
-| `mesh_join_admin`    | 4                     | Self-configured closed join; a locked connection can't send `MeshSend`; `mesh_unlock` then control; a member without the admin key can't command; wrong-secret lockout. Locked mode and open guests in Phase 2 |
+| `mesh_join_admin`    | 4                     | Self-configured closed join; a locked connection can't send `MeshSend`; `mesh_unlock` then control; a member cannot forge commands for other members; a replay after a member reboots is refused; bad-grant lockout. Locked mode and open guests in Phase 2 |
 | `mesh_multihop`      | 4                     | Forced topology (a test-only neighbour deny-list in firmware), 3 hops                                                                                                                                          |
 | `mesh_soak`          | 4                     | 2 h, fader streams every 5 min, heap minimum and render fps unchanged                                                                                                                                          |
 
@@ -1183,10 +1407,36 @@ ones that depend on unknown hardware behaviour.
 | **M5**  | Protocol arms (`MeshSend`, `MeshResult`, `GetMesh`/`MeshState`), gateway fan-out + aggregation, member dispatch allow-list, `MeshStatus`; `mesh_gateway` HITL                                                                |                                 |
 | **M5b** | P4 + C6: the mesh on the C6 front end, relayed control forwarded over the link, C6↔P4 clock offset for `TIME_BASE`, effect blobs handed to the P4                                                                            | P4 + C6 bench run               |
 | **M6**  | Blob kind on the page protocol + effect distribution + scenes and catch-up; `mesh_effect` HITL                                                                                                                               |                                 |
-| **M7**  | Membership: closed mode (site secret, self-configuring formation, approval joins), the kiosk-style admin secret (`mesh_unlock`, admin tags, §7.9), groups; `mesh_join_admin` HITL                                            |                                 |
+| **M7**  | Membership: closed mode (site secret, self-configuring formation, approval joins), the kiosk-style admin secret (`mesh_unlock` with a signed grant, per-receiver MACs, §7.9), groups; `mesh_join_admin` HITL                                            |                                 |
 | **M8**  | App: member list via gateway, target picker in live control and effects, mesh screen, admin secret export/import (copy, QR, file, backup)                                                                                    | web unit tests + manual run     |
 | **M8b** | Bridge: hub mesh route (`hub.ts`) through one gateway, admin secret in the bridge config, `list_players` via gateways                                                                                                        | agent tests + bench run         |
 | **M9a** | HITL gate: the multi-DUT suite in CI (`mesh_*`)                                                                                                                                                                              |                                 |
+
+**What M2 delivered, and what it moved (2026-11-17).** M2 (#529 → #530 → #531, host tests and
+`meshsim` only) contains:
+
+- the envelope with 64-bit counters and replay windows (§7.5);
+- insider-resistant administration: signed grants, freshness by challenge-response,
+  per-receiver MACs (§7.9);
+- rotation on removal with revocations (§7.6);
+- the membership state machines;
+- the mesh-time aggregation (§6.2, pure: M4 wires it in);
+- the capacity classes and `swarm_net`'s queue sizing and drop policy (§10.6);
+- `meshsim` with the capacity sweep.
+
+The work it moves to later milestones:
+
+| PR     | Added by M2                                                                                                                                                                                   |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M3a    | Measure ECDSA-P256 verify and ECDH on the C6 and P4 (estimates in §7.9); measure 6 Mb/s OFDM range through the enclosures (§10.6)                                                            |
+| M3     | Mesh frames at 6 Mb/s OFDM where range allows; the counter mark and replay marks in littlefs                                                                                                 |
+| M4     | Wire `timesync` (robust aggregation, step and slew rules) into beacons and the show clock                                                                                                      |
+| M5     | Live moves coalesced to ≤ 30 Hz on the mesh; `mesh_unlock{grant}` and the grant/roster in `MeshState`                                                                                       |
+| M7     | Firmware `DeviceKey` on MbedTLS (per-device TLS key); the app derives the admin signing key and signs grants and rekey orders; admin-signed member certificates (node id ↔ device key); per-sender pairwise freshness for non-gateway peers |
+| M7b    | Open mode behind the `open_mode` feature (+1.4 KB on the C6 as written; −0.6 KB possible)                                                                                                     |
+| M7c    | `RekeyRequest` for members absent during a rotation; closed ↔ locked transitions in the app                                                                                                   |
+| M9b    | Rotate the site secret without a removal; rotate the admin secret (a lost phone or bridge)                                                                                                    |
+| M10    | IP backhaul; a Pi bridging islands (§10.6)                                                                                                                                                     |
 
 ### Phase 2: open mode, hardening and reach
 
@@ -1194,7 +1444,7 @@ ones that depend on unknown hardware behaviour.
 | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | M7b | Open mode: owner key + signed scenes/blobs/time, the follow stream under the open key, guest tables and rate limits, `mesh_follow` device setting, guests in the app; `mesh_open_guest` HITL |
 | M7c | Locked mode (allow-list by device key), closed ↔ locked transitions, key rotation on removal                                                                                                 |
-| M9b | Site-secret rotation; the asymmetric admin key upgrade (§7.9) if wanted                                                                                                                      |
+| M9b | Site-secret rotation; admin-secret rotation (the asymmetric admin key is in M2, §7.9)                                                                                                                     |
 | M10 | IP backhaul (UDP on the LAN) to bridge islands on other APs                                                                                                                                  |
 | M12 | `group_capture` arming over the mesh (one connection arms the room)                                                                                                                          |
 | M13 | OTA over the mesh (page protocol with the firmware kind; Splanc's manifest, `docs/design/ota.md`)                                                                                            |
@@ -1219,7 +1469,10 @@ ones that depend on unknown hardware behaviour.
 | Mesh channel conflicts with multi-AP sites                                                                       | islands                        | prefer same-channel BSSIDs; IP backhaul (M10)                                       |
 | Background sweeps make members deaf                                                                              | missed changes                 | skip sweeps while the mesh is healthy; `Away`; generation catch-up                  |
 | BLE coex loses broadcasts at the gateway                                                                         | slower fan-out                 | relays and retries; HITL measures; a coex priority bump for mesh TX if needed       |
-| C6 RAM at large LED configs                                                                                      | can't fit                      | ~7 KB static budget, measured in M2/M3; compact gateway table                       |
+| C6 RAM at large LED configs                                                                                      | can't fit                      | measured 15.1 KB static (§10.4); fewer `swarm_net` slots or a byte ring if needed   |
+| Live control saturates the channel at 1 Mb/s beyond ~8 fixtures (per-receiver MACs + floods)                      | lagging, lost live moves       | 6 Mb/s OFDM, ≤ 30 Hz coalescing, broadcast authenticator for big meshes (§10.6)     |
+| An eclipsed node (only malicious neighbours)                                                                      | desynced (≤ 500 ppm), starved  | cannot be made to accept forgeries or replays (§7.10); more neighbours              |
+| ECDSA verify slower than estimated on the C6                                                                      | slow session start             | once per session, in the mesh task; measured in M3a                                 |
 | The ported swarm code diverges from indoor_localization                                                          | fixes don't flow both ways     | provenance note; ported golden vectors; port fixes back by hand                     |
 | Node-id collisions (u16 from MAC)                                                                                | misrouting                     | detect via full MAC in status; app reassigns                                        |
 | Site secret leaks (a lost fixture holds it)                                                                      | closed mesh joinable           | lock the mesh after install; rotate the site secret from the app                    |
@@ -1252,8 +1505,7 @@ swarm code, and Splanc's own framing.
 
 **Security and admission:**
 
-- **Q5.** Is the kiosk-level threat model for the admin key acceptable (it sits on each
-  fixture's flash, like the kiosk secret), with the asymmetric upgrade later if needed?
+- **Q5.** (Answered 2026-11-17, superseded.) The admin key is now asymmetric: fixtures hold only its public half, so extracting a board no longer gives command authority (§7.9).
 - **Q6.** Open mode as designed: guests follow signed scenes and effects, live moves are
   unsigned but bounded, guests can never manage. Is accepting unsigned live moves on guests
   acceptable, or should guests only follow signed commits (coarser, but unforgeable)?
@@ -1268,6 +1520,32 @@ swarm code, and Splanc's own framing.
   which supports the C6) and PHY test-tone TX (shown on the S3), but no public C6 I/Q write.
 - **Q10.** Is the self-built ranging meant for P4 + C6 boards only? The dump engine needs a whole
   SRAM block, which a C6 player rendering effects does not have (a C6 front end may).
+
+**Answered 2026-11-17 (M2 review):**
+
+- No counter rollover and no bigger frames: a 64-bit counter, low 32 bits on the wire, reserved
+  in blocks (§7.5).
+- Replay protection must not depend on time, and time must not depend on one peer (§6.2, §7.5).
+- Insider resistance: signed grants and per-receiver MACs (§7.9).
+- Removal rotates the mesh key and the site secret, and revokes the device key (§7.6).
+- Mixed-capacity meshes: C6, P4 + C6, Pi (§10.6).
+
+**New:**
+
+- **Q11.** ECDSA cost: the estimates in §7.9 are to be measured in M3a. Is a session start of
+  tens of ms per member acceptable (it runs once per admin session)?
+- **Q12.** Mesh PHY: move mesh frames to 6 Mb/s OFDM where range allows (needed for live
+  control beyond ~8 fixtures)?
+- **Q13.** Live moves: coalesce to ≤ 30 Hz on the mesh (the app's fader stream can stay at
+  60 Hz)?
+- **Q14.** Meshes beyond ~32 fixtures: per-receiver MACs cost 8 B per member per command.
+  - (a) Accept several packets per command.
+  - (b) Use a delayed-key broadcast authenticator (TESLA-style) for live moves, which adds about
+    one interval of latency and needs loose time sync.
+  - (c) Allow live moves under a per-session group key. Insiders could then forge live moves
+    but not commits, like open-mode guests.
+- **Q15.** Hop limit 3 is too small for line or chain venues: make it a per-install setting?
+- **Q16.** Open mode's 1.4 KB on the C6: accept it as the M7b budget?
 
 ## 18. Sources
 
