@@ -789,8 +789,10 @@ per id and per pilot frame.</p>
 <p><strong>Wire, for now.</strong></p>
 <ul class="simple">
 <li><p><strong>Request.</strong> <code class="docutils literal notranslate"><span class="pre">StartMappingOptions.sync_pattern</span></code> (field 12) asks for
-<code class="docutils literal notranslate"><span class="pre">&quot;stagger_pilot&quot;</span></code>. The phone sends it only when the capture page is opened
-with <code class="docutils literal notranslate"><span class="pre">?sync=stagger_pilot</span></code>.</p></li>
+<code class="docutils literal notranslate"><span class="pre">&quot;stagger_pilot&quot;</span></code>. The phone sends it by default to every player whose welcome
+advertises <code class="docutils literal notranslate"><span class="pre">hue_stagger_pilot</span></code> (<code class="docutils literal notranslate"><span class="pre">requestedSyncPattern</span></code>, web/src/code/gray.ts).
+<code class="docutils literal notranslate"><span class="pre">?sync=</span></code> on the capture page is a debug override (<code class="docutils literal notranslate"><span class="pre">?sync=v1</span></code> forces the old
+pattern). Group captures still request nothing, so mixed fleets share v1.</p></li>
 <li><p><strong>Who honours it.</strong> The shared player core (<code class="docutils literal notranslate"><span class="pre">firmware/player</span></code>) runs the
 staggered pilot only if the build advertises the <code class="docutils literal notranslate"><span class="pre">hue_stagger_pilot</span></code> feature.
 The host player (<code class="docutils literal notranslate"><span class="pre">pi/player_rs</span></code> <code class="docutils literal notranslate"><span class="pre">player_host</span></code>, and so the virtual wall
@@ -799,7 +801,6 @@ it. A player without it replies with <code class="docutils literal notranslate">
 <li><p><strong>What the phone decodes.</strong> Whatever the reply’s <code class="docutils literal notranslate"><span class="pre">codeParams.syncPattern</span></code>
 says, so an unsupported request is v1 end to end. A configure keeps the
 capture’s pattern.</p></li>
-<li><p><strong>Next.</strong> Requesting the code automatically from players that advertise it.</p></li>
 </ul>
 <section id="simulation-results">
 <h3>Simulation results<a class="headerlink" href="#simulation-results" title="Link to this heading">¶</a></h3>
