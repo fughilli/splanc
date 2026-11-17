@@ -113,10 +113,11 @@ export const DEVICE_PERF_TOOLS = [
 /** Appended to the system prompt only when measure_on_device is offered, so a
  * turn without a fixture (and the tiny local-model prompt) pays nothing. */
 export const DEVICE_PERF_GUIDE =
-  "A fixture is connected: measure_on_device gives the REAL on-device numbers. Iterate with " +
-  "estimate_performance (instant, offline), then confirm with measure_on_device before saying a " +
-  "performance goal is met. When the two disagree, optimize against the measurement (the estimate " +
-  "models the interpreter; the device may JIT) and report measured numbers.";
+  "A fixture is connected: measure_on_device gives the REAL on-device numbers, the gold standard. " +
+  "Iterate with estimate_performance (instant, offline) only while it reports a CALIBRATED model, then " +
+  "confirm with measure_on_device before saying a performance goal is met. When the two disagree, " +
+  "optimize against the measurement (the estimate models the interpreter; the device may JIT) and report " +
+  "measured numbers.";
 
 /** MIDI tools, added to the tool list only when the editor supplies the hooks
  * (i.e. when a MIDI mapping context exists). Kept separate so a plain effect
@@ -231,8 +232,10 @@ export const CHAT_SYSTEM = `${SYSTEM_PROMPT}
 You are now in an interactive chat with the user inside the effect editor. You can:
 - Answer questions about the current effect program.
 - Call set_script to author or revise the effect; you'll get the compile result back (fix any errors and iterate). Fix its "Warnings" too — the usual one is a speed/rate uniform multiplying \`time\` in a phase, which makes the effect jump whenever the user moves that slider: integrate it in update() (\`ph = fract(ph + dt * speed);\`) and use the phase. When editing an existing effect that does \`time * speed\`, convert it.
+- The set_script result has a "Device:" line that starts with SENT or NOT SENT. Say the effect is live, pushed, sent or playing on the lights ONLY when it says SENT. On NOT SENT, say plainly that it is not on the lights yet and why (no fixture connected, auto-push off, upload failed…), as the result explains. If the user asks you to send or push it, call set_script again and report what its Device line says — never claim a push you didn't see succeed.
+- Performance verdicts come only from a measurement on the fixture (the gold standard) or from an estimate_performance report on a CALIBRATED model. Never hold back, delay, or refuse to send an effect, and never call it too slow, because of an uncalibrated estimate — when the model is uncalibrated estimate_performance gives no numbers; ignore the simulator.
 - Call capture_preview to SEE the live preview rendered to an image — but only when seeing the result actually matters (judging colours/motion/coverage). Skip it when it wouldn't help (e.g. after a compile error, or a purely mechanical edit); capturing every turn is slow and wasteful.
-- When performance matters (the user wants a target framerate, to fit the budget, or to optimize), call estimate_performance after set_script to check the change against the real device economics: it reports each device's frame time, % of the FX budget used (≤70% green / >70% yellow / >90% red), the binding device, the hottest opcodes, and the top cost findings (what to change, with the cycles each would save). Optimize for the binding device first, then re-estimate to confirm it fits.
+- When performance matters (the user wants a target framerate, to fit the budget, or to optimize), call estimate_performance after set_script to check the change against the device economics (calibrated models only; otherwise measure on the fixture): it reports each device's frame time, % of the FX budget used (≤70% green / >70% yellow / >90% red), the binding device, the hottest opcodes, and the top cost findings (what to change, with the cycles each would save). Optimize for the binding device first, then re-estimate to confirm it fits.
 - OPTIMIZE requests ("make this faster", "fit 60fps", "reduce RAM", "optimize this program") are a MEASURED, MULTI-TURN loop — never a one-shot guess:
   1. estimate_performance on the current script to get a BASELINE (frame time, % of budget on the binding device, phase split update-vs-shade, and the hottest opcodes). State it briefly.
   2. Form ONE hypothesis from that data. Typical wins, in order of impact: move per-LED / loop-invariant work from shade() into update(); apply the estimate's top cost findings; replace soft-float in hot per-LED math with fixed (fixed() around every literal; sin/cos of a fixed phase in TURNS is an integer LUT); replace pow/exp/smoothstep/length with multiplies, clamp ramps and squared distances; cut the op count (every op pays ~70 cycles of dispatch); narrow buffer/texture storage to : fixed8 / : fixed16 to cut RAM.

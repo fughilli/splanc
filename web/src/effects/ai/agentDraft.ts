@@ -57,22 +57,6 @@ export function holdAgentAutoPush(s: { agentTurn: boolean; budget: DraftBudget |
   return s.agentTurn && trustedBudget(s.budget) && draftVerdict(s.budget) === "over";
 }
 
-/**
- * For the agent (set_script result): an over-budget estimate from the
- * UNCALIBRATED default model is not a verdict. Say so, and point at the
- * measurement. Empty string when there is nothing to add.
- */
-export function uncalibratedEstimateNote(b: DraftBudget | null | undefined, connected: boolean): string {
-  if (!b || trustedBudget(b) || draftVerdict(b) !== "over") return "";
-  return (
-    `Budget estimate: ${pct(b.fraction)} of the frame budget, from the UNCALIBRATED default cost model ` +
-    "(this board has no calibration), so it is not a verdict and the effect was not held back. " +
-    (connected
-      ? "Call measure_on_device and treat the measured number as what counts."
-      : "No fixture is connected to measure it; say the estimate is uncalibrated rather than calling the effect too slow.")
-  );
-}
-
 /** How the agent turn ended, from the editor's point of view. */
 export type AgentTurnEnd = "complete" | "finished-after-script" | "exhausted" | "error" | "cancelled";
 

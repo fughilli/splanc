@@ -69,7 +69,6 @@ import {
   draftNotice,
   holdAgentAutoPush,
   optimizeAsk,
-  uncalibratedEstimateNote,
   type AgentTurnEnd,
   type DraftAction,
   type DraftBudget,
@@ -97,6 +96,16 @@ import { effectStore, isBuiltinEffect } from "../../store/effectStore";
 import { deviceEffects } from "../../store/deviceEffects";
 import { KeypointStrip } from "./keypointStrip";
 import { deviceStore } from "../../store/deviceStore";
+import {
+  bytesEqual,
+  needsPush,
+  pushOutcomeNote,
+  readAutoPush,
+  shouldPushOnConnect,
+  uncalibratedEstimateToolResult,
+  writeAutoPush,
+  type PushOutcome,
+} from "../../effects/editor/autoPush";
 import { chatLogStore, newChatLogSessionId } from "../../store/chatLogStore";
 import { registerChatDriver } from "../../net/remoteChat";
 import { mapStore } from "../../store/mapStore";
@@ -118,17 +127,19 @@ import type { Router, Screen } from "../app/router";
 const COMPILE_DEBOUNCE_MS = 300;
 const SAVE_DEBOUNCE_MS = 800;
 
+/** window.localStorage, or null where touching it throws (blocked storage). */
+function safeLocalStorage(): Storage | null {
+  try {
+    return localStorage;
+  } catch {
+    return null;
+  }
+}
+
 function msg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** Byte-for-byte equality of two (possibly null) buffers. */
-function bytesEqual(a: Uint8Array | null, b: Uint8Array | null): boolean {
-  if (a === b) return true;
-  if (a === null || b === null || a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
 
 export function EffectEditorScreen(router: Router, effectId: string, screenOpts: { demo?: boolean } = {}): Screen {
   let disposeTour: (() => void) | undefined;
@@ -178,6 +189,11 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   // whose bytecode is byte-identical (e.g. a whitespace edit) so it doesn't
   // needlessly re-flash the device.
   let lastPushedFxb: Uint8Array | null = null;
+  // …and the device it went to: a different device connecting still needs it.
+  let lastPushedDevice: string | null = null;
+  // What the latest clean compile did on the fixture (sent / not, and why): the
+  // set_script result reports it, so the AI can't claim a push that didn't happen.
+  let lastPushOutcome: Promise<PushOutcome> | null = null;
   let chatBusy = false;
   // An AI draft auto-push held back for being over budget (#443).
   let heldDraft: Uint8Array | null = null;
@@ -880,22 +896,19 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   devTiles.className = "k-actiongrid fxedit-devtiles";
   devTiles.append(sendBtn, hydrateBtn);
 
-  // Auto-push: when on, every successful compile is sent to the device.
-  const AUTOPUSH_KEY = "fxedit.autopush.v1";
+  // Auto-push: when on, every successful compile is sent to the device — and a
+  // compile made while offline is sent when a device connects. On by default
+  // (effects/editor/autoPush.ts): off only when the user turned it off.
   const autoPushRow = document.createElement("label");
   autoPushRow.className = "fxedit-autopush";
   const autoPushCb = document.createElement("input");
   autoPushCb.type = "checkbox";
-  autoPushCb.checked = localStorage.getItem(AUTOPUSH_KEY) === "1";
+  autoPushCb.checked = readAutoPush(safeLocalStorage());
   const autoPushTxt = document.createElement("span");
   autoPushTxt.textContent = "Auto-push on compile";
   autoPushRow.append(autoPushCb, autoPushTxt);
   autoPushCb.addEventListener("change", () => {
-    try {
-      localStorage.setItem(AUTOPUSH_KEY, autoPushCb.checked ? "1" : "0");
-    } catch {
-      /* storage blocked — non-fatal */
-    }
+    writeAutoPush(safeLocalStorage(), autoPushCb.checked);
     // Just enabled with a program already compiled → push it right away.
     if (autoPushCb.checked && lastBytecode) void pushBytecode(lastBytecode);
   });
@@ -960,9 +973,26 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     if (!connected) devStatus.textContent = "Connect a device (tap the status pill) to send this effect.";
     videoPanel.setSink(connected ? appState.client : null);
     fxDebugPanel?.refresh();
-    // Newly connected → automatically pull whatever effect is running so its
-    // uniforms hydrate and any mismatch surfaces without a manual tap.
-    if (connected && !prevConnected) {
+    // Newly connected with auto-push on and a compiled program this device
+    // doesn't have yet (written while offline, or by the AI before the session
+    // was ready) → push it now, instead of making the user leave and re-enter.
+    // Otherwise pull whatever effect is running so its uniforms hydrate and any
+    // mismatch surfaces without a manual tap. (Not both: a pull first would load
+    // the device's other effect's values into this effect's sliders.)
+    if (
+      shouldPushOnConnect({
+        autoPush: autoPushCb.checked,
+        connected,
+        wasConnected: prevConnected,
+        compiled: lastBytecode,
+        pushed: { fxb: lastPushedFxb, device: lastPushedDevice },
+        device: deviceStore.activeId(),
+        held: heldDraft !== null && bytesEqual(heldDraft, lastBytecode),
+      })
+    ) {
+      void autoPushCompiled(lastBytecode!);
+      if (selectedMapId) void followDeviceMap();
+    } else if (connected && !prevConnected) {
       void hydrateFromDevice();
       if (selectedMapId) void followDeviceMap();
     }
@@ -1315,19 +1345,22 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   /** Auto-push one clean compile — unless it is an AI draft over the frame
    * budget (#443): that stays an optimizing preview, and the fixture keeps
    * playing what it has until the draft fits (or the user pushes it anyway). */
-  async function autoPushCompiled(bytecode: Uint8Array): Promise<void> {
+  async function autoPushCompiled(bytecode: Uint8Array): Promise<PushOutcome> {
     if (chatBusy) {
+      // Only a calibrated estimate or a measurement can hold a draft
+      // (holdAgentAutoPush / trustedBudget): an uncalibrated one never gates.
       const budget = await draftBudgetOf(bytecode);
       if (holdAgentAutoPush({ agentTurn: chatBusy, budget })) {
         heldDraft = bytecode;
+        const at = `${Math.round((budget?.fraction ?? 0) * 100)}% of the frame budget`;
         devStatus.textContent =
-          `Auto-push held: the AI draft is at ${Math.round((budget?.fraction ?? 0) * 100)}% of the frame budget ` +
-          "(calibrated estimate) — still optimizing; the device keeps the previous effect.";
-        return;
+          `Auto-push held: the AI draft is at ${at} ` +
+          `(${budget?.source === "measured" ? "measured" : "calibrated estimate"}) — still optimizing; the device keeps the previous effect.`;
+        return { kind: "held", detail: `held back — it is at ${at} (${budget?.source === "measured" ? "measured on the fixture" : "calibrated estimate"}); the fixture keeps the previous effect until it fits or the user pushes it anyway.` };
       }
     }
-    if (bytecode !== lastBytecode) return; // superseded while estimating
-    await pushBytecode(bytecode);
+    if (bytecode !== lastBytecode) return { kind: "failed", error: "superseded by a newer compile" };
+    return pushBytecode(bytecode);
   }
 
   /** Compile once and update all sinks. Returns the FxCompiled for callers that
@@ -1338,6 +1371,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     setStatusCompiling();
     const src = codeEl.value;
     const seq = ++compileSeq;
+    lastPushOutcome = null;
     const r = await worker.compile(src);
     if (seq !== compileSeq || disposed) return; // a newer compile supersedes us
 
@@ -1370,12 +1404,14 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     lastUniforms = r.uniforms;
     // Auto-push: a clean compile goes straight to the connected device — but only
     // when the .fxb actually changed, so a whitespace-only edit doesn't re-flash.
-    if (
-      autoPushCb.checked &&
-      appState.client?.isConnected &&
-      !bytesEqual(r.bytecode, lastPushedFxb)
-    ) {
-      void autoPushCompiled(r.bytecode);
+    if (!appState.client?.isConnected) {
+      lastPushOutcome = Promise.resolve({ kind: "not_connected", autoPush: autoPushCb.checked });
+    } else if (!autoPushCb.checked) {
+      lastPushOutcome = Promise.resolve({ kind: "autopush_off" });
+    } else if (needsPush(r.bytecode, { fxb: lastPushedFxb, device: lastPushedDevice }, deviceStore.activeId())) {
+      lastPushOutcome = autoPushCompiled(r.bytecode);
+    } else {
+      lastPushOutcome = Promise.resolve({ kind: "already" });
     }
     midiRouter.setManifest(r.uniforms);
     // Auto-bind uniforms to like-named controls ("speed" uniform ↔ a knob named
@@ -1529,6 +1565,12 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     }
     const fallbackLeds = currentMap ? currentMap.leds.length : 256;
     const targets = await resolveFleetTargets(fallbackLeds);
+    // Until the cost model is calibrated on the user's board the simulator is
+    // noise: no numbers for the AI (the budget bar still shows humans its
+    // labelled estimate). The fixture's measurement is the gold standard.
+    if (!targets.some((t) => t.calibrated)) {
+      return uncalibratedEstimateToolResult(!screenOpts.demo && canMeasure(perfDeviceFromClient(appState.client)));
+    }
     const fleet = estimateAcrossDevices(lastBytecode, targets);
     return describeFleet(fleet, { bytecode: lastBytecode, source: codeEl.value, warnings: lastWarnings });
   }
@@ -1562,6 +1604,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     // The fixture now runs this workspace's program (same as a manual Push).
     if (result.deployed) {
       lastPushedFxb = bytecode;
+      lastPushedDevice = deviceStore.activeId();
       runningEffectId = effectId;
       if (heldDraft !== null && bytesEqual(heldDraft, bytecode)) heldDraft = null;
       refreshMismatch();
@@ -1749,16 +1792,12 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
           // Kept live values that now differ from the new defaults (#452): the
           // one case where a compiled source edit changes nothing on screen.
           const kept = lastCompileSummary.startsWith("OK") ? retainedLiveNote(lastUniforms, panel.values()) : "";
-          // An over-budget estimate from an uncalibrated model is not a verdict:
-          // tell the agent to measure (the draft was pushed normally).
-          const uncal =
-            lastCompileSummary.startsWith("OK") && lastBytecode
-              ? uncalibratedEstimateNote(
-                  measuredBudgets.get(lastBytecode) ?? (await draftBudgetOf(lastBytecode)),
-                  !screenOpts.demo && canMeasure(perfDeviceFromClient(appState.client)),
-                )
-              : "";
-          return `Compile result: ${lastCompileSummary}${kept ? `\n\n${kept}` : ""}${uncal ? `\n\n${uncal}` : ""}${
+          // What reached the fixture, stated plainly (SENT / NOT SENT + why). No
+          // budget estimate here: an uncalibrated simulator is noise and must
+          // not steer send decisions; a calibrated one already gates auto-push
+          // (holdAgentAutoPush), and the fixture's measurement is the standard.
+          const outcome = lastCompileSummary.startsWith("OK") && lastPushOutcome ? pushOutcomeNote(await lastPushOutcome) : "";
+          return `Compile result: ${lastCompileSummary}${outcome ? `\n\nDevice: ${outcome}` : ""}${kept ? `\n\n${kept}` : ""}${
             lastDisassembly && !cpuMode ? `\n\nDisassembly:\n${lastDisassembly}` : ""
           }`;
         },
@@ -1864,19 +1903,20 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   // -- device ---------------------------------------------------------------
   // Upload already-compiled bytecode + the current uniforms to the device. Shared
   // by the manual Push button and the auto-push-on-compile path.
-  async function pushBytecode(bytecode: Uint8Array): Promise<void> {
+  async function pushBytecode(bytecode: Uint8Array): Promise<PushOutcome> {
     // Serialized with measure_on_device: an upload mid-capture would mix two
     // programs' perf windows.
     return withDeviceLock(() => pushBytecodeNow(bytecode));
   }
 
-  async function pushBytecodeNow(bytecode: Uint8Array): Promise<void> {
+  async function pushBytecodeNow(bytecode: Uint8Array): Promise<PushOutcome> {
     const c = appState.client;
-    if (!c?.isConnected) return;
+    if (!c?.isConnected) return { kind: "not_connected", autoPush: autoPushCb.checked };
     devStatus.textContent = "Uploading…";
     try {
       await c.submitEffect(effectId, bytecode, true);
       lastPushedFxb = bytecode; // flashed — auto-push dedupes against this
+      lastPushedDevice = deviceStore.activeId();
       if (heldDraft !== null && bytesEqual(heldDraft, bytecode)) heldDraft = null;
       if (panel.values().length > 0) c.setUniforms(panel.values());
       // Remember this effect now lives on the connected device (green badge +
@@ -1886,8 +1926,11 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       runningEffectId = effectId;
       refreshMismatch();
       devStatus.textContent = "Pushed · effect active.";
+      const name = c.welcome?.deviceName;
+      return name ? { kind: "sent", device: name } : { kind: "sent" };
     } catch (e) {
       devStatus.textContent = `push failed: ${msg(e)}`;
+      return { kind: "failed", error: msg(e) };
     }
   }
 

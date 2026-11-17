@@ -16,7 +16,6 @@ import {
   holdAgentAutoPush,
   optimizeAsk,
   trustedBudget,
-  uncalibratedEstimateNote,
 } from "../src/effects/ai/agentDraft";
 
 /** A calibrated-model estimate (cost table benchmarked on the user's board). */
@@ -106,17 +105,6 @@ test("uncalibrated: an over-budget estimate does not hold auto-push", () => {
   assert.equal(holdAgentAutoPush({ agentTurn: true, budget: rough(3.14) }), false);
   assert.equal(holdAgentAutoPush({ agentTurn: true, budget: est(3.14) }), true);
   assert.equal(holdAgentAutoPush({ agentTurn: true, budget: measured(1.3) }), true);
-});
-
-test("uncalibrated: the agent is told the estimate is no verdict and to measure", () => {
-  const note = uncalibratedEstimateNote(rough(3.14), true);
-  assert.match(note, /314% of the frame budget, from the UNCALIBRATED default cost model/);
-  assert.match(note, /not held back/);
-  assert.match(note, /Call measure_on_device and treat the measured number as what counts/);
-  assert.match(uncalibratedEstimateNote(rough(3.14), false), /No fixture is connected/);
-  assert.equal(uncalibratedEstimateNote(est(3.14), true), "", "calibrated estimates speak for themselves");
-  assert.equal(uncalibratedEstimateNote(measured(3.14), true), "");
-  assert.equal(uncalibratedEstimateNote(rough(0.5), true), "");
 });
 
 test("uncalibrated: no 'not ready'/'stopped' verdict from the estimate; the measurement decides", () => {
