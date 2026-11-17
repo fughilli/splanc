@@ -27,6 +27,7 @@ firmware instead.
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from typing import Any
@@ -37,7 +38,12 @@ from server.codebook import code_params_for
 
 # What the C6/P4 firmware advertises in welcome.features (firmware/player
 # FEATURE_STAGGER_PILOT): the app then asks start_mapping for hue code v2.
-FEATURES = ["hue_stagger_pilot"]
+# MOCK_DEVICE_FEATURES=<comma list> overrides it ("" = an older player: v1 only).
+FEATURES = (
+    [f for f in os.environ["MOCK_DEVICE_FEATURES"].split(",") if f]
+    if "MOCK_DEVICE_FEATURES" in os.environ
+    else ["hue_stagger_pilot"]
+)
 
 CODE_PARAMS = {
     "ledCount": 64,

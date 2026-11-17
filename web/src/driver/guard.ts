@@ -62,6 +62,8 @@ export interface DriverDecodeStats {
   perf?: CapturePerfSnapshot;
   /** Code book + decoder counters, so a stuck decode says why (HITL timeouts). */
   decoder?: Record<string, string | number | null>;
+  /** Capture startup phase (probe, clock sync, start_mapping, capturing). */
+  phase?: string;
 }
 
 /** A solved-map summary the HITL capture journey asserts on (target LED count vs

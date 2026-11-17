@@ -277,7 +277,7 @@ async function handle(msg: Incoming): Promise<unknown> {
         if (Date.now() >= deadline) {
           throw new Error(
             `decode timeout: ${st.ids}/${minIds} ids after ${p.timeoutMs ?? 30000}ms` +
-              ` (tracks ${st.tracks}, decoder ${JSON.stringify(st.decoder ?? null)})`,
+              ` (phase ${st.phase ?? "?"}, tracks ${st.tracks}, decoder ${JSON.stringify(st.decoder ?? null)})`,
           );
         }
         await new Promise((r) => setTimeout(r, 250));

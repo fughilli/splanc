@@ -776,6 +776,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   let driverDecodeStats: DriverDecodeStats = { ids: 0, total: 0, tracks: 0, observations: 0 };
   // Mid-capture code renegotiations applied this run (applyReconfigure).
   let renegotiations = 0;
+  // Where the capture's startup is, so a decode that never began says where it stalled.
+  let driverPhase = "mounting";
   // The live capture's renegotiation, for the HITL driver's `renegotiate` command.
   let driverRenegotiate: ((opts: { symbols?: 2 | 4; bitPeriodMs?: number; brightness?: number }) => Promise<void>) | null =
     null;
@@ -1252,6 +1254,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       let lastAmbient: number | null = null;
       const skipProbe = profileRun?.skipProbe === true;
       if (!skipProbe) guideEl.textContent = "Measuring light…";
+      driverPhase = "probe";
       if (!skipProbe) await new Promise<void>((resolve) => {
         const deadline = setTimeout(resolve, 2500);
         let t0 = -1;
@@ -1312,6 +1315,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       };
 
       abandonIfDisposed();
+      driverPhase = "clock sync";
       await c.syncClock(4);
       // Per-channel capture whose first stage codes only a prefix (the curtain):
       // the device transmits just [0, ledCount) while capturing, so a channel
@@ -1321,7 +1325,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       const stage0 = channelPlan?.stages[0];
       const blankFirst = channelPlan !== null && stage0 !== undefined && stage0.ledCount < channelPlan.total;
       abandonIfDisposed();
+      driverPhase = "start_mapping";
       const started = await c.startMapping(ledCount, blankFirst ? { ...config, brightness: 0 } : config);
+      driverPhase = "capturing";
       mappingStarted = true;
       abandonIfDisposed();
       if (calibrateId !== null) startCalibrationUi(c);
@@ -2846,7 +2852,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // capture and await the solved map (see driver/harness.ts finishCapture).
       if (driverActive()) {
         registerDriverCapture({
-          stats: () => driverDecodeStats,
+          stats: () => ({ ...driverDecodeStats, phase: driverPhase }),
           renegotiate: async (opts) => {
             // The capture starts (start_mapping) a moment after the screen mounts.
             const by = Date.now() + 20000;
