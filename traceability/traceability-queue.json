@@ -237,12 +237,6 @@
       "provided_level": "simulation"
     },
     {
-      "kind": "untraced-failure",
-      "entity": "//agent:schedule_test",
-      "message": "//agent:schedule_test agent/schedule_test_/schedule_test error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
       "kind": "high-risk-open",
       "entity": "RISK-1",
       "message": "high risk; mitigation is PARTIAL",
