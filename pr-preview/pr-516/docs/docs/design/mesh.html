@@ -949,6 +949,135 @@ antennas before the install.</p></li>
 it, so an installer sees a weak link on site. HITL can’t reproduce the enclosure; the bench
 measurement is the check.</p>
 </section>
+<section id="phy-rate-adapted-per-node-gated-by-measurement">
+<h3>4.6 PHY rate: adapted per node, gated by measurement<a class="headerlink" href="#phy-rate-adapted-per-node-gated-by-measurement" title="Link to this heading">¶</a></h3>
+<p>The owner does not pick a rate: the measurements decide (Q12). Every node adapts its broadcast
+rate on its own, and R0 and the HITL scenarios gate what ships.</p>
+<p><strong>Adaptation</strong> (modelled in <code class="docutils literal notranslate"><span class="pre">meshsim</span></code>, <code class="docutils literal notranslate"><span class="pre">RateCtl</span></code>; firmware in M3):</p>
+<ul class="simple">
+<li><p><strong>Ladder</strong>: 1 Mb/s DSSS → 6 → 12 → 24 Mb/s OFDM. A node starts at the most robust rate.</p></li>
+<li><p><strong>Feedback</strong> is the share of its frames that its <em>solid</em> neighbours still receive. On
+hardware this comes from per-neighbour heard counts in their adverts (up to 8 neighbours,
+~16 B) and from MAC ACKs on unicasts.</p>
+<ul>
+<li><p>A neighbour is solid when the most robust rate reaches it with a 10 dB margin.</p></li>
+<li><p>Marginal neighbours are left to relays: holding the whole mesh at 1 Mb/s for them costs
+more airtime than it saves.</p></li>
+</ul>
+</li>
+<li><p><strong>Rules</strong>, per 1 s window:</p>
+<ul>
+<li><p>Step <strong>up</strong> after two windows at ≥ 90 %.</p></li>
+<li><p>Step <strong>down</strong> below 80 %.</p></li>
+<li><p>A failed probe doubles the hold-off before the next one (up to 32 s).</p></li>
+<li><p>On a <strong>busy channel</strong> (&gt; 50 % of the window sensed busy), poor delivery means collisions,
+not range, so step <strong>up</strong> (shorter frames).</p></li>
+</ul>
+</li>
+<li><p>Live control is never paused for adaptation: a rate change takes effect on the next frame.</p></li>
+</ul>
+<p>Measured in meshsim. 30 Hz live control, grid, enclosure losses spread 5–25 dB, 5 % random
+loss, with and without people walking (links shadowed 12 dB for 1–3 s at random):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Nodes</p></th>
+<th class="head"><p>1 Mb/s</p></th>
+<th class="head"><p>6 Mb/s</p></th>
+<th class="head"><p>12 Mb/s</p></th>
+<th class="head"><p>24 Mb/s</p></th>
+<th class="head"><p><strong>Adaptive</strong> (mean rate)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>6</p></td>
+<td><p>99.6 %</p></td>
+<td><p>97.3 %</p></td>
+<td><p>79 %</p></td>
+<td><p>71 %</p></td>
+<td><p><strong>98.4 %</strong> (3.8 Mb/s)</p></td>
+</tr>
+<tr class="row-odd"><td><p>6, walking</p></td>
+<td><p>99.6 %</p></td>
+<td><p>98.7 %</p></td>
+<td><p>87 %</p></td>
+<td><p>71 %</p></td>
+<td><p><strong>97.3 %</strong> (4.3 Mb/s)</p></td>
+</tr>
+<tr class="row-even"><td><p>16</p></td>
+<td><p>100 %</p></td>
+<td><p>98.4 %</p></td>
+<td><p>96 %</p></td>
+<td><p>90 %</p></td>
+<td><p><strong>99.6 %</strong> (4.9 Mb/s)</p></td>
+</tr>
+<tr class="row-odd"><td><p>16, walking</p></td>
+<td><p>100 %</p></td>
+<td><p>94.3 %</p></td>
+<td><p>97 %</p></td>
+<td><p>86 %</p></td>
+<td><p><strong>99.2 %</strong> (2.9 Mb/s)</p></td>
+</tr>
+<tr class="row-even"><td><p>32</p></td>
+<td><p>61 %</p></td>
+<td><p>96.6 %</p></td>
+<td><p>91 %</p></td>
+<td><p>80 %</p></td>
+<td><p><strong>96.1 %</strong> (4.4 Mb/s)</p></td>
+</tr>
+<tr class="row-odd"><td><p>32, walking</p></td>
+<td><p>53 %</p></td>
+<td><p>95.9 %</p></td>
+<td><p>89 %</p></td>
+<td><p>77 %</p></td>
+<td><p><strong>93.1 %</strong> (2.5 Mb/s)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p>Adaptation lands within a few percent of the best fixed rate without knowing it in
+advance, and never collapses the way 1 Mb/s does at 32 nodes.</p></li>
+<li><p>In a 6-fixture room with strong links it climbs to 24 Mb/s (meshsim scenario).</p></li>
+<li><p><strong>Known shortfall</strong>: at 32 nodes under heavy live load it settles below 6 Mb/s. M3 tunes
+the congestion rule against the node’s own offered load, or adds a 6 Mb/s floor once every
+solid neighbour is reached.</p></li>
+</ul>
+<p><img alt="PHY rate: fixed vs adaptive" src="docs/design/mesh/phy-rate.png" /></p>
+<p><strong>Pass criteria</strong> (the gate, not a number picked up front):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Gate</p></th>
+<th class="head"><p>Test</p></th>
+<th class="head"><p>Pass</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>R0, enclosure link budget</p></td>
+<td><p>§4.5: RSSI both ways at 1/3/5 m, people walking, 4 orientations</p></td>
+<td><p>Every fixture-to-fixture link ≥ the 6 Mb/s sensitivity + 10 dB at the 1st percentile (−78 dBm); otherwise the install runs adaptive with a 1 Mb/s floor and fewer live Hz</p></td>
+</tr>
+<tr class="row-odd"><td><p>Convergence</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">mesh_smoke</span></code> HITL, 2 DUTs, then all bench DUTs</p></td>
+<td><p>Settles within 5 s of a change; no more than one rate change per 10 s per node when nothing moves</p></td>
+</tr>
+<tr class="row-even"><td><p>Live control</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">mesh_gateway</span></code> HITL at the target rate for the install (§6.4)</p></td>
+<td><p>≥ 99 % of live updates delivered, p99 latency &lt; 50 ms</p></td>
+</tr>
+<tr class="row-odd"><td><p>Walking</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">mesh_soak</span></code> with people (or an attenuator ladder) between DUTs</p></td>
+<td><p>Live delivery stays ≥ 97 %; no node stuck below 6 Mb/s once the obstruction clears</p></td>
+</tr>
+<tr class="row-even"><td><p>Bulk</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">mesh_effect</span></code></p></td>
+<td><p>Blob to all members, no rate-induced retries beyond 10 %</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
 </section>
 <section id="protocol">
 <h2>5. Protocol<a class="headerlink" href="#protocol" title="Link to this heading">¶</a></h2>
@@ -1306,6 +1435,96 @@ generations, flooded the same way.</p></li>
 plus one want-ack retry adds 1 s. The default lead stays the bridge’s 150 ms for one or two
 hops, and 300 ms when the target set is three hops out. A member that receives a change after
 its <code class="docutils literal notranslate"><span class="pre">apply_at</span></code> applies it on arrival and counts it late (reported in <code class="docutils literal notranslate"><span class="pre">MeshStatus</span></code>).</p>
+</section>
+<section id="live-updates-as-fast-as-the-airtime-allows-smooth-on-every-member">
+<h3>6.4 Live updates: as fast as the airtime allows, smooth on every member<a class="headerlink" href="#live-updates-as-fast-as-the-airtime-allows-smooth-on-every-member" title="Link to this heading">¶</a></h3>
+<p>Live moves (fader drags, uncommitted uniforms) should feel immediate on every fixture (Q13).</p>
+<p><strong>On the mesh</strong> (<code class="docutils literal notranslate"><span class="pre">MeshStack::send_live</span></code>, M2):</p>
+<ul class="simple">
+<li><p><strong>Coalesced per frame.</strong> A new live update replaces one not yet sent, so the mesh always
+carries the newest value at whatever rate its airtime allows. Live traffic never queues
+behind itself.</p></li>
+<li><p><strong>Compact and batched.</strong> One packet carries several uniforms, each as uniform id + 16-bit
+value, plus a sequence number (8 B for two uniforms). Deltas against the last committed
+scene keep it small. The per-receiver MACs (8 B per member, §7.9) dominate the size, not
+the values.</p></li>
+<li><p><strong>Priority over bulk.</strong> Live control relays at high priority; bulk is evicted first (§10.6).</p></li>
+<li><p><strong>Rate per mesh size.</strong> The app offers updates at its UI rate (60 Hz or more); coalescing
+turns that into the rate the mesh carries.</p></li>
+</ul>
+<p><strong>Measured</strong> (meshsim, grid, mixed links, 5 % loss, people walking; offered 15–120 Hz):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Nodes</p></th>
+<th class="head"><p>Highest rate at ≥ 99 % delivered</p></th>
+<th class="head"><p>≥ 97 % delivered</p></th>
+<th class="head"><p>What members receive at 120 Hz offered</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>6</p></td>
+<td><p>15 Hz (99.7 %, adaptive)</p></td>
+<td><p>60 Hz</p></td>
+<td><p>112–116 updates/s</p></td>
+</tr>
+<tr class="row-odd"><td><p>16</p></td>
+<td><p><strong>45 Hz</strong> (99.0 %, adaptive)</p></td>
+<td><p>60 Hz</p></td>
+<td><p>82–107 updates/s</p></td>
+</tr>
+<tr class="row-even"><td><p>32</p></td>
+<td><p>none: 98.7 % at 15 Hz is the best</p></td>
+<td><p>15 Hz</p></td>
+<td><p>41–96 updates/s</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>On every member: interpolation on its own render clock</strong> (<code class="docutils literal notranslate"><span class="pre">firmware/mesh/src/interp.rs</span></code>):</p>
+<ul class="simple">
+<li><p>Each live update is a keyframe that applies at <code class="docutils literal notranslate"><span class="pre">apply_at</span> <span class="pre">=</span> <span class="pre">sent</span> <span class="pre">+</span> <span class="pre">playout</span> <span class="pre">delay</span></code>, in mesh
+time (§6.2). The playout delay is 2.5 keyframe intervals, at least 33 ms: 83 ms at 30 Hz,
+56 ms at 45 Hz, 33 ms at 60 Hz and above.</p></li>
+<li><p>A member renders at 60 fps or more and samples each uniform at its render time:</p></li>
+</ul>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Uniform type</p></th>
+<th class="head"><p>Between keyframes</p></th>
+<th class="head"><p>Past the last keyframe (loss)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>float (fader, speed)</p></td>
+<td><p>Catmull-Rom (Hermite); linear at the ends</p></td>
+<td><p>keep its velocity for ≤ 1 interval, ease to a hold over the next; hold after</p></td>
+</tr>
+<tr class="row-odd"><td><p>colour</p></td>
+<td><p>linear per channel (linear RGB)</p></td>
+<td><p>hold</p></td>
+</tr>
+<tr class="row-even"><td><p>int, enum, bool, effect</p></td>
+<td><p>step at <code class="docutils literal notranslate"><span class="pre">apply_at</span></code></p></td>
+<td><p>hold</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p><strong>Smoothness</strong> (a 0.5 Hz full-scale fader, rendered at 60 fps, error against the true
+motion delayed by the playout delay): wherever delivery is ≥ 97 % (14 of 36 runs), Hermite’s
+RMS error has a median of 0.0004 of full scale and a worst case of 0.015. Linear is a median
+3× worse, and step a median 140×.
+With interpolation a 30 Hz mesh rate already renders as smooth motion at 60+ fps; the
+playout delay is the price.</p></li>
+<li><p>A track holds 8 keyframes (enough for the delay at 120 Hz).</p></li>
+</ul>
+<p><img alt="live update rate, delivery and smoothness" src="docs/design/mesh/live-rate.png" /></p>
+<p>So the radiolarians (6 fixtures) can take 60 Hz live moves at ≥ 97 % and render them smoothly.
+A 16-fixture install runs comfortably at 45 Hz. Past ~32 fixtures the per-receiver MACs are
+the limit; a broadcast authenticator is the open item there (Q14, deferred).</p>
 </section>
 </section>
 <section id="membership-groups-and-security">
@@ -1770,6 +1989,62 @@ the bridge.</p></li>
 <li><p>A stolen phone or bridge holds the admin secret. Rotate it from another admin’s app
 (staged as M9b).</p></li>
 </ul>
+<p><strong>When crypto cost is paid</strong> (Q11). Never per command, and never on the render path:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>When</p></th>
+<th class="head"><p>Who pays</p></th>
+<th class="head"><p>What</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>An admin unlocks (the app presents a grant to a gateway)</p></td>
+<td><p>each member, once</p></td>
+<td><p>1 ECDSA verify + 1 ECDH (C6 est. 5–15 ms)</p></td>
+</tr>
+<tr class="row-odd"><td><p></p></td>
+<td><p>the gateway, once per member Ack</p></td>
+<td><p>1 ECDH each</p></td>
+</tr>
+<tr class="row-even"><td><p>The app switches gateway (a new grant to a new fixture)</p></td>
+<td><p>as at unlock</p></td>
+<td><p>as at unlock</p></td>
+</tr>
+<tr class="row-odd"><td><p>Grant renewal, before T</p></td>
+<td><p>each member, once</p></td>
+<td><p>1 ECDSA verify (same session: no ECDH, no new keys, no Acks)</p></td>
+</tr>
+<tr class="row-even"><td><p>A member reboots or joins mid-session</p></td>
+<td><p>that member, and the gateway once for its Ack</p></td>
+<td><p>1 verify + 1 ECDH; 1 ECDH</p></td>
+</tr>
+<tr class="row-odd"><td><p>Every command</p></td>
+<td><p>each recipient</p></td>
+<td><p>1 HMAC-SHA256 (tens of µs); no public-key work</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p><strong>Off the render path.</strong> Members queue grants that need a verify, and gateways queue Acks
+that need an ECDH (<code class="docutils literal notranslate"><span class="pre">MeshStack::run_crypto</span></code>). Firmware drains that queue from a
+low-priority task, below the render task and the netstack. A slow verify delays only the
+session’s start; it never hitches a frame. Held commands wait for it.</p>
+<ul>
+<li><p>The queue costs ~340 B on the C6: one pending grant and two pending Acks.</p></li>
+</ul>
+</li>
+<li><p><strong>Renewal ahead of expiry.</strong> The gateway raises <code class="docutils literal notranslate"><span class="pre">GrantRenewalDue</span></code> 10 min before T. The app
+(or the bridge) signs a renewal in the background, with the same session and a later T, and
+presents it. Members re-verify off the render path while the old grant is still valid.</p>
+<ul>
+<li><p>A live show never waits on a renewal. In meshsim, 750 commands across two renewals and
+the original expiry: none missed, 20 crypto jobs in all.</p></li>
+</ul>
+</li>
+<li><p><strong>Measure in M3a.</strong> Until then the C6/P4 figures stay estimates.</p></li>
+</ul>
 </section>
 <section id="what-remains-unresolvable">
 <h3>7.10 What remains unresolvable<a class="headerlink" href="#what-remains-unresolvable" title="Link to this heading">¶</a></h3>
@@ -2003,62 +2278,74 @@ limit is the BLE gateway’s share (§4.3), not the mesh.</p>
 <h3>10.4 RAM<a class="headerlink" href="#ram" title="Link to this heading">¶</a></h3>
 <p>The C6 front ends of the radiolarians have no render task and no LED buffers, so the mesh’s RAM
 is not a concern there. On a standalone C6 player it still matters at large LED configs.</p>
-<p>Measured in M2: <code class="docutils literal notranslate"><span class="pre">size</span></code> of each piece as a <code class="docutils literal notranslate"><span class="pre">.bss</span></code> static on the C6 (riscv32imac, <code class="docutils literal notranslate"><span class="pre">-c</span> <span class="pre">opt</span></code>,
-<code class="docutils literal notranslate"><span class="pre">nm</span> <span class="pre">-S</span></code> on <code class="docutils literal notranslate"><span class="pre">//firmware/mesh:mesh_ram_probe</span></code>), at the 802.11 payload <code class="docutils literal notranslate"><span class="pre">P</span> <span class="pre">=</span> <span class="pre">200</span></code>:</p>
+<p>Measured: each piece as a <code class="docutils literal notranslate"><span class="pre">.bss</span></code> static on the C6 (riscv32imac, <code class="docutils literal notranslate"><span class="pre">-c</span> <span class="pre">opt</span></code>, <code class="docutils literal notranslate"><span class="pre">nm</span> <span class="pre">-S</span></code> on
+<code class="docutils literal notranslate"><span class="pre">//firmware/mesh:mesh_ram_probe</span></code>), at the 802.11 payload <code class="docutils literal notranslate"><span class="pre">P</span> <span class="pre">=</span> <span class="pre">200</span></code>:</p>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
 <thead>
 <tr class="row-odd"><th class="head"><p>Item</p></th>
-<th class="head"><p>M2, first draft</p></th>
+<th class="head"><p>M2 first draft</p></th>
+<th class="head"><p>M2 review</p></th>
 <th class="head"><p>M2 now</p></th>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">swarm_net</span></code> (relays, outbox, events and app queue: 8 → 4 each; dedup; pages)</p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">swarm_net</span></code> (queues 8 → 4; the custodian spill slot behind a feature, off)</p></td>
 <td><p>12,648 B</p></td>
 <td><p>9,360 B</p></td>
+<td><p>9,128 B</p></td>
 </tr>
 <tr class="row-odd"><td><p>Envelope: keys, 64-bit counter, replay table (64 × 16 B)</p></td>
 <td><p>1,152 B</p></td>
+<td><p>1,264 B</p></td>
 <td><p>1,264 B</p></td>
 </tr>
 <tr class="row-even"><td><p>Membership: state (804 B, persisted), pending joins, gateway’s pending list</p></td>
 <td><p>2,688 B</p></td>
 <td><p>1,752 B</p></td>
+<td><p>1,760 B</p></td>
 </tr>
-<tr class="row-odd"><td><p>Admin sessions (member) / gateway roster (16 members, pairwise keys)</p></td>
+<tr class="row-odd"><td><p>Admin sessions (member) / gateway roster (16, pairwise keys)</p></td>
 <td><p>—</p></td>
+<td><p>200 / 608 B</p></td>
 <td><p>200 / 608 B</p></td>
 </tr>
 <tr class="row-even"><td><p>Rotation: gateway rekeyer / member side</p></td>
 <td><p>—</p></td>
 <td><p>496 / 240 B</p></td>
+<td><p>496 / 240 B</p></td>
 </tr>
-<tr class="row-odd"><td><p>Router, admin gate, held command, neighbours, plain-frame buffers</p></td>
-<td><p>~600 B</p></td>
-<td><p>~1,100 B</p></td>
+<tr class="row-odd"><td><p>Background crypto queue (a grant, two Acks, ~340 B), the pending live update (~60 B), hop, pacing and renewal state</p></td>
+<td><p>—</p></td>
+<td><p>—</p></td>
+<td><p>~590 B</p></td>
 </tr>
 <tr class="row-even"><td><p><strong>Whole <code class="docutils literal notranslate"><span class="pre">MeshStack</span></code> (gateway roster 16)</strong></p></td>
 <td><p><strong>17,232 B</strong></p></td>
-<td><p><strong>15,080 B</strong></p></td>
+<td><p><strong>15,104 B</strong></p></td>
+<td><p><strong>15,472 B</strong></p></td>
 </tr>
-<tr class="row-odd"><td><p>Open mode (feature <code class="docutils literal notranslate"><span class="pre">open_mode</span></code>, M7b): guest table 1,040 + guest replay 272 + follower 56</p></td>
-<td><p>in the above</p></td>
-<td><p><strong>+1,368 B</strong> when compiled in</p></td>
+<tr class="row-odd"><td><p>Open mode (feature <code class="docutils literal notranslate"><span class="pre">open_mode</span></code>, M7b)</p></td>
+<td><p>(included)</p></td>
+<td><p>+1,368 B</p></td>
+<td><p><strong>+912 B</strong></p></td>
 </tr>
 </tbody>
 </table>
 </div>
 <p>There is no heap. <code class="docutils literal notranslate"><span class="pre">tick()</span></code> also takes a caller-provided scratch of about 0.7 KB.</p>
 <ul class="simple">
-<li><p>The <strong>gateway roster</strong> grows with the mesh: 16 entries = 608 B, 64 = 1,952 B. A standalone
-C6 player keeps 16. A P4 + C6 front end can keep 64 or more, or keep the roster on the P4.</p></li>
-<li><p><strong>Open mode’s budget is 1.4 KB.</strong> About 0.6 KB of that can be saved with 32-bit timestamps
-and compact rate buckets in the guest table. It must fit within the current figure when
-M7b turns it on.</p></li>
-<li><p>The design’s first estimate (~7.5 KB) assumed <code class="docutils literal notranslate"><span class="pre">swarm_net</span></code> at ~4 KB. At <code class="docutils literal notranslate"><span class="pre">P</span> <span class="pre">=</span> <span class="pre">200</span></code> its packet
-slots dominate. Shrinking further means fewer slots (each holds a full 200 B packet) or a
-byte ring instead of fixed slots. That is the next lever if a C6 player needs it.</p></li>
+<li><p>The <strong>gateway roster</strong> grows with the mesh: 16 = 608 B, 64 = 1,952 B. A standalone C6
+player keeps 16; a P4 + C6 front end can keep 64 or more.</p></li>
+<li><p><strong>Open mode’s budget is accepted</strong> (Q16). The guest table was trimmed to 32-bit timestamps
+and an in-band empty marker (1,040 → 588 B), so open mode adds 912 B, within the 1.4 KB
+budget.</p></li>
+<li><p>The <strong>custodian spill</strong> (~230 B) is behind the <code class="docutils literal notranslate"><span class="pre">custodian_spill</span></code> feature, off on firmware
+(Q17). Host builds (Pi, meshsim) keep it.</p></li>
+<li><p>The background crypto queue (§7.9) is the price of never doing public-key work on the tick:
+~340 B.</p></li>
+<li><p>Shrinking further means fewer <code class="docutils literal notranslate"><span class="pre">swarm_net</span></code> slots or a byte ring. That is the next lever if a
+C6 player needs it.</p></li>
 </ul>
 </section>
 <section id="minimum-set-that-ships-radiolarians">
@@ -2088,117 +2375,239 @@ IP backhaul and OTA over the mesh can follow the first install.</p>
 <p>Meshes mix very different devices. A standalone C6 player has a tight heap. A P4 + C6 fixture
 runs the mesh on the C6 front end but can keep deep queues on the P4, reached over the C6↔P4
 SDIO link. A Raspberry Pi has effectively unlimited RAM, runs Linux, and may also be on the
-LAN. The mesh uses the difference instead of sizing everyone for the weakest node.</p>
-<p><strong>Mechanisms</strong> (implemented in M2, host code: <code class="docutils literal notranslate"><span class="pre">firmware/mesh/src/stack.rs</span></code>, <code class="docutils literal notranslate"><span class="pre">swarm/src/mesh.rs</span></code>):</p>
+LAN. The question was whether the mesh should exploit the difference instead of sizing
+everyone for the weakest node, and which mechanisms earn their RAM. M2 built the mechanisms,
+simulated them, and kept only what helps.</p>
+<p><strong>What is in the code</strong> (<code class="docutils literal notranslate"><span class="pre">firmware/mesh/src/stack.rs</span></code>, <code class="docutils literal notranslate"><span class="pre">firmware/mesh/swarm/src/mesh.rs</span></code>):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Mechanism</p></th>
+<th class="head"><p>C6 RAM</p></th>
+<th class="head"><p>Verdict from the sweeps</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Class (C6, P4, Pi) and relay credit in every advert</p></td>
+<td><p>~100 B (8 neighbours)</p></td>
+<td><p><strong>Keep</strong>: picks bulk sources and page servers, sizes gateway rosters</p></td>
+</tr>
+<tr class="row-odd"><td><p>Small C6 queues (4 relay, 4 outbox) with a priority drop policy: bulk, then status, never control/time/membership/freshness first</p></td>
+<td><p>saves 3.3 KB</p></td>
+<td><p><strong>Keep</strong>: control is never starved by bulk</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>Source pacing of bulk</strong> (<code class="docutils literal notranslate"><span class="pre">send_bulk</span></code>: ≥ 20 ms between bulk packets, and only while neighbours advertise credit)</p></td>
+<td><p>a few bytes</p></td>
+<td><p><strong>Keep, the one that matters</strong>: far-side delivery through a C6 cut vertex rises from 40–53 % to 69–89 %</p></td>
+</tr>
+<tr class="row-odd"><td><p>Custodian spill: a P4/Pi keeps evicted bulk/normal relays in a deep store (P4 RAM over SDIO, 100 µs + 20 MB/s per transfer; Pi RAM), released while neighbours have credit</p></td>
+<td><p>0 on firmware (feature <code class="docutils literal notranslate"><span class="pre">custodian_spill</span></code>, off)</p></td>
+<td><p><strong>Behind a feature, off by default</strong> (owner, Q17): never exercised so far</p></td>
+</tr>
+<tr class="row-even"><td><p>Relay-delay bias by class (custodians relay bulk early, C6s late)</p></td>
+<td><p>0</p></td>
+<td><p><strong>Removed</strong>: made a C6 cut vertex cancel the only relay toward the far side (3 % delivery)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Page requests prefer custodians among equally advanced neighbours</p></td>
+<td><p>8 B</p></td>
+<td><p>Keep (harmless), but no measurable gain</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>Adaptive hop limit</strong> (Q15): the diameter seen (own + neighbours’ adverts) + 1, 2..=15; a probe flood at 15 once a minute per node</p></td>
+<td><p>6 B</p></td>
+<td><p><strong>Keep</strong>: a 32-node line goes from 20–40 % to 63 % (below)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The <strong>Pi</strong> runs the same crates’ std build (<code class="docutils literal notranslate"><span class="pre">//firmware/mesh</span></code>, feature <code class="docutils literal notranslate"><span class="pre">host</span></code>). The Backhaul
+trait and the frame format are host-portable, and nothing blocks a std/Linux build.</p>
 <ul class="simple">
-<li><p><strong>Capacity advertised.</strong> Every advert carries the node’s class (C6, P4, Pi) and its current
-relay credit (free relay slots).</p></li>
-<li><p><strong>Standalone C6: small queues, a drop policy.</strong> It keeps 4 relay and 4 outbox slots and
-forwards promptly. With no room, it evicts the oldest relay of the lowest class below the
-new one: bulk (port ≥ 23) before status and replies, before control, membership, time and
-freshness (<code class="docutils literal notranslate"><span class="pre">Port::HIGH_PRIORITY</span></code>). Control is never starved by bulk.</p></li>
-<li><p><strong>Custodians (P4, Pi): depth on the big side.</strong></p>
+<li><p>A Pi needs its own <code class="docutils literal notranslate"><span class="pre">DeviceKey</span></code> (its TLS key file), a real <code class="docutils literal notranslate"><span class="pre">Entropy</span></code> (getrandom), a
+file-backed <code class="docutils literal notranslate"><span class="pre">Flash</span></code> for the page protocol, and its <code class="docutils literal notranslate"><span class="pre">Backhaul</span></code> (nl80211 Public Action frames on
+the built-in radio, §4.1).</p></li>
+<li><p>In meshsim its radio is the measured built-in Broadcom path: one-way 5–27 ms (≈ 14 ms median,
+54 ms p99 RTT), 94 % per-hop broadcast delivery, ≤ 320 frames/s.</p></li>
+<li><p>A Pi bridging islands over IP is M10.</p></li>
+</ul>
+<p><strong>Sweeps</strong> (<code class="docutils literal notranslate"><span class="pre">firmware/mesh/meshsim/sweep/</span></code>: <code class="docutils literal notranslate"><span class="pre">main.rs</span></code> runs them, <code class="docutils literal notranslate"><span class="pre">plot.py</span></code> draws them; data in
+<code class="docutils literal notranslate"><span class="pre">mesh/sweep.csv</span></code> (150 runs) and <code class="docutils literal notranslate"><span class="pre">mesh/stress.csv</span></code> (46 runs)). Frames carry the Public Action
+header (+1 B, §4.1).</p>
+<ol class="arabic">
+<li><p><strong>Airtime, not queue RAM, limits live control.</strong> 60 Hz control to every member (one
+flood, per-receiver MACs):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Nodes</p></th>
+<th class="head"><p>6</p></th>
+<th class="head"><p>16</p></th>
+<th class="head"><p>32</p></th>
+<th class="head"><p>64</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>1 Mb/s DSSS, 60 Hz</p></td>
+<td><p>100 %</p></td>
+<td><p>53 %</p></td>
+<td><p>18 %</p></td>
+<td><p>15 %</p></td>
+</tr>
+<tr class="row-odd"><td><p>6 Mb/s OFDM, 60 Hz</p></td>
+<td><p>100 %</p></td>
+<td><p>99 %</p></td>
+<td><p>91 %</p></td>
+<td><p>58 %</p></td>
+</tr>
+<tr class="row-even"><td><p>6 Mb/s OFDM, 30 Hz</p></td>
+<td><p>100 %</p></td>
+<td><p>99 %</p></td>
+<td><p>97 %</p></td>
+<td><p>71 %</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Mesh frames default to 6 Mb/s OFDM</strong> (meshsim’s default now; M3 for the radio, after
+M3a checks the range through the enclosures). Live moves should be coalesced to ≤ 30 Hz
+on the mesh. Past ~32 members, live moves need a broadcast authenticator (§17 Q14).</p>
+<p><img alt="live control vs nodes, 1 vs 6 Mb/s" src="docs/design/mesh/airtime.png" /></p>
+</li>
+<li><p><strong>Pull-based bulk (effect blobs, firmware, catch-up) does not need queue space.</strong> Its pages
+live in flash, and requests pull them hop by hop. Through a C6 cut vertex (two clusters
+joined only by one standalone C6, 6 Mb/s), every run completed, and capacity awareness made
+no difference:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Image</p></th>
+<th class="head"><p>Time to all</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>4 KiB blob, 16 nodes (grid)</p></td>
+<td><p>1.0–1.7 s</p></td>
+</tr>
+<tr class="row-odd"><td><p>4 KiB blob, 64 nodes</p></td>
+<td><p>3.3–4.3 s</p></td>
+</tr>
+<tr class="row-even"><td><p>256 KiB catch-up across the C6-only path</p></td>
+<td><p>40–43 s</p></td>
+</tr>
+<tr class="row-odd"><td><p>256 KiB with 30 % one-way loss after the cut vertex</p></td>
+<td><p>86–99 s</p></td>
+</tr>
+<tr class="row-even"><td><p>256 KiB with churn (a node off the air 3 s in every 4 s)</p></td>
+<td><p>72–83 s</p></td>
+</tr>
+<tr class="row-odd"><td><p>1.5 MB firmware</p></td>
+<td><p>350–366 s</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>A custodian <em>source</em> (a Pi or P4 seeding the image centrally) helps more than any queue.</p>
+</li>
+<li><p><strong>Pushed bursts are where queues bite, and pacing is the fix.</strong> Four 4 KiB blobs pushed as
+bulk floods (88 packets) through the C6 cut vertex:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Pushed as</p></th>
+<th class="head"><p>Far-side delivery</p></th>
+<th class="head"><p>All nodes</p></th>
+<th class="head"><p>Burst takes</p></th>
+<th class="head"><p>30 Hz control during it</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Unpaced (as fast as the outbox allows)</p></td>
+<td><p>40–53 %</p></td>
+<td><p>68–75 %</p></td>
+<td><p>0.14–0.26 s</p></td>
+<td><p>96–98 %</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Paced</strong> (≥ 20 ms apart, credit-gated)</p></td>
+<td><p><strong>69–89 %</strong></p></td>
+<td><p><strong>84–94 %</strong></p></td>
+<td><p>1.7 s</p></td>
+<td><p>91–94 %</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p>Credit in a 1 Hz advert is far too slow to throttle a burst that leaves in 140 ms. The
+pace itself is the backpressure.</p></li>
+<li><p>With pacing, the custodian stores were never used, in any run: nothing but live control
+ever filled a C6’s queue, and live control is never spilled (relayed late, it is worse
+than not at all: an early version that spilled it pushed 64-node p99 latency to 1.9 s).</p></li>
+</ul>
+<p><img alt="push bursts through a C6 cut vertex" src="docs/design/mesh/stress-bursts.png" /></p>
+</li>
+<li><p><strong>The hop limit, not capacity, limits line and chain venues.</strong></p>
 <ul>
-<li><p>What a custodian’s C6-side queue cannot hold spills into a deep store: P4 RAM over SDIO
-(modelled as 100 µs + 20 MB/s per transfer, each way), or the Pi’s RAM.</p></li>
-<li><p>A stored relay is released only while the neighbours advertise credit (credit-based
-backpressure).</p></li>
-<li><p><strong>Only bulk and normal-priority traffic is spilled.</strong> Live control relayed late is worse
-than not relayed. The first sweep spilled it, and 64-node p99 latency rose to 1.9 s.</p></li>
-</ul>
-</li>
-<li><p><strong>Bulk toward custodians.</strong></p>
+<li><p>A line of 32 fixtures 5 m apart is about 13 hops long at OFDM range. It reaches 20 / 31 /
+38 % of control at hop limits 3 / 5 / 7.</p></li>
+<li><p>Clustered layouts with bridges plateau at ~55–59 %.</p></li>
+<li><p><strong>Adaptive hop limit</strong> (Q15, M2):</p>
 <ul>
-<li><p>Custodians relay bulk floods early and C6s late, so a custodian’s relay usually cancels
-the C6’s.</p></li>
-<li><p>Page requests (effect blobs, firmware, catch-up) prefer a custodian among equally advanced
-neighbours, so custodians carry the retransmissions.</p></li>
-<li><p>Live control is untouched: it relays with the normal RSSI-based delay.</p></li>
+<li><p>Every node records the most hops any packet took to reach it in the last 5 minutes.
+Adverts carry that diameter estimate, and each node takes the maximum of its own and
+its neighbours’.</p></li>
+<li><p>Originations use estimate + 1, between 2 and 15 (the MeshPacket field’s bound).</p></li>
+<li><p>Every node floods a 1-byte probe at hop limit 15 once a minute, so far nodes are
+discovered even before anything reaches them.</p></li>
+<li><p>Results at 32 nodes, 30 Hz control:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Layout</p></th>
+<th class="head"><p>Fixed 3 / 5 / 7</p></th>
+<th class="head"><p>Adaptive</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Line</p></td>
+<td><p>20 / 31 / 40 %</p></td>
+<td><p><strong>63 %</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>Grid</p></td>
+<td><p>85 / 85 / 86 %</p></td>
+<td><p>88 %</p></td>
+</tr>
+<tr class="row-even"><td><p>Random</p></td>
+<td><p>96 / 99 / 97 %</p></td>
+<td><p>97 %</p></td>
+</tr>
+<tr class="row-odd"><td><p>Clustered</p></td>
+<td><p>54 / 60 / 57 %</p></td>
+<td><p>58 %</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>A line of 16 is reached end to end at limit 9 (27 of 30 commands, against 0 at a
+fixed 3).</p>
+</li>
+<li><p>The clustered layout is limited by its weak bridge links, not hops. A line longer than
+15 hops needs the IP backhaul (M10) or more bridges.</p></li>
 </ul>
 </li>
-<li><p><strong>Pi radio path</strong> is a parameter in the model: extra per-frame latency (2 ms in the sweep,
-for nl80211 action frames or USB injection), or an attached C6 as the radio. The Pi runs
-the same crates’ std build (<code class="docutils literal notranslate"><span class="pre">//firmware/mesh</span></code> feature <code class="docutils literal notranslate"><span class="pre">host</span></code>). The Backhaul trait and the
-frame format are host-portable.</p>
-<ul>
-<li><p>Nothing blocks a std/Linux build.</p></li>
-<li><p>A Pi needs its own <code class="docutils literal notranslate"><span class="pre">DeviceKey</span></code> (its TLS key file instead of <code class="docutils literal notranslate"><span class="pre">host_keys</span></code>), a real
-<code class="docutils literal notranslate"><span class="pre">Entropy</span></code> (getrandom), a file-backed <code class="docutils literal notranslate"><span class="pre">Flash</span></code> for the page protocol, and its <code class="docutils literal notranslate"><span class="pre">Backhaul</span></code>
-implementation.</p></li>
-<li><p>A Pi bridging islands over IP is the IP backhaul (M10).</p></li>
 </ul>
-</li>
-</ul>
-<p><strong>Sweep</strong> (<code class="docutils literal notranslate"><span class="pre">//firmware/mesh/meshsim:sweep</span></code>; script and plots <code class="docutils literal notranslate"><span class="pre">firmware/mesh/meshsim/sweep/</span></code>;
-results <code class="docutils literal notranslate"><span class="pre">docs/design/mesh/sweep.csv</span></code>, 150 runs). It varies:</p>
-<ul class="simple">
-<li><p>class mix (C6/P4/Pi from 100 % C6 to 100 % Pi),</p></li>
-<li><p>node count (6, 16, 32, 64),</p></li>
-<li><p>topology (line, grid, random geometric, clustered with single-custodian bridges),</p></li>
-<li><p>loss (0, 10, 30 %),</p></li>
-<li><p>traffic (live control to all at 30/60 Hz, a 4 KiB effect blob, 32 KiB firmware, late-joiner
-catch-up, a blob during live control),</p></li>
-<li><p>capacity-aware relaying versus the uniform-small-queue baseline (every node a C6).</p></li>
-</ul>
-<p><img alt="live control vs nodes, 1 vs 6 Mb/s" src="docs/design/mesh/airtime.png" />
-<img alt="delivery, latency and blob time vs nodes" src="docs/design/mesh/nodes.png" />
-<img alt="class mix: control p99 and blob time" src="docs/design/mesh/mix.png" />
-<img alt="topologies at 32 nodes" src="docs/design/mesh/topology.png" />
-<img alt="queue occupancy and drops per class" src="docs/design/mesh/queues.png" /></p>
-<p>What it shows:</p>
-<ol class="arabic simple">
-<li><p><strong>Airtime, not queue RAM, is the limit for live control.</strong></p>
-<ul class="simple">
-<li><p>At 1 Mb/s DSSS, 60 Hz control to every member (one flood plus per-receiver MACs)
-delivers 100 % at 6 fixtures, 53 % at 16, 18 % at 32 and 15 % at 64.</p></li>
-<li><p>At <strong>6 Mb/s OFDM</strong>: 100 / 98 / 92 / 57 %. At 6 Mb/s and 30 Hz: 100 / 99 / 98 / 72 %.</p></li>
-<li><p>The radiolarians (6 fixtures) are fine at either rate. Larger meshes need OFDM for mesh
-frames (M3a must check its range through the enclosures) and live moves coalesced to
-≤ 30 Hz. Past ~32 nodes, live moves need a broadcast authenticator instead of
-per-receiver MACs (§17 Q14).</p></li>
-</ul>
-</li>
-<li><p><strong>Bulk is pull-based and flash-backed, so queues barely matter for it.</strong></p>
-<ul class="simple">
-<li><p>A 4 KiB blob reaches 16 nodes in 0.7–1.7 s and 64 in 3.4–4.1 s. 32 KiB firmware reaches
-16 nodes in 9–16 s.</p></li>
-<li><p>Every run with bulk completed, and no bulk was dropped at a C6.</p></li>
-<li><p>The biggest effect is <strong>where the source is</strong>: a central custodian (a Pi or P4 seeding the
-blob) beats a corner C6 gateway. That favours custodians as bulk sources.</p></li>
-<li><p>Capacity-aware relaying changed firmware times by −24 % to +23 % against the baseline,
-in both directions. That is within the noise of source placement: no consistent gain.</p></li>
-</ul>
-</li>
-<li><p><strong>Single-custodian bottleneck.</strong> In the clustered topology with the only custodian on a
-bridge, the blob reached all 32 nodes in 4.5 s (all-C6: 4.3 s). There is no bottleneck,
-because bulk is not queued at the bridge.</p></li>
-<li><p><strong>Where it degrades, and what mitigates it.</strong></p>
-<ul class="simple">
-<li><p><strong>Saturation (≥ 16 nodes at 1 Mb/s and 60 Hz):</strong> C6s drop live control at full queues
-(686 drops in 5 s at 32 nodes). Use OFDM and ≤ 30 Hz.</p></li>
-<li><p><strong>Line and chain venues:</strong> 32 in a line reach only 32 % of control, because the hop
-limit is 3. Raise the hop limit per install (Q15), or add custodians as bridges with the
-IP backhaul.</p></li>
-<li><p><strong>Random dense layouts</strong> saturate like the grid.</p></li>
-<li><p><strong>100 % C6</strong> is not worse than the mixes for control (same airtime). It is slightly
-slower for bulk only when the gateway that seeds the blob sits at the edge.</p></li>
-</ul>
-</li>
-<li><p><strong>Queue occupancy.</strong></p>
-<ul class="simple">
-<li><p>C6 relay queues reach their budget (4) only when live control saturates the channel.</p></li>
-<li><p>In this traffic mix <strong>no bulk or normal-priority relay was ever dropped at a C6</strong>, so the
-custodian stores stayed empty. The first sweep, which still spilled live control, filled
-a P4 store to 227 of 256.</p></li>
-<li><p>The custodian store and credit pacing are therefore implemented and unit-tested but not
-exercised by today’s traffic. They start to matter if M6 pushes blobs as floods instead
-of pulling pages, or for status bursts in large meshes. The sweep keeps them in the model
-for that.</p></li>
-<li><p>What the classes buy today: <strong>Pis and P4s as bulk sources and page servers</strong>, plus
-deeper gateway rosters.</p></li>
-</ul>
+<p><img alt="fixed vs adaptive hop limit" src="docs/design/mesh/hops.png" /></p>
+<p><img alt="big images and hop limits" src="docs/design/mesh/stress-images-hops.png" /></p>
 </li>
 </ol>
+<p><strong>Does capacity awareness earn its RAM?</strong> Partly.</p>
+<ul class="simple">
+<li><p>The parts that cost almost nothing earn it: pacing, priority drop, and class adverts.</p></li>
+<li><p>The parts that cost RAM on every C6 do not, for the traffic Splanc has: the custodian spill
+slot (~230 B) was never used. Unless M6 chooses to push blobs as floods (it should pull
+pages, §5.5), the spill and custody path can go behind a feature, and the P4/Pi role reduces
+to: deep gateway rosters, bulk sources, and page servers.</p></li>
+<li><p>Open mode (M7b) needs 1.4 KB on the C6 when compiled in (§10.4).</p></li>
+</ul>
+<p><img alt="C6 RAM before and after M2" src="docs/design/mesh/ram.png" /></p>
 </section>
 </section>
 <section id="uwb-backhaul-later">
@@ -2566,25 +2975,28 @@ per-receiver MACs (§7.9);</p></li>
 <tr class="row-odd"><td><p>M3</p></td>
 <td><p>Mesh frames at 6 Mb/s OFDM where range allows; the counter mark and replay marks in littlefs</p></td>
 </tr>
-<tr class="row-even"><td><p>M4</p></td>
-<td><p>Wire <code class="docutils literal notranslate"><span class="pre">timesync</span></code> (robust aggregation, step and slew rules) into beacons and the show clock</p></td>
+<tr class="row-even"><td><p>M3</p></td>
+<td><p>Per-node rate adaptation on hardware (heard counts in adverts, CCA busy time), tuned for heavy live load (§4.6)</p></td>
 </tr>
-<tr class="row-odd"><td><p>M5</p></td>
-<td><p>Live moves coalesced to ≤ 30 Hz on the mesh; <code class="docutils literal notranslate"><span class="pre">mesh_unlock{grant}</span></code> and the grant/roster in <code class="docutils literal notranslate"><span class="pre">MeshState</span></code></p></td>
+<tr class="row-odd"><td><p>M4</p></td>
+<td><p>Wire <code class="docutils literal notranslate"><span class="pre">timesync</span></code> (robust aggregation, step and slew rules) into beacons and the show clock; live keyframes applied on mesh time with <code class="docutils literal notranslate"><span class="pre">interp</span></code> (§6.4)</p></td>
 </tr>
-<tr class="row-even"><td><p>M7</p></td>
+<tr class="row-even"><td><p>M5</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">send_live</span></code> behind the app’s fader stream (compact batched uniforms); <code class="docutils literal notranslate"><span class="pre">mesh_unlock{grant}</span></code>, <code class="docutils literal notranslate"><span class="pre">GrantRenewalDue</span></code> to the app, <code class="docutils literal notranslate"><span class="pre">run_crypto</span></code> in a low-priority task</p></td>
+</tr>
+<tr class="row-odd"><td><p>M7</p></td>
 <td><p>Firmware <code class="docutils literal notranslate"><span class="pre">DeviceKey</span></code> on MbedTLS (per-device TLS key); the app derives the admin signing key and signs grants and rekey orders; admin-signed member certificates (node id ↔ device key); per-sender pairwise freshness for non-gateway peers</p></td>
 </tr>
-<tr class="row-odd"><td><p>M7b</p></td>
+<tr class="row-even"><td><p>M7b</p></td>
 <td><p>Open mode behind the <code class="docutils literal notranslate"><span class="pre">open_mode</span></code> feature (+1.4 KB on the C6 as written; −0.6 KB possible)</p></td>
 </tr>
-<tr class="row-even"><td><p>M7c</p></td>
+<tr class="row-odd"><td><p>M7c</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">RekeyRequest</span></code> for members absent during a rotation; closed ↔ locked transitions in the app</p></td>
 </tr>
-<tr class="row-odd"><td><p>M9b</p></td>
+<tr class="row-even"><td><p>M9b</p></td>
 <td><p>Rotate the site secret without a removal; rotate the admin secret (a lost phone or bridge)</p></td>
 </tr>
-<tr class="row-even"><td><p>M10</p></td>
+<tr class="row-odd"><td><p>M10</p></td>
 <td><p>IP backhaul; a Pi bridging islands (§10.6)</p></td>
 </tr>
 </tbody>
@@ -2693,45 +3105,49 @@ per-receiver MACs (§7.9);</p></li>
 </tr>
 <tr class="row-even"><td><p>Live control saturates the channel at 1 Mb/s beyond ~8 fixtures (per-receiver MACs + floods)</p></td>
 <td><p>lagging, lost live moves</p></td>
-<td><p>6 Mb/s OFDM, ≤ 30 Hz coalescing, broadcast authenticator for big meshes (§10.6)</p></td>
+<td><p>6 Mb/s OFDM (default), ≤ 30 Hz coalescing, broadcast authenticator for big meshes (§10.6)</p></td>
 </tr>
-<tr class="row-odd"><td><p>An eclipsed node (only malicious neighbours)</p></td>
+<tr class="row-odd"><td><p>Pushed bulk overruns a constrained C6 cut vertex</p></td>
+<td><p>lost blob chunks</p></td>
+<td><p>pull pages (M6); pace pushed bulk (<code class="docutils literal notranslate"><span class="pre">send_bulk</span></code>, §10.6)</p></td>
+</tr>
+<tr class="row-even"><td><p>An eclipsed node (only malicious neighbours)</p></td>
 <td><p>desynced (≤ 500 ppm), starved</p></td>
 <td><p>cannot be made to accept forgeries or replays (§7.10); more neighbours</p></td>
 </tr>
-<tr class="row-even"><td><p>ECDSA verify slower than estimated on the C6</p></td>
+<tr class="row-odd"><td><p>ECDSA verify slower than estimated on the C6</p></td>
 <td><p>slow session start</p></td>
 <td><p>once per session, in the mesh task; measured in M3a</p></td>
 </tr>
-<tr class="row-odd"><td><p>The ported swarm code diverges from indoor_localization</p></td>
+<tr class="row-even"><td><p>The ported swarm code diverges from indoor_localization</p></td>
 <td><p>fixes don’t flow both ways</p></td>
 <td><p>provenance note; ported golden vectors; port fixes back by hand</p></td>
 </tr>
-<tr class="row-even"><td><p>Node-id collisions (u16 from MAC)</p></td>
+<tr class="row-odd"><td><p>Node-id collisions (u16 from MAC)</p></td>
 <td><p>misrouting</p></td>
 <td><p>detect via full MAC in status; app reassigns</p></td>
 </tr>
-<tr class="row-odd"><td><p>Site secret leaks (a lost fixture holds it)</p></td>
+<tr class="row-even"><td><p>Site secret leaks (a lost fixture holds it)</p></td>
 <td><p>closed mesh joinable</p></td>
 <td><p>lock the mesh after install; rotate the site secret from the app</p></td>
 </tr>
-<tr class="row-even"><td><p>Open mode abused (forged live moves, guest floods)</p></td>
+<tr class="row-odd"><td><p>Open mode abused (forged live moves, guest floods)</p></td>
 <td><p>guests misbehave; airtime</p></td>
 <td><p>members ignore open-key frames; signed commits; guest rate limits; switch to closed</p></td>
 </tr>
-<tr class="row-odd"><td><p>BLE gateway starves the mesh at short connection intervals</p></td>
+<tr class="row-even"><td><p>BLE gateway starves the mesh at short connection intervals</p></td>
 <td><p>slow fan-out on BLE-only sites</p></td>
 <td><p>≥ 50 ms interval, narrowed coex window, TX outside it (§4.3)</p></td>
 </tr>
-<tr class="row-even"><td><p>Metal enclosures attenuate the mesh and the phone’s BLE link</p></td>
+<tr class="row-odd"><td><p>Metal enclosures attenuate the mesh and the phone’s BLE link</p></td>
 <td><p>lost frames, BLE drops</p></td>
 <td><p>R0 measurement first; u.FL module + external antenna or a non-metal window (§4.5)</p></td>
 </tr>
-<tr class="row-odd"><td><p>The placeholder CID collides with a future CID assignee</p></td>
+<tr class="row-even"><td><p>The placeholder CID collides with a future CID assignee</p></td>
 <td><p>foreign frames parsed as ours</p></td>
 <td><p>envelope magic + mesh id + MIC reject them; register a CID (Q4)</p></td>
 </tr>
-<tr class="row-even"><td><p>The research track fails (no phase continuity)</p></td>
+<tr class="row-odd"><td><p>The research track fails (no phase continuity)</p></td>
 <td><p>no self-built ranging</p></td>
 <td><p>independent of the mesh; UWB remains the ranging path</p></td>
 </tr>
@@ -2787,24 +3203,22 @@ in blocks (§7.5).</p></li>
 <li><p>Mixed-capacity meshes: C6, P4 + C6, Pi (§10.6).</p></li>
 </ul>
 <p><strong>New:</strong></p>
+<p><strong>Answered 2026-11-17 (Q11–Q17):</strong></p>
 <ul class="simple">
-<li><p><strong>Q11.</strong> ECDSA cost: the estimates in §7.9 are to be measured in M3a. Is a session start of
-tens of ms per member acceptable (it runs once per admin session)?</p></li>
-<li><p><strong>Q12.</strong> Mesh PHY: move mesh frames to 6 Mb/s OFDM where range allows (needed for live
-control beyond ~8 fixtures)?</p></li>
-<li><p><strong>Q13.</strong> Live moves: coalesce to ≤ 30 Hz on the mesh (the app’s fader stream can stay at
-60 Hz)?</p></li>
-<li><p><strong>Q14.</strong> Meshes beyond ~32 fixtures: per-receiver MACs cost 8 B per member per command.</p>
-<ul>
-<li><p>(a) Accept several packets per command.</p></li>
-<li><p>(b) Use a delayed-key broadcast authenticator (TESLA-style) for live moves, which adds about
-one interval of latency and needs loose time sync.</p></li>
-<li><p>(c) Allow live moves under a per-session group key. Insiders could then forge live moves
-but not commits, like open-mode guests.</p></li>
-</ul>
-</li>
-<li><p><strong>Q15.</strong> Hop limit 3 is too small for line or chain venues: make it a per-install setting?</p></li>
-<li><p><strong>Q16.</strong> Open mode’s 1.4 KB on the C6: accept it as the M7b budget?</p></li>
+<li><p><strong>Q11.</strong> Session crypto never blocks render. It runs in a low-priority task, and grants are
+renewed in the background ahead of expiry. When it is paid is spelled out in §7.9; the
+figures are measured in M3a.</p></li>
+<li><p><strong>Q12.</strong> No fixed rate. Per-node adaptation, with pass criteria tied to R0 and the HITL
+scenarios (§4.6).</p></li>
+<li><p><strong>Q13.</strong> Approved, as responsive as the airtime allows: coalescing, compact batches,
+priority over bulk, and on-device interpolation on mesh time (§6.4).</p></li>
+<li><p><strong>Q14.</strong> <em>Deferred</em>: a broadcast authenticator for live moves in meshes past ~32 members.
+Options stay as listed: several packets per command, a TESLA-style delayed-key MAC, or
+group-key live moves.</p></li>
+<li><p><strong>Q15.</strong> Adaptive hop limit (§10.6).</p></li>
+<li><p><strong>Q16.</strong> Open mode’s budget accepted; trimmed to +912 B (§10.4).</p></li>
+<li><p><strong>Q17.</strong> The custodian spill stays, behind the <code class="docutils literal notranslate"><span class="pre">custodian_spill</span></code> feature, off by default
+(§10.4, §10.6).</p></li>
 </ul>
 </section>
 <section id="sources">
@@ -2900,6 +3314,7 @@ Microcontrollers” (espdr-tx test-tone TX on the S3):
 <li><a class="reference internal" href="#coexistence-with-ble">4.3 Coexistence with BLE</a></li>
 <li><a class="reference internal" href="#spike-before-committing-m3a">4.4 Spike before committing (M3a)</a></li>
 <li><a class="reference internal" href="#antennas-and-metal-enclosures">4.5 Antennas and metal enclosures</a></li>
+<li><a class="reference internal" href="#phy-rate-adapted-per-node-gated-by-measurement">4.6 PHY rate: adapted per node, gated by measurement</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#protocol">5. Protocol</a><ul>
@@ -2916,6 +3331,7 @@ Microcontrollers” (espdr-tx test-tone TX on the S3):
 <li><a class="reference internal" href="#budget">6.1 Budget</a></li>
 <li><a class="reference internal" href="#mesh-time">6.2 Mesh time</a></li>
 <li><a class="reference internal" href="#mapping-the-show-clock">6.3 Mapping the show clock</a></li>
+<li><a class="reference internal" href="#live-updates-as-fast-as-the-airtime-allows-smooth-on-every-member">6.4 Live updates: as fast as the airtime allows, smooth on every member</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#membership-groups-and-security">7. Membership, groups and security</a><ul>
