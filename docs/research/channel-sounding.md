@@ -176,9 +176,12 @@ attenuator change is still owed (§11).
 Eleven LOs from 2422 to 2462 MHz (the ±19.5 MHz comb stays inside 2400–2483.5), six
 exchanges each (e23). Group delay per LO: 1910.7–1912.4 ns for LOs up to 2450 (spread
 ±0.9 ns: filter group-delay ripple, to calibrate per LO). It then jumps: 1904 ns at 2454,
-then +120 ns at 2458/2462. HT40-above is not valid above ch 9, so the vendor falls back to
-another filter setting. Use HT40-below there. The carrier phase falls about 36° per 4 MHz
-across the LOs. That slope is the RF phase delay (~25 ns round trip, dominated by the
+then +120 ns at 2458/2462. HT40-above is not valid
+above ch 9, so the vendor falls back to another filter setting. Re-run with HT40-below for
+LO ≥ 2452 (now the default in `twoway.py`): every LO from 2442 to 2462 lands at
+1911.1–1913.0 ns, with 0.14–0.37 ns within-LO scatter (4 back-to-back exchanges each).
+The carrier phase falls about 36° per
+4 MHz across the LOs. That slope is the RF phase delay (~25 ns round trip, dominated by the
 boards' RF chains and filters, not the cable). With calibration it gives a third,
 independent range observable.
 
