@@ -2,8 +2,8 @@
 (//firmware/mesh/swarm). M1: the backhaul seam (Backhaul trait, RxMeta), the link frame
 Splanc backhauls carry, and a Node that drives swarm_net over one backhaul with the mesh
 payload sized from the backhaul's MTU. M2: the security envelope (AES-CCM on the netstack's
-ccmp.rs, 64-bit counters, replay windows), insider-resistant admin sessions, ports.
-no_std, no allocation.
+ccmp.rs, 64-bit counters, replay windows), insider-resistant admin sessions, ports,
+membership and key rotation. no_std, no allocation.
 
   :mesh     host (tests): feature `host` adds the loopback backhaul and a P-256
             device key on the host-only p256 crate.
@@ -44,6 +44,28 @@ rust_test(
     data = ["//firmware/mesh/swarm:proto/testdata/swarm_wire_golden.txt"],
     edition = "2021",
     env = {"SWARM_WIRE_GOLDEN": "$(rootpath //firmware/mesh/swarm:proto/testdata/swarm_wire_golden.txt)"},
+)
+
+# Open mode (guests, the follow stream) is compiled out until M7b (feature `open_mode`); this
+# keeps it building and tested.
+rust_test(
+    name = "mesh_open_mode_test",
+    size = "small",
+    srcs = SRCS,
+    crate_features = [
+        "custodian_spill",
+        "host",
+        "open_mode",
+    ],
+    crate_root = "src/lib.rs",
+    data = ["//firmware/mesh/swarm:proto/testdata/swarm_wire_golden.txt"],
+    edition = "2021",
+    env = {"SWARM_WIRE_GOLDEN": "$(rootpath //firmware/mesh/swarm:proto/testdata/swarm_wire_golden.txt)"},
+    deps = [
+        "//firmware/mesh/swarm:swarm_net",
+        "//firmware/netstack",
+        "@player_crates//:p256",
+    ],
 )
 
 rust_library(
