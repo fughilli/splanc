@@ -1,0 +1,221 @@
+// Ported from fughilli/indoor_localization swarm/proto/swarm_wire.proto at 5a906e78. Splanc
+// owns this copy (the mesh, docs/design/mesh.md); firmware/mesh/swarm/PROVENANCE.md lists
+// what changed. Field numbers and meanings stay wire-compatible with the swarm's.
+//
+// swarm.v1 — every structure that crosses a link between swarm nodes, or between a node
+// and the host, or sits in staging flash. The single source of truth: C++ reads it in
+// place with pbview (zero-copy views), Rust (swarm_net) with pbview views and typed
+// encoders, Python with protoc.
+//
+// Layers, outermost first:
+//
+//   LinkFrame            one UWB frame (<= 125 bytes + 2 FCS), indoor_localization apps/common/radio.cpp
+//     |- advert, summary  the POLL's riders (PoseAdvertisement is widget.v1, an opaque blob here)
+//     |- payload          mesh packet / fw request / fw data / manifest, opaque to the radio
+//   MeshPacket           managed flooding (firmware/mesh/swarm/src/mesh.rs); its payload carries
+//     |- BundleFragment, SettingsGet, SettingsReport, Override, Ack, app data
+//   Manifest, Summary, FwRequest, FwData          firmware distribution (update.rs)
+//
+// Rules the schema relies on:
+//
+//  * Signed and tagged things are `{ bytes body; bytes tag/signature }`: the signature or
+//    HMAC covers the exact `body` bytes as transmitted, never a re-encoding, so protobuf's
+//    lack of canonical encoding does not matter. Nodes store and re-serve the envelope verbatim.
+//  * Frame budgets are worst cases with every varint at maximum width; they are asserted by
+//    tests (indoor_localization apps/common/link_test.cc, firmware/mesh/swarm) and must keep holding when fields are added.
+//  * Field numbers of a message never change meaning. New fields are optional and older
+//    readers skip them (that is how `lock` / `range_bias` joined PoseAdvertisement).
+//  * proto3 omits a field at its default, so absent means 0 / empty / broadcast. Fields on
+//    the hot path use numbers 1..15 (one-byte tags).
+
+syntax = "proto3";
+
+package swarm.v1;
+
+// ---------------------------------------------------------------------------------------
+// Link layer (C++: indoor_localization apps/common/radio.cpp)
+// ---------------------------------------------------------------------------------------
+
+enum FrameType {
+  FRAME_TYPE_UNSPECIFIED = 0;
+  FRAME_TYPE_POLL = 1;
+  FRAME_TYPE_RESPONSE = 2;
+  FRAME_TYPE_FINAL = 3;
+  FRAME_TYPE_REPORT = 4;
+  FRAME_TYPE_RESULT = 5;
+  FRAME_TYPE_MESH = 6;         // payload: MeshPacket. dst: absent (broadcast)
+  FRAME_TYPE_FW_REQUEST = 7;   // payload: FwRequest, to the server
+  FRAME_TYPE_FW_DATA = 8;      // payload: FwData. broadcast
+  FRAME_TYPE_FW_MANIFEST = 9;  // payload: Manifest. broadcast, never relayed
+  // Splanc: a backhaul without TDMA (802.11, IP) has no POLL to carry the sender's Summary;
+  // it sends a BEACON instead (summary set, broadcast). Later milestones add the mesh's own
+  // beacon fields (design §5.3).
+  FRAME_TYPE_BEACON = 10;
+}
+
+// Worst-case encoded header (all ids >= 16384, seq >= 128): ver 2 + type 2 + src 4 + dst 4 +
+// seq 3 + slot 2 + payload tag/len 2 = 19 bytes (a POLL has no payload: 17 + advert + summary). Frames that carry no seq or slot, and
+// broadcasts (dst absent), are shorter; the manifest frame is 12 + the manifest.
+message LinkFrame {
+  uint32 ver = 15;         // protocol version, 1. A frame with any other value is dropped.
+  FrameType type = 1;
+  uint32 src = 2;          // node id
+  optional uint32 dst = 3; // absent: broadcast (node ids come from MACs; any u16 but 0xFFFF)
+  uint32 seq = 4;          // exchange sequence (the ranging exchange a frame belongs to)
+  uint32 slot = 5;         // POLL only: the sender's TDMA slot, for superframe sync
+  bytes payload = 6;       // MESH / FW_*: the layer above, opaque to the radio
+  // DS-TWR payloads. Fixed width: reply timing must not depend on the values.
+  fixed32 t_round_b = 8;   // REPORT: t6 - t3 (15.65 ps ticks)
+  fixed32 t_reply_b = 9;   // REPORT: t3 - t2
+  sint32 range_mm = 10;    // RESULT
+  // POLL / RESPONSE riders.
+  bytes advert = 11;       // widget.v1.PoseAdvertisement, <= 64 bytes
+  bytes summary = 12;      // POLL (Splanc: and BEACON) only: Summary, the sender's network state
+}
+
+// ---------------------------------------------------------------------------------------
+// Firmware distribution (Rust: firmware/mesh/swarm/src/update.rs, manifest.rs; C++ reads Summary
+// and the Manifest at the loader)
+// ---------------------------------------------------------------------------------------
+
+// What a node advertises in every POLL: firmware progress and settings generation.
+// Worst case 6 + 6 + 4 + 4 + 6 = 26 bytes.
+message Summary {
+  uint32 running = 1;      // firmware version running here (0: flashed by hand)
+  uint32 staged = 2;       // version of the staged image (0: none)
+  uint32 pages = 3;        // pages staged so far
+  uint32 total = 4;        // pages in the staged image
+  uint32 generation = 5;   // swarm settings generation
+}
+
+// The signed part of a manifest. Serialized once by the signer; the signature covers
+// those bytes. Worst case 6 + 6 + 34 = 46 bytes (flags is absent when 0).
+message ManifestBody {
+  uint32 version = 1;      // monotonic; nodes ignore images not newer than what they run
+  uint32 size = 2;         // image length in bytes
+  bytes sha256 = 3;        // 32 bytes
+  uint32 flags = 4;        // bit 0: the image is a loader (reserved)
+}
+
+// Worst case (46 + 2) + 66 = 114 bytes. Its link frame carries only ver, type, src and the
+// payload tag/len (2 + 2 + 4 + 2 = 10; no dst, seq or slot), so 124 of the 125 bytes: this
+// is why the manifest has its own FRAME_TYPE and does not ride a MeshPacket.
+message Manifest {
+  bytes body = 1;          // ManifestBody, exactly as signed
+  bytes signature = 2;     // ECDSA P-256 r||s (big-endian), over SHA-256 of `body`; 64 bytes
+}
+
+// Link unicast to the node serving the image.
+message FwRequest {
+  uint32 version = 1;
+  uint32 page = 2;
+  fixed64 missing = 3;     // bitmap of the chunks of `page` still needed
+}
+
+// Link broadcast.
+message FwData {
+  uint32 version = 1;
+  uint32 page = 2;
+  uint32 chunk = 3;
+  bytes data = 4;          // <= 96 bytes (CHUNK); exact length checked against the manifest
+}
+
+// ---------------------------------------------------------------------------------------
+// Mesh (Rust: firmware/mesh/swarm/src/mesh.rs)
+// ---------------------------------------------------------------------------------------
+
+// A mesh link frame is ver, type, src, payload tag/len = 10 bytes (broadcast, no seq or
+// slot), so a MeshPacket may be 115 bytes. Its header is at worst 4 + 4 + 4 + 2 + 2 + 2 + 2 +
+// 2 + 2 = 24 bytes (origin, id, dest >= 16384, every small field set), leaving 91; MAX_PAYLOAD
+// is 88, three bytes of slack.
+message MeshPacket {
+  uint32 origin = 1;
+  uint32 id = 2;
+  optional uint32 dest = 3;// absent: broadcast
+  uint32 hop_limit = 4;
+  uint32 hop_start = 5;
+  uint32 port = 6;         // see Port
+  uint32 flags = 7;        // bit 0: want ack, bit 1: is ack
+  uint32 attempt = 8;      // retry number of the origin's transmission
+  bytes payload = 9;       // <= 88 bytes (MAX_PAYLOAD)
+}
+
+enum Port {
+  PORT_ACK = 0;            // payload: Ack
+  PORT_BUNDLE_DATA = 2;    // payload: BundleFragment
+  PORT_BUNDLE_REQUEST = 3; // payload: BundleRequest
+  PORT_OVERRIDE = 4;       // payload: Override
+  PORT_SETTINGS_GET = 5;   // payload: empty
+  PORT_SETTINGS_REPORT = 6;// payload: SettingsReport
+  PORT_APP = 16;           // >= 16: application packets, payload is the app's
+}
+
+message Ack {
+  uint32 id = 1;
+}
+
+// ---------------------------------------------------------------------------------------
+// Settings (Rust: firmware/mesh/swarm/src/settings.rs)
+// ---------------------------------------------------------------------------------------
+
+message Setting {
+  uint32 key = 1;          // registry id (indoor_localization swarm/node/src/settings.rs); never renumbered
+  fixed32 value = 2;       // raw 32 bits: f32 bits, i32 or bool
+  uint32 source = 3;       // SettingsReport only: 1 swarm layer, 2 device override
+}
+
+// The swarm layer, tagged. HMAC-SHA256 (first 4 bytes) over 'B' || body, as stored.
+message BundleBody {
+  uint32 generation = 1;
+  repeated Setting settings = 2;   // sorted by key, <= 96
+}
+message Bundle {
+  bytes body = 1;          // BundleBody
+  bytes tag = 2;           // 4 bytes
+}
+
+// A slice of a serialized Bundle, broadcast with hop limit 0 (<= 32 fragments).
+message BundleFragment {
+  uint32 generation = 1;
+  uint32 total_len = 2;    // length of the whole serialized Bundle
+  uint32 offset = 3;       // multiple of FRAG_DATA
+  bytes data = 4;
+}
+
+message BundleRequest {
+  uint32 generation = 1;
+}
+
+// A device override command, unicast. Tag: HMAC over 'O' || dest (u16 LE) || body, so a
+// command for one node cannot be replayed at another.
+message OverrideBody {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_SET = 1;
+    KIND_CLEAR = 2;
+  }
+  Kind kind = 1;
+  uint32 seq = 2;          // must exceed the node's stored override_seq
+  repeated Setting settings = 3;
+}
+message Override {
+  bytes body = 1;          // OverrideBody
+  bytes tag = 2;           // 4 bytes
+}
+
+// A node's settings, in parts, back to the host (a reply to PORT_SETTINGS_GET).
+message SettingsReport {
+  uint32 part = 1;
+  uint32 parts = 2;
+  uint32 generation = 3;
+  uint32 override_seq = 4;
+  repeated Setting settings = 5;   // with `source`
+}
+
+// ---------------------------------------------------------------------------------------
+// Staging flash (Rust: update.rs; C++: indoor_localization apps/common/boot.cpp, apps/loader)
+// ---------------------------------------------------------------------------------------
+//
+// Sector 0 of the staging partition holds the manifest as a length-delimited message:
+// varint(length) || Manifest. Erased flash (0xFF...) is not a valid length, so an empty
+// staging area reads as "no manifest". The image starts at offset 4096.
