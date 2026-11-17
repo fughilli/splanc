@@ -28,6 +28,11 @@ _C6 = select({
 rust_library(
     name = "netstack",
     srcs = glob(["src/*.rs"]),
+    # The P4 has atomics like the C6 but a different AES block (ccmp.rs): software AES there.
+    crate_features = select({
+        "@embedded//platforms:is_esp32p4": ["soft_aes"],
+        "//conditions:default": [],
+    }),
     crate_name = "ledmapper_netstack",
     crate_root = "src/lib.rs",
     edition = "2021",

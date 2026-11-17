@@ -63,7 +63,10 @@ fn gmul(mut a: u8, mut b: u8) -> u8 {
 /// software cipher with pre-expanded round keys. The `hw_aes` path is gated on the
 /// RISC-V atomics extension (`target_feature = "a"`), present on the C6's rv32imac
 /// but not the C3's rv32imc, so the two firmware SKUs pick the right backend
-/// automatically. The public API is identical either way, so CCMP / key-wrap code is
+/// automatically. The P4 (rv32imafc) has atomics too but a different AES block, and rustc
+/// reports the same `cfg` for both targets, so its build sets the crate feature `soft_aes`
+/// (BUILD.bazel, on `@embedded//platforms:is_esp32p4`): the P4 uses the software cipher
+/// (the mesh crate builds this module for it). The public API is identical either way, so CCMP / key-wrap code is
 /// backend-agnostic.
 pub struct Aes128 {
     // Read only by the C6 hardware-AES backend (`hw_aes::block`); the software
@@ -71,17 +74,17 @@ pub struct Aes128 {
     // those builds this field is stored but unread.
     #[allow(dead_code)]
     key: [u8; 16],
-    #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(test))))]
+    #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(feature = "soft_aes"), not(test))))]
     rk: [[u8; 16]; 11],
 }
 
 impl Aes128 {
-    #[cfg(all(target_arch = "riscv32", target_feature = "a", not(test)))]
+    #[cfg(all(target_arch = "riscv32", target_feature = "a", not(feature = "soft_aes"), not(test)))]
     pub fn new(key: &[u8; 16]) -> Self {
         Aes128 { key: *key } // HW engine takes the raw key; no round-key expansion needed
     }
 
-    #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(test))))]
+    #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(feature = "soft_aes"), not(test))))]
     pub fn new(key: &[u8; 16]) -> Self {
         let mut rk = [[0u8; 16]; 11];
         rk[0].copy_from_slice(key);
@@ -108,26 +111,26 @@ impl Aes128 {
     }
 
     pub fn encrypt_block(&self, s: &mut [u8; 16]) {
-        #[cfg(all(target_arch = "riscv32", target_feature = "a", not(test)))]
+        #[cfg(all(target_arch = "riscv32", target_feature = "a", not(feature = "soft_aes"), not(test)))]
         {
             hw_aes::block(&self.key, s, hw_aes::MODE_ENC);
             return;
         }
-        #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(test))))]
+        #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(feature = "soft_aes"), not(test))))]
         self.encrypt_block_sw(s);
     }
 
     pub fn decrypt_block(&self, s: &mut [u8; 16]) {
-        #[cfg(all(target_arch = "riscv32", target_feature = "a", not(test)))]
+        #[cfg(all(target_arch = "riscv32", target_feature = "a", not(feature = "soft_aes"), not(test)))]
         {
             hw_aes::block(&self.key, s, hw_aes::MODE_DEC);
             return;
         }
-        #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(test))))]
+        #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(feature = "soft_aes"), not(test))))]
         self.decrypt_block_sw(s);
     }
 
-    #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(test))))]
+    #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(feature = "soft_aes"), not(test))))]
     fn encrypt_block_sw(&self, s: &mut [u8; 16]) {
         add_rk(s, &self.rk[0]);
         for r in 1..10 {
@@ -141,7 +144,7 @@ impl Aes128 {
         add_rk(s, &self.rk[10]);
     }
 
-    #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(test))))]
+    #[cfg(not(all(target_arch = "riscv32", target_feature = "a", not(feature = "soft_aes"), not(test))))]
     fn decrypt_block_sw(&self, s: &mut [u8; 16]) {
         add_rk(s, &self.rk[10]);
         for r in (1..10).rev() {
@@ -169,7 +172,7 @@ impl Aes128 {
 // just not accelerated. A future c3 HW-AES port would add a parallel register map
 // here under `target_feature = "c"` && !"a" (or an explicit chip cfg) and re-enable
 // the accelerated path; until then the C3 never touches these registers.
-#[cfg(all(target_arch = "riscv32", target_feature = "a", not(test)))]
+#[cfg(all(target_arch = "riscv32", target_feature = "a", not(feature = "soft_aes"), not(test)))]
 pub mod hw_aes {
     const AES_BASE: usize = 0x6008_8000;
     const AES_KEY_0: usize = AES_BASE + 0x00; // KEY_0..3 (AES-128), stride 4
@@ -404,9 +407,9 @@ impl KeyUnwrap for AesUnwrap {
     }
 }
 
-// --- AES-CCM (CCM*, L=2, M=8 as CCMP uses) -----------------------------------
+// --- AES-CCM (RFC 3610: L=2, 13-byte nonce; CCMP's M=8, other tag lengths for the mesh) ----
 
-const M: usize = 8; // MIC length
+const M: usize = 8; // CCMP's MIC length
 const L: usize = 2; // length field size (15 - nonce_len)
 
 fn ctr_block(nonce: &[u8; 13], counter: u16) -> [u8; 16] {
@@ -417,28 +420,34 @@ fn ctr_block(nonce: &[u8; 13], counter: u16) -> [u8; 16] {
     a
 }
 
-/// AES-CCM encrypt in place: `data` (plaintext -> ciphertext) with `aad`, and the
-/// 8-byte MIC appended is returned separately. Bounded: caller sizes buffers.
-fn ccm_mic(aes: &Aes128, nonce: &[u8; 13], aad: &[u8], data: &[u8]) -> [u8; M] {
+/// The CCM tag (`T` bytes: 4, 6, 8, ..., 16) over `aad` and the plaintext `data`.
+/// `aad` may be up to 0xFEFF bytes (the 2-byte length encoding); CCMP's is at most 30.
+fn ccm_mic<const T: usize>(aes: &Aes128, nonce: &[u8; 13], aad: &[u8], data: &[u8]) -> [u8; T] {
+    const { assert!(T >= 4 && T <= 16 && T % 2 == 0) };
     // CBC-MAC with a zero IV. B0 = flags || nonce || l(m); t = E(B0).
     let mut t = [0u8; 16];
-    t[0] = 0x40 /*Adata*/ | (((M - 2) / 2) << 3) as u8 | (L - 1) as u8;
+    t[0] = 0x40 /*Adata*/ | (((T - 2) / 2) << 3) as u8 | (L - 1) as u8;
     t[1..14].copy_from_slice(nonce);
     t[14..16].copy_from_slice(&(data.len() as u16).to_be_bytes());
     aes_e(aes, &mut t);
-    // AAD block: 2-byte length prefix then the AAD (padded to the block by cbc_mac).
-    let mut aad_buf = [0u8; 2 + 32];
+    // AAD blocks: a 2-byte length prefix then the AAD, zero-padded to the block. The
+    // first block carries the prefix and up to 14 AAD bytes; the rest stream through.
     let alen = aad.len();
-    aad_buf[0..2].copy_from_slice(&(alen as u16).to_be_bytes());
-    aad_buf[2..2 + alen].copy_from_slice(aad);
-    cbc_mac(aes, &mut t, &aad_buf[..2 + alen]);
+    let first = core::cmp::min(14, alen);
+    t[0] ^= (alen >> 8) as u8;
+    t[1] ^= alen as u8;
+    for i in 0..first {
+        t[2 + i] ^= aad[i];
+    }
+    aes_e(aes, &mut t);
+    cbc_mac(aes, &mut t, &aad[first..]);
     cbc_mac(aes, &mut t, data);
-    let mut mic = [0u8; M];
-    mic.copy_from_slice(&t[..M]);
-    // MIC ^= S0[:M], where S0 = E(A0).
+    let mut mic = [0u8; T];
+    mic.copy_from_slice(&t[..T]);
+    // MIC ^= S0[:T], where S0 = E(A0).
     let mut a0 = ctr_block(nonce, 0);
     aes_e(aes, &mut a0);
-    for i in 0..M {
+    for i in 0..T {
         mic[i] ^= a0[i];
     }
     mic
@@ -475,33 +484,56 @@ fn ctr_xor(aes: &Aes128, nonce: &[u8; 13], data: &mut [u8]) {
     }
 }
 
-/// AES-CCM encrypt: `buf[..plen]` is encrypted in place and the 8-byte MIC is
-/// written to `buf[plen..plen+8]`; returns total length.
-pub fn ccm_encrypt(key: &[u8; 16], nonce: &[u8; 13], aad: &[u8], buf: &mut [u8], plen: usize) -> usize {
-    let aes = Aes128::new(key);
-    let mic = ccm_mic(&aes, nonce, aad, &buf[..plen]);
-    ctr_xor(&aes, nonce, &mut buf[..plen]);
-    buf[plen..plen + M].copy_from_slice(&mic);
-    plen + M
+/// Constant-time equality of two tags (no early exit on the first differing byte).
+fn tag_eq(a: &[u8], b: &[u8]) -> bool {
+    let mut d = (a.len() ^ b.len()) as u8;
+    for (x, y) in a.iter().zip(b) {
+        d |= x ^ y;
+    }
+    d == 0
 }
 
-/// AES-CCM decrypt+verify: `buf[..clen]` (ciphertext||MIC) is decrypted in place;
-/// returns `Some(plaintext_len)` if the MIC verifies, else `None`.
-pub fn ccm_decrypt(key: &[u8; 16], nonce: &[u8; 13], aad: &[u8], buf: &mut [u8], clen: usize) -> Option<usize> {
-    if clen < M {
+/// AES-CCM seal with a `T`-byte tag: `buf[..plen]` is encrypted in place and the tag is
+/// written to `buf[plen..plen + T]`; returns `plen + T`. `buf` must hold `plen + T` bytes
+/// and `plen` must be under 64 KiB (the 2-byte length field).
+pub fn ccm_seal<const T: usize>(key: &[u8; 16], nonce: &[u8; 13], aad: &[u8], buf: &mut [u8], plen: usize) -> usize {
+    let aes = Aes128::new(key);
+    let mic = ccm_mic::<T>(&aes, nonce, aad, &buf[..plen]);
+    ctr_xor(&aes, nonce, &mut buf[..plen]);
+    buf[plen..plen + T].copy_from_slice(&mic);
+    plen + T
+}
+
+/// AES-CCM open with a `T`-byte tag: `buf[..clen]` (ciphertext || tag) is decrypted in
+/// place; `Some(plaintext_len)` if the tag verifies (compared in constant time), else
+/// `None` (the plaintext left in `buf` must then not be used).
+pub fn ccm_open<const T: usize>(key: &[u8; 16], nonce: &[u8; 13], aad: &[u8], buf: &mut [u8], clen: usize) -> Option<usize> {
+    if clen < T {
         return None;
     }
-    let plen = clen - M;
+    let plen = clen - T;
     let aes = Aes128::new(key);
-    let mut rx_mic = [0u8; M];
-    rx_mic.copy_from_slice(&buf[plen..plen + M]);
+    let mut rx_mic = [0u8; T];
+    rx_mic.copy_from_slice(&buf[plen..plen + T]);
     ctr_xor(&aes, nonce, &mut buf[..plen]);
-    let mic = ccm_mic(&aes, nonce, aad, &buf[..plen]);
-    if mic == rx_mic {
+    let mic = ccm_mic::<T>(&aes, nonce, aad, &buf[..plen]);
+    if tag_eq(&mic, &rx_mic) {
         Some(plen)
     } else {
         None
     }
+}
+
+/// AES-CCM encrypt with CCMP's 8-byte MIC: `buf[..plen]` is encrypted in place and the
+/// MIC is written to `buf[plen..plen+8]`; returns total length.
+pub fn ccm_encrypt(key: &[u8; 16], nonce: &[u8; 13], aad: &[u8], buf: &mut [u8], plen: usize) -> usize {
+    ccm_seal::<M>(key, nonce, aad, buf, plen)
+}
+
+/// AES-CCM decrypt+verify with CCMP's 8-byte MIC: `buf[..clen]` (ciphertext||MIC) is
+/// decrypted in place; returns `Some(plaintext_len)` if the MIC verifies, else `None`.
+pub fn ccm_decrypt(key: &[u8; 16], nonce: &[u8; 13], aad: &[u8], buf: &mut [u8], clen: usize) -> Option<usize> {
+    ccm_open::<M>(key, nonce, aad, buf, clen)
 }
 
 // --- 802.11 CCMP framing -----------------------------------------------------
@@ -663,6 +695,94 @@ mod tests {
         let mut bad = buf;
         bad[clen - 1] ^= 0x01;
         assert!(ccm_decrypt(&key, &nonce, &aad, &mut bad, clen).is_none());
+    }
+
+    /// RFC 3610 packet vector #1 (M = 8, L = 2, 8-byte header as AAD).
+    #[test]
+    fn ccm_rfc3610_vector_1() {
+        let mut key = [0u8; 16];
+        hx("c0c1c2c3c4c5c6c7c8c9cacbcccdcecf", &mut key);
+        let mut nonce = [0u8; 13];
+        hx("00000003020100a0a1a2a3a4a5", &mut nonce);
+        let mut pkt = [0u8; 31];
+        hx("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e", &mut pkt);
+        let mut exp = [0u8; 39];
+        hx("0001020304050607588c979a61c663d2f066d0c2c0f989806d5f6b61dac38417e8d12cfdf926e0", &mut exp);
+        let mut buf = [0u8; 64];
+        buf[..23].copy_from_slice(&pkt[8..]);
+        let n = ccm_seal::<8>(&key, &nonce, &pkt[..8], &mut buf, 23);
+        assert_eq!(&buf[..n], &exp[8..]);
+        assert_eq!(ccm_open::<8>(&key, &nonce, &pkt[..8], &mut buf, n), Some(23));
+        assert_eq!(&buf[..23], &pkt[8..]);
+    }
+
+    /// The pre-mesh CCM MIC (AAD copied into a 2 + 32-byte block buffer), kept to prove the
+    /// streaming AAD path computes the same tag for every AAD length CCMP uses and beyond.
+    fn ccm_mic_reference(aes: &Aes128, nonce: &[u8; 13], aad: &[u8], data: &[u8]) -> [u8; 8] {
+        let mut t = [0u8; 16];
+        t[0] = 0x40 | (((8 - 2) / 2) << 3) as u8 | (L - 1) as u8;
+        t[1..14].copy_from_slice(nonce);
+        t[14..16].copy_from_slice(&(data.len() as u16).to_be_bytes());
+        aes_e(aes, &mut t);
+        let mut aad_buf = [0u8; 2 + 64];
+        aad_buf[0..2].copy_from_slice(&(aad.len() as u16).to_be_bytes());
+        aad_buf[2..2 + aad.len()].copy_from_slice(aad);
+        cbc_mac(aes, &mut t, &aad_buf[..2 + aad.len()]);
+        cbc_mac(aes, &mut t, data);
+        let mut a0 = ctr_block(nonce, 0);
+        aes_e(aes, &mut a0);
+        let mut mic = [0u8; 8];
+        for i in 0..8 {
+            mic[i] = t[i] ^ a0[i];
+        }
+        mic
+    }
+
+    #[test]
+    fn ccm_streaming_aad_matches_the_reference() {
+        let aes = Aes128::new(&[0x5a; 16]);
+        let nonce = [7u8; 13];
+        let aad: [u8; 64] = core::array::from_fn(|i| (i * 31) as u8);
+        let data: [u8; 45] = core::array::from_fn(|i| (i * 7) as u8);
+        for alen in 0..=64 {
+            for dlen in [0, 1, 15, 16, 17, 45] {
+                assert_eq!(
+                    ccm_mic::<8>(&aes, &nonce, &aad[..alen], &data[..dlen]),
+                    ccm_mic_reference(&aes, &nonce, &aad[..alen], &data[..dlen]),
+                    "aad {alen} data {dlen}"
+                );
+            }
+        }
+    }
+
+    /// A 4-byte tag (the mesh's UWB envelope) round-trips, rejects tampering, and is not the
+    /// 8-byte tag cut short (B0 encodes the tag length).
+    #[test]
+    fn ccm_short_tag() {
+        let key = [0x42u8; 16];
+        let nonce = [9u8; 13];
+        let aad = b"SM header";
+        let pt = b"a mesh link frame";
+        let mut a = [0u8; 32];
+        a[..pt.len()].copy_from_slice(pt);
+        let n4 = ccm_seal::<4>(&key, &nonce, aad, &mut a, pt.len());
+        let mut b = [0u8; 32];
+        b[..pt.len()].copy_from_slice(pt);
+        let n8 = ccm_seal::<8>(&key, &nonce, aad, &mut b, pt.len());
+        assert_eq!((n4, n8), (pt.len() + 4, pt.len() + 8));
+        assert_eq!(&a[..pt.len()], &b[..pt.len()], "same keystream");
+        assert_ne!(&a[pt.len()..n4], &b[pt.len()..pt.len() + 4], "different tag");
+        let mut rx = a;
+        assert_eq!(ccm_open::<4>(&key, &nonce, aad, &mut rx, n4), Some(pt.len()));
+        assert_eq!(&rx[..pt.len()], &pt[..]);
+        for i in 0..n4 {
+            let mut bad = a;
+            bad[i] ^= 0x80;
+            assert!(ccm_open::<4>(&key, &nonce, aad, &mut bad, n4).is_none(), "byte {i}");
+        }
+        let mut rx = a;
+        assert!(ccm_open::<4>(&key, &nonce, b"SM headeR", &mut rx, n4).is_none(), "aad");
+        assert!(ccm_open::<4>(&key, &nonce, aad, &mut rx, 3).is_none(), "short");
     }
 
     #[test]

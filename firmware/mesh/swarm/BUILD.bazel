@@ -48,6 +48,8 @@ SRCS = glob(["src/*.rs"])
 rust_library(
     name = "swarm_net",
     srcs = SRCS,
+    # Host builds (tests, meshsim, Pi nodes) carry the custodian spill; firmware does not.
+    crate_features = ["custodian_spill"],
     crate_root = "src/lib.rs",
     edition = "2021",
     target_compatible_with = _HOST_ONLY,

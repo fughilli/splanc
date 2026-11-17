@@ -25,6 +25,8 @@ pub const CHUNK: usize = 96;
 pub const CHUNKS_PER_PAGE: usize = PAGE_SIZE.div_ceil(CHUNK);
 const IMAGE_OFFSET: u32 = PAGE_SIZE as u32;
 const NEIGHBOURS: usize = 16;
+/// Splanc: custodians a requester prefers as page servers.
+pub const PREFERRED: usize = 4;
 const SERVE_SLOTS: usize = 4;
 
 /// Longest encoded FwRequest: version 6 + page 4 (a u16 page) + missing bitmap 9. (With
@@ -131,6 +133,8 @@ pub struct Updater {
     /// boot never leaves the first node that tries it.
     validated: bool,
     neighbours: [Option<Neighbour>; NEIGHBOURS],
+    /// Splanc: high-capacity neighbours (P4 + C6, Pi custodians) to ask first.
+    preferred: [u16; PREFERRED],
     serve: [Option<Serve>; SERVE_SLOTS],
     last_request_us: i64,
     last_data_us: i64,
@@ -164,6 +168,7 @@ impl Updater {
             verified: false,
             validated: false,
             neighbours: [None; NEIGHBOURS],
+            preferred: [0xFFFF; PREFERRED],
             serve: [None; SERVE_SLOTS],
             last_request_us: i64::MIN / 2,
             last_data_us: i64::MIN / 2,
@@ -402,6 +407,14 @@ impl Updater {
         self.chunk(t_us, m.version, page, chunk as usize, &data[..data.len().min(CHUNK)], flash);
     }
 
+    /// Splanc: the custodians to ask first (from their adverts' capacity class).
+    pub fn set_preferred(&mut self, ids: &[u16]) {
+        self.preferred = [0xFFFF; PREFERRED];
+        for (p, &id) in self.preferred.iter_mut().zip(ids) {
+            *p = id;
+        }
+    }
+
     /// Our next request, if we're behind a neighbour and nothing useful has
     /// arrived for a while: (destination, encoded FwRequest, its length).
     pub fn next_request(&mut self, t_us: i64) -> Option<(u16, [u8; REQUEST_MAX], usize)> {
@@ -419,7 +432,9 @@ impl Updater {
             .iter()
             .flatten()
             .filter(|n| t_us - n.last_us < 2_000_000 && n.summary.staged == m.version && n.summary.pages > self.pages_done)
-            .max_by_key(|n| n.summary.pages)?;
+            // Splanc: among those, a custodian first (it holds the retransmissions, so
+            // constrained neighbours don't have to).
+            .max_by_key(|n| (self.preferred.contains(&n.id), n.summary.pages))?;
         self.last_request_us = t_us;
         self.stats.requests_sent += 1;
         let missing = self.page_mask(self.pages_done) & !self.page_have;
