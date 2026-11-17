@@ -1220,7 +1220,7 @@ Measured: each piece as a `.bss` static on the C6 (riscv32imac, `-c opt`, `nm -S
 | Membership: state (804 B, persisted), pending joins, gateway's pending list   | 2,688 B        | 1,752 B      | 1,760 B       |
 | Admin sessions (member) / gateway roster (16, pairwise keys)                  | —              | 200 / 608 B  | 200 / 608 B   |
 | Rotation: gateway rekeyer / member side                                       | —              | 496 / 240 B  | 496 / 240 B   |
-| Background crypto queue (a grant, two Acks), live update, hop and pacing state | —             | —            | ~370 B        |
+| Background crypto queue (a grant, two Acks, ~340 B), the pending live update (~60 B), hop, pacing and renewal state | — | — | ~590 B |
 | **Whole `MeshStack` (gateway roster 16)**                                     | **17,232 B**   | **15,104 B** | **15,472 B**  |
 | Open mode (feature `open_mode`, M7b)                                          | (included)     | +1,368 B     | **+912 B**    |
 
