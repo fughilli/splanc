@@ -148,6 +148,9 @@ async function captureWithDeviceDrop(opts: {
   frames?: number;
   /** Keep the device up but never answer stop_mapping (instead of dropping it). */
   silentStop?: boolean;
+  /** Instead of the socket dying, another client takes the session over: the app
+   * detaches its client (appState.client = null, as onTakenOver does). */
+  takenOver?: boolean;
 }): Promise<Run> {
   const frames = opts.frames ?? 24;
   mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
@@ -190,6 +193,7 @@ async function captureWithDeviceDrop(opts: {
     await settleDecode();
     const decodedWhileUp = ScriptedDecoder.decoded.length;
     if (!device.silentStop) device.up = false; // TLS heap exhausted: the player's socket dies mid-walk
+    if (opts.takenOver) appState.client = null; // another client took the idle session (#444)
     for (let i = 0; i < frames; i++) cam.emit(2000 + (frames + i) * 33);
 
     fire(asFake(screen.el.querySelector(".capture-stop")), "click");
@@ -272,4 +276,20 @@ test("a player that never acknowledges stop does not hold the phone solve hostag
   assert.deepEqual(SolverWorkerStub.problems[0]!.detections, ScriptedDecoder.decoded);
   assert.equal(run.saved.length, 1);
   assert.deepEqual(run.navigations, ["/map/lib-1"]);
+});
+
+test("Stop & finish solves and saves even when the device session was taken over mid-capture [rr:PR-31]", async () => {
+  // Regression: a takeover detaches the app's client (appState.client = null), and
+  // "Stop & finish" returned on `client() === null` without a word, stranding a
+  // complete capture. The detections are the phone's: it must solve regardless,
+  // even though the host solver (faster here) is no longer reachable.
+  const run = await captureWithDeviceDrop({ phoneBenchMs: 4000, hostBenchMs: 100, takenOver: true });
+
+  assert.deepEqual(run.device.calls, [], "nothing is sent to a client the app no longer holds");
+  assert.equal(SolverWorkerStub.problems.length, 1, "solved on the phone");
+  assert.deepEqual(SolverWorkerStub.problems[0]!.detections, ScriptedDecoder.decoded);
+  assert.equal(run.saved.length, 1, "saved to the library");
+  assert.equal(run.saved[0]!.map.leds.length, LEDS);
+  assert.deepEqual(run.navigations, ["/map/lib-1"]);
+  assert.ok(run.toasts.some((t) => t.includes("device offline, not pushed")), run.toasts.join(" | "));
 });

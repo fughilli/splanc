@@ -2176,10 +2176,32 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     go(router.origin() ?? "/maps");
   }
 
+  // Tell the device to stop its pattern: fire and forget, on whichever client is up
+  // NOW (it may have reconnected since the capture began). Nothing waits on it — the
+  // capture is the phone's, and the solve never depends on the device answering; the
+  // client re-delivers an unacknowledged stop on reconnect.
+  function stopDevicePattern(): void {
+    void client()
+      ?.stopMappingNoSolve()
+      .catch((e: unknown) => {
+        nativeLog(`[solve] device did not acknowledge stop: ${e instanceof Error ? e.message : String(e)}`);
+      });
+  }
+
+  // Hand the solved map to the device if one is connected now; the client it went to,
+  // or null (offline: the map is still saved to the library).
+  type DeviceClient = NonNullable<ReturnType<typeof client>>;
+  async function pushMapToDevice(map: OutputMap): Promise<DeviceClient | null> {
+    const cur = client();
+    if (cur === null) return null;
+    return cur.submitMap(map).then(() => cur).catch(() => null);
+  }
+
   async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
     if (!capturing) return;
+    // The device connection is NOT required: the detections are held here, so a
+    // session lost mid-capture (taken over, dropped) must not block the solve.
     const c = client();
-    if (c === null) return;
     // Frames still queued for decode are part of the capture: finish them
     // before the loop stops (each queued item checks `capturing`).
     cvQueueRef?.drain();
@@ -2223,34 +2245,38 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     if (calibrateId !== null) {
       stopCalibrationUi();
       calPanel.style.display = "none";
-      await c.stopMappingNoSolve().catch(() => undefined);
+      stopDevicePattern();
       stopBtn.disabled = false;
       go(`/map/${calibrateId}`);
       return;
     }
 
     await solverReady.catch(() => false);
-    if (c.hostSolverBenchMs === null && !solverAgent.available) {
+    // The host solve runs through the device session, so it is an option only while
+    // one is live.
+    const hostClient = c !== null && c.isConnected && c.hostSolverBenchMs !== null ? c : null;
+    const hostBench = hostClient?.hostSolverBenchMs ?? null;
+    if (hostBench === null && !solverAgent.available) {
       guideEl.textContent = "loading the solver…";
       await solverAgent.init().catch(() => false);
     }
-    const placement = chooseSolvePlacement(solverAgent.benchMs, c.hostSolverBenchMs);
+    const placement = chooseSolvePlacement(solverAgent.benchMs, hostBench);
     const solveOnPhone = placement === "phone" && solverAgent.available && localDetections.length > 0;
     // The solve is where an iOS run can still fail after a perfect capture, and
     // Release builds swallow console output — so record the whole decision.
     nativeLog(
       `[solve] placement=${placement} onPhone=${solveOnPhone} ` +
         `wasmAvailable=${solverAgent.available} wasmBench=${solverAgent.benchMs} ` +
-        `hostBench=${c.hostSolverBenchMs} detections=${localDetections.length} imu=${localImu.length}`,
+        `hostBench=${hostBench} detections=${localDetections.length} imu=${localImu.length}`,
     );
-    if (!solveOnPhone && c.hostSolverBenchMs === null) {
+    if (!solveOnPhone && hostBench === null) {
       toast(
         solverAgent.available
           ? "Nothing to solve — no LEDs were decoded."
           : "The in-browser solver could not load. Try capturing again.",
         { error: true },
       );
-      await c.stopMappingNoSolve().catch(() => undefined);
+      stopDevicePattern();
       driverSolveReject?.(
         new Error(
           solverAgent.available
@@ -2303,11 +2329,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         preview.view.setTrajectory(st.trajectory);
       }
     };
-    const solvePoll = solveOnPhone
-      ? null
-      : setInterval(() => {
-          c.getSolveStatus().then(renderSolveSnapshot).catch(() => undefined);
-        }, 400);
+    const solvePoll =
+      solveOnPhone || hostClient === null
+        ? null
+        : setInterval(() => {
+            hostClient.getSolveStatus().then(renderSolveSnapshot).catch(() => undefined);
+          }, 400);
     // A phone solve needs only the locally-retained detections; the device
     // plays no part once capture ends (FUG-69). Factored out so the host-solve
     // path can fall back to it when the device has dropped mid-capture.
@@ -2377,10 +2404,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     };
     try {
       let map: OutputMap;
-      // Whether the solved map made it back onto the device. Reconstruction no
-      // longer hinges on it: a dropped device socket (e.g. TLS heap exhaustion
+      // The device the solved map made it back onto (null: not pushed). Reconstruction
+      // doesn't hinge on it: a dropped device socket (e.g. TLS heap exhaustion
       // on a long capture, FUG-69) must not lose a capture we already hold.
-      let pushedToDevice = false;
+      let pushedTo: DeviceClient | null = null;
       if (solveOnPhone && supplementId !== null && priorMap !== null) {
         // Supplemental scan solved on the phone. A short scan aimed at a few
         // weak LEDs may be too thin to solve ON ITS OWN, yet still add the rays
@@ -2388,9 +2415,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // is not fatal here; reviewSupplement decides what is usable. Like the
         // plain phone solve below, the stop is sent but its reply is not
         // awaited (a stalled player would otherwise hold up the solve).
-        void c.stopMappingNoSolve().catch((e: unknown) => {
-          nativeLog(`[solve] device did not acknowledge stop: ${e instanceof Error ? e.message : String(e)}`);
-        });
+        stopDevicePattern();
         const supp = await solveOnPhoneNow().catch((e: unknown) => {
           nativeLog(`[solve] supplemental standalone solve failed: ${e instanceof Error ? e.message : String(e)}`);
           return null;
@@ -2409,24 +2434,24 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // that round trip until the socket finally died. The client bounds the
         // wait itself and re-delivers an unacknowledged stop on reconnect, so
         // the pattern still stops on the device.
-        void c.stopMappingNoSolve().catch((e: unknown) => {
-          nativeLog(`[solve] device did not acknowledge stop: ${e instanceof Error ? e.message : String(e)}`);
-        });
+        stopDevicePattern();
         nativeLog("[solve] phone solve starting");
         map = await solveOnPhoneNow();
         nativeLog(`[solve] phone solve done: ${map.leds.length} leds`);
         // A supplemental scan's raw solve is not the map — the fused result is,
         // and it isn't pushed until the user accepts — so skip the device push.
-        pushedToDevice =
-          supplementId !== null ? false : await c.submitMap(map).then(() => true).catch(() => false);
+        pushedTo = supplementId !== null ? null : await pushMapToDevice(map);
       } else {
         try {
-          const result = await c.stopMapping();
+          // Unreachable without a live host client (hostBench gates it); the throw
+          // just lands in the phone-solve fallback below.
+          if (hostClient === null) throw new Error("no device session for the host solve");
+          const result = await hostClient.stopMapping();
           const resp = await fetch(`/maps/${result.mapId}`);
           if (!resp.ok) throw new Error(`fetching map failed: HTTP ${resp.status}`);
           map = keepMap((await resp.json()) as OutputMap, null, null, null);
           nativeLog(`[solve] host solve done: ${map.leds.length} leds`);
-          pushedToDevice = true;
+          pushedTo = hostClient;
         } catch (hostErr) {
           // Host solve unreachable — typically the device dropped mid-capture
           // (FUG-69). We kept every detection locally, so fall back to the
@@ -2451,8 +2476,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           nativeLog(`[solve] fallback phone solve done: ${map.leds.length} leds`);
           // A supplemental scan's raw solve is not the map — the fused result is,
           // and it isn't pushed until the user accepts — so skip the device push.
-          pushedToDevice =
-            supplementId !== null ? false : await c.submitMap(map).then(() => true).catch(() => false);
+          pushedTo = supplementId !== null ? null : await pushMapToDevice(map);
         }
       }
       preview.view?.stop();
@@ -2474,9 +2498,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         };
         const id = await mapStore.create({ map, source: "capture", observations });
         appState.setSelectedMap(id);
-        if (pushedToDevice) void afterMapStored(c, id, map.mapId);
+        if (pushedTo !== null) void afterMapStored(pushedTo, id, map.mapId);
         toast(
-          pushedToDevice
+          pushedTo !== null
             ? `Saved ${map.leds.length} LEDs`
             : `Saved ${map.leds.length} LEDs — device offline, not pushed`,
         );
