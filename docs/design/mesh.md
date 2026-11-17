@@ -384,9 +384,10 @@ where the antenna sits. The same antenna serves the mesh and the phone's BLE lin
 | **Module with a u.FL/IPEX connector** (ESP32-C6-WROOM-1U, -MINI-1U) and a pigtail to a bulkhead RP-SMA, a 2.4 GHz dipole outside | Predictable; +2–3 dBi antenna, minus ~0.5–1 dB of cable and connector loss. The usual answer for metal boxes     |
 | A flat external antenna stuck to the outside, fed through a grommet                                                              | Less visible; check its gain pattern against the fixture's orientation                                           |
 
-Which C6 module the radiolarians' P4 + C6 boards carry (PCB antenna or connector) is an open
-question (§17). A board with only a PCB antenna and no connector needs a window or a board
-change.
+**Radiolarians (owner, 2026-11-17):** their C6 has **both a chip antenna and a u.FL
+connector**, so an external antenna is available. The enclosures have **windows through the
+metal**. The plan is to test first with the antenna **inside** the enclosure, radiating through
+the windows. An external antenna on the u.FL is the fallback if R0 fails.
 
 **Link budget at 2.4 GHz** (rough; the measurement below replaces it):
 
@@ -409,7 +410,8 @@ It needs no mesh code: stock firmware on the radiolarian's C6 is enough.
 1. Two radiolarians (or one plus a reference C6 with a known antenna) at 1, 3 and 5 m, enclosures
    closed. Log the received RSSI both ways: a Wi-Fi beacon or probe from one, scanned by the
    other (the vendor scan reports RSSI), and the phone's view of the BLE advertisement (any BLE
-   scanner app). Repeat with the enclosure open and with an external antenna if one is fitted.
+   scanner app). Repeat with the enclosure open, then with an external antenna on the u.FL (the fallback).
+   With the antenna inside, note where the chip antenna sits relative to the windows.
 2. Ten minutes with people walking between them: log the minimum and the 1st percentile.
 3. Rotate each fixture through 4 orientations (the antenna pattern through the enclosure).
 4. Pass: the 1st-percentile RSSI with people moving is at least 20 dB above the 6 Mb/s
@@ -1170,7 +1172,7 @@ ones that depend on unknown hardware behaviour.
 
 | PR      | Content                                                                                                                                                                                                                      | Gate                            |
 | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| **R0**  | Link budget in the real radiolarian enclosure (§4.5): RSSI both ways at 1/3/5 m, people walking between, 4 orientations, BLE to a phone; decide on external antennas. No code                                                | ≥ −70 dBm at the 1st percentile |
+| **R0**  | Link budget in the real radiolarian enclosure (§4.5): RSSI both ways at 1/3/5 m, people walking between, 4 orientations, BLE to a phone; antenna inside through the windows first, u.FL external as fallback. No code        | ≥ −70 dBm at the 1st percentile |
 | **M0**  | This design                                                                                                                                                                                                                  | owner review                    |
 | **M1**  | Port `swarm/net` + `swarm/proto` into `firmware/mesh/swarm/` with provenance (§3.1); the backhaul entry point, per-instance MTU, Splanc crypto backend; C6 + P4 + host builds and the swarm's tests and golden vectors in CI | ported tests pass               |
 | **M2**  | `firmware/mesh`: `Backhaul` trait, envelope (AES-CCM via `ccmp.rs`, replay window), membership state, ports, `meshsim` with the first scenarios                                                                              | host tests only                 |
@@ -1179,7 +1181,7 @@ ones that depend on unknown hardware behaviour.
 | **M3b** | BLE gateway: connection-interval request, narrowed coex window, mesh TX outside the BLE window (§4.3); `mesh_ble_gateway` HITL                                                                                               | Wi-Fi share ≥ 70 % with BLE up  |
 | **M4**  | Mesh time (beacon fit) + `TIME_BASE` mapped to the existing time base; meshsim skew test; `mesh_apply_at_skew` HITL                                                                                                          | skew < 10 ms                    |
 | **M5**  | Protocol arms (`MeshSend`, `MeshResult`, `GetMesh`/`MeshState`), gateway fan-out + aggregation, member dispatch allow-list, `MeshStatus`; `mesh_gateway` HITL                                                                |                                 |
-| **M5b** | P4 + C6: the mesh on the C6 front end, relayed control forwarded over the link, C6↔P4 clock offset for `TIME_BASE`, effect blobs handed to the P4                                                                           | P4 + C6 bench run               |
+| **M5b** | P4 + C6: the mesh on the C6 front end, relayed control forwarded over the link, C6↔P4 clock offset for `TIME_BASE`, effect blobs handed to the P4                                                                            | P4 + C6 bench run               |
 | **M6**  | Blob kind on the page protocol + effect distribution + scenes and catch-up; `mesh_effect` HITL                                                                                                                               |                                 |
 | **M7**  | Membership: closed mode (site secret, self-configuring formation, approval joins), the kiosk-style admin secret (`mesh_unlock`, admin tags, §7.9), groups; `mesh_join_admin` HITL                                            |                                 |
 | **M8**  | App: member list via gateway, target picker in live control and effects, mesh screen, admin secret export/import (copy, QR, file, backup)                                                                                    | web unit tests + manual run     |
@@ -1191,7 +1193,7 @@ ones that depend on unknown hardware behaviour.
 | PR  | Content                                                                                                                                                                                      |
 | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | M7b | Open mode: owner key + signed scenes/blobs/time, the follow stream under the open key, guest tables and rate limits, `mesh_follow` device setting, guests in the app; `mesh_open_guest` HITL |
-| M7c | Locked mode (allow-list by device key), closed ↔ locked transitions, key rotation on removal                                                                                                |
+| M7c | Locked mode (allow-list by device key), closed ↔ locked transitions, key rotation on removal                                                                                                 |
 | M9b | Site-secret rotation; the asymmetric admin key upgrade (§7.9) if wanted                                                                                                                      |
 | M10 | IP backhaul (UDP on the LAN) to bridge islands on other APs                                                                                                                                  |
 | M12 | `group_capture` arming over the mesh (one connection arms the room)                                                                                                                          |
@@ -1236,8 +1238,8 @@ swarm code, and Splanc's own framing.
 
 **Radiolarians:**
 
-- **Q1.** Which C6 module is on their P4 + C6 boards: PCB antenna or u.FL/IPEX connector? Can
-  the enclosures take a bulkhead antenna or a non-metal window? (R0 measures the rest.)
+- **Q1. Answered (2026-11-17):** chip antenna plus a u.FL connector. Test first with the antenna
+  inside the enclosure through its windows; an external antenna on the u.FL is the fallback (§4.5, R0).
 - **Q2.** Who provisions the site secret, mesh id and admin key: Splanc before shipping, or the
   customer from the app on site?
 - **Q3.** Does the venue have Wi-Fi for the bridge, or should the Pi bridge host the network the
