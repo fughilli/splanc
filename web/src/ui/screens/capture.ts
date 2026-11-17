@@ -38,7 +38,7 @@ import {
   driverFixtureScene,
   setDriverCaptureError,
 } from "../../driver/guard";
-import { forcedSyncPattern, isStaggered } from "../../code/gray";
+import { forcedSyncPattern, isStaggered, requestedSyncPattern } from "../../code/gray";
 import { phaseCount as stridePhaseCount } from "../../code/stride";
 import {
   fillChannelGaps,
@@ -217,10 +217,10 @@ const forcedSymbols = ((): 2 | 4 | null => {
   const v = qs.get("symbols");
   return v === "2" ? 2 : v === "4" ? 4 : null;
 })();
-// `?sync=stagger_pilot` REQUESTS the hue code v2 staggered pilot in
-// start_mapping (phase 2 wall test). The phone always decodes the
-// CodeParams.syncPattern the device answers with: a player that doesn't advertise
-// `hue_stagger_pilot` (C6/P4 firmware before it did) runs v1 "on_off" and the phone decodes v1.
+// start_mapping asks for the hue code v2 staggered pilot whenever the player
+// advertises `hue_stagger_pilot` (requestedSyncPattern); older firmware runs v1.
+// The phone always decodes the CodeParams.syncPattern the device answers with.
+// `?sync=` is a debug override only (e.g. `?sync=v1` forces the old pattern).
 const forcedSync = forcedSyncPattern(qs.get("sync"));
 const forcedBitMs = ((): number | null => {
   const v = parseFloat(qs.get("bitms") ?? "");
@@ -1299,7 +1299,11 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // Per-channel capture: the code book covers the WHOLE fixture from the
         // start, so ids + code timing never change between stages.
         ...(channelPlan !== null ? { codeSpace: channelPlan.total } : {}),
-        ...(forcedSync !== null ? { syncPattern: forcedSync } : {}),
+        // Hue code v2 by default on players that advertise it; older firmware
+        // gets v1. The phone decodes whatever the reply's codeParams says.
+        ...((sync) => (sync !== null ? { syncPattern: sync } : {}))(
+          requestedSyncPattern(forcedSync, c.welcome?.features),
+        ),
       };
 
       abandonIfDisposed();

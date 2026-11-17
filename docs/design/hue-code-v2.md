@@ -336,8 +336,10 @@ per id and per pilot frame.
 **Wire, for now.**
 
 - **Request.** `StartMappingOptions.sync_pattern` (field 12) asks for
-  `"stagger_pilot"`. The phone sends it only when the capture page is opened
-  with `?sync=stagger_pilot`.
+  `"stagger_pilot"`. The phone sends it by default to every player whose welcome
+  advertises `hue_stagger_pilot` (`requestedSyncPattern`, web/src/code/gray.ts).
+  `?sync=` on the capture page is a debug override (`?sync=v1` forces the old
+  pattern). Group captures still request nothing, so mixed fleets share v1.
 - **Who honours it.** The shared player core (`firmware/player`) runs the
   staggered pilot only if the build advertises the `hue_stagger_pilot` feature.
   The host player (`pi/player_rs` `player_host`, and so the virtual wall
@@ -347,7 +349,6 @@ per id and per pilot frame.
 - **What the phone decodes.** Whatever the reply's `codeParams.syncPattern`
   says, so an unsupported request is v1 end to end. A configure keeps the
   capture's pattern.
-- **Next.** Requesting the code automatically from players that advertise it.
 
 ### Simulation results
 

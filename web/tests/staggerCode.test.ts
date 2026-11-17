@@ -24,6 +24,8 @@ import {
   dataFrames,
   decodeCycleSymbols,
   forcedSyncPattern,
+  requestedSyncPattern,
+  FEATURE_STAGGER_PILOT,
   isStaggered,
   type Rgb,
   staggerPhase,
@@ -191,4 +193,15 @@ test("?sync= parses to a sync pattern, or null", () => {
   const p = book(16, 2, "on_off");
   assert.equal(withSyncPattern(p, null), p);
   assert.equal(withSyncPattern(p, SYNC_STAGGER_PILOT).syncPattern, SYNC_STAGGER_PILOT);
+});
+
+test("capture requests the staggered pilot by default from players that advertise it", () => {
+  assert.equal(FEATURE_STAGGER_PILOT, "hue_stagger_pilot");
+  assert.equal(requestedSyncPattern(null, ["effects", "hue_stagger_pilot"]), SYNC_STAGGER_PILOT);
+  // Older firmware: no request, so it runs (and reports) v1.
+  assert.equal(requestedSyncPattern(null, ["effects"]), null);
+  assert.equal(requestedSyncPattern(null, undefined), null);
+  // ?sync= debug override wins either way.
+  assert.equal(requestedSyncPattern("on_off", ["hue_stagger_pilot"]), "on_off");
+  assert.equal(requestedSyncPattern(SYNC_STAGGER_PILOT as never, []), SYNC_STAGGER_PILOT);
 });
