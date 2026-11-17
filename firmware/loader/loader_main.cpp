@@ -683,6 +683,9 @@ int lm_mdns_reply(const uint8_t *query, size_t qlen, uint16_t src_port, const ui
                : (int)loader_mdns_announce(ip, out, cap);
 }
 
+// The loader never renames itself, so there is never an old name to withdraw.
+int lm_mdns_goodbye_reply(const uint8_t *, uint8_t *, size_t) { return 0; }
+
 // #311: credentials a BLE provision in the loader leases on are kept, same keys as the app.
 bool lm_store_wifi_credentials(const char *ssid, const char *pass) {
   Preferences p;
