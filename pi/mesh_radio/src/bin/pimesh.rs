@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use splanc_mesh::{Backhaul, Node, NodeConfig};
 use splanc_mesh_linux::frame::{self, Category};
 use splanc_mesh_linux::nl80211::{self, Nl80211};
-use splanc_mesh_linux::radio::{BrcmActframe, Monitor, Nl80211Mgmt, RawRadio};
+use splanc_mesh_linux::radio::{BrcmActframe, BrcmRx, Monitor, Nl80211Mgmt, RawRadio, TxRecord};
 use splanc_mesh_linux::sys;
 use splanc_mesh_linux::udp::UdpRadio;
 use splanc_mesh_linux::{WifiBackhaul, WifiConfig};
@@ -41,6 +41,8 @@ struct Opts {
     mac: Option<[u8; 6]>,
     id: u16,
     app_ms: u64,
+    rx: BrcmRx,
+    csv: bool,
 }
 
 fn opts() -> Opts {
@@ -53,7 +55,7 @@ fn opts() -> Opts {
         cmd: a[0].clone(),
         ifname: a[1].clone(),
         via: "brcm".into(),
-        cat: Category::Vendor,
+        cat: Category::PublicVendor,
         count: 10,
         interval_ms: 100,
         len: 64,
@@ -66,6 +68,8 @@ fn opts() -> Opts {
         mac: None,
         id: 0,
         app_ms: 0,
+        rx: BrcmRx::Tap,
+        csv: false,
     };
     let mut i = 2;
     while i + 1 < a.len() + 1 && i < a.len() {
@@ -73,7 +77,7 @@ fn opts() -> Opts {
         let num = || v.parse::<u64>().unwrap_or_else(|_| panic!("{k}: bad number {v:?}"));
         match k {
             "--via" => o.via = v.clone(),
-            "--cat" => o.cat = if v == "public" { Category::PublicVendor } else { Category::Vendor },
+            "--cat" => o.cat = if v == "vendor" { Category::Vendor } else { Category::PublicVendor },
             "--count" => o.count = num() as u32,
             "--interval-ms" => o.interval_ms = num(),
             "--len" => o.len = num() as usize,
@@ -86,6 +90,11 @@ fn opts() -> Opts {
             "--mac" => o.mac = sys::parse_mac(&v),
             "--id" => o.id = num() as u16,
             "--app-ms" => o.app_ms = num(),
+            "--rx" => o.rx = if v == "nl" { BrcmRx::Nl80211 } else { BrcmRx::Tap },
+            "--csv" => {
+                o.csv = true;
+                i -= 1; // a flag
+            }
             _ => panic!("unknown option {k}"),
         }
         i += 2;
@@ -95,7 +104,7 @@ fn opts() -> Opts {
 
 fn radio(o: &Opts) -> io::Result<Box<dyn RawRadio>> {
     Ok(match o.via.as_str() {
-        "brcm" => Box::new(BrcmActframe::open(&o.ifname, o.cat, o.channel, o.dwell)?),
+        "brcm" => Box::new(BrcmActframe::open(&o.ifname, o.cat, o.channel, o.dwell, o.rx)?),
         "nl80211" => Box::new(Nl80211Mgmt::open(&o.ifname, o.cat, o.freq)?),
         "monitor" => {
             let mac = o.mac.ok_or_else(|| io::Error::other("--mac required with --via monitor"))?;
@@ -125,6 +134,56 @@ fn probe(kind: u8, seq: u32, t_us: u64, len: usize) -> Vec<u8> {
 fn parse_probe(b: &[u8]) -> Option<(u8, u32, u64)> {
     (b.len() >= 16 && &b[..3] == b"PRB")
         .then(|| (b[3], u32::from_le_bytes(b[4..8].try_into().unwrap()), u64::from_le_bytes(b[8..16].try_into().unwrap())))
+}
+
+fn pct(v: &mut [u32], q: f64) -> u32 {
+    v.sort_unstable();
+    v.get(((v.len() as f64 - 1.0) * q).round() as usize).copied().unwrap_or(0)
+}
+
+/// Print a summary (and with --csv every record) of the radio's per-send log.
+fn tx_report(o: &Opts, log: &[TxRecord]) {
+    if log.is_empty() {
+        return;
+    }
+    if o.csv {
+        for r in log {
+            println!("tx,{},{},{},{},{}", r.packet_id, r.call_us, r.cpu_us, r.complete_us, r.status as i64);
+        }
+    }
+    let mut call: Vec<u32> = log.iter().map(|r| r.call_us).collect();
+    let mut cpu: Vec<u32> = log.iter().map(|r| r.cpu_us).collect();
+    let mut done: Vec<u32> = log.iter().filter(|r| r.status != u32::MAX).map(|r| r.complete_us).collect();
+    let mut st: HashMap<i64, u32> = HashMap::new();
+    for r in log {
+        *st.entry(r.status as i64).or_default() += 1;
+    }
+    println!(
+        "txlog n={} status={st:?} call_us p50={} p90={} p99={} cpu_us p50={} p90={} complete_us p50={} p90={} p99={}",
+        log.len(),
+        pct(&mut call, 0.5),
+        pct(&mut call, 0.9),
+        pct(&mut call, 0.99),
+        pct(&mut cpu, 0.5),
+        pct(&mut cpu, 0.9),
+        pct(&mut done, 0.5),
+        pct(&mut done, 0.9),
+        pct(&mut done, 0.99)
+    );
+}
+
+fn iovar(o: &Opts, name: &str) -> io::Result<()> {
+    let mut r = BrcmActframe::open(&o.ifname, o.cat, 1, 0, BrcmRx::Nl80211)?;
+    let mut t = Vec::new();
+    let mut last = Vec::new();
+    for _ in 0..o.count {
+        let s = Instant::now();
+        last = r.iovar_get(name, o.len.max(4))?;
+        t.push(s.elapsed().as_micros() as u32);
+    }
+    let hex: String = last.iter().take(64).map(|b| format!("{b:02x}")).collect();
+    println!("iovar {name} len={} first64={hex} get_us p50={} p90={} min={}", last.len(), pct(&mut t.clone(), 0.5), pct(&mut t.clone(), 0.9), t.iter().min().unwrap_or(&0));
+    Ok(())
 }
 
 fn caps(o: &Opts) -> io::Result<()> {
@@ -182,6 +241,8 @@ fn send(o: &Opts) -> io::Result<()> {
     let mut buf = [0u8; 2400];
     while bh.recv(&mut buf).is_some() {}
     println!("sent ok={ok} err={err} errors={errs:?} stats={:?}", bh.stats);
+    let log = bh.radio.take_tx_log();
+    tx_report(o, &log);
     Ok(())
 }
 
@@ -190,6 +251,7 @@ fn listen(o: &Opts, pong: bool) -> io::Result<()> {
     let t0 = Instant::now();
     let mut buf = [0u8; 2400];
     let mut n = 0u32;
+    let mut rssis: Vec<i32> = Vec::new();
     while t0.elapsed() < Duration::from_secs(o.secs) {
         let t = t0.elapsed().as_micros() as i64;
         bh.set_now(t);
@@ -198,7 +260,11 @@ fn listen(o: &Opts, pong: bool) -> io::Result<()> {
             idle = false;
             n += 1;
             let p = parse_probe(&buf[..m.len]);
-            if n <= 20 || n % 100 == 0 {
+            rssis.push(m.rssi_dbm as i32);
+            if o.csv {
+                println!("rx,{},{},{}", p.map_or(-1, |x| x.1 as i64), m.rssi_dbm, t);
+            }
+            if !o.csv && (n <= 20 || n % 100 == 0) {
                 println!("rx t_ms={} from={} len={} rssi={} probe={p:?}", t / 1000, sys::fmt_mac(&m.src_mac), m.len, m.rssi_dbm);
             }
             if let (true, Some((1, seq, ts))) = (pong, p) {
@@ -214,7 +280,11 @@ fn listen(o: &Opts, pong: bool) -> io::Result<()> {
             std::thread::sleep(Duration::from_micros(200));
         }
     }
-    println!("received {n} stats={:?}", bh.stats);
+    rssis.sort_unstable();
+    let q = |f: f64| rssis.get(((rssis.len() as f64 - 1.0) * f).round() as usize).copied().unwrap_or(0);
+    println!("received {n} rssi min={} p10={} p50={} p90={} max={} stats={:?}", q(0.0), q(0.1), q(0.5), q(0.9), q(1.0), bh.stats);
+    let log = bh.radio.take_tx_log();
+    tx_report(o, &log);
     Ok(())
 }
 
@@ -249,7 +319,10 @@ fn ping(o: &Opts) -> io::Result<()> {
                 }
                 let rtt = t0.elapsed().as_micros() as u64 - ts;
                 rtts.push(rtt);
-                if s < 5 {
+                if o.csv {
+                    println!("rtt,{s},{rtt},{}", m.rssi_dbm);
+                }
+                if !o.csv && s < 5 {
                     println!("pong seq={s} rtt_us={rtt} rssi={}", m.rssi_dbm);
                 }
             }
@@ -267,6 +340,8 @@ fn ping(o: &Opts) -> io::Result<()> {
         pct(0.99),
         rtts.last().copied().unwrap_or(0)
     );
+    let log = bh.radio.take_tx_log();
+    tx_report(o, &log);
     Ok(())
 }
 
@@ -333,6 +408,10 @@ fn main() {
         "pong" => listen(&o, true),
         "ping" => ping(&o),
         "node" => node(&o),
+        "iovar" => {
+            let name = std::env::var("IOVAR").unwrap_or_else(|_| "ver".into());
+            iovar(&o, &name)
+        }
         c => Err(io::Error::other(format!("unknown command {c}"))),
     };
     if let Err(e) = r {

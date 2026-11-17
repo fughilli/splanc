@@ -1,9 +1,10 @@
 """Splanc mesh on a Linux radio (docs/design/mesh-pi-transport.md): a Raspberry Pi as a
-full mesh node. The Splanc 802.11 action frame, raw radios (monitor-mode injection on
-mac80211 USB adapters, nl80211 management frames, brcmfmac's firmware `actframe` through
-its vendor command for the Pi's own radio), the IP backhaul (M10) and a USB-attached C6
-coprocessor link, behind the mesh's Backhaul trait (//firmware/mesh). std, Linux, no new
-crates.
+full mesh node. The Splanc 802.11 action frame (Public Action), raw radios: the Pi's own
+radio through brcmfmac's firmware `actframe` (vendor DCMD) with a tracefs kprobe tap for
+RSSI, receive time and ACK status (the primary Pi transport); nl80211 management frames and
+monitor-mode injection for mac80211 USB adapters; the IP backhaul (M10) and a USB-attached
+C6 coprocessor link; all behind the mesh's Backhaul trait (//firmware/mesh). std, Linux, no
+new crates.
 
   bazel test //pi/mesh_radio:mesh_radio_test
   bazel build //pi/mesh_radio:pimesh_musl     # static aarch64 probe tool for a Pi
