@@ -281,6 +281,24 @@ export function forcedSyncPattern(value: string | null): CodeParams["syncPattern
   return null;
 }
 
+/** The welcome feature of a player that runs the hue code v2 staggered pilot
+ * (firmware/player FEATURE_STAGGER_PILOT). */
+export const FEATURE_STAGGER_PILOT = "hue_stagger_pilot";
+
+/**
+ * The sync pattern a capture asks a player for: the staggered pilot when the
+ * player advertises it, otherwise nothing (older firmware runs v1). A `?sync=`
+ * override (debug only) wins. The phone decodes whatever codeParams.syncPattern
+ * the player answers with, so the request is never a promise.
+ */
+export function requestedSyncPattern(
+  forced: CodeParams["syncPattern"] | null,
+  features: readonly string[] | undefined,
+): CodeParams["syncPattern"] | null {
+  if (forced !== null) return forced;
+  return features?.includes(FEATURE_STAGGER_PILOT) ? (SYNC_STAGGER_PILOT as CodeParams["syncPattern"]) : null;
+}
+
 /** `params` under another sync pattern (null = unchanged): the code book is
  * re-derived (a pruned book is wider). */
 export function withSyncPattern(params: CodeParams, sync: CodeParams["syncPattern"] | null): CodeParams {
