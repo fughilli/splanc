@@ -78,13 +78,57 @@
   },
   {
     "tag_name": "pi-bridge-v1.0.0",
-    "name": "pi-bridge-v1.0.0",
+    "name": "Splanc bridge 1.0.0",
     "draft": false,
     "prerelease": false,
     "published_at": "2026-11-01T08:00:00Z",
     "html_url": "https://github.com/fughilli/splanc/releases/tag/pi-bridge-v1.0.0",
-    "body": "Not app.",
-    "body_html": "<p>Not app.</p>",
+    "body": "First bridge image.",
+    "body_html": "<p>First bridge image.</p>",
+    "assets": []
+  },
+  {
+    "tag_name": "firmware-v1.8.0",
+    "name": "firmware-v1.8.0",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-10-20T10:00:00Z",
+    "html_url": "https://github.com/fughilli/splanc/releases/tag/firmware-v1.8.0",
+    "body": "Older firmware.\n<img alt=\"Same pic\" src=\"https://github.com/user-attachments/assets/aaaa-1111\" />",
+    "body_html": "<p>Older firmware.</p>\n<p><img alt=\"Same pic\" src=\"https://github.com/user-attachments/assets/aaaa-1111\"></p>",
+    "assets": []
+  },
+  {
+    "tag_name": "pi-bridge-ota-v1.1.0",
+    "name": "pi-bridge-ota-v1.1.0",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-11-02T08:00:00Z",
+    "html_url": "https://github.com/fughilli/splanc/releases/tag/pi-bridge-ota-v1.1.0",
+    "body": "OTA payload, not a product.",
+    "body_html": "<p>OTA payload, not a product.</p>",
+    "assets": []
+  },
+  {
+    "tag_name": "fxbench-data",
+    "name": "fxbench-data",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-11-03T08:00:00Z",
+    "html_url": "https://github.com/fughilli/splanc/releases/tag/fxbench-data",
+    "body": "Benchmark data.",
+    "body_html": "<p>Benchmark data.</p>",
+    "assets": []
+  },
+  {
+    "tag_name": "stage-demo",
+    "name": "stage-demo",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-11-04T08:00:00Z",
+    "html_url": "https://github.com/fughilli/splanc/releases/tag/stage-demo",
+    "body": "Stage tag.",
+    "body_html": "<p>Stage tag.</p>",
     "assets": []
   }
 ]

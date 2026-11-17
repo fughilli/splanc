@@ -451,9 +451,10 @@ jobs:
           make_latest: false
           target_commitish: ${{ github.sha }}
 
-      # Mirror the newest app releases' notes (+ their images/videos) into
-      # whatsnew/ for the in-app card (tools/whatsnew/whatsnew_mirror.py). Best
-      # effort: without it the app just says the notes aren't available.
+      # Mirror every product's release notes (app, firmware, bridge; + their
+      # images/videos) into whatsnew/ for the in-app card
+      # (tools/whatsnew/whatsnew_mirror.py). Best effort: without it the app
+      # just says the notes aren't available.
       # splanc.io re-mirrors on each deploy, which is how edited notes land.
       - name: Mirror release notes (What's new)
         continue-on-error: true

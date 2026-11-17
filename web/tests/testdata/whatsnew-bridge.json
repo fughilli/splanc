@@ -1,0 +1,21 @@
+{
+  "schema": 2,
+  "product": "bridge",
+  "releases": [
+    {
+      "version": "1.0.0",
+      "tag": "pi-bridge-v1.0.0",
+      "name": "Splanc bridge 1.0.0",
+      "date": "2026-11-01T08:00:00Z",
+      "url": "https://github.com/fughilli/splanc/releases/tag/pi-bridge-v1.0.0",
+      "prerelease": false,
+      "body": [
+        {
+          "t": "p",
+          "c": ["First bridge image."]
+        }
+      ],
+      "media": []
+    }
+  ]
+}

@@ -125,7 +125,7 @@ class SanitizerTest(unittest.TestCase):
 
 class SelectionTest(unittest.TestCase):
     def test_numeric_order_skips_drafts_and_other_streams(self):
-        picked = wm.select_releases(load_fixture(), wm.APP_TAG, 10)
+        picked = wm.select_releases(load_fixture(), wm.APP_TAG)
         self.assertEqual(
             [r["tag_name"] for r in picked], ["app-v1.10.0", "app-v1.9.10", "app-v1.9.2"]
         )
@@ -150,26 +150,59 @@ class SelectionTest(unittest.TestCase):
             log=lambda m: None,
         )
         self.assertEqual(
-            idx["releases"][0]["url"], "https://github.com/fughilli/splanc/releases/tag/app-v1.11.0"
+            idx["notes"]["app"]["releases"][0]["url"],
+            "https://github.com/fughilli/splanc/releases/tag/app-v1.11.0",
         )
 
-    def test_up_to_drops_later_firmware(self):
-        app, fw = wm.select_all(load_fixture(), 10, 3, up_to="app-v1.9.10")
-        self.assertEqual(fw, [])  # firmware 1.9.0 was published after app 1.9.10
-        app, fw = wm.select_all(load_fixture(), 10, 3)
-        self.assertEqual([r["tag_name"] for r in fw], ["firmware-v1.9.0"])
+    def test_products_by_tag_prefix(self):
+        got = [(p.id, [r["tag_name"] for r in rows]) for p, rows in wm.select_all(load_fixture())]
+        self.assertEqual(
+            got,
+            [
+                ("app", ["app-v1.10.0", "app-v1.9.10", "app-v1.9.2"]),
+                ("firmware", ["firmware-v1.9.0", "firmware-v1.8.0"]),
+                # pi-bridge-ota-v1.1.0, fxbench-data and stage-demo are no product.
+                ("bridge", ["pi-bridge-v1.0.0"]),
+            ],
+        )
+
+    def test_product_table(self):
+        ids = [p.id for p in wm.PRODUCTS]
+        self.assertEqual(ids[0], "app")
+        self.assertEqual(len(ids), len(set(ids)))
+        for p in wm.PRODUCTS:
+            self.assertRegex(p.id, r"^[a-z0-9-]+$")
+        bridge = next(p for p in wm.PRODUCTS if p.id == "bridge")
+        self.assertTrue(bridge.pattern.match("pi-bridge-v1.1.0"))
+        self.assertFalse(bridge.pattern.match("pi-bridge-ota-v1.1.0"))
+        self.assertFalse(bridge.pattern.match("pi-bridge-ota"))
+
+    def test_up_to_drops_later_products(self):
+        got = {p.id: rows for p, rows in wm.select_all(load_fixture(), up_to="app-v1.9.10")}
+        # firmware 1.9.0 was published after app 1.9.10; 1.8.0 and the bridge before.
+        self.assertEqual([r["tag_name"] for r in got["firmware"]], ["firmware-v1.8.0"])
+        self.assertEqual([r["tag_name"] for r in got["bridge"]], ["pi-bridge-v1.0.0"])
+        got = {p.id for p, _ in wm.select_all(load_fixture(), up_to="app-v1.9.2")}
+        self.assertEqual(got, {"app", "firmware", "bridge"})
+        # A product with no releases is left out of the list entirely.
+        rel = [r for r in load_fixture() if not r["tag_name"].startswith("pi-bridge-v")]
+        self.assertEqual([p.id for p, _ in wm.select_all(rel)], ["app", "firmware"])
 
     def test_digest_tracks_edits(self):
         rel = load_fixture()
-        before = wm.digest(*wm.select_all(rel, 10, 3))
-        self.assertEqual(before, wm.digest(*wm.select_all(load_fixture(), 10, 3)))
+        before = wm.digest(wm.select_all(rel))
+        self.assertEqual(before, wm.digest(wm.select_all(load_fixture())))
         rel[1]["body"] += "\nEdited."
-        self.assertNotEqual(before, wm.digest(*wm.select_all(rel, 10, 3)))
+        self.assertNotEqual(before, wm.digest(wm.select_all(rel)))
         rel = load_fixture()
         rel[1]["assets"].append(
             {"id": 103, "name": "new.webp", "content_type": "image/webp", "updated_at": "x"}
         )
-        self.assertNotEqual(before, wm.digest(*wm.select_all(rel, 10, 3)))
+        self.assertNotEqual(before, wm.digest(wm.select_all(rel)))
+        # Bridge notes are part of the fingerprint too.
+        rel = load_fixture()
+        next(r for r in rel if r["tag_name"] == "pi-bridge-v1.0.0")["body"] = "Edited."
+        self.assertNotEqual(before, wm.digest(wm.select_all(rel)))
 
 
 class MirrorTest(unittest.TestCase):
@@ -181,21 +214,69 @@ class MirrorTest(unittest.TestCase):
         self.index = wm.build_index(
             load_fixture(), self.out, self.net, now="2026-11-16T00:00:00Z", log=self.logs.append
         )
-        self.rel = self.index["releases"][0]
+        self.app = self.index["notes"]["app"]["releases"]
+        self.rel = self.app[0]
+
+    def read(self, name):
+        with open(os.path.join(self.out, name)) as f:
+            return json.load(f)
 
     def test_index_shape(self):
-        with open(os.path.join(self.out, "index.json")) as f:
-            on_disk = json.load(f)
-        self.assertEqual(on_disk, self.index)
-        self.assertEqual(self.index["schema"], 1)
+        on_disk = self.read("index.json")
+        self.assertEqual(on_disk, {k: v for k, v in self.index.items() if k != "notes"})
+        self.assertEqual(on_disk["schema"], 2)
+        self.assertNotIn("releases", on_disk)  # notes live in the per-product files
         self.assertEqual(
-            [r["version"] for r in self.index["releases"]], ["1.10.0", "1.9.10", "1.9.2"]
+            on_disk["products"],
+            [
+                {
+                    "id": "app",
+                    "name": "Splanc app",
+                    "label": "Splanc",
+                    "file": "app.json",
+                    "count": 3,
+                    "latest": {"version": "1.10.0", "date": "2026-11-12T08:00:00Z"},
+                },
+                {
+                    "id": "firmware",
+                    "name": "Firmware",
+                    "label": "Firmware",
+                    "file": "firmware.json",
+                    "count": 2,
+                    "latest": {"version": "1.9.0", "date": "2026-11-10T10:00:00Z"},
+                },
+                {
+                    "id": "bridge",
+                    "name": "Bridge",
+                    "label": "Bridge",
+                    "file": "bridge.json",
+                    "count": 1,
+                    "latest": {"version": "1.0.0", "date": "2026-11-01T08:00:00Z"},
+                },
+            ],
         )
-        self.assertEqual([r["version"] for r in self.index["firmware"]], ["1.9.0"])
-        self.assertTrue(self.index["releases"][2]["prerelease"])
+        self.assertTrue(on_disk["digest"].startswith("sha256:"))
+
+    def test_product_files(self):
+        for product in self.index["products"]:
+            body = self.read(product["file"])
+            self.assertEqual(body, self.index["notes"][product["id"]])
+            self.assertEqual(body["schema"], 2)
+            self.assertEqual(body["product"], product["id"])
+            self.assertEqual(len(body["releases"]), product["count"])
+        self.assertEqual([r["version"] for r in self.app], ["1.10.0", "1.9.10", "1.9.2"])
+        fw = self.read("firmware.json")["releases"]
+        self.assertEqual([r["version"] for r in fw], ["1.9.0", "1.8.0"])
+        bridge = self.read("bridge.json")["releases"]
+        self.assertEqual(bridge[0]["tag"], "pi-bridge-v1.0.0")
+        self.assertEqual(bridge[0]["name"], "Splanc bridge 1.0.0")
+        self.assertTrue(self.app[2]["prerelease"])
         self.assertEqual(self.rel["date"], "2026-11-12T08:00:00Z")
         self.assertEqual(self.rel["name"], "Splanc 1.10.0")
-        self.assertTrue(self.index["digest"].startswith("sha256:"))
+        self.assertEqual(
+            sorted(os.listdir(self.out)),
+            ["app.json", "bridge.json", "firmware.json", "index.json", "media"],
+        )
 
     def test_media_rewritten_to_local_files(self):
         media = [
@@ -215,10 +296,13 @@ class MirrorTest(unittest.TestCase):
         self.assertEqual(media[2]["a"]["alt"], "light show")  # gallery asset, from its file name
         # The .tar.gz asset is not media and is never fetched.
         self.assertFalse(any(u.endswith(".tar.gz") for u in self.net.calls))
-        # Each URL is fetched once even though the body links it twice.
+        # Each URL is fetched once even though the body links it twice and an
+        # older firmware release shows it too: media are shared across products.
         self.assertEqual(
             self.net.calls.count("https://github.com/user-attachments/assets/aaaa-1111"), 1
         )
+        fw_old = self.index["notes"]["firmware"]["releases"][1]
+        self.assertEqual(fw_old["media"], [srcs[0]])
 
     def test_no_remote_media_or_unsafe_content_left(self):
         blob = json.dumps(self.index)
@@ -252,7 +336,7 @@ class MirrorTest(unittest.TestCase):
 
     def test_task_list_and_text_fallback(self):
         self.assertIn("☑ Done thing", text_of(self.rel["body"]))
-        plain = self.index["releases"][1]["body"]
+        plain = self.app[1]["body"]
         self.assertEqual(
             plain, [{"t": "p", "c": ["Plain text only"]}, {"t": "p", "c": ["Second paragraph"]}]
         )
@@ -280,9 +364,28 @@ class MirrorTest(unittest.TestCase):
             )
         finally:
             wm.http_fetcher = orig
+        with open(os.path.join(out, "app.json")) as f:
+            app = json.load(f)
+        self.assertEqual([r["version"] for r in app["releases"]], ["1.9.10", "1.9.2"])
         with open(os.path.join(out, "index.json")) as f:
             idx = json.load(f)
-        self.assertEqual([r["version"] for r in idx["releases"]], ["1.9.10", "1.9.2"])
+        self.assertEqual([p["count"] for p in idx["products"]], [2, 1, 1])
+        with open(os.path.join(out, "firmware.json")) as f:
+            fw = json.load(f)
+        self.assertEqual([r["tag"] for r in fw["releases"]], ["firmware-v1.8.0"])
+
+    def test_cli_limit_per_product(self):
+        fixture = os.path.join(HERE, "testdata", "releases.json")
+        out = os.path.join(self.tmp, "cli1")
+        orig = wm.http_fetcher
+        wm.http_fetcher = lambda token: FakeNet()
+        try:
+            self.assertEqual(wm.main(["--releases-json", fixture, "--out", out, "--limit", "1"]), 0)
+        finally:
+            wm.http_fetcher = orig
+        with open(os.path.join(out, "index.json")) as f:
+            idx = json.load(f)
+        self.assertEqual([p["count"] for p in idx["products"]], [1, 1, 1])
 
 
 if __name__ == "__main__":

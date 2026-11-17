@@ -1,27 +1,38 @@
 /**
  * "What's new?" (release notes card): version order, when the sparkle bubble
  * shows (fresh install, update, skipped versions, after it was seen, a PWA
- * pull-to-refresh into a new deploy, play-mode launches), which notes a card
- * lists, and the allowlist the mirrored notes pass before reaching the DOM.
+ * pull-to-refresh into a new deploy, play-mode launches), the product list,
+ * each product's newest-first history and its "Jump to…" targets, and the
+ * allowlist the mirrored notes pass before reaching the DOM.
  *
- * testdata/whatsnew-index.json is what tools/whatsnew/whatsnew_mirror.py emits
- * for its own fixture releases (tools/whatsnew/testdata/releases.json).
+ * testdata/whatsnew-{index,app,firmware,bridge}.json are what
+ * tools/whatsnew/whatsnew_mirror.py emits for its own fixture releases
+ * (tools/whatsnew/testdata/releases.json).
  */
 
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import {
-  cardContent,
+  APP_PRODUCT,
   compareVersions,
   deserializeWhatsNewState,
+  jumpTargets,
   parseIndex,
+  parseProductNotes,
   parseReleaseVersion,
+  pickProduct,
   planBoot,
+  productHistory,
+  releaseAnchor,
   sanitizeNotes,
   serializeWhatsNewState,
+  type ReleaseNotes,
   type WhatsNewState,
 } from "../src/ui/whatsnew/model";
+import appJson from "./testdata/whatsnew-app.json";
+import bridgeJson from "./testdata/whatsnew-bridge.json";
+import firmwareJson from "./testdata/whatsnew-firmware.json";
 import indexJson from "./testdata/whatsnew-index.json";
 
 const st = (lastSeen: string | null): WhatsNewState => ({ lastSeen });
@@ -125,70 +136,137 @@ describe("planBoot (sparkle bubble visibility)", () => {
   });
 });
 
-describe("parseIndex + cardContent", () => {
+describe("index + products", () => {
   const index = parseIndex(indexJson)!;
 
-  test("the mirror's fixture output parses, newest first", () => {
+  test("the mirror's fixture index lists the products in order", () => {
     assert.ok(index);
-    assert.deepEqual(index.releases.map((r) => r.version), ["1.10.0", "1.9.10", "1.9.2"]);
-    assert.deepEqual(index.firmware.map((r) => r.version), ["1.9.0"]);
-    assert.equal(index.releases[0]!.name, "Splanc 1.10.0");
-    assert.equal(index.releases[0]!.media.length, 3);
+    assert.equal(index.schema, 2);
+    assert.deepEqual(
+      index.products.map((p) => [p.id, p.name, p.label, p.file, p.count, p.latest]),
+      [
+        ["app", "Splanc app", "Splanc", "app.json", 3, "1.10.0"],
+        ["firmware", "Firmware", "Firmware", "firmware.json", 2, "1.9.0"],
+        ["bridge", "Bridge", "Bridge", "bridge.json", 1, "1.0.0"],
+      ],
+    );
   });
 
-  test("rejects a missing or incompatible index", () => {
+  test("product files parse newest first, whatever order they arrive in", () => {
+    const app = parseProductNotes(appJson, "app")!;
+    assert.deepEqual(app.map((r) => r.version), ["1.10.0", "1.9.10", "1.9.2"]);
+    assert.equal(app[0]!.name, "Splanc 1.10.0");
+    assert.equal(app[0]!.media.length, 3);
+    const shuffled = { ...firmwareJson, releases: [...firmwareJson.releases].reverse() };
+    assert.deepEqual(parseProductNotes(shuffled, "firmware")!.map((r) => r.version), ["1.9.0", "1.8.0"]);
+    assert.deepEqual(parseProductNotes(bridgeJson, "bridge")!.map((r) => r.tag), ["pi-bridge-v1.0.0"]);
+  });
+
+  test("a product file must be that product's, at a known schema", () => {
+    assert.equal(parseProductNotes(appJson, "firmware"), null);
+    assert.equal(parseProductNotes({ ...appJson, schema: 3 }, "app"), null);
+    assert.equal(parseProductNotes(null, "app"), null);
+  });
+
+  test("rejects a missing or unknown index; drops bad product entries", () => {
     assert.equal(parseIndex(null), null);
-    assert.equal(parseIndex({ schema: 2, releases: [] }), null);
+    assert.equal(parseIndex({ schema: 3, products: [] }), null);
+    assert.equal(parseIndex({ schema: 2 }), null);
     assert.equal(parseIndex("nope"), null);
+    const odd = parseIndex({
+      schema: 2,
+      products: [
+        { id: "app", file: "app.json", count: 2, name: "Splanc app" },
+        { id: "../x", file: "x.json", count: 1 },
+        { id: "fw", file: "https://evil.example/fw.json", count: 1 },
+        { id: "fw2", file: "../fw.json", count: 1 },
+        { id: "empty", file: "empty.json", count: 0 },
+        { id: "app", file: "dupe.json", count: 1 },
+        null,
+      ],
+    })!;
+    assert.deepEqual(odd.products.map((p) => [p.id, p.label, p.latest]), [["app", "Splanc app", null]]);
   });
 
-  test("since: every skipped version up to the running one", () => {
-    const c = cardContent(index, "1.10.0", { kind: "since", since: "1.9.2" });
-    assert.deepEqual(c.primary.map((r) => r.version), ["1.10.0", "1.9.10"]);
-    assert.equal(c.missingCurrent, false);
-    assert.deepEqual(c.earlier, []);
+  test("a schema-1 index (inline app + firmware notes) still reads", () => {
+    const v1 = parseIndex({
+      schema: 1,
+      releases: appJson.releases,
+      firmware: firmwareJson.releases.slice(0, 1),
+    })!;
+    assert.deepEqual(v1.products.map((p) => [p.id, p.file, p.count]), [
+      ["app", null, 3],
+      ["firmware", null, 1],
+    ]);
+    assert.deepEqual(v1.products[0]!.releases!.map((r) => r.version), ["1.10.0", "1.9.10", "1.9.2"]);
+    assert.equal(parseIndex({ schema: 1 })!.products.length, 0);
   });
 
-  test("since: firmware released after the last-seen app release", () => {
-    // 1.9.2 went out 11-05, firmware 1.9.0 on 11-10 → news.
-    assert.deepEqual(cardContent(index, "1.10.0", { kind: "since", since: "1.9.2" }).firmware.map((r) => r.version), ["1.9.0"]);
-    // 1.10.0 went out 11-12, after the firmware → not news.
-    assert.deepEqual(cardContent(index, "1.10.0", { kind: "since", since: "1.10.0" }).firmware, []);
+  test("pickProduct: the wanted one, else the app, else the first", () => {
+    assert.equal(pickProduct(index, "bridge")!.id, "bridge");
+    assert.equal(pickProduct(index, null)!.id, APP_PRODUCT);
+    assert.equal(pickProduct(index, "gone")!.id, APP_PRODUCT);
+    const noApp = { ...index, products: index.products.filter((p) => p.id !== "app") };
+    assert.equal(pickProduct(noApp, "gone")!.id, "firmware");
+    assert.equal(pickProduct(null, "app"), null);
+    assert.equal(pickProduct({ ...index, products: [] }, "app"), null);
+  });
+});
+
+describe("productHistory + jumpTargets", () => {
+  const app = parseProductNotes(appJson, "app")!;
+  const fw = parseProductNotes(firmwareJson, "firmware")!;
+  const versions = (rs: ReleaseNotes[]): string[] => rs.map((r) => r.version);
+
+  test("the whole history, newest first, nothing marked from About", () => {
+    const h = productHistory("app", [...app].reverse(), "1.10.0", { kind: "history" });
+    assert.deepEqual(versions(h.releases), ["1.10.0", "1.9.10", "1.9.2"]);
+    assert.equal(h.fresh.size, 0);
+    assert.equal(h.missingCurrent, false);
   });
 
-  test("since null (update from a pre-feature build): the current version only", () => {
-    const c = cardContent(index, "1.9.10", { kind: "since", since: null });
-    assert.deepEqual(c.primary.map((r) => r.version), ["1.9.10"]);
-    assert.deepEqual(c.firmware.map((r) => r.version), ["1.9.0"]);
+  test("from the sparkle: every skipped version is marked new", () => {
+    const h = productHistory("app", app, "1.10.0", { kind: "since", since: "1.9.2" });
+    assert.deepEqual(versions(h.releases), ["1.10.0", "1.9.10", "1.9.2"]); // still the whole list
+    assert.deepEqual([...h.fresh], ["1.10.0", "1.9.10"]);
+    // Last-seen version unknown (an update from a pre-feature build): the current one.
+    assert.deepEqual([...productHistory("app", app, "1.9.10", { kind: "since", since: null }).fresh], ["1.9.10"]);
   });
 
-  test("never lists releases newer than the running build", () => {
-    const c = cardContent(index, "1.9.10", { kind: "since", since: "1.9.2" });
-    assert.deepEqual(c.primary.map((r) => r.version), ["1.9.10"]);
-    const h = cardContent(index, "1.9.10", { kind: "history" });
-    assert.deepEqual(h.primary.map((r) => r.version), ["1.9.10"]);
-    assert.deepEqual(h.earlier.map((r) => r.version), ["1.9.2"]);
+  test("never lists app releases newer than the running build", () => {
+    const h = productHistory("app", app, "1.9.10", { kind: "since", since: "1.9.2" });
+    assert.deepEqual(versions(h.releases), ["1.9.10", "1.9.2"]);
+    assert.deepEqual([...h.fresh], ["1.9.10"]);
   });
 
-  test("history (About): current version, then the rest", () => {
-    const h = cardContent(index, "1.10.0", { kind: "history" });
-    assert.deepEqual(h.primary.map((r) => r.version), ["1.10.0"]);
-    assert.deepEqual(h.earlier.map((r) => r.version), ["1.9.10", "1.9.2"]);
-    assert.deepEqual(h.firmware.map((r) => r.version), ["1.9.0"]);
-  });
-
-  test("running version not mirrored yet, or no index at all", () => {
-    const c = cardContent(index, "1.11.0", { kind: "history" });
-    assert.equal(c.missingCurrent, true);
-    assert.deepEqual(c.primary, []);
-    assert.deepEqual(c.earlier.map((r) => r.version), ["1.10.0", "1.9.10", "1.9.2"]);
-    const none = cardContent(null, "1.11.0", { kind: "since", since: "1.10.0" });
-    assert.deepEqual(none.primary, []);
-    assert.equal(none.missingCurrent, true);
-    // A dev build browsing history: everything, nothing "missing".
-    const dev = cardContent(index, "0.0.0-dev", { kind: "history" });
-    assert.deepEqual(dev.primary.map((r) => r.version), ["1.10.0"]);
+  test("running version not mirrored yet; dev builds see everything", () => {
+    const h = productHistory("app", app, "1.11.0", { kind: "history" });
+    assert.equal(h.missingCurrent, true);
+    assert.deepEqual(versions(h.releases), ["1.10.0", "1.9.10", "1.9.2"]);
+    const dev = productHistory("app", app, "0.0.0-dev", { kind: "since", since: "1.9.2" });
+    assert.deepEqual(versions(dev.releases), ["1.10.0", "1.9.10", "1.9.2"]);
     assert.equal(dev.missingCurrent, false);
+    assert.equal(dev.fresh.size, 0);
+  });
+
+  test("other products: everything, unaffected by the app version", () => {
+    const h = productHistory("firmware", fw, "1.0.0", { kind: "since", since: "0.9.0" });
+    assert.deepEqual(versions(h.releases), ["1.9.0", "1.8.0"]);
+    assert.equal(h.fresh.size, 0);
+    assert.equal(h.missingCurrent, false);
+  });
+
+  test("Jump to…: the product's versions, latest on top, anchored per product", () => {
+    const h = productHistory("app", app, "1.10.0", { kind: "since", since: "1.9.10" });
+    assert.deepEqual(jumpTargets("app", h), [
+      { version: "1.10.0", label: "1.10.0 (new)", anchor: "wn-app-1-10-0" },
+      { version: "1.9.10", label: "1.9.10", anchor: "wn-app-1-9-10" },
+      { version: "1.9.2", label: "1.9.2 (pre-release)", anchor: "wn-app-1-9-2" },
+    ]);
+    const f = jumpTargets("firmware", productHistory("firmware", fw, undefined, { kind: "history" }));
+    assert.deepEqual(f.map((t) => t.anchor), ["wn-firmware-1-9-0", "wn-firmware-1-8-0"]);
+    assert.notEqual(releaseAnchor("app", "1.9.0"), releaseAnchor("firmware", "1.9.0"));
+    assert.equal(jumpTargets("bridge", productHistory("bridge", [], undefined, { kind: "history" })).length, 0);
   });
 });
 

@@ -1,0 +1,48 @@
+{
+  "schema": 2,
+  "product": "firmware",
+  "releases": [
+    {
+      "version": "1.9.0",
+      "tag": "firmware-v1.9.0",
+      "name": "firmware-v1.9.0",
+      "date": "2026-11-10T10:00:00Z",
+      "url": "https://github.com/fughilli/splanc/releases/tag/firmware-v1.9.0",
+      "prerelease": false,
+      "body": [
+        {
+          "t": "p",
+          "c": ["Faster Wi-Fi rejoin."]
+        }
+      ],
+      "media": []
+    },
+    {
+      "version": "1.8.0",
+      "tag": "firmware-v1.8.0",
+      "name": "firmware-v1.8.0",
+      "date": "2026-10-20T10:00:00Z",
+      "url": "https://github.com/fughilli/splanc/releases/tag/firmware-v1.8.0",
+      "prerelease": false,
+      "body": [
+        {
+          "t": "p",
+          "c": ["Older firmware."]
+        },
+        {
+          "t": "p",
+          "c": [
+            {
+              "t": "img",
+              "a": {
+                "alt": "Same pic",
+                "src": "media/0068d2a62945f51a2326.png"
+              }
+            }
+          ]
+        }
+      ],
+      "media": ["media/0068d2a62945f51a2326.png"]
+    }
+  ]
+}

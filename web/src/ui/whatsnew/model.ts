@@ -1,14 +1,17 @@
 /**
  * "What's new?" — the pure core: version comparison, when the sparkle bubble
- * shows, which notes the card lists, and the allowlist check on the mirrored
+ * shows, the product list, which releases a product's history lists (and which
+ * are new), the "Jump to…" targets, and the allowlist check on the mirrored
  * notes. DOM-free so it unit-tests under plain Node (tests/whatsNew.test.ts);
  * the bubble + card live in ./whatsNew.ts.
  *
- * The notes are the app's GitHub releases, mirrored at deploy time by
- * tools/whatsnew/whatsnew_mirror.py into `whatsnew/index.json` + `whatsnew/media/`
- * next to the app (the service worker caches them like any other asset). The
- * app never calls the GitHub API. See "Release notes and What's new" in
- * web/README.md.
+ * The notes are Splanc's GitHub releases, mirrored at deploy time by
+ * tools/whatsnew/whatsnew_mirror.py next to the app (the service worker caches
+ * them like any other asset): `whatsnew/index.json` lists the products (Splanc
+ * app, Firmware, Bridge, …), `whatsnew/<product>.json` holds one product's
+ * whole history (fetched only when that product is picked), `whatsnew/media/`
+ * their images and videos. The app never calls the GitHub API. See "Release
+ * notes and What's new" in web/README.md.
  */
 
 // -- versions -----------------------------------------------------------------
@@ -131,14 +134,33 @@ export interface ReleaseNotes {
   media: string[];
 }
 
+/** One product in the card's dropdown (a tag-prefix release stream). */
+export interface ProductInfo {
+  /** "app", "firmware", "bridge", … */
+  id: string;
+  /** Dropdown text: "Splanc app". */
+  name: string;
+  /** Release heading prefix: "Splanc" → "Splanc 1.14.1". */
+  label: string;
+  /** Its notes file beside index.json (null: the notes are inline, schema 1). */
+  file: string | null;
+  count: number;
+  latest: string | null;
+  /** Inline notes (schema-1 index only), newest first. */
+  releases?: ReleaseNotes[];
+}
+
 export interface WhatsNewIndex {
   schema: number;
   repo: string;
   generated_at: string;
   digest: string;
-  releases: ReleaseNotes[];
-  firmware: ReleaseNotes[];
+  /** In dropdown order; never empty-handed: products without releases are dropped. */
+  products: ProductInfo[];
 }
+
+/** The app itself: the default product, and the one the sparkle opens on. */
+export const APP_PRODUCT = "app";
 
 const TAGS = new Set([
   "p", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li", "strong", "em",
@@ -227,7 +249,6 @@ function parseNotes(r: unknown): ReleaseNotes | null {
   if (!r || typeof r !== "object") return null;
   const o = r as Record<string, unknown>;
   if (typeof o.version !== "string" || !parseReleaseVersion(o.version)) return null;
-  const str = (v: unknown): string => (typeof v === "string" ? v : "");
   return {
     version: o.version,
     tag: str(o.tag),
@@ -240,77 +261,143 @@ function parseNotes(r: unknown): ReleaseNotes | null {
   };
 }
 
-/** Validate a fetched index.json (newest first, whatever order it arrived in).
- * Returns null for a missing or incompatible index. Pure. */
-export function parseIndex(json: unknown): WhatsNewIndex | null {
-  if (!json || typeof json !== "object") return null;
-  const o = json as Record<string, unknown>;
-  if (o.schema !== 1) return null;
-  const list = (v: unknown): ReleaseNotes[] =>
-    (Array.isArray(v) ? v.map(parseNotes).filter((r): r is ReleaseNotes => r !== null) : []).sort((a, b) =>
-      compareVersions(b.version, a.version),
-    );
-  return {
-    schema: 1,
-    repo: typeof o.repo === "string" ? o.repo : "",
-    generated_at: typeof o.generated_at === "string" ? o.generated_at : "",
-    digest: typeof o.digest === "string" ? o.digest : "",
-    releases: list(o.releases),
-    firmware: list(o.firmware),
-  };
+const PRODUCT_ID = /^[a-z0-9-]{1,32}$/;
+const PRODUCT_FILE = /^[a-z0-9-]{1,32}\.json$/;
+
+function releaseList(v: unknown): ReleaseNotes[] {
+  return (Array.isArray(v) ? v.map(parseNotes).filter((r): r is ReleaseNotes => r !== null) : []).sort((a, b) =>
+    compareVersions(b.version, a.version),
+  );
 }
 
-export type CardMode =
-  /** From the sparkle bubble: everything since the last-seen version. */
-  | { kind: "since"; since: string | null }
-  /** From About: the current version first, then the history. */
-  | { kind: "history" };
-
-export interface CardContent {
-  /** App releases to show expanded, newest first. */
-  primary: ReleaseNotes[];
-  /** Older app releases (About only), collapsed. */
-  earlier: ReleaseNotes[];
-  /** Firmware releases that are news for this card. */
-  firmware: ReleaseNotes[];
-  /** The running version has no mirrored notes (yet): link to its release. */
-  missingCurrent: boolean;
-}
-
-function published(r: ReleaseNotes | undefined): string {
-  return r?.date ?? "";
+function str(v: unknown): string {
+  return typeof v === "string" ? v : "";
 }
 
 /**
- * Which notes a card shows. "since": app releases in (since, current], newest
- * first — every version a user skipped — plus the firmware released since the
- * last-seen app release went out. "history": the current version, then older
- * ones; plus the newest firmware. Releases newer than the running app (a
- * mirror refreshed after a newer deploy, seen from a stale cached build) are
- * never listed as "new". Pure.
+ * Validate a fetched index.json. Schema 2 lists products, each with its own
+ * notes file; schema 1 (the first mirror) carried the app + firmware notes
+ * inline, and still reads as those two products. Returns null for a missing or
+ * unknown index (the card then says there are no notes). Pure.
  */
-export function cardContent(index: WhatsNewIndex | null, current: string | undefined, mode: CardMode): CardContent {
-  const rel = index?.releases ?? [];
-  const fw = index?.firmware ?? [];
-  const cur = current && parseReleaseVersion(current) ? current : null;
-  const upToCurrent = cur ? rel.filter((r) => compareVersions(r.version, cur) <= 0) : rel;
-  const missingCurrent = cur !== null && !rel.some((r) => r.version === cur);
-  if (mode.kind === "history") {
-    const [first, ...rest] = upToCurrent;
-    return {
-      primary: first && (!cur || first.version === cur) ? [first] : [],
-      earlier: first && (!cur || first.version === cur) ? rest : upToCurrent,
-      firmware: fw.slice(0, 1),
-      missingCurrent,
+export function parseIndex(json: unknown): WhatsNewIndex | null {
+  if (!json || typeof json !== "object") return null;
+  const o = json as Record<string, unknown>;
+  const head = { repo: str(o.repo), generated_at: str(o.generated_at), digest: str(o.digest) };
+  if (o.schema === 1) {
+    const inline = (id: string, name: string, label: string, v: unknown): ProductInfo => {
+      const releases = releaseList(v);
+      return { id, name, label, file: null, count: releases.length, latest: releases[0]?.version ?? null, releases };
     };
+    const products = [
+      inline(APP_PRODUCT, "Splanc app", "Splanc", o.releases),
+      inline("firmware", "Firmware", "Firmware", o.firmware),
+    ].filter((p) => p.count > 0);
+    return { schema: 1, ...head, products };
   }
-  const since = mode.since;
-  const primary = since
-    ? upToCurrent.filter((r) => compareVersions(r.version, since) > 0)
-    : upToCurrent.filter((r) => r.version === cur);
-  // Firmware news: released after the last-seen app release was published. When
-  // that release isn't in the index (too old, or no "since"), the newest one.
-  const sinceDate = since ? published(rel.find((r) => r.version === since)) : "";
-  const firmware = sinceDate ? fw.filter((f) => published(f) > sinceDate) : fw.slice(0, 1);
-  return { primary, earlier: [], firmware, missingCurrent };
+  if (o.schema !== 2 || !Array.isArray(o.products)) return null;
+  const seen = new Set<string>();
+  const products: ProductInfo[] = [];
+  for (const p of o.products) {
+    if (!p || typeof p !== "object") continue;
+    const e = p as Record<string, unknown>;
+    const id = str(e.id);
+    const file = str(e.file);
+    if (!PRODUCT_ID.test(id) || !PRODUCT_FILE.test(file) || seen.has(id)) continue;
+    const count = typeof e.count === "number" && Number.isInteger(e.count) && e.count > 0 ? e.count : 0;
+    if (!count) continue;
+    const latest = e.latest && typeof e.latest === "object" ? str((e.latest as Record<string, unknown>).version) : "";
+    seen.add(id);
+    products.push({
+      id,
+      name: str(e.name) || id,
+      label: str(e.label) || str(e.name) || id,
+      file,
+      count,
+      latest: parseReleaseVersion(latest) ? latest : null,
+    });
+  }
+  return { schema: 2, ...head, products };
+}
+
+/** Validate a fetched `<product>.json`: that product's releases, newest first,
+ * or null when it is not that product's notes. Pure. */
+export function parseProductNotes(json: unknown, productId: string): ReleaseNotes[] | null {
+  if (!json || typeof json !== "object") return null;
+  const o = json as Record<string, unknown>;
+  if (o.schema !== 2 || o.product !== productId) return null;
+  return releaseList(o.releases);
+}
+
+/** Which product the card opens on: the wanted one if the index has it, else
+ * the app, else the first listed. null with no products at all. Pure. */
+export function pickProduct(index: WhatsNewIndex | null, wanted: string | null | undefined): ProductInfo | null {
+  const ps = index?.products ?? [];
+  return ps.find((p) => p.id === wanted) ?? ps.find((p) => p.id === APP_PRODUCT) ?? ps[0] ?? null;
+}
+
+export type CardMode =
+  /** From the sparkle bubble: the app's history, the versions since the
+   * last-seen one marked new. */
+  | { kind: "since"; since: string | null }
+  /** From About: the last product picked, nothing marked. */
+  | { kind: "history" };
+
+export interface ProductHistory {
+  /** Every release to list, newest first: one long scroll. */
+  releases: ReleaseNotes[];
+  /** Versions marked "New" (the app after an update: (since, current]). */
+  fresh: Set<string>;
+  /** The running app version has no mirrored notes (yet): link to its release. */
+  missingCurrent: boolean;
+}
+
+/**
+ * One product's history for the card: every release, newest first. For the app
+ * on a release build, releases newer than the running version (a mirror
+ * refreshed after a newer deploy, seen from a stale cached build) are left out,
+ * and from the sparkle ("since") the versions in (since, current] — every
+ * version the user skipped — are marked new (just the current one when the
+ * last-seen version is unknown). Other products list everything. Pure.
+ */
+export function productHistory(
+  productId: string,
+  releases: ReleaseNotes[],
+  current: string | undefined,
+  mode: CardMode,
+): ProductHistory {
+  const sorted = [...releases].sort((a, b) => compareVersions(b.version, a.version));
+  if (productId !== APP_PRODUCT) return { releases: sorted, fresh: new Set(), missingCurrent: false };
+  const cur = current && parseReleaseVersion(current) ? current : null;
+  const list = cur ? sorted.filter((r) => compareVersions(r.version, cur) <= 0) : sorted;
+  const missingCurrent = cur !== null && !list.some((r) => r.version === cur);
+  const fresh = new Set<string>();
+  if (mode.kind === "since" && cur) {
+    const since = mode.since;
+    for (const r of list) {
+      if (since ? compareVersions(r.version, since) > 0 : r.version === cur) fresh.add(r.version);
+    }
+  }
+  return { releases: list, fresh, missingCurrent };
+}
+
+/** DOM id of a release's section (the "Jump to…" target). Pure. */
+export function releaseAnchor(productId: string, version: string): string {
+  return `wn-${productId}-${version.replace(/[^0-9A-Za-z]/g, "-")}`;
+}
+
+export interface JumpTarget {
+  version: string;
+  /** Option text: the version, marked " (new)" or " (pre-release)". */
+  label: string;
+  anchor: string;
+}
+
+/** The "Jump to…" list: the history's versions, newest (latest) first. Pure. */
+export function jumpTargets(productId: string, history: ProductHistory): JumpTarget[] {
+  return history.releases.map((r) => ({
+    version: r.version,
+    label: r.version + (history.fresh.has(r.version) ? " (new)" : r.prerelease ? " (pre-release)" : ""),
+    anchor: releaseAnchor(productId, r.version),
+  }));
 }

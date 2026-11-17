@@ -5,15 +5,20 @@
  * launch of a new version (for the PWA: the pull-to-refresh that loaded a new
  * deploy, since navigations are network-first in sw.js) a small sparkle bubble
  * sits in the lower-left corner, exactly where the tour's first-run hint sits.
- * Tapping it opens the card with the notes of every version since the one last
- * seen. The bubble goes away once the card is opened, and is never shown again
- * for that version (the version is recorded at launch). A fresh install shows
- * no bubble: that launch belongs to the tour hint. The card is always reachable
- * from About → "What's new" under the version number.
+ * Tapping it opens the card on the Splanc app's notes, scrolled to the newest,
+ * with every version since the one last seen marked "New". The bubble goes away
+ * once the card is opened, and is never shown again for that version (the
+ * version is recorded at launch). A fresh install shows no bubble: that launch
+ * belongs to the tour hint. The card is always reachable from About → "What's
+ * new" under the version number (opening on the product last picked).
  *
- * Notes come from `whatsnew/index.json` beside the app (mirrored from the
- * GitHub releases at deploy time; see ./model.ts). The native iOS shell bundles
- * the app without them, so it falls back to splanc.io's copy.
+ * The card: a product dropdown (Splanc app, Firmware, Bridge, …) and a "Jump
+ * to…" version picker in a bar pinned to the top, then ONE long scroll of every
+ * release of that product, newest first. Notes come from `whatsnew/index.json`
+ * + `whatsnew/<product>.json` beside the app (mirrored from the GitHub
+ * releases at deploy time; see ./model.ts); a product's file is fetched when it
+ * is first picked. The native iOS shell bundles the app without them, so it
+ * falls back to splanc.io's copy.
  */
 
 import { assetUrl } from "../../assetBase";
@@ -22,20 +27,28 @@ import { isNativePlatform } from "../../net/native";
 import { Button, Sheet, icon } from "../kit";
 import { installHintStyles } from "../guide/tour";
 import {
+  APP_PRODUCT,
   WHATS_NEW_STORAGE_KEY,
-  cardContent,
   deserializeWhatsNewState,
+  jumpTargets,
   parseIndex,
+  parseProductNotes,
+  pickProduct,
   planBoot,
+  productHistory,
+  releaseAnchor,
   serializeWhatsNewState,
   type CardMode,
   type NoteNode,
+  type ProductInfo,
   type ReleaseNotes,
   type WhatsNewIndex,
   type WhatsNewState,
 } from "./model";
 
 const TOUR_STORAGE_KEY = "ledmapper.tour";
+/** The product last picked in the card's dropdown (About reopens on it). */
+const PRODUCT_STORAGE_KEY = "splanc.whatsnew.product";
 /** Where the native shell (no mirrored notes in its bundle) reads them from. */
 const PUBLIC_INDEX_URL = "https://splanc.io/app/whatsnew/index.json";
 const RELEASES_URL = "https://github.com/fughilli/splanc/releases";
@@ -48,27 +61,34 @@ function readStore(key: string): string | null {
   }
 }
 
+function writeStore(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* storage blocked: nothing to remember it by, which is harmless */
+  }
+}
+
 function loadState(): WhatsNewState {
   return deserializeWhatsNewState(readStore(WHATS_NEW_STORAGE_KEY));
 }
 
 function saveState(s: WhatsNewState): void {
-  try {
-    localStorage.setItem(WHATS_NEW_STORAGE_KEY, serializeWhatsNewState(s));
-  } catch {
-    /* storage blocked: the bubble may show again next launch, which is harmless */
-  }
+  // Storage blocked: the bubble may show again next launch, which is harmless.
+  writeStore(WHATS_NEW_STORAGE_KEY, serializeWhatsNewState(s));
 }
 
 // -- loading ------------------------------------------------------------------
 
 interface LoadedIndex {
   index: WhatsNewIndex;
-  /** index.json's own URL; media paths resolve against it. */
+  /** index.json's own URL; product files and media paths resolve against it. */
   base: string;
 }
 
 let loading: Promise<LoadedIndex | null> | null = null;
+/** Per product id: its notes, fetched once per session. */
+const productNotes = new Map<string, Promise<ReleaseNotes[] | null>>();
 
 async function fetchIndex(url: string): Promise<LoadedIndex | null> {
   const res = await fetch(url, { cache: "no-cache" });
@@ -95,6 +115,31 @@ export function loadWhatsNew(): Promise<LoadedIndex | null> {
     return null;
   })();
   return loading;
+}
+
+/** One product's releases (newest first): inline in a schema-1 index, else its
+ * `<product>.json`, fetched on first use. null when it can't be had (offline
+ * and never cached); a later call retries. */
+function loadProductNotes(loaded: LoadedIndex, product: ProductInfo): Promise<ReleaseNotes[] | null> {
+  if (product.releases) return Promise.resolve(product.releases);
+  const file = product.file;
+  if (!file) return Promise.resolve(null);
+  let p = productNotes.get(product.id);
+  if (!p) {
+    p = (async () => {
+      try {
+        const res = await fetch(new URL(file, loaded.base).href, { cache: "no-cache" });
+        const notes = res.ok ? parseProductNotes(await res.json(), product.id) : null;
+        if (!notes) productNotes.delete(product.id);
+        return notes;
+      } catch {
+        productNotes.delete(product.id);
+        return null;
+      }
+    })();
+    productNotes.set(product.id, p);
+  }
+  return p;
 }
 
 // -- rendering ----------------------------------------------------------------
@@ -154,15 +199,33 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-function releaseSection(r: ReleaseNotes, base: string, label: string, headingId?: string): HTMLElement {
+function externalLink(href: string, text: string, className?: string): HTMLAnchorElement {
+  const a = document.createElement("a");
+  if (className) a.className = className;
+  a.href = href;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.textContent = text;
+  return a;
+}
+
+function releaseSection(product: ProductInfo, r: ReleaseNotes, base: string, fresh: boolean): HTMLElement {
   const sec = document.createElement("section");
   sec.className = "wn-release";
+  sec.id = releaseAnchor(product.id, r.version);
   const head = document.createElement("div");
   head.className = "wn-release-head";
   const h = document.createElement("h3");
   h.className = "wn-release-title";
-  h.textContent = `${label} ${r.version}`;
-  if (headingId) h.id = headingId;
+  h.tabIndex = -1; // "Jump to…" moves focus here
+  h.textContent = `${product.label} ${r.version}`;
+  sec.setAttribute("aria-labelledby", (h.id = `${sec.id}-h`));
+  if (fresh || r.prerelease) {
+    const tag = document.createElement("span");
+    tag.className = fresh ? "wn-tag wn-tag--new" : "wn-tag";
+    tag.textContent = fresh ? "New" : "Pre-release";
+    h.append(" ", tag);
+  }
   const date = document.createElement("span");
   date.className = "wn-release-date";
   date.textContent = formatDate(r.date);
@@ -172,76 +235,28 @@ function releaseSection(r: ReleaseNotes, base: string, label: string, headingId?
   if (r.body.length) notes.appendChild(renderNotes(r.body, base));
   else notes.textContent = "No notes for this release.";
   sec.append(head, notes);
-  if (r.url) {
-    const more = document.createElement("a");
-    more.className = "wn-release-link";
-    more.href = r.url;
-    more.target = "_blank";
-    more.rel = "noopener noreferrer";
-    more.textContent = "View on GitHub";
-    sec.appendChild(more);
-  }
+  if (r.url) sec.appendChild(externalLink(r.url, "View on GitHub", "wn-release-link"));
   return sec;
 }
 
-function collapsed(summary: string, content: HTMLElement): HTMLDetailsElement {
-  const d = document.createElement("details");
-  d.className = "wn-collapsed";
-  const s = document.createElement("summary");
-  s.textContent = summary;
-  d.append(s, content);
-  return d;
+function notice(...parts: (string | Node)[]): HTMLParagraphElement {
+  const p = document.createElement("p");
+  p.className = "wn-missing";
+  p.append(...parts);
+  return p;
 }
 
-function fillCard(body: HTMLElement, loaded: LoadedIndex | null, mode: CardMode): void {
-  const current = appBuildInfo.version;
-  const c = cardContent(loaded?.index ?? null, current, mode);
-  const base = loaded?.base ?? assetUrl("whatsnew/index.json");
-  const out: HTMLElement[] = [];
-  if (c.missingCurrent && current) {
-    const p = document.createElement("p");
-    p.className = "wn-missing";
-    p.append(`Release notes for Splanc ${current} aren't available here yet. `);
-    const a = document.createElement("a");
-    a.href = `${RELEASES_URL}/tag/app-v${current}`;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    a.textContent = "Read them on GitHub";
-    p.append(a, ".");
-    out.push(p);
-  } else if (!loaded) {
-    const p = document.createElement("p");
-    p.className = "wn-missing";
-    p.append("No release notes in this build. ");
-    const a = document.createElement("a");
-    a.href = RELEASES_URL;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    a.textContent = "See all releases on GitHub";
-    p.append(a, ".");
-    out.push(p);
-  }
-  c.primary.forEach((r, i) => out.push(releaseSection(r, base, "Splanc", i === 0 ? "wn-first" : undefined)));
-  if (c.firmware.length) {
-    const fw = document.createElement("div");
-    fw.className = "wn-firmware";
-    for (const r of c.firmware) fw.appendChild(releaseSection(r, base, "Firmware"));
-    const label = c.firmware.length === 1 ? `Firmware ${c.firmware[0]!.version}` : `Firmware (${c.firmware.length} releases)`;
-    out.push(collapsed(label, fw));
-  }
-  if (c.earlier.length) {
-    const list = document.createElement("div");
-    for (const r of c.earlier) list.appendChild(releaseSection(r, base, "Splanc"));
-    out.push(collapsed(`Earlier releases (${c.earlier.length})`, list));
-  }
-  body.replaceChildren(...out);
+function prefersReducedMotion(): boolean {
+  return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 let openCard: { close: () => void } | null = null;
 
 /**
- * Open the "What's new?" card. `mode` picks the notes (see cardContent);
- * focus moves into the card and returns to `opener` when it closes.
+ * Open the "What's new?" card. "since" (the sparkle) opens on the Splanc app
+ * with the versions since `since` marked new; "history" (About) opens on the
+ * product last picked. Either way the list starts at the top (newest). Focus
+ * moves into the card and returns to `opener` when it closes.
  */
 export function openWhatsNew(mode: CardMode = { kind: "history" }, opener?: HTMLElement | null): void {
   if (openCard) return;
@@ -258,7 +273,7 @@ export function openWhatsNew(mode: CardMode = { kind: "history" }, opener?: HTML
     },
   });
   openCard = sheet;
-  const panel = sheet.body.parentElement;
+  const panel = sheet.body.parentElement; // .k-sheet: the one long scroll view
   if (panel) {
     panel.classList.add("wn-sheet");
     panel.setAttribute("role", "dialog");
@@ -271,21 +286,116 @@ export function openWhatsNew(mode: CardMode = { kind: "history" }, opener?: HTML
   }
   document.addEventListener("keydown", onKey);
   sheet.body.className = "wn-body";
-  const status = document.createElement("p");
-  status.className = "wn-loading";
-  status.textContent = "Loading release notes…";
-  sheet.body.appendChild(status);
+
+  // The pinned bar: product dropdown + "Jump to…" version picker.
+  const bar = document.createElement("div");
+  bar.className = "wn-bar";
+  const pick = (aria: string): HTMLSelectElement => {
+    const wrap = document.createElement("div");
+    wrap.className = "k-field wn-field";
+    const sel = document.createElement("select");
+    sel.setAttribute("aria-label", aria);
+    sel.disabled = true;
+    wrap.appendChild(sel);
+    bar.appendChild(wrap);
+    return sel;
+  };
+  const productSel = pick("Product");
+  const jumpSel = pick("Jump to version");
   const content = document.createElement("div");
+  content.className = "wn-list";
   content.setAttribute("aria-live", "polite");
+  content.setAttribute("aria-busy", "true");
+  content.appendChild(notice("Loading release notes…"));
+  const foot = document.createElement("div");
+  foot.className = "wn-foot";
+  foot.appendChild(externalLink(RELEASES_URL, "All releases on GitHub", "wn-release-link"));
   const done = Button({ label: "Done", variant: "primary", block: true, onClick: () => sheet.close() });
   done.classList.add("wn-done");
-  sheet.body.append(content, done);
+  foot.appendChild(done);
+  sheet.body.append(bar, content, foot);
   // Focus the close button first: a screen reader lands in the dialog and can
   // read on; Done closes it at the end.
   requestAnimationFrame(() => panel?.querySelector<HTMLElement>(".k-sheet-head button")?.focus());
+
+  const scrollTo = (el: HTMLElement | null): void => {
+    if (!panel) return;
+    const top = el
+      ? el.getBoundingClientRect().top - panel.getBoundingClientRect().top + panel.scrollTop - bar.offsetHeight - 8
+      : 0;
+    panel.scrollTo({ top: Math.max(0, top), behavior: el && !prefersReducedMotion() ? "smooth" : "auto" });
+  };
+
+  let generation = 0;
+  const show = async (loaded: LoadedIndex, product: ProductInfo): Promise<void> => {
+    const gen = ++generation;
+    jumpSel.disabled = true;
+    content.setAttribute("aria-busy", "true");
+    content.replaceChildren(notice(`Loading ${product.name} release notes…`));
+    const notes = await loadProductNotes(loaded, product);
+    if (gen !== generation || !sheet.body.isConnected) return; // switched again / closed
+    const current = appBuildInfo.version;
+    const hist = productHistory(product.id, notes ?? [], current, mode);
+    const out: HTMLElement[] = [];
+    if (!notes) {
+      out.push(notice(`Couldn't load the ${product.name} release notes. `, externalLink(RELEASES_URL, "See them on GitHub"), "."));
+    } else if (hist.missingCurrent && current) {
+      out.push(
+        notice(
+          `Release notes for Splanc ${current} aren't available here yet. `,
+          externalLink(`${RELEASES_URL}/tag/app-v${current}`, "Read them on GitHub"),
+          ".",
+        ),
+      );
+    }
+    for (const r of hist.releases) out.push(releaseSection(product, r, loaded.base, hist.fresh.has(r.version)));
+    content.replaceChildren(...out);
+    content.setAttribute("aria-busy", "false");
+    const placeholder = new Option("Jump to…", "");
+    placeholder.disabled = true;
+    const targets = jumpTargets(product.id, hist);
+    jumpSel.replaceChildren(
+      placeholder,
+      ...targets.map((t, i) => {
+        const date = formatDate(hist.releases[i]?.date ?? null);
+        return new Option(date ? `${t.label} · ${date}` : t.label, t.anchor);
+      }),
+    );
+    jumpSel.value = "";
+    jumpSel.disabled = targets.length === 0;
+    scrollTo(null); // newest at the top
+  };
+
   void loadWhatsNew().then((loaded) => {
-    status.remove();
-    fillCard(content, loaded, mode);
+    if (!sheet.body.isConnected) return;
+    const wanted = mode.kind === "since" ? APP_PRODUCT : readStore(PRODUCT_STORAGE_KEY);
+    const first = pickProduct(loaded?.index ?? null, wanted);
+    if (!loaded || !first) {
+      content.setAttribute("aria-busy", "false");
+      content.replaceChildren(
+        notice("No release notes in this build. ", externalLink(RELEASES_URL, "See all releases on GitHub"), "."),
+      );
+      bar.hidden = true;
+      return;
+    }
+    const products = loaded.index.products;
+    productSel.replaceChildren(...products.map((p) => new Option(p.name, p.id)));
+    productSel.value = first.id;
+    productSel.disabled = products.length < 2;
+    productSel.addEventListener("change", () => {
+      const p = products.find((x) => x.id === productSel.value);
+      if (!p) return;
+      writeStore(PRODUCT_STORAGE_KEY, p.id);
+      void show(loaded, p);
+    });
+    jumpSel.addEventListener("change", () => {
+      const target = jumpSel.value ? document.getElementById(jumpSel.value) : null;
+      jumpSel.value = ""; // back to "Jump to…": the same version can be picked again
+      if (!target) return;
+      scrollTo(target);
+      target.querySelector<HTMLElement>(".wn-release-title")?.focus({ preventScroll: true });
+    });
+    void show(loaded, first);
   });
 }
 
@@ -364,7 +474,7 @@ function installWhatsNewStyles(): void {
 @keyframes wn-pulse { 0% { box-shadow: 0 0 0 0 var(--accent); opacity: .7; } 100% { box-shadow: 0 0 0 10px var(--accent); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .wn-bubble::after { animation: none; } }
 .wn-sheet { max-width: 720px; margin: 0 auto; }
-.wn-body { display: flex; flex-direction: column; gap: var(--sp-4); }
+.wn-body { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
 .wn-loading, .wn-missing { color: var(--text-dim); margin: 0; line-height: 1.5; }
 .wn-release { display: flex; flex-direction: column; gap: var(--sp-2); }
 .wn-release + .wn-release { border-top: 1px solid var(--border); padding-top: var(--sp-4); }
@@ -388,11 +498,27 @@ function installWhatsNewStyles(): void {
 .wn-notes blockquote { margin: var(--sp-2) 0; padding-left: var(--sp-3); border-left: 3px solid var(--border); color: var(--text-dim); }
 .wn-notes table { border-collapse: collapse; display: block; overflow-x: auto; }
 .wn-notes th, .wn-notes td { border: 1px solid var(--border); padding: var(--sp-1) var(--sp-2); }
-.wn-collapsed { border: 1px solid var(--border); border-radius: var(--r-card); padding: var(--sp-2) var(--sp-3); }
-.wn-collapsed > summary { cursor: pointer; color: var(--text); font-weight: 600; padding: var(--sp-1) 0; }
-.wn-collapsed[open] > summary { margin-bottom: var(--sp-3); }
-.wn-collapsed .wn-release-title { font-size: var(--f-body); }
-.wn-done { margin-top: var(--sp-2); }
+.wn-bar {
+  position: sticky; top: calc(-1 * var(--sp-4)); z-index: 1;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-2);
+  margin: 0 calc(-1 * var(--sp-4)); padding: var(--sp-2) var(--sp-4) var(--sp-3);
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.wn-bar[hidden] { display: none; }
+.wn-field { margin: 0; min-width: 0; }
+.wn-field select { min-width: 0; text-overflow: ellipsis; }
+.wn-field select:disabled { opacity: 0.6; }
+.wn-list { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+.wn-release-title .wn-tag { vertical-align: middle; }
+.wn-tag {
+  display: inline-block; font-size: var(--f-caption); font-weight: 600; line-height: 1.4;
+  padding: 0 var(--sp-2); border-radius: 999px; border: 1px solid var(--border); color: var(--text-dim);
+}
+.wn-tag--new { color: var(--accent); border-color: var(--accent); background: var(--accent-quiet); }
+.wn-release-title:focus { outline: none; }
+.wn-release-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.wn-foot { display: flex; flex-direction: column; gap: var(--sp-3); border-top: 1px solid var(--border); padding-top: var(--sp-4); }
+.wn-foot .wn-release-link { align-self: center; }
 `;
   document.head.appendChild(style);
 }

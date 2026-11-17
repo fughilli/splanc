@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
-"""Mirror the app's GitHub release notes into the static site for the in-app
+"""Mirror Splanc's GitHub release notes into the static site for the in-app
 "What's new?" card.
 
 The app never calls the GitHub API at runtime (rate limits, CORS, offline). This
 tool runs at deploy time instead, in fughilli/splanc's release + site builds and
 in the splanc.io deploy (Studio-Fug/splanc.io scripts/stage-app.mjs), and writes:
 
-    <out>/index.json        the notes of the newest N app-v* releases (+ the newest
-                            few firmware-v* releases), newest first
-    <out>/media/<hash>.<ext> every image/video the notes show, downloaded
+    <out>/index.json         the product list (PRODUCTS below: Splanc app,
+                             Firmware, Bridge), each with its release count,
+                             newest version and per-product file
+    <out>/<product>.json     every release of that product, newest first (the
+                             app fetches one only when its product is picked)
+    <out>/media/<hash>.<ext> every image/video the notes show, downloaded once
+                             (content-addressed, shared across products)
+
+A product is a tag prefix: ``app-vX.Y.Z`` is the Splanc app, ``firmware-vX.Y.Z``
+the firmware, ``pi-bridge-vX.Y.Z`` the bridge. Other tags (``pi-bridge-ota-*``,
+data, scaffold and stage tags) belong to no product and are skipped. Adding a
+product is one line in PRODUCTS.
 
 Release bodies come from the API's rendered ``body_html`` (exactly what GitHub
 shows on the release page, so drag-and-dropped ``github.com/user-attachments``
@@ -27,7 +36,7 @@ Stdlib only, so it also runs as a plain ``python3 whatsnew_mirror.py`` on a CI
 runner without Bazel. Usage:
 
     whatsnew_mirror.py --out _site/whatsnew [--repo fughilli/splanc]
-                       [--up-to app-v1.15.0] [--limit 10] [--firmware-limit 3]
+                       [--up-to app-v1.15.0] [--limit N]   # N per product; 0 = all
     whatsnew_mirror.py --print-digest        # fingerprint of the notes only
     whatsnew_mirror.py --releases-json releases.json --out ...   # offline input
 
@@ -48,14 +57,41 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Callable, Optional
 
-SCHEMA = 1
+# 2: index.json lists products; each product's notes are in <product>.json.
+# (1 had the app + firmware notes inline in index.json.)
+SCHEMA = 2
 DEFAULT_REPO = "fughilli/splanc"
-APP_TAG = re.compile(r"^app-v(\d+)\.(\d+)\.(\d+)$")
-FIRMWARE_TAG = re.compile(r"^firmware-v(\d+)\.(\d+)\.(\d+)$")
+
+
+@dataclass(frozen=True)
+class Product:
+    """One release stream: every ``<prefix>X.Y.Z`` tag."""
+
+    id: str  # file name + the app's key; [a-z0-9-]
+    name: str  # the card's product dropdown
+    label: str  # release headings: "<label> 1.2.3"
+    prefix: str  # tag prefix, up to the version number
+
+    @property
+    def pattern(self) -> re.Pattern:
+        return re.compile("^" + re.escape(self.prefix) + r"(\d+)\.(\d+)\.(\d+)$")
+
+
+# The card's product dropdown, in this order. The first is the app itself (the
+# --up-to tag and the post-update sparkle are about it).
+PRODUCTS = (
+    Product("app", "Splanc app", "Splanc", "app-v"),
+    Product("firmware", "Firmware", "Firmware", "firmware-v"),
+    Product("bridge", "Bridge", "Bridge", "pi-bridge-v"),
+)
+APP = PRODUCTS[0]
+APP_TAG = APP.pattern
+FIRMWARE_TAG = PRODUCTS[1].pattern
 
 # Per-file and per-run download caps: a runaway asset must not bloat the site.
 MAX_MEDIA_BYTES = 25 * 1024 * 1024
@@ -427,13 +463,13 @@ def _version(tag: str, pattern: re.Pattern) -> Optional[tuple[int, int, int]]:
 def select_releases(
     releases: list[dict],
     pattern: re.Pattern,
-    limit: int,
+    limit: int = 0,
     up_to: Optional[str] = None,
 ) -> list[dict]:
     """Published releases matching ``pattern``, newest version first (the API is
-    not version-ordered), optionally capped at the ``up_to`` tag's version. The
-    ``up_to`` release itself may still be a draft: the Release workflow mirrors
-    it before publishing it with its assets."""
+    not version-ordered), optionally capped at the ``up_to`` tag's version and
+    at ``limit`` releases (0: all). The ``up_to`` release itself may still be a
+    draft: the Release workflow mirrors it before publishing it with its assets."""
     cap = _version(up_to, pattern) if up_to else None
     picked = []
     for r in releases:
@@ -444,21 +480,27 @@ def select_releases(
             continue
         picked.append((v, r))
     picked.sort(key=lambda p: p[0], reverse=True)
-    return [r for _v, r in picked[: max(0, limit)]]
+    rows = [r for _v, r in picked]
+    return rows[:limit] if limit > 0 else rows
 
 
 def select_all(
-    releases: list[dict], limit: int, firmware_limit: int, up_to: Optional[str] = None
-) -> tuple[list[dict], list[dict]]:
-    """The app and firmware releases an index carries. With ``up_to`` (a pinned or
-    just-tagged build), firmware published after that app release is left out:
-    it is not yet news for that build."""
-    app = select_releases(releases, APP_TAG, limit, up_to)
-    firmware = select_releases(releases, FIRMWARE_TAG, firmware_limit)
+    releases: list[dict], limit: int = 0, up_to: Optional[str] = None
+) -> list[tuple[Product, list[dict]]]:
+    """Each product's releases, in PRODUCTS order (products with none are left
+    out). ``up_to`` is an app tag (a pinned or just-tagged build): app releases
+    past it are left out, and so are other products' releases published after
+    it went out — they are not yet news for that build."""
+    app = select_releases(releases, APP.pattern, limit, up_to)
     cutoff = (app[0].get("published_at") or "") if up_to and app else ""
-    if cutoff:
-        firmware = [r for r in firmware if (r.get("published_at") or "") <= cutoff]
-    return app, firmware
+    out: list[tuple[Product, list[dict]]] = [(APP, app)] if app else []
+    for product in PRODUCTS[1:]:
+        rows = select_releases(releases, product.pattern, limit)
+        if cutoff:
+            rows = [r for r in rows if (r.get("published_at") or "") <= cutoff]
+        if rows:
+            out.append((product, rows))
+    return out
 
 
 def _is_media_asset(asset: dict) -> bool:
@@ -468,19 +510,25 @@ def _is_media_asset(asset: dict) -> bool:
     return os.path.splitext(asset.get("name", ""))[1].lower() in EXT_TYPES
 
 
-def digest(app: list[dict], firmware: list[dict]) -> str:
-    """Fingerprint of everything the card shows: tags, markdown bodies and media
-    assets. A deploy compares it with the live index.json to re-mirror edits."""
-    parts = []
-    for r in app + firmware:
-        assets = sorted(
-            (a.get("id"), a.get("name"), a.get("updated_at"))
-            for a in r.get("assets", [])
-            if _is_media_asset(a)
-        )
-        parts.append([r.get("tag_name"), r.get("name"), r.get("body") or "", assets])
+def digest(selected: list[tuple[Product, list[dict]]]) -> str:
+    """Fingerprint of everything the card shows: products, tags, markdown bodies
+    and media assets. A deploy compares it with the live index.json's to
+    re-mirror edits."""
+    parts: list = [SCHEMA]
+    for product, rows in selected:
+        parts.append([product.id, product.name, product.label])
+        parts.extend(_digest_part(r) for r in rows)
     blob = json.dumps(parts, sort_keys=True, separators=(",", ":"), default=str)
     return "sha256:" + hashlib.sha256(blob.encode()).hexdigest()
+
+
+def _digest_part(r: dict) -> list:
+    assets = sorted(
+        (a.get("id"), a.get("name"), a.get("updated_at"))
+        for a in r.get("assets", [])
+        if _is_media_asset(a)
+    )
+    return [r.get("tag_name"), r.get("name"), r.get("body") or "", assets]
 
 
 # -- network ------------------------------------------------------------------
@@ -518,7 +566,7 @@ def http_fetcher(token: Optional[str]) -> Fetcher:
     return fetch
 
 
-def list_releases(repo: str, fetch: Fetcher, pages: int = 6, per_page: int = 50) -> list[dict]:
+def list_releases(repo: str, fetch: Fetcher, pages: int = 40, per_page: int = 50) -> list[dict]:
     out: list[dict] = []
     for page in range(1, pages + 1):
         data, _ = fetch(
@@ -623,31 +671,47 @@ def build_index(
     fetch: Fetcher,
     *,
     repo: str = DEFAULT_REPO,
-    limit: int = 10,
-    firmware_limit: int = 3,
+    limit: int = 0,
     up_to: Optional[str] = None,
     now: Optional[str] = None,
     log: Callable[[str], None] = lambda m: print(m, file=sys.stderr),
 ) -> dict:
-    """Write <out_dir>/index.json (+ media/) from a releases list. Replaces
-    whatever was in out_dir. Returns the index."""
-    app, firmware = select_all(releases, limit, firmware_limit, up_to)
+    """Write <out_dir>/index.json, one <product>.json per product with releases,
+    and media/ from a releases list. Replaces whatever was in out_dir. Returns
+    the index with each product's file contents under "notes" (not written to
+    index.json; handy for callers and tests)."""
+    selected = select_all(releases, limit, up_to)
     parent = os.path.dirname(os.path.abspath(out_dir)) or "."
     os.makedirs(parent, exist_ok=True)
     work = tempfile.mkdtemp(prefix=".whatsnew-", dir=parent)
     try:
         media = MediaStore(work, fetch, log)
+        products = []
+        notes: dict[str, dict] = {}
+        for product, rows in selected:
+            mirrored = [mirror_release(r, product.pattern, media, repo) for r in rows]
+            body = {"schema": SCHEMA, "product": product.id, "releases": mirrored}
+            _write_json(os.path.join(work, product.id + ".json"), body)
+            notes[product.id] = body
+            newest = mirrored[0]
+            products.append(
+                {
+                    "id": product.id,
+                    "name": product.name,
+                    "label": product.label,
+                    "file": product.id + ".json",
+                    "count": len(mirrored),
+                    "latest": {"version": newest["version"], "date": newest["date"]},
+                }
+            )
         index = {
             "schema": SCHEMA,
             "repo": repo,
             "generated_at": now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "digest": digest(app, firmware),
-            "releases": [mirror_release(r, APP_TAG, media, repo) for r in app],
-            "firmware": [mirror_release(r, FIRMWARE_TAG, media, repo) for r in firmware],
+            "digest": digest(selected),
+            "products": products,
         }
-        with open(os.path.join(work, "index.json"), "w") as f:
-            json.dump(index, f, indent=1, ensure_ascii=False)
-            f.write("\n")
+        _write_json(os.path.join(work, "index.json"), index)
         if os.path.exists(out_dir):
             shutil.rmtree(out_dir)
         os.replace(work, out_dir)
@@ -655,7 +719,13 @@ def build_index(
     except BaseException:
         shutil.rmtree(work, ignore_errors=True)
         raise
-    return index
+    return {**index, "notes": notes}
+
+
+def _write_json(path: str, obj: dict) -> None:
+    with open(path, "w") as f:
+        json.dump(obj, f, indent=1, ensure_ascii=False)
+        f.write("\n")
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -663,8 +733,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--repo", default=os.environ.get("WHATSNEW_REPO", DEFAULT_REPO))
     ap.add_argument("--out", help="output directory (replaced), e.g. _site/whatsnew")
     ap.add_argument("--up-to", help="newest app tag to include (the build's own tag)")
-    ap.add_argument("--limit", type=int, default=10, help="app releases to keep")
-    ap.add_argument("--firmware-limit", type=int, default=3, help="firmware releases to keep")
+    ap.add_argument(
+        "--limit", type=int, default=0, help="releases to keep per product (default 0: all)"
+    )
     ap.add_argument("--releases-json", help="read the releases list from this file (offline)")
     ap.add_argument(
         "--print-digest",
@@ -682,23 +753,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     else:
         releases = list_releases(args.repo, fetch)
     if args.print_digest:
-        print(digest(*select_all(releases, args.limit, args.firmware_limit, args.up_to)))
+        print(digest(select_all(releases, args.limit, args.up_to)))
         return 0
     if not args.out:
         ap.error("--out is required unless --print-digest")
     index = build_index(
-        releases,
-        args.out,
-        fetch,
-        repo=args.repo,
-        limit=args.limit,
-        firmware_limit=args.firmware_limit,
-        up_to=args.up_to,
+        releases, args.out, fetch, repo=args.repo, limit=args.limit, up_to=args.up_to
     )
-    n_media = sum(len(r["media"]) for r in index["releases"] + index["firmware"])
+    rows = [r for body in index["notes"].values() for r in body["releases"]]
+    n_media = len({m for r in rows for m in r["media"]})
+    counts = ", ".join(f"{p['count']} {p['id']}" for p in index["products"]) or "no"
     print(
-        f"whatsnew: {len(index['releases'])} app + {len(index['firmware'])} firmware "
-        f"release(s), {n_media} media file(s) -> {args.out} ({index['digest'][:19]})"
+        f"whatsnew: {counts} release(s), {n_media} media file(s) -> {args.out} "
+        f"({index['digest'][:19]})"
     )
     return 0
 
