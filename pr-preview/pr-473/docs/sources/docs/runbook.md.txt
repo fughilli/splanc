@@ -55,8 +55,13 @@ sandbox.
 
 ## The LED driver (M1)
 
-The real-time driver process owns the SPI bus and the pattern clock, running the
-Gray-code cycle and exposing a Unix-socket control plane for M2.
+On the Pi, M1 is picked by `ledOutput` in `pi/provisioning/nix/apps.nix` (or
+`SPLANC_LED_OUTPUT` at build time): `fpga` runs the Rust player
+(`//pi/player_rs`, WSS protocol + spi_ws281x FPGA render), `apa102` runs the
+Python driver (`//pi/led_driver`), which owns the SPI bus and the pattern clock,
+drives an APA102/SK9822 strip directly and exposes a Unix-socket control plane
+for M2. Both render the hue code with the one Rust kernel (`//firmware/pattern`;
+the Python driver calls it through `//firmware/pattern:pattern_py`).
 
 ```sh
 # On the Pi (real hardware):
@@ -68,8 +73,8 @@ bazelisk run //pi/led_driver:drive -- --dry-run --socket /tmp/control.sock --sta
 
 The control commands (`start`/`stop`/`get_clock`/`set_debug`) and the wire format
 are documented in [`pi/led_driver/README.md`](../pi/led_driver/README.md). Real
-cadence verification (±10% per §9 Phase 1) needs a logic analyzer on a bench and
-is not covered by CI.
+cadence verification (±10% per §9 Phase 1) needs a logic analyzer on a bench
+(`//pi/tools/la_probe`) and is not covered by CI.
 
 ## The Pi server (M2)
 
