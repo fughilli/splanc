@@ -58,6 +58,7 @@ interface Fixture {
   bundles: Map<string, StoredBundle>;
   failList?: boolean;
   vanish?: Set<string>;
+  applog?: unknown[];
 }
 
 function fixture(): Fixture {
@@ -74,6 +75,7 @@ function sources(f: Fixture): DiagSources {
   return {
     effects: async () => f.effects,
     chatlogs: async () => f.chats,
+    applog: async () => f.applog ?? [],
     captureList: async () => {
       if (f.failList) throw new Error("IndexedDB unavailable");
       return [...f.bundles.values()].map(
@@ -103,6 +105,7 @@ interface FakeServer {
   bundles: Map<string, { sha256: string; body: string }>;
   effects: unknown[] | null;
   chats: Map<string, unknown>;
+  applogs: Map<string, unknown[]>;
   manifests: Map<string, unknown>;
   bodies: { path: string; body: string }[];
   /** Fail matching requests (path substring or bundle id) with this status. */
@@ -119,6 +122,7 @@ function fakeServer(): FakeServer {
     bundles: new Map(),
     effects: null,
     chats: new Map(),
+    applogs: new Map(),
     manifests: new Map(),
     bodies: [],
     failWhen: null,
@@ -144,6 +148,11 @@ function fakeServer(): FakeServer {
       if (route === "/effects") {
         s.effects = j["effects"] as unknown[];
         return res(200, { stored: true, ids: s.effects.map((e) => String((e as { id: string }).id)) });
+      }
+      if (route === "/applog") {
+        const logs = j["logs"] as { id: string }[];
+        s.applogs.set(String(j["snapshotId"]), logs);
+        return res(200, { stored: true, ids: logs.map((x) => x.id) });
       }
       if (route === "/chatlogs") {
         const ids: string[] = [];
@@ -506,4 +515,33 @@ test("a partial failure in the sheet says so and offers Retry failed", async () 
   await waitFor("the retry", () => /Sent —/.test(h.el.querySelector(".diag-status")?.textContent ?? ""));
   assert.match(h.el.querySelector(".diag-status")?.textContent ?? "", /Sent — everything acknowledged/);
   h.close();
+});
+
+// -- the app event log ("applog") ----------------------------------------------------
+
+test("the app event log travels as its own category: in the file (its own IDB home) and to /applog", async () => {
+  const f = fixture();
+  f.applog = [
+    {
+      id: "applog",
+      updatedAt: "2026-11-17T03:40:00.000Z",
+      userAgent: "test",
+      entries: [
+        { t: "2026-11-17T03:39:00.000Z", kind: "toast", msg: "Network error", data: { error: true } },
+        { t: "2026-11-17T03:39:01.000Z", kind: "conn", msg: "connecting: reconnecting…", data: { device: "dev#00000000" } },
+      ],
+    },
+  ];
+  const snap = await takeSnapshot({ categories: ["effects", "applog"], includeFrames: false }, sources(f));
+  assert.deepEqual(snap.manifest.categories.applog?.items.map((i) => i.id), ["applog"]);
+  const file = await readBackup(new Uint8Array(await (await buildArchive(snap)).blob.arrayBuffer()));
+  const rec = file.idb["ledmapper-applog"]?.["log"]?.[0]?.value as { entries: { msg: string }[] };
+  assert.equal(rec.entries[0]!.msg, "Network error");
+  const server = fakeServer();
+  const report = await uploadSnapshot(snap, server.post);
+  assert.equal(report.complete, true, describeReport(report, snap.manifest).join("; "));
+  assert.deepEqual(report.categories.applog?.acked, ["applog"]);
+  const sent = server.applogs.get(snap.manifest.snapshotId)!;
+  assert.equal((sent[0] as { entries: unknown[] }).entries.length, 2);
+  assert.ok(server.bodies.some((b) => b.path.startsWith("/applog?snapshot=")));
 });

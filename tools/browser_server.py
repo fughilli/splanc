@@ -35,6 +35,9 @@ Debug intake (the app's Settings ▸ Debugging ▸ Send diagnostics, over HTTPS)
   /effects, /chatlogs      effects library / FX-agent chat sessions (POST; GET pulls)
   /capturebundles          mapping + localization capture bundles, one per POST,
                            persisted under --store-dir; GET lists, ?id= fetches one
+  /applog                  the app event log (errors, toasts, connection changes,
+                           failed fetches), one file per snapshot under --store-dir;
+                           GET ?snapshot= fetches one, else lists them
   /diagnostics             snapshot manifests; GET ?id=<snapshot> reports which of
                            its items this server holds
 """
@@ -863,6 +866,38 @@ def store_manifest(raw: bytes) -> tuple[dict, int]:
     return {"stored": True, "snapshotId": sid}, 200
 
 
+def store_applog(raw: bytes, sid: str):
+    """POST /applog: the app event log of one snapshot ({snapshotId, logs: [...]}),
+    persisted as <store>/applog/<snapshot>.json. Acks the record ids."""
+    try:
+        payload = json.loads(raw.decode("utf-8")) if raw else None
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        return {"error": f"bad JSON body: {e}"}, 400
+    logs = payload.get("logs") if isinstance(payload, dict) else None
+    if not isinstance(logs, list):
+        return {"error": "expected {logs: [...]}"}, 400
+    sid = sid or str(payload.get("snapshotId") or "") or _now()
+    ids = [str(r.get("id")) for r in logs if isinstance(r, dict) and "id" in r]
+    with _STORE_LOCK:
+        _write_atomic(_store_path("applog", _safe_name(sid) + ".json"), raw)
+    entries = sum(len(r.get("entries") or []) for r in logs if isinstance(r, dict))
+    _log(f"/applog stored {entries} entries for snapshot {sid} ({len(raw)} bytes)")
+    return {"stored": True, "snapshotId": sid, "ids": ids, "entries": entries}, 200
+
+
+def get_applog(sid: str):
+    return _read_json(_store_path("applog", _safe_name(sid) + ".json"), None)
+
+
+def list_applogs() -> list:
+    d = os.path.join(_STORE["dir"], "applog")
+    return (
+        sorted(n[: -len(".json")] for n in os.listdir(d) if n.endswith(".json"))
+        if os.path.isdir(d)
+        else []
+    )
+
+
 def list_manifests() -> list:
     d = os.path.join(_STORE["dir"], "diagnostics")
     out = []
@@ -901,6 +936,7 @@ def manifest_report(sid: str):
         "effects": lambda it: str(it.get("id")) in effect_ids,
         "chatlogs": lambda it: str(it.get("id")) in _CHATLOGS["sessions"],
         "captures": lambda it: (idx.get(str(it.get("id"))) or {}).get("sha256") == it.get("sha256"),
+        "applog": lambda it: get_applog(sid) is not None,
     }
     report = {}
     for cat, body in (man.get("categories") or {}).items():
@@ -1208,6 +1244,19 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(
                         {"sessions": sessions, "count": len(sessions), "at": _CHATLOGS["at"]}
                     )
+            elif route == "/applog":
+                # POST (from the app): one snapshot's app event log. GET: ?snapshot= one.
+                if self.command == "POST":
+                    ack, code = store_applog(self._read_body(), g("snapshot", "") or "")
+                    self._json(ack, code)
+                elif g("snapshot"):
+                    log = get_applog(g("snapshot"))
+                    if log is None:
+                        self._json({"error": f"no app log for snapshot {g('snapshot')}"}, 404)
+                    else:
+                        self._json(log)
+                else:
+                    self._json({"snapshots": list_applogs(), "dir": _STORE["dir"]})
             elif route == "/capturebundles":
                 # POST (from the app): one mapping/localization bundle per request.
                 # GET: the index of every persisted bundle, or ?id= one bundle.

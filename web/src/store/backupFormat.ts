@@ -38,8 +38,10 @@ export const DIAG_MANIFEST_KIND = "splanc-diagnostics";
 export const DIAG_MANIFEST_VERSION = 1;
 
 /** The diagnostic categories one export can carry. */
-export type DiagCategory = "effects" | "chatlogs" | "captures";
-export const DIAG_CATEGORIES: readonly DiagCategory[] = ["effects", "chatlogs", "captures"];
+// "applog": the app event log (store/appLog.ts) — errors, toasts, connection
+// transitions, failed fetches; diagnostics only (a backup import skips it).
+export type DiagCategory = "effects" | "chatlogs" | "captures" | "applog";
+export const DIAG_CATEGORIES: readonly DiagCategory[] = ["effects", "chatlogs", "captures", "applog"];
 
 /** One item in a snapshot. `sha256` is over the item's JSON text exactly as it
  * appears in the file (and as it is uploaded): JSON.stringify of its

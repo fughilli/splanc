@@ -5,6 +5,7 @@
  * `k-*` classes and wire events.
  */
 
+import { logToast } from "../../store/appLogStore";
 import { icon, type IconName } from "./icons";
 import { attachDiffractionBackdrop, type DiffractionHandle } from "./diffractionBackdrop";
 
@@ -564,6 +565,7 @@ function ensureToastHost(): HTMLElement {
 }
 
 export function toast(message: string, opts: { error?: boolean; ms?: number } = {}): void {
+  logToast(message, opts.error === true); // diagnostics app log (never throws)
   const host = ensureToastHost();
   const t = document.createElement("div");
   t.className = "k-toast";

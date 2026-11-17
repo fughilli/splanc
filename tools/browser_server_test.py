@@ -150,6 +150,31 @@ class IntakeTest(unittest.TestCase):
         _, ack = self.req("/chatlogs", json.dumps({"sessions": [{"id": "c1"}]}).encode())
         self.assertEqual(ack["ids"], ["c1"])
 
+    def test_applog_is_stored_per_snapshot_and_reported(self) -> None:
+        man = {
+            "snapshotId": "snap-log",
+            "createdAt": "2026-11-17T00:00:00Z",
+            "categories": {"applog": {"count": 1, "items": [{"id": "applog"}]}},
+        }
+        self.req("/diagnostics", json.dumps(man).encode())
+        _, rep = self.req("/diagnostics?id=snap-log")
+        self.assertEqual(rep["report"]["applog"]["missing"], ["applog"])
+        body = {
+            "snapshotId": "snap-log",
+            "logs": [
+                {"id": "applog", "entries": [{"t": "x", "kind": "toast", "msg": "Network error"}]}
+            ],
+        }
+        _, ack = self.req("/applog?snapshot=snap-log", json.dumps(body).encode())
+        self.assertEqual((ack["ids"], ack["entries"]), (["applog"], 1))
+        _, rep = self.req("/diagnostics?id=snap-log")
+        self.assertEqual(rep["report"]["applog"]["received"], ["applog"])
+        self.assertTrue(rep["complete"])
+        _, got = self.req("/applog?snapshot=snap-log")
+        self.assertEqual(got["logs"][0]["entries"][0]["msg"], "Network error")
+        _, listing = self.req("/applog")
+        self.assertEqual(listing["snapshots"], ["snap-log"])
+
     def test_manifest_report_tracks_received_and_missing(self) -> None:
         raw_a, _ = self.post_bundle(_bundle("a"))
         man = {

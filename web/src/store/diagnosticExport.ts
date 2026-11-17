@@ -1,12 +1,14 @@
 /**
  * Diagnostics export (#450): one snapshot of the debug data — the effects
- * library, the FX-agent chat sessions and the mapping / room-localization
- * capture bundles — that every transport sends identically:
+ * library, the FX-agent chat sessions, the mapping / room-localization
+ * capture bundles and the app event log (store/appLog.ts) — that every
+ * transport sends identically:
  *
  *   - Send to the debug server (tools/browser_server.py): the manifest to
  *     `/diagnostics`, then effects to `/effects`, chat sessions to `/chatlogs`
- *     and each capture bundle to `/capturebundles` (one request per bundle, so
- *     a large set never has to sit in one request body);
+ *     each capture bundle to `/capturebundles` (one request per bundle, so
+ *     a large set never has to sit in one request body) and the app log to
+ *     `/applog`;
  *   - Share / Save file: the same snapshot as one file.
  *
  * The file IS an app backup (store/backupFormat.ts, `splanc-backup` v1) holding
@@ -41,6 +43,7 @@ import {
   type DiagnosticManifest,
 } from "./backupFormat";
 import { captureBundleStore, type CaptureBundleMeta, type StoredBundle } from "./captureBundleStore";
+import { appLogRecords } from "./appLogStore";
 import { chatLogStore } from "./chatLogStore";
 import { effectStore } from "./effectStore";
 
@@ -52,12 +55,14 @@ const IDB_HOME: Record<DiagCategory, { db: string; store: string; meta?: string 
   effects: { db: "ledmapper", store: "effects" },
   chatlogs: { db: "ledmapper-chatlog", store: "sessions" },
   captures: { db: "ledmapper-capturebundles", store: "bundles", meta: "meta" },
+  applog: { db: "ledmapper-applog", store: "log" },
 };
 
 export const CATEGORY_LABEL: Record<DiagCategory, string> = {
   effects: "Effects library",
   chatlogs: "AI chat sessions",
   captures: "Mapping & localization bundles",
+  applog: "App event log",
 };
 
 /** Largest single item the server upload sends (the server refuses bodies
@@ -70,6 +75,8 @@ export const MAX_UPLOAD_ITEM_BYTES = 200 * 1024 * 1024;
 export interface DiagSources {
   effects(): Promise<readonly unknown[]>;
   chatlogs(): Promise<readonly unknown[]>;
+  /** The app event log: one record ({@link AppLogRecord}), or none. */
+  applog(): Promise<readonly unknown[]>;
   captureList(): Promise<readonly CaptureBundleMeta[]>;
   captureGet(id: string): Promise<StoredBundle | undefined>;
 }
@@ -77,6 +84,7 @@ export interface DiagSources {
 export const storeSources: DiagSources = {
   effects: () => effectStore.list(),
   chatlogs: () => chatLogStore.list(),
+  applog: () => appLogRecords(),
   captureList: () => captureBundleStore.list(),
   captureGet: (id) => captureBundleStore.get(id),
 };
@@ -103,15 +111,21 @@ export async function summarizeCategories(src: DiagSources = storeSources): Prom
     const r = await list();
     return { count: r.length, bytes: JSON.stringify(r).length };
   };
-  const [effects, chatlogs, captures] = await Promise.all([
+  const [effects, chatlogs, captures, applog] = await Promise.all([
     one(() => records(src.effects)),
     one(() => records(src.chatlogs)),
     one(async () => {
       const m = await src.captureList();
       return { count: m.length, bytes: m.reduce((a, x) => a + x.bytes, 0) };
     }),
+    // Counted in entries (the store holds one record).
+    one(async () => {
+      const r = await src.applog();
+      const n = r.reduce<number>((a, x) => a + (((x as { entries?: unknown[] }).entries ?? []).length), 0);
+      return { count: n, bytes: JSON.stringify(r).length };
+    }),
   ]);
-  return { effects, chatlogs, captures };
+  return { effects, chatlogs, captures, applog };
 }
 
 // -- snapshot ----------------------------------------------------------------------
@@ -220,7 +234,7 @@ export async function takeSnapshot(
         }
         hooks.onProgress?.(metas.length, metas.length);
       } else {
-        const records = await (category === "effects" ? src.effects() : src.chatlogs());
+        const records = await (category === "effects" ? src.effects() : category === "applog" ? src.applog() : src.chatlogs());
         for (const r of records) {
           abortCheck();
           const id = (r as { id?: unknown } | null)?.id;
@@ -430,7 +444,8 @@ export async function uploadSnapshot(snap: DiagnosticSnapshot, post: Poster, opt
       }
       continue;
     }
-    // Effects / chat sessions: one request for the category, acknowledged by id.
+    // Effects / chat sessions / the app log: one request for the category,
+    // acknowledged by id.
     progress(CATEGORY_LABEL[c]);
     try {
       const values: unknown[] = [];
@@ -440,9 +455,12 @@ export async function uploadSnapshot(snap: DiagnosticSnapshot, post: Poster, opt
         exportedAt: m.createdAt,
         count: values.length,
         userAgent: m.userAgent,
-        ...(c === "effects" ? { effects: values } : { sessions: values }),
+        ...(c === "effects" ? { effects: values } : c === "applog" ? { logs: values } : { sessions: values }),
       };
-      const res = await post(c === "effects" ? "/effects" : "/chatlogs", JSON.stringify(body));
+      const res = await post(
+        c === "effects" ? "/effects" : c === "applog" ? `/applog?snapshot=${encodeURIComponent(m.snapshotId)}` : "/chatlogs",
+        JSON.stringify(body),
+      );
       if (!res.ok) {
         const err = await httpError(res);
         for (const it of list) o.failed.push({ id: it.id, error: err });

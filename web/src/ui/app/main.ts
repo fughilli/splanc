@@ -7,6 +7,7 @@
  * #/capture. `?url=<wss>` still selects/links a device on load (back-compat).
  */
 
+import { installAppLog } from "../../store/appLogStore";
 import "../kit/fonts.css";
 import "../kit/tokens.css";
 import "./app.css";
@@ -55,6 +56,8 @@ import { maybeShowFirstRunHint } from "../guide/tour";
 import { chatLogStore, chatLogDumpOnBootEnabled } from "../../store/chatLogStore";
 
 async function main(): Promise<void> {
+  // Diagnostics app log first, so boot errors land in it too.
+  installAppLog();
   // The hue-code kernel (wasm) must be callable before any capture / decode /
   // sim render runs; already resolved wherever it compiled synchronously.
   await codeKernelReady;

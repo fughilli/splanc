@@ -45,7 +45,7 @@ const ON_OFF: ["off" | "on", string][] = [
 ];
 
 /** Selection survives the settings screen's re-renders (connection changes). */
-const selection: Record<DiagCategory, boolean> = { effects: true, chatlogs: true, captures: true };
+const selection: Record<DiagCategory, boolean> = { effects: true, chatlogs: true, captures: true, applog: true };
 let includeFrames: boolean | null = null;
 
 /** Test seams. */
