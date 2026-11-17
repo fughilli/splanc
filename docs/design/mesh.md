@@ -23,6 +23,10 @@ Follow-up directions from the owner, folded into this design:
 4. **Priority: the application backhaul ships first**, for the radiolarians deployment. Their
    fixtures are heavy and static, so the existing room localization is enough to provision the
    install. Ranging, fusion and channel sounding are later, independent tracks.
+5. Owner answers: up to 6 radiolarians, each a P4 + C6 driving WLEDs over DDP; BLE → mesh for
+   sites without Wi-Fi; three membership modes (open, closed, locked).
+6. The swarm code is ported into Splanc (indoor_localization is public), not shared as a
+   dependency.
 
 ## Contents
 
@@ -65,9 +69,15 @@ Follow-up directions from the owner, folded into this design:
 - **Mesh time** is disciplined from beacons. The app's `SetTimeBase` epoch is mapped into mesh
   time, so `apply_at_ms` (`docs/design/synced-show.md`) lands a relayed change on the same
   frame on every member.
-- **Membership:** a mesh has an id, a key and an epoch. Groups target messages. The mesh is
-  either **open** (devices holding the site credentials auto-join) or **frozen** (only listed
-  ids are accepted; removal rotates the key).
+- **Membership:** a mesh has an id, a key and an epoch, and one of three modes set from the
+  app. **Open**: any Splanc device can follow the show (time, scenes, effects) as a guest, with
+  no secret, but can never manage it. **Closed**: devices holding the site secret from
+  provisioning join as members. **Locked**: only devices the owner approved; removal rotates
+  the key. Groups target messages.
+- **BLE or Wi-Fi in.** Sites without Wi-Fi are first-class: the phone connects over BLE to any
+  fixture, which gateways to a mesh running in a radio-up, no-AP mode.
+- **Radiolarians** (up to 6 P4 + C6 fixtures driving WLEDs over DDP): the C6 front end is the
+  mesh node and gateway, the P4 the endpoint.
 - **Later tracks:** UWB (a hardware revision: no current Splanc board has UWB), ranging plus
   IMU fusion, and a research track on CS-like phase ranging using the C6's undocumented raw I/Q
   capture.
@@ -129,9 +139,9 @@ What does **not** carry over as is:
 
 - The swarm authenticates only settings (4-byte truncated HMAC-SHA256) and firmware (ECDSA).
   Reports and acks are unauthenticated. Lights in someone's home need every control frame
-  authenticated (§7.4).
+  authenticated (§7.5).
 - Membership is implicit (a node's slot is its rank among heard ids). There is no join, no
-  groups, no freeze (§7).
+  groups, no modes (§7).
 - Time sync is coarse (superframes align to the lowest id's POLL). Splanc needs ms-level shared
   time for `apply_at` (§6).
 - The 88 B payload is a UWB budget. The 802.11 backhaul allows more (§5.2).
@@ -144,9 +154,9 @@ What does **not** carry over as is:
                                   ▼
  ┌─────────────────────────── firmware/mesh (Splanc) ─────────────────────────────┐
  │ ports: control · reply · status · membership · scene · blobs · time            │
- │ membership: mesh id, key epoch, members, groups, open / frozen                 │
+ │ membership: mesh id, key epoch, members, groups, open / closed / locked        │
  │ security envelope: AES-128-CCM, per-source replay window                       │
- ├──────────────────────────── swarm_net (shared) ─────────────────────────────────┤
+ ├──────────────────────────── swarm_net (ported) ─────────────────────────────────┤
  │ MeshPacket flood + dedup + TTL · want-ack · generations · page protocol         │
  ├──────────────────────────── Backhaul trait ─────────────────────────────────────┤
  │ wifi_p2p (netstack action frames) │ ip (UDP on the LAN, later) │ uwb (later)    │
@@ -155,37 +165,37 @@ What does **not** carry over as is:
                                   ▼  each member: lm_player_handle (same as wss/BLE)
 ```
 
-### 3.1 Where the code lives: extract, then depend
+### 3.1 Where the code lives: port the swarm into Splanc
 
-**Recommendation: extract `swarm/net` and `swarm/proto` from indoor_localization into their own
-repository and consume it from both projects with a pinned `archive_override`.** This is how
-`fughilli/lighthouse` was handled: it started in indoor_localization (`lighthouse/`) and Splanc
-now pins it in `MODULE.bazel` ("re-sync, not fork: bump the commit").
+The owner's call: **port `swarm/net` and `swarm/proto` into Splanc** as Splanc code. No shared
+repo, no Bazel dependency on indoor_localization (which is public now).
 
-Why this option:
+- **Where**: `firmware/mesh/swarm/` (the ported `swarm_net` crate, kept close to upstream) and
+  `firmware/mesh/` (the Splanc layer on top: backhauls, envelope, membership, ports). The proto
+  goes to `shared/protocol/proto/swarm_wire.proto` next to `ledmapper.proto`, generated with
+  Splanc's existing protobuf tooling (micropb on firmware; pbview is already in `oss/pbview`).
+- **Provenance**: a header comment in each ported file and a `firmware/mesh/swarm/PROVENANCE.md`
+  naming the source (`fughilli/indoor_localization`, `swarm/net` and `swarm/proto` at
+  `5a906e7823f2d1c13af30dfa2a3b1b887616d0f1`) and listing what Splanc changed.
+- **License**: `swarm/` is the owner's own code, so it comes in under Splanc's AGPL-3.0. (Even
+  taken as GPL-3.0 from the repo root, GPL-3.0 §13 allows combining it with AGPL-3.0 code.) The
+  GPL-derived DW3000 driver (`libs/dw3000`) is not ported; a UWB driver is a later, separate
+  question (§11).
+- **From then on Splanc owns its copy.** Fixes worth sharing go back to indoor_localization by
+  hand; the golden vectors (`swarm/proto/testdata`) come along so the wire format stays checkable
+  against the swarm's.
 
-| Option                                                                                         | Verdict                                                                                                       |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `git_override` on indoor_localization directly                                                 | **No.** The repo is private and GPL-3.0 at the root (the DW3000 driver). A public Splanc build can't fetch it |
-| Vendor a copy into Splanc                                                                      | **No.** Two copies of the wire format drift; golden vectors stop meaning anything                             |
-| Move it into Splanc's `oss/` (like `oss/pbview`) and have indoor_localization depend on Splanc | Possible, but makes the swarm depend on a much larger repo                                                    |
-| **Extract to `fughilli/swarm-net`** (name to choose), license it for both                      | **Yes.** One wire format, one set of golden vectors, both projects bump a pin                                 |
-
-Licensing: `swarm/` is the owner's own code, so the owner can license the extracted repo freely.
-Splanc is AGPL-3.0; GPL-3.0 §13 allows combining with AGPL-3.0 code anyway. The DW3000 driver
-stays in indoor_localization; Splanc's future UWB driver (§11) is a separate question.
-
-Changes Splanc needs upstream in the extracted crate (each a small PR there, keeping the swarm
-working):
+Changes made while porting (M1 unless noted):
 
 1. A `Backhaul`-friendly entry point: `on_rx(t_us, frame, RxMeta)` and a slot tick that a
    backhaul without TDMA can drive from a timer.
 2. A per-instance `MAX_PAYLOAD` (88 on UWB, larger on 802.11; §5.2) instead of one constant.
 3. Blob kinds on the page protocol: `Summary`/`FwRequest`/`FwData` gain a `kind` (firmware,
-   effect) and a content id, so the same `Updater` serves effects (§5.5).
-4. An optional security envelope hook (§7.4), so the swarm can adopt it too.
-5. A riscv32imac (C6) build in its CI. The crate is already `no_std`; the swarm's build patches
-   rules_rust for Xtensa only.
+   effect) and a content id, so the same `Updater` serves effects (§5.5). This can wait for M6.
+4. A hook for the security envelope (§7.5) around `LinkFrame`.
+5. Builds for riscv32imac (C6) and the P4 target, plus the host tests, in Splanc's CI. The crate
+   is already `no_std`; its crypto backend switches to Splanc's (the netstack's AES, mbedTLS for
+   SHA-256 and P-256).
 
 ### 3.2 The backhaul seam
 
@@ -277,8 +287,9 @@ The mesh needs every member on one channel. Our netstack has one radio, tuned to
 Rules that keep effects running (`effects-must-keep-running`): a member never reboots to find the
 mesh, and a sweep happens in place, like today's background rescan.
 
-New Wi-Fi mode: **`kModeMesh`**, radio up, MAC awake, no association, fixed channel. Offline
-mode stays fully radio-off.
+New Wi-Fi mode, **Phase 1**: **`kModeMesh`**, radio up, MAC awake, no association, fixed
+channel. Sites without Wi-Fi depend on it (the phone reaches the mesh over BLE). Offline mode
+stays fully radio-off.
 
 Background sweeps take a member off-channel for ~1.6 s (13 channels × 120 ms). While mesh
 peers are healthy, a member skips scheduled sweeps unless the rejoin policy needs one. Before
@@ -287,13 +298,40 @@ generations (§5.3).
 
 ### 4.3 Coexistence with BLE
 
-- The gateway may hold the app's BLE link while it relays. `coex.rs` grants the antenna by
-  priority with bounded starvation, and `coex_timer_cb` yields to BLE. A mesh broadcast can be
-  lost while BLE holds the radio.
-- Loss is handled the same way as any loss: relays give redundancy, want-ack retries cover
-  unicast, and generations cover state. No new coex priority at first; HITL measures the loss
-  with a BLE session open (§14.2).
+The BLE gateway (the app on BLE, the fixture relaying to the mesh) is a Phase 1 path: sites
+without Wi-Fi have no other way in. So the gateway's one radio must serve a BLE connection and
+the mesh channel at once.
+
+How the C6 shares the radio today (`coex_timer_cb` in `netstack_transport.cpp`): while a BLE
+central is connected, the MAC sleeps for a **±7 ms window around each predicted connection
+event** and is awake (Wi-Fi) the rest of the time. Without a phase lock it gives BLE 4 ms in
+every 16 ms. The budget that follows:
+
+| BLE connection interval                            | BLE window | Wi-Fi (mesh) share at the gateway |
+| -------------------------------------------------- | ---------- | --------------------------------- |
+| 15 ms (the minimum the code phase-locks, 12 units) | 14 ms      | ~7 % (unusable)                   |
+| 30 ms                                              | 14 ms      | ~53 %                             |
+| 50 ms                                              | 14 ms      | ~72 %                             |
+| 100 ms                                             | 14 ms      | ~86 %                             |
+
+Rules for the BLE gateway:
+
+- **Ask for a ≥ 50 ms connection interval** once the GATT session is up and the mesh is active
+  (an L2CAP connection parameter update from the peripheral). Phones usually accept it. Control
+  traffic from the app is small, so 50 ms costs it nothing visible; `apply_at` hides the extra
+  latency.
+- **Narrow the window.** ±7 ms is generous for a connection event that carries one or two
+  packets (~1–3 ms of air). Measure, then try ±3 ms: at 50 ms that is ~88 % for the mesh.
+- **Send mesh frames outside the BLE window.** The gateway knows the window (the same phase
+  math as `coex_timer_cb`), so it queues mesh TX until the Wi-Fi phase. A relay waiting 0–3
+  virtual slots of 5 ms fits between windows.
+- **Only the gateway pays.** Other members have no BLE connection and listen full time. A
+  broadcast the gateway misses during a BLE window is relayed by others; replies to the gateway
+  are unicast, so the sender's MAC retries them (M3a checks that retries work on our TX path).
 - Mesh traffic is light (§10.3), so it does not starve BLE.
+
+On P4 + C6 boards the C6 front end owns BLE (`docs/design/p4-c6-split.md` §2.1) and has no
+render task, so the gateway logic runs at full priority there.
 
 ### 4.4 Spike before committing (M3a)
 
@@ -320,14 +358,15 @@ Every mesh frame, on every backhaul:
 | magic `"SM"`   | 2                   | Splanc mesh                                                 |
 | version        | 1                   | 1. Unknown versions are dropped and counted                 |
 | mesh id        | 4                   | Random at creation                                          |
-| key epoch      | 1                   | Which mesh key (§7.4)                                       |
+| key epoch      | 1                   | Which mesh key (§7.5)                                       |
 | source node id | 2                   | For the nonce and the replay window                         |
-| frame counter  | 4                   | Per source, strictly increasing (§7.4)                      |
+| frame counter  | 4                   | Per source, strictly increasing (§7.5)                      |
 | ciphertext     | n                   | A `swarm.v1` `LinkFrame` (as on UWB), AES-128-CCM encrypted |
 | MIC            | 8 (802.11), 4 (UWB) | CCM tag over the header and the ciphertext                  |
 
-Overhead: 14 B + MIC. Join requests (§7.2) use the same envelope with epoch 0 and no
-encryption, and carry only join payloads.
+Overhead: 14 B + MIC. Join requests and guest hellos (§7.3) use the same envelope with epoch 0
+and no encryption, and carry only join payloads. The open-mode follow stream uses a reserved
+epoch and the public open key (§7.4).
 
 ### 5.2 MTU per backhaul
 
@@ -351,12 +390,12 @@ Messages larger than the payload are fragmented at the port layer (like the swar
 | 16    | `CONTROL`    | to targets (broadcast with a target filter, or unicast) | `MeshControl{op_id, targets, apply_at?, inner ClientMessage bytes}` |
 | 17    | `REPLY`      | unicast to the gateway                                  | `MeshReply{op_id, status, small ServerMessage bytes}`               |
 | 18    | `STATUS`     | broadcast, every 10 s and on change                     | `MeshStatus` (§5.4)                                                 |
-| 19    | `MEMBERSHIP` | broadcast or unicast                                    | join, admit, assign groups, freeze, rekey (§7)                      |
+| 19    | `MEMBERSHIP` | broadcast or unicast                                    | join, admit, assign groups, mode, rekey (§7)                        |
 | 20    | `SCENE`      | broadcast                                               | per-group scene generation and its state (§5.6)                     |
 | 21    | `TIME_BASE`  | broadcast                                               | the show epoch in mesh time (§6.3)                                  |
 | 22–31 | reserved     |                                                         |                                                                     |
 
-Link frame types beyond the swarm's (new `FrameType` values, upstream):
+Link frame types beyond the swarm's (new `FrameType` values in the ported proto):
 
 | Type     | Purpose                                                                                                             |
 | -------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -471,51 +510,99 @@ its `apply_at` applies it on arrival and counts it late (reported in `MeshStatus
 
 ## 7. Membership, groups and security
 
-### 7.1 State on each member
+### 7.1 Three membership modes
+
+The mode is a per-mesh setting the owner changes from the app at any time.
+
+| Mode                            | Who can join                                                              | What a member gets                                                                         | Protection                                                              |
+| ------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| **Open** (free association)     | Any Splanc device that is set to follow open meshes. No secret            | **Guest**: follows the mesh (time, scenes, effects, live uniforms). Cannot manage anything | Owner-signed state, a public "open" key for framing, rate limits (§7.4) |
+| **Closed** (authenticated join) | A device that proves it holds the **site secret** (given at provisioning) | **Member**: controllable from the gateway, holds the mesh key                              | AES-CCM under the mesh key (§7.5)                                       |
+| **Locked**                      | Only devices the owner approved, by device key                            | **Member**, on the allow-list                                                              | Mesh key; removal rotates it (§7.6)                                     |
+
+Open mode runs **alongside** the closed traffic: the owner's members are still members under
+the mesh key, and the mesh additionally publishes a follow stream that guests can read. Turning
+open mode off stops the follow stream; guests fall away and members are untouched.
+
+### 7.2 State on each device
 
 Persisted in littlefs (one small file, written only on membership changes):
 
-- mesh id, mesh name, channel, mode (open or frozen), membership generation;
-- current key and epoch, plus the previous key during a rotation (§7.5);
-- its own groups (≤ 8 group ids);
-- in frozen mode, the member list (≤ 64 node ids + MAC prefixes);
-- its pairwise key with the mesh (from its join, §7.3), for rekeys.
+- mesh id, name, channel, mode, membership generation;
+- members only: the mesh key and epoch, the previous key during a rotation (§7.6), the
+  pairwise key from its join, and in locked mode the allow-list (≤ 64 device-key hashes);
+- its own groups (≤ 8 ids);
+- the **mesh owner public key** (P-256, §7.4), learned at join;
+- a device setting, `mesh_follow`: `off` (default for a device already in a mesh) or `open`
+  (follow any open mesh it hears; the setting a home-built fixture ships with).
 
-### 7.2 Joining: the three paths
+### 7.3 Joining
 
-| Path                             | When                                                                      | How                                                                                                                                                                                             |
-| -------------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **App-provisioned**              | The app can talk to the device directly (BLE Improv during setup, or wss) | The app sends `MeshJoin{mesh id, key, epoch, channel, mode, groups}` over the trusted link (BLE pairing/TLS with the pinned cert). This is the Phase 1 path                                     |
-| **Free association** (open mode) | A device holding the site credentials appears near the mesh               | It broadcasts `JoinRequest{node id, MAC, cert public key, firmware, proof}`. A member that hears it forwards it to the gateway. If the proof checks (below), any member admits it automatically |
-| **Approval** (open or frozen)    | A device without the site credentials appears                             | The request reaches the app as "New fixture nearby: admit?" One tap admits it                                                                                                                   |
+| Path                | Modes          | How                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **App-provisioned** | all            | The app talks to the device directly (BLE Improv at setup, or wss/BLE later) and sends `MeshJoin{mesh id, key, epoch, channel, mode, groups, owner public key}` over the trusted link. In locked mode this is also the approval: the app adds the device's key hash to the allow-list                                                                                                                                                                                               |
+| **Site secret**     | closed         | A device provisioned with the site secret hears the mesh beacon and broadcasts `JoinRequest{node id, MAC, device public key, firmware, proof}`, with `proof = HMAC(site_secret, "join" ‖ beacon nonce ‖ node id)`. The beacon nonce stops replays of an old proof. Any member checks the proof, wraps the mesh key for the newcomer (ECDH between the two devices' P-256 keys, the per-device TLS keys of `docs/design/per-device-cert.md`, then HKDF and AES-CCM) and announces it |
+| **Approval**        | closed, locked | A device without the secret (or any device, when locked) sends a `JoinRequest` without proof. Members forward it to the gateway; the app shows "New fixture nearby: admit?" One tap admits it (and, when locked, adds it to the allow-list)                                                                                                                                                                                                                                         |
+| **Follow**          | open           | A device with `mesh_follow = open` hears an open mesh's beacon and starts following. It sends a `GuestHello{node id, device public key hash, firmware}` so the owner sees it in the app. No key exchange                                                                                                                                                                                                                                                                            |
 
-**The site secret.** Free association must not mean "anyone with Splanc firmware nearby joins
-and controls the lights". The app creates a 32-byte site secret per installation and hands it to
-every device it provisions (Improv) or joins. A newcomer proves it holds the secret with
-`proof = HMAC(site_secret, "join" ‖ mesh nonce ‖ node id)`. The mesh nonce comes from the
-latest beacon, so a recorded proof can't be replayed later.
+The site secret is a 32-byte value the app creates per installation and hands to every device
+it provisions. The C6 has an ECC accelerator; even in software one ECDH per join is a one-off.
 
-The admitting member then wraps the mesh key for the newcomer: ECDH between its P-256 device key
-(the per-device TLS key, `docs/design/per-device-cert.md`) and the newcomer's, HKDF, AES-CCM.
-The C6 has an ECC accelerator; even in software one P-256 ECDH is a one-off per join. The
-shared secret also becomes the newcomer's pairwise key.
+### 7.4 Open mode: what guests can and cannot do
 
-### 7.3 Frozen membership
+The point of open mode: someone shows up with a fixture they built, it joins and starts doing
+the coordinated effects. A guest must be able to follow the show, and must never be able to run
+it.
 
-- The app freezes the mesh: the gateway floods `Freeze{member list, membership generation}`,
-  authenticated by the mesh key.
-- Frozen members drop frames from node ids not on the list, even with a valid MIC, and ignore
-  `JoinRequest`s except to report them to the gateway (the app shows them).
-- Adding a member while frozen is an explicit app action (the approval path with the list
-  updated).
-- **Removing a member rotates the key** (§7.5). Without rotation the removed device still holds
-  the key and could forge another id. Unfreezing goes back to open mode.
+**Guests can:**
 
-### 7.4 Frame protection
+- take mesh time and the show epoch (`TIME_BASE`), so they land on the same frames;
+- follow the open groups' scenes: the effect (fetching the blob), committed uniforms,
+  brightness, crossfade;
+- follow live uniform moves (fader streams) on open groups;
+- relay follow-stream frames (more coverage for other guests);
+- send `GuestHello` and a small status every 30 s.
 
-- **AES-128-CCM** over every frame (§5.1), keyed by `HKDF(mesh key, epoch, "frame")`. The C6's
-  AES accelerator already runs our software CCMP (`firmware/netstack/src/ccmp.rs`, which is
-  CCM); the mesh reuses it. Cost is a few AES blocks per frame.
+**Guests cannot:** send `CONTROL` to anyone, change membership or groups, originate scenes,
+effects or time, act as a gateway for management, or read member-to-member traffic (it is
+under the mesh key, which guests don't have).
+
+**How the follow stream is protected.** Guests hold no secret, so a symmetric key can't prove
+anything to them. Two layers:
+
+1. **Framing under a public open key**, `K_open = HKDF(mesh id, "open")`, using the same
+   envelope (§5.1) with a reserved epoch. It gives integrity against corruption, not
+   authenticity: anyone can compute it.
+2. **Owner signatures on what lasts.** At mesh creation the app generates a mesh owner key pair
+   (P-256; the private key stays in the app and the bridge, the public key goes to every member
+   and is in the beacon). Scene commits, effect blob ids and `TIME_BASE` generations on the
+   follow stream carry an ECDSA signature from the app; the gateway only relays them. A guest
+   verifies them against the owner key it learned when it first followed (trust on first use,
+   shown in the app as "following <mesh name>").
+3. **Live moves are unsigned** (a signature per fader frame is too costly). Guests accept them
+   only for the signed scene's effect, only within each uniform's manifest range, and only up to
+   the rate limit. A forger can wiggle a guest's sliders between commits; the next signed commit
+   puts it back. Members never act on open-key frames.
+
+**Abuse limits:**
+
+| Limit                                 | Value                                                                                                                                                             |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Guests tracked                        | 16, in their own tables (dedup, replay, status), so guests can't evict members' entries                                                                           |
+| Per-guest traffic relayed or answered | ≤ 5 frames/s and ≤ 1 KB/s; excess is dropped and counted                                                                                                          |
+| What members relay from guests        | only `GuestHello` and guest status, one hop                                                                                                                       |
+| Blob size a guest will fetch          | ≤ `FX_MAX_BYTES` (4 KiB), only for a signed blob id                                                                                                               |
+| Follow stream rate (owner side)       | live moves coalesced to ≤ 15 Hz on the open key                                                                                                                   |
+| Getting out                           | the owner switches the mesh to closed or locked (below); guests stop following within one beacon interval and fall back to their own effect after 10 s of silence |
+
+The open groups are chosen by the owner (default: the "all" scene). A guest follows a group
+named in the beacon; it does not join groups itself.
+
+### 7.5 Frame protection (members)
+
+- **AES-128-CCM** over every member frame (§5.1), keyed by `HKDF(mesh key, epoch, "frame")`.
+  The C6's AES accelerator already runs our software CCMP (`firmware/netstack/src/ccmp.rs`,
+  which is CCM); the mesh reuses it. Cost is a few AES blocks per frame.
 - **Nonce**: mesh id ‖ source id ‖ epoch ‖ counter (13 B). Unique while counters never repeat.
 - **Counter**: `boot_count << 20 | n`. `boot_count` is persisted once per boot (no per-frame
   flash writes); `n` counts frames this boot. A member that would exceed 2^20 frames in one
@@ -524,35 +611,49 @@ shared secret also becomes the newcomer's pairwise key.
   × 12 B ≈ 0.8 KB. A counter below the window is dropped.
 - **MIC**: 8 B on 802.11; 4 B on UWB, where every byte counts. The swarm argues 4 B is enough
   for settings (2^31 tries on average, one per frame on air).
-- This replaces the swarm's per-message HMAC for Splanc traffic. Upstreaming it lets the swarm
-  authenticate its reports and acks too.
+- This replaces the swarm's per-message HMAC for Splanc traffic. Offering it back to the swarm
+  would let it authenticate its reports and acks too.
 
-### 7.5 Key rotation
+### 7.6 Mode transitions and key rotation
 
-1. The gateway picks a new key and epoch.
-2. It sends `Rekey{epoch, key}` to every listed member, unicast with want-ack, wrapped with that
-   member's pairwise key.
-3. Members accept both epochs for a grace period (60 s), then only the new one.
+| Transition                         | What happens                                                                                                                                    | Existing members                                     | Existing guests                                                                    |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| open → closed                      | Follow stream stops; beacons stop advertising open                                                                                              | unchanged                                            | stop following; the app lists them as "former guests" with "Admit" (approval path) |
+| closed → locked                    | The app shows the current members as the proposed allow-list; the owner confirms or unticks some. Then a **key rotation** to the listed members | listed: unchanged; unticked: dropped by the rotation | n/a                                                                                |
+| locked → closed                    | Allow-list dropped; site-secret joins accepted again. No rotation needed                                                                        | unchanged                                            | n/a                                                                                |
+| closed or locked → open            | The follow stream starts on the open groups                                                                                                     | unchanged                                            | new guests may follow                                                              |
+| remove a member (closed or locked) | Key rotation without it (in closed mode the site secret also needs rotating, or the device can rejoin; the app says so)                         | others: new key                                      | n/a                                                                                |
+
+Key rotation:
+
+1. The gateway (on the app's command) picks a new key and epoch.
+2. It sends `Rekey{epoch, key}` to every remaining member, unicast with want-ack, wrapped with
+   that member's pairwise key.
+3. Members accept both epochs for 60 s, then only the new one.
 4. A member that was off during the rotation hears beacons in an epoch it lacks and sends a
    `RekeyRequest` under its pairwise key; any member holding the new key answers, if the
-   requester is still listed.
+   requester is still a member (on the allow-list when locked).
 
-### 7.6 Groups
+### 7.7 Groups
 
 - Group ids are u8 (0 = none). Names live in the app and the hub config; members store ids only.
 - `AssignGroups{node, groups}` (membership port, authenticated) sets a member's groups,
   persisted.
 - A `MeshControl` with a group target is broadcast; members not in the group drop it after
-  decrypting the header. Scenes are per group (§5.6).
+  decrypting the header. Scenes are per group (§5.6). In open mode the owner marks which groups
+  guests follow.
 - The hub/app may also target an ad-hoc list (≤ 8 ids) without creating a group.
 
-### 7.7 How this relates to device trust
+### 7.8 How this relates to device trust
 
-- The app still pins each device's certificate by MAC (`deviceTrust.ts`, `trust.ts`). A mesh
-  member reports its certificate hash in `MeshStatus` and `JoinRequest`; the app pins it at
-  first sight, and warns on a change, as for a direct connection.
+- The app still pins each device's certificate by MAC (`deviceTrust.ts`, `trust.ts`). A member
+  reports its certificate hash in `MeshStatus` and `JoinRequest`; the app pins it at first sight
+  and warns on a change, as for a direct connection. In locked mode the allow-list entry is that
+  same device key.
 - The app-to-gateway leg is TLS or BLE as today. Gateway-to-member traffic is protected by the
   mesh key, not TLS. A member trusts the gateway because the gateway holds the mesh key.
+- The mesh owner key is new: it lives with the app's site data (backed up with it,
+  `web/src/store/backup.ts`) and is copied to the bridge when one manages the site.
 
 ## 8. Gateway: one connection, the whole mesh
 
@@ -585,7 +686,7 @@ message MeshResult {
 }
 
 // Membership and listing: GetMesh / MeshState (members, groups, mode, pending joins),
-// CreateMesh, JoinMesh (direct), AdmitDevice, SetGroups, FreezeMesh, RotateMeshKey.
+// CreateMesh, JoinMesh (direct), AdmitDevice, SetGroups, SetMeshMode, RotateMeshKey.
 ```
 
 ### 8.2 Behaviour
@@ -616,7 +717,7 @@ message MeshResult {
   3 s ago". Members are controllable like directly connected devices for everything in the
   allow-list. Features that need a direct link (mapping, video, debugger, OTA in Phase 1) show
   "connect directly".
-- **Mesh screen** (Devices ▸ Mesh): mesh name, channel, mode (Open / Frozen toggle), members
+- **Mesh screen** (Devices ▸ Mesh): mesh name, channel, mode (Open / Closed / Locked), members
   (status, firmware, heap, fps, time-sync error, last seen), pending join requests (Admit /
   Ignore), groups (create, rename, assign by multi-select), "Rotate key", "Leave mesh".
 - **Targets**: the live-control and effect screens gain a target picker: this device, a group,
@@ -640,69 +741,88 @@ message MeshResult {
 
 ## 10. The radiolarians deployment: sizing
 
-### 10.1 What the repo says
+### 10.1 What we know
 
-| Fact                                                                                                                                              | Source                                                               |
-| ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| Fixture: a dodecahedron of 12 pentagonal panels, LEDs on concentric rings (1, 6, 12, 18, 24, 44 = 105 per panel), **1260 LEDs**, inradius 10.5 cm | `solver/src/scenario.rs` `dodecahedron_leds`, `DODECA_INRADIUS_M`    |
-| Wired as **three strings of 420 LEDs**                                                                                                            | issue #479 ("Each 420-LED string fits the whole 265 s capture")      |
-| Five customer captures on 2026-11-12, mapped with the phone app                                                                                   | `docs/design/hue-code-v2.md`, `solver/src/regression_tests.rs`, #484 |
-| Heavy, static after install (owner)                                                                                                               | owner's direction                                                    |
+| Fact                                                                                                                           | Source                                                                       |
+| ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| **Up to 6 fixtures**                                                                                                           | owner                                                                        |
+| Each fixture is an **ESP32-P4 with its C6 front end** (over SDIO), **driving WLED controllers over DDP**                       | owner; `docs/design/p4-c6-split.md`, `docs/design/p4-ethernet-ddp.md` (#478) |
+| Fixture: a dodecahedron of 12 pentagonal panels, LEDs on concentric rings (105 per panel), **1260 LEDs**, three strings of 420 | `solver/src/scenario.rs` `dodecahedron_leds`, issue #479                     |
+| Heavy and static after install; room localization places them                                                                  | owner                                                                        |
+| **Not every site has Wi-Fi**: the app must reach the mesh over BLE as well as Wi-Fi                                            | owner                                                                        |
 
-Not in the repo (open questions, §17): how many fixtures, the venue size and layout, which
-board drives a fixture (1260 LEDs is above the C6's 1024-per-channel cap from #335, and three
-strings need three outputs, so possibly a P4 + C6 board), whether the site has Wi-Fi, and
-whether they manage it from the app or a bridge.
+### 10.2 What that means for the design
 
-### 10.2 Assumptions for sizing
+- **The C6 front end is the mesh node; the P4 is the endpoint.** The C6 runs the netstack, the
+  mesh layer, BLE and the gateway. Relayed control for its own fixture goes to the P4 through
+  the link exactly like a wss or GATT frame (`frontend_link.cpp`, the §2.2 arm table of the
+  split design). Effect blobs are assembled on the C6 (it has RAM to spare: the split design
+  expects +60–100 KB of free heap) and forwarded to the P4 as one `SubmitEffect`.
+- **Time base across the link.** The P4 owns the renderer clock and the time base; the C6 owns
+  mesh time. The C6 keeps a C6↔P4 clock offset (a `time_sync_ping` round trip over SDIO every
+  few seconds: sub-ms, symmetric) and converts `TIME_BASE` into the P4's clock before
+  forwarding `SetTimeBase`. `apply_at_ms` is in time-base ms and needs no conversion.
+- **BLE → mesh is Phase 1** (sites without Wi-Fi), so `kModeMesh` (radio up, no AP) is Phase 1
+  too, and the BLE coex rules of §4.3 apply to whichever fixture the phone is connected to.
+- **Where the WLEDs sit, and the channel.** `p4-ethernet-ddp.md` drives WLED boards over the
+  P4's own Ethernet (RMII PHY), with the P4 as a DHCP server for an "LED network". In that setup
+  DDP never touches the C6's radio, and the C6 is free to sit on the mesh channel. If instead
+  a site's WLEDs are on Wi-Fi, DDP needs a network the C6 joins or hosts:
+  - joining the site AP: DDP and the mesh share the AP's channel; DDP for 1260 LEDs at 40 fps
+    is ~1.6 Mbit/s per fixture (the DDP doc's figure), on the same channel as the mesh;
+  - with no site Wi-Fi, the C6 would have to host an AP for its WLEDs (the netstack has an AP
+    role, `firmware/netstack/src/ap.rs`, but not one carrying DDP), and every fixture's AP would
+    have to be on the mesh channel.
+    The design assumes wired Ethernet to the WLEDs; anything else is an open question (§17).
 
-- Up to **32 fixtures** in one venue (the design allows 64).
-- Most fixtures one hop from the gateway; **≤ 3 hops** (the swarm's default hop limit).
-- Indoors, 802.11 at 1 Mb/s reaches 20–50 m per hop.
+### 10.3 Traffic for 6 fixtures
 
-### 10.3 Traffic
+All fixtures in one venue are most likely one hop from each other; the hop limit stays 3.
 
-| Traffic                 | Size                | Rate                 | Airtime (1 Mb/s, worst: 1 TX + 2 relays) |
-| ----------------------- | ------------------- | -------------------- | ---------------------------------------- |
-| Beacons                 | ~80 B frame         | 1 Hz × 32 nodes      | ~1 ms each → ~3 % of the channel         |
-| Status                  | ~110 B frame        | every 10 s × 32      | < 0.5 %                                  |
-| Uniform fader stream    | ~150 B frame        | 30 Hz while dragging | ~1.5 ms × 3 × 30 ≈ 14 % while dragging   |
-| One effect push (4 KiB) | ~21 frames of 200 B | once                 | ~50 ms per hop; < 1 s to all             |
-| Scene catch-up          | 2–6 packets         | per late joiner      | negligible                               |
+| Traffic                                               | Size                | Rate                 | Airtime at 1 Mb/s (1 TX + ≤ 1 relay)  |
+| ----------------------------------------------------- | ------------------- | -------------------- | ------------------------------------- |
+| Beacons                                               | ~80 B frame         | 1 Hz × 6             | ~0.6 % of the channel                 |
+| Status                                                | ~110 B frame        | every 10 s × 6       | < 0.1 %                               |
+| Uniform fader stream                                  | ~150 B frame        | 30 Hz while dragging | ~1.5 ms × 2 × 30 ≈ 9 % while dragging |
+| One effect push (4 KiB, `FX_MAX_BYTES` on the P4 too) | ~21 frames of 200 B | once                 | ~50 ms per hop; < 0.2 s to all        |
+| Scene catch-up                                        | 2–6 packets         | per late joiner      | negligible                            |
 
-At 6 Mb/s OFDM the same traffic costs about a fifth. A fader stream at 1 Mb/s is the heaviest
-load; the gateway coalesces fader updates to 15 Hz over the mesh if measurements show loss.
-With `apply_at` the visible result is the same.
+At 6 Mb/s OFDM all of this costs about a fifth. Six fixtures leave the channel nearly idle; the
+limit is the BLE gateway's share (§4.3), not the mesh.
 
-### 10.4 RAM per member (C6), estimate to be measured
+### 10.4 RAM
 
-| Item                                                              | Bytes                    |
-| ----------------------------------------------------------------- | ------------------------ |
-| `swarm_net` state (dedup rings, TX queue, page state, neighbours) | ~4 K                     |
-| Replay table (64 sources)                                         | ~0.8 K                   |
-| Membership + groups                                               | ~0.5 K                   |
-| Frame buffers (one RX, one TX at 250 B)                           | ~0.5 K                   |
-| Gateway member table (compact)                                    | ~1.5 K                   |
-| **Total**                                                         | **~7 K** static, no heap |
+On the radiolarians' C6 front ends the mesh's ~7 KB static is not a concern (no render task, no
+LED buffers). On a standalone C6 player it still matters at large LED configs:
 
-Blobs go to littlefs, not RAM. The ~7 KB matters at the 2048-LED max config (24 KB floor);
-the PR that adds the crate reports `size -A` against main, as `docs/design/ram-budget.md` asks.
+| Item                                                              | Bytes                      |
+| ----------------------------------------------------------------- | -------------------------- |
+| `swarm_net` state (dedup rings, TX queue, page state, neighbours) | ~4 K                       |
+| Replay table (64 members + 16 guests)                             | ~1 K                       |
+| Membership + groups                                               | ~0.5 K                     |
+| Frame buffers (one RX, one TX at 250 B)                           | ~0.5 K                     |
+| Gateway member table (compact)                                    | ~1.5 K                     |
+| **Total**                                                         | **~7.5 K** static, no heap |
+
+The PR that adds the crate reports `size -A` against main, as `docs/design/ram-budget.md` asks.
 
 ### 10.5 Minimum set that ships radiolarians
 
-From the PR plan (§15): M1–M8 plus HITL M9a. Specifically:
+From the PR plan (§15):
 
-- the shared mesh crate and the Splanc layer (M1, M2);
-- the 802.11 backhaul with AP-anchored and mesh-only modes (M3);
+- the ported mesh crate and the Splanc layer (M1, M2);
+- the 802.11 backhaul with **mesh-only mode** and AP-anchored mode (M3a, M3);
+- the **BLE gateway** with the coex rules of §4.3 (M3b);
 - mesh time and `apply_at` across the mesh (M4);
-- the gateway with uniforms, effect/crossfade/brightness and status (M5);
+- the gateway: uniforms, effect, crossfade, brightness, status (M5);
+- the **front-end integration**: the C6 front end as mesh node, the P4 as endpoint (M5b);
 - effect blobs and scene catch-up (M6);
-- app-provisioned membership, groups, freeze and the site-secret free association (M7);
-- the app's member list, target picker, mesh screen (M8);
-- a 4-DUT HITL gate (M9a).
+- closed and locked membership (site secret, approval, groups) (M7);
+- the app's member list, target picker and mesh screen (M8);
+- a HITL gate with P4 + C6 boards where the rigs have them, C6 players otherwise (M9a).
 
-What can follow the first install: approval joins for strangers, key rotation, the IP backhaul
-for multi-AP islands, bridge integration (if they use the app), OTA over the mesh.
+Open mode (M7b), key rotation for closed-mode removals, the IP backhaul, bridge integration and
+OTA over the mesh can follow the first install.
 
 ## 11. UWB backhaul (later)
 
@@ -860,10 +980,11 @@ A `meshsim` crate in `firmware/mesh`:
     3 hops over a simulated hour;
   - effect blob to 32 nodes with 10 % loss; resume after a node restarts mid-transfer;
   - late joiner catches the scene; partition and heal;
-  - open join with and without the site secret; frozen rejects; removal plus rekey; a member
+  - closed join with and without the site secret; locked rejects unapproved devices; removal
+    plus rekey; open guests follow signed scenes and cannot send control; a member
     offline during the rekey recovers;
   - replay and forgery attempts are dropped and counted.
-- Golden vectors for the envelope, shared with the extracted swarm repo.
+- Golden vectors for the envelope, plus the swarm's own vectors ported with the code.
 
 ### 14.2 HITL
 
@@ -877,7 +998,7 @@ USB power and shared-DUT gotchas).
 | `mesh_effect`        | 4                     | Push a `.fxb`, every member runs it (serial log + `get_status` via the mesh)                                                       |
 | `mesh_apply_at_skew` | 2 analyzer-tapped + 2 | Extends `pi/hitl/harness/hitl_time_base_skew.py`: tapped DUTs reached only via the mesh; p99 skew < 10 ms + one frame              |
 | `mesh_ble_gateway`   | 3                     | Same as `mesh_gateway` with the gateway on BLE (coex)                                                                              |
-| `mesh_join_freeze`   | 4                     | Open join, freeze, a removed DUT can't control others, rekey                                                                       |
+| `mesh_join_lock`     | 4                     | Closed join, lock, a removed DUT can't control others, rekey; open guest follows but can't control (Phase 2)                       |
 | `mesh_multihop`      | 4                     | Forced topology (a test-only neighbour deny-list in firmware), 3 hops                                                              |
 | `mesh_soak`          | 4                     | 2 h, fader streams every 5 min, heap minimum and render fps unchanged                                                              |
 
@@ -897,30 +1018,33 @@ ones that depend on unknown hardware behaviour.
 
 ### Phase 1: application backhaul (ships radiolarians)
 
-| PR      | Content                                                                                                                                                                                                                                                                          | Gate                           |
-| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| **M0**  | This design                                                                                                                                                                                                                                                                      | owner review                   |
-| **M1**  | Extract `swarm/net` + `swarm/proto` into a shared repo (indoor_localization keeps building against it); upstream PRs there for the backhaul entry point, per-instance MTU and the C6 build; Splanc pins it (`archive_override`) and builds it for riscv32imac + host tests in CI | swarm tests pass in both repos |
-| **M2**  | `firmware/mesh`: `Backhaul` trait, envelope (AES-CCM via `ccmp.rs`, replay window), membership state, ports, `meshsim` with the first scenarios                                                                                                                                  | host tests only                |
-| **M3a** | Spike: vendor action frames TX/RX between two C6s, RX vector RSSI + timestamp, BLE coex loss                                                                                                                                                                                     | §4.4 exit                      |
-| **M3**  | `wifi_p2p` backhaul in the netstack transport; `kModeMesh`; channel rules (§4.2); mesh beacons; `mesh_smoke` HITL                                                                                                                                                                | M3a passed                     |
-| **M4**  | Mesh time (beacon fit) + `TIME_BASE` mapped to the existing time base; meshsim skew test; `mesh_apply_at_skew` HITL                                                                                                                                                              | skew < 10 ms                   |
-| **M5**  | Protocol arms (`MeshSend`, `MeshResult`, `GetMesh`/`MeshState`), gateway fan-out + aggregation, member dispatch allow-list, `MeshStatus`; `mesh_gateway` HITL                                                                                                                    |                                |
-| **M6**  | Blob kind on the page protocol (upstream) + effect distribution + scenes and catch-up; `mesh_effect` HITL                                                                                                                                                                        |                                |
-| **M7**  | Membership: create/join over BLE or wss, site secret + free association, groups, freeze; `mesh_join_freeze` HITL                                                                                                                                                                 |                                |
-| **M8**  | App: member list via gateway, target picker in live control and effects, mesh screen                                                                                                                                                                                             | web unit tests + manual run    |
-| **M9a** | HITL gate: the 4-DUT suite in CI (`mesh_*` above)                                                                                                                                                                                                                                |                                |
+| PR      | Content                                                                                                                                                                                                                      | Gate                           |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| **M0**  | This design                                                                                                                                                                                                                  | owner review                   |
+| **M1**  | Port `swarm/net` + `swarm/proto` into `firmware/mesh/swarm/` with provenance (§3.1); the backhaul entry point, per-instance MTU, Splanc crypto backend; C6 + P4 + host builds and the swarm's tests and golden vectors in CI | ported tests pass              |
+| **M2**  | `firmware/mesh`: `Backhaul` trait, envelope (AES-CCM via `ccmp.rs`, replay window), membership state, ports, `meshsim` with the first scenarios                                                                              | host tests only                |
+| **M3a** | Spike: vendor action frames TX/RX between two C6s (associated and not), RX vector RSSI + timestamp, unicast retries, BLE coex loss                                                                                           | §4.4 exit                      |
+| **M3**  | `wifi_p2p` backhaul in the netstack transport; `kModeMesh` (radio up, no AP); channel rules (§4.2); mesh beacons; `mesh_smoke` HITL                                                                                          | M3a passed                     |
+| **M3b** | BLE gateway: connection-interval request, narrowed coex window, mesh TX outside the BLE window (§4.3); `mesh_ble_gateway` HITL                                                                                               | Wi-Fi share ≥ 70 % with BLE up |
+| **M4**  | Mesh time (beacon fit) + `TIME_BASE` mapped to the existing time base; meshsim skew test; `mesh_apply_at_skew` HITL                                                                                                          | skew < 10 ms                   |
+| **M5**  | Protocol arms (`MeshSend`, `MeshResult`, `GetMesh`/`MeshState`), gateway fan-out + aggregation, member dispatch allow-list, `MeshStatus`; `mesh_gateway` HITL                                                                |                                |
+| **M5b** | P4 + C6: the mesh on the C6 front end, relayed control forwarded over the link, C6↔P4 clock offset for `TIME_BASE`, effect blobs handed to the P4                                                                           | P4 + C6 bench run              |
+| **M6**  | Blob kind on the page protocol + effect distribution + scenes and catch-up; `mesh_effect` HITL                                                                                                                               |                                |
+| **M7**  | Membership: closed (site secret) and locked (allow-list), approval joins, groups, mode switch closed ↔ locked with key rotation; `mesh_join_lock` HITL                                                                      |                                |
+| **M8**  | App: member list via gateway, target picker in live control and effects, mesh screen with the mode setting                                                                                                                   | web unit tests + manual run    |
+| **M9a** | HITL gate: the multi-DUT suite in CI (`mesh_*`)                                                                                                                                                                              |                                |
 
-### Phase 2: hardening and reach
+### Phase 2: open mode, hardening and reach
 
-| PR  | Content                                                                                           |
-| --- | ------------------------------------------------------------------------------------------------- |
-| M9b | Key rotation, approval joins for devices without the site secret                                  |
-| M10 | IP backhaul (UDP on the LAN) to bridge islands on other APs                                       |
-| M11 | Bridge/agent mesh route (`hub.ts`), `list_players` via gateways                                   |
-| M12 | `group_capture` arming over the mesh (one connection arms the room)                               |
-| M13 | OTA over the mesh (page protocol with the firmware kind; Splanc's manifest, `docs/design/ota.md`) |
-| M14 | ESP-NOW v2 payloads (1470 B) if measurements justify them                                         |
+| PR  | Content                                                                                                                                                                                      |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M7b | Open mode: owner key + signed scenes/blobs/time, the follow stream under the open key, guest tables and rate limits, `mesh_follow` device setting, guests in the app; `mesh_open_guest` HITL |
+| M9b | Site-secret rotation and closed-mode removal                                                                                                                                                 |
+| M10 | IP backhaul (UDP on the LAN) to bridge islands on other APs                                                                                                                                  |
+| M11 | Bridge/agent mesh route (`hub.ts`), `list_players` via gateways                                                                                                                              |
+| M12 | `group_capture` arming over the mesh (one connection arms the room)                                                                                                                          |
+| M13 | OTA over the mesh (page protocol with the firmware kind; Splanc's manifest, `docs/design/ota.md`)                                                                                            |
+| M14 | ESP-NOW v2 payloads (1470 B) if measurements justify them                                                                                                                                    |
 
 ### Phase 3 and research (deferred, independent)
 
@@ -934,56 +1058,62 @@ ones that depend on unknown hardware behaviour.
 
 ## 16. Risks
 
-| Risk                                                                                                             | Impact                | Mitigation                                                                     |
-| ---------------------------------------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------ |
-| Action-frame TX on our direct-submission path behaves differently from Auth/Assoc (rate, retries, no completion) | M3 slips              | M3a spike first; pacing already exists                                         |
-| RX vector timestamp not found or too coarse                                                                      | time sync worse       | fall back to loop-time stamping (jitter of the loop period) plus AP beacon TSF |
-| Mesh channel conflicts with multi-AP sites                                                                       | islands               | prefer same-channel BSSIDs; IP backhaul (M10)                                  |
-| Background sweeps make members deaf                                                                              | missed changes        | skip sweeps while the mesh is healthy; `Away`; generation catch-up             |
-| BLE coex loses broadcasts at the gateway                                                                         | slower fan-out        | relays and retries; HITL measures; a coex priority bump for mesh TX if needed  |
-| C6 RAM at large LED configs                                                                                      | can't fit             | ~7 KB static budget, measured in M2/M3; compact gateway table                  |
-| Two copies of the swarm crate drift                                                                              | wire incompatibility  | extract once (M1); shared golden vectors                                       |
-| Node-id collisions (u16 from MAC)                                                                                | misrouting            | detect via full MAC in status; app reassigns                                   |
-| Site secret leaks (a lost fixture holds it)                                                                      | open mesh joinable    | freeze the mesh after install; rotate the site secret from the app             |
-| The research track fails (no phase continuity)                                                                   | no self-built ranging | independent of the mesh; UWB remains the ranging path                          |
+| Risk                                                                                                             | Impact                         | Mitigation                                                                          |
+| ---------------------------------------------------------------------------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------- |
+| Action-frame TX on our direct-submission path behaves differently from Auth/Assoc (rate, retries, no completion) | M3 slips                       | M3a spike first; pacing already exists                                              |
+| RX vector timestamp not found or too coarse                                                                      | time sync worse                | fall back to loop-time stamping (jitter of the loop period) plus AP beacon TSF      |
+| Mesh channel conflicts with multi-AP sites                                                                       | islands                        | prefer same-channel BSSIDs; IP backhaul (M10)                                       |
+| Background sweeps make members deaf                                                                              | missed changes                 | skip sweeps while the mesh is healthy; `Away`; generation catch-up                  |
+| BLE coex loses broadcasts at the gateway                                                                         | slower fan-out                 | relays and retries; HITL measures; a coex priority bump for mesh TX if needed       |
+| C6 RAM at large LED configs                                                                                      | can't fit                      | ~7 KB static budget, measured in M2/M3; compact gateway table                       |
+| The ported swarm code diverges from indoor_localization                                                          | fixes don't flow both ways     | provenance note; ported golden vectors; port fixes back by hand                     |
+| Node-id collisions (u16 from MAC)                                                                                | misrouting                     | detect via full MAC in status; app reassigns                                        |
+| Site secret leaks (a lost fixture holds it)                                                                      | closed mesh joinable           | lock the mesh after install; rotate the site secret from the app                    |
+| Open mode abused (forged live moves, guest floods)                                                               | guests misbehave; airtime      | members ignore open-key frames; signed commits; guest rate limits; switch to closed |
+| BLE gateway starves the mesh at short connection intervals                                                       | slow fan-out on BLE-only sites | ≥ 50 ms interval, narrowed coex window, TX outside it (§4.3)                        |
+| The research track fails (no phase continuity)                                                                   | no self-built ranging          | independent of the mesh; UWB remains the ranging path                               |
 
 ## 17. Open questions for the owner
 
-**Radiolarians (blocking sizing and the first install):**
+Answered so far: fixture count (up to 6), board (P4 + C6 driving WLEDs over DDP), BLE → mesh
+for sites without Wi-Fi, the three membership modes, and porting the swarm code into Splanc.
 
-- **Q1.** How many fixtures, and how far apart (largest hop distance, walls or metal in between)?
-- **Q2.** Which board drives a fixture? 1260 LEDs in three 420-LED strings exceed one C6 channel
-  (1024 cap) and need three outputs. Is it a P4 + C6 board, or something else?
-- **Q3.** Does the venue have Wi-Fi the fixtures may join (and how many APs, which channels), or is it
-  mesh-only with the app over BLE?
-- **Q4.** Will they manage it from the phone app, a bridge, or both? Do they need agent/MCP control?
-- **Q5.** Should they get the mesh before or after OTA over the mesh (how will their firmware be
-  updated on site)?
+**Radiolarians:**
+
+- **Q1.** Are the WLED boards always wired to the P4's Ethernet (the P4 serving DHCP for an
+  LED network), or do some sites put them on Wi-Fi? Wi-Fi WLEDs mean DDP shares the mesh's
+  channel, and without site Wi-Fi the C6 would have to host an AP for them (§10.2).
+- **Q2.** How far apart are the fixtures (largest distance, walls or metal in between)? Six
+  fixtures are likely one hop, but a long venue may need relays.
+- **Q3.** Will they run it from the phone app, a bridge, or both? Do they need agent/MCP
+  control on site?
+- **Q4.** How will their firmware be updated on site before OTA over the mesh exists (direct
+  BLE/wss per fixture)?
+- **Q5.** Should the radiolarians run closed or locked, and should a guest fixture be able to
+  join their show (open mode) at events?
 
 **Security and admission:**
 
-- **Q6.** Is the site-secret model right for free association (devices provisioned by the same app
-  auto-join), with one-tap approval for everything else? Or should free association be
-  stricter (always approve) or looser (any Splanc device)?
-- **Q7.** Should a frozen mesh be the default after setup (install flow ends with "Freeze")?
-- **Q8.** Who may be a gateway: any member, or only devices the user marked?
+- **Q6.** Open mode as designed: guests follow signed scenes and effects, live moves are
+  unsigned but bounded, guests can never manage. Is accepting unsigned live moves on guests
+  acceptable, or should guests only follow signed commits (coarser, but unforgeable)?
+- **Q7.** Should `mesh_follow = open` be the default for unprovisioned or home-built fixtures,
+  so the "show up and join" magic needs no setup?
+- **Q8.** Should setup end with the mesh locked by default?
+- **Q9.** Who may be a gateway: any member, or only devices the user marked?
 
 **Architecture:**
 
-- **Q9.** Extracting `swarm/net` + `swarm/proto` into a standalone repo (like lighthouse): name, public
-  or private, license (Splanc is AGPL-3.0)?
 - **Q10.** OK to use the ESP-NOW framing (Espressif's OUI) for interop, versus our own OUI?
-- **Q11.** Should the swarm adopt the Splanc envelope (authenticated reports and acks), so the two
-  projects share one wire format end to end?
 
-**UWB and ranging:**
+**UWB and ranging (later tracks):**
 
-- **Q12.** UWB hardware: DWM3000 (what the swarm has, single antenna) or QM33120 (PDoA/AoA)? On the C6
-  board, the P4 + C6 board, or both? Is a board revision planned?
-- **Q13.** Which public raw I/Q **TX** work did you mean for the C6? I found raw I/Q RX (ESP-SDR, which
-  supports the C6) and PHY test-tone TX (shown on the S3), but no public C6 I/Q write.
-- **Q14.** Is the self-built ranging meant for P4 + C6 boards only? The dump engine needs a whole SRAM
-  block, which a C6 player rendering effects does not have.
+- **Q11.** UWB hardware: DWM3000 (what the swarm has, single antenna) or QM33120 (angle of
+  arrival)? On the C6 board, the P4 + C6 board, or both?
+- **Q12.** Which public raw I/Q **TX** work did you mean for the C6? I found raw I/Q RX (ESP-SDR,
+  which supports the C6) and PHY test-tone TX (shown on the S3), but no public C6 I/Q write.
+- **Q13.** Is the self-built ranging meant for P4 + C6 boards only? The dump engine needs a whole
+  SRAM block, which a C6 player rendering effects does not have (a C6 front end may).
 
 ## 18. Sources
 
