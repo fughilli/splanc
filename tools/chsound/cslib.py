@@ -35,12 +35,15 @@ def decode_words_raw(raw: bytes):
 
 
 def b64_of(lines: list[str]) -> bytes | None:
-    for ln in lines:
+    """The B64 payload in a reply, or None if absent or corrupted (USB drop)."""
+    for ln in lines or []:
         if ln.startswith("B64 "):
-            _, n, data = ln.split(" ", 2)
-            raw = base64.b64decode(data)
-            assert len(raw) == int(n), (len(raw), n)
-            return raw
+            try:
+                _, n, data = ln.split(" ", 2)
+                raw = base64.b64decode(data)
+            except Exception:  # noqa: BLE001
+                return None
+            return raw if len(raw) == int(n) else None
     return None
 
 

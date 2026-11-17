@@ -28,7 +28,10 @@
 // here (checked at boot against _heap_start).
 #define BANK_ADDR 0x40840000u
 #define BANK_WORDS 16384u
-SOC_RESERVE_MEMORY_REGION(0x40840000, 0x40860000, chsound_bank);
+// Blocks 1 and 2 (0x40820000-0x4085ffff) are kept out of the heap: block 2 is the DAC/capture
+// bank, block 1 a second capture bank / the capture slot. The image must end below 0x40820000.
+SOC_RESERVE_MEMORY_REGION(0x40820000, 0x40860000, chsound_banks);
+#define BANK1_ADDR 0x40820000u
 
 extern "C" {
 // libphy / ROM PHY entry points (C6, arduino-esp32 3.3.10 libphy.a; ROM via esp32c6.rom.phy.ld)
@@ -81,12 +84,12 @@ static bool g_dac_on = false;
 static uint32_t g_tone_save0, g_tone_save1;
 static int g_gain = -1;           // forced RX gain index, -1 = AGC
 
-static constexpr uint32_t MASTER_WORDS = 4096;
+static constexpr uint32_t MASTER_WORDS = 2048;
 static uint32_t g_master[MASTER_WORDS];
 static uint32_t g_master_len = 0;  // period in words
 static constexpr int NSLOT = 1;
 static constexpr uint32_t SLOT_WORDS = 16384;
-static uint32_t g_slot[NSLOT][SLOT_WORDS];
+static uint32_t (*const g_slot)[SLOT_WORDS] = (uint32_t(*)[SLOT_WORDS])BANK1_ADDR;
 static uint32_t g_slot_n[NSLOT];
 static uint32_t g_slot_div[NSLOT];
 
@@ -520,6 +523,55 @@ static int seq_run(char *prog) {
       case 'S':
         stamp('S', v, cyc());
         break;
+      case 'O': {  // raw SRAM owner bits: O<hex>, e.g. O0x400 (block2) O0x200 (block1) O0x600
+        uint32_t c = cyc();
+        uint32_t cur = R(SRAM_OWNER);
+        if (!engine_owned) g_owner_saved = cur;
+        R(SRAM_OWNER) = (cur & ~0x10f00u) | ((uint32_t)strtoul(ops[i] + 1, nullptr, 0) & 0x10f00u);
+        fence();
+        (void)R(SRAM_OWNER);
+        engine_owned = (R(SRAM_OWNER) & 0xf00u) != 0;
+        stamp('O', (int32_t)(R(SRAM_OWNER) >> 8), c);
+        break;
+      }
+      case 'Y': {  // capture without touching ownership: Y<n>[,div]
+        uint32_t n = (uint32_t)v, div = v2 < 0 ? 0 : (uint32_t)v2;
+        if (n < 256) n = 256;
+        if (n > 16380) n = 16380;
+        dump_clocks();
+        R(DUMP_CTRL) = 0;
+        R(DUMP_LANES) = (R(DUMP_LANES) & 0xfe000000u) | 0x000c2040u;
+        R(DUMP_MODE) = (R(DUMP_MODE) & ~(0xfu << 15)) | (15u << 15);
+        R(BTBB_RB4) &= ~1u;
+        uint32_t w = n | ((div & 3u) << 15);
+        R(DUMP_CTRL) = w | (1u << 18);
+        R(DUMP_CTRL) = w | (1u << 31);
+        uint32_t c = cyc();
+        R(DUMP_CTRL) = w | (1u << 31) | (1u << 19);
+        R(DUMP_CTRL) = w | (1u << 31);
+        stamp('Y', (int32_t)n, c);
+        int done = 0;
+        while ((uint32_t)(cyc() - c) < 160u * 20000u)
+          if (R(DUMP_CTRL) & (1u << 18)) { done = 1; break; }
+        stamp('y', done, cyc());
+        R(DUMP_CTRL) = 0;
+        ok = done;
+        cap_n = n;
+        cap_div = div;
+        break;
+      }
+      case 'X': {  // DAC loop start without tiling / ownership change: X<n>
+        uint32_t n = (uint32_t)v;
+        if (n < 2 || n > 16384) n = 16384;
+        dump_clocks();
+        R(DAC_CTRL) = 0;
+        uint32_t w = ((n - g_dac_cnt_adj) & 0x3fffu) | (1u << 15) | (1u << 31) | (1u << 19);
+        uint32_t c = cyc();
+        R(DAC_CTRL) = w;
+        stamp('X', (int32_t)n, c);
+        g_dac_on = true;
+        break;
+      }
       case 'L': {  // preload: tile the master into the bank and hand it to the engine
         uint32_t n = (uint32_t)v;
         if (n < 2 || n > 16384) n = 16384;
@@ -579,6 +631,15 @@ static int seq_run(char *prog) {
         uint32_t c = cyc();
         R(0x600a0910) = (R(0x600a0910) & ~0xf00u) | (((uint32_t)v & 0xfu) << 8);
         stamp('F', v, c);
+        break;
+      }
+      case 'V': {  // vendor unkey -> RX front end, DAC engine left running (cf. U)
+        uint32_t c = cyc();
+        phy_tx_tone(0, 0, 0);
+        g_tx_keyed = false;
+        rx_frontend();
+        stamp('V', 0, c);
+        stamp('v', 0, cyc());
         break;
       }
       case 'R': {  // RX front end only (no vendor unkey)
@@ -763,6 +824,16 @@ static void cmd(char *line) {
       }
     }
     Serial.printf("WUP off=%u n=%u\n", (unsigned)off, (unsigned)nw);
+  } else if (!strcmp(c, "mem")) {  // mem <addr> <nwords>  -> B64 (CPU must own the block)
+    uint32_t a = U(1, BANK1_ADDR), n = U(2, 1024);
+    if (n > 16384) n = 16384;
+    send_b64((const uint8_t *)(uintptr_t)a, n * 4);
+  } else if (!strcmp(c, "fill")) {  // fill <addr> <nwords> <value>
+    uint32_t a = U(1, BANK1_ADDR), n = U(2, 1024), val = U(3, 0xa5a0055au);
+    for (uint32_t i = 0; i < n; i++) ((volatile uint32_t *)(uintptr_t)a)[i] = val;
+    Serial.printf("FILL ok\n");
+  } else if (!strcmp(c, "owner")) {
+    Serial.printf("OWNER %08x\n", (unsigned)R(SRAM_OWNER));
   } else if (!strcmp(c, "dacadj")) {
     g_dac_cnt_adj = U(1, 0);
     Serial.printf("DACADJ %u\n", (unsigned)g_dac_cnt_adj);
@@ -809,7 +880,7 @@ void setup() {
   rx_frontend();
   Serial.printf("\nCHSOUND ready wifi_init=%d start=%d heap_start=%p bank=%08x\n", (int)e1,
                 (int)e2, &_heap_start, (unsigned)BANK_ADDR);
-  if ((uintptr_t)&_heap_start > BANK_ADDR) Serial.printf("WARN image overlaps the bank!\n");
+  if ((uintptr_t)&_heap_start > BANK1_ADDR) Serial.printf("WARN image overlaps bank 1!\n");
 }
 
 void loop() {

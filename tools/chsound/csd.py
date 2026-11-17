@@ -28,7 +28,30 @@ import time
 
 import serial
 
-PORTS = {"A": "/dev/ttyACM0", "B": "/dev/ttyACM1"}
+SERIALS = {"A": "58:E6:C5:11:FC:B0", "B": "8C:FD:49:11:32:18"}
+
+
+def find_port(usb_serial):
+    """The /dev/ttyACM* whose USB serial matches (via sysfs); create the node if the
+    container's /dev predates a re-enumeration (privileged env)."""
+    import glob
+
+    for t in sorted(glob.glob("/sys/class/tty/ttyACM*")):
+        try:
+            ser = open(os.path.join(t, "device", "..", "serial")).read().strip()
+        except OSError:
+            continue
+        if ser.upper() == usb_serial.upper():
+            name = os.path.basename(t)
+            dev = "/dev/" + name
+            if not os.path.exists(dev):
+                maj, mnr = open(os.path.join(t, "dev")).read().strip().split(":")
+                os.mknod(dev, 0o20666, os.makedev(int(maj), int(mnr)))
+            return dev
+    raise RuntimeError(f"no tty for {usb_serial}")
+
+
+PORTS = {k: None for k in SERIALS}
 
 
 class Dev:
@@ -166,20 +189,27 @@ def run_steps(steps):
             elif "sdr_finish" in st:
                 out.append(sdr_finish())
             elif "raw_reset" in st:  # hardware-reset a DUT via RTS (boots the app again)
-                d = DEVS[st["raw_reset"]]
-                d.s.dtr = False
-                d.s.rts = True
+                k = st["raw_reset"]
+                d = DEVS[k]
+                d.s.close()  # never hold the port across the USB re-enumeration
+                tmp = serial.Serial()
+                tmp.port = d.port
+                tmp.dtr = False
+                tmp.rts = True
+                tmp.open()
                 time.sleep(0.1)
-                d.s.rts = False
-                time.sleep(st.get("boot_wait", 1.5))
-                out.append({"boot": d.s.read(65536).decode(errors="replace")})
+                tmp.rts = False
+                tmp.close()
+                time.sleep(st.get("boot_wait", 2.0))
+                DEVS[k] = Dev(k, find_port(SERIALS[k]))
+                out.append({"boot": "reopened " + DEVS[k].port})
             elif "reopen" in st:
-                for k, p in PORTS.items():
+                for k in SERIALS:
                     try:
                         DEVS[k].s.close()
                     except Exception:
                         pass
-                    DEVS[k] = Dev(k, p)
+                    DEVS[k] = Dev(k, find_port(SERIALS[k]))
                 out.append({"reopened": True})
             else:
                 out.append({"error": "bad step"})
@@ -190,8 +220,8 @@ def run_steps(steps):
 
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 7700
-    for k, p in PORTS.items():
-        DEVS[k] = Dev(k, p)
+    for k in SERIALS:
+        DEVS[k] = Dev(k, find_port(SERIALS[k]))
     srv = socket.socket()
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", port))
