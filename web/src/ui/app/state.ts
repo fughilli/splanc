@@ -17,6 +17,28 @@ import { connectionRegistry } from "../../net/connectionRegistry";
 import { nativeSocketFactory } from "../../net/nativeSocket";
 import { isBleUrl } from "../../net/bleTransport";
 import { deviceStore } from "../../store/deviceStore";
+import { logEvent, setAppLogRedaction } from "../../store/appLogStore";
+import { connTransition, opaqueDeviceId } from "../../store/appLog";
+
+// The app log masks every known device's name / host / URL as its opaque id.
+setAppLogRedaction(() => {
+  const known: Record<string, string> = {};
+  try {
+    for (const d of deviceStore.list()) {
+      const opaque = opaqueDeviceId(d.id);
+      known[d.wssUrl] = opaque;
+      if (d.label) known[d.label] = opaque;
+      try {
+        known[new URL(d.wssUrl).host] = opaque;
+      } catch {
+        /* ble: */
+      }
+    }
+  } catch {
+    /* storage blocked */
+  }
+  return known;
+});
 import { certChangedMessage, certPins } from "../../net/deviceTrust";
 import { deviceProber } from "../../net/deviceProber";
 import { toast, type PillState } from "../kit";
@@ -65,8 +87,29 @@ class AppState {
   }
 
   private setStatus(patch: Partial<ConnStatus>): void {
+    const prev = this.status;
     this.status = { ...this.status, ...patch };
+    this.logStatus(prev);
     this.emit();
+  }
+
+  /** Diagnostics app log: a connection state transition, the device as an opaque
+   * id (its name, address and URL masked out of the texts). Never throws. */
+  private logStatus(prev: ConnStatus): void {
+    try {
+      const next = this.status;
+      const a = { state: prev.state, text: prev.text, error: prev.error ?? null };
+      const b = { state: next.state, text: next.text, error: next.error ?? null };
+      if (!connTransition(a, b)) return;
+      const id = deviceStore.activeId();
+      const dev = id ? deviceStore.get(id) : undefined;
+      logEvent("conn", `${b.state}: ${b.text}${b.error ? ` — ${b.error}` : ""}`, {
+        device: opaqueDeviceId(id),
+        transport: dev ? (isBleUrl(dev.wssUrl) ? "ble" : "wifi") : "none",
+      });
+    } catch {
+      /* logging never breaks the connection state */
+    }
   }
 
   /** Connect to a device by wss URL, tearing down any current client. Records
