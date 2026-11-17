@@ -1559,9 +1559,17 @@ offsets;</p></li>
 <p>One USB flash of <code class="docutils literal notranslate"><span class="pre">flash_esp32p4_player_c6</span></code> moves a huge_app P4 onto it and keeps its map,
 effects and name. After that, updates go over the air. The image is 2.5 MB of the 3 MB slot.</p>
 </li>
+<li><p><strong>Release.</strong> A <code class="docutils literal notranslate"><span class="pre">firmware-v*</span></code> tag publishes two P4 assets next to the C6’s
+(<code class="docutils literal notranslate"><span class="pre">.github/workflows/release.yaml</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/ota_release.py</span> <span class="pre">--target</span> <span class="pre">p4</span></code>), built with the
+tracker module and signed with the C6’s key:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">esp32p4-player-&lt;ver&gt;.ota</span></code>, the signed package the agent and the web Flash screen
+stream to a P4;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">esp32p4-player-&lt;ver&gt;.tar</span></code>, the USB flash bundle with that package inside.</p></li>
+</ul>
+</li>
 </ol>
-<p>What is still open: release packaging (<code class="docutils literal notranslate"><span class="pre">tools/ota_release.py</span></code> emits only the C6 assets), the
-HITL OTA gate for the <code class="docutils literal notranslate"><span class="pre">esp32p4-c6</span></code> SKU (§5.2), and the Python HITL client (<code class="docutils literal notranslate"><span class="pre">ota_core.py</span></code>),
+<p>What is still open: the HITL OTA gate for the <code class="docutils literal notranslate"><span class="pre">esp32p4-c6</span></code> SKU (§5.2), and the Python HITL client (<code class="docutils literal notranslate"><span class="pre">ota_core.py</span></code>),
 which doesn’t know <code class="docutils literal notranslate"><span class="pre">ota_inapp</span></code> yet.</p>
 <p>The original proposal follows. Two of its choices were dropped:</p>
 <ul class="simple">
