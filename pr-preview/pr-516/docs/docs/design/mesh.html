@@ -349,6 +349,10 @@ install. Ranging, fusion and channel sounding are later, independent tracks.</p>
 sites without Wi-Fi; three membership modes (open, closed, locked).</p></li>
 <li><p>The swarm code is ported into Splanc (indoor_localization is public), not shared as a
 dependency.</p></li>
+<li><p>Radiolarians details: WLEDs on the P4’s Ethernet; fixtures a few metres apart in metal
+enclosures; they self-configure; admin over BLE, Wi-Fi or the bridge; per-device Wi-Fi OTA
+is enough; a closed mesh unlocked with a kiosk-style admin secret; any fixture is a gateway;
+Splanc’s own frame format, no Espressif OUI.</p></li>
 </ol>
 </section>
 <section id="contents">
@@ -382,7 +386,8 @@ dependency.</p></li>
 authenticated generation-numbered state, and a Deluge-style page protocol for blobs. Splanc
 adds a security envelope, membership and groups, and Splanc ports on top. Backhauls plug in
 under a small <code class="docutils literal notranslate"><span class="pre">Backhaul</span></code> trait.</p></li>
-<li><p><strong>Phase 1 backhaul: 802.11 vendor action frames in our netstack</strong> (ESP-NOW framing). The
+<li><p><strong>Phase 1 backhaul: 802.11 vendor action frames in our netstack</strong>, with Splanc’s own framing
+(a Splanc CID, no Espressif OUI). The
 netstack already sends raw management frames (<code class="docutils literal notranslate"><span class="pre">ns_mac_send</span></code>) and receives every frame on the
 channel. Mesh frames share the AP’s channel when associated, and a fixed mesh channel when
 not.</p></li>
@@ -399,7 +404,8 @@ frame on every member.</p></li>
 app. <strong>Open</strong>: any Splanc device can follow the show (time, scenes, effects) as a guest, with
 no secret, but can never manage it. <strong>Closed</strong>: devices holding the site secret from
 provisioning join as members. <strong>Locked</strong>: only devices the owner approved; removal rotates
-the key. Groups target messages.</p></li>
+the key. Groups target messages. Administration is unlocked per connection with a
+kiosk-style <strong>admin secret</strong> kept in the app and exportable to other admins.</p></li>
 <li><p><strong>BLE or Wi-Fi in.</strong> Sites without Wi-Fi are first-class: the phone connects over BLE to any
 fixture, which gateways to a mesh running in a radio-up, no-AP mode.</p></li>
 <li><p><strong>Radiolarians</strong> (up to 6 P4 + C6 fixtures driving WLEDs over DDP): the C6 front end is the
@@ -653,18 +659,58 @@ node id from status reports.</p></li>
 </section>
 <section id="the-802-11-p2p-backhaul-in-the-netstack">
 <h2>4. The 802.11 P2P backhaul in the netstack<a class="headerlink" href="#the-802-11-p2p-backhaul-in-the-netstack" title="Link to this heading">¶</a></h2>
-<section id="frames">
-<h3>4.1 Frames<a class="headerlink" href="#frames" title="Link to this heading">¶</a></h3>
-<p>ESP-NOW is a vendor-specific Action frame. We use the same framing, so stock ESP-IDF devices
-and sniffers recognise it, and fill the body with our envelope:</p>
+<section id="frames-splanc-s-own-framing">
+<h3>4.1 Frames: Splanc’s own framing<a class="headerlink" href="#frames-splanc-s-own-framing" title="Link to this heading">¶</a></h3>
+<p>The owner’s call: <strong>no Espressif OUI and no ESP-NOW framing.</strong> Splanc defines its own frame.</p>
+<p><strong>Options considered:</strong></p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Option</p></th>
+<th class="head"><p>Receive filtering in our netstack</p></th>
+<th class="head"><p>While associated to an AP</p></th>
+<th class="head"><p>Other stacks</p></th>
+<th class="head"><p>Verdict</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>Vendor-specific Action frame (category 127) with a Splanc identifier</strong></p></td>
+<td><p>One compare: FC <code class="docutils literal notranslate"><span class="pre">0xd0</span></code>, category 127, 3-byte id, before any STA processing</p></td>
+<td><p>Fine: a non-BSS management frame with wildcard A3, the same class of frame as ESP-NOW, NAN or vendor discovery; the AP ignores it. Category 127 is not a robust action, so PMF (802.11w) doesn’t apply</p></td>
+<td><p>Unknown ids are parsed and dropped silently; sniffers show “vendor-specific action”</p></td>
+<td><p><strong>Chosen</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>Data frames to a Splanc group address, LLC/SNAP + an EtherType</p></td>
+<td><p>Same cost</p></td>
+<td><p>ToDS = FromDS = 0 data frames outside an IBSS are non-standard; some APs and wireless IDSs flag them as rogue ad-hoc traffic</p></td>
+<td><p>Stacks filtering by BSSID drop them; the only EtherTypes free to use are the IEEE “local experimental” 0x88B5/0x88B6, which aren’t unique</p></td>
+<td><p>No</p></td>
+</tr>
+<tr class="row-even"><td><p>Public Action (category 4), vendor-specific subtype</p></td>
+<td><p>Same cost</p></td>
+<td><p>Fine</p></td>
+<td><p>Fine</p></td>
+<td><p>No gain over category 127, and it also needs an OUI</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>The identifier.</strong> A vendor-specific action frame starts with an OUI or a <strong>CID</strong> (an IEEE
+Company ID: 24 bits with the local, “X”, bit set, so a CID never collides with any assigned OUI).</p>
+<ul class="simple">
+<li><p><strong>Ship with a registered CID.</strong> IEEE RA sells CIDs for a modest fee; registering one before the
+first install is the clean answer (an open question for the owner, §17).</p></li>
+<li><p><strong>Until then</strong>, use a CID-format placeholder (<code class="docutils literal notranslate"><span class="pre">0x0A</span> <span class="pre">0x5C</span> <span class="pre">0x4D</span></code>, local bit set): it cannot
+collide with an OUI-assigned company. A later CID swap is one constant plus a version bump.</p></li>
+</ul>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>802.11 header (24 B)
   FC 0xd0 0x00 (Action), duration, A1 = ff:ff:ff:ff:ff:ff or the peer&#39;s MAC,
-  A2 = own MAC, A3 = ff:ff:ff:ff:ff:ff, sequence (our SeqCounter)
+  A2 = own MAC, A3 = ff:ff:ff:ff:ff:ff (no BSS), sequence (our SeqCounter)
 Action body
   category 127 (vendor-specific)
-  OUI 18:fe:34, 4 random bytes                         (ESP-NOW framing)
-  vendor element: id 221, len, OUI 18:fe:34, type 4, version 1
-  mesh envelope (§5.1)                                 (our payload)
+  Splanc CID (3 B)
+  frame kind (1 B): 0x01 = mesh v1          (room for other Splanc frame kinds later)
+  mesh envelope (§5.1)
 FCS (hardware)
 </pre></div>
 </div>
@@ -674,16 +720,17 @@ Assoc use it). Mesh frames go through the same path, after <code class="docutils
 arm on top of a frame still on air. Broadcast frames get no ACK; unicast frames to a peer’s
 MAC get the peer’s hardware auto-ACK (<code class="docutils literal notranslate"><span class="pre">mac_own_bssid</span></code> keeps own-MAC valid).</p></li>
 <li><p><strong>RX</strong>: <code class="docutils literal notranslate"><span class="pre">netstack_loop</span></code> drains <code class="docutils literal notranslate"><span class="pre">ns_mac_recv</span></code>. A mesh frame is identified before the BSSID
-gate: <code class="docutils literal notranslate"><span class="pre">rx[0]</span> <span class="pre">==</span> <span class="pre">0xd0</span></code>, category 127, the ESP-NOW OUI, element type 4, then our envelope magic.
-It is handed to the mesh layer and never to the STA path.</p></li>
+gate: <code class="docutils literal notranslate"><span class="pre">rx[0]</span> <span class="pre">==</span> <span class="pre">0xd0</span></code>, category 127, the Splanc CID, kind 0x01, then the envelope magic. It is
+handed to the mesh layer and never to the STA path.</p></li>
 <li><p><strong>RX metadata</strong>: decode RSSI and the RX timestamp from the 92-byte RX vector
 (<code class="docutils literal notranslate"><span class="pre">RX_VECTOR_HDR</span></code>). The layout is undocumented. Spike M3a finds the fields on silicon by
 comparing against the vendor <code class="docutils literal notranslate"><span class="pre">wifi_pkt_rx_ctrl_t</span></code> in promiscuous mode.</p></li>
-<li><p><strong>Rate</strong>: start with 1 Mb/s DSSS for broadcast (ESP-NOW’s default: robust, long range) and
-measure 6 Mb/s OFDM. A 250-byte frame is ~2.2 ms at 1 Mb/s and ~0.4 ms at 6 Mb/s. The pacing
-formula in <code class="docutils literal notranslate"><span class="pre">tx_pace_after</span></code> must use the rate actually sent.</p></li>
-<li><p><strong>Payload</strong>: ESP-NOW v1 caps the body at 250 B and v2 at 1470 B. We start at 250 B per frame
-(compatible with every ESP-NOW peer) and raise the MTU only if measurements say it pays.</p></li>
+<li><p><strong>Rate</strong>: start with 1 Mb/s DSSS for broadcast (robust, longest range) and measure 6 Mb/s
+OFDM. A 250-byte frame is ~2.2 ms at 1 Mb/s and ~0.4 ms at 6 Mb/s. The pacing formula in
+<code class="docutils literal notranslate"><span class="pre">tx_pace_after</span></code> must use the rate actually sent.</p></li>
+<li><p><strong>Size</strong>: 802.11 allows management frames up to 2304 B. We start with 250 B bodies (short
+airtime at 1 Mb/s, fits every buffer on the path) and raise it only if measurements say it
+pays (M14).</p></li>
 </ul>
 </section>
 <section id="channels">
@@ -797,6 +844,90 @@ management frames at all on the direct-submission path.</p></li>
 <p>Exit: frames flow both ways in both cases with ≥ 95 % delivery at one hop, and the RX
 timestamp is found.</p>
 </section>
+<section id="antennas-and-metal-enclosures">
+<h3>4.5 Antennas and metal enclosures<a class="headerlink" href="#antennas-and-metal-enclosures" title="Link to this heading">¶</a></h3>
+<p>The radiolarians sit a few metres apart with clear line of sight, but <strong>inside metal
+enclosures</strong>, with people walking between them. A closed metal box is close to a Faraday cage:
+a module’s PCB antenna inside it can lose tens of dB, and the loss depends on seams, holes and
+where the antenna sits. The same antenna serves the mesh and the phone’s BLE link.</p>
+<p><strong>Hardware options:</strong></p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Option</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Module with a PCB antenna (ESP32-C6-WROOM-1, -MINI-1) inside the enclosure</p></td>
+<td><p>Only works if the antenna faces a non-metal window (a plastic panel or cap) with the module’s keep-out respected</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Module with a u.FL/IPEX connector</strong> (ESP32-C6-WROOM-1U, -MINI-1U) and a pigtail to a bulkhead RP-SMA, a 2.4 GHz dipole outside</p></td>
+<td><p>Predictable; +2–3 dBi antenna, minus ~0.5–1 dB of cable and connector loss. The usual answer for metal boxes</p></td>
+</tr>
+<tr class="row-even"><td><p>A flat external antenna stuck to the outside, fed through a grommet</p></td>
+<td><p>Less visible; check its gain pattern against the fixture’s orientation</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Radiolarians (owner, 2026-11-17):</strong> their C6 has <strong>both a chip antenna and a u.FL
+connector</strong>, so an external antenna is available. The enclosures have <strong>windows through the
+metal</strong>. The plan is to test first with the antenna <strong>inside</strong> the enclosure, radiating through
+the windows. An external antenna on the u.FL is the fallback if R0 fails.</p>
+<p><strong>Link budget at 2.4 GHz</strong> (rough; the measurement below replaces it):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Term</p></th>
+<th class="head"><p>Value</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>C6 TX power, 802.11b 1 Mb/s</p></td>
+<td><p>up to +21 dBm (datasheet); +18 dBm assumed</p></td>
+</tr>
+<tr class="row-odd"><td><p>Antennas</p></td>
+<td><p>+2 dBi each side (external dipoles), −1 dB cable each side</p></td>
+</tr>
+<tr class="row-even"><td><p>Free-space path loss</p></td>
+<td><p>40 dB at 1 m, 54 dB at 5 m, 60 dB at 10 m</p></td>
+</tr>
+<tr class="row-odd"><td><p>People between fixtures</p></td>
+<td><p>3–20 dB per body (shadowing at 2.4 GHz); budget 20 dB</p></td>
+</tr>
+<tr class="row-even"><td><p>RX sensitivity, 1 Mb/s</p></td>
+<td><p>about −98 dBm for this class of chip (confirm in the WROOM-1/1U datasheet’s RX sensitivity table); about −90 dBm at 6 Mb/s OFDM</p></td>
+</tr>
+<tr class="row-odd"><td><p>Received at 5 m with a body in the way</p></td>
+<td><p>18 + 2 − 1 − 54 − 20 + 2 − 1 ≈ <strong>−54 dBm</strong>: ~40 dB of margin at 6 Mb/s</p></td>
+</tr>
+<tr class="row-even"><td><p>Same, PCB antenna in a closed metal box</p></td>
+<td><p>the enclosure’s loss comes straight off that margin: it may be 20–40 dB, so it must be measured</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The phone’s BLE link has the same geometry plus the phone’s lower TX power (often 0 to +10 dBm),
+so it is the weaker of the two links.</p>
+<p><strong>Measure it in the real enclosure: an early, explicit task for the radiolarians (R0, §15).</strong>
+It needs no mesh code: stock firmware on the radiolarian’s C6 is enough.</p>
+<ol class="arabic simple">
+<li><p>Two radiolarians (or one plus a reference C6 with a known antenna) at 1, 3 and 5 m, enclosures
+closed. Log the received RSSI both ways: a Wi-Fi beacon or probe from one, scanned by the
+other (the vendor scan reports RSSI), and the phone’s view of the BLE advertisement (any BLE
+scanner app). Repeat with the enclosure open, then with an external antenna on the u.FL (the fallback).
+With the antenna inside, note where the chip antenna sits relative to the windows.</p></li>
+<li><p>Ten minutes with people walking between them: log the minimum and the 1st percentile.</p></li>
+<li><p>Rotate each fixture through 4 orientations (the antenna pattern through the enclosure).</p></li>
+<li><p>Pass: the 1st-percentile RSSI with people moving is at least 20 dB above the 6 Mb/s
+sensitivity (≥ −70 dBm), on the mesh link and on the phone’s BLE link. If not, fit external
+antennas before the install.</p></li>
+</ol>
+<p>Once the mesh runs, <code class="docutils literal notranslate"><span class="pre">MeshStatus</span></code> reports each member’s best-neighbour RSSI and the app shows
+it, so an installer sees a weak link on site. HITL can’t reproduce the enclosure; the bench
+measurement is the check.</p>
+</section>
 </section>
 <section id="protocol">
 <h2>5. Protocol<a class="headerlink" href="#protocol" title="Link to this heading">¶</a></h2>
@@ -870,17 +1001,17 @@ epoch and the public open key (§7.4).</p>
 <td><p>24 B</p></td>
 <td><p>~80 B (the swarm’s 88 less the envelope; §11)</p></td>
 </tr>
-<tr class="row-odd"><td><p>802.11 ESP-NOW v1</p></td>
+<tr class="row-odd"><td><p>802.11 Splanc action frame</p></td>
 <td><p>250 B</p></td>
 <td><p>22 B</p></td>
 <td><p>24 B</p></td>
 <td><p><strong>200 B</strong> (LinkFrame tags take a few bytes)</p></td>
 </tr>
-<tr class="row-even"><td><p>802.11 ESP-NOW v2 (later)</p></td>
-<td><p>1470 B</p></td>
+<tr class="row-even"><td><p>802.11, larger bodies (later, M14)</p></td>
+<td><p>up to 1400 B</p></td>
 <td><p>22 B</p></td>
 <td><p>24 B</p></td>
-<td><p>~1400 B</p></td>
+<td><p>~1300 B</p></td>
 </tr>
 <tr class="row-odd"><td><p>IP / UDP (later)</p></td>
 <td><p>1400 B</p></td>
@@ -1364,6 +1495,96 @@ mesh key, not TLS. A member trusts the gateway because the gateway holds the mes
 <code class="docutils literal notranslate"><span class="pre">web/src/store/backup.ts</span></code>) and is copied to the bridge when one manages the site.</p></li>
 </ul>
 </section>
+<section id="administration-a-kiosk-style-admin-secret">
+<h3>7.9 Administration: a kiosk-style admin secret<a class="headerlink" href="#administration-a-kiosk-style-admin-secret" title="Link to this heading">¶</a></h3>
+<p>The radiolarians’ mesh is <strong>closed</strong> (the site secret admits members), and administering it is
+<strong>unlocked with an admin secret, the same way kiosk mode works</strong>. Kiosk mode today
+(<code class="docutils literal notranslate"><span class="pre">docs/design/kiosk-mode.md</span></code>):</p>
+<ul class="simple">
+<li><p>firmware: <code class="docutils literal notranslate"><span class="pre">firmware/player_app/kiosk_ffi.rs</span></code> (<code class="docutils literal notranslate"><span class="pre">lm_kiosk_gate</span></code> classifies every arm before
+any handler; <code class="docutils literal notranslate"><span class="pre">kiosk_unlock{secret}</span></code> unlocks only the connection that sent it, until it drops;
+<code class="docutils literal notranslate"><span class="pre">secret_eq</span></code> is constant time; a wrong secret locks unlocking out for 2 s), persisted in
+<code class="docutils literal notranslate"><span class="pre">/lfs/kiosk.cfg</span></code>;</p></li>
+<li><p>app: <code class="docutils literal notranslate"><span class="pre">web/src/halloween/kioskSecrets.ts</span></code> generates a 128-bit secret per device, keeps it in
+<code class="docutils literal notranslate"><span class="pre">localStorage</span></code> (<code class="docutils literal notranslate"><span class="pre">splanc.kioskSecrets.v1</span></code>), and <code class="docutils literal notranslate"><span class="pre">web/src/ui/screens/kioskSection.ts</span></code> offers
+“Copy owner secret”; the key is in the app backup (<code class="docutils literal notranslate"><span class="pre">web/src/store/backupFormat.ts</span></code>).</p></li>
+</ul>
+<p>The mesh admin secret reuses all of it, with one difference: it is <strong>per mesh, not per device</strong>.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p></p></th>
+<th class="head"><p>Kiosk</p></th>
+<th class="head"><p>Mesh admin</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Scope</p></td>
+<td><p>one device</p></td>
+<td><p>every member of one mesh</p></td>
+</tr>
+<tr class="row-odd"><td><p>Generated</p></td>
+<td><p>by the app, 128-bit</p></td>
+<td><p>by the app at mesh creation, 128-bit</p></td>
+</tr>
+<tr class="row-even"><td><p>Kept</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">localStorage</span></code>, keyed by MAC</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">localStorage</span></code> (<code class="docutils literal notranslate"><span class="pre">splanc.meshAdmin.v1</span></code>), keyed by mesh id; in the app backup</p></td>
+</tr>
+<tr class="row-odd"><td><p>Shared with other admins</p></td>
+<td><p>“Copy owner secret”</p></td>
+<td><p>“Export admin secret”: copy, QR code, or a file; “Import” on the other phone or into the bridge config</p></td>
+</tr>
+<tr class="row-even"><td><p>On the device</p></td>
+<td><p>the secret, plain, on flash</p></td>
+<td><p>a verifier and the derived admin key (below)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Unlock</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">kiosk_unlock{secret}</span></code> per connection</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">mesh_unlock{secret}</span></code> per connection, same lockout, same per-connection scope</p></td>
+</tr>
+<tr class="row-even"><td><p>Recovery</p></td>
+<td><p>USB console <code class="docutils literal notranslate"><span class="pre">kiosk</span> <span class="pre">off</span></code></p></td>
+<td><p>USB console <code class="docutils literal notranslate"><span class="pre">mesh</span> <span class="pre">admin</span> <span class="pre">reset</span></code> (clears the admin key on that device; the app re-provisions it)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>What a locked connection can do.</strong> A connection to any fixture that has not sent
+<code class="docutils literal notranslate"><span class="pre">mesh_unlock</span></code> gets read-only mesh access (<code class="docutils literal notranslate"><span class="pre">GetMesh</span></code>, status) and whatever the fixture’s own
+policy allows locally. <code class="docutils literal notranslate"><span class="pre">MeshSend</span></code>, membership, groups, mode changes and mesh-wide scenes need
+an unlocked connection. If kiosk mode is on too, its gate runs first, unchanged.</p>
+<p><strong>How the gateway proves admin commands to members.</strong> The admin secret never crosses the mesh.</p>
+<ul class="simple">
+<li><p>Each member stores <code class="docutils literal notranslate"><span class="pre">K_admin</span> <span class="pre">=</span> <span class="pre">HKDF(admin</span> <span class="pre">secret,</span> <span class="pre">mesh</span> <span class="pre">id,</span> <span class="pre">&quot;admin&quot;)</span></code>, delivered with the mesh
+key at join (wrapped, §7.3) and on rotation.</p></li>
+<li><p>The gateway checks <code class="docutils literal notranslate"><span class="pre">mesh_unlock</span></code> against its stored verifier. For an unlocked connection it
+adds an <strong>admin tag</strong> to every admin-class packet it originates: <code class="docutils literal notranslate"><span class="pre">HMAC-SHA256(K_admin,</span> <span class="pre">envelope</span> <span class="pre">header</span> <span class="pre">‖</span> <span class="pre">payload)</span></code>, truncated to 8 B, inside the encrypted payload.</p></li>
+<li><p>Members check two things: the envelope MIC under the mesh key (any member could have sent the
+frame) and, on admin-class ports (<code class="docutils literal notranslate"><span class="pre">CONTROL</span></code>, <code class="docutils literal notranslate"><span class="pre">MEMBERSHIP</span></code>, <code class="docutils literal notranslate"><span class="pre">SCENE</span></code>, <code class="docutils literal notranslate"><span class="pre">TIME_BASE</span></code>), the admin tag
+(an unlocked gateway sent it). A member that holds the site secret but not the admin secret
+can follow and relay but cannot command.</p></li>
+</ul>
+<p><strong>Threat model, honestly.</strong> Like the kiosk secret, <code class="docutils literal notranslate"><span class="pre">K_admin</span></code> sits on every fixture’s flash, so
+someone who takes a fixture apart can extract it. That matches kiosk mode (“keeps visitors out;
+does not resist an attacker with the board”). The upgrade path, if needed later, is asymmetric:
+derive a P-256 key pair from the admin secret in the app, give members only the public key, and
+sign admin packets (the open-mode owner key of §7.4 is that key). Same secret, no
+re-provisioning.</p>
+<p><strong>Self-configuring installs.</strong> The radiolarians are plugged in and left to form their mesh:</p>
+<ol class="arabic simple">
+<li><p>Before shipping (or once on site), each fixture is provisioned from the app: the site secret,
+the mesh id, the admin key, and Wi-Fi credentials if the venue has Wi-Fi.</p></li>
+<li><p>At power-up a fixture with a site secret looks for its mesh: it listens for the mesh’s
+beacons on the venue AP’s channel if it has one, otherwise on a channel derived from the mesh
+id (one of 1, 6, 11). No beacon within 5 s: it starts beaconing itself. Members find each
+other, the first one up becomes the time root, and scenes catch up by generation.</p></li>
+<li><p>Nobody has to connect for the show to run: the last committed scene is persisted on each
+fixture and resumes at boot.</p></li>
+<li><p>An admin connects to any fixture (BLE or Wi-Fi, app or bridge), unlocks with the admin
+secret, and manages the whole mesh through it.</p></li>
+</ol>
+</section>
 </section>
 <section id="gateway-one-connection-the-whole-mesh">
 <h2>8. Gateway: one connection, the whole mesh<a class="headerlink" href="#gateway-one-connection-the-whole-mesh" title="Link to this heading">¶</a></h2>
@@ -1414,8 +1635,9 @@ dispatch, like <code class="docutils literal notranslate"><span class="pre">Cont
 <li><p><strong>Listing</strong>: the gateway keeps the latest <code class="docutils literal notranslate"><span class="pre">MeshStatus</span></code> of each member (64 × ~60 B ≈ 4 KB; on a
 C6 gateway this is the largest new RAM cost, so it may keep a compact 24 B subset instead).
 <code class="docutils literal notranslate"><span class="pre">GetMesh</span></code> returns it.</p></li>
-<li><p><strong>Gateway change</strong>: any member can be the gateway; there is no special role in the mesh
-itself. A gateway with no app session is just a member.</p></li>
+<li><p><strong>Any fixture is a gateway</strong>: whichever one the app or bridge is connected to (owner’s
+decision). There is no gateway role in the mesh itself; a fixture with no session is just a
+member, and two admins on two fixtures are two gateways at once.</p></li>
 <li><p><strong>P4 + C6 boards</strong>: the C6 front end runs the mesh layer and forwards control for its own P4
 through the existing link (<code class="docutils literal notranslate"><span class="pre">frontend_link.cpp</span></code>), so a P4 fixture is a normal mesh member.</p></li>
 </ul>
@@ -1430,6 +1652,8 @@ through the existing link (<code class="docutils literal notranslate"><span clas
 3 s ago”. Members are controllable like directly connected devices for everything in the
 allow-list. Features that need a direct link (mapping, video, debugger, OTA in Phase 1) show
 “connect directly”.</p></li>
+<li><p><strong>Admin</strong>: “Unlock” with the stored admin secret (automatic when this phone has it), “Export
+admin secret” (copy, QR, file) and “Import admin secret”, as in the kiosk section.</p></li>
 <li><p><strong>Mesh screen</strong> (Devices ▸ Mesh): mesh name, channel, mode (Open / Closed / Locked), members
 (status, firmware, heap, fps, time-sync error, last seen), pending join requests (Admit /
 Ignore), groups (create, rename, assign by multi-select), “Rotate key”, “Leave mesh”.</p></li>
@@ -1445,7 +1669,14 @@ per-fixture connect-arm-disconnect fallback.</p></li>
 </section>
 <section id="bridge-and-agent">
 <h3>9.2 Bridge and agent<a class="headerlink" href="#bridge-and-agent" title="Link to this heading">¶</a></h3>
+<p>The radiolarians may run live shows from the bridge, so the bridge path is <strong>Phase 1</strong> (M8b).</p>
 <ul class="simple">
+<li><p><strong>How the bridge reaches a gateway in Phase 1.</strong> Over IP, as today: the bridge opens one wss
+session to any fixture on the venue network (found by mDNS like any player), sends
+<code class="docutils literal notranslate"><span class="pre">mesh_unlock</span></code> with the imported admin secret, and addresses the others with <code class="docutils literal notranslate"><span class="pre">MeshSend</span></code>. At a
+site with no venue Wi-Fi the Pi bridge can host the Wi-Fi network the fixtures join (the
+mesh then runs on its channel). A bridge over BLE (BlueZ is already on the image for Improv)
+is possible later.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">agent/src/hub.ts</span></code> gains a mesh route: a player reachable “via gateway G” is addressed with
 <code class="docutils literal notranslate"><span class="pre">MeshSend</span></code>. Tools (<code class="docutils literal notranslate"><span class="pre">set_uniforms</span></code>, <code class="docutils literal notranslate"><span class="pre">crossfade_to</span></code>, <code class="docutils literal notranslate"><span class="pre">set_brightness</span></code>, …) keep their signatures;
 <code class="docutils literal notranslate"><span class="pre">list_players</span></code> shows members with their gateway and hop count.</p></li>
@@ -1501,19 +1732,15 @@ few seconds: sub-ms, symmetric) and converts <code class="docutils literal notra
 forwarding <code class="docutils literal notranslate"><span class="pre">SetTimeBase</span></code>. <code class="docutils literal notranslate"><span class="pre">apply_at_ms</span></code> is in time-base ms and needs no conversion.</p></li>
 <li><p><strong>BLE → mesh is Phase 1</strong> (sites without Wi-Fi), so <code class="docutils literal notranslate"><span class="pre">kModeMesh</span></code> (radio up, no AP) is Phase 1
 too, and the BLE coex rules of §4.3 apply to whichever fixture the phone is connected to.</p></li>
-<li><p><strong>Where the WLEDs sit, and the channel.</strong> <code class="docutils literal notranslate"><span class="pre">p4-ethernet-ddp.md</span></code> drives WLED boards over the
-P4’s own Ethernet (RMII PHY), with the P4 as a DHCP server for an “LED network”. In that setup
-DDP never touches the C6’s radio, and the C6 is free to sit on the mesh channel. If instead
-a site’s WLEDs are on Wi-Fi, DDP needs a network the C6 joins or hosts:</p>
-<ul>
-<li><p>joining the site AP: DDP and the mesh share the AP’s channel; DDP for 1260 LEDs at 40 fps
-is ~1.6 Mbit/s per fixture (the DDP doc’s figure), on the same channel as the mesh;</p></li>
-<li><p>with no site Wi-Fi, the C6 would have to host an AP for its WLEDs (the netstack has an AP
-role, <code class="docutils literal notranslate"><span class="pre">firmware/netstack/src/ap.rs</span></code>, but not one carrying DDP), and every fixture’s AP would
-have to be on the mesh channel.
-The design assumes wired Ethernet to the WLEDs; anything else is an open question (§17).</p></li>
-</ul>
-</li>
+<li><p><strong>The WLEDs are on the P4’s Ethernet</strong> (owner). <code class="docutils literal notranslate"><span class="pre">p4-ethernet-ddp.md</span></code> drives WLED boards over
+the P4’s own RMII PHY, with the P4 as a DHCP server for an “LED network”. DDP never touches
+the C6’s radio, so the C6 is free to sit on the mesh channel, and no fixture has to host a
+Wi-Fi network for its LEDs.</p></li>
+<li><p><strong>RF</strong>: fixtures a few metres apart, line of sight, people moving between them, inside metal
+enclosures. The enclosure is the risk; §4.5 has the antenna options, the link budget and the
+measurement (R0) to do before the install.</p></li>
+<li><p><strong>OTA</strong>: per-device OTA over Wi-Fi (the existing path) is enough for Phase 1. OTA over the mesh
+stays Phase 2.</p></li>
 </ul>
 </section>
 <section id="traffic-for-6-fixtures">
@@ -1599,6 +1826,8 @@ LED buffers). On a standalone C6 player it still matters at large LED configs:</
 <h3>10.5 Minimum set that ships radiolarians<a class="headerlink" href="#minimum-set-that-ships-radiolarians" title="Link to this heading">¶</a></h3>
 <p>From the PR plan (§15):</p>
 <ul class="simple">
+<li><p><strong>R0 first</strong>: the link budget measured in the real enclosure (§4.5), so antennas are settled
+before anything else depends on them;</p></li>
 <li><p>the ported mesh crate and the Splanc layer (M1, M2);</p></li>
 <li><p>the 802.11 backhaul with <strong>mesh-only mode</strong> and AP-anchored mode (M3a, M3);</p></li>
 <li><p>the <strong>BLE gateway</strong> with the coex rules of §4.3 (M3b);</p></li>
@@ -1606,12 +1835,14 @@ LED buffers). On a standalone C6 player it still matters at large LED configs:</
 <li><p>the gateway: uniforms, effect, crossfade, brightness, status (M5);</p></li>
 <li><p>the <strong>front-end integration</strong>: the C6 front end as mesh node, the P4 as endpoint (M5b);</p></li>
 <li><p>effect blobs and scene catch-up (M6);</p></li>
-<li><p>closed and locked membership (site secret, approval, groups) (M7);</p></li>
-<li><p>the app’s member list, target picker and mesh screen (M8);</p></li>
+<li><p>closed membership with self-configuration (site secret) and the kiosk-style <strong>admin secret</strong>,
+groups (M7);</p></li>
+<li><p>the app’s member list, target picker, mesh screen, admin secret export/import (M8);</p></li>
+<li><p>the <strong>bridge</strong> reaching the mesh through one gateway (M8b);</p></li>
 <li><p>a HITL gate with P4 + C6 boards where the rigs have them, C6 players otherwise (M9a).</p></li>
 </ul>
-<p>Open mode (M7b), key rotation for closed-mode removals, the IP backhaul, bridge integration and
-OTA over the mesh can follow the first install.</p>
+<p>Firmware updates use per-device OTA over Wi-Fi. Locked mode, open mode (M7b), key rotation, the
+IP backhaul and OTA over the mesh can follow the first install.</p>
 </section>
 </section>
 <section id="uwb-backhaul-later">
@@ -1849,9 +2080,9 @@ USB power and shared-DUT gotchas).</p>
 <td><p>3</p></td>
 <td><p>Same as <code class="docutils literal notranslate"><span class="pre">mesh_gateway</span></code> with the gateway on BLE (coex)</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mesh_join_lock</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mesh_join_admin</span></code></p></td>
 <td><p>4</p></td>
-<td><p>Closed join, lock, a removed DUT can’t control others, rekey; open guest follows but can’t control (Phase 2)</p></td>
+<td><p>Self-configured closed join; a locked connection can’t send <code class="docutils literal notranslate"><span class="pre">MeshSend</span></code>; <code class="docutils literal notranslate"><span class="pre">mesh_unlock</span></code> then control; a member without the admin key can’t command; wrong-secret lockout. Locked mode and open guests in Phase 2</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">mesh_multihop</span></code></p></td>
 <td><p>4</p></td>
@@ -1889,53 +2120,61 @@ ones that depend on unknown hardware behaviour.</p>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p><strong>M0</strong></p></td>
+<tr class="row-even"><td><p><strong>R0</strong></p></td>
+<td><p>Link budget in the real radiolarian enclosure (§4.5): RSSI both ways at 1/3/5 m, people walking between, 4 orientations, BLE to a phone; antenna inside through the windows first, u.FL external as fallback. No code</p></td>
+<td><p>≥ −70 dBm at the 1st percentile</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>M0</strong></p></td>
 <td><p>This design</p></td>
 <td><p>owner review</p></td>
 </tr>
-<tr class="row-odd"><td><p><strong>M1</strong></p></td>
+<tr class="row-even"><td><p><strong>M1</strong></p></td>
 <td><p>Port <code class="docutils literal notranslate"><span class="pre">swarm/net</span></code> + <code class="docutils literal notranslate"><span class="pre">swarm/proto</span></code> into <code class="docutils literal notranslate"><span class="pre">firmware/mesh/swarm/</span></code> with provenance (§3.1); the backhaul entry point, per-instance MTU, Splanc crypto backend; C6 + P4 + host builds and the swarm’s tests and golden vectors in CI</p></td>
 <td><p>ported tests pass</p></td>
 </tr>
-<tr class="row-even"><td><p><strong>M2</strong></p></td>
+<tr class="row-odd"><td><p><strong>M2</strong></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">firmware/mesh</span></code>: <code class="docutils literal notranslate"><span class="pre">Backhaul</span></code> trait, envelope (AES-CCM via <code class="docutils literal notranslate"><span class="pre">ccmp.rs</span></code>, replay window), membership state, ports, <code class="docutils literal notranslate"><span class="pre">meshsim</span></code> with the first scenarios</p></td>
 <td><p>host tests only</p></td>
 </tr>
-<tr class="row-odd"><td><p><strong>M3a</strong></p></td>
+<tr class="row-even"><td><p><strong>M3a</strong></p></td>
 <td><p>Spike: vendor action frames TX/RX between two C6s (associated and not), RX vector RSSI + timestamp, unicast retries, BLE coex loss</p></td>
 <td><p>§4.4 exit</p></td>
 </tr>
-<tr class="row-even"><td><p><strong>M3</strong></p></td>
+<tr class="row-odd"><td><p><strong>M3</strong></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">wifi_p2p</span></code> backhaul in the netstack transport; <code class="docutils literal notranslate"><span class="pre">kModeMesh</span></code> (radio up, no AP); channel rules (§4.2); mesh beacons; <code class="docutils literal notranslate"><span class="pre">mesh_smoke</span></code> HITL</p></td>
 <td><p>M3a passed</p></td>
 </tr>
-<tr class="row-odd"><td><p><strong>M3b</strong></p></td>
+<tr class="row-even"><td><p><strong>M3b</strong></p></td>
 <td><p>BLE gateway: connection-interval request, narrowed coex window, mesh TX outside the BLE window (§4.3); <code class="docutils literal notranslate"><span class="pre">mesh_ble_gateway</span></code> HITL</p></td>
 <td><p>Wi-Fi share ≥ 70 % with BLE up</p></td>
 </tr>
-<tr class="row-even"><td><p><strong>M4</strong></p></td>
+<tr class="row-odd"><td><p><strong>M4</strong></p></td>
 <td><p>Mesh time (beacon fit) + <code class="docutils literal notranslate"><span class="pre">TIME_BASE</span></code> mapped to the existing time base; meshsim skew test; <code class="docutils literal notranslate"><span class="pre">mesh_apply_at_skew</span></code> HITL</p></td>
 <td><p>skew &lt; 10 ms</p></td>
 </tr>
-<tr class="row-odd"><td><p><strong>M5</strong></p></td>
+<tr class="row-even"><td><p><strong>M5</strong></p></td>
 <td><p>Protocol arms (<code class="docutils literal notranslate"><span class="pre">MeshSend</span></code>, <code class="docutils literal notranslate"><span class="pre">MeshResult</span></code>, <code class="docutils literal notranslate"><span class="pre">GetMesh</span></code>/<code class="docutils literal notranslate"><span class="pre">MeshState</span></code>), gateway fan-out + aggregation, member dispatch allow-list, <code class="docutils literal notranslate"><span class="pre">MeshStatus</span></code>; <code class="docutils literal notranslate"><span class="pre">mesh_gateway</span></code> HITL</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p><strong>M5b</strong></p></td>
+<tr class="row-odd"><td><p><strong>M5b</strong></p></td>
 <td><p>P4 + C6: the mesh on the C6 front end, relayed control forwarded over the link, C6↔P4 clock offset for <code class="docutils literal notranslate"><span class="pre">TIME_BASE</span></code>, effect blobs handed to the P4</p></td>
 <td><p>P4 + C6 bench run</p></td>
 </tr>
-<tr class="row-odd"><td><p><strong>M6</strong></p></td>
+<tr class="row-even"><td><p><strong>M6</strong></p></td>
 <td><p>Blob kind on the page protocol + effect distribution + scenes and catch-up; <code class="docutils literal notranslate"><span class="pre">mesh_effect</span></code> HITL</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-even"><td><p><strong>M7</strong></p></td>
-<td><p>Membership: closed (site secret) and locked (allow-list), approval joins, groups, mode switch closed ↔ locked with key rotation; <code class="docutils literal notranslate"><span class="pre">mesh_join_lock</span></code> HITL</p></td>
+<tr class="row-odd"><td><p><strong>M7</strong></p></td>
+<td><p>Membership: closed mode (site secret, self-configuring formation, approval joins), the kiosk-style admin secret (<code class="docutils literal notranslate"><span class="pre">mesh_unlock</span></code>, admin tags, §7.9), groups; <code class="docutils literal notranslate"><span class="pre">mesh_join_admin</span></code> HITL</p></td>
 <td><p></p></td>
 </tr>
-<tr class="row-odd"><td><p><strong>M8</strong></p></td>
-<td><p>App: member list via gateway, target picker in live control and effects, mesh screen with the mode setting</p></td>
+<tr class="row-even"><td><p><strong>M8</strong></p></td>
+<td><p>App: member list via gateway, target picker in live control and effects, mesh screen, admin secret export/import (copy, QR, file, backup)</p></td>
 <td><p>web unit tests + manual run</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>M8b</strong></p></td>
+<td><p>Bridge: hub mesh route (<code class="docutils literal notranslate"><span class="pre">hub.ts</span></code>) through one gateway, admin secret in the bridge config, <code class="docutils literal notranslate"><span class="pre">list_players</span></code> via gateways</p></td>
+<td><p>agent tests + bench run</p></td>
 </tr>
 <tr class="row-even"><td><p><strong>M9a</strong></p></td>
 <td><p>HITL gate: the multi-DUT suite in CI (<code class="docutils literal notranslate"><span class="pre">mesh_*</span></code>)</p></td>
@@ -1958,14 +2197,14 @@ ones that depend on unknown hardware behaviour.</p>
 <tr class="row-even"><td><p>M7b</p></td>
 <td><p>Open mode: owner key + signed scenes/blobs/time, the follow stream under the open key, guest tables and rate limits, <code class="docutils literal notranslate"><span class="pre">mesh_follow</span></code> device setting, guests in the app; <code class="docutils literal notranslate"><span class="pre">mesh_open_guest</span></code> HITL</p></td>
 </tr>
-<tr class="row-odd"><td><p>M9b</p></td>
-<td><p>Site-secret rotation and closed-mode removal</p></td>
+<tr class="row-odd"><td><p>M7c</p></td>
+<td><p>Locked mode (allow-list by device key), closed ↔ locked transitions, key rotation on removal</p></td>
 </tr>
-<tr class="row-even"><td><p>M10</p></td>
+<tr class="row-even"><td><p>M9b</p></td>
+<td><p>Site-secret rotation; the asymmetric admin key upgrade (§7.9) if wanted</p></td>
+</tr>
+<tr class="row-odd"><td><p>M10</p></td>
 <td><p>IP backhaul (UDP on the LAN) to bridge islands on other APs</p></td>
-</tr>
-<tr class="row-odd"><td><p>M11</p></td>
-<td><p>Bridge/agent mesh route (<code class="docutils literal notranslate"><span class="pre">hub.ts</span></code>), <code class="docutils literal notranslate"><span class="pre">list_players</span></code> via gateways</p></td>
 </tr>
 <tr class="row-even"><td><p>M12</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">group_capture</span></code> arming over the mesh (one connection arms the room)</p></td>
@@ -1974,7 +2213,7 @@ ones that depend on unknown hardware behaviour.</p>
 <td><p>OTA over the mesh (page protocol with the firmware kind; Splanc’s manifest, <code class="docutils literal notranslate"><span class="pre">docs/design/ota.md</span></code>)</p></td>
 </tr>
 <tr class="row-even"><td><p>M14</p></td>
-<td><p>ESP-NOW v2 payloads (1470 B) if measurements justify them</p></td>
+<td><p>Larger 802.11 bodies (up to ~1400 B) if measurements justify them</p></td>
 </tr>
 </tbody>
 </table>
@@ -2065,6 +2304,14 @@ ones that depend on unknown hardware behaviour.</p>
 <td><p>slow fan-out on BLE-only sites</p></td>
 <td><p>≥ 50 ms interval, narrowed coex window, TX outside it (§4.3)</p></td>
 </tr>
+<tr class="row-odd"><td><p>Metal enclosures attenuate the mesh and the phone’s BLE link</p></td>
+<td><p>lost frames, BLE drops</p></td>
+<td><p>R0 measurement first; u.FL module + external antenna or a non-metal window (§4.5)</p></td>
+</tr>
+<tr class="row-even"><td><p>The placeholder CID collides with a future CID assignee</p></td>
+<td><p>foreign frames parsed as ours</p></td>
+<td><p>envelope magic + mesh id + MIC reject them; register a CID (Q4)</p></td>
+</tr>
 <tr class="row-odd"><td><p>The research track fails (no phase continuity)</p></td>
 <td><p>no self-built ranging</p></td>
 <td><p>independent of the mesh; UWB remains the ranging path</p></td>
@@ -2075,43 +2322,41 @@ ones that depend on unknown hardware behaviour.</p>
 </section>
 <section id="open-questions-for-the-owner">
 <h2>17. Open questions for the owner<a class="headerlink" href="#open-questions-for-the-owner" title="Link to this heading">¶</a></h2>
-<p>Answered so far: fixture count (up to 6), board (P4 + C6 driving WLEDs over DDP), BLE → mesh
-for sites without Wi-Fi, the three membership modes, and porting the swarm code into Splanc.</p>
+<p>Answered so far: fixture count (up to 6), board (P4 + C6, WLEDs on the P4’s Ethernet over DDP),
+BLE and Wi-Fi in, spacing and enclosures, self-configuration, OTA (per device for now), the
+membership modes and the closed-plus-admin-secret model, any fixture as gateway, porting the
+swarm code, and Splanc’s own framing.</p>
 <p><strong>Radiolarians:</strong></p>
 <ul class="simple">
-<li><p><strong>Q1.</strong> Are the WLED boards always wired to the P4’s Ethernet (the P4 serving DHCP for an
-LED network), or do some sites put them on Wi-Fi? Wi-Fi WLEDs mean DDP shares the mesh’s
-channel, and without site Wi-Fi the C6 would have to host an AP for them (§10.2).</p></li>
-<li><p><strong>Q2.</strong> How far apart are the fixtures (largest distance, walls or metal in between)? Six
-fixtures are likely one hop, but a long venue may need relays.</p></li>
-<li><p><strong>Q3.</strong> Will they run it from the phone app, a bridge, or both? Do they need agent/MCP
-control on site?</p></li>
-<li><p><strong>Q4.</strong> How will their firmware be updated on site before OTA over the mesh exists (direct
-BLE/wss per fixture)?</p></li>
-<li><p><strong>Q5.</strong> Should the radiolarians run closed or locked, and should a guest fixture be able to
-join their show (open mode) at events?</p></li>
+<li><p><strong>Q1. Answered (2026-11-17):</strong> chip antenna plus a u.FL connector. Test first with the antenna
+inside the enclosure through its windows; an external antenna on the u.FL is the fallback (§4.5, R0).</p></li>
+<li><p><strong>Q2.</strong> Who provisions the site secret, mesh id and admin key: Splanc before shipping, or the
+customer from the app on site?</p></li>
+<li><p><strong>Q3.</strong> Does the venue have Wi-Fi for the bridge, or should the Pi bridge host the network the
+fixtures join?</p></li>
+</ul>
+<p><strong>Framing:</strong></p>
+<ul class="simple">
+<li><p><strong>Q4.</strong> Register an IEEE CID for the Splanc frame identifier before the first install (a
+modest fee), or ship with the CID-format placeholder for now?</p></li>
 </ul>
 <p><strong>Security and admission:</strong></p>
 <ul class="simple">
+<li><p><strong>Q5.</strong> Is the kiosk-level threat model for the admin key acceptable (it sits on each
+fixture’s flash, like the kiosk secret), with the asymmetric upgrade later if needed?</p></li>
 <li><p><strong>Q6.</strong> Open mode as designed: guests follow signed scenes and effects, live moves are
 unsigned but bounded, guests can never manage. Is accepting unsigned live moves on guests
 acceptable, or should guests only follow signed commits (coarser, but unforgeable)?</p></li>
 <li><p><strong>Q7.</strong> Should <code class="docutils literal notranslate"><span class="pre">mesh_follow</span> <span class="pre">=</span> <span class="pre">open</span></code> be the default for unprovisioned or home-built fixtures,
 so the “show up and join” magic needs no setup?</p></li>
-<li><p><strong>Q8.</strong> Should setup end with the mesh locked by default?</p></li>
-<li><p><strong>Q9.</strong> Who may be a gateway: any member, or only devices the user marked?</p></li>
-</ul>
-<p><strong>Architecture:</strong></p>
-<ul class="simple">
-<li><p><strong>Q10.</strong> OK to use the ESP-NOW framing (Espressif’s OUI) for interop, versus our own OUI?</p></li>
 </ul>
 <p><strong>UWB and ranging (later tracks):</strong></p>
 <ul class="simple">
-<li><p><strong>Q11.</strong> UWB hardware: DWM3000 (what the swarm has, single antenna) or QM33120 (angle of
+<li><p><strong>Q8.</strong> UWB hardware: DWM3000 (what the swarm has, single antenna) or QM33120 (angle of
 arrival)? On the C6 board, the P4 + C6 board, or both?</p></li>
-<li><p><strong>Q12.</strong> Which public raw I/Q <strong>TX</strong> work did you mean for the C6? I found raw I/Q RX (ESP-SDR,
+<li><p><strong>Q9.</strong> Which public raw I/Q <strong>TX</strong> work did you mean for the C6? I found raw I/Q RX (ESP-SDR,
 which supports the C6) and PHY test-tone TX (shown on the S3), but no public C6 I/Q write.</p></li>
-<li><p><strong>Q13.</strong> Is the self-built ranging meant for P4 + C6 boards only? The dump engine needs a whole
+<li><p><strong>Q10.</strong> Is the self-built ranging meant for P4 + C6 boards only? The dump engine needs a whole
 SRAM block, which a C6 player rendering effects does not have (a C6 front end may).</p></li>
 </ul>
 </section>
@@ -2203,10 +2448,11 @@ Microcontrollers” (espdr-tx test-tone TX on the S3):
 </ul>
 </li>
 <li><a class="reference internal" href="#the-802-11-p2p-backhaul-in-the-netstack">4. The 802.11 P2P backhaul in the netstack</a><ul>
-<li><a class="reference internal" href="#frames">4.1 Frames</a></li>
+<li><a class="reference internal" href="#frames-splanc-s-own-framing">4.1 Frames: Splanc’s own framing</a></li>
 <li><a class="reference internal" href="#channels">4.2 Channels</a></li>
 <li><a class="reference internal" href="#coexistence-with-ble">4.3 Coexistence with BLE</a></li>
 <li><a class="reference internal" href="#spike-before-committing-m3a">4.4 Spike before committing (M3a)</a></li>
+<li><a class="reference internal" href="#antennas-and-metal-enclosures">4.5 Antennas and metal enclosures</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#protocol">5. Protocol</a><ul>
@@ -2234,6 +2480,7 @@ Microcontrollers” (espdr-tx test-tone TX on the S3):
 <li><a class="reference internal" href="#mode-transitions-and-key-rotation">7.6 Mode transitions and key rotation</a></li>
 <li><a class="reference internal" href="#groups">7.7 Groups</a></li>
 <li><a class="reference internal" href="#how-this-relates-to-device-trust">7.8 How this relates to device trust</a></li>
+<li><a class="reference internal" href="#administration-a-kiosk-style-admin-secret">7.9 Administration: a kiosk-style admin secret</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#gateway-one-connection-the-whole-mesh">8. Gateway: one connection, the whole mesh</a><ul>
