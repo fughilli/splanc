@@ -32,6 +32,11 @@ Sounding conformance.
   about 1 ns over milliseconds (§7.1). Group delay sees this wander. The carrier phase does
   not. So: keep exchanges short, average, and use carrier phase once the group delay is good
   enough to fix its integer.
+- **Round 2 (§12):** tight 2.4 ms bursts hold the carrier phase to 2–15°. With the
+  calibration taken _inside_ the burst, the carrier integer is resolved from ~35–60 bursts:
+  synthetic delays of 0, 0.37 and 2.90 ns come back within **+9 ± 3 ps** (≈1.3 mm one-way,
+  with a calibratable +9 ps bias). Group delay alone averages to ±0.08 ns (1.2 cm). Two HT40
+  LOs stitch to an 80 MHz span that shows a 15 ns echo a single 40 MHz shot cannot.
 - **Not a player feature yet.** The engines need whole 128 KB SRAM blocks while they run,
   and the exchange takes the radio for ~1 ms with interrupts off (§9). This fits a bench
   image, a P4+C6 front end, or a dedicated ranging mode. It does not fit a heap-starved
@@ -322,6 +327,85 @@ LO hops (80 MHz) halves that. The CIR in §6.6 is the tool for that.
     2048 LEDs). **A P4+C6 board (C6 as the radio) can run it as is.**
   - Interrupts are off for ~1–2 ms per exchange. Effects keep rendering (LED DMA keeps going
     if its buffers are outside the engine blocks); a frame or two may be late. Nothing reboots.
+
+## 12. Round 2: tight bursts, carrier-integer resolution, hop stitching
+
+Firmware v14 adds: long `seq` programs (up to ~300 ops), the DAC waveform tiled into the
+upper 64 KB of block 2 (`H`, DAC owner `0x10400`), a second waveform in block 1 (`J`, owner
+`0x200`), and `Q<slot>` to copy each capture into a block-1 slot.
+
+### 12.1 Tight bursts
+
+A burst is one CW-preamble sync followed by 4–5 two-way exchanges, one every 600 µs.
+Captures stay on chip and are read out afterwards, so a whole burst takes ~2.4–3 ms on air.
+Results (`experiments/e32_pairs.py`, analysis `e33`):
+
+- **Carrier phase within a burst: 2–15° circular std** (it was 21° for exchanges 9 s apart).
+  Between bursts a minute apart it wanders ±50°: the "thermal drift" of §6.5 is really a
+  random walk on a ~minute scale.
+- **Group delay per exchange inside a burst: still 0.3–0.6 ns.** The noise is not slow
+  wander. It is per-exchange engine-start jitter: the DAC restart is bimodal by ±0.9 ns
+  (e14), and each burst exchange restarts the DAC. The carrier phase is immune to it,
+  because a baseband shift doesn't move the f = 0 intercept.
+- **Preamble misses:** 3/28, 4/74, 10/89 and 14/133 bursts (5–11 % per burst), retried
+  automatically. Since one sync covers 4–5 exchanges, that is ~1–3 % per exchange, down
+  from 8–20 %.
+
+### 12.2 Absolute ranging with resolved carrier phase (synthetic delays)
+
+The carrier phase pins `2τ` to ~10 ps, modulo 1/f_c = 0.41 ns. Its slow wander means the
+calibration must be taken simultaneously with the measurement. So B alternates two waveforms
+inside every burst: the normal one (even exchanges, the reference) and one pre-delayed by d
+both at baseband and at the carrier (odd exchanges). That is exactly what a real extra path
+length d on the B→A leg would do. Per burst: Δgd = gd(odd) − gd(even),
+Δφ = φ(odd) − φ(even). The integer comes from the median Δgd (σ ≈ 0.08 ns over 35–60
+bursts spread across 5 LOs, 2422–2462 MHz). Then `d = (−Δφ/2π + k)/f`.
+
+| Injected d | Bursts | Group delay only  | **Carrier-resolved** | Error                   |
+| ---------- | ------ | ----------------- | -------------------- | ----------------------- |
+| 0          | 53     | +0.104 ± 0.076 ns | **+0.0085 ns**       | +8.5 ps                 |
+| 0.37 ns    | 54     | +0.274 ± 0.079 ns | **+0.3798 ns**       | +9.8 ps                 |
+| 2.90 ns    | 59     | +2.832 ± 0.077 ns | **+2.9090 ns**       | +9.0 ps                 |
+| 7.30 ns    | 19     | +7.095 ± 0.144 ns | +6.9001 ns           | −400 ps (wrong integer) |
+
+- With ≥35 bursts the integer is right every time. The result then has a common **+9 ps
+  bias** (calibratable) and ±2–3 ps statistical error. That is **~1.3 mm one-way including
+  the bias, ~0.4 mm after it**.
+- With 19 bursts and a −0.2 ns group-delay bias (the 1–2 % group-delay scale error of §6.3
+  grows with d), the integer slips by one. **Reliable integer fixing needs the group delay
+  unbiased to ≲0.1 ns**: calibrate the group-delay scale, or use more bursts.
+- Cost: ~50 bursts × 2.4 ms ≈ 0.12 s of airtime. Wall clock today is ~4 min, because each
+  burst ships 8 × 24 KB over USB and the Python DSP is slow.
+
+![integer](img/chsound/carrier-integer-paired.png)
+
+### 12.3 Hop stitching (80 MHz) and multipath
+
+Two HT40 LOs (2422 and 2462 MHz; HT40-below at ≥ 2452) tile 2402–2481.5 MHz. In paired
+bursts, B's odd exchanges carry an injected two-path channel (direct + 0.6 × echo at 15 ns).
+The per-tone magnitude ratio |H(echo)/H(direct)| shows the expected 1/15 ns = 67 MHz ripple
+across the stitched band. That ripple is not resolvable in one 40 MHz shot: the single-LO
+fits give Δ = 21.2 ns or a degenerate a. A two-path fit over the 80 MHz stitched span gives
+a = 0.57, Δ = 17.5 ns (truth 0.6, 15 ns). The residual bias comes from per-side (±f
+baseband) distortion of the reply: the edges of each 40 MHz segment step. The image/IQ
+imbalance of the TX path is the likely cause, and it needs a per-LO two-sided calibration
+before the stitched CIR is metrology-grade.
+
+![stitch](img/chsound/hop-stitch-echo-fit.png)
+
+### 12.4 What was not done, and why
+
+- **On-device DSP (~100 exchanges/s): not implemented.** The C6 has no FPU. The plan is to
+  period-average 4×2048 → one 2048-point Q15 FFT → tone phasors → slope, a few ms per
+  capture, plus a ~40 B result per exchange instead of 48 KB of captures. Airtime already
+  allows ~1600 exchanges/s; today's rate (~1 exchange/s) is the USB link and host Python.
+- **Self-measured TX→RX turnaround: not implemented.** The C6 cannot capture its own keyed
+  TX (§7.3). The DAC→ADC leakage with the PA off is real: rms 170 LSB of feedback when the
+  DAC plays the capture block. So a device can see its own DAC epoch in its own ADC samples.
+  The missing piece is a memory layout in which the DAC keeps playing a reference waveform
+  while the capture lands elsewhere: every owner setting that maps the capture away also
+  remaps the DAC read pointer (§6, e15/e16). That is the experiment to run next, because it
+  would remove the per-exchange DAC-restart jitter that now limits the group delay.
 
 ## 10. Reproduce
 

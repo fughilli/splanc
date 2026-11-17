@@ -196,8 +196,8 @@ from Nix, **Nix is a hard prerequisite** (below).
 - **`shared/protocol/`** — the single source of truth for the wire protocol: JSON
   schemas + `proto/ledmapper.proto` → generated Python and TypeScript bindings,
   byte-pinned by a freshness check. Rust gets micropb structs plus zero-copy
-  views from **`oss/pbview`** (a self-contained `no_std` protobuf view generator
-  meant for separate publication); the firmware decodes every request in place.
+  views from **[pbview](https://github.com/fughilli/pbview)** (a `no_std` protobuf view
+  generator, a separate repo consumed as a Bazel module); the firmware decodes every request in place.
 - **`agent/`** — the AI-agent bridge: an MCP server + one-shot CLI over a hub
   that discovers and drives every player on the LAN (rooms, poses, shared time
   base). Released as `splanc-agent-<ver>.tgz` with each firmware release and
@@ -498,7 +498,6 @@ pool by carrying the tailnet tag.
 | `firmware/`         | ESP32-C6 player firmware: LED driver, wss control server, effects execution                                          |
 | `firmware/fx_vm/`   | effects bytecode VM (Rust, `no_std`) — runs on device and, as wasm, in the browser preview                           |
 | `agent/`            | AI-agent bridge: MCP server + CLI hub over every player on the LAN; the release bundle + splanc.io site files        |
-| `oss/pbview/`       | zero-copy `no_std` protobuf views + generator (self-contained, for separate publication)                             |
 | `requirements/`     | the requirements model (`requirements.yaml`) the tests trace to                                                      |
 | `fx_compiler/`      | the GLSL-ish effect language → `.fxb` bytecode compiler (Rust)                                                       |
 | `solver/`           | visual-inertial solver (Rust): native on the Pi, wasm in a phone Web Worker                                          |

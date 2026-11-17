@@ -354,6 +354,11 @@ from today’s 0.26 ns group-delay floor (§6.5, §8).</p></li>
 about 1 ns over milliseconds (§7.1). Group delay sees this wander. The carrier phase does
 not. So: keep exchanges short, average, and use carrier phase once the group delay is good
 enough to fix its integer.</p></li>
+<li><p><strong>Round 2 (§12):</strong> tight 2.4 ms bursts hold the carrier phase to 2–15°. With the
+calibration taken <em>inside</em> the burst, the carrier integer is resolved from ~35–60 bursts:
+synthetic delays of 0, 0.37 and 2.90 ns come back within <strong>+9 ± 3 ps</strong> (≈1.3 mm one-way,
+with a calibratable +9 ps bias). Group delay alone averages to ±0.08 ns (1.2 cm). Two HT40
+LOs stitch to an 80 MHz span that shows a 15 ns echo a single 40 MHz shot cannot.</p></li>
 <li><p><strong>Not a player feature yet.</strong> The engines need whole 128 KB SRAM blocks while they run,
 and the exchange takes the radio for ~1 ms with interrupts off (§9). This fits a bench
 image, a P4+C6 front end, or a dedicated ranging mode. It does not fit a heap-starved
@@ -820,6 +825,118 @@ if its buffers are outside the engine blocks); a frame or two may be late. Nothi
 </li>
 </ul>
 </section>
+<section id="round-2-tight-bursts-carrier-integer-resolution-hop-stitching">
+<h2>12. Round 2: tight bursts, carrier-integer resolution, hop stitching<a class="headerlink" href="#round-2-tight-bursts-carrier-integer-resolution-hop-stitching" title="Link to this heading">¶</a></h2>
+<p>Firmware v14 adds: long <code class="docutils literal notranslate"><span class="pre">seq</span></code> programs (up to ~300 ops), the DAC waveform tiled into the
+upper 64 KB of block 2 (<code class="docutils literal notranslate"><span class="pre">H</span></code>, DAC owner <code class="docutils literal notranslate"><span class="pre">0x10400</span></code>), a second waveform in block 1 (<code class="docutils literal notranslate"><span class="pre">J</span></code>, owner
+<code class="docutils literal notranslate"><span class="pre">0x200</span></code>), and <code class="docutils literal notranslate"><span class="pre">Q&lt;slot&gt;</span></code> to copy each capture into a block-1 slot.</p>
+<section id="tight-bursts">
+<h3>12.1 Tight bursts<a class="headerlink" href="#tight-bursts" title="Link to this heading">¶</a></h3>
+<p>A burst is one CW-preamble sync followed by 4–5 two-way exchanges, one every 600 µs.
+Captures stay on chip and are read out afterwards, so a whole burst takes ~2.4–3 ms on air.
+Results (<code class="docutils literal notranslate"><span class="pre">experiments/e32_pairs.py</span></code>, analysis <code class="docutils literal notranslate"><span class="pre">e33</span></code>):</p>
+<ul class="simple">
+<li><p><strong>Carrier phase within a burst: 2–15° circular std</strong> (it was 21° for exchanges 9 s apart).
+Between bursts a minute apart it wanders ±50°: the “thermal drift” of §6.5 is really a
+random walk on a ~minute scale.</p></li>
+<li><p><strong>Group delay per exchange inside a burst: still 0.3–0.6 ns.</strong> The noise is not slow
+wander. It is per-exchange engine-start jitter: the DAC restart is bimodal by ±0.9 ns
+(e14), and each burst exchange restarts the DAC. The carrier phase is immune to it,
+because a baseband shift doesn’t move the f = 0 intercept.</p></li>
+<li><p><strong>Preamble misses:</strong> 3/28, 4/74, 10/89 and 14/133 bursts (5–11 % per burst), retried
+automatically. Since one sync covers 4–5 exchanges, that is ~1–3 % per exchange, down
+from 8–20 %.</p></li>
+</ul>
+</section>
+<section id="absolute-ranging-with-resolved-carrier-phase-synthetic-delays">
+<h3>12.2 Absolute ranging with resolved carrier phase (synthetic delays)<a class="headerlink" href="#absolute-ranging-with-resolved-carrier-phase-synthetic-delays" title="Link to this heading">¶</a></h3>
+<p>The carrier phase pins <code class="docutils literal notranslate"><span class="pre">2τ</span></code> to ~10 ps, modulo 1/f_c = 0.41 ns. Its slow wander means the
+calibration must be taken simultaneously with the measurement. So B alternates two waveforms
+inside every burst: the normal one (even exchanges, the reference) and one pre-delayed by d
+both at baseband and at the carrier (odd exchanges). That is exactly what a real extra path
+length d on the B→A leg would do. Per burst: Δgd = gd(odd) − gd(even),
+Δφ = φ(odd) − φ(even). The integer comes from the median Δgd (σ ≈ 0.08 ns over 35–60
+bursts spread across 5 LOs, 2422–2462 MHz). Then <code class="docutils literal notranslate"><span class="pre">d</span> <span class="pre">=</span> <span class="pre">(−Δφ/2π</span> <span class="pre">+</span> <span class="pre">k)/f</span></code>.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Injected d</p></th>
+<th class="head"><p>Bursts</p></th>
+<th class="head"><p>Group delay only</p></th>
+<th class="head"><p><strong>Carrier-resolved</strong></p></th>
+<th class="head"><p>Error</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>0</p></td>
+<td><p>53</p></td>
+<td><p>+0.104 ± 0.076 ns</p></td>
+<td><p><strong>+0.0085 ns</strong></p></td>
+<td><p>+8.5 ps</p></td>
+</tr>
+<tr class="row-odd"><td><p>0.37 ns</p></td>
+<td><p>54</p></td>
+<td><p>+0.274 ± 0.079 ns</p></td>
+<td><p><strong>+0.3798 ns</strong></p></td>
+<td><p>+9.8 ps</p></td>
+</tr>
+<tr class="row-even"><td><p>2.90 ns</p></td>
+<td><p>59</p></td>
+<td><p>+2.832 ± 0.077 ns</p></td>
+<td><p><strong>+2.9090 ns</strong></p></td>
+<td><p>+9.0 ps</p></td>
+</tr>
+<tr class="row-odd"><td><p>7.30 ns</p></td>
+<td><p>19</p></td>
+<td><p>+7.095 ± 0.144 ns</p></td>
+<td><p>+6.9001 ns</p></td>
+<td><p>−400 ps (wrong integer)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p>With ≥35 bursts the integer is right every time. The result then has a common <strong>+9 ps
+bias</strong> (calibratable) and ±2–3 ps statistical error. That is <strong>~1.3 mm one-way including
+the bias, ~0.4 mm after it</strong>.</p></li>
+<li><p>With 19 bursts and a −0.2 ns group-delay bias (the 1–2 % group-delay scale error of §6.3
+grows with d), the integer slips by one. <strong>Reliable integer fixing needs the group delay
+unbiased to ≲0.1 ns</strong>: calibrate the group-delay scale, or use more bursts.</p></li>
+<li><p>Cost: ~50 bursts × 2.4 ms ≈ 0.12 s of airtime. Wall clock today is ~4 min, because each
+burst ships 8 × 24 KB over USB and the Python DSP is slow.</p></li>
+</ul>
+<p><img alt="integer" src="docs/research/img/chsound/carrier-integer-paired.png" /></p>
+</section>
+<section id="hop-stitching-80-mhz-and-multipath">
+<h3>12.3 Hop stitching (80 MHz) and multipath<a class="headerlink" href="#hop-stitching-80-mhz-and-multipath" title="Link to this heading">¶</a></h3>
+<p>Two HT40 LOs (2422 and 2462 MHz; HT40-below at ≥ 2452) tile 2402–2481.5 MHz. In paired
+bursts, B’s odd exchanges carry an injected two-path channel (direct + 0.6 × echo at 15 ns).
+The per-tone magnitude ratio |H(echo)/H(direct)| shows the expected 1/15 ns = 67 MHz ripple
+across the stitched band. That ripple is not resolvable in one 40 MHz shot: the single-LO
+fits give Δ = 21.2 ns or a degenerate a. A two-path fit over the 80 MHz stitched span gives
+a = 0.57, Δ = 17.5 ns (truth 0.6, 15 ns). The residual bias comes from per-side (±f
+baseband) distortion of the reply: the edges of each 40 MHz segment step. The image/IQ
+imbalance of the TX path is the likely cause, and it needs a per-LO two-sided calibration
+before the stitched CIR is metrology-grade.</p>
+<p><img alt="stitch" src="docs/research/img/chsound/hop-stitch-echo-fit.png" /></p>
+</section>
+<section id="what-was-not-done-and-why">
+<h3>12.4 What was not done, and why<a class="headerlink" href="#what-was-not-done-and-why" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>On-device DSP (~100 exchanges/s): not implemented.</strong> The C6 has no FPU. The plan is to
+period-average 4×2048 → one 2048-point Q15 FFT → tone phasors → slope, a few ms per
+capture, plus a ~40 B result per exchange instead of 48 KB of captures. Airtime already
+allows ~1600 exchanges/s; today’s rate (~1 exchange/s) is the USB link and host Python.</p></li>
+<li><p><strong>Self-measured TX→RX turnaround: not implemented.</strong> The C6 cannot capture its own keyed
+TX (§7.3). The DAC→ADC leakage with the PA off is real: rms 170 LSB of feedback when the
+DAC plays the capture block. So a device can see its own DAC epoch in its own ADC samples.
+The missing piece is a memory layout in which the DAC keeps playing a reference waveform
+while the capture lands elsewhere: every owner setting that maps the capture away also
+remaps the DAC read pointer (§6, e15/e16). That is the experiment to run next, because it
+would remove the per-exchange DAC-restart jitter that now limits the group delay.</p></li>
+</ul>
+</section>
+</section>
 <section id="reproduce">
 <h2>10. Reproduce<a class="headerlink" href="#reproduce" title="Link to this heading">¶</a></h2>
 <p><code class="docutils literal notranslate"><span class="pre">tools/chsound/README.md</span></code>. Short version: hold <code class="docutils literal notranslate"><span class="pre">c6-sdr</span></code>, flash
@@ -902,6 +1019,13 @@ is written from the documented facts, not copied. Fine with the AGPL repo?</p></
 </li>
 <li><a class="reference internal" href="#error-model-and-achievable-accuracy">8. Error model and achievable accuracy</a></li>
 <li><a class="reference internal" href="#rate-airtime-and-coexistence">9. Rate, airtime and coexistence</a></li>
+<li><a class="reference internal" href="#round-2-tight-bursts-carrier-integer-resolution-hop-stitching">12. Round 2: tight bursts, carrier-integer resolution, hop stitching</a><ul>
+<li><a class="reference internal" href="#tight-bursts">12.1 Tight bursts</a></li>
+<li><a class="reference internal" href="#absolute-ranging-with-resolved-carrier-phase-synthetic-delays">12.2 Absolute ranging with resolved carrier phase (synthetic delays)</a></li>
+<li><a class="reference internal" href="#hop-stitching-80-mhz-and-multipath">12.3 Hop stitching (80 MHz) and multipath</a></li>
+<li><a class="reference internal" href="#what-was-not-done-and-why">12.4 What was not done, and why</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#reproduce">10. Reproduce</a></li>
 <li><a class="reference internal" href="#open-questions-for-the-owner">11. Open questions for the owner</a></li>
 </ul>
