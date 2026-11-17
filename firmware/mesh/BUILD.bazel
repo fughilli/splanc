@@ -3,9 +3,10 @@
 Splanc backhauls carry, and a Node that drives swarm_net over one backhaul with the mesh
 payload sized from the backhaul's MTU. M2: the security envelope (AES-CCM on the netstack's
 ccmp.rs, 64-bit counters, replay windows), insider-resistant admin sessions, ports,
-membership and key rotation. no_std, no allocation.
+membership and key rotation, mesh-time aggregation, and the per-device stack with capacity
+classes; simulated in //firmware/mesh/meshsim. no_std, no allocation.
 
-  :mesh     host (tests): feature `host` adds the loopback backhaul and a P-256
+  :mesh     host (tests, meshsim): feature `host` adds the loopback backhaul and a P-256
             device key on the host-only p256 crate.
   :mesh_fw  firmware (C6 riscv32imac, P4 riscv32imafc), over :swarm_net_fw.
 
@@ -77,5 +78,46 @@ rust_library(
     deps = [
         "//firmware/mesh/swarm:swarm_net_fw",
         "//firmware/netstack",
+    ],
+)
+
+# RAM probe (design §10.4): each piece of mesh state as a .bss static for `nm -S` on the
+# firmware target. Not part of any image.
+rust_library(
+    name = "mesh_ram_probe",
+    srcs = ["ram_probe/lib.rs"],
+    edition = "2021",
+    tags = ["manual"],
+    deps = [
+        ":mesh_fw",
+        "//firmware/mesh/swarm:swarm_net_fw",
+    ],
+)
+
+# The same with open mode compiled in (its RAM budget, design §10.4).
+rust_library(
+    name = "mesh_fw_open",
+    srcs = SRCS,
+    crate_features = ["open_mode"],
+    crate_name = "splanc_mesh",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    tags = ["manual"],
+    deps = [
+        "//firmware/mesh/swarm:swarm_net_fw",
+        "//firmware/netstack",
+    ],
+)
+
+rust_library(
+    name = "mesh_ram_probe_open",
+    srcs = ["ram_probe/lib.rs"],
+    crate_features = ["open_mode"],
+    crate_name = "mesh_ram_probe",
+    edition = "2021",
+    tags = ["manual"],
+    deps = [
+        ":mesh_fw_open",
+        "//firmware/mesh/swarm:swarm_net_fw",
     ],
 )
