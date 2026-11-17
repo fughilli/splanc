@@ -574,3 +574,34 @@ flash_bundle(
     flash = ":wifi_tx_rate_probe_flash",
     tags = ["manual"],
 )
+
+# mesh_frame_probe — the C6's view of Splanc mesh frames for the Pi transport bench
+# (docs/design/mesh-pi-transport.md): promiscuous RX with RSSI, and periodic TX of the
+# reference frame, on the vendor stack (an oracle until M3's netstack backhaul).
+cc_binary(
+    name = "mesh_frame_probe",
+    srcs = ["examples/mesh_frame_probe.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + ["@embedded//libs/vendor:wifi"],
+)
+
+firmware_binary(
+    name = "mesh_frame_probe_esp32c6",
+    binary = ":mesh_frame_probe",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "mesh_frame_probe_flash",
+    app = ":mesh_frame_probe_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "mesh_frame_probe_flashbundle",
+    flash = ":mesh_frame_probe_flash",
+    tags = ["manual"],
+)

@@ -4,7 +4,9 @@
 //! - [`frame`]: the Splanc 802.11 action frame (design §4.1), byte-identical to the C6's.
 //! - [`radio`]: raw radios — monitor-mode injection ([`radio::Monitor`], mac80211 USB
 //!   adapters), nl80211 management frames ([`radio::Nl80211Mgmt`]) and brcmfmac's firmware
-//!   `actframe` through its vendor command ([`radio::BrcmActframe`], the Pi's own radio).
+//!   `actframe` through its vendor command ([`radio::BrcmActframe`], the Pi's own radio:
+//!   the primary Pi transport).
+//! - [`ktap`]: RSSI, receive time and ACK status from brcmfmac via tracefs kprobes.
 //! - [`udp`]: the IP backhaul (M10) with the same frames in UDP datagrams.
 //! - [`serial`]: a USB-attached ESP32-C6 as the radio coprocessor.
 //! - [`WifiBackhaul`]: the mesh's `Backhaul` over any of them.
@@ -12,6 +14,7 @@
 //! std, Linux. No dependencies beyond the mesh crates (libc calls are declared in [`sys`]).
 
 pub mod frame;
+pub mod ktap;
 pub mod nl80211;
 pub mod radio;
 pub mod radiotap;

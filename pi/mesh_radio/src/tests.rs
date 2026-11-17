@@ -170,13 +170,13 @@ fn receive_filters_and_unicast_addressing() {
     };
     let peer = mac(5);
     let rx = VecDeque::from([
-        f(Category::Vendor, frame::BROADCAST, peer, 1, false, &env(42)), // ok, learns 42
-        f(Category::Vendor, frame::BROADCAST, peer, 1, true, &env(42)),  // retry of seq 1: dup
-        f(Category::Vendor, mac(9), peer, 2, false, &env(42)),           // unicast to someone else
-        f(Category::PublicVendor, frame::BROADCAST, peer, 3, false, &env(42)), // other category
-        f(Category::Vendor, frame::BROADCAST, mac(0), 4, false, &env(1)), // our own echo
+        f(Category::PublicVendor, frame::BROADCAST, peer, 1, false, &env(42)), // ok, learns 42
+        f(Category::PublicVendor, frame::BROADCAST, peer, 1, true, &env(42)),  // retry of seq 1: dup
+        f(Category::PublicVendor, mac(9), peer, 2, false, &env(42)),           // unicast to someone else
+        f(Category::Vendor, frame::BROADCAST, peer, 3, false, &env(42)), // other category
+        f(Category::PublicVendor, frame::BROADCAST, mac(0), 4, false, &env(1)), // our own echo
         vec![0x80, 0, 0, 0],                                              // not ours at all
-        f(Category::Vendor, mac(0), peer, 5, true, &env(42)),             // unicast to us, retry of a new seq
+        f(Category::PublicVendor, mac(0), peer, 5, true, &env(42)),             // unicast to us, retry of a new seq
     ]);
     let mut bh = WifiBackhaul::new(Script { rx, tx: vec![] }, WifiConfig::default());
     let mut buf = [0u8; 300];

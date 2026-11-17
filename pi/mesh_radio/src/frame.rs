@@ -6,9 +6,11 @@
 //!   FC 0xd0 0x00 (Action), duration 0, A1 = ff:ff:ff:ff:ff:ff or the peer's MAC,
 //!   A2 = own MAC, A3 = ff:ff:ff:ff:ff:ff (no BSS), sequence control
 //! Action body
-//!   category: 127 (vendor-specific, the design's choice) or 4 + action 9 (Public Action,
-//!             vendor-specific: the variant Linux cfg80211 lets a managed interface send;
-//!             docs/design/mesh-pi-transport.md §3)
+//!   category 4 (Public Action), action 9 (vendor-specific): the mesh's frame since the
+//!             owner's decision of 2026-11-17 (docs/design/mesh-pi-transport.md §3). Linux
+//!             cfg80211/mac80211 accept it on a managed interface, TX and RX, associated
+//!             or not; category 127 is refused both ways. [`Category::Vendor`] (127) stays
+//!             parseable for the brcmfmac bench and old captures.
 //!   Splanc CID (3 B, placeholder 0x0A 0x5C 0x4D until a registered CID, design Q4)
 //!   frame kind (1 B): 0x01 = mesh v1
 //!   mesh frame (the backhaul's opaque bytes: the envelope, §5.1)
@@ -29,8 +31,8 @@ pub const CAT_PUBLIC: u8 = 4;
 pub const PUBLIC_VENDOR_SPECIFIC: u8 = 9;
 pub const CAT_VENDOR: u8 = 127;
 
-/// Which action category the frame uses (§3 of the transport doc: 127 is the design's; 4/9
-/// is what Linux lets a managed interface transmit through nl80211).
+/// Which action category the frame uses: [`Category::PublicVendor`] is the mesh's (design
+/// §4.1); [`Category::Vendor`] (127) was the first draft's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Category {
     /// Category 127, then the CID.
@@ -134,7 +136,27 @@ mod tests {
 
     const ME: [u8; 6] = [0x02, 0, 0, 0, 0, 1];
 
-    /// The exact bytes a C6 (M3) must produce for the same inputs: the interop vector.
+    /// The exact bytes a C6 (M3) must produce for the same inputs: the interop vector
+    /// (design §4.1).
+    #[test]
+    fn golden_public_vendor_frame() {
+        let mut b = [0u8; 64];
+        let n = encode(Category::PublicVendor, BROADCAST, ME, 0x123, b"SM\x01", &mut b).unwrap();
+        let want: [u8; 33] = [
+            0xd0, 0x00, 0x00, 0x00, // FC, duration
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // A1
+            0x02, 0x00, 0x00, 0x00, 0x00, 0x01, // A2
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // A3
+            0x30, 0x12, // seq 0x123 << 4
+            0x04, 0x09, 0x0a, 0x5c, 0x4d, 0x01, // Public, vendor-specific, CID, kind
+            b'S', b'M', 0x01,
+        ];
+        assert_eq!(&b[..n], &want);
+        let p = parse(&b[..n]).unwrap();
+        assert_eq!((p.cat, p.da, p.sa, p.seq, p.retry, p.mesh), (Category::PublicVendor, BROADCAST, ME, 0x123, false, &b"SM\x01"[..]));
+    }
+
+    /// The first draft's category-127 frame still parses.
     #[test]
     fn golden_vendor_frame() {
         let mut b = [0u8; 64];

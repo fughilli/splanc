@@ -115,3 +115,27 @@ pub fn parse_mac(s: &str) -> Option<[u8; 6]> {
 pub fn fmt_mac(m: &[u8; 6]) -> String {
     m.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":")
 }
+
+#[repr(C)]
+struct timespec {
+    tv_sec: i64,
+    tv_nsec: i64,
+}
+
+extern "C" {
+    fn clock_gettime(clk: c_int, ts: *mut timespec) -> c_int;
+}
+
+/// CLOCK_THREAD_CPUTIME_ID, µs: what a call costs this thread in CPU, not wall time.
+pub fn thread_cpu_us() -> i64 {
+    let mut t = timespec { tv_sec: 0, tv_nsec: 0 };
+    unsafe { clock_gettime(3, &mut t) };
+    t.tv_sec * 1_000_000 + t.tv_nsec / 1000
+}
+
+/// CLOCK_MONOTONIC, µs (the clock tracefs's `mono` trace clock uses).
+pub fn mono_us() -> i64 {
+    let mut t = timespec { tv_sec: 0, tv_nsec: 0 };
+    unsafe { clock_gettime(1, &mut t) };
+    t.tv_sec * 1_000_000 + t.tv_nsec / 1000
+}

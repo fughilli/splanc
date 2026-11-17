@@ -34,7 +34,7 @@ pub struct WifiConfig {
 impl Default for WifiConfig {
     fn default() -> Self {
         WifiConfig {
-            cat: Category::Vendor,
+            cat: Category::PublicVendor,
             mtu: 250,
             backhaul: BackhaulId(0),
             rate_kbps: 6_000,
