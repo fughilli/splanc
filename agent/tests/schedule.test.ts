@@ -44,7 +44,18 @@ vec3 shade(Led led) { return vec3(rain, rain, 1.0); }
 type Text = { type: string; text?: string };
 
 /** set_uniforms is fire-and-forget: give the fake player a moment to receive it. */
+// For asserting that nothing (more) arrived: there is no event to wait for.
 const settle = () => new Promise((r) => setTimeout(r, 60));
+// For asserting that something arrived: poll until it has. Some sends are
+// fire-and-forget (a tool can return before the fake has read the frame) and a
+// loaded CI box can take well over a fixed sleep to deliver them.
+async function until(what: string, ok: () => boolean, timeoutMs = 5000): Promise<void> {
+  const end = performance.now() + timeoutMs;
+  while (!ok()) {
+    if (performance.now() > end) assert.fail(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
 
 describe("planSchedule", () => {
   const c = (id: string, applyAt: boolean, epochHubMs: number | undefined): ScheduleCandidate => ({
@@ -167,7 +178,7 @@ describe("scheduled tools (MCP, several players)", { skip: DECKS_IN_PROTO ? fals
     assert.equal(r.isError, false, r.text);
     assert.equal(r.json.schedule.lead_ms, DEFAULT_LEAD_MS);
     assert.equal(r.json.schedule.scheduled, 2);
-    await settle();
+    await until("both players' scheduled set_uniforms", () => dues("set_uniforms").every((x) => x.length > 0));
     const [a, b] = dues("set_uniforms").map((x) => x[x.length - 1]!);
     assert.ok(a && b, "both got a scheduled set_uniforms");
     assert.ok(Math.abs(a.dueHubMs - b.dueHubMs) <= 2, `same instant: ${a.dueHubMs} vs ${b.dueHubMs}`);
@@ -177,11 +188,13 @@ describe("scheduled tools (MCP, several players)", { skip: DECKS_IN_PROTO ? fals
     const br = await call("set_brightness", { level: 0.4, players: "all" });
     assert.equal(br.isError, false, br.text);
     assert.equal(br.json.results[0].result.brightness, 0.4, "reports the level asked for");
+    await until("both players' scheduled set_brightness", () => dues("set_brightness").every((x) => x.length > 0));
     const [ba, bb] = dues("set_brightness").map((x) => x[0]!);
     assert.ok(Math.abs(ba!.dueHubMs - bb!.dueHubMs) <= 2);
 
     const off = await call("set_effect", { effect_id: "off", players: "all" });
     assert.equal(off.isError, false, off.text);
+    await until("both players' scheduled set_effect", () => dues("set_effect").every((x) => x.length > 0));
     const [ea, eb] = dues("set_effect").map((x) => x[0]!);
     assert.ok(Math.abs(ea!.dueHubMs - eb!.dueHubMs) <= 2);
 
@@ -202,7 +215,7 @@ describe("scheduled tools (MCP, several players)", { skip: DECKS_IN_PROTO ? fals
     const asked = await call("set_uniforms", { values: { level: 0.3 }, lead_ms: 300, players: "Fixture A" });
     assert.equal(asked.isError, false, asked.text);
     assert.ok(asked.json.time_base, "aligned its time base first");
-    await settle();
+    await until("the scheduled set", () => players[0]!.scheduled.length > 0);
     assert.equal(players[0]!.scheduled.length, 1);
   });
 
@@ -217,7 +230,9 @@ describe("scheduled tools (MCP, several players)", { skip: DECKS_IN_PROTO ? fals
     assert.equal(players[0]!.scheduled.length, 0);
     const lead = await call("set_uniforms", { values: { level: 0.6 }, lead_ms: 200, players: "all" });
     assert.deepEqual(lead.json.schedule.on_arrival, ["Fixture B"]);
-    await settle();
+    await until("A's scheduled set and B's on-arrival set", () =>
+      players[0]!.scheduled.length > 0 && players[1]!.received.filter((m) => m["type"] === "set_uniforms").length >= 2,
+    );
     assert.equal(players[0]!.scheduled.length, 1);
     assert.equal(players[1]!.received.filter((m) => m["applyAtMs"] !== undefined).length, 0);
   });
@@ -230,6 +245,13 @@ describe("scheduled tools (MCP, several players)", { skip: DECKS_IN_PROTO ? fals
     assert.equal(r.isError, false, r.text);
     assert.ok(performance.now() - t0 >= 450, "returns when the ramp is done");
     for (const x of r.json.results) assert.equal(x.result.scheduled, true);
+    // The steps are acked (live channel); the final committed set is a plain
+    // send, so the tool can return before a player has read it. Wait for every
+    // scheduled set the tool reports (steps include the final one).
+    const steps = new Map<string, number>(r.json.results.map((x: any) => [x.player.name, x.result.steps]));
+    await until("both players' final committed set", () =>
+      players.every((p, i) => dues("set_uniforms")[i]!.length >= steps.get(p.name)!),
+    );
     const [a, b] = dues("set_uniforms");
     assert.ok(a!.length >= 4 && b!.length >= 4, `steps: ${a!.length}, ${b!.length}`);
     for (const xs of [a!, b!]) {
