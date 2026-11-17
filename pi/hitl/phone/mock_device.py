@@ -10,7 +10,9 @@ messages the three journeys drive:
   get_hardware_config -> hardware_config_state
   set_hardware_config -> hardware_config_state (echoes the set fields)
   set_color_correction-> welcome (the app awaits a welcome ack)
-  start_mapping       -> mapping_started
+  start_mapping       -> mapping_started     (honours the requested syncPattern)
+  configure           -> pattern_state       (mid-capture renegotiation: new code
+                                              book + RESTAMPED epoch, as firmware does)
   stop_mapping        -> result_ready         (canned map id — the mapping FLOW is
   submit_map/topology -> result_ready          what this validates; solve correctness
   upload_chunk        -> chunk_ack / result_ready  is covered by pipeline_synthetic.test.ts)
@@ -25,11 +27,17 @@ firmware instead.
 
 from __future__ import annotations
 
+import sys
 import time
 from typing import Any
 
 import websockets
 from server import proto_wire
+from server.codebook import code_params_for
+
+# What the C6/P4 firmware advertises in welcome.features (firmware/player
+# FEATURE_STAGGER_PILOT): the app then asks start_mapping for hue code v2.
+FEATURES = ["hue_stagger_pilot"]
 
 CODE_PARAMS = {
     "ledCount": 64,
@@ -50,10 +58,19 @@ def _now_ms() -> float:
 class MockDevice:
     """One mock device; serve() runs a WS server that any number of apps connect to."""
 
-    def __init__(self, mac: str = "AA:BB:CC:DD:EE:FF", name: str = "Mock Widget 00FFEE") -> None:
+    def __init__(
+        self,
+        mac: str = "AA:BB:CC:DD:EE:FF",
+        name: str = "Mock Widget 00FFEE",
+        features: list[str] | None = None,
+    ) -> None:
         self.mac = mac
         self.name = name
+        self.features = list(FEATURES if features is None else features)
         self._led_count = CODE_PARAMS["ledCount"]
+        # The active capture's code book (None = idle), for configure.
+        self._active: dict[str, Any] | None = None
+        self.reconfigures = 0
 
     def _welcome(self) -> dict[str, Any]:
         return {
@@ -65,6 +82,7 @@ class MockDevice:
             "deviceName": self.name,
             "fwGitCommit": "",
             "fwGitDirty": False,
+            "features": self.features,
         }
 
     def _hardware_state(self, ch: dict[str, Any]) -> dict[str, Any]:
@@ -98,10 +116,52 @@ class MockDevice:
             opts = msg.get("options") or {}
             if opts.get("ledCount"):
                 self._led_count = int(opts["ledCount"])
+            # Like firmware: the requested sync pattern runs only if advertised.
+            sync = opts.get("syncPattern") or "on_off"
+            if sync == "stagger_pilot" and "hue_stagger_pilot" not in self.features:
+                sync = "on_off"
+            self._active = _code_params(
+                self._led_count,
+                opts.get("bitPeriodMs") or CODE_PARAMS["bitPeriodMs"],
+                opts.get("symbols") or CODE_PARAMS["symbols"],
+                opts.get("brightness"),
+                sync,
+            )
             return {
                 "type": "mapping_started",
                 "patternClockEpoch": _now_ms(),
-                "codeParams": {**CODE_PARAMS, "ledCount": self._led_count, **_code_overrides(opts)},
+                "codeParams": self._active,
+            }
+        if kind == "configure":
+            # Mid-capture renegotiation (exposure/alphabet/brightness servos): the
+            # firmware overlays the options on the active code book, keeps its sync
+            # pattern and RESTAMPS the pattern epoch (firmware/player configure).
+            if self._active is None:
+                return {"type": "error", "code": "no_session", "message": "no active capture"}
+            opts = msg.get("options") or {}
+            cur = self._active
+            if opts.get("ledCount"):
+                self._led_count = int(opts["ledCount"])
+            self._active = _code_params(
+                self._led_count,
+                opts.get("bitPeriodMs") or cur["bitPeriodMs"],
+                opts.get("symbols") or cur["symbols"],
+                opts["brightness"] if opts.get("brightness") is not None else cur.get("brightness"),
+                cur["syncPattern"],
+            )
+            self.reconfigures += 1
+            print(
+                f"[mock] configure #{self.reconfigures} {opts} -> "
+                f"symbols={self._active['symbols']} bitPeriodMs={self._active['bitPeriodMs']} "
+                f"sync={self._active['syncPattern']} (epoch restamped)",
+                file=sys.stderr,
+                flush=True,
+            )
+            return {
+                "type": "pattern_state",
+                "active": True,
+                "patternClockEpoch": _now_ms(),
+                "codeParams": self._active,
             }
         if kind == "get_status":
             return {"type": "status", "identified": 0, "total": self._led_count, "lowParallax": 0}
@@ -110,6 +170,7 @@ class MockDevice:
             # `mapping_stopped` ack (it then solves locally + submits the map);
             # the host-solve path awaits `result_ready`. Reply to match, or the
             # app hangs waiting for the wrong message.
+            self._active = None
             if msg.get("solveOnHost") is False:
                 return {"type": "mapping_stopped", "detections": 0, "imuSamples": 0}
             return {"type": "result_ready", "mapId": "mock-map"}
@@ -124,11 +185,18 @@ class MockDevice:
         return None
 
 
-def _code_overrides(opts: dict[str, Any]) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    for k in ("symbols", "bitPeriodMs"):
-        if opts.get(k) is not None:
-            out[k] = opts[k]
+def _code_params(
+    led_count: int, bit_period_ms: float, symbols: int, brightness: float | None, sync: str
+) -> dict[str, Any]:
+    """The code book a player derives (the shared kernel, via the Pi codebook)."""
+    cp = code_params_for(
+        led_count,
+        float(bit_period_ms),
+        int(symbols),
+        brightness=brightness,
+        sync_pattern=sync,
+    )
+    out = cp.model_dump(mode="json", exclude_none=True)
     return out
 
 

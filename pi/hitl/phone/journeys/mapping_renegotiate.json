@@ -1,0 +1,23 @@
+{
+  "name": "mapping_renegotiate",
+  "description": "A mid-capture code renegotiation must not stop decoding: open the capture screen under the synthetic camera, switch the alphabet (configure → new code book + restamped epoch, as the alphabet planner does on a slow phone) before anything has decoded, then require every LED id. Regression for the hue code v2 android_journeys failure, where the synthetic scene kept the old code book and decoded 0 ids. Needs a connected device.",
+  "inputs": { "led_count": 30, "min_ids": 30 },
+  "steps": [
+    { "runFlow": "connect" },
+    { "do": "openCapture", "with": { "ledCount": "${led_count}" } },
+    {
+      "description": "switch to 4 symbols at once (a new code book from a new epoch)",
+      "do": "renegotiate",
+      "with": { "symbols": 4 },
+      "timeout": 30
+    },
+    {
+      "description": "every LED id still decodes, under the renegotiated code",
+      "do": "awaitDecode",
+      "with": { "minIds": "${min_ids}", "timeoutMs": 40000 },
+      "timeout": 60,
+      "expect": { "ids": "present" }
+    },
+    { "do": "cancelCapture" }
+  ]
+}

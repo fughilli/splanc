@@ -54,7 +54,7 @@ DEFAULT_SSID = os.environ.get("HITL_WIFI_SSID") or "amd-rig-ap"
 DEFAULT_PSK = os.environ.get("HITL_WIFI_PASS") or "amd-rig-provision"
 # connect → config → the two deep (synthetic-camera) mapping journeys. config +
 # mapping_* each runFlow connect, so connect is exercised several times per run.
-DEFAULT_JOURNEYS = "connect,config,mapping_capture,mapping_solve"
+DEFAULT_JOURNEYS = "connect,config,mapping_capture,mapping_renegotiate,mapping_solve"
 
 REMOTE_ROOT = "/tmp/hitl-android"  # where the shipped bundle lands in the env
 # The in-env DUT console capture taken while the journeys run (see _run_journeys).

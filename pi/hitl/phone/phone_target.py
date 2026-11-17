@@ -107,6 +107,14 @@ class BrowserTarget(PhoneTarget):
             headless=True, args=["--no-sandbox", "--ignore-certificate-errors"]
         )
         page = await self._browser.new_page()
+        # PHONE_CPU_THROTTLE=<rate>: slow the page's CPU <rate>x (CDP) to emulate a
+        # slow phone. The bench SM-A115U runs the capture screen below 25 fps, which
+        # trips mid-capture renegotiations (configure) a fast host never reaches.
+        throttle = float(os.environ.get("PHONE_CPU_THROTTLE", "0") or 0)
+        if throttle > 1:
+            cdp = await page.context.new_cdp_session(page)
+            await cdp.send("Emulation.setCPUThrottlingRate", {"rate": throttle})
+            print(f"[browser] CPU throttled {throttle:g}x", file=sys.stderr)
         if os.environ.get("PHONE_PAGE_LOG", "1") != "0":
             page.on("console", lambda m: print(f"[page:{m.type}] {m.text}", file=sys.stderr))
             page.on("pageerror", lambda e: print(f"[page:error] {e}", file=sys.stderr))
@@ -357,6 +365,19 @@ class AndroidDeviceTarget(PhoneTarget):
             print(f"[cert] host={host} accepted={ok} view-texts={texts!r}", flush=True)
         except Exception as e:  # noqa: BLE001
             print(f"[cert] host={host} accepted={ok} (view dump failed: {e})", flush=True)
+        if not ok:
+            # Read-only network snapshot: an ERR_ADDRESS_UNREACHABLE page means the
+            # phone could not reach the DUT (its Wi-Fi, its address, or ARP for host).
+            for cmd in (
+                "dumpsys wifi | grep -m1 mWifiInfo",
+                "ip -4 addr show wlan0",
+                f"ip neigh show {host}",
+            ):
+                try:
+                    out = drv._shell(cmd, capture=True, timeout=15).strip()
+                except Exception as e:  # noqa: BLE001
+                    out = f"(failed: {e})"
+                print(f"[cert] phone `{cmd}`: {out[:400]}", flush=True)
         self._foreground_app()
         if not ok:
             raise RuntimeError(f"Chrome did not accept the device certificate for {host}")

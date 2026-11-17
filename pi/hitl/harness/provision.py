@@ -319,8 +319,14 @@ def wire_provision_dut(res, ssid: str, password: str, timeout: float) -> str:
     # Attach the reader BEFORE writing the PROV: a board already on this network (it
     # rejoined from its stored credentials) answers at once with "PROV re-received at IP
     # <ip>", which a reader started after the write would miss.
+    # Wait for the tty first: right after a flash the C6's USB-serial re-enumerates,
+    # and for a few seconds /dev/ttyACM0 answers ENXIO ("No such device or address"),
+    # so the PROV write and the reader both failed (android_journeys, PR #523). The
+    # `stty` that configures the tty is the probe — no extra open on the happy path
+    # (every open toggles DTR).
     cmd = (
-        "stty -F /dev/ttyACM0 raw -echo 115200 2>/dev/null; "
+        "for _ in $(seq 60); do stty -F /dev/ttyACM0 raw -echo 115200 2>/dev/null && break; "
+        + "sleep 0.5; done; "
         + f"timeout {timeout:g} cat /dev/ttyACM0 & sleep 0.5; "
         + prov
         + "; wait"

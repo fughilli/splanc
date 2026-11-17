@@ -60,6 +60,8 @@ export interface DriverDecodeStats {
   observations: number;
   /** Hot-loop / live-solver perf counters (cv/capturePerf), once capturing. */
   perf?: CapturePerfSnapshot;
+  /** Code book + decoder counters, so a stuck decode says why (HITL timeouts). */
+  decoder?: Record<string, string | number | null>;
 }
 
 /** A solved-map summary the HITL capture journey asserts on (target LED count vs
@@ -77,6 +79,8 @@ export interface DriverCaptureResult {
 export interface DriverCaptureController {
   stats(): DriverDecodeStats;
   finish(): Promise<DriverCaptureResult>;
+  /** Renegotiate the running capture's code (as the exposure / alphabet servos do). */
+  renegotiate(opts: { symbols?: 2 | 4; bitPeriodMs?: number; brightness?: number }): Promise<void>;
   cancel(): Promise<void>;
 }
 

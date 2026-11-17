@@ -22,6 +22,12 @@ bazel run //pi/hitl/phone:phone_e2e -- --browser --mock-device --journeys smoke,
 # real decoder (mapping_capture), plus the real VIO solve with synthetic IMU (mapping_solve)
 bazel run //pi/hitl/phone:phone_e2e -- --browser --mock-device --journeys mapping_capture,mapping_solve
 
+# A mid-capture code renegotiation (the alphabet / exposure servos' configure: a new
+# code book from a restamped epoch) must not stop decoding. The mock device, like the
+# C6/P4 firmware, advertises hue code v2 (hue_stagger_pilot) and answers configure.
+# PHONE_CPU_THROTTLE=<rate> slows the headless page (CDP) to emulate a slow phone.
+PHONE_CPU_THROTTLE=12 bazel run //pi/hitl/phone:phone_e2e_mock -- --browser --mock-device --journeys mapping_capture,mapping_renegotiate
+
 # Hands-free Calibrate IMU: a synthetic tilting fixture + fake IMU through the real
 # capture screen, registration, auto-capture and write-back (+ the drop-mid-write
 # variant: pending on the phone, pushed on the automatic reconnect). Device-free.
@@ -205,7 +211,7 @@ harness + the built web app + solver + the netstack flash bundle into the reserv
 env, then in-env: `hitl-flash` c6-a → `wire_provision_dut` it onto **`amd-rig-ap`**
 (a deterministic DHCP IP, independent of the phone chooser) → `join_wifi` the phone
 onto the same AP → runs `phone_e2e --phone-target android-phone --ble-mode real` for
-`connect,config,mapping_capture,mapping_solve`. The journey drives the **real Web
+`connect,config,mapping_capture,mapping_renegotiate,mapping_solve`. The journey drives the **real Web
 Bluetooth provision + cert-trust via adb/uiautomator taps**; because the C6 is already
 wire-provisioned and reachable, a flaky OS Bluetooth chooser can't fail the rep
 (`provision_ble` never raises). Everything runs in-env because the phone's adb server,
