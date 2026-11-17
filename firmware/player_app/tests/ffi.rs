@@ -102,6 +102,41 @@ fn full_device_flow_through_the_c_abi() {
     assert_eq!(rgb, [255, 255, 255], "frame 0 is the white ALL_ON reference");
     assert!(unsafe { lm_pattern_color(0, 1, rgb.as_mut_ptr()) });
     assert_eq!(rgb, [0, 255, 0], "frame 1 is the green ALL_OFF sync");
+    assert_eq!(started.r#code_params.r#sync_pattern.as_str(), "on_off", "unrequested: v1");
+
+    // Hue code v2: this firmware advertises the staggered pilot and runs it on request.
+    assert!(w.r#features.iter().any(|f| f.as_str() == "hue_stagger_pilot"));
+    let mut opts = pb::StartMappingOptions {
+        r#led_count: 16,
+        ..Default::default()
+    };
+    opts.set_sync_pattern(micropb::heapless::String::try_from("stagger_pilot").unwrap());
+    let mut start = pb::StartMapping::default();
+    start.set_options(opts);
+    let Some(SMsg::MappingStarted(staggered)) =
+        handle(&encode(CMsg::StartMapping(start)), 1000.0)
+    else {
+        panic!("mapping_started expected");
+    };
+    assert_eq!(staggered.r#code_params.r#sync_pattern.as_str(), "stagger_pilot");
+    // Rendered in LED order (as the firmware loop does), frame 0 is no longer a
+    // white flash on every LED: each LED shows its own staggered pilot phase.
+    let frame0: Vec<[u8; 3]> = (0..16)
+        .map(|i| {
+            let mut c = [0u8; 3];
+            assert!(unsafe { lm_pattern_color(i, 0, c.as_mut_ptr()) });
+            c
+        })
+        .collect();
+    assert!(frame0.iter().any(|c| *c != [255, 255, 255]), "staggered frame 0: {frame0:?}");
+    // Back to v1 for the rest of the test.
+    let opts = pb::StartMappingOptions {
+        r#led_count: 16,
+        ..Default::default()
+    };
+    let mut start = pb::StartMapping::default();
+    start.set_options(opts);
+    assert!(matches!(handle(&encode(CMsg::StartMapping(start)), 1000.0), Some(SMsg::MappingStarted(_))));
 
     // Fire-and-forget telemetry produces no reply.
     assert!(handle(&encode(CMsg::Detections(pb::Detections::default())), 1100.0).is_none());

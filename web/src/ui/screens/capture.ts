@@ -219,8 +219,8 @@ const forcedSymbols = ((): 2 | 4 | null => {
 })();
 // `?sync=stagger_pilot` REQUESTS the hue code v2 staggered pilot in
 // start_mapping (phase 2 wall test). The phone always decodes the
-// CodeParams.syncPattern the device answers with: a player that doesn't support
-// the request (every C6/P4 today) runs v1 "on_off" and the phone decodes v1.
+// CodeParams.syncPattern the device answers with: a player that doesn't advertise
+// `hue_stagger_pilot` (C6/P4 firmware before it did) runs v1 "on_off" and the phone decodes v1.
 const forcedSync = forcedSyncPattern(qs.get("sync"));
 const forcedBitMs = ((): number | null => {
   const v = parseFloat(qs.get("bitms") ?? "");

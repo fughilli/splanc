@@ -2843,6 +2843,10 @@ macro_rules! features {
         // Scheduled changes: set_uniforms / set_effect / set_crossfade /
         // set_brightness apply_at_ms on the shared time base (lm_sched_apply).
         "apply_at",
+        // Hue code v2 phase 2: start_mapping syncPattern "stagger_pilot" runs the
+        // staggered pilot (docs/design/hue-code-v2.md). The render loop walks LEDs
+        // in order, so pattern_color's memoised stagger_next walk is amortised.
+        "hue_stagger_pilot",
         $($extra),*
     ] };
 }
