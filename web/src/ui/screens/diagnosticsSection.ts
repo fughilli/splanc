@@ -33,6 +33,7 @@ import {
 } from "../../store/diagnosticExport";
 import { Button, Sheet, toast } from "../kit";
 import { saveFile } from "../saveFile";
+import { describeShareOutcome, isChromium, shareCandidates, shareWithFallback } from "../shareFallback";
 
 type GroupFn = (legend: string) => HTMLElement;
 type RowFn = (name: string, hint: string, control: HTMLElement) => HTMLElement;
@@ -56,6 +57,10 @@ export interface DiagnosticsDeps {
   save?: (data: Blob, name: string, mime: string) => Promise<void>;
   share?: ((data: ShareData) => Promise<void>) | null;
   canShare?: ((data: ShareData) => boolean) | null;
+  /** Treat the browser as Chromium (its file-share allowlist); default: sniffed. */
+  chromium?: boolean;
+  /** Build the File handed to share() (Node tests). */
+  toFile?: (f: { blob: Blob; name: string; mime: string }) => File;
 }
 
 export function diagnosticsGroup(group: GroupFn, row: RowFn, segmented: SegmentedFn, deps: DiagnosticsDeps = {}): HTMLElement {
@@ -204,21 +209,34 @@ export function openSnapshotSheet(
   }
 
   async function doShare(): Promise<void> {
-    const file = new File([archive.blob], archive.name, { type: archive.mime });
-    const data: ShareData = { files: [file], title: archive.name };
-    const shareFn = deps.share !== undefined ? deps.share : typeof navigator.share === "function" ? (d: ShareData) => navigator.share(d) : null;
-    const canShareFn = deps.canShare !== undefined ? deps.canShare : (d: ShareData) => navigator.canShare?.(d) ?? false;
-    if (shareFn === null || canShareFn === null || !canShareFn(data)) {
-      status.textContent = "Sharing files isn't available here — saving the file instead.";
-      await doSave();
-      return;
-    }
-    try {
-      await shareFn(data);
-    } catch (e) {
-      if (e instanceof DOMException && e.name === "AbortError") return;
-      status.textContent = "Share didn't open — tap Share again, or Save file.";
-    }
+    // Chrome refuses .json.gz / application/gzip in share() (its file-type
+    // allowlist), so the fallback chain lives in ui/shareFallback.ts: a .txt
+    // copy first on Chromium, the original first on WebKit, then save the file.
+    const original = { blob: archive.blob, name: archive.name, mime: archive.mime };
+    const nav = typeof navigator !== "undefined" ? navigator : undefined;
+    const shareFn =
+      deps.share !== undefined ? deps.share : typeof nav?.share === "function" ? (d: ShareData) => nav.share(d) : null;
+    const canShareFn =
+      deps.canShare !== undefined ? deps.canShare : typeof nav?.canShare === "function" ? (d: ShareData) => nav.canShare(d) : null;
+    const brands = (nav as (Navigator & { userAgentData?: { brands?: { brand: string }[] } }) | undefined)?.userAgentData?.brands;
+    const chromium = deps.chromium ?? isChromium(nav?.userAgent ?? "", brands);
+    const candidates = shareCandidates(original, { chromium, ...(archive.plain ? { plain: archive.plain } : {}) });
+    status.classList.remove("diag-status--err");
+    const out = await shareWithFallback(original, candidates, {
+      share: shareFn,
+      canShare: canShareFn,
+      save: (f) => saveWith(f.blob, f.name, f.mime),
+      ...(deps.toFile ? { toFile: deps.toFile } : {}),
+      onError: (d, f) => console.warn(`diagnostics share refused (${f.name}, ${f.mime}): ${d}`),
+    });
+    const text = describeShareOutcome(out, chromium ? "to your Downloads" : "");
+    if (text) status.textContent = text;
+    status.classList.toggle("diag-status--err", out.kind === "saved" && out.errors.length > 0);
+  }
+
+  function saveWith(b: Blob, n: string, mime: string): Promise<void> {
+    const saver = deps.save ?? ((bb: Blob, nn: string, mm: string) => blobBytes(bb).then((u) => saveFile(u, nn, mm)));
+    return saver(b, n, mime);
   }
 
   async function doSave(): Promise<void> {

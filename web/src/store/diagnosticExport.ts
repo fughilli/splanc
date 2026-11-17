@@ -255,6 +255,9 @@ export interface DiagnosticArchive {
   blob: Blob;
   name: string;
   mime: string;
+  /** The same archive uncompressed (application/json), when `blob` is gzipped:
+   * Share's fallback where gzip/JSON files can't be shared (ui/shareFallback.ts). */
+  plain?: Blob;
 }
 
 /** The snapshot as one backup-format file (gzipped when the browser can). The
@@ -315,7 +318,7 @@ export async function buildArchive(snap: DiagnosticSnapshot): Promise<Diagnostic
   const stamp = m.createdAt.replace(/\.\d+Z$/, "Z").replace(/:/g, "-");
   const gz = await gzipBlob(json).catch(() => null);
   return gz
-    ? { blob: gz, name: `splanc-diagnostics-${stamp}.json.gz`, mime: "application/gzip" }
+    ? { blob: gz, name: `splanc-diagnostics-${stamp}.json.gz`, mime: "application/gzip", plain: json }
     : { blob: json, name: `splanc-diagnostics-${stamp}.json`, mime: "application/json" };
 }
 
