@@ -49,8 +49,8 @@ instruction budget — see [Execution model](#execution-model)).
 (`Type name[N]`). A fixed-point literal takes a suffix: `0.6fx` is `fixed(0.6)`,
 `0.6fx16` is `fixed16(0.6)` and `0.6fx8` is `fixed8(0.6)` (folded to the same
 constant; `fx16`/`fx8` literals must be below 2). At runtime everything is an `f32`
-slot; the compiler types every operation so the VM stays untyped (integers and fixed-point values ride in the f32
-slot bit-for-bit).
+slot; the compiler types every operation so the VM stays untyped (integers and
+fixed-point values ride in the f32 slot bit-for-bit).
 
 ### Read-only contexts
 
