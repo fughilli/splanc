@@ -8,6 +8,9 @@ Environment (systemd reads /etc/splanc-bridge/bridge.env):
     SPLANC_DISPLAY_VT=8               the VT taken over for the HDMI page
     OLED=auto|spi|i2c|off             default auto (see hat.detect)
     OLED_ROTATE=0..3                  default 2 (matches Waveshare's orientation)
+    SPLANC_UPDATE_REQUESTS / SPLANC_SYSTEM_UPDATE_STATUS / SPLANC_AGENT_UPDATE_STATUS
+                                      the Updates page (updates.py; shown when the
+                                      request directory exists: the SD image)
 
 Every output is optional and retried: the service runs (and keeps the other
 screen going) with no HDMI attached, no HAT, or no bridge running yet.
@@ -32,10 +35,10 @@ import threading
 import time
 from typing import Optional
 
-from . import boot, control, render_hdmi, render_oled
+from . import boot, control, render_hdmi, render_oled, updates
 from .fb import Framebuffer, PngSink
 from .status import StatusWatcher
-from .ui import OledUI
+from .ui import PAGES, UPDATE_CHECK, UPDATES_PAGES, OledUI
 
 TICK = 0.1  # OLED/UI loop period when nothing moves (s)
 IDLE_TICK = TICK
@@ -101,14 +104,25 @@ class App:
         boot_frames="auto",
         oled_device=None,
         hdmi_device=None,
+        update_watcher="auto",
     ):
         self.clock, self.wall = clock, wall
         self.hdmi_mode, self.oled_mode = hdmi, oled
         self.control_path = control_path
         self.vt, self.rotate = vt, rotate
-        self.watcher = StatusWatcher(status_path)
+        # Software updates (updates.py): watched + the Updates page only where the
+        # screen manages them (the request directory exists: the SD image).
+        if update_watcher == "auto":
+            update_watcher = updates.UpdatesWatcher()
+            if not update_watcher.updates.supported:
+                update_watcher = None
+        self.updates = update_watcher
+        self.watcher = StatusWatcher(status_path, updates=update_watcher)
         self.done_q: "queue.Queue" = queue.Queue()
-        self.ui = OledUI(self._dispatch, clock)
+        self.ui = OledUI(
+            self._dispatch, clock, pages=UPDATES_PAGES if update_watcher is not None else PAGES
+        )
+        self.ui.update_action = self._update_action
         self.inputs: "queue.Queue" = queue.Queue()  # (kind, key, at) from the button thread
         self.wake = threading.Event()
         self.frames = boot.load() if boot_frames == "auto" else boot_frames
@@ -138,13 +152,42 @@ class App:
     def _dispatch(self, cmd: str, done, **args) -> None:
         def work():
             try:
-                control.send(cmd, path=self.control_path, **args)
+                if cmd.startswith("update_"):
+                    self._update_request(cmd, args.get("target", ""))
+                else:
+                    control.send(cmd, path=self.control_path, **args)
                 self.done_q.put((done, True, ""))
-            except control.ControlError as e:
+            except (control.ControlError, updates.RequestError) as e:
                 log(f"{cmd}: {e}")
                 self.done_q.put((done, False, str(e)))
 
         threading.Thread(target=work, daemon=True).start()
+
+    # --- software updates --------------------------------------------------------------
+    def _update_request(self, cmd: str, target: str) -> None:
+        """The Updates page's Check / Install / Restart -> a request for the root side."""
+        if self.updates is None:
+            raise updates.RequestError("updates are not managed from this screen")
+        if cmd == "update_check":
+            action = "check"
+        elif cmd == "update_install" and target in updates.TARGETS:
+            action = "install-" + target
+        elif cmd == "update_restart" and target == "system":
+            action = "restart-system"
+        else:
+            raise updates.RequestError(f"unknown update command {cmd} {target}")
+        log(f"update request: {action}")
+        updates.request(action, self.updates.requests)
+
+    def _update_action(self, target: str) -> Optional[str]:
+        """What pressing in an updater's detail does: install | restart | None."""
+        u = self.watcher.status.updates
+        t = u.track(target) if u is not None else None
+        if t is None:
+            return None
+        if t.waiting and target == "system":
+            return "restart"
+        return "install" if t.offer else None
 
     # --- OLED ------------------------------------------------------------------
     def _open_oled(self) -> None:
@@ -198,6 +241,12 @@ class App:
             [c.key for c in st.paired],
             lambda k: render_oled.client_row_count(st.client(k), now),
         )
+        u = st.updates
+        if u is not None:
+            self.ui.set_updates(
+                [t.target for t in u.tracks] + [UPDATE_CHECK],
+                lambda k: render_oled.update_row_count(u.track(k), now, st.clients),
+            )
 
     def _input(self, kind: str, key: str) -> None:
         """A button event (gpiozero's thread): queued for the UI thread, which wakes."""

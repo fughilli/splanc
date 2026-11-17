@@ -10,10 +10,17 @@
 #                               else the one baked into the image
 #   splanc-display.service      pi/bridge/display on /dev/fb0 (VT 8) + the OLED HAT
 #   splanc-agent-update.timer   ~2 min after boot, then daily: fetch
-#                               splanc.io/agent/latest.json, verify the bundle's
+#                               splanc.io/agent/latest.json and record what it
+#                               offers (update-status.json) -- never installs
+#   splanc-agent-install        the confirmed install: verify the bundle's
 #                               sha256, switch, restart the bridge (as the
 #                               `splanc-update` user: the bridge can't modify the
 #                               code it runs)
+#   splanc-update-request.path  the display's "Check for updates" / "Install":
+#                               it (user splanc) drops a request file into
+#                               /run/splanc-update-request; this root unit
+#                               starts the matching check/install unit. The
+#                               display itself never gets root.
 #
 # State that survives reboots: /var/lib/splanc-bridge (bridge.json identity, hub
 # config) and /var/lib/splanc-agent (updated bundles). Settings come from the
@@ -27,6 +34,49 @@ let
   statusFile = "/run/splanc-bridge/status.json";
   controlSock = "/run/splanc-bridge/control.sock";
   envFile = "/run/splanc-flash/bridge.env";
+  requestDir = "/run/splanc-update-request";
+
+  # The display's update requests -> units (system-update.nix has the system
+  # ones; with system updates off they don't exist and `start` just fails).
+  requestRun = pkgs.writeShellScript "splanc-update-request" ''
+    set -u
+    PATH=${lib.makeBinPath [ pkgs.coreutils config.systemd.package ]}
+    for f in ${requestDir}/* ${requestDir}/.[!.]*; do
+      [ -e "$f" ] || continue
+      name="$(basename "$f")"
+      rm -rf -- "$f"
+      case "$name" in
+        check) units="splanc-system-update-check.service splanc-agent-check.service" ;;
+        install-system) units="splanc-system-update-install.service" ;;
+        restart-system) units="splanc-system-update-apply.service" ;;
+        install-agent) units="splanc-agent-install.service" ;;
+        *) echo "splanc-update-request: ignoring '$name'" >&2; continue ;;
+      esac
+      for u in $units; do
+        echo "splanc-update-request: $name -> $u"
+        systemctl start --no-block "$u" || echo "splanc-update-request: can't start $u" >&2
+      done
+    done
+  '';
+
+  agentUpdater = args: hardening // {
+    Type = "oneshot";
+    User = "splanc-update";
+    Group = "splanc";
+    EnvironmentFile = "-${envFile}";
+    StateDirectory = "splanc-agent";
+    StateDirectoryMode = "0755";
+    UMask = "0022";
+    ExecStart = lib.escapeShellArgs ([ "${bp.pyEnv}/bin/python3" "-m" "splanc_image.selfupdate" ] ++ args ++ cfg.updaterExtraArgs);
+    PrivateDevices = true;
+    RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+  };
+  agentUpdaterEnv = {
+    SPLANC_AGENT_BAKED = "${bp.agentBundle}";
+    SPLANC_LATEST_URL = cfg.latestUrl;
+    PYTHONPATH = "${bp.splancPy}";
+    PYTHONDONTWRITEBYTECODE = "1";
+  };
 
   # ExecStart of splanc-bridge.service. A bundle that predates `splanc-agent
   # bridge` (anything before the cloud-relay release) can't run it: say so on
@@ -45,7 +95,7 @@ let
     while ! grep -q 'bridge-ctl' "$agent/mcp/splanc-agent.mjs"; do
       ver="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$agent/bundle.json" | head -n1)"
       tmp="$SPLANC_BRIDGE_STATUS.tmp"
-      printf '{"v":1,"state":"error","error":"Splanc agent %s has no bridge yet. Checking for an update...","updated_at":%s}\n' \
+      printf '{"v":1,"state":"error","error":"Splanc agent %s has no bridge yet. Install the update on the Updates screen.","updated_at":%s}\n' \
         "$ver" "$(date +%s)" >"$tmp" && mv -f "$tmp" "$SPLANC_BRIDGE_STATUS"
       echo "splanc-bridge: agent $ver predates the bridge; waiting for an update" >&2
       sleep 120
@@ -63,11 +113,13 @@ let
       status | new-code | identify | revoke-all | clients | revoke)
         SPLANC_BRIDGE_STATUS=${statusFile} SPLANC_BRIDGE_CONTROL=${controlSock} \
           PYTHONPATH=${bp.splancPy} exec ${bp.pyEnv}/bin/python3 -m splanc_display.ctl "$@" ;;
-      logs) shift; exec journalctl -u splanc-bridge -u splanc-display -u splanc-agent-update -u splanc-flash-config --no-pager -n 200 "$@" ;;
-      update) exec systemctl start splanc-agent-update.service ;;
+      logs) shift; exec journalctl -u splanc-bridge -u splanc-display -u splanc-agent-update -u splanc-agent-check -u splanc-agent-install -u splanc-update-request -u splanc-flash-config --no-pager -n 200 "$@" ;;
+      # Typed over SSH as root: that is the confirmation.
+      update) exec systemctl start splanc-agent-install.service ;;
+      check) exec systemctl start splanc-agent-check.service ;;
       restart) exec systemctl restart splanc-bridge.service splanc-display.service ;;
       version) cat /etc/splanc-bridge/image.json; echo; readlink ${agentState}/current || echo "agent: baked ${bp.agentBundle.version}" ;;
-      *) echo "usage: splanc-bridge [status|new-code|identify|revoke-all|clients|revoke <id>|logs|update|restart|version]" >&2; exit 2 ;;
+      *) echo "usage: splanc-bridge [status|new-code|identify|revoke-all|clients|revoke <id>|logs|check|update|restart|version]" >&2; exit 2 ;;
     esac
   '';
 
@@ -191,6 +243,9 @@ in
         PYTHONDONTWRITEBYTECODE = "1";
         GPIOZERO_PIN_FACTORY = "lgpio";
         LG_WD = "/run/splanc-display";
+        SPLANC_UPDATE_REQUESTS = requestDir;
+        SPLANC_AGENT_UPDATE_STATUS = "${agentState}/update-status.json";
+        SPLANC_SYSTEM_UPDATE_STATUS = "/run/splanc-system-update/status.json";
       };
       serviceConfig = hardening // {
         Type = "simple";
@@ -199,6 +254,8 @@ in
         EnvironmentFile = "-${envFile}";
         WorkingDirectory = "/run/splanc-display";
         RuntimeDirectory = "splanc-display";
+        # The only thing it may write outside its own directory: update requests.
+        ReadWritePaths = [ "-${requestDir}" ];
         ExecStart = "${bp.pyEnv}/bin/python3 -m splanc_display.main";
         # Below the bridge: animation frames never take CPU or I/O from its network work.
         Nice = 10;
@@ -212,25 +269,33 @@ in
       };
     };
 
+    # The timer's check (honours SPLANC_AUTO_UPDATE=0) and the display's
+    # "Check for updates": read latest.json, record the offer. Nothing installed.
     systemd.services.splanc-agent-update = {
-      description = "Update the Splanc agent bundle (splanc.io/agent/latest.json)";
+      description = "Check for a Splanc agent bundle update (splanc.io/agent/latest.json)";
       wants = [ "network-online.target" ];
       after = [ "network-online.target" "time-sync.target" "splanc-flash-config.service" ];
-      environment = {
-        SPLANC_AGENT_BAKED = "${bp.agentBundle}";
-        SPLANC_LATEST_URL = cfg.latestUrl;
-        PYTHONPATH = "${bp.splancPy}";
-        PYTHONDONTWRITEBYTECODE = "1";
+      environment = agentUpdaterEnv;
+      serviceConfig = agentUpdater [ "check" "--auto" ] // {
+        # No network yet / splanc.io unreachable: try again in a while.
+        Restart = "on-failure";
+        RestartSec = "15min";
       };
-      serviceConfig = hardening // {
-        Type = "oneshot";
-        User = "splanc-update";
-        Group = "splanc";
-        EnvironmentFile = "-${envFile}";
-        StateDirectory = "splanc-agent";
-        StateDirectoryMode = "0755";
-        UMask = "0022";
-        ExecStart = lib.escapeShellArgs ([ "${bp.pyEnv}/bin/python3" "-m" "splanc_image.selfupdate" "--auto" ] ++ cfg.updaterExtraArgs);
+    };
+    systemd.services.splanc-agent-check = {
+      description = "Check for a Splanc agent bundle update now";
+      wants = [ "network-online.target" ];
+      after = [ "network-online.target" "splanc-flash-config.service" ];
+      environment = agentUpdaterEnv;
+      serviceConfig = agentUpdater [ "check" ];
+    };
+    # Confirmed on the screen (or `splanc-bridge update`): install the offer.
+    systemd.services.splanc-agent-install = {
+      description = "Install the Splanc agent bundle update";
+      wants = [ "network-online.target" ];
+      after = [ "network-online.target" "splanc-flash-config.service" ];
+      environment = agentUpdaterEnv;
+      serviceConfig = agentUpdater [ "install" ] // {
         # "+": as root, to restart the bridge onto the new bundle.
         ExecStartPost = "+${pkgs.writeShellScript "splanc-agent-updated" ''
           if [ -e ${agentState}/.updated ]; then
@@ -238,11 +303,27 @@ in
             ${config.systemd.package}/bin/systemctl try-restart splanc-bridge.service
           fi
         ''}";
-        # No network yet / splanc.io unreachable: try again in a while.
-        Restart = "on-failure";
-        RestartSec = "15min";
-        PrivateDevices = true;
-        RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+      };
+    };
+
+    # The display's requests (it runs as `splanc`, without root): a file named
+    # after the action in ${requestDir} (group splanc may create files there)
+    # starts this root oneshot, which only maps a few fixed names to units.
+    systemd.tmpfiles.rules = [ "d ${requestDir} 0770 root splanc -" ];
+    systemd.paths.splanc-update-request = {
+      description = "Update requests from the bridge's screen";
+      wantedBy = [ "paths.target" ];
+      pathConfig.DirectoryNotEmpty = requestDir;
+    };
+    systemd.services.splanc-update-request = {
+      description = "Start the update the bridge's screen asked for";
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = requestRun;
+        NoNewPrivileges = true;
+        ProtectHome = true;
+        PrivateTmp = true;
+        PrivateNetwork = true;
       };
     };
 

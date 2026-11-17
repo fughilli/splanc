@@ -196,3 +196,95 @@ def test_main_honours_auto_update_off(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("SPLANC_AUTO_UPDATE", "0")
     assert su.main(["--dir", str(tmp_path), "--auto"]) == 0
     assert "off" in capsys.readouterr().out
+
+
+# ---- confirm on the display: check records the offer, install is the yes ------------
+
+
+def status_of(state):
+    return json.loads((state / su.STATUS_FILE).read_text())
+
+
+def test_check_only_records_the_offer(tmp_path, site):
+    state = tmp_path / "state"
+    state.mkdir()
+    site.publish("1.8.0", make_tgz("1.8.0"))
+    heads = []
+    r = su.check(
+        str(state),
+        baked=baked_dir(tmp_path),
+        fetch=site.fetch,
+        head=lambda u: heads.append(u) or 512,
+    )
+    assert not r.updated and "1.8.0 available" in r.message
+    assert not (state / "current").exists() and not (state / ".updated").exists()
+    assert site.calls == [LATEST]  # latest.json only: the bundle is not downloaded
+    doc = status_of(state)
+    assert doc["state"] == "available" and doc["current_version"] == "1.7.1"
+    assert doc["available"]["version"] == "1.8.0" and doc["available"]["bytes"] == 512
+    assert heads == ["https://splanc.io/agent/splanc-agent-1.8.0.tgz"]
+    assert (state / su.STATUS_FILE).stat().st_mode & 0o777 == 0o644  # the display reads it
+
+
+def test_install_installs_what_the_screen_showed(tmp_path, site):
+    state = tmp_path / "state"
+    state.mkdir()
+    baked = baked_dir(tmp_path)
+    site.publish("1.8.0", make_tgz("1.8.0"))
+    su.check(str(state), baked=baked, fetch=site.fetch, head=lambda u: None)
+    site.publish("1.9.0", make_tgz("1.9.0"))  # the site moved on after the screen showed 1.8.0
+    r = su.install(str(state), baked=baked, fetch=site.fetch, head=lambda u: None)
+    assert r.updated and r.version == "1.8.0"
+    assert os.readlink(state / "current") == "agent/1.8.0" and (state / ".updated").exists()
+    doc = status_of(state)
+    assert doc["state"] == "idle" and doc["current_version"] == "1.8.0" and doc["available"] is None
+    # The next check offers 1.9.0; nothing switches until it is confirmed.
+    su.check(str(state), baked=baked, fetch=site.fetch, head=lambda u: None)
+    assert status_of(state)["available"]["version"] == "1.9.0"
+    assert os.readlink(state / "current") == "agent/1.8.0"
+
+
+def test_up_to_date_check_and_install(tmp_path, site):
+    state = tmp_path / "state"
+    state.mkdir()
+    site.publish("1.7.1", make_tgz("1.7.1"))
+    baked = baked_dir(tmp_path)
+    assert "up to date" in su.check(str(state), baked=baked, fetch=site.fetch).message
+    assert status_of(state)["state"] == "idle"
+    r = su.install(str(state), baked=baked, fetch=site.fetch, head=lambda u: None)
+    assert not r.updated and not (state / "current").exists()
+
+
+def test_failed_install_keeps_the_offer(tmp_path, site):
+    state = tmp_path / "state"
+    state.mkdir()
+    baked = baked_dir(tmp_path)
+    site.publish("1.8.0", make_tgz("1.8.0"), sha="0" * 64)
+    su.check(str(state), baked=baked, fetch=site.fetch, head=lambda u: None)
+    with pytest.raises(su.UpdateError, match="sha256"):
+        su.install(str(state), baked=baked, fetch=site.fetch)
+    doc = status_of(state)
+    assert doc["state"] == "failed" and "sha256" in doc["message"]
+    assert doc["available"]["version"] == "1.8.0"  # the user may try again
+    assert not (state / "current").exists()
+
+
+def test_latest_size_and_notes_are_optional():
+    doc = {"version": "1.8.0", "url": "https://x/a.tgz", "sha256": "a" * 64}
+    lt = su.parse_latest(json.dumps(dict(doc, size=1234, notes="  Faster\n discovery ")).encode())
+    assert (lt.size, lt.notes) == (1234, "Faster discovery")
+    lt = su.parse_latest(json.dumps(dict(doc, size="big", notes=7)).encode())
+    assert (lt.size, lt.notes) == (None, "")
+
+
+def test_main_checks_by_default(tmp_path, monkeypatch):
+    calls = []
+
+    def fake(name):
+        return lambda d, **kw: calls.append(name) or su.Result(False, "", name)
+
+    monkeypatch.setattr(su, "check", fake("check"))
+    monkeypatch.setattr(su, "install", fake("install"))
+    assert su.main(["--dir", str(tmp_path)]) == 0
+    assert su.main(["install", "--dir", str(tmp_path)]) == 0
+    assert calls == ["check", "install"]

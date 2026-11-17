@@ -296,6 +296,18 @@ def _panels(c: _Canvas, s: Status, oled: bool, now: float) -> None:
     legend = (
         "KEY1 new code   ·   KEY2 identify fixtures   ·   hold KEY3 5 s: revoke all" if oled else ""
     )
+    u = s.updates
+    if u is not None and getattr(u, "offers", 0):
+        # Never installed without a yes on the bridge: say where to give it.
+        names = ", ".join(f"{t.title} {t.available}" for t in u.tracks if t.available)
+        how = (
+            "install it from the OLED's Updates page"
+            if oled
+            else "install over SSH: sudo splanc-system-update install / splanc-bridge update"
+        )
+        text = c.ell(f"Update available: {names}   ·   {how}", "bold", 28, BASE_W - 160)
+        c.text((BASE_W / 2, 1046), text, "bold", 28, ACCENT["pairing"], anchor="mm")
+        return
     if legend:
         c.text((BASE_W / 2, 1046), legend, "sans", 28, MUTED, anchor="mm")
 

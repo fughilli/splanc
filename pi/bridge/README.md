@@ -24,7 +24,10 @@ display/splanc_display/     the screen service (Python)
   status.py                   status.json contract -> Status (lenient), file watcher
   control.py                  control.sock client
   ui.py                       OLED/button state machine (pages, fixture list + detail menu,
-                              KEY3 hold+confirm, active/passive/screensaver, boot hand-off)
+                              KEY3 hold+confirm, the Updates page + its Install? confirm,
+                              active/passive/screensaver, boot hand-off)
+  updates.py                  the updaters' status files -> Updates (lenient), watcher, and
+                              the request files the Updates page drops (image only)
   anim.py                     easing, gliding values, scene slides (retarget, never queue)
   boot.py                     loads the pre-rendered boot animation (boot_frames.bin)
   render_hdmi.py              1920x1080-grid status page, scaled to any framebuffer
@@ -184,11 +187,16 @@ image/ota-public-keys.txt   Nix public keys a system update must be signed with
   (uncompressed) to the closure (Python and ICU are already there).
 - **The agent:** the image bakes the bundle named in `agent-pin.json` (a `firmware-v*` release
   asset, sha256-pinned). `splanc-agent-update.timer` (2 min after boot, then daily) runs
-  `selfupdate.py` as the `splanc-update` user: it fetches `splanc.io/agent/latest.json`, checks the
-  bundle's sha256, unpacks it safely (plain files under one top directory only) into
-  `/var/lib/splanc-agent/agent/<ver>`, flips `current`, keeps the previous version and restarts the
-  bridge. The bridge runs as `splanc` and can only read that directory. A bundle older than the
-  bridge (no `bridge` command) puts an explanatory error on the screens until an update arrives.
+  `selfupdate.py check` as the `splanc-update` user: it fetches `splanc.io/agent/latest.json` and
+  records the offer (version, size from `size` or a HEAD request, `notes` if present) in
+  `/var/lib/splanc-agent/update-status.json` for the screens. It never installs. The install is
+  confirmed on the OLED (see [Confirm on the bridge](#confirm-on-the-bridge)) or typed over SSH
+  (`splanc-bridge update`): `splanc-agent-install` installs the version the check recorded (the
+  one the screen showed), checks the bundle's sha256, unpacks it safely (plain files under one
+  top directory only) into `/var/lib/splanc-agent/agent/<ver>`, flips `current`, keeps the
+  previous version and restarts the bridge. The bridge runs as `splanc` and can only read that
+  directory. A bundle older than the bridge (no `bridge` command) puts an explanatory error on
+  the screens until the update is installed.
 - **State:** `/var/lib/splanc-bridge` (bridge identity `bridge.json`, hub config) and
   `/var/lib/splanc-agent` survive reboots; the journal is in RAM, `/tmp` is tmpfs and `/` is mounted
   `noatime`. A fully read-only root wasn't worth it: the first boot grows the root partition and
@@ -264,10 +272,13 @@ job fails.
 **Device (`splanc-system-update.timer`, every 15 min; checks the channel every ~6 h).**
 
 1. Fetch the pointer; nothing to do if it names the running system or one that failed here before.
-2. Fetch the manifest (sha256 from the pointer), compute the closure, ask Nix which store paths are
-   missing, check there's room (else drop old generations + GC), download only those NARs and
-   check each against its narinfo's FileHash/FileSize. A small change is a few MB; a nixpkgs bump
-   is most of the 480 MB.
+   Fetch the manifest (sha256 from the pointer), compute the closure and ask Nix which store paths
+   are missing: that is the download size. Record the release as **available** (state +
+   `/run/splanc-system-update/status.json`) and stop. The timer never goes further: no NAR is
+   downloaded until the user confirms on the bridge (or runs `splanc-system-update install`).
+2. Confirmed (`splanc-system-update-install`): check there's room (else drop old generations +
+   GC), download only the missing NARs of the release that was shown and check each against its
+   narinfo's FileHash/FileSize. A small change is a few MB; a nixpkgs bump is most of the 480 MB.
 3. `nix store verify --no-contents --sigs-needed 1` with **only** the keys in
    `ota-public-keys.txt`: every path of the closure must be signed by one of them. Then
    `nix copy --from file://...` imports it (Nix checks each NAR's signed NarHash). The imported
@@ -326,12 +337,45 @@ PYTHONPATH=pi/bridge/image python3 -m splanc_image.sysrelease pointer \
 gh release upload pi-bridge-ota bridge-system-pi5.json --clobber
 ```
 
-On the bridge: `splanc-system-update status` (state, last result, staged/pending update),
-`sudo splanc-system-update check` (check now; installs when idle), `... apply` (install now even if
-an app is connected), `... logs`. `SPLANC_AUTO_UPDATE=0` in `splanc-bridge.conf` turns the
-automatic checks off, as for the agent. Progress goes to `/run/splanc-system-update/status.json`
-(`state`: downloading, verifying, staged, installing, rebooting, confirming, committing,
-rolling_back, idle, failed, disabled) for the screens to show.
+On the bridge: `splanc-system-update status` (state, last result, available/staged/pending
+update), `sudo splanc-system-update check` (check now; only records what is available),
+`... install` (the confirmed install: installs once no app is connected), `... apply` (install
+now even if an app is connected), `... logs`. `SPLANC_AUTO_UPDATE=0` in `splanc-bridge.conf`
+turns the background checks off, as for the agent. Progress goes to
+`/run/splanc-system-update/status.json` (`state`: checking, available, downloading, verifying,
+staged, installing, rebooting, confirming, committing, rolling_back, idle, failed, disabled, plus
+`current_version`, `available` {version, bytes}, `checked_at`) for the screens to show.
+
+### Confirm on the bridge
+
+Owner's rule: an update is shown as available before the user confirms the download, nothing
+updates automatically, and the user can ask for a check. This holds for both the system and the
+agent bundle. Background checks only discover.
+
+```text
+timer (check only) ──> status.json "available" ──> OLED: arrow in the title bar, Updates page
+                                                     │ press System/Agent: Now / New / Size
+                                                     │ press: Install update? press/KEY3 = yes
+display (user splanc) ── touch /run/splanc-update-request/<action>
+splanc-update-request.path (root) ──> splanc-update-request.service ──> starts the unit:
+    check           splanc-system-update-check + splanc-agent-check
+    install-system  splanc-system-update-install (download, verify, import; reboot when idle)
+    restart-system  splanc-system-update-apply   (reboot now, even with an app connected)
+    install-agent   splanc-agent-install         (swap the bundle, restart the bridge)
+```
+
+The display never runs as root: it can only create files in `/run/splanc-update-request`
+(`0770 root:splanc`, its one `ReadWritePaths`), and the root side only maps those four fixed names
+to units (anything else is deleted and ignored). The bridge service shares the `splanc` user, so
+it could ask for an install too, but only of the signed release the channel already offers. An
+install confirmed while an app is connected downloads and verifies right away and restarts once
+the app disconnects (the timer applies it; "Restart now" on the screen skips the wait). The
+boot-time health check and rollback are unchanged. The HDMI page says where to confirm; a bridge
+without the HAT is updated over SSH (`sudo splanc-system-update install`,
+`sudo splanc-bridge update`).
+
+The Raspberry Pi OS install (`install.sh`, above) is not covered yet: its daily
+`splanc-bridge-update.timer` still installs the agent bundle by itself.
 
 ## The flasher
 
@@ -493,7 +537,7 @@ under Bazel, which has neither; run it in a venv that has the lockfile plus `gpi
 | Installer: install, upgrade, prune, settings kept, sha256/no-pi-bridge refusals, I2C, uninstall/purge                                                                                                                  | `installer_test` (fake root)                                                                                                                       |
 | Real downloads: latest.json → bundle sha256, pinned Node tarball sha256, venv + hash-locked pip                                                                                                                        | manual dry run into a fake root, with the display then run against the fake bridge                                                                 |
 | Image: boot-partition settings parsing/validation, keyfile move off the FAT partition, SSH key merge                                                                                                                   | `//pi/bridge/image:image_py_test`                                                                                                                  |
-| Image: self-update (sha256, hostile tarballs, rollback by publishing an older version, pruning)                                                                                                                        | `//pi/bridge/image:image_py_test`                                                                                                                  |
+| Image: self-update (sha256, hostile tarballs, rollback by publishing an older version, pruning); check only records the offer, install installs what was shown                                                         | `//pi/bridge/image:image_py_test`                                                                                                                  |
 | Image: Improv WiFi: phone-app RPC bytes -> Pi codec -> keyfile byte-identical to the flasher's (tricky SSIDs/PSKs), add vs dedupe, fresh scan + join, hidden fallback, rollback on failure                             | `//pi/bridge/image:image_py_test` (fake nmcli)                                                                                                     |
 | Image: boots; flash config applied; bridge on the baked bundle, then self-updated onto a newer one with the flash-time relay; NetworkManager reads the flasher's tricky keyfile exactly; HDMI page renders; CLI        | `checks.aarch64-linux.vm` (QEMU, generic aarch64; CI `vm-test` job)                                                                                |
 | Image: Improv-stored networks read back exactly by NetworkManager; real-nmcli failed join leaves the store untouched; no BT adapter, no service                                                                        | `checks.aarch64-linux.vm`                                                                                                                          |

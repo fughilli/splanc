@@ -19,7 +19,10 @@ and, for the bridge, either
                    (fixtures, relay up/down, pairing code, connected sessions,
                    paired clients with names/kinds/last use (add, remove, toggle
                    live, an outdated relay), failing commands), with every knob
-                   on the page; the Clients page's revoke works against it
+                   on the page; the Clients page's revoke works against it.
+                   Software updates too (FakeUpdates: the two updaters' status
+                   files + the root side of the request directory), so the
+                   Updates page's check / install / restart run end to end
     --bridge real  the actual ``splanc-agent bridge`` (Node) with its status file
                    and control socket in a temp dir, against a local
                    ``splanc-agent relay`` it starts (or --relay URL). Fixtures
@@ -52,7 +55,7 @@ from typing import Callable, Dict, List, Optional
 
 from PIL import Image
 
-from . import boot, control, fake_bridge, fonts, main, render_oled, ui
+from . import boot, control, fake_bridge, fonts, main, render_oled, ui, updates
 from .hat import KEY_PINS
 
 PIN_KEYS = {pin: key for key, pin in KEY_PINS.items()}
@@ -266,6 +269,176 @@ class SimButtons:
 # --- bridges --------------------------------------------------------------------------
 
 
+class FakeUpdates:
+    """The image's updaters as the display sees them: the system and agent status
+    files (updates.py's contract) and a "root side" that acts on the request files
+    the Updates page drops -- check, then install with progress (download, verify,
+    install, restart) -- at ``step`` seconds per stage."""
+
+    def __init__(self, workdir: str, step: float = 0.4):
+        self.system_path = os.path.join(workdir, "system-update.json")
+        self.agent_path = os.path.join(workdir, "agent-update.json")
+        self.requests_dir = os.path.join(workdir, "update-requests")
+        os.makedirs(self.requests_dir, exist_ok=True)
+        self.step = step
+        self.fail_next = False
+        self.requests: List[str] = []
+        now = time.time()
+        self.docs = {
+            "system": {
+                "state": "idle",
+                "current_version": "1.3.0",
+                "available": None,
+                "checked_at": now - 7200,
+            },
+            "agent": {
+                "state": "idle",
+                "current_version": "1.9.2",
+                "available": None,
+                "checked_at": now - 7200,
+            },
+        }
+        self.offers = {"system": None, "agent": None}  # what the next check finds
+        self._lock = threading.RLock()
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self.clients = lambda: 0  # apps connected (FakeModel sets it)
+        self._write("system")
+        self._write("agent")
+
+    def watcher(self) -> updates.UpdatesWatcher:
+        return updates.UpdatesWatcher(self.system_path, self.agent_path, self.requests_dir)
+
+    def _write(self, target: str) -> None:
+        fake_bridge.write_atomic(
+            self.system_path if target == "system" else self.agent_path,
+            dict(self.docs[target], v=1, updated_at=time.time()),
+        )
+
+    def _set(self, target: str, **kw) -> None:
+        with self._lock:
+            self.docs[target].update(kw)
+            self._write(target)
+
+    def offer(self, target: str, found: bool = True) -> None:
+        """Put an update on offer (as the timer's check would find it)."""
+        new = {
+            "system": {"version": "1.4.0", "bytes": 48_200_000, "paths": 37},
+            "agent": {
+                "version": "1.10.0",
+                "bytes": 612_000,
+                "notes": "Faster fixture discovery; scheduled scene changes.",
+            },
+        }[target]
+        self.offers[target] = new
+        if found:
+            self._set(
+                target,
+                state="available",
+                available=dict(new),
+                checked_at=time.time(),
+                message=f"{new['version']} available",
+            )
+
+    def clear(self) -> None:
+        for t in ("system", "agent"):
+            self.offers[t] = None
+            self._set(t, state="idle", available=None, staged=None, message="")
+
+    def start(self) -> "FakeUpdates":
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="fake-updates")
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _loop(self) -> None:
+        while not self._stop.wait(0.05):
+            try:
+                names = sorted(os.listdir(self.requests_dir))
+            except OSError:
+                continue
+            for name in names:
+                try:
+                    os.unlink(os.path.join(self.requests_dir, name))
+                except OSError:
+                    continue
+                self.requests.append(name)
+                threading.Thread(target=self._handle, args=(name,), daemon=True).start()
+
+    def _handle(self, action: str) -> None:
+        if action == "check":
+            for t in ("system", "agent"):
+                self._set(t, state="checking")
+            time.sleep(self.step)
+            for t in ("system", "agent"):
+                av = self.offers[t]
+                cur = self.docs[t]
+                if cur.get("staged"):
+                    self._set(t, state="staged", checked_at=time.time())
+                else:
+                    self._set(
+                        t, state="available" if av else "idle", available=av, checked_at=time.time()
+                    )
+        elif action in ("install-system", "install-agent"):
+            self._install(action.split("-", 1)[1])
+        elif action == "restart-system":
+            self._finish("system")
+
+    def _install(self, target: str) -> None:
+        av = self.docs[target].get("available")
+        if not av:
+            return
+        total = av.get("bytes") or 1
+        for i in range(5):
+            self._set(target, state="downloading", bytes_total=total, bytes_done=total * i // 4)
+            time.sleep(self.step / 2)
+        if self.fail_next:
+            self.fail_next = False
+            self._set(target, state="failed", message="install failed: not signed by a trusted key")
+            return
+        if target == "system":
+            self._set(target, state="verifying")
+            time.sleep(self.step)
+            if self.clients():
+                self._set(
+                    target,
+                    state="staged",
+                    staged={"version": av["version"], "confirmed": True},
+                    message=f"{av['version']} ready; restarts when no app is connected",
+                )
+                return
+        self._finish(target)
+
+    def _finish(self, target: str) -> None:
+        av = self.docs[target].get("available") or {}
+        for state in (
+            ("installing", "rebooting", "confirming", "committing")
+            if target == "system"
+            else ("installing",)
+        ):
+            self._set(target, state=state)
+            time.sleep(self.step / 2)
+        self.offers[target] = None
+        self._set(
+            target,
+            state="idle",
+            current_version=av.get("version") or self.docs[target]["current_version"],
+            available=None,
+            staged=None,
+            message=f"updated to {av.get('version')}",
+        )
+
+    def snapshot(self) -> dict:
+        return {
+            "system": {"state": self.docs["system"]["state"]},
+            "agent": {"state": self.docs["agent"]["state"]},
+            "requests": list(self.requests),
+            "fail_next": self.fail_next,
+        }
+
+
 class FakeModel(fake_bridge.FakeBridge):
     """fake_bridge's FakeBridge, its status derived from knobs the way the real
     bridge derives it (agent/src/bridge/lanBridge.ts status())."""
@@ -288,6 +461,9 @@ class FakeModel(fake_bridge.FakeBridge):
         self._used_ago: Dict[str, Optional[float]] = {}
         self._client_n = 0
         self.relay_outdated = False
+        # The image's updaters, next to the status file (the Updates page).
+        self.updates = FakeUpdates(os.path.dirname(status_path) or ".")
+        self.updates.clients = lambda: self.clients
         self._hb_stop = threading.Event()
         self._hb: Optional[threading.Thread] = None
         self._ago: Dict[str, float] = {}  # player key -> seconds since seen
@@ -353,6 +529,7 @@ class FakeModel(fake_bridge.FakeBridge):
 
     def start(self) -> "FakeModel":
         super().start()
+        self.updates.start()
         self.publish()
         self._hb = threading.Thread(target=self._heartbeat, daemon=True)
         self._hb.start()
@@ -360,6 +537,7 @@ class FakeModel(fake_bridge.FakeBridge):
 
     def stop(self) -> None:
         self._hb_stop.set()
+        self.updates.stop()
         super().stop()
 
     def _heartbeat(self) -> None:
@@ -456,6 +634,7 @@ class FakeModel(fake_bridge.FakeBridge):
                 }
                 for c in self.paired_list
             ],
+            "updates": self.updates.snapshot(),
         }
 
     def _add_client(self, now: float, used_ago=None, live: bool = True) -> None:
@@ -558,6 +737,13 @@ class FakeModel(fake_bridge.FakeBridge):
                     self.paired_list.append(c)
                 if self.paired_list:
                     self.paired = True
+        elif action == "update_offer":  # system | agent | none (up to date)
+            if arg == "none":
+                self.updates.clear()
+            else:
+                self.updates.offer(str(arg))
+        elif action == "update_fail":
+            self.updates.fail_next = bool(arg)
         elif action == "fixtures":  # preset lists
             self.players = (
                 []
@@ -793,6 +979,9 @@ class Sim:
             boot_frames=self.boot_frames,
             oled_device=lambda: SimOled(self.frames, self.push_seconds),
             hdmi_device=lambda: SimHdmi(self.frames, self.hdmi_size),
+            update_watcher=(
+                self.bridge.updates.watcher() if getattr(self.bridge, "updates", None) else None
+            ),
         )
 
     def start(self) -> "Sim":

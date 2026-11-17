@@ -22,15 +22,20 @@
 # themselves -- Pi 5 tryboot.txt, U-Boot extlinux -- aren't exercised here).
 #
 # Checks:
-#   1. a release signed by the wrong key, and an unsigned one, are rejected:
-#      nothing imported, profile untouched;
-#   2. with an app connected the update is only staged (delta: fewer store
-#      paths fetched than the closure has);
-#   3. bbad: installed, rebooted into, fails its health check, rolled back to A
-#      (rebooted), remembered as bad (not retried);
-#   4. B: installed, rebooted into, the new service runs, the health check
-#      commits it; /var/lib state, Wi-Fi profiles and the bridge identity
-#      survive; two generations kept, bbad no longer rooted (collectable).
+#   1. the timer only discovers: B is recorded as available (version + size, on
+#      status.json for the screens) but nothing is downloaded or installed;
+#   2. a release signed by the wrong key, and an unsigned one, are rejected
+#      when the user confirms them: nothing imported, profile untouched;
+#   3. a confirmed install with an app connected is only staged (delta: fewer
+#      store paths fetched than the closure has);
+#   4. bbad: the timer applies the confirmed update once idle, reboots into it,
+#      it fails its health check, rolled back to A (rebooted), remembered as bad
+#      (not offered again);
+#   5. B: confirmed the way the screen does it (the display's user drops an
+#      install request; the root path unit starts the install), rebooted into,
+#      the new service runs, the health check commits it; /var/lib state, Wi-Fi
+#      profiles and the bridge identity survive; two generations kept, bbad no
+#      longer rooted (collectable).
 { pkgs, bridgeModules }:
 let
   lib = pkgs.lib;
@@ -213,9 +218,26 @@ in
     serve()
     machine.fail(f"nix-store --check-validity {B}")
 
-    with subtest("wrong key and unsigned releases are rejected"):
+    with subtest("the timer only discovers: shown as available, nothing downloaded"):
+        machine.succeed("systemctl start splanc-system-update.service")
+        st = state()
+        assert st["available"]["toplevel"] == B and st["available"]["version"] == "${version}", st
+        assert 0 < st["available"]["paths"] < st["available"]["total_paths"], st["available"]
+        assert st["staged"] is None and st["pending"] is None, st
+        status = json.loads(machine.succeed("cat /run/splanc-system-update/status.json"))
+        assert status["state"] == "available", status
+        assert status["available"]["version"] == "${version}" and status["available"]["bytes"] > 0, status
+        machine.fail(f"nix-store --check-validity {B}")
+        assert machine.succeed("readlink -f /nix/var/nix/profiles/system").strip() == A
+        assert booted() == A
+        # The display (user splanc) can read it and may ask for updates, nothing more.
+        machine.succeed("runuser -u splanc -- cat /run/splanc-system-update/status.json")
+        machine.fail("runuser -u splanc -- cat /var/lib/splanc-system-update/state.json")
+        machine.succeed("runuser -u splanc -- test -w /run/splanc-update-request")
+
+    with subtest("wrong key and unsigned releases are rejected when confirmed"):
         for name in ("evil", "unsigned"):
-            machine.fail(f"splanc-system-update check --channel http://127.0.0.1:${toString port}/{name}.json")
+            machine.fail(f"splanc-system-update install --channel http://127.0.0.1:${toString port}/{name}.json")
             st = state()
             assert st["last_result"]["result"] == "failed", st
             assert "not signed by a trusted key" in st["last_result"]["message"], st
@@ -223,12 +245,14 @@ in
             machine.fail(f"nix-store --check-validity {B}")
             assert machine.succeed("readlink -f /nix/var/nix/profiles/system").strip() == A
 
-    with subtest("with an app connected, a release is only staged (delta download)"):
+    with subtest("confirmed with an app connected, a release is only staged (delta download)"):
         machine.succeed("systemctl stop splanc-bridge.service")
         machine.succeed("mkdir -p /run/splanc-bridge && echo '{\"v\": 1, \"state\": \"paired\", \"clients\": 1}' > /run/splanc-bridge/status.json")
-        machine.succeed("splanc-system-update check --channel http://127.0.0.1:${toString port}/bad.json")
+        machine.succeed("splanc-system-update install --channel http://127.0.0.1:${toString port}/bad.json")
         st = state()
         assert st["staged"]["toplevel"] == BBAD and st["pending"] is None, st
+        assert st["staged"]["confirmed"] is True, st
+        assert "no app is connected" in machine.succeed("cat /run/splanc-system-update/status.json")
         assert 0 < st["staged"]["fetched_paths"] < st["staged"]["total_paths"], st["staged"]
         machine.succeed(f"nix-store --check-validity {BBAD}")
         assert booted() == A
@@ -236,6 +260,7 @@ in
         machine.sleep(15)
 
     with subtest("a system that fails its health check is rolled back"):
+        # The timer applies the update the user confirmed, now that no app is connected.
         machine.succeed("systemctl start --no-block splanc-system-update.service")
         wait_reboot(settle=False)  # -> bbad
         # bbad's confirm gives up after healthTimeout and reboots into A.
@@ -245,20 +270,24 @@ in
         assert st["last_result"]["result"] == "rolled_back", st
         assert "splanc-ota-canary" in st["last_result"]["message"], st
         assert BBAD in st["bad"] and st["pending"] is None, st
+        assert (st["available"] or {}).get("toplevel") != BBAD, st
         assert machine.succeed("readlink -f /nix/var/nix/profiles/system").strip() == A
         serve()
         machine.succeed("splanc-system-update check --channel http://127.0.0.1:${toString port}/bad.json")
         assert "failed on this bridge before" in machine.succeed("cat /run/splanc-system-update/status.json")
 
-    with subtest("update to B: new service runs, state survives, health check commits"):
-        # (the timer's next channel check is hours away: check now, as the CLI does)
+    with subtest("update to B, confirmed on the screen: new service runs, state survives, commits"):
         # The bridge's identity (the real agent writes it) must survive unchanged.
         machine.wait_until_succeeds("test -s /var/lib/splanc-bridge/bridge.json", timeout=120)
         identity = machine.succeed("sha256sum /var/lib/splanc-bridge/bridge.json")
-        machine.succeed(
-            "systemd-run --no-block --collect --unit ota-check-now "
-            "/run/current-system/sw/bin/splanc-system-update check"
+        # "Check now" then "Install" on the OLED: the display (user splanc) drops
+        # request files; splanc-update-request (root) starts the units.
+        machine.succeed("runuser -u splanc -- touch /run/splanc-update-request/check")
+        machine.wait_until_succeeds(
+            "grep -q '\"state\": \"available\"' /run/splanc-system-update/status.json", timeout=120
         )
+        assert booted() == A and state()["available"]["toplevel"] == B
+        machine.succeed("runuser -u splanc -- touch /run/splanc-update-request/install-system")
         wait_reboot()
         assert booted() == B, booted()
         machine.wait_for_unit("splanc-ota-dummy.service")
