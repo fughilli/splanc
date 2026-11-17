@@ -443,6 +443,60 @@ Once the mesh runs, `MeshStatus` reports each member's best-neighbour RSSI and t
 it, so an installer sees a weak link on site. HITL can't reproduce the enclosure; the bench
 measurement is the check.
 
+### 4.6 PHY rate: adapted per node, gated by measurement
+
+The owner does not pick a rate: the measurements decide (Q12). Every node adapts its broadcast
+rate on its own, and R0 and the HITL scenarios gate what ships.
+
+**Adaptation** (modelled in `meshsim`, `RateCtl`; firmware in M3):
+
+- **Ladder**: 1 Mb/s DSSS → 6 → 12 → 24 Mb/s OFDM. A node starts at the most robust rate.
+- **Feedback** is the share of its frames that its *solid* neighbours still receive. On
+  hardware this comes from per-neighbour heard counts in their adverts (up to 8 neighbours,
+  ~16 B) and from MAC ACKs on unicasts.
+  - A neighbour is solid when the most robust rate reaches it with a 10 dB margin.
+  - Marginal neighbours are left to relays: holding the whole mesh at 1 Mb/s for them costs
+    more airtime than it saves.
+- **Rules**, per 1 s window:
+  - Step **up** after two windows at ≥ 90 %.
+  - Step **down** below 80 %.
+  - A failed probe doubles the hold-off before the next one (up to 32 s).
+  - On a **busy channel** (> 50 % of the window sensed busy), poor delivery means collisions,
+    not range, so step **up** (shorter frames).
+- Live control is never paused for adaptation: a rate change takes effect on the next frame.
+
+Measured in meshsim. 30 Hz live control, grid, enclosure losses spread 5–25 dB, 5 % random
+loss, with and without people walking (links shadowed 12 dB for 1–3 s at random):
+
+| Nodes | 1 Mb/s | 6 Mb/s | 12 Mb/s | 24 Mb/s | **Adaptive** (mean rate)       |
+| ----- | ------ | ------ | ------- | ------- | ------------------------------ |
+| 6     | 99.6 % | 97.3 % | 79 %    | 71 %    | **98.4 %** (3.8 Mb/s)          |
+| 6, walking | 99.6 % | 98.7 % | 87 % | 71 %   | **97.3 %** (4.3 Mb/s)          |
+| 16    | 100 %  | 98.4 % | 96 %    | 90 %    | **99.6 %** (4.9 Mb/s)          |
+| 16, walking | 100 % | 94.3 % | 97 % | 86 %   | **99.2 %** (2.9 Mb/s)          |
+| 32    | 61 %   | 96.6 % | 91 %    | 80 %    | **96.1 %** (4.4 Mb/s)          |
+| 32, walking | 53 % | 95.9 % | 89 % | 77 %   | **93.1 %** (2.5 Mb/s)          |
+
+- Adaptation lands within a few percent of the best fixed rate without knowing it in
+  advance, and never collapses the way 1 Mb/s does at 32 nodes.
+- In a 6-fixture room with strong links it climbs to 24 Mb/s (meshsim scenario).
+- **Known shortfall**: at 32 nodes under heavy live load it settles below 6 Mb/s. M3 tunes
+  the congestion rule against the node's own offered load, or adds a 6 Mb/s floor once every
+  solid neighbour is reached.
+
+![PHY rate: fixed vs adaptive](mesh/phy-rate.png)
+
+**Pass criteria** (the gate, not a number picked up front):
+
+| Gate                       | Test                                                                         | Pass                                                                                     |
+| -------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| R0, enclosure link budget  | §4.5: RSSI both ways at 1/3/5 m, people walking, 4 orientations              | Every fixture-to-fixture link ≥ the 6 Mb/s sensitivity + 10 dB at the 1st percentile (−78 dBm); otherwise the install runs adaptive with a 1 Mb/s floor and fewer live Hz |
+| Convergence                | `mesh_smoke` HITL, 2 DUTs, then all bench DUTs                               | Settles within 5 s of a change; no more than one rate change per 10 s per node when nothing moves |
+| Live control               | `mesh_gateway` HITL at the target rate for the install (§6.4)                 | ≥ 99 % of live updates delivered, p99 latency < 50 ms                                    |
+| Walking                    | `mesh_soak` with people (or an attenuator ladder) between DUTs               | Live delivery stays ≥ 97 %; no node stuck below 6 Mb/s once the obstruction clears       |
+| Bulk                       | `mesh_effect`                                                                | Blob to all members, no rate-induced retries beyond 10 %                                 |
+
+
 ## 5. Protocol
 
 ### 5.1 Envelope
@@ -628,6 +682,59 @@ Lead: `apply_at` must be later than the slowest delivery. One hop with relay del
 plus one want-ack retry adds 1 s. The default lead stays the bridge's 150 ms for one or two
 hops, and 300 ms when the target set is three hops out. A member that receives a change after
 its `apply_at` applies it on arrival and counts it late (reported in `MeshStatus`).
+
+### 6.4 Live updates: as fast as the airtime allows, smooth on every member
+
+Live moves (fader drags, uncommitted uniforms) should feel immediate on every fixture (Q13).
+
+**On the mesh** (`MeshStack::send_live`, M2):
+
+- **Coalesced per frame.** A new live update replaces one not yet sent, so the mesh always
+  carries the newest value at whatever rate its airtime allows. Live traffic never queues
+  behind itself.
+- **Compact and batched.** One packet carries several uniforms, each as uniform id + 16-bit
+  value, plus a sequence number (8 B for two uniforms). Deltas against the last committed
+  scene keep it small. The per-receiver MACs (8 B per member, §7.9) dominate the size, not
+  the values.
+- **Priority over bulk.** Live control relays at high priority; bulk is evicted first (§10.6).
+- **Rate per mesh size.** The app offers updates at its UI rate (60 Hz or more); coalescing
+  turns that into the rate the mesh carries.
+
+**Measured** (meshsim, grid, mixed links, 5 % loss, people walking; offered 15–120 Hz):
+
+| Nodes | Highest rate at ≥ 99 % delivered                         | ≥ 97 % delivered | What members receive at 120 Hz offered |
+| ----- | -------------------------------------------------------- | ---------------- | --------------------------------------- |
+| 6     | 15 Hz (99.7 %, adaptive)                                  | 60 Hz            | 112–116 updates/s                       |
+| 16    | **45 Hz** (99.0 %, adaptive)                              | 60 Hz            | 82–107 updates/s                        |
+| 32    | none: 98.7 % at 15 Hz is the best                         | 15 Hz            | 41–96 updates/s                         |
+
+**On every member: interpolation on its own render clock** (`firmware/mesh/src/interp.rs`):
+
+- Each live update is a keyframe that applies at `apply_at = sent + playout delay`, in mesh
+  time (§6.2). The playout delay is 2.5 keyframe intervals, at least 33 ms: 83 ms at 30 Hz,
+  56 ms at 45 Hz, 33 ms at 60 Hz and above.
+- A member renders at 60 fps or more and samples each uniform at its render time:
+
+| Uniform type             | Between keyframes                         | Past the last keyframe (loss)                                                   |
+| ------------------------ | ----------------------------------------- | ------------------------------------------------------------------------------- |
+| float (fader, speed)     | Catmull-Rom (Hermite); linear at the ends | keep its velocity for ≤ 1 interval, ease to a hold over the next; hold after   |
+| colour                   | linear per channel (linear RGB)           | hold                                                                            |
+| int, enum, bool, effect  | step at `apply_at`                        | hold                                                                            |
+
+- **Smoothness** (a 0.5 Hz full-scale fader, rendered at 60 fps, error against the true
+  motion delayed by the playout delay): wherever delivery is ≥ 97 % (14 of 36 runs), Hermite's
+  RMS error has a median of 0.0004 of full scale and a worst case of 0.015. Linear is a median
+  3× worse, and step a median 140×.
+  With interpolation a 30 Hz mesh rate already renders as smooth motion at 60+ fps; the
+  playout delay is the price.
+- A track holds 8 keyframes (enough for the delay at 120 Hz).
+
+![live update rate, delivery and smoothness](mesh/live-rate.png)
+
+So the radiolarians (6 fixtures) can take 60 Hz live moves at ≥ 97 % and render them smoothly.
+A 16-fixture install runs comfortably at 45 Hz. Past ~32 fixtures the per-receiver MACs are
+the limit; a broadcast authenticator is the open item there (Q14, deferred).
+
 
 ## 7. Membership, groups and security
 
@@ -908,6 +1015,30 @@ app re-provisions it.
 - A stolen phone or bridge holds the admin secret. Rotate it from another admin's app
   (staged as M9b).
 
+
+**When crypto cost is paid** (Q11). Never per command, and never on the render path:
+
+| When                                                           | Who pays                                                | What                                          |
+| -------------------------------------------------------------- | ------------------------------------------------------- | --------------------------------------------- |
+| An admin unlocks (the app presents a grant to a gateway)       | each member, once                                       | 1 ECDSA verify + 1 ECDH (C6 est. 5–15 ms)      |
+|                                                                | the gateway, once per member Ack                        | 1 ECDH each                                   |
+| The app switches gateway (a new grant to a new fixture)        | as at unlock                                            | as at unlock                                  |
+| Grant renewal, before T                                        | each member, once                                       | 1 ECDSA verify (same session: no ECDH, no new keys, no Acks) |
+| A member reboots or joins mid-session                          | that member, and the gateway once for its Ack           | 1 verify + 1 ECDH; 1 ECDH                      |
+| Every command                                                  | each recipient                                          | 1 HMAC-SHA256 (tens of µs); no public-key work |
+
+- **Off the render path.** Members queue grants that need a verify, and gateways queue Acks
+  that need an ECDH (`MeshStack::run_crypto`). Firmware drains that queue from a
+  low-priority task, below the render task and the netstack. A slow verify delays only the
+  session's start; it never hitches a frame. Held commands wait for it.
+  - The queue costs ~340 B on the C6: one pending grant and two pending Acks.
+- **Renewal ahead of expiry.** The gateway raises `GrantRenewalDue` 10 min before T. The app
+  (or the bridge) signs a renewal in the background, with the same session and a later T, and
+  presents it. Members re-verify off the render path while the old grant is still valid.
+  - A live show never waits on a renewal. In meshsim, 750 commands across two renewals and
+    the original expiry: none missed, 20 crypto jobs in all.
+- **Measure in M3a.** Until then the C6/P4 figures stay estimates.
+
 ### 7.10 What remains unresolvable
 
 - **An eclipsed node** (its only neighbours are malicious) can be **desynced and starved**.
@@ -1079,30 +1210,33 @@ limit is the BLE gateway's share (§4.3), not the mesh.
 The C6 front ends of the radiolarians have no render task and no LED buffers, so the mesh's RAM
 is not a concern there. On a standalone C6 player it still matters at large LED configs.
 
-Measured in M2: `size` of each piece as a `.bss` static on the C6 (riscv32imac, `-c opt`,
-`nm -S` on `//firmware/mesh:mesh_ram_probe`), at the 802.11 payload `P = 200`:
+Measured: each piece as a `.bss` static on the C6 (riscv32imac, `-c opt`, `nm -S` on
+`//firmware/mesh:mesh_ram_probe`), at the 802.11 payload `P = 200`:
 
-| Item                                                                         | M2, first draft | M2 now     |
-| ---------------------------------------------------------------------------- | --------------- | ---------- |
-| `swarm_net` (relays, outbox, events and app queue: 8 → 4 each; dedup; pages) | 12,648 B        | 9,360 B    |
-| Envelope: keys, 64-bit counter, replay table (64 × 16 B)                     | 1,152 B         | 1,264 B    |
-| Membership: state (804 B, persisted), pending joins, gateway's pending list  | 2,688 B         | 1,752 B    |
-| Admin sessions (member) / gateway roster (16 members, pairwise keys)         | —               | 200 / 608 B |
-| Rotation: gateway rekeyer / member side                                      | —               | 496 / 240 B |
-| Router, admin gate, held command, neighbours, plain-frame buffers            | ~600 B          | ~1,100 B   |
-| **Whole `MeshStack` (gateway roster 16)**                                    | **17,232 B**    | **15,080 B** |
-| Open mode (feature `open_mode`, M7b): guest table 1,040 + guest replay 272 + follower 56 | in the above | **+1,368 B** when compiled in |
+| Item                                                                          | M2 first draft | M2 review    | M2 now        |
+| ----------------------------------------------------------------------------- | -------------- | ------------ | ------------- |
+| `swarm_net` (queues 8 → 4; the custodian spill slot behind a feature, off)    | 12,648 B       | 9,360 B      | 9,128 B       |
+| Envelope: keys, 64-bit counter, replay table (64 × 16 B)                      | 1,152 B        | 1,264 B      | 1,264 B       |
+| Membership: state (804 B, persisted), pending joins, gateway's pending list   | 2,688 B        | 1,752 B      | 1,760 B       |
+| Admin sessions (member) / gateway roster (16, pairwise keys)                  | —              | 200 / 608 B  | 200 / 608 B   |
+| Rotation: gateway rekeyer / member side                                       | —              | 496 / 240 B  | 496 / 240 B   |
+| Background crypto queue (a grant, two Acks), live update, hop and pacing state | —             | —            | ~370 B        |
+| **Whole `MeshStack` (gateway roster 16)**                                     | **17,232 B**   | **15,104 B** | **15,472 B**  |
+| Open mode (feature `open_mode`, M7b)                                          | (included)     | +1,368 B     | **+912 B**    |
 
 There is no heap. `tick()` also takes a caller-provided scratch of about 0.7 KB.
 
-- The **gateway roster** grows with the mesh: 16 entries = 608 B, 64 = 1,952 B. A standalone
-  C6 player keeps 16. A P4 + C6 front end can keep 64 or more, or keep the roster on the P4.
-- **Open mode's budget is 1.4 KB.** About 0.6 KB of that can be saved with 32-bit timestamps
-  and compact rate buckets in the guest table. It must fit within the current figure when
-  M7b turns it on.
-- The design's first estimate (~7.5 KB) assumed `swarm_net` at ~4 KB. At `P = 200` its packet
-  slots dominate. Shrinking further means fewer slots (each holds a full 200 B packet) or a
-  byte ring instead of fixed slots. That is the next lever if a C6 player needs it.
+- The **gateway roster** grows with the mesh: 16 = 608 B, 64 = 1,952 B. A standalone C6
+  player keeps 16; a P4 + C6 front end can keep 64 or more.
+- **Open mode's budget is accepted** (Q16). The guest table was trimmed to 32-bit timestamps
+  and an in-band empty marker (1,040 → 588 B), so open mode adds 912 B, within the 1.4 KB
+  budget.
+- The **custodian spill** (~230 B) is behind the `custodian_spill` feature, off on firmware
+  (Q17). Host builds (Pi, meshsim) keep it.
+- The background crypto queue (§7.9) is the price of never doing public-key work on the tick:
+  ~340 B.
+- Shrinking further means fewer `swarm_net` slots or a byte ring. That is the next lever if a
+  C6 player needs it.
 
 ### 10.5 Minimum set that ships radiolarians
 
@@ -1142,10 +1276,10 @@ simulated them, and kept only what helps.
 | Class (C6, P4, Pi) and relay credit in every advert                                        | ~100 B (8 neighbours) | **Keep**: picks bulk sources and page servers, sizes gateway rosters                                 |
 | Small C6 queues (4 relay, 4 outbox) with a priority drop policy: bulk, then status, never control/time/membership/freshness first | saves 3.3 KB | **Keep**: control is never starved by bulk                                 |
 | **Source pacing of bulk** (`send_bulk`: ≥ 20 ms between bulk packets, and only while neighbours advertise credit) | a few bytes | **Keep, the one that matters**: far-side delivery through a C6 cut vertex rises from 40–53 % to 69–89 % |
-| Custodian spill: a P4/Pi keeps evicted bulk/normal relays in a deep store (P4 RAM over SDIO, 100 µs + 20 MB/s per transfer; Pi RAM), released while neighbours have credit | ~230 B (one spill slot) | **Drop or gate behind a feature**: never exercised (see below) |
+| Custodian spill: a P4/Pi keeps evicted bulk/normal relays in a deep store (P4 RAM over SDIO, 100 µs + 20 MB/s per transfer; Pi RAM), released while neighbours have credit | 0 on firmware (feature `custodian_spill`, off) | **Behind a feature, off by default** (owner, Q17): never exercised so far |
 | Relay-delay bias by class (custodians relay bulk early, C6s late)                          | 0               | **Removed**: made a C6 cut vertex cancel the only relay toward the far side (3 % delivery)                |
 | Page requests prefer custodians among equally advanced neighbours                          | 8 B             | Keep (harmless), but no measurable gain                                                                   |
-| Hop limit per install (default 5, up to 7)                                                 | 0               | **Keep**; make it adaptive (below)                                                                        |
+| **Adaptive hop limit** (Q15): the diameter seen (own + neighbours' adverts) + 1, 2..=15; a probe flood at 15 once a minute per node | 6 B | **Keep**: a 32-node line goes from 20–40 % to 63 % (below) |
 
 The **Pi** runs the same crates' std build (`//firmware/mesh`, feature `host`). The Backhaul
 trait and the frame format are host-portable, and nothing blocks a std/Linux build.
@@ -1211,9 +1345,28 @@ header (+1 B, §4.1).
    - A line of 32 fixtures 5 m apart is about 13 hops long at OFDM range. It reaches 20 / 31 /
      38 % of control at hop limits 3 / 5 / 7.
    - Clustered layouts with bridges plateau at ~55–59 %.
-   - Default 5, a per-install setting up to 7. Better: **adaptive**, where the gateway raises
-     the limit to the largest hop count it sees in members' status, capped at 7. A venue
-     longer than that needs the IP backhaul (M10) or more bridges.
+   - **Adaptive hop limit** (Q15, M2):
+     - Every node records the most hops any packet took to reach it in the last 5 minutes.
+       Adverts carry that diameter estimate, and each node takes the maximum of its own and
+       its neighbours'.
+     - Originations use estimate + 1, between 2 and 15 (the MeshPacket field's bound).
+     - Every node floods a 1-byte probe at hop limit 15 once a minute, so far nodes are
+       discovered even before anything reaches them.
+     - Results at 32 nodes, 30 Hz control:
+
+       | Layout    | Fixed 3 / 5 / 7     | Adaptive |
+       | --------- | ------------------- | -------- |
+       | Line      | 20 / 31 / 40 %      | **63 %** |
+       | Grid      | 85 / 85 / 86 %      | 88 %     |
+       | Random    | 96 / 99 / 97 %      | 97 %     |
+       | Clustered | 54 / 60 / 57 %      | 58 %     |
+
+       A line of 16 is reached end to end at limit 9 (27 of 30 commands, against 0 at a
+       fixed 3).
+     - The clustered layout is limited by its weak bridge links, not hops. A line longer than
+       15 hops needs the IP backhaul (M10) or more bridges.
+
+   ![fixed vs adaptive hop limit](mesh/hops.png)
 
    ![big images and hop limits](mesh/stress-images-hops.png)
 
@@ -1457,8 +1610,9 @@ The work it moves to later milestones:
 | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | M3a    | Measure ECDSA-P256 verify and ECDH on the C6 and P4 (estimates in §7.9); measure 6 Mb/s OFDM range through the enclosures (§10.6)                                                            |
 | M3     | Mesh frames at 6 Mb/s OFDM where range allows; the counter mark and replay marks in littlefs                                                                                                 |
-| M4     | Wire `timesync` (robust aggregation, step and slew rules) into beacons and the show clock                                                                                                      |
-| M5     | Live moves coalesced to ≤ 30 Hz on the mesh; `mesh_unlock{grant}` and the grant/roster in `MeshState`                                                                                       |
+| M3     | Per-node rate adaptation on hardware (heard counts in adverts, CCA busy time), tuned for heavy live load (§4.6)                                                                              |
+| M4     | Wire `timesync` (robust aggregation, step and slew rules) into beacons and the show clock; live keyframes applied on mesh time with `interp` (§6.4)                                            |
+| M5     | `send_live` behind the app's fader stream (compact batched uniforms); `mesh_unlock{grant}`, `GrantRenewalDue` to the app, `run_crypto` in a low-priority task                                |
 | M7     | Firmware `DeviceKey` on MbedTLS (per-device TLS key); the app derives the admin signing key and signs grants and rekey orders; admin-signed member certificates (node id ↔ device key); per-sender pairwise freshness for non-gateway peers |
 | M7b    | Open mode behind the `open_mode` feature (+1.4 KB on the C6 as written; −0.6 KB possible)                                                                                                     |
 | M7c    | `RekeyRequest` for members absent during a rotation; closed ↔ locked transitions in the app                                                                                                   |
@@ -1560,23 +1714,22 @@ swarm code, and Splanc's own framing.
 
 **New:**
 
-- **Q11.** ECDSA cost: the estimates in §7.9 are to be measured in M3a. Is a session start of
-  tens of ms per member acceptable (it runs once per admin session)?
-- **Q12.** Mesh PHY: move mesh frames to 6 Mb/s OFDM where range allows (needed for live
-  control beyond ~8 fixtures)?
-- **Q13.** Live moves: coalesce to ≤ 30 Hz on the mesh (the app's fader stream can stay at
-  60 Hz)?
-- **Q14.** Meshes beyond ~32 fixtures: per-receiver MACs cost 8 B per member per command.
-  - (a) Accept several packets per command.
-  - (b) Use a delayed-key broadcast authenticator (TESLA-style) for live moves, which adds about
-    one interval of latency and needs loose time sync.
-  - (c) Allow live moves under a per-session group key. Insiders could then forge live moves
-    but not commits, like open-mode guests.
-- **Q15.** Hop limit: M2 makes it 5 by default and a per-install setting up to 7. Should it
-  also be adaptive (the gateway raises it to the largest hop count it sees)?
-- **Q17.** Custodian spill (a deep relay store on P4/Pi) costs ~230 B on every C6 and was never
-  used in the sweeps. Remove it, or keep it behind a feature for a future push-based M6?
-- **Q16.** Open mode's 1.4 KB on the C6: accept it as the M7b budget?
+**Answered 2026-11-17 (Q11–Q17):**
+
+- **Q11.** Session crypto never blocks render. It runs in a low-priority task, and grants are
+  renewed in the background ahead of expiry. When it is paid is spelled out in §7.9; the
+  figures are measured in M3a.
+- **Q12.** No fixed rate. Per-node adaptation, with pass criteria tied to R0 and the HITL
+  scenarios (§4.6).
+- **Q13.** Approved, as responsive as the airtime allows: coalescing, compact batches,
+  priority over bulk, and on-device interpolation on mesh time (§6.4).
+- **Q14.** *Deferred*: a broadcast authenticator for live moves in meshes past ~32 members.
+  Options stay as listed: several packets per command, a TESLA-style delayed-key MAC, or
+  group-key live moves.
+- **Q15.** Adaptive hop limit (§10.6).
+- **Q16.** Open mode's budget accepted; trimmed to +912 B (§10.4).
+- **Q17.** The custodian spill stays, behind the `custodian_spill` feature, off by default
+  (§10.4, §10.6).
 
 ## 18. Sources
 
