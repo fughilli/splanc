@@ -143,21 +143,40 @@ reaches splanc.io without a manual pin bump.
 
 ## Release notes and "What's new"
 
-The app shows each release's notes in a **What's new** card. After an update, a
+The app shows release notes in a **What's new** card. After an update, a
 sparkle bubble appears in the lower-left corner on the first launch of the new
 version, including a PWA pull-to-refresh that loaded a new deploy. The bubble
 sits where the tour hint sits; a fresh install gets the tour hint instead. The
-card is always available from **About → Version → What's new**. It lists every
-version since the one the user last ran, plus any newer firmware release.
+card is always available from **About → Version → What's new**.
 
-The notes are the **GitHub release of the `app-vX.Y.Z` tag**. The app never
-calls GitHub. `tools/whatsnew/whatsnew_mirror.py` copies the newest 10 app
-releases and 3 firmware releases into `whatsnew/index.json`, and every image or
-video they show into `whatsnew/media/`, both next to the app. The mirror runs
-in three places:
+The card has a product dropdown (Splanc app, Firmware, Bridge) and a
+**Jump to…** version picker, pinned at the top. Below them is one long scroll
+with every release of that product, newest first, each under a version and
+date heading. Jump to… lists the same versions, latest on top, and scrolls to
+the one picked. The sparkle opens the card on the Splanc app at the top, with
+every version since the one last run marked **New**. About opens it on the
+product picked last time.
+
+The notes are the **GitHub releases**. A product is a tag prefix: `app-vX.Y.Z`
+is the Splanc app, `firmware-vX.Y.Z` the firmware, and `pi-bridge-vX.Y.Z` the
+bridge. Other tags (`pi-bridge-ota-*`, data, scaffold and stage tags) are not
+shown. To add a product, add one line to `PRODUCTS` in
+`tools/whatsnew/whatsnew_mirror.py`. The app never calls GitHub. The mirror
+writes, next to the app:
+
+- `whatsnew/index.json`: the product list, with each product's release count
+  and newest version, and the notes `digest`;
+- `whatsnew/<product>.json`: that product's full history (the app fetches a
+  product's file the first time it is picked);
+- `whatsnew/media/`: every image or video the notes show, named by content hash
+  so a file shared by several releases is stored once.
+
+`--limit N` caps each product at N releases (default: all). The mirror runs in
+three places:
 
 - the `app-v*` Release workflow, after it creates the release with generated
-  notes (for Pages and Cloudflare, and in the webapp tarball);
+  notes (for Pages and Cloudflare, and in the webapp tarball). Other products'
+  releases published after that app release are left out of that build;
 - the Test workflow's site build (main and PR previews);
 - every splanc.io deploy (Studio-Fug/splanc.io `scripts/stage-app.mjs`), which
   re-mirrors at the staged tag. Its scheduled check also redeploys when the
@@ -165,8 +184,9 @@ in three places:
 
 To write notes:
 
-1. Edit the release on GitHub (Releases → `app-vX.Y.Z` → Edit). The generated
-   PR list is a starting point; rewrite it for users. Markdown is fine.
+1. Edit the release on GitHub (Releases → `app-vX.Y.Z`, `firmware-vX.Y.Z` or
+   `pi-bridge-vX.Y.Z` → Edit). The generated PR list is a starting point;
+   rewrite it for users. Markdown is fine.
 2. For images or short videos, drag them into the editor. GitHub uploads them
    as `github.com/user-attachments/...` links, and the mirror downloads them.
    You can also attach PNG/JPEG/GIF/WebP/MP4/WebM files as release assets;
@@ -224,6 +244,11 @@ The publish tree is staged the same way for both targets — the layout lives in
 
 ## Testing with a phone against the virtual wall (no LED hardware)
 
+To test with the **installed** phone app (add the wall by address like any
+player, including hue-code captures), use `bazel run //pi/player_rs:wall --
+--leds 400` instead: see docs/host-player.md "Virtual LED wall". The flow below
+serves the app itself from the M2 dev server.
+
 One command serves everything (M2 + built app, HTTPS with a persistent
 self-signed cert under `.ledmapper/`):
 
@@ -262,8 +287,34 @@ skipping auto-negotiation for that field), `?imumap=+a,+b,+g;+x,+y,+z`
 (DeviceMotion axis-mapping override — fit a new device with
 `bazelisk run //pi/reconstruction:vio_replay -- <trace> <decoded> --diagnose`),
 `?fx=` (focal seed; otherwise a cached calibration, otherwise a 70°-FOV
-guess — fx error shifts metric scale ~1:1, shape is unaffected). Wall page:
-`?cols=N`, `?gap`, `?margin`, `?dot` (dot diameter as a fraction of pitch).
+guess — fx error shifts metric scale ~1:1, shape is unaffected),
+`?sync=stagger_pilot` (REQUEST the hue code v2 staggered pilot; see below). Wall
+page: `?cols=N`, `?gap`, `?margin`, `?dot` (dot diameter as a fraction of
+pitch), `?sync=stagger_pilot|on_off` (FORCE the rendered sync pattern).
+
+### Testing hue code v2 (staggered pilot) against the wall
+
+The staggered-pilot code (`syncPattern: "stagger_pilot"`,
+docs/design/hue-code-v2.md phase 2) is opt-in. The phone asks for it when the
+capture page is opened with `?sync=stagger_pilot`: start_mapping carries
+`syncPattern`, and the phone decodes whatever `codeParams.syncPattern` the
+device answers with. A player that doesn't support it (every C6/P4 today) keeps
+v1 and says so. Supporting devices: the virtual wall player (`bazel run
+//pi/player_rs:wall`, docs/host-player.md; it advertises `hue_stagger_pilot`)
+and this dev server. The dev server can also hand the code out to every
+capture without the request: `bazelisk run //web:serve -- --sync-pattern
+stagger_pilot`.
+
+The wall renders what the device runs. Its status line reads
+`sync stagger_pilot`. The phone HUD adds `pilot k … · cyc … miss … φrej …`:
+
+- `pilot k`: the locked whole-frame latency;
+- `cyc`: per-track pilots found;
+- `miss`: delimiter misses;
+- `φrej`: phase-check rejects.
+
+`wall.html?sync=…` forces the wall's rendering only (debugging); the phone must
+then be decoding the same pattern.
 
 ### The hue code + auto-negotiated capture configuration
 
