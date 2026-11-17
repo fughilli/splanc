@@ -1964,8 +1964,8 @@ pub fn upload_malformed() -> pb::ServerMessage {
 }
 
 /// The welcome feature a player advertises when it can run the hue code v2
-/// staggered pilot (`start_mapping` `syncPattern: "stagger_pilot"`). Only the
-/// host player sets it today; firmware players keep v1.
+/// staggered pilot (`start_mapping` `syncPattern: "stagger_pilot"`). The host
+/// player and the C6/P4 firmware set it.
 pub const FEATURE_STAGGER_PILOT: &str = "hue_stagger_pilot";
 
 /// pb CodeParams from a derived spec (mirrors codebook.py code_params_for;

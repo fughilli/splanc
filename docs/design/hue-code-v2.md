@@ -2,7 +2,7 @@
 
 Status: decided. Phase 1 (measurement) is implemented. Phase 0 (one Rust
 kernel) is PR #488 (merged). Phase 2 is implemented wall-first (kernel,
-virtual wall, phone decoder; no firmware advertisement yet): see "Phase 2 as
+virtual wall, phone decoder; C6/P4 firmware advertises it too): see "Phase 2 as
 built" below. The owner has confirmed the pilot sequence and the other
 decisions below; phases 2 and 3 are ready for implementation.
 
@@ -284,8 +284,8 @@ Costs:
   the walk inside `pattern_color`. The phone builds an id ↔ index table once
   per code book (`pk_stagger_fill`, 4 bytes per id).
 - **Decode.** Maps the index back by rank, O(n) checks, in the app only.
-- **Firmware.** C6/P4 firmware never runs this path today. It would need the
-  same in-order walk.
+- **Firmware.** C6/P4 firmware runs the same path: its render loop calls
+  `pattern_color` in LED order, so the memoised walk is amortised there too.
 
 One part of the decided design is deferred: **constant luminance**. The pilot
 and data use the same full-drive palette colours. The app-computed drive
@@ -330,7 +330,7 @@ per id and per pilot frame.
 | 7   | Split-blob colour (`haloHue`)  | Deferred. Splits come from bloom, which the pilot removes.                                                                                                                                                                 |
 | 8   | Tracker, 3D overlay, IMU lock  | None needed.                                                                                                                                                                                                               |
 | 9   | Group capture                  | Deferred. The φ check uses the coded id, so it holds across fixtures, but k is a single value. Fixtures whose latencies differ by a whole frame need a k per fixture.                                                      |
-| 10  | Generators and renderers       | Done in the kernel (`color_index_for_frame`). The host player (`pi/player_rs`, the wall player), the wall page, the phone's synthetic source and the Python binding (`sync_pattern=`) render it. C6/P4 firmware links the same core but does not advertise the feature, so it stays on v1. |
+| 10  | Generators and renderers       | Done in the kernel (`color_index_for_frame`). The host player (`pi/player_rs`, the wall player), the wall page, the phone's synthetic source and the Python binding (`sync_pattern=`) render it. C6/P4 firmware links the same core and advertises the feature too. |
 | 11  | Telemetry                      | Done: `pilotCycles`, `delimiterMisses`, `phaseRejects`, `rejectedPhaseUnlocked` and `phaseK`. The first three are folded into link telemetry. The HUD shows `pilot k … cyc … miss … φrej …`.                               |
 
 **Wire, for now.**
@@ -340,15 +340,14 @@ per id and per pilot frame.
   with `?sync=stagger_pilot`.
 - **Who honours it.** The shared player core (`firmware/player`) runs the
   staggered pilot only if the build advertises the `hue_stagger_pilot` feature.
-  Only the host player (`pi/player_rs` `player_host`, and so the virtual wall
-  player) advertises it. C6 and P4 firmware do not, so they reply with
-  `"on_off"`. The dev backend honours it too, and its `--sync-pattern
+  The host player (`pi/player_rs` `player_host`, and so the virtual wall
+  player) and the C6/P4 firmware (`firmware/player_app` FEATURES) advertise
+  it. A player without it replies with `"on_off"`. The dev backend honours it too, and its `--sync-pattern
   stagger_pilot` flag can hand the code out unrequested.
 - **What the phone decodes.** Whatever the reply's `codeParams.syncPattern`
   says, so an unsupported request is v1 end to end. A configure keeps the
   capture's pattern.
-- **Next.** Requesting the code automatically from players that advertise it,
-  and firmware support.
+- **Next.** Requesting the code automatically from players that advertise it.
 
 ### Simulation results
 
