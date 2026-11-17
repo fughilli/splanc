@@ -6,7 +6,7 @@
 //! drives `swarm_net` over one backhaul ([`Node`]), with the mesh payload sized from the
 //! backhaul's MTU (§5.2). M1 of the PR plan (§15).
 //!
-//! M2 adds the Splanc layer's security, as pure logic tested on the host:
+//! M2 adds the Splanc layer's security and membership, as pure logic tested on the host:
 //!
 //! - [`envelope`]: the §5.1 envelope, AES-128-CCM on the netstack's CCM (`ccmp.rs`), a 64-bit
 //!   per-sender counter that never rolls over (low 32 bits on the wire, rebuilt by the
@@ -14,6 +14,11 @@
 //!   window with synced/unsynced sources; [`security`]: both as the [`Node`]'s frame guard.
 //! - [`admin`]: insider-resistant administration: admin-signed session grants, freshness by
 //!   challenge-response (not time), per-receiver MACs under pairwise keys.
+//! - [`rekey`]: rotation on removal (signed order, one broadcast, 26 B per member).
+//! - [`membership`]: closed / locked / open modes, provisioning (either path), the
+//!   self-configuring formation, joins by site secret or approval, revocations, groups, mode
+//!   transitions; [`msg`]: their messages and the capacity classes; [`guest`]: open mode
+//!   (feature `open_mode`, off until M7b).
 //! - [`ports`]: §5.3's ports and the dispatch policy in front of them.
 //!
 //! no_std, no allocation. The std build (feature `host`) adds the in-memory [`loopback`]
@@ -26,13 +31,18 @@ pub mod codec;
 pub mod crypto;
 pub mod envelope;
 pub mod groups;
+#[cfg(feature = "open_mode")]
+pub mod guest;
 #[cfg(any(test, feature = "host"))]
 pub mod host_keys;
 pub mod link;
 #[cfg(any(test, feature = "loopback", feature = "host"))]
 pub mod loopback;
+pub mod membership;
+pub mod msg;
 pub mod node;
 pub mod ports;
+pub mod rekey;
 pub mod replay;
 pub mod security;
 
