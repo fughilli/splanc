@@ -66,6 +66,8 @@ import { registerChatDriver } from "../../net/remoteChat";
 import { mapStore } from "../../store/mapStore";
 import { deviceMaps } from "./deviceMapCard";
 import { appState } from "../app/state";
+import { deviceStore } from "../../store/deviceStore";
+import { shouldPushOnConnect } from "../../effects/editor/autoPush";
 import { StatusPill, confirmDialog, icon, toast, type PillState } from "../kit";
 import { aiSummary, appFileBugHook, confirmFilingText } from "../../bugs/appBugReport";
 import { installAcidStyles } from "./acidMode.css";
@@ -123,6 +125,8 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
   let lastWarnings: { line: number; col: number; msg: string }[] = [];
   /** The program last uploaded to the device (measure_on_device skips re-upload). */
   let uploadedFxb: Uint8Array | null = null;
+  /** The device uploadedFxb went to (a different device connecting still needs it). */
+  let uploadedTo: string | null = null;
   let lastUniforms: FxUniform[] = [];
   let currentSource = "";
   /** The last source that compiled AND passed the guard (what the fixture plays). */
@@ -182,6 +186,7 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
   };
   const unsubPill = appState.subscribe(() => {
     syncPill();
+    if (!disposed) pushOnConnect();
     if (play && !playMapIsFixture) void loadFixtureMap();
   });
   syncPill();
@@ -611,25 +616,57 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
     // (not for a kiosk visitor: their phone's library is not the owner's).
     if (!play) void persistSource(source);
 
-    // Upload to the device (with default uniform values), if connected.
-    let deviceNote = "not connected — wrote it but can't send it to a device yet";
+    // Upload to the device (with default uniform values), if connected. If not,
+    // it goes out as soon as a device connects (the appState listener below).
+    let deviceNote =
+      "NOT SENT: no device is connected yet — it's in the preview only, NOT on the lights (don't say it's playing); it will be sent automatically as soon as a device connects";
     const c = appState.client;
     if (c?.isConnected) {
-      try {
-        await withDeviceLock(() => c.submitEffect(ACID_EFFECT_ID, r.bytecode, true));
-        uploadedFxb = r.bytecode;
-        const defaults = r.uniforms.map((u) => ({ slot: u.slot, value: u.default }));
-        if (defaults.length > 0) c.setUniforms(defaults);
-        deviceNote = "uploaded + now playing on your device";
-        appendMsg("think", "📤 Sent it to your lights");
-      } catch (e) {
-        deviceNote = `upload failed: ${msg(e)}`;
-        appendMsg("think", "⚠️ Couldn't reach your device");
-      }
+      const up = await uploadToDevice(c, r.bytecode, r.uniforms);
+      deviceNote =
+        up === null ? "SENT: uploaded and now playing on your device" : `NOT SENT: the upload failed (${up}) — it is NOT on the lights`;
     } else {
-      appendMsg("think", "💡 Wrote it (no device connected)");
+      appendMsg("think", "💡 Wrote it — it'll go to your lights when one connects");
     }
     return `Compiled OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes; ${deviceNote}.${warningsFeedback(r.warnings)}`;
+  }
+
+  /** Upload a compiled program + its default uniforms; null on success, else the
+   * error. Shared by set_script and the push-on-connect path. */
+  async function uploadToDevice(c: NonNullable<typeof appState.client>, bytecode: Uint8Array, uniforms: FxUniform[]): Promise<string | null> {
+    try {
+      await withDeviceLock(() => c.submitEffect(ACID_EFFECT_ID, bytecode, true));
+      uploadedFxb = bytecode;
+      uploadedTo = deviceStore.activeId();
+      const defaults = uniforms.map((u) => ({ slot: u.slot, value: u.default }));
+      if (defaults.length > 0) c.setUniforms(defaults);
+      appendMsg("think", "📤 Sent it to your lights");
+      return null;
+    } catch (e) {
+      appendMsg("think", "⚠️ Couldn't reach your device");
+      return msg(e);
+    }
+  }
+
+  /** A device connected (or the session became ready) after the last effect was
+   * written: send it now, so the user doesn't have to leave and come back.
+   * Acid Mode always plays what it writes (set_script uploads unconditionally),
+   * so this is not gated on the editor's auto-push toggle; the dedupe is the
+   * editor's (effects/editor/autoPush.ts), per device. */
+  let wasConnected = appState.client?.isConnected ?? false;
+  function pushOnConnect(): void {
+    const c = appState.client;
+    const connected = c?.isConnected ?? false;
+    const push = shouldPushOnConnect({
+      autoPush: true,
+      connected,
+      wasConnected,
+      compiled: lastBytecode,
+      pushed: { fxb: uploadedFxb, device: uploadedTo },
+      device: deviceStore.activeId(),
+    });
+    wasConnected = connected;
+    if (push && c && lastBytecode) void uploadToDevice(c, lastBytecode, lastUniforms);
   }
 
   /** Run a candidate on a throwaway preview: sample a few frames for darkness and
@@ -657,9 +694,16 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
     let fraction = Number.NaN;
     try {
       const { table, stored } = await costTableStore.resolveTable();
-      const leds = Math.max(currentMap?.leds.length ?? 0, ACID_PLAY_BUDGET_LEDS);
-      const est = estimateAcrossDevices(bytecode, [fallbackTarget(table, leds, stored !== null)]);
-      fraction = est.binding?.budget.fraction ?? Number.NaN;
+      // Only a cost model calibrated on the user's board may refuse an effect as
+      // too slow: the uncalibrated simulator is noise (lag beats a cut-out, and
+      // the fixture's measurement is the gold standard).
+      if (stored?.origin !== "calibrated") {
+        fraction = 0;
+      } else {
+        const leds = Math.max(currentMap?.leds.length ?? 0, ACID_PLAY_BUDGET_LEDS);
+        const est = estimateAcrossDevices(bytecode, [fallbackTarget(table, leds, true)]);
+        fraction = est.binding?.budget.fraction ?? Number.NaN;
+      }
     } catch {
       fraction = 0; // no cost model available: don't block on it
     }
@@ -787,7 +831,10 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
         return { totalMs: est.totalMs, lowMs: est.errorBand.lowMs, highMs: est.errorBand.highMs };
       },
     });
-    if (r.deployed) uploadedFxb = bytecode;
+    if (r.deployed) {
+      uploadedFxb = bytecode;
+      uploadedTo = deviceStore.activeId();
+    }
     return unknown.length > 0 ? `${r.text}\n(Ignored unknown uniforms: ${unknown.join(", ")}.)` : r.text;
   }
 
