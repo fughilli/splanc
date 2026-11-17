@@ -70,6 +70,15 @@ paths = [
   "web/src/driver/**",
   "web/src/ui/screens/deviceSheet.ts",
   "web/src/ui/screens/addDevice.ts",
+  # The mapping journeys drive the real capture screen, code book and decoder
+  # under the synthetic camera (#518 changed capture.ts and merged without
+  # this lane, then broke it).
+  "web/src/ui/screens/capture.ts",
+  "web/src/code/**",
+  "web/src/cv/**",
+  "web/src/xr/syntheticCaptureSource.ts",
+  "firmware/player/**",
+  "firmware/pattern/**",
 ]
 lanes = ["android"]
 
