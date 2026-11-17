@@ -21,6 +21,26 @@ and `internal/tailnet`).
 ESP32 attached and your key authorized, SSHes you in, heartbeats to hold the
 lease, and releases on exit (`--keep` to hold it).
 
+## What you may change: DUTs, not hosts
+
+A rig has **host** machines and **DUTs** (devices under test). The hosts are rig
+infrastructure: they run the reservation daemon, the containers, Tailscale, and
+the Wi-Fi access point and DHCP that DUTs join. The DUTs include the ESP32 boards
+and the DUT Pis. Every rig and DUT Pi is on Ethernet.
+
+- **DUTs: change whatever a test needs.** Flash firmware, reconfigure radios,
+  load drivers or kernel modules, install packages, attach USB adapters. Reserve
+  the DUT first so CI isn't using it at the same time. Release the reservation
+  when you're done.
+- **Hosts: don't modify them for device development or experiments.** That means
+  no driver, kernel module, firmware, radio, network or package changes. A host
+  change is only for adding a missing HITL feature, and only when it's truly
+  needed. Make it upstream in
+  [fughilli/hitl-reserve](https://github.com/fughilli/hitl-reserve) where it
+  belongs there, then move the pin here. Otherwise make it through this
+  directory's deploy (`nix/`, [Deploying the rig](#deploying-the-rig)). Never
+  hand-edit a running host.
+
 ## BLE HCI capture (btmon)
 
 When you're debugging BLE — e.g. a provisioning `connect()` that times out and
