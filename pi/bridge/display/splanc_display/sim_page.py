@@ -161,6 +161,12 @@ td.n { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowr
           <button class="b" data-a="client_list" data-v="none">none</button>
           <button class="b" data-a="client_list" data-v="outdated" id="outdated">relay outdated</button></div>
         <table id="pclients"></table>
+        <div class="row"><label>Updates</label>
+          <button class="b" data-a="update_offer" data-v="system">system on offer</button>
+          <button class="b" data-a="update_offer" data-v="agent">agent on offer</button>
+          <button class="b" data-a="update_offer" data-v="none">up to date</button>
+          <button class="b" data-a="update_fail" data-v="1">next install fails</button>
+          <span class="mono" id="upd"></span></div>
       </div>
       <div id="breal" hidden>
         <div class="row"><label>Relay</label>
@@ -282,6 +288,9 @@ function showInfo() {
       `<td><button class="b" data-a="client_remove" data-v="${esc(c.id)}">` +
       `revoke (elsewhere)</button></td></tr>`).join("");
     if ($("pclients").dataset.rows !== crows) { $("pclients").innerHTML = crows; $("pclients").dataset.rows = crows; }
+    const u = b.updates;
+    $("upd").textContent = u ? `system ${u.system.state} · agent ${u.agent.state}` +
+      (u.requests.length ? ` · asked: ${u.requests.slice(-3).join(", ")}` : "") : "";
   } else {
     mark("relay", String(b.relay_up));
     $("relayurl").textContent = b.relay + (b.bridge_running ? "" : " · bridge exited");

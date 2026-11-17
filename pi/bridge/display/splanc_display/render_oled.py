@@ -18,6 +18,7 @@ from PIL import Image, ImageChops, ImageDraw
 from . import boot as boot_mod
 from . import draw as d
 from . import fonts, gliders
+from . import updates as upd
 from .anim import Scene, SlideView
 from .status import (
     WAITING,
@@ -42,6 +43,9 @@ M = 2  # margin: the 1 px burn-in shift never clips anything
 
 # The font set of the frame being drawn (fonts.active() at the start of render()).
 _fs = fonts.SETS[fonts.DEFAULT_SET]
+# The scene being drawn shows the "update available" arrow in its header (the
+# top-level pages, while an update is on offer; set per scene by _draw_scene).
+_flag = False
 
 
 def F(role: str):
@@ -124,6 +128,8 @@ def _header(dr: ImageDraw.ImageDraw, title: str, right: str = "", reserve: int =
     inverse = d.is_bitmap(f) and _fs.title_style == "inverse"
     ink = OFF if inverse else ON
     rw = d.text_size(dr, right, rf)[0] if right else 0
+    if _flag:  # "update available": room for an up arrow left of the right-hand text
+        reserve += 9
     ty, ry = 0, 1
     if inverse:
         dr.rectangle([0, 0, W - 1, _rule_y()], fill=ON)
@@ -136,9 +142,19 @@ def _header(dr: ImageDraw.ImageDraw, title: str, right: str = "", reserve: int =
     d.text(dr, (M, ty), d.ellipsize(dr, title, f, max_w), f, ink)
     if right:
         d.text(dr, (W - M - rw, ry), right, rf, ink)
+    if _flag:
+        ay = 2 if inverse else max(0, _rule_y() - 10)
+        _arrow(dr, W - M - rw - (4 if right else 0) - 7, ay, ink)
     if not inverse:
         dr.line([M, _rule_y(), W - M - 1, _rule_y()], fill=ON)
     return ink
+
+
+def _arrow(dr: ImageDraw.ImageDraw, x: int, y: int, fill=ON) -> None:
+    """The "update available" mark, 7x8 at (x, y): an up arrow on a bar."""
+    dr.polygon([(x + 3, y), (x + 6, y + 3), (x, y + 3)], fill=fill)
+    dr.rectangle([x + 2, y + 3, x + 4, y + 5], fill=fill)
+    dr.line([x, y + 7, x + 6, y + 7], fill=fill)
 
 
 def _stack(dr: ImageDraw.ImageDraw, top: int, bottom: int, lines: list) -> None:
@@ -285,6 +301,10 @@ def _glyph(dr: ImageDraw.ImageDraw, x: int, y: int, cond: str, fill=ON) -> None:
     elif cond == "reconnecting":
         dr.ellipse(box, outline=fill)
         dr.pieslice(box, 90, 270, fill=fill)
+    elif cond == "update":
+        _arrow(dr, x, y - 1, fill)
+    elif cond == "action":  # a row that does something: a play triangle
+        dr.polygon([(x + 1, y), (x + 6, y + 3), (x + 1, y + 6)], fill=fill)
     else:
         dr.line([x, y, x + 6, y + 6], fill=fill)
         dr.line([x, y + 6, x + 6, y], fill=fill)
@@ -549,9 +569,119 @@ def _network(dr: ImageDraw.ImageDraw, s: Status, now: float) -> None:
         d.text(dr, (vx, y), d.ellipsize(dr, v, small, W - vx - 1), small, ON)
 
 
+# --- software updates (updates.py) ---------------------------------------------------
+
+
+def _track_cond(t: upd.Track) -> str:
+    """A list glyph for an updater: arrow = update on offer, half = working,
+    hollow = up to date, cross = failed."""
+    if t.busy:
+        return "reconnecting"
+    if t.state == "failed":
+        return "unreachable"
+    if t.available:
+        return "update"
+    return "idle"
+
+
+def _track_hint(t: upd.Track) -> str:
+    p = t.progress
+    if p is not None:
+        return f"{p * 100:.0f}%"
+    if t.busy:
+        return "…"
+    if t.available:
+        return t.available
+    if t.state == "failed":
+        return "failed"
+    return t.current.replace("rev ", "") if t.current else "ok"
+
+
+def _updates(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v: View) -> None:
+    u = s.updates if isinstance(s.updates, upd.Updates) else upd.Updates()
+    n = u.offers
+    _header(dr, "Updates", "…" if u.busy else (f"{n} new" if n else ""))
+    rows = [(_track_cond(t), t.title, _track_hint(t)) for t in u.tracks]
+    checked = u.checked_at
+    rows.append(
+        ("action", "Check now", fmt_age(None if checked is None else max(0, now - checked)))
+    )
+    _list(img, dr, rows, v.update_top, v.update_pos)
+
+
+UPDATE_LABELS = ("Now", "New", "Size", "State", "Notes", "Info")
+
+
+def update_rows(
+    t: Optional[upd.Track], now: float, fs: Optional[fonts.FontSet] = None, clients: int = 0
+) -> list:
+    """(label, value) rows of an updater's detail: the running and the offered
+    version, the download size, progress, then what pressing does."""
+    if t is None or not t.known:
+        return [("", "No update info")]
+    probe = ImageDraw.Draw(Image.new("1", (1, 1)))
+    f = (fs or fonts.active()).get("small")
+    vx = VALUE_X
+    if d.is_bitmap(f):
+        vx = max(VALUE_X, M + max(f.width(k) for k in UPDATE_LABELS) + 5)
+    state = t.label
+    p = t.progress
+    if p is not None:
+        state += f" {p * 100:.0f}%"
+    # What pressing does goes on screen without scrolling (row 3 of 4).
+    if t.waiting:
+        action = [(None, "Press: restart now"), (None, "Restarts when apps leave")]
+    elif t.offer:
+        action = [(None, "Press: install")]
+        if t.target == "system" and clients:
+            action.append((None, "Restart waits for apps"))
+        action.append((None, "Left: later"))
+    else:
+        action = []
+    rows = [("Now", t.current or "-"), ("New", t.available or "up to date")]
+    rows += action[:1] if action else [("State", state)]
+    if t.available and t.size is not None:
+        rows.append(("Size", upd.fmt_size(t.size)))
+    if action:
+        rows.append(("State", state))
+    if t.notes:
+        lines = _wrap(probe, t.notes, f, W - vx - 6, 3)
+        rows += [("Notes" if i == 0 else "", ln) for i, ln in enumerate(lines)]
+    if t.state == "failed" and t.message:
+        lines = _wrap(probe, t.message, f, W - vx - 6, 3)
+        rows += [("Info" if i == 0 else "", ln) for i, ln in enumerate(lines)]
+    rows += action[1:]
+    if not action and not t.busy and t.state != "disabled":
+        rows.append((None, "Check now: on the list"))
+    return rows
+
+
+def update_row_count(t: Optional[upd.Track], now: float, clients: int = 0) -> int:
+    return len(update_rows(t, now, clients=clients))
+
+
+def _update(img: Image.Image, dr: ImageDraw.ImageDraw, s: Status, now: float, v: View) -> None:
+    u = s.updates if isinstance(s.updates, upd.Updates) else upd.Updates()
+    t = u.track(v.key)
+    ink = _header(dr, (t.title if t else "Software") + " update", reserve=9)
+    if t:
+        gy = (_rule_y() + 1 - 7) // 2 if ink == OFF else max(1, _rule_y() - 10)
+        _glyph(dr, W - M - 7, gy, _track_cond(t), fill=ink)
+    _rows(img, dr, update_rows(t, now, _fs, s.clients), v.update_scroll, UPDATE_LABELS)
+
+
 PAGE_RENDERERS = {"home": _home, "qr": _qr, "network": _network}
-LIST_RENDERERS = {"players": _players, "detail": _detail, "clients": _clients, "client": _client}
-DETAIL_PAGES = ("detail", "client")
+LIST_RENDERERS = {
+    "players": _players,
+    "detail": _detail,
+    "clients": _clients,
+    "client": _client,
+    "updates": _updates,
+    "update": _update,
+}
+DETAIL_PAGES = ("detail", "client", "update")
+# Pages that show the "update available" arrow (not the details: their glyph is there).
+TOP_PAGES = ("home", "qr", "players", "network", "clients", "updates")
 
 
 def _boot(img: Image.Image, dr: ImageDraw.ImageDraw, t: Optional[float], frames) -> None:
@@ -579,6 +709,10 @@ def _scene_key(status: Status, scene: Scene, view: View, now: float, frames):
         extra = (view.client_sel, view.client_pos, view.client_top)
     elif scene.page == "client":
         extra = (view.client_scroll,)
+    elif scene.page == "updates":
+        extra = (view.update_sel, view.update_pos, view.update_top)
+    elif scene.page == "update":
+        extra = (view.update_scroll,)
     else:
         extra = ()
     return (scene, status, extra, int(now), _fs.name)
@@ -599,6 +733,9 @@ def _scene(status: Status, scene: Scene, view: View, now: float, frames) -> Imag
 
 
 def _draw_scene(status: Status, scene: Scene, view: View, now: float, frames) -> Image.Image:
+    global _flag
+    u = status.updates
+    _flag = scene.page in TOP_PAGES and isinstance(u, upd.Updates) and u.offers > 0
     img = Image.new("1", (W, H), OFF)
     dr = ImageDraw.Draw(img)
     dr.fontmode = "1"  # no anti-aliasing: crisp 1-bit glyphs
@@ -663,6 +800,9 @@ def _overlay(
     # Revoking one client (KEY3 in its detail) names it; else it's all of them.
     one = s.client(v.revoke) if s is not None and v.revoke else None
     who = one.label if one else "this client"
+    if v.overlay == "confirm" and v.confirm in ("install", "restart"):
+        _confirm_update(dr, v, s)
+        return
     if v.overlay == "hold":
         dr.rectangle([0, 0, W - 1, H - 1], fill=OFF)
         _header(dr, "Revoke " + who if v.revoke else "Revoke all clients")
@@ -700,6 +840,37 @@ def _overlay(
         top = min(H - 16, H - 4 - f.height) if d.is_bitmap(f) else H - 16
         dr.rectangle([0, top, W - 1, H - 1], fill=ON)
         d.text(dr, ((W - tw) // 2, top + 2), text, f, OFF)
+
+
+def _confirm_update(dr: ImageDraw.ImageDraw, v: View, s: Optional[Status]) -> None:
+    """Install (or restart into) an update? Press / KEY3 = yes, any other key = later."""
+    small, title = F("small"), F("title")
+    u = s.updates if s is not None and isinstance(s.updates, upd.Updates) else upd.Updates()
+    t = u.track(v.target)
+    what = f"{t.title} {t.available}".strip() if t else "the update"
+    restart = v.confirm == "restart"
+    if t and t.size is not None and not restart:
+        what += f" ({upd.fmt_size(t.size)})"
+    dr.rectangle([0, 0, W - 1, H - 1], fill=OFF)
+    dr.rectangle([0, 0, W - 1, 13], fill=ON)
+    _center(
+        dr,
+        max(0, (14 - d.line_height(dr, title)) // 2) if d.is_bitmap(title) else 1,
+        "RESTART NOW?" if restart else "INSTALL UPDATE?",
+        title,
+        OFF,
+    )
+    lines = [
+        (d.ellipsize(dr, what, small, W - 2 * M), small),
+        ("Press = yes", title),
+        ("other key = later", small),
+        (f"cancels in {max(0, v.overlay_seconds):.0f} s", small),
+    ]
+    if not d.is_bitmap(small):
+        for (text, f), y in zip(lines, (17, 29, 41, 53)):
+            _center(dr, y, text, f)
+        return
+    _stack(dr, 15, H, lines)
 
 
 _DEFAULT_FRAMES = []

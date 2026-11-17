@@ -5,9 +5,10 @@ Pure and clock-injected (``clock`` returns seconds) so it is tested with fakes;
 ``main`` feeds it button events and status updates and ticks it from the render loop.
 
 Screens: five top-level pages (home, qr, players = the fixture list, network,
-clients = the paired-client list) and, under each list, one item's detail
-(``detail`` = a fixture, ``client`` = a paired client). Button map (Waveshare
-1.3" OLED HAT):
+clients = the paired-client list), a sixth on the SD image (updates: the system
+and agent updaters + "Check now") and, under each list, one item's detail
+(``detail`` = a fixture, ``client`` = a paired client, ``update`` = one updater).
+Button map (Waveshare 1.3" OLED HAT):
 
     KEY1            new pairing code (from anywhere; goes to the home page to show it)
     KEY2            identify fixtures (flash every player)
@@ -17,6 +18,11 @@ clients = the paired-client list) and, under each list, one item's detail
                     except on a list (fixtures, clients) where they move the selection;
                     press = open the selected item (list) or go home (other pages)
     in a detail     up/down scroll it; left or press = back to its list
+    Updates page    press on "Check now" = check both updaters; on System/Agent =
+                    its detail, where press (with an update on offer) asks
+                    "Install?" -> press or KEY3 = install, any other key = later.
+                    A confirmed system update that waits for apps to disconnect
+                    offers "Restart now" the same way. Nothing installs without it.
 
 Any key wakes a sleeping screen (that press does nothing else). Every screen
 change slides (anim.py); a press during a slide retargets it at once.
@@ -31,8 +37,11 @@ from . import anim, gliders
 from .anim import Scene, SlideView, Tween
 
 PAGES = ("home", "qr", "players", "network", "clients")
+# The SD image (updates managed from the screen) adds the Updates page.
+UPDATES_PAGES = PAGES + ("updates",)
 # Each list page and the scene that shows one of its items.
-LIST_DETAIL = {"players": "detail", "clients": "client"}
+LIST_DETAIL = {"players": "detail", "clients": "client", "updates": "update"}
+UPDATE_CHECK = "check"  # the Updates list's "Check now" row (not a detail)
 
 HOLD_SECONDS = 5.0  # KEY3 hold before the revoke confirm appears
 CONFIRM_SECONDS = 10.0  # confirm screen auto-cancels after this
@@ -65,13 +74,21 @@ DONE_TEXT = {
     "identify": "Identifying fixtures",
     "revoke_all": "All clients revoked",
     "revoke": "Client revoked",
+    "update_check": "Checking for updates",
+    "update_install": "Update started",
+    "update_restart": "Restarting soon",
 }
+
+# An updater's action from its detail: "install" | "restart" | None (nothing to do).
+UpdateAction = Callable[[str], Optional[str]]
 
 
 @dataclass(frozen=True)
 class View:
     page: str  # a PAGES entry, "detail", "client", or "boot"
     overlay: Optional[str] = None  # None | "hold" | "confirm" | "toast"
+    confirm: str = ""  # the confirm's question: "revoke" | "install" | "restart"
+    target: str = ""  # install/restart: the updater ("system" | "agent")
     overlay_text: str = ""
     overlay_seconds: float = 0.0  # countdown for hold/confirm
     shift: tuple = (0, 0)
@@ -88,6 +105,10 @@ class View:
     client_pos: float = 0.0
     client_top: float = 0.0
     client_scroll: float = 0.0  # the client detail's scroll offset
+    update_sel: int = 0  # the same four for the Updates page
+    update_pos: float = 0.0
+    update_top: float = 0.0
+    update_scroll: float = 0.0
     revoke: str = ""  # hold/confirm: the client (grant id) being revoked; "" = all
     boot_t: Optional[float] = None  # seconds into the boot animation (while it shows)
     animating: bool = False  # something is moving: draw at the animation frame rate
@@ -133,7 +154,10 @@ class OledUI:
         self._last_activity = now
         self._hold_start: Optional[float] = None
         self._confirm_until: Optional[float] = None
+        self._confirm = "revoke"  # what the confirm asks: revoke | install | restart
+        self._target = ""  # install/restart: the updater
         self._revoke = ""  # the hold/confirm's client ("" = revoke all)
+        self.update_action: UpdateAction = lambda target: None  # set by main
         self._toast = ""
         self._toast_until = 0.0
         self._busy: Optional[str] = None
@@ -141,7 +165,8 @@ class OledUI:
         # The fixture menu and the client menu; at most one item open at a time.
         self._fx = _Menu("players", "detail", "Fixture is gone", now)
         self._cl = _Menu("clients", "client", "Client is gone", now)
-        self._menus = {m.page: m for m in (self._fx, self._cl)}
+        self._up = _Menu("updates", "update", "Updater is gone", now)
+        self._menus = {m.page: m for m in (self._fx, self._cl, self._up)}
         self._open: Optional[_Menu] = None
         # Screen changes + the boot animation.
         self._slide: Optional[anim.Slide] = None
@@ -200,6 +225,10 @@ class OledUI:
         """The paired-client list changed: as set_fixtures, for the Clients page."""
         self._set_items(self._cl, keys, rows_of)
 
+    def set_updates(self, keys, rows_of: Optional[Callable[[str], int]] = None) -> None:
+        """The Updates page's rows: the updaters shown ("system", "agent") + "check"."""
+        self._set_items(self._up, keys, rows_of)
+
     def _set_items(self, m: _Menu, keys, rows_of) -> None:
         now = self.clock()
         keys = tuple(keys)
@@ -244,6 +273,13 @@ class OledUI:
         self._last_activity = now
         if self._confirm_until is not None:
             self._confirm_until = None
+            if self._confirm != "revoke":
+                kind, self._confirm = self._confirm, "revoke"
+                if key in ("press", "key3"):
+                    self._run("update_" + kind, now, target=self._target)
+                else:
+                    self._show_toast("Later", now)
+                return
             target, self._revoke = self._revoke, ""
             if key != "key3":
                 self._show_toast("Cancelled", now)
@@ -305,7 +341,8 @@ class OledUI:
         if self._confirm_until is not None and now >= self._confirm_until:
             self._confirm_until = None
             self._revoke = ""
-            self._show_toast("Cancelled", now)
+            self._show_toast("Cancelled" if self._confirm == "revoke" else "Later", now)
+            self._confirm = "revoke"
         if self._open is not None:
             if (
                 now - self._open.since >= DETAIL_IDLE_SECONDS
@@ -354,6 +391,7 @@ class OledUI:
             or scene.page == "boot"
             or self._fx.moving(now)
             or self._cl.moving(now)
+            or self._up.moving(now)
         )
         base = dict(
             page=scene.page,
@@ -369,6 +407,10 @@ class OledUI:
             client_pos=self._cl.pos.value(now),
             client_top=self._cl.top.value(now),
             client_scroll=self._cl.scroll.value(now),
+            update_sel=self._up.sel,
+            update_pos=self._up.pos.value(now),
+            update_top=self._up.top.value(now),
+            update_scroll=self._up.scroll.value(now),
             boot_t=boot_t,
             animating=animating,
         )
@@ -376,6 +418,8 @@ class OledUI:
             return View(
                 overlay="confirm",
                 overlay_seconds=self._confirm_until - now,
+                confirm=self._confirm,
+                target=self._target if self._confirm != "revoke" else "",
                 revoke=self._revoke,
                 **dict(base, dimmed=False),
             )
@@ -448,6 +492,9 @@ class OledUI:
         self._manual_until = now + MANUAL_HOLD_SECONDS
         self._page_since = now
         idx = m.sel
+        if key == "press" and m is self._up and m.keys[idx] == UPDATE_CHECK:
+            self._run("update_check", now)
+            return
         if key == "press":
             before = self.scene
             m.open = m.keys[idx]
@@ -465,6 +512,12 @@ class OledUI:
 
     def _detail_key(self, m: _Menu, key: str, now: float) -> None:
         m.since = now
+        if key == "press" and m is self._up and m.open:
+            action = self.update_action(m.open)
+            if action in ("install", "restart"):
+                self._confirm, self._target = action, m.open
+                self._confirm_until = now + CONFIRM_SECONDS
+                return
         if key in ("left", "press"):
             self._back_to_list(now)
         elif key in ("up", "down"):

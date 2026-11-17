@@ -29,7 +29,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 from urllib.parse import urlsplit
 
@@ -160,6 +160,9 @@ class Status:
     paired: tuple = field(default_factory=tuple)  # Client, oldest first
     # ok | offline (the last list heard) | relay_outdated | unknown | "" (older bridge)
     clients_state: str = ""
+    # Software updates (updates.py; not from the bridge's file: StatusWatcher merges
+    # them in). None: not watched (tests, the Pi OS install).
+    updates: Optional[object] = None
 
     @property
     def label(self) -> str:
@@ -203,6 +206,7 @@ class Status:
             tuple((p.key, p.name, p.ok, p.condition) for p in self.players),
             self.clients_state,
             tuple((c.id, c.label, c.live) for c in self.paired),
+            self.updates.salient() if self.updates is not None else None,
         )
 
 
@@ -327,13 +331,22 @@ def load(path: Optional[str] = None) -> Status:
 
 
 class StatusWatcher:
-    """Re-reads the status file only when it changes (mtime/size/inode)."""
+    """Re-reads the status file only when it changes (mtime/size/inode). With an
+    ``updates`` watcher (updates.UpdatesWatcher), its state rides along in
+    ``Status.updates``."""
 
-    def __init__(self, path: Optional[str] = None):
+    def __init__(self, path: Optional[str] = None, updates=None):
         self.path = path or status_path()
         self._sig = None
-        self.status = load(self.path)
+        self.updates = updates
+        self._bridge = load(self.path)
+        self.status = self._merged()
         self.salient_changed = False  # the last poll() changed what wakes the screen
+
+    def _merged(self) -> Status:
+        if self.updates is None:
+            return self._bridge
+        return replace(self._bridge, updates=self.updates.updates)
 
     def _signature(self):
         try:
@@ -345,10 +358,13 @@ class StatusWatcher:
     def poll(self) -> bool:
         """Reload if the file changed. Returns True when the status changed."""
         sig = self._signature()
-        if sig == self._sig and self._sig is not None:
+        ups = self.updates.poll() if self.updates is not None else False
+        if sig == self._sig and self._sig is not None and not ups:
             return False
-        self._sig = sig
-        new = load(self.path)
+        if sig != self._sig or self._sig is None:
+            self._sig = sig
+            self._bridge = load(self.path)
+        new = self._merged()
         changed = new != self.status
         self.salient_changed = new.salient() != self.status.salient()
         self.status = new
