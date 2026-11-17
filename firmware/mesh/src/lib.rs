@@ -20,6 +20,10 @@
 //!   transitions; [`msg`]: their messages and the capacity classes; [`guest`]: open mode
 //!   (feature `open_mode`, off until M7b).
 //! - [`ports`]: §5.3's ports and the dispatch policy in front of them.
+//! - [`timesync`]: mesh time aggregated over many peers (M4 wires it in); [`interp`]: members
+//!   interpolate live updates on their own render clock.
+//! - [`stack`]: one device's mesh, all of the above around a [`Node`], with capacity classes
+//!   and the custodian store hook.
 //!
 //! no_std, no allocation. The std build (feature `host`) adds the in-memory [`loopback`]
 //! backhaul and [`host_keys`]; it is also what a Linux node (a Pi) runs.
@@ -35,6 +39,7 @@ pub mod groups;
 pub mod guest;
 #[cfg(any(test, feature = "host"))]
 pub mod host_keys;
+pub mod interp;
 pub mod link;
 #[cfg(any(test, feature = "loopback", feature = "host"))]
 pub mod loopback;
@@ -45,9 +50,12 @@ pub mod ports;
 pub mod rekey;
 pub mod replay;
 pub mod security;
+pub mod stack;
+pub mod timesync;
 
 pub use backhaul::{Backhaul, BackhaulId, Busy, NodeId, RxMeta};
 pub use node::{MtuTooSmall, Node, NodeConfig, NodeStats};
+pub use stack::{Event, MeshStack, StackConfig};
 
 #[cfg(test)]
 mod tests {
