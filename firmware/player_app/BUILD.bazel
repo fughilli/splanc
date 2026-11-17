@@ -885,10 +885,10 @@ rust_static_library(
         "//firmware/sensor",
         "//firmware/store",
         "//firmware/sysmode",
-        "@pbview",
         "//shared/protocol/rust:ledmapper_pb_fw",
         "//shared/protocol/rust:ledmapper_view",
         "@crates//:micropb",
+        "@pbview",
     ],
 )
 
