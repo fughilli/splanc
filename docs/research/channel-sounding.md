@@ -20,12 +20,14 @@ Sounding conformance.
   here: no 72 retunes (each retune costs 0.24 ms plus a random LO phase), and the
   measurement airtime is 0.6 ms per two-way exchange.
 - **Measured precision (conducted, one LO, one exchange):** round-trip group delay `2τ`
-  std **0.83 ns**, which is **12 cm one-way**. Back-to-back exchanges within a few seconds
-  scatter less: 0.14–0.3 ns (2–4.5 cm). Synthetic delays injected into the reply waveform
-  are recovered (§6.3).
+  std **0.76–0.83 ns**, which is **11–12 cm one-way**. Averaging floors at ~0.26 ns
+  (**4 cm**, ~1 min). No drift over 15 min. Synthetic delays of 0.5–12.5 ns injected into the
+  reply waveform are recovered with slope 0.987 and 0.12 ns rms on medians (§6.3).
 - **LO phase survives the TX↔RX turnaround** when the PLL is not retuned. The two-way
-  carrier phase (LO phases cancel) repeats to **13–30° per exchange**, which is 15–34 ps of
-  `2τ`, **2–5 mm one-way**, with an integer ambiguity of 1/f_c = 0.41 ns (6.1 cm one-way).
+  carrier phase (LO phases cancel) repeats to **13–30° per exchange** (33 ps of `2τ`,
+  **~5 mm one-way**). That makes a mm-level _relative_ displacement tracker. It drifts
+  thermally (~0.4 ns of `2τ` in 15 min), and its 0.41 ns integer ambiguity can't be fixed
+  from today's 0.26 ns group-delay floor (§6.5, §8).
 - **What limits it:** the 80 MHz sample clock wanders against the crystal and the RF LO by
   about 1 ns over milliseconds (§7.1). Group delay sees this wander. The carrier phase does
   not. So: keep exchanges short, average, and use carrier phase once the group delay is good
@@ -184,7 +186,26 @@ independent range observable.
 
 ### 6.5 Drift
 
-RESULTS_E25
+87 exchanges at 2440 MHz over 15 min, one every ~9 s (8 more missed the preamble, 8 %):
+
+|                      | single exchange                    | Allan dev at 8 exchanges (~75 s) | drift over 15 min                      |
+| -------------------- | ---------------------------------- | -------------------------------- | -------------------------------------- |
+| group delay 2τ       | 0.76 ns (11 cm one-way)            | 0.26 ns (4 cm), flattening       | 0.004 ns/min (none)                    |
+| carrier phase, as 2τ | 0.033 ns (21° circ.; 5 mm one-way) | 0.09 ns (rising)                 | −0.025 ns/min (≈ −0.9 cycle in 15 min) |
+
+Group delay averages roughly as 1/√N to ~0.26 ns, and then the sample-clock wander floors it.
+The carrier phase is very quiet exchange-to-exchange but drifts slowly (thermal: the RF phase
+delay of the two boards' chains). So:
+
+- **Absolute range** comes from the group delay: 11 cm per exchange, ~4 cm averaged over a
+  minute. It has no visible drift, so one calibration holds.
+- **Relative motion** comes from the carrier phase, unwrapped over time: ~5 mm noise per
+  exchange, valid while the motion between exchanges stays below λ/4 (3 cm), with a slow
+  drift to recalibrate against the group delay.
+- **Fixing the carrier integer** (absolute mm ranging) needs group delay at ~0.07 ns. That
+  is below the 0.26 ns floor measured here. §8 says what would get there.
+
+![drift](img/chsound/drift-allan.png)
 
 ### 6.6 Channel impulse response
 
@@ -251,12 +272,30 @@ Per exchange (40 MHz, conducted, SNR ~30 dB per tone):
 | filter phase ripple across the band         | ±30°                                              | per-LO H calibration                   |
 | carrier phase per exchange                  | 13–30° (15–34 ps of 2τ)                           | average; needs the integer from gd     |
 
-Projected ranging (conducted, after calibration):
+Measured ranging performance (conducted, after calibration):
 
-- **Coarse** (group delay, one exchange, 0.6 ms airtime): σ ≈ 12 cm.
-- **Averaged** N exchanges: σ ≈ 12 cm/√N if the wander decorrelates between exchanges.
-  Within-burst numbers (0.14–0.3 ns) suggest 2–4 cm per ~10-exchange burst.
-- **Carrier-phase** (once the integer is fixed): σ ≈ 2–5 mm per exchange.
+- **Single exchange** (group delay, 0.6 ms airtime): σ ≈ 11–12 cm.
+- **Averaged**: ~1/√N down to σ ≈ 4 cm (0.26 ns, ~8 exchanges here). Below that the
+  sample-clock wander sets a floor.
+- **Carrier-phase tracking**: ~5 mm per exchange for relative motion, with thermal drift of
+  ~0.025 ns/min of `2τ` to recalibrate.
+
+Further gains, roughly in order of payoff:
+
+1. **On-device DSP and fast bursts.** Exchanges a few ms apart scattered 0.14–0.3 ns (e23)
+   instead of 0.76 ns 9 s apart. A burst of 16 exchanges in ~20 ms, averaged, should reach
+   ~0.1 ns. That is close to fixing the carrier integer.
+2. **Measure the sample-clock wander instead of suffering it.** Each board could loop its
+   own TX into its RX (a calibration capture) inside the exchange to reference DAC vs ADC
+   timing. Or the BBPLL/APLL could be locked or characterised so the ~2 ns steps are
+   predictable.
+3. **Wider synthesized bandwidth.** Stitch HT40 shots at 2422/2462 (80 MHz) for multipath
+   resolution. For precision the group-delay span is already enough. Calibrate H per LO.
+4. **More SNR.** Not the limit in conducted tests (thermal CRLB ~0.03 ns). Over the air at
+   range it will matter: longer captures (16 k samples), power index 0, coherent averaging
+   across periods.
+5. **External hardware**, if the owner wants absolute mm: a shared reference clock between
+   fixtures removes the wander. UWB (DW3000) gives ~2–5 cm per shot anyway.
 
 Over the air, multipath will dominate. 40 MHz resolves paths ~7.5 m apart; stitching the
 LO hops (80 MHz) halves that. The CIR in §6.6 is the tool for that.

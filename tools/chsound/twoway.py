@@ -66,7 +66,8 @@ class Sounder:
     def setup(self, upload: bool = True):
         for d in (self.A, self.B):
             self.b.cmd(d, f"tune {int(round(self.fc / 1e6))} 0")
-            self.b.cmd(d, "ht40 1")
+            # HT40-above is only valid up to ch 9; above that use HT40-below (same LO, other filter cfg)
+            self.b.cmd(d, "ht40 1" if self.fc < 2452e6 else "ht40 2")
             self.b.cmd(d, "gain 20")
             if upload:
                 cp.upload(self.b, d, self.words)
