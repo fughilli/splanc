@@ -1367,3 +1367,69 @@ vec3 shade(Led led) {
     // (`c` is stored-then-returned: the optimizer forwards it on the stack, so
     // its slots may never be written — a named local can legitimately read 0.)
 }
+
+// -- fixed-point literal suffixes (`0.6fx`, `0.6fx16`, `0.6fx8`) -------------------
+
+fn fxb_of(src: &str) -> Vec<u8> {
+    compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d)).fxb
+}
+
+fn compile_err(src: &str) -> String {
+    match compile(src) {
+        Ok(_) => panic!("expected a compile error for: {src}"),
+        Err(d) => d.into_iter().map(|d| d.msg).collect::<Vec<_>>().join("; "),
+    }
+}
+
+#[test]
+fn fixed_literal_suffixes_compile_exactly_like_the_casts() {
+    // Sugar, not a new path: each suffix yields the same program as its cast.
+    for (ty, sfx) in [("fixed", "fx"), ("fixed16", "fx16"), ("fixed8", "fx8")] {
+        for lit in ["0.25", "1.5", "1", ".5"] {
+            let shade = |e: &str| {
+                format!("vec3 shade(Led led) {{\n  {ty} a = {e};\n  {ty} b = a * {e};\n  return vec3(float(b), 0.0, 0.0);\n}}\n")
+            };
+            assert_eq!(
+                fxb_of(&shade(&format!("{lit}{sfx}"))),
+                fxb_of(&shade(&format!("{ty}({lit})"))),
+                "{lit}{sfx} vs {ty}({lit})"
+            );
+        }
+    }
+}
+
+#[test]
+fn fixed_literal_suffixes_give_the_fixed_types() {
+    // (0.25 + 0.25) * 1.0 = 0.5 -> ~127, as fixed8_arithmetic does with casts.
+    let src = r#"
+        vec3 shade(Led led) {
+            fixed8 a = 0.25fx8;
+            fixed8 s = (a + a) * 1.0fx8;
+            fixed16 h = 0.5fx16;
+            fixed f = -2.5fx * 0.2fx;
+            return vec3(float(s), float(h), float(f) + 1.0);
+        }
+    "#;
+    let (r, g, b) = run_shade(src, &[], Led::default(), Frame::default());
+    assert!((r as i32 - 127).abs() <= 5, "fixed8: {r}");
+    assert!((g as i32 - 127).abs() <= 2, "fixed16: {g}");
+    assert!((b as i32 - 127).abs() <= 2, "fixed: {b}");
+    // A suffixed literal is fixed, not a float literal: no soft-float perf warning.
+    let w = compile("state fixed ph;\nvoid update() { ph = fract(ph + fixed(dt)); }\nvec3 shade(Led led) {\n  fixed x = fixed(led.s);\n  float v = float(x * 0.6fx);\n  return vec3(v, v, v);\n}\n")
+        .unwrap()
+        .warnings;
+    assert!(w.is_empty(), "a suffixed literal is not a float literal: {w:?}");
+}
+
+#[test]
+fn fixed_literal_suffix_errors() {
+    let shade = |e: &str| format!("vec3 shade(Led led) {{ float v = float({e}); return vec3(v, v, v); }}");
+    let e = compile_err(&shade("0.5fx12"));
+    assert!(e.contains("unknown fixed-point suffix 'fx12'"), "{e}");
+    let e = compile_err(&shade("2.0fx8"));
+    assert!(e.contains("out of range") && e.contains("fixed8 holds [-2, 2)"), "{e}");
+    let e = compile_err(&shade("3fx16"));
+    assert!(e.contains("fixed16 holds [-2, 2)"), "{e}");
+    // Q16.16 has the range for it.
+    compile(&shade("300.0fx")).unwrap_or_else(|d| panic!("{d:?}"));
+}

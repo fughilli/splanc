@@ -142,9 +142,9 @@ export const BUILTINS: { sig: string; doc: string }[] = [
 export const TYPES: { name: string; doc: string }[] = [
   { name: "float", doc: "32-bit floating point (the default numeric type)" },
   { name: "int", doc: "native 32-bit integer — fast, no soft-float" },
-  { name: "fixed", doc: "Q16.16 fixed-point number — native integer arithmetic, the fast type for per-LED maths (sin/cos take TURNS on it); wrap literals: x * fixed(0.5)" },
-  { name: "fixed16", doc: "Q1.14 reduced-precision fixed-point, range [-2, 2) — integer arithmetic like fixed, sin/cos in turns; overflows past ±2" },
-  { name: "fixed8", doc: "Q1.6 reduced-precision fixed-point, range [-2, 2) — mainly for compact buffer/texture storage (: fixed8)" },
+  { name: "fixed", doc: "Q16.16 fixed-point number — native integer arithmetic, the fast type for per-LED maths (sin/cos take TURNS on it); literals: x * 0.5fx (= fixed(0.5))" },
+  { name: "fixed16", doc: "Q1.14 reduced-precision fixed-point, range [-2, 2) — integer arithmetic like fixed, sin/cos in turns; overflows past ±2; literals: 0.5fx16" },
+  { name: "fixed8", doc: "Q1.6 reduced-precision fixed-point, range [-2, 2) — mainly for compact buffer/texture storage (: fixed8); literals: 0.5fx8" },
   { name: "bool", doc: "boolean (true/false)" },
   { name: "vec2", doc: "2-component vector (x, y)" },
   { name: "vec3", doc: "3-component vector (x, y, z / r, g, b)" },
