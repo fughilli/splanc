@@ -21,7 +21,7 @@ import {
   downloadFirmwareToCache,
   prefetchLatestFirmware,
 } from "../../flash/firmwareRepo";
-import { loadReleaseFirmwareIndex, proxiedAssetUrl, siblingAssetUrl } from "../../flash/githubReleaseRepo";
+import { loadReleaseFirmwareIndex, p4PackageAsset, proxiedAssetUrl, siblingAssetUrl } from "../../flash/githubReleaseRepo";
 import { cachedIds, deleteBundle, listBundles } from "../../flash/firmwareCache";
 import {
   webSerialUnavailableReason,
@@ -41,7 +41,7 @@ import { buildLabel, commitUrl } from "../../buildInfo";
 import type { FirmwareEntry, FirmwareIndex } from "../../flash/manifest";
 import { appState } from "../app/state";
 import type { LedMapperClient } from "../../net/client";
-import { inLoader, maxManifestAsset, OtaError, pullsImage, updateFirmware, type OtaProgress } from "../../net/otaUpdate";
+import { inLoader, maxManifestAsset, OtaError, pullsImage, updateFirmware, updatesInApp, type OtaProgress } from "../../net/otaUpdate";
 
 let openHandle: SheetHandle | null = null;
 
@@ -615,7 +615,11 @@ async function startOtaUpdate(
   let lastKey = "";
   try {
     status.textContent = "Downloading firmware…";
-    const { pkg, keyEpoch } = pullsImage(client.welcome) ? await maxPackage(client, entry) : await c6Package(entry);
+    const { pkg, keyEpoch } = pullsImage(client.welcome)
+      ? await maxPackage(client, entry)
+      : updatesInApp(client.welcome)
+        ? await p4Package(entry)
+        : await c6Package(entry);
     appendLog(
       pullsImage(client.welcome)
         ? `Signed manifest for ${entry.label}: the device fetches the image itself.`
@@ -663,8 +667,36 @@ async function startOtaUpdate(
   }
 }
 
+const isP4Entry = (entry: FirmwareEntry): boolean => entry.chip.toLowerCase() === "esp32p4";
+
+/** An ESP32-P4 player's `.ota` (docs/design/p4-c6-split.md §5.1; one package for the P4
+ * and its C6). From the selected bundle when that is the P4's; otherwise the same
+ * release's `esp32p4-player-<ver>.ota`, so the version picked for a C6 works for a P4. */
+async function p4Package(entry: FirmwareEntry): Promise<{ pkg: Uint8Array; keyEpoch?: Uint8Array }> {
+  if (isP4Entry(entry)) {
+    const req = await loadFlashRequest(entry);
+    if (!req.otaPackage) {
+      throw new OtaError("no_package", "This build's ESP32-P4 firmware has no signed over-the-air package: pick a released version, or flash over USB.");
+    }
+    return { pkg: req.otaPackage, ...(req.keyEpoch ? { keyEpoch: req.keyEpoch } : {}) };
+  }
+  if (!entry.tarUrl || !entry.version) {
+    throw new OtaError("no_package", "This device is an ESP32-P4 player: pick a released version to update it over Wi-Fi.");
+  }
+  const res = await fetch(proxiedAssetUrl(siblingAssetUrl(entry.tarUrl, p4PackageAsset(entry.version))));
+  if (!res.ok) {
+    throw new OtaError("no_package", `Firmware ${entry.version} has no ESP32-P4 player package: pick a newer release.`);
+  }
+  const pkg = new Uint8Array(await res.arrayBuffer());
+  const er = await fetch(proxiedAssetUrl(siblingAssetUrl(entry.tarUrl, "key-epoch.bin"))).catch(() => null);
+  return { pkg, ...(er?.ok ? { keyEpoch: new Uint8Array(await er.arrayBuffer()) } : {}) };
+}
+
 /** A C6's `.ota` (manifest ‖ image) from the selected bundle. */
 async function c6Package(entry: FirmwareEntry): Promise<{ pkg: Uint8Array; keyEpoch?: Uint8Array }> {
+  if (isP4Entry(entry)) {
+    throw new OtaError("no_package", "This firmware is for the ESP32-P4 player; the connected device is not one. Pick an ESP32-C6 firmware.");
+  }
   const req = await loadFlashRequest(entry);
   if (!req.otaPackage) {
     throw new OtaError(

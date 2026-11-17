@@ -2,7 +2,8 @@
 # gated on per-component version tags (deploys never happen on a plain push to main;
 # see test.yaml / macos.yaml, which only build + preview per commit):
 #
-#   firmware-vX.Y.Z  -> build both ESP32-C6 flashbundles, attach as Release assets;
+#   firmware-vX.Y.Z  -> build both ESP32-C6 flashbundles and the ESP32-P4 player's,
+#                       attach them and their signed .ota packages as Release assets;
 #                       then (job `max`) the signed Splanc MAX over-the-air images
 #                       (docs/design/max-ota.md), one per board, on the same release.
 #   pi-vX.Y.Z        -> build the Pi 3 player SD image (.img.zst) + wiring README,
@@ -150,6 +151,35 @@ jobs:
           fi
           python3 tools/ota_release.py \
             --bundle bazel-bin/firmware/player_app/esp32c6_ota_flashbundle.tar \
+            --version "${VER}" --signer bazel-bin/firmware/ota/ota_sign \
+            --pubkey firmware/ota/keys/release.pub --key-epoch firmware/ota/keys/epoch.bin \
+            --out-dir _assets
+
+      # The ESP32-P4 player (docs/design/p4-c6-split.md section 5.1), with its C6 front
+      # end and the wired Vive tracker module. One image does both chips: it carries
+      # the C6 front end and flashes it onto the board's C6 at boot. A separate
+      # invocation, so the tracker flag doesn't reconfigure the C6 build above. It
+      # trusts the same keyring as the C6 loader (//firmware/ota:ota_key).
+      - name: Build the ESP32-P4 player flashbundle
+        run: |
+          bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
+            --//firmware/player_app:agent_bundle_url="${AGENT_BUNDLE_URL}" \
+            --//firmware/player_app:agent_bundle_sha256="${AGENT_BUNDLE_SHA256}" \
+            --//firmware/p4:tracker \
+            //firmware/player_app:esp32p4_player_c6_flashbundle
+
+      # -> esp32p4-player-<ver>.ota (the signed package, board 16: what update_firmware
+      # and "Update over Wi-Fi" stream to a P4, which then updates its own C6) +
+      # esp32p4-player-<ver>.tar (the USB flash bundle, package inside). The same key
+      # and key-epoch record as the C6 package; the key was checked against
+      # release.pub above.
+      - name: Sign the ESP32-P4 OTA package
+        env:
+          OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
+        run: |
+          VER="${GITHUB_REF_NAME#firmware-v}"
+          python3 tools/ota_release.py --target p4 \
+            --bundle bazel-bin/firmware/player_app/esp32p4_player_c6_flashbundle.tar \
             --version "${VER}" --signer bazel-bin/firmware/ota/ota_sign \
             --pubkey firmware/ota/keys/release.pub --key-epoch firmware/ota/keys/epoch.bin \
             --out-dir _assets

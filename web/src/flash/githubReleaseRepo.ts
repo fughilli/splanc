@@ -20,18 +20,33 @@ import { getReleaseIndex, putReleaseIndex } from "./firmwareCache";
 import type { ChipFamily } from "./usb";
 import type { FirmwareEntry, FirmwareIndex } from "./manifest";
 
-/** Firmware asset names we publish, e.g. `esp32c6-netstack-1.2.0.tar`. The chip +
- * family are fixed for now (only the ESP32-C6 player ships a web-flashable image);
- * the capture group is the variant shown in the picker. */
+/** Firmware asset names we publish, e.g. `esp32c6-netstack-1.2.0.tar` and
+ * `esp32p4-player-1.2.0.tar`: the first capture group is the chip, the second the
+ * variant shown in the picker. */
 // `ota`: the loader + app layout (docs/design/ota.md) — updates over Wi-Fi after a
 // one-time USB migration. Listed first within a release.
-const ASSET_RE = /^esp32c6-(vendor|netstack|ota)-.+\.tar$/i;
+// `player`: the ESP32-P4 player with its C6 front end (docs/design/p4-c6-split.md),
+// one image for both chips. Listed after the C6 images, which stay the default.
+const ASSET_RE = /^(?:(esp32c6)-(vendor|netstack|ota)|(esp32p4)-(player))-.+\.tar$/i;
 const VARIANT_LABEL: Record<string, string> = {
   vendor: "Vendor Wi-Fi",
   netstack: "Heapless netstack (legacy layout)",
   ota: "Netstack + OTA loader",
+  player: "ESP32-P4 player (+ C6 front end)",
 };
-const VARIANT_ORDER: Record<string, number> = { ota: 0, netstack: 1, vendor: 2 };
+const VARIANT_ORDER: Record<string, number> = { ota: 0, netstack: 1, vendor: 2, player: 3 };
+
+/** The chip and variant of a firmware asset name, or null if it isn't one. */
+function parseAsset(name: string): { chip: string; variant: string } | null {
+  const m = ASSET_RE.exec(name);
+  if (!m) return null;
+  return { chip: (m[1] ?? m[3])!.toLowerCase(), variant: (m[2] ?? m[4])!.toLowerCase() };
+}
+
+/** The release asset holding an ESP32-P4 player's signed over-the-air package. */
+export function p4PackageAsset(version: string): string {
+  return `esp32p4-player-${version.replace(/^v/, "")}.ota`;
+}
 
 // GitHub release-asset downloads send no CORS headers, so a browser fetch() of the
 // asset URL is blocked ("Failed to fetch"). Route it through our Cloudflare Pages
@@ -92,8 +107,8 @@ export function releasesToFirmwareIndex(json: unknown): FirmwareIndex | null {
     const assets = (Array.isArray(r["assets"]) ? [...r["assets"]] : []).sort((a, b) => {
       const v = (x: unknown): number => {
         const n = typeof x === "object" && x !== null ? (x as Record<string, unknown>)["name"] : "";
-        const m = typeof n === "string" ? ASSET_RE.exec(n) : null;
-        return m ? (VARIANT_ORDER[m[1]!.toLowerCase()] ?? 9) : 9;
+        const m = typeof n === "string" ? parseAsset(n) : null;
+        return m ? (VARIANT_ORDER[m.variant] ?? 9) : 9;
       };
       return v(a) - v(b);
     });
@@ -102,13 +117,13 @@ export function releasesToFirmwareIndex(json: unknown): FirmwareIndex | null {
       const asset = a as Record<string, unknown>;
       const name = typeof asset["name"] === "string" ? asset["name"] : "";
       const url = typeof asset["browser_download_url"] === "string" ? asset["browser_download_url"] : "";
-      const m = ASSET_RE.exec(name);
+      const m = parseAsset(name);
       if (!m || !url) continue;
-      const variant = m[1]!.toLowerCase();
+      const variant = m.variant;
       entries.push({
         id: `${tag}::${variant}`, // unique across releases + variants (picker <option> value)
         label: `${VARIANT_LABEL[variant] ?? variant} — ${tag}`,
-        chip: "esp32c6",
+        chip: m.chip,
         family: "esp" as ChipFamily,
         manifest: "flash.json", // lives inside the tar
         tarUrl: url,
