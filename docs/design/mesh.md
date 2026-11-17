@@ -252,11 +252,29 @@ The owner's call: **no Espressif OUI and no ESP-NOW framing.** Splanc defines it
 
 **Options considered:**
 
-| Option                                                                   | Receive filtering in our netstack                                          | While associated to an AP                                                                                                                                                                              | Other stacks                                                                                                                              | Verdict                                             |
-| ------------------------------------------------------------------------ | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| **Vendor-specific Action frame (category 127) with a Splanc identifier** | One compare: FC `0xd0`, category 127, 3-byte id, before any STA processing | Fine: a non-BSS management frame with wildcard A3, the same class of frame as ESP-NOW, NAN or vendor discovery; the AP ignores it. Category 127 is not a robust action, so PMF (802.11w) doesn't apply | Unknown ids are parsed and dropped silently; sniffers show "vendor-specific action"                                                       | **Chosen**                                          |
-| Data frames to a Splanc group address, LLC/SNAP + an EtherType           | Same cost                                                                  | ToDS = FromDS = 0 data frames outside an IBSS are non-standard; some APs and wireless IDSs flag them as rogue ad-hoc traffic                                                                           | Stacks filtering by BSSID drop them; the only EtherTypes free to use are the IEEE "local experimental" 0x88B5/0x88B6, which aren't unique | No                                                  |
-| Public Action (category 4), vendor-specific subtype                      | Same cost                                                                  | Fine                                                                                                                                                                                                   | Fine                                                                                                                                      | No gain over category 127, and it also needs an OUI |
+| Option                                                                   | Receive filtering in our netstack                                          | While associated to an AP                                                                                                                                       | Linux hosts (a Pi, a USB adapter; `mesh-pi-transport.md` §3)                                                                                                                               | Verdict                                                  |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| **Public Action frame (category 4), action 9 (vendor-specific), with a Splanc identifier** | One compare: FC `0xd0`, category 4, action 9, 3-byte id, before any STA processing | Fine: a non-BSS management frame with wildcard A3, the class P2P, DPP and NAN discovery use; the AP ignores it. Public Action is not a robust action, so PMF (802.11w) doesn't apply | **Sent and received through plain nl80211 on a managed interface, associated or not**: cfg80211 and mac80211 let Public Action through from peers that are not in the BSS | **Chosen** (owner, 2026-11-17)                          |
+| Vendor-specific Action frame (category 127) with a Splanc identifier      | Same cost                                                                  | Fine                                                                                                                                                            | cfg80211 refuses to send it from a station except to its own AP (`ENOTCONN`), and mac80211 drops it on receive from a sender that is not an associated station: monitor mode only | No (the first draft's choice)                            |
+| Data frames to a Splanc group address, LLC/SNAP + an EtherType           | Same cost                                                                  | ToDS = FromDS = 0 data frames outside an IBSS are non-standard; some APs and wireless IDSs flag them as rogue ad-hoc traffic                                    | Stacks filtering by BSSID drop them; the only EtherTypes free to use are the IEEE "local experimental" 0x88B5/0x88B6, which aren't unique                                                 | No                                                       |
+
+Why Public Action (verified in Linux 6.12, `net/wireless/mlme.c` and `net/mac80211/`):
+
+- **TX.** `cfg80211_mlme_mgmt_tx` skips its per-interface checks only for category 4; for any
+  other category a station may address nothing but its own AP. mac80211's `ieee80211_mgmt_tx`
+  then sends on-channel when associated, or off-channel (remain-on-channel) when not.
+- **RX.** `ieee80211_rx_h_action` drops every non-Public, non-self-protected action frame
+  whose sender has no station entry (`RX_DROP_U_ACTION_UNKNOWN_SRC`) before userspace can see
+  it; `ieee80211_accept_frame` explicitly accepts Public Action even when the BSSID doesn't
+  match ("used for P2P and location updates").
+- **Action code 9** is the standard vendor-specific Public Action. The Wi-Fi Alliance's users
+  of 4/9 (P2P, DPP, NAN) are keyed by its OUI 50:6F:9A, so our CID cannot collide, and none of
+  wpa_supplicant's station-mode registrations is a prefix of ours. In AP mode hostapd
+  registers all of category 4 (and all of 127), so a host that runs hostapd on the same
+  interface receives mesh frames another way (a monitor interface, or the brcmfmac path in
+  `mesh-pi-transport.md`); the category does not change that.
+- **brcmfmac** (the Pi's own radio) refuses both categories on the normal path and accepts
+  both through its firmware passthrough, so it does not decide the question.
 
 **The identifier.** A vendor-specific action frame starts with an OUI or a **CID** (an IEEE
 Company ID: 24 bits with the local, "X", bit set, so a CID never collides with any assigned OUI).
@@ -271,7 +289,7 @@ Company ID: 24 bits with the local, "X", bit set, so a CID never collides with a
   FC 0xd0 0x00 (Action), duration, A1 = ff:ff:ff:ff:ff:ff or the peer's MAC,
   A2 = own MAC, A3 = ff:ff:ff:ff:ff:ff (no BSS), sequence (our SeqCounter)
 Action body
-  category 127 (vendor-specific)
+  category 4 (Public Action), action 9 (vendor-specific)
   Splanc CID (3 B)
   frame kind (1 B): 0x01 = mesh v1          (room for other Splanc frame kinds later)
   mesh envelope (§5.1)
@@ -283,7 +301,7 @@ FCS (hardware)
   arm on top of a frame still on air. Broadcast frames get no ACK; unicast frames to a peer's
   MAC get the peer's hardware auto-ACK (`mac_own_bssid` keeps own-MAC valid).
 - **RX**: `netstack_loop` drains `ns_mac_recv`. A mesh frame is identified before the BSSID
-  gate: `rx[0] == 0xd0`, category 127, the Splanc CID, kind 0x01, then the envelope magic. It is
+  gate: `rx[0] == 0xd0`, category 4, action 9, the Splanc CID, kind 0x01, then the envelope magic. It is
   handed to the mesh layer and never to the STA path.
 - **RX metadata**: decode RSSI and the RX timestamp from the 92-byte RX vector
   (`RX_VECTOR_HDR`). The layout is undocumented. Spike M3a finds the fields on silicon by
@@ -291,6 +309,9 @@ FCS (hardware)
 - **Rate**: start with 1 Mb/s DSSS for broadcast (robust, longest range) and measure 6 Mb/s
   OFDM. A 250-byte frame is ~2.2 ms at 1 Mb/s and ~0.4 ms at 6 Mb/s. The pacing formula in
   `tx_pace_after` must use the rate actually sent.
+- **Reference bytes**: `pi/mesh_radio/src/frame.rs` (`golden_public_vendor_frame`) is the
+  exact frame the netstack must emit for a given header and envelope; the Pi transport
+  (PR #533) is built against it.
 - **Size**: 802.11 allows management frames up to 2304 B. We start with 250 B bodies (short
   airtime at 1 Mb/s, fits every buffer on the path) and raise it only if measurements say it
   pays (M14).
