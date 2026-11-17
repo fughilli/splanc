@@ -85,7 +85,7 @@ static uint32_t g_tone_save0, g_tone_save1;
 static int g_gain = -1;           // forced RX gain index, -1 = AGC
 
 static constexpr uint32_t MASTER_WORDS = 2048;
-static uint32_t g_master[MASTER_WORDS];
+static uint32_t *const g_master = (uint32_t *)(uintptr_t)(BANK1_ADDR + 0x1e000u);  // top 8 KiB of block 1
 static uint32_t g_master_len = 0;  // period in words
 static constexpr int NSLOT = 1;
 static constexpr uint32_t SLOT_WORDS = 16384;
@@ -345,10 +345,10 @@ struct Stamp {
   char op;
   int32_t arg;
 };
-static Stamp g_st[48];
+static Stamp g_st[200];
 static int g_nst;
 static IRAM_ATTR void stamp(char op, int32_t arg, uint32_t c) {
-  if (g_nst < 48) g_st[g_nst++] = {c, op, arg};
+  if (g_nst < 200) g_st[g_nst++] = {c, op, arg};
 }
 
 static IRAM_ATTR void tile_master(uint32_t n) {
@@ -374,9 +374,9 @@ static uint32_t g_iqe_last;
 static uint32_t g_seq_t0;
 static uint32_t g_evt_c;
 static int seq_run(char *prog) {
-  char *ops[40];
+  static char *ops[300];
   int nops = 0;
-  for (char *t = strtok(prog, " "); t && nops < 40; t = strtok(nullptr, " ")) ops[nops++] = t;
+  for (char *t = strtok(prog, " "); t && nops < 300; t = strtok(nullptr, " ")) ops[nops++] = t;
   g_nst = 0;
   uint32_t cap_n = 0, cap_div = 0;
   int ok = 1;
@@ -523,6 +523,41 @@ static int seq_run(char *prog) {
       case 'S':
         stamp('S', v, cyc());
         break;
+      case 'H': {  // tile the master into the bank's UPPER 64 KiB (DAC with owner 0x10400)
+        uint32_t n = (uint32_t)v;
+        if (n < 2 || n > 16384) n = 2048;
+        if (engine_owned) { bank_to_cpu(); engine_owned = false; }
+        uint32_t L = g_master_len ? g_master_len : 1;
+        for (uint32_t i2 = 0, j = 0; i2 < n; i2++) {
+          bank[16384 + i2] = g_master[j];
+          if (++j == L) j = 0;
+        }
+        dump_clocks();
+        stamp('H', (int32_t)n, cyc());
+        break;
+      }
+      case 'J': {  // tile the master into block 1's first n words (a 2nd waveform: DAC with owner 0x200)
+        uint32_t n = (uint32_t)v;
+        if (n < 2 || n > 4096) n = 2048;
+        if (engine_owned) { bank_to_cpu(); engine_owned = false; }
+        uint32_t L = g_master_len ? g_master_len : 1;
+        uint32_t *b1 = (uint32_t *)(uintptr_t)BANK1_ADDR;
+        for (uint32_t i2 = 0, j = 0; i2 < n; i2++) {
+          b1[i2] = g_master[j];
+          if (++j == L) j = 0;
+        }
+        stamp('J', (int32_t)n, cyc());
+        break;
+      }
+      case 'Q': {  // copy the last capture (bank lower) to block-1 slot v (slot = cap_n words)
+        uint32_t c = cyc();
+        if (engine_owned) { bank_to_cpu(); engine_owned = false; }
+        uint32_t *dst = (uint32_t *)(uintptr_t)(BANK1_ADDR + (uint32_t)v * cap_n * 4u);
+        if ((uintptr_t)(dst + cap_n) <= BANK1_ADDR + 0x1e000u) memcpy(dst, bank, cap_n * 4);
+        else ok = 0;
+        stamp('Q', v, c);
+        break;
+      }
       case 'O': {  // raw SRAM owner bits: O<hex>, e.g. O0x400 (block2) O0x200 (block1) O0x600
         uint32_t c = cyc();
         uint32_t cur = R(SRAM_OWNER);
@@ -884,14 +919,17 @@ void setup() {
 }
 
 void loop() {
-  static char buf[2048];
+  static char buf[3000];
   static size_t n = 0;
   while (Serial.available()) {
     int ch = Serial.read();
     if (ch == '\r') continue;
     if (ch == '\n') {
       buf[n] = 0;
-      if (n) {
+      if (n > 4 && !strncmp(buf, "seq ", 4)) {
+        seq_run(buf + 4);  // long programs bypass the argv split
+        Serial.print("END\n");
+      } else if (n) {
         cmd(buf);
         Serial.print("END\n");
       }

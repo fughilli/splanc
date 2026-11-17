@@ -82,7 +82,7 @@ class Sounder:
         fbb, fk = cp.rx_freqs(self.ks, P, delta, self.fc)
         return cp.tone_phasors_rx(x, fbb, n0=-start) / self.S, fk
 
-    def analyse(self, x, delta0):
+    def analyse(self, x, delta0, search: bool = True):
         x = x - x.mean()
         n_on = cp.comb_onset(x, P)
         start = n_on + 160
@@ -91,7 +91,7 @@ class Sounder:
             return None
         seg = x[start : start + L]
         best, span = delta0, 0.5e-6
-        for _ in range(3):
+        for _ in range(3 if search else 0):
             grid = best + np.linspace(-span, span, 11)
             e = [np.sum(np.abs(self._chan(seg, d, start)[0]) ** 2) for d in grid]
             best = grid[int(np.argmax(e))]
