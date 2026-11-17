@@ -4,18 +4,37 @@
 //! //firmware/mesh/swarm, from fughilli/indoor_localization): the backhaul seam
 //! ([`Backhaul`], §3.2), the link frame Splanc backhauls carry ([`link`]) and a node that
 //! drives `swarm_net` over one backhaul ([`Node`]), with the mesh payload sized from the
-//! backhaul's MTU (§5.2). M1 of the PR plan (§15); the security envelope, membership,
-//! ports and the 802.11 backhaul come in later milestones.
+//! backhaul's MTU (§5.2). M1 of the PR plan (§15).
 //!
-//! no_std, no allocation; the in-memory [`loopback`] backhaul (std) exists for host tests
-//! (feature `loopback`).
-#![cfg_attr(not(any(test, feature = "loopback")), no_std)]
+//! M2 adds the Splanc layer's security, as pure logic tested on the host:
+//!
+//! - [`envelope`]: the §5.1 envelope, AES-128-CCM on the netstack's CCM (`ccmp.rs`), a 64-bit
+//!   per-sender counter that never rolls over (low 32 bits on the wire, rebuilt by the
+//!   receiver), reserved ahead in flash once per 2^16 frames; [`replay`]: the per-source
+//!   window with synced/unsynced sources; [`security`]: both as the [`Node`]'s frame guard.
+//! - [`admin`]: insider-resistant administration: admin-signed session grants, freshness by
+//!   challenge-response (not time), per-receiver MACs under pairwise keys.
+//! - [`ports`]: §5.3's ports and the dispatch policy in front of them.
+//!
+//! no_std, no allocation. The std build (feature `host`) adds the in-memory [`loopback`]
+//! backhaul and [`host_keys`]; it is also what a Linux node (a Pi) runs.
+#![cfg_attr(not(any(test, feature = "loopback", feature = "host")), no_std)]
 
+pub mod admin;
 pub mod backhaul;
+pub mod codec;
+pub mod crypto;
+pub mod envelope;
+pub mod groups;
+#[cfg(any(test, feature = "host"))]
+pub mod host_keys;
 pub mod link;
-#[cfg(any(test, feature = "loopback"))]
+#[cfg(any(test, feature = "loopback", feature = "host"))]
 pub mod loopback;
 pub mod node;
+pub mod ports;
+pub mod replay;
+pub mod security;
 
 pub use backhaul::{Backhaul, BackhaulId, Busy, NodeId, RxMeta};
 pub use node::{MtuTooSmall, Node, NodeConfig, NodeStats};

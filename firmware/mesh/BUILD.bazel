@@ -1,9 +1,12 @@
 """Splanc mesh (docs/design/mesh.md): the Splanc layer over the ported swarm stack
 (//firmware/mesh/swarm). M1: the backhaul seam (Backhaul trait, RxMeta), the link frame
 Splanc backhauls carry, and a Node that drives swarm_net over one backhaul with the mesh
-payload sized from the backhaul's MTU. no_std, no allocation.
+payload sized from the backhaul's MTU. M2: the security envelope (AES-CCM on the netstack's
+ccmp.rs, 64-bit counters, replay windows), insider-resistant admin sessions, ports.
+no_std, no allocation.
 
-  :mesh     host (tests; its loopback backhaul is the `loopback` feature).
+  :mesh     host (tests): feature `host` adds the loopback backhaul and a P-256
+            device key on the host-only p256 crate.
   :mesh_fw  firmware (C6 riscv32imac, P4 riscv32imafc), over :swarm_net_fw.
 
 Firmware-target build check (also in CI):
@@ -20,10 +23,18 @@ SRCS = glob(["src/*.rs"])
 rust_library(
     name = "mesh",
     srcs = SRCS,
+    crate_features = [
+        "custodian_spill",
+        "host",
+    ],
     crate_name = "splanc_mesh",
     crate_root = "src/lib.rs",
     edition = "2021",
-    deps = ["//firmware/mesh/swarm:swarm_net"],
+    deps = [
+        "//firmware/mesh/swarm:swarm_net",
+        "//firmware/netstack",
+        "@player_crates//:p256",
+    ],
 )
 
 rust_test(
@@ -41,5 +52,8 @@ rust_library(
     crate_name = "splanc_mesh",
     crate_root = "src/lib.rs",
     edition = "2021",
-    deps = ["//firmware/mesh/swarm:swarm_net_fw"],
+    deps = [
+        "//firmware/mesh/swarm:swarm_net_fw",
+        "//firmware/netstack",
+    ],
 )
