@@ -19,6 +19,7 @@ import { MapView } from "../mapview";
 import { generateFixture } from "../../effects/fixtures";
 import { extractTopology } from "../../topology/extract";
 import { FxCompilerWorker } from "../../effects/editor/compiler";
+import { compilerStatusText, compilerUnavailableToolResult } from "../../fx/wasmLoad";
 import {
   CONTINUE_NOTE,
   describeExhaustedTurn,
@@ -131,6 +132,9 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
   let lastT = 0;
   let raf = 0;
   let disposed = false;
+  /** A set_script that failed only because the compiler couldn't be downloaded:
+   * applied as soon as the (background-retried) download lands. */
+  let pendingAfterDownload = false;
 
   // -- backdrop canvas + scrim ------------------------------------------------
   const canvas = document.createElement("canvas");
@@ -573,6 +577,14 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
   async function onSetScript(source: string): Promise<string> {
     currentSource = source;
     const r = await worker.compile(source);
+    if (!r.ok && r.compilerUnavailable !== undefined) {
+      // The compiler bundle couldn't be downloaded (a network problem, retried
+      // in the background): not the script's fault. Keep the last good effect,
+      // apply this one once the download lands, and tell the agent so.
+      pendingAfterDownload = true;
+      return compilerUnavailableToolResult(r.compilerUnavailable);
+    }
+    pendingAfterDownload = false;
     if (!r.ok) {
       const first = r.diagnostics[0];
       lastBytecode = null;
@@ -869,9 +881,29 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
     }
   }
 
+  // The effect compiler's download (fx/wasmLoad.ts): fetch it as soon as Acid Mode
+  // opens (the first wish shouldn't wait on it), say plainly when it fails and is
+  // being retried, and apply the agent's script once it lands.
+  let compilerNote: HTMLElement | null = null;
+  const unsubCompiler = worker.onStatus((s) => {
+    if (disposed) return;
+    // A first download that just works stays quiet.
+    const text = s.phase === "downloading" ? null : compilerStatusText(s);
+    if (text) {
+      if (compilerNote?.isConnected) compilerNote.textContent = text;
+      else compilerNote = appendMsg("think", text);
+    }
+    if (s.phase === "ready") compilerNote = null;
+    if (s.phase === "ready" && s.recovered && pendingAfterDownload && currentSource) {
+      pendingAfterDownload = false;
+      void onSetScript(currentSource);
+    }
+  });
+
   return {
     el,
     onMount: () => {
+      worker.warm();
       void initMap();
       raf = requestAnimationFrame(tick);
       midiRouter.attach();
@@ -889,6 +921,7 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
       if (doneTimer !== undefined) clearTimeout(doneTimer);
       cancelAnimationFrame(raf);
       unsubPill();
+      unsubCompiler();
       midiRouter.detach();
       voice?.stop();
       preview?.dispose();

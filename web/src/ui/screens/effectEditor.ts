@@ -39,6 +39,7 @@ import { MapView } from "../mapview";
 import { generateFixture } from "../../effects/fixtures";
 import { extractTopology } from "../../topology/extract";
 import { FxCompilerWorker } from "../../effects/editor/compiler";
+import { compilerStatusText, compilerUnavailableToolResult } from "../../fx/wasmLoad";
 import { UniformPanel } from "../../effects/editor/uniform-panel";
 import { sceneUniformValues, type EffectScene } from "../../effects/scene";
 import { highlight } from "../../effects/editor/highlight";
@@ -139,6 +140,23 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
 
   // -- live state -----------------------------------------------------------
   const worker = new FxCompilerWorker();
+  // Fetch the compiler as soon as the editor opens, and narrate its download
+  // (fx/wasmLoad.ts): "Downloading the effect compiler…" while a compile waits on
+  // it, "couldn't download — retrying" on a flaky network, and a recompile once a
+  // retried download lands (no edit needed to recover).
+  worker.onStatus((s) => {
+    if (disposed) return;
+    const text = compilerStatusText(s);
+    if ((s.phase === "downloading" || s.phase === "retrying") && text && statusEl.classList.contains("fxedit-status--busy")) {
+      setStatusCompiling(text);
+    } else if (s.phase === "failed" && text) {
+      setStatusErr(text);
+    } else if (s.phase === "ready" && s.recovered) {
+      toast("Effect compiler downloaded");
+      scheduleCompile();
+    }
+  });
+  worker.warm();
   let currentMap: OutputMap | null = null;
   let mapView: MapView | null = null;
   // Preview grid/triad state, seeded from the Appearance defaults and toggled by
@@ -586,13 +604,13 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     }
   }
 
-  function setStatusCompiling(): void {
+  function setStatusCompiling(label = "compiling…"): void {
     statusEl.className = "fxedit-status fxedit-status--busy";
     statusText.replaceChildren();
     const spin = document.createElement("span");
     spin.className = "fxedit-spinner";
     const txt = document.createElement("span");
-    txt.textContent = "compiling…";
+    txt.textContent = label;
     statusText.append(spin, txt);
   }
   function setStatusOk(text: string): void {
@@ -1343,6 +1361,19 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
 
     const warnings = r.warnings ?? [];
     renderDiagnostics([...r.diagnostics, ...warnings]);
+    if (!r.ok && r.compilerUnavailable !== undefined) {
+      // The compiler couldn't be downloaded (retried in the background; the
+      // status listener recompiles when it lands): a network problem, not an
+      // error in the effect — say so, to the user and to the agent.
+      setStatusErr(compilerStatusText(worker.lastStatus ?? { phase: "failed", attempt: 0 }) ?? "couldn't download the effect compiler");
+      lastCompileSummary = compilerUnavailableToolResult(r.compilerUnavailable);
+      lastDisassembly = "";
+      lastBytecode = null;
+      disasmPre.textContent = "";
+      videoPanel.setBytecode(null);
+      void updateBudgetBar(null);
+      return;
+    }
     if (!r.ok) {
       const first = r.diagnostics[0];
       const summary = first ? `line ${first.line}: ${first.msg}` : "compile failed";

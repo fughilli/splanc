@@ -11,6 +11,7 @@
 
 import type { FxCompiled } from "../../fx/preview";
 import type { CompileRequest, CompileResponse } from "./compile-worker";
+import type { WasmLoadStatus } from "../../fx/wasmLoad";
 
 export class FxCompilerWorker {
   private readonly worker: Worker;
@@ -19,6 +20,9 @@ export class FxCompilerWorker {
   // disassemble resolvers take a string — stored untyped and narrowed by the
   // response's `kind`.
   private readonly pending = new Map<number, (r: never) => void>();
+  private readonly statusListeners = new Set<(s: WasmLoadStatus) => void>();
+  /** The compiler download's latest status (null before the worker reported one). */
+  lastStatus: WasmLoadStatus | null = null;
 
   constructor() {
     this.worker = new Worker(new URL("./compile-worker.ts", import.meta.url), {
@@ -26,12 +30,31 @@ export class FxCompilerWorker {
     });
     this.worker.onmessage = (ev: MessageEvent<CompileResponse>): void => {
       const data = ev.data;
+      if (data.kind === "status") {
+        this.lastStatus = data.status;
+        for (const fn of this.statusListeners) fn(data.status);
+        return;
+      }
       const resolve = this.pending.get(data.id);
       if (!resolve) return;
       this.pending.delete(data.id);
       if (data.kind === "disassemble") (resolve as (t: string) => void)(data.text);
       else (resolve as (r: FxCompiled) => void)(data.result);
     };
+  }
+
+  /** Follow the compiler bundle's download (downloading / retrying / failed /
+   * ready) to tell the user what's going on. Returns an unsubscribe. */
+  onStatus(fn: (s: WasmLoadStatus) => void): () => void {
+    this.statusListeners.add(fn);
+    return () => this.statusListeners.delete(fn);
+  }
+
+  /** Start downloading the compiler now (screen open), so the first compile
+   * doesn't wait on it — and a flaky network is retried before it matters. */
+  warm(): void {
+    const req: CompileRequest = { id: this.nextId++, kind: "warm" };
+    this.worker.postMessage(req);
   }
 
   /** Compile source off-thread. Resolves with {ok, bytecode, uniforms,
@@ -59,5 +82,6 @@ export class FxCompilerWorker {
   dispose(): void {
     this.worker.terminate();
     this.pending.clear();
+    this.statusListeners.clear();
   }
 }
