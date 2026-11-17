@@ -1131,96 +1131,102 @@ IP backhaul and OTA over the mesh can follow the first install.
 Meshes mix very different devices. A standalone C6 player has a tight heap. A P4 + C6 fixture
 runs the mesh on the C6 front end but can keep deep queues on the P4, reached over the C6↔P4
 SDIO link. A Raspberry Pi has effectively unlimited RAM, runs Linux, and may also be on the
-LAN. The mesh uses the difference instead of sizing everyone for the weakest node.
+LAN. The question was whether the mesh should exploit the difference instead of sizing
+everyone for the weakest node, and which mechanisms earn their RAM. M2 built the mechanisms,
+simulated them, and kept only what helps.
 
-**Mechanisms** (implemented in M2, host code: `firmware/mesh/src/stack.rs`, `swarm/src/mesh.rs`):
+**What is in the code** (`firmware/mesh/src/stack.rs`, `firmware/mesh/swarm/src/mesh.rs`):
 
-- **Capacity advertised.** Every advert carries the node's class (C6, P4, Pi) and its current
-  relay credit (free relay slots).
-- **Standalone C6: small queues, a drop policy.** It keeps 4 relay and 4 outbox slots and
-  forwards promptly. With no room, it evicts the oldest relay of the lowest class below the
-  new one: bulk (port ≥ 23) before status and replies, before control, membership, time and
-  freshness (`Port::HIGH_PRIORITY`). Control is never starved by bulk.
-- **Custodians (P4, Pi): depth on the big side.**
-  - What a custodian's C6-side queue cannot hold spills into a deep store: P4 RAM over SDIO
-    (modelled as 100 µs + 20 MB/s per transfer, each way), or the Pi's RAM.
-  - A stored relay is released only while the neighbours advertise credit (credit-based
-    backpressure).
-  - **Only bulk and normal-priority traffic is spilled.** Live control relayed late is worse
-    than not relayed. The first sweep spilled it, and 64-node p99 latency rose to 1.9 s.
-- **Bulk toward custodians.**
-  - Custodians relay bulk floods early and C6s late, so a custodian's relay usually cancels
-    the C6's.
-  - Page requests (effect blobs, firmware, catch-up) prefer a custodian among equally advanced
-    neighbours, so custodians carry the retransmissions.
-  - Live control is untouched: it relays with the normal RSSI-based delay.
-- **Pi radio path** is a parameter in the model: extra per-frame latency (2 ms in the sweep,
-  for nl80211 action frames or USB injection), or an attached C6 as the radio. The Pi runs
-  the same crates' std build (`//firmware/mesh` feature `host`). The Backhaul trait and the
-  frame format are host-portable.
-  - Nothing blocks a std/Linux build.
-  - A Pi needs its own `DeviceKey` (its TLS key file instead of `host_keys`), a real
-    `Entropy` (getrandom), a file-backed `Flash` for the page protocol, and its `Backhaul`
-    implementation.
-  - A Pi bridging islands over IP is the IP backhaul (M10).
+| Mechanism                                                                                  | C6 RAM          | Verdict from the sweeps                                                                                   |
+| ------------------------------------------------------------------------------------------ | --------------- | --------------------------------------------------------------------------------------------------------- |
+| Class (C6, P4, Pi) and relay credit in every advert                                        | ~100 B (8 neighbours) | **Keep**: picks bulk sources and page servers, sizes gateway rosters                                 |
+| Small C6 queues (4 relay, 4 outbox) with a priority drop policy: bulk, then status, never control/time/membership/freshness first | saves 3.3 KB | **Keep**: control is never starved by bulk                                 |
+| **Source pacing of bulk** (`send_bulk`: ≥ 20 ms between bulk packets, and only while neighbours advertise credit) | a few bytes | **Keep, the one that matters**: far-side delivery through a C6 cut vertex rises from 40–53 % to 69–89 % |
+| Custodian spill: a P4/Pi keeps evicted bulk/normal relays in a deep store (P4 RAM over SDIO, 100 µs + 20 MB/s per transfer; Pi RAM), released while neighbours have credit | ~230 B (one spill slot) | **Drop or gate behind a feature**: never exercised (see below) |
+| Relay-delay bias by class (custodians relay bulk early, C6s late)                          | 0               | **Removed**: made a C6 cut vertex cancel the only relay toward the far side (3 % delivery)                |
+| Page requests prefer custodians among equally advanced neighbours                          | 8 B             | Keep (harmless), but no measurable gain                                                                   |
+| Hop limit per install (default 5, up to 7)                                                 | 0               | **Keep**; make it adaptive (below)                                                                        |
 
-**Sweep** (`//firmware/mesh/meshsim:sweep`; script and plots `firmware/mesh/meshsim/sweep/`;
-results `docs/design/mesh/sweep.csv`, 150 runs). It varies:
-- class mix (C6/P4/Pi from 100 % C6 to 100 % Pi),
-- node count (6, 16, 32, 64),
-- topology (line, grid, random geometric, clustered with single-custodian bridges),
-- loss (0, 10, 30 %),
-- traffic (live control to all at 30/60 Hz, a 4 KiB effect blob, 32 KiB firmware, late-joiner
-  catch-up, a blob during live control),
-- capacity-aware relaying versus the uniform-small-queue baseline (every node a C6).
+The **Pi** runs the same crates' std build (`//firmware/mesh`, feature `host`). The Backhaul
+trait and the frame format are host-portable, and nothing blocks a std/Linux build.
+- A Pi needs its own `DeviceKey` (its TLS key file), a real `Entropy` (getrandom), a
+  file-backed `Flash` for the page protocol, and its `Backhaul` (nl80211 Public Action frames on
+  the built-in radio, §4.1).
+- In meshsim its radio is the measured built-in Broadcom path: one-way 5–27 ms (≈ 14 ms median,
+  54 ms p99 RTT), 94 % per-hop broadcast delivery, ≤ 320 frames/s.
+- A Pi bridging islands over IP is M10.
 
-![live control vs nodes, 1 vs 6 Mb/s](mesh/airtime.png)
-![delivery, latency and blob time vs nodes](mesh/nodes.png)
-![class mix: control p99 and blob time](mesh/mix.png)
-![topologies at 32 nodes](mesh/topology.png)
-![queue occupancy and drops per class](mesh/queues.png)
+**Sweeps** (`firmware/mesh/meshsim/sweep/`: `main.rs` runs them, `plot.py` draws them; data in
+`mesh/sweep.csv` (150 runs) and `mesh/stress.csv` (46 runs)). Frames carry the Public Action
+header (+1 B, §4.1).
 
-What it shows:
+1. **Airtime, not queue RAM, limits live control.** 60 Hz control to every member (one
+   flood, per-receiver MACs):
 
-1. **Airtime, not queue RAM, is the limit for live control.**
-   - At 1 Mb/s DSSS, 60 Hz control to every member (one flood plus per-receiver MACs)
-     delivers 100 % at 6 fixtures, 53 % at 16, 18 % at 32 and 15 % at 64.
-   - At **6 Mb/s OFDM**: 100 / 98 / 92 / 57 %. At 6 Mb/s and 30 Hz: 100 / 99 / 98 / 72 %.
-   - The radiolarians (6 fixtures) are fine at either rate. Larger meshes need OFDM for mesh
-     frames (M3a must check its range through the enclosures) and live moves coalesced to
-     ≤ 30 Hz. Past ~32 nodes, live moves need a broadcast authenticator instead of
-     per-receiver MACs (§17 Q14).
-2. **Bulk is pull-based and flash-backed, so queues barely matter for it.**
-   - A 4 KiB blob reaches 16 nodes in 0.7–1.7 s and 64 in 3.4–4.1 s. 32 KiB firmware reaches
-     16 nodes in 9–16 s.
-   - Every run with bulk completed, and no bulk was dropped at a C6.
-   - The biggest effect is **where the source is**: a central custodian (a Pi or P4 seeding the
-     blob) beats a corner C6 gateway. That favours custodians as bulk sources.
-   - Capacity-aware relaying changed firmware times by −24 % to +23 % against the baseline,
-     in both directions. That is within the noise of source placement: no consistent gain.
-3. **Single-custodian bottleneck.** In the clustered topology with the only custodian on a
-   bridge, the blob reached all 32 nodes in 4.5 s (all-C6: 4.3 s). There is no bottleneck,
-   because bulk is not queued at the bridge.
-4. **Where it degrades, and what mitigates it.**
-   - **Saturation (≥ 16 nodes at 1 Mb/s and 60 Hz):** C6s drop live control at full queues
-     (686 drops in 5 s at 32 nodes). Use OFDM and ≤ 30 Hz.
-   - **Line and chain venues:** 32 in a line reach only 32 % of control, because the hop
-     limit is 3. Raise the hop limit per install (Q15), or add custodians as bridges with the
-     IP backhaul.
-   - **Random dense layouts** saturate like the grid.
-   - **100 % C6** is not worse than the mixes for control (same airtime). It is slightly
-     slower for bulk only when the gateway that seeds the blob sits at the edge.
-5. **Queue occupancy.**
-   - C6 relay queues reach their budget (4) only when live control saturates the channel.
-   - In this traffic mix **no bulk or normal-priority relay was ever dropped at a C6**, so the
-     custodian stores stayed empty. The first sweep, which still spilled live control, filled
-     a P4 store to 227 of 256.
-   - The custodian store and credit pacing are therefore implemented and unit-tested but not
-     exercised by today's traffic. They start to matter if M6 pushes blobs as floods instead
-     of pulling pages, or for status bursts in large meshes. The sweep keeps them in the model
-     for that.
-   - What the classes buy today: **Pis and P4s as bulk sources and page servers**, plus
-     deeper gateway rosters.
+   | Nodes                 | 6     | 16   | 32   | 64   |
+   | --------------------- | ----- | ---- | ---- | ---- |
+   | 1 Mb/s DSSS, 60 Hz    | 100 % | 53 % | 18 % | 15 % |
+   | 6 Mb/s OFDM, 60 Hz    | 100 % | 99 % | 91 % | 58 % |
+   | 6 Mb/s OFDM, 30 Hz    | 100 % | 99 % | 97 % | 71 % |
+
+   **Mesh frames default to 6 Mb/s OFDM** (meshsim's default now; M3 for the radio, after
+   M3a checks the range through the enclosures). Live moves should be coalesced to ≤ 30 Hz
+   on the mesh. Past ~32 members, live moves need a broadcast authenticator (§17 Q14).
+
+   ![live control vs nodes, 1 vs 6 Mb/s](mesh/airtime.png)
+
+2. **Pull-based bulk (effect blobs, firmware, catch-up) does not need queue space.** Its pages
+   live in flash, and requests pull them hop by hop. Through a C6 cut vertex (two clusters
+   joined only by one standalone C6, 6 Mb/s), every run completed, and capacity awareness made
+   no difference:
+
+   | Image                                          | Time to all  |
+   | ---------------------------------------------- | ------------ |
+   | 4 KiB blob, 16 nodes (grid)                    | 1.0–1.7 s    |
+   | 4 KiB blob, 64 nodes                           | 3.3–4.3 s    |
+   | 256 KiB catch-up across the C6-only path       | 40–43 s      |
+   | 256 KiB with 30 % one-way loss after the cut vertex | 86–99 s |
+   | 256 KiB with churn (a node off the air 3 s in every 4 s) | 72–83 s |
+   | 1.5 MB firmware                                | 350–366 s    |
+
+   A custodian *source* (a Pi or P4 seeding the image centrally) helps more than any queue.
+
+3. **Pushed bursts are where queues bite, and pacing is the fix.** Four 4 KiB blobs pushed as
+   bulk floods (88 packets) through the C6 cut vertex:
+
+   | Pushed as                                        | Far-side delivery | All nodes | Burst takes | 30 Hz control during it |
+   | ------------------------------------------------ | ----------------- | --------- | ----------- | ----------------------- |
+   | Unpaced (as fast as the outbox allows)           | 40–53 %           | 68–75 %   | 0.14–0.26 s | 96–98 %                 |
+   | **Paced** (≥ 20 ms apart, credit-gated)          | **69–89 %**       | **84–94 %** | 1.7 s     | 91–94 %                 |
+
+   - Credit in a 1 Hz advert is far too slow to throttle a burst that leaves in 140 ms. The
+     pace itself is the backpressure.
+   - With pacing, the custodian stores were never used, in any run: nothing but live control
+     ever filled a C6's queue, and live control is never spilled (relayed late, it is worse
+     than not at all: an early version that spilled it pushed 64-node p99 latency to 1.9 s).
+
+   ![push bursts through a C6 cut vertex](mesh/stress-bursts.png)
+
+4. **The hop limit, not capacity, limits line and chain venues.**
+   - A line of 32 fixtures 5 m apart is about 13 hops long at OFDM range. It reaches 20 / 31 /
+     38 % of control at hop limits 3 / 5 / 7.
+   - Clustered layouts with bridges plateau at ~55–59 %.
+   - Default 5, a per-install setting up to 7. Better: **adaptive**, where the gateway raises
+     the limit to the largest hop count it sees in members' status, capped at 7. A venue
+     longer than that needs the IP backhaul (M10) or more bridges.
+
+   ![big images and hop limits](mesh/stress-images-hops.png)
+
+**Does capacity awareness earn its RAM?** Partly.
+- The parts that cost almost nothing earn it: pacing, priority drop, and class adverts.
+- The parts that cost RAM on every C6 do not, for the traffic Splanc has: the custodian spill
+  slot (~230 B) was never used. Unless M6 chooses to push blobs as floods (it should pull
+  pages, §5.5), the spill and custody path can go behind a feature, and the P4/Pi role reduces
+  to: deep gateway rosters, bulk sources, and page servers.
+- Open mode (M7b) needs 1.4 KB on the C6 when compiled in (§10.4).
+
+![C6 RAM before and after M2](mesh/ram.png)
+
 ## 11. UWB backhaul (later)
 
 - **Hardware**: no current Splanc board has UWB. The C6 boards, `splanc-mini` and the P4 + C6
@@ -1491,7 +1497,8 @@ The work it moves to later milestones:
 | Background sweeps make members deaf                                                                              | missed changes                 | skip sweeps while the mesh is healthy; `Away`; generation catch-up                  |
 | BLE coex loses broadcasts at the gateway                                                                         | slower fan-out                 | relays and retries; HITL measures; a coex priority bump for mesh TX if needed       |
 | C6 RAM at large LED configs                                                                                      | can't fit                      | measured 15.1 KB static (§10.4); fewer `swarm_net` slots or a byte ring if needed   |
-| Live control saturates the channel at 1 Mb/s beyond ~8 fixtures (per-receiver MACs + floods)                      | lagging, lost live moves       | 6 Mb/s OFDM, ≤ 30 Hz coalescing, broadcast authenticator for big meshes (§10.6)     |
+| Live control saturates the channel at 1 Mb/s beyond ~8 fixtures (per-receiver MACs + floods)                      | lagging, lost live moves       | 6 Mb/s OFDM (default), ≤ 30 Hz coalescing, broadcast authenticator for big meshes (§10.6) |
+| Pushed bulk overruns a constrained C6 cut vertex                                                                  | lost blob chunks               | pull pages (M6); pace pushed bulk (`send_bulk`, §10.6)                              |
 | An eclipsed node (only malicious neighbours)                                                                      | desynced (≤ 500 ppm), starved  | cannot be made to accept forgeries or replays (§7.10); more neighbours              |
 | ECDSA verify slower than estimated on the C6                                                                      | slow session start             | once per session, in the mesh task; measured in M3a                                 |
 | The ported swarm code diverges from indoor_localization                                                          | fixes don't flow both ways     | provenance note; ported golden vectors; port fixes back by hand                     |
@@ -1565,7 +1572,10 @@ swarm code, and Splanc's own framing.
     one interval of latency and needs loose time sync.
   - (c) Allow live moves under a per-session group key. Insiders could then forge live moves
     but not commits, like open-mode guests.
-- **Q15.** Hop limit 3 is too small for line or chain venues: make it a per-install setting?
+- **Q15.** Hop limit: M2 makes it 5 by default and a per-install setting up to 7. Should it
+  also be adaptive (the gateway raises it to the largest hop count it sees)?
+- **Q17.** Custodian spill (a deep relay store on P4/Pi) costs ~230 B on every C6 and was never
+  used in the sweeps. Remove it, or keep it behind a feature for a future push-based M6?
 - **Q16.** Open mode's 1.4 KB on the C6: accept it as the M7b budget?
 
 ## 18. Sources
