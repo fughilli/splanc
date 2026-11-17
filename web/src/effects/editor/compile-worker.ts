@@ -15,16 +15,21 @@
 
 import type { FxCompiled, FxDiagnostic, FxSymbol, FxUniform } from "../../fx/preview";
 import { compilerAssetBase } from "./workerAssets";
+import { compilerDownloadMessage, createRetryingLoader, retryUrl, WasmDownloadError, type WasmLoadStatus } from "../../fx/wasmLoad";
 
-/** A compile request (`src`) or a disassemble request (`fxb`). Discriminated by
- * `kind`; the untagged legacy `{id, src}` shape is treated as a compile. */
+/** A compile request (`src`), a disassemble request (`fxb`), or a prefetch of the
+ * compiler bundle (`warm`, no reply of its own). Discriminated by `kind`; the
+ * untagged legacy `{id, src}` shape is treated as a compile. */
 export type CompileRequest =
   | { id: number; kind?: "compile"; src: string }
-  | { id: number; kind: "disassemble"; fxb: Uint8Array };
+  | { id: number; kind: "disassemble"; fxb: Uint8Array }
+  | { id: number; kind: "warm" };
 
+/** Replies, plus unsolicited `status` updates on the compiler download (id 0). */
 export type CompileResponse =
   | { id: number; kind?: "compile"; result: FxCompiled }
-  | { id: number; kind: "disassemble"; text: string };
+  | { id: number; kind: "disassemble"; text: string }
+  | { id: 0; kind: "status"; status: WasmLoadStatus };
 
 interface CompilerResult {
   readonly ok: boolean;
@@ -39,8 +44,6 @@ interface CompilerModule {
   fx_disassemble(fxb: Uint8Array): string;
 }
 
-let modP: Promise<CompilerModule> | null = null;
-
 // This runs in a Web Worker — there is no `document` to resolve against (unlike
 // src/assetBase.ts). Vite emits this worker chunk at <deploy-root>/assets/<hash>.js
 // (default assetsDir "assets"), so the deploy root — where the fx-compiler
@@ -51,18 +54,21 @@ function fxCompilerBase(): string {
   return compilerAssetBase(self.location.href);
 }
 
-function loadCompiler(base = fxCompilerBase()): Promise<CompilerModule> {
-  if (modP === null) {
-    modP = (async () => {
-      const mod = (await import(
-        /* @vite-ignore */ `${base}/fx_compiler_wasm_pkg.js`
-      )) as CompilerModule;
-      await mod.default(`${base}/fx_compiler_wasm_pkg_bg.wasm`);
-      return mod;
-    })();
-  }
-  return modP;
-}
+const post = (resp: CompileResponse): void => (self as unknown as Worker).postMessage(resp);
+
+// Retrying, cache-busting load (src/fx/wasmLoad.ts): one failed download must not
+// poison the worker's module map for the rest of the session.
+const compiler = createRetryingLoader<CompilerModule>({
+  load: async (attempt) => {
+    const base = fxCompilerBase();
+    const mod = (await import(/* @vite-ignore */ retryUrl(`${base}/fx_compiler_wasm_pkg.js`, attempt))) as CompilerModule;
+    await mod.default(retryUrl(`${base}/fx_compiler_wasm_pkg_bg.wasm`, attempt));
+    return mod;
+  },
+  onStatus: (status) => post({ id: 0, kind: "status", status }),
+});
+
+const loadCompiler = (): Promise<CompilerModule> => compiler.get();
 
 function toCompiled(r: CompilerResult): FxCompiled {
   // The FX debugger's symbol table (absent from compilers that predate it).
@@ -80,6 +86,10 @@ function toCompiled(r: CompilerResult): FxCompiled {
 
 self.onmessage = (ev: MessageEvent<CompileRequest>): void => {
   const req = ev.data;
+  if (req.kind === "warm") {
+    compiler.warm();
+    return;
+  }
   void (async () => {
     if (req.kind === "disassemble") {
       let text: string;
@@ -89,8 +99,7 @@ self.onmessage = (ev: MessageEvent<CompileRequest>): void => {
       } catch (e) {
         text = `; disassembly failed: ${e instanceof Error ? e.message : String(e)}`;
       }
-      const resp: CompileResponse = { id: req.id, kind: "disassemble", text };
-      (self as unknown as Worker).postMessage(resp);
+      post({ id: req.id, kind: "disassemble", text });
       return;
     }
     let result: FxCompiled;
@@ -99,18 +108,22 @@ self.onmessage = (ev: MessageEvent<CompileRequest>): void => {
       result = toCompiled(mod.fx_compile(req.src));
     } catch (e) {
       // A wasm panic or load failure — surface as an error diagnostic rather
-      // than throwing, so the editor stays alive.
+      // than throwing, so the editor stays alive. A failed DOWNLOAD is flagged
+      // (compilerUnavailable) so the screens and the AI tools say it's the
+      // network, being retried — not an error in the effect.
+      const download = e instanceof WasmDownloadError;
+      const text = e instanceof Error ? e.message : String(e);
       result = {
         ok: false,
         bytecode: new Uint8Array(0),
         uniforms: [],
         diagnostics: [
-          { line: 0, col: 0, msg: `compiler error: ${e instanceof Error ? e.message : String(e)}` },
+          { line: 0, col: 0, msg: download ? compilerDownloadMessage(text) : `compiler error: ${text}` },
         ] satisfies FxDiagnostic[],
         warnings: [],
+        ...(download ? { compilerUnavailable: text } : {}),
       };
     }
-    const resp: CompileResponse = { id: req.id, result };
-    (self as unknown as Worker).postMessage(resp);
+    post({ id: req.id, result });
   })();
 };

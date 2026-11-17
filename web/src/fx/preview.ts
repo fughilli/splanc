@@ -12,6 +12,7 @@
 
 import { assetUrl } from "../assetBase";
 import type { ReplayVm } from "./fxDebug";
+import { createRetryingLoader, retryUrl } from "./wasmLoad";
 
 export type FxUiKind =
   // A scalar, or a RANGED vector (vec2..vec4 with a declared range: one slider
@@ -66,6 +67,10 @@ export interface FxCompiled {
   warnings?: FxDiagnostic[] | undefined;
   /** Absent from compiler builds that predate the FX debugger. */
   symbols?: FxSymbol[];
+  /** Set (to the load error) when the compile failed because the compiler bundle
+   * itself could not be downloaded — a network problem being retried
+   * (src/fx/wasmLoad.ts), not an error in the source. */
+  compilerUnavailable?: string;
 }
 
 interface CompilerResult {
@@ -101,6 +106,7 @@ interface VmModule {
   fx_blend_rgb8?: ReplayVm["fx_blend_rgb8"];
 }
 
+// Modules a host installed (installFxModules); otherwise the retrying loaders below.
 let compilerMod: Promise<CompilerModule> | null = null;
 let vmMod: Promise<VmModule> | null = null;
 
@@ -123,26 +129,31 @@ export function installFxModules(m: FxModules): void {
   if (m.vm) vmMod = Promise.resolve(m.vm as VmModule);
 }
 
-function loadCompiler(base = assetUrl("fx-compiler")): Promise<CompilerModule> {
-  if (compilerMod === null) {
-    compilerMod = (async () => {
-      const mod = (await import(/* @vite-ignore */ `${base}/fx_compiler_wasm_pkg.js`)) as CompilerModule;
-      await mod.default(`${base}/fx_compiler_wasm_pkg_bg.wasm`);
-      return mod;
-    })();
-  }
-  return compilerMod;
+// Retrying, cache-busting loads (wasmLoad.ts): a transient download failure is
+// retried with a fresh URL instead of poisoning the module map for the session.
+const compilerLoader = createRetryingLoader<CompilerModule>({
+  load: async (attempt) => {
+    const base = assetUrl("fx-compiler");
+    const mod = (await import(/* @vite-ignore */ retryUrl(`${base}/fx_compiler_wasm_pkg.js`, attempt))) as CompilerModule;
+    await mod.default(retryUrl(`${base}/fx_compiler_wasm_pkg_bg.wasm`, attempt));
+    return mod;
+  },
+});
+const vmLoader = createRetryingLoader<VmModule>({
+  load: async (attempt) => {
+    const base = assetUrl("fx-vm");
+    const mod = (await import(/* @vite-ignore */ retryUrl(`${base}/fx_vm_wasm_pkg.js`, attempt))) as VmModule;
+    await mod.default(retryUrl(`${base}/fx_vm_wasm_pkg_bg.wasm`, attempt));
+    return mod;
+  },
+});
+
+function loadCompiler(): Promise<CompilerModule> {
+  return compilerMod ?? compilerLoader.get();
 }
 
-function loadVm(base = assetUrl("fx-vm")): Promise<VmModule> {
-  if (vmMod === null) {
-    vmMod = (async () => {
-      const mod = (await import(/* @vite-ignore */ `${base}/fx_vm_wasm_pkg.js`)) as VmModule;
-      await mod.default(`${base}/fx_vm_wasm_pkg_bg.wasm`);
-      return mod;
-    })();
-  }
-  return vmMod;
+function loadVm(): Promise<VmModule> {
+  return vmMod ?? vmLoader.get();
 }
 
 /** The VM wasm's FX-debugger replay surface (fxDebug.ts), from the same module

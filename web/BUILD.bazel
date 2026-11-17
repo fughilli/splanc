@@ -111,6 +111,7 @@ copy_to_bin(
         "src/effects/editor/lang-spec.ts",
         "src/fx/fxDebug.ts",  # the FX debugger (pause/step/snapshot/replay/compare)
         "src/fx/preview.ts",
+        "src/fx/wasmLoad.ts",  # preview.ts's retrying wasm loader
         "src/gen/ledmapper_pb.ts",
         "src/geom/mapExport.ts",  # export_map (TouchDesigner CSV / Chromatik .lxf)
         "src/net/bridgeLive.ts",  # the app's live-VJ client (the bridge's live e2e test drives it)

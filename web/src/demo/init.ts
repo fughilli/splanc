@@ -73,7 +73,8 @@ function stubPresetCompiler(): void {
     if (!String(url).includes("compile-worker")) return new Orig(url, opts);
     const w = {
       onmessage: null as ((ev: { data: unknown }) => void) | null,
-      postMessage(req: { id: number; src: string }) {
+      postMessage(req: { id: number; kind?: string; src: string }) {
+        if (req.kind === "warm") return;
         setTimeout(() => w.onmessage?.({ data: { id: req.id, kind: "compile", result: compile(req.src) } }), 20);
       },
       terminate() {},
@@ -359,6 +360,7 @@ function setupEffectEditor(): void {
     } = {
       onmessage: null,
       postMessage(req) {
+        if (req.kind === "warm") return;
         const resp =
           req.kind === "disassemble"
             ? { id: req.id, kind: "disassemble", text: disasm }
