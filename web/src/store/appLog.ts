@@ -57,6 +57,13 @@ function escapeRe(s: string): string {
  * replacement (normally its opaque id); they are replaced first, longest first.
  */
 export function redactText(text: string, known: Readonly<Record<string, string>> = {}): string {
+  const out = maskText(text, known);
+  return out.length > MAX_MSG ? `${out.slice(0, MAX_MSG - 1)}…` : out;
+}
+
+/** {@link redactText} without the length cap: for longer text that must be
+ * redacted the same way (the agent-feedback trace, web/src/feedback). */
+export function maskText(text: string, known: Readonly<Record<string, string>> = {}): string {
   let out = String(text);
   const keys = Object.keys(known)
     .filter((k) => k.length >= 3)
@@ -74,7 +81,7 @@ export function redactText(text: string, known: Readonly<Record<string, string>>
     // API-key-shaped tokens (sk-…, ghp_…, long hex / base64 runs).
     .replace(/\b(?:sk|pk|rk|ghp|gho|github_pat|xox[abp])[-_][A-Za-z0-9_-]{8,}\b/g, "<secret>")
     .replace(/\b[A-Za-z0-9+_-]{40,}={0,2}/g, "<secret>");
-  return out.length > MAX_MSG ? `${out.slice(0, MAX_MSG - 1)}…` : out;
+  return out;
 }
 
 /** A URL for the log: origin + path only (no query, fragment or credentials),

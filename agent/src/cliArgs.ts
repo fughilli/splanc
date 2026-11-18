@@ -69,6 +69,16 @@ Cloud agents (docs/guides/cloud-agent.md; docs/design/cloud-relay.md):
   relay [--port 8787] [--listen 127.0.0.1] [--public-url https://...] [--data-dir d] [--trust-proxy]
                                        host the relay yourself (e.g. behind tailscale funnel)
 
+Agent feedback triage, for the Splanc team (docs/design/agent-feedback.md):
+  feedback list [--signature s] [--status s] [--file f ...] [--json]   reports grouped by signature
+  feedback show <id> | --file f        one report, readable (the relay's private store needs
+                                       SPLANC_FEEDBACK_TOKEN; --relay or $SPLANC_RELAY)
+  feedback replay <id> | --file f [--runs 5] [--host <test player>]
+                                       re-run its tool calls N times; where runs and the recording
+                                       diverge (exit 3: the failure didn't come back)
+  feedback status <id> <received|reproduced|not_reproduced|fixed|wontfix> [--fixed-in X] [--message m]
+  feedback fixture <id> | --file f --out f.json --expect ok/ok/sent   a regression fixture
+
 Demo night (docs/guides/demo-stage.md):
   stage [--port 7420] [--effort low|medium|high] [--lan] [--no-open]
                                        the TV screen: talk to Claude (push-to-talk in the page),
@@ -123,6 +133,7 @@ const BOOL = new Set([
   "help",
   "quiet",
   "trust-proxy",
+  "json",
   "direct",
   "user-confirmed",
   "lan",

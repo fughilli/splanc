@@ -40,6 +40,7 @@ export type IconName =
   | "plug-off"
   | "sparkles"
   | "alert"
+  | "thumbs-down"
   | "help"
   | "info"
   | "arrow-up"
@@ -128,6 +129,7 @@ const PATHS: Record<IconName, string> = {
   "ble-search": `<path d="M5 5 10 9 7.5 11 7.5 3 10 5 5 9"/><circle cx="15.5" cy="15.5" r="3.5"/><path d="M18 18l3.6 3.6"/>`,
   sparkles: `<path d="M12 4l1.6 4.4L18 10l-4.4 1.6L12 16l-1.6-4.4L6 10l4.4-1.6z"/><path d="M18 15l.8 2 2 .8-2 .8L18 21l-.8-2-2-.8 2-.8z"/>`,
   alert: `<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/>`,
+  "thumbs-down": `<path d="M7 4h9.5a2 2 0 0 1 2 1.7l1.2 7A2 2 0 0 1 17.7 15H14l.8 3.6a1.8 1.8 0 0 1-3.4 1.1L8 14V4z"/><path d="M4 4h3v10H4z"/>`,
   help: `<circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a2.8 2.8 0 0 1 5.3 1.2c0 1.9-2.6 2.3-2.6 4"/><path d="M12 17.5h.01"/>`,
   info: `<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/>`,
   "arrow-up": `<path d="M12 19V5"/><path d="M6 11l6-6 6 6"/>`,

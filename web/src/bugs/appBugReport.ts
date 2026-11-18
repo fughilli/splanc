@@ -41,7 +41,7 @@ export interface AppBugDeps {
   creds?: () => { relay: string; token: string } | null;
 }
 
-function storedCreds(): { relay: string; token: string } | null {
+export function storedCreds(): { relay: string; token: string } | null {
   try {
     const raw = globalThis.localStorage?.getItem(BRIDGE_CREDS_KEY);
     const c = raw ? (JSON.parse(raw) as { relay?: unknown; token?: unknown }) : null;

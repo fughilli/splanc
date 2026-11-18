@@ -7,7 +7,9 @@
  * - fixed-window rate limits (`rl:<bucket>:<window>:<key>` -> count): failed code
  *   redemptions per client IP and globally, bridge registrations, new codes;
  * - the HMAC key that signs stateless OAuth client ids (dynamic client
- *   registration stores nothing per client).
+ *   registration stores nothing per client) and agent-feedback receipts;
+ * - agent-feedback reports (feedback.ts): `fb:<id>` -> the record, `fbi:<id>`
+ *   -> its summary for listing; both carry `exp` and the alarm purges them.
  *
  * Only the Worker talks to it (Durable Objects aren't publicly addressable).
  * Traffic is tiny: it is touched on pairing, registration and OAuth steps, never
@@ -37,6 +39,10 @@ export const LIMITS = {
   bugBridge: [5, 3600],
   bugIp: [3, 3600],
   bugGlobal: [60, 86400],
+  /** Agent-feedback reports (POST /feedback, feedback.ts): same callers as bugs. */
+  feedbackBridge: [20, 3600],
+  feedbackIp: [6, 3600],
+  feedbackGlobal: [300, 86400],
 } as const satisfies Record<string, readonly [number, number]>;
 
 export type LimitName = keyof typeof LIMITS;
@@ -92,8 +98,14 @@ export class Directory {
       const w = LIMITS[name as LimitName]?.[1] ?? 3600;
       if (Number(win) < Math.floor(t / w)) dead.push(k);
     }
+    for (const [k, v] of await this.state.storage.list<{ exp?: number }>({ prefix: "fbi:" })) {
+      if ((v.exp ?? 0) <= t) dead.push(k, `fb:${k.slice(4)}`);
+    }
     for (let i = 0; i < dead.length; i += 128) await this.state.storage.delete(dead.slice(i, i + 128));
-    const left = (await this.state.storage.list({ prefix: "rl:", limit: 1 })).size + (await this.state.storage.list({ prefix: "code:", limit: 1 })).size;
+    const left =
+      (await this.state.storage.list({ prefix: "rl:", limit: 1 })).size +
+      (await this.state.storage.list({ prefix: "code:", limit: 1 })).size +
+      (await this.state.storage.list({ prefix: "fbi:", limit: 1 })).size;
     if (left > 0) await this.state.storage.setAlarm(now(this.env) + 600_000);
   }
 
@@ -119,6 +131,33 @@ export class Directory {
         await this.bump(name, key);
         if (global) await this.bump(global, "*");
         return json({ ok: true });
+      }
+      case "/fb/put": {
+        const b = body as unknown as { id: string; rec: { exp: number }; summary: { exp: number } };
+        await this.state.storage.put({ [`fb:${b.id}`]: b.rec, [`fbi:${b.id}`]: b.summary });
+        await this.ensureAlarm();
+        return json({ ok: true });
+      }
+      case "/fb/get":
+        return json({ rec: (await this.state.storage.get(`fb:${body["id"]}`)) ?? null });
+      case "/fb/list":
+        return json({ items: [...(await this.state.storage.list({ prefix: "fbi:" })).values()] });
+      case "/fb/patch": {
+        const b = body as unknown as { id: string; patch: Record<string, unknown> };
+        const rec = await this.state.storage.get<Record<string, unknown>>(`fb:${b.id}`);
+        const sum = await this.state.storage.get<Record<string, unknown>>(`fbi:${b.id}`);
+        if (!rec || !sum) return json({ error: "not found" }, 404);
+        const status = b.patch["status"];
+        const fixedIn = b.patch["fixedIn"];
+        await this.state.storage.put({
+          [`fb:${b.id}`]: { ...rec, ...b.patch },
+          [`fbi:${b.id}`]: { ...sum, ...(status ? { status } : {}), ...(fixedIn ? { fixedIn } : {}) },
+        });
+        return json({ ok: true });
+      }
+      case "/fb/delete": {
+        const n = await this.state.storage.delete([`fb:${body["id"]}`, `fbi:${body["id"]}`]);
+        return n > 0 ? json({ ok: true }) : json({ error: "not found" }, 404);
       }
       case "/hmac/sign":
         return json({ sig: await hmac(await this.key(), body["msg"]!) });

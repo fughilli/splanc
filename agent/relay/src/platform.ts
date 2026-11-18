@@ -69,6 +69,12 @@ export interface Env {
   GITHUB_ISSUES_REPO?: string;
   /** GitHub API base (default https://api.github.com; tests point it at a mock). */
   GITHUB_API_URL?: string;
+  /** Worker secret: the owner's token for reading agent-feedback reports (the
+   * triage CLI). Unset = POST /feedback answers 503 not_configured
+   * (docs/design/agent-feedback.md). */
+  FEEDBACK_ADMIN_TOKEN?: string;
+  /** Days a feedback report is kept (default 90). */
+  FEEDBACK_RETENTION_DAYS?: string;
   /** Present under the Node host. */
   HOST?: HostHooks;
 }

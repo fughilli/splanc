@@ -1,0 +1,113 @@
+{
+  "schema": "splanc-agent-feedback-fixture/1",
+  "note": "Synthetic regression fixture (no user data): the in-app AI claimed 'Pushed' while set_script reported NOT SENT. Replaying the tool calls against a connected player must send (ok/ok/sent); the false claim itself is the model's and is covered by the claimed_sent_not_sent finding.",
+  "report": {
+    "schema": "splanc-agent-feedback/1",
+    "id": "fixture0claimedpushed",
+    "createdAt": "2026-11-18T10:01:00Z",
+    "surface": "web-editor",
+    "reasons": ["false_claim", "not_sent"],
+    "note": "Synthetic: the AI said Pushed, the fixture was not connected.",
+    "turn": 1,
+    "app": {
+      "version": "1.14.0",
+      "commit": null,
+      "browser": "Chrome 131 on Android"
+    },
+    "ai": {
+      "kind": "cloud",
+      "vendor": "anthropic",
+      "model": "synthetic"
+    },
+    "signature": "a74045f6",
+    "signal": {
+      "tool": "set_script",
+      "error": "compile result: ok — # uniforms",
+      "flags": "claimed_sent_not_sent",
+      "firmware": "1.14.0"
+    },
+    "flags": ["claimed_sent_not_sent"],
+    "sections": {
+      "conversation": [
+        {
+          "role": "user",
+          "text": "make it blue"
+        },
+        {
+          "role": "assistant",
+          "text": "Pushed! It's playing on your fixture now."
+        }
+      ],
+      "trace": [
+        {
+          "turn": 1,
+          "startedAt": "2026-11-18T10:00:00.000Z",
+          "durationMs": 980,
+          "outcome": "complete",
+          "rounds": [
+            {
+              "round": 1,
+              "atMs": 0,
+              "out": ""
+            },
+            {
+              "round": 2,
+              "atMs": 80,
+              "out": "Pushed! It's playing on your fixture now."
+            }
+          ],
+          "tools": [
+            {
+              "round": 1,
+              "name": "set_script",
+              "input": {
+                "source": "vec3 shade(Led led) { return vec3(0.0, 0.0, 1.0); }\n",
+                "summary": "blue"
+              },
+              "result": "Compile result: OK — 0 uniforms\n\nDevice: NOT SENT: no fixture is connected.",
+              "isError": false,
+              "atMs": 0,
+              "durationMs": 80,
+              "delivery": "not_sent",
+              "compile": "ok",
+              "estimateCalibrated": null
+            }
+          ],
+          "system": {
+            "hash": "c3cbad13",
+            "chars": 16,
+            "tools": ["set_script"]
+          },
+          "flags": ["claimed_sent_not_sent"]
+        }
+      ],
+      "source": {
+        "before": "",
+        "after": "vec3 shade(Led led) { return vec3(0.0, 0.0, 1.0); }\n"
+      },
+      "device": [
+        {
+          "board": "esp32c6",
+          "firmware": "1.14.0",
+          "features": ["effects"],
+          "channels": 1,
+          "led_count": 64
+        }
+      ],
+      "applog": [
+        {
+          "t": "2026-11-18T09:59:58Z",
+          "kind": "conn",
+          "msg": "connection lost (dev#00000000)"
+        }
+      ]
+    },
+    "omitted": [],
+    "truncated": [],
+    "redactions": 0
+  },
+  "expect": {
+    "failing_step": 0,
+    "failing_step_outcome": "ok/ok/sent"
+  }
+}

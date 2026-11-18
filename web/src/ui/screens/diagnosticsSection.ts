@@ -31,6 +31,9 @@ import {
   type Poster,
   type UploadReport,
 } from "../../store/diagnosticExport";
+import { feedbackQueue, feedbackRelay, refreshFeedbackStatuses } from "../../feedback/appFeedback";
+import { submitFeedback } from "../../feedback/feedbackClient";
+import { receiptStatusText } from "../../feedback/feedbackQueue";
 import { Button, Sheet, toast } from "../kit";
 import { saveFile } from "../saveFile";
 import { describeShareOutcome, isChromium, shareCandidates, shareWithFallback } from "../shareFallback";
@@ -96,6 +99,7 @@ export function diagnosticsGroup(group: GroupFn, row: RowFn, segmented: Segmente
   const prepare = Button({ label: "Prepare", icon: "upload", onClick: () => void prepareAndShow() });
   prepare.classList.add("diag-prepare");
   g.append(row("Send, share or save", "Takes a snapshot of the selected categories.", prepare));
+  g.append(agentFeedbackRow(row));
 
   void summarizeCategories(sources).then((s) => {
     for (const c of DIAG_CATEGORIES) {
@@ -298,4 +302,57 @@ function hostOf(url: string): string {
 function sizeText(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
+}
+
+/** Settings ▸ Debugging: AI problem reports (docs/design/agent-feedback.md) —
+ * what waits on this phone, what was sent and its status; send now or export. */
+export function agentFeedbackRow(row: RowFn): HTMLElement {
+  const q = feedbackQueue();
+  const controls = document.createElement("div");
+  controls.style.display = "flex";
+  controls.style.gap = "8px";
+  controls.style.flexWrap = "wrap";
+  const r = row("AI problem reports", "", controls);
+  r.dataset.diagCategory = "agent-feedback";
+  const hint = r.querySelector(".settings-row-hint") as HTMLElement | null;
+  const paint = () => {
+    const waiting = q.outbox();
+    const receipts = q.receipts();
+    const latest = receipts[receipts.length - 1];
+    const parts = [`${waiting.length} waiting to send`, `${receipts.length} sent`];
+    if (latest) parts.push(`latest: ${receiptStatusText(latest)}`);
+    if (hint) hint.textContent = parts.join(" · ");
+  };
+  const send = Button({
+    label: "Send now",
+    variant: "quiet",
+    onClick: () => {
+      const { relay, headers } = feedbackRelay();
+      q.retryNow();
+      void q
+        .flush((rep) => submitFeedback(relay, rep, { headers }), relay)
+        .then((o) => {
+          toast(o.sent.length ? `Sent ${o.sent.length} report(s).` : `Nothing sent (${o.waiting} still waiting).`);
+          paint();
+        });
+    },
+  });
+  const check = Button({
+    label: "Check status",
+    variant: "quiet",
+    onClick: () => void refreshFeedbackStatuses().then(paint),
+  });
+  const exp = Button({
+    label: "Export waiting",
+    variant: "quiet",
+    icon: "download",
+    onClick: () => {
+      const waiting = q.outbox().map((w) => w.report);
+      if (!waiting.length) return toast("No reports are waiting.");
+      void saveFile(JSON.stringify(waiting, null, 2), "splanc-agent-feedback.json.txt", "text/plain");
+    },
+  });
+  controls.append(send, check, exp);
+  paint();
+  return r;
 }

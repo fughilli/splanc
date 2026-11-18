@@ -107,6 +107,16 @@ export function setAppLogRedaction(src: () => Readonly<Record<string, string>>):
   knownSource = src;
 }
 
+/** The strings the log masks right now (every known device's name, host and
+ * URL → its opaque id), for other redactors (the agent-feedback trace). */
+export function appLogMasks(): Readonly<Record<string, string>> {
+  try {
+    return { ...(knownSource?.() ?? {}) };
+  } catch {
+    return {};
+  }
+}
+
 /** Record one event. `known` adds strings to mask (→ their replacement). Never throws. */
 export function logEvent(
   kind: AppLogKind,

@@ -70,6 +70,9 @@ import { deviceStore } from "../../store/deviceStore";
 import { shouldPushOnConnect } from "../../effects/editor/autoPush";
 import { StatusPill, confirmDialog, icon, toast, type PillState } from "../kit";
 import { aiSummary, appFileBugHook, confirmFilingText } from "../../bugs/appBugReport";
+import { TurnHistory, TurnRecorder } from "../../feedback/agentTrace";
+import type { FeedbackScreenContext } from "../../feedback/appFeedback";
+import { openAgentFeedbackSheet, reportButton } from "./agentFeedbackSheet";
 import { installAcidStyles } from "./acidMode.css";
 import { narrateTool } from "../acid/narrate";
 import { createVoice, voiceSupported, type VoiceSession } from "../acid/voice";
@@ -398,6 +401,28 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
   // Persisted-log bookkeeping (see chatLogStore) — one session per acid screen.
   const chatLogSessionId = newChatLogSessionId();
   let chatTurns = 0;
+  // Agent feedback (docs/design/agent-feedback.md), owner mode only: play mode
+  // is for visitors on their own phones, who don't report on the owner's setup.
+  const turnHistory = new TurnHistory();
+  const feedLog: { role: "user" | "assistant"; text: string }[] = [];
+  const feedbackCtx: FeedbackScreenContext = {
+    surface: "web-acid",
+    history: turnHistory,
+    conversation: () => feedLog,
+    client: () => appState.client,
+  };
+  function attachReport(m: HTMLElement, turn: number): void {
+    const b = reportButton(() => {
+      void openAgentFeedbackSheet(feedbackCtx, turn).then((done) => {
+        if (!done) return;
+        b.classList.add("afb-report--done");
+        b.disabled = true;
+        b.lastElementChild!.textContent = done === "sent" ? "Reported" : "Report saved, sending later";
+      });
+    });
+    b.classList.add("acid-report");
+    m.appendChild(b);
+  }
   let unregisterChatDriver: (() => void) | null = null;
 
   // "Continue" for a turn that ran out of tool steps (#451; owner mode only).
@@ -462,6 +487,9 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
     let turnError: string | undefined;
     let turnOutcome: string | undefined;
     const goodBefore = lastGoodSource;
+    const recorder = new TurnRecorder({ turn: chatTurns, ask: text, sourceBefore: currentSource });
+    feedLog.push({ role: "user", text });
+    let replyEl: HTMLElement | null = null;
     showThinking("Thinking");
 
     let deviceCosts: string | undefined;
@@ -486,6 +514,8 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
             appendMsg("think", narrateTool(name));
           },
           onSetScript: (source) => onSetScript(source),
+          onPrompt: (info) => recorder.onPrompt(info),
+          onTrace: (ev) => recorder.onTrace(ev),
           onCapturePreview: async () => capturePreviewPng(provider !== undefined),
           // Tool groups. The free relay allows only set_script, capture_preview,
           // estimate_performance and the two MIDI tools, so measure_on_device and
@@ -535,12 +565,12 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
           chatHistory.push({ role: "assistant", content: [{ type: "text", text: "(Stopped: out of steps.)" }] });
           appendMsg("agent", "Here's what I got to so far — I ran out of steps before finishing it. Ask again to keep tweaking!");
         } else {
-          appendMsg("agent", describeExhaustedTurn(result));
+          replyEl = appendMsg("agent", describeExhaustedTurn(result));
           offerContinue();
         }
         setState("idle", "Stopped before finishing");
       } else {
-        appendMsg("agent", finalText || "Done.");
+        replyEl = appendMsg("agent", finalText || "Done.");
         setState("done");
       }
     } catch (e) {
@@ -554,7 +584,7 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
         busyCard.hidden = false;
         setState("busy", e.retryAfterS ? `Try again in ${Math.ceil(e.retryAfterS)}s` : "Try again in a minute");
       } else {
-        appendMsg("agent", play ? "Hmm, that didn't work — try again, or pick a preset!" : `Hmm, that didn't work: ${turnError}`);
+        replyEl = appendMsg("agent", play ? "Hmm, that didn't work — try again, or pick a preset!" : `Hmm, that didn't work: ${turnError}`);
         setState("idle");
         // Tools already ran before the failure: resume from their results.
         if (!play && endsWithToolResults(chatHistory)) offerContinue();
@@ -562,6 +592,12 @@ export function AcidModeScreen(router: Router, opts: AcidModeOptions = {}): Scre
     } finally {
       busy = false;
       micBtn.disabled = false;
+      const reply = replyEl?.textContent ?? "";
+      feedLog.push({ role: "assistant", text: reply });
+      while (feedLog.length > 40) feedLog.shift();
+      const trace = recorder.finish({ reply, outcome: turnOutcome ?? "complete", error: turnError, sourceAfter: currentSource });
+      turnHistory.push(trace);
+      if (replyEl && !play && provider === undefined) attachReport(replyEl, trace.turn);
       scrollFeed();
       // Snapshot the transcript for off-device debugging. Best-effort.
       void chatLogStore.record({

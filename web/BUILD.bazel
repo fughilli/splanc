@@ -96,6 +96,13 @@ copy_to_bin(
         # file_bug's shared core (docs/design/agent-bug-reports.md): the hub's tool,
         # the relay's POST /bugs and its offline file_bug.
         "src/bugs/bugReport.ts",
+        # Agent feedback (docs/design/agent-feedback.md): the report + its intake
+        # validation (the relay's POST /feedback), the client (file_bug
+        # submit=private), and the app-log redactor they reuse.
+        "src/feedback/agentTrace.ts",
+        "src/feedback/feedbackClient.ts",
+        "src/feedback/feedbackQueue.ts",
+        "src/store/appLog.ts",
         # Capture profile + IMU extrinsic solve (types used by net/client.ts).
         "src/capture/captureProfile.ts",
         "src/geom/imuExtrinsic.ts",

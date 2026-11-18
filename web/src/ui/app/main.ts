@@ -8,6 +8,7 @@
  */
 
 import { installAppLog } from "../../store/appLogStore";
+import { installFeedbackFlusher } from "../../feedback/appFeedback";
 import "../kit/fonts.css";
 import "../kit/tokens.css";
 import "./app.css";
@@ -58,6 +59,8 @@ import { chatLogStore, chatLogDumpOnBootEnabled } from "../../store/chatLogStore
 async function main(): Promise<void> {
   // Diagnostics app log first, so boot errors land in it too.
   installAppLog();
+  // Agent-feedback reports queued while offline go out when the app is back.
+  installFeedbackFlusher();
   // The hue-code kernel (wasm) must be callable before any capture / decode /
   // sim render runs; already resolved wherever it compiled synchronously.
   await codeKernelReady;
