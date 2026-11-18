@@ -267,6 +267,7 @@
 <li class="toctree-l2"><a class="reference internal" href="agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="ai-tiers.html">AI tiers (free / paid / self-serve)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="ios-support.html">iOS support</a></li>
 <li class="toctree-l2"><a class="reference internal" href="on-device-models.html">On-device models</a></li>
 <li class="toctree-l2"><a class="reference internal" href="effects-demo.html">Effects demo</a></li>
@@ -2602,6 +2603,124 @@ value for longer than that moment.</p></li>
 pending packet plus the cooldown); the stack’s best-of-N state is 12 B; <code class="docutils literal notranslate"><span class="pre">MeshStack</span></code> stays at
 17,768 B.</p>
 <p><img alt="live latency above 24 members: options and an insider" src="docs/design/mesh/tree-live.png" /></p>
+<p><strong>Containing an insider that floods forged live moves (Q25, <code class="docutils literal notranslate"><span class="pre">firmware/mesh/src/forensics.rs</span></code>).</strong></p>
+<p>Apply-then-verify bounds each forgery, but a persistent forger keeps members verifying first,
+and at 30 Hz crowds their verify buffers: delivery falls to 68 % while it lasts. The goal:
+detect and contain the forger, and never let one liar get an honest fixture blocked.</p>
+<p><strong>Design: reports to the gateway, judged by quorum.</strong></p>
+<ul class="simple">
+<li><p><strong>Reports.</strong> A member that verifies a forgery reports it to the gateway. The report is
+MAC’d under the pairwise session key, so every report is attributable. It says which
+neighbour the first copy came from, whether that neighbour’s RSSI fit its usual level, and
+whether that neighbour is the member’s tree parent.</p></li>
+<li><p><strong>Sampling.</strong> Members report only forgeries whose interval key falls in a 1 in 8 sample.
+The gateway accepts only those (it holds the chain). So every member reports the same
+forgeries, the airtime is bounded, and nobody can flood the gateway’s case table. The
+forger cannot avoid the sample: the key is unknown when it forges.</p></li>
+<li><p><strong>Provable lies.</strong> The gateway recomputes each reported packet’s tag. A report about a
+genuine packet is a provable lie and is dropped.</p></li>
+<li><p><strong>Suspects.</strong> A neighbour is a suspect for one forgery if at least 2 side witnesses name it.
+A side witness’s copy came from a neighbour at its usual RSSI that is not its parent; a
+forwarder’s children prove nothing about where a forgery started.</p></li>
+<li><p><strong>Its own account can clear it.</strong> That holds only if the upstream it names was seen sending
+the forgery by someone else, and following the upstream claims never leads back to it:</p>
+<ul>
+<li><p>an honest relay names the injector and is cleared;</p></li>
+<li><p>an injector that names a downstream relay is led back to itself;</p></li>
+<li><p>an injector that names a node which never sent the packet has no witness for that claim.</p></li>
+</ul>
+</li>
+<li><p><strong>Block and alert.</strong> A fixture that is a suspect in 3 forgeries within 30 s is blocked:
+the gateway orders every member to drop all live packets under that id for 60 s, and alerts
+the admin. Only the admin removes a fixture (rotation, §7.6).</p></li>
+</ul>
+<p>Measured: an insider forging at 30 Hz, 30 Hz live, 64 and 128 fixtures, the insider a leaf
+or a busy relay.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Containment</p></th>
+<th class="head"><p>Delivered (run)</p></th>
+<th class="head"><p>Latency p50</p></th>
+<th class="head"><p>Insider blocked after</p></th>
+<th class="head"><p>Honest fixtures blocked</p></th>
+<th class="head"><p>Report airtime</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>None</p></td>
+<td><p>68 %</p></td>
+<td><p>74 ms</p></td>
+<td><p>never</p></td>
+<td><p>0</p></td>
+<td><p>0</p></td>
+</tr>
+<tr class="row-odd"><td><p>Local only (each fixture blocks a neighbour after 3 forgeries)</p></td>
+<td><p>96–98 %</p></td>
+<td><p>8–35 ms</p></td>
+<td><p>never (mesh-wide)</p></td>
+<td><p>95–584 (fixture, neighbour) pairs</p></td>
+<td><p>0</p></td>
+</tr>
+<tr class="row-even"><td><p>Local + gateway quorum</p></td>
+<td><p>95–98 %</p></td>
+<td><p>8–100 ms</p></td>
+<td><p>never: local blocks starve the quorum of evidence</p></td>
+<td><p>95–584 pairs</p></td>
+<td><p>0.1–0.8 %</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Gateway quorum (recommended)</strong></p></td>
+<td><p><strong>95.5–96.1 %</strong></p></td>
+<td><p><strong>5–16 ms</strong></p></td>
+<td><p><strong>2.5 s</strong></p></td>
+<td><p><strong>0</strong></p></td>
+<td><p><strong>0.4–0.85 %</strong></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p><strong>Delivery</strong> under the recommendation drops only during the 2.5 s before the block. After
+it, no forgery reaches anyone.</p></li>
+<li><p><strong>Local blocking is harmful.</strong> An honest relay that forwards forgeries gets blocked by its
+neighbours. Local blocks also stop the forgeries before the gateway has enough evidence to
+name the forger, so the forger is never removed.</p></li>
+<li><p><strong>Attacks on the quarantine itself:</strong></p>
+<ul>
+<li><p><em>One liar fabricating reports:</em> never reaches the 2-witness quorum, so no block. Reports
+about genuine packets are counted as lies.</p></li>
+<li><p><em>Two colluders fabricating reports:</em> they can get an honest fixture a 60 s block. In
+20 s runs they blocked 3 relays in turn, and delivery stayed at 99.4 %. Removal still
+needs the admin.</p></li>
+<li><p><em>A forger spoofing a neighbour’s id:</em> RSSI cannot tell two adjacent fixtures apart, so
+the gateway blocks the neighbour’s id (1–3 honest fixtures for 60 s). The forgeries stop,
+because the order drops everything under that id. The admin alert names that fixture, so
+the admin must not confirm removal blindly.</p></li>
+<li><p><em>A slow forger (1 Hz):</em> blocked in 19 s (the 1 in 8 sample). Meanwhile it shows 0.25 % of
+screen time and keeps members verifying first.</p></li>
+</ul>
+</li>
+<li><p><strong>RAM on the C6</strong> (measured):</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">LinkGuard</span></code> 352 B on every fixture: enforces orders, tracks 12 neighbours’ RSSI.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Forensics</span></code> 1,296 B on the gateway: 6 forgeries × 24 witnesses, 8 suspects.</p></li>
+<li><p>Not yet wired into <code class="docutils literal notranslate"><span class="pre">MeshStack</span></code>: that needs the link-layer source and RSSI passed up
+through <code class="docutils literal notranslate"><span class="pre">swarm_net</span></code> (T5).</p></li>
+</ul>
+</li>
+</ul>
+<p><strong>In plain words.</strong> If a fixture inside the mesh starts forging live moves, every other
+fixture notices within a few tenths of a second and tells the gateway who handed it the fake.</p>
+<ul class="simple">
+<li><p><strong>Blocking:</strong> when several independent fixtures point at the same one, three times, the
+gateway tells everyone to ignore its live moves for a minute and asks the admin to remove it.
+That takes about 2.5 s. Lights twitch for a moment before that, and live moves are normal
+again after.</p></li>
+<li><p><strong>One lying fixture</strong> cannot get an innocent one blocked.</p></li>
+<li><p><strong>Two lying together,</strong> or a forger impersonating a neighbour, can get an innocent fixture
+ignored for a minute. Nothing worse happens, because only the admin can remove a fixture.</p></li>
+</ul>
+<p><img alt="containing an insider: delivery, latency, collateral" src="docs/design/mesh/tree-quarantine.png" /></p>
 </section>
 <section id="what-remains-unresolvable">
 <h3>7.10 What remains unresolvable<a class="headerlink" href="#what-remains-unresolvable" title="Link to this heading">¶</a></h3>
@@ -3622,16 +3741,19 @@ per-receiver MACs (§7.9);</p></li>
 <tr class="row-even"><td><p>T3</p></td>
 <td><p>Relay suppression for 64+ fixtures (a relay skips its rebroadcast when its children were all covered by copies it heard) and churn damping at 64–128</p></td>
 </tr>
-<tr class="row-odd"><td><p>T4</p></td>
+<tr class="row-odd"><td><p>T5</p></td>
+<td><p>Forgery containment in firmware (Q25): link-layer source and RSSI through <code class="docutils literal notranslate"><span class="pre">swarm_net</span></code> to the stack; <code class="docutils literal notranslate"><span class="pre">ForgeryReport</span></code> on the freshness port; <code class="docutils literal notranslate"><span class="pre">Forensics</span></code> at the gateway with the block order and the admin alert; spoof protests; <code class="docutils literal notranslate"><span class="pre">mesh_forgery_quarantine</span></code> HITL with an injecting DUT</p></td>
+</tr>
+<tr class="row-even"><td><p>T4</p></td>
 <td><p>Broadcast authenticator in firmware: chain build in the crypto task, apply-then-verify with <code class="docutils literal notranslate"><span class="pre">LiveRejected</span></code> wired to the uniform store (revert to last verified), best-of-N challenges and adaptive <code class="docutils literal notranslate"><span class="pre">d</span></code> (Q24, in the stack), C6 cost in M3a; <code class="docutils literal notranslate"><span class="pre">mesh_live_auth</span></code> HITL at 24+ DUTs (or the 6-fixture rig with lowered thresholds)</p></td>
 </tr>
-<tr class="row-even"><td><p>L1</p></td>
+<tr class="row-odd"><td><p>L1</p></td>
 <td><p>Ranges into the room solver as constraints</p></td>
 </tr>
-<tr class="row-odd"><td><p>L2</p></td>
+<tr class="row-even"><td><p>L2</p></td>
 <td><p>IMU + range fusion (<code class="docutils literal notranslate"><span class="pre">swarm_core</span></code>), placement of the filter (C6 rate, P4, or bridge)</p></td>
 </tr>
-<tr class="row-even"><td><p>R1–R3</p></td>
+<tr class="row-odd"><td><p>R1–R3</p></td>
 <td><p>§13.6 spikes S1a–S3 on the amd-rig</p></td>
 </tr>
 </tbody>
@@ -3805,25 +3927,30 @@ airtime 13–23 % with the authenticator.</p></li>
 </ul>
 <p><strong>Answered 2026-11-18 (Q22–Q24):</strong></p>
 <ul class="simple">
-<li><p><strong>Q22.</strong> ~70 ms not accepted. Apply-then-verify keeps live moves at p50 1–4 ms and p99
-4–32 ms at 32–128 fixtures. A forging insider can show a fake value for ≤ ~0.1 s per
-attempt, then members verify first for 10 s (§7.9).</p></li>
+<li><p><strong>Q22.</strong> Decided: adopt apply-then-verify for live moves above 24 members. It keeps live
+moves at p50 1–4 ms and p99 4–32 ms at 32–128 fixtures. A forging insider can show a fake
+value for ≤ ~0.1 s per attempt, then members verify first for 10 s (§7.9).</p></li>
 <li><p><strong>Q23.</strong> Accepted: any fixture can be the gateway (~3.9 KB on the C6).</p></li>
 <li><p><strong>Q24.</strong> Built: best-of-3 challenges, round trips reported, the gateway raises <code class="docutils literal notranslate"><span class="pre">d</span></code> with a
 new chain.</p></li>
 </ul>
 <p><strong>New (2026-11-18):</strong></p>
 <ul class="simple">
-<li><p><strong>Q25.</strong> A persistent insider forging at ≥ 30 Hz crowds the 6-slot verify buffer, and
-delivery falls to 68 % while it lasts. It is detected (<code class="docutils literal notranslate"><span class="pre">LiveRejected</span></code> at every member), but
-not stopped until the admin removes the fixture. Options:</p>
+<li><p><strong>Q25.</strong> Investigated: auto-quarantine by member reports and a gateway quorum (§7.9).
+Recommended:</p>
 <ul>
-<li><p>Accept it, like jamming, which any insider can also do.</p></li>
-<li><p>A bigger buffer on P4 + C6 and Pi fixtures (+~80 B per slot).</p></li>
-<li><p>Automatic quarantine: the gateway removes a fixture its members report. This is hard,
-because a forger can spoof the source.</p></li>
+<li><p><strong>Detection:</strong> a forger is blocked mesh-wide in 2.5 s, with no honest fixture blocked by
+one liar. Delivery under attack is 95.5–96 % (68 % without), at 0.4–0.85 % airtime.</p></li>
+<li><p><strong>Residual:</strong> two colluders, or a forger impersonating a neighbour, can get an honest
+fixture a 60 s block; only the admin removes a fixture.</p></li>
 </ul>
 </li>
+</ul>
+<p><strong>New (2026-11-18):</strong></p>
+<ul class="simple">
+<li><p><strong>Q26.</strong> When the gateway blocks a fixture and alerts the admin, should the app offer
+removal in one tap? Or should it first show the evidence: who reported, and whether the
+named fixture itself reports being impersonated (a spoof protest, T5)?</p></li>
 </ul>
 </section>
 <section id="sources">
