@@ -242,6 +242,8 @@ async def raw(url: str, msgs: list[str]) -> None:
                 b = await asyncio.wait_for(s.recv(), 0.5)
                 m = pw.decode_server(b)
                 print(f"{time.monotonic() - t0:6.2f}s <- {m.get('type')} {len(b)} B", flush=True)
+                if m.get("type") == "welcome":
+                    print(json.dumps(m)[:1500], flush=True)
             except asyncio.TimeoutError:
                 pass
             if not sent and time.monotonic() - t0 > 1.5:
