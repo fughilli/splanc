@@ -148,6 +148,16 @@ jobs:
           bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
             //firmware/player_app:esp32c3_netstack_flashbundle
 
+      # The mesh crates (docs/design/mesh.md M1: the ported swarm_net, its MbedTLS shim
+      # and the Splanc layer) for both firmware targets. Build-only until an image links
+      # them (M3); the host tests run in `bazel test //...`.
+      - name: Build mesh crates (esp32c6 + esp32p4, build-only)
+        run: |
+          for p in esp32c6 esp32p4; do
+            bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
+              --platforms=@embedded//platforms:$p //firmware/mesh/...
+          done
+
       - name: Upload flash bundle artifacts
         uses: actions/upload-artifact@v4
         with:

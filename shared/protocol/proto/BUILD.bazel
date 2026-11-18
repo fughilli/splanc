@@ -27,3 +27,8 @@ py_library(
     imports = ["."],
     deps = [requirement("protobuf")],
 )
+
+# swarm.v1, the mesh's wire format (ported from indoor_localization; see
+# //firmware/mesh/swarm:PROVENANCE.md). Rust views + typed encoders are generated in
+# //firmware/mesh/swarm.
+exports_files(["swarm_wire.proto"])
