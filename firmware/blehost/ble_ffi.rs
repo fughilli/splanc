@@ -624,6 +624,12 @@ pub extern "C" fn ns_ble_set_addr(mac: *const u8) {
     unsafe { HOST.set_random_addr(a) };
 }
 
+/// HCI reason of the last BLE disconnect, for telemetry (0 = none yet).
+#[no_mangle]
+pub extern "C" fn ns_ble_last_disc_reason() -> u32 {
+    unsafe { HOST.last_disc_reason() as u32 }
+}
+
 /// Host state for telemetry: 0=Init .. 6=Advertising, 7=Connected.
 #[no_mangle]
 pub extern "C" fn ns_ble_state() -> u32 {

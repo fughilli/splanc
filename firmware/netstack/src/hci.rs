@@ -73,6 +73,10 @@ pub struct BleHost {
     /// Connection Update Complete). 0 when not connected. The coex arbiter uses it to
     /// predict connection-event anchors and yield the radio to BLE only around them.
     conn_interval: u16,
+    /// HCI reason of the last Disconnection Complete (0 = none yet): 0x08 supervision
+    /// timeout (RF/coex), 0x13 the central closed it, 0x22 LL response timeout, 0x28
+    /// instant passed, 0x3e failed to establish. Telemetry only.
+    last_disc_reason: u8,
 }
 
 impl BleHost {
@@ -84,12 +88,18 @@ impl BleHost {
             scan_rsp: [0; 32],
             rand_addr: [0x01, 0x00, 0x00, 0x00, 0xDE, 0xC0], // C0:DE:00:00:00:01
             conn_interval: 0,
+            last_disc_reason: 0,
         }
     }
 
     /// Negotiated connection interval in 1.25 ms units (0 if not connected).
     pub fn conn_interval(&self) -> u16 {
         self.conn_interval
+    }
+
+    /// HCI reason of the last Disconnection Complete (0 = none yet).
+    pub fn last_disc_reason(&self) -> u8 {
+        self.last_disc_reason
     }
 
     /// Set the static random advertising address (LE byte order). The MSB
@@ -169,6 +179,10 @@ impl BleHost {
                 0
             }
             EV_DISCONN => {
+                // params: status, handle (2), reason.
+                if params.len() >= 4 {
+                    self.last_disc_reason = params[3];
+                }
                 // back to advertising after a disconnect
                 self.state = HostState::AdvEnableSent;
                 self.conn_interval = 0;

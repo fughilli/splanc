@@ -45,6 +45,8 @@ void improv_ble_request_disconnect();
 // Raw BLE link state (Rust FFI ns_ble_state): 7 == central connected+subscribed.
 // Exposed for diagnostics (distinguish link-drop vs notification-loss).
 extern "C" uint32_t ns_ble_state();
+// HCI reason of the last disconnect (Rust FFI ns_ble_last_disc_reason; 0 = none yet).
+extern "C" uint32_t ns_ble_last_disc_reason();
 
 // Coex phase inputs for the activity-driven WiFi/BT arbiter (netstack build only):
 //  - improv_ble_last_acl_ms(): millis() of the last inbound ACL = a connection-event anchor.
