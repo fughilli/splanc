@@ -189,7 +189,7 @@ export async function applyPurchase(opts: {
   accountId: string;
   purchase: VerifiedPurchase;
   environment: StoreEnvironment;
-}): Promise<{ entry: LedgerEntry; replay: boolean }> {
+}): Promise<{ entry: LedgerEntry; replay: boolean; first_purchase?: boolean }> {
   const { purchase: p, accountId } = opts;
   if (p.environment !== opts.environment) {
     throw new PurchaseError(400, "wrong_environment", `a ${p.environment} purchase on a ${opts.environment} server`);

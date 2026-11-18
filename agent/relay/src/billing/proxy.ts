@@ -49,6 +49,9 @@ export interface OrgSpend {
   get(): Promise<number>;
   /** Add `microUsd`; returns the new month-to-date total. */
   add(microUsd: number): Promise<number>;
+  /** Ops: add `deltaMicro` to the running credit liability (every account's
+   * balance together, µcredits); returns the new total. Optional. */
+  liability?(deltaMicro: number): Promise<number>;
 }
 
 export interface ProxyDeps {
@@ -327,7 +330,7 @@ export async function proxyMessages(req: Request, accountId: string, deps: Proxy
     });
   } catch (e) {
     await deps.ledger.release(id);
-    safeLog(deps, { ev: "ai_upstream_unreachable", alert: true, account: accountId, id, detail: String(e) });
+    safeLog(deps, { ev: "ai_upstream_unreachable", alert: true, account: accountId, id, model, detail: String(e) });
     return errorResponse(fail(503, "ai_credits_busy", BUSY_MESSAGE));
   }
   if (!up.ok || up.body === null) {
@@ -347,6 +350,7 @@ export async function proxyMessages(req: Request, accountId: string, deps: Proxy
       ...(spendLimit || up.status === 429 ? { alert: true } : {}),
       account: accountId,
       id,
+      model,
       status: up.status,
       type,
       body: errText.slice(0, 500),
@@ -381,26 +385,48 @@ export async function proxyMessages(req: Request, accountId: string, deps: Proxy
           safeLog(deps, { ev: "ai_org_spend_alert", alert: true, month_to_date_usd: total / MICRO, limit_usd: cfg.org.monthly_limit_usd });
         }
       }
-      const { entry } = await deps.ledger.settle(
+      const { entry, replay, activity } = await deps.ledger.settle(
         id,
         charge,
         { model, usage: bill.usage, pricing_version: cfg.version, estimated: bill.estimated },
         Math.round(cfg.max_overdraft_credits * MICRO),
       );
-      safeLog(deps, {
-        ev: "ai_settled",
-        account: accountId,
-        id,
-        model,
-        usage: bill.usage,
-        estimated: bill.estimated,
-        list_usd: listMicroUsd / MICRO,
-        ...(orgTotal >= 0 ? { org_month_to_date_usd: orgTotal / MICRO } : {}),
-        reserved: amount,
-        charged: -entry.amount,
-        written_off: entry.written_off ?? 0,
-        pricing_version: cfg.version,
-      });
+      const low = cfg.low_balance_credits * MICRO;
+      if (!replay) {
+        safeLog(deps, {
+          ev: "ai_settled",
+          account: accountId,
+          id,
+          model,
+          usage: bill.usage,
+          // Flat token counts for the ops push (ops.ts keeps only these).
+          input_tokens: bill.usage.input_tokens,
+          output_tokens: bill.usage.output_tokens,
+          cache_read_tokens: bill.usage.cache_read_input_tokens,
+          cache_write_tokens: bill.usage.cache_creation_input_tokens,
+          estimated: bill.estimated,
+          list_usd: listMicroUsd / MICRO,
+          ...(orgTotal >= 0
+            ? { org_month_to_date_usd: orgTotal / MICRO, org_limit_usd: cfg.org.monthly_limit_usd, org_fraction: orgTotal / orgLimit }
+            : {}),
+          reserved: amount,
+          charged: -entry.amount,
+          credits_charged: -entry.amount / MICRO,
+          usd_charged: -entry.amount / MICRO / cfg.credits_per_usd,
+          written_off: entry.written_off ?? 0,
+          pricing_version: cfg.version,
+          ...(activity ? { active_day: activity.day, active_week: activity.week, active_month: activity.month, paying: activity.paying } : {}),
+          low_balance: entry.balance < low && entry.balance - entry.amount >= low,
+        });
+      }
+      if (deps.org?.liability && !replay && entry.amount !== 0) {
+        // The liability counter is ops-only: never delays or fails the request.
+        const p = deps.org
+          .liability(entry.amount)
+          .then((t) => safeLog(deps, { ev: "ai_liability", liability_credits: t / MICRO, delta_credits: entry.amount / MICRO }))
+          .catch(() => undefined);
+        deps.waitUntil?.(p);
+      }
       return { chargedMicro: -entry.amount, balanceMicro: entry.balance };
     })();
     return settled;
@@ -446,7 +472,7 @@ export async function proxyMessages(req: Request, accountId: string, deps: Proxy
         controller.close();
       } catch (e) {
         // Upstream broke mid-stream: bill what was used (estimated), end the stream.
-        if (!cancelled) safeLog(deps, { ev: "ai_stream_error", account: accountId, id, detail: String(e) });
+        if (!cancelled) safeLog(deps, { ev: "ai_stream_error", account: accountId, id, model, detail: String(e) });
         await settle().catch(() => null);
         if (!cancelled) controller.error(new Error("stream interrupted"));
       }

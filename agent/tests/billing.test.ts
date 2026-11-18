@@ -27,7 +27,8 @@ import { describe, test } from "node:test";
 import { BillingAccount, mintSession, verifySession } from "../relay/src/billing/account";
 import { billingEndpoint, billingReady, type BillingContext } from "../relay/src/billing/endpoint";
 import { HOLD_TTL_MS, Ledger, lotConsumption } from "../relay/src/billing/ledger";
-import { BILLING_EVENTS, billingAlertRules, eventSink, grafanaProvisioning, lokiPayload, reconcileStore, reconcileUsage } from "../relay/src/billing/metrics";
+import { BILLING_EVENTS, eventSink, lokiPayload, purchaseMoney, reconcileStore, reconcileUsage } from "../relay/src/billing/metrics";
+import { OPS_SCHEMA } from "../relay/src/ops";
 import {
   DEFAULT_PRICING,
   MICRO,
@@ -898,24 +899,100 @@ describe("metrics + alerts", () => {
     assert.deepEqual(p.streams[0]!.stream, { service: "splanc-relay", component: "ai-billing", env: "sandbox", event: "ai_org_spend_stop", alert: "true" });
     assert.equal(p.streams[0]!.values[0]![0], "1800000000000000000");
     assert.equal((pushes[0]!.init.headers as Record<string, string>)["authorization"], `Basic ${btoa(`123:${lokiToken}`)}`);
-    assert.equal(lokiPayload([{ ev: "a" }, { ev: "a" }, { ev: "b" }], "x", 0).streams.length, 2);
+    assert.equal(lokiPayload([{ ev: "ai_refund" }, { ev: "ai_refund" }, { ev: "ai_released" }, { ev: "not_an_event" }], "x", 0).streams.length, 2);
+    // The pushed line is the allowlisted one: no detail text, ever.
+    assert.equal(p.streams[0]!.values[0]![1], JSON.stringify({ ev: "ai_org_spend_stop", alert: true }));
   });
 
-  test("alert rules: sized from the org limit, only real events, valid provisioning", () => {
+  test("purchase money: gross, the channel fee estimate, net", () => {
     const c = cfg();
-    assert.equal(c.org.monthly_limit_usd, 1000);
-    const rules = billingAlertRules(c.org.monthly_limit_usd, c.org.alert_fraction);
-    assert.equal(rules.find((r) => r.uid === "ai-org-spend-near-limit")!.above, 800);
-    for (const r of rules) {
-      for (const m of r.expr.matchAll(/event=~?"([^"]+)"/g)) {
-        for (const ev of m[1]!.split("|")) assert.ok((BILLING_EVENTS as readonly string[]).includes(ev), `${r.uid}: ${ev}`);
+    const web = purchaseMoney(c, "web", "web.credits.10", 833 * MICRO);
+    assert.deepEqual(web, { credits: 833, usd_gross: 10, usd_fee: 0.64, usd_net: 9.36 }); // 3.4 % + 30 c
+    const apple = purchaseMoney(c, "apple", "dev.splanc.app.credits.small", 356 * MICRO);
+    assert.equal(apple.usd_fee, 0.75); // 15 %
+    assert.equal(purchaseMoney(c, "web", "no.such.pack", 0).usd_gross, 0);
+  });
+
+  test("the ops push of a whole billing flow: allowlisted fields only, no account / request ids", async () => {
+    const pushed: Record<string, unknown>[] = [];
+    const labels: Record<string, string>[] = [];
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      const p = JSON.parse(String(init.body)) as { streams: { stream: Record<string, string>; values: [string, string][] }[] };
+      for (const st of p.streams) {
+        labels.push(st.stream);
+        for (const [, line] of st.values) pushed.push(JSON.parse(line) as Record<string, unknown>);
       }
+      return new Response("", { status: 204 });
+    }) as unknown as typeof fetch;
+    const grafana = { GRAFANA_LOKI_PUSH_URL: "https://logs.example/loki/api/v1/push", GRAFANA_LOKI_USER: "1", GRAFANA_LOKI_TOKEN: "glc_test_token_not_real_000" };
+    const env = await sandboxEnv(grafana);
+    const raw: string[] = [];
+    const ctx: BillingContext = { ...ctxFor(raw), log: eventSink({ env, secrets: [CANARY], console: (l) => raw.push(l), fetchImpl }) };
+    const made = await call(env, ctx, "/billing/account", { method: "POST" });
+    const accountId = String(made.body["account_id"]);
+    const auth = { authorization: `Bearer ${String(made.body["token"])}` };
+    await call(env, ctx, "/billing/age", { method: "POST", headers: auth, body: JSON.stringify({ confirm: true }) });
+    const store = new FakeStoreVerifier("apple", STORE_KEY);
+    const receipt = await store.sign({ sku: "dev.splanc.app.credits.small", transactionId: "2000000000000777", purchasedAt: 0, accountRef: await accountRefFor(accountId) });
+    assert.equal((await call(env, ctx, "/billing/purchase/apple", { method: "POST", headers: auth, body: JSON.stringify(receipt) })).status, 201);
+    assert.equal((await call(env, ctx, "/billing/purchase/apple", { method: "POST", headers: auth, body: JSON.stringify(receipt) })).status, 200); // replay
+    for (let i = 0; i < 2; i++) {
+      const ai = await billingEndpoint(new Request("https://relay/ai/v1/messages", { method: "POST", headers: auth, body: JSON.stringify(chatBody()) }), env, ctx, "/ai/v1/messages");
+      await ai.text();
     }
-    const prov = grafanaProvisioning(rules, { lokiUid: "grafanacloud-logs", folderUid: "ai-billing", env: "production" });
-    assert.equal(prov.length, rules.length);
-    const exprOf = (x: (typeof prov)[number]) => String((x.data[0]!.model as { expr?: string }).expr);
-    assert.ok(prov.every((x) => exprOf(x).includes('env="production"') && !exprOf(x).includes("$env")));
-    assert.equal(new Set(prov.map((x) => x.uid)).size, prov.length);
+    const n = await store.signRefund("2000000000000777", "chargeback");
+    await call(env, ctx, "/billing/notify/apple", { method: "POST", headers: { "x-fake-signature": n.sig }, body: n.body });
+    await call(env, ctx, "/billing/account", { method: "DELETE", headers: auth });
+    await new Promise((r) => setTimeout(r, 20)); // the background liability pushes
+
+    // The Worker log still has the ids (Cloudflare's own logs); Grafana never does.
+    assert.ok(raw.some((l) => l.includes(accountId)));
+    const all = JSON.stringify(pushed);
+    for (const bad of [accountId, "acct_", "2000000000000777", CANARY, "198.51.100.7", "make it blue", "Here is your effect"]) assert.ok(!all.includes(bad), bad);
+    for (const ev of pushed) {
+      const spec = OPS_SCHEMA[String(ev["ev"])];
+      assert.ok(spec, String(ev["ev"]));
+      for (const k of Object.keys(ev)) assert.ok(k === "ev" || k === "alert" || k in spec.fields, `${String(ev["ev"])}.${k}`);
+    }
+    for (const l of labels) assert.deepEqual(Object.keys(l).sort(), ["alert", "component", "env", "event", "service"]);
+
+    const purchases = pushed.filter((e) => e["ev"] === "ai_purchase");
+    assert.equal(purchases.length, 2);
+    assert.deepEqual(
+      { ...purchases[0] },
+      { ev: "ai_purchase", channel: "apple", sku: "dev.splanc.app.credits.small", replay: false, credits: 356, usd_gross: 4.99, usd_fee: 0.75, usd_net: 4.24, first_purchase: true },
+    );
+    assert.deepEqual({ ...purchases[1] }, { ev: "ai_purchase", channel: "apple", sku: "dev.splanc.app.credits.small", replay: true });
+    const settled = pushed.filter((e) => e["ev"] === "ai_settled");
+    assert.equal(settled.length, 2);
+    assert.deepEqual(
+      settled.map((e) => [e["active_day"], e["active_week"], e["active_month"], e["paying"]]),
+      [
+        [true, true, true, true],
+        [false, false, false, true],
+      ],
+    );
+    assert.equal(settled[0]!["input_tokens"], 1000);
+    assert.ok(Number(settled[0]!["credits_charged"]) > 0 && Number(settled[0]!["list_usd"]) > 0);
+    const refund = pushed.find((e) => e["ev"] === "ai_refund")!;
+    assert.equal(refund["kind"], "chargeback");
+    assert.equal(refund["credits"], 356);
+    // The liability walks +356, -spend, -spend, -356 (the clawback; the balance
+    // goes negative, so closing forfeits nothing): it ends at -spend.
+    const liab = pushed.filter((e) => e["ev"] === "ai_liability").map((e) => Number(e["liability_credits"]));
+    const spent = settled.reduce((t, e) => t + Number(e["credits_charged"]), 0);
+    assert.equal(liab.length, 4, JSON.stringify(liab));
+    assert.ok(liab.includes(356));
+    assert.ok(liab.some((x) => Math.abs(x + spent) < 1e-6), JSON.stringify({ liab, spent }));
+  });
+
+  test("the near-limit alert input: settles carry the org fraction", async () => {
+    const { deps, logs } = await proxyFixture();
+    deps.org = memOrg(400 * MICRO);
+    await (await proxyMessages(post(chatBody()), "acct_test", deps)).text();
+    const settled = JSON.parse(logs.find((x) => x.includes('"ai_settled"'))!) as { org_fraction: number; org_limit_usd: number };
+    assert.equal(settled.org_limit_usd, 1000);
+    assert.ok(settled.org_fraction > 0.4 && settled.org_fraction < 0.41);
   });
 
   test("settles carry the org month-to-date (the near-limit alert's input)", async () => {

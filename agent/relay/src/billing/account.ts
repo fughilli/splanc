@@ -14,7 +14,7 @@
 
 import { b64url, hmac, randomBytes, safeEqual } from "../crypto";
 import { now, type DONamespace, type DOState, type Env } from "../platform";
-import { Ledger, type LedgerEntry, type LotConsumption, type ReserveResult } from "./ledger";
+import { Ledger, type LedgerEntry, type LotConsumption, type ReserveResult, type SettleActivity } from "./ledger";
 import type { Caps, Usage } from "./pricing";
 
 const json = (obj: unknown, status = 200) => new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json" } });
@@ -133,13 +133,13 @@ export class DoLedger {
     return this.call("/reserve", { id, amount, model, caps });
   }
   settle(id: string, charge: number, meta: { model: string; usage: Usage; pricing_version: number; estimated?: boolean }, overdraft: number) {
-    return this.call<{ entry: LedgerEntry; replay: boolean }>("/settle", { id, charge, meta, overdraft });
+    return this.call<{ entry: LedgerEntry; replay: boolean; activity?: SettleActivity }>("/settle", { id, charge, meta, overdraft });
   }
   async release(id: string): Promise<boolean> {
     return (await this.call<{ ok: boolean }>("/release", { id })).ok;
   }
   credit(kind: "purchase" | "adjust" | "trial", ref: string, amount: number, meta: Partial<LedgerEntry> = {}) {
-    return this.call<{ entry: LedgerEntry; replay: boolean }>("/credit", { kind, ref, amount, meta });
+    return this.call<{ entry: LedgerEntry; replay: boolean; first_purchase?: boolean }>("/credit", { kind, ref, amount, meta });
   }
   clawback(ref: string, note = "refund") {
     return this.clawbackFraction(ref, 1, note);

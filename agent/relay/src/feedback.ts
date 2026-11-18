@@ -24,6 +24,7 @@ import { caller, type BugsContext } from "./bugs";
 import { safeEqual, sha256b64url } from "./crypto";
 import { dir } from "./oauth";
 import { now, type Env } from "./platform";
+import { opsPush } from "./ops";
 
 export const RECEIPT_HEADER = "x-splanc-receipt";
 export const FEEDBACK_STATUSES = ["received", "reproduced", "not_reproduced", "fixed", "wontfix"] as const;
@@ -67,7 +68,26 @@ export interface FeedbackRecord {
   exp: number;
 }
 
-type Ctx = BugsContext;
+type Ctx = BugsContext & {
+  /** Keeps the ops push alive after the response (ctx.waitUntil in the Worker). */
+  waitUntil?: ((p: Promise<unknown>) => void) | undefined;
+  /** Tests: a fake fetch for the Grafana Cloud Logs push. */
+  opsFetch?: typeof fetch | undefined;
+};
+
+/**
+ * Ops metrics (docs/design/ops-grafana.md): counts and labels only. ops.ts
+ * keeps just the allowlisted fields: never the note, conversation, trace,
+ * source, device list, error text, report id, receipt, or who sent it.
+ */
+function ops(env: Env, ctx: Ctx, events: Record<string, unknown>[]): void {
+  void opsPush(env, events, { waitUntil: ctx.waitUntil, fetchImpl: ctx.opsFetch, now: () => now(env) });
+}
+
+/** The ops fields that describe a report (all from its no-content summary). */
+function reportLabels(s: Pick<FeedbackSummary, "signature" | "signal" | "app">) {
+  return { signature: s.signature, tool: s.signal?.tool, app: s.app, firmware: s.signal?.firmware };
+}
 
 function isAdmin(req: Request, env: Env): boolean {
   const h = req.headers.get("authorization") ?? "";
@@ -125,12 +145,16 @@ async function submit(req: Request, env: Env, ctx: Ctx): Promise<Response> {
   const who = await caller(req, ctx, bodyHash);
   if (who instanceof Response) return who;
   const v = validateFeedbackReport(text);
-  if (!v.ok) return ctx.json({ error: "invalid_request", message: v.message }, v.status);
+  if (!v.ok) {
+    ops(env, ctx, [{ ev: "fb_rejected", status: v.status }]);
+    return ctx.json({ error: "invalid_request", message: v.message }, v.status);
+  }
   const report = v.report;
   // A retry of the same report: same receipt, nothing counted twice.
   const existing = (await dir<{ rec: FeedbackRecord | null }>(env, "/fb/get", { id: report.id })).body.rec;
   if (existing) {
     if (existing.bodyHash !== bodyHash) return ctx.json({ error: "conflict", message: "a different report already has this id" }, 409);
+    ops(env, ctx, [{ ev: "fb_duplicate" }]);
     return ctx.json({ id: report.id, receipt: await receiptFor(env, report.id), status: existing.status }, 200);
   }
   const lim =
@@ -138,6 +162,7 @@ async function submit(req: Request, env: Env, ctx: Ctx): Promise<Response> {
       ? await dir(env, "/limit", { name: "feedbackBridge", key: who.bridge, global: "feedbackGlobal" })
       : await dir(env, "/limit", { name: "feedbackIp", key: who.ip, global: "feedbackGlobal" });
   if (lim.status === 429) {
+    ops(env, ctx, [{ ev: "fb_rate_limited", via: who.kind }]);
     return ctx.json({ error: "rate_limited", message: "Too many reports from here for now; it stays queued on the device." }, 429, { "retry-after": "3600" });
   }
   const days = Number(env.FEEDBACK_RETENTION_DAYS ?? DEFAULT_RETENTION_DAYS) || DEFAULT_RETENTION_DAYS;
@@ -162,6 +187,20 @@ async function submit(req: Request, env: Env, ctx: Ctx): Promise<Response> {
     exp,
   };
   await dir(env, "/fb/put", { id: report.id, rec, summary });
+  ops(env, ctx, [
+    {
+      ev: "fb_received",
+      ...reportLabels(summary),
+      surface: summary.surface,
+      reasons: [...summary.reasons].sort().join(","),
+      reason_count: summary.reasons.length,
+      ai: summary.ai,
+      via: summary.via,
+      sections: summary.sections.length,
+      bytes: summary.bytes,
+    },
+    ...summary.reasons.map((reason) => ({ ev: "fb_reason", reason, surface: summary.surface, app: summary.app })),
+  ]);
   return ctx.json({ id: report.id, receipt: await receiptFor(env, report.id), status: "received" }, 201);
 }
 
@@ -186,8 +225,15 @@ async function setStatus(req: Request, env: Env, ctx: Ctx): Promise<Response> {
     ...(typeof b["fixed_in"] === "string" ? { fixedIn: String(b["fixed_in"]).slice(0, 40) } : {}),
     ...(typeof b["message"] === "string" ? { message: String(b["message"]).slice(0, 500) } : {}),
   };
-  const r = await dir<{ ok: boolean }>(env, "/fb/patch", { id, patch });
-  return r.status === 404 ? ctx.json({ error: "not_found" }, 404) : ctx.json({ ok: true, id, status });
+  const r = await dir<{ ok: boolean; before?: FeedbackSummary }>(env, "/fb/patch", { id, patch });
+  if (r.status === 404) return ctx.json({ error: "not_found" }, 404);
+  // The summary as it was (no content) gives the ops event its age and labels.
+  const before = r.body.before;
+  if (before && before.status !== status) {
+    const ageH = (now(env) - Date.parse(before.createdAt)) / 3_600_000;
+    ops(env, ctx, [{ ev: "fb_status", status, prev: before.status, age_h: Math.round(ageH * 100) / 100, ...reportLabels(before) }]);
+  }
+  return ctx.json({ ok: true, id, status });
 }
 
 async function getOne(env: Env, ctx: Ctx, id: string): Promise<Response> {
@@ -205,7 +251,10 @@ async function list(env: Env, ctx: Ctx, url: URL): Promise<Response> {
 
 async function erase(req: Request, env: Env, ctx: Ctx, id: string | null): Promise<Response> {
   if (!id) return ctx.json({ error: "invalid_request", message: "id is required" }, 400);
-  if (!isAdmin(req, env) && !(await receiptOk(env, id, req.headers.get(RECEIPT_HEADER)))) return ctx.json({ error: "unauthorized" }, 401);
+  const admin = isAdmin(req, env);
+  if (!admin && !(await receiptOk(env, id, req.headers.get(RECEIPT_HEADER)))) return ctx.json({ error: "unauthorized" }, 401);
   const r = await dir<{ ok: boolean }>(env, "/fb/delete", { id });
-  return r.status === 404 ? ctx.json({ error: "not_found" }, 404) : ctx.json({ ok: true, deleted: id });
+  if (r.status === 404) return ctx.json({ error: "not_found" }, 404);
+  ops(env, ctx, [{ ev: "fb_deleted", by: admin ? "admin" : "reporter" }]);
+  return ctx.json({ ok: true, deleted: id });
 }

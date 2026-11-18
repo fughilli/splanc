@@ -132,7 +132,7 @@ export default {
           return bugsEndpoint(req, env, bugsContext(req, env, origin));
         case "/feedback":
         case "/feedback/status":
-          return feedbackEndpoint(req, env, bugsContext(req, env, origin), path);
+          return feedbackEndpoint(req, env, { ...bugsContext(req, env, origin), waitUntil: ectx ? (p) => ectx.waitUntil(p) : undefined }, path);
         case "/.well-known/oauth-protected-resource":
         case "/.well-known/oauth-protected-resource/mcp":
           return json(

@@ -1,0 +1,177 @@
+{
+  "//": "Alert rules as code for the private Splanc business folder (docs/design/ops-grafana.md). sync.py turns each into Grafana alert provisioning JSON: queries A[,B] on Loki (grafanacloud-logs), reduced to their last value, then `condition` (a math expression over $A/$B) or `$A > above`. `$env` becomes `alert_env` (a regex). Rules route through the DEFAULT notification policy; the owner configures its contact point. Every event and field named here is checked against agent/relay/src/ops.ts by agent/tests/ops.test.ts.",
+  "group": "splanc-business",
+  "interval_s": 300,
+  "alert_env": "production|sandbox",
+  "rules": [
+    {
+      "uid": "biz-org-spend-80",
+      "title": "AI credits: Anthropic org spend at 80 % of the monthly limit",
+      "component": "ai-billing",
+      "queries": {
+        "A": "max(max_over_time({service=\"splanc-relay\", component=\"ai-billing\", env=~\"$env\", event=\"ai_settled\"} | json | unwrap org_fraction [15m]))"
+      },
+      "above": 0.8,
+      "for": "0m",
+      "severity": "warn",
+      "summary": "Month-to-date Anthropic spend is above 80 % of the org limit (the relay stops at 98 %). Raise the limit / usage tier or expect 'busy' answers."
+    },
+    {
+      "uid": "biz-org-spend-stop",
+      "title": "AI credits: stopped at the org spend limit",
+      "component": "ai-billing",
+      "queries": {
+        "A": "sum(count_over_time({service=\"splanc-relay\", component=\"ai-billing\", env=~\"$env\", event=~\"ai_org_spend_stop|ai_org_spend_limit_hit\"} [10m]))"
+      },
+      "above": 0,
+      "for": "0m",
+      "severity": "page",
+      "summary": "Users are getting 'Splanc AI credits are busy': the org spend limit is (nearly) reached."
+    },
+    {
+      "uid": "biz-anthropic-errors",
+      "title": "AI credits: Anthropic errors spiking",
+      "component": "ai-billing",
+      "queries": {
+        "A": "sum(count_over_time({service=\"splanc-relay\", component=\"ai-billing\", env=~\"$env\", event=~\"ai_upstream_error|ai_upstream_unreachable|ai_stream_error\"} [10m]))"
+      },
+      "above": 5,
+      "for": "5m",
+      "severity": "warn",
+      "summary": "More than 5 Anthropic errors (4xx/5xx, unreachable, broken streams) in 10 minutes: rate limits or an Anthropic incident."
+    },
+    {
+      "uid": "biz-reconcile-mismatch",
+      "title": "AI credits: reconciliation mismatch",
+      "component": "ai-billing",
+      "queries": {
+        "A": "sum(count_over_time({service=\"splanc-relay\", component=\"ai-billing\", env=~\"$env\", event=~\"ai_reconcile_usage|ai_reconcile_store\", alert=\"true\"} [1d]))"
+      },
+      "above": 0,
+      "for": "0m",
+      "severity": "page",
+      "summary": "The daily reconciliation found a mismatch: usage billed vs Anthropic's cost beyond 2 %, or credited purchases vs store / Stripe transactions."
+    },
+    {
+      "uid": "biz-dispute",
+      "title": "AI credits: card dispute (chargeback) created",
+      "component": "ai-billing",
+      "queries": {
+        "A": "sum(count_over_time({service=\"splanc-relay\", component=\"ai-billing\", env=~\"$env\", event=\"ai_refund\"} | json | kind=\"chargeback\" [1h]))"
+      },
+      "above": 0,
+      "for": "0m",
+      "severity": "page",
+      "summary": "A card dispute was opened: respond in the Stripe dashboard before the deadline."
+    },
+    {
+      "uid": "biz-refund-spike",
+      "title": "AI credits: refunds spiking",
+      "component": "ai-billing",
+      "queries": {
+        "A": "sum(count_over_time({service=\"splanc-relay\", component=\"ai-billing\", env=~\"$env\", event=\"ai_refund\"} [1h]))"
+      },
+      "above": 3,
+      "for": "0m",
+      "severity": "warn",
+      "summary": "More than 3 refunds / revocations / chargebacks in an hour."
+    },
+    {
+      "uid": "biz-account-suspended",
+      "title": "AI credits: an account was suspended for abuse",
+      "component": "ai-billing",
+      "queries": {
+        "A": "sum(count_over_time({service=\"splanc-relay\", component=\"ai-billing\", env=~\"$env\", event=\"ai_account_suspended\"} [1h]))"
+      },
+      "above": 0,
+      "for": "0m",
+      "severity": "warn",
+      "summary": "An account was suspended (Usage Policy / abuse). Check whether Anthropic needs telling."
+    },
+    {
+      "uid": "biz-write-offs",
+      "title": "AI credits: written-off usage",
+      "component": "ai-billing",
+      "queries": {
+        "A": "sum(sum_over_time({service=\"splanc-relay\", component=\"ai-billing\", env=~\"$env\", event=\"ai_settled\"} | json | unwrap written_off [1d]))"
+      },
+      "above": 500000000,
+      "for": "0m",
+      "severity": "warn",
+      "summary": "More than 500 credits (US$5) a day of usage could not be debited (beyond the overdraft): check the reservation estimate."
+    },
+    {
+      "uid": "biz-web-payments",
+      "title": "AI credits: web checkout / Stripe purchase problems",
+      "component": "ai-billing",
+      "queries": {
+        "A": "sum(count_over_time({service=\"splanc-relay\", component=\"ai-billing\", env=~\"$env\", event=~\"ai_checkout_failed|ai_purchase_rejected\"} [1h]))"
+      },
+      "above": 0,
+      "for": "0m",
+      "severity": "page",
+      "summary": "A paid Stripe checkout wasn't credited (rejected purchase), or checkout sessions can't be created."
+    },
+    {
+      "uid": "biz-webhook-signatures",
+      "title": "AI credits: Stripe webhook signatures failing",
+      "component": "ai-billing",
+      "queries": {
+        "A": "sum(count_over_time({service=\"splanc-relay\", component=\"ai-billing\", env=~\"$env\", event=\"ai_webhook_rejected\"} [1h]))"
+      },
+      "above": 5,
+      "for": "0m",
+      "severity": "warn",
+      "summary": "Webhook calls with bad signatures: a rotated signing secret, or someone probing the endpoint."
+    },
+    {
+      "uid": "biz-consumption-failed",
+      "title": "AI credits: Apple consumption answer failed",
+      "component": "ai-billing",
+      "queries": {
+        "A": "sum(count_over_time({service=\"splanc-relay\", component=\"ai-billing\", env=~\"$env\", event=\"ai_consumption_failed\"} [1h]))"
+      },
+      "above": 0,
+      "for": "0m",
+      "severity": "warn",
+      "summary": "A CONSUMPTION_REQUEST could not be answered (12-hour deadline; Apple retries the notification)."
+    },
+    {
+      "uid": "biz-feedback-spike",
+      "title": "Feedback: problem reports spiking (after a release?)",
+      "component": "feedback",
+      "queries": {
+        "A": "sum(count_over_time({service=\"splanc-relay\", component=\"feedback\", env=~\"$env\", event=\"fb_received\"} [6h]))",
+        "B": "sum(count_over_time({service=\"splanc-relay\", component=\"feedback\", env=~\"$env\", event=\"fb_received\"} [7d])) / 28"
+      },
+      "condition": "$A > 5 && $A > 3 * $B",
+      "for": "0m",
+      "severity": "warn",
+      "summary": "More than 5 AI problem reports in 6 hours and over 3x the 7-day average rate. Check the newest app / firmware release (User feedback dashboard: by app version)."
+    },
+    {
+      "uid": "biz-demo-429-spike",
+      "title": "Demo relay: 429 spike",
+      "component": "demo-relay",
+      "queries": {
+        "A": "sum(count_over_time({service=\"splanc-pages\", component=\"demo-relay\", env=~\"$env\", event=\"demo_request\"} | json | status=\"429\" [15m]))"
+      },
+      "above": 30,
+      "for": "0m",
+      "severity": "warn",
+      "summary": "More than 30 rate-limited demo requests in 15 minutes (our limits or OpenRouter's free-model quota): a crowd, a scraper, or the daily free cap."
+    },
+    {
+      "uid": "biz-demo-unavailable",
+      "title": "Demo relay: free models unavailable",
+      "component": "demo-relay",
+      "queries": {
+        "A": "sum(count_over_time({service=\"splanc-pages\", component=\"demo-relay\", env=~\"$env\", event=\"demo_request\"} | json | outcome=~\"models_unavailable|provider_unavailable\" [15m]))"
+      },
+      "above": 10,
+      "for": "0m",
+      "severity": "warn",
+      "summary": "The demo relay answered 'models unavailable' more than 10 times in 15 minutes: every free model failed (OpenRouter outage or a revoked key)."
+    }
+  ]
+}
