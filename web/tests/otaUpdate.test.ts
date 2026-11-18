@@ -49,6 +49,7 @@ class FakeDevice implements OtaDevice {
   private listeners: ((w: WelcomeMessage) => void)[] = [];
   legacy = false;
   failNextChunkAt = -1;
+  maxChunk = 4096;
   /** An ESP32-P4 player: it takes the image in the app (welcome feature "ota_inapp")
    * and a bad image rolls back to the previous app, not a loader. */
   inApp = false;
@@ -173,7 +174,7 @@ class FakeDevice implements OtaDevice {
       loaderReason: "",
       lastResult: this.last,
       loaderVersion: 0,
-      maxChunk: 4096,
+      maxChunk: this.maxChunk,
       slotSize: this.slot.length,
     };
   }
@@ -518,4 +519,18 @@ test("a chunk lost mid-pipeline drains the rest and resumes from the device's of
   const r = await updateFirmware(dev, pkg(image, 1_014_000, true, 16), { ...fast, window: 4 });
   assert.equal(r.outcome, "ok");
   assert.deepEqual(dev.slot.subarray(0, image.length), image);
+});
+
+test("by default only a device taking chunks over 4 KB gets them pipelined", async () => {
+  const image = new Uint8Array(100_000).map((_, i) => (i * 13) & 255);
+  image[0] = 0xe9;
+  const c6like = PipelinedDevice.make();
+  await updateFirmware(c6like, pkg(image, 1_014_000, true, 16), fast);
+  assert.equal(c6like.maxInFlight, 1, "a 4 KB device: one at a time");
+  const p4 = PipelinedDevice.make();
+  p4.maxChunk = 8192;
+  const r = await updateFirmware(p4, pkg(image, 1_014_000, true, 16), fast);
+  assert.equal(r.outcome, "ok");
+  assert.equal(p4.maxInFlight, 4, "an 8 KB device: four in flight");
+  assert.deepEqual(p4.slot.subarray(0, image.length), image);
 });

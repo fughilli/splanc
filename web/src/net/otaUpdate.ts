@@ -371,6 +371,7 @@ export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaO
   let resumes = 0;
   let offset = -1;
   let chunk = 4096;
+  let maxChunk: number | undefined;
   for (;;) {
     try {
       if (offset < 0) {
@@ -378,9 +379,14 @@ export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaO
         if (failed(st)) throw new OtaError(st.error, `The updater refused the image: ${st.error}`);
         offset = st.offset;
         chunk = Math.min(opts.chunkBytes ?? st.maxChunk ?? 4096, st.maxChunk || 4096);
+        maxChunk = st.maxChunk;
         report("transfer", offset);
       }
-      const window = dev.otaPipelined ? Math.max(1, Math.floor(opts.window ?? 4)) : 1;
+      // Pipelined by default only where it pays: a device that takes bigger chunks than a
+      // C6 (a P4 behind its front end's big TCP windows). Into a C6's 4 KB receive window,
+      // chunks in flight just queue (measured: no faster, replies up to 6 s late).
+      const deflt = (maxChunk ?? 0) > 4096 ? 4 : 1;
+      const window = dev.otaPipelined ? Math.max(1, Math.floor(opts.window ?? deflt)) : 1;
       const flight: Promise<OtaStatusFlat>[] = [];
       let next = offset;
       try {
