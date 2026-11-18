@@ -19,7 +19,7 @@
     "mitigations": 12,
     "mitigations_verified": 6,
     "test_cases": 3035,
-    "gaps": 30
+    "gaps": 29
   },
   "levels": [
     {
@@ -7519,12 +7519,6 @@
       "route": "human-gate",
       "demanded_level": "hitl",
       "provided_level": "simulation"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:ble_capture_e2e_netstack",
-      "message": "//pi/hitl/harness:ble_capture_e2e_netstack pi/hitl/harness/ble_capture_e2e_netstack error and traces to no requirement",
-      "route": "autonomous"
     },
     {
       "kind": "high-risk-open",
