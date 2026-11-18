@@ -226,8 +226,9 @@ things, matching `providers/credits.ts` on agent/ai-billing:
 - Before the billing PR merges, `normalizeConfig` drops the unknown kind. The
   card checks this with the pure function `paidTierSupported()` and stays
   "Coming soon".
-- Sign-in and buying credits live in Settings ▸ AI. When credits are selected
-  but no session exists, the sheet sends the user there and keeps the prompt.
+- Buying credits is its own flow (`#/credits`, ai-billing.md); the account
+  lives in Settings ▸ AI. When credits are selected but no session exists, the
+  sheet opens that flow and keeps the prompt.
 
 A three-way merge of both branches' edits to `generate.ts`, `aiSettings.ts`,
 `provider.ts` and `anthropic.ts` has no conflicts.

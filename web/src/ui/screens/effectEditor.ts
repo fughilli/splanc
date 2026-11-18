@@ -26,6 +26,8 @@
  *     shared MidiRouter moves the uniform controls live as knobs turn.
  */
 
+import { forgetCreditsSession, formatCredits, isOutOfCredits, isSignedOut, takeLowBalanceWarning } from "../../effects/ai/providers/credits";
+import { openCreditsFlow } from "./creditsFlow";
 import type { OutputMap, Topology } from "@ledmapper/protocol";
 import {
   FxPreview,
@@ -1942,6 +1944,13 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
         replyText = result.text || "(done)";
         replyRow = appendChat("assistant", replyText);
       }
+      // Splanc AI credits: a gentle heads-up once the balance runs low.
+      const left = getAiConfig().kind === "credits" ? takeLowBalanceWarning() : null;
+      if (left !== null) {
+        const low = appendChat("assistant", `Heads-up: ${formatCredits(Math.max(0, left))} left on your Splanc AI account.`);
+        low.classList.add("fxedit-msg--warn");
+        low.append(Button({ label: "Buy more", icon: "sparkles", variant: "quiet", onClick: () => openCreditsFlow("buy") }));
+      }
     } catch (e) {
       clearChatStatus();
       turnError = msg(e);
@@ -1952,6 +1961,18 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       if (isFreeTierLimit(e) || (e instanceof OpenRouterError && e.kind === "auth")) {
         replyRow.append(
           Button({ label: "Model setup…", icon: "sparkles", variant: "quiet", onClick: () => void openModelSetup() }),
+        );
+      }
+      // Splanc AI credits ran out (402): straight into the buy flow.
+      if (isOutOfCredits(e)) {
+        replyRow.append(
+          Button({ label: "Buy credits", icon: "sparkles", variant: "quiet", onClick: () => openCreditsFlow("buy") }),
+        );
+      }
+      // Signed out (restored on another device, or deleted): restore here.
+      if (isSignedOut(e)) {
+        replyRow.append(
+          Button({ label: "Restore account", variant: "quiet", onClick: () => (forgetCreditsSession(), openCreditsFlow("restore")) }),
         );
       }
     } finally {

@@ -23,6 +23,9 @@ const CSS = `
   gap: var(--sp-2);
   border-bottom: 1px solid var(--border);
   margin-bottom: var(--sp-4);
+  /* Four tabs fit a 390 px phone; scroll rather than squeeze if a fifth lands. */
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 .settings-tab {
   background: none;
@@ -34,6 +37,8 @@ const CSS = `
   padding: var(--sp-2) var(--sp-3);
   margin-bottom: -1px;
   cursor: pointer;
+  white-space: nowrap;
+  flex: none;
 }
 .settings-tab.on { color: var(--text); border-bottom-color: var(--accent); }
 .settings-legend {

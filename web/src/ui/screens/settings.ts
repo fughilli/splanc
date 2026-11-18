@@ -48,7 +48,11 @@ import { captureBundlesGroup } from "./captureBundles";
 import { backupGroup } from "./backupSection";
 import { diagnosticsGroup } from "./diagnosticsSection";
 
-type SettingsTab = "appearance" | "behavior" | "debugging";
+export type SettingsTab = "appearance" | "behavior" | "ai" | "debugging";
+
+/** Each tab's deep link (the AI tab is #/settings/ai: the editor's "AI
+ * settings" shortcut and Stripe-era links land on it). */
+const TAB_ROUTE: Partial<Record<SettingsTab, string>> = { ai: "#/settings/ai" };
 
 // The Debugging tab is hidden until the user opts in (Behavior ▸ "Enable Debug
 // Settings"), so the developer affordances don't clutter the default surface.
@@ -70,7 +74,7 @@ const MONO_LABELS: Record<MonoChoice, string> = {
   courier: "Courier",
 };
 
-export function SettingsScreen(router: Router): Screen {
+export function SettingsScreen(router: Router, initialTab: SettingsTab = "appearance"): Screen {
   installSettingsStyles();
   const el = document.createElement("div");
   el.className = "screen screen--settings";
@@ -78,7 +82,7 @@ export function SettingsScreen(router: Router): Screen {
   // The app bar already reads "Settings", so the body leads straight with the
   // tabs — Appearance (theme / fonts / 3D / startup) and Behavior (capture and,
   // later, other behavioural knobs). Each panel ends with its own "Reset".
-  let tab: SettingsTab = "appearance";
+  let tab: SettingsTab = initialTab;
 
   let s = getAppearance();
   const set = (patch: Partial<AppearanceSettings>): void => {
@@ -121,6 +125,8 @@ export function SettingsScreen(router: Router): Screen {
     let panels: HTMLElement[];
     if (tab === "appearance") {
       panels = [themeGroup(), typeGroup(), viewGroup(), startupGroup(), experimentalGroup(), appearanceResetRow()];
+    } else if (tab === "ai") {
+      panels = [aiPanel()];
     } else if (tab === "debugging") {
       panels = [
         debugServerGroup(),
@@ -141,11 +147,28 @@ export function SettingsScreen(router: Router): Screen {
     body.replaceChildren(tabBar(), ...panels);
   }
 
+  // The AI tab (AI provider + Splanc AI credits) loads on demand: it pulls in
+  // the on-device model runtimes, which the other tabs don't need.
+  function aiPanel(): HTMLElement {
+    const holder = document.createElement("div");
+    void import("./aiSettings").then((m) => {
+      if (tab === "ai") holder.replaceChildren(m.aiSettingsPanel());
+    });
+    return holder;
+  }
+
   // Switch tabs. The 3D preview only lives in the Appearance panel, so pause its
   // render loop while it's off-screen and resume when it's back.
   function setTab(next: SettingsTab): void {
     if (next === tab) return;
     tab = next;
+    // Keep the address in step with the tab (no remount: replaceState fires
+    // no hashchange), so Back / reload / sharing land on the same tab.
+    try {
+      history.replaceState(history.state, "", TAB_ROUTE[next] ?? "#/settings");
+    } catch {
+      /* no history API (tests) */
+    }
     rerender();
     if (next === "appearance") preview.start();
     else preview.stop();
@@ -163,7 +186,8 @@ export function SettingsScreen(router: Router): Screen {
       b.addEventListener("click", () => setTab(id));
       return b;
     };
-    bar.append(mk("appearance", "Appearance"), mk("behavior", "Behavior"));
+    bar.setAttribute("role", "tablist");
+    bar.append(mk("appearance", "Appearance"), mk("behavior", "Behavior"), mk("ai", "AI"));
     // Debugging is a first-class tab, shown only once opted in.
     if (debugSettingsEnabled()) bar.append(mk("debugging", "Debugging"));
     return bar;
@@ -725,7 +749,7 @@ export function SettingsScreen(router: Router): Screen {
   return {
     el,
     onMount: () => {
-      preview.start();
+      if (tab === "appearance") preview.start();
       // Reflect live connection state on the Debugging tab, and refresh it.
       unsubDebug = subscribeDebugServer(() => {
         if (tab === "debugging") rerender();

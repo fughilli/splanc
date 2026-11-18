@@ -27,11 +27,10 @@ import { installFakeDom, asFake, textOf, typeInto, fire, type FakeElement } from
 
 installFakeDom();
 
-import { AiSettingsScreen } from "../src/ui/screens/aiSettings";
+import { aiSettingsPanel } from "../src/ui/screens/aiSettings";
 import { getAiConfig, isAiConfigured, updateAiConfig } from "../src/effects/ai/provider";
 import { unloadWllamaModel } from "../src/effects/ai/providers/wllama";
 import { unloadWebLlmModel } from "../src/effects/ai/providers/webllm";
-import type { Router } from "../src/ui/app/router";
 
 const BASE = "http://localhost:11434/v1";
 const QWEN_05 = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf";
@@ -52,7 +51,7 @@ function manualBody(): { stream: ReadableStream<Uint8Array>; push: (b: Uint8Arra
 }
 
 function mount(): FakeElement {
-  const s = AiSettingsScreen({} as Router);
+  const s = { el: aiSettingsPanel() };
   document.body.appendChild(s.el);
   screen = asFake(s.el);
   return screen;
