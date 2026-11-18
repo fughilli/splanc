@@ -398,6 +398,7 @@ pub struct VerifyStats {
     /// Applied on arrival (apply-then-verify), and of those, rolled back when the tag failed.
     pub provisional: u32,
     pub rolled_back: u32,
+    pub expired: u32,
     pub hashes: u64,
 }
 
@@ -422,8 +423,13 @@ pub enum Out<'a> {
     /// Render this update. `provisional`: applied on arrival, before its key is out
     /// (apply-then-verify); it may still be rejected.
     Apply { seq: u64, port: u8, body: &'a [u8], provisional: bool },
-    /// A provisional update failed verification: return to the last verified state.
-    Rejected { seq: u64, port: u8, body: &'a [u8] },
+    /// A buffered update failed verification: it was forged. `shown`: it had been applied
+    /// provisionally (return to the last verified state). Its interval and tag identify it
+    /// in a forgery report (§7.9, Q25).
+    Rejected { seq: u64, port: u8, body: &'a [u8], shown: bool, interval: u16, tag: [u8; TAG_LEN], key: [u8; KEY_LEN] },
+    /// A provisional update whose key never came (no later packet reached this member in
+    /// time): return to the last verified state. Not evidence of forgery.
+    Expired { seq: u64, port: u8, body: &'a [u8] },
 }
 
 /// A member's view of the gateway's current chain.
@@ -602,8 +608,8 @@ impl Verifier {
                     // A forgery was on screen: undo it, and verify first for a while.
                     self.stats.rolled_back += 1;
                     self.cool_until_us = now_us + COOLDOWN_US;
-                    out(Out::Rejected { seq: p.seq, port: p.port, body });
                 }
+                out(Out::Rejected { seq: p.seq, port: p.port, body, shown: p.applied, interval: p.interval, tag: p.tag, key: k });
                 continue;
             }
             if p.seq <= self.last_seq {
@@ -617,6 +623,21 @@ impl Verifier {
                 if !p.applied {
                     out(Out::Apply { seq: p.seq, port: p.port, body, provisional: false });
                 }
+            }
+        }
+    }
+
+    /// Revert provisional updates still unverified `d + 2` intervals after the latest the
+    /// gateway can have sent them (their key never reached us: a member cut off, or its
+    /// neighbours blocked). Call periodically.
+    pub fn expire(&mut self, now_us: i64, out: &mut dyn FnMut(Out<'_>)) {
+        let upper = self.upper_interval(now_us);
+        for i in 0..PENDING {
+            let Some(p) = self.pending[i] else { continue };
+            if p.applied && upper > p.interval as u32 + self.d as u32 + 2 {
+                self.pending[i] = None;
+                self.stats.expired += 1;
+                out(Out::Expired { seq: p.seq, port: p.port, body: &p.body[..p.len as usize] });
             }
         }
     }
@@ -755,7 +776,8 @@ mod tests {
             v.on_packet(now, seq, 16, &a, b"real", &mut |o| match o {
                 Out::Apply { seq, provisional: true, .. } => log.push((now, "prov", seq)),
                 Out::Apply { seq, .. } => log.push((now, "late", seq)),
-                Out::Rejected { seq, .. } => log.push((now, "reject", seq)),
+                Out::Rejected { seq, shown: true, .. } => log.push((now, "reject", seq)),
+                Out::Rejected { .. } | Out::Expired { .. } => {}
             });
             if seq == 10 || seq == 12 {
                 // An insider forges an update for the current interval (it knows the time and
@@ -766,7 +788,8 @@ mod tests {
                 v.on_packet(now + 500, fs, 16, &f, b"evil", &mut |o| match o {
                     Out::Apply { seq, provisional: true, .. } => log.push((now + 500, "prov", seq)),
                     Out::Apply { seq, .. } => log.push((now + 500, "late", seq)),
-                    Out::Rejected { seq, .. } => log.push((now + 500, "reject", seq)),
+                    Out::Rejected { seq, shown: true, .. } => log.push((now + 500, "reject", seq)),
+                    Out::Rejected { .. } | Out::Expired { .. } => {}
                 });
             }
         }
@@ -811,6 +834,22 @@ mod tests {
             }
         });
         assert_eq!((shown, v.stats.future), (0, 1));
+    }
+
+    /// A provisional update whose key never arrives is reverted d + 2 intervals on.
+    #[test]
+    fn an_unverified_provisional_update_expires() {
+        let (mut s, mut v) = setup(0, 1_000_000, 1_005_000, 3);
+        v.early = true;
+        let t = 1_100_000;
+        let a = s.seal(t, C, 1, 16, b"x").unwrap();
+        let mut ev = Vec::new();
+        v.on_packet(t + 1_000, 1, 16, &a, b"x", &mut |o| ev.push(format!("{o:?}").split(' ').next().unwrap().to_string()));
+        v.expire(t + 4 * INTERVAL_US as i64, &mut |o| ev.push(format!("{o:?}").split(' ').next().unwrap().to_string()));
+        assert_eq!(ev, ["Apply"]);
+        v.expire(t + 7 * INTERVAL_US as i64, &mut |o| ev.push(format!("{o:?}").split(' ').next().unwrap().to_string()));
+        assert_eq!(ev, ["Apply", "Expired"]);
+        assert_eq!((v.stats.expired, v.stats.rolled_back), (1, 0));
     }
 
     /// Best-of-N challenges (Q24): a later, faster round trip tightens the bound.

@@ -23,6 +23,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use splanc_mesh::backhaul::Backhaul;
+use splanc_mesh::forensics::{self, Forensics, ForgeryReport, LinkGuard, Verdict};
 use splanc_mesh::msg::Class;
 use splanc_mesh::tesla::{self, Auth, Challenge, Out, Signer, TeslaMsg, Verifier};
 use splanc_mesh::tree::{Dist, Radio, RelayCache, Role, Selector, Tree, TreeAd};
@@ -78,6 +79,18 @@ pub struct DistCfg {
     pub tesla_adaptive: bool,
     /// An insider forging live updates for the current interval at this rate (Hz).
     pub insider_hz: f64,
+    /// Q25 containment: local per-neighbour blocks, and/or gateway forensics by quorum.
+    pub guard_local: bool,
+    pub guard_central: bool,
+    /// The local layer only for spoofs (frames under an id at the wrong RSSI).
+    pub guard_spoof_only: bool,
+    /// The insider: the busiest relay at the end of the warm-up (else the member half-way
+    /// through the list); it lies in its own reports, naming a neighbour as its source; with
+    /// `spoof` it puts that neighbour's id on its forged frames.
+    pub insider_relay: bool,
+    pub spoof: bool,
+    /// Members that fabricate forgery reports framing an honest relay, once a second.
+    pub framers: usize,
 }
 
 impl DistCfg {
@@ -106,6 +119,12 @@ impl DistCfg {
             tesla_early: false,
             tesla_adaptive: false,
             insider_hz: 0.0,
+            guard_local: false,
+            guard_central: false,
+            guard_spoof_only: false,
+            insider_relay: false,
+            spoof: false,
+            framers: 0,
         }
     }
 }
@@ -177,6 +196,18 @@ pub struct DistOut {
     pub forged_screen_share: f64,
     /// The root's children (the members a per-receiver-MAC first hop would reach directly).
     pub root_children: u8,
+    /// Q25: seconds from the first forgery to the gateway's block of the insider (NaN: never);
+    /// honest fixtures blocked mesh-wide; honest (fixture, neighbour) local blocks; forgery
+    /// reports per second and their airtime share; forgeries that still reached members after
+    /// the insider was blocked (per second).
+    pub detect_s: f64,
+    pub false_blocks: usize,
+    pub local_false: usize,
+    pub local_true: usize,
+    pub reports_s: f64,
+    pub report_airtime: f64,
+    pub forged_after_block_s: f64,
+    pub insider_was_relay: bool,
     pub series: Vec<Bin>,
 }
 
@@ -271,6 +302,11 @@ struct Node {
     best_rtt: u32,
     /// A forged update on screen since (seq, time).
     forged_on: Option<(u16, i64)>,
+    /// Q25: the per-neighbour guard, where each update's first copy came from (claimed link
+    /// source, RSSI, from the parent), and recent verified forgeries.
+    guard: LinkGuard,
+    first: HashMap<u16, (usize, i16, bool)>,
+    recent: VecDeque<i64>,
 }
 
 struct Gen {
@@ -300,6 +336,20 @@ struct Sim<'a> {
     rng: u64,
     glitches: Vec<f64>,
     honest_rejected: u64,
+    /// Q25: the insider and its spoof target, gateway forensics, reports in flight (arrive
+    /// at, report), blocks ordered (effective at, node, until), stats.
+    insider: Option<usize>,
+    spoof_as: Option<usize>,
+    forensics: Forensics,
+    inflight: Vec<(i64, ForgeryReport)>,
+    orders: Vec<(i64, usize, i64)>,
+    reports: u64,
+    report_bytes: u64,
+    first_forgery: Option<i64>,
+    detected: Option<i64>,
+    blocked_mesh: HashSet<usize>,
+    forged_after_block: u64,
+    framed_target: Option<usize>,
 }
 
 /// The UWB link budget (dBm) from `a` to `b`: −14 dBm EIRP (−41.3 dBm/MHz over 500 MHz),
@@ -371,6 +421,9 @@ pub fn run(cfg: &DistCfg) -> DistOut {
                 last_req: i64::MIN / 2,
                 best_rtt: 0,
                 forged_on: None,
+                guard: LinkGuard::new(),
+                first: HashMap::new(),
+                recent: VecDeque::new(),
             }
         })
         .collect();
@@ -383,7 +436,7 @@ pub fn run(cfg: &DistCfg) -> DistOut {
     for i in 0..n {
         air.0.borrow_mut().st[i].online = true;
     }
-    let mut sim = Sim { cfg, parts: HashMap::new(), hops: diameter(&air, n) + 1, ctrl: 0, nacks: 0, ages: Vec::new(), lacking: 0, signer: cfg.tesla.map(|(iv, d)| Signer::new(&[0x33; 16], 1, 0, iv, d)), auth: HashMap::new(), gen_t: HashMap::new(), rtt_max: 0, rebuild: false, chains: 1, rng: cfg.seed ^ 0x7e57, glitches: Vec::new(), honest_rejected: 0 };
+    let mut sim = Sim { cfg, parts: HashMap::new(), hops: diameter(&air, n) + 1, ctrl: 0, nacks: 0, ages: Vec::new(), lacking: 0, signer: cfg.tesla.map(|(iv, d)| Signer::new(&[0x33; 16], 1, 0, iv, d)), auth: HashMap::new(), gen_t: HashMap::new(), rtt_max: 0, rebuild: false, chains: 1, rng: cfg.seed ^ 0x7e57, glitches: Vec::new(), honest_rejected: 0, insider: None, spoof_as: None, forensics: Forensics::new(1), inflight: Vec::new(), orders: Vec::new(), reports: 0, report_bytes: 0, first_forgery: None, detected: None, blocked_mesh: HashSet::new(), forged_after_block: 0, framed_target: None };
     let gw_hashes0 = sim.signer.as_ref().map_or(0, |s| s.hashes);
     let mut selector = Selector::new();
     let mut seq: u16 = 0;
@@ -549,8 +602,14 @@ pub fn run(cfg: &DistCfg) -> DistOut {
         }
         // The insider (the member half-way through the list) forges an update for the
         // gateway's current interval: it knows the time and the disclosed keys, not K_i.
+        if cfg.insider_hz > 0.0 && sim.insider.is_none() && now >= cfg.warmup_ms * 1000 {
+            let x = if cfg.insider_relay { (1..n).filter(|&j| nodes[j].alive).max_by_key(|&j| nodes[j].tree.children).unwrap_or(n / 2) } else { n / 2 };
+            sim.insider = Some(x);
+            // Its spoof target and the neighbour it names in its lies: its loudest neighbour.
+            sim.spoof_as = (1..n).filter(|&j| j != x && nodes[j].alive).max_by(|&a, &b| air.rssi(x, a).unwrap_or(-200.0).partial_cmp(&air.rssi(x, b).unwrap_or(-200.0)).unwrap());
+        }
         if cfg.insider_hz > 0.0 && now >= cfg.warmup_ms * 1000 && sim.signer.is_some() && (now / 1000) % ((1000.0 / cfg.insider_hz) as i64).max(1) == 7 {
-            let x = n / 2;
+            let x = sim.insider.unwrap_or(n / 2);
             if nodes[x].alive {
                 forge_seq = forge_seq.wrapping_add(1) | 0x8000;
                 let s = sim.signer.as_mut().unwrap();
@@ -564,6 +623,63 @@ pub fn run(cfg: &DistCfg) -> DistOut {
                 let f = frame(KIND_DATA, forge_seq, 0, 0, x as u16 + 1, 0, Dist::Tree, body_len(0, true));
                 let _ = nodes[x].port.send(&f, None);
                 forgeries += 1;
+                sim.first_forgery.get_or_insert(now);
+                // Its own report (a lie): it names its loudest neighbour as the source.
+                if cfg.guard_central {
+                    if let Some(y) = sim.spoof_as {
+                        let r = ForgeryReport { session: 1, reporter: x as u16 + 1, first_hop: y as u16 + 1, consistent: true, from_parent: false, interval: a.interval, seq: forge_seq as u64, port: 24, tag: a.tag, len: 0, body: [0; forensics::REPORT_BODY_MAX] };
+                        sim.inflight.push((now + 20_000, r));
+                    }
+                }
+            }
+        }
+        // Framers fabricate a forgery report a second, each naming the same honest relay.
+        if cfg.guard_central && cfg.framers > 0 && now >= cfg.warmup_ms * 1000 && now % 1_000_000 == 3_000 {
+            let target = (1..n).filter(|&j| nodes[j].alive && Some(j) != sim.insider).max_by_key(|&j| nodes[j].tree.children).unwrap_or(1);
+            // A recent interval whose (disclosed) key is in the sample: the framers know it.
+            let fake = sim.signer.as_mut().map_or(0, |s| {
+                let (cur, _) = s.interval_at(now);
+                let mut i = cur.saturating_sub(s.disclose_delay() as u32 + 1);
+                while i > 1 && !forensics::sampled(&s.key(i)) {
+                    i -= 1;
+                }
+                i as u16
+            });
+            for k in 0..cfg.framers {
+                let liar = (n / 3 + k * 7) % (n - 1) + 1;
+                let r = ForgeryReport { session: 1, reporter: liar as u16 + 1, first_hop: target as u16 + 1, consistent: true, from_parent: false, interval: fake, seq: 1 << 50, port: 24, tag: [fake as u8; 8], len: 0, body: [0; forensics::REPORT_BODY_MAX] };
+                sim.inflight.push((now + 20_000, r));
+                sim.framed_target = Some(target);
+            }
+        }
+        // Reports reach the gateway; it judges every 100 ms; its blocks reach members 50 ms later.
+        if cfg.guard_central {
+            let (due, keep): (Vec<_>, Vec<_>) = sim.inflight.drain(..).partition(|x| x.0 <= now);
+            sim.inflight = keep;
+            for (_, r) in due {
+                // The gateway recomputes the tag: genuine packets are its own (none here: honest
+                // fixtures report only real forgeries; the forger and the framers lie about
+                // the source, not the tag). It checks the sample against its own chain.
+                let sampled = sim.signer.as_mut().is_some_and(|s| forensics::sampled(&s.key(r.interval as u32)));
+                sim.forensics.report(now, &r, false, sampled);
+            }
+            if now % 100_000 == 0 {
+                if let Some(Verdict::Block { node, until_us }) = sim.forensics.tick(now) {
+                    let idx = node as usize - 1;
+                    sim.orders.push((now + 50_000, idx, until_us));
+                    if Some(idx) == sim.insider {
+                        sim.detected.get_or_insert(now);
+                    } else {
+                        sim.blocked_mesh.insert(idx);
+                    }
+                }
+            }
+            let (due, keep): (Vec<_>, Vec<_>) = sim.orders.drain(..).partition(|x| x.0 <= now);
+            sim.orders = keep;
+            for (_, idx, until) in due {
+                for nd in nodes.iter_mut().filter(|x| x.alive) {
+                    nd.guard.order_block(now, idx as u16 + 1, until);
+                }
             }
         }
         // UWB: a 4 ms superframe of four 1 ms slots; slot 0 the root's, 1-3 round-robin.
@@ -594,7 +710,7 @@ pub fn run(cfg: &DistCfg) -> DistOut {
                     }
                     let p = uwb_ok(uwb_rx(cfg, pi, pos(&air, j), shadow[i][j] > now));
                     if p > 0.0 && (0..frags).all(|_| rnd(&mut s) < p) {
-                        on_data(&mut sim, &mut nodes, j, i, &f, now + frames as i64 * UWB_FRAME_US, true);
+                        on_data(&mut sim, &mut nodes, j, i, &f, now + frames as i64 * UWB_FRAME_US, true, 0);
                     }
                 }
             }
@@ -643,7 +759,7 @@ pub fn run(cfg: &DistCfg) -> DistOut {
                             }
                         }
                     }
-                    KIND_DATA | KIND_REPAIR => on_data(&mut sim, &mut nodes, i, src, &f, now, false),
+                    KIND_DATA | KIND_REPAIR => on_data(&mut sim, &mut nodes, i, src, &f, now, false, meta.rssi_dbm as i16),
                     KIND_NACK => {
                         let want = u16::from_be_bytes([f[1], f[2]]);
                         let part = f[3];
@@ -678,6 +794,22 @@ pub fn run(cfg: &DistCfg) -> DistOut {
                 a.resize(14 + ENVELOPE, 0); // the advert exists anyway (§5.3)
                 sim.ctrl += (TreeAd::LEN + 4) as u64;
                 let _ = nodes[i].port.send(&a, None);
+            }
+            if now % 10_000 == 0 {
+                let mut ended = Vec::new();
+                if let Some(v) = nodes[i].tv.as_mut() {
+                    v.expire(now, &mut |o| {
+                        if let Out::Expired { seq, .. } = o {
+                            ended.push(seq as u16);
+                        }
+                    });
+                }
+                for q in ended {
+                    if nodes[i].forged_on.is_some_and(|(fq, _)| fq == q) {
+                        let (_, t) = nodes[i].forged_on.take().unwrap();
+                        sim.glitches.push((now - t) as f64 / 1000.0);
+                    }
+                }
             }
             if now >= nodes[i].next_window {
                 nodes[i].next_window = now + 1_000_000;
@@ -801,6 +933,17 @@ pub fn run(cfg: &DistCfg) -> DistOut {
         nack_lacking: sim.lacking,
         mode_switches: selector.switches,
         root_children: nodes[0].tree.children,
+        detect_s: match (sim.first_forgery, sim.detected) {
+            (Some(a), Some(b)) => (b - a) as f64 / 1e6,
+            _ => f64::NAN,
+        },
+        false_blocks: sim.blocked_mesh.len(),
+        local_false: nodes.iter().enumerate().filter(|(j, _)| Some(*j) != sim.insider).map(|(_, nd)| (1..=n as u16).filter(|&s| Some(s as usize - 1) != sim.insider && nd.guard.blocked(t_end, s)).count()).sum(),
+        local_true: nodes.iter().filter(|nd| sim.insider.is_some_and(|x| nd.guard.blocked(t_end, x as u16 + 1))).count(),
+        reports_s: sim.reports as f64 / run_s,
+        report_airtime: sim.report_bytes as f64 * 8.0 / 6e6 / run_s,
+        forged_after_block_s: sim.forged_after_block as f64 / run_s,
+        insider_was_relay: sim.insider.is_some_and(|x| nodes[x].tree.children > 0),
         tesla_d: sim.signer.as_ref().map_or(0, |s| s.disclose_delay()),
         tesla_chains: if sim.signer.is_some() { sim.chains } else { 0 },
         honest_rejected: sim.honest_rejected,
@@ -880,6 +1023,28 @@ fn bootstrap(sim: &mut Sim<'_>, i: usize, now: i64, one_way_us: i64) -> Option<(
     Verifier::from_sync(&ch, &body, &mac, &PAIRWISE, i as u16 + 1, CTX.mesh_id).map(|v| (v, rtt as u32))
 }
 
+/// A fixture verified that update `q` was forged: count it against its first hop, and report.
+#[allow(clippy::too_many_arguments)]
+fn on_forgery(sim: &mut Sim<'_>, nd: &mut Node, i: usize, q: u16, interval: u16, tag: [u8; 8], key: [u8; 16], now: i64) {
+    let Some(&(src, rssi, from_parent)) = nd.first.get(&q) else { return };
+    let consistent = nd.guard.consistent(src as u16 + 1, rssi);
+    if sim.cfg.guard_local || (sim.cfg.guard_spoof_only && !consistent) {
+        nd.guard.forged(now, src as u16 + 1, rssi, from_parent);
+    }
+    while nd.recent.front().is_some_and(|t| now - t > forensics::COUNT_WINDOW_US) {
+        nd.recent.pop_front();
+    }
+    nd.recent.push_back(now);
+    if sim.cfg.guard_central && forensics::should_report(&key, from_parent, nd.tree.role == Role::Relay) {
+        let r = ForgeryReport { session: 1, reporter: i as u16 + 1, first_hop: src as u16 + 1, consistent, from_parent, interval, seq: q as u64, port: 24, tag, len: 18, body: [0; forensics::REPORT_BODY_MAX] };
+        // Up the tree to the gateway (~2 hops at these sizes), as a unicast with its MAC.
+        let hops = 2u64;
+        sim.reports += 1;
+        sim.report_bytes += hops * (1 + 4 + 2 + 2 + 1 + 2 + 8 + 1 + 8 + 1 + 18 + 8 + ENVELOPE as u64 + HDR as u64);
+        sim.inflight.push((now + 20_000, r));
+    }
+}
+
 /// Q24: the member's Req carries its best round trip; the gateway raises d when needed.
 fn report_rtt(sim: &mut Sim<'_>, nd: &mut Node, rtt: u32) {
     if !sim.cfg.tesla_adaptive {
@@ -894,13 +1059,30 @@ fn report_rtt(sim: &mut Sim<'_>, nd: &mut Node, rtt: u32) {
     }
 }
 
-fn on_data(sim: &mut Sim<'_>, nodes: &mut [Node], i: usize, from: usize, f: &[u8], now: i64, via_uwb: bool) {
+#[allow(clippy::too_many_arguments)]
+fn on_data(sim: &mut Sim<'_>, nodes: &mut [Node], i: usize, from: usize, f: &[u8], now: i64, via_uwb: bool, rssi: i16) {
     let seq = u16::from_be_bytes([f[3], f[4]]);
     let hop = f[5];
     let part = f[6];
     let rseq = u16::from_be_bytes([f[9], f[10]]);
     let tree = f[11] == 1;
     let k = key(seq, part);
+    // Q25: the link source a receiver sees (the insider may put its neighbour's id on its
+    // own forgeries), the guard's view, and its blocks: a blocked source's live packets are
+    // dropped before verification and forwarding.
+    let forged_frame = seq & 0x8000 != 0;
+    let claimed = if forged_frame && sim.cfg.spoof && Some(from) == sim.insider { sim.spoof_as.unwrap_or(from) } else { from };
+    if !via_uwb && f[0] == KIND_DATA {
+        nodes[i].guard.heard(now, claimed as u16 + 1, rssi);
+        if sim.auth.contains_key(&seq) && (sim.cfg.guard_local || sim.cfg.guard_central || sim.cfg.guard_spoof_only) && !nodes[i].guard.allow(now, claimed as u16 + 1, rssi) {
+            return;
+        }
+        if forged_frame && sim.detected.is_some_and(|t| now > t + 100_000) && i != sim.insider.unwrap_or(usize::MAX) && !nodes[i].first.contains_key(&seq) {
+            sim.forged_after_block += 1;
+        }
+        let parent = nodes[i].tree.parent.map(|p| p.0 as usize - 1);
+        nodes[i].first.entry(seq).or_insert((claimed, rssi, parent == Some(claimed)));
+    }
     nodes[i].mode_of.insert(seq, tree);
     if rseq != 0 {
         nodes[i].rseq_of.insert(seq, rseq);
@@ -940,10 +1122,17 @@ fn on_data(sim: &mut Sim<'_>, nodes: &mut [Node], i: usize, from: usize, f: &[u8
                 nodes[i].last_req = now;
             }
             let mut out: Vec<(u16, bool)> = Vec::new();
+            let mut forged_failed: Vec<(u16, u16, [u8; 8], [u8; 16])> = Vec::new();
             if let Some(v) = nodes[i].tv.as_mut() {
                 v.on_packet(now, seq as u64, 24, &a, &body, &mut |o| match o {
                     Out::Apply { seq, .. } => out.push((seq as u16, true)),
-                    Out::Rejected { seq, .. } => out.push((seq as u16, false)),
+                    Out::Rejected { seq, shown, interval, tag, key, .. } => {
+                        if shown {
+                            out.push((seq as u16, false));
+                        }
+                        forged_failed.push((seq as u16, interval, tag, key));
+                    }
+                    Out::Expired { seq, .. } => out.push((seq as u16, false)),
                 });
             }
             for (q, ok) in out {
@@ -967,6 +1156,11 @@ fn on_data(sim: &mut Sim<'_>, nodes: &mut [Node], i: usize, from: usize, f: &[u8
                 if !ok && !forged {
                     sim.honest_rejected += 1;
                 }
+            }
+            // Every rejection (shown or not): the guard counts it against the first hop, and
+            // the fixture reports it (first few, then a keyed sample).
+            for (q, interval, tag, key) in forged_failed {
+                on_forgery(sim, &mut nodes[i], i, q, interval, tag, key, now);
             }
         }
     } else if covered && !nodes[i].got.contains_key(&seq) {

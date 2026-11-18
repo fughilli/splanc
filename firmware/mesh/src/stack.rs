@@ -496,6 +496,17 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     /// Run the device's mesh for one step: receive, timers, adverts, sessions, the mesh slot,
     /// deliver. `scratch` must hold `scratch_len()` bytes. Bounded work; never blocks.
     pub fn tick(&mut self, now_us: i64, flash: &mut dyn Flash, scratch: &mut [u8], on: &mut dyn FnMut(Event<'_>)) {
+        // 0. Provisional live updates whose key never came are reverted (§7.9).
+        if let Some((origin, v)) = self.tesla_v.as_mut() {
+            let origin = *origin;
+            v.expire(now_us, &mut |o| {
+                if let tesla::Out::Expired { body, .. } = o {
+                    if let Some((header, _)) = ControlHeader::decode(body) {
+                        on(Event::LiveRejected { origin, op_id: header.op_id });
+                    }
+                }
+            });
+        }
         // 1. Receive: link frames into the mesh, plain frames to membership.
         loop {
             let before = self.node.guard.stats;
@@ -1039,6 +1050,12 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                         if header.targets.includes(me, &groups) {
                             on(Event::Control { origin, header, inner });
                         }
+                    }
+                }
+                tesla::Out::Rejected { shown: false, .. } => {}
+                tesla::Out::Expired { body, .. } => {
+                    if let Some((header, _)) = ControlHeader::decode(body) {
+                        on(Event::LiveRejected { origin, op_id: header.op_id });
                     }
                 }
                 tesla::Out::Rejected { body, .. } => {
