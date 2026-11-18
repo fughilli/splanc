@@ -359,6 +359,11 @@ calibration taken <em>inside</em> the burst, the carrier integer is resolved fro
 synthetic delays of 0, 0.37 and 2.90 ns come back within <strong>+9 ± 3 ps</strong> (≈1.3 mm one-way,
 with a calibratable +9 ps bias). Group delay alone averages to ±0.08 ns (1.2 cm). Two HT40
 LOs stitch to an 80 MHz span that shows a 15 ns echo a single 40 MHz shot cannot.</p></li>
+<li><p><strong>Round 3 (§13):</strong> 0–12.5 ns injected delays (264 bursts) all resolve to the right carrier
+cycle within <strong>±1.6 ps of 2τ (±0.25 mm one-way)</strong> with ~38 bursts per estimate. The slip rate
+falls to 3.9 % at 30 bursts. The group-delay “bias” was noise. On-device FFT processing gives
+~4× the rate (3.6–3.7 exch/s wall). One-sided tones bring the stitched 80 MHz echo fit to
+15.8 ns (truth 15).</p></li>
 <li><p><strong>Not a player feature yet.</strong> The engines need whole 128 KB SRAM blocks while they run,
 and the exchange takes the radio for ~1 ms with interrupts off (§9). This fits a bench
 image, a P4+C6 front end, or a dedicated ranging mode. It does not fit a heap-starved
@@ -937,6 +942,146 @@ would remove the per-exchange DAC-restart jitter that now limits the group delay
 </ul>
 </section>
 </section>
+<section id="round-3-reliable-integer-resolution-dac-jitter-on-device-processing-stitching">
+<h2>13. Round 3: reliable integer resolution, DAC jitter, on-device processing, stitching<a class="headerlink" href="#round-3-reliable-integer-resolution-dac-jitter-on-device-processing-stitching" title="Link to this heading">¶</a></h2>
+<section id="the-group-delay-bias-that-grew-with-delay-was-noise">
+<h3>13.1 The group-delay bias that “grew with delay” was noise<a class="headerlink" href="#the-group-delay-bias-that-grew-with-delay-was-noise" title="Link to this heading">¶</a></h3>
+<p>There is no systematic bias. A 0–12.5 ns campaign used 264 paired bursts over 5 LOs, about
+38 bursts per injected delay. The group-delay error per delay was:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>d (ns)</p></th>
+<th class="head"><p>0</p></th>
+<th class="head"><p>0.5</p></th>
+<th class="head"><p>1.9</p></th>
+<th class="head"><p>4.1</p></th>
+<th class="head"><p>7.3</p></th>
+<th class="head"><p>10.2</p></th>
+<th class="head"><p>12.5</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>gd err (ns)</p></td>
+<td><p>−0.15</p></td>
+<td><p>−0.07</p></td>
+<td><p>+0.04</p></td>
+<td><p>+0.05</p></td>
+<td><p>+0.02</p></td>
+<td><p>−0.11</p></td>
+<td><p>−0.14</p></td>
+</tr>
+<tr class="row-odd"><td><p>carrier-resolved err (ps of 2τ)</p></td>
+<td><p>−0.6</p></td>
+<td><p>+0.7</p></td>
+<td><p>−1.6</p></td>
+<td><p>+0.4</p></td>
+<td><p>+1.4</p></td>
+<td><p>−1.2</p></td>
+<td><p>+0.6</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>All errors are within ±1.5σ (σ ≈ 0.08–0.11 ns). Per-LO medians scatter ±0.2 ns, which
+matches the per-burst noise (0.4–0.6 ns). Round 2’s −0.2 ns at 7.3 ns came from only 19 bursts.</p>
+<ul class="simple">
+<li><p><strong>All 7 delays resolve to the right carrier cycle, within ±1.6 ps of 2τ (±0.25 mm
+one-way).</strong> The +9 ps offset of round 2 is gone. Bootstrap slip rate per estimate: 53 % at
+3 bursts, 27 % at 10, 12 % at 20, 3.9 % at 30, and 0 of 7 at 32–40.</p></li>
+<li><p>Integer fixing is limited only by the per-burst group-delay noise.</p></li>
+</ul>
+<p><img alt="campaign" src="docs/research/img/chsound/integer-resolution-campaign.png" /></p>
+</section>
+<section id="dac-restart-jitter-can-it-be-avoided">
+<h3>13.2 DAC restart jitter: can it be avoided?<a class="headerlink" href="#dac-restart-jitter-can-it-be-avoided" title="Link to this heading">¶</a></h3>
+<p><strong>Keep the DAC running.</strong> Started once per burst and never stopped, the DAC makes the
+captures useless: broadband, equal power on the A-bins, B-bins and off-grid. That holds
+whether the owner points the DAC at its own block or at the capture block. The DAC
+playback and the capture are one modem dump engine with one SRAM-owner register; they don’t
+run at the same time. So a self-reference leakage capture of the device’s own running DAC
+can’t be taken during reception either. The interleaved-tone-set experiment (A on even bins,
+B on odd) confirms it: no clean components.</p>
+<p><strong>Detect the state.</strong> The per-exchange group-delay scatter isn’t visibly bimodal at the
+2τ level (two devices × two states smear it). There is no handle on the device to read the
+state.</p>
+<p><strong>What works.</strong> In-burst pairing cancels everything common to the burst. The remaining
+per-exchange restart noise (~0.5 ns) is averaged over bursts, and the carrier phase is
+immune to it. The real fix needs a second engine or a timing reference that survives the
+DAC restart, for example a looped TX→RX path on the board, or reading the modem’s
+DAC-clock phase if such a register exists. This is open.</p>
+</section>
+<section id="on-device-processing">
+<h3>13.3 On-device processing<a class="headerlink" href="#on-device-processing" title="Link to this heading">¶</a></h3>
+<p>Firmware v20 adds three commands:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">tones</span></code>: a 2048-point fixed-point FFT of one or two periods, CFO de-rotated, with quarter-wave
+twiddles. The output is 1000 tone values. Validated against the host DFT: D within 0.06–0.3 ns,
+phase within 1–2°.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">proc</span></code>: a reference divide, a multi-lag phase slope and a weighted-LS refinement on device.
+Each exchange returns D, carrier phase and |H|.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fftp</span></code>: sets the number of periods averaged.</p></li>
+</ul>
+<p>The FFT costs 2.3–3.3 M cycles (~15–20 ms at 160 MHz; soft-float-free but not optimised).
+The weighted LS with soft-float <code class="docutils literal notranslate"><span class="pre">atan2f</span></code> dominates <code class="docutils literal notranslate"><span class="pre">proc</span></code> (~60 M cycles for 4 captures).</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Path</p></th>
+<th class="head"><p>Wall rate (incl. retries/uploads)</p></th>
+<th class="head"><p>Burst wall time</p></th>
+<th class="head"><p>gd per burst</p></th>
+<th class="head"><p>Result</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>host DSP on raw captures (rounds 1–2)</p></td>
+<td><p>~0.9 exch/s</p></td>
+<td><p>~4.5 s</p></td>
+<td><p>0.4–0.6 ns</p></td>
+<td><p>slip-free at ~38 bursts</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">tones</span></code> (device FFT, host LS)</p></td>
+<td><p><strong>3.7 exch/s</strong></p></td>
+<td><p>0.7–1 s</p></td>
+<td><p>0.8–1.3 ns</p></td>
+<td><p>2/3 delays resolved</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">proc</span></code> (all on device, both DUTs in parallel)</p></td>
+<td><p><strong>3.6 exch/s</strong></p></td>
+<td><p>0.69 s</p></td>
+<td><p>worse; −7 % scale bias on long delays</p></td>
+<td><p>not yet usable for integer fixing</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>So on-device processing gives about 4× the rate. The single fixed analysis window on the device
+gives about 2× worse group delay than the host’s onset-aligned, Hann-weighted multi-period
+window, and the on-device LS has a scale bias still to find. Next steps, roughly in order:
+fixed-point CORDIC in place of soft-float atan2, the onset-aligned window on device, the
+whole burst’s processing in one command (now 2 round trips), and longer bursts. These should
+reach the tens of exchanges per second the airtime allows (~1600 exch/s).</p>
+</section>
+<section id="stitching-with-one-sided-tones">
+<h3>13.4 Stitching with one-sided tones<a class="headerlink" href="#stitching-with-one-sided-tones" title="Link to this heading">¶</a></h3>
+<p>TX/RX IQ images of a symmetric comb land on the comb itself, and they biased the 2-LO fit
+(17.5 ns). With <strong>one-sided tones</strong> (0.04–19.5 MHz above each LO) at 4 HT40 LOs (2402,
+2422, 2442, 2462 MHz → 2402–2481.5 MHz), the images fall on empty bins. The stitched
+2-path fit now gives <strong>Δ = 15.8 ns</strong> (truth 15.0). Single 20 MHz segments give 15.0 to
+45 ns (degenerate), and two segments 59 ns. The echo amplitude comes out low: a = 0.17
+against 0.6. The injected two-path waveform has a higher crest factor and is
+peak-normalised, so the TX chain compresses the modulation depth. Spikes near each LO
+(DC/LO leakage) also remain. The delay is the robust parameter. Amplitude needs TX
+linearity calibration, or a lower injection level.</p>
+<p><img alt="stitch1s" src="docs/research/img/chsound/stitch-onesided-echo-fit.png" /></p>
+</section>
+<section id="preamble-misses">
+<h3>13.5 Preamble misses<a class="headerlink" href="#preamble-misses" title="Link to this heading">¶</a></h3>
+<p>5–13 % per burst over 600 bursts (17/137, 18/137, 57/331), about 2–3 % per exchange, all retried.
+They cluster at LOs near the rig AP (2432–2442 MHz).</p>
+</section>
+</section>
 <section id="reproduce">
 <h2>10. Reproduce<a class="headerlink" href="#reproduce" title="Link to this heading">¶</a></h2>
 <p><code class="docutils literal notranslate"><span class="pre">tools/chsound/README.md</span></code>. Short version: hold <code class="docutils literal notranslate"><span class="pre">c6-sdr</span></code>, flash
@@ -1024,6 +1169,14 @@ is written from the documented facts, not copied. Fine with the AGPL repo?</p></
 <li><a class="reference internal" href="#absolute-ranging-with-resolved-carrier-phase-synthetic-delays">12.2 Absolute ranging with resolved carrier phase (synthetic delays)</a></li>
 <li><a class="reference internal" href="#hop-stitching-80-mhz-and-multipath">12.3 Hop stitching (80 MHz) and multipath</a></li>
 <li><a class="reference internal" href="#what-was-not-done-and-why">12.4 What was not done, and why</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#round-3-reliable-integer-resolution-dac-jitter-on-device-processing-stitching">13. Round 3: reliable integer resolution, DAC jitter, on-device processing, stitching</a><ul>
+<li><a class="reference internal" href="#the-group-delay-bias-that-grew-with-delay-was-noise">13.1 The group-delay bias that “grew with delay” was noise</a></li>
+<li><a class="reference internal" href="#dac-restart-jitter-can-it-be-avoided">13.2 DAC restart jitter: can it be avoided?</a></li>
+<li><a class="reference internal" href="#on-device-processing">13.3 On-device processing</a></li>
+<li><a class="reference internal" href="#stitching-with-one-sided-tones">13.4 Stitching with one-sided tones</a></li>
+<li><a class="reference internal" href="#preamble-misses">13.5 Preamble misses</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#reproduce">10. Reproduce</a></li>
