@@ -21,7 +21,7 @@ import {
   downloadFirmwareToCache,
   prefetchLatestFirmware,
 } from "../../flash/firmwareRepo";
-import { loadReleaseFirmwareIndex, p4PackageAsset, proxiedAssetUrl, siblingAssetUrl } from "../../flash/githubReleaseRepo";
+import { loadReleaseFirmwareIndex, proxiedAssetUrl, siblingAssetUrl } from "../../flash/githubReleaseRepo";
 import { cachedIds, deleteBundle, listBundles } from "../../flash/firmwareCache";
 import {
   webSerialUnavailableReason,
@@ -41,7 +41,18 @@ import { buildLabel, commitUrl } from "../../buildInfo";
 import type { FirmwareEntry, FirmwareIndex } from "../../flash/manifest";
 import { appState } from "../app/state";
 import type { LedMapperClient } from "../../net/client";
-import { inLoader, maxManifestAsset, OtaError, pullsImage, updateFirmware, updatesInApp, type OtaProgress } from "../../net/otaUpdate";
+import {
+  boardLabel,
+  deviceBoard,
+  inLoader,
+  maxManifestAsset,
+  OtaError,
+  pullsImage,
+  updateFirmware,
+  updatesInApp,
+  type OtaProgress,
+} from "../../net/otaUpdate";
+import { entriesForBoard, entryFitsBoard, otaEntryFor, updateState } from "../../flash/boardMatch";
 
 let openHandle: SheetHandle | null = null;
 
@@ -54,6 +65,9 @@ let currentSource: FwSource = "release";
 /** Ids of firmware versions cached for OFFLINE flashing — refreshed on each picker
  * load and after a manage-drawer download/remove, and used to mark them in the UI. */
 let cachedSet = new Set<string>();
+
+/** The picker lists every board's firmware, not just the connected device's. */
+let showAllBoards = false;
 
 function loadIndexForSource(source: FwSource): Promise<FirmwareIndex | null> {
   return source === "release" ? loadReleaseFirmwareIndex() : loadFirmwareIndex();
@@ -195,7 +209,11 @@ async function showPicker(sheet: SheetHandle): Promise<void> {
     return;
   }
   cachedSet = await cachedIds(); // mark which versions are offline-ready
-  renderIdle(sheet, index, index.entries[0]!);
+  // A connected device: start on the newest bundle for ITS board (never the
+  // newest of another board's, e.g. the C6 image for a P4 player).
+  const target = otaTarget();
+  const first = (target ? entriesForBoard(index.entries, deviceBoard(target.welcome))[0] : undefined) ?? index.entries[0]!;
+  renderIdle(sheet, index, first);
 }
 
 /** The "Firmware source" selector (releases vs this build), shown atop the picker. */
@@ -236,11 +254,22 @@ function renderIdle(sheet: SheetHandle, index: FirmwareIndex, selected: Firmware
   const envNote = summarizeEnv(readFlashEnv()).note;
   if (envNote) sheet.body.append(note(envNote));
 
+  // With a device connected, list only the bundles for its board (an ESP32-P4
+  // player is never offered the C6 image, and vice versa); "Other boards…"
+  // shows the rest, for flashing a different board over USB.
+  const target = otaTarget();
+  const board = target ? deviceBoard(target.welcome) : null;
+  const listed =
+    board && !showAllBoards && entriesForBoard(index.entries, board).length > 0
+      ? entriesForBoard(index.entries, board).concat(entryFitsBoard(selected, board) ? [] : [selected])
+      : index.entries;
+  const hiddenOther = index.entries.length - listed.length;
+
   // Firmware picker (only shown when there's a real choice).
-  if (index.entries.length > 1) {
+  if (listed.length > 1) {
     const sel = document.createElement("select");
     sel.className = "sheet-input";
-    for (const e of index.entries) {
+    for (const e of listed) {
       const opt = document.createElement("option");
       opt.value = e.id;
       opt.textContent = e.label + (cachedSet.has(e.id) ? "  ·  cached ✓" : "");
@@ -252,6 +281,19 @@ function renderIdle(sheet: SheetHandle, index: FirmwareIndex, selected: Firmware
       if (next) renderIdle(sheet, index, next);
     });
     sheet.body.append(field("Firmware", sel));
+  }
+  if (board && hiddenOther > 0) {
+    sheet.body.append(
+      Button({
+        label: `Other boards' firmware (USB)…`,
+        variant: "quiet",
+        block: true,
+        onClick: () => {
+          showAllBoards = true;
+          renderIdle(sheet, index, selected);
+        },
+      }),
+    );
   }
 
   const card = document.createElement("div");
@@ -269,39 +311,56 @@ function renderIdle(sheet: SheetHandle, index: FirmwareIndex, selected: Firmware
   sheet.body.append(card);
 
   // Over the air: the connected device, if it has the OTA loader (welcome feature
-  // "ota") or is sitting in its update loader right now (recovery).
-  const target = otaTarget();
-  if (target) {
+  // "ota") or is sitting in its update loader right now (recovery). It only ever
+  // gets a bundle for its own board: the selected one when it fits, else the
+  // newest that does; "update available" is judged against that.
+  if (target && board) {
     const w = target.welcome!;
     const name = w.deviceName || w.mac || "the connected device";
-    if (inLoader(w)) {
+    const otaEntry = otaEntryFor(index.entries, selected, board);
+    if (!otaEntry) {
       sheet.body.append(
-        note(`${name} is in its updater (recovery mode): install firmware over Wi-Fi to bring it back.`),
+        note(`No firmware release has a ${boardLabel(board)} image yet, so ${name} can't be updated over Wi-Fi from here.`),
       );
-    }
-    // The app advertises "ota" even on the legacy (pre-OTA) partition layout, where
-    // an update over Wi-Fi can only be refused: ask the device up front and, if it
-    // still has the old layout, say what to do instead of offering a doomed button.
-    const slot = document.createElement("div");
-    sheet.body.append(slot);
-    const offer = (): void => {
-      slot.replaceChildren(
-        Button({
-          label: `Update ${name} over Wi-Fi`,
-          icon: "chip",
-          variant: "primary",
-          block: true,
-          onClick: () => void startOtaUpdate(sheet, index, selected, target),
-        }),
-      );
-    };
-    if (inLoader(w)) offer();
-    else {
-      slot.append(note(`Checking whether ${name} can update over Wi-Fi…`));
-      void otaReadiness(target).then((ready) => {
-        if (ready === "legacy") slot.replaceChildren(note(legacyLayoutText(name)));
-        else offer();
-      });
+    } else {
+      const up = updateState(index.entries, board, w.fwVersion);
+      if (up.kind === "available") {
+        sheet.body.append(note(`Update available for ${name} (${boardLabel(board)}): ${up.running} → ${up.entry.version}.`));
+      } else if (up.kind === "current" && otaEntry === up.entry) {
+        sheet.body.append(note(`${name} (${boardLabel(board)}) runs ${up.running}, the newest ${boardLabel(board)} firmware.`));
+      }
+      if (otaEntry !== selected) {
+        sheet.body.append(note(`${selected.label} isn't for ${name}'s board; Wi-Fi updates use ${otaEntry.label}.`));
+      }
+      if (inLoader(w)) {
+        sheet.body.append(
+          note(`${name} is in its updater (recovery mode): install firmware over Wi-Fi to bring it back.`),
+        );
+      }
+      // The app advertises "ota" even on the legacy (pre-OTA) partition layout, where
+      // an update over Wi-Fi can only be refused: ask the device up front and, if it
+      // still has the old layout, say what to do instead of offering a doomed button.
+      const slot = document.createElement("div");
+      sheet.body.append(slot);
+      const offer = (): void => {
+        slot.replaceChildren(
+          Button({
+            label: `Update ${name} over Wi-Fi`,
+            icon: "chip",
+            variant: "primary",
+            block: true,
+            onClick: () => void startOtaUpdate(sheet, index, otaEntry, target),
+          }),
+        );
+      };
+      if (inLoader(w)) offer();
+      else {
+        slot.append(note(`Checking whether ${name} can update over Wi-Fi…`));
+        void otaReadiness(target).then((ready) => {
+          if (ready === "legacy") slot.replaceChildren(note(legacyLayoutText(name)));
+          else offer();
+        });
+      }
     }
   }
   if (usbBlocked) {
@@ -670,26 +729,17 @@ async function startOtaUpdate(
 const isP4Entry = (entry: FirmwareEntry): boolean => entry.chip.toLowerCase() === "esp32p4";
 
 /** An ESP32-P4 player's `.ota` (docs/design/p4-c6-split.md §5.1; one package for the P4
- * and its C6). From the selected bundle when that is the P4's; otherwise the same
- * release's `esp32p4-player-<ver>.ota`, so the version picked for a C6 works for a P4. */
+ * and its C6), from a P4 bundle only: the sheet never hands a P4 another board's
+ * bundle (boardMatch.ts), and this refuses one if it did. */
 async function p4Package(entry: FirmwareEntry): Promise<{ pkg: Uint8Array; keyEpoch?: Uint8Array }> {
-  if (isP4Entry(entry)) {
-    const req = await loadFlashRequest(entry);
-    if (!req.otaPackage) {
-      throw new OtaError("no_package", "This build's ESP32-P4 firmware has no signed over-the-air package: pick a released version, or flash over USB.");
-    }
-    return { pkg: req.otaPackage, ...(req.keyEpoch ? { keyEpoch: req.keyEpoch } : {}) };
+  if (!isP4Entry(entry)) {
+    throw new OtaError("wrong_board", `${entry.label} is not ESP32-P4 firmware; the connected device is an ESP32-P4 player.`);
   }
-  if (!entry.tarUrl || !entry.version) {
-    throw new OtaError("no_package", "This device is an ESP32-P4 player: pick a released version to update it over Wi-Fi.");
+  const req = await loadFlashRequest(entry);
+  if (!req.otaPackage) {
+    throw new OtaError("no_package", "This build's ESP32-P4 firmware has no signed over-the-air package: pick a released version, or flash over USB.");
   }
-  const res = await fetch(proxiedAssetUrl(siblingAssetUrl(entry.tarUrl, p4PackageAsset(entry.version))));
-  if (!res.ok) {
-    throw new OtaError("no_package", `Firmware ${entry.version} has no ESP32-P4 player package: pick a newer release.`);
-  }
-  const pkg = new Uint8Array(await res.arrayBuffer());
-  const er = await fetch(proxiedAssetUrl(siblingAssetUrl(entry.tarUrl, "key-epoch.bin"))).catch(() => null);
-  return { pkg, ...(er?.ok ? { keyEpoch: new Uint8Array(await er.arrayBuffer()) } : {}) };
+  return { pkg: req.otaPackage, ...(req.keyEpoch ? { keyEpoch: req.keyEpoch } : {}) };
 }
 
 /** A C6's `.ota` (manifest ‖ image) from the selected bundle. */

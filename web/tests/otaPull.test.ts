@@ -13,6 +13,7 @@ function manifest(version: number, size: number, sig = 1): Uint8Array {
   const m = new Uint8Array(MANIFEST_LEN);
   new DataView(m.buffer).setUint32(0, version, true);
   new DataView(m.buffer).setUint32(4, size, true);
+  new DataView(m.buffer).setUint32(40, 1 << 24, true); // flags: board 1 (pi3), as signed for a MAX
   m.fill(sig, 44);
   return m;
 }
