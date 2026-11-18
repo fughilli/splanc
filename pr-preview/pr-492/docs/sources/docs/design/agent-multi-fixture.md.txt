@@ -109,6 +109,10 @@ effects on two devices drift apart.
   each player the epoch converted to that player's clock. It re-syncs
   periodically and on reconnect. Target: under 20 ms skew between fixtures,
   measured on HITL with two DUTs and the LED timing capture.
+- **Staying in step.** After the align, the bridge's drift discipline re-samples
+  each player, fits offset and drift rate, and slews its epoch in ≤ 2 ms steps;
+  under a time base update()'s `dt` follows the shared time too. See
+  [synced-show.md](synced-show.md).
 
 ## 4. Room-level tools
 

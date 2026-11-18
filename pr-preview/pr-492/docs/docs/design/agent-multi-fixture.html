@@ -443,6 +443,10 @@ clock offset (min-RTT filtered), picks one room epoch in host time, and sends
 each player the epoch converted to that player’s clock. It re-syncs
 periodically and on reconnect. Target: under 20 ms skew between fixtures,
 measured on HITL with two DUTs and the LED timing capture.</p></li>
+<li><p><strong>Staying in step.</strong> After the align, the bridge’s drift discipline re-samples
+each player, fits offset and drift rate, and slews its epoch in ≤ 2 ms steps;
+under a time base update()’s <code class="docutils literal notranslate"><span class="pre">dt</span></code> follows the shared time too. See
+<a class="reference internal" href="synced-show.html"><span class="std std-doc">synced-show.md</span></a>.</p></li>
 </ul>
 </section>
 <section id="room-level-tools">
