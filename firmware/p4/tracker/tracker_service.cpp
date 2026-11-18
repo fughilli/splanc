@@ -8,9 +8,8 @@
 #include "firmware/p4/tracker/tracker_service.h"
 
 #include <freertos/FreeRTOS.h>
-#include <freertos/idf_additions.h>
 #include <freertos/queue.h>
-#include <esp_heap_caps.h>
+#include <esp_attr.h>
 #include <esp_timer.h>
 #include <freertos/task.h>
 #include <stdio.h>
@@ -251,6 +250,7 @@ void take_profile() {
 }
 
 int g_prio = 0, g_tracking_prio = 0;
+constexpr uint32_t kWorkerStack = 32 * 1024;
 
 // Runs the kernel's slow solves (lh_job_run is pure: no tracker state), below the tracker
 // task on its core, so a report always preempts it.
@@ -361,16 +361,15 @@ void tracker_service_start(int prio, int tracking_prio, int usb_prio, int core) 
   // The kernel's EKF runs on the tracker task, its solves on the worker: big stacks for
   // both (the calibration's least squares). The worker first: without it the kernel solves
   // on the tracker task as before.
-  // Its stack in PSRAM: internal RAM is what the USB host allocates the tracker's
-  // endpoints from, and 32 KB more there left it short (ESP_ERR_NO_MEM claiming the IMU's
-  // interface: light but no IMU). The worker only computes, never touches flash.
-#ifdef CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM
-  const BaseType_t made = xTaskCreatePinnedToCoreWithCaps(worker, "lh_solve", 32 * 1024, nullptr, prio > 1 ? prio - 1 : 1,
-                                                          nullptr, core, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#else
-  const BaseType_t made = xTaskCreatePinnedToCore(worker, "lh_solve", 32 * 1024, nullptr, prio > 1 ? prio - 1 : 1, nullptr, core);
-#endif
-  if (made == pdPASS) {
+  // Its stack in PSRAM (EXT_RAM_BSS_ATTR: firmware/p4/sdkconfig_overrides.h): internal
+  // RAM is what the USB host allocates the tracker's endpoints from, and 32 KB more there
+  // left it short (ESP_ERR_NO_MEM claiming the IMU's interface: light but no IMU). The
+  // worker only computes, never touches flash; its TCB stays internal (FreeRTOS wants it).
+  static EXT_RAM_BSS_ATTR StackType_t worker_stack[kWorkerStack / sizeof(StackType_t)];
+  static StaticTask_t worker_tcb;
+  const bool made = xTaskCreateStaticPinnedToCore(worker, "lh_solve", kWorkerStack, nullptr, prio > 1 ? prio - 1 : 1,
+                                                 worker_stack, &worker_tcb, core) != nullptr;
+  if (made) {
     lh_defer_solves(1);
   } else {
     printf("[tracker] no memory for the solve worker; solving on the tracker task\n");
