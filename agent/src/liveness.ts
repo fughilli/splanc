@@ -24,9 +24,12 @@ export interface LivenessOptions {
   /** Unanswered pings in a row (with no other traffic) that mean dead. */
   misses?: number;
   now?: () => number;
+  /** While true, silence is expected (a firmware update restarting the player): no
+   * heartbeat pings, so no death from them. */
+  paused?: () => boolean;
 }
 
-export const LIVENESS_DEFAULTS: Required<Omit<LivenessOptions, "now">> = {
+export const LIVENESS_DEFAULTS: Required<Omit<LivenessOptions, "now" | "paused">> = {
   idleMs: 20_000,
   busyMs: 4_000,
   pingTimeoutMs: 5_000,
@@ -41,8 +44,9 @@ export class Liveness {
   private inflight = 0;
   private beating = false;
   private readonly timer: ReturnType<typeof setInterval>;
-  private readonly o: Required<Omit<LivenessOptions, "now">>;
+  private readonly o: Required<Omit<LivenessOptions, "now" | "paused">>;
   private readonly now: () => number;
+  private readonly paused: () => boolean;
   private readonly onDeath = new Set<(why: string) => void>();
 
   constructor(
@@ -51,7 +55,9 @@ export class Liveness {
     opts: LivenessOptions = {},
   ) {
     this.now = opts.now ?? (() => performance.now());
-    this.o = { ...LIVENESS_DEFAULTS, ...stripUndefined(opts) };
+    this.paused = opts.paused ?? (() => false);
+    const { paused: _p, now: _n, ...rest } = opts;
+    this.o = { ...LIVENESS_DEFAULTS, ...stripUndefined(rest) };
     this.lastRx = this.now();
     const tick = Math.max(50, Math.min(this.o.busyMs, this.o.idleMs) / 2);
     this.timer = setInterval(() => this.check(), tick);
@@ -120,6 +126,10 @@ export class Liveness {
 
   private check(): void {
     if (this.dead || this.beating) return;
+    if (this.paused()) {
+      this.rx(); // the silence was expected: count from when the pause ends
+      return;
+    }
     if (this.silentMs < (this.inflight > 0 ? this.o.busyMs : this.o.idleMs)) return;
     this.beating = true;
     void (async () => {
