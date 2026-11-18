@@ -1,0 +1,133 @@
+{
+  "model": "inclusionai/ling-3.2-flash:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 16.6,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6588,
+        "completion_tokens": 530,
+        "total_tokens": 7118,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 29,
+          "col": 34,
+          "msg": "arithmetic on non-numeric"
+        }
+      ],
+      "source": "// Sunrise: a warm band climbs the helix, sky warms from cyan to peach,\n// base flares once the front passes. All per-LED maths in fixed point.\nuniform float speed   : 0.05 .. 2.0 = 0.35;   // climb rate (cycles per second)\nuniform float width   : 0.02 .. 0.5  = 0.15;  // glow band width (fraction of height)\nuniform float sat     : 0.0 .. 1.0   = 0.55;  // sky saturation\nuniform float bright  : 0.0 .. 2.0   = 1.0;   // overall gain\n\nstate fixed climb;   // band position in turns\nstate fixed w;       // width, fixed\nstate fixed s;       // saturation, fixed\nstate fixed g;       // gain, fixed\n\nvoid update() {\n  climb = fract(climb + fixed(dt * speed));\n  w = fixed(width);\n  s = fixed(sat);\n  g = fixed(bright);\n}\n\nvec3 shade(Led led) {\n  fixed h = fixed(led.pos.y) * fixed(3.3333);   // 0..1 up the lamp\n  fixed f = fract(climb * fixed(1.5) - h * fixed(0.5));  // 1 at the front\n  fixed d = fixed(1.0) - f;                      // signed distance, front = 0\n  fixed band = clamp(f * (fixed(1.0) / w), fixed(0.0), fixed(1.0));\n  fixed base = clamp(d * fixed(1.25), fixed(0.0), fixed(1.0));\n  fixed hf = clamp((h - fixed(0.75)) * fixed(4.0), fixed(0.0), fixed(1.0));\n  fixed hue = fixed(0.055) + base * fixed(0.035) + hf * fixed(0.09);\n  fixed val = band * (fixed(0.4) + base * fixed(0.6));\n  return hsv2rgb(hue, s, val) * g;\n}\n"
+    },
+    {
+      "round": 1,
+      "status": 200,
+      "seconds": 13.8,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 7165,
+        "completion_tokens": 534,
+        "total_tokens": 7699,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 6464,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 29,
+          "col": 41,
+          "msg": "arithmetic on non-numeric"
+        }
+      ],
+      "source": "// Sunrise: a warm band climbs the helix, sky warms from cyan to peach,\n// base flares once the front passes. All per-LED maths in fixed point.\nuniform float speed   : 0.05 .. 2.0 = 0.35;   // climb rate (cycles per second)\nuniform float width   : 0.02 .. 0.5  = 0.15;  // glow band width (fraction of height)\nuniform float sat     : 0.0 .. 1.0   = 0.55;  // sky saturation\nuniform float bright  : 0.0 .. 2.0   = 1.0;   // overall gain\n\nstate fixed climb;   // band position in turns\nstate fixed w;       // width, fixed\nstate fixed s;       // saturation, fixed\nstate fixed g;       // gain, fixed\n\nvoid update() {\n  climb = fract(climb + fixed(dt * speed));\n  w = fixed(width);\n  s = fixed(sat);\n  g = fixed(bright);\n}\n\nvec3 shade(Led led) {\n  fixed h = fixed(led.pos.y) * fixed(3.3333);   // 0..1 up the lamp\n  fixed f = fract(climb * fixed(1.5) - h * fixed(0.5));  // 1 at the front\n  fixed d = fixed(1.0) - f;                      // signed distance, front = 0\n  fixed band = clamp(f * (fixed(1.0) / w), fixed(0.0), fixed(1.0));\n  fixed base = clamp(d * fixed(1.25), fixed(0.0), fixed(1.0));\n  fixed hf = clamp((h - fixed(0.75)) * fixed(4.0), fixed(0.0), fixed(1.0));\n  fixed hue = fixed(0.055) + base * fixed(0.035) + hf * fixed(0.09);\n  fixed val = band * (fixed(0.4) + base * fixed(0.6));\n  return hsv2rgb(hue, s, val) * float(g);\n}\n"
+    },
+    {
+      "round": 2,
+      "status": 200,
+      "seconds": 7.34,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 7743,
+        "completion_tokens": 534,
+        "total_tokens": 8277,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 6464,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 29,
+          "col": 67,
+          "msg": "arithmetic on non-numeric"
+        }
+      ],
+      "source": "// Sunrise: a warm band climbs the helix, sky warms from cyan to peach,\n// base flares once the front passes. All per-LED maths in fixed point.\nuniform float speed   : 0.05 .. 2.0 = 0.35;   // climb rate (cycles per second)\nuniform float width   : 0.02 .. 0.5  = 0.15;  // glow band width (fraction of height)\nuniform float sat     : 0.0 .. 1.0   = 0.55;  // sky saturation\nuniform float bright  : 0.0 .. 2.0   = 1.0;   // overall gain\n\nstate fixed climb;   // band position in turns\nstate fixed w;       // width, fixed\nstate fixed s;       // saturation, fixed\nstate fixed g;       // gain, fixed\n\nvoid update() {\n  climb = fract(climb + fixed(dt * speed));\n  w = fixed(width);\n  s = fixed(sat);\n  g = fixed(bright);\n}\n\nvec3 shade(Led led) {\n  fixed h = fixed(led.pos.y) * fixed(3.3333);   // 0..1 up the lamp\n  fixed f = fract(climb * fixed(1.5) - h * fixed(0.5));  // 1 at the front\n  fixed d = fixed(1.0) - f;                      // signed distance, front = 0\n  fixed band = clamp(f * (fixed(1.0) / w), fixed(0.0), fixed(1.0));\n  fixed base = clamp(d * fixed(1.25), fixed(0.0), fixed(1.0));\n  fixed hf = clamp((h - fixed(0.75)) * fixed(4.0), fixed(0.0), fixed(1.0));\n  fixed hue = fixed(0.055) + base * fixed(0.035) + hf * fixed(0.09);\n  fixed val = band * (fixed(0.4) + base * fixed(0.6));\n  return hsv2rgb(hue, s, val) * vec3(float(g), float(g), float(g));\n}\n"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": null,
+  "outcome": "compile_failed",
+  "prompt": "p09",
+  "reasoning": "off"
+}

@@ -1,0 +1,45 @@
+{
+  "model": "inclusionai/ling-3.2-flash:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 19.23,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6584,
+        "completion_tokens": 784,
+        "total_tokens": 7368,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 6464,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "// Water caustics shimmer on a helix lamp.\n// Per-LED maths is all fixed-point; the two interference waves are advanced in\n// update() so the speed sliders never rescale elapsed time.\nuniform float speed1 : 0.0 .. 5.0 = 1.0;   // wave drift 1 (turns / s)\nuniform float speed2 : 0.0 .. 5.0 = 0.6;   // wave drift 2 (turns / s)\nuniform float density : 1.0 .. 12.0 = 5.0; // spatial frequency of the web\nuniform float shimmer : 0.0 .. 1.0 = 0.6;  // sparkle contrast\nuniform float glow : 0.0 .. 1.0 = 0.35;    // ambient body light\nuniform vec3 tint : color = 0.35, 0.7, 1.0;\n\nstate fixed ph1;   // wave 1 phase, TURNS\nstate fixed ph2;   // wave 2 phase, TURNS\nstate fixed k;     // spatial frequency\nstate fixed sh;    // shimmer amount\nstate fixed gl;    // ambient glow\nstate fixed ti;    // tint r\nstate fixed tg;    // tint g\nstate fixed tb;    // tint b\n\nvoid update() {\n  ph1 = fract(ph1 + fixed(dt * speed1));\n  ph2 = fract(ph2 + fixed(dt * speed2));\n  k  = fixed(density);\n  sh = fixed(shimmer);\n  gl = fixed(glow);\n  ti = fixed(tint.x);\n  tg = fixed(tint.y);\n  tb = fixed(tint.z);\n}\n\nvec3 shade(Led led) {\n  fixed x = fixed(led.pos.x);\n  fixed z = fixed(led.pos.z);\n  fixed y = fixed(led.pos.y);\n\n  // two interfering wave fields -> sharp caustic web via squared sum\n  fixed a = sin(x * k + ph1) + sin(z * k * fixed(1.13) + ph2);\n  fixed b = sin((x + z) * k * fixed(0.71) - ph1 * fixed(0.6) + ph2 * fixed(0.4));\n  fixed w = a * a + b * b;              // 0..8\n  fixed c = w - fixed(5.0);             // only the bright ridges stay\n  c = c * c;                            // sharpen the filaments\n  c = clamp(c * fixed(0.06), fixed(0.0), fixed(1.0));\n\n  // slow vertical shimmer so the web crawls and sparkles\n  fixed tw = sin(y * fixed(28.0) + ph1 * fixed(6.0) + ph2 * fixed(4.0)) * fixed(0.5) + fixed(0.5);\n  c = c * (fixed(0.6) + sh * tw);\n\n  fixed r = ti * c + gl * ti * fixed(0.25);\n  fixed g = tg * c + gl * tg * fixed(0.25);\n  fixed b2 = tb * c + gl * tb * fixed(0.25);\n  return vec3(float(r), float(g), float(b2));\n}\n"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p15",
+  "reasoning": "off"
+}

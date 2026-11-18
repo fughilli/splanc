@@ -1,0 +1,45 @@
+{
+  "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 23.79,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6540,
+        "completion_tokens": 823,
+        "total_tokens": 7363,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4384,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float flash_rate : 0.05 .. 2.0 = 0.3;\nuniform float flash_duration : 0.01 .. 0.2 = 0.05;\nuniform float cloud_speed : 0.1 .. 2.0 = 0.5;\nuniform float cloud_density : 0.1 .. 1.0 = 0.7;\nuniform vec3 cloud_color : color = 0.05, 0.05, 0.08;\nuniform vec3 flash_color : color = 1.0, 0.95, 0.85;\nuniform float ambient_glow : 0.0 .. 0.3 = 0.05;\n\nstate fixed flash_phase;\nstate fixed flash_timer;\nstate fixed cloud_phase;\nstate bool flash_active;\nstate int flash_led_start;\nstate int flash_led_end;\n\nvoid update() {\n  cloud_phase = fract(cloud_phase + fixed(dt * cloud_speed * 0.2));\n  \n  if (!flash_active) {\n    flash_phase = fract(flash_phase + fixed(dt * flash_rate));\n    if (flash_phase < fixed(dt * flash_rate)) {\n      flash_active = true;\n      flash_timer = fixed(flash_duration);\n      flash_led_start = int(hash(float(frame)) * float(led.count));\n      flash_led_end = int(hash(float(frame) * 3.0) * float(led.count));\n      if (flash_led_start > flash_led_end) {\n        int tmp = flash_led_start;\n        flash_led_start = flash_led_end;\n        flash_led_end = tmp;\n      }\n    }\n  } else {\n    flash_timer = flash_timer - fixed(dt);\n    if (flash_timer <= fixed(0.0)) {\n      flash_active = false;\n      flash_phase = fixed(0.0);\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  fixed s = fixed(led.s);\n  fixed y = fixed(led.pos.y);\n  fixed idx = fixed(led.idx);\n  fixed count = fixed(led.count);\n  \n  fixed cloud_noise = sin(s * fixed(8.0) + cloud_phase) * fixed(0.5) + fixed(0.5);\n  fixed cloud_mask = step(cloud_noise, fixed(cloud_density));\n  \n  vec3 base = vec3(cloud_color.x, cloud_color.y, cloud_color.z) * float(cloud_mask) + vec3(ambient_glow);\n  \n  if (flash_active) {\n    fixed flash_progress = flash_timer / fixed(flash_duration);\n    fixed flash_intensity = flash_progress * flash_progress;\n    \n    fixed led_norm = idx / count;\n    fixed flash_start_norm = fixed(flash_led_start) / count;\n    fixed flash_end_norm = fixed(flash_led_end) / count;\n    \n    fixed in_flash = step(flash_start_norm, led_norm) * step(led_norm, flash_end_norm);\n    fixed vertical_falloff = fixed(1.0) - abs(y / fixed(0.15));\n    vertical_falloff = clamp(vertical_falloff, fixed(0.0), fixed(1.0));\n    \n    fixed total_flash = flash_intensity * in_flash * vertical_falloff * fixed(0.7) + flash_intensity * fixed(0.3);\n    \n    vec3 flash_rgb = vec3(flash_color.x, flash_color.y, flash_color.z) * float(total_flash);\n    return base + flash_rgb;\n  }\n  \n  return base;\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p06",
+  "reasoning": "off"
+}

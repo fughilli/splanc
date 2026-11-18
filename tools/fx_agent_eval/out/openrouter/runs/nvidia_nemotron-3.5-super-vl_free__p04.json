@@ -1,0 +1,133 @@
+{
+  "model": "nvidia/nemotron-3.5-super-vl:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 2.55,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6542,
+        "completion_tokens": 270,
+        "total_tokens": 6812,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4336,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 12,
+          "col": 83,
+          "msg": "arithmetic on non-numeric"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 5.0 = 0.6;\nuniform float width : 0.02 .. 1.0 = 0.5;\nuniform float sat   : 0.0 .. 1.0 = 1.0;\nuniform float val   : 0.0 .. 1.0 = 1.0;\nstate fixed ph;\nvoid update() {\n  ph = fract(ph + fixed(dt) * fixed(speed * 0.25));\n}\nvec3 shade(Led led) {\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  fixed band = clamp((fixed(1.0) - abs(fract(ang - ph) - fixed(0.5)) * fixed(2.0)) * fixed(1.0) / fixed(width), fixed(0.0), fixed(1.0));\n  return hsv2rgb(fract(ang - ph), fixed(sat), fixed(val)) * vec3(band, band, band);\n}"
+    },
+    {
+      "round": 1,
+      "status": 200,
+      "seconds": 5.51,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6856,
+        "completion_tokens": 280,
+        "total_tokens": 7136,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4336,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 14,
+          "col": 60,
+          "msg": "a fixed colour (rgb()/rgb8()/hsv2rgb()/palette on fixed args) must be returned directly from shade()"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 5.0 = 0.6;\nuniform float width : 0.02 .. 1.0 = 0.5;\nuniform float sat   : 0.0 .. 1.0 = 1.0;\nuniform float val   : 0.0 .. 1.0 = 1.0;\nstate fixed ph;\nvoid update() {\n  ph = fract(ph + fixed(dt) * fixed(speed * 0.25));\n}\nvec3 shade(Led led) {\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  fixed frac = fract(ang - ph);\n  fixed d = abs(frac - fixed(0.5));\n  fixed band = clamp((fixed(0.5) - d) * fixed(2.0) / fixed(width), fixed(0.0), fixed(1.0));\n  vec3 c = hsv2rgb(fract(ang - ph), fixed(sat), fixed(val));\n  return c * vec3(band, band, band);\n}"
+    },
+    {
+      "round": 2,
+      "status": 200,
+      "seconds": 3.31,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 7201,
+        "completion_tokens": 269,
+        "total_tokens": 7470,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4336,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 14,
+          "col": 60,
+          "msg": "a fixed colour (rgb()/rgb8()/hsv2rgb()/palette on fixed args) must be returned directly from shade()"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 5.0 = 0.6;\nuniform float width : 0.02 .. 1.0 = 0.5;\nuniform float sat   : 0.0 .. 1.0 = 1.0;\nuniform float val   : 0.0 .. 1.0 = 1.0;\nstate fixed ph;\nvoid update() {\n  ph = fract(ph + fixed(dt) * fixed(speed * 0.25));\n}\nvec3 shade(Led led) {\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  fixed frac = fract(ang - ph);\n  fixed d = abs(frac - fixed(0.5));\n  fixed band = clamp((fixed(0.5) - d) * fixed(2.0) / fixed(width), fixed(0.0), fixed(1.0));\n  vec3 c = hsv2rgb(fract(ang - ph), fixed(sat), fixed(val));\n  return c * band;\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": null,
+  "outcome": "compile_failed",
+  "prompt": "p04",
+  "reasoning": "off"
+}

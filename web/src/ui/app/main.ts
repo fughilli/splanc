@@ -240,6 +240,12 @@ async function main(): Promise<void> {
   await seedBuiltinMaps();
   await seedBuiltinEffects();
 
+  // OpenRouter sign-in coming back (free tier, docs/design/ai-tiers.md): store
+  // the user's key and restore the route before any screen mounts.
+  if (/[?&](code|error)=/.test(location.search)) {
+    const { finishOpenRouterRedirect } = await import("../screens/aiTierSheet");
+    await finishOpenRouterRedirect();
+  }
   router.start();
 
   // Warm the offline firmware cache with the latest release in the background, so a

@@ -1,0 +1,45 @@
+{
+  "model": "nvidia/nemotron-3.5-super-vl:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 2.39,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6537,
+        "completion_tokens": 303,
+        "total_tokens": 6840,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4336,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float density : 0.0 .. 1.0 = 0.3;\nuniform float tail : 0.01 .. 2.0 = 0.5;\n\nstate float head[8];\nstate bool inited;\n\nvoid update() {\n  if (!inited) {\n    for (int i = 0; i < 8; i = i + 1) {\n      head[i] = hash(float(i));\n    }\n    inited = true;\n  }\n  for (int i = 0; i < 8; i = i + 1) {\n    head[i] = fract(head[i] + dt * speed * fixed(0.25));\n  }\n}\n\nvec3 shade(Led led) {\n  int seg = led.seg;\n  float t = fract(led.s - head[seg]);\n  float band = clamp((tail - t) / tail, 0.0, 1.0);\n  float spark = step(fixed(1.0) - fixed(density), fixed(led.s));\n  return vec3(0.0, 1.0, 0.0) * band * spark;\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p10",
+  "reasoning": "off"
+}

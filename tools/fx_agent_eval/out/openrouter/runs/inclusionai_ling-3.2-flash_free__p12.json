@@ -1,0 +1,45 @@
+{
+  "model": "inclusionai/ling-3.2-flash:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 27.61,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6583,
+        "completion_tokens": 232,
+        "total_tokens": 6815,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float rate : 0.02 .. 0.5 = 0.1;\nuniform float glow : 0.0 .. 1.0 = 0.6;\nuniform vec3 tint : color = 0.2, 0.6, 1.0;\n\nstate float breath;\n\nvoid update() {\n  breath = fract(breath + dt * rate);\n}\n\nvec3 shade(Led led) {\n  float level = 0.5 + 0.5 * sin(breath * 6.2832);\n  float height = clamp((led.pos.y + 0.15) * 3.333, 0.0, 1.0);\n  float v = level * mix(0.4, 1.0, height) * mix(0.15, 1.0, glow);\n  return tint * v;\n}\n"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p12",
+  "reasoning": "off"
+}

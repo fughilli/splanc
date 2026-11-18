@@ -1,0 +1,45 @@
+{
+  "model": "inclusionai/ling-3.2-flash:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 7.07,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6590,
+        "completion_tokens": 255,
+        "total_tokens": 6845,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float speed : 0.0 .. 2.0 = 0.25;\nuniform float sat : 0.0 .. 1.0 = 0.85;\nuniform float height : 0.05 .. 1.0 = 0.35;\n\nstate fixed rot;\nstate fixed drift;\nstate fixed satf;\nstate fixed hf;\n\nvoid update() {\n  rot = fract(rot + fixed(dt * speed * 0.05));\n  drift = fract(drift + fixed(dt * speed * 0.02));\n  satf = fixed(sat);\n  hf = fixed(height);\n}\n\nvec3 shade(Led led) {\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  fixed h = fract(ang + rot + fixed(led.pos.y) * hf + drift);\n  return hsv2rgb(h, satf, fixed(1.0));\n}\n"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p04",
+  "reasoning": "off"
+}

@@ -1,0 +1,133 @@
+{
+  "model": "inclusionai/ling-3.2-flash:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 11.52,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6583,
+        "completion_tokens": 374,
+        "total_tokens": 6957,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 17,
+          "col": 21,
+          "msg": "expected ')'"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float density : 0.0 .. 1.0 = 0.35;\nuniform float sparkle : 0.0 .. 5.0 = 2.0;\nuniform vec3 tint : color = 0.7, 0.8, 1.0;\nuniform bool color = false;\n\nstate fixed ph;\nstate fixed spd;\nstate fixed den;\nstate fixed sat;\nstate fixed one;\n\nvoid update() {\n  ph = fract(ph + fixed(dt * speed));\n  spd = fixed(sparkle);\n  den = fixed(density);\n  sat = fixed(color ? 0.6 : 0.0);\n  one = fixed(1.0);\n}\n\nvec3 shade(Led led) {\n  fixed p = fixed(led.pos.y) * fixed(7.0) + fixed(led.idx) * fixed(0.61803);\n  fixed h = hash(float(fract(p)));\n  fixed lit = step(fixed(1.0) - den, h);\n  fixed tw = fixed(0.5) + fixed(0.5) * sin(fract(p + ph * (fixed(0.5) + h * spd)) * one);\n  fixed b = lit * tw * tw;\n  fixed hue = fract(h + fract(p * fixed(0.5)) + ph);\n  return hsv2rgb(hue, sat, b);\n}\n"
+    },
+    {
+      "round": 1,
+      "status": 200,
+      "seconds": 5.3,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 7002,
+        "completion_tokens": 369,
+        "total_tokens": 7371,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 17,
+          "col": 21,
+          "msg": "expected ')'"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float density : 0.0 .. 1.0 = 0.35;\nuniform float sparkle : 0.0 .. 5.0 = 2.0;\nuniform vec3 tint : color = 0.7, 0.8, 1.0;\nuniform bool color = false;\n\nstate fixed ph;\nstate fixed spd;\nstate fixed den;\nstate fixed sat;\nstate fixed one;\n\nvoid update() {\n  ph = fract(ph + fixed(dt * speed));\n  spd = fixed(sparkle);\n  den = fixed(density);\n  sat = fixed(color ? 0.6 : 0.0);\n  one = fixed(1.0);\n}\n\nvec3 shade(Led led) {\n  fixed p = fixed(led.pos.y) * fixed(7.0) + fixed(led.idx) * fixed(0.61803);\n  fixed h = hash(float(fract(p)));\n  fixed lit = step(fixed(1.0) - den, h);\n  fixed tw = fixed(0.5) + fixed(0.5) * sin(fract(p + ph * (fixed(0.5) + h * spd)) * one);\n  fixed b = lit * tw * tw;\n  fixed hue = fract(h + fract(p * fixed(0.5)) + ph);\n  return hsv2rgb(hue, sat, b);\n}\n"
+    },
+    {
+      "round": 2,
+      "status": 200,
+      "seconds": 10.87,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 7421,
+        "completion_tokens": 369,
+        "total_tokens": 7790,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 6464,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 17,
+          "col": 21,
+          "msg": "expected ')'"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float density : 0.0 .. 1.0 = 0.35;\nuniform float sparkle : 0.0 .. 5.0 = 2.0;\nuniform vec3 tint : color = 0.7, 0.8, 1.0;\nuniform bool color = false;\n\nstate fixed ph;\nstate fixed spd;\nstate fixed den;\nstate fixed sat;\nstate fixed one;\n\nvoid update() {\n  ph = fract(ph + fixed(dt * speed));\n  spd = fixed(sparkle);\n  den = fixed(density);\n  sat = fixed(color ? 0.6 : 0.0);\n  one = fixed(1.0);\n}\n\nvec3 shade(Led led) {\n  fixed p = fixed(led.pos.y) * fixed(7.0) + fixed(led.idx) * fixed(0.61803);\n  fixed h = hash(float(fract(p)));\n  fixed lit = step(fixed(1.0) - den, h);\n  fixed tw = fixed(0.5) + fixed(0.5) * sin(fract(p + ph * (fixed(0.5) + h * spd)) * one);\n  fixed b = lit * tw * tw;\n  fixed hue = fract(h + fract(p * fixed(0.5)) + ph);\n  return hsv2rgb(hue, sat, b);\n}\n"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": null,
+  "outcome": "compile_failed",
+  "prompt": "p13",
+  "reasoning": "off"
+}

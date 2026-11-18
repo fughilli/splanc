@@ -1,0 +1,45 @@
+{
+  "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 4.05,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6536,
+        "completion_tokens": 228,
+        "total_tokens": 6764,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4384,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float density : 0.0 .. 1.0 = 0.05;\nuniform float speed : 0.0 .. 5.0 = 1.0;\nuniform vec3 color : color = 1.0, 0.9, 0.6;\nstate fixed phase;\nvoid update() {\n  phase = fract(phase + fixed(dt * speed));\n}\nvec3 shade(Led led) {\n  fixed s = fixed(led.s);\n  fixed h = hash(s * fixed(1000.0) + phase);\n  fixed t = hash(s * fixed(2000.0) + phase + fixed(0.5));\n  fixed on = step(fixed(1.0) - fixed(density), h);\n  fixed blink = step(fixed(0.5), t);\n  fixed v = on * blink;\n  return color * float(v);\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p07",
+  "reasoning": "off"
+}

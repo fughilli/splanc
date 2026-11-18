@@ -1,0 +1,45 @@
+{
+  "model": "nvidia/nemotron-3.5-super-vl:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 3.24,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6536,
+        "completion_tokens": 478,
+        "total_tokens": 7014,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4336,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float density : 0.0 .. 1.0 = 0.4;\nuniform float brightness : 0.0 .. 1.0 = 1.0;\nuniform vec3 tint : color = 1.0, 1.0, 0.9;\n\nstate fixed phase[32];\nstate bool inited;\n\nvoid update() {\n  if (!inited) {\n    for (int i = 0; i < 32; i = i + 1) {\n      phase[i] = fixed(hash(float(i) * 17.0));\n    }\n    inited = true;\n  }\n  for (int i = 0; i < 32; i = i + 1) {\n    phase[i] = fract(phase[i] + fixed(dt * speed * 0.0625));\n  }\n}\n\nvec3 shade(Led led) {\n  fixed s = fixed(led.s);\n  vec3 c = vec3(0.0, 0.0, 0.0);\n  for (int i = 0; i < 32; i = i + 1) {\n    fixed p = fract(s * fixed(32.0) + phase[i]);\n    fixed w = p * fixed(256.0);\n    w = w * (fixed(1.0) - w);\n    w = w * fixed(4.0);\n    if (w > fixed(0.9)) {\n      c = c + vec3(1.0, 1.0, 1.0) * float(w);\n    }\n  }\n  c = c * vec3(float(fixed(brightness)), float(fixed(brightness)), float(fixed(brightness)));\n  c = c * tint;\n  return clamp(c, vec3(0.0, 0.0, 0.0), vec3(1.0, 1.0, 0.0));\n}\n"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p13",
+  "reasoning": "off"
+}

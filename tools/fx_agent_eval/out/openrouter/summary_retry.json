@@ -1,0 +1,19 @@
+[
+  {
+    "model": "google/gemma-4-31b-it:free_retry",
+    "n": 3,
+    "http_errors": 3,
+    "n_429": 3,
+    "tool_call_valid_first": 0,
+    "compiled_round0": 0,
+    "compiled_any": 0,
+    "median_request_s": null,
+    "median_turn_s_compiled": null,
+    "requests": 3,
+    "deny_probe": {
+      "status": 429,
+      "seconds": 0.14,
+      "message": "Provider returned error"
+    }
+  }
+]

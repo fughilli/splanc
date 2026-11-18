@@ -18,6 +18,7 @@ import { appState } from "../app/state";
 import { EffectPreviewTiles } from "./effectPreviewTiles";
 import { appendGrouped, openFolderPicker } from "./folders";
 import { isAiConfigured } from "../../effects/ai/provider";
+import { openModelSetup } from "./aiTierSheet";
 import { setTabMenuItems } from "../app/tabMenu";
 import { prefs } from "../../store/prefs";
 import { getAppearance } from "../../store/appearance";
@@ -88,7 +89,7 @@ export function EffectsBrowserScreen(router: Router): Screen {
     const tip = HelpTip({
       label: "About AI generation",
       title: "AI generation",
-      body: "Generate effects and map MIDI from a text prompt. Use your own Anthropic API key, a local model server (Ollama/LM Studio), or an in-browser WebGPU model — everything runs on your device.",
+      body: "Generate effects and map MIDI from a text prompt. Start free with OpenRouter's free models, or bring your own key, endpoint or on-device model.",
       align: "right",
       // First-run hint: nothing configured yet, so surface it expanded on arrival
       // rather than hiding it behind a "?" the user has to discover.
@@ -103,7 +104,7 @@ export function EffectsBrowserScreen(router: Router): Screen {
         label: "Set up AI",
         icon: "sparkles",
         onClick: () => {
-          location.hash = "#/settings/ai";
+          void openModelSetup().then(() => renderAiHelp());
         },
       },
     });

@@ -1,0 +1,45 @@
+{
+  "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 4.63,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6542,
+        "completion_tokens": 259,
+        "total_tokens": 6801,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4384,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float waves : 0.5 .. 8.0 = 3.0;\nuniform float sat   : 0.0 .. 1.0 = 0.9;\n\nstate fixed ph1;\nstate fixed ph2;\nstate fixed k;\nstate fixed s;\n\nvoid update() {\n  ph1 = fract(ph1 + fixed(dt * speed * 0.25));\n  ph2 = fract(ph2 + fixed(dt * speed * 0.17));\n  k = fixed(waves);\n  s = fixed(sat);\n}\n\nvec3 shade(Led led) {\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  fixed w = sin(fixed(led.uv.y) * k + ph2) * fixed(0.125);\n  return hsv2rgb(fract(ang + ph1 + w), s, fixed(1.0));\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p04",
+  "reasoning": "off"
+}

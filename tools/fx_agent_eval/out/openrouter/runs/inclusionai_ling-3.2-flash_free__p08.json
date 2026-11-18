@@ -1,0 +1,133 @@
+{
+  "model": "inclusionai/ling-3.2-flash:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 29.13,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6584,
+        "completion_tokens": 1122,
+        "total_tokens": 7706,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 6464,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 30,
+          "col": 22,
+          "msg": "comparison operands must be scalar"
+        }
+      ],
+      "source": "// Lava lamp: slow rising blobs, glow, sparkle, motion-reactive wobble.\n// Simulation lives in update() on a small fixed-point lattice buffer;\n// shade() is a handful of fixed-point ops per LED.\n\nuniform float speed : 0.0 .. 5.0 = 1.0;      // blob rise rate\nuniform float glow : 0.0 .. 2.0 = 1.0;       // master brightness\nuniform float palette : 0.0 .. 1.0 = 0.0;    // hue sweep of the wax\nuniform bool motion : 0.0 .. 1.0 = 0.0;      // tilt/wobble the lamp\nuniform vec3 tint : color = 1.0, 0.45, 0.12; // wax colour\n\nstate fixed heat[32];       // 1D lattice: heat field, wraps vertically\nstate fixed ph;             // slow phase (turns)\nstate float wob;            // wobble phase\nstate float lvl;            // liquid level from tilt\nstate bool inited;\n\nvoid update() {\n  if (!inited) {\n    for (int i = 0; i < 32; i = i + 1) {\n      heat[i] = fixed(hash(float(i) * 0.371));\n    }\n    inited = true;\n  }\n\n  // integrate phases\n  ph = fract(ph + fixed(dt * speed * 0.05));\n  wob = fract(wob + dt * 0.4);\n\n  // liquid level from tilt (motion reactive): -0.5..0.5\n  lvl = motion > 0.5 ? imu_gravity.y * 0.5 : 0.0;\n\n  // diffuse + rise: heat[i] = mix(heat[i-1], heat[i+1], 0.5) with upward bias\n  fixed h0 = heat[0];\n  for (int i = 0; i < 32; i = i + 1) {\n    int lo = (i + 31) & 31;\n    int hi = (i + 1) & 31;\n    fixed avg = (heat[lo] + heat[hi]) * fixed(0.5);\n    fixed up = heat[hi] * fixed(0.75) + heat[lo] * fixed(0.25);\n    heat[i] = avg * fixed(0.5) + up * fixed(0.5);\n  }\n  heat[0] = heat[0] + h0 * fixed(0.0); // keep lattice alive\n}\n\nvec3 shade(Led led) {\n  fixed y = fixed(led.pos.y) * fixed(3.3333);   // 0..1 over 0.30 m\n  fixed level = y + fixed(lvl);\n  fixed idx = level * fixed(32.0);\n  int i0 = int(idx) & 31;\n  int i1 = (i0 + 1) & 31;\n  fixed f = fract(idx);\n  fixed h = mix(heat[i0], heat[i1], float(f));\n\n  // blob threshold + soft edge\n  fixed on = clamp((h - fixed(0.45)) * fixed(6.0), fixed(0.0), fixed(1.0));\n  on = on * on * (fixed(3.0) - on * fixed(2.0)); // smoothstep-ish\n\n  // hue: wax palette + slow sweep + per-blob variation\n  fixed hue = fract(fixed(palette) + ph + h * fixed(0.15));\n  vec3 wax = hsv2rgb(hue, fixed(0.85), fixed(1.0));\n\n  // dark glass when off, hot wax when on\n  vec3 col = mix(vec3(0.02, 0.01, 0.01), wax * tint, float(on));\n\n  // sparkle at blob edges\n  fixed sp = clamp((h - fixed(0.42)) * fixed(30.0), fixed(0.0), fixed(1.0))\n           - clamp((h - fixed(0.50)) * fixed(30.0), fixed(0.0), fixed(1.0));\n  col = col + vec3(float(sp)) * fixed(0.15) * float(on);\n\n  // wobble: horizontal sway with height\n  fixed wobamt = fixed(motion) * sin(fixed(wob) * fixed(6.2832)) * fixed(0.02);\n  col = col + vec3(wobamt * float(led.pos.x));\n\n  return col * glow;\n}"
+    },
+    {
+      "round": 1,
+      "status": 200,
+      "seconds": 27.74,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 7748,
+        "completion_tokens": 1107,
+        "total_tokens": 8855,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 30,
+          "col": 16,
+          "msg": "expected ';'"
+        }
+      ],
+      "source": "// Lava lamp: slow rising blobs, glow, sparkle, motion-reactive wobble.\n// Simulation lives in update() on a small fixed-point lattice buffer;\n// shade() is a handful of fixed-point ops per LED.\n\nuniform float speed : 0.0 .. 5.0 = 1.0;      // blob rise rate\nuniform float glow : 0.0 .. 2.0 = 1.0;       // master brightness\nuniform float palette : 0.0 .. 1.0 = 0.0;    // hue sweep of the wax\nuniform bool motion : 0.0 .. 1.0 = 0.0;      // tilt/wobble the lamp\nuniform vec3 tint : color = 1.0, 0.45, 0.12; // wax colour\n\nstate fixed heat[32];       // 1D lattice: heat field, wraps vertically\nstate fixed ph;             // slow phase (turns)\nstate float wob;            // wobble phase\nstate float lvl;            // liquid level from tilt\nstate bool inited;\n\nvoid update() {\n  if (!inited) {\n    for (int i = 0; i < 32; i = i + 1) {\n      heat[i] = fixed(hash(float(i) * 0.371));\n    }\n    inited = true;\n  }\n\n  // integrate phases\n  ph = fract(ph + fixed(dt * speed * 0.05));\n  wob = fract(wob + dt * 0.4);\n\n  // liquid level from tilt (motion reactive): -0.5..0.5\n  lvl = motion ? imu_gravity.y * 0.5 : 0.0;\n\n  // diffuse + rise: heat[i] = mix(heat[i-1], heat[i+1], 0.5) with upward bias\n  fixed h0 = heat[0];\n  for (int i = 0; i < 32; i = i + 1) {\n    int lo = (i + 31) & 31;\n    int hi = (i + 1) & 31;\n    fixed avg = (heat[lo] + heat[hi]) * fixed(0.5);\n    fixed up = heat[hi] * fixed(0.75) + heat[lo] * fixed(0.25);\n    heat[i] = avg * fixed(0.5) + up * fixed(0.5);\n  }\n  heat[0] = heat[0] + h0 * fixed(0.0); // keep lattice alive\n}\n\nvec3 shade(Led led) {\n  fixed y = fixed(led.pos.y) * fixed(3.3333);   // 0..1 over 0.30 m\n  fixed level = y + fixed(lvl);\n  fixed idx = level * fixed(32.0);\n  int i0 = int(idx) & 31;\n  int i1 = (i0 + 1) & 31;\n  fixed f = fract(idx);\n  fixed h = mix(heat[i0], heat[i1], float(f));\n\n  // blob threshold + soft edge\n  fixed on = clamp((h - fixed(0.45)) * fixed(6.0), fixed(0.0), fixed(1.0));\n  on = on * on * (fixed(3.0) - on * fixed(2.0)); // smoothstep-ish\n\n  // hue: wax palette + slow sweep + per-blob variation\n  fixed hue = fract(fixed(palette) + ph + h * fixed(0.15));\n  vec3 wax = hsv2rgb(hue, fixed(0.85), fixed(1.0));\n\n  // dark glass when off, hot wax when on\n  vec3 col = mix(vec3(0.02, 0.01, 0.01), wax * tint, float(on));\n\n  // sparkle at blob edges\n  fixed sp = clamp((h - fixed(0.42)) * fixed(30.0), fixed(0.0), fixed(1.0))\n           - clamp((h - fixed(0.50)) * fixed(30.0), fixed(0.0), fixed(1.0));\n  col = col + vec3(float(sp)) * fixed(0.15) * float(on);\n\n  // wobble: horizontal sway with height\n  fixed wobamt = fixed(motion) * sin(fixed(wob) * fixed(6.2832)) * fixed(0.02);\n  col = col + vec3(wobamt * float(led.pos.x));\n\n  return col * glow;\n}"
+    },
+    {
+      "round": 2,
+      "status": 200,
+      "seconds": 14.12,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 8905,
+        "completion_tokens": 1125,
+        "total_tokens": 10030,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 31,
+          "col": 22,
+          "msg": "unknown identifier 'imu_gravity'"
+        }
+      ],
+      "source": "// Lava lamp: slow rising blobs, glow, sparkle, motion-reactive wobble.\n// Simulation lives in update() on a small fixed-point lattice buffer;\n// shade() is a handful of fixed-point ops per LED.\n\nuniform float speed : 0.0 .. 5.0 = 1.0;      // blob rise rate\nuniform float glow : 0.0 .. 2.0 = 1.0;       // master brightness\nuniform float palette : 0.0 .. 1.0 = 0.0;    // hue sweep of the wax\nuniform bool motion : 0.0 .. 1.0 = 0.0;      // tilt/wobble the lamp\nuniform vec3 tint : color = 1.0, 0.45, 0.12; // wax colour\n\nstate fixed heat[32];       // 1D lattice: heat field, wraps vertically\nstate fixed ph;             // slow phase (turns)\nstate float wob;            // wobble phase\nstate float lvl;            // liquid level from tilt\nstate bool inited;\n\nvoid update() {\n  if (!inited) {\n    for (int i = 0; i < 32; i = i + 1) {\n      heat[i] = fixed(hash(float(i) * 0.371));\n    }\n    inited = true;\n  }\n\n  // integrate phases\n  ph = fract(ph + fixed(dt * speed * 0.05));\n  wob = fract(wob + dt * 0.4);\n\n  // liquid level from tilt (motion reactive): -0.5..0.5\n  if (motion) {\n    lvl = imu_gravity.y * 0.5;\n  } else {\n    lvl = 0.0;\n  }\n\n  // diffuse + rise: heat[i] = mix(heat[i-1], heat[i+1], 0.5) with upward bias\n  fixed h0 = heat[0];\n  for (int i = 0; i < 32; i = i + 1) {\n    int lo = (i + 31) & 31;\n    int hi = (i + 1) & 31;\n    fixed avg = (heat[lo] + heat[hi]) * fixed(0.5);\n    fixed up = heat[hi] * fixed(0.75) + heat[lo] * fixed(0.25);\n    heat[i] = avg * fixed(0.5) + up * fixed(0.5);\n  }\n  heat[0] = heat[0] + h0 * fixed(0.0); // keep lattice alive\n}\n\nvec3 shade(Led led) {\n  fixed y = fixed(led.pos.y) * fixed(3.3333);   // 0..1 over 0.30 m\n  fixed level = y + fixed(lvl);\n  fixed idx = level * fixed(32.0);\n  int i0 = int(idx) & 31;\n  int i1 = (i0 + 1) & 31;\n  fixed f = fract(idx);\n  fixed h = mix(heat[i0], heat[i1], float(f));\n\n  // blob threshold + soft edge\n  fixed on = clamp((h - fixed(0.45)) * fixed(6.0), fixed(0.0), fixed(1.0));\n  on = on * on * (fixed(3.0) - on * fixed(2.0)); // smoothstep-ish\n\n  // hue: wax palette + slow sweep + per-blob variation\n  fixed hue = fract(fixed(palette) + ph + h * fixed(0.15));\n  vec3 wax = hsv2rgb(hue, fixed(0.85), fixed(1.0));\n\n  // dark glass when off, hot wax when on\n  vec3 col = mix(vec3(0.02, 0.01, 0.01), wax * tint, float(on));\n\n  // sparkle at blob edges\n  fixed sp = clamp((h - fixed(0.42)) * fixed(30.0), fixed(0.0), fixed(1.0))\n           - clamp((h - fixed(0.50)) * fixed(30.0), fixed(0.0), fixed(1.0));\n  col = col + vec3(float(sp)) * fixed(0.15) * float(on);\n\n  // wobble: horizontal sway with height\n  fixed wobamt = fixed(motion) * sin(fixed(wob) * fixed(6.2832)) * fixed(0.02);\n  col = col + vec3(wobamt * float(led.pos.x));\n\n  return col * glow;\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": null,
+  "outcome": "compile_failed",
+  "prompt": "p08",
+  "reasoning": "off"
+}

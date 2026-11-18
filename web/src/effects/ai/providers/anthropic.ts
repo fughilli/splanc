@@ -42,7 +42,7 @@ export function withCacheControl(content: string | ContentBlock[]): unknown {
 }
 
 /** Fixed status verb for a tool call, shown the moment the model starts it. */
-function toolLabel(name: string): string {
+export function toolLabel(name: string): string {
   switch (name) {
     case "set_script":
       return "Writing the effect code…";
@@ -64,7 +64,7 @@ function toolLabel(name: string): string {
 /** Best-effort extraction of a string field's in-progress value from partial JSON
  * (a streamed tool-input object), e.g. the set_script `summary`. Null until the
  * field's opening quote has arrived. */
-function partialField(json: string, field: string): string | null {
+export function partialField(json: string, field: string): string | null {
   const m = new RegExp(`"${field}"\\s*:\\s*"`).exec(json);
   if (m === null) return null;
   const start = m.index + m[0].length;

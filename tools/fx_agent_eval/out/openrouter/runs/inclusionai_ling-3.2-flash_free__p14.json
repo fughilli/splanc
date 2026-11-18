@@ -1,0 +1,45 @@
+{
+  "model": "inclusionai/ling-3.2-flash:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 35.28,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6586,
+        "completion_tokens": 515,
+        "total_tokens": 7101,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 6464,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;      // sweep rate (turns of the column per second)\nuniform float width : 0.01 .. 0.4 = 0.08;      // beam width as a fraction of the column\nuniform float dark : 0.0 .. 1.0 = 0.06;        // dim tail level of the unlit column\nuniform vec3 tint : color = 0.3, 0.8, 1.0;     // beam colour\nuniform bool bounce = false;                   // ping-pong instead of wrapping\n\nstate fixed head;      // beam position along the column, TURNS 0..1\nstate fixed dir;       // sweep direction for bounce mode\n\nvoid update() {\n  fixed step = fixed(dt * speed);\n  if (bounce) {\n    head = head + step * dir;\n    if (head >= fixed(1.0)) { head = fixed(1.0); dir = -fixed(1.0); }\n    if (head <= fixed(0.0)) { head = fixed(0.0); dir =  fixed(1.0); }\n  } else {\n    head = fract(head + step);\n  }\n}\n\nvec3 shade(Led led) {\n  // column coordinate 0..1 (bottom -> top) from the LED's own position\n  fixed y = clamp(fixed(led.pos.y) / fixed(0.3), fixed(0.0), fixed(1.0));\n  fixed d = y - head;                                   // signed distance to the beam core\n  fixed core = clamp(fixed(1.0) - abs(d) / fixed(width), fixed(0.0), fixed(1.0));\n  fixed glow = core * core;                             // sharpen the beam\n  fixed halo = clamp(fixed(1.0) - abs(d) / (fixed(width) * fixed(3.0)), fixed(0.0), fixed(1.0));\n  fixed v = dark + glow + halo * fixed(0.25);           // beam + soft halo + faint column\n  return tint * float(v);\n}\n"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p14",
+  "reasoning": "off"
+}

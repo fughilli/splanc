@@ -18,6 +18,7 @@ import { Button, Card, PasswordReveal, icon, toast, type IconName } from "../kit
 import type { Router, Screen } from "../app/router";
 import { installSettingsStyles } from "./settings.css";
 import { installAiSettingsStyles } from "./aiSettings.css";
+import { modelSetupRow, openRouterAllowance } from "./aiTierSheet";
 import {
   getAiConfig,
   updateAiConfig,
@@ -153,6 +154,8 @@ export function AiSettingsScreen(_router: Router): Screen {
   }
 
   rerender();
+  // Model setup (docs/design/ai-tiers.md): the tier picker, reachable any time.
+  el.insertBefore(modelSetupRow(rerender), status);
   return { el };
 }
 
@@ -276,6 +279,8 @@ function cloudPanel(
     row.append(modelField, listBtn);
     g.append(row, picker);
   }
+
+  if (vendor === "openrouter") g.append(openRouterAllowance());
 
   g.append(
     note(

@@ -1,0 +1,133 @@
+{
+  "model": "inclusionai/ling-3.2-flash:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 24.46,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6585,
+        "completion_tokens": 1259,
+        "total_tokens": 7844,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 6464,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 11,
+          "col": 1,
+          "msg": "unexpected token Ident(\"const\")"
+        }
+      ],
+      "source": "// Matrix-style green rain falling down a helix.\n// Columns are angular bins around the cylinder; each column runs its own\n// trail (head + decaying tail) in a small fixed-point ring buffer.\n\nuniform float speed : 0.2 .. 5.0 = 1.6;      // fall speed (rows per second)\nuniform float density : 0.0 .. 1.0 = 0.45;   // fraction of columns active\nuniform float trail : 0.05 .. 0.6 = 0.28;    // tail length (fraction of column)\nuniform float hue : 0.2 .. 0.45 = 0.33;      // green hue\nuniform float glow : 0.2 .. 1.5 = 1.0;       // brightness\n\nconst int NCOL = 64;\nconst int ROWS = 16;\nconst int NSLOT = NCOL * ROWS;               // 1024\n\nstate fixed8 fb[NSLOT];                      // ring buffer of trail energies\nstate fixed head[NCOL];                      // current head row (float 0..ROWS)\nstate fixed on[NCOL];                        // column active flag\nstate fixed ph;                              // scroll phase in rows\nstate fixed spd;\nstate fixed dens;\nstate fixed trlen;\nstate fixed huef;\nstate fixed glowf;\nstate bool inited;\n\nvoid update() {\n  spd = fixed(speed);\n  dens = fixed(density);\n  trlen = fixed(trail);\n  huef = fixed(hue);\n  glowf = fixed(glow);\n  ph = fract(ph + fixed(dt) * spd);          // integrate scroll rate\n\n  if (!inited) {\n    for (int c = 0; c < NCOL; c = c + 1) {\n      float h = hash(float(c) * 0.371);\n      head[c] = fixed(h * float(ROWS));\n      on[c] = step(dens, fixed(hash(float(c) * 0.913 + 7.0))) * fixed(1.0);\n    }\n    for (int i = 0; i < NSLOT; i = i + 1) fb[i] = fixed8(0.0);\n    inited = true;\n  }\n\n  // advance each active column's head; paint the head cell\n  for (int c = 0; c < NCOL; c = c + 1) {\n    if (on[c] > fixed(0.5)) {\n      fixed h = head[c] + spd * fixed(dt);\n      if (h >= fixed(float(ROWS))) {\n        h = h - fixed(float(ROWS));\n        // respawn: some columns go dark, dark ones may wake\n        on[c] = step(fixed(hash(float(c) * 0.771 + float(frame) * 0.013)), dens);\n      }\n      head[c] = h;\n      int row = int(h);\n      if (row >= ROWS) row = ROWS - 1;\n      fb[c * ROWS + row] = fixed8(1.0);\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  // angular column from the cached atan2 (TURNS, -0.5..0.5)\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);   // 0..1\n  fixed cf = ang * fixed(float(NCOL));\n  int col = int(cf);\n  if (col >= NCOL) col = NCOL - 1;\n\n  // row from height: top of the lamp is row 0\n  fixed y = fixed(led.pos.y);                // metres, ~ -0.15..0.15\n  fixed rf = (fixed(0.15) - y) * fixed(float(ROWS) / 0.30);\n  int row = int(rf);\n  if (row < 0) row = 0;\n  if (row >= ROWS) row = ROWS - 1;\n\n  // scroll the row lookup by the phase (rows down the column)\n  fixed sr = rf - ph;\n  sr = sr - fixed(float(int(sr / fixed(float(ROWS))) * ROWS));  // wrap\n  if (sr < fixed(0.0)) sr = sr + fixed(float(ROWS));\n  int srow = int(sr);\n  if (srow >= ROWS) srow = ROWS - 1;\n\n  fixed e = fixed(fb[col * ROWS + srow]);    // this cell's energy\n  // decay applied on read: older cells sit further from the head\n  fixed d = fixed(float(row)) - head[col];\n  if (d < fixed(0.0)) d = d + fixed(float(ROWS));\n  fixed fall = fixed(1.0) - clamp(d / trlen, fixed(0.0), fixed(1.0));\n  e = e * fall;\n\n  // bright head core + green body\n  fixed core = clamp(e * fixed(4.0), fixed(0.0), fixed(1.0));\n  vec3 c = hsv2rgb(huef, fixed(0.85), core * glowf);\n  return c;\n}\n"
+    },
+    {
+      "round": 1,
+      "status": 200,
+      "seconds": 15.49,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 7889,
+        "completion_tokens": 1236,
+        "total_tokens": 9125,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 6528,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 11,
+          "col": 22,
+          "msg": "array length must be 1..255"
+        }
+      ],
+      "source": "// Matrix-style green rain falling down a helix.\n// Columns are angular bins around the cylinder; each column runs its own\n// trail (head + decaying tail) painted into a small fixed-point ring buffer.\n\nuniform float speed : 0.2 .. 5.0 = 1.6;      // fall speed (rows per second)\nuniform float density : 0.0 .. 1.0 = 0.45;   // fraction of columns active\nuniform float trail : 0.05 .. 0.6 = 0.28;    // tail length (fraction of column)\nuniform float hue : 0.2 .. 0.45 = 0.33;      // green hue\nuniform float glow : 0.2 .. 1.5 = 1.0;       // brightness\n\nstate fixed8 fb[1024];                       // ring buffer of trail energies\nstate fixed head[64];                        // current head row (float 0..16)\nstate fixed on[64];                          // column active flag\nstate fixed ph;                              // scroll phase in rows\nstate fixed spd;\nstate fixed dens;\nstate fixed trlen;\nstate fixed huef;\nstate fixed glowf;\nstate bool inited;\n\nvoid update() {\n  spd = fixed(speed);\n  dens = fixed(density);\n  trlen = fixed(trail);\n  huef = fixed(hue);\n  glowf = fixed(glow);\n  ph = fract(ph + fixed(dt) * spd);          // integrate scroll rate\n\n  if (!inited) {\n    for (int c = 0; c < 64; c = c + 1) {\n      head[c] = fixed(hash(float(c) * 0.371) * 16.0);\n      on[c] = step(dens, fixed(hash(float(c) * 0.913 + 7.0)));\n    }\n    for (int i = 0; i < 1024; i = i + 1) fb[i] = fixed8(0.0);\n    inited = true;\n  }\n\n  // advance each active column's head; paint the head cell\n  for (int c = 0; c < 64; c = c + 1) {\n    if (on[c] > fixed(0.5)) {\n      fixed h = head[c] + spd * fixed(dt);\n      if (h >= fixed(16.0)) {\n        h = h - fixed(16.0);\n        // respawn: some columns go dark, dark ones may wake\n        on[c] = step(fixed(hash(float(c) * 0.771 + float(frame) * 0.013)), dens);\n      }\n      head[c] = h;\n      int row = int(h);\n      if (row >= 16) row = 16 - 1;\n      fb[c * 16 + row] = fixed8(1.0);\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  // angular column from the cached atan2 (TURNS, -0.5..0.5)\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);   // 0..1\n  fixed cf = ang * fixed(64.0);\n  int col = int(cf);\n  if (col >= 64) col = 64 - 1;\n\n  // row from height: top of the lamp is row 0\n  fixed y = fixed(led.pos.y);                // metres, ~ -0.15..0.15\n  fixed rf = (fixed(0.15) - y) * fixed(16.0 / 0.30);\n  int row = int(rf);\n  if (row < 0) row = 0;\n  if (row >= 16) row = 16 - 1;\n\n  // scroll the row lookup by the phase (rows down the column)\n  fixed sr = rf - ph;\n  int wrapi = int(sr / fixed(16.0));\n  sr = sr - fixed(float(wrapi * 16));\n  if (sr < fixed(0.0)) sr = sr + fixed(16.0);\n  int srow = int(sr);\n  if (srow >= 16) srow = 16 - 1;\n\n  fixed e = fixed(fb[col * 16 + srow]);      // this cell's energy\n  // distance below the head gives the decaying tail\n  fixed d = fixed(float(row)) - head[col];\n  if (d < fixed(0.0)) d = d + fixed(16.0);\n  fixed fall = fixed(1.0) - clamp(d / trlen, fixed(0.0), fixed(1.0));\n  e = e * fall;\n\n  // bright head core + green body\n  fixed core = clamp(e * fixed(4.0), fixed(0.0), fixed(1.0));\n  vec3 c = hsv2rgb(huef, fixed(0.85), core * glowf);\n  return c;\n}\n"
+    },
+    {
+      "round": 2,
+      "status": 200,
+      "seconds": 119.96,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 9180,
+        "completion_tokens": 1232,
+        "total_tokens": 10412,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 12,
+          "col": 1,
+          "msg": "too many state variables (over the state slot budget)"
+        }
+      ],
+      "source": "// Matrix-style green rain falling down a helix.\n// Columns are angular bins around the cylinder; each column runs its own\n// trail (head + decaying tail) painted into a small fixed-point ring buffer.\n\nuniform float speed : 0.2 .. 5.0 = 1.6;      // fall speed (rows per second)\nuniform float density : 0.0 .. 1.0 = 0.45;   // fraction of columns active\nuniform float trail : 0.05 .. 0.6 = 0.28;    // tail length (fraction of column)\nuniform float hue : 0.2 .. 0.45 = 0.33;      // green hue\nuniform float glow : 0.2 .. 1.5 = 1.0;       // brightness\n\nstate fixed8 fb[255];                        // ring buffer of trail energies\nstate fixed head[64];                        // current head row (float 0..16)\nstate fixed on[64];                          // column active flag\nstate fixed ph;                              // scroll phase in rows\nstate fixed spd;\nstate fixed dens;\nstate fixed trlen;\nstate fixed huef;\nstate fixed glowf;\nstate bool inited;\n\nvoid update() {\n  spd = fixed(speed);\n  dens = fixed(density);\n  trlen = fixed(trail);\n  huef = fixed(hue);\n  glowf = fixed(glow);\n  ph = fract(ph + fixed(dt) * spd);          // integrate scroll rate\n\n  if (!inited) {\n    for (int c = 0; c < 64; c = c + 1) {\n      head[c] = fixed(hash(float(c) * 0.371) * 16.0);\n      on[c] = step(dens, fixed(hash(float(c) * 0.913 + 7.0)));\n    }\n    for (int i = 0; i < 255; i = i + 1) fb[i] = fixed8(0.0);\n    inited = true;\n  }\n\n  // advance each active column's head; paint the head cell\n  for (int c = 0; c < 64; c = c + 1) {\n    if (on[c] > fixed(0.5)) {\n      fixed h = head[c] + spd * fixed(dt);\n      if (h >= fixed(16.0)) {\n        h = h - fixed(16.0);\n        // respawn: some columns go dark, dark ones may wake\n        on[c] = step(fixed(hash(float(c) * 0.771 + float(frame) * 0.013)), dens);\n      }\n      head[c] = h;\n      int row = int(h);\n      if (row >= 16) row = 16 - 1;\n      fb[c * 16 + row] = fixed8(1.0);\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  // angular column from the cached atan2 (TURNS, -0.5..0.5)\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);   // 0..1\n  fixed cf = ang * fixed(64.0);\n  int col = int(cf);\n  if (col >= 64) col = 64 - 1;\n\n  // row from height: top of the lamp is row 0\n  fixed y = fixed(led.pos.y);                // metres, ~ -0.15..0.15\n  fixed rf = (fixed(0.15) - y) * fixed(16.0 / 0.30);\n  int row = int(rf);\n  if (row < 0) row = 0;\n  if (row >= 16) row = 16 - 1;\n\n  // scroll the row lookup by the phase (rows down the column)\n  fixed sr = rf - ph;\n  int wrapi = int(sr / fixed(16.0));\n  sr = sr - fixed(float(wrapi * 16));\n  if (sr < fixed(0.0)) sr = sr + fixed(16.0);\n  int srow = int(sr);\n  if (srow >= 16) srow = 16 - 1;\n\n  fixed e = fixed(fb[col * 16 + srow]);      // this cell's energy\n  // distance below the head gives the decaying tail\n  fixed d = fixed(float(row)) - head[col];\n  if (d < fixed(0.0)) d = d + fixed(16.0);\n  fixed fall = fixed(1.0) - clamp(d / trlen, fixed(0.0), fixed(1.0));\n  e = e * fall;\n\n  // bright head core + green body\n  fixed core = clamp(e * fixed(4.0), fixed(0.0), fixed(1.0));\n  vec3 c = hsv2rgb(huef, fixed(0.85), core * glowf);\n  return c;\n}\n"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": null,
+  "outcome": "compile_failed",
+  "prompt": "p10",
+  "reasoning": "off"
+}

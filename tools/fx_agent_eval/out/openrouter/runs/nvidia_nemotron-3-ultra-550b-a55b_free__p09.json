@@ -1,0 +1,45 @@
+{
+  "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 5.74,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6541,
+        "completion_tokens": 250,
+        "total_tokens": 6791,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4384,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float speed : 0.01 .. 2.0 = 0.1;\nuniform float tail : 0.05 .. 0.5 = 0.25;\nuniform float intensity : 0.0 .. 1.0 = 1.0;\n\nstate fixed phase;\nstate fixed tail_fixed;\n\nvoid update() {\n  phase = fract(phase + fixed(dt * speed));\n  tail_fixed = fixed(tail);\n}\n\nvec3 shade(Led led) {\n  fixed s = fixed(led.s);\n  fixed d = s - phase;\n  fixed lit = clamp((tail_fixed - d) * fixed(4.0), fixed(0.0), fixed(1.0));\n  fixed h = fixed(0.04) + fixed(0.06) * lit;\n  fixed sat = fixed(0.6) + fixed(0.3) * lit;\n  return hsv2rgb(h, sat, lit * fixed(intensity));\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p09",
+  "reasoning": "off"
+}

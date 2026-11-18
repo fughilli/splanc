@@ -64,6 +64,7 @@ Cloud relay + LAN bridge <../docs/design/cloud-relay>
 :maxdepth: 1
 
 App UX overhaul <../docs/design/app-ux-overhaul>
+AI tiers (free / paid / self-serve) <../docs/design/ai-tiers>
 iOS support <../docs/design/ios-support>
 On-device models <../docs/design/on-device-models>
 Effects demo <../docs/design/effects-demo>

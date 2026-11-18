@@ -36,6 +36,7 @@ import {
 } from "./provider";
 import { makeAnthropicProvider } from "./providers/anthropic";
 import { makeOpenAiProvider } from "./providers/openaiCompat";
+import { makeOpenRouterProvider } from "./providers/openrouter";
 import { makeWebLlmProvider } from "./providers/webllm";
 import { makeWllamaProvider } from "./providers/wllama";
 
@@ -60,6 +61,11 @@ export function activeProvider(): AiProvider {
   const v = cfg.cloud.vendors[cfg.cloud.vendor];
   if (cfg.cloud.vendor === "anthropic") {
     return makeAnthropicProvider({ key: v.key, model: v.model });
+  }
+  // OpenRouter (the free tier, or a user's own OpenRouter key): streaming,
+  // free-model fallbacks and typed rate-limit errors (docs/design/ai-tiers.md).
+  if (cfg.cloud.vendor === "openrouter") {
+    return makeOpenRouterProvider({ key: v.key, model: v.model, baseUrl: v.baseUrl || undefined });
   }
   return makeOpenAiProvider({ baseUrl: v.baseUrl, key: v.key, model: v.model, vision: false });
 }

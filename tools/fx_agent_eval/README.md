@@ -83,3 +83,18 @@ in the credentials store).
 - **Lint** source lines come from matching the k-th bytecode op of a builtin to
   the k-th textual call in the same function, so a line can be off when the
   optimizer folded a call away.
+
+## Free-tier models (OpenRouter `:free`)
+
+`openrouter_eval.py` runs the in-app chat prompt (`CHAT_SYSTEM` + the
+`set_script` tool, rendered from this tree) against OpenRouter free models and
+records tool-call validity, compile success (≤2 repairs) and latency, plus
+whether each model routes with `data_collection: "deny"`. Needs an OpenRouter
+key in a file (read at runtime, never printed):
+
+```sh
+OPENROUTER_KEY_FILE=/path/to/key python3 openrouter_eval.py --fx-compile ~/perf/fx_compile
+```
+
+Results: `out/openrouter/summary.md` (+ `runs/`); discussion in
+`docs/design/ai-tiers.md`.
