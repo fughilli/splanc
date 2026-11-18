@@ -85,8 +85,15 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;
   /** Worker SECRET: HMAC key (base64url, 32 bytes) for app session tokens. */
   BILLING_TOKEN_SECRET?: string;
-  /** Worker SECRET (sandbox only): the fake store's test signing key. */
+  /** Worker SECRET (sandbox only, optional): the fake store's test signing key
+   * (fake Apple purchases; fake web purchases when Stripe isn't set). */
   AI_BILLING_FAKE_STORE_KEY?: string;
+  /** Worker SECRETS: Stripe (web checkout). In sandbox mode only test keys
+   * (sk_test_…) are accepted. */
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
+  /** Where Checkout sends the user back (default https://splanc.io/app/). */
+  BILLING_APP_URL?: string;
   /** Worker SECRET: the owner's token for /billing/admin/* (suspensions). */
   BILLING_ADMIN_TOKEN?: string;
   /** Grafana Cloud Logs push (billing/metrics.ts); all three or none. */

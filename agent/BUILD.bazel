@@ -52,7 +52,10 @@ SRCS = glob(["src/**/*.ts"])
 RELAY_SRCS = glob(["relay/src/**/*.ts"])
 
 # billing.test.ts is pure relay logic (no bridge, no wasm): its own light target below.
-LIGHT_TESTS = ["tests/billing.test.ts"]
+LIGHT_TESTS = [
+    "tests/billing.test.ts",
+    "tests/billing_stripe.test.ts",
+]
 
 TESTS = glob(
     ["tests/*.test.ts"],
@@ -149,7 +152,7 @@ copy_to_directory(
 [
     vite_bin.vite(
         name = f.removeprefix("tests/").removesuffix(".test.ts") + "_test_bundle",
-        srcs = BUILD_INPUTS + glob(["tests/*.ts"]),
+        srcs = BUILD_INPUTS + glob(["tests/*.ts"]) + ["relay/billing.sandbox.pricing.json"],
         outs = ["dist-test/{n}/{n}.test.mjs".format(n = f.removeprefix("tests/").removesuffix(".test.ts"))],
         args = [
             "build",
@@ -180,6 +183,7 @@ tsc_bin.tsc_test(
     ],
     chdir = package_name(),
     data = BUILD_INPUTS + glob(["tests/*.ts"]) + [
+        "relay/billing.sandbox.pricing.json",
         ":node_modules/@types/multicast-dns",
         ":node_modules/@types/node",
         ":node_modules/@types/ws",

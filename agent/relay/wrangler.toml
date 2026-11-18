@@ -21,10 +21,20 @@ class_name = "BridgeObject"
 name = "DIRECTORY"
 class_name = "Directory"
 
+# Splanc AI credits: one object per credit account (agent/relay/src/billing,
+# docs/design/ai-billing.md). Inert unless the AI_BILLING secret is "sandbox".
+[[durable_objects.bindings]]
+name = "BILLING"
+class_name = "BillingAccount"
+
 # Free plan: SQLite-backed Durable Objects only.
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["BridgeObject", "Directory"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["BillingAccount"]
 
 [observability]
 enabled = true

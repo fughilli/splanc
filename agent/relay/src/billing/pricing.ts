@@ -76,6 +76,10 @@ export interface Pack {
    * (packCredits); set it to pin a round number. */
   credits?: number | undefined;
   enabled: boolean;
+  /** Web packs: the Stripe Price the Checkout Session sells (test-mode ids in
+   * the sandbox config, live ids in production). Config, never code. Without
+   * it, checkout for the pack answers 503. */
+  stripe_price_id?: string | undefined;
 }
 
 export interface Caps {
@@ -406,6 +410,9 @@ export function validatePricing(raw: unknown): PricingResult {
     if (!(CHANNELS as readonly string[]).includes(p.channel)) errors.push(`${at}.channel: ${CHANNELS.join("|")}`);
     if (!isNum(p.price_usd) || p.price_usd <= 0) errors.push(`${at}.price_usd: > 0`);
     if (p.credits !== undefined && (!Number.isInteger(p.credits) || p.credits <= 0)) errors.push(`${at}.credits: integer > 0 (or omit it)`);
+    if (p.stripe_price_id !== undefined && (p.channel !== "web" || typeof p.stripe_price_id !== "string" || !/^price_[A-Za-z0-9]{8,64}$/.test(p.stripe_price_id))) {
+      errors.push(`${at}.stripe_price_id: a Stripe price id (price_…), web packs only`);
+    }
     if (typeof p.enabled !== "boolean") errors.push(`${at}.enabled: boolean`);
     const key = `${p.channel}:${p.sku}`;
     if (seen.has(key)) errors.push(`${at}: duplicate ${key}`);
@@ -447,6 +454,8 @@ export function publicPricing(cfg: PricingConfig, channel: Channel | null) {
       .filter((p) => p.enabled && (channel === null || p.channel === channel))
       // No price for the app to show on iOS: StoreKit shows the localized
       // store price. The web shows Stripe's. Credits are what the server grants.
-      .map((p) => ({ sku: p.sku, channel: p.channel, credits: packCredits(cfg, p) })),
+      // The web shows its reference price (Stripe Checkout adds tax); iOS shows
+      // StoreKit's localized price, so none is sent for Apple packs.
+      .map((p) => ({ sku: p.sku, channel: p.channel, credits: packCredits(cfg, p), ...(p.channel === "web" ? { reference_price_usd: p.price_usd } : {}) })),
   };
 }

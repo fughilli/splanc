@@ -171,6 +171,66 @@ export async function setAppleConsumptionConsent(consented: boolean, fetchImpl: 
   if (!r.ok) throw new Error(creditsErrorMessage(r.status, (await r.json().catch(() => null)) as { message?: string } | null));
 }
 
+// -- web checkout (Stripe): the PWA in a browser and on Android, NEVER iOS ------------
+
+export interface CreditPack {
+  sku: string;
+  credits: number;
+  /** The reference (US) price; web packs only. Stripe Checkout shows the final
+   * price with tax. */
+  reference_price_usd?: number;
+}
+
+/** The packs this platform sells (the relay's public pricing view). */
+export async function fetchCreditPacks(fetchImpl: typeof fetch = fetch): Promise<CreditPack[]> {
+  const r = await fetchImpl(`${creditsRelay()}/billing/pricing?channel=${purchaseChannel()}`);
+  if (!r.ok) return [];
+  const b = (await r.json().catch(() => null)) as { packs?: CreditPack[] } | null;
+  return Array.isArray(b?.packs) ? b.packs : [];
+}
+
+/** Where Stripe sends the user back: this app's AI settings. */
+export function checkoutReturnUrl(loc: { origin: string; pathname: string } = location): string {
+  return `${loc.origin}${loc.pathname}#/settings/ai`;
+}
+
+/**
+ * Start a web checkout for `sku` and return the Stripe Checkout URL to open.
+ * Refuses inside the iOS app (In-App Purchase only there). The caller
+ * navigates to the URL (the same tab: Stripe returns to AI settings).
+ */
+export async function startWebCheckout(sku: string, fetchImpl: typeof fetch = fetch, loc?: { origin: string; pathname: string }): Promise<string> {
+  if (!mayShowWebCheckout()) throw new Error("Credits are bought through the App Store in the iOS app.");
+  const s = getCreditsSession();
+  if (!s) throw new Error("Sign in to use Splanc AI credits.");
+  const r = await fetchImpl(`${creditsRelay()}/billing/checkout`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authed(s) },
+    body: JSON.stringify({ sku, return_url: checkoutReturnUrl(loc) }),
+  });
+  const b = (await r.json().catch(() => null)) as { url?: string; message?: string } | null;
+  if (!r.ok || typeof b?.url !== "string" || !b.url.startsWith("https://checkout.stripe.com/")) {
+    throw new Error(creditsErrorMessage(r.status, b));
+  }
+  return b.url;
+}
+
+/** After Stripe sends the user back: "success" | "cancel" | null, read from
+ * `?checkout=` (and removed from the address bar so a reload doesn't repeat it). */
+export function takeCheckoutResult(): "success" | "cancel" | null {
+  try {
+    const u = new URL(location.href);
+    const v = u.searchParams.get("checkout");
+    if (v !== "success" && v !== "cancel") return null;
+    u.searchParams.delete("checkout");
+    u.searchParams.delete("session_id");
+    history.replaceState(history.state, "", u.href);
+    return v;
+  } catch {
+    return null;
+  }
+}
+
 /** May the Buy button show? Only for a confirmed adult. */
 export function mayBuyCredits(b: CreditsBalance | null): boolean {
   return b !== null && b.adult === true && b.status === "active";

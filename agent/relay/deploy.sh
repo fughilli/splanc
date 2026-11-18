@@ -63,6 +63,14 @@ case "$fb" in
   503) echo "agent feedback: NOT configured (set FEEDBACK_ADMIN_TOKEN, see the top of this script)" ;;
   *) echo "agent feedback: unexpected $fb from /feedback" >&2 ;;
 esac
+# Splanc AI credits: 200 = enabled (sandbox), 503 = off (docs/design/ai-billing.md
+# "Sandbox deploy runbook").
+ai="$(curl -s -o /dev/null -w '%{http_code}' "$url/billing/pricing")"
+case "$ai" in
+  200) echo "AI credits: ENABLED ($(curl -fsS "$url/billing/pricing" | grep -o '"version":[0-9]*'))" ;;
+  503) echo "AI credits: off (AI_BILLING not set to sandbox, or config incomplete)" ;;
+  *) echo "AI credits: unexpected $ai from /billing/pricing" >&2 ;;
+esac
 echo "relay is up. MCP endpoint for connectors: $url/mcp"
 echo "public address (splanc.pages.dev forwards to this Worker, web/_worker.js): https://splanc.pages.dev/mcp"
 echo "run a bridge against it:  npx -y https://splanc.io/agent/splanc-agent.tgz bridge --relay $url"

@@ -45,65 +45,11 @@ import {
 import { estimatePromptTokens, proxyMessages, redact, sanitizeRequest, type ProxyDeps } from "../relay/src/billing/proxy";
 import { FakeConsumptionSender, FakeStoreVerifier, MemoryClaims, accountRefFor, applyPurchase, applyRefund, consumptionRequestFor } from "../relay/src/billing/purchases";
 import { Directory } from "../relay/src/directory";
-import type { DONamespace, DOState, DOStorage, Env } from "../relay/src/platform";
+import type { Env } from "../relay/src/platform";
+import { MemStorage, namespace } from "./billingFakes";
 
 // -- fakes -----------------------------------------------------------------------------
 
-/** In-memory DO storage that YIELDS on every call, so interleavings happen. */
-class MemStorage implements DOStorage {
-  readonly map = new Map<string, unknown>();
-  alarm: number | null = null;
-  private tick = () => new Promise<void>((r) => setImmediate(r));
-  async get<T>(k: string | string[]): Promise<never> {
-    await this.tick();
-    if (Array.isArray(k)) return new Map(k.filter((x) => this.map.has(x)).map((x) => [x, structuredClone(this.map.get(x)) as T])) as never;
-    return structuredClone(this.map.get(k)) as never;
-  }
-  async put<T>(k: string | Record<string, T>, v?: T): Promise<void> {
-    await this.tick();
-    if (typeof k === "string") this.map.set(k, structuredClone(v));
-    else for (const [a, b] of Object.entries(k)) this.map.set(a, structuredClone(b));
-  }
-  async delete(k: string | string[]): Promise<never> {
-    await this.tick();
-    if (Array.isArray(k)) return k.filter((x) => this.map.delete(x)).length as never;
-    return this.map.delete(k) as never;
-  }
-  async list<T>(o: { prefix?: string; limit?: number } = {}): Promise<Map<string, T>> {
-    await this.tick();
-    const keys = [...this.map.keys()].filter((x) => x.startsWith(o.prefix ?? "")).sort();
-    return new Map(keys.slice(0, o.limit ?? keys.length).map((x) => [x, structuredClone(this.map.get(x)) as T]));
-  }
-  async getAlarm() {
-    return this.alarm;
-  }
-  async setAlarm(t: number) {
-    this.alarm = t;
-  }
-}
-
-function memState(): DOState & { storage: MemStorage } {
-  return { storage: new MemStorage(), acceptWebSocket() {}, getWebSockets: () => [] };
-}
-
-function namespace(make: (s: DOState) => { fetch(r: Request): Promise<Response> }): DONamespace & { objects: Map<string, { state: DOState & { storage: MemStorage } }> } {
-  const objects = new Map<string, { state: DOState & { storage: MemStorage }; obj: { fetch(r: Request): Promise<Response> } }>();
-  return {
-    objects,
-    idFromName: (n: string) => n,
-    get: (id: unknown) => ({
-      fetch: async (input: Request | string, init?: RequestInit) => {
-        let o = objects.get(String(id));
-        if (!o) {
-          const state = memState();
-          o = { state, obj: make(state) };
-          objects.set(String(id), o);
-        }
-        return o.obj.fetch(new Request(input, init));
-      },
-    }),
-  };
-}
 
 const CAPS: Caps = { per_request_max_credits: 0, daily_credits: 0, monthly_credits: 0, concurrent_requests: 1000, requests_per_minute: 1000 };
 const usage = (p: Partial<Usage>): Usage => ({ input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, ...p });
@@ -724,7 +670,7 @@ describe("relay routes", () => {
       { AI_BILLING: "production" },
       { ANTHROPIC_API_KEY: undefined },
       { BILLING_TOKEN_SECRET: undefined },
-      { AI_BILLING_FAKE_STORE_KEY: undefined },
+      { STRIPE_SECRET_KEY: "sk_live_x", STRIPE_WEBHOOK_SECRET: "whsec_x" },
       { BILLING: undefined },
       { AI_PRICING: undefined },
       { AI_PRICING: JSON.stringify({ ...DEFAULT_PRICING, markup: 1 }) },

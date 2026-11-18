@@ -42,6 +42,15 @@ import {
   purchaseChannel,
   setAppleConsumptionConsent,
   APPLE_CONSUMPTION_CONSENT_TEXT,
+  ADULT_CONFIRM_TEXT,
+  DELETE_ACCOUNT_WARNING,
+  confirmAdult,
+  createCreditsAccount,
+  deleteCreditsAccount,
+  fetchCreditPacks,
+  mayBuyCredits,
+  startWebCheckout,
+  takeCheckoutResult,
 } from "../../effects/ai/providers/credits";
 import {
   isWllamaSupported,
@@ -970,15 +979,87 @@ function creditsPanel(cfg: AiConfig, set: (p: Partial<AiConfig>) => void): HTMLE
     void fetchCreditsBalance().then((b) => render(b?.apple_consumption_consent === true));
     g.append(row);
   }
-  // Buying is not wired yet. It is 18+, and on iOS it will be In-App Purchase
-  // only: the iOS app never shows or links to the web checkout (App Store rules).
-  g.append(
-    note(
-      (mayShowWebCheckout() ? "Buying credits isn't available yet." : "Buying credits in the app isn't available yet.") +
-        " Buying is for adults (18+).",
-    ),
-  );
+  const rerender = () => set({ credits: getAiConfig().credits });
+  if (!mayShowWebCheckout()) {
+    // iOS: In-App Purchase only (not wired yet). The iOS app never shows or
+    // links to the web checkout (App Store rules).
+    g.append(note("Buying credits in the app isn't available yet. Buying is for adults (18+)."));
+    return g;
+  }
+  g.append(webBuy(rerender, balance));
   return g;
+}
+
+/** The web / Android Buy flow: account -> 18+ -> packs -> Stripe Checkout. */
+function webBuy(rerender: () => void, balanceEl: HTMLElement): HTMLElement {
+  const box = document.createElement("div");
+  const fail = (e: unknown) => toast(msg(e), { error: true });
+  const back = takeCheckoutResult();
+  if (back === "success") {
+    toast("Payment received. Your credits arrive in a few seconds.");
+    // The webhook credits the account; refresh the balance a few times.
+    let tries = 0;
+    const poll = () =>
+      void fetchCreditsBalance().then((b) => {
+        if (b) balanceEl.textContent = formatCredits(b.available_credits) + (b.low ? " (low)" : "");
+        if (++tries < 5) setTimeout(poll, 2000);
+      });
+    poll();
+  } else if (back === "cancel") {
+    toast("Checkout cancelled. Nothing was charged.");
+  }
+  if (!getCreditsSession()) {
+    box.append(
+      note("Create a Splanc AI account on this device to buy and use credits. You can link it to Apple or Google later."),
+      Button({ label: "Create account", onClick: () => void createCreditsAccount().then(rerender, fail) }),
+    );
+    return box;
+  }
+  const status = note("Checking…");
+  box.append(status);
+  void fetchCreditsBalance().then(async (b) => {
+    if (!b) {
+      status.textContent = "Splanc AI credits are unavailable right now.";
+      return;
+    }
+    if (!b.adult) {
+      status.textContent = ADULT_CONFIRM_TEXT;
+      box.append(
+        Button({
+          label: "I'm 18 or older",
+          onClick: () => {
+            if (window.confirm(ADULT_CONFIRM_TEXT)) void confirmAdult().then(rerender, fail);
+          },
+        }),
+      );
+      return;
+    }
+    if (!mayBuyCredits(b)) {
+      status.textContent = "Buying isn't available on this account.";
+      return;
+    }
+    const packs = await fetchCreditPacks();
+    status.textContent = packs.length ? "Buy credits (secure checkout by Stripe; tax added at checkout):" : "No credit packs are on sale right now.";
+    for (const p of packs) {
+      const price = p.reference_price_usd !== undefined ? `US$${p.reference_price_usd.toFixed(2)}` : "";
+      box.append(
+        Button({
+          label: `${formatCredits(p.credits)}${price ? ` · ${price}` : ""}`,
+          onClick: () => void startWebCheckout(p.sku).then((url) => window.location.assign(url), fail),
+        }),
+      );
+    }
+  });
+  box.append(
+    Button({
+      label: "Delete Splanc AI account",
+      variant: "danger",
+      onClick: () => {
+        if (window.confirm(DELETE_ACCOUNT_WARNING)) void deleteCreditsAccount().then(rerender, fail);
+      },
+    }),
+  );
+  return box;
 }
 
 // -- small local builders ----------------------------------------------------
