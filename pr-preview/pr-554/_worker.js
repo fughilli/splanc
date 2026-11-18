@@ -57,27 +57,19 @@ async function ghAsset(request) {
 }
 
 // Public effects-demo relay. Credentials never enter a browser or static asset.
-// Order = fallback order. Claude leads, Opus first (owner, 2026-10-30: the free models wrote
-// poor effects; the OpenRouter key is topped up to pay for a good demo). Each
-// paid model is capped at its own list price (USD per million tokens), so a
-// provider price change can't silently cost more. When the key's credit runs out
-// (402) the relay falls through to the zero-priced models instead of failing.
-// Nemotron leads the free tail: in the 2026-10-29 live check it answered every
-// Acid Mode request (1.7-2.5 s) while MiniMax (low reasoning) never did.
+// Owner, 2026-11-18 (#548, docs/design/ai-tiers.md): the shared demo (website
+// playground, Acid Mode / kiosk with no AI set up) behaves like the app's FREE
+// tier: the same OpenRouter free models in the same order as FREE_MODELS in
+// web/src/effects/ai/providers/openrouter.ts (minus the private pick), reasoning
+// off, and the app's own system prompt passed through unchanged (the client
+// builds it exactly as for the free tier). No paid models: every request is
+// zero-priced, so the key's credit can't be spent here. Order = fallback order.
+// A request carrying an image (capture_preview) goes only to the vision models.
 const FREE = Object.freeze({ prompt: 0, completion: 0, request: 0, image: 0 });
-// Claude on OpenRouter rejects {enabled: false} ("Reasoning is mandatory for this
-// endpoint", 400). Opus 4.8 at medium effort matches the editor's AI tab with an
-// Anthropic key (DEFAULT_ANTHROPIC_MODEL, effort "medium"): a play-mode wish took
-// 10.5 s and ~$0.02 on 2026-10-31. Sonnet/Haiku are the quicker paid fallbacks.
-const CLAUDE_REASONING = Object.freeze({ effort: "low" });
 const DEMO_MODEL_SPECS = Object.freeze([
-  { id: "anthropic/claude-opus-4.8", maxPrice: { prompt: 5, completion: 25, request: 0, image: 0 }, reasoning: { effort: "medium" } },
-  { id: "anthropic/claude-sonnet-5.5", maxPrice: { prompt: 2, completion: 10, request: 0, image: 0 }, reasoning: CLAUDE_REASONING },
-  { id: "anthropic/claude-haiku-5.5", maxPrice: { prompt: 0.1, completion: 0.5, request: 0, image: 0 }, reasoning: CLAUDE_REASONING },
-  { id: "nvidia/nemotron-3.5-super-vl:free", maxPrice: FREE },
-  // MiniMax defaults to max reasoning; this is an interactive editor.
-  { id: "minimax/minimax-m3.1-flash:free", maxPrice: FREE, reasoning: { effort: "low" } },
-  { id: "google/gemma-4-31b-it:free", maxPrice: FREE },
+  { id: "nvidia/nemotron-3.5-lightning:free", maxPrice: FREE, vision: false },
+  { id: "nvidia/nemotron-3-ultra-550b-a55b:free", maxPrice: FREE, vision: false },
+  { id: "nvidia/nemotron-3.5-super-vl:free", maxPrice: FREE, vision: true },
 ]);
 export const DEMO_MODELS = Object.freeze(DEMO_MODEL_SPECS.map(m => m.id));
 const DEMO_PATH = "/api/demo-ai/chat/completions";
@@ -230,17 +222,18 @@ function completion(json, tools) {
 
 // The isolate budget is a coarse burst guard, not globally coordinated abuse
 // prevention. Operators can bind AI_RATE_LIMITER for Cloudflare edge enforcement.
-// Every upstream request is additionally capped at its model's list price.
+// Every upstream request is additionally capped at zero price (free models only).
 //
 // Sizing (2026-10-29): the key has credit, so OpenRouter allows ~1000 free-model
 // requests/day and ~20/minute. A crowd at a Halloween stoop shares that, and an
 // Acid Mode prompt costs 1-3 requests. So: 20/minute per isolate (the upstream
 // per-minute cap; more only buys upstream 429s), and per client 6/minute (a prompt
 // plus repairs, twice) and 30/hour (~10-15 prompts), so one visitor can burn at
-// most a few percent of the day. 2026-10-31: Claude (paid, no free-tier daily
-// cap) leads and play mode is a conversation, so 60/hour per client.
+// most a few percent of the day. (2026-10-31 raised it to 60/hour while paid
+// Claude led; 2026-11-18 the demo is free-models-only again, so the shared
+// 1000/day free cap binds once more and the hourly share is back to 30.)
 export const DEMO_LIMITS = Object.freeze({
-  perMinute: 20, inFlight: 8, clientPerMinute: 6, clientPerHour: 60, clientActive: 2, clients: 2000,
+  perMinute: 20, inFlight: 8, clientPerMinute: 6, clientPerHour: 30, clientActive: 2, clients: 2000,
 });
 
 /** Rate-limit key for a visitor: the IPv4 address, or the /64 of an IPv6 one.
@@ -324,7 +317,8 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
       if (!validPayload(body)) return error(400, "invalid_request");
       body = engagePlay(body);
       const attempts = [];
-      for (const { id: model, maxPrice, reasoning } of DEMO_MODEL_SPECS) {
+      const images = body.messages.some(m => Array.isArray(m.content) && m.content.some(p => p?.type === "image_url"));
+      for (const { id: model, maxPrice, reasoning } of DEMO_MODEL_SPECS.filter(m => !images || m.vision)) {
         if (total.signal.aborted) break;
         const diagnostic = { model, outcome: "pending" };
         attempts.push(diagnostic);
@@ -381,14 +375,6 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
               const retry = result.headers.get("retry-after") || quotaHeaders.get("retry-after") || "60";
               return reply(429, { error: { code: "rate_limited", scope: platformQuota ? "platform" : "unknown" } }, { "retry-after": retry });
             }
-            continue;
-          }
-          // Out of credit: the paid models can't run, the zero-priced ones still can.
-          // A paid model the key can't use (out of credit, or a key/account
-          // guardrail that rejects it) falls through to the zero-priced models.
-          if ((status === 402 || status === 400) && maxPrice !== FREE) {
-            console.warn("demo-ai: paid model rejected, falling back", model, status,
-              String(json?.error?.message ?? "").slice(0, 200));
             continue;
           }
           if ([401, 402, 403].includes(status)) return error(503, "provider_unavailable");
