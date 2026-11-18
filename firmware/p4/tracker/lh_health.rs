@@ -51,9 +51,21 @@ pub const POS_SIGMA_LIMIT_M: f32 = 0.02;
 /// 2026-11-13). Carried at ~3 m from one
 /// station σ sits right at 2 cm, and a single threshold flipped Locked/Uncertain 226 times
 /// in 95 s (often several times in 10 ms; PixieLamp2, 2026-11-13): the effect flickered
-/// between its shape and its idle look.
-pub const POS_SIGMA_ENTER_M: f32 = 0.04;
-pub const POS_SIGMA_BACK_M: f32 = 0.03;
+/// between its shape and its idle look. At ~3.2 m from one station a LIT, tracking lamp sat
+/// at 30-40 mm: at 40 / 30 mm it still went Uncertain every few seconds for 0.1-1.8 s, and
+/// the flashlight effect froze its beam each time (PixieLamp2, 2026-11-18). 70 / 50 mm,
+/// below COAST_GIVE_UP_M, so dead reckoning still ends in Lost.
+pub const POS_SIGMA_ENTER_M: f32 = 0.07;
+pub const POS_SIGMA_BACK_M: f32 = 0.05;
+
+/// Usable while coasting (dead reckoning through an occlusion) up to this uncertainty (m).
+/// Above POS_SIGMA_LIMIT_M: at ~3 m from one station σ is already past 2 cm WITH light, so
+/// every 50 ms occlusion went Uncertain for ~0.5 s and froze the effect (PixieLamp2,
+/// 2026-11-18). A still tracker coasts on zero-velocity updates and stays near where it
+/// was; a moving one's dead reckoning drifts, and 50 mm let it run 30+ mm off the truth
+/// while still usable (tests/reacquire.rs), so 30 mm: still coasts on, moving goes
+/// Uncertain soon. COAST_MAX_S still bounds a coast.
+pub const POS_SIGMA_COAST_M: f32 = 0.03;
 
 /// Position uncertainty (m) at which dead reckoning gives up (the kernel's `lost_sigma_pos`
 /// on the P4; its default is POS_SIGMA_LIMIT_M). Between the two the pose is Uncertain: not
@@ -113,7 +125,7 @@ impl Default for HealthConfig {
             fresh_ticks: (FRESH_S * TPS as f32) as i64,
             max_sigma_m: POS_SIGMA_ENTER_M,
             back_sigma_m: POS_SIGMA_BACK_M,
-            coast_sigma_m: POS_SIGMA_LIMIT_M,
+            coast_sigma_m: POS_SIGMA_COAST_M,
             coast_max_ticks: (COAST_MAX_S * TPS as f32) as i64,
             settle_poses: 4,
             settle_ticks: TPS / 20,
@@ -418,7 +430,7 @@ mod tests {
         tick(&mut h, 150);
         assert_eq!(h.state(), Health::Coasting);
         // Uncertain with light (one station, moving): not usable.
-        h.pose(3, 0.05, false);
+        h.pose(3, POS_SIGMA_ENTER_M + 0.01, false);
         assert_eq!(h.state(), Health::Uncertain);
         assert!(!h.state().usable());
         h.pose(3, 0.005, false);
@@ -433,7 +445,7 @@ mod tests {
         h.started();
         for _ in 0..6 {
             tick(&mut h, 10);
-            h.pose(5, 0.05, false);
+            h.pose(5, POS_SIGMA_ENTER_M + 0.01, false);
         }
         assert_eq!(h.state(), Health::Acquiring, "not confirmed while uncertain");
         h.pose(5, 0.005, false);
