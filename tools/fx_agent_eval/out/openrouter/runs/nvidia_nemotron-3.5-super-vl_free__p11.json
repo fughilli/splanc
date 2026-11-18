@@ -1,0 +1,86 @@
+{
+  "model": "nvidia/nemotron-3.5-super-vl:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 2.8,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6538,
+        "completion_tokens": 283,
+        "total_tokens": 6821,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4336,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 13,
+          "col": 53,
+          "msg": "unknown function 'frac'"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float width : 0.02 .. 0.5 = 0.12;\nuniform float bright : 0.0 .. 1.0 = 1.0;\n\nstate fixed ph;\n\nvoid update() {\n  ph = fract(ph + fixed(dt) * fixed(speed) * fixed(0.25));\n}\n\nvec3 shade(Led led) {\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  fixed band = clamp(fixed(1.0) - abs(frac(ang - ph)) / fixed(0.08), fixed(0.0), fixed(1.0));\n  vec3 red   = vec3(1.0, 0.0, 0.0);\n  vec3 blue  = vec3(0.0, 0.0, 1.0);\n  vec3 c = mix(blue, red, step(fixed(0.5), band));\n  return c * band * float(bright);\n}"
+    },
+    {
+      "round": 1,
+      "status": 200,
+      "seconds": 1.8,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6863,
+        "completion_tokens": 269,
+        "total_tokens": 7132,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4336,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float width : 0.02 .. 0.5 = 0.12;\nuniform float bright : 0.0 .. 1.0 = 1.0;\n\nstate fixed ph;\n\nvoid update() {\n  ph = fract(ph + fixed(dt) * fixed(speed) * fixed(0.25));\n}\n\nvec3 shade(Led led) {\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  fixed d = abs(fract(ang - ph));\n  fixed band = clamp(fixed(1.0) - d / fixed(0.08), fixed(0.0), fixed(1.0));\n  vec3 c = mix(vec3(0.0, 0.0, 1.0), vec3(1.0, 0.0, 0.0), step(fixed(0.5), band));\n  return c * band * float(bright);\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 1,
+  "outcome": "compiled",
+  "prompt": "p11",
+  "reasoning": "off"
+}

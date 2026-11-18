@@ -1,0 +1,45 @@
+{
+  "model": "inclusionai/ling-3.2-flash:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 14.63,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6587,
+        "completion_tokens": 525,
+        "total_tokens": 7112,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float speed : 0.0 .. 3.0 = 0.35;   // swell rise rate (cycles / second)\nuniform float wavelength : 0.1 .. 0.5 = 0.25; // vertical wavelength in metres\nuniform float width : 0.02 .. 0.30 = 0.10;    // crest softness in metres\nuniform float amp : 0.0 .. 0.5 = 0.15;        // surface wobble amplitude\nuniform vec3 deep : color = 0.01, 0.06, 0.16;\nuniform vec3 foam : color = 0.35, 0.75, 0.95;\n\nstate fixed rise;   // swell phase in TURNS\nstate fixed wob;    // wobble phase in TURNS\n\nvoid update() {\n  rise = fract(rise + fixed(dt * speed));\n  wob  = fract(wob  + fixed(dt * speed * 1.7));\n}\n\nvec3 shade(Led led) {\n  // swell front: a soft band travelling up the helix (led.s is arclength 0..1)\n  fixed band = fract(fixed(led.s) - rise);\n  fixed crest = fixed(1.0) - clamp(band * fixed(1.0) / fixed(width), fixed(0.0), fixed(1.0));\n\n  // gentle surface wobble so the crest breathes around the column\n  fixed h = fixed(led.pos.y) * fixed(3.3333);          // ~ turns over the 0.30 m height\n  fixed ripple = sin(h * fixed(6.2832) + wob) * fixed(amp);\n\n  fixed v = clamp(crest + ripple * crest, fixed(0.0), fixed(1.0));\n\n  // depth tint: darker toward the floor, foam tint on the crest\n  vec3 col = mix(deep, foam, float(v));\n  col = col * (0.55 + 0.45 * float(fixed(led.pos.y) * fixed(3.3333)));\n  return col;\n}\n"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p01",
+  "reasoning": "off"
+}

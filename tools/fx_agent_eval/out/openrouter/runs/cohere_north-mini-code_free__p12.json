@@ -1,0 +1,42 @@
+{
+  "model": "cohere/north-mini-code:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 5.14,
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 5862,
+        "completion_tokens": 728,
+        "total_tokens": 6590,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Cohere",
+      "n_tool_calls": 0,
+      "text": "// Breathing Meditation Glow\n// A soft, breathing glow that follows a slow vertical wave across the cylindrical helix.\n// Uses fixed-point phases for performance and a subtle colour shift from base to accent.\n//\n// Uniforms:\n//   float rate    : breathing speed (Hz) 0.0..2.0, default 0.05\n//   float depth   : vertical wave depth (m) 0.0..0.5, default 0.15\n//   vec3  base    : base colour (RGB) default 0.2, 0.4, 0.8\n//   vec3  accent  : accent colour (RGB) default 0.9, 0.9, 1.0\n//\n// State:\n//   state fixed ph1;   // breathing phase (turns)\n//   state fixed ph2;   // vertical wave phase (turns)\n//\n// update() advances both phases using dt and the rate uniform, keeping them bounded with fract.\n// shade() computes a per-LED glow based on the LED's vertical position (led.pos.y)\n// and a breathing amplitude that oscillates over time. The vertical wave is a sin along\n// the helix length (led.s) modulated by depth, and the breathing glow is a smoothstep\n// around a centre that moves up and down with a slow sinusoid. All per-LED math is in\n// fixed-point for speed, and the final colour is blended between base and accent.\n//\n// The effect is designed to stay comfortably under the 33 ms frame budget on the ESP32-C6,\n// using integer LUTs for sin/cos and avoiding expensive float ops.\n\nuniform float rate : 0.0 .. 2.0 = 0.05;\nuniform float depth : 0.0 .. 0.5 = 0.15;\nuniform vec3 base : color = 0.2, 0.4, 0.8;\nuniform vec3 accent : color = 0.9, 0.9, 1.0;\n\nstate fixed ph1; // breathing phase"
+    }
+  ],
+  "first_tool_call_valid": false,
+  "compiled_round": null,
+  "outcome": "no_tool_call",
+  "prompt": "p12",
+  "reasoning": "off"
+}

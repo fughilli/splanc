@@ -1,0 +1,45 @@
+{
+  "model": "nvidia/nemotron-3.5-super-vl:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 1.31,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6535,
+        "completion_tokens": 166,
+        "total_tokens": 6701,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4336,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float rate : 0.02 .. 0.5 = 0.1;\nuniform vec3 tint : color = 1.0, 0.9, 0.8;\nuniform float glow : 0.0 .. 1.0 = 0.6;\nstate float ph;\nstate float bright;\nvoid update() {\n  ph = fract(ph + dt * rate);\n  bright = 0.5 + 0.5 * sin(ph * 6.2832);\n}\nvec3 shade(Led led) {\n  return tint * (glow * bright);\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p12",
+  "reasoning": "off"
+}

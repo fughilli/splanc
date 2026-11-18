@@ -1,0 +1,133 @@
+{
+  "model": "inclusionai/ling-3.2-flash:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 22.78,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6588,
+        "completion_tokens": 1406,
+        "total_tokens": 7994,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 24,
+          "col": 15,
+          "msg": "expected ';'"
+        }
+      ],
+      "source": "// Thunderstorm: dark rolling clouds + random lightning strikes with branches.\n// All per-LED maths in fixed point; strikes/leaders precomputed in update().\nuniform float speed : 0.1 .. 5.0 = 1.0;     // storm intensity: strikes per second\nuniform float flash : 0.2 .. 3.0 = 1.2;     // flash duration (s)\nuniform vec3 tint : color = 0.55, 0.7, 1.0; // lightning tint\n\nstate fixed cloudPh;      // cloud drift phase (turns)\nstate fixed pulsePh;      // slow brightness breathing (turns)\nstate fixed flashEnv;     // flash envelope 0..1 (fixed)\nstate float flashT;       // seconds since strike start\nstate float nextStrike;   // seconds until next strike\nstate int strikeLed;      // LED index of the strike\nstate int branchLed;      // LED index of the branch point\nstate int branchDir;      // +1 / -1 branch direction\nstate bool hasBranch;\nstate bool flashOn;\nstate bool inited;\n\nvoid update() {\n  if (!inited) {\n    cloudPh = fixed(hash(1.7));\n    pulsePh = fixed(0.0);\n    flashEnv = fixed(0.0);\n    flashT = 1e9;\n    nextStrike = 0.5 + hash(3.1) * 2.0;\n    strikeLed = 0;\n    branchLed = 0;\n    branchDir = 1;\n    hasBranch = false;\n    flashOn = false;\n    inited = true;\n  }\n  // cloud drift + breathing (fixed phases in TURNS)\n  cloudPh = fract(cloudPh + fixed(dt * speed * 0.02));\n  pulsePh = fract(pulsePh + fixed(dt * speed * 0.05));\n\n  if (flashOn) {\n    flashT = flashT + dt;\n    if (flashT > flash) {\n      flashOn = false;\n      flashEnv = fixed(0.0);\n      nextStrike = 0.4 + hash(float(frame) * 0.37) * (2.5 / max(speed, 0.1));\n    } else {\n      // double-strobe envelope: sharp attack, two pulses, decay\n      float t = flashT / flash;\n      float e = exp(-t * 6.0) + exp(-abs(t - 0.35) * 18.0) * 0.8;\n      flashEnv = fixed(min(e, 1.0));\n    }\n  } else {\n    nextStrike = nextStrike - dt;\n    if (nextStrike <= 0) {\n      flashOn = true;\n      flashT = 0.0;\n      strikeLed = int(hash(float(frame) * 7.3) * 500.0);\n      hasBranch = hash(float(frame) * 3.9) > 0.4;\n      branchLed = strikeLed + int(hash(float(frame) * 5.1) * 80.0) - 40;\n      branchDir = hash(float(frame) * 9.7) > 0.5 ? 1 : -1;\n      if (branchLed < 0) { branchLed = 0; }\n      if (branchLed > 499) { branchLed = 499; }\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  fixed s = fixed(led.s);          // 0..1 along the helix\n  fixed y = fixed(led.pos.y);      // height\n  fixed idx = fixed(led.idx);\n\n  // --- dark rolling clouds: two drifting sine bands + height gradient ---\n  fixed band1 = sin(s * fixed(6.0) + cloudPh);\n  fixed band2 = sin(s * fixed(13.0) - cloudPh * fixed(1.7) + y * fixed(4.0));\n  fixed cloud = band1 * fixed(0.5) + band2 * fixed(0.35) + y * fixed(0.4);\n  cloud = clamp(cloud * fixed(0.5) + fixed(0.35), fixed(0.0), fixed(1.0));\n  fixed breathe = sin(pulsePh * fixed(6.2832)) * fixed(0.08) + fixed(0.92);\n  fixed grey = cloud * breathe * fixed(0.16);   // very dark cloud base\n\n  // --- lightning: bright channel at strikeLed, decaying with helix distance ---\n  fixed d = abs(idx - fixed(strikeLed));\n  fixed chan = clamp(fixed(1.0) - d * fixed(0.06), fixed(0.0), fixed(1.0));\n  fixed chan2 = chan * chan;\n  fixed leader = chan2 * flashEnv * fixed(1.4);\n\n  // branch: a second fainter channel offset from the strike\n  fixed bd = abs(idx - fixed(branchLed));\n  fixed bchan = clamp(fixed(1.0) - bd * fixed(0.09), fixed(0.0), fixed(1.0));\n  fixed branch = bchan * bchan * flashEnv * fixed(0.5) * (hasBranch ? fixed(1.0) : fixed(0.0));\n\n  fixed lum = grey + leader + branch;\n  lum = clamp(lum, fixed(0.0), fixed(1.0));\n\n  // cold blue-white flash tint on the leader, grey-blue clouds otherwise\n  fixed3 col = hsv2rgb(fixed(0.58), fixed(0.35), lum);\n  fixed3 flashCol = hsv2rgb(fixed(0.55), fixed(0.15), lum);\n  fixed isFlash = step(fixed(0.05), flashEnv);\n  return mix(col, flashCol, isFlash * float(flashEnv));\n}"
+    },
+    {
+      "round": 1,
+      "status": 200,
+      "seconds": 16.79,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 8038,
+        "completion_tokens": 1402,
+        "total_tokens": 9440,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 24,
+          "col": 15,
+          "msg": "expected ';'"
+        }
+      ],
+      "source": "// Thunderstorm: dark rolling clouds + random lightning strikes with branches.\n// All per-LED maths in fixed point; strikes/leaders precomputed in update().\nuniform float speed : 0.1 .. 5.0 = 1.0;     // storm intensity: strikes per second\nuniform float flash : 0.2 .. 3.0 = 1.2;     // flash duration (s)\nuniform vec3 tint : color = 0.55, 0.7, 1.0; // lightning tint\n\nstate fixed cloudPh;      // cloud drift phase (turns)\nstate fixed pulsePh;      // slow brightness breathing (turns)\nstate fixed flashEnv;     // flash envelope 0..1 (fixed)\nstate float flashT;       // seconds since strike start\nstate float nextStrike;   // seconds until next strike\nstate int strikeLed;      // LED index of the strike\nstate int branchLed;      // LED index of the branch point\nstate int branchDir;      // +1 / -1 branch direction\nstate bool hasBranch;\nstate bool flashOn;\nstate bool inited;\n\nvoid update() {\n  if (!inited) {\n    cloudPh = fixed(hash(1.7));\n    pulsePh = fixed(0.0);\n    flashEnv = fixed(0.0);\n    flashT = 1e9;\n    nextStrike = 0.5 + hash(3.1) * 2.0;\n    strikeLed = 0;\n    branchLed = 0;\n    branchDir = 1;\n    hasBranch = false;\n    flashOn = false;\n    inited = true;\n  }\n  // cloud drift + breathing (fixed phases in TURNS)\n  cloudPh = fract(cloudPh + fixed(dt * speed * 0.02));\n  pulsePh = fract(pulsePh + fixed(dt * speed * 0.05));\n\n  if (flashOn) {\n    flashT = flashT + dt;\n    if (flashT > flash) {\n      flashOn = false;\n      flashEnv = fixed(0.0);\n      nextStrike = 0.4 + hash(float(frame) * 0.37) * (2.5 / max(speed, 0.1));\n    } else {\n      // double-strobe envelope: sharp attack, two pulses, decay\n      float t = flashT / flash;\n      float e = exp(-t * 6.0) + exp(-abs(t - 0.35) * 18.0) * 0.8;\n      flashEnv = fixed(min(e, 1.0));\n    }\n  } else {\n    nextStrike = nextStrike - dt;\n    if (nextStrike <= 0.0) {\n      flashOn = true;\n      flashT = 0.0;\n      strikeLed = int(hash(float(frame) * 7.3) * 500.0);\n      hasBranch = hash(float(frame) * 3.9) > 0.4;\n      branchLed = strikeLed + int(hash(float(frame) * 5.1) * 80.0) - 40;\n      branchDir = hash(float(frame) * 9.7) > 0.5 ? 1 : -1;\n      if (branchLed < 0) { branchLed = 0; }\n      if (branchLed > 499) { branchLed = 499; }\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  fixed s = fixed(led.s);          // 0..1 along the helix\n  fixed y = fixed(led.pos.y);      // height\n  fixed idx = fixed(led.idx);\n\n  // --- dark rolling clouds: two drifting sine bands + height gradient ---\n  fixed band1 = sin(s * fixed(6.0) + cloudPh);\n  fixed band2 = sin(s * fixed(13.0) - cloudPh * fixed(1.7) + y * fixed(4.0));\n  fixed cloud = band1 * fixed(0.5) + band2 * fixed(0.35) + y * fixed(0.4);\n  cloud = clamp(cloud * fixed(0.5) + fixed(0.35), fixed(0.0), fixed(1.0));\n  fixed breathe = sin(pulsePh * fixed(6.2832)) * fixed(0.08) + fixed(0.92);\n  fixed grey = cloud * breathe * fixed(0.16);   // very dark cloud base\n\n  // --- lightning: bright channel at strikeLed, decaying with helix distance ---\n  fixed d = abs(idx - fixed(strikeLed));\n  fixed chan = clamp(fixed(1.0) - d * fixed(0.06), fixed(0.0), fixed(1.0));\n  fixed chan2 = chan * chan;\n  fixed leader = chan2 * flashEnv * fixed(1.4);\n\n  // branch: a second fainter channel offset from the strike\n  fixed bd = abs(idx - fixed(branchLed));\n  fixed bchan = clamp(fixed(1.0) - bd * fixed(0.09), fixed(0.0), fixed(1.0));\n  fixed branch = bchan * bchan * flashEnv * fixed(0.5) * (hasBranch ? fixed(1.0) : fixed(0.0));\n\n  fixed lum = grey + leader + branch;\n  lum = clamp(lum, fixed(0.0), fixed(1.0));\n\n  // cold blue-white flash tint on the leader, grey-blue clouds otherwise\n  fixed3 col = hsv2rgb(fixed(0.58), fixed(0.35), lum);\n  fixed3 flashCol = hsv2rgb(fixed(0.55), fixed(0.15), lum);\n  fixed isFlash = step(fixed(0.05), flashEnv);\n  return mix(col, flashCol, isFlash * float(flashEnv));\n}"
+    },
+    {
+      "round": 2,
+      "status": 200,
+      "seconds": 29.2,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 9490,
+        "completion_tokens": 1402,
+        "total_tokens": 10892,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 6464,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 24,
+          "col": 15,
+          "msg": "expected ';'"
+        }
+      ],
+      "source": "// Thunderstorm: dark rolling clouds + random lightning strikes with branches.\n// All per-LED maths in fixed point; strikes/leaders precomputed in update().\nuniform float speed : 0.1 .. 5.0 = 1.0;     // storm intensity: strikes per second\nuniform float flash : 0.2 .. 3.0 = 1.2;     // flash duration (s)\nuniform vec3 tint : color = 0.55, 0.7, 1.0; // lightning tint\n\nstate fixed cloudPh;      // cloud drift phase (turns)\nstate fixed pulsePh;      // slow brightness breathing (turns)\nstate fixed flashEnv;     // flash envelope 0..1 (fixed)\nstate float flashT;       // seconds since strike start\nstate float nextStrike;   // seconds until next strike\nstate int strikeLed;      // LED index of the strike\nstate int branchLed;      // LED index of the branch point\nstate int branchDir;      // +1 / -1 branch direction\nstate bool hasBranch;\nstate bool flashOn;\nstate bool inited;\n\nvoid update() {\n  if (!inited) {\n    cloudPh = fixed(hash(1.7));\n    pulsePh = fixed(0.0);\n    flashEnv = fixed(0.0);\n    flashT = 1e9;\n    nextStrike = 0.5 + hash(3.1) * 2.0;\n    strikeLed = 0;\n    branchLed = 0;\n    branchDir = 1;\n    hasBranch = false;\n    flashOn = false;\n    inited = true;\n  }\n  // cloud drift + breathing (fixed phases in TURNS)\n  cloudPh = fract(cloudPh + fixed(dt * speed * 0.02));\n  pulsePh = fract(pulsePh + fixed(dt * speed * 0.05));\n\n  if (flashOn) {\n    flashT = flashT + dt;\n    if (flashT > flash) {\n      flashOn = false;\n      flashEnv = fixed(0.0);\n      nextStrike = 0.4 + hash(float(frame) * 0.37) * (2.5 / max(speed, 0.1));\n    } else {\n      // double-strobe envelope: sharp attack, two pulses, decay\n      float t = flashT / flash;\n      float e = exp(-t * 6.0) + exp(-abs(t - 0.35) * 18.0) * 0.8;\n      flashEnv = fixed(min(e, 1.0));\n    }\n  } else {\n    nextStrike = nextStrike - dt;\n    if (nextStrike <= 0.0) {\n      flashOn = true;\n      flashT = 0.0;\n      strikeLed = int(hash(float(frame) * 7.3) * 500.0);\n      hasBranch = hash(float(frame) * 3.9) > 0.4;\n      branchLed = strikeLed + int(hash(float(frame) * 5.1) * 80.0) - 40;\n      branchDir = hash(float(frame) * 9.7) > 0.5 ? 1 : -1;\n      if (branchLed < 0) { branchLed = 0; }\n      if (branchLed > 499) { branchLed = 499; }\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  fixed s = fixed(led.s);          // 0..1 along the helix\n  fixed y = fixed(led.pos.y);      // height\n  fixed idx = fixed(led.idx);\n\n  // --- dark rolling clouds: two drifting sine bands + height gradient ---\n  fixed band1 = sin(s * fixed(6.0) + cloudPh);\n  fixed band2 = sin(s * fixed(13.0) - cloudPh * fixed(1.7) + y * fixed(4.0));\n  fixed cloud = band1 * fixed(0.5) + band2 * fixed(0.35) + y * fixed(0.4);\n  cloud = clamp(cloud * fixed(0.5) + fixed(0.35), fixed(0.0), fixed(1.0));\n  fixed breathe = sin(pulsePh * fixed(6.2832)) * fixed(0.08) + fixed(0.92);\n  fixed grey = cloud * breathe * fixed(0.16);   // very dark cloud base\n\n  // --- lightning: bright channel at strikeLed, decaying with helix distance ---\n  fixed d = abs(idx - fixed(strikeLed));\n  fixed chan = clamp(fixed(1.0) - d * fixed(0.06), fixed(0.0), fixed(1.0));\n  fixed chan2 = chan * chan;\n  fixed leader = chan2 * flashEnv * fixed(1.4);\n\n  // branch: a second fainter channel offset from the strike\n  fixed bd = abs(idx - fixed(branchLed));\n  fixed bchan = clamp(fixed(1.0) - bd * fixed(0.09), fixed(0.0), fixed(1.0));\n  fixed branch = bchan * bchan * flashEnv * fixed(0.5) * (hasBranch ? fixed(1.0) : fixed(0.0));\n\n  fixed lum = grey + leader + branch;\n  lum = clamp(lum, fixed(0.0), fixed(1.0));\n\n  // cold blue-white flash tint on the leader, grey-blue clouds otherwise\n  vec3 col = hsv2rgb(fixed(0.58), fixed(0.35), lum);\n  vec3 flashCol = hsv2rgb(fixed(0.55), fixed(0.15), lum);\n  fixed isFlash = step(fixed(0.05), flashEnv);\n  return mix(col, flashCol, isFlash * float(flashEnv));\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": null,
+  "outcome": "compile_failed",
+  "prompt": "p06",
+  "reasoning": "off"
+}

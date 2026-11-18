@@ -1,0 +1,121 @@
+[
+  {
+    "model": "nvidia/nemotron-3.5-super-vl:free",
+    "n": 15,
+    "http_errors": 0,
+    "n_429": 0,
+    "tool_call_valid_first": 15,
+    "compiled_round0": 9,
+    "compiled_any": 10,
+    "median_request_s": 2.8,
+    "median_turn_s_compiled": 3.0,
+    "requests": 26,
+    "deny_probe": {
+      "status": 404,
+      "seconds": 0.17,
+      "message": "No endpoints found matching your data policy (Free model training). Configure: https://openrouter.ai/settings/privacy"
+    }
+  },
+  {
+    "model": "google/gemma-4-31b-it:free",
+    "n": 15,
+    "http_errors": 15,
+    "n_429": 15,
+    "tool_call_valid_first": 0,
+    "compiled_round0": 0,
+    "compiled_any": 0,
+    "median_request_s": null,
+    "median_turn_s_compiled": null,
+    "requests": 15,
+    "deny_probe": {
+      "status": 429,
+      "seconds": 0.14,
+      "message": "Provider returned error"
+    }
+  },
+  {
+    "model": "google/gemma-4-26b-a4b-it:free",
+    "n": 15,
+    "http_errors": 15,
+    "n_429": 15,
+    "tool_call_valid_first": 1,
+    "compiled_round0": 0,
+    "compiled_any": 0,
+    "median_request_s": 10.3,
+    "median_turn_s_compiled": null,
+    "requests": 16,
+    "deny_probe": {
+      "status": 429,
+      "seconds": 0.15,
+      "message": "Provider returned error"
+    }
+  },
+  {
+    "model": "cohere/north-mini-code:free",
+    "n": 15,
+    "http_errors": 0,
+    "n_429": 0,
+    "tool_call_valid_first": 10,
+    "compiled_round0": 5,
+    "compiled_any": 6,
+    "median_request_s": 2.6,
+    "median_turn_s_compiled": 1.9,
+    "requests": 24,
+    "deny_probe": {
+      "status": 200,
+      "seconds": 0.25,
+      "message": ""
+    }
+  },
+  {
+    "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "n": 15,
+    "http_errors": 0,
+    "n_429": 0,
+    "tool_call_valid_first": 15,
+    "compiled_round0": 10,
+    "compiled_any": 13,
+    "median_request_s": 9.4,
+    "median_turn_s_compiled": 8.0,
+    "requests": 22,
+    "deny_probe": {
+      "status": 404,
+      "seconds": 0.05,
+      "message": "No endpoints found matching your data policy (Free model training). Configure: https://openrouter.ai/settings/privacy"
+    }
+  },
+  {
+    "model": "nvidia/nemotron-3.5-lightning:free",
+    "n": 15,
+    "http_errors": 0,
+    "n_429": 0,
+    "tool_call_valid_first": 15,
+    "compiled_round0": 12,
+    "compiled_any": 13,
+    "median_request_s": 1.8,
+    "median_turn_s_compiled": 1.5,
+    "requests": 20,
+    "deny_probe": {
+      "status": 404,
+      "seconds": 0.08,
+      "message": "No endpoints found matching your data policy (Free model training). Configure: https://openrouter.ai/settings/privacy"
+    }
+  },
+  {
+    "model": "inclusionai/ling-3.2-flash:free",
+    "n": 15,
+    "http_errors": 0,
+    "n_429": 0,
+    "tool_call_valid_first": 15,
+    "compiled_round0": 8,
+    "compiled_any": 8,
+    "median_request_s": 16.6,
+    "median_turn_s_compiled": 13.9,
+    "requests": 29,
+    "deny_probe": {
+      "status": 200,
+      "seconds": 1.96,
+      "message": ""
+    }
+  }
+]

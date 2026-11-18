@@ -75,6 +75,9 @@ import {
   type DraftBudget,
 } from "../../effects/ai/agentDraft";
 import { isAiConfigured, getAiConfig } from "../../effects/ai/provider";
+import { isFreeTierLimit, OpenRouterError } from "../../effects/ai/providers/openrouter";
+import { takePendingAsk } from "../../effects/ai/tiers";
+import { openModelSetup } from "./aiTierSheet";
 import { resolveFleetTargets } from "../../effects/fleet";
 import { estimateAcrossDevices, describeFleet } from "../../effects/multiDevice";
 import { estimateFrameTime, DEFAULT_BUDGET_MODEL, type BudgetModel } from "../../effects/costModel";
@@ -1534,11 +1537,13 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   async function runChat(): Promise<void> {
     const ask = chatInput.value.trim();
     if (!ask) return;
-    // Keep the typed text if AI isn't set up yet (settings open; sending again
-    // after configuring a provider preserves the ask).
+    // First prompt with no AI set up: the model-setup sheet picks a tier, then
+    // this same prompt is sent (docs/design/ai-tiers.md). Dismissing it keeps
+    // the typed text; a setup that leaves the page (OpenRouter sign-in,
+    // Settings ▸ AI) sends it when the user comes back (takePendingAsk below).
     if (!screenOpts.demo && !isAiConfigured()) {
-      location.hash = "#/settings/ai";
-      return;
+      if (!(await openModelSetup({ ask, route: location.hash }))) return;
+      if (disposed) return;
     }
     chatInput.value = "";
     await submitChat(ask);
@@ -1773,14 +1778,25 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   // A restored conversation that stopped on unassessed tool results can resume.
   if (endsWithToolResults(chatHistory)) renderTurnActions(["continue"], null);
 
+  // A first prompt kept across a setup detour (OpenRouter sign-in redirect or
+  // Settings ▸ AI): send it now that AI is set up. Deferred so the screen
+  // finishes mounting first.
+  if (!screenOpts.demo && isAiConfigured()) {
+    const pendingAsk = takePendingAsk(location.hash);
+    if (pendingAsk) {
+      setTimeout(() => {
+        if (!disposed) void submitChat(pendingAsk);
+      }, 0);
+    }
+  }
+
   /** Shared body: ground the turn in the editor context, run the tool loop.
    * `resume` continues a turn that stopped on unassessed tool results (#451). */
   async function submitChat(ask: string, opts: { label?: string; resume?: boolean } = {}): Promise<void> {
     if (chatBusy) return;
     if (!screenOpts.demo && !isAiConfigured()) {
-      // AI not set up yet — send them to the provider settings the ⋯ menu opens.
-      location.hash = "#/settings/ai";
-      return;
+      // AI not set up yet: pick a tier first (no prompt kept for canned asks).
+      if (!(await openModelSetup()) || disposed) return;
     }
     clearTurnActions();
     appendChat("user", opts.label ?? ask);
@@ -1932,6 +1948,12 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       turnEnd = "error";
       replyText = `AI error: ${turnError}`;
       replyRow = appendChat("assistant", replyText);
+      // Free-tier limit / revoked key: offer the tier picker right there.
+      if (isFreeTierLimit(e) || (e instanceof OpenRouterError && e.kind === "auth")) {
+        replyRow.append(
+          Button({ label: "Model setup…", icon: "sparkles", variant: "quiet", onClick: () => void openModelSetup() }),
+        );
+      }
     } finally {
       const trace = recorder.finish({ reply: replyText, outcome: turnEnd, error: turnError, sourceAfter: codeEl.value });
       turnHistory.push(trace);

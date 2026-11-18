@@ -1,0 +1,45 @@
+{
+  "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 4.86,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6538,
+        "completion_tokens": 234,
+        "total_tokens": 6772,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4384,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float rate : 0.02 .. 0.5 = 0.1;\nuniform float width : 0.02 .. 0.5 = 0.12;\nuniform vec3 color : color = 1.0, 0.2, 0.1;\n\nstate float ph;\nstate float front;\n\nvoid update() {\n  ph = ph + dt * rate;\n  if (ph >= 1.0) {\n    ph = ph - 1.0;\n    front = 0.0;\n  }\n  front = front + dt * 3.0;\n}\n\nvec3 shade(Led led) {\n  float d = abs(led.dist - front);\n  float band = smoothstep(width, 0.0, d);\n  float beat = 0.5 + 0.5 * sin(ph * 6.2832);\n  return color * band * beat;\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p05",
+  "reasoning": "off"
+}

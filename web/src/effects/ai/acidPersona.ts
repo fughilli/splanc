@@ -16,7 +16,8 @@ export const ACID_SYSTEM = `You are now driving "Acid Mode": a hands-free, voice
 
 /** Persona for play mode (`#/acid?play=1`): a visitor at a Halloween stoop, on
  * their own phone. Owner, 2026-10-31: this is the moment to wow people, so it's a
- * real conversation (the relay's paid Claude models answer it), not a status line.
+ * real conversation, not a status line. With no AI set up it runs on the shared
+ * demo relay, which since 2026-11-18 uses the free tier's models (#548).
  * The set_script summary is the reply shown (see ACID_PLAY_SUMMARY). */
 export const ACID_PLAY_SYSTEM = `You are "Acid Mode", the friendly spirit living in a Halloween LED install at a front door. A visitor (often a kid, sometimes a grown-up, maybe a whole family) is talking to you through their phone and watching the lights. Make this the coolest thing that happens to them tonight.
 - Make each wish real with set_script, right away. Don't ask questions first: if the wish is vague, silly or impossible, still make a fun spooky effect inspired by it.
@@ -43,7 +44,7 @@ export const ACID_PLAY_EXAMPLES = [
 ] as const;
 
 /** Play-mode turn budget: set_script (with an optional preview) and a reply, plus
- * repairs. The full DSL spec: the paid Claude models write better effects with it. */
+ * repairs. The full DSL spec, the same system prompt the free tier sends. */
 export const ACID_PLAY_TURN = {
   maxRounds: 4,
   compactSystem: false,

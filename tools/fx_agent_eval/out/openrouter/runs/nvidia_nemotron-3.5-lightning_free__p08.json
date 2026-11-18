@@ -1,0 +1,45 @@
+{
+  "model": "nvidia/nemotron-3.5-lightning:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 1.94,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6535,
+        "completion_tokens": 280,
+        "total_tokens": 6815,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 6336,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float size : 0.01 .. 0.5 = 0.1;\nuniform vec3 tint : color = 1.0, 0.4, 0.2;\nstate fixed ph;\nvoid update() {\n  ph = fract(ph + fixed(dt) * fixed(speed));\n}\nvec3 shade(Led led) {\n  fixed d = length(led.pos.xy);\n  fixed r = fixed(0.08);\n  fixed a = clamp((r - d) * fixed(20.0), fixed(0.0), fixed(1.0));\n  fixed g = sin(fixed(led.uv.y) * fixed(6.28) + ph) * fixed(0.25);\n  fixed b = sin(fixed(led.uv.x) * fixed(6.28) + ph + fixed(1.0)) * fixed(0.25);\n  return hsv2rgb(fract(a + g + b), fixed(1.0), fixed(1.0));\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p08",
+  "reasoning": "off"
+}

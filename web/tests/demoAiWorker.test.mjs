@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker, { clientKey, createDemoRelay, DEMO_LIMITS, DEMO_TOOLS, DEMO_MODELS, RELAY_PATHS, engagePlay, DEMO_PLAY } from '../_worker.js';
@@ -43,11 +44,11 @@ test('locks upstream/model/price/output and preserves tool/image history', async
   assert.equal(sent.target, 'https://openrouter.ai/api/v1/chat/completions');
   assert.equal(sent.init.headers.authorization, 'Bearer unit-test-secret');
   assert.equal(sent.init.redirect, 'manual');
-  assert.equal(sent.body.model, DEMO_MODELS[0]);
   assert.equal(sent.body.max_tokens, 4000);
-  // Claude leads, capped at its list price (USD per million tokens).
-  assert.equal(sent.body.model, 'anthropic/claude-opus-4.8');
-  assert.deepEqual(sent.body.provider.max_price, { prompt: 5, completion: 25, request: 0, image: 0 });
+  // A request carrying a preview image goes straight to the free vision model.
+  assert.equal(sent.body.model, 'nvidia/nemotron-3.5-super-vl:free');
+  assert.deepEqual(sent.body.provider.max_price, { prompt: 0, completion: 0, request: 0, image: 0 });
+  assert.deepEqual(sent.body.reasoning, { enabled: false });
   assert.deepEqual(sent.body.messages, payload.messages);
   assert.equal(sent.body.stream, false);
   assert.equal(result.headers.get('cache-control'), 'no-store');
@@ -95,8 +96,7 @@ test('auth, payment, input failures and refusal are not retried; upstream errors
     let calls = 0;
     const relay = createDemoRelay({ fetchImpl: async () => { calls++; return failure(status, { raw: 'unit-test-secret' }); } });
     const r = await relay(req(), env);
-    // A paid model's 400 (key guardrail) falls through; the first free model's is terminal.
-    assert.equal(calls, status === 400 ? 4 : 1); assert.ok(!(await r.text()).includes('unit-test-secret'));
+    assert.equal(calls, 1); assert.ok(!(await r.text()).includes('unit-test-secret'));
   }
   let calls = 0;
   const relay = createDemoRelay({ fetchImpl: async () => { calls++; return Response.json({ choices: [{ message: { role: 'assistant', refusal: 'No' }, finish_reason: 'content_filter' }] }); } });
@@ -326,11 +326,10 @@ test('interactive reasoning policy survives fallback without raising token or pr
   const sent=[];
   const relay=createDemoRelay({fetchImpl:async(_,init)=>{sent.push(JSON.parse(init.body));return failure(503,{});}});
   assert.equal((await relay(req(),env)).status,503);
-  assert.deepEqual(sent.map(x=>x.reasoning),[{effort:'medium'},{effort:'low'},{effort:'low'},{enabled:false},{effort:'low'},{enabled:false}]);
+  assert.deepEqual(sent.map(x=>x.reasoning),DEMO_MODELS.map(()=>({enabled:false})));
   assert(sent.every(x=>x.max_tokens===4000));
-  // Paid models never above their list price; every free fallback stays zero-priced.
-  assert.deepEqual(sent.slice(0,3).map(x=>x.provider.max_price),[{prompt:5,completion:25,request:0,image:0},{prompt:2,completion:10,request:0,image:0},{prompt:0.1,completion:0.5,request:0,image:0}]);
-  assert(sent.slice(3).every(x=>x.model.endsWith(':free')&&Object.values(x.provider.max_price).every(price=>price===0)));
+  // Free models only, every attempt zero-priced: the demo can't spend the key's credit.
+  assert(sent.every(x=>x.model.endsWith(':free')&&Object.values(x.provider.max_price).every(price=>price===0)));
 });
 
 test('200 headers followed by a stalled body report timeout and cancel each stream', async () => {
@@ -377,27 +376,26 @@ test('tool allowlist is exactly the five effect tools (acidFreeAi.test.ts pins t
   assert.ok(!DEMO_TOOLS.has('file_bug') && !DEMO_TOOLS.has('measure_on_device'));
 });
 
-test('out of credit (402) on the paid models falls through to the free ones; 402 on a free model stops', async () => {
+test('the demo uses the free tier models in the app\'s order (Nemotron 3.5 Lightning first)', async () => {
+  assert.equal(DEMO_MODELS[0], 'nvidia/nemotron-3.5-lightning:free');
+  assert(DEMO_MODELS.every(m => m.endsWith(':free')));
+  // Same order as the app's curated FREE_MODELS (minus the private pick).
+  const src = readFileSync(new URL('../src/effects/ai/providers/openrouter.ts', import.meta.url), 'utf8');
+  const block = src.slice(src.indexOf('export const FREE_MODELS'), src.indexOf('export const DEFAULT_FREE_MODEL'));
+  const app = [...block.matchAll(/id: "([^"]+)"[\s\S]*?private: (true|false)/g)].filter(m => m[2] === 'false').map(m => m[1]);
+  assert.deepEqual(DEMO_MODELS, app);
+  // A text-only request starts at Lightning and falls back in order.
   const tried=[];
-  const relay=createDemoRelay({fetchImpl:async(_,init)=>{const {model}=JSON.parse(init.body);tried.push(model);
-    return model.endsWith(':free')?Response.json({choices:[{finish_reason:'stop',message:{role:'assistant',content:'Done'}}]}):failure(402,{});}});
-  const r=await relay(req(),env);
-  assert.equal(r.status,200);
-  assert.equal((await r.json()).model,'nvidia/nemotron-3.5-super-vl:free');
-  assert.deepEqual(tried,['anthropic/claude-opus-4.8','anthropic/claude-sonnet-5.5','anthropic/claude-haiku-5.5','nvidia/nemotron-3.5-super-vl:free']);
-  let calls=0;
-  const broke=createDemoRelay({fetchImpl:async(_,init)=>{calls++;return failure(402,{});}});
-  assert.equal((await broke(req(),env)).status,503);
-  assert.equal(calls,4,'paid models skipped, then the first free model\'s 402 is terminal');
+  const relay=createDemoRelay({fetchImpl:async(_,init)=>{tried.push(JSON.parse(init.body).model);return failure(503,{});}});
+  assert.equal((await relay(req(),env)).status,503);
+  assert.deepEqual(tried,DEMO_MODELS);
 });
 
-test('a paid model the key rejects (400) falls through to the free ones', async () => {
-  const seen=[];
-  const relay=createDemoRelay({fetchImpl:async(_,init)=>{const {model}=JSON.parse(init.body);seen.push(model);
-    return model.endsWith(':free')?Response.json({choices:[{finish_reason:'stop',message:{role:'assistant',content:'Done'}}]}):failure(400,{});}});
-  const r=await relay(req(),env);
-  assert.equal(r.status,200);
-  assert.deepEqual(seen,DEMO_MODELS.slice(0,4));
+test('402 (no credit / key limit) is terminal: never retried on another model', async () => {
+  let calls=0;
+  const broke=createDemoRelay({fetchImpl:async()=>{calls++;return failure(402,{});}});
+  assert.equal((await broke(req(),env)).status,503);
+  assert.equal(calls,1);
 });
 
 test('Acid play requests get the engaging persona, summary description and token cap; others are untouched', async () => {

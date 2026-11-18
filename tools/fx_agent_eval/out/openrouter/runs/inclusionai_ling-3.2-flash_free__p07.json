@@ -1,0 +1,133 @@
+{
+  "model": "inclusionai/ling-3.2-flash:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 21.98,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6584,
+        "completion_tokens": 1148,
+        "total_tokens": 7732,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 15,
+          "col": 15,
+          "msg": "expected ';'"
+        }
+      ],
+      "source": "// Fireflies: N blinking agents drift around the lamp in (angle, height) space.\n// All per-LED math is fixed point; agents are simulated once per frame in update().\nuniform float speed : 0.0 .. 5.0 = 1.0;     // global drift + twinkle rate\nuniform float density : 0.0 .. 1.0 = 0.6;   // fraction of flies awake\nuniform float glow : 0.0 .. 3.0 = 1.4;      // flash brightness\nuniform float warmth : 0.0 .. 1.0 = 0.65;   // hue mix green -> amber\nuniform vec3 tint : color = 1.0, 0.85, 0.55;\n\nstate fixed flies[16];   // packed Q8.8: [0]=y, [1]=ang, [2]=vy, [3]=w, [4]=seed\nstate fixed head;        // integrated global phase (turns)\nstate fixed fspd;\nstate fixed fdens;\nstate fixed fglow;\nstate fixed fwarm;\nstate fixed fr, fh, ftwo;\nstate bool inited;\n\nvoid update() {\n  if (!inited) {\n    for (int i = 0; i < 16; i = i + 1) {\n      fixed sd = fixed(hash(float(i) * 7.31));\n      flies[i * 5 + 0] = fract(sd * fixed(0.713));\n      flies[i * 5 + 1] = fract(sd * fixed(0.377) + fixed(0.25));\n      flies[i * 5 + 2] = (fract(sd * fixed(0.531)) - fixed(0.5)) * fixed(0.06);\n      flies[i * 5 + 3] = fract(sd * fixed(0.917));\n      flies[i * 5 + 4] = sd;\n    }\n    inited = true;\n  }\n  head = fract(head + fixed(dt) * fixed(speed));\n  fspd = fixed(speed);\n  fdens = fixed(density);\n  fglow = fixed(glow);\n  fwarm = fixed(warmth);\n  fr = fixed(0.08);\n  fh = fixed(0.30);\n  ftwo = fixed(2.0);\n  for (int i = 0; i < 16; i = i + 1) {\n    fixed sd = flies[i * 5 + 4];\n    fixed wob = sin(head * ftwo + sd * fixed(6.2832));\n    flies[i * 5 + 0] = fract(flies[i * 5 + 0] + (flies[i * 5 + 2] + wob * fixed(0.015)) * fixed(dt));\n    flies[i * 5 + 1] = fract(flies[i * 5 + 1] + (wob - fixed(0.5)) * fixed(dt) * fspd * fixed(0.12));\n  }\n}\n\nvec3 shade(Led led) {\n  fixed px = fixed(led.pos.x);\n  fixed pz = fixed(led.pos.z);\n  fixed py = fixed(led.pos.y);\n  fixed ang = atan2(pz, px) + fixed(0.5);      // turns, 0..1 (cached per LED)\n  fixed best = fixed(0.0);\n  for (int i = 0; i < 16; i = i + 1) {\n    fixed sd = flies[i * 5 + 4];\n    fixed dy = abs(py - flies[i * 5 + 0]);\n    fixed da = abs(ang - flies[i * 5 + 1]);\n    da = min(da, fixed(1.0) - da);             // wrap angular distance\n    fixed dd = sqrt(dy * dy + da * da * fr * fr * ftwo * ftwo);\n    fixed tw = sin(head * fixed(3.0) + sd * fixed(12.566));\n    fixed on = step(fixed(0.55), fract(sd * fixed(11.17) + head * fixed(0.35)));\n    fixed b = on * max(fixed(0.0), fixed(1.0) - dd * fixed(18.0)) * (fixed(0.5) + tw * fixed(0.5));\n    best = max(best, b);\n  }\n  fixed awake = step(fixed(0.5), fdens);       // density gate (cheap global dim)\n  fixed h = fract(fwarm * fixed(0.13) + sd0);\n  return hsv2rgb(h, fixed(0.55), fixed(1.0)) * (best * fglow * awake);\n}"
+    },
+    {
+      "round": 1,
+      "status": 200,
+      "seconds": 14.37,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 7779,
+        "completion_tokens": 1153,
+        "total_tokens": 8932,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 6464,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 15,
+          "col": 15,
+          "msg": "expected ';'"
+        }
+      ],
+      "source": "// Fireflies: N blinking agents drift around the lamp in (angle, height) space.\n// All per-LED math is fixed point; agents are simulated once per frame in update().\nuniform float speed : 0.0 .. 5.0 = 1.0;     // global drift + twinkle rate\nuniform float density : 0.0 .. 1.0 = 0.6;   // fraction of flies awake\nuniform float glow : 0.0 .. 3.0 = 1.4;      // flash brightness\nuniform float warmth : 0.0 .. 1.0 = 0.65;   // hue mix green -> amber\nuniform vec3 tint : color = 1.0, 0.85, 0.55;\n\nstate fixed flies[80];   // packed Q8.8: [0]=y, [1]=ang, [2]=vy, [3]=w, [4]=seed\nstate fixed head;        // integrated global phase (turns)\nstate fixed fspd;\nstate fixed fdens;\nstate fixed fglow;\nstate fixed fwarm;\nstate fixed fr, fh, ftwo;\nstate bool inited;\n\nvoid update() {\n  if (!inited) {\n    for (int i = 0; i < 16; i = i + 1) {\n      fixed sd = fixed(hash(float(i) * 7.31));\n      flies[i * 5 + 0] = fract(sd * fixed(0.713));\n      flies[i * 5 + 1] = fract(sd * fixed(0.377) + fixed(0.25));\n      flies[i * 5 + 2] = (fract(sd * fixed(0.531)) - fixed(0.5)) * fixed(0.06);\n      flies[i * 5 + 3] = fract(sd * fixed(0.917));\n      flies[i * 5 + 4] = sd;\n    }\n    inited = true;\n  }\n  head = fract(head + fixed(dt) * fixed(speed));\n  fspd = fixed(speed);\n  fdens = fixed(density);\n  fglow = fixed(glow);\n  fwarm = fixed(warmth);\n  fr = fixed(0.08);\n  fh = fixed(0.30);\n  ftwo = fixed(2.0);\n  for (int i = 0; i < 16; i = i + 1) {\n    fixed sd = flies[i * 5 + 4];\n    fixed wob = sin(head * ftwo + sd * fixed(6.2832));\n    flies[i * 5 + 0] = fract(flies[i * 5 + 0] + (flies[i * 5 + 2] + wob * fixed(0.015)) * fixed(dt));\n    flies[i * 5 + 1] = fract(flies[i * 5 + 1] + (wob - fixed(0.5)) * fixed(dt) * fspd * fixed(0.12));\n  }\n}\n\nvec3 shade(Led led) {\n  fixed px = fixed(led.pos.x);\n  fixed pz = fixed(led.pos.z);\n  fixed py = fixed(led.pos.y);\n  fixed ang = atan2(pz, px) + fixed(0.5);      // turns, 0..1 (cached per LED)\n  fixed best = fixed(0.0);\n  for (int i = 0; i < 16; i = i + 1) {\n    fixed sd = flies[i * 5 + 4];\n    fixed dy = abs(py - flies[i * 5 + 0]);\n    fixed da = abs(ang - flies[i * 5 + 1]);\n    da = min(da, fixed(1.0) - da);             // wrap angular distance\n    fixed dd = sqrt(dy * dy + da * da * fr * fr * ftwo * ftwo);\n    fixed tw = sin(head * fixed(3.0) + sd * fixed(12.566));\n    fixed on = step(fixed(0.55), fract(sd * fixed(11.17) + head * fixed(0.35)));\n    fixed b = on * max(fixed(0.0), fixed(1.0) - dd * fixed(18.0)) * (fixed(0.5) + tw * fixed(0.5));\n    best = max(best, b);\n  }\n  fixed awake = step(fixed(0.5), fdens);       // density gate (cheap global dim)\n  fixed h = fract(fwarm * fixed(0.13) + fixed(0.02));\n  return hsv2rgb(h, fixed(0.55), fixed(1.0)) * (best * fglow * awake);\n}"
+    },
+    {
+      "round": 2,
+      "status": 200,
+      "seconds": 51.94,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 8978,
+        "completion_tokens": 1071,
+        "total_tokens": 10049,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 6464,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 65,
+          "col": 70,
+          "msg": "arithmetic on non-numeric"
+        }
+      ],
+      "source": "// Fireflies: N blinking agents drift around the lamp in (angle, height) space.\n// All per-LED math is fixed point; agents are simulated once per frame in update().\nuniform float speed : 0.0 .. 5.0 = 1.0;     // global drift + twinkle rate\nuniform float density : 0.0 .. 1.0 = 0.6;   // fraction of flies awake\nuniform float glow : 0.0 .. 3.0 = 1.4;      // flash brightness\nuniform float warmth : 0.0 .. 1.0 = 0.65;   // hue mix green -> amber\nuniform vec3 tint : color = 1.0, 0.85, 0.55;\n\nstate fixed flies[80];\nstate fixed head;\nstate fixed fspd;\nstate fixed fdens;\nstate fixed fglow;\nstate fixed fwarm;\nstate fixed fr;\nstate fixed ftwo;\nstate bool inited;\n\nvoid update() {\n  if (!inited) {\n    for (int i = 0; i < 16; i = i + 1) {\n      fixed sd = fixed(hash(float(i) * 7.31));\n      flies[i * 5 + 0] = fract(sd * fixed(0.713));\n      flies[i * 5 + 1] = fract(sd * fixed(0.377) + fixed(0.25));\n      flies[i * 5 + 2] = (fract(sd * fixed(0.531)) - fixed(0.5)) * fixed(0.06);\n      flies[i * 5 + 3] = fract(sd * fixed(0.917));\n      flies[i * 5 + 4] = sd;\n    }\n    inited = true;\n  }\n  head = fract(head + fixed(dt) * fixed(speed));\n  fspd = fixed(speed);\n  fdens = fixed(density);\n  fglow = fixed(glow);\n  fwarm = fixed(warmth);\n  fr = fixed(0.08);\n  ftwo = fixed(2.0);\n  for (int i = 0; i < 16; i = i + 1) {\n    fixed sd = flies[i * 5 + 4];\n    fixed wob = sin(head * ftwo + sd * fixed(6.2832));\n    flies[i * 5 + 0] = fract(flies[i * 5 + 0] + (flies[i * 5 + 2] + wob * fixed(0.015)) * fixed(dt));\n    flies[i * 5 + 1] = fract(flies[i * 5 + 1] + (wob - fixed(0.5)) * fixed(dt) * fspd * fixed(0.12));\n  }\n}\n\nvec3 shade(Led led) {\n  fixed px = fixed(led.pos.x);\n  fixed pz = fixed(led.pos.z);\n  fixed py = fixed(led.pos.y);\n  fixed ang = atan2(pz, px) + fixed(0.5);\n  fixed best = fixed(0.0);\n  for (int i = 0; i < 16; i = i + 1) {\n    fixed sd = flies[i * 5 + 4];\n    fixed dy = abs(py - flies[i * 5 + 0]);\n    fixed da = abs(ang - flies[i * 5 + 1]);\n    da = min(da, fixed(1.0) - da);\n    fixed dd = sqrt(dy * dy + da * da * fr * fr * ftwo * ftwo);\n    fixed tw = sin(head * fixed(3.0) + sd * fixed(12.566));\n    fixed on = step(fixed(0.55), fract(sd * fixed(11.17) + head * fixed(0.35)));\n    fixed b = on * max(fixed(0.0), fixed(1.0) - dd * fixed(18.0)) * (fixed(0.5) + tw * fixed(0.5));\n    best = max(best, b);\n  }\n  fixed awake = step(fixed(0.5), fdens);\n  fixed h = fract(fwarm * fixed(0.13) + fixed(0.02));\n  return hsv2rgb(h, fixed(0.55), fixed(1.0)) * (best * fglow * awake);\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": null,
+  "outcome": "compile_failed",
+  "prompt": "p07",
+  "reasoning": "off"
+}

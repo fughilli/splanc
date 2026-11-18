@@ -1,0 +1,45 @@
+{
+  "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 10.55,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6536,
+        "completion_tokens": 699,
+        "total_tokens": 7235,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4384,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float speed : 0.0 .. 1.0 = 0.12;\nuniform float wave_scale : 0.5 .. 4.0 = 1.8;\nuniform float curtain_count : 1.0 .. 6.0 = 3.0;\nuniform float intensity : 0.1 .. 1.0 = 0.7;\nuniform vec3 color_a : color = 0.0, 0.8, 0.4;\nuniform vec3 color_b : color = 0.2, 0.4, 1.0;\nuniform vec3 color_c : color = 0.6, 0.1, 0.8;\n\nstate fixed ph_v;\nstate fixed ph_h1;\nstate fixed ph_h2;\nstate fixed ph_h3;\nstate fixed k_v;\nstate fixed k_h;\nstate fixed s_a;\nstate fixed s_b;\nstate fixed s_c;\n\nvoid update() {\n  ph_v = fract(ph_v + fixed(dt * speed * 0.5));\n  ph_h1 = fract(ph_h1 + fixed(dt * speed * 0.17));\n  ph_h2 = fract(ph_h2 + fixed(dt * speed * 0.23));\n  ph_h3 = fract(ph_h3 + fixed(dt * speed * 0.31));\n  k_v = fixed(wave_scale);\n  k_h = fixed(curtain_count);\n  s_a = fixed(intensity * 0.8);\n  s_b = fixed(intensity * 1.0);\n  s_c = fixed(intensity * 0.6);\n}\n\nvec3 shade(Led led) {\n  fixed y = fixed(led.pos.y);\n  fixed z = fixed(led.pos.z);\n  fixed x = fixed(led.pos.x);\n  \n  fixed ang = atan2(z, x) + fixed(0.5);\n  \n  fixed v1 = sin(y * k_v + ph_v);\n  fixed v2 = sin(y * k_v * fixed(1.5) + ph_v * fixed(1.3));\n  fixed vertical = (v1 + v2 * fixed(0.5)) * fixed(0.66);\n  \n  fixed h1 = sin(ang * k_h + ph_h1);\n  fixed h2 = sin(ang * k_h * fixed(1.5) + ph_h2);\n  fixed h3 = sin(ang * k_h * fixed(0.7) + ph_h3);\n  fixed horizontal = (h1 + h2 * fixed(0.5) + h3 * fixed(0.3)) * fixed(0.5);\n  \n  fixed pattern = vertical + horizontal;\n  pattern = fract(pattern + fixed(0.5));\n  \n  fixed hue = pattern * fixed(0.33) + fixed(0.5);\n  fixed sat = s_a + (s_b - s_a) * pattern;\n  fixed val = s_c + (s_a - s_c) * pattern;\n  \n  return hsv2rgb(hue, sat, val);\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p03",
+  "reasoning": "off"
+}

@@ -1,0 +1,42 @@
+{
+  "model": "cohere/north-mini-code:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 1.92,
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 5868,
+        "completion_tokens": 352,
+        "total_tokens": 6220,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Cohere",
+      "n_tool_calls": 0,
+      "text": "// Uniforms: rotation speed, wave amplitude, hue offset\nuniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float waves : 0.5 .. 8.0 = 3.0;\nuniform float hueOffset : 0.0 .. 1.0 = 0.0;\n\n// State: phases for rotation and vertical wave\nstate fixed phRot;\nstate fixed phWave;\n\n// Update: advance phases per uniform rate\nvoid update() {\n  // Wrap each rate with fract to avoid time jumps\n  phRot = fract(phRot + fixed(dt * speed * 0.25));\n  phWave = fract(phWave + fixed(dt * speed * 0.17));\n}\n\n// Per-LED shade: compute angle from cylinder axis, apply wave and rotate\nvec3 shade(Led led) {\n  // Fixed-point inputs\n  fixed x = fixed(led.pos.x);\n  fixed y = fixed(led.pos.y);\n  fixed z = fixed(led.pos.z);\n\n  // Angle around cylinder axis (in turns) using fixed atan2 (integer LUT)\n  fixed ang = atan2(z, x) + fixed(0.5);   // shift to 0..1\n\n  // Vertical wave displacement (using led.uv.y normalized to 0..1)\n  fixed w = sin(fixed(led.uv.y) * fixed(waves) + phWave) * fixed(0.125);\n\n  // Combined hue with rotation and wave, then HSV to RGB (fixed path)\n  fixed h = fract(ang + phRot + w) + fixed(hueOffset);\n  return hsv2rgb(h, fixed(0.9), fixed(1.0));\n}"
+    }
+  ],
+  "first_tool_call_valid": false,
+  "compiled_round": null,
+  "outcome": "no_tool_call",
+  "prompt": "p04",
+  "reasoning": "off"
+}

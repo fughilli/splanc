@@ -1,0 +1,45 @@
+{
+  "model": "inclusionai/ling-3.2-flash:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 12.33,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6584,
+        "completion_tokens": 640,
+        "total_tokens": 7224,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "// Aurora curtains: slow-drifting vertical shimmer bands wrapping the helix.\n// All per-LED math is fixed-point; phases (TURNS) integrate in update().\nuniform float speed : 0.0 .. 3.0 = 0.25;   // drift speed of the curtains\nuniform float bands : 1.0 .. 8.0 = 3.0;    // number of curtain bands around\nuniform float sat   : 0.0 .. 1.0 = 0.75;   // colour saturation\nuniform float gain  : 0.0 .. 2.0 = 1.0;    // brightness\n\nstate fixed ph1;   // slow primary drift\nstate fixed ph2;   // faster counter-drift (sheen)\nstate fixed ph3;   // vertical shimmer\nstate fixed k;     // band count\nstate fixed s;     // saturation\nstate fixed g;     // gain\n\nvoid update() {\n  fixed dtf = fixed(dt);\n  ph1 = fract(ph1 + dtf * fixed(speed) * fixed(0.05));\n  ph2 = fract(ph2 + dtf * fixed(speed) * fixed(0.11));\n  ph3 = fract(ph3 + dtf * fixed(speed) * fixed(0.23));\n  k = fixed(bands);\n  s = fixed(sat);\n  g = fixed(gain);\n}\n\nvec3 shade(Led led) {\n  fixed fy = fixed(led.pos.y) * fixed(3.3333);   // 0..1 along the height\n  fixed fx = fixed(led.uv.x);                    // 0..1 around the column\n\n  // slow vertical shimmer wave\n  fixed w = sin(fy * fixed(6.0) + ph3) * fixed(0.08);\n\n  // curtain phase: wraps around, drifts slowly, sheared by height\n  fixed t = fract(fx * k + fy * fixed(0.5) + ph1 + w + ph2 * fy);\n\n  // band profile: bright crest with soft shoulders\n  fixed band = t * (fixed(1.0) - t);\n  band = band * band * fixed(16.0);              // parabolic crest, 0..1\n  fixed v = band * (fixed(0.4) + fixed(0.6) * sin(fy * fixed(9.0) + ph2));\n\n  fixed h = fract(fx * fixed(0.5) + fy * fixed(0.25) + ph1);\n  return hsv2rgb(h, s, clamp(v * g, fixed(0.0), fixed(1.0)));\n}\n"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p03",
+  "reasoning": "off"
+}

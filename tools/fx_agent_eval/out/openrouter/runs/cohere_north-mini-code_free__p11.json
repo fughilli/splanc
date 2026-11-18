@@ -1,0 +1,45 @@
+{
+  "model": "cohere/north-mini-code:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 1.36,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 5863,
+        "completion_tokens": 443,
+        "total_tokens": 6306,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Cohere",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float offset : 0.0 .. 1.0 = 0.0;\nuniform float width : 0.02 .. 0.5 = 0.12;\nuniform vec3 red : color = 1.0, 0.0, 0.0;\nuniform vec3 blue : color = 0.0, 0.2, 1.0;\nuniform vec3 dark : color = 0.0, 0.0, 0.0;\n\nstate float phase;\nstate float spin;\n\nvoid update() {\n  phase = fract(phase + dt * speed);\n  spin = fract(spin + dt * speed * 0.5);\n}\n\nvec3 shade(Led led) {\n  fixed s = fixed(led.s);\n  fixed y = fixed(led.pos.y);\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  fixed rot = sin(fixed(spin * 6.2832)) * fixed(0.5) + fixed(0.5);\n  fixed band = smoothstep(fixed(width), fixed(0.0), abs(fixed(fract(s - phase)) - fixed(0.5)));\n  fixed blueBand = step(fixed(fract(ang + rot)), fixed(0.0)) * fixed(1.0);\n  fixed redBand = step(fixed(1.0 - fract(ang + rot)), fixed(0.0)) * fixed(1.0);\n  fixed col = mix(fixed(0.0), fixed(1.0), band);\n  fixed r = redBand * col;\n  fixed g = fixed(0.0);\n  fixed b = blueBand * col;\n  return mix(dark, mix(red, blue, fixed(b)), fixed(r));\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p11",
+  "reasoning": "off"
+}

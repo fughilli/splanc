@@ -1,0 +1,133 @@
+{
+  "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 15.6,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6535,
+        "completion_tokens": 1121,
+        "total_tokens": 7656,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4384,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 17,
+          "col": 14,
+          "msg": "unknown type"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 2.0 = 0.4;\nuniform float blob_size : 0.05 .. 0.3 = 0.15;\nuniform float blob_count : 3.0 .. 12.0 = 7.0;\nuniform float separation : 0.0 .. 1.0 = 0.3;\nuniform vec3 color_a : color = 1.0, 0.3, 0.1;\nuniform vec3 color_b : color = 1.0, 0.8, 0.2;\nuniform vec3 bg_color : color = 0.1, 0.05, 0.02;\n\nstate fixed ph_y;\nstate fixed ph_r;\nstate fixed ph_rot;\nstate fixed k_y;\nstate fixed k_r;\nstate fixed sep;\nstate fixed bsize;\nstate fixed n_blobs;\nstate fixed3 col_a;\nstate fixed3 col_b;\nstate fixed3 col_bg;\n\nvoid update() {\n  ph_y = fract(ph_y + fixed(dt * speed * 0.6));\n  ph_r = fract(ph_r + fixed(dt * speed * 0.35));\n  ph_rot = fract(ph_rot + fixed(dt * speed * 0.15));\n  k_y = fixed(2.0);\n  k_r = fixed(4.0);\n  sep = fixed(separation);\n  bsize = fixed(blob_size);\n  n_blobs = fixed(blob_count);\n  col_a = fixed3(color_a);\n  col_b = fixed3(color_b);\n  col_bg = fixed3(bg_color);\n}\n\nfixed3 hsv2rgb_fixed(fixed h, fixed s, fixed v) {\n  fixed i = floor(h * fixed(6.0));\n  fixed f = h * fixed(6.0) - i;\n  fixed p = v * (fixed(1.0) - s);\n  fixed q = v * (fixed(1.0) - s * f);\n  fixed t = v * (fixed(1.0) - s * (fixed(1.0) - f));\n  fixed ii = mod(i, fixed(6.0));\n  if (ii < fixed(1.0)) return fixed3(v, t, p);\n  if (ii < fixed(2.0)) return fixed3(q, v, p);\n  if (ii < fixed(3.0)) return fixed3(p, v, t);\n  if (ii < fixed(4.0)) return fixed3(p, q, v);\n  if (ii < fixed(5.0)) return fixed3(t, p, v);\n  return fixed3(v, p, q);\n}\n\nvec3 shade(Led led) {\n  fixed y = fixed(led.pos.y) / fixed(0.3);\n  fixed r = fixed(led.pos.x) * fixed(led.pos.x) + fixed(led.pos.z) * fixed(led.pos.z);\n  r = sqrt(r) / fixed(0.08);\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  \n  fixed3 acc = fixed3(0.0, 0.0, 0.0);\n  fixed total_w = fixed(0.0);\n  \n  for (int i = 0; i < 12; i = i + 1) {\n    fixed fi = fixed(i);\n    fixed fy = fract(fi * fixed(0.618) + ph_y);\n    fixed fr = fract(fi * fixed(0.382) + ph_r);\n    fixed fang = fract(fi * fixed(0.231) + ph_rot);\n    \n    fixed dy = abs(y - fy);\n    if (dy > fixed(0.5)) dy = fixed(1.0) - dy;\n    \n    fixed dr = abs(r - fr);\n    if (dr > fixed(0.5)) dr = fixed(1.0) - dr;\n    \n    fixed dang = abs(ang - fang);\n    if (dang > fixed(0.5)) dang = fixed(1.0) - dang;\n    \n    fixed d2 = dy * dy * k_y + dr * dr * k_r + dang * dang * fixed(8.0);\n    fixed w = exp(-d2 / (bsize * bsize * fixed(2.0)));\n    \n    fixed hi = fract(fi / n_blobs + ph_y * fixed(0.3));\n    fixed3 col = mix(col_a, col_b, hi);\n    \n    acc = acc + col * w;\n    total_w = total_w + w;\n  }\n  \n  fixed3 result;\n  if (total_w > fixed(0.0)) {\n    result = acc / total_w;\n  } else {\n    result = col_bg;\n  }\n  \n  return vec3(float(result.x), float(result.y), float(result.z));\n}"
+    },
+    {
+      "round": 1,
+      "status": 200,
+      "seconds": 16.62,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 7697,
+        "completion_tokens": 1111,
+        "total_tokens": 8808,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4384,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 35,
+          "col": 1,
+          "msg": "unexpected token Ident(\"fixed3\")"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 2.0 = 0.4;\nuniform float blob_size : 0.05 .. 0.3 = 0.15;\nuniform float blob_count : 3.0 .. 12.0 = 7.0;\nuniform float separation : 0.0 .. 1.0 = 0.3;\nuniform vec3 color_a : color = 1.0, 0.3, 0.1;\nuniform vec3 color_b : color = 1.0, 0.8, 0.2;\nuniform vec3 bg_color : color = 0.1, 0.05, 0.02;\n\nstate fixed ph_y;\nstate fixed ph_r;\nstate fixed ph_rot;\nstate fixed k_y;\nstate fixed k_r;\nstate fixed sep;\nstate fixed bsize;\nstate fixed n_blobs;\nstate vec3 col_a;\nstate vec3 col_b;\nstate vec3 col_bg;\n\nvoid update() {\n  ph_y = fract(ph_y + fixed(dt * speed * 0.6));\n  ph_r = fract(ph_r + fixed(dt * speed * 0.35));\n  ph_rot = fract(ph_rot + fixed(dt * speed * 0.15));\n  k_y = fixed(2.0);\n  k_r = fixed(4.0);\n  sep = fixed(separation);\n  bsize = fixed(blob_size);\n  n_blobs = fixed(blob_count);\n  col_a = color_a;\n  col_b = color_b;\n  col_bg = bg_color;\n}\n\nfixed3 hsv2rgb_fixed(fixed h, fixed s, fixed v) {\n  fixed i = floor(h * fixed(6.0));\n  fixed f = h * fixed(6.0) - i;\n  fixed p = v * (fixed(1.0) - s);\n  fixed q = v * (fixed(1.0) - s * f);\n  fixed t = v * (fixed(1.0) - s * (fixed(1.0) - f));\n  fixed ii = mod(i, fixed(6.0));\n  if (ii < fixed(1.0)) return fixed3(v, t, p);\n  if (ii < fixed(2.0)) return fixed3(q, v, p);\n  if (ii < fixed(3.0)) return fixed3(p, v, t);\n  if (ii < fixed(4.0)) return fixed3(p, q, v);\n  if (ii < fixed(5.0)) return fixed3(t, p, v);\n  return fixed3(v, p, q);\n}\n\nvec3 shade(Led led) {\n  fixed y = fixed(led.pos.y) / fixed(0.3);\n  fixed r = fixed(led.pos.x) * fixed(led.pos.x) + fixed(led.pos.z) * fixed(led.pos.z);\n  r = sqrt(r) / fixed(0.08);\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  \n  fixed3 acc = fixed3(0.0, 0.0, 0.0);\n  fixed total_w = fixed(0.0);\n  \n  for (int i = 0; i < 12; i = i + 1) {\n    fixed fi = fixed(i);\n    fixed fy = fract(fi * fixed(0.618) + ph_y);\n    fixed fr = fract(fi * fixed(0.382) + ph_r);\n    fixed fang = fract(fi * fixed(0.231) + ph_rot);\n    \n    fixed dy = abs(y - fy);\n    if (dy > fixed(0.5)) dy = fixed(1.0) - dy;\n    \n    fixed dr = abs(r - fr);\n    if (dr > fixed(0.5)) dr = fixed(1.0) - dr;\n    \n    fixed dang = abs(ang - fang);\n    if (dang > fixed(0.5)) dang = fixed(1.0) - dang;\n    \n    fixed d2 = dy * dy * k_y + dr * dr * k_r + dang * dang * fixed(8.0);\n    fixed w = exp(-d2 / (bsize * bsize * fixed(2.0)));\n    \n    fixed hi = fract(fi / n_blobs + ph_y * fixed(0.3));\n    fixed3 col = mix(col_a, col_b, hi);\n    \n    acc = acc + col * w;\n    total_w = total_w + w;\n  }\n  \n  fixed3 result;\n  if (total_w > fixed(0.0)) {\n    result = acc / total_w;\n  } else {\n    result = col_bg;\n  }\n  \n  return vec3(float(result.x), float(result.y), float(result.z));\n}"
+    },
+    {
+      "round": 2,
+      "status": 200,
+      "seconds": 12.44,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 8855,
+        "completion_tokens": 869,
+        "total_tokens": 9724,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 51,
+          "col": 26,
+          "msg": "expected '{'"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 2.0 = 0.4;\nuniform float blob_size : 0.05 .. 0.3 = 0.15;\nuniform float blob_count : 3.0 .. 12.0 = 7.0;\nuniform float separation : 0.0 .. 1.0 = 0.3;\nuniform vec3 color_a : color = 1.0, 0.3, 0.1;\nuniform vec3 color_b : color = 1.0, 0.8, 0.2;\nuniform vec3 bg_color : color = 0.1, 0.05, 0.02;\n\nstate fixed ph_y;\nstate fixed ph_r;\nstate fixed ph_rot;\nstate fixed k_y;\nstate fixed k_r;\nstate fixed sep;\nstate fixed bsize;\nstate fixed n_blobs;\nstate vec3 col_a;\nstate vec3 col_b;\nstate vec3 col_bg;\n\nvoid update() {\n  ph_y = fract(ph_y + fixed(dt * speed * 0.6));\n  ph_r = fract(ph_r + fixed(dt * speed * 0.35));\n  ph_rot = fract(ph_rot + fixed(dt * speed * 0.15));\n  k_y = fixed(2.0);\n  k_r = fixed(4.0);\n  sep = fixed(separation);\n  bsize = fixed(blob_size);\n  n_blobs = fixed(blob_count);\n  col_a = color_a;\n  col_b = color_b;\n  col_bg = bg_color;\n}\n\nvec3 shade(Led led) {\n  fixed y = fixed(led.pos.y) / fixed(0.3);\n  fixed r = fixed(led.pos.x) * fixed(led.pos.x) + fixed(led.pos.z) * fixed(led.pos.z);\n  r = sqrt(r) / fixed(0.08);\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  \n  vec3 acc = vec3(0.0, 0.0, 0.0);\n  float total_w = 0.0;\n  \n  for (int i = 0; i < 12; i = i + 1) {\n    fixed fi = fixed(i);\n    fixed fy = fract(fi * fixed(0.618) + ph_y);\n    fixed fr = fract(fi * fixed(0.382) + ph_r);\n    fixed fang = fract(fi * fixed(0.231) + ph_rot);\n    \n    fixed dy = abs(y - fy);\n    if (dy > fixed(0.5)) dy = fixed(1.0) - dy;\n    \n    fixed dr = abs(r - fr);\n    if (dr > fixed(0.5)) dr = fixed(1.0) - dr;\n    \n    fixed dang = abs(ang - fang);\n    if (dang > fixed(0.5)) dang = fixed(1.0) - dang;\n    \n    fixed d2 = dy * dy * k_y + dr * dr * k_r + dang * dang * fixed(8.0);\n    fixed w = exp(-d2 / (bsize * bsize * fixed(2.0)));\n    \n    fixed hi = fract(fi / n_blobs + ph_y * fixed(0.3));\n    vec3 col = mix(col_a, col_b, float(hi));\n    \n    acc = acc + col * float(w);\n    total_w = total_w + float(w);\n  }\n  \n  vec3 result;\n  if (total_w > 0.0) {\n    result = acc / total_w;\n  } else {\n    result = col_bg;\n  }\n  \n  return result;\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": null,
+  "outcome": "compile_failed",
+  "prompt": "p08",
+  "reasoning": "off"
+}

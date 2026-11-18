@@ -1,0 +1,133 @@
+{
+  "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 18.31,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6539,
+        "completion_tokens": 1042,
+        "total_tokens": 7581,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4384,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 77,
+          "col": 75,
+          "msg": "a fixed colour (rgb()/rgb8()/hsv2rgb()/palette on fixed args) must be returned directly from shade()"
+        }
+      ],
+      "source": "uniform float ember_speed : 0.05 .. 2.0 = 0.4;\nuniform float spark_rate : 0.0 .. 3.0 = 0.6;\nuniform float spark_life : 0.05 .. 0.5 = 0.18;\nuniform float ember_brightness : 0.1 .. 1.0 = 0.6;\nuniform float spark_brightness : 0.2 .. 1.5 = 1.0;\nuniform float wind : 0.0 .. 1.0 = 0.15;\nuniform vec3 base_color : color = 1.0, 0.35, 0.08;\n\nstate fixed ph_ember;\nstate fixed ph_wind;\nstate int spark_count;\nstate fixed spark_pos[8];\nstate fixed spark_vel[8];\nstate fixed spark_age[8];\nstate fixed spark_max_age[8];\nstate bool inited;\n\nvoid update() {\n  ph_ember = fract(ph_ember + fixed(dt * ember_speed));\n  ph_wind = fract(ph_wind + fixed(dt * wind * 0.3));\n  \n  if (!inited) {\n    spark_count = 0;\n    inited = true;\n  }\n  \n  float spawn_chance = dt * spark_rate * 8.0;\n  if (hash(float(frame)) < spawn_chance && spark_count < 8) {\n    int idx = spark_count;\n    spark_pos[idx] = fixed(0.0);\n    spark_vel[idx] = fixed(2.0 + hash(float(frame) * 1.7) * 4.0);\n    spark_age[idx] = fixed(0.0);\n    spark_max_age[idx] = fixed(spark_life);\n    spark_count = spark_count + 1;\n  }\n  \n  for (int i = 0; i < 8; i = i + 1) {\n    if (i < spark_count) {\n      spark_age[i] = spark_age[i] + fixed(dt);\n      spark_pos[i] = spark_pos[i] + spark_vel[i] * fixed(dt);\n      if (spark_age[i] > spark_max_age[i] || spark_pos[i] > fixed(1.0)) {\n        spark_count = spark_count - 1;\n        if (i < spark_count) {\n          spark_pos[i] = spark_pos[spark_count];\n          spark_vel[i] = spark_vel[spark_count];\n          spark_age[i] = spark_age[spark_count];\n          spark_max_age[i] = spark_max_age[spark_count];\n        }\n      }\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  fixed s = fixed(led.s);\n  fixed h = fixed(led.uv.y);\n  \n  fixed ember_wave = sin(h * fixed(12.0) + ph_ember) * fixed(0.5) + fixed(0.5);\n  fixed wind_wobble = sin(s * fixed(8.0) + ph_wind) * fixed(wind * 0.3);\n  fixed ember_phase = fract(s * fixed(3.0) - ph_ember + wind_wobble * fixed(0.2));\n  \n  fixed ember_intensity = ember_wave * (fixed(1.0) - ember_phase) * fixed(ember_brightness);\n  ember_intensity = ember_intensity * ember_intensity;\n  \n  vec3 c = base_color * float(ember_intensity);\n  \n  for (int i = 0; i < 8; i = i + 1) {\n    if (i < spark_count) {\n      fixed d = abs(s - spark_pos[i]);\n      if (d < fixed(0.08)) {\n        fixed life_frac = spark_age[i] / spark_max_age[i];\n        fixed spark_intensity = (fixed(1.0) - life_frac) * (fixed(1.0) - d * fixed(12.5));\n        spark_intensity = spark_intensity * spark_intensity * fixed(spark_brightness);\n        \n        fixed hue_shift = (fixed(1.0) - life_frac) * fixed(0.15);\n        fixed sat = fixed(1.0) - life_frac * fixed(0.5);\n        vec3 spark_col = hsv2rgb(fixed(0.08) + hue_shift, sat, fixed(1.0));\n        c = c + spark_col * float(spark_intensity);\n      }\n    }\n  }\n  \n  return clamp(c, vec3(0.0), vec3(1.0));\n}"
+    },
+    {
+      "round": 1,
+      "status": 200,
+      "seconds": 15.18,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 7644,
+        "completion_tokens": 1026,
+        "total_tokens": 8670,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4384,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 78,
+          "col": 30,
+          "msg": "unknown identifier 'spark_col'"
+        }
+      ],
+      "source": "uniform float ember_speed : 0.05 .. 2.0 = 0.4;\nuniform float spark_rate : 0.0 .. 3.0 = 0.6;\nuniform float spark_life : 0.05 .. 0.5 = 0.18;\nuniform float ember_brightness : 0.1 .. 1.0 = 0.6;\nuniform float spark_brightness : 0.2 .. 1.5 = 1.0;\nuniform float wind : 0.0 .. 1.0 = 0.15;\nuniform vec3 base_color : color = 1.0, 0.35, 0.08;\n\nstate fixed ph_ember;\nstate fixed ph_wind;\nstate int spark_count;\nstate fixed spark_pos[8];\nstate fixed spark_vel[8];\nstate fixed spark_age[8];\nstate fixed spark_max_age[8];\nstate bool inited;\n\nvoid update() {\n  ph_ember = fract(ph_ember + fixed(dt * ember_speed));\n  ph_wind = fract(ph_wind + fixed(dt * wind * 0.3));\n  \n  if (!inited) {\n    spark_count = 0;\n    inited = true;\n  }\n  \n  float spawn_chance = dt * spark_rate * 8.0;\n  if (hash(float(frame)) < spawn_chance && spark_count < 8) {\n    int idx = spark_count;\n    spark_pos[idx] = fixed(0.0);\n    spark_vel[idx] = fixed(2.0 + hash(float(frame) * 1.7) * 4.0);\n    spark_age[idx] = fixed(0.0);\n    spark_max_age[idx] = fixed(spark_life);\n    spark_count = spark_count + 1;\n  }\n  \n  for (int i = 0; i < 8; i = i + 1) {\n    if (i < spark_count) {\n      spark_age[i] = spark_age[i] + fixed(dt);\n      spark_pos[i] = spark_pos[i] + spark_vel[i] * fixed(dt);\n      if (spark_age[i] > spark_max_age[i] || spark_pos[i] > fixed(1.0)) {\n        spark_count = spark_count - 1;\n        if (i < spark_count) {\n          spark_pos[i] = spark_pos[spark_count];\n          spark_vel[i] = spark_vel[spark_count];\n          spark_age[i] = spark_age[spark_count];\n          spark_max_age[i] = spark_max_age[spark_count];\n        }\n      }\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  fixed s = fixed(led.s);\n  fixed h = fixed(led.uv.y);\n  \n  fixed ember_wave = sin(h * fixed(12.0) + ph_ember) * fixed(0.5) + fixed(0.5);\n  fixed wind_wobble = sin(s * fixed(8.0) + ph_wind) * fixed(wind * 0.3);\n  fixed ember_phase = fract(s * fixed(3.0) - ph_ember + wind_wobble * fixed(0.2));\n  \n  fixed ember_intensity = ember_wave * (fixed(1.0) - ember_phase) * fixed(ember_brightness);\n  ember_intensity = ember_intensity * ember_intensity;\n  \n  vec3 c = base_color * float(ember_intensity);\n  \n  for (int i = 0; i < 8; i = i + 1) {\n    if (i < spark_count) {\n      fixed d = abs(s - spark_pos[i]);\n      if (d < fixed(0.08)) {\n        fixed life_frac = spark_age[i] / spark_max_age[i];\n        fixed spark_intensity = (fixed(1.0) - life_frac) * (fixed(1.0) - d * fixed(12.5));\n        spark_intensity = spark_intensity * spark_intensity * fixed(spark_brightness);\n        \n        fixed hue_shift = (fixed(1.0) - life_frac) * fixed(0.15);\n        fixed sat = fixed(1.0) - life_frac * fixed(0.5);\n        fixed hue = fixed(0.08) + hue_shift;\n        return c + spark_col * float(spark_intensity);\n      }\n    }\n  }\n  \n  return clamp(c, vec3(0.0), vec3(1.0));\n}"
+    },
+    {
+      "round": 2,
+      "status": 200,
+      "seconds": 15.5,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 8712,
+        "completion_tokens": 1041,
+        "total_tokens": 9753,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4384,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 78,
+          "col": 55,
+          "msg": "a fixed colour (rgb()/rgb8()/hsv2rgb()/palette on fixed args) must be returned directly from shade()"
+        }
+      ],
+      "source": "uniform float ember_speed : 0.05 .. 2.0 = 0.4;\nuniform float spark_rate : 0.0 .. 3.0 = 0.6;\nuniform float spark_life : 0.05 .. 0.5 = 0.18;\nuniform float ember_brightness : 0.1 .. 1.0 = 0.6;\nuniform float spark_brightness : 0.2 .. 1.5 = 1.0;\nuniform float wind : 0.0 .. 1.0 = 0.15;\nuniform vec3 base_color : color = 1.0, 0.35, 0.08;\n\nstate fixed ph_ember;\nstate fixed ph_wind;\nstate int spark_count;\nstate fixed spark_pos[8];\nstate fixed spark_vel[8];\nstate fixed spark_age[8];\nstate fixed spark_max_age[8];\nstate bool inited;\n\nvoid update() {\n  ph_ember = fract(ph_ember + fixed(dt * ember_speed));\n  ph_wind = fract(ph_wind + fixed(dt * wind * 0.3));\n  \n  if (!inited) {\n    spark_count = 0;\n    inited = true;\n  }\n  \n  float spawn_chance = dt * spark_rate * 8.0;\n  if (hash(float(frame)) < spawn_chance && spark_count < 8) {\n    int idx = spark_count;\n    spark_pos[idx] = fixed(0.0);\n    spark_vel[idx] = fixed(2.0 + hash(float(frame) * 1.7) * 4.0);\n    spark_age[idx] = fixed(0.0);\n    spark_max_age[idx] = fixed(spark_life);\n    spark_count = spark_count + 1;\n  }\n  \n  for (int i = 0; i < 8; i = i + 1) {\n    if (i < spark_count) {\n      spark_age[i] = spark_age[i] + fixed(dt);\n      spark_pos[i] = spark_pos[i] + spark_vel[i] * fixed(dt);\n      if (spark_age[i] > spark_max_age[i] || spark_pos[i] > fixed(1.0)) {\n        spark_count = spark_count - 1;\n        if (i < spark_count) {\n          spark_pos[i] = spark_pos[spark_count];\n          spark_vel[i] = spark_vel[spark_count];\n          spark_age[i] = spark_age[spark_count];\n          spark_max_age[i] = spark_max_age[spark_count];\n        }\n      }\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  fixed s = fixed(led.s);\n  fixed h = fixed(led.uv.y);\n  \n  fixed ember_wave = sin(h * fixed(12.0) + ph_ember) * fixed(0.5) + fixed(0.5);\n  fixed wind_wobble = sin(s * fixed(8.0) + ph_wind) * fixed(wind * 0.3);\n  fixed ember_phase = fract(s * fixed(3.0) - ph_ember + wind_wobble * fixed(0.2));\n  \n  fixed ember_intensity = ember_wave * (fixed(1.0) - ember_phase) * fixed(ember_brightness);\n  ember_intensity = ember_intensity * ember_intensity;\n  \n  vec3 c = base_color * float(ember_intensity);\n  \n  for (int i = 0; i < 8; i = i + 1) {\n    if (i < spark_count) {\n      fixed d = abs(s - spark_pos[i]);\n      if (d < fixed(0.08)) {\n        fixed life_frac = spark_age[i] / spark_max_age[i];\n        fixed spark_intensity = (fixed(1.0) - life_frac) * (fixed(1.0) - d * fixed(12.5));\n        spark_intensity = spark_intensity * spark_intensity * fixed(spark_brightness);\n        \n        fixed hue_shift = (fixed(1.0) - life_frac) * fixed(0.15);\n        fixed sat = fixed(1.0) - life_frac * fixed(0.5);\n        fixed hue = fixed(0.08) + hue_shift;\n        vec3 spark_col = hsv2rgb(hue, sat, fixed(1.0));\n        return c + spark_col * float(spark_intensity);\n      }\n    }\n  }\n  \n  return clamp(c, vec3(0.0), vec3(1.0));\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": null,
+  "outcome": "compile_failed",
+  "prompt": "p02",
+  "reasoning": "off"
+}

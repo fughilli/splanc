@@ -1,0 +1,133 @@
+{
+  "model": "cohere/north-mini-code:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 3.24,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 5864,
+        "completion_tokens": 775,
+        "total_tokens": 6639,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Cohere",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 6,
+          "col": 22,
+          "msg": "expected '='"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 5.0 = 2.0;\nuniform float density : 0.0 .. 1.0 = 0.3;\nuniform float lifetime : 0.0 .. 10.0 = 8.0;\nuniform float width : 0.0 .. 1.0 = 0.5;\nuniform vec3 tint : color = 0.0, 1.0, 0.0;\nuniform bool trail : toggle = true;\n\nstate fixed ph;\nstate fixed drift;\nstate fixed densityState;\nstate fixed lifetimeState;\nstate fixed widthState;\nbuffer fixed8 rain[500]; // each LED holds rain intensity 0..1\n\nvoid update() {\n  ph = fract(ph + fixed(dt * speed * 0.2)); // phase for sine wave\n  drift = drift + fixed(dt * speed * 0.05); // steady drift offset\n  densityState = fixed(density);\n  lifetimeState = fixed(lifetime);\n  widthState = fixed(width);\n  // initialize rain buffer on first frame\n  if (frame == 0) {\n    for (int i = 0; i < 500; i = i + 1) {\n      rain[i] = fixed8(densityState);\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  fixed idx = fixed(led.idx);\n  fixed s = fixed(led.s);\n  fixed y = fixed(led.pos.y);\n  fixed uvx = fixed(led.uv.x);\n  fixed uvz = fixed(led.uv.y);\n\n  // rain intensity per LED from buffer\n  fixed rainVal = fixed(rain[led.idx]);\n  // decay rain over time\n  rainVal = rainVal * fixed(0.995);\n  // new rain spawns at top with density\n  if (rainVal < densityState) {\n    rainVal = rainVal + fixed(0.05);\n  }\n  // store back\n  rain[led.idx] = fixed8(rainVal);\n\n  // horizontal wave motion\n  fixed wave = sin(fixed(2.0) * (s + ph + drift * uvx) + ph) * fixed(0.5) + fixed(0.5);\n  // vertical fall factor based on y and lifetime\n  fixed fall = exp((fixed(1.0) - y) * fixed(1.0 / lifetimeState));\n  // combine into brightness\n  fixed bright = rainVal * wave * fall;\n  // width ramp\n  bright = clamp((bright - (fixed(1.0) - widthState)) * fixed(20.0), fixed(0.0), fixed(1.0));\n\n  // color: hsv based on brightness and phase\n  fixed hue = fract(ph + wave * fixed(0.3));\n  vec3 col = hsv2rgb(hue, fixed(0.9), bright);\n  // apply tint\n  col = col * tint;\n\n  // optional trail effect: blend with previous buffer value\n  if (trail) {\n    fixed8 prev = rain[led.idx];\n    fixed8 blend = fixed8(col.r * 0.7 + prev.r * 0.3);\n    col.r = blend;\n    col.g = blend;\n    col.b = blend;\n  }\n\n  return col;\n}"
+    },
+    {
+      "round": 1,
+      "status": 200,
+      "seconds": 2.68,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 5891,
+        "completion_tokens": 770,
+        "total_tokens": 6661,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Cohere",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 6,
+          "col": 22,
+          "msg": "expected '='"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 5.0 = 2.0;\nuniform float density : 0.0 .. 1.0 = 0.3;\nuniform float lifetime : 0.0 .. 10.0 = 8.0;\nuniform float width : 0.0 .. 1.0 = 0.5;\nuniform vec3 tint : color = 0.0, 1.0, 0.0;\nuniform bool trail : toggle = true;\n\nstate fixed ph;\nstate fixed drift;\nstate fixed densityState;\nstate fixed lifetimeState;\nstate fixed widthState;\nbuffer fixed8 rain[500]; // each LED holds rain intensity 0..1\n\nvoid update() {\n  ph = fract(ph + fixed(dt * speed * 0.2)); // phase for sine wave\n  drift = drift + fixed(dt * speed * 0.05); // steady drift offset\n  densityState = fixed(density);\n  lifetimeState = fixed(lifetime);\n  widthState = fixed(width);\n  // initialize rain buffer on first frame\n  if (frame == 0) {\n    for (int i = 0; i < 500; i = i + 1) {\n      rain[i] = fixed8(densityState);\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  fixed idx = fixed(led.idx);\n  fixed s = fixed(led.s);\n  fixed y = fixed(led.pos.y);\n  fixed uvx = fixed(led.uv.x);\n  fixed uvz = fixed(led.uv.y);\n\n  // rain intensity per LED from buffer\n  fixed rainVal = fixed(rain[led.idx]);\n  // decay rain over time\n  rainVal = rainVal * fixed(0.995);\n  // new rain spawns at top with density\n  if (rainVal < densityState) {\n    rainVal = rainVal + fixed(0.05);\n  }\n  // store back\n  rain[led.idx] = fixed8(rainVal);\n\n  // horizontal wave motion\n  fixed wave = sin(fixed(2.0) * (s + ph + drift * uvx) + ph) * fixed(0.5) + fixed(0.5);\n  // vertical fall factor based on y and lifetime\n  fixed fall = exp((fixed(1.0) - y) * fixed(1.0 / lifetimeState));\n  // combine into brightness\n  fixed bright = rainVal * wave * fall;\n  // width ramp\n  bright = clamp((bright - (fixed(1.0) - widthState)) * fixed(20.0), fixed(0.0), fixed(1.0));\n\n  // color: hsv based on brightness and phase\n  fixed hue = fract(ph + wave * fixed(0.3));\n  vec3 col = hsv2rgb(hue, fixed(0.9), bright);\n  // apply tint\n  col = col * tint;\n\n  // optional trail effect: blend with previous buffer value\n  if (trail) {\n    fixed8 prev = rain[led.idx];\n    fixed8 blend = fixed8(col.r * 0.7 + prev.r * 0.3);\n    col.r = blend;\n    col.g = blend;\n    col.b = blend;\n  }\n\n  return col;\n}"
+    },
+    {
+      "round": 2,
+      "status": 200,
+      "seconds": 2.58,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 5918,
+        "completion_tokens": 770,
+        "total_tokens": 6688,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Cohere",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 6,
+          "col": 22,
+          "msg": "expected '='"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 5.0 = 2.0;\nuniform float density : 0.0 .. 1.0 = 0.3;\nuniform float lifetime : 0.0 .. 10.0 = 8.0;\nuniform float width : 0.0 .. 1.0 = 0.5;\nuniform vec3 tint : color = 0.0, 1.0, 0.0;\nuniform bool trail : toggle = true;\n\nstate fixed ph;\nstate fixed drift;\nstate fixed densityState;\nstate fixed lifetimeState;\nstate fixed widthState;\nbuffer fixed8 rain[500]; // each LED holds rain intensity 0..1\n\nvoid update() {\n  ph = fract(ph + fixed(dt * speed * 0.2)); // phase for sine wave\n  drift = drift + fixed(dt * speed * 0.05); // steady drift offset\n  densityState = fixed(density);\n  lifetimeState = fixed(lifetime);\n  widthState = fixed(width);\n  // initialize rain buffer on first frame\n  if (frame == 0) {\n    for (int i = 0; i < 500; i = i + 1) {\n      rain[i] = fixed8(densityState);\n    }\n  }\n}\n\nvec3 shade(Led led) {\n  fixed idx = fixed(led.idx);\n  fixed s = fixed(led.s);\n  fixed y = fixed(led.pos.y);\n  fixed uvx = fixed(led.uv.x);\n  fixed uvz = fixed(led.uv.y);\n\n  // rain intensity per LED from buffer\n  fixed rainVal = fixed(rain[led.idx]);\n  // decay rain over time\n  rainVal = rainVal * fixed(0.995);\n  // new rain spawns at top with density\n  if (rainVal < densityState) {\n    rainVal = rainVal + fixed(0.05);\n  }\n  // store back\n  rain[led.idx] = fixed8(rainVal);\n\n  // horizontal wave motion\n  fixed wave = sin(fixed(2.0) * (s + ph + drift * uvx) + ph) * fixed(0.5) + fixed(0.5);\n  // vertical fall factor based on y and lifetime\n  fixed fall = exp((fixed(1.0) - y) * fixed(1.0 / lifetimeState));\n  // combine into brightness\n  fixed bright = rainVal * wave * fall;\n  // width ramp\n  bright = clamp((bright - (fixed(1.0) - widthState)) * fixed(20.0), fixed(0.0), fixed(1.0));\n\n  // color: hsv based on brightness and phase\n  fixed hue = fract(ph + wave * fixed(0.3));\n  vec3 col = hsv2rgb(hue, fixed(0.9), bright);\n  // apply tint\n  col = col * tint;\n\n  // optional trail effect: blend with previous buffer value\n  if (trail) {\n    fixed8 prev = rain[led.idx];\n    fixed8 blend = fixed8(col.r * 0.7 + prev.r * 0.3);\n    col.r = blend;\n    col.g = blend;\n    col.b = blend;\n  }\n\n  return col;\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": null,
+  "outcome": "compile_failed",
+  "prompt": "p10",
+  "reasoning": "off"
+}

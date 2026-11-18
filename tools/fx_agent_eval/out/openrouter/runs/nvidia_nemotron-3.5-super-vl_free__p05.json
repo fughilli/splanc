@@ -1,0 +1,45 @@
+{
+  "model": "nvidia/nemotron-3.5-super-vl:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 2.78,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6538,
+        "completion_tokens": 367,
+        "total_tokens": 6905,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4336,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float intensity : 0.0 .. 2.0 = 1.0;\nuniform vec3 tint : color = 1.0, 0.15, 0.05;\n\nstate float ph;\nstate float tail;\n\nvoid update() {\n  ph = fract(ph + dt * speed * 1.25);\n  tail = 0.30 + 0.05 * sin(ph * 6.2832);\n}\n\nvec3 shade(Led led) {\n  fixed r2 = fixed(led.pos.x) * fixed(led.pos.x) + fixed(led.pos.z) * fixed(led.pos.z);\n  fixed h2 = fixed(led.pos.y) * fixed(led.pos.y);\n  fixed d2 = r2 + h2;\n  fixed rmax2 = fixed(0.0064 + 0.0225);   // 0.08^2 + 0.15^2\n  fixed norm = d2 / rmax2;                // 0 at centre, 1 at rim\n  fixed phase = fract(fixed(ph) - norm);\n  fixed pulse = clamp(fixed(1.0) - phase / fixed(tail), fixed(0.0), fixed(1.0));\n  pulse = pulse * pulse;\n  return hsv2rgb(fixed(0.0), fixed(0.9), pulse * fixed(intensity));\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p05",
+  "reasoning": "off"
+}

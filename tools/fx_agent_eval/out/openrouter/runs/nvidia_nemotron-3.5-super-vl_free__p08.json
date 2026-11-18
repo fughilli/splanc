@@ -1,0 +1,45 @@
+{
+  "model": "nvidia/nemotron-3.5-super-vl:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 5.27,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6535,
+        "completion_tokens": 651,
+        "total_tokens": 7186,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4336,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float speed : 0.0 .. 3.0 = 1.0;\nuniform float count : 1.0 .. 6.0 = 3.0;\nuniform float size  : 0.05 .. 0.5 = 0.25;\nuniform vec3 col1 : color = 1.0, 0.2, 0.1;\nuniform vec3 col2 : color = 0.1, 0.3, 1.0;\n\nstate fixed ph;\nstate fixed ang[6];\nstate fixed rad[6];\nstate fixed hgt[6];\nstate bool inited;\n\nvoid update() {\n  ph = fract(ph + fixed(dt * speed * fixed(0.15)));\n  if (!inited) {\n    for (int i = 0; i < 6; i = i + 1) {\n      ang[i] = fixed(hash(float(i) * fixed(7.0)));\n      rad[i] = fixed(0.08) * fixed(0.6) + fixed(hash(float(i) * fixed(11.0))) * fixed(0.08) * fixed(0.3);\n      hgt[i] = fixed(hash(float(i) * fixed(13.0))) * fixed(0.30);\n    }\n    inited = true;\n  }\n}\n\nvec3 shade(Led led) {\n  fixed p = fixed(led.pos.y) / fixed(0.30);\n  fixed s = fixed(led.s);\n  vec3 c = vec3(0.0, 0.0, 0.0);\n  fixed n = fixed(count);\n  for (int i = 0; i < 6; i = i + 1) {\n    fixed dx = fixed(led.pos.x) - sin(ang[i] + ph * fixed(2.0)) * rad[i];\n    fixed dy = fixed(led.pos.z) - cos(ang[i] + ph * fixed(2.0)) * rad[i];\n    fixed d2 = dx * dx + dy * dy;\n    fixed rr = rad[i] * rad[i];\n    fixed g = clamp(fixed(1.0) - d2 / rr, fixed(0.0), fixed(1.0));\n    fixed lift = fixed(0.5) + fixed(0.5) * sin(p * fixed(count * 2.0) + ph + fixed(i));\n    fixed yy = abs(p - hgt[i]) * fixed(2.0) * fixed(size);\n    fixed gv = clamp(fixed(1.0) - yy, fixed(0.0), fixed(1.0));\n    fixed m = g * gv * lift;\n    float t = float(m);\n    c = c + mix(col1, col2, t) * t;\n  }\n  return c;\n}\n"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p08",
+  "reasoning": "off"
+}

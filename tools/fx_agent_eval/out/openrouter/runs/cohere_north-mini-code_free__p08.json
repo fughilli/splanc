@@ -1,0 +1,86 @@
+{
+  "model": "cohere/north-mini-code:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 4.75,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 5861,
+        "completion_tokens": 659,
+        "total_tokens": 6520,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Cohere",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 50,
+          "col": 31,
+          "msg": "a fixed colour (rgb()/rgb8()/hsv2rgb()/palette on fixed args) must be returned directly from shade()"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float radius : 0.05 .. 0.3 = 0.1;\nuniform float height : 0.1 .. 0.5 = 0.3;\nuniform float blobs : 0.0 .. 5.0 = 2.0;\nuniform float spread : 0.0 .. 1.0 = 0.5;\nuniform vec3 tint : color = 1.0, 0.2, 0.0;\nuniform float intensity : 0.0 .. 2.0 = 1.0;\nuniform bool invert = false;\n\nstate fixed ph;\nstate fixed drift;\n\nvoid update() {\n  ph = fract(ph + fixed(dt * speed * 0.5));\n  drift = drift + fixed(dt * speed * 0.3);\n}\n\nvec3 shade(Led led) {\n  fixed s = fixed(led.s);\n  fixed x = fixed(led.pos.x);\n  fixed z = fixed(led.pos.z);\n  fixed y = fixed(led.pos.y);\n\n  // radial distance from central axis (0..1)\n  fixed r = sqrt(fixed(x*x + fixed(z*z)));\n  // normalize into a pseudo 2D plane\n  fixed nx = x / max(r, fixed(0.01));\n  fixed nz = z / max(r, fixed(0.01));\n\n  // generate blob pattern using fixed-point noise-like LUTs\n  fixed hash1 = hash(float(led.idx));\n  fixed hash2 = hash(float(led.idx) * fixed(3.2));\n  fixed n = mix(hash1, hash2, fixed(0.5));\n\n  // blobs: offset from blob count, then a smooth bump\n  fixed b = fract(s * fixed(blobs) + ph);\n  fixed bump = smoothstep(fixed(0.0), fixed(0.5), fixed(1.0) - abs(fixed(2.0) * b - fixed(1.0)));\n  bump = bump * fixed(spread);\n\n  // combine geometry with blob field\n  fixed geom = exp(fixed(-r * fixed(3.0))) * fixed(1.0 + fixed(0.2) * sin(fixed(led.uv.y) * fixed(6.2832) + ph));\n\n  // final intensity per LED\n  fixed val = bump * geom;\n\n  // hsv to rgb, all fixed args use the integer path\n  fixed h = fract(r * fixed(3.0) + drift);\n  fixed s_ = fixed(0.9);\n  fixed v = clamp(val * fixed(intensity), fixed(0.0), fixed(1.0));\n  vec3 col = hsv2rgb(h, s_, v);\n  return col * tint;\n}"
+    },
+    {
+      "round": 1,
+      "status": 200,
+      "seconds": 2.76,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 5912,
+        "completion_tokens": 564,
+        "total_tokens": 6476,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Cohere",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float radius : 0.05 .. 0.3 = 0.1;\nuniform float height : 0.1 .. 0.5 = 0.3;\nuniform float blobs : 0.0 .. 5.0 = 2.0;\nuniform float spread : 0.0 .. 1.0 = 0.5;\nuniform vec3 tint : color = 1.0, 0.2, 0.0;\nuniform float intensity : 0.0 .. 2.0 = 0.0;\nuniform bool invert = false;\n\nstate fixed ph;\nstate fixed drift;\n\nvoid update() {\n  ph = fract(ph + fixed(dt * speed * 0.5));\n  drift = drift + fixed(dt * speed * 0.3);\n}\n\nvec3 shade(Led led) {\n  fixed s = fixed(led.s);\n  fixed x = fixed(led.pos.x);\n  fixed z = fixed(led.pos.z);\n  fixed y = fixed(led.pos.y);\n\n  fixed r = sqrt(fixed(x*x + fixed(z*z)));\n  fixed nx = x / max(r, fixed(0.01));\n  fixed nz = z / max(r, fixed(0.01));\n\n  fixed hash1 = hash(float(led.idx));\n  fixed hash2 = hash(float(led.idx) * fixed(3.2));\n  fixed n = mix(hash1, hash2, fixed(0.5));\n\n  fixed b = fract(s * fixed(blobs) + ph);\n  fixed bump = smoothstep(fixed(0.0), fixed(0.5), fixed(1.0) - abs(fixed(2.0) * b - fixed(1.0)));\n  bump = bump * fixed(spread);\n\n  fixed geom = exp(fixed(-r * fixed(3.0))) * fixed(1.0 + fixed(0.2) * sin(fixed(led.uv.y) * fixed(6.2832) + ph));\n\n  fixed val = bump * geom;\n\n  fixed h = fract(r * fixed(3.0) + drift);\n  fixed s_ = fixed(0.9);\n  fixed v = clamp(val * fixed(intensity), fixed(0.0), fixed(1.0));\n  return hsv2rgb(h, s_, v);\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 1,
+  "outcome": "compiled",
+  "prompt": "p08",
+  "reasoning": "off"
+}

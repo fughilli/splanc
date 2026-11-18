@@ -1,0 +1,133 @@
+{
+  "model": "cohere/north-mini-code:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 1.64,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 5863,
+        "completion_tokens": 308,
+        "total_tokens": 6171,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Cohere",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 16,
+          "col": 44,
+          "msg": "a fixed colour (rgb()/rgb8()/hsv2rgb()/palette on fixed args) must be returned directly from shade()"
+        }
+      ],
+      "source": "uniform float blink_rate : 0.0 .. 5.0 = 2.0;\nuniform float spread : 0.0 .. 1.0 = 0.5;\nuniform float brightness : 0.0 .. 2.0 = 1.0;\nuniform bool inverse = false;\nstate float ph;\nvoid update() {\n  ph = fract(ph + dt * blink_rate);\n}\nvec3 shade(Led led) {\n  fixed s = fixed(led.s);\n  fixed phase = atan2(fixed(led.pos.z), fixed(led.pos.x));\n  fixed r = sqrt(fixed(led.pos.x * led.pos.x + fixed(led.pos.z * led.pos.z)));\n  fixed h = mix(fixed(0.0), fixed(1.0), fract(phase / (fixed(6.28318))));\n  fixed v = mix(fixed(0.0), fixed(1.0), fract(r / fixed(spread)));\n  fixed a = sin(fixed(ph)) * fixed(0.5) + fixed(0.5);\n  fixed col = hsv2rgb(h, fixed(0.9), v * a);\n  if (inverse) {\n    col = fixed(1.0) - col;\n  }\n  return vec3(col * fixed(brightness));\n}"
+    },
+    {
+      "round": 1,
+      "status": 200,
+      "seconds": 1.03,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 5914,
+        "completion_tokens": 304,
+        "total_tokens": 6218,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Cohere",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 16,
+          "col": 44,
+          "msg": "a fixed colour (rgb()/rgb8()/hsv2rgb()/palette on fixed args) must be returned directly from shade()"
+        }
+      ],
+      "source": "uniform float blink_rate : 0.0 .. 5.0 = 2.0;\nuniform float spread : 0.0 .. 1.0 = 0.5;\nuniform float brightness : 0.0 .. 2.0 = 1.0;\nuniform bool inverse = false;\nstate float ph;\nvoid update() {\n  ph = fract(ph + dt * blink_rate);\n}\nvec3 shade(Led led) {\n  fixed s = fixed(led.s);\n  fixed phase = atan2(fixed(led.pos.z), fixed(led.pos.x));\n  fixed r = sqrt(fixed(led.pos.x * led.pos.x + fixed(led.pos.z * led.pos.z)));\n  fixed h = mix(fixed(0.0), fixed(1.0), fract(phase / (fixed(6.28318))));\n  fixed v = mix(fixed(0.0), fixed(1.0), fract(r / fixed(spread)));\n  fixed a = sin(fixed(ph)) * fixed(0.5) + fixed(0.5);\n  fixed col = hsv2rgb(h, fixed(0.9), v * a);\n  if (inverse) {\n    col = fixed(1.0) - col;\n  }\n  return vec3(col * fixed(brightness));\n}"
+    },
+    {
+      "round": 2,
+      "status": 200,
+      "seconds": 1.7,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 5965,
+        "completion_tokens": 304,
+        "total_tokens": 6269,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Cohere",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 16,
+          "col": 44,
+          "msg": "a fixed colour (rgb()/rgb8()/hsv2rgb()/palette on fixed args) must be returned directly from shade()"
+        }
+      ],
+      "source": "uniform float blink_rate : 0.0 .. 5.0 = 2.0;\nuniform float spread : 0.0 .. 1.0 = 0.5;\nuniform float brightness : 0.0 .. 2.0 = 1.0;\nuniform bool inverse = false;\nstate float ph;\nvoid update() {\n  ph = fract(ph + dt * blink_rate);\n}\nvec3 shade(Led led) {\n  fixed s = fixed(led.s);\n  fixed phase = atan2(fixed(led.pos.z), fixed(led.pos.x));\n  fixed r = sqrt(fixed(led.pos.x * led.pos.x + fixed(led.pos.z * led.pos.z)));\n  fixed h = mix(fixed(0.0), fixed(1.0), fract(phase / (fixed(6.28318))));\n  fixed v = mix(fixed(0.0), fixed(1.0), fract(r / fixed(spread)));\n  fixed a = sin(fixed(ph)) * fixed(0.5) + fixed(0.5);\n  fixed col = hsv2rgb(h, fixed(0.9), v * a);\n  if (inverse) {\n    col = fixed(1.0) - col;\n  }\n  return vec3(col * fixed(brightness));\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": null,
+  "outcome": "compile_failed",
+  "prompt": "p07",
+  "reasoning": "off"
+}

@@ -1,0 +1,70 @@
+{
+  "model": "google/gemma-4-26b-a4b-it:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 10.29,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6470,
+        "completion_tokens": 453,
+        "total_tokens": 6923,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Google AI Studio",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 35,
+          "col": 34,
+          "msg": "type mismatch: Bool vs Vec3"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 10.0 = 3.0;\nuniform float width : 0.05 .. 0.5 = 0.2;\nuniform vec3 red : color = 1.0, 0.0, 0.0;\nuniform vec3 blue : color = 0.0, 0.0, 1.0;\n\nstate fixed ph;\n\nvoid update() {\n    ph = fract(ph + fixed(dt * speed));\n}\n\nvec3 shade(Led led) {\n    // led.uv.x is roughly the angle around the cylinder (0..1)\n    // We want a spinning beam.\n    // Use the angle from UV.x. \n    // In a helix, UV.x maps to the rotation.\n    \n    fixed angle = fixed(led.uv.x);\n    fixed beam_center = ph;\n    \n    // Distance in circular space\n    fixed diff = abs(angle - beam_center);\n    // Handle wrap-around for the circle\n    if (diff > fixed(0.5)) {\n        diff = fixed(1.0) - diff;\n    }\n    \n    // Create a sharp beam using a clamp-based ramp (fast replacement for smoothstep)\n    // width is 0..1 relative to the circle\n    fixed mask = clamp((fixed(width) - diff) * fixed(10.0), fixed(0.0), fixed(1.0));\n    \n    // Alternate red and blue based on the phase\n    // If ph is in [0, 0.5), use red. If [0.5, 1.0), use blue.\n    // We'll use a hard switch to make it look like police lights.\n    vec3 col = (ph < fixed(0.5)) ? red : blue;\n    \n    return col * float(mask);\n}\n"
+    },
+    {
+      "round": 1,
+      "status": 429,
+      "seconds": 0.19,
+      "error": {
+        "code": 429,
+        "message": "Provider returned error",
+        "metadata": {
+          "raw": "google/gemma-4-26b-a4b-it:free is temporarily rate-limited upstream. Please retry shortly, or add your own provider key to use your own limits: https://openrouter.ai/workspaces/default/byok",
+          "provider_name": "Google AI Studio",
+          "is_byok": false,
+          "provider_error_code": "429",
+          "limit_source": "upstream_provider_shared_pool",
+          "remedy_hint": "Retry shortly, add your own provider key to use your own limits (https://openrouter.ai/workspaces/default/byok), or route to another provider with provider routing: https://openrouter.ai/docs/features/provider-routing."
+        },
+        "retry_after": null,
+        "ratelimit_reset": null
+      }
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": null,
+  "outcome": "http_error",
+  "prompt": "p11",
+  "reasoning": "off"
+}

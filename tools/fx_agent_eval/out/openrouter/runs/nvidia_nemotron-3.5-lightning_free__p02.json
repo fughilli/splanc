@@ -1,0 +1,133 @@
+{
+  "model": "nvidia/nemotron-3.5-lightning:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 2.51,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6539,
+        "completion_tokens": 415,
+        "total_tokens": 6954,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 6336,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 22,
+          "col": 57,
+          "msg": "a fixed colour (rgb()/rgb8()/hsv2rgb()/palette on fixed args) must be returned directly from shade()"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float spark_chance : 0.0 .. 0.1 = 0.005;\nuniform vec3 ember_tint : color = 1.0, 0.6, 0.3;\nuniform vec3 spark_tint : color = 1.0, 0.9, 0.6;\nstate fixed ph;\nstate fixed sparks_per_frame;\nvoid update() {\n  ph = fract(ph + fixed(dt) * fixed(speed));\n  sparks_per_frame = fixed(spark_chance) * fixed(led.count);\n}\nvec3 shade(Led led) {\n  fixed d = fixed(led.dist);\n  fixed h = fixed(led.pos.y);\n  fixed r = fixed(0.08);\n  fixed h0 = fixed(0.30);\n  // radial phase around cylinder axis\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  // vertical position phase\n  fixed v = h / h0;\n  // ember colour based on height (hotter at bottom)\n  fixed ember_h = fixed(1.0) - v;\n  vec3 c = hsv2rgb(fract(ang + ph), ember_h, fixed(1.0));\n  // occasional spark\n  if (fract(hash(fixed(led.idx)) * fixed(3.7)) < sparks_per_frame) {\n    // spark: bright white, short-lived\n    c = hsv2rgb(fract(hash(fixed(led.idx)) * fixed(7.3)), fixed(1.0), fixed(1.0));\n  }\n  return c;\n}"
+    },
+    {
+      "round": 1,
+      "status": 200,
+      "seconds": 2.64,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 7017,
+        "completion_tokens": 476,
+        "total_tokens": 7493,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 6336,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 25,
+          "col": 45,
+          "msg": "a fixed colour (rgb()/rgb8()/hsv2rgb()/palette on fixed args) must be returned directly from shade()"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float spark_chance : 0.0 .. 0.1 = 0.005;\nuniform vec3 ember_tint : color = 1.0, 0.6, 0.3;\nuniform vec3 spark_tint : color = 1.0, 0.9, 0.6;\nstate fixed ph;\nstate fixed sparks_per_frame;\nvoid update() {\n  ph = fract(ph + fixed(dt) * fixed(speed));\n  sparks_per_frame = fixed(spark_chance) * fixed(led.count);\n}\nvec3 shade(Led led) {\n  fixed d = fixed(led.dist);\n  fixed h = fixed(led.pos.y);\n  fixed r = fixed(0.08);\n  fixed h0 = fixed(0.30);\n  // radial phase around cylinder axis\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  // vertical position phase\n  fixed v = h / h0;\n  // ember colour based on height (hotter at bottom)\n  fixed ember_h = fixed(1.0) - v;\n  // compute hue from ang + ph\n  fixed hue = fract(ang + ph);\n  // use hsv2rgb with all fixed args \u2014 returns a fixed vec3, must be returned directly\n  vec3 c = hsv2rgb(hue, ember_h, fixed(1.0));\n  // occasional spark\n  if (fract(hash(fixed(led.idx)) * fixed(3.7)) < sparks_per_frame) {\n    // spark: bright white\n    vec3 spark = hsv2rgb(fract(hash(fixed(led.idx)) * fixed(7.3)), fixed(1.0), fixed(1.0));\n    // mix with ember, prefer spark colour\n    c = mix(c, spark, fixed(1.0));\n  }\n  return c;\n}"
+    },
+    {
+      "round": 2,
+      "status": 200,
+      "seconds": 2.8,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 7556,
+        "completion_tokens": 454,
+        "total_tokens": 8010,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 6336,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 24,
+          "col": 45,
+          "msg": "a fixed colour (rgb()/rgb8()/hsv2rgb()/palette on fixed args) must be returned directly from shade()"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float spark_chance : 0.0 .. 0.1 = 0.005;\nuniform vec3 ember_tint : color = 1.0, 0.6, 0.3;\nuniform vec3 spark_tint : color = 1.0, 0.9, 0.6;\nstate fixed ph;\nstate fixed sparks_per_frame;\nvoid update() {\n  ph = fract(ph + fixed(dt) * fixed(speed));\n  sparks_per_frame = fixed(spark_chance) * fixed(led.count);\n}\nvec3 shade(Led led) {\n  fixed d = fixed(led.dist);\n  fixed h = fixed(led.pos.y);\n  fixed h0 = fixed(0.30);\n  // radial phase around cylinder axis\n  fixed ang = atan2(fixed(led.pos.z), fixed(led.pos.x)) + fixed(0.5);\n  // vertical position phase\n  fixed v = h / h0;\n  // ember colour based on height (hotter at bottom)\n  fixed ember_h = fixed(1.0) - v;\n  // compute hue from ang + ph\n  fixed hue = fract(ang + ph);\n  // all-fixed hsv2rgb must be returned directly\n  vec3 c = hsv2rgb(hue, ember_h, fixed(1.0));\n  // occasional spark\n  if (fract(hash(fixed(led.idx)) * fixed(3.7)) < sparks_per_frame) {\n    // spark: bright white \u2014 all-fixed hsv2rgb returns fixed3, mix with fixed3\n    vec3 spark = hsv2rgb(fract(hash(fixed(led.idx)) * fixed(7.3)), fixed(1.0), fixed(1.0));\n    c = mix(c, spark, fixed(0.5));\n  }\n  return c;\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": null,
+  "outcome": "compile_failed",
+  "prompt": "p02",
+  "reasoning": "off"
+}

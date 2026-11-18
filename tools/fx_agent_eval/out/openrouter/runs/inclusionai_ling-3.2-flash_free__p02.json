@@ -1,0 +1,133 @@
+{
+  "model": "inclusionai/ling-3.2-flash:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 18.75,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6586,
+        "completion_tokens": 1129,
+        "total_tokens": 7715,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 14,
+          "col": 23,
+          "msg": "array length must be 1..255"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float intensity : 0.0 .. 2.0 = 1.0;\nuniform vec3 tint : color = 1.0, 0.45, 0.12;\n\nstate fixed phase;\nstate fixed flick;\nstate fixed sparkH;\nstate fixed sparkR;\nstate fixed sparkA;\nstate fixed sparkV;\nstate fixed sparkLife;\nstate fixed sparkAge;\nstate fixed sparkGlow;\nstate fixed8 heat[500];\nstate bool inited;\n\nvoid update() {\n  phase = fract(phase + fixed(dt) * fixed(0.15) * fixed(speed));\n  flick = fract(flick + fixed(dt) * fixed(speed));\n\n  fixed age = sparkAge + fixed(dt);\n  fixed life = sparkLife;\n  fixed g = fixed(0.0);\n  if (age < life) {\n    g = fixed(1.0) - age / life;\n    g = g * g;\n    sparkAge = age;\n  } else {\n    fixed r = hash(float(frame) * 0.173);\n    if (r < fixed(0.05)) {\n      sparkH = fixed(0.15) + fixed(0.85) * hash(float(frame) * 0.311 + 1.0);\n      sparkR = hash(float(frame) * 0.577 + 2.0);\n      sparkA = hash(float(frame) * 0.719 + 3.0);\n      sparkV = fixed(0.25) + fixed(0.55) * hash(float(frame) * 0.911 + 4.0);\n      sparkLife = fixed(0.4) + fixed(0.8) * hash(float(frame) * 0.417 + 5.0);\n      sparkAge = fixed(0.0);\n      g = fixed(1.0);\n    }\n  }\n  sparkGlow = g;\n\n  fixed hgt = fract(phase + fixed(0.5));\n  fixed rise = fixed(1.0) - hgt;\n  for (int i = 0; i < 500; i = i + 1) {\n    fixed y = fixed(led.pos.y) * fixed(3.333);\n    fixed n = hash(float(i) * 0.011 + float(frame >> 5) * 0.37);\n    fixed e = heat[i] * fixed(0.94);\n    e = e + n * n * fixed(0.06) * rise * (fixed(1.0) - y);\n    if (e > fixed(1.0)) e = fixed(1.0);\n    heat[i] = fixed8(e);\n  }\n}\n\nvec3 shade(Led led) {\n  fixed y = fixed(led.pos.y) * fixed(3.333);\n  fixed e = fixed(heat[led.idx]);\n\n  fixed fl = fixed(0.75) + fixed(0.25) * sin(flick * fixed(6.0) + fixed(led.idx) * fixed(0.7));\n  fixed ember = e * fl * (fixed(1.0) - y * fixed(0.5));\n  ember = ember * ember;\n\n  fixed h = sparkH;\n  fixed rr = sparkR;\n  fixed aa = sparkA;\n  fixed vy = sparkV;\n  fixed age = sparkAge;\n  fixed px = fixed(led.uv.x) - fixed(0.5);\n  fixed py = fixed(led.uv.y) - fixed(0.5);\n  fixed dx = px * cos(aa * fixed(6.2832)) + py * sin(aa * fixed(6.2832));\n  fixed dy = py * cos(aa * fixed(6.2832)) - px * sin(aa * fixed(6.2832));\n  fixed sx = dx - rr * fixed(0.5);\n  fixed sy = dy - (h - vy * age);\n  fixed sd = sx * sx + sy * sy;\n  fixed spark = sparkGlow * (fixed(1.0) - clamp(sd * fixed(400.0), fixed(0.0), fixed(1.0)));\n\n  fixed v = ember + spark;\n  if (v > fixed(1.0)) v = fixed(1.0);\n  vec3 col = hsv2rgb(tint.x + fixed(0.02) * (fixed(1.0) - y), fixed(0.85), v * fixed(intensity));\n  return col;\n}\n"
+    },
+    {
+      "round": 1,
+      "status": 200,
+      "seconds": 14.02,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 7766,
+        "completion_tokens": 1335,
+        "total_tokens": 9101,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 6464,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 15,
+          "col": 1,
+          "msg": "too many state variables (over the state slot budget)"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float intensity : 0.0 .. 2.0 = 1.0;\nuniform vec3 tint : color = 1.0, 0.45, 0.12;\n\nstate fixed phase;\nstate fixed flick;\nstate fixed sparkH;\nstate fixed sparkR;\nstate fixed sparkA;\nstate fixed sparkV;\nstate fixed sparkLife;\nstate fixed sparkAge;\nstate fixed sparkGlow;\nstate fixed8 heat0[250];\nstate fixed8 heat1[250];\nstate bool inited;\n\nvoid update() {\n  phase = fract(phase + fixed(dt) * fixed(0.15) * fixed(speed));\n  flick = fract(flick + fixed(dt) * fixed(speed));\n\n  fixed age = sparkAge + fixed(dt);\n  fixed life = sparkLife;\n  fixed g = fixed(0.0);\n  if (age < life) {\n    g = fixed(1.0) - age / life;\n    g = g * g;\n    sparkAge = age;\n  } else {\n    fixed r = hash(float(frame) * 0.173);\n    if (r < fixed(0.05)) {\n      sparkH = fixed(0.15) + fixed(0.85) * hash(float(frame) * 0.311 + 1.0);\n      sparkR = hash(float(frame) * 0.577 + 2.0);\n      sparkA = hash(float(frame) * 0.719 + 3.0);\n      sparkV = fixed(0.25) + fixed(0.55) * hash(float(frame) * 0.911 + 4.0);\n      sparkLife = fixed(0.4) + fixed(0.8) * hash(float(frame) * 0.417 + 5.0);\n      sparkAge = fixed(0.0);\n      g = fixed(1.0);\n    }\n  }\n  sparkGlow = g;\n\n  fixed hgt = fract(phase + fixed(0.5));\n  fixed rise = fixed(1.0) - hgt;\n  for (int i = 0; i < 250; i = i + 1) {\n    fixed y = fixed(led.pos.y) * fixed(3.333);\n    fixed n = hash(float(i) * 0.011 + float(frame >> 5) * 0.37);\n    fixed e = fixed(heat0[i]) * fixed(0.94);\n    e = e + n * n * fixed(0.06) * rise * (fixed(1.0) - y);\n    if (e > fixed(1.0)) e = fixed(1.0);\n    heat0[i] = fixed8(e);\n  }\n  for (int i = 0; i < 250; i = i + 1) {\n    fixed y = fixed(led.pos.y) * fixed(3.333);\n    fixed n = hash(float(i + 250) * 0.011 + float(frame >> 5) * 0.37);\n    fixed e = fixed(heat1[i]) * fixed(0.94);\n    e = e + n * n * fixed(0.06) * rise * (fixed(1.0) - y);\n    if (e > fixed(1.0)) e = fixed(1.0);\n    heat1[i] = fixed8(e);\n  }\n}\n\nvec3 shade(Led led) {\n  fixed y = fixed(led.pos.y) * fixed(3.333);\n  fixed e;\n  if (led.idx < 250) {\n    e = fixed(heat0[led.idx]);\n  } else {\n    e = fixed(heat1[led.idx - 250]);\n  }\n\n  fixed fl = fixed(0.75) + fixed(0.25) * sin(flick * fixed(6.0) + fixed(led.idx) * fixed(0.7));\n  fixed ember = e * fl * (fixed(1.0) - y * fixed(0.5));\n  ember = ember * ember;\n\n  fixed h = sparkH;\n  fixed rr = sparkR;\n  fixed aa = sparkA;\n  fixed vy = sparkV;\n  fixed age = sparkAge;\n  fixed px = fixed(led.uv.x) - fixed(0.5);\n  fixed py = fixed(led.uv.y) - fixed(0.5);\n  fixed ca = cos(aa * fixed(6.2832));\n  fixed sa = sin(aa * fixed(6.2832));\n  fixed dx = px * ca + py * sa;\n  fixed dy = py * ca - px * sa;\n  fixed sx = dx - rr * fixed(0.5);\n  fixed sy = dy - (h - vy * age);\n  fixed sd = sx * sx + sy * sy;\n  fixed spark = sparkGlow * (fixed(1.0) - clamp(sd * fixed(400.0), fixed(0.0), fixed(1.0)));\n\n  fixed v = ember + spark;\n  if (v > fixed(1.0)) v = fixed(1.0);\n  vec3 col = hsv2rgb(tint.x + fixed(0.02) * (fixed(1.0) - y), fixed(0.85), v * fixed(intensity));\n  return col;\n}\n"
+    },
+    {
+      "round": 2,
+      "status": 200,
+      "seconds": 29.85,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 9158,
+        "completion_tokens": 1335,
+        "total_tokens": 10493,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Ant Digital",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 15,
+          "col": 1,
+          "msg": "too many state variables (over the state slot budget)"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float intensity : 0.0 .. 2.0 = 1.0;\nuniform vec3 tint : color = 1.0, 0.45, 0.12;\n\nstate fixed phase;\nstate fixed flick;\nstate fixed sparkH;\nstate fixed sparkR;\nstate fixed sparkA;\nstate fixed sparkV;\nstate fixed sparkLife;\nstate fixed sparkAge;\nstate fixed sparkGlow;\nstate fixed8 heat0[250];\nstate fixed8 heat1[250];\nstate bool inited;\n\nvoid update() {\n  phase = fract(phase + fixed(dt) * fixed(0.15) * fixed(speed));\n  flick = fract(flick + fixed(dt) * fixed(speed));\n\n  fixed age = sparkAge + fixed(dt);\n  fixed life = sparkLife;\n  fixed g = fixed(0.0);\n  if (age < life) {\n    g = fixed(1.0) - age / life;\n    g = g * g;\n    sparkAge = age;\n  } else {\n    fixed r = hash(float(frame) * 0.173);\n    if (r < fixed(0.05)) {\n      sparkH = fixed(0.15) + fixed(0.85) * hash(float(frame) * 0.311 + 1.0);\n      sparkR = hash(float(frame) * 0.577 + 2.0);\n      sparkA = hash(float(frame) * 0.719 + 3.0);\n      sparkV = fixed(0.25) + fixed(0.55) * hash(float(frame) * 0.911 + 4.0);\n      sparkLife = fixed(0.4) + fixed(0.8) * hash(float(frame) * 0.417 + 5.0);\n      sparkAge = fixed(0.0);\n      g = fixed(1.0);\n    }\n  }\n  sparkGlow = g;\n\n  fixed hgt = fract(phase + fixed(0.5));\n  fixed rise = fixed(1.0) - hgt;\n  for (int i = 0; i < 250; i = i + 1) {\n    fixed y = fixed(led.pos.y) * fixed(3.333);\n    fixed n = hash(float(i) * 0.011 + float(frame >> 5) * 0.37);\n    fixed e = fixed(heat0[i]) * fixed(0.94);\n    e = e + n * n * fixed(0.06) * rise * (fixed(1.0) - y);\n    if (e > fixed(1.0)) e = fixed(1.0);\n    heat0[i] = fixed8(e);\n  }\n  for (int i = 0; i < 250; i = i + 1) {\n    fixed y = fixed(led.pos.y) * fixed(3.333);\n    fixed n = hash(float(i + 250) * 0.011 + float(frame >> 5) * 0.37);\n    fixed e = fixed(heat1[i]) * fixed(0.94);\n    e = e + n * n * fixed(0.06) * rise * (fixed(1.0) - y);\n    if (e > fixed(1.0)) e = fixed(1.0);\n    heat1[i] = fixed8(e);\n  }\n}\n\nvec3 shade(Led led) {\n  fixed y = fixed(led.pos.y) * fixed(3.333);\n  fixed e;\n  if (led.idx < 250) {\n    e = fixed(heat0[led.idx]);\n  } else {\n    e = fixed(heat1[led.idx - 250]);\n  }\n\n  fixed fl = fixed(0.75) + fixed(0.25) * sin(flick * fixed(6.0) + fixed(led.idx) * fixed(0.7));\n  fixed ember = e * fl * (fixed(1.0) - y * fixed(0.5));\n  ember = ember * ember;\n\n  fixed h = sparkH;\n  fixed rr = sparkR;\n  fixed aa = sparkA;\n  fixed vy = sparkV;\n  fixed age = sparkAge;\n  fixed px = fixed(led.uv.x) - fixed(0.5);\n  fixed py = fixed(led.uv.y) - fixed(0.5);\n  fixed ca = cos(aa * fixed(6.2832));\n  fixed sa = sin(aa * fixed(6.2832));\n  fixed dx = px * ca + py * sa;\n  fixed dy = py * ca - px * sa;\n  fixed sx = dx - rr * fixed(0.5);\n  fixed sy = dy - (h - vy * age);\n  fixed sd = sx * sx + sy * sy;\n  fixed spark = sparkGlow * (fixed(1.0) - clamp(sd * fixed(400.0), fixed(0.0), fixed(1.0)));\n\n  fixed v = ember + spark;\n  if (v > fixed(1.0)) v = fixed(1.0);\n  vec3 col = hsv2rgb(tint.x + fixed(0.02) * (fixed(1.0) - y), fixed(0.85), v * fixed(intensity));\n  return col;\n}\n"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": null,
+  "outcome": "compile_failed",
+  "prompt": "p02",
+  "reasoning": "off"
+}

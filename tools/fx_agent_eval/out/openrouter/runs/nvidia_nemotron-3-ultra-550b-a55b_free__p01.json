@@ -1,0 +1,45 @@
+{
+  "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 7.81,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6539,
+        "completion_tokens": 482,
+        "total_tokens": 7021,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float speed : 0.0 .. 3.0 = 0.4;\nuniform float swell_count : 0.5 .. 4.0 = 1.5;\nuniform float swell_width : 0.05 .. 0.3 = 0.12;\nuniform float foam_intensity : 0.0 .. 1.0 = 0.3;\nuniform vec3 deep_color : color = 0.02, 0.08, 0.25;\nuniform vec3 swell_color : color = 0.1, 0.35, 0.6;\nuniform vec3 foam_color : color = 0.6, 0.8, 1.0;\nuniform float shimmer_speed : 0.0 .. 2.0 = 0.6;\nuniform float shimmer_strength : 0.0 .. 0.5 = 0.15;\n\nstate float swell_ph;\nstate float shimmer_ph;\n\nvoid update() {\n  swell_ph = fract(swell_ph + dt * speed);\n  shimmer_ph = fract(shimmer_ph + dt * shimmer_speed);\n}\n\nvec3 shade(Led led) {\n  float y_norm = (led.pos.y + 0.15) / 0.3;\n  float swell_phase = fract(y_norm * swell_count - swell_ph);\n  float swell = smoothstep(swell_width, 0.0, abs(swell_phase - 0.5));\n  \n  float shimmer = sin(led.pos.y * 12.0 + shimmer_ph * 6.2832 + led.pos.x * 8.0) * 0.5 + 0.5;\n  shimmer = shimmer * shimmer_strength;\n  \n  vec3 base = mix(deep_color, swell_color, swell);\n  vec3 foam = foam_color * smoothstep(0.7, 1.0, swell) * (1.0 + shimmer);\n  \n  return base + foam;\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p01",
+  "reasoning": "off"
+}

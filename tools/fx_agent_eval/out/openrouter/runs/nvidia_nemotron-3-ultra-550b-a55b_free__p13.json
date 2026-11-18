@@ -1,0 +1,45 @@
+{
+  "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 8.02,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6536,
+        "completion_tokens": 420,
+        "total_tokens": 6956,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float density : 0.0 .. 1.0 = 0.03;\nuniform float speed   : 0.0 .. 5.0 = 0.8;\nuniform float size    : 0.0 .. 0.5 = 0.15;\nuniform vec3  tint    : color = 1.0, 0.95, 0.85;\nuniform vec3  bg      : color = 0.02, 0.02, 0.05;\n\nstate fixed phase;\n\nvoid update() {\n  phase = fract(phase + fixed(dt * speed));\n}\n\nvec3 shade(Led led) {\n  fixed s  = fixed(led.s);\n  fixed id = fixed(float(led.idx));\n  \n  fixed h1 = fract(id * fixed(0.618034) + phase * fixed(7.0));\n  fixed h2 = fract(id * fixed(1.618034) + phase * fixed(11.0));\n  \n  fixed twinkle = h1 * h2;\n  fixed on = step(fixed(1.0) - fixed(density), twinkle);\n  \n  fixed d = abs(s - h1);\n  fixed pulse = sin(twinkle * fixed(6.2832));\n  fixed envelope = clamp(fixed(1.0) - d * fixed(1.0) / fixed(size), fixed(0.0), fixed(1.0));\n  fixed brightness = on * envelope * (fixed(0.3) + fixed(0.7) * (fixed(1.0) + pulse) * fixed(0.5));\n  \n  return tint * float(brightness) + bg;\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p13",
+  "reasoning": "off"
+}

@@ -1,0 +1,86 @@
+{
+  "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 8.7,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6537,
+        "completion_tokens": 489,
+        "total_tokens": 7026,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4384,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": false,
+      "diagnostics": [
+        {
+          "line": 36,
+          "col": 36,
+          "msg": "expected '{'"
+        }
+      ],
+      "source": "uniform float speed : 0.0 .. 10.0 = 3.0;\nuniform float density : 0.0 .. 1.0 = 0.15;\nuniform float tail_len : 0.05 .. 0.5 = 0.15;\nuniform vec3 tint : color = 0.0, 1.0, 0.3;\n\nstate fixed phase;\nstate fixed speed_fixed;\n\nvoid update() {\n  speed_fixed = fixed(speed);\n  phase = fract(phase + speed_fixed * fixed(dt));\n}\n\nfixed rand_fixed(fixed x) {\n  fixed a = fixed(1664525);\n  fixed c = fixed(1013904223);\n  fixed m = fixed(4294967296.0);\n  fixed res = fract((a * x + c) / m);\n  return res;\n}\n\nvec3 shade(Led led) {\n  fixed s = fixed(led.s);\n  fixed y = s + phase;\n  fixed fy = fract(y);\n  \n  fixed col = fixed(led.idx);\n  fixed seed = rand_fixed(col * fixed(12345.0) + fixed(frame));\n  fixed active = step(fixed(density), seed);\n  \n  fixed pos_in_strip = fy * active;\n  fixed head = fixed(0.0);\n  fixed tail = tail_len;\n  \n  fixed dist_from_head = head - pos_in_strip;\n  if (dist_from_head < fixed(0.0)) dist_from_head = dist_from_head + fixed(1.0);\n  \n  fixed brightness = fixed(0.0);\n  if (dist_from_head < tail) {\n    brightness = fixed(1.0) - dist_from_head / tail;\n    brightness = brightness * brightness;\n  }\n  \n  fixed r = fixed(tint.r) * brightness;\n  fixed g = fixed(tint.g) * brightness;\n  fixed b = fixed(tint.b) * brightness;\n  \n  return vec3(float(r), float(g), float(b));\n}"
+    },
+    {
+      "round": 1,
+      "status": 200,
+      "seconds": 13.83,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 7068,
+        "completion_tokens": 493,
+        "total_tokens": 7561,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4384,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float speed : 0.0 .. 10.0 = 3.0;\nuniform float density : 0.0 .. 1.0 = 0.15;\nuniform float tail_len : 0.05 .. 0.5 = 0.15;\nuniform vec3 tint : color = 0.0, 1.0, 0.3;\n\nstate fixed phase;\nstate fixed speed_fixed;\n\nvoid update() {\n  speed_fixed = fixed(speed);\n  phase = fract(phase + speed_fixed * fixed(dt));\n}\n\nfixed rand_fixed(fixed x) {\n  fixed a = fixed(1664525);\n  fixed c = fixed(1013904223);\n  fixed m = fixed(4294967296.0);\n  fixed res = fract((a * x + c) / m);\n  return res;\n}\n\nvec3 shade(Led led) {\n  fixed s = fixed(led.s);\n  fixed y = s + phase;\n  fixed fy = fract(y);\n  \n  fixed col = fixed(led.idx);\n  fixed seed = rand_fixed(col * fixed(12345.0) + fixed(frame));\n  fixed active = step(fixed(density), seed);\n  \n  fixed pos_in_strip = fy * active;\n  fixed head = fixed(0.0);\n  fixed tail = fixed(tail_len);\n  \n  fixed dist_from_head = head - pos_in_strip;\n  if (dist_from_head < fixed(0.0)) {\n    dist_from_head = dist_from_head + fixed(1.0);\n  }\n  \n  fixed brightness = fixed(0.0);\n  if (dist_from_head < tail) {\n    brightness = fixed(1.0) - dist_from_head / tail;\n    brightness = brightness * brightness;\n  }\n  \n  fixed r = fixed(tint.r) * brightness;\n  fixed g = fixed(tint.g) * brightness;\n  fixed b = fixed(tint.b) * brightness;\n  \n  return vec3(float(r), float(g), float(b));\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 1,
+  "outcome": "compiled",
+  "prompt": "p10",
+  "reasoning": "off"
+}

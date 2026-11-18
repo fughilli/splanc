@@ -1,0 +1,45 @@
+{
+  "model": "nvidia/nemotron-3.5-super-vl:free",
+  "requests": [
+    {
+      "round": 0,
+      "status": 200,
+      "seconds": 2.12,
+      "finish_reason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 6541,
+        "completion_tokens": 192,
+        "total_tokens": 6733,
+        "cost": 0,
+        "is_byok": false,
+        "prompt_tokens_details": {
+          "cached_tokens": 4336,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "cost_details": {
+          "upstream_inference_cost": 0,
+          "upstream_inference_prompt_cost": 0,
+          "upstream_inference_completions_cost": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "image_tokens": 0,
+          "audio_tokens": 0
+        }
+      },
+      "provider": "Nvidia",
+      "n_tool_calls": 1,
+      "text": "",
+      "compiled": true,
+      "diagnostics": [],
+      "source": "uniform float speed : 0.0 .. 5.0 = 1.0;\nuniform float tail : 0.05 .. 1.0 = 0.3;\nuniform vec3 base : color = 0.05, 0.02, 0.01;\nuniform vec3 peak : color = 1.0, 0.6, 0.2;\n\nstate float front;\n\nvoid update() {\n  front = fract(front + dt * speed);\n}\n\nvec3 shade(Led led) {\n  float lit = clamp((led.dist - front + 1.0) / tail, 0.0, 1.0);\n  return mix(base, peak, lit);\n}"
+    }
+  ],
+  "first_tool_call_valid": true,
+  "compiled_round": 0,
+  "outcome": "compiled",
+  "prompt": "p09",
+  "reasoning": "off"
+}
