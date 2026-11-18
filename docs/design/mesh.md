@@ -732,7 +732,7 @@ additional root is the rank, parent and role; the neighbour table is shared.
   Its 13–16 relays all rebroadcast every part, while the flood's duplicate cancellation
   suppresses more. Relay suppression is T3.
 - **128 fixtures at 30 Hz** fail in both. The per-receiver MAC bytes (127 × 8 B per update) are
-  the limit, which is Q14's broadcast authenticator.
+  the limit. The broadcast authenticator (§7.9, Q19) removes it: 99.4 % at 128 fixtures.
 - **Relay failure.** Killing the busiest relay: its children re-parent in 3.0 s (the 3 s silence
   bound). Delivery during the repair stays at 99.7 %, because full MACs let the children use
   other relays' copies.
@@ -762,6 +762,60 @@ tree.
   member count and keeps the flood as the fallback.
 - No relay suppression yet (T3 for 64+).
 - UWB as the root's first tier where present.
+
+**Owner decisions (2026-11-18, Q18–Q21) and what they changed.**
+
+- **Automatic switch (Q18).** The root runs `tree::Selector`:
+  - It moves to the tree at ≥ 24 members and back to the flood at ≤ 16, once the count has
+    held past the threshold for 5 s.
+  - Every data packet carries the mode the root chose for it. The tree is maintained in both
+    modes (its fields ride on adverts), so a switch takes effect on the next packet.
+  - In a 105 s membership ramp (8 → 30 → 20 → 14, then 15 ↔ 25 every 3 s), it switched exactly
+    three times, and never on the oscillation that is shorter than the hold.
+  - Delivery was 99.6 %, against 99.9 % flood-only and 99.6 % tree-only. 802.11 airtime was
+    0.072, against 0.089 and 0.058.
+  - A switch into the tree 5 s after a burst of joins costs ~1 % for ~15 s while the
+    newcomers' parents settle. The tree-only run shows the same dip after the joins.
+    Mitigation (T1): switch only once ≥ 90 % of members appear in relays' child reports.
+- **Multi-hop UWB (Q20).** `TreeAd` carries the parent radio (flags bit 3). A relay forwards
+  over UWB to children that joined it over UWB, and over 802.11 to the rest; a relay with
+  only UWB children skips 802.11.
+  - The UWB TDMA is a 4 ms superframe of four 1 ms slots: slot 0 the root's, slots 1–3 shared
+    round-robin by UWB relays (up to 4 frames each).
+  - Measured UWB depth is up to 4–6 hops at 64–128 fixtures.
+  - With per-receiver MACs, multi-hop UWB saturates its slots. A 64-member update is 4 parts ×
+    3 fragments, UWB utilisation reaches 0.5–0.6, and delivery drops 0.1–2 %.
+  - With the broadcast authenticator (one 90 B packet, 2 fragments) it pays off: 802.11
+    airtime falls 13–23 % (64: 0.105 → 0.091; 128: 0.303 → 0.232) at equal delivery
+    (99.4–99.6 %), with UWB utilisation 0.10–0.31.
+  - The tree objective already lets UWB chains form (weight 0.5 per hop), so no new rule
+    was needed.
+- **Every fixture caches (Q21).** `tree::RelayCache<4, 200>` is 828 B on the C6 (measured),
+  plus `Tree` (736 B) and `Selector` (32 B): 1,596 B.
+  - Repair requests reach back at most 3 reliable commands (p90 ≤ 1, 0–20 % loss, 32–64
+    fixtures, 60 s runs).
+  - So the cache needs (max age + 1) × packets per command entries. With one packet per
+    command (≤ 19 recipients, or the authenticator), 4 entries answer every request.
+  - The misses at 64 fixtures with per-receiver MACs come from 4-packet commands, which the
+    authenticator removes from the live path.
+  - Repairs are rare (≤ 136 requests per minute in a 64-fixture mesh at 20 % loss), because
+    full MACs make any overheard copy count.
+
+| Fixtures | Flood (per-receiver) | Tree, per-receiver MACs | Tree + authenticator (20 ms, d = 3) | Bytes per update |
+| -------- | -------------------- | ----------------------- | ----------------------------------- | ---------------- |
+| 32       | 100 % / p99 12 ms / 0.19  | 99.97 % / 6 ms / 0.107  | 99.98 % / 100 ms / 0.036          | 307 → 90         |
+| 64       | 99.8 % / 27 ms / 0.71     | 98.6 % / 19 ms / 0.52   | 99.5 % / 102 ms / 0.095           | 563 → 90         |
+| 128      | 66 % / 420 ms / 2.39      | 79 % / 381 ms / 2.06    | 99.4 % / 113 ms / 0.25            | 1,075 → 90       |
+
+(delivered / latency p99 / 802.11 airtime; 30 Hz, 50 % UWB, multi-hop UWB, people walking.)
+
+![automatic switch on a membership ramp](mesh/tree-switch.png)
+
+![broadcast authenticator vs per-receiver MACs](mesh/tree-auth.png)
+
+![one-hop vs multi-hop UWB](mesh/tree-uwbhop.png)
+
+![relay cache depth](mesh/tree-cache.png)
 
 ## 6. Time sync and apply_at across the mesh
 
@@ -873,7 +927,7 @@ Live moves (fader drags, uncommitted uniforms) should feel immediate on every fi
 
 So the radiolarians (6 fixtures) can take 60 Hz live moves at ≥ 97 % and render them smoothly.
 A 16-fixture install runs comfortably at 45 Hz. Past ~32 fixtures the per-receiver MACs are
-the limit; a broadcast authenticator is the open item there (Q14, deferred).
+the limit. Above 24 members live moves use the broadcast authenticator (§7.9, Q19).
 
 
 ## 7. Membership, groups and security
@@ -1179,6 +1233,81 @@ app re-provisions it.
     the original expiry: none missed, 20 crypto jobs in all.
 - **Measure in M3a.** Until then the C6/P4 figures stay estimates.
 
+**Broadcast authenticator for live updates (Q19, `firmware/mesh/src/tesla.rs`).**
+
+Per-receiver MACs cost 8 B per member. Past ~20 members a live update takes several packets,
+and at 128 members and 30 Hz the bytes alone saturate the air (§5.8). Large meshes need one
+constant-size authenticator per packet, which must still keep insider resistance: a member,
+which holds the mesh key and its own pairwise key, must not be able to forge a live update.
+
+| Scheme                                    | Per packet           | CPU per packet (receiver)            | Insider-resistant                     | Latency                  | Verdict                         |
+| ----------------------------------------- | -------------------- | ------------------------------------ | ------------------------------------- | ------------------------ | ------------------------------- |
+| Per-receiver MACs (today, §7.9)           | 13 + 8 n B           | 1 HMAC                               | yes                                   | none                     | **Kept below 24 members**       |
+| Group-key MAC                             | 8 B                  | 1 HMAC                               | **no**: any member forges             | none                     | No                              |
+| ECDSA P-256 per packet                    | 64 B                 | 1 verify (C6 est. 5–15 ms)           | yes                                   | none                     | No: 15–45 % of a C6 at 30 Hz    |
+| Ed25519 per packet                        | 64 B                 | 1 verify (no accelerator; est. 5–10 ms) | yes                                 | none                     | No: same CPU problem            |
+| Signature amortisation (sign every k-th, hash-chain the rest) | 8–32 B + 64 B / k | 1 verify per k packets          | yes                                   | k packets                | Possible; loss breaks chains    |
+| Hash-based one-time signatures (HORS etc.) | 0.3–1 KB            | tens of hashes                       | yes                                   | none                     | No: bytes                       |
+| **TESLA (delayed key disclosure)**        | **30 B**             | **1 HMAC + ~3 hashes**               | **yes**, given a bound on the gateway's clock | **d intervals**  | **Chosen above 24 members**     |
+
+**How TESLA works here.**
+- **Key chain.** The gateway draws a one-way chain `K_N → … → K_0` (`K_i = F(K_{i+1})`,
+  SHA-256 truncated to 16 B; N = 65,535 intervals of 20 ms, 21.8 min) and commits to `K_0`.
+- **Tag and disclosure.** A packet sent in interval `i` carries an 8 B tag under a key
+  derived from `K_i`. `K_i` is disclosed in every packet from interval `i + d` on (d = 3).
+  The trailer is chain id, interval, tag, disclosed interval and key: 30 B.
+- **Member side.** A member buffers a packet only if, by its own clock, `K_i` cannot be out
+  yet (the security condition). When a later packet discloses the key, the member checks
+  that it hashes back to a key it trusts, checks the tag, and delivers.
+- **Why an insider cannot forge.** It learns `K_i` only once every member's window for
+  interval `i` has closed. In meshsim an insider forging with a disclosed key reached 0 of 9
+  members.
+- **The clock bound comes from challenge-response, not mesh time.** Owner rule: replay
+  protection must not depend on time. A member sends `TeslaMsg::Req` (a nonce) and records
+  its local send time `t0`. The gateway answers `TeslaMsg::Sync`: the chain commitment, its
+  interval and the offset into it, MAC'd under the session's pairwise key and bound to the
+  nonce. The gateway's clock at local time `t` is then at most `gateway_at_reply + (t −
+  t0)(1 + ρ)`, with ρ = 200 ppm.
+  - An attacker who delays the Req or the Sync only makes the bound more conservative:
+    packets fail the condition and are dropped, never wrongly accepted. There is a test for
+    this.
+  - No peer's clock is involved, and an eclipse of mesh time (§6.2) cannot open a forgery
+    window.
+- **Replays.** Rejected by the condition itself (an old interval's key is public) and by the
+  per-chain sequence floor.
+- **Per-receiver MACs stay below 24 members** (the same 24/16 hysteresis as the tree), for
+  node-list targets, and for reliable commands, which are admin traffic and need no TESLA
+  delay. A gateway falls back to them until its chain is built.
+
+**Sizing d and the interval.** The condition needs `d · interval > (bootstrap round trip) +
+(one-way latency)`.
+
+| 64 fixtures              | d = 2, 20 ms | d = 3, 20 ms | d = 4, 20 ms | d = 4, 10 ms | d = 6, 10 ms | d = 3, 20 ms, 100 ms RTT |
+| ------------------------ | ------------ | ------------ | ------------ | ------------ | ------------ | ------------------------ |
+| delivered                | 79 %         | 99.5 %       | 99.4 %       | 99.75 %      | 99.7 %       | 29 %                     |
+| latency p50 / p99        | 37 / 102 ms  | 69 / 102 ms  | 100 / 135 ms | 67 / 103 ms  | 69 / 102 ms  | 68 / 100 ms              |
+
+- **The default is 20 ms and d = 3.** Latency is ~70 ms p50 and ~110 ms p99 at 32–128
+  fixtures, which interpolation absorbs with a ~100 ms playout delay (§6.4).
+- **A long bootstrap round trip is the failure mode.** For it:
+  - a member repeats its challenge and keeps the tightest bound;
+  - the gateway sizes `d` from the round trips members report (T4).
+  The stack does neither yet; the sweep shows why both are needed.
+
+**Costs.**
+- **Bytes:** 30 B trailer + 8 B sequence; a 12 B update is 90 B on the air against 1,075 B at
+  128 members.
+- **CPU (host, measured):**
+  - Seal: 9.7 µs (65 SHA-256 steps: one walk down a 64-key checkpoint segment, plus the
+    disclosed key, which is usually memoised).
+  - Verify: 1.4 µs (~3 hashes + 1 HMAC).
+  - Chain build: 65,535 hashes (15 ms on the host), once per 21.8 min in the crypto task.
+  - On the C6 that is ~2,000 hashes/s at the gateway and ~100 per member. M3a measures it with
+    the other crypto costs.
+- **RAM (C6, measured):** signer 1,488 B (16 + 64 checkpoints and 8 recent keys); verifier
+  680 B (6 pending packets). `MeshStack` grows 15,472 → 17,768 B, since every fixture can be
+  a gateway.
+
 ### 7.10 What remains unresolvable
 
 - **An eclipsed node** (its only neighbours are malicious) can be **desynced and starved**.
@@ -1445,7 +1574,7 @@ header (+1 B, §4.1).
 
    **Mesh frames default to 6 Mb/s OFDM** (meshsim's default now; M3 for the radio, after
    M3a checks the range through the enclosures). Live moves should be coalesced to ≤ 30 Hz
-   on the mesh. Past ~32 members, live moves need a broadcast authenticator (§17 Q14).
+   on the mesh. Above 24 members, live moves use the broadcast authenticator (§7.9).
 
    ![live control vs nodes, 1 vs 6 Mb/s](mesh/airtime.png)
 
@@ -1779,9 +1908,10 @@ The work it moves to later milestones:
 | ----- | ----------------------------------------------------------------------------------- |
 | U1    | UWB board revision (DWM3000 or QM33120) — needs the owner's hardware decision       |
 | U2    | UWB backhaul (TDMA, DS-TWR) behind `Backhaul`; C6 driver port                       |
-| T1    | Distribution tree (§5.8) in `MeshStack`: `TreeAd` in adverts, relay rebroadcast, reliable NACK repair with a 4-entry relay cache; flood ≤ 16 fixtures, tree above; `mesh_tree_repair` HITL (kill a relay) |
+| T1    | Distribution tree (§5.8) in `MeshStack`: `TreeAd` in adverts, relay rebroadcast, reliable NACK repair with the 4-entry `RelayCache`, `Selector` 24/16 (gate the switch on ≥ 90 % of members in child reports); `mesh_tree_repair` HITL (kill a relay). The tree, selector, cache and authenticator code is in #544 and its two follow-ups |
 | T2    | The UWB first tier: the root's UWB data slot and per-node beacon slots on U2's TDMA; measured UWB link budget through the enclosures |
 | T3    | Relay suppression for 64+ fixtures (a relay skips its rebroadcast when its children were all covered by copies it heard) and churn damping at 64–128 |
+| T4    | Broadcast authenticator in firmware: chain build in the crypto task, best-of-N challenges, adaptive `d` (Q24), C6 cost in M3a; `mesh_live_auth` HITL at 24+ DUTs (or the 6-fixture rig with lowered thresholds) |
 | L1    | Ranges into the room solver as constraints                                          |
 | L2    | IMU + range fusion (`swarm_core`), placement of the filter (C6 rate, P4, or bridge) |
 | R1–R3 | §13.6 spikes S1a–S3 on the amd-rig                                                  |
@@ -1870,29 +2000,37 @@ swarm code, and Splanc's own framing.
   scenarios (§4.6).
 - **Q13.** Approved, as responsive as the airtime allows: coalescing, compact batches,
   priority over bulk, and on-device interpolation on mesh time (§6.4).
-- **Q14.** *Deferred*: a broadcast authenticator for live moves in meshes past ~32 members.
-  Options stay as listed: several packets per command, a TESLA-style delayed-key MAC, or
-  group-key live moves.
+- **Q14.** Answered 2026-11-18 with Q19: TESLA on a challenge-response clock bound, above 24
+  members (§7.9).
 - **Q15.** Adaptive hop limit (§10.6).
 - **Q16.** Open mode's budget accepted; trimmed to +912 B (§10.4).
 - **Q17.** The custodian spill stays, behind the `custodian_spill` feature, off by default
   (§10.4, §10.6).
 
-**New (2026-11-18, the distribution tree, §5.8):**
+**Answered 2026-11-18 (Q18–Q21, the distribution tree):**
 
-- **Q18.** When should the tree replace the flood? Proposed: flood up to ~16 fixtures, tree
-  with full MACs from ~24–32, switched by the root from the member count. At 6 fixtures the
-  tree delivered 93–99.8 % against the flood's 99.9 %.
-- **Q19.** The tree assumes every packet carries every member's MAC entry (full MACs). Per-subtree
-  MACs save bytes but made the tree single-path (87–94 % at 32 fixtures), so they are
-  rejected. Live updates at 64+ fixtures and 30 Hz therefore still need Q14's broadcast
-  authenticator, or a lower rate.
-- **Q20.** UWB reach: the gateway reached N L2 relays only within ~15 m (DW3000-class, 3 dB
-  enclosure loss per end), 6–51 parents of 32–128 fixtures at 50 % UWB. For larger venues, should
-  UWB relays also relay over UWB (a multi-hop UWB tier, not modelled yet), or is a one-hop UWB
-  tier enough? This depends on Q8's hardware and on measuring UWB through the enclosures (T2).
-- **Q21.** RAM: the tree costs 736 B on the C6 plus an ~800 B relay cache, only on fixtures
-  that run it. Accept, or restrict relaying to P4 + C6 and Pi fixtures?
+- **Q18.** Automatic: flood up to 16 members, tree from 24, 5 s hold in between
+  (`tree::Selector`, §5.8).
+- **Q19.** The broadcast authenticator is built: TESLA with a challenge-response clock bound,
+  above 24 members; per-receiver MACs below (§7.9). 128 fixtures at 30 Hz now deliver 99.4 %.
+- **Q20.** Multi-hop UWB: relays forward over UWB to their UWB children (§5.8). It cuts 802.11
+  airtime 13–23 % with the authenticator.
+- **Q21.** Every fixture may relay and caches 4 reliable packets (828 B, measured; tree state
+  1,596 B in all).
+
+**New (2026-11-18):**
+
+- **Q22.** Live latency above 24 members becomes ~70 ms p50 / ~110 ms p99 (the disclosure
+  delay), against 5–20 ms with per-receiver MACs. Is a ~100 ms playout delay acceptable for
+  large installs? The alternative is a lower live rate with per-receiver MACs (64 fixtures:
+  98.6 % at 30 Hz).
+- **Q23.** RAM: the authenticator adds 2,296 B to every C6's `MeshStack` (any fixture can be
+  the gateway). On top of the tree's 1,596 B that is ~3.9 KB. Accept, or let only P4 + C6
+  and Pi fixtures be gateways for meshes above 24 members (C6 gateways stay per-receiver)?
+- **Q24.** Adaptive disclosure delay (T4): members re-challenge to tighten their clock bound
+  and report the round trip, and the gateway raises `d` to cover the slowest. Approve? The
+  cost is latency for everyone when one member is far away. The alternative is that a member
+  whose bound is too loose falls back to reliable per-receiver delivery of the latest state.
 
 ## 18. Sources
 
