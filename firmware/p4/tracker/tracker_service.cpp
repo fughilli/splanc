@@ -1,11 +1,17 @@
 // See tracker_service.h. The task loop is the bring-up image's (tracker.cpp) without
 // its console prints: attach, handshake, then feed every report to lh_report.
+//
+// The kernel's slow solves (a pose bootstrap ~1.5 s, a station calibration several
+// seconds) run on a worker task, not this one (lh_defer_solves): inline, the reports of
+// that stretch waited behind it (or overflowed the queue), and the track it started was
+// lost for want of light the moment it was made (PixieLamp2, 2026-11-17).
 #include "firmware/p4/tracker/tracker_service.h"
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <esp_timer.h>
 #include <freertos/task.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "firmware/p4/tracker/lh_p4.h"
@@ -19,6 +25,8 @@ struct Adopt {
   float p[7];
 };
 QueueHandle_t g_adopt;
+// Jobs out to the worker, and their results back (lh_p4.rs owns both; pointers here).
+QueueHandle_t g_jobs, g_results;
 portMUX_TYPE g_mux = portMUX_INITIALIZER_UNLOCKED;
 TrackerPose g_pose = {};
 // How far behind the tracker task runs: a report's age when the kernel gets it.
@@ -87,6 +95,27 @@ void take_profile() {
 
 int g_prio = 0, g_tracking_prio = 0;
 
+// Runs the kernel's slow solves (lh_job_run is pure: no tracker state), below the tracker
+// task on its core, so a report always preempts it.
+void worker(void*) {
+  while (true) {
+    void* job;
+    if (xQueueReceive(g_jobs, &job, portMAX_DELAY) != pdTRUE) continue;
+    void* result = lh_job_run(job);
+    xQueueSend(g_results, &result, portMAX_DELAY);
+  }
+}
+
+// Jobs the kernel handed out go to the worker; results that are back go into the kernel.
+void exchange_jobs() {
+  void* p;
+  while (xQueueReceive(g_results, &p, 0) == pdTRUE) lh_job_done(p);
+  while ((p = lh_take_job()) != nullptr) {
+    // The kernel has at most a few out; if the queue is full anyway, solve it here.
+    if (xQueueSend(g_jobs, &p, 0) != pdTRUE) lh_job_done(lh_job_run(p));
+  }
+}
+
 void task(void*) {
   uint16_t vid = 0, pid = 0;
   bool high = false;
@@ -140,6 +169,7 @@ void task(void*) {
       n++;
     }
     if (configured) lh_clock(esp_timer_get_time());
+    exchange_jobs();
     if (configured || any || !open) {
       LhStatus s;
       lh_status(&s);
@@ -167,8 +197,17 @@ void tracker_service_start(int prio, int tracking_prio, int usb_prio, int core) 
   g_tracking_prio = tracking_prio;
   g_reports = xQueueCreate(1024, sizeof(TrackerReport));
   g_adopt = xQueueCreate(8, sizeof(Adopt));
+  g_jobs = xQueueCreate(8, sizeof(void*));
+  g_results = xQueueCreate(8, sizeof(void*));
+  // The kernel's EKF runs on the tracker task, its solves on the worker: big stacks for
+  // both (the calibration's least squares). The worker first: without it the kernel solves
+  // on the tracker task as before.
+  if (xTaskCreatePinnedToCore(worker, "lh_solve", 32 * 1024, nullptr, prio > 1 ? prio - 1 : 1, nullptr, core) == pdPASS) {
+    lh_defer_solves(1);
+  } else {
+    printf("[tracker] no memory for the solve worker; solving on the tracker task\n");
+  }
   tracker_usb_start(g_reports, usb_prio);
-  // The kernel's EKF and calibration run on this task: a big stack.
   xTaskCreatePinnedToCore(task, "tracker", 32 * 1024, nullptr, prio, nullptr, core);
 }
 

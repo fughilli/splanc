@@ -314,8 +314,9 @@ size_t osc_floats(uint8_t *out, const char *addr, const float *v, int n) {
 void begin() {
   load_mount();
   lm_module_log("[tracker] Vive tracker on the USB OTG port; mount %s\n", g_mount_valid ? "loaded" : "not set");
-  // Not tracking: below render (10) and the loop (9), for the ~0.6 s pose bootstraps.
-  // Tracking: above render and the transmit task (11), so light goes into the filter at
+  // Not tracking: below render (10) and the loop (9). The slow solves run on a worker one
+  // below this task on its core (tracker_service.cpp), so they get what's left and a
+  // report always preempts them. Tracking: above render and the transmit task (11), so light goes into the filter at
   // once (tens of µs a report). The USB host tasks above render too: they stamp each
   // report's arrival, which the tracker's clock mapping and latency figures rest on.
   tracker_service_start(7, 12, 13, 1);

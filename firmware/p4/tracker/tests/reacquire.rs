@@ -25,7 +25,7 @@
 //! the velocity error per pose.
 
 use lh_health::{Health, TrackHealth, TPS};
-use lh_kernel::kernel::{Event, Input, Kernel, KernelConfig};
+use lh_kernel::kernel::{run_job, Event, Input, Kernel, KernelConfig, SolveJob};
 use lh_kernel::lh1::{SyncCode, CYCLE_TICKS, SLOT_TICKS};
 use lh_kernel::linalg::Mat;
 use lh_kernel::math::{Pose, Quat, Vec3};
@@ -233,6 +233,10 @@ struct Sim {
     rng: u64,
     /// The accelerometer's bias (g, body frame); the gyro's is fixed (5 mrad/s).
     accel_bias: V,
+    /// KernelConfig::defer_solves: how long a job takes on the "worker" (s), and the jobs
+    /// out with when each is back.
+    solve_delay: f64,
+    jobs: Vec<(f64, SolveJob)>,
 }
 
 const A: u32 = 0x1111_2222;
@@ -264,6 +268,8 @@ impl Sim {
             events: Vec::new(),
             rng: 0x2545_f491_4f6c_dd1d,
             accel_bias: V([0.02, -0.01, 0.015]),
+            solve_delay: 0.0,
+            jobs: Vec::new(),
         };
         let mut out = Vec::new();
         for i in 0..s.stations.len() {
@@ -353,8 +359,14 @@ impl Sim {
             }
             match e {
                 Event::Pose { .. } | Event::Still { .. } => {}
+                Event::Solve(job) => self.jobs.push((t + self.solve_delay, job)),
                 other => self.events.push((t, format!("{:?}", other))),
             }
+        }
+        // Deferred solves that are back by now.
+        while let Some(i) = self.jobs.iter().position(|j| j.0 <= t) {
+            let (_, job) = self.jobs.remove(i);
+            self.push(t, Input::Solved(run_job(job)));
         }
     }
 
@@ -600,6 +612,37 @@ fn swing_behind_the_body_then_put_down_relocks() {
     assert!(lost < SETTLE + 1.2 + 0.7, "{}", sim.log());
     sim.assert_no_jumps(SETTLE);
     reacquired(&sim, end);
+}
+
+/// The P4 (PixieLamp2, 2026-11-17): a pose bootstrap takes ~1.4 s there. Inline, the light
+/// of that stretch waited behind it and the track it made was lost (NoLight) the moment it
+/// started, every time. Solved on a worker (defer_solves), the first lock and the relock
+/// after the swing above each come one solve later, and hold.
+#[test]
+fn slow_solves_on_a_worker_lock_and_relock() {
+    const SOLVE_S: f64 = 1.4;
+    let p0 = [0.1, 0.2, 1.0];
+    let path = Path(vec![
+        key(SETTLE + 1.0, p0, [0.0, 0.0, 0.3]),
+        key(SETTLE + 1.4, [-0.3, 0.3, 1.3], [2.6, 0.0, 0.3]),
+        key(SETTLE + 2.4, [-0.1, 0.4, 1.4], [2.4, 0.6, 0.3]),
+        key(SETTLE + 2.8, [0.2, -0.1, 0.9], [0.0, 0.1, -0.4]),
+    ]);
+    let end = path.last_move();
+    let cfg = KernelConfig { defer_solves: true, ..p4_config() };
+    let mut sim = Sim::with_cfg(path, vec![(SETTLE + 1.2, SETTLE + 2.4, &[A, B])], cfg);
+    sim.solve_delay = SOLVE_S;
+    sim.run(end + 4.0);
+    let first = sim.first(0.0, Health::Locked).unwrap_or_else(|| panic!("never locked\n{}", sim.log()));
+    assert!(first < SETTLE, "first lock at {first:.2} s\n{}", sim.log());
+    assert!(sim.first(SETTLE + 1.2, Health::Lost).is_some(), "never Lost behind the body\n{}", sim.log());
+    // One lost behind the body, none after: no track lost as soon as it started.
+    let losses: Vec<&(f64, String)> = sim.events.iter().filter(|e| e.1.starts_with("TrackingLost")).collect();
+    assert_eq!(losses.len(), 1, "{}", sim.log());
+    let back = sim.first(end, Health::Locked).unwrap_or_else(|| panic!("never Locked again\n{}", sim.log()));
+    assert!(back - end <= REACQUIRE_S + SOLVE_S, "Locked {:.3} s after {end} s\n{}", back - end, sim.log());
+    assert!(sim.states.iter().filter(|x| x.0 > back + 0.1).all(|x| x.1 == Health::Locked), "{}", sim.log());
+    sim.assert_no_jumps(SETTLE);
 }
 
 /// One station blocked by a hand for 1.5 s while the tracker is carried 20 cm: the other
