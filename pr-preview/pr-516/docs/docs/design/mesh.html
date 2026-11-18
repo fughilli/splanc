@@ -2490,6 +2490,118 @@ the other crypto costs.</p></li>
 680 B (6 pending packets). <code class="docutils literal notranslate"><span class="pre">MeshStack</span></code> grows 15,472 → 17,768 B, since every fixture can be
 a gateway.</p></li>
 </ul>
+<p><strong>Keeping live moves at 5–20 ms above 24 members (Q22): apply-then-verify.</strong></p>
+<p>The owner did not accept ~70 ms. Options, simulated at 32/64/128 fixtures (30 Hz, people
+walking, 50 % UWB, multi-hop):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Option</p></th>
+<th class="head"><p>Latency p50 / p99 (32 · 64 · 128)</p></th>
+<th class="head"><p>Delivered (32 · 64 · 128)</p></th>
+<th class="head"><p>Verdict</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Per-receiver MACs everywhere</p></td>
+<td><p>2/6 · 5/19 · 38/433 ms</p></td>
+<td><p>99.98 · 99.6 · 80.5 %</p></td>
+<td><p>No: fails at 128 (bytes)</p></td>
+</tr>
+<tr class="row-odd"><td><p>TESLA verify-first, d = 3</p></td>
+<td><p>67/101 · 69/102 · 70/113 ms</p></td>
+<td><p>99.97 · 99.7 · 99.1 %</p></td>
+<td><p>Too slow</p></td>
+</tr>
+<tr class="row-even"><td><p>(b) TESLA verify-first, adaptive d (best-of-3 round trips)</p></td>
+<td><p>100/133 · 100/135 · 102/142 ms</p></td>
+<td><p>99.8 · 99.4 · 99.1 %</p></td>
+<td><p>No: d must cover real round trips; it settles at 4 × 20 ms</p></td>
+</tr>
+<tr class="row-odd"><td><p>(c) Per-subtree MACs</p></td>
+<td><p>(§5.8)</p></td>
+<td><p>87–94 % at 32</p></td>
+<td><p>No: single path</p></td>
+</tr>
+<tr class="row-even"><td><p>(d) Per-receiver to the root’s children, TESLA beyond</p></td>
+<td><p>low for 6–16 members, TESLA for the rest</p></td>
+<td><p>—</p></td>
+<td><p>No: the root has 6–16 children, so ≥ 75–90 % of members still wait</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>(a) Apply-then-verify, adaptive d</strong></p></td>
+<td><p><strong>1/4 · 3/9 · 4/32 ms</strong></p></td>
+<td><p><strong>99.97 · 99.67 · 98.95 %</strong></p></td>
+<td><p><strong>Chosen</strong></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Apply-then-verify</strong> (<code class="docutils literal notranslate"><span class="pre">Verifier::early</span></code>, <code class="docutils literal notranslate"><span class="pre">StackConfig::live_early</span></code>, on by default):</p>
+<ul class="simple">
+<li><p><strong>Rendering.</strong> A member renders a live update the moment it arrives, if it passes the
+security condition. It verifies the tag when the key is disclosed, <code class="docutils literal notranslate"><span class="pre">d</span></code> intervals later.
+Genuine updates are then confirmed silently.</p></li>
+<li><p><strong>A failed tag.</strong> The update was forged. The member raises <code class="docutils literal notranslate"><span class="pre">Event::LiveRejected</span></code>, the app
+returns those uniforms to their last verified values, and the member verifies first
+(TESLA latency) for 10 s.</p></li>
+<li><p><strong>Bounds on what a forger can do:</strong></p>
+<ul>
+<li><p>Provisional updates are ordered by interval, not sequence. A forger can claim only an
+interval in the safe window, never a future one (refused), so the next genuine update
+overwrites its value.</p></li>
+<li><p>Live moves are bounded by the signed scene and each uniform’s manifest range (§7.4), and
+the interpolator smooths them (§6.4).</p></li>
+<li><p>Only live moves are applied early. Commands, scenes, membership and time stay verify-first
+or per-receiver.</p></li>
+</ul>
+</li>
+<li><p><strong>Adaptive d (Q24)</strong> still matters, but now it sets how long a forgery can stay up, not the
+latency. Members make three challenges per chain, keep the tightest bound, and report
+their best round trip in the Req; the gateway rebuilds its chain with a larger <code class="docutils literal notranslate"><span class="pre">d</span></code> when one
+needs it. Measured: <code class="docutils literal notranslate"><span class="pre">d</span></code> settled at 4 × 20 ms or 6–7 × 10 ms with one rebuild.</p></li>
+</ul>
+<p><strong>What an insider can do with it</strong>, measured with one member forging the current interval:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Forging rate</p></th>
+<th class="head"><p>Forged value on screen (p50 / max)</p></th>
+<th class="head"><p>Member screen time showing a forgery</p></th>
+<th class="head"><p>Side effect</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>1 Hz</p></td>
+<td><p>13–20 ms / 32–46 ms</p></td>
+<td><p>0.2 %</p></td>
+<td><p>Members stay in the cooldown: latency back to ~100 ms (verify-first) while it continues</p></td>
+</tr>
+<tr class="row-odd"><td><p>30 Hz</p></td>
+<td><p>26 ms / 29–125 ms</p></td>
+<td><p>0.8 %</p></td>
+<td><p>Also crowds the 6-slot verify buffer: delivery 68 % (an availability attack, like jamming)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>In plain words.</strong> Below 24 members nothing changes. Above 24, every fixture applies a
+live move as soon as it hears it, and a few tens of milliseconds later checks that it really
+came from the admin’s gateway.</p>
+<ul class="simple">
+<li><p><strong>If someone inside the mesh</strong> (a stolen or compromised fixture) forges one, the fake value
+shows for a moment (typically 20 ms, at most ~0.1 s) and is then undone. After that the
+fixtures stop trusting early updates for 10 s.</p></li>
+<li><p><strong>A forger can make lights twitch briefly, or slow live moves back to ~0.1 s,</strong> for as long
+as it keeps trying.</p></li>
+<li><p><strong>It can never take control:</strong> it cannot change scenes, commands or membership, or hold a
+value for longer than that moment.</p></li>
+<li><p><strong>Every attempt is detected</strong> (<code class="docutils literal notranslate"><span class="pre">LiveRejected</span></code>). The admin sees it and removes the fixture
+(rotation, §7.6).</p></li>
+</ul>
+<p><strong>Costs.</strong> No new bytes; CPU as verify-first. RAM on the C6: verifier 656 B (one flag per
+pending packet plus the cooldown); the stack’s best-of-N state is 12 B; <code class="docutils literal notranslate"><span class="pre">MeshStack</span></code> stays at
+17,768 B.</p>
+<p><img alt="live latency above 24 members: options and an insider" src="docs/design/mesh/tree-live.png" /></p>
 </section>
 <section id="what-remains-unresolvable">
 <h3>7.10 What remains unresolvable<a class="headerlink" href="#what-remains-unresolvable" title="Link to this heading">¶</a></h3>
@@ -3511,7 +3623,7 @@ per-receiver MACs (§7.9);</p></li>
 <td><p>Relay suppression for 64+ fixtures (a relay skips its rebroadcast when its children were all covered by copies it heard) and churn damping at 64–128</p></td>
 </tr>
 <tr class="row-odd"><td><p>T4</p></td>
-<td><p>Broadcast authenticator in firmware: chain build in the crypto task, best-of-N challenges, adaptive <code class="docutils literal notranslate"><span class="pre">d</span></code> (Q24), C6 cost in M3a; <code class="docutils literal notranslate"><span class="pre">mesh_live_auth</span></code> HITL at 24+ DUTs (or the 6-fixture rig with lowered thresholds)</p></td>
+<td><p>Broadcast authenticator in firmware: chain build in the crypto task, apply-then-verify with <code class="docutils literal notranslate"><span class="pre">LiveRejected</span></code> wired to the uniform store (revert to last verified), best-of-N challenges and adaptive <code class="docutils literal notranslate"><span class="pre">d</span></code> (Q24, in the stack), C6 cost in M3a; <code class="docutils literal notranslate"><span class="pre">mesh_live_auth</span></code> HITL at 24+ DUTs (or the 6-fixture rig with lowered thresholds)</p></td>
 </tr>
 <tr class="row-even"><td><p>L1</p></td>
 <td><p>Ranges into the room solver as constraints</p></td>
@@ -3691,19 +3803,27 @@ airtime 13–23 % with the authenticator.</p></li>
 <li><p><strong>Q21.</strong> Every fixture may relay and caches 4 reliable packets (828 B, measured; tree state
 1,596 B in all).</p></li>
 </ul>
+<p><strong>Answered 2026-11-18 (Q22–Q24):</strong></p>
+<ul class="simple">
+<li><p><strong>Q22.</strong> ~70 ms not accepted. Apply-then-verify keeps live moves at p50 1–4 ms and p99
+4–32 ms at 32–128 fixtures. A forging insider can show a fake value for ≤ ~0.1 s per
+attempt, then members verify first for 10 s (§7.9).</p></li>
+<li><p><strong>Q23.</strong> Accepted: any fixture can be the gateway (~3.9 KB on the C6).</p></li>
+<li><p><strong>Q24.</strong> Built: best-of-3 challenges, round trips reported, the gateway raises <code class="docutils literal notranslate"><span class="pre">d</span></code> with a
+new chain.</p></li>
+</ul>
 <p><strong>New (2026-11-18):</strong></p>
 <ul class="simple">
-<li><p><strong>Q22.</strong> Live latency above 24 members becomes ~70 ms p50 / ~110 ms p99 (the disclosure
-delay), against 5–20 ms with per-receiver MACs. Is a ~100 ms playout delay acceptable for
-large installs? The alternative is a lower live rate with per-receiver MACs (64 fixtures:
-98.6 % at 30 Hz).</p></li>
-<li><p><strong>Q23.</strong> RAM: the authenticator adds 2,296 B to every C6’s <code class="docutils literal notranslate"><span class="pre">MeshStack</span></code> (any fixture can be
-the gateway). On top of the tree’s 1,596 B that is ~3.9 KB. Accept, or let only P4 + C6
-and Pi fixtures be gateways for meshes above 24 members (C6 gateways stay per-receiver)?</p></li>
-<li><p><strong>Q24.</strong> Adaptive disclosure delay (T4): members re-challenge to tighten their clock bound
-and report the round trip, and the gateway raises <code class="docutils literal notranslate"><span class="pre">d</span></code> to cover the slowest. Approve? The
-cost is latency for everyone when one member is far away. The alternative is that a member
-whose bound is too loose falls back to reliable per-receiver delivery of the latest state.</p></li>
+<li><p><strong>Q25.</strong> A persistent insider forging at ≥ 30 Hz crowds the 6-slot verify buffer, and
+delivery falls to 68 % while it lasts. It is detected (<code class="docutils literal notranslate"><span class="pre">LiveRejected</span></code> at every member), but
+not stopped until the admin removes the fixture. Options:</p>
+<ul>
+<li><p>Accept it, like jamming, which any insider can also do.</p></li>
+<li><p>A bigger buffer on P4 + C6 and Pi fixtures (+~80 B per slot).</p></li>
+<li><p>Automatic quarantine: the gateway removes a fixture its members report. This is hard,
+because a forger can spoof the source.</p></li>
+</ul>
+</li>
 </ul>
 </section>
 <section id="sources">
