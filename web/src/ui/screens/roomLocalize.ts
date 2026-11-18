@@ -325,7 +325,7 @@ export function RoomLocalizeScreen(router: Router): Screen {
           document.body.style.background = "";
         };
         const det = new DetectorGL(detectGl, detectorOpts);
-        nc.setDetectParams({ threshold: det.threshold, downscale: det.downscale });
+        nc.setDetectParams({ threshold: det.threshold, downscale: det.downscale, adaptive: det.adaptiveWanted });
         startLoop(det);
       } else {
         const ms = new MediaStreamCaptureSource({ kSeed: cached });

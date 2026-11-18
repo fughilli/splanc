@@ -22,6 +22,7 @@ import {
   planExposureServo,
   planLedBrightness,
   planReconfigure,
+  BitRatePlanner,
   recommendConfig,
 } from "../../cv/exposure";
 import { CapturePerf, formatPerfLine, formatPhaseLine } from "../../cv/capturePerf";
@@ -133,6 +134,7 @@ interface CaptureEngineConfig {
     downscale: number;
     flipV: boolean;
     localContrast?: { gain: number };
+    diffuseMode: "adaptive" | "legacy";
   };
 }
 
@@ -161,6 +163,9 @@ function resolveCaptureConfig(forceDiffuse?: boolean): CaptureEngineConfig {
     downscale: numParam("downscale", bp.downscale),
     flipV: qs.get("flipv") !== null ? qs.get("flipv") !== "0" : bp.flipV,
     ...(diffuse ? { localContrast: { gain: numParam("lcgain", bp.lcGain) } } : {}),
+    // Diffuse frames run the adaptive detector (cv/diffuseDetect.ts) unless
+    // ?diffusedet=legacy asks for the old top-hat (A/B).
+    diffuseMode: qs.get("diffusedet") === "legacy" ? ("legacy" as const) : ("adaptive" as const),
   };
   return { diffuse, forcedThreshold, strideSpacing, anchorDensity, detectorOpts };
 }
@@ -249,6 +254,24 @@ function finalSolveOptions(perChannel = false): NonNullable<SolveProblem["option
   const on = forced === null ? prefs.getStripPrior() && !perChannel : forced === "1";
   return { ...(on ? { stripPrior: true } : {}), minCameraDistM: prefs.getMinCameraDistM() };
 }
+/** Diffuse capture's exposure is negotiated: auto exposure biased this many
+ * stops dark first — it keeps the camera at 60 fps (a manual lock drops a
+ * Pixel to 30, see MediaStreamCaptureSource.setExposureBias) and lands ~1 ms
+ * in a lit room, inside the 0.25-0.45 band below. AE still follows the scene,
+ * so when spot cores clip (a dark room lets AE lengthen until diffused spots
+ * bloom and merge) capture falls back to the manual pin. */
+const DIFFUSE_AE_BIAS_EV = -4;
+/** Blob saturated-pixel fraction (median) that reads "AE let the spots bloom",
+ * held for DIFFUSE_CLIP_TICKS 2-s ticks, before falling back to the pin. */
+const DIFFUSE_CLIP_SAT_FRAC = 0.25;
+const DIFFUSE_CLIP_TICKS = 2;
+/** The manual fallback, in the [0,1] planExposure range over
+ * [camera min, DIFFUSE_EXPOSURE_CAP_MS]: ~0.6 ms on a Pixel 10 — the middle of
+ * the 0.25-0.45 band where the adaptive detector found the most diffused spots
+ * across LED brightness. A fixed cap (not bitPeriodMs/2) so the absolute
+ * exposure doesn't move when the bit rate is renegotiated. */
+const DIFFUSE_EXPOSURE = 0.35;
+const DIFFUSE_EXPOSURE_CAP_MS = 55;
 const forcedExposure = ((): number | null => {
   const v = parseFloat(qs.get("exposure") ?? "");
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : null;
@@ -1177,15 +1200,30 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       localDetections = [];
       localImu = [];
       const cached = prefs.getCalibratedK();
+      // Diffuse capture never runs on the camera's auto exposure: in a lit room AE
+      // picks ~17 ms, each diffused LED blooms into a band and neighbours 2-3 LEDs
+      // apart merge — no per-frame detector can recover their centres (measured on
+      // the 2026-11-18 rope: the adaptive detector finds 5% of spots under AE vs
+      // ~70-80% at a short manual exposure). Pin the short end unless a stored
+      // profile, the servo or ?exposure= says otherwise.
       const initialExposure =
         profileRun?.exposure ?? (servoExposure ? EXPOSURE_SERVO_START : forcedExposure);
+      // Diffuse runs with no stored/forced exposure negotiate it (see
+      // DIFFUSE_AE_BIAS_EV): biased auto exposure first (keeps 60 fps), the
+      // manual pin as the fallback. Set once the capture source exists.
+      let diffuseExposure: "none" | "ae-bias" | "pinned" = "none";
+      let diffuseClipTicks = 0;
       let servoedExposure = initialExposure ?? EXPOSURE_SERVO_START;
       // iOS takes the camera natively: WebKit's getUserMedia offers no exposure
       // control at all and its camera is unreachable from this process, so the
       // app owns an AVCaptureSession instead (design doc §4.6/§4.7). Everything
       // downstream of `onFrame` is identical — the native source pre-runs the
       // detector's threshold pass and ships the sparse result.
-      let exposureTarget: { setExposure(t: number, capMs?: number): unknown };
+      let exposureTarget: {
+        setExposure(t: number, capMs?: number): unknown;
+        /** Auto exposure biased by `ev` stops; absent where the camera path can't. */
+        setExposureBias?(ev: number): Promise<boolean>;
+      };
       let detectGl: WebGL2RenderingContext;
       if (driverActive()) {
         // HITL app-driver: a hardware-free synthetic scene. Like the native path it
@@ -1250,7 +1288,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       const detector = new DetectorGL(detectGl, detectorOpts);
       // The native reduction must threshold with the SAME value the servo below
       // steers, or the servo is reacting to counts it isn't controlling.
-      nativeSource?.setDetectParams({ threshold: detector.threshold, downscale: detector.downscale });
+      nativeSource?.setDetectParams({ threshold: detector.threshold, downscale: detector.downscale, adaptive: detector.adaptiveWanted });
 
       // Pre-capture probe: measure the scene before the pattern runs, then
       // negotiate the capture configuration.
@@ -1361,6 +1399,25 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       if (initialExposure !== null) {
         void exposureTarget.setExposure(initialExposure, params.bitPeriodMs / 2);
       }
+      /** Diffuse exposure: biased AE where the camera path supports it (60 fps),
+       * else the manual short-exposure pin. */
+      const enterDiffuseExposure = (): void => {
+        if (initialExposure !== null || manualMode || servoExposure || diffuseExposure !== "none") return;
+        if (exposureTarget.setExposureBias) {
+          diffuseExposure = "ae-bias";
+          void exposureTarget.setExposureBias(DIFFUSE_AE_BIAS_EV);
+          nativeLog(`[capture] diffuse exposure: auto, bias ${DIFFUSE_AE_BIAS_EV} EV`);
+        } else {
+          pinDiffuseExposure("no exposure bias on this camera path");
+        }
+      };
+      const pinDiffuseExposure = (why: string): void => {
+        diffuseExposure = "pinned";
+        servoedExposure = DIFFUSE_EXPOSURE;
+        void exposureTarget.setExposure(DIFFUSE_EXPOSURE, DIFFUSE_EXPOSURE_CAP_MS);
+        nativeLog(`[capture] diffuse exposure: manual pin (${why})`);
+      };
+      if (diffuse) enterDiffuseExposure();
       // Every LED id decoded so far this run (drives the per-channel stage switch).
       const decodedIds = new Set<number>();
       // Data-aided channel measurement (cv/channelQuality.ts): shared across
@@ -1368,6 +1425,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // alphabet. It drives the alphabet both ways (no scene-luma gate).
       const channelQuality = new ChannelQuality();
       const alphabetPlanner = new AlphabetPlanner([2, 4]);
+      // Frames per code window, earned from decode yield (cv/exposure.ts).
+      const ratePlanner = new BitRatePlanner();
       const makePipeline = (p: CodeParams, e: number): CvPipeline => {
         const pl = new CvPipeline(p, e, (t) => c.clock.toServerTime(t), {
           denseRecords: true,
@@ -1662,7 +1721,13 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
                       `lowconf=${s.rejectedLowConf}`
                     : "") +
                   ` reneg=${renegotiations}` +
-                  (pop ? ` sat=${pop.satFrac.toFixed(2)} medI=${pop.medianIntensity.toFixed(2)}` : "");
+                  (pop ? ` sat=${pop.satFrac.toFixed(2)} medI=${pop.medianIntensity.toFixed(2)}` : "") +
+                  ` fpb=${ratePlanner.framesPerBit} exp=${diffuseExposure}` +
+                  (detector.adaptiveActive && detector.lastNoise !== null
+                    ? ` det=adaptive floor=${(detector.lastNoise.floor * 255).toFixed(2)}DN`
+                    : diffuse
+                      ? " det=legacy"
+                      : "");
               console.info(diag);
               nativeLog(diag);
               const perfDiag =
@@ -1906,7 +1971,11 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           .then((ps) => {
             if (!capturing || !ps.active || ps.patternClockEpoch === null) return;
             onApplied?.();
-            if (ps.codeParams.symbols !== params.symbols) channelQuality.resetYield();
+            // The yield is per (alphabet, rate): both planners read it as
+            // evidence about the CURRENT code.
+            if (ps.codeParams.symbols !== params.symbols || ps.codeParams.bitPeriodMs !== params.bitPeriodMs) {
+              channelQuality.resetYield();
+            }
             params = ps.codeParams;
             epoch = ps.patternClockEpoch;
             renegotiations++;
@@ -2013,7 +2082,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             lastPhaseAt = performance.now();
             if (!forcedThreshold) detector.threshold = threshold;
             detector.setLocalContrast(gain);
-            nativeSource?.setDetectParams({ threshold: detector.threshold });
+            nativeSource?.setDetectParams({ threshold: detector.threshold, adaptive: detector.adaptiveWanted });
+            // Switched INTO diffuse while the camera was on plain auto exposure.
+            if (target) enterDiffuseExposure();
             nativeLog(`[capture] switched to ${target ? `strided (stride ${strideSpacing})` : "dense"} capture`);
             noteDraft();
             updateCalSettingsNote();
@@ -2060,7 +2131,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             lastPhaseAt = performance.now();
             if (!forcedThreshold) detector.threshold = threshold;
             detector.setLocalContrast(gain);
-            nativeSource?.setDetectParams({ threshold: detector.threshold });
+            nativeSource?.setDetectParams({ threshold: detector.threshold, adaptive: detector.adaptiveWanted });
             nextStageBtn.style.display = stageIdx < channelPlan.stages.length - 1 ? "" : "none";
             const line = `${stageLabel(channelPlan, stageIdx)} (prev ${Math.round(coverage * 100)}% decoded)`;
             nativeLog(`[capture] ${line}`);
@@ -2090,7 +2161,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // brightness servo would fight it. Leave it pinned there.
         if (!forcedThreshold && !diffuse) {
           detector.threshold = adjustThreshold(detector.threshold, report.blobCount, ledCount);
-          nativeSource?.setDetectParams({ threshold: detector.threshold });
+          nativeSource?.setDetectParams({ threshold: detector.threshold, adaptive: detector.adaptiveWanted });
         }
         // Link telemetry: the settings in effect over the window this report
         // measured (before this tick's servo steps change them).
@@ -2105,8 +2176,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           marginEma: pipeline.stats.marginEma,
         });
         if (renegotiating) return;
-        const wantBit = forcedBitMs === null ? planReconfigure(params.bitPeriodMs, report.frameIntervalMs) : null;
-        const wantSym =
+        const wantSym0 =
           forcedSymbols === null
             ? (alphabetPlanner.plan(
                 params.symbols,
@@ -2116,7 +2186,19 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
                 performance.now(),
               ) as 2 | 4 | null)
             : null;
+        const wantSym = wantSym0;
+        // One renegotiation lever at a time: the rate only moves on a tick the
+        // alphabet doesn't (both read the same yield).
+        const framesPerBit =
+          wantSym === null ? ratePlanner.plan(channelQuality.decodeYield(), performance.now()) : ratePlanner.framesPerBit;
+        const wantBit =
+          forcedBitMs === null ? planReconfigure(params.bitPeriodMs, report.frameIntervalMs, framesPerBit) : null;
         const pop = monitor.blobPopulation();
+        // Diffuse on biased AE: fall back to the manual pin once spot cores clip.
+        if (diffuseExposure === "ae-bias" && diffuse && pop !== null) {
+          diffuseClipTicks = pop.satFrac >= DIFFUSE_CLIP_SAT_FRAC ? diffuseClipTicks + 1 : 0;
+          if (diffuseClipTicks >= DIFFUSE_CLIP_TICKS) pinDiffuseExposure(`spot cores clipping, sat ${pop.satFrac.toFixed(2)}`);
+        }
         if (servoExposure && !manualMode && pop !== null) {
           const nextExp = planExposureServo(servoedExposure, {
             blobCount: report.blobCount,

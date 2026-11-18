@@ -124,11 +124,14 @@ export const MIN_FRAMES_PER_BIT = 3.0;
  * MIN_FRAMES_PER_BIT the decoder still works; hysteresis, not a cliff. */
 export const RENEG_FRAMES_PER_BIT = 2.5;
 
-/** Window-period bounds: floor keeps the cycle robust to timing jitter even
- * on high-fps cameras; ceiling keeps a 64-LED SEC-DED cycle (14 frames at
- * 2 symbols, 8 at 4) under ~6 s so decodes (and live solves) still converge
- * in a handheld walk. */
-export const BIT_PERIOD_MIN_MS = 60;
+/** Window-period bounds: the floor keeps the cycle robust to timing jitter
+ * (and inside what a strip's refresh can render: a 250-LED WS2812 strip
+ * repaints in ~8 ms); the ceiling keeps a 64-LED SEC-DED cycle (14 frames at
+ * 2 symbols, 8 at 4) under ~6 s so decodes (and live solves) still converge in
+ * a handheld walk. The floor was 60 ms while capture ran at 3 frames/bit only;
+ * BitRatePlanner now earns shorter windows (2 frames/bit at 60 fps = 35 ms)
+ * from measured decode yield. */
+export const BIT_PERIOD_MIN_MS = 30;
 export const BIT_PERIOD_MAX_MS = 400;
 
 /** Detector-threshold servo bounds (base = the §5 dark-room operating point). */
@@ -142,9 +145,10 @@ export interface NegotiatedConfig {
   bitPeriodMs: number;
 }
 
-/** Round up to the 10 ms grid the wall/driver render cleanly. */
+/** Round up to the 5 ms grid the wall/driver render cleanly (fine enough that
+ * 2, 2.5 and 3 frames/bit at 60 fps are distinct rates: 35/45/50 ms). */
 function roundBitPeriod(ms: number): number {
-  const stepped = Math.ceil(ms / 10) * 10;
+  const stepped = Math.ceil(ms / 5 - 1e-9) * 5;
   return Math.min(BIT_PERIOD_MAX_MS, Math.max(BIT_PERIOD_MIN_MS, stepped));
 }
 
@@ -171,14 +175,92 @@ export function recommendConfig(m: {
  * recovered so much that the code is pointlessly slow (>2× what's needed —
  * halving the cycle time is worth the one-cycle re-anchor cost).
  */
-export function planReconfigure(currentBitPeriodMs: number, frameIntervalMs: number): number | null {
+export function planReconfigure(
+  currentBitPeriodMs: number,
+  frameIntervalMs: number,
+  targetFramesPerBit: number = MIN_FRAMES_PER_BIT,
+): number | null {
   const framesPerBit = currentBitPeriodMs / frameIntervalMs;
-  if (framesPerBit < RENEG_FRAMES_PER_BIT) {
-    return roundBitPeriod(MIN_FRAMES_PER_BIT * frameIntervalMs);
-  }
-  const ideal = roundBitPeriod(MIN_FRAMES_PER_BIT * frameIntervalMs);
+  const ideal = roundBitPeriod(targetFramesPerBit * frameIntervalMs);
+  // Too few frames per window for the target (the camera slowed, or the
+  // planner stepped back up): lengthen. Hysteresis of half a frame/bit.
+  if (framesPerBit < targetFramesPerBit - (MIN_FRAMES_PER_BIT - RENEG_FRAMES_PER_BIT)) return ideal;
+  // Below the default target the planner asked for speed: follow it exactly.
+  if (targetFramesPerBit < MIN_FRAMES_PER_BIT && currentBitPeriodMs > ideal) return ideal;
+  // At the default target, only shorten on a big gap (frame-interval jitter
+  // must not flap the rate).
   if (currentBitPeriodMs >= 2 * ideal) return ideal;
   return null;
+}
+
+/** Frames-per-bit ladder the rate planner walks (fastest last). */
+export const FRAMES_PER_BIT_LADDER = [MIN_FRAMES_PER_BIT, 2.5, 2] as const;
+/** Step to a faster rung after this many sync-valid cycles at the current one
+ * decoding at least RATE_UP_YIELD of the time (and a minimum dwell). */
+export const RATE_UP_ATTEMPTS = 40;
+export const RATE_UP_YIELD = 0.5;
+export const RATE_MIN_DWELL_MS = 8_000;
+/** Step back to a slower rung when the yield at this rung falls below this
+ * over at least RATE_DOWN_ATTEMPTS cycles; the abandoned rung is then barred
+ * for RATE_BACKOFF_MS, doubling on each repeat failure (cap RATE_BACKOFF_MAX_MS). */
+export const RATE_DOWN_YIELD = 0.2;
+export const RATE_DOWN_ATTEMPTS = 25;
+export const RATE_BACKOFF_MS = 30_000;
+export const RATE_BACKOFF_MAX_MS = 240_000;
+
+/**
+ * Bit-rate negotiation: how many camera frames each code window spans. Shorter
+ * windows mean faster cycles (more decodes per second) until the decoder runs
+ * out of evidence per window — so the rate is EARNED from measured decode
+ * yield, exactly like the symbol alphabet (AlphabetPlanner): step faster while
+ * the current rung decodes well, step back (and bar the rung for a while) when
+ * it starves. `yieldNow` must cover only the current rung (the caller resets
+ * the yield on every rate or alphabet change).
+ */
+export class BitRatePlanner {
+  private rung = 0;
+  private since = -Infinity;
+  private readonly blockedUntil = new Map<number, number>();
+  private readonly backoff = new Map<number, number>();
+
+  constructor(private readonly ladder: readonly number[] = FRAMES_PER_BIT_LADDER) {}
+
+  /** The frames/bit the capture should run at now. */
+  get framesPerBit(): number {
+    return this.ladder[this.rung]!;
+  }
+
+  /** Re-anchor the dwell (call when the code was reconfigured for any reason). */
+  noteReconfigured(tMs: number): void {
+    this.since = tMs;
+  }
+
+  /** Update the rung from the current rung's decode yield; returns the frames/bit. */
+  plan(yieldNow: { attempts: number; frac: number } | null, tMs: number): number {
+    if (this.since === -Infinity) this.since = tMs;
+    if (yieldNow === null) return this.framesPerBit;
+    if (this.rung > 0 && yieldNow.attempts >= RATE_DOWN_ATTEMPTS && yieldNow.frac < RATE_DOWN_YIELD) {
+      const failed = this.rung;
+      const b = Math.min(RATE_BACKOFF_MAX_MS, (this.backoff.get(failed) ?? RATE_BACKOFF_MS / 2) * 2);
+      this.backoff.set(failed, b);
+      this.blockedUntil.set(failed, tMs + b);
+      this.rung--;
+      this.since = tMs;
+      return this.framesPerBit;
+    }
+    const next = this.rung + 1;
+    if (
+      next < this.ladder.length &&
+      tMs - this.since >= RATE_MIN_DWELL_MS &&
+      yieldNow.attempts >= RATE_UP_ATTEMPTS &&
+      yieldNow.frac >= RATE_UP_YIELD &&
+      (this.blockedUntil.get(next) ?? -Infinity) <= tMs
+    ) {
+      this.rung = next;
+      this.since = tMs;
+    }
+    return this.framesPerBit;
+  }
 }
 
 /**

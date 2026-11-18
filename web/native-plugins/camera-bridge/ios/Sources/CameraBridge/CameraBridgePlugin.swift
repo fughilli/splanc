@@ -64,6 +64,9 @@ public class CameraBridge: CAPPlugin, CAPBridgedPlugin {
     private let paramLock = NSLock()
     private var threshold: Double = 0.6
     private var downscale: Int = 2
+    /// Diffuse mode's adaptive detector (AdaptiveDiffuse.swift) instead of the
+    /// threshold; set by capture.ts with the JS detector's diffuse state.
+    private var adaptive = false
     private var framesEmitted = 0
     private var framesDropped = 0
     private var reduceMsEma = 0.0
@@ -417,9 +420,10 @@ public class CameraBridge: CAPPlugin, CAPBridgedPlugin {
         paramLock.lock()
         if let t = call.getDouble("threshold") { threshold = min(1.0, max(0.0, t)) }
         if let d = call.getInt("downscale") { downscale = max(1, d) }
-        let (t, d) = (threshold, downscale)
+        if let a = call.getBool("adaptive") { adaptive = a }
+        let (t, d, a) = (threshold, downscale, adaptive)
         paramLock.unlock()
-        clog("setDetectParams threshold=\(t) downscale=\(d)")
+        clog("setDetectParams threshold=\(t) downscale=\(d) adaptive=\(a)")
         call.resolve()
     }
 
@@ -506,7 +510,7 @@ extension CameraBridge: AVCaptureVideoDataOutputSampleBufferDelegate {
                               from connection: AVCaptureConnection) {
         guard let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         paramLock.lock()
-        let (thr, ds) = (threshold, downscale)
+        let (thr, ds, adapt) = (threshold, downscale, adaptive)
         paramLock.unlock()
 
         // Scene stats move at AE speed and capture.ts consumes them every 6th
@@ -514,7 +518,7 @@ extension CameraBridge: AVCaptureVideoDataOutputSampleBufferDelegate {
         // nothing. NativeCaptureSource carries the last one forward.
         let wantMeasure = framesEmitted % 6 == 0
         let t0 = CFAbsoluteTimeGetCurrent()
-        guard let r = reducer.reduce(pixels, downscale: ds, threshold: thr,
+        guard let r = reducer.reduce(pixels, downscale: ds, threshold: thr, adaptive: adapt,
                                      measureWidth: CameraBridge.measureWidth,
                                      wantMeasure: wantMeasure)
         else {

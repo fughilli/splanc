@@ -17,6 +17,8 @@
  */
 
 import { connectedComponents } from "./ccl";
+import { AdaptiveDiffuseGL } from "./diffuseDetectGL";
+import { adaptiveParamsForDownscale, DEFAULT_ADAPTIVE_DIFFUSE, type AdaptiveDiffuseParams, type NoiseFloor } from "./diffuseDetect";
 import type { SceneStats } from "./exposure";
 import type { Blob } from "./types";
 
@@ -123,6 +125,16 @@ export interface DetectorOptions {
    */
   localContrast?: { gain: number; radiusPx?: number } | undefined;
   /**
+   * Which detector diffuse mode (localContrast gain > 0) runs. "adaptive" (the
+   * default): cv/diffuseDetect.ts — spot-scale DoG + a per-frame noise floor +
+   * local-peak split, ~2.3x the legacy recall on real diffused-rope frames
+   * (web/tests/diffuseRope.test.ts). "legacy": the single-pass top-hat above,
+   * kept for A/B (`?diffusedet=legacy`). Falls back to legacy, and says so, on a
+   * context without EXT_color_buffer_float.
+   */
+  diffuseMode?: "adaptive" | "legacy";
+  adaptiveParams?: AdaptiveDiffuseParams;
+  /**
    * Whether the camera texture's v=0 row is the image BOTTOM (GL-style) —
    * then blob v must be flipped to the §7.4 top-left origin. Camera-texture
    * row order is device/driver territory; validated on-device 2026-07-03:
@@ -220,6 +232,10 @@ export class DetectorGL {
    * The gain changes when a capture switches diffuse mode live (setLocalContrast). */
   private bgGain: number;
   private readonly bgRadiusPx: number;
+  /** The adaptive diffuse detector, when diffuseMode is "adaptive" and the
+   * context supports it; used whenever the diffuse prefilter is on. */
+  private readonly adaptive: AdaptiveDiffuseGL | null = null;
+  private readonly diffuseMode: "adaptive" | "legacy";
   private targetW = 0;
   private targetH = 0;
   private readback: Uint8Array = new Uint8Array(0);
@@ -257,6 +273,14 @@ export class DetectorGL {
     this.maxAspect = opts.maxAspect ?? 3;
     this.bgGain = opts.localContrast?.gain ?? 0;
     this.bgRadiusPx = opts.localContrast?.radiusPx ?? 8;
+    this.diffuseMode = opts.diffuseMode ?? "adaptive";
+    if (this.diffuseMode === "adaptive") {
+      if (AdaptiveDiffuseGL.supported(gl)) {
+        const p = adaptiveParamsForDownscale(opts.adaptiveParams ?? DEFAULT_ADAPTIVE_DIFFUSE, this.downscale);
+        this.adaptive = new AdaptiveDiffuseGL(gl, p);
+      }
+      else console.warn("[detect] EXT_color_buffer_float unavailable: diffuse mode uses the legacy top-hat prefilter");
+    }
 
     this.program = buildProgram(gl, VS, FS);
     this.uThreshold = gl.getUniformLocation(this.program, "threshold")!;
@@ -284,6 +308,23 @@ export class DetectorGL {
     this.bgGain = Math.max(0, gain);
   }
 
+  /** Whether diffuse frames SHOULD go through the adaptive detector (diffuse on,
+   * adaptive mode) — what a pre-reduced source (the iOS native reducer) runs,
+   * whatever this context's GL support. */
+  get adaptiveWanted(): boolean {
+    return this.diffuseMode === "adaptive" && this.bgGain > 0;
+  }
+
+  /** Whether diffuse frames currently go through the adaptive detector. */
+  get adaptiveActive(): boolean {
+    return this.adaptive !== null && this.bgGain > 0;
+  }
+
+  /** The adaptive detector's last noise floor (null until it has run). */
+  get lastNoise(): NoiseFloor | null {
+    return this.adaptive?.lastNoise ?? null;
+  }
+
   /**
    * Run detection on a camera texture of `imgW`×`imgH`. Returns blobs in
    * full-resolution pixels, origin top-left (§7.4) — the readback's GL
@@ -293,6 +334,10 @@ export class DetectorGL {
     const gl = this.gl;
     const w = Math.max(1, Math.round(imgW / this.downscale));
     const h = Math.max(1, Math.round(imgH / this.downscale));
+    if (this.adaptive !== null && this.bgGain > 0) {
+      const buf = this.adaptive.run(texture, w, h);
+      return this.blobsFrom(buf, w, h, this.downscale, imgH, this.flipV, opts);
+    }
     this.ensureTarget(w, h);
 
     const prevFbo = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;

@@ -23,6 +23,12 @@ import {
   planExposureServo,
   planLedBrightness,
   planReconfigure,
+  BitRatePlanner,
+  RATE_BACKOFF_MS,
+  RATE_DOWN_ATTEMPTS,
+  RATE_MIN_DWELL_MS,
+  RATE_UP_ATTEMPTS,
+  RATE_UP_YIELD,
   planSymbolSwitch,
   recommendConfig,
   SYMBOL_DOWNGRADE_MARGIN,
@@ -54,9 +60,9 @@ test("30 fps camera -> 100 ms windows (the design-doc default operating point)",
   assert.equal(cfg.bitPeriodMs, 100);
 });
 
-test("15 fps camera (low light doubles exposure) -> 210 ms windows", () => {
+test("15 fps camera (low light doubles exposure) -> 205 ms windows", () => {
   const cfg = recommendConfig({ frameIntervalMs: 66.7, meanLuma: 0.03, clipFrac: 0.001 });
-  assert.equal(cfg.bitPeriodMs, 210); // ceil(3 * 66.7 / 10) * 10
+  assert.equal(cfg.bitPeriodMs, 205); // ceil(3 * 66.7 / 5) * 5
 });
 
 test("window period clamps to sane bounds", () => {
@@ -75,7 +81,7 @@ test("window period clamps to sane bounds", () => {
 test("fps drop below the decodable band triggers a slower code", () => {
   // 100 ms bits at 15 fps = 1.5 frames/bit — starved windows.
   const next = planReconfigure(100, 66.7);
-  assert.equal(next, 210);
+  assert.equal(next, 205);
 });
 
 test("fps within band keeps the current rate (hysteresis)", () => {
@@ -90,6 +96,41 @@ test("a much faster camera reclaims cycle time only past 2x", () => {
   assert.equal(planReconfigure(400, 33.3), 100);
   // 180 ms at 30 fps: ideal 100, but 180 < 200 — not worth the re-anchor.
   assert.equal(planReconfigure(180, 33.3), null);
+});
+
+test("a faster frames/bit target from the rate planner is followed exactly", () => {
+  // 60 fps: 3 frames/bit = 50 ms; the planner asks for 2 -> 35 ms.
+  assert.equal(planReconfigure(50, 16.7, 2), 35);
+  assert.equal(planReconfigure(50, 16.7, 2.5), 45);
+  // Already there: no change.
+  assert.equal(planReconfigure(35, 16.7, 2), null);
+  // Planner stepped back to 3 from 2: 35 ms is 2.1 frames/bit < 2.5 -> lengthen.
+  assert.equal(planReconfigure(35, 16.7, 3), 55);
+});
+
+// -- BitRatePlanner: yield-earned frames/bit ---------------------------------
+
+test("rate planner steps faster only after a healthy dwell, and backs off a starved rung", () => {
+  const p = new BitRatePlanner();
+  assert.equal(p.framesPerBit, 3);
+  // Healthy yield but no dwell yet: stay.
+  assert.equal(p.plan({ attempts: 50, frac: 0.8 }, 0), 3);
+  assert.equal(p.plan({ attempts: 50, frac: 0.8 }, RATE_MIN_DWELL_MS - 1), 3);
+  // Dwell met, enough attempts, good yield: step to 2.5.
+  assert.equal(p.plan({ attempts: RATE_UP_ATTEMPTS, frac: RATE_UP_YIELD }, RATE_MIN_DWELL_MS), 2.5);
+  // Too few attempts at the new rung: no further step.
+  assert.equal(p.plan({ attempts: 10, frac: 0.9 }, 2 * RATE_MIN_DWELL_MS), 2.5);
+  assert.equal(p.plan({ attempts: 60, frac: 0.9 }, 2 * RATE_MIN_DWELL_MS + 1), 2);
+  // 2 frames/bit starves: back to 2.5, and 2 is barred for RATE_BACKOFF_MS.
+  const t = 3 * RATE_MIN_DWELL_MS;
+  assert.equal(p.plan({ attempts: RATE_DOWN_ATTEMPTS, frac: 0.05 }, t), 2.5);
+  assert.equal(p.plan({ attempts: 80, frac: 0.9 }, t + RATE_MIN_DWELL_MS), 2.5, "rung barred");
+  assert.equal(p.plan({ attempts: 80, frac: 0.9 }, t + RATE_BACKOFF_MS + 1), 2, "bar expired");
+});
+
+test("rate planner never steps below the slowest rung on bad yield", () => {
+  const p = new BitRatePlanner();
+  assert.equal(p.plan({ attempts: 100, frac: 0 }, 1e6), 3);
 });
 
 // -- planSymbolSwitch: margin-driven alphabet renegotiation -------------------
