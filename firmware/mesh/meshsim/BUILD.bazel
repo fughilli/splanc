@@ -40,3 +40,15 @@ rust_binary(
         "//firmware/mesh/swarm:swarm_net",
     ],
 )
+
+# The distribution sweep (design §5.8): managed flood vs the two-tier UWB/802.11 tree.
+#   bazel build -c opt //firmware/mesh/meshsim:treesweep && bazel-bin/.../treesweep > tree.csv
+rust_binary(
+    name = "treesweep",
+    srcs = ["sweep/tree.rs"],
+    edition = "2021",
+    deps = [
+        ":meshsim",
+        "//firmware/mesh",
+    ],
+)

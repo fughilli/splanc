@@ -22,6 +22,8 @@
 //! - [`ports`]: §5.3's ports and the dispatch policy in front of them.
 //! - [`timesync`]: mesh time aggregated over many peers (M4 wires it in); [`interp`]: members
 //!   interpolate live updates on their own render clock.
+//! - [`tree`]: the two-tier distribution tree (UWB gateway → relays, 802.11 relays →
+//!   fixtures), an ETX DODAG built cooperatively (§5.8).
 //! - [`stack`]: one device's mesh, all of the above around a [`Node`], with capacity classes
 //!   and the custodian store hook.
 //!
@@ -52,6 +54,7 @@ pub mod replay;
 pub mod security;
 pub mod stack;
 pub mod timesync;
+pub mod tree;
 
 pub use backhaul::{Backhaul, BackhaulId, Busy, NodeId, RxMeta};
 pub use node::{MtuTooSmall, Node, NodeConfig, NodeStats};
