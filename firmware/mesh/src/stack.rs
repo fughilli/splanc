@@ -95,6 +95,9 @@ pub struct StackConfig {
     /// authenticator, and at or below which they return to per-receiver MACs (Q19; the same
     /// hysteresis as the tree switch, Q18).
     pub live_auth: (u16, u16),
+    /// Apply-then-verify for authenticated live updates (Q22): render on arrival, verify when
+    /// the key comes, roll back a forgery and verify first for a cooldown after one.
+    pub live_early: bool,
 }
 
 impl Default for StackConfig {
@@ -111,6 +114,7 @@ impl Default for StackConfig {
             hop_limit: 5,
             adaptive_hops: true,
             live_auth: (crate::tree::TREE_ENTER, crate::tree::TREE_EXIT),
+            live_early: true,
         }
     }
 }
@@ -128,6 +132,9 @@ pub struct TeslaStats {
     pub reqs_sent: u32,
     pub syncs_accepted: u32,
     pub no_chain: u32,
+    /// Member: forged live updates rolled back. Gateway: chains rebuilt to raise `d`.
+    pub rejected: u32,
+    pub d_raises: u32,
 }
 
 /// What happened, for the device (dispatch, persist, tell the app).
@@ -135,6 +142,9 @@ pub struct TeslaStats {
 pub enum Event<'a> {
     /// Relayed control for this node (§5.4): dispatch `inner` as a ClientMessage.
     Control { origin: NodeId, header: ControlHeader, inner: &'a [u8] },
+    /// A live update rendered on arrival (apply-then-verify, §7.9) failed verification: it
+    /// was forged. Return the uniforms it set to their last verified values.
+    LiveRejected { origin: NodeId, op_id: u32 },
     /// Another non-membership port's packet (reply, status, scene, time base, bulk).
     Packet { origin: NodeId, port: Port, body: &'a [u8], admin: bool },
     /// A device waits for approval (gateway: "New fixture nearby: admit?").
@@ -272,6 +282,12 @@ pub struct MeshStack<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, cons
     pub tesla_v: Option<(NodeId, Verifier)>,
     tesla_ch: Option<(NodeId, Challenge)>,
     tesla_req_us: i64,
+    /// Member: best round trip so far and challenges made for the current chain. Gateway:
+    /// the largest round trip members reported since the chain was built.
+    tesla_best_rtt: u32,
+    tesla_tries: u8,
+    tesla_rtt_max: u32,
+    tesla_rebuild: bool,
     pub tesla_stats: TeslaStats,
     plain_tx: [u8; PLAIN_MAX],
     plain_sealed: [u8; PLAIN_MAX + 32],
@@ -340,6 +356,10 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             tesla_v: None,
             tesla_ch: None,
             tesla_req_us: i64::MIN / 2,
+            tesla_best_rtt: 0,
+            tesla_tries: 0,
+            tesla_rtt_max: 0,
+            tesla_rebuild: false,
             tesla_stats: TeslaStats::default(),
             plain_tx: [0; PLAIN_MAX],
             plain_sealed: [0; PLAIN_MAX + 32],
@@ -842,14 +862,19 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         }
         // A gateway whose live updates moved to the broadcast authenticator builds its chain
         // here (CHAIN_LEN hashes), and the next one before this one runs out.
-        if self.gateway.is_some() && self.live_sel.mode == Dist::Tree && self.tesla.as_ref().is_none_or(|s| s.ending(now_us)) {
+        if self.gateway.is_some() && self.live_sel.mode == Dist::Tree && (self.tesla_rebuild || self.tesla.as_ref().is_none_or(|s| s.ending(now_us))) {
             self.crypto_jobs += 1;
             let mut seed = [0u8; 16];
             self.rng.fill(&mut seed);
             let mut c = [0u8; 2];
             self.rng.fill(&mut c);
-            self.tesla = Some(Signer::new(&seed, u16::from_be_bytes(c), now_us, tesla::INTERVAL_US, tesla::DISCLOSE));
+            // d covers the slowest member that reported (Q24); members re-report for the new
+            // chain, so a far member that left lets d come down at the next chain.
+            let d = if self.tesla_rtt_max == 0 { tesla::DISCLOSE } else { tesla::needed_d(self.tesla_rtt_max, tesla::INTERVAL_US) };
+            self.tesla = Some(Signer::new(&seed, u16::from_be_bytes(c), now_us, tesla::INTERVAL_US, d));
             self.tesla_stats.chains += 1;
+            self.tesla_rebuild = false;
+            self.tesla_rtt_max = 0;
             return true;
         }
         false
@@ -1000,17 +1025,31 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             self.tesla_request(now_us, origin);
             return;
         }
+        // Best-of-N: a few more challenges for a tighter bound (and a better RTT report).
+        if self.tesla_tries < tesla::TRIES {
+            self.tesla_request(now_us, origin);
+        }
         let me = self.me();
         let groups = self.membership.groups();
+        let mut rejected = 0;
         if let Some((_, v)) = self.tesla_v.as_mut() {
-            v.on_packet(now_us, seq, Port::LiveAuth as u8, &a, payload, &mut |_, _, b| {
-                if let Some((header, inner)) = ControlHeader::decode(b) {
-                    if header.targets.includes(me, &groups) {
-                        on(Event::Control { origin, header, inner });
+            v.on_packet(now_us, seq, Port::LiveAuth as u8, &a, payload, &mut |o| match o {
+                tesla::Out::Apply { body, .. } => {
+                    if let Some((header, inner)) = ControlHeader::decode(body) {
+                        if header.targets.includes(me, &groups) {
+                            on(Event::Control { origin, header, inner });
+                        }
+                    }
+                }
+                tesla::Out::Rejected { body, .. } => {
+                    rejected += 1;
+                    if let Some((header, _)) = ControlHeader::decode(body) {
+                        on(Event::LiveRejected { origin, op_id: header.op_id });
                     }
                 }
             });
         }
+        self.tesla_stats.rejected += rejected;
     }
 
     /// Challenge `gw` for its chain (only a gateway we hold a synced session with).
@@ -1026,7 +1065,8 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         let me = self.me();
         self.tesla_ch = Some((gw, Challenge { session, nonce, t0_us: now_us }));
         self.tesla_req_us = now_us;
-        self.send_tesla(gw, &TeslaMsg::Req { session, node: me, nonce, mac: tesla::req_mac(&key, session, me, nonce) });
+        let rtt_us = self.tesla_best_rtt;
+        self.send_tesla(gw, &TeslaMsg::Req { session, node: me, nonce, rtt_us, mac: tesla::req_mac(&key, session, me, nonce, rtt_us) });
         self.tesla_stats.reqs_sent += 1;
     }
 
@@ -1041,10 +1081,19 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         let me = self.me();
         let mesh_id = self.node.guard.mesh_id;
         match m {
-            TeslaMsg::Req { session, node, nonce, mac } => {
+            TeslaMsg::Req { session, node, nonce, rtt_us, mac } => {
                 let Some(gs) = self.gateway.as_ref().filter(|g| g.grant.session == session) else { return };
-                let Some(e) = gs.entry(node).filter(|e| crate::crypto::ct_eq(&tesla::req_mac(&e.key, session, node, nonce), &mac)) else { return };
+                let Some(e) = gs.entry(node).filter(|e| crate::crypto::ct_eq(&tesla::req_mac(&e.key, session, node, nonce, rtt_us), &mac)) else { return };
                 let key = e.key;
+                // Q24: a member whose round trip the current d does not cover raises it (a new
+                // chain at once); d comes down only with the next chain.
+                if rtt_us > 0 {
+                    self.tesla_rtt_max = self.tesla_rtt_max.max(rtt_us);
+                    if self.tesla.as_ref().is_some_and(|s| tesla::needed_d(rtt_us, s.interval_us()) > s.disclose_delay()) && !self.tesla_rebuild {
+                        self.tesla_rebuild = true;
+                        self.tesla_stats.d_raises += 1;
+                    }
+                }
                 if let Some(s) = self.tesla.as_ref() {
                     let reply = s.sync(now_us, session, node, nonce, &key);
                     self.send_tesla(origin, &reply);
@@ -1054,8 +1103,21 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             TeslaMsg::Sync(body, mac) => {
                 let Some((gw, ch)) = self.tesla_ch.filter(|(g, _)| *g == origin) else { return };
                 let Some(key) = self.sessions.get(body.session).map(|s| s.key) else { return };
-                if let Some(v) = Verifier::from_sync(&ch, &body, &mac, &key, me, mesh_id) {
-                    self.tesla_v = Some((gw, v));
+                if let Some(mut v) = Verifier::from_sync(&ch, &body, &mac, &key, me, mesh_id) {
+                    let rtt = (now_us - ch.t0_us).clamp(1, u32::MAX as i64) as u32;
+                    match self.tesla_v.as_mut() {
+                        // Another round trip for the same chain: keep the tighter bound.
+                        Some((g, cur)) if *g == gw && cur.chain == v.chain => {
+                            cur.rebound(now_us, &v);
+                            self.tesla_tries = self.tesla_tries.saturating_add(1);
+                        }
+                        _ => {
+                            v.early = self.cfg.live_early;
+                            self.tesla_v = Some((gw, v));
+                            self.tesla_tries = 1;
+                        }
+                    }
+                    self.tesla_best_rtt = if self.tesla_best_rtt == 0 { rtt } else { self.tesla_best_rtt.min(rtt) };
                     self.tesla_ch = None;
                     self.tesla_stats.syncs_accepted += 1;
                 }

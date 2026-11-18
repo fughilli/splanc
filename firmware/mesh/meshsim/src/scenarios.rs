@@ -581,20 +581,19 @@ fn rate_adaptation_climbs_and_survives_walking() {
     eprintln!("rate adaptation (6 fixtures, walking): rates now {rates:?} Mb/s, {changes} changes in {} s; 30 Hz control delivered {:.1}%", w.now() / 1_000_000, ratio * 100.0);
 }
 
-/// Q19: past the threshold, live updates go out under the broadcast authenticator: one
-/// constant-size packet per update instead of 8 bytes per member. Every member receives them
-/// once their keys are disclosed; an insider holding a disclosed key cannot forge one.
-#[test]
-fn live_updates_use_the_broadcast_authenticator_in_large_meshes() {
+/// A 10-fixture room whose live updates use the broadcast authenticator (thresholds lowered
+/// to 6/4 so a small room takes the large-mesh path), streaming 30 Hz for 30 s. Returns the
+/// world, the updates sent and the member latencies (ms) of the last 400.
+fn live_auth_room(early: bool, seed: u64) -> (World, Vec<(u32, i64)>, Vec<f64>, usize) {
     let n = 10;
-    // Low thresholds stand in for 24/16, so a small room exercises the large-mesh path.
-    let mut w = room_with(n, 21, |w| w.live_auth = (6, 4));
+    let mut w = room_with(n, seed, |w| {
+        w.live_auth = (6, 4);
+        w.live_early = early;
+    });
     let all: Vec<usize> = (0..n).collect();
     let c = creds(&w);
     form(&mut w, &all, &c, 0, 15_000);
     w.unlock_and_sync(GW, SESSION, &all, 15_000).expect("sync");
-    // Live at 30 Hz: the selector holds 5 s, the chain is built in the crypto task, members
-    // fetch it on the first authenticated packet.
     let mut sent = Vec::new();
     for k in 0..900u32 {
         let local = w.local(GW);
@@ -603,39 +602,66 @@ fn live_updates_use_the_broadcast_authenticator_in_large_meshes() {
         w.run_ms(33);
     }
     w.run_ms(500);
-    let gw = w.nodes[GW].stack.tesla_stats;
-    assert!(gw.auth_sent > 600, "{gw:?}");
-    assert_eq!(gw.chains, 1);
-    // The last 400 updates (well after the switch and sync): every member got them.
-    let tail = &sent[500..];
     let mut missing = 0;
     let mut lat = Vec::new();
-    for (op, at) in tail {
+    for (op, at) in &sent[500..] {
         let r = receivers(&w, *op, *at);
         missing += (n - 1) - r.len();
         lat.extend(r.iter().map(|x| x.2));
     }
     lat.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    (w, sent, lat, missing)
+}
+
+/// An insider (member `from`) forges a live update for the gateway's current interval: it
+/// knows the time and every disclosed key, not the current one.
+fn forge_live(w: &mut World, from: usize, op: u32) {
+    let chain = w.nodes[from].stack.tesla_v.as_ref().unwrap().1.chain;
+    let now_gw = w.local(GW);
+    let s = w.nodes[GW].stack.tesla.as_mut().unwrap();
+    let (cur, _) = s.interval_at(now_gw);
+    let d = s.disclose_delay() as u32;
+    let disclosed_key = s.key(cur - d);
+    let mut body = [0u8; 64];
+    let hn = splanc_mesh::ports::ControlHeader { op_id: op, targets: Targets::All }.encode(b"evil", &mut body).unwrap();
+    let a = splanc_mesh::tesla::Auth { chain, interval: cur as u16, tag: [0xA5; 8], disclosed: (cur - d) as u16, key: disclosed_key };
+    let mut p = [0u8; 128];
+    a.encode(&mut p).unwrap();
+    p[30..38].copy_from_slice(&((1u64 << 40) | op as u64).to_be_bytes());
+    p[38..38 + hn].copy_from_slice(&body[..hn]);
+    inject_as(w, from, id(GW), Port::LiveAuth, &p[..38 + hn]);
+}
+
+/// Q19: past the threshold, live updates go out under the broadcast authenticator: one
+/// constant-size packet per update instead of 8 bytes per member. Verify-first: every member
+/// receives them once their keys are disclosed; an insider holding a disclosed key cannot
+/// forge one.
+#[test]
+fn live_updates_use_the_broadcast_authenticator_in_large_meshes() {
+    let n = 10;
+    let (mut w, sent, lat, missing) = live_auth_room(false, 21);
+    let tail = sent.len() - 500;
+    let gw = w.nodes[GW].stack.tesla_stats;
+    assert!(gw.auth_sent > 600, "{gw:?}");
     let p50 = lat[lat.len() / 2];
     let p99 = lat[lat.len() * 99 / 100];
     let st: Vec<_> = w.nodes[1..].iter().map(|x| x.stack.tesla_v.as_ref().map(|v| v.1.stats)).collect();
-    assert!(missing * 100 <= tail.len() * (n - 1), "{missing} missing of {}: {st:?}", tail.len() * (n - 1));
-    // Latency: the disclosure delay (3 intervals of 20 ms) plus the wait for the next packet.
-    assert!((60.0..=130.0).contains(&p50), "p50 {p50} ms");
-    // No forgery or bad key under honest traffic.
+    assert!(missing * 100 <= tail * (n - 1), "{missing} missing of {}: {st:?}", tail * (n - 1));
+    // Latency: the disclosure delay (d intervals of 20 ms) plus the wait for the next packet.
+    let d = w.nodes[GW].stack.tesla.as_ref().unwrap().disclose_delay();
+    assert!((40.0..=140.0).contains(&p50), "p50 {p50} ms (d = {d})");
     for v in st.iter().flatten() {
         assert_eq!((v.bad_tag, v.bad_key), (0, 0));
     }
 
-    // An insider (member 3) takes the newest disclosed key from the air and forges an update
+    // An insider (member 3) takes an already-disclosed key from the air and forges an update
     // for that interval: every member drops it as unsafe (its key is already public).
     let chain = w.nodes[3].stack.tesla_v.as_ref().unwrap().1.chain;
     let now_gw = w.local(GW);
     let ctx = splanc_mesh::tesla::Context { mesh_id: w.nodes[GW].stack.node.guard.mesh_id, session: SESSION };
     let gw_signer = w.nodes[GW].stack.tesla.as_mut().unwrap();
-    // The insider's view: the key of an interval that is already disclosed.
     let (cur, _) = gw_signer.interval_at(now_gw);
-    let old = cur - splanc_mesh::tesla::DISCLOSE as u32;
+    let old = cur - gw_signer.disclose_delay() as u32;
     let k = gw_signer.key(old);
     let mut body = [0u8; 64];
     let hn = splanc_mesh::ports::ControlHeader { op_id: 9999, targets: Targets::All }.encode(b"evil", &mut body).unwrap();
@@ -651,10 +677,67 @@ fn live_updates_use_the_broadcast_authenticator_in_large_meshes() {
     let unsafe_after: u32 = w.nodes[1..].iter().filter_map(|x| x.stack.tesla_v.as_ref()).map(|v| v.1.stats.unsafe_late).sum();
     assert_eq!(forged, 0);
     assert!(unsafe_after > unsafe_before);
+    eprintln!("live auth, verify-first (10 fixtures, thresholds 6/4, d = {d}): {} authenticated, {} per-receiver before the switch; {missing}/{} missing; latency p50 {p50:.0} ms p99 {p99:.0} ms; forged update delivered to {forged}", gw.auth_sent, gw.per_receiver_sent, tail * (n - 1));
+}
+
+/// Q22: apply-then-verify. Members render an authenticated live update on arrival (network
+/// latency, not the disclosure delay) and verify when its key comes. An insider forging the
+/// current interval gets its update on screen until the key is out (or a newer genuine one
+/// overwrites it); it is then rejected (`LiveRejected`), and members verify first for
+/// COOLDOWN_US, so a second forgery inside the cooldown is never shown.
+#[test]
+fn apply_then_verify_keeps_live_latency_and_bounds_an_insider() {
+    let n = 10;
+    let (mut w, sent, lat, missing) = live_auth_room(true, 22);
+    let tail = sent.len() - 500;
+    let p50 = lat[lat.len() / 2];
+    let p99 = lat[lat.len() * 99 / 100];
+    assert!(missing * 100 <= tail * (n - 1), "{missing} missing");
+    assert!(p50 <= 20.0, "p50 {p50} ms");
+    let gw = w.nodes[GW].stack.tesla_stats;
+    let d = w.nodes[GW].stack.tesla.as_ref().unwrap().disclose_delay();
+    // No honest update was ever rolled back.
+    assert_eq!(w.nodes.iter().map(|x| x.stack.tesla_stats.rejected).sum::<u32>(), 0);
+
+    // Keep streaming; the insider (member 3) forges twice, 300 ms apart.
+    let mut shown = Vec::new();
+    for k in 0..90u32 {
+        let local = w.local(GW);
+        w.nodes[GW].stack.send_live(local, CONN, 7000 + k, Targets::All, b"speed=0.5").expect("live");
+        if k == 30 || k == 39 {
+            forge_live(&mut w, 3, 9000 + k);
+            shown.push((9000 + k, w.now()));
+        }
+        w.run_ms(33);
+    }
+    w.run_ms(500);
+    // How long each member had the first forgery on screen: until a newer genuine update or
+    // its rejection, whichever came first.
+    let mut glitch_ms: Vec<f64> = Vec::new();
+    let mut rejected_members = 0;
+    for (i, node) in w.nodes.iter().enumerate().skip(1) {
+        if i == 3 {
+            continue;
+        }
+        let ev: Vec<(i64, NodeId, u32, Vec<u8>)> = node.controls();
+        let Some(at) = ev.iter().find(|c| c.2 == 9030).map(|c| c.0) else { continue };
+        let next_genuine = ev.iter().filter(|c| c.0 > at && (7000..7090).contains(&c.2)).map(|c| c.0).min();
+        if let Some(t) = next_genuine {
+            glitch_ms.push((t - at) as f64 / 1000.0);
+        }
+        if node.events.iter().any(|(_, e)| matches!(e, Ev::LiveRejected { op_id: 9030, .. })) {
+            rejected_members += 1;
+        }
+    }
+    let second_shown = w.nodes.iter().enumerate().filter(|(i, x)| *i != 3 && x.controls().iter().any(|c| c.2 == 9039)).count();
+    let max_glitch = glitch_ms.iter().cloned().fold(0.0, f64::max);
     eprintln!(
-        "live auth (10 fixtures, thresholds 6/4): {} authenticated, {} per-receiver before the switch; {missing}/{} missing after; latency p50 {p50:.0} ms p99 {p99:.0} ms; forged update delivered to {forged}",
-        gw.auth_sent,
-        gw.per_receiver_sent,
-        tail.len() * (n - 1)
+        "apply-then-verify (10 fixtures, d = {d}, {} chains, {} d raises): latency p50 {p50:.0} ms p99 {p99:.0} ms, {missing} missing; forgery shown to {} members for at most {max_glitch:.0} ms, rejected at {rejected_members}; second forgery (in the cooldown) shown to {second_shown}",
+        gw.chains,
+        gw.d_raises,
+        glitch_ms.len()
     );
+    assert!(rejected_members >= 6, "{rejected_members}");
+    assert!(max_glitch <= 40.0, "a newer genuine update overwrites a forgery within one update gap: {max_glitch} ms");
+    assert_eq!(second_shown, 0);
 }
