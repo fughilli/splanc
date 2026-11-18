@@ -521,16 +521,16 @@ test("a chunk lost mid-pipeline drains the rest and resumes from the device's of
   assert.deepEqual(dev.slot.subarray(0, image.length), image);
 });
 
-test("by default only a device taking chunks over 4 KB gets them pipelined", async () => {
+test("by default only a device whose welcome says ota_pipeline gets them pipelined", async () => {
   const image = new Uint8Array(100_000).map((_, i) => (i * 13) & 255);
   image[0] = 0xe9;
   const c6like = PipelinedDevice.make();
   await updateFirmware(c6like, pkg(image, 1_014_000, true, 16), fast);
-  assert.equal(c6like.maxInFlight, 1, "a 4 KB device: one at a time");
+  assert.equal(c6like.maxInFlight, 1, "no ota_pipeline: one at a time");
   const p4 = PipelinedDevice.make();
-  p4.maxChunk = 8192;
+  (p4.welcome as unknown as { features: string[] }).features.push("ota_pipeline");
   const r = await updateFirmware(p4, pkg(image, 1_014_000, true, 16), fast);
   assert.equal(r.outcome, "ok");
-  assert.equal(p4.maxInFlight, 4, "an 8 KB device: four in flight");
+  assert.equal(p4.maxInFlight, 4, "ota_pipeline: four in flight");
   assert.deepEqual(p4.slot.subarray(0, image.length), image);
 });
