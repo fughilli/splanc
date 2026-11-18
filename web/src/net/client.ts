@@ -1183,10 +1183,11 @@ export class LedMapperClient {
    * one: on a lossy Wi-Fi a 4 KB chunk can ride out several TCP retransmits (and the
    * loader a flash erase), and giving up early costs a fresh TLS handshake + resume
    * for a link that was about to deliver (the Python client waits 30 s too). */
-  otaChunk(offset: number, data: Uint8Array): Promise<OtaStatusMessage> {
+  otaChunk(offset: number, data: Uint8Array, inflatedLen = 0): Promise<OtaStatusMessage> {
     const timeoutMs = Math.max(this.requestTimeoutMs, OTA_TRANSFER_TIMEOUT_MS);
     const reply = new Promise<ServerMessage>((resolve, reject) => {
-      if (!this.send({ type: "ota_chunk", offset, data } as unknown as ClientMessage)) {
+      const msg = inflatedLen > 0 ? { type: "ota_chunk", offset, data, inflatedLen } : { type: "ota_chunk", offset, data };
+      if (!this.send(msg as unknown as ClientMessage)) {
         reject(new Error("not connected"));
         return;
       }

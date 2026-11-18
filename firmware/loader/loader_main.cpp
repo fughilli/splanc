@@ -335,6 +335,9 @@ int on_begin(const uint8_t *frame, const OtaClientMsg &m) {
 }
 
 int on_chunk(const uint8_t *frame, const OtaClientMsg &m) {
+  // Compressed chunks are the P4's ("ota_deflate"); writing these bytes as-is would only
+  // fail the digest at the end.
+  if (m.inflated_len != 0) return reply_refusal("bad_chunk");
   OtaPlanC p;
   const char *err =
       ota_session_plan(m.offset, frame + m.data_off, m.data_len, OTA_CHIP_ESP32C6, &p);

@@ -2866,8 +2866,9 @@ pub const FEATURES: &[&str] = features!("mesh");
 /// itself, through the C6 front end: no restart into a loader before the transfer.
 /// "ota_pipeline": its C6 front end's big TCP windows take several OTA chunks in
 /// flight (the client keeps 4 out; into a standalone C6's 4 KB window they just queue).
+/// "ota_deflate": it inflates compressed chunks (ota_chunk.inflated_len; the ROM's tinfl).
 #[cfg(lm_ota_inapp)]
-pub const FEATURES: &[&str] = features!("ota_inapp", "ota_pipeline");
+pub const FEATURES: &[&str] = features!("ota_inapp", "ota_pipeline", "ota_deflate");
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
 /// (The set_texture RLE payload's run lengths; protobuf fields go through
