@@ -610,7 +610,8 @@ docs/design/hue-code-v2.md phase 2) is the default. The phone asks for it from e
 player that advertises <code class="docutils literal notranslate"><span class="pre">hue_stagger_pilot</span></code>: start_mapping carries
 <code class="docutils literal notranslate"><span class="pre">syncPattern</span></code>, and the phone decodes whatever <code class="docutils literal notranslate"><span class="pre">codeParams.syncPattern</span></code> the
 device answers with. A player on older firmware keeps v1 and says so;
-<code class="docutils literal notranslate"><span class="pre">?sync=v1</span></code> forces v1 for debugging. Supporting devices: C6/P4 firmware with splanc#517, the virtual wall player (<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//pi/player_rs:wall</span></code>, docs/host-player.md; it advertises <code class="docutils literal notranslate"><span class="pre">hue_stagger_pilot</span></code>)
+<code class="docutils literal notranslate"><span class="pre">?sync=v1</span></code> forces v1 for debugging. Supporting devices: C6/P4 firmware with
+splanc#517, the virtual wall player (<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//pi/player_rs:wall</span></code>, docs/host-player.md; it advertises <code class="docutils literal notranslate"><span class="pre">hue_stagger_pilot</span></code>)
 and this dev server. The dev server can also hand the code out to every
 capture without the request: <code class="docutils literal notranslate"><span class="pre">bazelisk</span> <span class="pre">run</span> <span class="pre">//web:serve</span> <span class="pre">--</span> <span class="pre">--sync-pattern</span> <span class="pre">stagger_pilot</span></code>.</p>
 <p>The wall renders what the device runs. Its status line reads

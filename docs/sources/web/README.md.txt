@@ -223,7 +223,8 @@ docs/design/hue-code-v2.md phase 2) is the default. The phone asks for it from e
 player that advertises `hue_stagger_pilot`: start_mapping carries
 `syncPattern`, and the phone decodes whatever `codeParams.syncPattern` the
 device answers with. A player on older firmware keeps v1 and says so;
-`?sync=v1` forces v1 for debugging. Supporting devices: C6/P4 firmware with splanc#517, the virtual wall player (`bazel run
+`?sync=v1` forces v1 for debugging. Supporting devices: C6/P4 firmware with
+splanc#517, the virtual wall player (`bazel run
 //pi/player_rs:wall`, docs/host-player.md; it advertises `hue_stagger_pilot`)
 and this dev server. The dev server can also hand the code out to every
 capture without the request: `bazelisk run //web:serve -- --sync-pattern
