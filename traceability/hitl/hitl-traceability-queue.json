@@ -273,8 +273,8 @@
     },
     {
       "kind": "untraced-failure",
-      "entity": "//pi/hitl/phone:android_journeys",
-      "message": "//pi/hitl/phone:android_journeys pi/hitl/phone/android_journeys error and traces to no requirement",
+      "entity": "//pi/hitl/harness:ble_capture_e2e_netstack",
+      "message": "//pi/hitl/harness:ble_capture_e2e_netstack pi/hitl/harness/ble_capture_e2e_netstack error and traces to no requirement",
       "route": "autonomous"
     },
     {
