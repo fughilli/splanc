@@ -87,6 +87,13 @@ export interface Env {
   BILLING_TOKEN_SECRET?: string;
   /** Worker SECRET (sandbox only): the fake store's test signing key. */
   AI_BILLING_FAKE_STORE_KEY?: string;
+  /** Worker SECRET: the owner's token for /billing/admin/* (suspensions). */
+  BILLING_ADMIN_TOKEN?: string;
+  /** Grafana Cloud Logs push (billing/metrics.ts); all three or none. */
+  GRAFANA_LOKI_PUSH_URL?: string;
+  GRAFANA_LOKI_USER?: string;
+  /** Worker SECRET: a logs:write-only access-policy token. */
+  GRAFANA_LOKI_TOKEN?: string;
   /** The BillingAccount Durable Object namespace (one object per account). Not
    * bound in wrangler.toml yet (staged plan, step 3). */
   BILLING?: DONamespace;

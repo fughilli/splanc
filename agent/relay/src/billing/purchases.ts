@@ -53,11 +53,80 @@ export interface PurchaseVerifier {
   verify(payload: unknown): Promise<VerifiedPurchase>;
 }
 
+/** Apple asks how much of a purchase was used, because the customer asked
+ * Apple for a refund (App Store Server Notifications v2 CONSUMPTION_REQUEST). */
+export interface ConsumptionRequestNotice {
+  channel: "apple";
+  transactionId: string;
+  environment: StoreEnvironment;
+}
+
+export type StoreNotification =
+  | { purchase: VerifiedPurchase }
+  | { refund: RefundNotice }
+  | { consumptionRequest: ConsumptionRequestNotice };
+
 /** Parses a store / processor server-to-server notification (Apple ASSN v2,
  * Stripe webhook). Returns null for a notification we don't act on. */
 export interface NotificationVerifier {
   readonly channel: Channel;
-  parse(body: string, headers: Headers): Promise<{ purchase: VerifiedPurchase } | { refund: RefundNotice } | null>;
+  parse(body: string, headers: Headers): Promise<StoreNotification | null>;
+}
+
+// -- Apple "Send Consumption Information" ----------------------------------------------
+//
+// App Store Server API: PUT /inApps/v2/transactions/consumption/{transactionId}
+// with a ConsumptionRequest, within 12 hours of the CONSUMPTION_REQUEST, and
+// ONLY if the customer consented; without consent, don't respond at all
+// (developer.apple.com/documentation/appstoreserverapi/send-consumption-information).
+// Fields per Apple's app-store-server-library 3.1.0 (models/ConsumptionRequest).
+
+export type DeliveryStatus = "DELIVERED" | "UNDELIVERED_QUALITY_ISSUE" | "UNDELIVERED_WRONG_ITEM" | "UNDELIVERED_SERVER_OUTAGE" | "UNDELIVERED_OTHER";
+export type RefundPreference = "DECLINE" | "GRANT_FULL" | "GRANT_PRORATED";
+
+export interface ConsumptionRequest {
+  customerConsented: boolean;
+  /** Percentage consumed, in milliunits (0..100000). */
+  consumptionPercentage?: number;
+  deliveryStatus: DeliveryStatus;
+  refundPreference?: RefundPreference;
+  sampleContentProvided: boolean;
+}
+
+/** Sends a ConsumptionRequest (the real one: a JWT-signed App Store Server
+ * API call with our In-App Purchase key; the fake records it). */
+export interface ConsumptionSender {
+  send(transactionId: string, environment: StoreEnvironment, body: ConsumptionRequest): Promise<void>;
+}
+
+export class FakeConsumptionSender implements ConsumptionSender {
+  readonly sent: { transactionId: string; environment: StoreEnvironment; body: ConsumptionRequest }[] = [];
+  async send(transactionId: string, environment: StoreEnvironment, body: ConsumptionRequest) {
+    if (environment !== "sandbox") throw new Error("the fake consumption sender is sandbox-only");
+    this.sent.push({ transactionId, environment, body });
+  }
+}
+
+/**
+ * The ConsumptionRequest for a credit pack, from its FIFO consumption
+ * (ledger.ts lotConsumption):
+ * - deliveryStatus DELIVERED (the credits were on the account and usable);
+ * - consumptionPercentage = the share of the pack's credits spent;
+ * - refundPreference: nothing used -> GRANT_FULL, partly -> GRANT_PRORATED,
+ *   all used -> DECLINE (owner-tunable policy; see the design doc);
+ * - sampleContentProvided: true. Before buying, the free tier lets people try
+ *   the AI and the app shows what requests cost.
+ */
+export function consumptionRequestFor(c: { fraction: number } | null): ConsumptionRequest {
+  if (!c) return { customerConsented: true, deliveryStatus: "UNDELIVERED_OTHER", sampleContentProvided: true, refundPreference: "GRANT_FULL" };
+  const milli = Math.max(0, Math.min(100_000, Math.round(c.fraction * 100_000)));
+  return {
+    customerConsented: true,
+    consumptionPercentage: milli,
+    deliveryStatus: "DELIVERED",
+    refundPreference: milli === 0 ? "GRANT_FULL" : milli >= 100_000 ? "DECLINE" : "GRANT_PRORATED",
+    sampleContentProvided: true,
+  };
 }
 
 /**
@@ -191,9 +260,18 @@ export class FakeStoreVerifier implements PurchaseVerifier, NotificationVerifier
     return p;
   }
 
-  async parse(body: string, headers: Headers): Promise<{ refund: RefundNotice } | null> {
+  async signConsumptionRequest(transactionId: string): Promise<{ body: string; sig: string }> {
+    const body = JSON.stringify({ consumptionRequest: { channel: this.channel, transactionId, environment: "sandbox" } });
+    return { body, sig: await this.mac(body) };
+  }
+
+  async parse(body: string, headers: Headers): Promise<StoreNotification | null> {
     if ((await this.mac(body)) !== headers.get("x-fake-signature")) throw new PurchaseError(400, "bad_notification", "signature does not verify");
-    const n = JSON.parse(body) as { refund?: RefundNotice };
-    return n.refund && n.refund.environment === "sandbox" ? { refund: n.refund } : null;
+    const n = JSON.parse(body) as { refund?: RefundNotice; consumptionRequest?: ConsumptionRequestNotice };
+    if (n.refund && n.refund.environment === "sandbox") return { refund: n.refund };
+    if (n.consumptionRequest && n.consumptionRequest.environment === "sandbox" && this.channel === "apple") {
+      return { consumptionRequest: n.consumptionRequest };
+    }
+    return null;
   }
 }

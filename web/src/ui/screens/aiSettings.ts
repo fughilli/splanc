@@ -38,6 +38,9 @@ import {
   formatCredits,
   getCreditsSession,
   mayShowWebCheckout,
+  purchaseChannel,
+  setAppleConsumptionConsent,
+  APPLE_CONSUMPTION_CONSENT_TEXT,
 } from "../../effects/ai/providers/credits";
 import {
   isWllamaSupported,
@@ -944,6 +947,23 @@ function creditsPanel(cfg: AiConfig, set: (p: Partial<AiConfig>) => void): HTMLE
     void fetchCreditsBalance().then((b) => {
       balance.textContent = b ? formatCredits(b.available_credits) + (b.low ? " (low)" : "") : "Unavailable";
     });
+  }
+  // iOS: the opt-in to share pack consumption with Apple on refund requests.
+  if (purchaseChannel() === "apple" && getCreditsSession()) {
+    const row = settingsRow("Help Apple with refund requests", APPLE_CONSUMPTION_CONSENT_TEXT, document.createElement("span"));
+    const ctl = row.querySelector(".settings-row-ctl")!;
+    const render = (on: boolean) =>
+      ctl.replaceChildren(
+        onOff(on, (v) => {
+          void setAppleConsumptionConsent(v).then(
+            () => render(v),
+            (e: unknown) => toast(msg(e)),
+          );
+        }),
+      );
+    render(false);
+    void fetchCreditsBalance().then((b) => render(b?.apple_consumption_consent === true));
+    g.append(row);
   }
   // Buying is not wired yet. It is 18+, and on iOS it will be In-App Purchase
   // only: the iOS app never shows or links to the web checkout (App Store rules).

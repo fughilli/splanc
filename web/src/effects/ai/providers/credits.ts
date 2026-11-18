@@ -97,6 +97,8 @@ export interface CreditsBalance {
   status: string;
   /** The account confirmed 18+ (buying credits is 18+). */
   adult: boolean;
+  /** Opted in to sharing consumption data with Apple on refund requests. */
+  apple_consumption_consent?: boolean;
 }
 
 /** The balance shown in AI settings and under the chat (STUB until the relay
@@ -146,6 +148,25 @@ export async function confirmAdult(fetchImpl: typeof fetch = fetch): Promise<voi
     method: "POST",
     headers: { "content-type": "application/json", ...authed(s) },
     body: JSON.stringify({ confirm: true }),
+  });
+  if (!r.ok) throw new Error(creditsErrorMessage(r.status, (await r.json().catch(() => null)) as { message?: string } | null));
+}
+
+/** Apple refund requests (iOS only): with the user's opt-in, Splanc tells Apple
+ * how much of a credit pack was used when the user asks Apple for a refund
+ * (App Store Server API "Send Consumption Information"). Asked in the purchase
+ * flow and changeable in AI settings; off until the user says yes. */
+export const APPLE_CONSUMPTION_CONSENT_TEXT =
+  "If you ask Apple for a refund of a credit pack, may Splanc tell Apple how much of that pack you've used? " +
+  "This helps Apple decide the refund. You can change this any time in AI settings.";
+
+export async function setAppleConsumptionConsent(consented: boolean, fetchImpl: typeof fetch = fetch): Promise<void> {
+  const s = getCreditsSession();
+  if (!s) throw new Error("Sign in to use Splanc AI credits.");
+  const r = await fetchImpl(`${creditsRelay()}/billing/consent`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authed(s) },
+    body: JSON.stringify({ apple_consumption: consented }),
   });
   if (!r.ok) throw new Error(creditsErrorMessage(r.status, (await r.json().catch(() => null)) as { message?: string } | null));
 }

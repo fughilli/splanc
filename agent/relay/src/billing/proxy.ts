@@ -327,7 +327,7 @@ export async function proxyMessages(req: Request, accountId: string, deps: Proxy
     });
   } catch (e) {
     await deps.ledger.release(id);
-    safeLog(deps, { ev: "ai_upstream_unreachable", account: accountId, id, detail: String(e) });
+    safeLog(deps, { ev: "ai_upstream_unreachable", alert: true, account: accountId, id, detail: String(e) });
     return errorResponse(fail(503, "ai_credits_busy", BUSY_MESSAGE));
   }
   if (!up.ok || up.body === null) {
@@ -372,8 +372,10 @@ export async function proxyMessages(req: Request, accountId: string, deps: Proxy
       }
       const charge = chargeMicro(cfg, model, bill.usage);
       const listMicroUsd = Math.ceil(listCostUsd(cfg.models[model]!, bill.usage) * MICRO);
+      let orgTotal = -1;
       if (deps.org) {
         const total = await deps.org.add(listMicroUsd).catch(() => -1);
+        orgTotal = total;
         const alertAt = cfg.org.alert_fraction * orgLimit;
         if (total >= alertAt && total - listMicroUsd < alertAt) {
           safeLog(deps, { ev: "ai_org_spend_alert", alert: true, month_to_date_usd: total / MICRO, limit_usd: cfg.org.monthly_limit_usd });
@@ -393,6 +395,7 @@ export async function proxyMessages(req: Request, accountId: string, deps: Proxy
         usage: bill.usage,
         estimated: bill.estimated,
         list_usd: listMicroUsd / MICRO,
+        ...(orgTotal >= 0 ? { org_month_to_date_usd: orgTotal / MICRO } : {}),
         reserved: amount,
         charged: -entry.amount,
         written_off: entry.written_off ?? 0,

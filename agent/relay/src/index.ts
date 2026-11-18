@@ -29,6 +29,7 @@
 import { BridgeObject, liveToken, parseToken, rpcError, wwwAuthenticate } from "./bridgeObject";
 import { BillingAccount } from "./billing/account";
 import { billingEndpoint, isBillingPath } from "./billing/endpoint";
+import { eventSink } from "./billing/metrics";
 import { bugsEndpoint } from "./bugs";
 import { RECEIPT_HEADER, feedbackEndpoint } from "./feedback";
 import { BRIDGE_ID_RE, ed25519Verify, normalizePairingCode, randomBridgeId } from "./crypto";
@@ -192,7 +193,12 @@ export default {
               json,
               clientIp: clientIp(req),
               waitUntil: ectx ? (p) => ectx.waitUntil(p) : undefined,
-              log: (ev) => console.log(JSON.stringify(ev)),
+              // Worker log + (when configured) Grafana Cloud Logs; redacted against every secret.
+              log: eventSink({
+                env,
+                secrets: [env.ANTHROPIC_API_KEY, env.BILLING_TOKEN_SECRET, env.GRAFANA_LOKI_TOKEN, env.BILLING_ADMIN_TOKEN].filter((x): x is string => !!x),
+                waitUntil: ectx ? (p) => ectx.waitUntil(p) : undefined,
+              }),
             }, path));
           }
           return json({ error: "not found" }, 404);

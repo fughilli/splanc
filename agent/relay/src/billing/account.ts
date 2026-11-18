@@ -14,7 +14,7 @@
 
 import { b64url, hmac, randomBytes, safeEqual } from "../crypto";
 import { now, type DONamespace, type DOState, type Env } from "../platform";
-import { Ledger, type LedgerEntry, type ReserveResult } from "./ledger";
+import { Ledger, type LedgerEntry, type LotConsumption, type ReserveResult } from "./ledger";
 import type { Caps, Usage } from "./pricing";
 
 const json = (obj: unknown, status = 200) => new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json" } });
@@ -68,6 +68,10 @@ export class BillingAccount {
           return json(await this.ledger.clawback(String(b["ref"]), String(b["note"] ?? "refund")));
         case "/statement":
           return json({ entries: await this.ledger.statement(Number(b["limit"] ?? 50)) });
+        case "/consent":
+          return json(await this.ledger.setAppleConsumptionConsent(b["apple_consumption"] === true));
+        case "/consumption":
+          return json({ consumption: await this.ledger.consumptionOf(String(b["ref"])) });
         case "/adult":
           return json(await this.ledger.confirmAdult());
         case "/status":
@@ -102,7 +106,25 @@ export class DoLedger {
     return this.call<{ id: string; balance: number; held: number; status: string }>("/open", { id: this.accountId, trial: trialMicro });
   }
   account() {
-    return this.call<{ account: { id: string; balance: number; held: number; status: string; adult_confirmed_at?: number } | null }>("/account", {});
+    return this.call<{
+      account: {
+        id: string;
+        balance: number;
+        held: number;
+        status: string;
+        adult_confirmed_at?: number;
+        apple_consumption_consent?: { consented: boolean; at: number };
+      } | null;
+    }>("/account", {});
+  }
+  setAppleConsumptionConsent(consented: boolean) {
+    return this.call<{ id: string }>("/consent", { apple_consumption: consented });
+  }
+  async consumptionOf(ref: string): Promise<LotConsumption | null> {
+    return (await this.call<{ consumption: LotConsumption | null }>("/consumption", { ref })).consumption;
+  }
+  setStatus(status: "active" | "suspended") {
+    return this.call<{ status: string }>("/status", { status });
   }
   confirmAdult() {
     return this.call<{ adult_confirmed_at: number }>("/adult", {});

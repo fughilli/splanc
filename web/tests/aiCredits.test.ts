@@ -25,6 +25,7 @@ import {
   deleteCreditsAccount,
   getCreditsSession,
   mayBuyCredits,
+  setAppleConsumptionConsent,
   fetchCreditsBalance,
   formatCredits,
   makeCreditsProvider,
@@ -194,7 +195,10 @@ test("account lifecycle: anonymous account, 18+ before Buy, deletion clears the 
   assert.equal(mayBuyCredits({ ...bal, adult: false }), false);
   assert.equal(mayBuyCredits({ ...bal, adult: true }), true);
   assert.equal(mayBuyCredits(null), false);
+  await setAppleConsumptionConsent(true, fn);
+  assert.ok(calls[2]!.url.endsWith("/billing/consent"));
+  assert.equal(calls[2]!.init.body, JSON.stringify({ apple_consumption: true }));
   await deleteCreditsAccount(fn);
-  assert.equal(calls[2]!.init.method, "DELETE");
+  assert.equal(calls[3]!.init.method, "DELETE");
   assert.equal(getCreditsSession(), null);
 });

@@ -26,7 +26,8 @@ import { describe, test } from "node:test";
 
 import { BillingAccount, mintSession, verifySession } from "../relay/src/billing/account";
 import { billingEndpoint, billingReady, type BillingContext } from "../relay/src/billing/endpoint";
-import { HOLD_TTL_MS, Ledger } from "../relay/src/billing/ledger";
+import { HOLD_TTL_MS, Ledger, lotConsumption } from "../relay/src/billing/ledger";
+import { BILLING_EVENTS, billingAlertRules, eventSink, grafanaProvisioning, lokiPayload, reconcileStore, reconcileUsage } from "../relay/src/billing/metrics";
 import {
   DEFAULT_PRICING,
   MICRO,
@@ -42,7 +43,7 @@ import {
   type Usage,
 } from "../relay/src/billing/pricing";
 import { estimatePromptTokens, proxyMessages, redact, sanitizeRequest, type ProxyDeps } from "../relay/src/billing/proxy";
-import { FakeStoreVerifier, MemoryClaims, accountRefFor, applyPurchase, applyRefund } from "../relay/src/billing/purchases";
+import { FakeConsumptionSender, FakeStoreVerifier, MemoryClaims, accountRefFor, applyPurchase, applyRefund, consumptionRequestFor } from "../relay/src/billing/purchases";
 import { Directory } from "../relay/src/directory";
 import type { DONamespace, DOState, DOStorage, Env } from "../relay/src/platform";
 
@@ -838,5 +839,169 @@ describe("relay routes", () => {
     const r = await applyRefund({ ledgerFor: () => s1, claims, refund: { channel: "web", transactionId: "cs_test_1", kind: "chargeback", environment: "sandbox" } });
     assert.equal(r?.accountId, "acct_a");
     assert.equal(r?.entry?.amount, -833 * MICRO);
+  });
+});
+
+// -- Apple consumption requests ---------------------------------------------------------
+
+describe("apple consumption requests", () => {
+  test("FIFO attribution: older lots are spent first; a refund ends its lot", async () => {
+    const { l } = await newLedger(0);
+    await l.credit("purchase", "apple:A", 100 * MICRO);
+    await l.credit("purchase", "apple:B", 100 * MICRO);
+    await l.reserve("spend-a-001", 150 * MICRO, "m", CAPS);
+    await l.settle("spend-a-001", 150 * MICRO, { model: "m", usage: usage({}), pricing_version: 1 }, 0);
+    const entries = await l.statement(100);
+    assert.deepEqual(lotConsumption(entries, "apple:A"), { granted: 100 * MICRO, spent: 100 * MICRO, fraction: 1, refunded: false });
+    assert.equal(lotConsumption(entries, "apple:B")!.fraction, 0.5);
+    await l.clawback("apple:B");
+    const b = await l.consumptionOf("apple:B");
+    assert.equal(b!.refunded, true);
+    assert.equal(b!.fraction, 0.5);
+    assert.equal(await l.consumptionOf("apple:nope"), null);
+  });
+
+  test("the ConsumptionRequest: milliunits, delivery, preference by use", () => {
+    assert.deepEqual(consumptionRequestFor({ fraction: 0 }), {
+      customerConsented: true,
+      consumptionPercentage: 0,
+      deliveryStatus: "DELIVERED",
+      refundPreference: "GRANT_FULL",
+      sampleContentProvided: true,
+    });
+    assert.equal(consumptionRequestFor({ fraction: 0.25 }).consumptionPercentage, 25_000);
+    assert.equal(consumptionRequestFor({ fraction: 0.25 }).refundPreference, "GRANT_PRORATED");
+    assert.equal(consumptionRequestFor({ fraction: 1 }).refundPreference, "DECLINE");
+    assert.equal(consumptionRequestFor(null).deliveryStatus, "UNDELIVERED_OTHER");
+  });
+
+  test("answered only with consent; withdrawn consent stops it; failures make Apple retry", async () => {
+    const env = await sandboxEnv();
+    const logs: string[] = [];
+    const sender = new FakeConsumptionSender();
+    const ctx = { ...ctxFor(logs), consumption: sender };
+    const made = await call(env, ctx, "/billing/account", { method: "POST" });
+    const auth = { authorization: `Bearer ${String(made.body["token"])}` };
+    const accountId = String(made.body["account_id"]);
+    const store = new FakeStoreVerifier("apple", STORE_KEY);
+    const receipt = await store.sign({ sku: "dev.splanc.app.credits.small", transactionId: "3000000000000001", purchasedAt: 0, accountRef: await accountRefFor(accountId) });
+    await call(env, ctx, "/billing/purchase/apple", { method: "POST", headers: auth, body: JSON.stringify(receipt) });
+    const n = await store.signConsumptionRequest("3000000000000001");
+    const notify = () => call(env, ctx, "/billing/notify/apple", { method: "POST", headers: { "x-fake-signature": n.sig }, body: n.body });
+
+    // No consent yet: don't respond to Apple.
+    assert.equal((await notify()).status, 200);
+    assert.equal(sender.sent.length, 0);
+    assert.ok(logs.some((x) => x.includes('"ai_consumption_skipped"') && x.includes("no_consent")));
+
+    // The user opts in (purchase flow or settings).
+    assert.equal((await call(env, ctx, "/billing/consent", { method: "POST", headers: auth, body: "{}" })).status, 400);
+    assert.equal((await call(env, ctx, "/billing/consent", { method: "POST", headers: auth, body: JSON.stringify({ apple_consumption: true }) })).status, 200);
+    assert.equal((await call(env, ctx, "/billing/balance", { headers: auth })).body["apple_consumption_consent"], true);
+    assert.equal((await notify()).status, 200);
+    assert.equal(sender.sent.length, 1);
+    assert.equal(sender.sent[0]!.transactionId, "3000000000000001");
+    assert.deepEqual(sender.sent[0]!.body, consumptionRequestFor({ fraction: 0 }));
+
+    // A failing send answers 500 (Apple retries) and alerts.
+    const failing = { ...ctx, consumption: { send: async () => { throw new Error("app store api 500"); } } };
+    assert.equal((await call(env, failing, "/billing/notify/apple", { method: "POST", headers: { "x-fake-signature": n.sig }, body: n.body })).status, 500);
+    assert.ok(logs.some((x) => x.includes('"ai_consumption_failed"') && x.includes('"alert":true')));
+
+    // Withdrawn: nothing more is sent.
+    await call(env, ctx, "/billing/consent", { method: "POST", headers: auth, body: JSON.stringify({ apple_consumption: false }) });
+    await notify();
+    assert.equal(sender.sent.length, 1);
+    // An unknown transaction is skipped, not an error.
+    const unknown = await store.signConsumptionRequest("3999999999999999");
+    assert.equal((await call(env, ctx, "/billing/notify/apple", { method: "POST", headers: { "x-fake-signature": unknown.sig }, body: unknown.body })).status, 200);
+    for (const x of logs) assert.ok((BILLING_EVENTS as readonly string[]).includes(String(JSON.parse(x).ev)), x);
+  });
+});
+
+// -- observability ---------------------------------------------------------------------
+
+describe("metrics + alerts", () => {
+  test("the Loki push: labelled streams, redacted lines, off without config", async () => {
+    const pushes: { url: string; init: RequestInit }[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      pushes.push({ url, init });
+      return new Response("", { status: 204 });
+    }) as unknown as typeof fetch;
+    const lines: string[] = [];
+    const waits: Promise<unknown>[] = [];
+    const off = eventSink({ env: {}, secrets: [CANARY], console: (l) => lines.push(l), fetchImpl });
+    off({ ev: "ai_settled", detail: CANARY });
+    assert.equal(pushes.length, 0);
+    assert.ok(!lines[0]!.includes(CANARY));
+    const lokiToken = "glc_loki-test-token-not-real-0000";
+    const on = eventSink({
+      env: { GRAFANA_LOKI_PUSH_URL: "https://logs.example/loki/api/v1/push", GRAFANA_LOKI_USER: "123", GRAFANA_LOKI_TOKEN: lokiToken, AI_BILLING: "sandbox" },
+      secrets: [CANARY, lokiToken],
+      console: (l) => lines.push(l),
+      fetchImpl,
+      waitUntil: (p) => waits.push(p),
+      now: () => 1_800_000_000_000,
+    });
+    on({ ev: "ai_org_spend_stop", alert: true, detail: `${CANARY} ${lokiToken}` });
+    await Promise.all(waits);
+    assert.equal(pushes.length, 1);
+    const body = String(pushes[0]!.init.body);
+    assert.ok(!body.includes(CANARY) && !body.includes(lokiToken));
+    const p = JSON.parse(body) as { streams: { stream: Record<string, string>; values: [string, string][] }[] };
+    assert.deepEqual(p.streams[0]!.stream, { service: "splanc-relay", component: "ai-billing", env: "sandbox", event: "ai_org_spend_stop", alert: "true" });
+    assert.equal(p.streams[0]!.values[0]![0], "1800000000000000000");
+    assert.equal((pushes[0]!.init.headers as Record<string, string>)["authorization"], `Basic ${btoa(`123:${lokiToken}`)}`);
+    assert.equal(lokiPayload([{ ev: "a" }, { ev: "a" }, { ev: "b" }], "x", 0).streams.length, 2);
+  });
+
+  test("alert rules: sized from the org limit, only real events, valid provisioning", () => {
+    const c = cfg();
+    assert.equal(c.org.monthly_limit_usd, 1000);
+    const rules = billingAlertRules(c.org.monthly_limit_usd, c.org.alert_fraction);
+    assert.equal(rules.find((r) => r.uid === "ai-org-spend-near-limit")!.above, 800);
+    for (const r of rules) {
+      for (const m of r.expr.matchAll(/event=~?"([^"]+)"/g)) {
+        for (const ev of m[1]!.split("|")) assert.ok((BILLING_EVENTS as readonly string[]).includes(ev), `${r.uid}: ${ev}`);
+      }
+    }
+    const prov = grafanaProvisioning(rules, { lokiUid: "grafanacloud-logs", folderUid: "ai-billing", env: "production" });
+    assert.equal(prov.length, rules.length);
+    const exprOf = (x: (typeof prov)[number]) => String((x.data[0]!.model as { expr?: string }).expr);
+    assert.ok(prov.every((x) => exprOf(x).includes('env="production"') && !exprOf(x).includes("$env")));
+    assert.equal(new Set(prov.map((x) => x.uid)).size, prov.length);
+  });
+
+  test("settles carry the org month-to-date (the near-limit alert's input)", async () => {
+    const { deps, logs } = await proxyFixture();
+    deps.org = memOrg(5 * MICRO);
+    await (await proxyMessages(post(chatBody()), "acct_test", deps)).text();
+    const settled = JSON.parse(logs.find((x) => x.includes('"ai_settled"'))!) as { org_month_to_date_usd: number; list_usd: number };
+    assert.ok(Math.abs(settled.org_month_to_date_usd - (5 + settled.list_usd)) < 1e-6);
+  });
+
+  test("reconciliation: usage vs Anthropic, credits vs store", () => {
+    assert.equal(reconcileUsage("2026-11-18", 100, 101).alert, undefined);
+    assert.equal(reconcileUsage("2026-11-18", 100, 110).alert, true);
+    const st = reconcileStore("2026-11-18", ["apple:1", "web:cs_2"], ["apple:1", "apple:3"]);
+    assert.deepEqual(st.missing, ["apple:3"]);
+    assert.deepEqual(st.unknown, ["web:cs_2"]);
+    assert.equal(st.alert, true);
+    assert.equal(reconcileStore("d", ["apple:1"], ["apple:1"]).alert, undefined);
+  });
+
+  test("admin suspension: admin token only; logged for the abuse alert; blocks spending", async () => {
+    const env = await sandboxEnv({ BILLING_ADMIN_TOKEN: "admin-test-token-0001" });
+    const logs: string[] = [];
+    const ctx = ctxFor(logs);
+    const made = await call(env, ctx, "/billing/account", { method: "POST" });
+    const id = String(made.body["account_id"]);
+    const body = JSON.stringify({ account: id, status: "suspended", reason: "aup:test" });
+    assert.equal((await call(env, ctx, "/billing/admin/status", { method: "POST", body })).status, 401);
+    assert.equal((await call(env, ctx, "/billing/admin/status", { method: "POST", headers: { authorization: "Bearer wrong" }, body })).status, 401);
+    assert.equal((await call(env, ctx, "/billing/admin/status", { method: "POST", headers: { authorization: "Bearer admin-test-token-0001" }, body })).status, 200);
+    assert.ok(logs.some((x) => x.includes('"ai_account_suspended"')));
+    const ai = await call(env, ctx, "/ai/v1/messages", { method: "POST", headers: { authorization: `Bearer ${String(made.body["token"])}` }, body: JSON.stringify(chatBody()) });
+    assert.equal(ai.status, 403);
   });
 });

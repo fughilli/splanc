@@ -5,6 +5,8 @@
  *   DELETE /billing/account               close it (in-app account deletion; the balance is forfeited)
  *   GET    /billing/balance               {balance_credits, held_credits, low, status, adult}
  *   POST   /billing/age                   {confirm: true}: the user confirmed 18+ (buying is 18+)
+ *   POST   /billing/consent               {apple_consumption: bool}: share consumption data with Apple on refund requests
+ *   POST   /billing/admin/status          admin (BILLING_ADMIN_TOKEN): {account, status: active|suspended}
  *   GET    /billing/pricing?channel=      models + credits per MTok + this channel's packs (public)
  *   GET    /billing/statement             the newest ledger entries (no content, just numbers)
  *   POST   /billing/purchase/<channel>    the app's proof of purchase -> credit (idempotent)
@@ -23,7 +25,18 @@ import { now, type Env } from "../platform";
 import { DoLedger, mintSession, newAccountId, verifySession } from "./account";
 import { MICRO, publicPricing, validatePricing, CHANNELS, type Channel, type PricingConfig } from "./pricing";
 import { proxyMessages, redact, type OrgSpend } from "./proxy";
-import { FakeStoreVerifier, PurchaseError, accountRefFor, applyPurchase, applyRefund, type PurchaseClaims } from "./purchases";
+import { safeEqual } from "../crypto";
+import {
+  FakeConsumptionSender,
+  FakeStoreVerifier,
+  PurchaseError,
+  accountRefFor,
+  applyPurchase,
+  applyRefund,
+  consumptionRequestFor,
+  type ConsumptionSender,
+  type PurchaseClaims,
+} from "./purchases";
 
 export interface BillingContext {
   json: (obj: unknown, status?: number, extra?: Record<string, string>) => Response;
@@ -32,9 +45,20 @@ export interface BillingContext {
   upstream?: ((url: string, init: RequestInit) => Promise<Response>) | undefined;
   waitUntil?: ((p: Promise<unknown>) => void) | undefined;
   log?: ((ev: Record<string, unknown>) => void) | undefined;
+  /** Apple "Send Consumption Information" (sandbox default: the fake). */
+  consumption?: ConsumptionSender | undefined;
 }
 
-export const BILLING_PATHS = ["/ai/v1/messages", "/billing/account", "/billing/age", "/billing/balance", "/billing/pricing", "/billing/statement"];
+export const BILLING_PATHS = [
+  "/ai/v1/messages",
+  "/billing/account",
+  "/billing/admin/status",
+  "/billing/age",
+  "/billing/balance",
+  "/billing/consent",
+  "/billing/pricing",
+  "/billing/statement",
+];
 export const isBillingPath = (p: string) =>
   BILLING_PATHS.includes(p) || /^\/billing\/(purchase|notify)\/[a-z]+$/.test(p);
 
@@ -116,9 +140,46 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
       const n = await new FakeStoreVerifier(channel, ready.storeKey).parse(body, req.headers);
       if (n && "refund" in n) {
         const r = await applyRefund({ ledgerFor: (a) => new DoLedger(ready.ns, a), claims: directoryClaims(env), refund: n.refund });
-        log({ ev: "ai_refund", channel, account: r?.accountId ?? null, amount: r?.entry?.amount ?? 0 });
+        log({ ev: "ai_refund", channel, kind: n.refund.kind, account: r?.accountId ?? null, amount: r?.entry?.amount ?? 0 });
+      }
+      if (n && "consumptionRequest" in n) {
+        // Apple asks how much of a purchase was used (the customer asked Apple
+        // for a refund). Answer ONLY with the customer's consent; otherwise
+        // don't respond at all (Apple's rule). A failed answer is a 500 so
+        // Apple retries the notification (12-hour deadline).
+        const cr = n.consumptionRequest;
+        const owner = await directoryClaims(env).owner("apple", cr.transactionId);
+        const a = owner ? (await new DoLedger(ready.ns, owner).account()).account : null;
+        if (!owner || !a || a.apple_consumption_consent?.consented !== true) {
+          log({ ev: "ai_consumption_skipped", account: owner ?? null, reason: !owner ? "unknown_transaction" : "no_consent" });
+          return ctx.json({ ok: true });
+        }
+        const c = await new DoLedger(ready.ns, owner).consumptionOf(`apple:${cr.transactionId}`);
+        const answer = consumptionRequestFor(c);
+        try {
+          await (ctx.consumption ?? new FakeConsumptionSender()).send(cr.transactionId, cr.environment, answer);
+        } catch (e) {
+          log({ ev: "ai_consumption_failed", alert: true, account: owner, detail: String(e) });
+          return ctx.json({ error: "consumption_failed" }, 500);
+        }
+        log({ ev: "ai_consumption_sent", account: owner, consumption_milli: answer.consumptionPercentage ?? null, preference: answer.refundPreference ?? null });
       }
       return ctx.json({ ok: true });
+    }
+
+    if (path === "/billing/admin/status" && req.method === "POST") {
+      const h = req.headers.get("authorization") ?? "";
+      const admin = !!env.BILLING_ADMIN_TOKEN && h.startsWith("Bearer ") && safeEqual(h.slice(7), env.BILLING_ADMIN_TOKEN);
+      if (!admin) return ctx.json({ error: "unauthorized" }, 401);
+      const b = (await req.json().catch(() => ({}))) as { account?: unknown; status?: unknown; reason?: unknown };
+      if (typeof b.account !== "string" || !/^acct_[a-z2-7]{20}$/.test(b.account) || (b.status !== "active" && b.status !== "suspended")) {
+        return ctx.json({ error: "invalid_request", message: "{account, status: active|suspended, reason?}" }, 400);
+      }
+      await new DoLedger(ready.ns, b.account).setStatus(b.status);
+      // The reason is a short admin label (e.g. "aup:spam"), never user content.
+      const reason = typeof b.reason === "string" ? b.reason.slice(0, 40) : null;
+      log({ ev: b.status === "suspended" ? "ai_account_suspended" : "ai_account_reinstated", account: b.account, reason });
+      return ctx.json({ ok: true, account: b.account, status: b.status });
     }
 
     // -- authenticated ----------------------------------------------------------------
@@ -148,8 +209,15 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
         low: avail < pricing.low_balance_credits * MICRO,
         status: a.status,
         adult: a.adult_confirmed_at !== undefined,
+        apple_consumption_consent: a.apple_consumption_consent?.consented === true,
         pricing_version: pricing.version,
       });
+    }
+    if (path === "/billing/consent" && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as { apple_consumption?: unknown };
+      if (typeof b.apple_consumption !== "boolean") return ctx.json({ error: "invalid_request", message: "{apple_consumption: boolean}" }, 400);
+      await ledger.setAppleConsumptionConsent(b.apple_consumption);
+      return ctx.json({ ok: true, apple_consumption_consent: b.apple_consumption });
     }
     if (path === "/billing/age" && req.method === "POST") {
       const b = (await req.json().catch(() => ({}))) as { confirm?: unknown };

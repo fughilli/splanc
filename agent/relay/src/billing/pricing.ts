@@ -198,9 +198,9 @@ export const DEFAULT_PRICING: PricingConfig = {
     requests_per_minute: 20,
   },
   min_margin: 0.05,
-  // The current Anthropic usage tier's monthly limit (owner: launch on it,
-  // raise it when the alert fires). Set to the console's actual value.
-  org: { monthly_limit_usd: 500, alert_fraction: 0.8, stop_fraction: 0.98 },
+  // The Anthropic org's monthly spend limit (owner, 2026-11-18: US$1,000; launch on it,
+  // raise it when the 80 % alert fires). Alert at $800, graceful stop at $980.
+  org: { monthly_limit_usd: 1000, alert_fraction: 0.8, stop_fraction: 0.98 },
 };
 
 /** Token usage of one request, as the Messages API reports it. */

@@ -76,6 +76,10 @@ export interface Account {
   /** When the user confirmed they are 18 or older (owner decision: buying
    * credits is 18+). The app gates Buy on it; web checkout refuses without it. */
   adult_confirmed_at?: number | undefined;
+  /** The user's opt-in to share consumption data with Apple when they ask
+   * Apple for a refund (App Store Server API "Send Consumption Information").
+   * Withdrawable; absent = never asked = not consented. */
+  apple_consumption_consent?: { consented: boolean; at: number } | undefined;
 }
 
 export interface Hold {
@@ -324,6 +328,26 @@ export class Ledger {
     });
   }
 
+  /** Record (or withdraw) the Apple consumption-data consent. */
+  setAppleConsumptionConsent(consented: boolean): Promise<Account> {
+    return this.locked(async () => {
+      const a = await this.acct();
+      if (!a) throw new Error("no account");
+      const next = { ...a, apple_consumption_consent: { consented, at: this.now() } };
+      await this.s.put({ acct: next });
+      return next;
+    });
+  }
+
+  /** How much of purchase `ref` (a pack) has been spent, for Apple's
+   * CONSUMPTION_REQUEST. See lotConsumption. */
+  consumptionOf(ref: string): Promise<LotConsumption | null> {
+    return this.locked(async () => {
+      const all = [...(await this.s.list<LedgerEntry>({ prefix: "led:" })).values()];
+      return lotConsumption(all, ref);
+    });
+  }
+
   /** Set the account status (admin: AUP suspension; reinstatement). */
   setStatus(status: "active" | "suspended"): Promise<Account> {
     return this.locked(async () => {
@@ -375,4 +399,52 @@ export class Ledger {
       };
     });
   }
+}
+
+export interface LotConsumption {
+  /** µcredits the purchase granted. */
+  granted: number;
+  /** µcredits of it spent (FIFO attribution). */
+  spent: number;
+  /** spent / granted, 0..1. */
+  fraction: number;
+  /** The purchase was already refunded / clawed back. */
+  refunded: boolean;
+}
+
+/**
+ * Credits are one pooled balance, so "how much of THIS pack was used" needs an
+ * attribution rule: FIFO. Credits are spent oldest-first (trial / grants
+ * first, then packs in purchase order); a refund removes what is left of its
+ * own lot; a forfeit or a negative adjustment consumes like usage. Returns
+ * null when `ref` is not a purchase on this ledger.
+ */
+export function lotConsumption(entries: LedgerEntry[], ref: string): LotConsumption | null {
+  const lots: { ref: string; granted: number; left: number; refunded: boolean; spentAtRefund: number }[] = [];
+  for (const e of [...entries].sort((x, y) => x.seq - y.seq)) {
+    if (e.amount > 0) {
+      lots.push({ ref: e.kind === "purchase" ? e.ref : `${e.kind}:${e.seq}`, granted: e.amount, left: e.amount, refunded: false, spentAtRefund: 0 });
+    } else if (e.kind === "refund") {
+      const lot = lots.find((l) => l.ref === e.ref);
+      if (lot) {
+        lot.spentAtRefund = lot.granted - lot.left;
+        lot.left = 0;
+        lot.refunded = true;
+      }
+    } else {
+      // usage / forfeit / negative adjust: consume oldest first
+      let need = -e.amount;
+      for (const l of lots) {
+        if (need <= 0) break;
+        const take = Math.min(l.left, need);
+        l.left -= take;
+        need -= take;
+      }
+    }
+  }
+  const lot = lots.find((l) => l.ref === ref);
+  if (!lot) return null;
+  // A refunded lot's "spent" is what was used before the refund removed it.
+  const spent = lot.refunded ? lot.spentAtRefund : lot.granted - lot.left;
+  return { granted: lot.granted, spent, fraction: lot.granted > 0 ? spent / lot.granted : 0, refunded: lot.refunded };
 }
