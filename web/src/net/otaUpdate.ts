@@ -43,6 +43,9 @@ export interface OtaDevice {
   getOtaStatus(): Promise<OtaStatusFlat>;
   otaBegin(manifest: Uint8Array, allowDowngrade?: boolean, keyEpoch?: Uint8Array, sourceUrl?: string): Promise<OtaStatusFlat>;
   otaChunk(offset: number, data: Uint8Array): Promise<OtaStatusFlat>;
+  /** otaChunk may be called again before the previous one is answered (replies are
+   * matched in order): the driver then keeps OtaOptions.window chunks in flight. */
+  readonly otaPipelined?: boolean;
   otaFinish(): Promise<OtaStatusFlat>;
   /** Resolve on the next connection handshake whose welcome satisfies `pred`; the
    * connection must keep reconnecting while this is pending (LedMapperClient does,
@@ -113,6 +116,11 @@ export interface OtaOptions {
   maxResumes?: number;
   /** Override the chunk size (≤ the device's max_chunk). */
   chunkBytes?: number;
+  /** Chunks in flight on a device that takes them pipelined (OtaDevice.otaPipelined;
+   * default 4): the next chunk crosses the network while the device writes this one,
+   * instead of one round trip per chunk. The device answers in order; an out_of_order
+   * reply (one went missing) drains the rest and resumes from where it says. */
+  window?: number;
   /** The newest signed key-epoch record (80 B, docs/design/ota.md "Key rotation") —
    * how a key revocation reaches devices. Sent with every ota_begin. */
   keyEpoch?: Uint8Array;
@@ -372,12 +380,32 @@ export async function updateFirmware(dev: OtaDevice, pkg: Uint8Array, opts: OtaO
         chunk = Math.min(opts.chunkBytes ?? st.maxChunk ?? 4096, st.maxChunk || 4096);
         report("transfer", offset);
       }
-      while (offset < total) {
-        const end = Math.min(offset + chunk, total);
-        const st = await dev.otaChunk(offset, image.subarray(offset, end));
-        if (failed(st) && st.error !== "out_of_order") throw new OtaError(st.error, `Chunk at ${offset}: ${st.error}`);
-        offset = st.offset;
-        report("transfer", offset);
+      const window = dev.otaPipelined ? Math.max(1, Math.floor(opts.window ?? 4)) : 1;
+      const flight: Promise<OtaStatusFlat>[] = [];
+      let next = offset;
+      try {
+        while (offset < total) {
+          while (next < total && flight.length < window) {
+            const end = Math.min(next + chunk, total);
+            const p = dev.otaChunk(next, image.subarray(next, end));
+            p.catch(() => undefined); // awaited in order below; a later one may fail first
+            flight.push(p);
+            next = end;
+          }
+          const st = await flight.shift()!;
+          if (failed(st) && st.error !== "out_of_order") throw new OtaError(st.error, `Chunk at ${offset}: ${st.error}`);
+          if (failed(st)) {
+            // The device wants st.offset: what's still in flight follows the gap and is
+            // refused too. Let it drain, then go on from there.
+            await Promise.allSettled(flight.splice(0));
+            next = st.offset;
+          }
+          offset = st.offset;
+          report("transfer", offset);
+        }
+      } finally {
+        // On a throw (a dropped link: the resume below), don't leave replies hanging.
+        flight.splice(0);
       }
       break;
     } catch (e) {
