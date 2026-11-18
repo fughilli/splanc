@@ -92,7 +92,8 @@ repos:
       - id: debug-statements
       - id: name-tests-test
         args: [--pytest-test-first]
-        exclude: (pytest_main|gen_golden)\.py$
+        # tests/tools/ holds dataset builders and parity scripts, not tests.
+        exclude: ((pytest_main|gen_golden)\.py|/tests/tools/.*\.py)$
 
   # Container image freshness: the agent container bakes prek's hook
   # environments into an image layer, built from a copy of THIS file at
