@@ -113,8 +113,9 @@ export class FakeConsumptionSender implements ConsumptionSender {
  * - deliveryStatus DELIVERED (the credits were on the account and usable);
  * - consumptionPercentage = the share of the pack's credits spent;
  * - refundPreference: nothing used -> GRANT_FULL, partly -> GRANT_PRORATED,
- *   all used -> DECLINE (owner-tunable policy; see the design doc);
- * - sampleContentProvided: true. Before buying, the free tier lets people try
+ *   all used -> DECLINE (owner decision, 2026-11-18);
+ * - sampleContentProvided: true (owner decision: the free tier counts as a
+ * sample). Before buying, the free tier lets people try
  *   the AI and the app shows what requests cost.
  */
 export function consumptionRequestFor(c: { fraction: number } | null): ConsumptionRequest {

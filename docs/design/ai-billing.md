@@ -69,6 +69,8 @@ the web gives 833. See [Margins](#costs-and-margins).
 | 13 | Org monthly spend limit | **US$1,000** (in the pricing config, not a secret): alert at **US$800** (80 %), graceful stop at **US$980** (98 %). |
 | 14 | Where alerts go | **Grafana Cloud alerting** (as for the HITL rigs): the relay pushes billing events to Grafana Cloud Logs, and the alert rules are code ([Observability and alerts](#observability-and-alerts)). |
 | 15 | Apple refund consumption requests | **Yes, with consent.** The app asks for the user's opt-in (in the purchase flow and in AI settings); with it, the relay answers Apple's CONSUMPTION_REQUEST with the pack's consumption ([Apple refund requests](#apple-refund-requests-consumption_request)). |
+| 16 | Refund preference in consumption answers | **By usage:** GRANT_FULL if none of the pack was used, GRANT_PRORATED if part was, DECLINE if all was. |
+| 17 | `sampleContentProvided` | **true**: the free tier counts as a sample. |
 
 ### Store rules (checked 2026-11-18)
 
@@ -449,9 +451,9 @@ and the field set in Apple's `app-store-server-library` 3.1.0).
   - `deliveryStatus: DELIVERED`: the credits were on the account and usable;
   - `consumptionPercentage`: the share of that pack's credits spent;
   - `refundPreference`: GRANT_FULL if nothing was used, GRANT_PRORATED if part
-    was, DECLINE if all was (a policy the owner can tune);
-  - `sampleContentProvided: true`: before buying, the free tier lets people
-    try the AI, and the app shows what requests cost.
+    was, DECLINE if all was (owner decision 16);
+  - `sampleContentProvided: true`: the free tier counts as a sample (owner
+    decision 17).
 - **Failures.** If the API call fails, the relay answers the notification with
   500 so that Apple retries, and logs `ai_consumption_failed` (an alert). An
   unknown transaction, or one without consent, is logged
@@ -888,11 +890,9 @@ All decided (see the two decision tables above): the org limit is US$1,000,
 alerts go to Grafana Cloud, and Apple's consumption requests are answered with
 consent. Revisit later:
 
-1. **Refund preference policy** for Apple's consumption answers (GRANT_FULL
-   when unused, GRANT_PRORATED when partly used, DECLINE when used up).
-2. **Android / Play:** stays a PWA with web checkout. Revisit only if
+1. **Android / Play:** stays a PWA with web checkout. Revisit only if
    distribution needs a Play app; then Play Billing applies.
-3. **US iOS link-out:** stays off. Revisit after the Supreme Court rules on
+2. **US iOS link-out:** stays off. Revisit after the Supreme Court rules on
    No. 25-1311.
 
 ## What is in this PR
