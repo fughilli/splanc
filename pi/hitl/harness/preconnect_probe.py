@@ -32,6 +32,7 @@ import json
 import select
 import socket
 import ssl
+import struct
 import sys
 import time
 
@@ -46,6 +47,29 @@ def _ctx() -> ssl.SSLContext:
 def _connect(host: str, port: int, timeout: float) -> ssl.SSLSocket:
     raw = socket.create_connection((host, port), timeout=timeout)
     return _ctx().wrap_socket(raw, server_hostname=None)
+
+
+def _tcp_info(s: socket.socket) -> dict:
+    """Linux TCP_INFO for the socket: its TCP state and the payload bytes it has received
+    (tcpi_bytes_received = rcv_nxt - IRS - 1). The DUT logs its RST's position in the same
+    units ("[reclaim] RST at sent=N"), and Linux accepts an RST only at exactly rcv_nxt, so
+    on a dead_send the two say whether the RST was mis-sequenced or never arrived."""
+    try:
+        b = s.getsockopt(socket.IPPROTO_TCP, socket.TCP_INFO, 232)
+    except (OSError, AttributeError):
+        return {}
+    if len(b) < 136:
+        return {}
+    state, retransmits = b[0], b[2]
+    last_data_recv_ms = struct.unpack_from("I", b, 52)[0]
+    bytes_acked, bytes_received = struct.unpack_from("QQ", b, 120)
+    return {
+        "tcp_state": state,  # 1 = ESTABLISHED, 7 = CLOSE
+        "retransmits": retransmits,
+        "bytes_received": bytes_received,
+        "bytes_acked": bytes_acked,
+        "last_data_recv_ms": last_data_recv_ms,
+    }
 
 
 def _get(s: ssl.SSLSocket, host: str, timeout: float) -> int | None:
@@ -96,12 +120,15 @@ def one_round(host: str, port: int, idle: float, timeout: float) -> dict:
         closed_at = _idle_watch(s, idle)
         out["closed_while_idle_at_s"] = closed_at
         if closed_at is None:
+            out["tcp_before_get"] = _tcp_info(s)
+            t_get = time.monotonic()
             try:
                 st = _get(s, host, timeout)
                 out["status"] = st
                 out["outcome"] = "reused_ok" if st == 200 else "dead_send"
             except Exception as e:  # noqa: BLE001
                 out.update(outcome="dead_send", error=repr(e))
+            out["get_s"] = round(time.monotonic() - t_get, 3)
             return out
     finally:
         try:

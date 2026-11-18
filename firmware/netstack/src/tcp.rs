@@ -93,6 +93,7 @@ pub struct TcpConn {
     sport: u16,
     dport: u16,
     snd_nxt: u32, // next sequence we'll send
+    iss: u32,     // our initial send sequence (telemetry: bytes sent = snd_nxt - iss - 1)
     snd_una: u32, // oldest unacked sequence
     rcv_nxt: u32, // next sequence we expect
     ip_id: u16,
@@ -256,7 +257,7 @@ impl TcpConn {
         TcpConn {
             stats: TcpStats::default(),
             src, dst, sport, dport,
-            snd_nxt: iss, snd_una: iss, rcv_nxt: 0, ip_id: 1,
+            snd_nxt: iss, iss, snd_una: iss, rcv_nxt: 0, ip_id: 1,
             state: State::Closed,
             rx: [0; RX_BUF], rx_len: 0,
             last_adv_wnd: 0,
@@ -639,6 +640,19 @@ impl TcpConn {
     /// those (ERR_TOO_MANY_RETRIES). An RST while it is still idle fails the
     /// browser's liveness check on the pooled socket, so it opens a fresh one
     /// instead. Returns the RST's length; 0 when there is no peer to reset.
+    /// Reclaim telemetry, in payload bytes since the handshake: (acked by the peer, our
+    /// snd_nxt = where an abort RST sits, highest ever sent). Compare with the peer's
+    /// tcpi_bytes_received: an RST is accepted only at exactly its rcv_nxt.
+    pub fn seq_diag(&self) -> [u32; 3] {
+        let base = self.iss.wrapping_add(1); // the SYN(-ACK) consumed iss
+        let hi = self.snd_una.wrapping_add(self.sent_max as u32);
+        [
+            self.snd_una.wrapping_sub(base),
+            self.snd_nxt.wrapping_sub(base),
+            hi.wrapping_sub(base),
+        ]
+    }
+
     pub fn abort(&mut self, out: &mut [u8]) -> usize {
         match self.state {
             State::SynRcvd | State::Established | State::FinWait => {

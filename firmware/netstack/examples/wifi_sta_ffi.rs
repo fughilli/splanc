@@ -194,6 +194,18 @@ pub extern "C" fn ns_tcp_abort(out: *mut u8, cap: u32) -> u32 {
     }
 }
 
+/// Reclaim telemetry: writes (acked, snd_nxt, high-water) in payload bytes since the
+/// handshake to `out[0..3]`; 0 when there is no connection.
+#[no_mangle]
+pub extern "C" fn ns_tcp_seq_diag(out: *mut u32) -> u32 {
+    unsafe {
+        let Some(c) = TCP.as_ref() else { return 0 };
+        let d = c.seq_diag();
+        core::slice::from_raw_parts_mut(out, 3).copy_from_slice(&d);
+        1
+    }
+}
+
 /// Open a passive TCP listener bound to `src`:`sport` (the WSS/TLS server path). The peer
 /// is latched from the first inbound SYN; drive it with `ns_tcp_on_ip`.
 #[no_mangle]

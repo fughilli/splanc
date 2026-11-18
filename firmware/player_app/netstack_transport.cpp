@@ -95,6 +95,7 @@ uint32_t ns_tcp_window_ack(uint8_t *out, uint32_t cap); // window-update ACK aft
 uint32_t ns_tcp_recv(uint8_t *out, uint32_t cap);
 void ns_tcp_listen(const uint8_t *src, uint16_t sport, uint32_t iss); // passive open (server)
 uint32_t ns_tcp_abort(uint8_t *out, uint32_t cap); // RST|ACK to the current peer (0 = none)
+uint32_t ns_tcp_seq_diag(uint32_t *out);           // bytes (acked, snd_nxt, high-water)
 uint32_t ns_tcp_state();
 uint32_t ns_tcp_snd_una(); // oldest unacked seq — advances on peer ACK (TX forward progress)
 uint32_t ns_tcp_rcv_nxt(); // next expected seq — advances on peer data (RX forward progress)
@@ -1037,6 +1038,19 @@ void handle_arp(const uint8_t *pt, int pl) {
 // browser's preconnected socket looking alive (preconnect_netstack dead_send).
 static uint32_t g_group_tx_quiet_until_ms = 0;
 static bool group_tx_quiet() { return (int32_t)(millis() - g_group_tx_quiet_until_ms) < 0; }
+
+// The last reclaim's RST and its two pending re-sends (see the reclaim gate).
+static uint8_t g_stale_rst[80];
+static uint32_t g_stale_rst_len = 0;
+static uint32_t g_stale_rst_due[2];
+static uint8_t g_stale_rst_left = 0;
+static void stale_rst_resend() {
+  if (g_stale_rst_left == 0 || g_stale_rst_len == 0) return;
+  const uint8_t i = 2 - g_stale_rst_left;
+  if ((int32_t)(millis() - g_stale_rst_due[i]) < 0) return;
+  send_ip(g_stale_rst, g_stale_rst_len);
+  g_stale_rst_left--;
+}
 
 void send_gratuitous_arp() {
   if (!g_leased) return;
@@ -3106,6 +3120,7 @@ void netstack_loop() {
     // Established — and once it exceeds ~3s (a real handshake+WS completes in <3s on the LAN),
     // force a fresh listener (ns_tcp_listen swaps the conn to a clean LISTEN), abandoning the
     // dead peer and freeing the slot. This is the tls_churn anti-wedge gate.
+    stale_rst_resend();
     {
       static uint32_t hs_since = 0;
       static uint32_t last_prog = 0;
@@ -3136,17 +3151,26 @@ void netstack_loop() {
           // Chrome later sends the request into the dead connection, gets the listener's
           // stale-segment RST, resends, and gives up (ERR_TOO_MANY_RETRIES on Android).
           // Reset now, while it's idle, so Chrome discards it and dials a fresh socket.
-          // Send it twice and keep the air quiet behind it: a lone frame nobody
-          // retransmits, lost if the next frame is armed while it is still in MAC
-          // retries (see g_group_tx_quiet_until_ms). The copy is identical, so whichever
-          // lands resets the peer; a second RST to an already-reset socket is ignored.
+          // An RST is a lone frame nobody retransmits, and on the rig ~1 in 25 never
+          // reached the AP (both of two back-to-back copies missing from a wlan0 capture
+          // while every other round showed them): a radio blackout longer than the gap
+          // between them — the shared radio's BLE advertising event is the fitting
+          // suspect. So send it now and again 25 and 75 ms later (stale_rst_resend), and
+          // keep group-addressed TX quiet behind it. Copies are identical: whichever lands
+          // resets the peer, and Linux ignores an RST for a socket that is already gone.
           {
-            uint8_t rst[80];
-            uint32_t rn = ns_tcp_abort(rst, sizeof rst);
-            if (rn > 0) {
-              send_ip(rst, rn);
-              send_ip(rst, rn);
-              g_group_tx_quiet_until_ms = millis() + 250;
+            uint32_t sq[3] = {0, 0, 0};
+            if (ns_tcp_seq_diag(sq))
+              Serial.printf("[reclaim] RST at sent=%lu (acked=%lu, high=%lu) bytes\n",
+                            (unsigned long)sq[1], (unsigned long)sq[0], (unsigned long)sq[2]);
+            g_stale_rst_len = ns_tcp_abort(g_stale_rst, sizeof g_stale_rst);
+            if (g_stale_rst_len > 0) {
+              send_ip(g_stale_rst, g_stale_rst_len);
+              const uint32_t now = millis();
+              g_stale_rst_due[0] = now + 25;
+              g_stale_rst_due[1] = now + 75;
+              g_stale_rst_left = 2;
+              g_group_tx_quiet_until_ms = now + 250;
             }
           }
           static uint32_t riss = 0x5000;
