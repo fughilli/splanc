@@ -342,6 +342,11 @@ impl Sessions {
         self.s.iter().flatten().find(|s| s.session == session)
     }
 
+    /// The synced session whose gateway is `gw`.
+    pub fn by_gateway(&self, gw: NodeId) -> Option<&MemberSession> {
+        self.s.iter().flatten().find(|s| s.gateway == gw && s.floor.is_some())
+    }
+
     /// A grant heard: verify it once (ECDSA), derive the pairwise key (ECDH), and return
     /// the Ack to send. A grant already held is not re-verified; its Ack is re-sent only if
     /// still unconfirmed.

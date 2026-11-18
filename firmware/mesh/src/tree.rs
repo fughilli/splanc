@@ -555,22 +555,35 @@ pub enum Dist {
 /// The root's distribution mode by member count, with hysteresis (Q18). Every data packet
 /// carries the mode the root chose for it, so the mesh switches packet by packet: the tree is
 /// maintained in both modes (its fields ride on adverts anyway), so a switch is instant.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct Selector {
     pub mode: Dist,
     since: Option<i64>,
     pub switches: u32,
+    enter: u16,
+    exit: u16,
+}
+
+impl Default for Selector {
+    fn default() -> Self {
+        Selector::new()
+    }
 }
 
 impl Selector {
     pub const fn new() -> Selector {
-        Selector { mode: Dist::Flood, since: None, switches: 0 }
+        Selector::with(TREE_ENTER, TREE_EXIT)
+    }
+
+    /// Other thresholds (tests, and the live authenticator's own switch in the stack).
+    pub const fn with(enter: u16, exit: u16) -> Selector {
+        Selector { mode: Dist::Flood, since: None, switches: 0, enter, exit }
     }
 
     pub fn update(&mut self, now_us: i64, members: u16) -> Dist {
         let want = match self.mode {
-            Dist::Flood if members >= TREE_ENTER => Some(Dist::Tree),
-            Dist::Tree if members <= TREE_EXIT => Some(Dist::Flood),
+            Dist::Flood if members >= self.enter => Some(Dist::Tree),
+            Dist::Tree if members <= self.exit => Some(Dist::Flood),
             _ => None,
         };
         match want {

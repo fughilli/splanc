@@ -34,7 +34,13 @@ fn id(i: usize) -> NodeId {
 /// The radiolarians (§10.1): fixtures on a 3 m circle (3–6 m apart), in metal enclosures
 /// (15 dB each way, an estimate until R0 measures it), clocks off by up to ~0.2 s and ±20 ppm.
 fn room(n: usize, seed: u64) -> World {
+    room_with(n, seed, |_| {})
+}
+
+/// [`room`] with the world configured before the fixtures are added.
+fn room_with(n: usize, seed: u64, setup: impl FnOnce(&mut World)) -> World {
     let mut w = World::new(RadioModel::default(), seed);
+    setup(&mut w);
     for i in 0..n {
         let a = i as f64 * std::f64::consts::TAU / n as f64;
         let place = Placement {
@@ -573,4 +579,82 @@ fn rate_adaptation_climbs_and_survives_walking() {
     assert!(rates.iter().all(|&r| r >= 6.0), "{rates:?}");
     assert!(ratio >= 0.98, "{ratio}");
     eprintln!("rate adaptation (6 fixtures, walking): rates now {rates:?} Mb/s, {changes} changes in {} s; 30 Hz control delivered {:.1}%", w.now() / 1_000_000, ratio * 100.0);
+}
+
+/// Q19: past the threshold, live updates go out under the broadcast authenticator: one
+/// constant-size packet per update instead of 8 bytes per member. Every member receives them
+/// once their keys are disclosed; an insider holding a disclosed key cannot forge one.
+#[test]
+fn live_updates_use_the_broadcast_authenticator_in_large_meshes() {
+    let n = 10;
+    // Low thresholds stand in for 24/16, so a small room exercises the large-mesh path.
+    let mut w = room_with(n, 21, |w| w.live_auth = (6, 4));
+    let all: Vec<usize> = (0..n).collect();
+    let c = creds(&w);
+    form(&mut w, &all, &c, 0, 15_000);
+    w.unlock_and_sync(GW, SESSION, &all, 15_000).expect("sync");
+    // Live at 30 Hz: the selector holds 5 s, the chain is built in the crypto task, members
+    // fetch it on the first authenticated packet.
+    let mut sent = Vec::new();
+    for k in 0..900u32 {
+        let local = w.local(GW);
+        w.nodes[GW].stack.send_live(local, CONN, 5000 + k, Targets::All, b"speed=0.5").expect("live");
+        sent.push((5000 + k, w.now()));
+        w.run_ms(33);
+    }
+    w.run_ms(500);
+    let gw = w.nodes[GW].stack.tesla_stats;
+    assert!(gw.auth_sent > 600, "{gw:?}");
+    assert_eq!(gw.chains, 1);
+    // The last 400 updates (well after the switch and sync): every member got them.
+    let tail = &sent[500..];
+    let mut missing = 0;
+    let mut lat = Vec::new();
+    for (op, at) in tail {
+        let r = receivers(&w, *op, *at);
+        missing += (n - 1) - r.len();
+        lat.extend(r.iter().map(|x| x.2));
+    }
+    lat.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let p50 = lat[lat.len() / 2];
+    let p99 = lat[lat.len() * 99 / 100];
+    let st: Vec<_> = w.nodes[1..].iter().map(|x| x.stack.tesla_v.as_ref().map(|v| v.1.stats)).collect();
+    assert!(missing * 100 <= tail.len() * (n - 1), "{missing} missing of {}: {st:?}", tail.len() * (n - 1));
+    // Latency: the disclosure delay (3 intervals of 20 ms) plus the wait for the next packet.
+    assert!((60.0..=130.0).contains(&p50), "p50 {p50} ms");
+    // No forgery or bad key under honest traffic.
+    for v in st.iter().flatten() {
+        assert_eq!((v.bad_tag, v.bad_key), (0, 0));
+    }
+
+    // An insider (member 3) takes the newest disclosed key from the air and forges an update
+    // for that interval: every member drops it as unsafe (its key is already public).
+    let chain = w.nodes[3].stack.tesla_v.as_ref().unwrap().1.chain;
+    let now_gw = w.local(GW);
+    let ctx = splanc_mesh::tesla::Context { mesh_id: w.nodes[GW].stack.node.guard.mesh_id, session: SESSION };
+    let gw_signer = w.nodes[GW].stack.tesla.as_mut().unwrap();
+    // The insider's view: the key of an interval that is already disclosed.
+    let (cur, _) = gw_signer.interval_at(now_gw);
+    let old = cur - splanc_mesh::tesla::DISCLOSE as u32;
+    let k = gw_signer.key(old);
+    let mut body = [0u8; 64];
+    let hn = splanc_mesh::ports::ControlHeader { op_id: 9999, targets: Targets::All }.encode(b"evil", &mut body).unwrap();
+    let a = splanc_mesh::tesla::Auth { chain, interval: old as u16, tag: splanc_mesh::tesla::tag(&k, ctx, chain, old as u16, 1 << 40, Port::LiveAuth as u8, &body[..hn]), disclosed: old as u16, key: k };
+    let mut p = [0u8; 128];
+    a.encode(&mut p).unwrap();
+    p[30..38].copy_from_slice(&(1u64 << 40).to_be_bytes());
+    p[38..38 + hn].copy_from_slice(&body[..hn]);
+    let unsafe_before: u32 = w.nodes[1..].iter().filter_map(|x| x.stack.tesla_v.as_ref()).map(|v| v.1.stats.unsafe_late).sum();
+    inject_as(&mut w, 3, id(GW), Port::LiveAuth, &p[..38 + hn]);
+    w.run_ms(2_000);
+    let forged = w.nodes.iter().filter(|x| x.controls().iter().any(|c| c.2 == 9999)).count();
+    let unsafe_after: u32 = w.nodes[1..].iter().filter_map(|x| x.stack.tesla_v.as_ref()).map(|v| v.1.stats.unsafe_late).sum();
+    assert_eq!(forged, 0);
+    assert!(unsafe_after > unsafe_before);
+    eprintln!(
+        "live auth (10 fixtures, thresholds 6/4): {} authenticated, {} per-receiver before the switch; {missing}/{} missing after; latency p50 {p50:.0} ms p99 {p99:.0} ms; forged update delivered to {forged}",
+        gw.auth_sent,
+        gw.per_receiver_sent,
+        tail.len() * (n - 1)
+    );
 }

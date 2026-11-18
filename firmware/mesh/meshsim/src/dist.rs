@@ -24,6 +24,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use splanc_mesh::backhaul::Backhaul;
 use splanc_mesh::msg::Class;
+use splanc_mesh::tesla::{self, Auth, Challenge, Signer, TeslaMsg, Verifier};
 use splanc_mesh::tree::{Dist, Radio, RelayCache, Role, Selector, Tree, TreeAd};
 
 use super::{Air, Placement, RadioModel, Rate, SimPort, MTU};
@@ -64,6 +65,11 @@ pub struct DistCfg {
     pub cache_depth: usize,
     /// Members over time, `(ms from start, count)`: nodes `0..count` are on. Empty: all.
     pub members: Vec<(i64, usize)>,
+    /// Live updates in tree mode under the broadcast authenticator (Q19): `(interval µs,
+    /// disclosure delay d)`. None: per-receiver MACs everywhere.
+    pub tesla: Option<(u32, u8)>,
+    /// The challenge round trip each member bootstraps its time bound with (ms).
+    pub tesla_rtt_ms: i64,
 }
 
 impl DistCfg {
@@ -87,6 +93,8 @@ impl DistCfg {
             uwb_multihop: true,
             cache_depth: splanc_mesh::tree::CACHE_ENTRIES,
             members: Vec::new(),
+            tesla: None,
+            tesla_rtt_ms: 40,
         }
     }
 }
@@ -136,6 +144,13 @@ pub struct DistOut {
     /// Requests the parent could not answer because it never had the packet.
     pub nack_lacking: u64,
     pub mode_switches: u32,
+    /// The broadcast authenticator: packets a member dropped as unsafe (arrived after their
+    /// key could be out), hashes per member per second and at the gateway, and the bytes of
+    /// one authenticated update on the air.
+    pub tesla_unsafe: u64,
+    pub tesla_hashes_member_s: f64,
+    pub tesla_hashes_gw_s: f64,
+    pub update_bytes: usize,
     pub series: Vec<Bin>,
 }
 
@@ -167,11 +182,23 @@ fn key(seq: u16, part: u8) -> u32 {
     ((seq as u32) << 8) | part as u32
 }
 
+/// A live update's body: per-receiver MACs (13 B + 8 B per recipient), or the broadcast
+/// authenticator's trailer (30 B) + sequence (8 B) + control header (6 B); 12 B of uniforms.
+fn body_len(recipients: usize, auth: bool) -> usize {
+    if auth {
+        tesla::AUTH_LEN + 8 + 6 + 12
+    } else {
+        13 + 8 * recipients + 12
+    }
+}
+
+const PAIRWISE: [u8; 16] = [0x5a; 16];
+const CTX: tesla::Context = tesla::Context { mesh_id: 7, session: 1 };
+
 /// Frame header (12 B): kind, origin (2), seq (2), hop, part, forwarder (2), reliable seq
-/// (2), mode; then the body: 13 B + 8 B per recipient + 12 B of uniforms.
+/// (2), mode; then `body` bytes.
 #[allow(clippy::too_many_arguments)]
-fn frame(kind: u8, seq: u16, hop: u8, part: u8, fwd: u16, rseq: u16, mode: Dist, recipients: usize) -> Vec<u8> {
-    let body = 13 + 8 * recipients + 12;
+fn frame(kind: u8, seq: u16, hop: u8, part: u8, fwd: u16, rseq: u16, mode: Dist, body: usize) -> Vec<u8> {
     let mut f = vec![0u8; (HDR + body + ENVELOPE).min(MTU)];
     f[0] = kind;
     f[1..3].copy_from_slice(&1u16.to_be_bytes());
@@ -209,6 +236,9 @@ struct Node {
     mode_of: HashMap<u16, bool>,
     /// (seq, part) copies already received.
     seen: HashSet<u32>,
+    /// The member's verifier for the gateway's chain, and the updates handed to it.
+    tv: Option<Verifier>,
+    fed: HashSet<u16>,
 }
 
 struct Gen {
@@ -228,6 +258,9 @@ struct Sim<'a> {
     nacks: u64,
     ages: Vec<u16>,
     lacking: u64,
+    /// The gateway's chain and each authenticated update's trailer and body.
+    signer: Option<Signer>,
+    auth: HashMap<u16, (Auth, [u8; 12])>,
 }
 
 /// The UWB link budget (dBm) from `a` to `b`: −14 dBm EIRP (−41.3 dBm/MHz over 500 MHz),
@@ -293,6 +326,8 @@ pub fn run(cfg: &DistCfg) -> DistOut {
                 rseq_of: HashMap::new(),
                 mode_of: HashMap::new(),
                 seen: HashSet::new(),
+                tv: None,
+                fed: HashSet::new(),
             }
         })
         .collect();
@@ -305,7 +340,8 @@ pub fn run(cfg: &DistCfg) -> DistOut {
     for i in 0..n {
         air.0.borrow_mut().st[i].online = true;
     }
-    let mut sim = Sim { cfg, parts: HashMap::new(), hops: diameter(&air, n) + 1, ctrl: 0, nacks: 0, ages: Vec::new(), lacking: 0 };
+    let mut sim = Sim { cfg, parts: HashMap::new(), hops: diameter(&air, n) + 1, ctrl: 0, nacks: 0, ages: Vec::new(), lacking: 0, signer: cfg.tesla.map(|(iv, d)| Signer::new(&[0x33; 16], 1, 0, iv, d)), auth: HashMap::new() };
+    let gw_hashes0 = sim.signer.as_ref().map_or(0, |s| s.hashes);
     let mut selector = Selector::new();
     let mut seq: u16 = 0;
     let mut rseq: u16 = 0;
@@ -422,10 +458,19 @@ pub fn run(cfg: &DistCfg) -> DistOut {
                 nodes[0].tree.seq = r;
             }
             let recips: Vec<usize> = (1..n).filter(|&j| alive[j]).collect();
-            let parts: Vec<Vec<usize>> = recips.chunks(PER_PACKET).map(|c| c.to_vec()).collect();
+            // Live updates in tree mode under the broadcast authenticator: one packet for
+            // everyone. Reliable commands keep per-receiver MACs.
+            let auth = mode == Dist::Tree && !reliable && sim.signer.is_some();
+            let parts: Vec<Vec<usize>> = if auth { vec![recips.clone()] } else { recips.chunks(PER_PACKET).map(|c| c.to_vec()).collect() };
+            if auth {
+                let body = [seq as u8; 12];
+                let a = sim.signer.as_mut().unwrap().seal(now, CTX, seq as u64, 24, &body).expect("chain");
+                sim.auth.insert(seq, (a, body));
+                sim.auth.remove(&seq.wrapping_sub(256));
+            }
             let fwd = if mode == Dist::Flood { FLOOD_FWD } else { 1 };
             for (k, p) in parts.iter().enumerate() {
-                let f = frame(KIND_DATA, seq, 0, k as u8, fwd, r, mode, p.len());
+                let f = frame(KIND_DATA, seq, 0, k as u8, fwd, r, mode, body_len(p.len(), auth));
                 if r != 0 {
                     nodes[0].cache.put(key16(r, k as u8), &f);
                 }
@@ -571,7 +616,7 @@ pub fn run(cfg: &DistCfg) -> DistOut {
                 let flood = !tree || nodes[i].tree.role == Role::Orphan;
                 let fwd = if flood { FLOOD_FWD } else { i as u16 + 1 };
                 let mode = if tree { Dist::Tree } else { Dist::Flood };
-                let f = frame(KIND_DATA, q, h, part, fwd, r, mode, p.len());
+                let f = frame(KIND_DATA, q, h, part, fwd, r, mode, body_len(p.len(), sim.auth.contains_key(&q)));
                 let _ = nodes[i].port.send(&f, None);
             }
         }
@@ -676,6 +721,13 @@ pub fn run(cfg: &DistCfg) -> DistOut {
         nack_age_max: sim.ages.iter().copied().max().unwrap_or(0),
         nack_lacking: sim.lacking,
         mode_switches: selector.switches,
+        tesla_unsafe: nodes.iter().filter_map(|x| x.tv.as_ref()).map(|v| v.stats.unsafe_late as u64).sum(),
+        tesla_hashes_member_s: {
+            let v: Vec<f64> = nodes.iter().filter_map(|x| x.tv.as_ref()).map(|v| v.stats.hashes as f64).collect();
+            if v.is_empty() { 0.0 } else { v.iter().sum::<f64>() / v.len() as f64 / run_s }
+        },
+        tesla_hashes_gw_s: sim.signer.as_ref().map_or(0.0, |s| (s.hashes - gw_hashes0) as f64 / ((cfg.warmup_ms + cfg.run_ms) as f64 / 1000.0)),
+        update_bytes: HDR + body_len(n - 1, cfg.tesla.is_some()) + ENVELOPE,
         series,
     }
 }
@@ -686,6 +738,11 @@ fn key16(rseq: u16, part: u8) -> u16 {
 }
 
 impl Node {
+    /// First time this node hands `seq` to its verifier?
+    fn tv_fed(&mut self, seq: u16) -> bool {
+        self.fed.insert(seq)
+    }
+
     /// The reliable sequence of `seq`, if this node holds it (0 if live or unknown).
     fn cache_rseq(&self, seq: u16) -> u16 {
         self.rseq_of.get(&seq).copied().unwrap_or(0)
@@ -716,6 +773,16 @@ fn nack(sim: &mut Sim<'_>, nd: &mut Node, rseq: u16, parent: u16, now: i64) {
     let _ = nd.port.send(&f, Some(parent));
 }
 
+/// A member's challenge-response with the gateway: the Req left `rtt` ago, the gateway
+/// answered half-way.
+fn bootstrap(sim: &Sim<'_>, i: usize, now: i64) -> Option<Verifier> {
+    let s = sim.signer.as_ref()?;
+    let rtt = sim.cfg.tesla_rtt_ms * 1000;
+    let ch = Challenge { session: CTX.session, nonce: i as u64, t0_us: now - rtt };
+    let TeslaMsg::Sync(body, mac) = s.sync(now - rtt / 2, CTX.session, i as u16 + 1, i as u64, &PAIRWISE) else { return None };
+    Verifier::from_sync(&ch, &body, &mac, &PAIRWISE, i as u16 + 1, CTX.mesh_id)
+}
+
 fn on_data(sim: &mut Sim<'_>, nodes: &mut [Node], i: usize, from: usize, f: &[u8], now: i64, via_uwb: bool) {
     let seq = u16::from_be_bytes([f[3], f[4]]);
     let hop = f[5];
@@ -733,7 +800,23 @@ fn on_data(sim: &mut Sim<'_>, nodes: &mut [Node], i: usize, from: usize, f: &[u8
     if f[0] == KIND_DATA && nodes[i].seen.insert(k) && rseq != 0 {
         nodes[i].cache.put(key16(rseq, part), f);
     }
-    if covered && !nodes[i].got.contains_key(&seq) {
+    if covered && f[0] == KIND_DATA && sim.auth.contains_key(&seq) {
+        // The broadcast authenticator: the first copy goes to the verifier; the update
+        // counts as delivered when its key is disclosed and its tag checks.
+        if nodes[i].seen.contains(&k) && nodes[i].tv_fed(seq) {
+            let (a, body) = sim.auth[&seq];
+            if nodes[i].tv.is_none() {
+                nodes[i].tv = bootstrap(sim, i, now);
+            }
+            let mut released = Vec::new();
+            if let Some(v) = nodes[i].tv.as_mut() {
+                v.on_packet(now, seq as u64, 24, &a, &body, &mut |q, _, _| released.push(q as u16));
+            }
+            for q in released {
+                nodes[i].got.entry(q).or_insert(now);
+            }
+        }
+    } else if covered && !nodes[i].got.contains_key(&seq) {
         nodes[i].got.insert(seq, now);
         if via_uwb {
             nodes[i].got_uwb.insert(seq);

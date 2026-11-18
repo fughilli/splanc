@@ -41,10 +41,13 @@ pub enum Port {
     Freshness = 22,
     /// Bulk transfers (effect blobs and catch-up, M6): lowest relay priority.
     Bulk = 23,
+    /// Live updates under the broadcast authenticator (§7.9, [`crate::tesla`]): `Auth ‖
+    /// seq ‖ ControlHeader ‖ inner`. Authenticated by the stack's verifier, not the router.
+    LiveAuth = 24,
 }
 
 /// Ports reserved for Splanc (dropped until assigned).
-pub const RESERVED: core::ops::RangeInclusive<u8> = 24..=31;
+pub const RESERVED: core::ops::RangeInclusive<u8> = 25..=31;
 
 impl Port {
     pub const fn from_u8(p: u8) -> Option<Port> {
@@ -57,6 +60,7 @@ impl Port {
             21 => Port::TimeBase,
             22 => Port::Freshness,
             23 => Port::Bulk,
+            24 => Port::LiveAuth,
             _ => return None,
         })
     }
@@ -73,7 +77,7 @@ impl Port {
 
     /// `swarm_net`'s relay priority bitmap for these ports: control, membership, time and
     /// freshness are never starved by bulk (the drop policy evicts bulk first).
-    pub const HIGH_PRIORITY: u32 = (1 << 16) | (1 << 19) | (1 << 20) | (1 << 21) | (1 << 22);
+    pub const HIGH_PRIORITY: u32 = (1 << 16) | (1 << 19) | (1 << 20) | (1 << 21) | (1 << 22) | (1 << 24);
 }
 
 /// Who a `CONTROL` packet is for (§3.3, §7.7): everyone, a group, or up to 8 nodes.
@@ -197,7 +201,7 @@ pub struct Inbound<'a> {
 pub enum RouteReject {
     /// Not one of Splanc's ports (a swarm port, or the app range beyond ours).
     UnknownPort,
-    /// 24..=31.
+    /// 25..=31.
     Reserved,
     /// Admin-class and not framed as a session command.
     Malformed,
@@ -349,11 +353,11 @@ mod tests {
 
     #[test]
     fn port_table() {
-        for p in 16..=23 {
+        for p in 16..=24 {
             assert_eq!(Port::from_u8(p).map(|x| x as u8), Some(p));
         }
-        assert_eq!(Port::from_u8(24), None);
-        let admin: Vec<_> = (16..=23).filter(|&p| Port::from_u8(p).unwrap().admin_class()).collect();
+        assert_eq!(Port::from_u8(25), None);
+        let admin: Vec<_> = (16..=24).filter(|&p| Port::from_u8(p).unwrap().admin_class()).collect();
         assert_eq!(admin, [16, 19, 20, 21]);
     }
 

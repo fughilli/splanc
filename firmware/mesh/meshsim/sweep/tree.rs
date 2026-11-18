@@ -27,6 +27,9 @@ struct Case {
     depth: usize,
     loss: f64,
     ramp: bool,
+    /// Broadcast authenticator (interval µs, d), and the bootstrap round trip (ms).
+    tesla: Option<(u32, u8)>,
+    rtt: i64,
 }
 
 fn rnd(s: &mut u64) -> f64 {
@@ -66,6 +69,8 @@ fn cfg(c: &Case, seed: u64) -> DistCfg {
     d.kill_relay_at_ms = c.kill.then_some(5_000);
     d.uwb_multihop = c.multihop;
     d.cache_depth = c.depth;
+    d.tesla = c.tesla;
+    d.tesla_rtt_ms = c.rtt;
     if c.set == "cache" {
         d.run_ms = 60_000;
     }
@@ -77,7 +82,7 @@ fn cfg(c: &Case, seed: u64) -> DistCfg {
 }
 
 fn cases(set: &str) -> Vec<Case> {
-    let base = Case { set: "tree", n: 16, scheme: Scheme::Tree, uwb_frac: 0.5, walking: true, moving: 0.0, kill: false, multihop: true, depth: 4, loss: 0.03, ramp: false };
+    let base = Case { set: "tree", n: 16, scheme: Scheme::Tree, uwb_frac: 0.5, walking: true, moving: 0.0, kill: false, multihop: true, depth: 4, loss: 0.03, ramp: false, tesla: None, rtt: 40 };
     let mut v = Vec::new();
     match set {
         "switch" => {
@@ -88,10 +93,27 @@ fn cases(set: &str) -> Vec<Case> {
         "uwbhop" => {
             for n in [64usize, 128] {
                 v.push(Case { set: "uwbhop", n, scheme: Scheme::Flood, uwb_frac: 0.0, ..base.clone() });
-                for f in [0.5, 1.0] {
-                    for multihop in [false, true] {
-                        v.push(Case { set: "uwbhop", n, uwb_frac: f, multihop, ..base.clone() });
+                for tesla in [None, Some((20_000u32, 3u8))] {
+                    for f in [0.5, 1.0] {
+                        for multihop in [false, true] {
+                            v.push(Case { set: "uwbhop", n, uwb_frac: f, multihop, tesla, ..base.clone() });
+                        }
                     }
+                }
+            }
+        }
+        "auth" => {
+            for n in [32usize, 64, 128] {
+                v.push(Case { set: "auth", n, scheme: Scheme::Flood, uwb_frac: 0.0, ..base.clone() });
+                v.push(Case { set: "auth", n, ..base.clone() });
+                for (iv, d) in [(20_000u32, 2u8), (20_000, 3), (20_000, 4), (10_000, 4), (10_000, 6)] {
+                    v.push(Case { set: "auth", n, tesla: Some((iv, d)), ..base.clone() });
+                }
+                // A slower bootstrap round trip (a deep mesh): the bound is looser.
+                v.push(Case { set: "auth", n, tesla: Some((20_000, 3)), rtt: 100, ..base.clone() });
+                // Multi-hop UWB with the authenticator, all fixtures UWB.
+                for multihop in [false, true] {
+                    v.push(Case { set: "auth", n, uwb_frac: 1.0, multihop, tesla: Some((20_000, 3)), ..base.clone() });
                 }
             }
         }
@@ -127,6 +149,10 @@ fn cases(set: &str) -> Vec<Case> {
 
 fn main() {
     let set = std::env::var("TREE_SET").unwrap_or_else(|_| "tree".into());
+    if set == "bench" {
+        bench();
+        return;
+    }
     let cs = cases(&set);
     let threads = std::env::var("SWEEP_THREADS").ok().and_then(|s| s.parse().ok()).unwrap_or(4usize);
     let next = AtomicUsize::new(0);
@@ -145,11 +171,11 @@ fn main() {
     });
     let mut rows = rows.into_inner().unwrap();
     rows.sort_by_key(|r| r.0);
-    println!("set,n,scheme,uwb_frac,walking,moving,kill,multihop,depth,loss,delivery,reliable_delivery,lat_p50_ms,lat_p99_ms,wifi_airtime,uwb_util,ctrl_bps,relays,max_children,orphans,parent_changes_per_node_min,repair_s,uwb_tier,uwb_depth,uwb_first,evictions_per_node_min,max_excess,nacks,cache_hits,cache_misses,nack_age_p90,nack_age_max,nack_lacking,mode_switches");
+    println!("set,n,scheme,uwb_frac,walking,moving,kill,multihop,depth,loss,delivery,reliable_delivery,lat_p50_ms,lat_p99_ms,wifi_airtime,uwb_util,ctrl_bps,relays,max_children,orphans,parent_changes_per_node_min,repair_s,uwb_tier,uwb_depth,uwb_first,evictions_per_node_min,max_excess,nacks,cache_hits,cache_misses,nack_age_p90,nack_age_max,nack_lacking,mode_switches,tesla,rtt,tesla_unsafe,tesla_hashes_member_s,tesla_hashes_gw_s,update_bytes");
     for (_, c, o) in &rows {
         println!(
-            "{},{},{:?},{},{},{},{},{},{},{},{:.4},{:.4},{:.1},{:.1},{:.4},{:.4},{:.1},{},{},{},{:.2},{:.2},{},{},{:.3},{:.2},{},{},{},{},{},{},{},{}",
-            c.set, c.n, c.scheme, c.uwb_frac, c.walking, c.moving, c.kill, c.multihop, c.depth, c.loss, o.delivery, o.reliable_delivery, o.lat_p50_ms, o.lat_p99_ms, o.wifi_airtime, o.uwb_util, o.ctrl_bps, o.relays, o.max_children, o.orphans, o.parent_changes_per_node_min, o.repair_s, o.uwb_tier, o.uwb_depth, o.uwb_first, o.evictions_per_node_min, o.max_excess, o.nacks, o.cache_hits, o.cache_misses, o.nack_age_p90, o.nack_age_max, o.nack_lacking, o.mode_switches
+            "{},{},{:?},{},{},{},{},{},{},{},{:.4},{:.4},{:.1},{:.1},{:.4},{:.4},{:.1},{},{},{},{:.2},{:.2},{},{},{:.3},{:.2},{},{},{},{},{},{},{},{},{},{},{},{:.1},{:.1},{}",
+            c.set, c.n, c.scheme, c.uwb_frac, c.walking, c.moving, c.kill, c.multihop, c.depth, c.loss, o.delivery, o.reliable_delivery, o.lat_p50_ms, o.lat_p99_ms, o.wifi_airtime, o.uwb_util, o.ctrl_bps, o.relays, o.max_children, o.orphans, o.parent_changes_per_node_min, o.repair_s, o.uwb_tier, o.uwb_depth, o.uwb_first, o.evictions_per_node_min, o.max_excess, o.nacks, o.cache_hits, o.cache_misses, o.nack_age_p90, o.nack_age_max, o.nack_lacking, o.mode_switches, c.tesla.map_or("none".to_string(), |(iv, d)| format!("{}ms/d{}", iv / 1000, d)), c.rtt, o.tesla_unsafe, o.tesla_hashes_member_s, o.tesla_hashes_gw_s, o.update_bytes
         );
     }
     if let Ok(path) = std::env::var("SERIES_OUT") {
@@ -161,4 +187,46 @@ fn main() {
             }
         }
     }
+}
+
+/// Host timings of the broadcast authenticator's operations (µs; the C6 is measured in M3a).
+fn bench() {
+    use splanc_mesh::tesla::{self, Auth, Challenge, Signer, TeslaMsg, Verifier};
+    use std::time::Instant;
+    let t = Instant::now();
+    let mut s = Signer::new(&[1; 16], 1, 0, tesla::INTERVAL_US, tesla::DISCLOSE);
+    let build = t.elapsed().as_secs_f64() * 1e6;
+    let c = tesla::Context { mesh_id: 7, session: 1 };
+    let body = [0u8; 18];
+    let n = 3000;
+    let t = Instant::now();
+    let mut auths: Vec<Auth> = Vec::new();
+    for k in 0..n {
+        auths.push(s.seal(1_000_000 + k as i64 * 33_000, c, k as u64 + 1, 24, &body).unwrap());
+    }
+    let seal = t.elapsed().as_secs_f64() * 1e6 / n as f64;
+    let ch = Challenge { session: 1, nonce: 1, t0_us: 1_000_000 };
+    let TeslaMsg::Sync(sb, mac) = s.sync(1_000_000, 1, 2, 1, &[9; 16]) else { return };
+    let mut v = Verifier::from_sync(&ch, &sb, &mac, &[9; 16], 2, 7).unwrap();
+    let t = Instant::now();
+    let mut got = 0;
+    for (k, a) in auths.iter().enumerate() {
+        v.on_packet(1_000_000 + k as i64 * 33_000 + 2_000, k as u64 + 1, 24, a, &body, &mut |_, _, _| got += 1);
+    }
+    let verify = t.elapsed().as_secs_f64() * 1e6 / n as f64;
+    let t = Instant::now();
+    let mut k = [0u8; 16];
+    for _ in 0..100_000 {
+        k = tesla::step(&k);
+    }
+    let hash = t.elapsed().as_secs_f64() * 1e6 / 100_000.0;
+    println!("op,host_us");
+    println!("chain_build_65535,{build:.0}");
+    println!("seal_per_packet,{seal:.2}");
+    println!("verify_per_packet,{verify:.2}");
+    println!("sha256_step,{hash:.3}");
+    println!("gateway_hashes_per_packet,{:.1}", s.hashes as f64 / n as f64);
+    println!("member_hashes_per_packet,{:.2}", v.stats.hashes as f64 / n as f64);
+    println!("delivered,{got}/{n}");
+    let _ = k;
 }
