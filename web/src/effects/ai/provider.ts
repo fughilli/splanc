@@ -186,7 +186,7 @@ export const CLOUD_VENDORS: Record<
     label: "Anthropic",
     baseUrl: "",
     native: true, // uses the native Messages API, not /chat/completions
-    modelPlaceholder: "claude-opus-4-8",
+    modelPlaceholder: "claude-sonnet-5-5",
     keyHint: "sk-ant-…",
   },
   openai: {
@@ -240,7 +240,7 @@ const CONFIG_STORAGE = "ledmapper.ai.config";
 const LEGACY_KEY = "ledmapper.anthropicKey";
 
 /** The default Anthropic model — kept in sync with the historical default. */
-export const DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8";
+export const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5-5";
 /** A sensible Ollama default; the user picks a real one in AI settings. */
 export const DEFAULT_OPENAI_BASE_URL = "http://localhost:11434/v1";
 /** Default in-browser context window (tokens): fits our grounded prompts, and is

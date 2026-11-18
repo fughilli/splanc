@@ -323,7 +323,7 @@ function parseResult(json: string): GenerateResult {
 // The loop: send messages(+tools) → if the response has tool_use, execute each
 // tool locally, append tool_result blocks, and call again; stop at a final text
 // turn. The system prompt is a stable cached prefix so prompt caching engages
-// across turns (docs: model claude-opus-4-8, anthropic-version 2023-06-01,
+// across turns (docs: model claude-sonnet-5-5, anthropic-version 2023-06-01,
 // direct-browser CORS, BYO key).
 // =============================================================================
 
