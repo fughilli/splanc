@@ -144,7 +144,9 @@ def test_damaged_download_is_refused_and_removed(monkeypatch, tmp_path):
     img = image(payload, "y")
     sha_url = img.checksum.url
     files = {
-        img.image.url: payload[:-1] + b"!",
+        # Flip the last byte. (Replacing it with b"!" left the file intact, so the
+        # checksum matched, whenever the random byte was already "!": 1 run in 256.)
+        img.image.url: payload[:-1] + bytes([payload[-1] ^ 0xFF]),
         sha_url: (hashlib.sha256(payload).hexdigest() + "\n").encode(),
     }
     serve(monkeypatch, files)
@@ -185,3 +187,10 @@ def test_cancel_during_download(monkeypatch, tmp_path):
         rl.fetch_image(
             img, cache_dir=str(tmp_path), fetch=files.__getitem__, cancelled=lambda: True
         )
+
+
+def test_damaged_download_when_the_last_byte_was_already_bang(monkeypatch, tmp_path):
+    # Regression: the corruption above must change the file whatever its last byte.
+    real = os.urandom
+    monkeypatch.setattr(os, "urandom", lambda n: real(n - 1) + b"!")
+    test_damaged_download_is_refused_and_removed(monkeypatch, tmp_path)
