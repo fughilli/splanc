@@ -210,26 +210,52 @@ export async function consumeChatStream(
   return { content, stop_reason: stopReason };
 }
 
-/** Build an Anthropic provider from its config. */
+/**
+ * The Messages request body the editor sends (shared by the BYO-key provider
+ * and the Splanc AI credits provider, so both get the same caching, thinking
+ * and streaming setup). `messages` is NOT mutated.
+ */
+export function messagesRequestBody(model: string, messages: ChatMessage[], opts: SendOptions): Record<string, unknown> {
+  // Cache the growing conversation prefix: a breakpoint on the LAST message's
+  // last block so every tool-loop round (and the next turn's shared prefix)
+  // re-reads the history — editor context, prior tool_results, any preview
+  // images — at the cache rate instead of re-billing it each round.
+  const reqMessages: { role: string; content: unknown }[] = messages.map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
+  if (reqMessages.length > 0) {
+    reqMessages[reqMessages.length - 1]!.content = withCacheControl(
+      messages[messages.length - 1]!.content,
+    );
+  }
+  return {
+    model,
+    // A set_script carrying a whole shader PLUS adaptive-thinking tokens
+    // easily exceeds a small ceiling, and a mid-tool-call cutoff wedges the
+    // chat (see chatTurn's truncation guard). max_tokens is a ceiling, not a
+    // cost, so give it real headroom.
+    max_tokens: opts.maxTokens ?? 16000,
+    // opus-4-8 supports ADAPTIVE thinking only. The lever to shorten the
+    // up-front "Thinking…" is output_config.effort: "medium" trades a little
+    // depth for a quicker, more interactive pace.
+    thinking: { type: "adaptive" },
+    output_config: { effort: "medium" },
+    stream: true,
+    // Frozen, cacheable system prefix so caching engages across turns.
+    system: [{ type: "text", text: opts.system, cache_control: { type: "ephemeral" } }],
+    ...(opts.tools.length ? { tools: opts.tools } : {}),
+    messages: reqMessages,
+  };
+}
+
+/** Build an Anthropic provider from its config (BYO key: browser -> Anthropic). */
 export function makeAnthropicProvider(cfg: AnthropicConfig): AiProvider {
   return {
     id: "anthropic",
     capabilities: { tools: true, vision: true },
     async send(messages: ChatMessage[], opts: SendOptions): Promise<SendResult> {
       if (!cfg.key.trim()) throw new Error("no Anthropic API key set (add one in AI settings)");
-      // Cache the growing conversation prefix: a breakpoint on the LAST message's
-      // last block so every tool-loop round (and the next turn's shared prefix)
-      // re-reads the history — editor context, prior tool_results, any preview
-      // images — at the cache rate instead of re-billing it each round.
-      const reqMessages: { role: string; content: unknown }[] = messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
-      if (reqMessages.length > 0) {
-        reqMessages[reqMessages.length - 1]!.content = withCacheControl(
-          messages[messages.length - 1]!.content,
-        );
-      }
       const resp = await fetch(API_URL, {
         method: "POST",
         headers: {
@@ -240,24 +266,7 @@ export function makeAnthropicProvider(cfg: AnthropicConfig): AiProvider {
           "anthropic-dangerous-direct-browser-access": "true",
         },
         signal: opts.signal ?? null,
-        body: JSON.stringify({
-          model: cfg.model,
-          // A set_script carrying a whole shader PLUS adaptive-thinking tokens
-          // easily exceeds a small ceiling, and a mid-tool-call cutoff wedges the
-          // chat (see chatTurn's truncation guard). max_tokens is a ceiling, not a
-          // cost, so give it real headroom.
-          max_tokens: opts.maxTokens ?? 16000,
-          // opus-4-8 supports ADAPTIVE thinking only. The lever to shorten the
-          // up-front "Thinking…" is output_config.effort: "medium" trades a little
-          // depth for a quicker, more interactive pace.
-          thinking: { type: "adaptive" },
-          output_config: { effort: "medium" },
-          stream: true,
-          // Frozen, cacheable system prefix so caching engages across turns.
-          system: [{ type: "text", text: opts.system, cache_control: { type: "ephemeral" } }],
-          ...(opts.tools.length ? { tools: opts.tools } : {}),
-          messages: reqMessages,
-        }),
+        body: JSON.stringify(messagesRequestBody(cfg.model, messages, opts)),
       });
       if (!resp.ok || resp.body === null) {
         const body = await resp.text().catch(() => "");

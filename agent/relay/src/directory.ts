@@ -9,7 +9,10 @@
  * - the HMAC key that signs stateless OAuth client ids (dynamic client
  *   registration stores nothing per client) and agent-feedback receipts;
  * - agent-feedback reports (feedback.ts): `fb:<id>` -> the record, `fbi:<id>`
- *   -> its summary for listing; both carry `exp` and the alarm purges them.
+ *   -> its summary for listing; both carry `exp` and the alarm purges them;
+ * - AI-credit purchase claims (billing/, docs/design/ai-billing.md):
+ *   `pur:<channel>:<txid>` -> the account it credited (first claim wins), so one
+ *   store transaction credits exactly one account. Kept forever (no content).
  *
  * Only the Worker talks to it (Durable Objects aren't publicly addressable).
  * Traffic is tiny: it is touched on pairing, registration and OAuth steps, never
@@ -43,6 +46,9 @@ export const LIMITS = {
   feedbackBridge: [20, 3600],
   feedbackIp: [6, 3600],
   feedbackGlobal: [300, 86400],
+  /** New AI-credit accounts (POST /billing/account, billing/endpoint.ts). */
+  billingAccountIp: [5, 3600],
+  billingAccountGlobal: [2000, 86400],
 } as const satisfies Record<string, readonly [number, number]>;
 
 export type LimitName = keyof typeof LIMITS;
@@ -159,6 +165,15 @@ export class Directory {
         const n = await this.state.storage.delete([`fb:${body["id"]}`, `fbi:${body["id"]}`]);
         return n > 0 ? json({ ok: true }) : json({ error: "not found" }, 404);
       }
+      case "/pur/claim": {
+        const k = `pur:${body["channel"]}:${body["tx"]}`;
+        const owner = await this.state.storage.get<string>(k);
+        if (owner !== undefined && owner !== body["account"]) return json({ ok: false, owner }, 409);
+        if (owner === undefined) await this.state.storage.put(k, body["account"]!);
+        return json({ ok: true });
+      }
+      case "/pur/owner":
+        return json({ owner: (await this.state.storage.get<string>(`pur:${body["channel"]}:${body["tx"]}`)) ?? null });
       case "/hmac/sign":
         return json({ sig: await hmac(await this.key(), body["msg"]!) });
       case "/hmac/verify": {

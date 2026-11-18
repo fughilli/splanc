@@ -1,0 +1,719 @@
+# Splanc AI credits: pay for Claude in the app
+
+Status: design + sandbox-only scaffold (this PR). Nothing is deployed, no store
+product or merchant account exists, and every route answers 503 until the
+owner turns it on.
+
+Today the in-app AI (the effect editor's chat, Acid Mode) needs the user's own
+Anthropic API key. Most people don't have one. With **Splanc AI credits** a
+user buys a credit pack, and the app uses Claude through our server. We pay
+Anthropic and charge the user Anthropic's price plus a small markup. Bringing
+your own key keeps working exactly as before.
+
+## What users see
+
+| Platform | How they buy | What they see |
+| --- | --- | --- |
+| **iOS app** (App Store) | Apple In-App Purchase: consumable credit packs, at Apple's local prices | AI settings ▸ "Splanc AI credits": balance, model, "Buy credits" (the StoreKit sheet). No link to, or mention of, the web checkout. |
+| **Android** (the PWA in Chrome) | Web checkout (Stripe Checkout: card, Google Pay) | The same panel, "Buy credits" opens Stripe Checkout. |
+| **Web** (any browser) | Web checkout (Stripe Checkout: card, Apple Pay, Google Pay) | The same panel. |
+
+Everywhere: one balance in **credits**, shown live in AI settings and after
+each AI reply ("−2.3 credits · 351 left"); a warning below a low-balance mark;
+a clear refusal when the balance runs out ("Not enough Splanc AI credit. Buy
+more in AI settings."), never a silent failure. Credits bought on one platform
+work on every platform the same account signs in on. Credits never expire
+(Apple requires that; it's also simpler).
+
+One credit = **US$0.01 of Anthropic list-price usage**. The markup is in how
+many credits a pack gives, which depends on where it's bought (it has to cover
+Apple's commission). A US$9.99 pack in the iOS app gives 713 credits; US$10 on
+the web gives 833. See [Margins](#costs-and-margins).
+
+## Decisions
+
+### Owner decisions (2026-11-18)
+
+1. **Channels.** iOS uses **Apple In-App Purchase** (consumable packs). Android
+   and the web use a **web checkout** (Stripe, with Apple Pay / Google Pay
+   buttons). **No Google Play Billing** and no Play-distributed Android app for
+   now. The iOS app never shows or links to the web purchase.
+2. **Markup per channel**, in the server-side config: higher on In-App
+   Purchase (to cover Apple's commission), lower on the web.
+3. **Architecture:** a server-side AI proxy on the relay, a reserve-then-settle
+   ledger, purchase validation, accounts. **Our Anthropic key (and any
+   managed credential) never reaches a client.** The app holds only a session
+   token for its credit account.
+4. **BYO key is unchanged.** "Cloud ▸ Anthropic" with your own key still calls
+   Anthropic straight from the browser, with the same request as before (a test
+   pins the bytes).
+
+### Store rules (checked 2026-11-18)
+
+- **Apple, App Store Review Guidelines (updated 2026-10-16)**
+  ([guidelines](https://developer.apple.com/app-store/review/guidelines/)).
+  - 3.1.1: digital features and "in-game currencies" sold in the app must use
+    In-App Purchase. "Any credits or in-game currencies purchased via in-app
+    purchase may not expire."
+  - In the **US storefront**, apps may also show buttons and links to an
+    external purchase (3.1.1(a), 3.1.3, after Epic v. Apple). Apple currently
+    charges no commission on those. The Supreme Court is hearing Apple's appeal
+    (No. 25-1311), so a fee could come back.
+  - **We don't link out (owner decision 1).** That is the rule everywhere
+    outside the US anyway, so it is the simplest compliant design.
+  - 5.1.1(v): an app that creates accounts must offer **account deletion in
+    the app**.
+  - 4.8: offering Google or other social login needs an equivalent private
+    login option (Sign in with Apple qualifies).
+  - 5.1.2(i): disclose, and get explicit permission, when personal data is
+    sent to a **third-party AI**.
+  - 1.2: apps that create AI content need a content filter, a way to report
+    content, and published contact details. The existing "Report" button on
+    every AI reply ([agent-feedback.md](agent-feedback.md)) covers reporting.
+- **Apple fees.** Small Business Program: 15 % on proceeds up to US$1 M a year
+  ([program](https://developer.apple.com/app-store/small-business-program/)),
+  30 % otherwise. Apple sells "as agent" and handles sales tax / VAT in most
+  regions (Schedule 2), so we don't file tax for In-App Purchase sales.
+  Consumables don't restore through StoreKit, so **the balance must live on
+  our server, tied to an account**.
+- **Google Play** (for the record: not used now). Apps on Play must use Play
+  Billing for digital goods
+  ([payments policy](https://support.google.com/googleplay/android-developer/answer/9858738)).
+  A TWA reaches it through the Digital Goods API. In the US after Epic v.
+  Google, alternative billing and links are allowed, with fees of about 10–20 %
+  ([answer 15582165](https://support.google.com/googleplay/android-developer/answer/15582165)).
+  Fees were restructured on 2026-06-30 (a service fee plus a 5 % billing fee).
+  Because Android users run the PWA in Chrome, not a Play app, **no store rule
+  applies to them**. "Google Pay" on the web is just a wallet in Stripe
+  Checkout, not Play Billing.
+- **Web.** No store rules. Stripe: 2.9 % + 30 ¢ per US card or wallet payment
+  ([pricing](https://stripe.com/pricing)). Stripe is **not** the merchant of
+  record, so sales tax / VAT is ours. Stripe Tax computes it for 0.5 %.
+  Alternatives that are the merchant of record: Stripe Managed Payments
+  (+3.5 %) or Paddle (5 % + 50 ¢). Lemon Squeezy is closing (no new sign-ups),
+  so don't use it.
+
+### Anthropic terms (checked 2026-11-18)
+
+- **Allowed.** The Commercial Terms let a customer use Claude "to power
+  products and services Customer makes available to its own customers and end
+  users" (A.1). Nothing regulates what we charge, so a markup is fine
+  ([commercial terms](https://www.anthropic.com/legal/commercial-terms)).
+- **Not allowed.** Reselling the Services as such ("resell the Services except
+  as expressly approved", D.4), building a competing product, and "Resell,
+  proxy, or otherwise provide access to Claude through unauthorized means"
+  ([Usage Policy](https://www.anthropic.com/legal/aup)).
+  - **So the proxy is not a general Claude endpoint.** It accepts only the
+    editor's request shape: custom tools, an allowlisted set of fields and
+    models, a capped `max_tokens`. It is for Splanc's own features.
+  - Keep the feature about lighting.
+- **Our obligations.**
+  - Our users must follow the Usage Policy, and we are "responsible for all
+    activity under [our] account" (D.2, D.5). Anthropic may suspend us for a
+    user's misuse (I.3).
+  - So we need per-account limits and caps, a way to suspend accounts, and an
+    opaque per-user id in `metadata.user_id` for Anthropic's abuse tooling.
+  - Tell users that AI output may be inaccurate (D.3).
+  - Disclose that users are talking to an AI (Usage Policy, consumer chatbots).
+    The editor already says so.
+  - Minors: products serving under-18s have extra requirements
+    ([support article](https://support.claude.com/en/articles/9307344)). The
+    simplest route is an 18+ gate on buying credits. **Owner decision.**
+- **Data.** Anthropic doesn't train on API content (B). It deletes inputs and
+  outputs within 30 days, or keeps them up to 2 years if flagged for a policy
+  violation ([retention](https://privacy.claude.com/en/articles/7996866-how-long-do-you-store-my-organization-s-data)).
+  Our privacy notice names Anthropic as a sub-processor.
+- **Branding.** Don't imply Anthropic endorses us ([trademark guidelines](https://www.anthropic.com/legal/trademark-guidelines)).
+  Name models exactly as sent ("Claude Sonnet 5.5"), say "Powered by Claude"
+  at most, and keep our own brand.
+- **Limits.** Rate limits and monthly spend limits are **organization-wide**
+  ([rate limits](https://platform.claude.com/docs/en/api/rate-limits)): all
+  users share one pool. At the spend limit the API returns 429
+  `enforced_spend_limit_reached`. The proxy maps that to "busy" and releases
+  the reservation. Before launch we need a usage tier with headroom: Start is
+  capped at US$500 a month, Build at US$1,000.
+
+### Billing model
+
+**Prepaid credits, metered per request, priced from the API's own usage
+report.**
+
+- Pack price → credits (the markup):
+  `credits = floor(price_usd / (1 + channel.markup) × credits_per_usd)`,
+  or a pack's explicit `credits`.
+- Request → charge (no markup by default):
+  `charge = max(min_request_credits, list_usd × (1 + usage_markup) × credits_per_usd)`.
+- `list_usd` is a sum over the request's usage fields. Each is multiplied by
+  that model's list rate for that token class
+  ([pricing](https://platform.claude.com/docs/en/about-claude/pricing)):
+  - `input_tokens`;
+  - `output_tokens` (thinking tokens bill as output);
+  - `cache_creation_input_tokens`, split into 5-minute and 1-hour writes by
+    `usage.cache_creation`;
+  - `cache_read_input_tokens`.
+- Claude Haiku 5.5 prices a request whose prompt (input + cache reads + cache
+  writes) is over 100,000 tokens at higher rates, for the **whole request**.
+  The config has a `long_context` block for that.
+- Every rate is per model in the config, not a multiplier. Cache reads are
+  0.05× on Opus 5.5 / Sonnet 5.5 but 0.1× on Haiku 5.5, so a single
+  multiplier would be wrong.
+
+Why the markup sits on the pack, not on usage: a credit is then one unit
+everywhere, so credits bought on iOS and on the web mix in one balance with no
+per-lot bookkeeping. The extra the store takes is paid when the pack is bought,
+on that channel. `usage_markup` stays available (default 0) if usage itself
+should carry a margin (e.g. to cover infrastructure).
+
+| Model (default config) | Input | Output | 5 m write | 1 h write | Cache read | Credits per 1 M output |
+| --- | --- | --- | --- | --- | --- | --- |
+| Claude Sonnet 5.5 (default) | $2 | $10 | $2.50 | $4 | $0.10 | 1,000 |
+| Claude Opus 5.5 | $4 | $20 | $5 | $8 | $0.20 | 2,000 |
+| Claude Haiku 5.5 (≤ 100 K prompt) | $0.10 | $0.50 | $0.125 | $0.20 | $0.01 | 50 |
+| Claude Haiku 5.5 (> 100 K prompt) | $0.50 | $2.50 | $0.625 | $1 | $0.05 | 250 |
+
+Rough size of a request (an estimate, not measured): one editor ask on Sonnet
+5.5 runs about 2–4 tool rounds. Each round reads a cached system prompt of
+about 6 K tokens and writes about 1–2 K output tokens (thinking included); the
+first round also writes the cache. That comes to roughly **3–12 credits per
+ask**, about twice that on Opus. So a US$9.99 iOS pack (713 credits) is about
+60–240 asks. Measure this in the sandbox before setting pack
+sizes.
+
+**Low balance, hard stop, refunds.**
+
+- The app warns below `low_balance_credits`.
+- If the balance doesn't cover a request's worst case, the proxy first lowers
+  `max_tokens` to what the balance does cover. If that would leave fewer than
+  1,024 tokens, it refuses with **402** and nothing is sent to Anthropic.
+- A request can still cost more than its estimate. The settle then debits up
+  to `max_overdraft_credits` below zero and records the rest as `written_off`
+  (our loss, which reconciliation shows). The next request is refused until
+  the user tops up.
+- Store refunds and chargebacks claw back the pack's credits (Apple REFUND /
+  REVOKE notifications; Stripe `charge.refunded` / `charge.dispute.created`).
+  The balance can go negative and stays blocked until it is topped up.
+- We don't refund usage. Support can make manual adjustments (`adjust`
+  entries).
+
+**Caps and abuse** (config, per account):
+
+- a ceiling per request;
+- daily and monthly spend caps;
+- concurrent streams;
+- requests per minute;
+- new accounts per IP (Directory rate limit);
+- suspension (`status = suspended`) for misuse under the Usage Policy.
+
+**Region and currency.** On iOS, each pack is one App Store product at a price
+tier. Apple converts it to local currency and handles tax, and the credits are
+the same everywhere. On the web, Stripe prices in USD to start (local-currency
+prices later). The config's `price_usd` is the US reference price, used to
+check margins.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph Client["App (iOS / Android PWA / web)"]
+    UI["AI settings ▸ Splanc AI credits\n(balance, model, Buy)"]
+    P["credits provider\n(session token only)"]
+    SK["StoreKit 2\n(iOS only)"]
+  end
+  subgraph Relay["Cloudflare relay Worker (agent/relay)"]
+    R["/ai/v1/messages\nproxy.ts"]
+    B["/billing/*\nendpoint.ts"]
+    CFG[("AI_PRICING\n(config var / KV)")]
+    SEC[("Secrets:\nANTHROPIC_API_KEY\nBILLING_TOKEN_SECRET")]
+    DO[("BillingAccount DO\n(one per account):\nledger + holds")]
+    DIR[("Directory DO:\npurchase claims,\nrate limits")]
+  end
+  A["Anthropic Messages API"]
+  AP["App Store Server API +\nServer Notifications v2"]
+  ST["Stripe Checkout +\nwebhooks"]
+
+  P -- "Bearer sst1… + Messages body" --> R
+  R -- "reserve / settle" --> DO
+  R -- "x-api-key (ours)" --> A
+  A -- "SSE + usage" --> R
+  R -- "SSE + splanc_billing" --> P
+  UI --> B
+  SK -- "signed transaction (JWS)" --> B
+  B -- "verify" --> AP
+  AP -- "REFUND / REVOKE" --> B
+  UI -. "web only" .-> ST
+  ST -- "checkout.session.completed\ncharge.refunded" --> B
+  B --> DO
+  B --> DIR
+  R --> CFG
+  B --> CFG
+```
+
+### The AI proxy (`agent/relay/src/billing/proxy.ts`)
+
+`POST /ai/v1/messages`. It takes a session token and an Anthropic Messages body
+(the same body the BYO-key provider sends), and handles a request in these
+steps:
+
+1. **Authenticate.** Check the session token (`sst1.<account>.<exp>.<hmac>`).
+2. **Allowlist the request.** Accepted fields: `model` (an enabled model in the
+   config), `max_tokens` (capped by `max_output_tokens`), `system`, `messages`,
+   `tools` (custom tools only), `tool_choice`, `thinking` (adaptive only),
+   `output_config` (`effort` only), `cache_control`, `stream`. Everything else
+   is a 400. That keeps out what `usage` doesn't meter, or that we don't want
+   to pay for:
+   - server tools such as web search (US$10 per 1,000 searches) and code
+     execution;
+   - MCP servers;
+   - fast mode;
+   - `inference_geo: "us"` (1.1×);
+   - fallbacks, betas, batches, containers.
+
+   The client's `metadata` is dropped. We set `metadata.user_id` to the opaque
+   account id.
+3. **Reserve the worst case.** Every prompt token is priced at the dearest
+   input rate (the 1-hour cache write), and every allowed output token at the
+   output rate. Prompt tokens are estimated as text bytes / 3, plus 5,000 per
+   image. If the balance is short, the proxy lowers `max_tokens` to fit;
+   below 1,024 it answers 402. The request id doubles as the reservation id:
+   a client retry with the same `Idempotency-Key` finds its hold instead of
+   reserving twice.
+4. **Call Anthropic** with **our** key, over a header set built from scratch.
+   `stream` is forced on.
+5. **Stream through.** Each SSE frame is re-emitted as it arrives, after
+   `redact()`. The usage meter reads `message_start` and the cumulative
+   `message_delta` usage.
+6. **Settle** at the actual charge and append one event to the stream:
+   `event: splanc_billing` with `{charged_credits, balance_credits}`. The
+   app's existing stream parser ignores unknown events, so nothing else
+   changes.
+   - **The app hangs up:** the proxy cancels the upstream (so we stop paying)
+     and bills `message_start`'s input plus an output estimate (streamed
+     bytes / 3, capped at `max_tokens`). The entry is flagged
+     `estimated: true`.
+   - **Anthropic rejects the request** (4xx/5xx before the stream): the hold
+     is **released uncharged**, because Anthropic doesn't bill a rejected
+     request.
+   - **The Worker dies mid-stream:** the hold expires after 20 minutes and is
+     released. The expired ids are logged for reconciliation.
+
+**Reconciliation.**
+- **Daily:** compare the sum of settled `usage` entries with Anthropic's
+  Usage & Cost Admin API for the key (raw HTTP `usage_report/messages`). That
+  catches estimated entries and expired holds.
+- **Monthly:** compare credits sold minus credits spent with store payouts.
+
+### Ledger (`ledger.ts`, `account.ts`)
+
+One **BillingAccount Durable Object per account** holds that account's ledger,
+so all balance changes for one account are serialised in one place, and
+different accounts never contend. The `Ledger` class also serialises its own
+operations, so it is race-free on any storage. The tests run 50 concurrent
+reserves on a storage that yields on every call. With the lock removed, those
+tests fail.
+
+| Key | Holds |
+| --- | --- |
+| `acct` | `{id, created, status: active\|suspended\|closed, balance, held, seq}`, written in the same atomic put as the entry that changes it |
+| `led:<seq>` | an **append-only** entry: `{seq, at, kind, amount (signed µcredits), balance, ref, pricing_version, model?, usage?, estimated?, written_off?, channel?, sku?, note?}`. `kind` is one of `trial`, `purchase`, `usage`, `refund`, `adjust`, `forfeit`. |
+| `ref:<kind>:<ref>` | → seq: the idempotency index. A purchase (`apple:<txid>`), a refund, or a settle (`usage:<request id>`) applies once. |
+| `hold:<id>` | an open reservation `{amount, model, created, exp}`; `available = balance − held` |
+| `spend:d:<day>`, `spend:m:<month>`, `rpm:<minute>` | cap counters |
+
+Amounts are integer **µcredits** (1 credit = 1,000,000). No float ever touches
+a balance. Entries hold token counts, the model, the pricing version and an
+opaque request id. **They never hold prompt or reply text.**
+
+The **Directory** DO (the relay's existing global object) gets
+`pur:<channel>:<txid>` → account, first claim wins. One store transaction
+credits exactly one account, ever.
+
+### Accounts and identity
+
+- **Stage 1 (scaffold):** a **device-bound anonymous account**. `POST
+  /billing/account` mints `acct_…` and a 180-day session token, rate-limited
+  per IP. The app stores the token next to its other settings.
+- **Before launch:** link the account to **Sign in with Apple** on iOS and
+  **Sign in with Google / email** on the web, so credits follow the person
+  across devices and survive reinstalls. Sign in with Apple is needed if any
+  social login is offered (4.8). An anonymous account can upgrade to a signed-in
+  one and keep its balance.
+- **Restore.** Consumables don't restore through StoreKit, so "restore" means
+  signing in on the new device. The balance is on the server.
+- **Account deletion (Apple 5.1.1(v)):** `DELETE /billing/account`, in the
+  app. It closes the account, forfeits the balance (the app warns first) and
+  drops open holds. Ledger entries hold no personal data and are kept for the
+  financial-records period. **Owner decision:** how many years, and whether to
+  offer a refund of the unused balance on deletion. Apple's refund flow stays
+  available anyway.
+- **iOS account binding.** At purchase the app passes
+  `appAccountToken = accountRefFor(account_id)` (a UUID derived from the
+  account id). The server checks that the signed transaction carries the same
+  token, so a receipt can't be credited to another account. The code has this
+  check in `applyPurchase` (`wrong_account`).
+
+### Purchases (`purchases.ts`)
+
+These are interfaces and fakes only in this PR (`PurchaseVerifier`,
+`NotificationVerifier`, `PurchaseClaims`, `FakeStoreVerifier`).
+
+- **Apple.**
+  - The app buys with StoreKit 2 through a small Capacitor plugin
+    (`web/native-plugins/storekit-bridge`, alongside camera-, speech- and
+    wss-bridge).
+  - It sends `Transaction.jwsRepresentation` to `POST /billing/purchase/apple`.
+  - The server verifies:
+    - the JWS x5c chain up to Apple Root CA G3;
+    - `bundleId = dev.splanc.app`;
+    - the product id, which must be an enabled pack;
+    - the environment (Sandbox / Production);
+    - `appAccountToken`.
+  - It then credits the account, claims the transaction, and the app
+    **finishes** the transaction.
+  - Unfinished transactions are re-sent at app start (`Transaction.unfinished`),
+    so a crash between paying and crediting heals itself.
+  - App Store Server Notifications v2 arrive at `POST /billing/notify/apple`:
+    REFUND and REVOKE claw back. For CONSUMPTION_REQUEST, answer "Send
+    Consumption Information" within 12 hours, and only if the customer
+    consented.
+  - Testing: the Xcode StoreKit configuration file and the Sandbox
+    environment.
+- **Web (Stripe).**
+  - `POST /billing/checkout` (later) creates a Checkout Session server-side,
+    with the pack's price, `client_reference_id = account_ref`, Apple Pay and
+    Google Pay enabled, and Stripe Tax if chosen.
+  - Credit on the `checkout.session.completed` webhook. Its `Stripe-Signature`
+    HMAC is verified with the endpoint secret, and its id is the idempotency key.
+  - `charge.refunded` and `charge.dispute.created` claw back.
+  - Testing: test-mode keys and the Stripe CLI's `stripe trigger`.
+
+### Pricing config (`pricing.ts`)
+
+The relay reads one JSON document from `AI_PRICING`: a Worker variable now, a
+KV key later so it can change without a deploy. It is **validated strictly on
+every request**:
+- unknown keys and missing keys are refused;
+- model ids must look like Claude ids;
+- each rate must be a number;
+- any enabled pack that would keep less than `min_margin` of its net proceeds
+  after the channel fee makes the whole config invalid.
+
+An invalid config turns the feature off (503) rather than half-applying. Every
+ledger entry is stamped with the config `version`.
+
+```json
+{
+  "version": 1,
+  "credits_per_usd": 100,
+  "usage_markup": 0,
+  "min_request_credits": 0.1,
+  "models": {
+    "claude-sonnet-5-5": { "label": "Claude Sonnet 5.5", "enabled": true,
+      "input": 2, "output": 10, "cache_write_5m": 2.5, "cache_write_1h": 4, "cache_read": 0.1 },
+    "claude-opus-5-5": { "label": "Claude Opus 5.5", "enabled": true,
+      "input": 4, "output": 20, "cache_write_5m": 5, "cache_write_1h": 8, "cache_read": 0.2 },
+    "claude-haiku-5-5": { "label": "Claude Haiku 5.5", "enabled": true,
+      "input": 0.1, "output": 0.5, "cache_write_5m": 0.125, "cache_write_1h": 0.2, "cache_read": 0.01,
+      "long_context": { "above_prompt_tokens": 100000,
+        "rates": { "input": 0.5, "output": 2.5, "cache_write_5m": 0.625, "cache_write_1h": 1, "cache_read": 0.05 } } }
+  },
+  "default_model": "claude-sonnet-5-5",
+  "max_output_tokens": 16000,
+  "channels": {
+    "apple": { "fee_percent": 0.15, "fee_fixed_usd": 0, "markup": 0.4 },
+    "web": { "fee_percent": 0.029, "fee_fixed_usd": 0.3, "markup": 0.2 }
+  },
+  "packs": [
+    { "sku": "dev.splanc.app.credits.small", "channel": "apple", "price_usd": 4.99, "enabled": true },
+    { "sku": "dev.splanc.app.credits.medium", "channel": "apple", "price_usd": 9.99, "enabled": true },
+    { "sku": "dev.splanc.app.credits.large", "channel": "apple", "price_usd": 19.99, "enabled": true },
+    { "sku": "web.credits.10", "channel": "web", "price_usd": 10, "enabled": true },
+    { "sku": "web.credits.25", "channel": "web", "price_usd": 25, "enabled": true }
+  ],
+  "trial_credits": 50,
+  "low_balance_credits": 50,
+  "max_overdraft_credits": 25,
+  "caps": { "per_request_max_credits": 300, "daily_credits": 2000, "monthly_credits": 20000,
+    "concurrent_requests": 2, "requests_per_minute": 20 },
+  "min_margin": 0.05
+}
+```
+
+`GET /billing/pricing?channel=apple|web` returns the **public** view: model
+labels, credits per million tokens, and that channel's packs with their
+credits. It never includes fees, markups, margins, or a price for the iOS app
+to show. StoreKit shows Apple's localized price. The iOS app asks for `apple`
+only, so it never learns that web packs exist.
+
+### API
+
+| Route | Auth | What it does |
+| --- | --- | --- |
+| `POST /billing/account` | none (IP-limited) | New account → `{account_id, token, account_ref, balance_credits}` (trial granted once) |
+| `DELETE /billing/account` | session | Close the account (deletion) |
+| `GET /billing/balance` | session | `{balance_credits, held_credits, available_credits, low, status, pricing_version}` |
+| `GET /billing/pricing?channel=` | none | The public pricing view |
+| `GET /billing/statement` | session | The newest 50 entries (numbers only) |
+| `POST /billing/purchase/<apple\|web>` | session | Proof of purchase → credit (201; a replay is 200 with the same entry) |
+| `POST /billing/notify/<apple\|web>` | store signature | Refunds / revocations → claw back |
+| `POST /ai/v1/messages` | session | The metered proxy (SSE) |
+
+Error shape: `{error, message}`. The errors are:
+
+| Status | Meaning |
+| --- | --- |
+| 401 | no or invalid session |
+| 402 | `insufficient_balance`, `daily_cap`, `monthly_cap`, `request_cap` |
+| 403 | the account is suspended or closed |
+| 409 | duplicate request id, or a receipt already claimed |
+| 429 | concurrency or requests per minute |
+| 503 | `not_configured`, `ai_busy`, `ai_unavailable` |
+
+### Flows
+
+- **Buy (iOS).** Panel ▸ Buy ▸ StoreKit sheet with Apple's price → the
+  plugin returns the signed transaction → `POST /billing/purchase/apple` →
+  credited → `finish()` → the balance updates. On a crash in between, the
+  unfinished transaction is re-sent at the next start. The credit is
+  idempotent.
+- **Buy (web / Android).** Panel ▸ Buy ▸ Stripe Checkout (card, Apple Pay,
+  Google Pay) → return to the app → poll the balance until the webhook has
+  credited it (it usually arrives within seconds).
+- **Spend.** Chat turn → proxy: reserve → Anthropic → stream → settle → the
+  `splanc_billing` event → "−2.3 credits · 351 left" under the reply.
+- **Low balance.** Below `low_balance_credits` the panel and the chat show a
+  warning with Buy. If a request doesn't fit, the proxy first trims
+  `max_tokens`, then answers 402 with the balance. The chat shows the message
+  and a Buy button, never an error dump.
+- **Refund.** Apple or Stripe notifies → claw back (once) → a negative balance
+  blocks spending until it is topped up.
+- **Restore.** Sign in on the new device. The balance is on the account.
+- **BYO key.** Untouched. "Cloud ▸ Anthropic" + key calls Anthropic directly
+  with the user's key. Splanc's server is never involved, and the "Splanc AI
+  credits" option doesn't change that path.
+
+### Interface with the model-setup picker (`agent/ai-tiers`)
+
+A separate PR adds a first-run "model setup" picker with three tiers: free,
+paid, and self-serve. Its "paid" tier is this feature. So that the two PRs
+merge in either order, the integration surface is a few stable exports from
+`web/src/effects/ai/providers/credits.ts`:
+
+- `aiCreditsEnabled()`: the feature flag (`AI_CREDITS_FLAG` =
+  `localStorage["splanc.flags.aiCredits"] === "1"`; off by default);
+- `CREDITS_KIND` (`"credits"`, a `ProviderKind`) and `CREDITS_LABEL`. Select
+  the tier with `updateAiConfig({ kind: CREDITS_KIND })`;
+- `getCreditsSession()` / `setCreditsSession()`, `fetchCreditsBalance()`,
+  `formatCredits()`, `purchaseChannel()` / `mayShowWebCheckout()`;
+- `makeCreditsProvider({ model })`, which `activeProvider()` already returns
+  for that kind.
+
+### Privacy
+
+- **Default: no prompt content is retained by Splanc.**
+  - The proxy streams bodies through and never stores them.
+  - Ledger entries and log lines hold only ids, token counts, model, status
+    and pricing version. Tests assert that the prompt text appears in neither.
+- The account id sent to Anthropic as `metadata.user_id` is opaque: no
+  e-mail, no device name.
+- **Anthropic.** It keeps API inputs and outputs for up to 30 days (2 years if
+  flagged) and doesn't train on them. The app asks for consent before the first
+  credits request (Apple 5.1.2(i)) and the privacy notice says this.
+- **Stores.** We keep the transaction id, sku and channel, never the receipt
+  itself after verification, and never payment details (Apple and Stripe hold
+  those).
+- **Feedback reports** ([agent-feedback.md](agent-feedback.md)) already drop
+  any AI setting named key/token/secret. The credits session token is stored
+  outside the AI config, so it's never in one.
+
+### Threat model
+
+| # | Threat | Mitigation (where) |
+| --- | --- | --- |
+| **T1** | **Our Anthropic key leaks to a client** (owner requirement: never) | The key is a Worker secret, only placed in the `x-api-key` header of requests to the fixed `api.anthropic.com` URL (no env override for the URL). Upstream request headers are built from scratch, so client headers are never forwarded. Response headers are built from scratch, so upstream and request headers are never echoed. Upstream error bodies are never passed through: we send our own message with Anthropic's error `type` only. Every SSE frame and log line passes `redact()`, which masks the key and anything shaped `sk-ant-…`. `/billing/pricing` comes from a config that holds no secret. `billingReady` never says *which* secret is missing. **Tests:** a canary key that the fake upstream echoes in error bodies, headers, SSE text, ids and a mid-stream error appears in no response, header or log line of any route (`agent/tests/billing.test.ts` › secrets). |
+| T2 | Someone uses our key as a free general Claude endpoint | Session tokens, per-account balances and caps, the field / tool / model allowlist, capped `max_tokens`, per-IP account creation limits. Anthropic's org-wide spend limit is the backstop. |
+| T3 | Double spend / race | One DO per account plus the ledger lock; reserve-then-settle; idempotent settle and credit; concurrency tests. |
+| T4 | Replayed or forged receipts | Verify the store signature; check `appAccountToken`; global first-claim on the transaction id; environment check; idempotent credit. |
+| T5 | Refund after spending | Clawback can go negative and blocks spending; the overdraft cap bounds one request's overshoot. |
+| T6 | Abuse / AUP violations by a user | Suspension (`status`), opaque `metadata.user_id`, rate limits, the Report button. On notice from Anthropic, suspend the account. |
+| T7 | A stolen session token | Bearer token only to our relay over HTTPS; 180-day expiry plus refresh; sign-in linking (later) allows revocation (a per-account token generation). |
+| T8 | A bad config loses money | Strict validation plus the `min_margin` check per pack; invalid config = feature off. |
+
+### Observability
+
+- Structured log events, all content-free: `ai_settled`, `ai_refused`,
+  `ai_upstream_error`, `ai_released`, `ai_holds_expired`, `ai_purchase`,
+  `ai_refund`, `ai_account_opened` / `ai_account_closed`.
+- Each carries the account, request id, model, usage, reserved vs charged,
+  `written_off`, `estimated` and the pricing version.
+- A revenue / cost dashboard (the Grafana pattern from
+  [perf-monitoring.md](perf-monitoring.md)) shows:
+  - credits sold per channel, at gross and net;
+  - credits spent (equal to the Anthropic list cost when `usage_markup` = 0);
+  - Anthropic's own reported cost;
+  - margin;
+  - written-off and estimated totals;
+  - outstanding balance (a liability: credits sold but not spent);
+  - refunds.
+
+## Costs and margins
+
+Margin = (net proceeds after the channel fee − Anthropic list cost of the
+credits) / net. It assumes **all** credits get spent; unspent credits are
+extra.
+
+| Markup | Apple, Small Business 15 % (US$9.99) | Apple 30 % (US$9.99) | Web, Stripe 2.9 % + 30 ¢ (US$10) |
+| --- | --- | --- | --- |
+| 10 % | **−7.0 %** (lose $0.59) | **−29.9 %** | +3.4 % (keep $0.32) |
+| 20 % | +2.0 % ($0.17) | **−19.0 %** | +11.4 % ($1.08) |
+| 30 % | +9.5 % ($0.81) | **−9.9 %** | +18.3 % ($1.72) |
+| 40 % (default iOS) | +16.0 % ($1.36) | **−2.0 %** | +24.1 % ($2.27) |
+| 55 % | +24.1 % ($2.05) | +7.8 % ($0.55) | +31.4 % ($2.96) |
+
+**A markup smaller than the store's cut loses money on In-App Purchase.**
+Apple takes its 15–30 % of the *price*. A 20 % markup leaves 1.2 × 0.85 = 1.02
+per 1.00 of usage before any other cost; at 30 %, 1.2 × 0.7 = 0.84, a loss. The
+config validation refuses such a pack, so a fee change without a markup change
+can't silently lose money.
+
+Recommendation:
+- **iOS: +40 %** with the Small Business Program (16 % margin). **+55 %** if we
+  are not enrolled, or once proceeds pass US$1 M (8 %).
+- **Web: +20 %** (11–13 % margin on US$10–25).
+- Use web packs of **US$10 and US$25**: Stripe's 30 ¢ fixed fee eats a US$5
+  pack (8.7 %).
+- Use iOS packs at **US$4.99 / 9.99 / 19.99**.
+- Give a **50-credit trial** (US$0.50 of usage, about 5–10 asks).
+
+The default pack table:
+
+| Pack | Credits | Net after fee | Usage cost | Margin |
+| --- | --- | --- | --- | --- |
+| iOS US$4.99 (+40 %) | 356 | $4.24 | $3.56 | 16.1 % |
+| iOS US$9.99 (+40 %) | 713 | $8.49 | $7.13 | 16.0 % |
+| iOS US$19.99 (+40 %) | 1,427 | $16.99 | $14.27 | 16.0 % |
+| Web US$10 (+20 %) | 833 | $9.41 | $8.33 | 11.5 % |
+| Web US$25 (+20 %) | 2,083 | $23.97 | $20.83 | 13.1 % |
+
+These numbers leave out:
+- web sales tax / VAT, which we owe on web sales (US prices are tax-exclusive;
+  VAT-inclusive prices in the EU cut the margin by the VAT rate unless prices
+  are set per region);
+- Stripe Tax at 0.5 % if used;
+- Cloudflare Workers Paid at US$5 a month (needed at any real volume: the free
+  plan's 100 K requests a day and 10 ms CPU per request are tight for
+  streaming);
+- support time.
+
+Unspent balances are a liability on the books until spent or forfeited.
+
+## Staged plan (small PRs)
+
+1. **This PR**:
+   - the design;
+   - pricing config + validation;
+   - ledger with reserve-then-settle;
+   - the proxy against a fake upstream;
+   - purchase interfaces + fakes;
+   - relay routes behind `AI_BILLING=sandbox` (off otherwise);
+   - the client provider behind a flag (off), with a stub balance;
+   - tests (`//agent:billing_test`, `//web:aiCredits_test`).
+2. **Sandbox deploy** (owner):
+   - bind `BillingAccount` (wrangler migration `v2`, `new_sqlite_classes =
+     ["BillingAccount"]`);
+   - set `AI_BILLING=sandbox`, `AI_PRICING`, and the secrets (a *separate,
+     low-limit* Anthropic key with a spend cap);
+   - forward `/ai/*` and `/billing/*` in `web/_worker.js`;
+   - measure real credits per ask.
+3. **Accounts**: Sign in with Apple / Google / email, linking, token refresh
+   and revocation, the deletion UI, the consent sheet.
+4. **Web checkout**: Stripe Checkout Session endpoint, webhook verification,
+   refunds and disputes, Stripe Tax decision; Buy button on web and Android.
+5. **iOS IAP**: `storekit-bridge` plugin (StoreKit 2), App Store products,
+   JWS verification (Apple Root CA G3), App Store Server Notifications v2,
+   unfinished-transaction replay, StoreKit configuration file tests.
+6. **UX**: live balance under replies, low-balance and 402 handling in the
+   chat, the statement view, the model picker from `/billing/pricing`.
+7. **Ops**: KV-backed config, the reconciliation job (Anthropic usage report
+   vs ledger), dashboards, alerts, the admin tool (adjust, suspend).
+8. **Production**: allow `AI_BILLING=production` only once steps 3–5 have
+   real verifiers. App Review submission with a demo account.
+
+## Risks
+
+- **Store review.** Apple may question an AI-credits consumable. The
+  mitigation is following 3.1.1 exactly: In-App Purchase, no expiry, no
+  steering, plus account deletion, AI-data consent and content reporting.
+- **Margin squeeze.** Anthropic prices change (usually downward), and a fee
+  tier can change. Prices are config, validated against `min_margin`, and the
+  ledger records the version used.
+- **Estimate gaps.** Cut-off streams are billed from an estimate. Daily
+  reconciliation and the `estimated` flag find drift.
+- **Org-wide limits.** One user's burst can rate-limit everyone. Per-account
+  caps and concurrency limits help, and the usage tier needs raising before
+  launch.
+- **Policy exposure.** A user's misuse can get our Anthropic account
+  suspended. That's why we have caps, suspension, the allowlist, and lighting
+  scope only.
+- **Tax on the web.** We owe it unless we use a merchant-of-record service.
+- **Legal entity.** Stores, Stripe and Anthropic's commercial terms all need a
+  business entity and bank account.
+- **Free plan.** Workers Free CPU and request limits may not cover streaming
+  at volume.
+
+## Decisions for the owner
+
+1. **Legal entity and accounts.** The business that is merchant / seller:
+   App Store Connect Paid Apps agreement, banking and tax forms; a Stripe
+   account; Anthropic commercial terms under that entity.
+2. **Apple Small Business Program:** enrol. It decides whether iOS needs +40 %
+   or +55 %.
+3. **Markups:** iOS +40 % (with the program) and web +20 % are proposed, as
+   is `usage_markup` 0.
+4. **Packs:** iOS US$4.99 / 9.99 / 19.99; web US$10 / 25. Or other sizes.
+5. **Free trial:** 50 credits per new account, or none (abuse: one per
+   device / sign-in?).
+6. **Web tax:** Stripe + Stripe Tax (we file), or a merchant-of-record service
+   (Stripe Managed Payments +3.5 % or Paddle 5 % + 50 ¢).
+7. **Sign-in:** which providers (Sign in with Apple is required on iOS if any
+   social login is offered), and whether to allow anonymous accounts at all.
+8. **Minors:** 18+ gate on buying credits, or the extra safeguards Anthropic
+   requires for under-18 users.
+9. **Data retention:**
+   - prompts: none (proposed default);
+   - ledger and financial records: how many years;
+   - logs: how long.
+10. **Deletion with a balance left:** forfeit (proposed, with a warning), or
+    refund on request.
+11. **Default model:** Sonnet 5.5 (proposed: half Opus's price); whether to
+    offer Opus 5.5 and Haiku 5.5.
+12. **Caps:** daily 2,000 / monthly 20,000 credits per account, 2 concurrent,
+    20 a minute, 300 per request.
+13. **Android:** stays a PWA with web checkout (decided). Revisit a Play app
+    only if distribution needs it; then Play Billing applies.
+14. **US link-out on iOS:** not used (decided). Revisit after the Supreme
+    Court rules on No. 25-1311.
+
+## What is in this PR
+
+- `agent/relay/src/billing/`:
+  - `pricing.ts`: config schema, validation, metering, margins;
+  - `ledger.ts`: reserve-then-settle ledger;
+  - `proxy.ts`: allowlist, metering, redaction;
+  - `purchases.ts`: interfaces + fakes;
+  - `account.ts`: the DO, sessions;
+  - `endpoint.ts`: routes, off unless sandbox.
+- Relay wiring:
+  - `index.ts`: routes, CORS, `BillingAccount` export (not bound in
+    `wrangler.toml`);
+  - `directory.ts`: purchase claims, account-creation limits;
+  - `platform.ts`: env.
+- `web/src/effects/ai/providers/credits.ts`: the flag-gated provider, session,
+  stub balance.
+- `provider.ts`: the `credits` kind, gated by the flag.
+- `generate.ts`: `activeProvider`.
+- `anthropic.ts`: `messagesRequestBody` shared; the BYO request is unchanged.
+- `aiSettings.ts`: the panel, shown only with the flag.
+- Tests:
+  - `agent/tests/billing.test.ts` (`//agent:billing_test`, a light target
+    without the bridge and wasm);
+  - `web/tests/aiCredits.test.ts`.

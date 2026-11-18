@@ -75,6 +75,21 @@ export interface Env {
   FEEDBACK_ADMIN_TOKEN?: string;
   /** Days a feedback report is kept (default 90). */
   FEEDBACK_RETENTION_DAYS?: string;
+  /** Splanc AI credits (billing/, docs/design/ai-billing.md). OFF unless this is
+   * exactly "sandbox"; every /ai and /billing route answers 503 otherwise.
+   * ("production" is refused too until real store verification lands.) */
+  AI_BILLING?: string;
+  /** The pricing config JSON (billing/pricing.ts), validated on every request. */
+  AI_PRICING?: string;
+  /** Worker SECRET: our Anthropic API key. Never sent to a client. */
+  ANTHROPIC_API_KEY?: string;
+  /** Worker SECRET: HMAC key (base64url, 32 bytes) for app session tokens. */
+  BILLING_TOKEN_SECRET?: string;
+  /** Worker SECRET (sandbox only): the fake store's test signing key. */
+  AI_BILLING_FAKE_STORE_KEY?: string;
+  /** The BillingAccount Durable Object namespace (one object per account). Not
+   * bound in wrangler.toml yet (staged plan, step 3). */
+  BILLING?: DONamespace;
   /** Present under the Node host. */
   HOST?: HostHooks;
 }
