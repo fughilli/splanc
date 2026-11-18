@@ -288,7 +288,7 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
         return page({
           hero: "help",
           title: "Add a recovery email?",
-          lead: "If you clear this app's data, switch phones or lose this device, your email is how you get your credits back. We also send your receipts there. Nothing else: no newsletters, no marketing.",
+          lead: "If you clear this app's data, switch phones or lose this device, your email is how you get your credits back. That's all it's used for: we keep a scrambled copy, not your address, so we can't send you anything else.",
           actions: actions(
             primaryBtn("Add email (recommended)", () => dispatch({ type: "chooseEmail" })),
             quietBtn("Continue without email", () => dispatch({ type: "skipEmail" })),
@@ -336,7 +336,7 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
           title: restore ? "Restore your account" : changing ? "Change your recovery email" : "Your recovery email",
           lead: restore
             ? "Enter the email you added to your Splanc AI account. We'll send a code to sign this device in, and your credits come with it."
-            : "We'll send a 6-digit code to check it's yours. It's only used to recover your credits and send receipts.",
+            : "We'll send a 6-digit code to check it's yours. It's only used to recover your credits. We keep a scrambled copy, not your address.",
           body: [f.el, restore ? para("If an account uses this address, the code arrives in a minute. Check your spam folder too.", "cf-note") : null],
           actions: actions(send, backBtn()),
         });
@@ -536,7 +536,7 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
         warn.className = "cf-panel cf-panel--danger";
         warn.append(
           para(
-            "Without a recovery email, your credits can't be recovered if this app's data is cleared, or if this device is lost or replaced. You'll stop getting receipts by email.",
+            "Without a recovery email, your credits can't be recovered if this app's data is cleared, or if this device is lost or replaced.",
             "",
           ),
         );
@@ -679,10 +679,27 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
     }
   }
 
-  render(false);
+  // Removing the e-mail depends on the account's state (the address may have
+  // been added on another device): wait for the balance before deciding.
+  let waiting = mode === "removeEmail" && getCreditsSession() !== null && creditsVisible();
+  if (waiting) {
+    wrap.replaceChildren(spinner());
+    void fetchCreditsBalance().then((b) => {
+      if (disposed) return;
+      balance = b;
+      waiting = false;
+      state = startFlow(mode, ctx());
+      if (state.exit) leave(state.exit.notice);
+      else render(true);
+    });
+  } else if (state.exit) {
+    setTimeout(() => leave(state.exit?.notice), 0);
+  } else {
+    render(false);
+  }
   // Learn the account state (18+, e-mail) before the user moves on; the intro
   // needs none of it, so it renders at once.
-  if (getCreditsSession() && creditsVisible()) {
+  if (!waiting && getCreditsSession() && creditsVisible()) {
     void fetchCreditsBalance().then((b) => {
       if (disposed) return;
       balance = b;

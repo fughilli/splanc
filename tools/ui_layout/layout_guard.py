@@ -172,6 +172,8 @@ class Scenario:
              (True = handled); everything else off-origin is blocked
     root:    where to look for controls (the screen, not the app chrome)
     settle_ms: extra wait after the steps (animations, polling)
+    expect:  a selector that must be visible once settled (proves the scenario
+             reached the intended screen, not an error or fallback state)
     """
 
     id: str
@@ -182,6 +184,7 @@ class Scenario:
     network: Callable[[], Callable] | None = None
     root: str = ".shell-outlet, .k-sheet"
     settle_ms: int = 700
+    expect: str | None = None
 
 
 BASE_SEED = {
@@ -298,6 +301,15 @@ def run_scenarios(
                             run_steps(page, sc.steps)
                             page.wait_for_timeout(sc.settle_ms)
                             v, n = check_page(page, sc.root)
+                            if sc.expect and not page.locator(sc.expect).first.is_visible():
+                                v.append(
+                                    Violation(
+                                        "state",
+                                        sc.expect,
+                                        "",
+                                        "expected element not visible: wrong screen",
+                                    )
+                                )
                             if n == 0:
                                 v.append(
                                     Violation(

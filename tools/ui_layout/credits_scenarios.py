@@ -212,6 +212,10 @@ def fake(**kw):
     return lambda: FakeBilling(**kw).handler()
 
 
+def title(text: str) -> str:
+    return f'.cf-title:has-text("{text}")'
+
+
 def btn(text: str) -> str:
     return f'button:has-text("{text}")'
 
@@ -247,13 +251,20 @@ RET_PRE = {"splanc.aiCredits.preCheckoutBalance": "0"}
 
 SCENARIOS = [
     # Settings ▸ AI (the new home of AI settings)
-    Scenario("ai-tab-no-account", "#/settings/ai", seed=FRESH, network=fake()),
+    Scenario(
+        "ai-tab-no-account",
+        "#/settings/ai",
+        seed=FRESH,
+        network=fake(),
+        expect=btn("Get Splanc AI credits"),
+    ),
     Scenario(
         "ai-tab-account",
         "#/settings/ai",
         seed=SIGNED_IN,
         network=fake(balance=412.5, adult=True, email="kim@example.com", statement=STATEMENT),
         settle_ms=1200,
+        expect=btn("Remove email"),
     ),
     Scenario(
         "ai-tab-low-anonymous",
@@ -261,6 +272,7 @@ SCENARIOS = [
         seed=SIGNED_IN,
         network=fake(balance=18.4, adult=True, anon=True, statement=STATEMENT[:2]),
         settle_ms=1200,
+        expect=".cacct-low",
     ),
     Scenario(
         "ai-tab-signed-out",
@@ -268,6 +280,7 @@ SCENARIOS = [
         seed=SIGNED_IN,
         network=fake(signed_out=True),
         settle_ms=1200,
+        expect=btn("Restore account"),
     ),
     Scenario(
         "ai-tier-sheet",
@@ -276,12 +289,25 @@ SCENARIOS = [
         network=fake(),
         steps=[("click", btn("Model setup")), ("wait", 600)],
         root=".k-sheet",
+        expect=btn("Use Splanc AI credits"),
     ),
     # The dedicated credits flow
-    Scenario("flow-01-intro", "#/credits", seed=FRESH, network=fake()),
-    Scenario("flow-02-account", "#/credits", seed=FRESH, network=fake(), steps=TO_ACCOUNT),
+    Scenario("flow-01-intro", "#/credits", seed=FRESH, network=fake(), expect=btn("Get started")),
     Scenario(
-        "flow-03-email-choice", "#/credits", seed=FRESH, network=fake(), steps=TO_EMAIL_CHOICE
+        "flow-02-account",
+        "#/credits",
+        seed=FRESH,
+        network=fake(),
+        steps=TO_ACCOUNT,
+        expect=title("Create your account"),
+    ),
+    Scenario(
+        "flow-03-email-choice",
+        "#/credits",
+        seed=FRESH,
+        network=fake(),
+        steps=TO_EMAIL_CHOICE,
+        expect=title("Add a recovery email?"),
     ),
     Scenario(
         "flow-04-anonymous-confirm",
@@ -289,9 +315,24 @@ SCENARIOS = [
         seed=FRESH,
         network=fake(),
         steps=TO_EMAIL_CHOICE + [("click", btn("Continue without email"))],
+        expect=title("Continue without an email?"),
     ),
-    Scenario("flow-05-email-entry", "#/credits", seed=FRESH, network=fake(), steps=TO_EMAIL_ENTRY),
-    Scenario("flow-06-email-code", "#/credits", seed=FRESH, network=fake(), steps=TO_EMAIL_CODE),
+    Scenario(
+        "flow-05-email-entry",
+        "#/credits",
+        seed=FRESH,
+        network=fake(),
+        steps=TO_EMAIL_ENTRY,
+        expect=title("Your recovery email"),
+    ),
+    Scenario(
+        "flow-06-email-code",
+        "#/credits",
+        seed=FRESH,
+        network=fake(),
+        steps=TO_EMAIL_CODE,
+        expect=title("Check your email"),
+    ),
     Scenario(
         "flow-07-email-code-wrong",
         "#/credits",
@@ -299,6 +340,7 @@ SCENARIOS = [
         network=fake(),
         steps=TO_EMAIL_CODE
         + [("fill", ".cf-code", "000000"), ("click", btn("Verify email")), ("wait_for", ".cf-err")],
+        expect=".cf-err",
     ),
     Scenario(
         "flow-08-email-in-use",
@@ -307,10 +349,32 @@ SCENARIOS = [
         network=fake(email_in_use=True),
         steps=TO_EMAIL_CODE
         + [("fill", ".cf-code", "123456"), ("click", btn("Verify email")), ("wait_for", ".cf-err")],
+        expect=btn("Restore that account instead"),
     ),
-    Scenario("flow-09-packs", "#/credits", seed=FRESH, network=fake(), steps=TO_PACKS),
-    Scenario("flow-10-handoff", "#/credits", seed=FRESH, network=fake(), steps=TO_HANDOFF),
-    Scenario("flow-11-return-success", "#/credits", seed=FRESH, network=fake(), steps=TO_SUCCESS),
+    Scenario(
+        "flow-09-packs",
+        "#/credits",
+        seed=FRESH,
+        network=fake(),
+        steps=TO_PACKS,
+        expect=title("Choose your credits"),
+    ),
+    Scenario(
+        "flow-10-handoff",
+        "#/credits",
+        seed=FRESH,
+        network=fake(),
+        steps=TO_HANDOFF,
+        expect=title("Pay securely with Stripe"),
+    ),
+    Scenario(
+        "flow-11-return-success",
+        "#/credits",
+        seed=FRESH,
+        network=fake(),
+        steps=TO_SUCCESS,
+        expect=title("You're all set"),
+    ),
     Scenario(
         "flow-12-return-pending",
         "#/credits/return",
@@ -318,6 +382,7 @@ SCENARIOS = [
         seed={**SIGNED_IN, **RET_PRE},
         network=fake(balance=0, adult=True, landing=False),
         steps=[("wait_for", btn("Check again"), 25000)],
+        expect=title("Payment still processing"),
     ),
     Scenario(
         "flow-13-return-cancelled",
@@ -325,6 +390,7 @@ SCENARIOS = [
         search="?checkout=cancel",
         seed=SIGNED_IN,
         network=fake(adult=True),
+        expect=title("Checkout cancelled"),
     ),
     Scenario(
         "flow-14-return-failed",
@@ -332,6 +398,7 @@ SCENARIOS = [
         search="?checkout=success",
         seed=FRESH,
         network=fake(),
+        expect=title("We couldn't confirm your payment"),
     ),
     Scenario(
         "flow-15-restore-email",
@@ -339,6 +406,7 @@ SCENARIOS = [
         seed=FRESH,
         network=fake(),
         steps=[("fill", "input[type=email]", "kim@example.com")],
+        expect=title("Restore your account"),
     ),
     Scenario(
         "flow-16-restore-code",
@@ -350,6 +418,7 @@ SCENARIOS = [
             ("click", btn("Send code")),
             ("wait_for", ".cf-code"),
         ],
+        expect=title("Check your email"),
     ),
     Scenario(
         "flow-17-restored",
@@ -364,12 +433,14 @@ SCENARIOS = [
             ("wait_for", ".cf-balance"),
             ("wait", 1200),
         ],
+        expect=title("Welcome back"),
     ),
     Scenario(
         "flow-18-remove-email",
         "#/credits/removeEmail",
         seed=SIGNED_IN,
         network=fake(balance=412.5, adult=True, email="kim@example.com"),
+        expect=title("Remove your recovery email?"),
     ),
     Scenario(
         "flow-19-delete-confirm",
@@ -377,6 +448,13 @@ SCENARIOS = [
         seed=SIGNED_IN,
         network=fake(balance=412.5, adult=True, email="kim@example.com"),
         steps=[("check", ".cf-consent input")],
+        expect=title("Delete your Splanc AI account?"),
     ),
-    Scenario("flow-20-unavailable", "#/credits", seed={}, network=fake()),
+    Scenario(
+        "flow-20-unavailable",
+        "#/credits",
+        seed={},
+        network=fake(),
+        expect=title("aren't available here"),
+    ),
 ]

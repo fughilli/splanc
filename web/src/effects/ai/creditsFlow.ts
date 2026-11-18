@@ -165,7 +165,9 @@ export function startFlow(mode: FlowMode, ctx: FlowContext, checkout: CheckoutRe
     case "email":
       return ctx.hasSession ? { ...base, step: "emailEntry" } : { ...base, step: "intro", mode: "buy", phases: buyPhases(ctx) };
     case "removeEmail":
-      return ctx.hasSession && ctx.emailVerified ? { ...base, step: "removeEmailConfirm" } : { ...base, step: "unavailable" };
+      if (!ctx.hasSession) return { ...base, step: "unavailable" };
+      // Nothing to remove: leave with a plain note rather than a dead end.
+      return ctx.emailVerified ? { ...base, step: "removeEmailConfirm" } : { ...base, step: "removeEmailConfirm", exit: { notice: "This account has no recovery email." } };
     case "delete":
       return ctx.hasSession ? { ...base, step: "deleteConfirm" } : { ...base, step: "unavailable" };
   }

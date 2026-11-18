@@ -109,7 +109,7 @@ function account(b: CreditsBalance): HTMLElement[] {
   const es = section("Recovery email");
   if (email) {
     es.append(
-      dim(`${email}. Used only to recover your credits on a new device and to send receipts.`),
+      dim(`${email}. Used only to recover your credits on a new device. We keep a scrambled copy, not your address.`),
       row(
         Button({ label: "Change email", variant: "quiet", onClick: () => openCreditsFlow("email") }),
         Button({ label: "Remove email", variant: "quiet", onClick: () => openCreditsFlow("removeEmail") }),

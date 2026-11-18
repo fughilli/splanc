@@ -366,11 +366,12 @@ test("email in use (409), anonymous acknowledgement, remove email, balance hint,
   assert.equal(isSignedOut(new CreditsApiError(401, "unauthorized", "x")), true);
 });
 
-test("remove email: a warning step, then exit with a notice; not offered without an e-mail", () => {
+test("remove email: a warning step, then exit with a notice; no e-mail -> a plain note, no dead end", () => {
   const ctx = { ...fresh, hasSession: true, adult: true, emailVerified: true };
   const s = startFlow("removeEmail", ctx);
   assert.equal(s.step, "removeEmailConfirm");
   assert.deepEqual(reduce(s, { type: "emailRemoved" }).exit, { notice: "Recovery email removed." });
   assert.ok(reduce(s, { type: "cancel" }).exit);
-  assert.equal(startFlow("removeEmail", { ...ctx, emailVerified: false }).step, "unavailable");
+  assert.deepEqual(startFlow("removeEmail", { ...ctx, emailVerified: false }).exit, { notice: "This account has no recovery email." });
+  assert.equal(startFlow("removeEmail", { ...ctx, hasSession: false }).step, "unavailable");
 });
