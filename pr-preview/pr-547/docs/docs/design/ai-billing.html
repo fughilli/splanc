@@ -323,8 +323,8 @@
           <section id="splanc-ai-credits-pay-for-claude-in-the-app">
 <h1>Splanc AI credits: pay for Claude in the app<a class="headerlink" href="#splanc-ai-credits-pay-for-claude-in-the-app" title="Link to this heading">¶</a></h1>
 <p>Status: design + sandbox-only scaffold (this PR). Nothing is deployed, no store
-product or merchant account exists, and every route answers 503 until the
-owner turns it on.</p>
+product exists, no merchant account is linked, and every route answers 503
+until the owner turns it on.</p>
 <p>Today the in-app AI (the effect editor’s chat, Acid Mode) needs the user’s own
 Anthropic API key. Most people don’t have one. With <strong>Splanc AI credits</strong> a
 user buys a credit pack, and the app uses Claude through our server. We pay
@@ -359,7 +359,9 @@ your own key keeps working exactly as before.</p>
 <p>Everywhere: one balance in <strong>credits</strong>, shown live in AI settings and after
 each AI reply (”−2.3 credits · 351 left”); a warning below a low-balance mark;
 a clear refusal when the balance runs out (“Not enough Splanc AI credit. Buy
-more in AI settings.”), never a silent failure. Credits bought on one platform
+more in AI settings.”), never a silent failure. Buying is 18+: the app asks
+once before the first purchase. There is no free credit; the free tier is for
+trying the AI. Credits bought on one platform
 work on every platform the same account signs in on. Credits never expire
 (Apple requires that; it’s also simpler).</p>
 <p>One credit = <strong>US$0.01 of Anthropic list-price usage</strong>. The markup is in how
@@ -386,6 +388,69 @@ token for its credit account.</p></li>
 Anthropic straight from the browser, with the same request as before (a test
 pins the bytes).</p></li>
 </ol>
+</section>
+<section id="owner-decisions-second-round-2026-11-18">
+<h3>Owner decisions, second round (2026-11-18)<a class="headerlink" href="#owner-decisions-second-round-2026-11-18" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>#</p></th>
+<th class="head"><p>Question</p></th>
+<th class="head"><p>Decision</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>1</p></td>
+<td><p>Seller</p></td>
+<td><p><strong>The owner’s LLC</strong> is the merchant / seller everywhere (App Store, Stripe, Anthropic). Its legal name stays out of this repo; it lives only in the private store, Stripe and Anthropic account settings.</p></td>
+</tr>
+<tr class="row-odd"><td><p>2</p></td>
+<td><p>Apple Small Business Program</p></td>
+<td><p><strong>Enrol</strong> → iOS markup <strong>+40 %</strong>.</p></td>
+</tr>
+<tr class="row-even"><td><p>3</p></td>
+<td><p>Markups and packs</p></td>
+<td><p>iOS +40 %, web +20 %; iOS packs US$4.99 / 9.99 / 19.99, web US$10 / 25.</p></td>
+</tr>
+<tr class="row-odd"><td><p>4</p></td>
+<td><p>Free trial</p></td>
+<td><p><strong>None</strong> (<code class="docutils literal notranslate"><span class="pre">trial_credits:</span> <span class="pre">0</span></code>). The free tier (OpenRouter free models; <code class="docutils literal notranslate"><span class="pre">docs/design/ai-tiers.md</span></code>, the model-setup picker PR) covers trying the AI.</p></td>
+</tr>
+<tr class="row-even"><td><p>5</p></td>
+<td><p>Web tax</p></td>
+<td><p><strong>Stripe Tax, we file.</strong> Its 0.5 % is in the web channel fee (<code class="docutils literal notranslate"><span class="pre">fee_percent:</span> <span class="pre">0.034</span></code>).</p></td>
+</tr>
+<tr class="row-odd"><td><p>6</p></td>
+<td><p>Sign-in</p></td>
+<td><p><strong>Sign in with Apple + Sign in with Google + anonymous device accounts</strong> that can be linked later. No e-mail login. In-app account deletion stays (Apple 5.1.1(v)).</p></td>
+</tr>
+<tr class="row-even"><td><p>7</p></td>
+<td><p>Minors</p></td>
+<td><p><strong>18+ gate on buying credits.</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>8</p></td>
+<td><p>Retention</p></td>
+<td><p>No prompt content; ledger / financial records as long as tax law requires; request logs 30 days.</p></td>
+</tr>
+<tr class="row-even"><td><p>9</p></td>
+<td><p>Deletion with credit left</p></td>
+<td><p><strong>Forfeit, with a clear warning</strong> before confirming.</p></td>
+</tr>
+<tr class="row-odd"><td><p>10</p></td>
+<td><p>Models</p></td>
+<td><p><strong>Claude Sonnet 5.5 (default), Claude Haiku 5.5, Claude Opus 5.5.</strong></p></td>
+</tr>
+<tr class="row-even"><td><p>11</p></td>
+<td><p>Caps</p></td>
+<td><p>2,000 credits a day, 20,000 a month, 2 concurrent per account.</p></td>
+</tr>
+<tr class="row-odd"><td><p>12</p></td>
+<td><p>Anthropic usage tier</p></td>
+<td><p><strong>Launch on the current tier</strong>, raise it when needed. Monitoring and alerting for approaching the org spend limit, and a graceful “Splanc AI credits are busy right now. Try again later.” when it is hit (<a class="reference internal" href="#org-spend-limit">Org spend limit</a>).</p></td>
+</tr>
+</tbody>
+</table>
+</div>
 </section>
 <section id="store-rules-checked-2026-11-18">
 <h3>Store rules (checked 2026-11-18)<a class="headerlink" href="#store-rules-checked-2026-11-18" title="Link to this heading">¶</a></h3>
@@ -466,8 +531,10 @@ opaque per-user id in <code class="docutils literal notranslate"><span class="pr
 <li><p>Disclose that users are talking to an AI (Usage Policy, consumer chatbots).
 The editor already says so.</p></li>
 <li><p>Minors: products serving under-18s have extra requirements
-(<a class="reference external" href="https://support.claude.com/en/articles/9307344">support article</a>). The
-simplest route is an 18+ gate on buying credits. <strong>Owner decision.</strong></p></li>
+(<a class="reference external" href="https://support.claude.com/en/articles/9307344">support article</a>).
+<strong>Decided: buying credits is 18+.</strong> The app asks once and the account
+records it (<code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/age</span></code>); Buy shows only for a confirmed adult,
+and the web checkout will refuse without it.</p></li>
 </ul>
 </li>
 <li><p><strong>Data.</strong> Anthropic doesn’t train on API content (B). It deletes inputs and
@@ -747,21 +814,33 @@ credits exactly one account, ever.</p>
 <section id="accounts-and-identity">
 <h3>Accounts and identity<a class="headerlink" href="#accounts-and-identity" title="Link to this heading">¶</a></h3>
 <ul class="simple">
-<li><p><strong>Stage 1 (scaffold):</strong> a <strong>device-bound anonymous account</strong>. <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/account</span></code> mints <code class="docutils literal notranslate"><span class="pre">acct_…</span></code> and a 180-day session token, rate-limited
-per IP. The app stores the token next to its other settings.</p></li>
-<li><p><strong>Before launch:</strong> link the account to <strong>Sign in with Apple</strong> on iOS and
-<strong>Sign in with Google / email</strong> on the web, so credits follow the person
-across devices and survive reinstalls. Sign in with Apple is needed if any
-social login is offered (4.8). An anonymous account can upgrade to a signed-in
-one and keep its balance.</p></li>
+<li><p><strong>Anonymous device accounts (scaffolded).</strong> <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/account</span></code> mints
+<code class="docutils literal notranslate"><span class="pre">acct_…</span></code> and a 180-day session token, rate-limited per IP. The app stores
+the token next to its other settings. It starts with <strong>no credit</strong> (no
+trial).</p></li>
+<li><p><strong>Linking (decided: Apple + Google, no e-mail).</strong> An anonymous account links
+to <strong>Sign in with Apple</strong> or <strong>Sign in with Google</strong> and keeps its balance,
+so credits follow the person across devices and survive reinstalls. Both
+are offered on every platform; Sign in with Apple satisfies 4.8 on iOS. The
+server verifies the provider’s ID token (Apple’s / Google’s JWKS, our
+client ids as audience) and stores only the provider’s opaque subject id
+(<code class="docutils literal notranslate"><span class="pre">link:&lt;provider&gt;:&lt;sub&gt;</span></code> → account). If that identity already has an
+account, the app offers to switch to it; balances are never merged
+automatically.</p></li>
+<li><p><strong>Buying is 18+ (decided).</strong> <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/age</span> <span class="pre">{confirm:</span> <span class="pre">true}</span></code> records the
+confirmation on the account (<code class="docutils literal notranslate"><span class="pre">adult_confirmed_at</span></code>); <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/balance</span></code>
+returns <code class="docutils literal notranslate"><span class="pre">adult</span></code>; the app shows Buy only for a confirmed adult
+(<code class="docutils literal notranslate"><span class="pre">mayBuyCredits</span></code>). An Apple purchase is still credited if it somehow
+arrives without it (the user has paid); the web checkout endpoint refuses
+to start one.</p></li>
 <li><p><strong>Restore.</strong> Consumables don’t restore through StoreKit, so “restore” means
 signing in on the new device. The balance is on the server.</p></li>
 <li><p><strong>Account deletion (Apple 5.1.1(v)):</strong> <code class="docutils literal notranslate"><span class="pre">DELETE</span> <span class="pre">/billing/account</span></code>, in the
-app. It closes the account, forfeits the balance (the app warns first) and
-drops open holds. Ledger entries hold no personal data and are kept for the
-financial-records period. <strong>Owner decision:</strong> how many years, and whether to
-offer a refund of the unused balance on deletion. Apple’s refund flow stays
-available anyway.</p></li>
+app. <strong>Decided: any credit left is forfeited, after a clear warning</strong>
+(<code class="docutils literal notranslate"><span class="pre">DELETE_ACCOUNT_WARNING</span></code>: “Any credits left on it are lost and are not
+refunded.”). It closes the account, drops open holds and unlinks Apple /
+Google identities. Ledger entries hold no personal data and are kept as long
+as tax law requires. Apple’s own refund flow stays available anyway.</p></li>
 <li><p><strong>iOS account binding.</strong> At purchase the app passes
 <code class="docutils literal notranslate"><span class="pre">appAccountToken</span> <span class="pre">=</span> <span class="pre">accountRefFor(account_id)</span></code> (a UUID derived from the
 account id). The server checks that the signed transaction carries the same
@@ -847,7 +926,7 @@ ledger entry is stamped with the config <code class="docutils literal notranslat
 <span class="w">  </span><span class="nt">&quot;max_output_tokens&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">16000</span><span class="p">,</span>
 <span class="w">  </span><span class="nt">&quot;channels&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nt">&quot;apple&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;fee_percent&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.15</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;fee_fixed_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;markup&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.4</span><span class="w"> </span><span class="p">},</span>
-<span class="w">    </span><span class="nt">&quot;web&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;fee_percent&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.029</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;fee_fixed_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.3</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;markup&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.2</span><span class="w"> </span><span class="p">}</span>
+<span class="w">    </span><span class="nt">&quot;web&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;fee_percent&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.034</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;fee_fixed_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.3</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;markup&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.2</span><span class="w"> </span><span class="p">}</span>
 <span class="w">  </span><span class="p">},</span>
 <span class="w">  </span><span class="nt">&quot;packs&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
 <span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;sku&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;dev.splanc.app.credits.small&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;channel&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;apple&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;price_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">4.99</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">},</span>
@@ -856,12 +935,13 @@ ledger entry is stamped with the config <code class="docutils literal notranslat
 <span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;sku&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;web.credits.10&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;channel&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;web&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;price_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">10</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">},</span>
 <span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;sku&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;web.credits.25&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;channel&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;web&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;price_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">25</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;enabled&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">}</span>
 <span class="w">  </span><span class="p">],</span>
-<span class="w">  </span><span class="nt">&quot;trial_credits&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">50</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;trial_credits&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
 <span class="w">  </span><span class="nt">&quot;low_balance_credits&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">50</span><span class="p">,</span>
 <span class="w">  </span><span class="nt">&quot;max_overdraft_credits&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">25</span><span class="p">,</span>
 <span class="w">  </span><span class="nt">&quot;caps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;per_request_max_credits&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">300</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;daily_credits&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2000</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;monthly_credits&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">20000</span><span class="p">,</span>
 <span class="w">    </span><span class="nt">&quot;concurrent_requests&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;requests_per_minute&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">20</span><span class="w"> </span><span class="p">},</span>
-<span class="w">  </span><span class="nt">&quot;min_margin&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.05</span>
+<span class="w">  </span><span class="nt">&quot;min_margin&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.05</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;org&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;monthly_limit_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">500</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;alert_fraction&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.8</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;stop_fraction&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.98</span><span class="w"> </span><span class="p">}</span>
 <span class="p">}</span>
 </pre></div>
 </div>
@@ -884,33 +964,37 @@ only, so it never learns that web packs exist.</p>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/account</span></code></p></td>
 <td><p>none (IP-limited)</p></td>
-<td><p>New account → <code class="docutils literal notranslate"><span class="pre">{account_id,</span> <span class="pre">token,</span> <span class="pre">account_ref,</span> <span class="pre">balance_credits}</span></code> (trial granted once)</p></td>
+<td><p>New anonymous account → <code class="docutils literal notranslate"><span class="pre">{account_id,</span> <span class="pre">token,</span> <span class="pre">account_ref,</span> <span class="pre">balance_credits}</span></code> (0: no trial)</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">DELETE</span> <span class="pre">/billing/account</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/age</span></code></p></td>
+<td><p>session</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{confirm:</span> <span class="pre">true}</span></code>: the user confirmed 18+ (buying is 18+)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">DELETE</span> <span class="pre">/billing/account</span></code></p></td>
 <td><p>session</p></td>
 <td><p>Close the account (deletion)</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/balance</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/balance</span></code></p></td>
 <td><p>session</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">{balance_credits,</span> <span class="pre">held_credits,</span> <span class="pre">available_credits,</span> <span class="pre">low,</span> <span class="pre">status,</span> <span class="pre">pricing_version}</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{balance_credits,</span> <span class="pre">held_credits,</span> <span class="pre">available_credits,</span> <span class="pre">low,</span> <span class="pre">status,</span> <span class="pre">adult,</span> <span class="pre">pricing_version}</span></code></p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/pricing?channel=</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/pricing?channel=</span></code></p></td>
 <td><p>none</p></td>
 <td><p>The public pricing view</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/statement</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/statement</span></code></p></td>
 <td><p>session</p></td>
 <td><p>The newest 50 entries (numbers only)</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/purchase/&lt;apple|web&gt;</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/purchase/&lt;apple|web&gt;</span></code></p></td>
 <td><p>session</p></td>
 <td><p>Proof of purchase → credit (201; a replay is 200 with the same entry)</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/notify/&lt;apple|web&gt;</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/notify/&lt;apple|web&gt;</span></code></p></td>
 <td><p>store signature</p></td>
 <td><p>Refunds / revocations → claw back</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/ai/v1/messages</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/ai/v1/messages</span></code></p></td>
 <td><p>session</p></td>
 <td><p>The metered proxy (SSE)</p></td>
 </tr>
@@ -942,7 +1026,7 @@ only, so it never learns that web packs exist.</p>
 <td><p>concurrency or requests per minute</p></td>
 </tr>
 <tr class="row-odd"><td><p>503</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">not_configured</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_busy</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_unavailable</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">not_configured</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_credits_busy</span></code> (Anthropic busy, or the org spend limit near / hit: “Splanc AI credits are busy right now. Try again later.”), <code class="docutils literal notranslate"><span class="pre">ai_unavailable</span></code></p></td>
 </tr>
 </tbody>
 </table>
@@ -993,6 +1077,8 @@ for that kind.</p></li>
 <section id="privacy">
 <h3>Privacy<a class="headerlink" href="#privacy" title="Link to this heading">¶</a></h3>
 <ul class="simple">
+<li><p><strong>Retention (decided):</strong> no prompt content; ledger and financial records as
+long as tax law requires; request logs 30 days.</p></li>
 <li><p><strong>Default: no prompt content is retained by Splanc.</strong></p>
 <ul>
 <li><p>The proxy streams bodies through and never stores them.</p></li>
@@ -1060,12 +1146,43 @@ outside the AI config, so it’s never in one.</p></li>
 </table>
 </div>
 </section>
+<section id="org-spend-limit">
+<h3>Org spend limit<a class="headerlink" href="#org-spend-limit" title="Link to this heading">¶</a></h3>
+<p>Anthropic’s rate and spend limits are per <strong>organization</strong>: every Splanc user
+shares them. The owner launches on the current usage tier and raises it when
+needed, so the relay watches the org’s spend and fails gracefully:</p>
+<ul class="simple">
+<li><p><strong>Counter.</strong> After each settle the proxy adds the request’s Anthropic list
+cost (µUSD) to a month-to-date counter in the Directory DO
+(<code class="docutils literal notranslate"><span class="pre">org:spend:&lt;YYYY-MM&gt;</span></code>). The config’s <code class="docutils literal notranslate"><span class="pre">org.monthly_limit_usd</span></code> is set to the
+Console’s actual monthly limit.</p></li>
+<li><p><strong>Alert.</strong> Crossing <code class="docutils literal notranslate"><span class="pre">org.alert_fraction</span></code> (80 %) logs <code class="docutils literal notranslate"><span class="pre">ai_org_spend_alert</span></code>
+once, with <code class="docutils literal notranslate"><span class="pre">alert:</span> <span class="pre">true</span></code>. That is the signal to raise the tier.</p></li>
+<li><p><strong>Graceful stop.</strong> From <code class="docutils literal notranslate"><span class="pre">org.stop_fraction</span></code> (98 %) on, the proxy answers 503
+<code class="docutils literal notranslate"><span class="pre">ai_credits_busy</span></code> (“Splanc AI credits are busy right now. Try again later.”)
+<strong>before</strong> calling Anthropic, so no turn dies halfway and nothing is
+charged. It logs <code class="docutils literal notranslate"><span class="pre">ai_org_spend_stop</span></code> (<code class="docutils literal notranslate"><span class="pre">alert:</span> <span class="pre">true</span></code>).</p></li>
+<li><p><strong>The real limit.</strong> If Anthropic answers 429 <code class="docutils literal notranslate"><span class="pre">enforced_spend_limit_reached</span></code>
+anyway (the counter is list cost, and the Console’s limit may differ), the
+proxy releases the reservation uncharged, answers the same busy message,
+and logs <code class="docutils literal notranslate"><span class="pre">ai_org_spend_limit_hit</span></code> (<code class="docutils literal notranslate"><span class="pre">alert:</span> <span class="pre">true</span></code>). Other 429s (rate limits)
+and 529 “overloaded” errors also answer busy, and 429s log with <code class="docutils literal notranslate"><span class="pre">alert:</span> <span class="pre">true</span></code>.</p></li>
+<li><p><strong>Reconciliation.</strong> The daily job (staged plan, Ops) replaces the estimate
+with Anthropic’s own cost report and alerts on drift.</p></li>
+<li><p><strong>Alerting.</strong> Any log event with <code class="docutils literal notranslate"><span class="pre">alert:</span> <span class="pre">true</span></code> goes to the alert channel (Workers
+Logs → Grafana alert rule, or a Logpush filter).</p></li>
+</ul>
+</section>
 <section id="observability">
 <h3>Observability<a class="headerlink" href="#observability" title="Link to this heading">¶</a></h3>
 <ul class="simple">
-<li><p>Structured log events, all content-free: <code class="docutils literal notranslate"><span class="pre">ai_settled</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_refused</span></code>,
-<code class="docutils literal notranslate"><span class="pre">ai_upstream_error</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_released</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_holds_expired</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_purchase</span></code>,
-<code class="docutils literal notranslate"><span class="pre">ai_refund</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_account_opened</span></code> / <code class="docutils literal notranslate"><span class="pre">ai_account_closed</span></code>.</p></li>
+<li><p>Structured log events, all content-free: <code class="docutils literal notranslate"><span class="pre">ai_settled</span></code> (with <code class="docutils literal notranslate"><span class="pre">list_usd</span></code>),
+<code class="docutils literal notranslate"><span class="pre">ai_refused</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_upstream_error</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_released</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_holds_expired</span></code>,
+<code class="docutils literal notranslate"><span class="pre">ai_purchase</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_refund</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_account_opened</span></code> / <code class="docutils literal notranslate"><span class="pre">ai_account_closed</span></code>, and
+the org alerts <code class="docutils literal notranslate"><span class="pre">ai_org_spend_alert</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_org_spend_stop</span></code>,
+<code class="docutils literal notranslate"><span class="pre">ai_org_spend_limit_hit</span></code>.</p></li>
+<li><p>Request logs are kept <strong>30 days</strong> (owner decision): the Workers Logs
+retention, or the Logpush destination’s lifecycle rule.</p></li>
 <li><p>Each carries the account, request id, model, usage, reserved vs charged,
 <code class="docutils literal notranslate"><span class="pre">written_off</span></code>, <code class="docutils literal notranslate"><span class="pre">estimated</span></code> and the pricing version.</p></li>
 <li><p>A revenue / cost dashboard (the Grafana pattern from
@@ -1094,34 +1211,34 @@ extra.</p>
 <tr class="row-odd"><th class="head"><p>Markup</p></th>
 <th class="head"><p>Apple, Small Business 15 % (US$9.99)</p></th>
 <th class="head"><p>Apple 30 % (US$9.99)</p></th>
-<th class="head"><p>Web, Stripe 2.9 % + 30 ¢ (US$10)</p></th>
+<th class="head"><p>Web, Stripe 2.9 % + 30 ¢ + Stripe Tax 0.5 % (US$10)</p></th>
 </tr>
 </thead>
 <tbody>
 <tr class="row-even"><td><p>10 %</p></td>
 <td><p><strong>−7.0 %</strong> (lose $0.59)</p></td>
 <td><p><strong>−29.9 %</strong></p></td>
-<td><p>+3.4 % (keep $0.32)</p></td>
+<td><p>+2.9 % (keep $0.27)</p></td>
 </tr>
-<tr class="row-odd"><td><p>20 %</p></td>
+<tr class="row-odd"><td><p>20 % (web)</p></td>
 <td><p>+2.0 % ($0.17)</p></td>
 <td><p><strong>−19.0 %</strong></p></td>
-<td><p>+11.4 % ($1.08)</p></td>
+<td><p>+11.0 % ($1.03)</p></td>
 </tr>
 <tr class="row-even"><td><p>30 %</p></td>
 <td><p>+9.5 % ($0.81)</p></td>
 <td><p><strong>−9.9 %</strong></p></td>
-<td><p>+18.3 % ($1.72)</p></td>
+<td><p>+17.8 % ($1.67)</p></td>
 </tr>
-<tr class="row-odd"><td><p>40 % (default iOS)</p></td>
+<tr class="row-odd"><td><p>40 % (iOS)</p></td>
 <td><p>+16.0 % ($1.36)</p></td>
 <td><p><strong>−2.0 %</strong></p></td>
-<td><p>+24.1 % ($2.27)</p></td>
+<td><p>+23.7 % ($2.22)</p></td>
 </tr>
 <tr class="row-even"><td><p>55 %</p></td>
 <td><p>+24.1 % ($2.05)</p></td>
 <td><p>+7.8 % ($0.55)</p></td>
-<td><p>+31.4 % ($2.96)</p></td>
+<td><p>+31.1 % ($2.91)</p></td>
 </tr>
 </tbody>
 </table>
@@ -1131,15 +1248,15 @@ Apple takes its 15–30 % of the <em>price</em>. A 20 % markup leaves 1.2 × 0.8
 per 1.00 of usage before any other cost; at 30 %, 1.2 × 0.7 = 0.84, a loss. The
 config validation refuses such a pack, so a fee change without a markup change
 can’t silently lose money.</p>
-<p>Recommendation:</p>
+<p>Decided (owner, 2026-11-18):</p>
 <ul class="simple">
-<li><p><strong>iOS: +40 %</strong> with the Small Business Program (16 % margin). <strong>+55 %</strong> if we
-are not enrolled, or once proceeds pass US$1 M (8 %).</p></li>
-<li><p><strong>Web: +20 %</strong> (11–13 % margin on US$10–25).</p></li>
-<li><p>Use web packs of <strong>US$10 and US$25</strong>: Stripe’s 30 ¢ fixed fee eats a US$5
-pack (8.7 %).</p></li>
-<li><p>Use iOS packs at <strong>US$4.99 / 9.99 / 19.99</strong>.</p></li>
-<li><p>Give a <strong>50-credit trial</strong> (US$0.50 of usage, about 5–10 asks).</p></li>
+<li><p><strong>iOS: +40 %</strong> with the Small Business Program (16 % margin). Move to
+<strong>+55 %</strong> if proceeds ever pass US$1 M and Apple’s rate becomes 30 % (8 %);
+the validator refuses +40 % at a 30 % fee.</p></li>
+<li><p><strong>Web: +20 %</strong> (11–13 % margin on US$10–25, Stripe Tax included).</p></li>
+<li><p>Web packs <strong>US$10 and US$25</strong> (Stripe’s 30 ¢ fixed fee eats a US$5 pack).</p></li>
+<li><p>iOS packs <strong>US$4.99 / 9.99 / 19.99</strong>.</p></li>
+<li><p><strong>No free trial</strong>: the free tier covers trying the AI.</p></li>
 </ul>
 <p>The default pack table:</p>
 <div class="table-wrapper colwidths-auto docutils container">
@@ -1173,25 +1290,25 @@ pack (8.7 %).</p></li>
 </tr>
 <tr class="row-odd"><td><p>Web US$10 (+20 %)</p></td>
 <td><p>833</p></td>
-<td><p>$9.41</p></td>
+<td><p>$9.36</p></td>
 <td><p>$8.33</p></td>
-<td><p>11.5 %</p></td>
+<td><p>11.0 %</p></td>
 </tr>
 <tr class="row-even"><td><p>Web US$25 (+20 %)</p></td>
 <td><p>2,083</p></td>
-<td><p>$23.97</p></td>
+<td><p>$23.85</p></td>
 <td><p>$20.83</p></td>
-<td><p>13.1 %</p></td>
+<td><p>12.7 %</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>These numbers leave out:</p>
+<p>“Net after fee” includes Stripe Tax’s 0.5 % on the web. These numbers leave
+out:</p>
 <ul class="simple">
-<li><p>web sales tax / VAT, which we owe on web sales (US prices are tax-exclusive;
-VAT-inclusive prices in the EU cut the margin by the VAT rate unless prices
-are set per region);</p></li>
-<li><p>Stripe Tax at 0.5 % if used;</p></li>
+<li><p>the web sales tax / VAT itself, which Stripe Tax computes and we collect and
+file (US prices are tax-exclusive; VAT-inclusive prices in the EU cut the
+margin by the VAT rate unless prices are set per region);</p></li>
 <li><p>Cloudflare Workers Paid at US$5 a month (needed at any real volume: the free
 plan’s 100 K requests a day and 10 ms CPU per request are tight for
 streaming);</p></li>
@@ -1199,43 +1316,67 @@ streaming);</p></li>
 </ul>
 <p>Unspent balances are a liability on the books until spent or forfeited.</p>
 </section>
-<section id="staged-plan-small-prs">
-<h2>Staged plan (small PRs)<a class="headerlink" href="#staged-plan-small-prs" title="Link to this heading">¶</a></h2>
+<section id="staged-plan-to-production">
+<h2>Staged plan to production<a class="headerlink" href="#staged-plan-to-production" title="Link to this heading">¶</a></h2>
+<p>Each step is one or more small PRs. <strong>[owner]</strong> marks what needs the owner’s
+accounts or secrets; everything else is code.</p>
 <ol class="arabic simple">
-<li><p><strong>This PR</strong>:</p>
+<li><p><strong>Done (this PR):</strong> design; pricing config + validation; ledger
+(reserve-then-settle); the proxy against a fake upstream, with the org
+spend guard; purchase interfaces + fakes; anonymous accounts, the 18+
+record, deletion; relay routes behind <code class="docutils literal notranslate"><span class="pre">AI_BILLING=sandbox</span></code>; the client
+provider behind a flag (off).</p></li>
+<li><p><strong>Sandbox deploy</strong> <strong>[owner]</strong>:</p>
 <ul class="simple">
-<li><p>the design;</p></li>
-<li><p>pricing config + validation;</p></li>
-<li><p>ledger with reserve-then-settle;</p></li>
-<li><p>the proxy against a fake upstream;</p></li>
-<li><p>purchase interfaces + fakes;</p></li>
-<li><p>relay routes behind <code class="docutils literal notranslate"><span class="pre">AI_BILLING=sandbox</span></code> (off otherwise);</p></li>
-<li><p>the client provider behind a flag (off), with a stub balance;</p></li>
-<li><p>tests (<code class="docutils literal notranslate"><span class="pre">//agent:billing_test</span></code>, <code class="docutils literal notranslate"><span class="pre">//web:aiCredits_test</span></code>).</p></li>
+<li><p>create a <em>separate, low-limit</em> Anthropic API key under the owner’s LLC
+org (a workspace with its own spend cap), and <code class="docutils literal notranslate"><span class="pre">wrangler</span> <span class="pre">secret</span> <span class="pre">put</span></code>
+<code class="docutils literal notranslate"><span class="pre">ANTHROPIC_API_KEY</span></code>, <code class="docutils literal notranslate"><span class="pre">BILLING_TOKEN_SECRET</span></code> (<code class="docutils literal notranslate"><span class="pre">newSessionSecret()</span></code>) and
+<code class="docutils literal notranslate"><span class="pre">AI_BILLING_FAKE_STORE_KEY</span></code>;</p></li>
+<li><p>set <code class="docutils literal notranslate"><span class="pre">AI_BILLING=sandbox</span></code> and <code class="docutils literal notranslate"><span class="pre">AI_PRICING</span></code> (with <code class="docutils literal notranslate"><span class="pre">org.monthly_limit_usd</span></code>
+= the Console’s limit).</p></li>
+<li><p>code: bind <code class="docutils literal notranslate"><span class="pre">BillingAccount</span></code> (wrangler migration <code class="docutils literal notranslate"><span class="pre">v2</span></code>,
+<code class="docutils literal notranslate"><span class="pre">new_sqlite_classes</span> <span class="pre">=</span> <span class="pre">[&quot;BillingAccount&quot;]</span></code>) and forward <code class="docutils literal notranslate"><span class="pre">/ai/*</span></code> +
+<code class="docutils literal notranslate"><span class="pre">/billing/*</span></code> in <code class="docutils literal notranslate"><span class="pre">web/_worker.js</span></code>;</p></li>
+<li><p>measure real credits per ask on the three models.</p></li>
 </ul>
 </li>
-<li><p><strong>Sandbox deploy</strong> (owner):</p>
-<ul class="simple">
-<li><p>bind <code class="docutils literal notranslate"><span class="pre">BillingAccount</span></code> (wrangler migration <code class="docutils literal notranslate"><span class="pre">v2</span></code>, <code class="docutils literal notranslate"><span class="pre">new_sqlite_classes</span> <span class="pre">=</span> <span class="pre">[&quot;BillingAccount&quot;]</span></code>);</p></li>
-<li><p>set <code class="docutils literal notranslate"><span class="pre">AI_BILLING=sandbox</span></code>, <code class="docutils literal notranslate"><span class="pre">AI_PRICING</span></code>, and the secrets (a <em>separate,
-low-limit</em> Anthropic key with a spend cap);</p></li>
-<li><p>forward <code class="docutils literal notranslate"><span class="pre">/ai/*</span></code> and <code class="docutils literal notranslate"><span class="pre">/billing/*</span></code> in <code class="docutils literal notranslate"><span class="pre">web/_worker.js</span></code>;</p></li>
-<li><p>measure real credits per ask.</p></li>
-</ul>
-</li>
-<li><p><strong>Accounts</strong>: Sign in with Apple / Google / email, linking, token refresh
-and revocation, the deletion UI, the consent sheet.</p></li>
-<li><p><strong>Web checkout</strong>: Stripe Checkout Session endpoint, webhook verification,
-refunds and disputes, Stripe Tax decision; Buy button on web and Android.</p></li>
-<li><p><strong>iOS IAP</strong>: <code class="docutils literal notranslate"><span class="pre">storekit-bridge</span></code> plugin (StoreKit 2), App Store products,
-JWS verification (Apple Root CA G3), App Store Server Notifications v2,
-unfinished-transaction replay, StoreKit configuration file tests.</p></li>
-<li><p><strong>UX</strong>: live balance under replies, low-balance and 402 handling in the
-chat, the statement view, the model picker from <code class="docutils literal notranslate"><span class="pre">/billing/pricing</span></code>.</p></li>
-<li><p><strong>Ops</strong>: KV-backed config, the reconciliation job (Anthropic usage report
-vs ledger), dashboards, alerts, the admin tool (adjust, suspend).</p></li>
-<li><p><strong>Production</strong>: allow <code class="docutils literal notranslate"><span class="pre">AI_BILLING=production</span></code> only once steps 3–5 have
-real verifiers. App Review submission with a demo account.</p></li>
+<li><p><strong>Accounts:</strong> Sign in with Apple + Google ID-token verification and
+linking, token refresh / revocation, the deletion UI with the forfeit
+warning, the 18+ sheet, the AI-data consent sheet (Apple 5.1.2(i)).
+<strong>[owner]</strong>: create the Sign in with Apple service id + key (Apple
+Developer, the owner’s LLC team) and a Google OAuth client id; store the
+ids as Worker vars.</p></li>
+<li><p><strong>Web checkout:</strong> <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/checkout</span></code> (Checkout Session; refuses
+without 18+), the webhook (<code class="docutils literal notranslate"><span class="pre">Stripe-Signature</span></code>), refunds and disputes, Stripe
+Tax on; Buy on web and Android. <strong>[owner]</strong>: activate the Stripe account
+for the owner’s LLC, turn on Stripe Tax (origin address, registrations),
+create the two Prices (US$10, US$25; lookup keys <code class="docutils literal notranslate"><span class="pre">web.credits.10</span></code>,
+<code class="docutils literal notranslate"><span class="pre">web.credits.25</span></code>), enable Apple Pay (domain verification for the app’s
+origin) and Google Pay, create the webhook endpoint, and <code class="docutils literal notranslate"><span class="pre">wrangler</span> <span class="pre">secret</span> <span class="pre">put</span></code> <code class="docutils literal notranslate"><span class="pre">STRIPE_SECRET_KEY</span></code> + <code class="docutils literal notranslate"><span class="pre">STRIPE_WEBHOOK_SECRET</span></code> (test mode first, live
+later).</p></li>
+<li><p><strong>iOS In-App Purchase:</strong> the <code class="docutils literal notranslate"><span class="pre">storekit-bridge</span></code> plugin (StoreKit 2,
+<code class="docutils literal notranslate"><span class="pre">appAccountToken</span></code>), JWS verification (Apple Root CA G3), App Store Server
+Notifications v2 (REFUND, REVOKE, CONSUMPTION_REQUEST), unfinished
+transaction replay, a StoreKit configuration file for Simulator tests.
+<strong>[owner]</strong>: sign the Paid Apps agreement and the banking / tax forms as
+the owner’s LLC, enrol in the Small Business Program, create the three
+consumables (<code class="docutils literal notranslate"><span class="pre">dev.splanc.app.credits.small</span></code> / <code class="docutils literal notranslate"><span class="pre">.medium</span></code> / <code class="docutils literal notranslate"><span class="pre">.large</span></code> at
+US$4.99 / 9.99 / 19.99) with review screenshots, set the Server
+Notifications v2 URL (sandbox and production), create an In-App Purchase
+key for the App Store Server API, and store its key id, issuer id and
+private key as Worker secrets.</p></li>
+<li><p><strong>UX:</strong> live balance under replies, low-balance and 402 handling in the
+chat, the “busy, try later” state, the statement view, the model picker
+from <code class="docutils literal notranslate"><span class="pre">/billing/pricing</span></code>.</p></li>
+<li><p><strong>Ops:</strong> KV-backed pricing config; the daily reconciliation job against
+Anthropic’s usage / cost report (needs an Admin API key <strong>[owner]</strong>);
+dashboards; alert routing for <code class="docutils literal notranslate"><span class="pre">alert:</span> <span class="pre">true</span></code> events <strong>[owner]</strong>: where
+alerts go; the 30-day log retention; the admin tool (adjust, suspend).</p></li>
+<li><p><strong>Production:</strong> allow <code class="docutils literal notranslate"><span class="pre">AI_BILLING=production</span></code> only once steps 3–5 have
+real verifiers; switch Stripe to live keys, the production App Store
+environment, and the production Anthropic key <strong>[owner]</strong>; Workers Paid
+plan <strong>[owner]</strong>; App Review submission with a demo account and notes;
+privacy notice update (Anthropic as sub-processor; 30-day request logs).</p></li>
 </ol>
 </section>
 <section id="risks">
@@ -1249,55 +1390,34 @@ tier can change. Prices are config, validated against <code class="docutils lite
 ledger records the version used.</p></li>
 <li><p><strong>Estimate gaps.</strong> Cut-off streams are billed from an estimate. Daily
 reconciliation and the <code class="docutils literal notranslate"><span class="pre">estimated</span></code> flag find drift.</p></li>
-<li><p><strong>Org-wide limits.</strong> One user’s burst can rate-limit everyone. Per-account
-caps and concurrency limits help, and the usage tier needs raising before
-launch.</p></li>
+<li><p><strong>Org-wide limits.</strong> One user’s burst can rate-limit everyone, and we
+launch on the current usage tier. Per-account caps, the org spend counter
+with its 80 % alert, and the graceful 98 % stop keep it visible and polite;
+raising the tier is the fix.</p></li>
 <li><p><strong>Policy exposure.</strong> A user’s misuse can get our Anthropic account
 suspended. That’s why we have caps, suspension, the allowlist, and lighting
 scope only.</p></li>
-<li><p><strong>Tax on the web.</strong> We owe it unless we use a merchant-of-record service.</p></li>
-<li><p><strong>Legal entity.</strong> Stores, Stripe and Anthropic’s commercial terms all need a
-business entity and bank account.</p></li>
+<li><p><strong>Tax on the web.</strong> We collect and file it (Stripe Tax computes it):
+registration thresholds per US state / the EU need watching.</p></li>
 <li><p><strong>Free plan.</strong> Workers Free CPU and request limits may not cover streaming
 at volume.</p></li>
 </ul>
 </section>
 <section id="decisions-for-the-owner">
 <h2>Decisions for the owner<a class="headerlink" href="#decisions-for-the-owner" title="Link to this heading">¶</a></h2>
+<p>All of the first round is decided (see <a class="reference internal" href="#owner-decisions-second-round-2026-11-18">Owner decisions, second
+round</a>). Still open, none blocking
+the sandbox:</p>
 <ol class="arabic simple">
-<li><p><strong>Legal entity and accounts.</strong> The business that is merchant / seller:
-App Store Connect Paid Apps agreement, banking and tax forms; a Stripe
-account; Anthropic commercial terms under that entity.</p></li>
-<li><p><strong>Apple Small Business Program:</strong> enrol. It decides whether iOS needs +40 %
-or +55 %.</p></li>
-<li><p><strong>Markups:</strong> iOS +40 % (with the program) and web +20 % are proposed, as
-is <code class="docutils literal notranslate"><span class="pre">usage_markup</span></code> 0.</p></li>
-<li><p><strong>Packs:</strong> iOS US$4.99 / 9.99 / 19.99; web US$10 / 25. Or other sizes.</p></li>
-<li><p><strong>Free trial:</strong> 50 credits per new account, or none (abuse: one per
-device / sign-in?).</p></li>
-<li><p><strong>Web tax:</strong> Stripe + Stripe Tax (we file), or a merchant-of-record service
-(Stripe Managed Payments +3.5 % or Paddle 5 % + 50 ¢).</p></li>
-<li><p><strong>Sign-in:</strong> which providers (Sign in with Apple is required on iOS if any
-social login is offered), and whether to allow anonymous accounts at all.</p></li>
-<li><p><strong>Minors:</strong> 18+ gate on buying credits, or the extra safeguards Anthropic
-requires for under-18 users.</p></li>
-<li><p><strong>Data retention:</strong></p>
-<ul class="simple">
-<li><p>prompts: none (proposed default);</p></li>
-<li><p>ledger and financial records: how many years;</p></li>
-<li><p>logs: how long.</p></li>
-</ul>
-</li>
-<li><p><strong>Deletion with a balance left:</strong> forfeit (proposed, with a warning), or
-refund on request.</p></li>
-<li><p><strong>Default model:</strong> Sonnet 5.5 (proposed: half Opus’s price); whether to
-offer Opus 5.5 and Haiku 5.5.</p></li>
-<li><p><strong>Caps:</strong> daily 2,000 / monthly 20,000 credits per account, 2 concurrent,
-20 a minute, 300 per request.</p></li>
-<li><p><strong>Android:</strong> stays a PWA with web checkout (decided). Revisit a Play app
-only if distribution needs it; then Play Billing applies.</p></li>
-<li><p><strong>US link-out on iOS:</strong> not used (decided). Revisit after the Supreme
-Court rules on No. 25-1311.</p></li>
+<li><p><strong>Org limit value:</strong> the Console’s current monthly spend limit, for
+<code class="docutils literal notranslate"><span class="pre">org.monthly_limit_usd</span></code>, and when to raise the tier.</p></li>
+<li><p><strong>Alert destination</strong> for <code class="docutils literal notranslate"><span class="pre">alert:</span> <span class="pre">true</span></code> events (e-mail, a chat channel,
+Grafana).</p></li>
+<li><p><strong>CONSUMPTION_REQUEST:</strong> whether to answer Apple’s refund-consumption
+requests (needs the customer’s consent in the app).</p></li>
+<li><p><strong>Android / Play</strong> stays a PWA with web checkout; revisit only if
+distribution needs a Play app (then Play Billing applies). <strong>US iOS
+link-out</strong> stays off; revisit after the Supreme Court rules on No. 25-1311.</p></li>
 </ol>
 </section>
 <section id="what-is-in-this-pr">
@@ -1317,7 +1437,8 @@ Court rules on No. 25-1311.</p></li>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">index.ts</span></code>: routes, CORS, <code class="docutils literal notranslate"><span class="pre">BillingAccount</span></code> export (not bound in
 <code class="docutils literal notranslate"><span class="pre">wrangler.toml</span></code>);</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">directory.ts</span></code>: purchase claims, account-creation limits;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">directory.ts</span></code>: purchase claims, account-creation limits, the org
+month-to-date spend counter;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">platform.ts</span></code>: env.</p></li>
 </ul>
 </li>
@@ -1379,6 +1500,7 @@ without the bridge and wasm);</p></li>
 <li><a class="reference internal" href="#what-users-see">What users see</a></li>
 <li><a class="reference internal" href="#decisions">Decisions</a><ul>
 <li><a class="reference internal" href="#owner-decisions-2026-11-18">Owner decisions (2026-11-18)</a></li>
+<li><a class="reference internal" href="#owner-decisions-second-round-2026-11-18">Owner decisions, second round (2026-11-18)</a></li>
 <li><a class="reference internal" href="#store-rules-checked-2026-11-18">Store rules (checked 2026-11-18)</a></li>
 <li><a class="reference internal" href="#anthropic-terms-checked-2026-11-18">Anthropic terms (checked 2026-11-18)</a></li>
 <li><a class="reference internal" href="#billing-model">Billing model</a></li>
@@ -1395,11 +1517,12 @@ without the bridge and wasm);</p></li>
 <li><a class="reference internal" href="#interface-with-the-model-setup-picker-agent-ai-tiers">Interface with the model-setup picker (<code class="docutils literal notranslate"><span class="pre">agent/ai-tiers</span></code>)</a></li>
 <li><a class="reference internal" href="#privacy">Privacy</a></li>
 <li><a class="reference internal" href="#threat-model">Threat model</a></li>
+<li><a class="reference internal" href="#org-spend-limit">Org spend limit</a></li>
 <li><a class="reference internal" href="#observability">Observability</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#costs-and-margins">Costs and margins</a></li>
-<li><a class="reference internal" href="#staged-plan-small-prs">Staged plan (small PRs)</a></li>
+<li><a class="reference internal" href="#staged-plan-to-production">Staged plan to production</a></li>
 <li><a class="reference internal" href="#risks">Risks</a></li>
 <li><a class="reference internal" href="#decisions-for-the-owner">Decisions for the owner</a></li>
 <li><a class="reference internal" href="#what-is-in-this-pr">What is in this PR</a></li>
