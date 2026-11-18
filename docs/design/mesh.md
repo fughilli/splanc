@@ -1692,13 +1692,9 @@ swarm code, and Splanc's own framing.
 **Security and admission:**
 
 - **Q5.** (Answered 2026-11-17, superseded.) The admin key is now asymmetric: fixtures hold only its public half, so extracting a board no longer gives command authority (§7.9).
-- **Q6.** Open mode as designed: guests follow signed scenes and effects, live moves are
-  unsigned but bounded, guests can never manage. Is accepting unsigned live moves on guests
-  acceptable, or should guests only follow signed commits (coarser, but unforgeable)?
-- **Q7. Answered (2026-11-18):** `mesh_follow = open` is **always off by default**, including for
-  unprovisioned and home-built fixtures. After a user commissions a fixture for the first time, the
-  app prompts them to turn it on ("follow open Splanc shows nearby"), so the magic is one tap away
-  but always opt-in.
+- **Q6. Answered (2026-11-18):** guests accept unsigned live moves on open groups, bounded as in
+  §7.4 (the signed scene's effect only, within each uniform's manifest range, rate-limited); the
+  next signed commit restores the state. Members never act on open-key frames.
 
 **UWB and ranging (later tracks):**
 
