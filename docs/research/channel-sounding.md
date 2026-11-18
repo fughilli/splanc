@@ -37,6 +37,11 @@ Sounding conformance.
   synthetic delays of 0, 0.37 and 2.90 ns come back within **+9 ± 3 ps** (≈1.3 mm one-way,
   with a calibratable +9 ps bias). Group delay alone averages to ±0.08 ns (1.2 cm). Two HT40
   LOs stitch to an 80 MHz span that shows a 15 ns echo a single 40 MHz shot cannot.
+- **Round 3 (§13):** 0–12.5 ns injected delays (264 bursts) all resolve to the right carrier
+  cycle within **±1.6 ps of 2τ (±0.25 mm one-way)** with ~38 bursts per estimate. The slip rate
+  falls to 3.9 % at 30 bursts. The group-delay "bias" was noise. On-device FFT processing gives
+  ~4× the rate (3.6–3.7 exch/s wall). One-sided tones bring the stitched 80 MHz echo fit to
+  15.8 ns (truth 15).
 - **Not a player feature yet.** The engines need whole 128 KB SRAM blocks while they run,
   and the exchange takes the radio for ~1 ms with interrupts off (§9). This fits a bench
   image, a P4+C6 front end, or a dedicated ranging mode. It does not fit a heap-starved
@@ -406,6 +411,94 @@ before the stitched CIR is metrology-grade.
   while the capture lands elsewhere: every owner setting that maps the capture away also
   remaps the DAC read pointer (§6, e15/e16). That is the experiment to run next, because it
   would remove the per-exchange DAC-restart jitter that now limits the group delay.
+
+## 13. Round 3: reliable integer resolution, DAC jitter, on-device processing, stitching
+
+### 13.1 The group-delay bias that "grew with delay" was noise
+
+There is no systematic bias. A 0–12.5 ns campaign used 264 paired bursts over 5 LOs, about
+38 bursts per injected delay. The group-delay error per delay was:
+
+| d (ns)                          | 0     | 0.5   | 1.9   | 4.1   | 7.3   | 10.2  | 12.5  |
+| ------------------------------- | ----- | ----- | ----- | ----- | ----- | ----- | ----- |
+| gd err (ns)                     | −0.15 | −0.07 | +0.04 | +0.05 | +0.02 | −0.11 | −0.14 |
+| carrier-resolved err (ps of 2τ) | −0.6  | +0.7  | −1.6  | +0.4  | +1.4  | −1.2  | +0.6  |
+
+All errors are within ±1.5σ (σ ≈ 0.08–0.11 ns). Per-LO medians scatter ±0.2 ns, which
+matches the per-burst noise (0.4–0.6 ns). Round 2's −0.2 ns at 7.3 ns came from only 19 bursts.
+
+- **All 7 delays resolve to the right carrier cycle, within ±1.6 ps of 2τ (±0.25 mm
+  one-way).** The +9 ps offset of round 2 is gone. Bootstrap slip rate per estimate: 53 % at
+  3 bursts, 27 % at 10, 12 % at 20, 3.9 % at 30, and 0 of 7 at 32–40.
+- Integer fixing is limited only by the per-burst group-delay noise.
+
+![campaign](img/chsound/integer-resolution-campaign.png)
+
+### 13.2 DAC restart jitter: can it be avoided?
+
+**Keep the DAC running.** Started once per burst and never stopped, the DAC makes the
+captures useless: broadband, equal power on the A-bins, B-bins and off-grid. That holds
+whether the owner points the DAC at its own block or at the capture block. The DAC
+playback and the capture are one modem dump engine with one SRAM-owner register; they don't
+run at the same time. So a self-reference leakage capture of the device's own running DAC
+can't be taken during reception either. The interleaved-tone-set experiment (A on even bins,
+B on odd) confirms it: no clean components.
+
+**Detect the state.** The per-exchange group-delay scatter isn't visibly bimodal at the
+2τ level (two devices × two states smear it). There is no handle on the device to read the
+state.
+
+**What works.** In-burst pairing cancels everything common to the burst. The remaining
+per-exchange restart noise (~0.5 ns) is averaged over bursts, and the carrier phase is
+immune to it. The real fix needs a second engine or a timing reference that survives the
+DAC restart, for example a looped TX→RX path on the board, or reading the modem's
+DAC-clock phase if such a register exists. This is open.
+
+### 13.3 On-device processing
+
+Firmware v20 adds three commands:
+
+- `tones`: a 2048-point fixed-point FFT of one or two periods, CFO de-rotated, with quarter-wave
+  twiddles. The output is 1000 tone values. Validated against the host DFT: D within 0.06–0.3 ns,
+  phase within 1–2°.
+- `proc`: a reference divide, a multi-lag phase slope and a weighted-LS refinement on device.
+  Each exchange returns D, carrier phase and |H|.
+- `fftp`: sets the number of periods averaged.
+
+The FFT costs 2.3–3.3 M cycles (~15–20 ms at 160 MHz; soft-float-free but not optimised).
+The weighted LS with soft-float `atan2f` dominates `proc` (~60 M cycles for 4 captures).
+
+| Path                                          | Wall rate (incl. retries/uploads) | Burst wall time | gd per burst                          | Result                            |
+| --------------------------------------------- | --------------------------------- | --------------- | ------------------------------------- | --------------------------------- |
+| host DSP on raw captures (rounds 1–2)         | ~0.9 exch/s                       | ~4.5 s          | 0.4–0.6 ns                            | slip-free at ~38 bursts           |
+| `tones` (device FFT, host LS)                 | **3.7 exch/s**                    | 0.7–1 s         | 0.8–1.3 ns                            | 2/3 delays resolved               |
+| `proc` (all on device, both DUTs in parallel) | **3.6 exch/s**                    | 0.69 s          | worse; −7 % scale bias on long delays | not yet usable for integer fixing |
+
+So on-device processing gives about 4× the rate. The single fixed analysis window on the device
+gives about 2× worse group delay than the host's onset-aligned, Hann-weighted multi-period
+window, and the on-device LS has a scale bias still to find. Next steps, roughly in order:
+fixed-point CORDIC in place of soft-float atan2, the onset-aligned window on device, the
+whole burst's processing in one command (now 2 round trips), and longer bursts. These should
+reach the tens of exchanges per second the airtime allows (~1600 exch/s).
+
+### 13.4 Stitching with one-sided tones
+
+TX/RX IQ images of a symmetric comb land on the comb itself, and they biased the 2-LO fit
+(17.5 ns). With **one-sided tones** (0.04–19.5 MHz above each LO) at 4 HT40 LOs (2402,
+2422, 2442, 2462 MHz → 2402–2481.5 MHz), the images fall on empty bins. The stitched
+2-path fit now gives **Δ = 15.8 ns** (truth 15.0). Single 20 MHz segments give 15.0 to
+45 ns (degenerate), and two segments 59 ns. The echo amplitude comes out low: a = 0.17
+against 0.6. The injected two-path waveform has a higher crest factor and is
+peak-normalised, so the TX chain compresses the modulation depth. Spikes near each LO
+(DC/LO leakage) also remain. The delay is the robust parameter. Amplitude needs TX
+linearity calibration, or a lower injection level.
+
+![stitch1s](img/chsound/stitch-onesided-echo-fit.png)
+
+### 13.5 Preamble misses
+
+5–13 % per burst over 600 bursts (17/137, 18/137, 57/331), about 2–3 % per exchange, all retried.
+They cluster at LOs near the rig AP (2432–2442 MHz).
 
 ## 10. Reproduce
 

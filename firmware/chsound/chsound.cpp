@@ -719,6 +719,182 @@ static int b64v(char c) {
   return -1;
 }
 
+
+// ---- on-device processing (round 3) ----------------------------------------------------------------
+// A 2048-point fixed-point FFT of one waveform period from a capture slot, then (proc) the delay
+// and carrier phase of the known multitone, so a burst returns a few numbers per exchange instead of
+// 24 KB captures. Twiddles: a quarter-wave Q15 table built once. FFT data is block-scaled (>>1 per
+// stage) so int32 products of 16-bit data x Q15 never overflow.
+static int g_fft_periods = 2;  // periods averaged before the FFT (set by `fftp`)
+static int16_t g_qsin[513];  // sin(pi/2 * i/512), Q15
+static bool g_qsin_ok = false;
+static void qsin_init() {
+  if (g_qsin_ok) return;
+  for (int i = 0; i <= 512; i++) g_qsin[i] = (int16_t)lrint(sin(M_PI / 2 * i / 512.0) * 32767.0);
+  g_qsin_ok = true;
+}
+static inline int32_t isin2048(uint32_t i) {  // sin(2 pi i / 2048)
+  i &= 2047;
+  if (i < 512) return g_qsin[i];
+  if (i < 1024) return g_qsin[1024 - i];
+  if (i < 1536) return -g_qsin[i - 1024];
+  return -g_qsin[2048 - i];
+}
+static inline int32_t icos2048(uint32_t i) { return isin2048(i + 512); }
+
+// FFT of 2048 samples at w (dump words), de-rotated by cfo_hz. Result in re/im, block-scaled.
+// twc/tws: N/2-entry Q15 twiddles (filled by fft_twiddles()).
+static void fft_twiddles(int16_t *twc, int16_t *tws) {
+  qsin_init();
+  for (int j = 0; j < 1024; j++) { twc[j] = (int16_t)icos2048(j); tws[j] = (int16_t)isin2048(j); }
+}
+static void fft2048(const uint32_t *w, int32_t cfo_hz, int32_t *re, int32_t *im, const int16_t *twc,
+                    const int16_t *tws) {
+  const int N = 2048;
+  int64_t stp = -(int64_t)(((double)cfo_hz / 80e6) * 4294967296.0);
+  uint32_t ph = 0;
+  for (int n = 0; n < N; n++) re[n] = im[n] = 0;
+  // average g_fft_periods consecutive periods (each de-rotated on the continuous CFO phase)
+  for (int n = 0; n < N * g_fft_periods; n++) {
+    uint32_t v = w[n];
+    int32_t a = (int32_t)(v << 22) >> 22, b = (int32_t)(v << 12) >> 22;
+    int32_t xr = b, xi = a;
+    uint32_t idx = ph >> 21;
+    int32_t c = icos2048(idx), sn = isin2048(idx);
+    int32_t yr = (xr * c - xi * sn) >> 11, yi = (xr * sn + xi * c) >> 11;
+    uint32_t t = (uint32_t)(n & (N - 1)), r = 0;
+    for (int bit = 0; bit < 11; bit++) { r = (r << 1) | (t & 1); t >>= 1; }
+    re[r] += yr; im[r] += yi;
+    ph += (uint32_t)stp;
+  }
+  for (int len = 2; len <= N; len <<= 1) {
+    int half = len >> 1, step = N / len;
+    for (int j = 0; j < half; j++) {
+      int32_t c = twc[j * step], sn = tws[j * step];
+      for (int i = j; i < N; i += len) {
+        int32_t ur = re[i], ui = im[i], vr0 = re[i + half], vi0 = im[i + half];
+        int32_t vr = (vr0 * c + vi0 * sn) >> 15, vi = (vi0 * c - vr0 * sn) >> 15;
+        re[i] = (ur + vr) >> 1; im[i] = (ui + vi) >> 1;
+        re[i + half] = (ur - vr) >> 1; im[i + half] = (ui - vi) >> 1;
+      }
+    }
+  }
+}
+
+// tones <addr> <offset> <cfo_hz> <kmax>: bins -kmax..kmax (k != 0) as int32 pairs (debug/validation)
+static void tones_cmd(uint32_t addr, uint32_t off, int32_t cfo_hz, int kmax) {
+  const int N = 2048;
+  int32_t *re = (int32_t *)bank, *im = re + N, *out = im + N;
+  int16_t *twc = (int16_t *)(out + 2 * 1024), *tws = twc + 1024;
+  fft_twiddles(twc, tws);
+  uint32_t t0 = cyc();
+  fft2048((const uint32_t *)(uintptr_t)(addr + off * 4u), cfo_hz, re, im, twc, tws);
+  uint32_t t1 = cyc();
+  int m = 0;
+  for (int k = -kmax; k <= kmax; k++) {
+    if (k == 0) continue;
+    int b = (k + N) % N;
+    out[m++] = re[b];
+    out[m++] = im[b];
+  }
+  Serial.printf("TONES n=%d fft_cyc=%u\n", m / 2, (unsigned)(t1 - t0));
+  send_b64((const uint8_t *)out, m * 4);
+}
+
+// proc <cfo_hz> <offset> <kmax> <nslots> <slot0_addr> <slot_stride_bytes>: for each slot, FFT,
+// divide by the reference phases (Newman, uploaded by `nref`), then
+//   D   = -arg(sum_k H_{k+1} conj(H_k)) / (2 pi df)   (adjacent-tone phase slope, mod 1/df)
+//   ph0 = arg(sum_k H_k exp(+j 2 pi f_k D))             (carrier phase at f = 0)
+// Prints one PROC line: per slot D_ns, ph_deg, |H| (window-referenced; host adds the offset terms).
+static int16_t g_ref[2 * 1000];  // conj reference phasors (Q15 cos, sin) for k = -500..-1, 1..500
+static int g_ref_n = 0;
+static void proc_cmd(int32_t cfo_hz, uint32_t off, int kmax, int nslots, uint32_t a0, uint32_t stride) {
+  const int N = 2048;
+  int32_t *re = (int32_t *)bank, *im = re + N;
+  float *Hr = (float *)(im + N), *Hi = Hr + 1024;
+  int16_t *twc = (int16_t *)(Hi + 1024), *tws = twc + 1024;
+  fft_twiddles(twc, tws);
+  const double df = 80e6 / N;
+  Serial.printf("PROC n=%d", nslots);
+  uint32_t tt0 = cyc(), fft_tot = 0;
+  // tone list index m <-> k: m = 0..kmax-1 -> k = m - kmax ; m = kmax.. -> k = m - kmax + 1
+  int nt = 2 * kmax;
+  for (int sl = 0; sl < nslots; sl++) {
+    uint32_t tq = cyc();
+    fft2048((const uint32_t *)(uintptr_t)(a0 + sl * stride + off * 4u), cfo_hz, re, im, twc, tws);
+    fft_tot += cyc() - tq;
+    float pw = 0;
+    for (int m = 0; m < nt; m++) {
+      int k = m < kmax ? m - kmax : m - kmax + 1;
+      int b = (k + N) % N;
+      float xr = (float)re[b], xi = (float)im[b];
+      float cr = g_ref[2 * m] * (1.0f / 32767.0f), ci = g_ref[2 * m + 1] * (1.0f / 32767.0f);
+      Hr[m] = xr * cr - xi * ci; Hi[m] = xr * ci + xi * cr;
+      pw += Hr[m] * Hr[m] + Hi[m] * Hi[m];
+    }
+    // multi-lag phase slope: lag L tones apart (same side of k = 0), D refined stage by stage
+    static const int lags[] = {1, 8, 64, 256};
+    double D = 0;
+    for (int li = 0; li < 4; li++) {
+      int L = lags[li];
+      if (L >= kmax) break;
+      float ar = 0, ai = 0;
+      for (int m = 0; m + L < nt; m++) {
+        if (m < kmax && m + L >= kmax) continue;  // crosses the k = 0 gap
+        ar += Hr[m + L] * Hr[m] + Hi[m + L] * Hi[m];
+        ai += Hi[m + L] * Hr[m] - Hr[m + L] * Hi[m];
+      }
+      double phi = atan2((double)ai, (double)ar);          // = -2 pi L df D (mod 2 pi)
+      double pred = -2 * M_PI * L * df * D;
+      double dphi = phi - pred;
+      dphi -= 2 * M_PI * floor((dphi + M_PI) / (2 * M_PI));
+      D += -dphi / (2 * M_PI * L * df);
+    }
+    // weighted LS on per-tone residual phases (the host estimator): two passes, then the
+    // carrier phase at f = 0 with the delay removed
+    float sr = 0, si = 0;
+    for (int pass = 0; pass < 3; pass++) {
+      float th = (float)(2 * M_PI * df * D);
+      float wr = cosf(th), wi = sinf(th);
+      float rr = cosf(-th * kmax), ri = sinf(-th * kmax);
+      float cr0 = 0, ci0 = 0;
+      // reference phase (weighted mean) first, so residuals are centred near 0
+      float *Pr = Hr, *Pi = Hi;
+      sr = 0; si = 0;
+      for (int k = -kmax, m = 0; k <= kmax; k++) {
+        if (k != 0) {
+          sr += Pr[m] * rr - Pi[m] * ri;
+          si += Pr[m] * ri + Pi[m] * rr;
+          m++;
+        }
+        float nr = rr * wr - ri * wi, ni = rr * wi + ri * wr;
+        rr = nr; ri = ni;
+      }
+      if (pass == 2) break;
+      float c0 = atan2f(si, sr);
+      cr0 = cosf(-c0); ci0 = sinf(-c0);
+      double Sw = 0, Sf = 0, Sff = 0, Sp = 0, Sfp = 0;
+      rr = cosf(-th * kmax); ri = sinf(-th * kmax);
+      for (int k = -kmax, m = 0; k <= kmax; k++) {
+        if (k != 0) {
+          float ar = Pr[m] * rr - Pi[m] * ri, ai = Pr[m] * ri + Pi[m] * rr;   // H * e^{+j th k}
+          float br = ar * cr0 - ai * ci0, bi = ar * ci0 + ai * cr0;           // remove mean phase
+          float w = br * br + bi * bi;
+          float p = atan2f(bi, br);
+          float f = (float)k;
+          Sw += w; Sf += w * f; Sff += w * f * f; Sp += w * p; Sfp += w * f * p;
+          m++;
+        }
+        float nr = rr * wr - ri * wi, ni = rr * wi + ri * wr;
+        rr = nr; ri = ni;
+      }
+      double slope = (Sw * Sfp - Sf * Sp) / (Sw * Sff - Sf * Sf);  // rad per bin
+      D += -slope / (2 * M_PI * df);
+    }
+    Serial.printf(" %.4f,%.3f,%.1f", D * 1e9, atan2((double)si, (double)sr) * 180.0 / M_PI, sqrt((double)pw / nt));
+  }
+  Serial.printf(" cyc=%u fft=%u\n", (unsigned)(cyc() - tt0), (unsigned)fft_tot);
+}
 // ---- command parser ---------------------------------------------------------------------------
 static void cmd(char *line) {
   char *argv[48];
@@ -859,6 +1035,27 @@ static void cmd(char *line) {
       }
     }
     Serial.printf("WUP off=%u n=%u\n", (unsigned)off, (unsigned)nw);
+  } else if (!strcmp(c, "fftp")) {
+    g_fft_periods = I(1, 2) < 1 ? 1 : (I(1, 2) > 2 ? 2 : I(1, 2));
+    Serial.printf("FFTP %d\n", g_fft_periods);
+  } else if (!strcmp(c, "nref")) {  // nref <n> : Newman reference phases for n tones (k=-n/2..n/2, k!=0)
+    int n = I(1, 1000);
+    if (n > 1000) n = 1000;
+    for (int m = 0; m < n; m++) {
+      double ph = M_PI * (double)m * (double)m / n;
+      g_ref[2 * m] = (int16_t)lrint(cos(ph) * 32767.0);
+      g_ref[2 * m + 1] = (int16_t)lrint(-sin(ph) * 32767.0);  // conj
+    }
+    g_ref_n = n;
+    Serial.printf("NREF %d\n", n);
+  } else if (!strcmp(c, "proc")) {  // proc <cfo_hz> <off> <kmax> <nslots> <addr0> <stride>
+    if (R(SRAM_OWNER) & 0xf00u) bank_to_cpu();
+    proc_cmd(I(1, 0), U(2, 3072), I(3, 500), I(4, 1), U(5, BANK1_ADDR), U(6, 24576));
+  } else if (!strcmp(c, "tones")) {  // tones <addr> <offset> <cfo_hz> <kmax>
+    if (R(SRAM_OWNER) & 0xf00u) bank_to_cpu();
+    int km = I(4, 500);
+    if (km > 512) km = 512;
+    tones_cmd(U(1, BANK1_ADDR), U(2, 2048), I(3, 0), km);
   } else if (!strcmp(c, "mem")) {  // mem <addr> <nwords>  -> B64 (CPU must own the block)
     uint32_t a = U(1, BANK1_ADDR), n = U(2, 1024);
     if (n > 16384) n = 16384;

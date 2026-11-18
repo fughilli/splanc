@@ -223,3 +223,25 @@ def comb_onset(x: np.ndarray, P: int, win: int = 256) -> int:
     thr = lo + 0.5 * (hi - lo)
     idx = np.where(es > thr)[0]
     return int(idx[0]) if len(idx) else -1
+
+
+def device_tones_to_H(
+    Xdev: np.ndarray,
+    ks: np.ndarray,
+    S: np.ndarray,
+    delta: float,
+    fc: float,
+    off: int,
+    cfo_used: float,
+    N: int = 2048,
+    scale: float = 32767 / 64,
+):
+    """Convert the firmware's `tones` output (an unnormalised 2048-point FFT of one period at
+    sample `off`, de-rotated by cfo_used) into the same H the host path computes (complex tone
+    amplitude referenced to the capture start, divided by S)."""
+    fk = ks * FS / N
+    fprime = fk * (1 + delta) + delta * fc  # receiver-clock tone frequency incl. CFO
+    eps = (fprime - cfo_used - fk) * N / FS  # residual offset from the bin, in bins
+    A0 = Xdev / (N * scale) * np.exp(-2j * np.pi * fprime * off / FS) * np.exp(-1j * np.pi * eps)
+    A0 /= np.sinc(eps)
+    return A0 / S, fk * (1 + delta)
