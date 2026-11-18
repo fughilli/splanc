@@ -1262,6 +1262,32 @@ py_test(
     ],
 )
 
+# A slider drag in the fx workspace moves the fixture DURING the drag (live channel:
+# seq'd commit:false set_uniforms paced on ControlAck), on any reachable player, C6 or
+# P4 (--device-ws, repeatable). Drags a slider of the running effect, echoes the
+# device's live value, gates on it following within --max-lag-ms; restores the value.
+py_test(
+    name = "slider_drag",
+    timeout = "long",
+    srcs = [
+        "hitl_led_capture.py",
+        "hitl_live_latency.py",
+        "hitl_slider_drag.py",
+    ],
+    imports = ["."],
+    main = "hitl_slider_drag.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # #400 wide uniforms on a real netstack C6: plane_slice_pose.fx (mat4 pose +
 # signed vec4 plane); its identity default, set_uniforms (chunked + one 16-float
 # value) and OSC (/plane, /pose, /pose/12, /pose/0/1) all land; still rendering.

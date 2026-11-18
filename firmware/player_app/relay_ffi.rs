@@ -96,6 +96,24 @@ pub unsafe extern "C" fn lm_relay_device_name(frame: *const u8, len: usize, out:
     n as i32
 }
 
+/// Whether `frame` is a live move: a set_uniforms with a non-zero seq, `commit: false` and
+/// no apply time (what the player's live mailbox takes). The relay forwards those to the P4
+/// like everything else, and treats the ControlAck that comes back as best-effort (held,
+/// never blocked on: netstack_transport.cpp flush_held_ack).
+///
+/// # Safety
+/// `data` points to `len` readable bytes (or is null).
+#[no_mangle]
+pub unsafe extern "C" fn lm_is_live_move(data: *const u8, len: usize) -> bool {
+    if data.is_null() || len == 0 {
+        return false;
+    }
+    match client_arm(core::slice::from_raw_parts(data, len)) {
+        Some(CArm::SetUniforms(m)) => m.seq() != 0 && m.commit() == Some(false) && m.apply_at_ms().is_none(),
+        _ => false,
+    }
+}
+
 /// The arms the front end answers itself, whether or not the P4 is up: the Wi-Fi rejoin
 /// policy (the radio is this chip's). The reply into `out`: its length, or -1 when the
 /// frame is not one of them (-2: `out` too small).

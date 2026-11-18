@@ -526,29 +526,22 @@ archive_override(
 bazel_dep(name = "firmware", version = "0.0.0", repo_name = "embedded")
 archive_override(
     module_name = "firmware",
-    # embedded master @0ea4759 = fughilli/embedded#9: master @569102d (mbedtls 3.6.5 + IDF v5.5.4 from source, dynamic record buffer,
-    # //libs/tls:selfsigned) plus what Splanc used to carry as patches/embedded-*:
-    # ledmapper_gen_key (FUG-90), the esp32c6+c3-only libs FOD, the 6 KB TLS
-    # record buffer, private mbedtls SDK headers, the esp32c3 build target and
-    # its software-ECC mbedtls, the overridable esp32c6 sections.ld, esptool 5.6,
-    # and the esp32p4 build target.
-    integrity = "sha256-ftz0jHpIH1W4ZZk85F6RFHreLxvbCILcegvYWkaMDq0=",
+    # embedded master @16f7283 = fughilli/embedded#12 (squash of @7cfe35e, same tree): esp32p4
+    # sdkconfig overrides over the prebuilt SDK (//sdk), esp_psram rebuilt from IDF source,
+    # .ext_ram.bss in PSRAM (.bazelrc, firmware/p4/sdkconfig_overrides.h), and splanc's
+    # mbedtls-propagate-config patch upstreamed. Before: master @0ea4759 = fughilli/embedded#9
+    # (mbedtls 3.6.5 + IDF v5.5.4 from source, the esp32p4 and esp32c3 targets, esptool 5.6, ...).
+    integrity = "sha256-mlP1CX7a/eZdLRUIQvZeSZyy7lGAfL7KAFaAI4sDU4E=",
     patch_strip = 1,
     patches = [
-        # mbedtls-propagate-config (#468): mbedtls_src's MBEDTLS_CONFIG_FILE becomes a
-        # propagated define and :sdk_hdrs drops the prebuilt SDK's mbedtls include dirs,
-        # so every TU that includes <mbedtls/*.h> compiles against the headers AND config
-        # of the mbedtls the image links (the netstack transport saw a 344 B
-        # mbedtls_ssl_context vs the library's 552 B). Upstream it to embedded next.
-        "//patches:embedded-mbedtls-propagate-config.patch",
         # firmware-os: the cc toolchain adds no -O in any compilation mode, so the
         # from-source mbedtls and Arduino core (esp32c6 + esp32c3) compiled -O0. Build
         # them -Os, as IDF (CONFIG_COMPILER_OPTIMIZATION_SIZE) and Arduino's platform.txt
         # do: ~240 KB less flash in the C6 player. Splanc's own C/C++ is unchanged.
         "//patches:embedded-firmware-os.patch",
     ],
-    strip_prefix = "embedded-0ea4759ad7d70f4ce563b3f3c8ca0113ff2b887d",
-    urls = ["https://github.com/fughilli/embedded/archive/0ea4759ad7d70f4ce563b3f3c8ca0113ff2b887d.tar.gz"],
+    strip_prefix = "embedded-16f72836904ea0308f29921ba7d59845292b0430",
+    urls = ["https://github.com/fughilli/embedded/archive/16f72836904ea0308f29921ba7d59845292b0430.tar.gz"],
 )
 
 # ---------------------------------------------------------------------------

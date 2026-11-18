@@ -6,7 +6,7 @@ the library's MBEDTLS_CONFIG_FILE silently gets upstream's default config instea
 happened to the transport: it saw a 344 B mbedtls_ssl_context while the library's is
 552 B, so mbedtls_ssl_init overran g_ssl by 208 B into g_conf on every init / setup /
 session reset (#444, found by #440; root cause #468). mbedtls_src now propagates its
-config as a `define` to every consumer (patches/embedded-mbedtls-propagate-config.patch),
+config as a `define` to every consumer (embedded mbedtls_src, upstreamed from splanc #468 in fughilli/embedded#12),
 so the two agree by construction; this test proves it on the shipped ELF.
 
 For each image it reads, from the ELF itself (no DWARF needed, so it works on -c opt):

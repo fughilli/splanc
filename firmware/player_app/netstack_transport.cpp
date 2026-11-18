@@ -1384,7 +1384,7 @@ constexpr bool TLS_SERVER = true;
 // mbedTLS ABI: these are declared with the from-source mbedtls's own headers and config
 // (@embedded's mbedtls_src propagates MBEDTLS_CONFIG_FILE to every consumer, and the
 // prebuilt SDK's mbedtls headers are off the include path:
-// patches/embedded-mbedtls-propagate-config.patch). Before that this file silently got
+// embedded mbedtls_src, upstreamed from splanc #468 in fughilli/embedded#12). Before that this file silently got
 // upstream's default config: a 344 B mbedtls_ssl_context against the library's 552 B, so
 // every init / setup / session reset overran g_ssl by 208 B into the next global (#444,
 // found by #440; root cause #468). //firmware/player_app:tls_abi_test reads each type's
@@ -1457,6 +1457,12 @@ struct Session {
   // starves the WiFi driver's DMA RX-buffer allocation (esp_wifi_init fails, beacons=0).
   uint8_t ws_rx[6144];
   size_t ws_rxlen = 0;
+  // A best-effort live-control reply (a ControlAck) that found the send window full: held,
+  // newest first (the client paces on the latest seq), and sent as soon as the window has
+  // room, ahead of any later reply (flush_held_ack).
+  static constexpr size_t kAckHoldMax = 32;
+  uint8_t ack_held[kWsSendHeadroom + kAckHoldMax];
+  size_t ack_held_len = 0;
 };
 Session g_sess[kSessions];
 // The session being served: its TCP slot is the one selected (sess_select).
@@ -1530,6 +1536,7 @@ static void session_clear() {
   tls_session_reset();
   g_s->tls_hs = false;
   g_s->ws_up = false;
+  g_s->ack_held_len = 0;
   g_s->responding = false;
   g_s->ws_rxlen = 0;
 }
@@ -1759,9 +1766,24 @@ static bool ws_send(uint8_t opcode, uint8_t *payload, size_t len, size_t headroo
   return len ? tls_write_all(payload, len) : true;
 }
 
+// The served session's held ControlAck (Session::ack_held), out once the window has room
+// (or now, `even_if_full`, ahead of a later reply). Dropping it instead stalled a slider
+// drag on a C6: the client waits out its ack timeout for every lost ack, 20-50% of batches
+// mid-drag (//pi/hitl/harness:slider_drag, 2026-11-18). The window is typically still
+// holding the previous reply then: nothing flows back to piggyback the peer's TCP ACK on
+// while it waits for this ack, so its delayed ACK holds the window.
+static bool flush_held_ack(bool even_if_full) {
+  if (g_s->ack_held_len == 0) return true;
+  if (!even_if_full && ns_tcp_tx_room() < g_s->ack_held_len + kWsSendHeadroom + 96) return true;
+  const size_t n = g_s->ack_held_len;
+  g_s->ack_held_len = 0;
+  return ws_send(WS_OP_BINARY, g_s->ack_held + kWsSendHeadroom, n, kWsSendHeadroom);
+}
+
 // Drive the WS layer once: pull TLS bytes, complete the upgrade, then dispatch any
 // complete frames. Returns false if the connection should be torn down.
 static bool ws_pump() {
+  if (g_s->ws_up && !flush_held_ack(false)) return false;
   // Drain EVERY TLS record available this call, not one. mbedtls_ssl_read returns one record's
   // plaintext; a single WS frame (e.g. a set_texture) is ~one record, so reading one per loop()
   // capped inbound throughput at one frame per cooperative render round-robin — well under what
@@ -1867,16 +1889,23 @@ static bool ws_pump() {
         //
         // Except a best-effort live-control reply (a ControlAck, or a legacy set_uniforms'
         // playback_state no client awaits): when the send window can't take it right now,
-        // DROP it, like an unsolicited PerfReport. Blocking in tls_write_all would leave
-        // every frame behind it unread for up to seconds — exactly the input backlog a
-        // knob stream builds (docs/design/live-control.md). A seq'd client whose ack is
-        // dropped times out and sends its next update anyway.
+        // don't block on it. Blocking in tls_write_all would leave every frame behind it
+        // unread for up to seconds — exactly the input backlog a knob stream builds
+        // (docs/design/live-control.md). A ControlAck is HELD (flush_held_ack: sent once
+        // there is room, the newest replacing an older one); a bigger droppable reply is
+        // dropped, like an unsolicited PerfReport.
         int outcome = tn > 0 && reply ? 1 : 0;
         if (tn > 0 && reply && lm_ws_reply_droppable() &&
-            ns_tcp_tx_room() < (size_t)tn + kWsSendHeadroom + 96) {
+            (g_s->ack_held_len > 0 || ns_tcp_tx_room() < (size_t)tn + kWsSendHeadroom + 96)) {
+          if ((size_t)tn <= Session::kAckHoldMax) {
+            memcpy(g_s->ack_held + kWsSendHeadroom, reply, (size_t)tn);
+            g_s->ack_held_len = (size_t)tn;
+          }
           tn = 0;
           outcome = 2;
         }
+        // Anything else goes out after a held ack, in order.
+        if (tn > 0 && reply && !flush_held_ack(true)) return false;
         if (tn > 0 && reply &&
             !ws_send(WS_OP_BINARY, const_cast<uint8_t *>(reply), (size_t)tn, kWsSendHeadroom))
           return false;
