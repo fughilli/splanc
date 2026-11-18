@@ -65,7 +65,7 @@ Named tasks:
     tf-archive       `xcodebuild archive` — App-Store-signed (manual signing with
                      the supplied profile; automatic signing fallback)
     tf-export        `xcodebuild -exportArchive` → build/export/*.ipa
-    tf-upload        `xcrun altool --upload-app` → App Store Connect / TestFlight
+    tf-upload        `xcrun altool --upload-package` (explicit Apple ID) → App Store Connect / TestFlight
 
 The device-* tasks go through devicectl (CoreDevice), so they reach a device
 over USB *or* Wi-Fi — unlike ios-run (`cap run`/native-run), which only sees
@@ -502,12 +502,27 @@ _TF_EXPORT_SH = (
 
 # Upload the exported .ipa to App Store Connect / TestFlight. altool finds the
 # AuthKey_<KeyID>.p8 in ~/.private_keys (written by signing-prep).
+#
+# `--upload-app` asks App Store Connect to look up the app's Apple ID from the
+# bundle id, and that lookup failed for every app-v* tag ("Cannot determine the
+# Apple ID from Bundle ID 'dev.splanc.app'") even though the app record exists.
+# So name the app explicitly: `--upload-package` with its Apple ID (the number in
+# the App Store Connect URL, apps/<id>/...; not secret) and the bundle's versions.
+APPLE_APP_ID_DEFAULT = "6803339540"
 _TF_UPLOAD_SH = (
     "set -e; "
     'ipa="$(ls "$PWD"/build/export/*.ipa 2>/dev/null | head -1)"; '
     '[ -n "$ipa" ] || { echo "[tf-upload] no .ipa in build/export (run tf-export first)" >&2; exit 1; }; '
-    'echo "[tf-upload] uploading $ipa"; '
-    'xcrun altool --upload-app -f "$ipa" -t ios '
+    'tmp="$(mktemp -d)"; '
+    'unzip -q -o "$ipa" "Payload/*.app/Info.plist" -d "$tmp"; '
+    'plist="$(ls "$tmp"/Payload/*.app/Info.plist | head -1)"; '
+    'bid="$(/usr/libexec/PlistBuddy -c \'Print :CFBundleIdentifier\' "$plist")"; '
+    'bver="$(/usr/libexec/PlistBuddy -c \'Print :CFBundleVersion\' "$plist")"; '
+    'bshort="$(/usr/libexec/PlistBuddy -c \'Print :CFBundleShortVersionString\' "$plist")"; '
+    f'appid="${{APPLE_APP_ID:-{APPLE_APP_ID_DEFAULT}}}"; '
+    'echo "[tf-upload] uploading $ipa ($bid $bshort ($bver), Apple ID $appid)"; '
+    'xcrun altool --upload-package "$ipa" -t ios --apple-id "$appid" '
+    '--bundle-id "$bid" --bundle-version "$bver" --bundle-short-version-string "$bshort" '
     '--apiKey "$APP_STORE_CONNECT_KEY_ID" --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"; '
     'echo "[tf-upload] uploaded — App Store Connect will process the build '
     '(a few minutes) before it shows in TestFlight"'
@@ -640,7 +655,7 @@ def _tasks() -> dict:
             "argv": ["bash", "-c", _TF_UPLOAD_SH],
             "cwd": "web/ios/App",
             "needs_ios": True,
-            "desc": "xcrun altool --upload-app — push the .ipa to App Store Connect / TestFlight",
+            "desc": "xcrun altool --upload-package — push the .ipa to App Store Connect / TestFlight",
         },
         "list-devices": {
             "argv": ["xcrun", "xctrace", "list", "devices"],
