@@ -462,3 +462,60 @@ test("a package signed for another board is refused before anything is sent", as
   });
   assert.equal(c6.handoffs, 0);
 });
+
+/** A device that takes chunks pipelined (LedMapperClient: replies matched in order). Each
+ * chunk is answered after a tick, one at a time in arrival order; `loseAt` drops the
+ * chunk at that offset once (it never lands, so the ones behind it are out of order). */
+class PipelinedDevice extends FakeDevice {
+  readonly otaPipelined = true;
+  inFlight = 0;
+  maxInFlight = 0;
+  loseAt = -1;
+  private queue: Promise<unknown> = Promise.resolve();
+
+  static make(): PipelinedDevice {
+    const d = new PipelinedDevice();
+    d.inApp = true;
+    d.welcome = d.makeWelcome();
+    return d;
+  }
+
+  override async otaChunk(offset: number, data: Uint8Array): Promise<OtaStatusFlat> {
+    this.inFlight++;
+    this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
+    const run = this.queue.then(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+      if (offset === this.loseAt) {
+        this.loseAt = -1;
+        return this.status("STATE_RECEIVING"); // as if it never arrived: next stays put
+      }
+      return super.otaChunk(offset, data);
+    });
+    this.queue = run.catch(() => undefined);
+    try {
+      return await run;
+    } finally {
+      this.inFlight--;
+    }
+  }
+}
+
+test("a pipelining device gets several chunks in flight and the image lands intact", async () => {
+  const dev = PipelinedDevice.make();
+  const image = new Uint8Array(150_000).map((_, i) => (i * 7) & 255);
+  image[0] = 0xe9;
+  const r = await updateFirmware(dev, pkg(image, 1_014_000, true, 16), { ...fast, window: 4 });
+  assert.equal(r.outcome, "ok");
+  assert.equal(dev.maxInFlight, 4);
+  assert.deepEqual(dev.slot.subarray(0, image.length), image);
+});
+
+test("a chunk lost mid-pipeline drains the rest and resumes from the device's offset", async () => {
+  const dev = PipelinedDevice.make();
+  const image = new Uint8Array(150_000).map((_, i) => (i * 11) & 255);
+  image[0] = 0xe9;
+  dev.loseAt = 8 * 4096;
+  const r = await updateFirmware(dev, pkg(image, 1_014_000, true, 16), { ...fast, window: 4 });
+  assert.equal(r.outcome, "ok");
+  assert.deepEqual(dev.slot.subarray(0, image.length), image);
+});
