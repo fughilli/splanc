@@ -1917,11 +1917,28 @@ export class DeviceSession {
     return st.board;
   }
 
+  /** True while updateFirmware runs: the player restarts on purpose, and the hub leaves
+   * the session (and its client, which the update's driver is waiting on) alone. */
+  updating = false;
+
   async updateFirmware(
     pkg: Uint8Array,
     opts: { allowDowngrade?: boolean; keyEpoch?: Uint8Array; sourceUrl?: string } = {},
   ): Promise<Record<string, unknown>> {
     const name = this.client.welcome?.deviceName || this.opts.url;
+    this.updating = true;
+    try {
+      return await this.updateFirmwareInner(pkg, opts, name);
+    } finally {
+      this.updating = false;
+    }
+  }
+
+  private async updateFirmwareInner(
+    pkg: Uint8Array,
+    opts: { allowDowngrade?: boolean; keyEpoch?: Uint8Array; sourceUrl?: string },
+    name: string,
+  ): Promise<Record<string, unknown>> {
     const from = this.fwVersion;
     let lastPhase: OtaPhase | null = null;
     let lastPct = -1;

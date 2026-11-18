@@ -214,7 +214,27 @@ describe("a player that moves to a new IP", () => {
     }
   });
 
-  test("a deploy right after the move, before the heartbeat noticed: the call re-finds it by id", async () => {
+  test("a session updating firmware keeps its client through a restart longer than the grace", async () => {
+    const cfg = emptyConfig();
+    const lamp = await fake("PixieLamp", LAMP);
+    cleanup.push(lamp);
+    const hub = hubOn([lamp.host], cfg);
+    const c = await mcp(hub);
+    try {
+      assert.equal((await call(c, "set_brightness", { level: 0.5 })).isError, false);
+      const sessions = (hub as unknown as { sessions: Map<string, { updating: boolean; client: { isConnected: boolean } }> }).sessions;
+      const s = [...sessions.values()][0]!;
+      s.updating = true;
+      await lamp.stop(); // the player restarts: its socket closes
+      await new Promise((r) => setTimeout(r, 900)); // 3x the test hub's 300 ms grace
+      assert.ok([...sessions.values()].includes(s), "the updating session was dropped (its client closed under the update)");
+      s.updating = false;
+    } finally {
+      hub.close();
+    }
+  });
+
+    test("a deploy right after the move, before the heartbeat noticed: the call re-finds it by id", async () => {
     const cfg = emptyConfig();
     const lamp = await fake("PixieLamp", LAMP);
     cleanup.push(lamp);
@@ -393,7 +413,21 @@ describe("liveness", () => {
     }
   });
 
-  test("traffic counts as life even when a pong is late", async () => {
+  test("paused (a firmware update restarting the player): silence is no death", async () => {
+    let paused = true;
+    const live = new Liveness(
+      async (t) => new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), t)),
+      () => assert.fail("declared dead while paused"),
+      { idleMs: 30, busyMs: 30, pingTimeoutMs: 20, misses: 1, paused: () => paused },
+    );
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(live.dead, null);
+    paused = false; // the silence counts from here, not from before the pause
+    assert.ok(live.silentMs < 60, `silent ${live.silentMs} ms`);
+    live.stop();
+  });
+
+    test("traffic counts as life even when a pong is late", async () => {
     let live!: Liveness;
     live = new Liveness(
       async (t) => {
