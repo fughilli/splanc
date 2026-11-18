@@ -25,7 +25,8 @@
 //! - [`tree`]: the two-tier distribution tree (UWB gateway → relays, 802.11 relays →
 //!   fixtures), an ETX DODAG built cooperatively (§5.8).
 //! - [`tesla`]: broadcast authentication for live updates in large meshes (TESLA, delayed
-//!   key disclosure, bootstrapped by challenge-response; §7.9, Q19).
+//!   key disclosure, bootstrapped by challenge-response; §7.9, Q19); [`forensics`]: containing
+//!   an insider that floods forged live moves (local blocks, gateway quorum; Q25).
 //! - [`stack`]: one device's mesh, all of the above around a [`Node`], with capacity classes
 //!   and the custodian store hook.
 //!
@@ -56,6 +57,7 @@ pub mod replay;
 pub mod security;
 pub mod stack;
 pub mod timesync;
+pub mod forensics;
 pub mod tesla;
 pub mod tree;
 

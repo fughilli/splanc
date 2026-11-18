@@ -85,6 +85,9 @@ probe!(MESH_RAM_selector, splanc_mesh::tree::Selector);
 // The broadcast authenticator (Q19): a gateway's chain, a member's verifier.
 probe!(MESH_RAM_tesla_signer, splanc_mesh::tesla::Signer);
 probe!(MESH_RAM_tesla_verifier, splanc_mesh::tesla::Verifier);
+// Q25: a fixture's per-neighbour guard, and the gateway's forgery forensics.
+probe!(MESH_RAM_link_guard, splanc_mesh::forensics::LinkGuard);
+probe!(MESH_RAM_forensics, splanc_mesh::forensics::Forensics);
 // Open mode (feature `open_mode`, M7b): what it will add.
 #[cfg(feature = "open_mode")]
 probe!(MESH_RAM_open_guest_table, splanc_mesh::guest::GuestTable<{ splanc_mesh::guest::GUESTS }>);
