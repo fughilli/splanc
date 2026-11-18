@@ -31,6 +31,7 @@ import { ms, setProgressSink } from "./progress";
 import { RelayHost } from "./relayHost";
 import { localLibrary } from "./libraryLocal";
 import { createServer, VERSION } from "./server";
+import { runFeedback } from "./feedbackCli";
 import { runStage } from "./stage/server";
 import { readBundleInfo } from "./toolchain";
 
@@ -311,8 +312,15 @@ async function runRelay(p: Parsed): Promise<void> {
     trustProxy: flag(p, "trust-proxy") === "true",
     ...(publicUrl ? { publicUrl } : {}),
     // Direct bug filing (docs/design/agent-bug-reports.md): off unless set.
-    ...(process.env["GITHUB_ISSUES_TOKEN"]
-      ? { bugs: { GITHUB_ISSUES_TOKEN: process.env["GITHUB_ISSUES_TOKEN"], ...(process.env["GITHUB_ISSUES_REPO"] ? { GITHUB_ISSUES_REPO: process.env["GITHUB_ISSUES_REPO"] } : {}) } }
+    // Agent feedback's private store (docs/design/agent-feedback.md): off unless set.
+    ...(process.env["GITHUB_ISSUES_TOKEN"] || process.env["FEEDBACK_ADMIN_TOKEN"]
+      ? {
+          bugs: {
+            ...(process.env["GITHUB_ISSUES_TOKEN"] ? { GITHUB_ISSUES_TOKEN: process.env["GITHUB_ISSUES_TOKEN"] } : {}),
+            ...(process.env["GITHUB_ISSUES_REPO"] ? { GITHUB_ISSUES_REPO: process.env["GITHUB_ISSUES_REPO"] } : {}),
+            ...(process.env["FEEDBACK_ADMIN_TOKEN"] ? { FEEDBACK_ADMIN_TOKEN: process.env["FEEDBACK_ADMIN_TOKEN"] } : {}),
+          },
+        }
       : {}),
     log,
   });
@@ -334,6 +342,11 @@ async function main(): Promise<void> {
   if (p.positional[0] === "bridge") return runBridge(p, root);
   if (p.positional[0] === "relay") return runRelay(p);
   if (p.positional[0] === "stage") return runStageCmd(p, root);
+  if (p.positional[0] === "feedback") {
+    setFxHostRoot(root);
+    process.exitCode = await runFeedback(p, () => makeHub(p, root));
+    return;
+  }
   if (p.positional[0] === "bridge-ctl") {
     process.exitCode = await bridgeCtl(p);
     return;

@@ -15,6 +15,9 @@
  *   /bugs                        an agent files a bug on the Splanc repo with the
  *                                Worker's GITHUB_ISSUES_TOKEN secret (bugs.ts;
  *                                docs/design/agent-bug-reports.md)
+ *   /feedback, /feedback/status  agent-feedback reports: a private store the
+ *                                owner's FEEDBACK_ADMIN_TOKEN reads (feedback.ts;
+ *                                docs/design/agent-feedback.md)
  *
  * The Worker itself is a thin router (the free plan gives it 10 ms CPU per
  * request); signatures, tokens and the tunnel live in the Durable Objects.
@@ -22,6 +25,7 @@
 
 import { BridgeObject, liveToken, parseToken, rpcError, wwwAuthenticate } from "./bridgeObject";
 import { bugsEndpoint } from "./bugs";
+import { RECEIPT_HEADER, feedbackEndpoint } from "./feedback";
 import { BRIDGE_ID_RE, ed25519Verify, normalizePairingCode, randomBridgeId } from "./crypto";
 import { Directory } from "./directory";
 import { SCOPES_SUPPORTED, checkClientSecret, dir, redirectAllowed, register, resolveClient, type OAuthClient } from "./oauth";
@@ -35,7 +39,7 @@ const CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
   "access-control-allow-headers":
-    `authorization, content-type, accept, mcp-session-id, mcp-protocol-version, mcp-method, mcp-name, last-event-id, ${BUG_AUTH_HEADER}`,
+    `authorization, content-type, accept, mcp-session-id, mcp-protocol-version, mcp-method, mcp-name, last-event-id, ${BUG_AUTH_HEADER}, ${RECEIPT_HEADER}`,
   "access-control-expose-headers": "mcp-session-id, mcp-protocol-version, www-authenticate",
   "access-control-max-age": "86400",
 };
@@ -45,6 +49,18 @@ const json = (obj: unknown, status = 200, extra: Record<string, string> = {}) =>
     status,
     headers: { "content-type": "application/json", "cache-control": "no-store", ...CORS, ...extra },
   });
+
+/** Who is calling POST /bugs or /feedback (bugs.ts caller): a bridge's DO checks its credential. */
+function bugsContext(req: Request, env: Env, origin: string) {
+  return {
+    json,
+    clientIp: clientIp(req),
+    verify: async (bid: string, headers: Headers) => {
+      const r = await toBridge(env, bid, origin, "/bugs/verify", { method: "POST", headers });
+      return r.ok && ((await r.json()) as { ok?: boolean }).ok === true;
+    },
+  };
+}
 
 export function originOf(req: Request, env: Env): string {
   return (env.PUBLIC_URL ?? new URL(req.url).origin).replace(/\/+$/, "");
@@ -101,14 +117,10 @@ export default {
         case "/live":
           return live(req, env, origin);
         case "/bugs":
-          return bugsEndpoint(req, env, {
-            json,
-            clientIp: clientIp(req),
-            verify: async (bid, headers) => {
-              const r = await toBridge(env, bid, origin, "/bugs/verify", { method: "POST", headers });
-              return r.ok && ((await r.json()) as { ok?: boolean }).ok === true;
-            },
-          });
+          return bugsEndpoint(req, env, bugsContext(req, env, origin));
+        case "/feedback":
+        case "/feedback/status":
+          return feedbackEndpoint(req, env, bugsContext(req, env, origin), path);
         case "/.well-known/oauth-protected-resource":
         case "/.well-known/oauth-protected-resource/mcp":
           return json(

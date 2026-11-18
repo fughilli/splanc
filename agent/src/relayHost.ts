@@ -175,7 +175,7 @@ export interface RelayHostOptions {
   trustProxy?: boolean;
   /** Direct bug filing (POST /bugs): the Worker secret + overrides
    * (`splanc-agent relay` reads GITHUB_ISSUES_TOKEN from its environment). */
-  bugs?: Pick<Env, "GITHUB_ISSUES_TOKEN" | "GITHUB_ISSUES_REPO" | "GITHUB_API_URL">;
+  bugs?: Pick<Env, "GITHUB_ISSUES_TOKEN" | "GITHUB_ISSUES_REPO" | "GITHUB_API_URL" | "FEEDBACK_ADMIN_TOKEN" | "FEEDBACK_RETENTION_DAYS">;
   /** Clock override (tests). */
   now?: () => number;
   log?: (...a: unknown[]) => void;

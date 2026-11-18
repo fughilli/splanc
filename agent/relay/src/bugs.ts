@@ -85,7 +85,7 @@ export function parseBugRequest(text: string): { ok: true; issue: PreparedIssue 
 }
 
 /** Who sent this request: a verified bridge, an anonymous IP, or a refusal. */
-async function caller(req: Request, ctx: BugsContext, bodyHash: string): Promise<BugCaller | Response> {
+export async function caller(req: Request, ctx: BugsContext, bodyHash: string): Promise<BugCaller | Response> {
   const h = req.headers.get("authorization") ?? "";
   const sig = req.headers.get(BUG_AUTH_HEADER);
   const deny = (why: string) => ctx.json({ error: "invalid_credentials", message: why }, 401);

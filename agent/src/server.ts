@@ -159,6 +159,46 @@ function withAnnotations(server: McpServer): void {
   };
 }
 
+/**
+ * Keep the last tool calls of this session (name, arguments, result, timing) for
+ * file_bug's private agent-feedback report (docs/design/agent-feedback.md).
+ * Bounded; arguments and results are scrubbed when a report is built.
+ */
+export class ToolJournal {
+  readonly calls: JournalEntry[] = [];
+  private readonly t0 = performance.now();
+  constructor(private readonly max = 40) {}
+  add(e: Omit<JournalEntry, "atMs">, startedAt: number): void {
+    this.calls.push({ ...e, atMs: Math.round(startedAt - this.t0) });
+    while (this.calls.length > this.max) this.calls.shift();
+  }
+}
+
+export interface JournalEntry {
+  name: string;
+  input: unknown;
+  result: string;
+  isError: boolean;
+  atMs: number;
+  durationMs: number;
+}
+
+function withJournal(server: McpServer, journal: ToolJournal): void {
+  type Fn = (...a: unknown[]) => unknown;
+  const s = server as unknown as { registerTool: Fn };
+  const orig = s.registerTool.bind(server) as Fn;
+  s.registerTool = (name: unknown, config: unknown, cb: unknown) =>
+    orig(name, config, async (...args: unknown[]) => {
+      const t = performance.now();
+      const r = (await (cb as Fn)(...args)) as { isError?: boolean; content?: { type: string; text?: string }[] };
+      if (name !== "file_bug") {
+        const text = (r?.content ?? []).map((c) => (c.type === "text" ? (c.text ?? "") : `[${c.type}]`)).join("\n");
+        journal.add({ name: String(name), input: args.length > 1 ? args[0] : {}, result: text.slice(0, 4000), isError: r?.isError === true, durationMs: Math.round(performance.now() - t) }, t);
+      }
+      return r;
+    });
+}
+
 export interface ServerOptions {
   root?: string;
   echo?: ProgressSink;
@@ -189,8 +229,13 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
   );
   withCallProgress(server, opts.echo);
   withAnnotations(server);
+  const journal = new ToolJournal();
+  withJournal(server, journal);
   if (library) registerLibraryTools(server, library);
-  registerFileBug(server, hub, opts.root ?? "", opts.bugs ?? localBugOptions());
+  registerFileBug(server, hub, opts.root ?? "", opts.bugs ?? localBugOptions(), {
+    journal,
+    client: () => server.server.getClientVersion()?.name ?? null,
+  });
   const json = (uri: URL, obj: unknown) => ({
     contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(obj, null, 2) }],
   });

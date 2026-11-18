@@ -116,6 +116,9 @@ import { renderSettings } from "../../store/appearance";
 import { appState } from "../app/state";
 import { Button, IconButton, confirmDialog, icon, toast, type IconName } from "../kit";
 import { aiSummary, appFileBugHook, confirmFilingText } from "../../bugs/appBugReport";
+import { TurnHistory, TurnRecorder } from "../../feedback/agentTrace";
+import type { FeedbackScreenContext } from "../../feedback/appFeedback";
+import { openAgentFeedbackSheet, reportButton } from "./agentFeedbackSheet";
 import { mountEffectsTour } from "../guide/effectsTour";
 import { captureDemoPreview, makeDemoProvider } from "../../effects/ai/providers/demo";
 import { FxLayout } from "../../effects/editor/layout";
@@ -225,6 +228,27 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
   // transcript after every turn so a failed agent run can be pulled off-device.
   const chatLogSessionId = newChatLogSessionId();
   let chatTurns = 0;
+  // Agent feedback (docs/design/agent-feedback.md): the last few turns' traces,
+  // in memory only, so a thumbs-down can report exactly what the AI did.
+  const turnHistory = new TurnHistory();
+  const feedbackCtx: FeedbackScreenContext = {
+    surface: "web-editor",
+    history: turnHistory,
+    conversation: () => transcript,
+    client: () => appState.client,
+  };
+  /** Put "Report" under an AI reply for recorded turn `turn`. */
+  function attachReport(row: HTMLElement, turn: number): void {
+    const b = reportButton(() => {
+      void openAgentFeedbackSheet(feedbackCtx, turn).then((done) => {
+        if (!done) return;
+        b.classList.add("afb-report--done");
+        b.disabled = true;
+        b.lastElementChild!.textContent = done === "sent" ? "Reported" : "Report saved, sending later";
+      });
+    });
+    row.appendChild(b);
+  }
   let unregisterChatDriver: (() => void) | null = null;
   let raf = 0;
   let disposed = false;
@@ -741,6 +765,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     if (chatBusy) return;
     chatHistory.length = 0;
     transcript.length = 0;
+    turnHistory.clear();
     clearChatStatus();
     chatLog.replaceChildren(chatHint); // restore the first-run hint
     clearChat(effectId);
@@ -1787,6 +1812,9 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     let turnError: string | undefined;
     let turnEnd: AgentTurnEnd = "complete";
     let scripted = false;
+    const recorder = new TurnRecorder({ turn: chatTurns, ask: opts.label ?? ask, sourceBefore: codeEl.value });
+    let replyRow: HTMLElement | null = null;
+    let replyText = "";
     setChatStatus("Thinking…");
 
     // Per-device builtin cost listing (from the user's calibrated board if any,
@@ -1876,7 +1904,11 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
           return applyLiveUniforms(call);
         },
         onToolUse: () => undefined,
-        onTrace: onChatTrace,
+        onPrompt: (info) => recorder.onPrompt(info),
+        onTrace: (ev) => {
+          recorder.onTrace(ev);
+          onChatTrace(ev);
+        },
         },
         deviceCosts,
         undefined,
@@ -1887,16 +1919,23 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
       // An exhausted round cap is NOT a finished answer (#451): say what is
       // unresolved instead of recycling interim narration as the reply.
       if (result.outcome === "exhausted") {
-        appendChat("assistant", describeExhaustedTurn(result)).classList.add("fxedit-msg--warn");
+        replyText = describeExhaustedTurn(result);
+        replyRow = appendChat("assistant", replyText);
+        replyRow.classList.add("fxedit-msg--warn");
       } else {
-        appendChat("assistant", result.text || "(done)");
+        replyText = result.text || "(done)";
+        replyRow = appendChat("assistant", replyText);
       }
     } catch (e) {
       clearChatStatus();
       turnError = msg(e);
       turnEnd = "error";
-      appendChat("assistant", `AI error: ${turnError}`);
+      replyText = `AI error: ${turnError}`;
+      replyRow = appendChat("assistant", replyText);
     } finally {
+      const trace = recorder.finish({ reply: replyText, outcome: turnEnd, error: turnError, sourceAfter: codeEl.value });
+      turnHistory.push(trace);
+      if (replyRow && !screenOpts.demo) attachReport(replyRow, trace.turn);
       chatBusy = false;
       chatSend.disabled = false;
       chatLog.scrollTop = chatLog.scrollHeight;

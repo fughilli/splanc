@@ -407,6 +407,10 @@ export interface ChatHooks {
    * so the editor can show a collapsible live transcript of what the (possibly
    * slow, local) model is actually doing before it replies. */
   onTrace?: (ev: ChatTraceEvent) => void;
+  /** The turn's assembled system prompt, the tools offered and the provider id,
+   * once per turn before the first request (agent feedback records its hash:
+   * web/src/feedback/agentTrace.ts). */
+  onPrompt?: (info: { system: string; tools: string[]; provider: string }) => void;
   signal?: AbortSignal;
 }
 
@@ -628,6 +632,11 @@ export async function runChatTurn(
     bugs,
     liveUniforms,
   }), turnOpts.summaryDescription);
+  try {
+    hooks.onPrompt?.({ system, tools: tools.map((t) => t.name), provider: provider.id });
+  } catch {
+    /* an observer never breaks a turn */
+  }
   for (let round = 0; round < MAX_ROUNDS; round++) {
     rounds = round + 1;
     hooks.onThinking?.(round + 1);
