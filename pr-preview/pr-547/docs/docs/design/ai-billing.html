@@ -448,6 +448,18 @@ pins the bytes).</p></li>
 <td><p>Anthropic usage tier</p></td>
 <td><p><strong>Launch on the current tier</strong>, raise it when needed. Monitoring and alerting for approaching the org spend limit, and a graceful “Splanc AI credits are busy right now. Try again later.” when it is hit (<a class="reference internal" href="#org-spend-limit">Org spend limit</a>).</p></td>
 </tr>
+<tr class="row-even"><td><p>13</p></td>
+<td><p>Org monthly spend limit</p></td>
+<td><p><strong>US$1,000</strong> (in the pricing config, not a secret): alert at <strong>US$800</strong> (80 %), graceful stop at <strong>US$980</strong> (98 %).</p></td>
+</tr>
+<tr class="row-odd"><td><p>14</p></td>
+<td><p>Where alerts go</p></td>
+<td><p><strong>Grafana Cloud alerting</strong> (as for the HITL rigs): the relay pushes billing events to Grafana Cloud Logs, and the alert rules are code (<a class="reference internal" href="#observability-and-alerts">Observability and alerts</a>).</p></td>
+</tr>
+<tr class="row-even"><td><p>15</p></td>
+<td><p>Apple refund consumption requests</p></td>
+<td><p><strong>Yes, with consent.</strong> The app asks for the user’s opt-in (in the purchase flow and in AI settings); with it, the relay answers Apple’s CONSUMPTION_REQUEST with the pack’s consumption (<a class="reference internal" href="#apple-refund-requests-consumption-request">Apple refund requests</a>).</p></td>
+</tr>
 </tbody>
 </table>
 </div>
@@ -873,9 +885,8 @@ wss-bridge).</p></li>
 <li><p>Unfinished transactions are re-sent at app start (<code class="docutils literal notranslate"><span class="pre">Transaction.unfinished</span></code>),
 so a crash between paying and crediting heals itself.</p></li>
 <li><p>App Store Server Notifications v2 arrive at <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/notify/apple</span></code>:
-REFUND and REVOKE claw back. For CONSUMPTION_REQUEST, answer “Send
-Consumption Information” within 12 hours, and only if the customer
-consented.</p></li>
+REFUND and REVOKE claw back. CONSUMPTION_REQUEST is answered with the
+customer’s consent (<a class="reference internal" href="#apple-refund-requests-consumption-request">below</a>).</p></li>
 <li><p>Testing: the Xcode StoreKit configuration file and the Sandbox
 environment.</p></li>
 </ul>
@@ -890,6 +901,62 @@ HMAC is verified with the endpoint secret, and its id is the idempotency key.</p
 <li><p><code class="docutils literal notranslate"><span class="pre">charge.refunded</span></code> and <code class="docutils literal notranslate"><span class="pre">charge.dispute.created</span></code> claw back.</p></li>
 <li><p>Testing: test-mode keys and the Stripe CLI’s <code class="docutils literal notranslate"><span class="pre">stripe</span> <span class="pre">trigger</span></code>.</p></li>
 </ul>
+</li>
+</ul>
+</section>
+<section id="apple-refund-requests-consumption-request">
+<h3>Apple refund requests (CONSUMPTION_REQUEST)<a class="headerlink" href="#apple-refund-requests-consumption-request" title="Link to this heading">¶</a></h3>
+<p>When a customer asks Apple for a refund, Apple sends CONSUMPTION_REQUEST and
+asks how much of the purchase was used. The developer answers with “Send
+Consumption Information” (<code class="docutils literal notranslate"><span class="pre">PUT</span> <span class="pre">/inApps/v2/transactions/consumption/{transactionId}</span></code>)
+<strong>within 12 hours, and only if the customer consented; without consent, it
+doesn’t respond at all</strong>. Apple says the consent must be freely given,
+specific, informed, opt-in and withdrawable, and must not be the App Tracking
+Transparency prompt
+(<a class="reference external" href="https://developer.apple.com/documentation/appstoreserverapi/send-consumption-information">Send Consumption Information</a>).
+The body’s fields are <code class="docutils literal notranslate"><span class="pre">customerConsented</span></code>, <code class="docutils literal notranslate"><span class="pre">consumptionPercentage</span></code> (in
+milliunits), <code class="docutils literal notranslate"><span class="pre">deliveryStatus</span></code>, <code class="docutils literal notranslate"><span class="pre">refundPreference</span></code> and <code class="docutils literal notranslate"><span class="pre">sampleContentProvided</span></code>
+(<a class="reference external" href="https://developer.apple.com/documentation/appstoreserverapi/consumptionrequest">ConsumptionRequest</a>,
+and the field set in Apple’s <code class="docutils literal notranslate"><span class="pre">app-store-server-library</span></code> 3.1.0).</p>
+<ul>
+<li><p><strong>Consent (owner decision: yes).</strong> On iOS the app shows
+<code class="docutils literal notranslate"><span class="pre">APPLE_CONSUMPTION_CONSENT_TEXT</span></code> with an explicit Yes / No, once in the
+purchase flow (before the first purchase) and as a switch in AI settings.
+The default is off.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/consent</span> <span class="pre">{apple_consumption:</span> <span class="pre">true|false}</span></code> records it on the
+account with its time.</p></li>
+<li><p>Withdrawing the consent stops every later answer.</p></li>
+<li><p>The App Store privacy label discloses it.</p></li>
+</ul>
+</li>
+<li><p><strong>The answer.</strong> Credits are one pooled balance, so the relay attributes
+usage <strong>FIFO</strong>: the oldest credits are spent first, and a refund ends its
+own lot (<code class="docutils literal notranslate"><span class="pre">lotConsumption</span></code> in <code class="docutils literal notranslate"><span class="pre">ledger.ts</span></code>). From that it sends:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">deliveryStatus:</span> <span class="pre">DELIVERED</span></code>: the credits were on the account and usable;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">consumptionPercentage</span></code>: the share of that pack’s credits spent;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">refundPreference</span></code>: GRANT_FULL if nothing was used, GRANT_PRORATED if part
+was, DECLINE if all was (a policy the owner can tune);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sampleContentProvided:</span> <span class="pre">true</span></code>: before buying, the free tier lets people
+try the AI, and the app shows what requests cost.</p></li>
+</ul>
+</li>
+<li><p><strong>Failures.</strong> If the API call fails, the relay answers the notification with
+500 so that Apple retries, and logs <code class="docutils literal notranslate"><span class="pre">ai_consumption_failed</span></code> (an alert). An
+unknown transaction, or one without consent, is logged
+<code class="docutils literal notranslate"><span class="pre">ai_consumption_skipped</span></code> and nothing is sent.</p></li>
+<li><p><strong>Scaffold.</strong> The fake store emits signed CONSUMPTION_REQUESTs and
+<code class="docutils literal notranslate"><span class="pre">FakeConsumptionSender</span></code> records the answers. The tests check:</p>
+<ul class="simple">
+<li><p>nothing is sent without consent;</p></li>
+<li><p>the answer is sent with consent;</p></li>
+<li><p>a withdrawn consent stops answers;</p></li>
+<li><p>a failure returns 500;</p></li>
+<li><p>FIFO attribution.</p></li>
+</ul>
+<p>The real sender signs an App Store Server API JWT with the In-App Purchase
+key (staged plan step 5).</p>
 </li>
 </ul>
 </section>
@@ -941,7 +1008,7 @@ ledger entry is stamped with the config <code class="docutils literal notranslat
 <span class="w">  </span><span class="nt">&quot;caps&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;per_request_max_credits&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">300</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;daily_credits&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2000</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;monthly_credits&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">20000</span><span class="p">,</span>
 <span class="w">    </span><span class="nt">&quot;concurrent_requests&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;requests_per_minute&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">20</span><span class="w"> </span><span class="p">},</span>
 <span class="w">  </span><span class="nt">&quot;min_margin&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.05</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;org&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;monthly_limit_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">500</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;alert_fraction&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.8</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;stop_fraction&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.98</span><span class="w"> </span><span class="p">}</span>
+<span class="w">  </span><span class="nt">&quot;org&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;monthly_limit_usd&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1000</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;alert_fraction&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.8</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;stop_fraction&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.98</span><span class="w"> </span><span class="p">}</span>
 <span class="p">}</span>
 </pre></div>
 </div>
@@ -990,9 +1057,17 @@ only, so it never learns that web packs exist.</p>
 <td><p>session</p></td>
 <td><p>Proof of purchase → credit (201; a replay is 200 with the same entry)</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/notify/&lt;apple|web&gt;</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/consent</span></code></p></td>
+<td><p>session</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{apple_consumption:</span> <span class="pre">bool}</span></code>: the opt-in to answer Apple’s refund consumption requests</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/notify/&lt;apple|web&gt;</span></code></p></td>
 <td><p>store signature</p></td>
-<td><p>Refunds / revocations → claw back</p></td>
+<td><p>Refunds / revocations → claw back; Apple CONSUMPTION_REQUEST → consumption answer (with consent)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/admin/status</span></code></p></td>
+<td><p>admin token (<code class="docutils literal notranslate"><span class="pre">BILLING_ADMIN_TOKEN</span></code>)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{account,</span> <span class="pre">status:</span> <span class="pre">active|suspended,</span> <span class="pre">reason?}</span></code>: abuse suspension / reinstatement</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/ai/v1/messages</span></code></p></td>
 <td><p>session</p></td>
@@ -1154,11 +1229,14 @@ needed, so the relay watches the org’s spend and fails gracefully:</p>
 <ul class="simple">
 <li><p><strong>Counter.</strong> After each settle the proxy adds the request’s Anthropic list
 cost (µUSD) to a month-to-date counter in the Directory DO
-(<code class="docutils literal notranslate"><span class="pre">org:spend:&lt;YYYY-MM&gt;</span></code>). The config’s <code class="docutils literal notranslate"><span class="pre">org.monthly_limit_usd</span></code> is set to the
-Console’s actual monthly limit.</p></li>
-<li><p><strong>Alert.</strong> Crossing <code class="docutils literal notranslate"><span class="pre">org.alert_fraction</span></code> (80 %) logs <code class="docutils literal notranslate"><span class="pre">ai_org_spend_alert</span></code>
-once, with <code class="docutils literal notranslate"><span class="pre">alert:</span> <span class="pre">true</span></code>. That is the signal to raise the tier.</p></li>
-<li><p><strong>Graceful stop.</strong> From <code class="docutils literal notranslate"><span class="pre">org.stop_fraction</span></code> (98 %) on, the proxy answers 503
+(<code class="docutils literal notranslate"><span class="pre">org:spend:&lt;YYYY-MM&gt;</span></code>). The config’s <code class="docutils literal notranslate"><span class="pre">org.monthly_limit_usd</span></code> is the
+Console’s monthly limit: <strong>US$1,000</strong> (owner, 2026-11-18). Each <code class="docutils literal notranslate"><span class="pre">ai_settled</span></code>
+event carries <code class="docutils literal notranslate"><span class="pre">org_month_to_date_usd</span></code>.</p></li>
+<li><p><strong>Alert.</strong> Crossing <code class="docutils literal notranslate"><span class="pre">org.alert_fraction</span></code> (80 %: <strong>US$800</strong>) logs
+<code class="docutils literal notranslate"><span class="pre">ai_org_spend_alert</span></code> once, with <code class="docutils literal notranslate"><span class="pre">alert:</span> <span class="pre">true</span></code>, and Grafana’s “spend near
+limit” rule fires on <code class="docutils literal notranslate"><span class="pre">org_month_to_date_usd</span> <span class="pre">&gt;</span> <span class="pre">800</span></code>. That is the signal to
+raise the tier.</p></li>
+<li><p><strong>Graceful stop.</strong> From <code class="docutils literal notranslate"><span class="pre">org.stop_fraction</span></code> (98 %: <strong>US$980</strong>) on, the proxy answers 503
 <code class="docutils literal notranslate"><span class="pre">ai_credits_busy</span></code> (“Splanc AI credits are busy right now. Try again later.”)
 <strong>before</strong> calling Anthropic, so no turn dies halfway and nothing is
 charged. It logs <code class="docutils literal notranslate"><span class="pre">ai_org_spend_stop</span></code> (<code class="docutils literal notranslate"><span class="pre">alert:</span> <span class="pre">true</span></code>).</p></li>
@@ -1169,32 +1247,134 @@ and logs <code class="docutils literal notranslate"><span class="pre">ai_org_spe
 and 529 “overloaded” errors also answer busy, and 429s log with <code class="docutils literal notranslate"><span class="pre">alert:</span> <span class="pre">true</span></code>.</p></li>
 <li><p><strong>Reconciliation.</strong> The daily job (staged plan, Ops) replaces the estimate
 with Anthropic’s own cost report and alerts on drift.</p></li>
-<li><p><strong>Alerting.</strong> Any log event with <code class="docutils literal notranslate"><span class="pre">alert:</span> <span class="pre">true</span></code> goes to the alert channel (Workers
-Logs → Grafana alert rule, or a Logpush filter).</p></li>
+<li><p><strong>Alerting.</strong> Grafana Cloud alerting
+(<a class="reference internal" href="#observability-and-alerts">Observability and alerts</a>).</p></li>
 </ul>
 </section>
-<section id="observability">
-<h3>Observability<a class="headerlink" href="#observability" title="Link to this heading">¶</a></h3>
-<ul class="simple">
-<li><p>Structured log events, all content-free: <code class="docutils literal notranslate"><span class="pre">ai_settled</span></code> (with <code class="docutils literal notranslate"><span class="pre">list_usd</span></code>),
-<code class="docutils literal notranslate"><span class="pre">ai_refused</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_upstream_error</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_released</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_holds_expired</span></code>,
-<code class="docutils literal notranslate"><span class="pre">ai_purchase</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_refund</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_account_opened</span></code> / <code class="docutils literal notranslate"><span class="pre">ai_account_closed</span></code>, and
-the org alerts <code class="docutils literal notranslate"><span class="pre">ai_org_spend_alert</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_org_spend_stop</span></code>,
-<code class="docutils literal notranslate"><span class="pre">ai_org_spend_limit_hit</span></code>.</p></li>
-<li><p>Request logs are kept <strong>30 days</strong> (owner decision): the Workers Logs
-retention, or the Logpush destination’s lifecycle rule.</p></li>
-<li><p>Each carries the account, request id, model, usage, reserved vs charged,
-<code class="docutils literal notranslate"><span class="pre">written_off</span></code>, <code class="docutils literal notranslate"><span class="pre">estimated</span></code> and the pricing version.</p></li>
-<li><p>A revenue / cost dashboard (the Grafana pattern from
-<a class="reference internal" href="perf-monitoring.html"><span class="std std-doc">perf-monitoring.md</span></a>) shows:</p>
+<section id="observability-and-alerts">
+<h3>Observability and alerts<a class="headerlink" href="#observability-and-alerts" title="Link to this heading">¶</a></h3>
+<p><strong>Owner decision: billing alerts go to Grafana Cloud alerting</strong>, the same
+<code class="docutils literal notranslate"><span class="pre">splanc.grafana.net</span></code> stack the HITL rigs and fx_bench dashboards use.</p>
 <ul>
-<li><p>credits sold per channel, at gross and net;</p></li>
-<li><p>credits spent (equal to the Anthropic list cost when <code class="docutils literal notranslate"><span class="pre">usage_markup</span></code> = 0);</p></li>
-<li><p>Anthropic’s own reported cost;</p></li>
+<li><p><strong>What is emitted.</strong> Every billing event is one content-free JSON line
+(<code class="docutils literal notranslate"><span class="pre">metrics.ts</span></code> <code class="docutils literal notranslate"><span class="pre">BILLING_EVENTS</span></code>):</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">ai_settled</span></code>, with usage, <code class="docutils literal notranslate"><span class="pre">list_usd</span></code>, <code class="docutils literal notranslate"><span class="pre">org_month_to_date_usd</span></code>, reserved,
+charged, <code class="docutils literal notranslate"><span class="pre">written_off</span></code>, <code class="docutils literal notranslate"><span class="pre">estimated</span></code> and the pricing version;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ai_refused</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_released</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_upstream_error</span></code>,
+<code class="docutils literal notranslate"><span class="pre">ai_upstream_unreachable</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_stream_error</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_holds_expired</span></code>;</p></li>
+<li><p>the org events <code class="docutils literal notranslate"><span class="pre">ai_org_spend_alert</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_org_spend_stop</span></code>,
+<code class="docutils literal notranslate"><span class="pre">ai_org_spend_limit_hit</span></code>;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ai_purchase</span></code>, and <code class="docutils literal notranslate"><span class="pre">ai_refund</span></code> with its <code class="docutils literal notranslate"><span class="pre">kind</span></code>
+(refund / revoke / chargeback);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ai_consumption_sent</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_consumption_skipped</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_consumption_failed</span></code>;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ai_account_opened</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_account_closed</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_account_suspended</span></code>,
+<code class="docutils literal notranslate"><span class="pre">ai_account_reinstated</span></code>;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ai_reconcile_usage</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_reconcile_store</span></code>;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ai_billing_error</span></code>.</p></li>
+</ul>
+<p>Events that need a human carry <code class="docutils literal notranslate"><span class="pre">alert:</span> <span class="pre">true</span></code>. No prompt or reply text and
+no credential is ever in them: each line is redacted against the Anthropic
+key, the session secret, the admin token and the Loki token.</p>
+</li>
+<li><p><strong>How the relay pushes.</strong> <code class="docutils literal notranslate"><span class="pre">eventSink</span></code> writes each event to the Worker log
+and, when <code class="docutils literal notranslate"><span class="pre">GRAFANA_LOKI_PUSH_URL</span></code>, <code class="docutils literal notranslate"><span class="pre">GRAFANA_LOKI_USER</span></code> and the secret
+<code class="docutils literal notranslate"><span class="pre">GRAFANA_LOKI_TOKEN</span></code> (a <code class="docutils literal notranslate"><span class="pre">logs:write</span></code>-only access-policy token) are all set,
+POSTs it to Grafana Cloud Logs (Loki’s JSON push API) in the background
+(<code class="docutils literal notranslate"><span class="pre">waitUntil</span></code>).</p>
+<ul class="simple">
+<li><p>Streams are labelled only <code class="docutils literal notranslate"><span class="pre">service=splanc-relay</span></code>, <code class="docutils literal notranslate"><span class="pre">component=ai-billing</span></code>,
+<code class="docutils literal notranslate"><span class="pre">env=&lt;sandbox|production&gt;</span></code>, <code class="docutils literal notranslate"><span class="pre">event</span></code>, <code class="docutils literal notranslate"><span class="pre">alert</span></code>; the rest is in the line.</p></li>
+<li><p>A push failure never touches the request.</p></li>
+<li><p>Why Loki and not Prometheus remote-write: a Worker can POST JSON, while
+remote-write needs protobuf and snappy. LogQL turns the events into
+metrics (<code class="docutils literal notranslate"><span class="pre">count_over_time</span></code>, <code class="docutils literal notranslate"><span class="pre">unwrap</span></code>), so one write path covers both.</p></li>
+<li><p>Without the three settings, the push is off. Nothing is configured
+in-repo.</p></li>
+</ul>
+</li>
+<li><p><strong>Alert rules (code: <code class="docutils literal notranslate"><span class="pre">billingAlertRules</span></code>, provisioning JSON:
+<code class="docutils literal notranslate"><span class="pre">grafanaProvisioning</span></code>).</strong> Each rule is a LogQL query, reduced to its last
+value, with a threshold.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Rule</p></th>
+<th class="head"><p>Query (on the billing streams)</p></th>
+<th class="head"><p>Fires when</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Org spend near the limit</p></td>
+<td><p>max <code class="docutils literal notranslate"><span class="pre">org_month_to_date_usd</span></code> (15 m)</p></td>
+<td><p>&gt; US$800 (80 % of US$1,000)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Stopped at the org limit (page)</p></td>
+<td><p>count of <code class="docutils literal notranslate"><span class="pre">ai_org_spend_stop</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_org_spend_limit_hit</span></code> (10 m)</p></td>
+<td><p>&gt; 0</p></td>
+</tr>
+<tr class="row-even"><td><p>Anthropic rate limits / outage</p></td>
+<td><p>count of alerting upstream errors (10 m)</p></td>
+<td><p>&gt; 5 for 5 m</p></td>
+</tr>
+<tr class="row-odd"><td><p>Reconciliation mismatch (page)</p></td>
+<td><p>count of alerting <code class="docutils literal notranslate"><span class="pre">ai_reconcile_usage</span></code>, <code class="docutils literal notranslate"><span class="pre">ai_reconcile_store</span></code> (1 d)</p></td>
+<td><p>&gt; 0</p></td>
+</tr>
+<tr class="row-even"><td><p>Refund spike</p></td>
+<td><p>count of <code class="docutils literal notranslate"><span class="pre">ai_refund</span></code> (1 h)</p></td>
+<td><p>&gt; 3</p></td>
+</tr>
+<tr class="row-odd"><td><p>Chargeback / dispute (page)</p></td>
+<td><p>count of <code class="docutils literal notranslate"><span class="pre">ai_refund</span></code> with <code class="docutils literal notranslate"><span class="pre">kind=&quot;chargeback&quot;</span></code> (1 h)</p></td>
+<td><p>&gt; 0</p></td>
+</tr>
+<tr class="row-even"><td><p>Abuse suspension</p></td>
+<td><p>count of <code class="docutils literal notranslate"><span class="pre">ai_account_suspended</span></code> (1 h)</p></td>
+<td><p>&gt; 0</p></td>
+</tr>
+<tr class="row-odd"><td><p>Written-off usage</p></td>
+<td><p>sum of <code class="docutils literal notranslate"><span class="pre">written_off</span></code> (1 d)</p></td>
+<td><p>&gt; 500 credits (US$5)</p></td>
+</tr>
+<tr class="row-even"><td><p>Apple consumption answer failed</p></td>
+<td><p>count of <code class="docutils literal notranslate"><span class="pre">ai_consumption_failed</span></code> (1 h)</p></td>
+<td><p>&gt; 0</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>A test checks that every rule names only real events, that the org rule is
+sized from the config (US$800), and that the provisioning JSON is complete.</p>
+</li>
+<li><p><strong>Reconciliation</strong> (<code class="docutils literal notranslate"><span class="pre">reconcileUsage</span></code>, <code class="docutils literal notranslate"><span class="pre">reconcileStore</span></code>, run daily by the Ops
+job):</p>
+<ul class="simple">
+<li><p>the ledger’s list-price usage against Anthropic’s Usage &amp; Cost report for
+the key: beyond 2 % it alerts;</p></li>
+<li><p>credited purchases against the store’s and Stripe’s transactions:
+<code class="docutils literal notranslate"><span class="pre">missing</span></code> (paid, never credited) or <code class="docutils literal notranslate"><span class="pre">unknown</span></code> (credited, the store doesn’t
+know it) alerts.</p></li>
+</ul>
+</li>
+<li><p><strong>Abuse suspensions.</strong> <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/admin/status</span></code> (<code class="docutils literal notranslate"><span class="pre">BILLING_ADMIN_TOKEN</span></code>)
+suspends or reinstates an account. It takes a short admin reason label,
+never user content. It logs <code class="docutils literal notranslate"><span class="pre">ai_account_suspended</span></code>, and the suspended
+account’s AI requests are refused (403).</p></li>
+<li><p><strong>Retention.</strong> Request logs are kept <strong>30 days</strong> (owner decision): the
+Grafana Cloud Logs retention for these streams, and the Workers Logs
+default.</p></li>
+<li><p><strong>Dashboard</strong> (<code class="docutils literal notranslate"><span class="pre">pi/hitl/observability/dashboards/</span></code> pattern, synced by the
+existing workflow). It shows:</p>
+<ul class="simple">
+<li><p>month-to-date spend against the limit;</p></li>
+<li><p>credits sold per channel (gross and net);</p></li>
+<li><p>credits spent;</p></li>
+<li><p>Anthropic’s reported cost;</p></li>
 <li><p>margin;</p></li>
 <li><p>written-off and estimated totals;</p></li>
-<li><p>outstanding balance (a liability: credits sold but not spent);</p></li>
-<li><p>refunds.</p></li>
+<li><p>outstanding balance (credits sold, not yet spent);</p></li>
+<li><p>refunds, disputes and suspensions.</p></li>
 </ul>
 </li>
 </ul>
@@ -1356,7 +1536,8 @@ origin) and Google Pay, create the webhook endpoint, and <code class="docutils l
 later).</p></li>
 <li><p><strong>iOS In-App Purchase:</strong> the <code class="docutils literal notranslate"><span class="pre">storekit-bridge</span></code> plugin (StoreKit 2,
 <code class="docutils literal notranslate"><span class="pre">appAccountToken</span></code>), JWS verification (Apple Root CA G3), App Store Server
-Notifications v2 (REFUND, REVOKE, CONSUMPTION_REQUEST), unfinished
+Notifications v2 (REFUND, REVOKE, CONSUMPTION_REQUEST, with the real
+<code class="docutils literal notranslate"><span class="pre">ConsumptionSender</span></code>: an App Store Server API JWT), unfinished
 transaction replay, a StoreKit configuration file for Simulator tests.
 <strong>[owner]</strong>: sign the Paid Apps agreement and the banking / tax forms as
 the owner’s LLC, enrol in the Small Business Program, create the three
@@ -1368,10 +1549,30 @@ private key as Worker secrets.</p></li>
 <li><p><strong>UX:</strong> live balance under replies, low-balance and 402 handling in the
 chat, the “busy, try later” state, the statement view, the model picker
 from <code class="docutils literal notranslate"><span class="pre">/billing/pricing</span></code>.</p></li>
-<li><p><strong>Ops:</strong> KV-backed pricing config; the daily reconciliation job against
-Anthropic’s usage / cost report (needs an Admin API key <strong>[owner]</strong>);
-dashboards; alert routing for <code class="docutils literal notranslate"><span class="pre">alert:</span> <span class="pre">true</span></code> events <strong>[owner]</strong>: where
-alerts go; the 30-day log retention; the admin tool (adjust, suspend).</p></li>
+<li><p><strong>Ops:</strong></p>
+<ul class="simple">
+<li><p>KV-backed pricing config;</p></li>
+<li><p>the daily reconciliation job, which needs an Anthropic Admin API key
+<strong>[owner]</strong>, plus the store transaction lists from step 4 / 5;</p></li>
+<li><p>the dashboard JSON;</p></li>
+<li><p>a sync step that applies <code class="docutils literal notranslate"><span class="pre">grafanaProvisioning(...)</span></code> through Grafana’s
+alerting provisioning API;</p></li>
+<li><p>the admin CLI (adjust, suspend).</p></li>
+<li><p><strong>[owner]</strong> in Grafana Cloud:</p>
+<ul>
+<li><p>create a <code class="docutils literal notranslate"><span class="pre">logs:write</span></code>-only access-policy token for the relay, and set
+<code class="docutils literal notranslate"><span class="pre">GRAFANA_LOKI_PUSH_URL</span></code>, <code class="docutils literal notranslate"><span class="pre">GRAFANA_LOKI_USER</span></code> and the
+<code class="docutils literal notranslate"><span class="pre">GRAFANA_LOKI_TOKEN</span></code> secret;</p></li>
+<li><p>a service-account token with alerting-rules write for the sync step
+(the in-repo Editor token can’t);</p></li>
+<li><p>the contact point and notification policy for <code class="docutils literal notranslate"><span class="pre">severity=page</span></code> /
+<code class="docutils literal notranslate"><span class="pre">warn</span></code>;</p></li>
+<li><p>30-day retention on the billing streams;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">BILLING_ADMIN_TOKEN</span></code>.</p></li>
+</ul>
+</li>
+</ul>
+</li>
 <li><p><strong>Production:</strong> allow <code class="docutils literal notranslate"><span class="pre">AI_BILLING=production</span></code> only once steps 3–5 have
 real verifiers; switch Stripe to live keys, the production App Store
 environment, and the production Anthropic key <strong>[owner]</strong>; Workers Paid
@@ -1405,19 +1606,16 @@ at volume.</p></li>
 </section>
 <section id="decisions-for-the-owner">
 <h2>Decisions for the owner<a class="headerlink" href="#decisions-for-the-owner" title="Link to this heading">¶</a></h2>
-<p>All of the first round is decided (see <a class="reference internal" href="#owner-decisions-second-round-2026-11-18">Owner decisions, second
-round</a>). Still open, none blocking
-the sandbox:</p>
+<p>All decided (see the two decision tables above): the org limit is US$1,000,
+alerts go to Grafana Cloud, and Apple’s consumption requests are answered with
+consent. Revisit later:</p>
 <ol class="arabic simple">
-<li><p><strong>Org limit value:</strong> the Console’s current monthly spend limit, for
-<code class="docutils literal notranslate"><span class="pre">org.monthly_limit_usd</span></code>, and when to raise the tier.</p></li>
-<li><p><strong>Alert destination</strong> for <code class="docutils literal notranslate"><span class="pre">alert:</span> <span class="pre">true</span></code> events (e-mail, a chat channel,
-Grafana).</p></li>
-<li><p><strong>CONSUMPTION_REQUEST:</strong> whether to answer Apple’s refund-consumption
-requests (needs the customer’s consent in the app).</p></li>
-<li><p><strong>Android / Play</strong> stays a PWA with web checkout; revisit only if
-distribution needs a Play app (then Play Billing applies). <strong>US iOS
-link-out</strong> stays off; revisit after the Supreme Court rules on No. 25-1311.</p></li>
+<li><p><strong>Refund preference policy</strong> for Apple’s consumption answers (GRANT_FULL
+when unused, GRANT_PRORATED when partly used, DECLINE when used up).</p></li>
+<li><p><strong>Android / Play:</strong> stays a PWA with web checkout. Revisit only if
+distribution needs a Play app; then Play Billing applies.</p></li>
+<li><p><strong>US iOS link-out:</strong> stays off. Revisit after the Supreme Court rules on
+No. 25-1311.</p></li>
 </ol>
 </section>
 <section id="what-is-in-this-pr">
@@ -1439,6 +1637,11 @@ link-out</strong> stays off; revisit after the Supreme Court rules on No. 25-131
 <code class="docutils literal notranslate"><span class="pre">wrangler.toml</span></code>);</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">directory.ts</span></code>: purchase claims, account-creation limits, the org
 month-to-date spend counter;</p></li>
+</ul>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">agent/relay/src/billing/metrics.ts</span></code>: the event list, the Grafana Cloud
+Logs push, the alert rules + provisioning JSON, reconciliation;</p>
+<ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">platform.ts</span></code>: env.</p></li>
 </ul>
 </li>
@@ -1511,6 +1714,7 @@ without the bridge and wasm);</p></li>
 <li><a class="reference internal" href="#ledger-ledger-ts-account-ts">Ledger (<code class="docutils literal notranslate"><span class="pre">ledger.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">account.ts</span></code>)</a></li>
 <li><a class="reference internal" href="#accounts-and-identity">Accounts and identity</a></li>
 <li><a class="reference internal" href="#purchases-purchases-ts">Purchases (<code class="docutils literal notranslate"><span class="pre">purchases.ts</span></code>)</a></li>
+<li><a class="reference internal" href="#apple-refund-requests-consumption-request">Apple refund requests (CONSUMPTION_REQUEST)</a></li>
 <li><a class="reference internal" href="#pricing-config-pricing-ts">Pricing config (<code class="docutils literal notranslate"><span class="pre">pricing.ts</span></code>)</a></li>
 <li><a class="reference internal" href="#api">API</a></li>
 <li><a class="reference internal" href="#flows">Flows</a></li>
@@ -1518,7 +1722,7 @@ without the bridge and wasm);</p></li>
 <li><a class="reference internal" href="#privacy">Privacy</a></li>
 <li><a class="reference internal" href="#threat-model">Threat model</a></li>
 <li><a class="reference internal" href="#org-spend-limit">Org spend limit</a></li>
-<li><a class="reference internal" href="#observability">Observability</a></li>
+<li><a class="reference internal" href="#observability-and-alerts">Observability and alerts</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#costs-and-margins">Costs and margins</a></li>

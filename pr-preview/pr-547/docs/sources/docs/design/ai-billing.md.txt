@@ -66,6 +66,9 @@ the web gives 833. See [Margins](#costs-and-margins).
 | 10 | Models | **Claude Sonnet 5.5 (default), Claude Haiku 5.5, Claude Opus 5.5.** |
 | 11 | Caps | 2,000 credits a day, 20,000 a month, 2 concurrent per account. |
 | 12 | Anthropic usage tier | **Launch on the current tier**, raise it when needed. Monitoring and alerting for approaching the org spend limit, and a graceful "Splanc AI credits are busy right now. Try again later." when it is hit ([Org spend limit](#org-spend-limit)). |
+| 13 | Org monthly spend limit | **US$1,000** (in the pricing config, not a secret): alert at **US$800** (80 %), graceful stop at **US$980** (98 %). |
+| 14 | Where alerts go | **Grafana Cloud alerting** (as for the HITL rigs): the relay pushes billing events to Grafana Cloud Logs, and the alert rules are code ([Observability and alerts](#observability-and-alerts)). |
+| 15 | Apple refund consumption requests | **Yes, with consent.** The app asks for the user's opt-in (in the purchase flow and in AI settings); with it, the relay answers Apple's CONSUMPTION_REQUEST with the pack's consumption ([Apple refund requests](#apple-refund-requests-consumption_request)). |
 
 ### Store rules (checked 2026-11-18)
 
@@ -404,9 +407,8 @@ These are interfaces and fakes only in this PR (`PurchaseVerifier`,
   - Unfinished transactions are re-sent at app start (`Transaction.unfinished`),
     so a crash between paying and crediting heals itself.
   - App Store Server Notifications v2 arrive at `POST /billing/notify/apple`:
-    REFUND and REVOKE claw back. For CONSUMPTION_REQUEST, answer "Send
-    Consumption Information" within 12 hours, and only if the customer
-    consented.
+    REFUND and REVOKE claw back. CONSUMPTION_REQUEST is answered with the
+    customer's consent ([below](#apple-refund-requests-consumption_request)).
   - Testing: the Xcode StoreKit configuration file and the Sandbox
     environment.
 - **Web (Stripe).**
@@ -417,6 +419,53 @@ These are interfaces and fakes only in this PR (`PurchaseVerifier`,
     HMAC is verified with the endpoint secret, and its id is the idempotency key.
   - `charge.refunded` and `charge.dispute.created` claw back.
   - Testing: test-mode keys and the Stripe CLI's `stripe trigger`.
+
+### Apple refund requests (CONSUMPTION_REQUEST)
+
+When a customer asks Apple for a refund, Apple sends CONSUMPTION_REQUEST and
+asks how much of the purchase was used. The developer answers with "Send
+Consumption Information" (`PUT /inApps/v2/transactions/consumption/{transactionId}`)
+**within 12 hours, and only if the customer consented; without consent, it
+doesn't respond at all**. Apple says the consent must be freely given,
+specific, informed, opt-in and withdrawable, and must not be the App Tracking
+Transparency prompt
+([Send Consumption Information](https://developer.apple.com/documentation/appstoreserverapi/send-consumption-information)).
+The body's fields are `customerConsented`, `consumptionPercentage` (in
+milliunits), `deliveryStatus`, `refundPreference` and `sampleContentProvided`
+([ConsumptionRequest](https://developer.apple.com/documentation/appstoreserverapi/consumptionrequest),
+and the field set in Apple's `app-store-server-library` 3.1.0).
+
+- **Consent (owner decision: yes).** On iOS the app shows
+  `APPLE_CONSUMPTION_CONSENT_TEXT` with an explicit Yes / No, once in the
+  purchase flow (before the first purchase) and as a switch in AI settings.
+  The default is off.
+  - `POST /billing/consent {apple_consumption: true|false}` records it on the
+    account with its time.
+  - Withdrawing the consent stops every later answer.
+  - The App Store privacy label discloses it.
+- **The answer.** Credits are one pooled balance, so the relay attributes
+  usage **FIFO**: the oldest credits are spent first, and a refund ends its
+  own lot (`lotConsumption` in `ledger.ts`). From that it sends:
+  - `deliveryStatus: DELIVERED`: the credits were on the account and usable;
+  - `consumptionPercentage`: the share of that pack's credits spent;
+  - `refundPreference`: GRANT_FULL if nothing was used, GRANT_PRORATED if part
+    was, DECLINE if all was (a policy the owner can tune);
+  - `sampleContentProvided: true`: before buying, the free tier lets people
+    try the AI, and the app shows what requests cost.
+- **Failures.** If the API call fails, the relay answers the notification with
+  500 so that Apple retries, and logs `ai_consumption_failed` (an alert). An
+  unknown transaction, or one without consent, is logged
+  `ai_consumption_skipped` and nothing is sent.
+- **Scaffold.** The fake store emits signed CONSUMPTION_REQUESTs and
+  `FakeConsumptionSender` records the answers. The tests check:
+  - nothing is sent without consent;
+  - the answer is sent with consent;
+  - a withdrawn consent stops answers;
+  - a failure returns 500;
+  - FIFO attribution.
+
+  The real sender signs an App Store Server API JWT with the In-App Purchase
+  key (staged plan step 5).
 
 ### Pricing config (`pricing.ts`)
 
@@ -467,7 +516,7 @@ ledger entry is stamped with the config `version`.
   "caps": { "per_request_max_credits": 300, "daily_credits": 2000, "monthly_credits": 20000,
     "concurrent_requests": 2, "requests_per_minute": 20 },
   "min_margin": 0.05,
-  "org": { "monthly_limit_usd": 500, "alert_fraction": 0.8, "stop_fraction": 0.98 }
+  "org": { "monthly_limit_usd": 1000, "alert_fraction": 0.8, "stop_fraction": 0.98 }
 }
 ```
 
@@ -488,7 +537,9 @@ only, so it never learns that web packs exist.
 | `GET /billing/pricing?channel=` | none | The public pricing view |
 | `GET /billing/statement` | session | The newest 50 entries (numbers only) |
 | `POST /billing/purchase/<apple\|web>` | session | Proof of purchase → credit (201; a replay is 200 with the same entry) |
-| `POST /billing/notify/<apple\|web>` | store signature | Refunds / revocations → claw back |
+| `POST /billing/consent` | session | `{apple_consumption: bool}`: the opt-in to answer Apple's refund consumption requests |
+| `POST /billing/notify/<apple\|web>` | store signature | Refunds / revocations → claw back; Apple CONSUMPTION_REQUEST → consumption answer (with consent) |
+| `POST /billing/admin/status` | admin token (`BILLING_ADMIN_TOKEN`) | `{account, status: active\|suspended, reason?}`: abuse suspension / reinstatement |
 | `POST /ai/v1/messages` | session | The metered proxy (SSE) |
 
 Error shape: `{error, message}`. The errors are:
@@ -582,11 +633,14 @@ needed, so the relay watches the org's spend and fails gracefully:
 
 - **Counter.** After each settle the proxy adds the request's Anthropic list
   cost (µUSD) to a month-to-date counter in the Directory DO
-  (`org:spend:<YYYY-MM>`). The config's `org.monthly_limit_usd` is set to the
-  Console's actual monthly limit.
-- **Alert.** Crossing `org.alert_fraction` (80 %) logs `ai_org_spend_alert`
-  once, with `alert: true`. That is the signal to raise the tier.
-- **Graceful stop.** From `org.stop_fraction` (98 %) on, the proxy answers 503
+  (`org:spend:<YYYY-MM>`). The config's `org.monthly_limit_usd` is the
+  Console's monthly limit: **US$1,000** (owner, 2026-11-18). Each `ai_settled`
+  event carries `org_month_to_date_usd`.
+- **Alert.** Crossing `org.alert_fraction` (80 %: **US$800**) logs
+  `ai_org_spend_alert` once, with `alert: true`, and Grafana's "spend near
+  limit" rule fires on `org_month_to_date_usd > 800`. That is the signal to
+  raise the tier.
+- **Graceful stop.** From `org.stop_fraction` (98 %: **US$980**) on, the proxy answers 503
   `ai_credits_busy` ("Splanc AI credits are busy right now. Try again later.")
   **before** calling Anthropic, so no turn dies halfway and nothing is
   charged. It logs `ai_org_spend_stop` (`alert: true`).
@@ -597,29 +651,88 @@ needed, so the relay watches the org's spend and fails gracefully:
   and 529 "overloaded" errors also answer busy, and 429s log with `alert: true`.
 - **Reconciliation.** The daily job (staged plan, Ops) replaces the estimate
   with Anthropic's own cost report and alerts on drift.
-- **Alerting.** Any log event with `alert: true` goes to the alert channel (Workers
-  Logs → Grafana alert rule, or a Logpush filter).
+- **Alerting.** Grafana Cloud alerting
+  ([Observability and alerts](#observability-and-alerts)).
 
-### Observability
+### Observability and alerts
 
-- Structured log events, all content-free: `ai_settled` (with `list_usd`),
-  `ai_refused`, `ai_upstream_error`, `ai_released`, `ai_holds_expired`,
-  `ai_purchase`, `ai_refund`, `ai_account_opened` / `ai_account_closed`, and
-  the org alerts `ai_org_spend_alert`, `ai_org_spend_stop`,
-  `ai_org_spend_limit_hit`.
-- Request logs are kept **30 days** (owner decision): the Workers Logs
-  retention, or the Logpush destination's lifecycle rule.
-- Each carries the account, request id, model, usage, reserved vs charged,
-  `written_off`, `estimated` and the pricing version.
-- A revenue / cost dashboard (the Grafana pattern from
-  [perf-monitoring.md](perf-monitoring.md)) shows:
-  - credits sold per channel, at gross and net;
-  - credits spent (equal to the Anthropic list cost when `usage_markup` = 0);
-  - Anthropic's own reported cost;
+**Owner decision: billing alerts go to Grafana Cloud alerting**, the same
+`splanc.grafana.net` stack the HITL rigs and fx_bench dashboards use.
+
+- **What is emitted.** Every billing event is one content-free JSON line
+  (`metrics.ts` `BILLING_EVENTS`):
+  - `ai_settled`, with usage, `list_usd`, `org_month_to_date_usd`, reserved,
+    charged, `written_off`, `estimated` and the pricing version;
+  - `ai_refused`, `ai_released`, `ai_upstream_error`,
+    `ai_upstream_unreachable`, `ai_stream_error`, `ai_holds_expired`;
+  - the org events `ai_org_spend_alert`, `ai_org_spend_stop`,
+    `ai_org_spend_limit_hit`;
+  - `ai_purchase`, and `ai_refund` with its `kind`
+    (refund / revoke / chargeback);
+  - `ai_consumption_sent`, `ai_consumption_skipped`, `ai_consumption_failed`;
+  - `ai_account_opened`, `ai_account_closed`, `ai_account_suspended`,
+    `ai_account_reinstated`;
+  - `ai_reconcile_usage`, `ai_reconcile_store`;
+  - `ai_billing_error`.
+
+  Events that need a human carry `alert: true`. No prompt or reply text and
+  no credential is ever in them: each line is redacted against the Anthropic
+  key, the session secret, the admin token and the Loki token.
+- **How the relay pushes.** `eventSink` writes each event to the Worker log
+  and, when `GRAFANA_LOKI_PUSH_URL`, `GRAFANA_LOKI_USER` and the secret
+  `GRAFANA_LOKI_TOKEN` (a `logs:write`-only access-policy token) are all set,
+  POSTs it to Grafana Cloud Logs (Loki's JSON push API) in the background
+  (`waitUntil`).
+  - Streams are labelled only `service=splanc-relay`, `component=ai-billing`,
+    `env=<sandbox|production>`, `event`, `alert`; the rest is in the line.
+  - A push failure never touches the request.
+  - Why Loki and not Prometheus remote-write: a Worker can POST JSON, while
+    remote-write needs protobuf and snappy. LogQL turns the events into
+    metrics (`count_over_time`, `unwrap`), so one write path covers both.
+  - Without the three settings, the push is off. Nothing is configured
+    in-repo.
+- **Alert rules (code: `billingAlertRules`, provisioning JSON:
+  `grafanaProvisioning`).** Each rule is a LogQL query, reduced to its last
+  value, with a threshold.
+
+  | Rule | Query (on the billing streams) | Fires when |
+  | --- | --- | --- |
+  | Org spend near the limit | max `org_month_to_date_usd` (15 m) | > US$800 (80 % of US$1,000) |
+  | Stopped at the org limit (page) | count of `ai_org_spend_stop`, `ai_org_spend_limit_hit` (10 m) | > 0 |
+  | Anthropic rate limits / outage | count of alerting upstream errors (10 m) | > 5 for 5 m |
+  | Reconciliation mismatch (page) | count of alerting `ai_reconcile_usage`, `ai_reconcile_store` (1 d) | > 0 |
+  | Refund spike | count of `ai_refund` (1 h) | > 3 |
+  | Chargeback / dispute (page) | count of `ai_refund` with `kind="chargeback"` (1 h) | > 0 |
+  | Abuse suspension | count of `ai_account_suspended` (1 h) | > 0 |
+  | Written-off usage | sum of `written_off` (1 d) | > 500 credits (US$5) |
+  | Apple consumption answer failed | count of `ai_consumption_failed` (1 h) | > 0 |
+
+  A test checks that every rule names only real events, that the org rule is
+  sized from the config (US$800), and that the provisioning JSON is complete.
+- **Reconciliation** (`reconcileUsage`, `reconcileStore`, run daily by the Ops
+  job):
+  - the ledger's list-price usage against Anthropic's Usage & Cost report for
+    the key: beyond 2 % it alerts;
+  - credited purchases against the store's and Stripe's transactions:
+    `missing` (paid, never credited) or `unknown` (credited, the store doesn't
+    know it) alerts.
+- **Abuse suspensions.** `POST /billing/admin/status` (`BILLING_ADMIN_TOKEN`)
+  suspends or reinstates an account. It takes a short admin reason label,
+  never user content. It logs `ai_account_suspended`, and the suspended
+  account's AI requests are refused (403).
+- **Retention.** Request logs are kept **30 days** (owner decision): the
+  Grafana Cloud Logs retention for these streams, and the Workers Logs
+  default.
+- **Dashboard** (`pi/hitl/observability/dashboards/` pattern, synced by the
+  existing workflow). It shows:
+  - month-to-date spend against the limit;
+  - credits sold per channel (gross and net);
+  - credits spent;
+  - Anthropic's reported cost;
   - margin;
   - written-off and estimated totals;
-  - outstanding balance (a liability: credits sold but not spent);
-  - refunds.
+  - outstanding balance (credits sold, not yet spent);
+  - refunds, disputes and suspensions.
 
 ## Costs and margins
 
@@ -710,7 +823,8 @@ accounts or secrets; everything else is code.
    later).
 5. **iOS In-App Purchase:** the `storekit-bridge` plugin (StoreKit 2,
    `appAccountToken`), JWS verification (Apple Root CA G3), App Store Server
-   Notifications v2 (REFUND, REVOKE, CONSUMPTION_REQUEST), unfinished
+   Notifications v2 (REFUND, REVOKE, CONSUMPTION_REQUEST, with the real
+   `ConsumptionSender`: an App Store Server API JWT), unfinished
    transaction replay, a StoreKit configuration file for Simulator tests.
    **[owner]**: sign the Paid Apps agreement and the banking / tax forms as
    the owner's LLC, enrol in the Small Business Program, create the three
@@ -722,10 +836,24 @@ accounts or secrets; everything else is code.
 6. **UX:** live balance under replies, low-balance and 402 handling in the
    chat, the "busy, try later" state, the statement view, the model picker
    from `/billing/pricing`.
-7. **Ops:** KV-backed pricing config; the daily reconciliation job against
-   Anthropic's usage / cost report (needs an Admin API key **[owner]**);
-   dashboards; alert routing for `alert: true` events **[owner]**: where
-   alerts go; the 30-day log retention; the admin tool (adjust, suspend).
+7. **Ops:**
+   - KV-backed pricing config;
+   - the daily reconciliation job, which needs an Anthropic Admin API key
+     **[owner]**, plus the store transaction lists from step 4 / 5;
+   - the dashboard JSON;
+   - a sync step that applies `grafanaProvisioning(...)` through Grafana's
+     alerting provisioning API;
+   - the admin CLI (adjust, suspend).
+   - **[owner]** in Grafana Cloud:
+     - create a `logs:write`-only access-policy token for the relay, and set
+       `GRAFANA_LOKI_PUSH_URL`, `GRAFANA_LOKI_USER` and the
+       `GRAFANA_LOKI_TOKEN` secret;
+     - a service-account token with alerting-rules write for the sync step
+       (the in-repo Editor token can't);
+     - the contact point and notification policy for `severity=page` /
+       `warn`;
+     - 30-day retention on the billing streams;
+     - `BILLING_ADMIN_TOKEN`.
 8. **Production:** allow `AI_BILLING=production` only once steps 3–5 have
    real verifiers; switch Stripe to live keys, the production App Store
    environment, and the production Anthropic key **[owner]**; Workers Paid
@@ -756,19 +884,16 @@ accounts or secrets; everything else is code.
 
 ## Decisions for the owner
 
-All of the first round is decided (see [Owner decisions, second
-round](#owner-decisions-second-round-2026-11-18)). Still open, none blocking
-the sandbox:
+All decided (see the two decision tables above): the org limit is US$1,000,
+alerts go to Grafana Cloud, and Apple's consumption requests are answered with
+consent. Revisit later:
 
-1. **Org limit value:** the Console's current monthly spend limit, for
-   `org.monthly_limit_usd`, and when to raise the tier.
-2. **Alert destination** for `alert: true` events (e-mail, a chat channel,
-   Grafana).
-3. **CONSUMPTION_REQUEST:** whether to answer Apple's refund-consumption
-   requests (needs the customer's consent in the app).
-4. **Android / Play** stays a PWA with web checkout; revisit only if
-   distribution needs a Play app (then Play Billing applies). **US iOS
-   link-out** stays off; revisit after the Supreme Court rules on No. 25-1311.
+1. **Refund preference policy** for Apple's consumption answers (GRANT_FULL
+   when unused, GRANT_PRORATED when partly used, DECLINE when used up).
+2. **Android / Play:** stays a PWA with web checkout. Revisit only if
+   distribution needs a Play app; then Play Billing applies.
+3. **US iOS link-out:** stays off. Revisit after the Supreme Court rules on
+   No. 25-1311.
 
 ## What is in this PR
 
@@ -784,6 +909,8 @@ the sandbox:
     `wrangler.toml`);
   - `directory.ts`: purchase claims, account-creation limits, the org
     month-to-date spend counter;
+- `agent/relay/src/billing/metrics.ts`: the event list, the Grafana Cloud
+  Logs push, the alert rules + provisioning JSON, reconciliation;
   - `platform.ts`: env.
 - `web/src/effects/ai/providers/credits.ts`: the flag-gated provider, session,
   stub balance.
