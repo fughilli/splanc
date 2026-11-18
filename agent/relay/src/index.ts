@@ -18,12 +18,18 @@
  *   /feedback, /feedback/status  agent-feedback reports: a private store the
  *                                owner's FEEDBACK_ADMIN_TOKEN reads (feedback.ts;
  *                                docs/design/agent-feedback.md)
+ *   /ai/v1/messages, /billing/*  Splanc AI credits: the metered AI proxy + the
+ *                                credit ledger (billing/; docs/design/ai-billing.md).
+ *                                503 unless AI_BILLING=sandbox and fully configured.
  *
  * The Worker itself is a thin router (the free plan gives it 10 ms CPU per
  * request); signatures, tokens and the tunnel live in the Durable Objects.
  */
 
 import { BridgeObject, liveToken, parseToken, rpcError, wwwAuthenticate } from "./bridgeObject";
+import { BillingAccount } from "./billing/account";
+import { billingEndpoint, isBillingPath } from "./billing/endpoint";
+import { eventSink } from "./billing/metrics";
 import { bugsEndpoint } from "./bugs";
 import { RECEIPT_HEADER, feedbackEndpoint } from "./feedback";
 import { BRIDGE_ID_RE, ed25519Verify, normalizePairingCode, randomBridgeId } from "./crypto";
@@ -33,14 +39,14 @@ import { consent, landing, oauthErrorPage, pairForm, tokenPage } from "./pages";
 import { now, type Env } from "./platform";
 import { BUG_AUTH_HEADER, SIGNATURE_WINDOW_S, registerMessage } from "./protocol";
 
-export { BridgeObject, Directory };
+export { BillingAccount, BridgeObject, Directory };
 
 const CORS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
   "access-control-allow-headers":
-    `authorization, content-type, accept, mcp-session-id, mcp-protocol-version, mcp-method, mcp-name, last-event-id, ${BUG_AUTH_HEADER}, ${RECEIPT_HEADER}`,
-  "access-control-expose-headers": "mcp-session-id, mcp-protocol-version, www-authenticate",
+    `authorization, content-type, accept, mcp-session-id, mcp-protocol-version, mcp-method, mcp-name, last-event-id, idempotency-key, ${BUG_AUTH_HEADER}, ${RECEIPT_HEADER}`,
+  "access-control-expose-headers": "mcp-session-id, mcp-protocol-version, www-authenticate, x-splanc-request-id",
   "access-control-max-age": "86400",
 };
 
@@ -60,6 +66,12 @@ function bugsContext(req: Request, env: Env, origin: string) {
       return r.ok && ((await r.json()) as { ok?: boolean }).ok === true;
     },
   };
+}
+
+function withCors(r: Response): Response {
+  const headers = new Headers(r.headers);
+  for (const [k, v] of Object.entries(CORS)) headers.set(k, v);
+  return new Response(r.body, { status: r.status, headers });
 }
 
 export function originOf(req: Request, env: Env): string {
@@ -101,7 +113,7 @@ function originOk(req: Request): boolean {
 }
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, ectx?: { waitUntil(p: Promise<unknown>): void }): Promise<Response> {
     const url = new URL(req.url);
     const origin = originOf(req, env);
     const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -175,6 +187,20 @@ export default {
           return toBridge(env, bid, origin, "/connect", { method: "GET", headers: req.headers });
         }
         default:
+          if (isBillingPath(path)) {
+            // The proxy builds its own responses (the SSE stream): add CORS here.
+            return withCors(await billingEndpoint(req, env, {
+              json,
+              clientIp: clientIp(req),
+              waitUntil: ectx ? (p) => ectx.waitUntil(p) : undefined,
+              // Worker log + (when configured) Grafana Cloud Logs; redacted against every secret.
+              log: eventSink({
+                env,
+                secrets: [env.ANTHROPIC_API_KEY, env.BILLING_TOKEN_SECRET, env.GRAFANA_LOKI_TOKEN, env.BILLING_ADMIN_TOKEN].filter((x): x is string => !!x),
+                waitUntil: ectx ? (p) => ectx.waitUntil(p) : undefined,
+              }),
+            }, path));
+          }
           return json({ error: "not found" }, 404);
       }
     } catch (e) {

@@ -34,6 +34,16 @@ import {
 } from "../../effects/ai/provider";
 import { listOpenAiModels, pullOllamaModel } from "../../effects/ai/providers/openaiCompat";
 import {
+  aiCreditsEnabled,
+  fetchCreditsBalance,
+  formatCredits,
+  getCreditsSession,
+  mayShowWebCheckout,
+  purchaseChannel,
+  setAppleConsumptionConsent,
+  APPLE_CONSUMPTION_CONSENT_TEXT,
+} from "../../effects/ai/providers/credits";
+import {
   isWllamaSupported,
   loadWllamaModel,
   unloadWllamaModel,
@@ -57,6 +67,9 @@ import {
 } from "../../effects/ai/providers/webllm";
 
 const KINDS: ProviderKind[] = ["cloud", "local", "webllm", "wllama"];
+
+/** The provider buttons: "Splanc AI credits" only while its flag is on. */
+const kinds = (): ProviderKind[] => (aiCreditsEnabled() ? [...KINDS, "credits"] : KINDS);
 
 /** A few small, tool-capable GGUFs (Qwen family → the `<tool_call>` convention
  * our parser expects) known to run on-CPU in-browser, lightest first. The URL
@@ -100,8 +113,9 @@ export function AiSettingsScreen(_router: Router): Screen {
   head.textContent = "AI provider";
   const sub = document.createElement("p");
   sub.className = "screen-sub";
-  sub.textContent =
-    "Choose where effect generation and MIDI remapping run. Everything stays on your device — no proxy server.";
+  sub.textContent = aiCreditsEnabled()
+    ? "Choose where effect generation and MIDI remapping run. Only Splanc AI credits go through Splanc's server."
+    : "Choose where effect generation and MIDI remapping run. Everything stays on your device — no proxy server.";
   el.append(head, sub);
 
   const status = document.createElement("p");
@@ -145,6 +159,9 @@ export function AiSettingsScreen(_router: Router): Screen {
       case "wllama":
         panel = wllamaPanel();
         break;
+      case "credits":
+        panel = creditsPanel(cfg, set);
+        break;
       case "cloud":
       default:
         panel = cloudPanel(cfg, set, setLive);
@@ -165,7 +182,7 @@ function kindGroup(active: ProviderKind, onPick: (k: ProviderKind) => void): HTM
   const g = group("Provider");
   const seg = document.createElement("div");
   seg.className = "settings-seg";
-  for (const k of KINDS) {
+  for (const k of kinds()) {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = kindLabel(k);
@@ -905,6 +922,63 @@ function webLlmPanel(): HTMLElement {
         : null,
   };
   return modelManagerPanel(src);
+}
+
+// -- Splanc AI credits (flag-gated stub; docs/design/ai-billing.md) -----------
+
+/** Models offered with credits. A stub: the real list (and prices) come from
+ * the relay's GET /billing/pricing once it is deployed. */
+const CREDIT_MODELS: Record<string, string> = {
+  "claude-sonnet-5-5": "Claude Sonnet 5.5",
+  "claude-opus-5-5": "Claude Opus 5.5",
+  "claude-haiku-5-5": "Claude Haiku 5.5",
+};
+
+function creditsPanel(cfg: AiConfig, set: (p: Partial<AiConfig>) => void): HTMLElement {
+  const g = group("Splanc AI credits");
+  g.append(
+    note(
+      "Use Claude without your own API key: requests go through Splanc's server and are paid from your credit balance. " +
+        "Your own API key (Cloud) keeps working; switch back any time.",
+    ),
+    labeledSelect("Model", CREDIT_MODELS, (cfg.credits.model in CREDIT_MODELS ? cfg.credits.model : "claude-sonnet-5-5"), (m) =>
+      set({ credits: { model: m } }),
+    ),
+  );
+  const balance = document.createElement("span");
+  balance.textContent = getCreditsSession() ? "Checking…" : "Not signed in";
+  g.append(settingsRow("Balance", "Credits left on your Splanc account", balance));
+  if (getCreditsSession()) {
+    void fetchCreditsBalance().then((b) => {
+      balance.textContent = b ? formatCredits(b.available_credits) + (b.low ? " (low)" : "") : "Unavailable";
+    });
+  }
+  // iOS: the opt-in to share pack consumption with Apple on refund requests.
+  if (purchaseChannel() === "apple" && getCreditsSession()) {
+    const row = settingsRow("Help Apple with refund requests", APPLE_CONSUMPTION_CONSENT_TEXT, document.createElement("span"));
+    const ctl = row.querySelector(".settings-row-ctl")!;
+    const render = (on: boolean) =>
+      ctl.replaceChildren(
+        onOff(on, (v) => {
+          void setAppleConsumptionConsent(v).then(
+            () => render(v),
+            (e: unknown) => toast(msg(e)),
+          );
+        }),
+      );
+    render(false);
+    void fetchCreditsBalance().then((b) => render(b?.apple_consumption_consent === true));
+    g.append(row);
+  }
+  // Buying is not wired yet. It is 18+, and on iOS it will be In-App Purchase
+  // only: the iOS app never shows or links to the web checkout (App Store rules).
+  g.append(
+    note(
+      (mayShowWebCheckout() ? "Buying credits isn't available yet." : "Buying credits in the app isn't available yet.") +
+        " Buying is for adults (18+).",
+    ),
+  );
+  return g;
 }
 
 // -- small local builders ----------------------------------------------------

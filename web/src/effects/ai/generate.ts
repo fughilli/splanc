@@ -35,6 +35,7 @@ import {
   type ToolDef,
 } from "./provider";
 import { makeAnthropicProvider } from "./providers/anthropic";
+import { aiCreditsEnabled, makeCreditsProvider } from "./providers/credits";
 import { makeOpenAiProvider } from "./providers/openaiCompat";
 import { freeTierVision, makeOpenRouterProvider } from "./providers/openrouter";
 import { makeWebLlmProvider } from "./providers/webllm";
@@ -56,6 +57,8 @@ export function activeProvider(): AiProvider {
   if (cfg.kind === "local") return makeOpenAiProvider(cfg.local);
   if (cfg.kind === "webllm") return makeWebLlmProvider(cfg.webllm);
   if (cfg.kind === "wllama") return makeWllamaProvider(cfg.wllama);
+  // Splanc AI credits (flag-gated; docs/design/ai-billing.md): our metered proxy.
+  if (cfg.kind === "credits" && aiCreditsEnabled()) return makeCreditsProvider({ model: cfg.credits.model });
   // cloud: Anthropic uses its native API; every other vendor is served through
   // the OpenAI-compatible client pointed at that vendor's endpoint.
   const v = cfg.cloud.vendors[cfg.cloud.vendor];

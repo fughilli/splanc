@@ -15,8 +15,12 @@
  * with tool_use / tool_result / image), which is expressive enough to drive the
  * loop; each provider translates that to/from its own wire format at its edge.
  *
- * Everything here is client-side: no server proxy, config in localStorage.
+ * Everything here is client-side (config in localStorage), except the
+ * flag-gated "Splanc AI credits" kind (providers/credits.ts), which talks to
+ * our metered proxy with a session token (docs/design/ai-billing.md).
  */
+
+import { aiCreditsEnabled, CREDITS_LABEL, DEFAULT_CREDITS_MODEL, getCreditsSession } from "./providers/credits";
 
 // =============================================================================
 // Neutral wire types (shared by generate.ts and every provider).
@@ -108,7 +112,7 @@ export interface AiProvider {
 // Config (localStorage): which provider is active + each provider's settings.
 // =============================================================================
 
-export type ProviderId = "anthropic" | "openai" | "webllm" | "wllama";
+export type ProviderId = "anthropic" | "openai" | "webllm" | "wllama" | "credits";
 
 export interface AnthropicConfig {
   key: string;
@@ -152,8 +156,14 @@ export interface WllamaConfig {
  * to a specific vendor (see {@link CloudVendor}); "local" is a self-hosted
  * OpenAI-compatible server; "webllm" is in-browser WebGPU; "wllama" is
  * in-browser CPU (WASM) — the phone-friendly path that doesn't touch the GPU.
+ * "credits" is Claude through Splanc's metered proxy (flag-gated, off by default).
  */
-export type ProviderKind = "cloud" | "local" | "webllm" | "wllama";
+export type ProviderKind = "cloud" | "local" | "webllm" | "wllama" | "credits";
+
+/** "Splanc AI credits" settings (the account session lives in credits.ts). */
+export interface CreditsConfig {
+  model: string;
+}
 
 /** Cloud vendors offered under the "Cloud" category. */
 export type CloudVendor = "anthropic" | "openai" | "gemini" | "grok" | "openrouter" | "custom";
@@ -222,6 +232,7 @@ export interface AiConfig {
   local: OpenAiConfig;
   webllm: WebLlmConfig;
   wllama: WllamaConfig;
+  credits: CreditsConfig;
 }
 
 const CONFIG_STORAGE = "ledmapper.ai.config";
@@ -264,6 +275,7 @@ export function defaultConfig(): AiConfig {
     local: { baseUrl: DEFAULT_OPENAI_BASE_URL, key: "", model: "", vision: false },
     webllm: { model: "", pinned: [], contextWindowSize: DEFAULT_WEBLLM_CONTEXT },
     wllama: { model: "", pinned: [], contextWindowSize: DEFAULT_WLLAMA_CONTEXT, nThreads: 0 },
+    credits: { model: DEFAULT_CREDITS_MODEL },
   };
 }
 
@@ -294,10 +306,14 @@ export function normalizeConfig(raw: unknown): AiConfig {
   }
 
   // -- current shape ----------------------------------------------------------
+  // "credits" only while its flag is on; otherwise fall back to the default.
   const kind: ProviderKind =
     r["kind"] === "local" || r["kind"] === "webllm" || r["kind"] === "wllama"
       ? r["kind"]
-      : "cloud";
+      : r["kind"] === "credits" && aiCreditsEnabled()
+        ? "credits"
+        : "cloud";
+  const credits = (r["credits"] ?? {}) as { model?: unknown };
   const cloud = (r["cloud"] ?? {}) as { vendor?: unknown; vendors?: unknown };
   const vendors = emptyVendors();
   if (cloud.vendors && typeof cloud.vendors === "object") {
@@ -351,6 +367,9 @@ export function normalizeConfig(raw: unknown): AiConfig {
         typeof wllama.nThreads === "number" && wllama.nThreads >= 0
           ? Math.floor(wllama.nThreads)
           : 0,
+    },
+    credits: {
+      model: typeof credits.model === "string" && credits.model ? credits.model : DEFAULT_CREDITS_MODEL,
     },
   };
 }
@@ -413,6 +432,9 @@ export function isAiConfigured(cfg: AiConfig = getAiConfig()): boolean {
       return cfg.webllm.model.trim() !== "";
     case "wllama":
       return cfg.wllama.model.trim() !== "";
+    case "credits":
+      // Ready = the flag is on and this device has a credit account session.
+      return aiCreditsEnabled() && getCreditsSession() !== null && cfg.credits.model.trim() !== "";
   }
 }
 
@@ -427,5 +449,7 @@ export function kindLabel(kind: ProviderKind): string {
       return "In-browser (WebGPU)";
     case "wllama":
       return "In-browser (CPU)";
+    case "credits":
+      return CREDITS_LABEL;
   }
 }

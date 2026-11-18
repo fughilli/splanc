@@ -51,7 +51,13 @@ SRCS = glob(["src/**/*.ts"])
 # tests run it in process. Cloudflare deploys it with wrangler (relay/deploy.sh).
 RELAY_SRCS = glob(["relay/src/**/*.ts"])
 
-TESTS = glob(["tests/*.test.ts"])
+# billing.test.ts is pure relay logic (no bridge, no wasm): its own light target below.
+LIGHT_TESTS = ["tests/billing.test.ts"]
+
+TESTS = glob(
+    ["tests/*.test.ts"],
+    exclude = LIGHT_TESTS,
+)
 
 # Everything a Vite (rolldown) build of the bridge reads. The tsconfig chain is
 # DECLARED for the same reason as //web:dist (rolldown resolves a tsconfig by
@@ -135,6 +141,34 @@ copy_to_directory(
         tags = ["requires-network"],
     )
     for f in TESTS
+]
+
+# Tests of relay-only logic (Splanc AI credits: docs/design/ai-billing.md): the
+# same bundling, but without the bridge / wasm data the other tests need, so
+# they build and run in seconds.
+[
+    vite_bin.vite(
+        name = f.removeprefix("tests/").removesuffix(".test.ts") + "_test_bundle",
+        srcs = BUILD_INPUTS + glob(["tests/*.ts"]),
+        outs = ["dist-test/{n}/{n}.test.mjs".format(n = f.removeprefix("tests/").removesuffix(".test.ts"))],
+        args = [
+            "build",
+            "--mode",
+            "test",
+        ],
+        chdir = package_name(),
+        env = {"AGENT_TEST_ENTRY": f.removeprefix("tests/")},
+    )
+    for f in LIGHT_TESTS
+]
+
+[
+    js_test(
+        name = f.removeprefix("tests/").removesuffix(".test.ts") + "_test",
+        chdir = package_name(),
+        entry_point = ":" + f.removeprefix("tests/").removesuffix(".test.ts") + "_test_bundle",
+    )
+    for f in LIGHT_TESTS
 ]
 
 tsc_bin.tsc_test(
