@@ -364,10 +364,17 @@ cycle within <strong>±1.6 ps of 2τ (±0.25 mm one-way)</strong> with ~38 burst
 falls to 3.9 % at 30 bursts. The group-delay “bias” was noise. On-device FFT processing gives
 ~4× the rate (3.6–3.7 exch/s wall). One-sided tones bring the stitched 80 MHz echo fit to
 15.8 ns (truth 15).</p></li>
-<li><p><strong>Not a player feature yet.</strong> The engines need whole 128 KB SRAM blocks while they run,
-and the exchange takes the radio for ~1 ms with interrupts off (§9). This fits a bench
-image, a P4+C6 front end, or a dedicated ranging mode. It does not fit a heap-starved
-C6 player as is.</p></li>
+<li><p><strong>Absolute path on the ~30 cm coax (§14):</strong> the round-trip group delay of 1918 ns and the
+RF phase delay of 18.5 ns are almost all device latency. The coax is ~2.7 ns round trip.
+One known path calibrates the total device constant (good to ~±5 cm with the cable’s
+uncertainty). It can’t split A from B or TX from RX. A zero-length barrel swap is the
+cheapest way to separate them. A role swap (done) exposed and removed a 2.85 ns
+processing asymmetry.</p></li>
+<li><p><strong>Deployment (§15):</strong> P4+C6 runs it as is (~100–200 exchanges/s with raw captures over
+SDIO). A C6 player needs a ranging mode: it borrows the netstack’s idle TLS/RX buffers
+placed at the start of a block (0 extra RAM), all DMA buffers go to other blocks, and
+bursts take ≤ 4 ms with interrupts off. Effects keep rendering, at the cost of 2–4× more
+bursts for the carrier fix.</p></li>
 </ul>
 </section>
 <section id="rig">
@@ -1082,6 +1089,219 @@ linearity calibration, or a lower injection level.</p>
 They cluster at LOs near the rig AP (2432–2442 MHz).</p>
 </section>
 </section>
+<section id="absolute-path-length-on-the-30-cm-coax-and-what-one-known-path-can-calibrate">
+<h2>14. Absolute path length on the ~30 cm coax, and what one known path can calibrate<a class="headerlink" href="#absolute-path-length-on-the-30-cm-coax-and-what-one-known-path-can-calibrate" title="Link to this heading">¶</a></h2>
+<p>The owner says A and B are joined by roughly 30 cm of coax (plus the bench’s attenuator
+and coupler parts). Expected propagation:</p>
+<ul class="simple">
+<li><p><strong>one way:</strong> 0.30 m / (v_f · c) = 1.18–1.52 ns for v_f = 0.85–0.66;</p></li>
+<li><p><strong>round trip:</strong> 2.35–3.03 ns.</p></li>
+</ul>
+<p>What the pipeline measures today (fw v20, LO 2442 MHz, conducted, after the round-3 work):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Observable</p></th>
+<th class="head"><p>Round trip</p></th>
+<th class="head"><p>Interpretation</p></th>
+<th class="head"><p>If all of it were coax (v_f 0.66–0.85)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>group delay 2τ_gd, initiator A</p></td>
+<td><p>1919.62 ns (n=24)</p></td>
+<td><p>everything: DAC/ADC engine pipelines, digital TX/RX filters, analog chains, cables</p></td>
+<td><p>190–245 m</p></td>
+</tr>
+<tr class="row-odd"><td><p>group delay 2τ_gd, initiator B</p></td>
+<td><p>1916.77 ns (n=24)</p></td>
+<td><p>same, with the roles swapped</p></td>
+<td><p>—</p></td>
+</tr>
+<tr class="row-even"><td><p>mean of both roles</p></td>
+<td><p><strong>1918.2 ns</strong></p></td>
+<td><p>role asymmetry removed (§14.2)</p></td>
+<td><p>—</p></td>
+</tr>
+<tr class="row-odd"><td><p>RF phase delay (slope of the two-way carrier vs LO, in-burst LO stepping 2436–2448 and 2424–2460 MHz, 18–20 bursts each)</p></td>
+<td><p><strong>18.2–18.8 ± 0.4 ns</strong></p></td>
+<td><p>analog/RF only (matching, filters, PA/LNA, attenuators, coupler, coax); digital latency doesn’t move the carrier phase</p></td>
+<td><p>1.8–2.4 m</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>So the coax is ~2.7 ns of an 18.5 ns RF phase delay, and of a 1918 ns group delay. <strong>About
+16 ns (round trip) of the RF phase delay, and ~1915 ns of the group delay, belong to the
+two boards.</strong> The pipeline can’t say that by itself. The split here assumes the owner’s
+30 cm.</p>
+<section id="what-one-known-path-can-and-can-t-separate">
+<h3>14.1 What one known path can and can’t separate<a class="headerlink" href="#what-one-known-path-can-and-can-t-separate" title="Link to this heading">¶</a></h3>
+<p>Every two-way observable is device-A sum + device-B sum + 2·path. Each sum is TX + RX latency.
+With a single known path:</p>
+<ul class="simple">
+<li><p><strong>Can:</strong> the total device constant K = 2τ_meas − 2L/(v_f c). With K, any later
+measurement gives an absolute range. This holds for the group delay (~cm), and for the
+carrier phase once the integer is fixed (mm). The reference’s own error is the cable’s
+uncertainty: ±5 cm of length and v_f 0.66–0.85 give ±0.17 ns one-way, about ±5 cm.</p></li>
+<li><p><strong>Can:</strong> separate digital from analog latency. The group delay includes the digital
+pipelines; the carrier-vs-LO slope doesn’t. That is where the 1918 vs 18.5 ns split comes
+from.</p></li>
+<li><p><strong>Can:</strong> separate role-dependent processing bias (§14.2).</p></li>
+<li><p><strong>Can’t:</strong> split A’s latency from B’s, or a device’s TX from its RX. It also can’t give
+the coax’s velocity factor, or move the device constant between pairs (each pair has its
+own sum). Every new pair needs its own reference, unless the per-device terms are known.</p></li>
+</ul>
+</section>
+<section id="done-remotely-role-swap">
+<h3>14.2 Done remotely: role swap<a class="headerlink" href="#done-remotely-role-swap" title="Link to this heading">¶</a></h3>
+<p>Swapping the initiator (A↔B, 24 exchanges each, interleaved twice) moves the group delay by
+2.85 ns: 1919.62 vs 1916.77 ns, reproducible to ±0.1 ns. The carrier sum also moves
+(−78° vs +144°). A physical path is reciprocal, so this is a <strong>processing/role term</strong>:
+initiator and reflector engine latencies differ (the DAC start relative to the stamp, and
+the order of the capture and DAC ops), plus the δ·Treply sign. Averaging both roles removes
+it: 1918.2 ns. Note also that the absolute group-delay offset depends on the firmware build
+(1911–1913 ns on v11, 1916.8–1919.6 on v20). The stamp-to-engine latency moves with code
+layout, so <strong>calibrate per firmware build</strong> (or stamp in hardware; see §16).</p>
+</section>
+<section id="cheapest-ways-to-separate-device-delay-from-path-delay">
+<h3>14.3 Cheapest ways to separate device delay from path delay<a class="headerlink" href="#cheapest-ways-to-separate-device-delay-from-path-delay" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Option</p></th>
+<th class="head"><p>Separates</p></th>
+<th class="head"><p>Cost</p></th>
+<th class="head"><p>Status</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Swap a zero-length SMA barrel (or a 2nd cable of known length) for the 30 cm coax, measure both</p></td>
+<td><p>device sum vs path (two points → intercept = device sum; slope checks v_f)</p></td>
+<td><p>one barrel or cable, 5 min of the owner’s time</p></td>
+<td><p><strong>recommended</strong>: the whole pipeline is ready, ~40 bursts each</p></td>
+</tr>
+<tr class="row-odd"><td><p>Role swap</p></td>
+<td><p>role/processing bias</p></td>
+<td><p>none</p></td>
+<td><p><strong>done</strong> (§14.2)</p></td>
+</tr>
+<tr class="row-even"><td><p>Third C6 wired into a triangle with known cables</p></td>
+<td><p>per-device delay sums d_A, d_B, d_C (3 pairs, 3 unknowns)</p></td>
+<td><p>one more DUT + 2 cables + a splitter</p></td>
+<td><p>needs the bench rewired; the phone-bench C6s are other units</p></td>
+</tr>
+<tr class="row-odd"><td><p>HackRF tap</p></td>
+<td><p>nothing on this bench: the tap is directional (sees only A’s TX) and the HackRF shares no clock with the C6s</p></td>
+<td><p>—</p></td>
+<td><p>ruled out as wired. A bidirectional tap at both ends of the coax plus a shared 10 MHz reference would measure each device’s TX latency</p></td>
+</tr>
+<tr class="row-even"><td><p>Self loopback on one C6</p></td>
+<td><p>its TX + RX latency</p></td>
+<td><p>—</p></td>
+<td><p>ruled out: a keyed C6 can’t capture its own TX, and DAC + capture can’t run at once (one engine, §13.2)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+<section id="deployment-p4-c6-boards-and-standalone-c6-players">
+<h2>15. Deployment: P4+C6 boards and standalone C6 players<a class="headerlink" href="#deployment-p4-c6-boards-and-standalone-c6-players" title="Link to this heading">¶</a></h2>
+<section id="p4-c6-c6-as-the-radio-front-end">
+<h3>15.1 P4+C6 (C6 as the radio front end)<a class="headerlink" href="#p4-c6-c6-as-the-radio-front-end" title="Link to this heading">¶</a></h3>
+<p>The bench firmware runs as is: the C6 has blocks 1+2 to spare, the P4 renders. Raw
+captures go over SDIO (10+ MB/s, versus ~0.2 MB/s over USB here), so the P4 can run the
+host-quality DSP (FPU, Hann/onset-aligned windows, per-tone LS). That removes the
+on-device estimator penalty of §13.3. Rate is then bounded by airtime and the C6’s
+sequencing: 4 exchanges per 2.4 ms burst, plus ~1 ms of turnaround per burst, gives
+~1000 exchanges/s on air. With per-capture SDIO transfer (48 KB per exchange at 10 MB/s ≈
+5 ms) it is <strong>~100–200 exchanges/s</strong>: a slip-free absolute fix (~150 exchanges) in about 1 s.</p>
+</section>
+<section id="standalone-c6-player-a-ranging-mode">
+<h3>15.2 Standalone C6 player: a ranging mode<a class="headerlink" href="#standalone-c6-player-a-ranging-mode" title="Link to this heading">¶</a></h3>
+<p>The constraints from the measurements:</p>
+<ol class="arabic simple">
+<li><p>While an engine runs it owns a whole 128 KB SRAM block. The CPU and all DMA must stay
+out of the entire block.</p></li>
+<li><p>The DAC waveform and each capture sit at the start of the owned block (or at +64 KB with
+bit 16).</p></li>
+<li><p>One engine at a time (DAC or capture).</p></li>
+<li><p>A burst runs with interrupts off for ~2.4 ms (4 exchanges) up to ~3.6 ms (with LO steps).</p></li>
+<li><p>The radio leaves normal Wi-Fi operation for the burst.</p></li>
+</ol>
+<p><strong>Design: borrow the netstack’s buffers during a ranging window.</strong></p>
+<ul>
+<li><p><strong>Linker placement:</strong> put the netstack’s TLS record buffers and the MAC RX ring
+(≈ 16 + 16 KB, idle while the radio is busy with ranging) at the start of one block,
+say block 2. Everything else in block 2 is CPU-only data that no ISR or DMA touches
+(for example, effect bytecode or the map). <strong>Every DMA buffer</strong> (LED RMT/PARLIO, the
+Wi-Fi vendor DMA, USB) and every ISR stack/data goes in other blocks. RAM cost: <strong>0 KB
+extra.</strong> The engine region reuses buffers that hold nothing during the window.</p></li>
+<li><p><strong>Ranging window, per burst:</strong></p>
+<ol class="arabic simple">
+<li><p>The netstack drains TLS and pauses MAC RX (as background scans do).</p></li>
+<li><p>Wait for the LED frame to be handed to DMA.</p></li>
+<li><p>Interrupts off. 4 exchanges with captures kept <em>in place</em>: capture into the borrowed
+region, then FFT it in place (16 KB work) before the next capture. Each capture is
+processed or reduced to ~16 bytes before the next one.</p></li>
+<li><p>Interrupts on, MAC resumed, channel restored.</p></li>
+</ol>
+<p>A burst costs ~3 ms of radio and CPU, plus the on-device processing (~15–20 ms FFT +
+estimator per capture today) in normal task context afterwards.</p>
+</li>
+<li><p><strong>Rendering:</strong> LED DMA keeps streaming during the window, because its buffers are
+outside the block. Frame computation stalls ≤ 4 ms, so at 60 fps a burst right after a
+frame dispatch misses no frame. Nothing reboots. The IWDT limit of 300 ms is far away.</p></li>
+<li><p><strong>Reduced-capture variant</strong> (if the netstack buffers can’t be colocated):</p>
+<ul class="simple">
+<li><p>Reserve only 24 KB permanently: a 2048-word waveform (8 KB) plus one 4096-word capture
+taken at <strong>40 MS/s</strong> (the band is ±20 MHz, so 40 MS/s keeps it), which is 102 µs, 4 periods.
+Each capture is reduced on device before the next exchange.</p></li>
+<li><p>The cost is 24 KB of RAM, which the 2048-LED configuration (24 KB floor) can’t spare.
+A ≤1024-LED player can.</p></li>
+<li><p>The accuracy cost is a 2-period window instead of 3, which is ~1.8 dB less SNR. The
+estimator penalty is §13.3’s ~2× group-delay noise until the onset-aligned window is
+on device. So integer fixing needs ~2–4× more bursts (≈80–150), or the player
+settles for group-delay-only ranging at 1–2 cm after averaging.</p></li>
+</ul>
+</li>
+<li><p><strong>Latency/airtime per absolute fix (C6 player):</strong></p>
+<ul class="simple">
+<li><p>~40 bursts over 5 LOs: 40 × ~3 ms = 0.12 s of radio time, plus 5 channel switches
+(~1 ms each, vendor retune).</p></li>
+<li><p>Spread over 1–2 s in normal operation, that is &lt; 10 % radio duty.</p></li>
+<li><p>Group-delay-only ranging (±5–12 cm) needs one burst: ~3 ms.</p></li>
+</ul>
+</li>
+</ul>
+<p><strong>Accuracy trade-offs summary:</strong></p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Mode</p></th>
+<th class="head"><p>Per-fix airtime</p></th>
+<th class="head"><p>Precision (conducted)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>P4+C6, raw over SDIO, host DSP</p></td>
+<td><p>~0.1 s for 38 bursts</p></td>
+<td><p>carrier-resolved ±0.25 mm; group delay alone ±1.2 cm</p></td>
+</tr>
+<tr class="row-odd"><td><p>C6 player, borrowed netstack block, on-device DSP</p></td>
+<td><p>~0.12–0.5 s</p></td>
+<td><p>group delay ±2–3 cm averaged; carrier-resolved after 80–150 bursts</p></td>
+</tr>
+<tr class="row-even"><td><p>C6 player, reduced 24 KB capture</p></td>
+<td><p>similar</p></td>
+<td><p>as above, slightly lower SNR</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
 <section id="reproduce">
 <h2>10. Reproduce<a class="headerlink" href="#reproduce" title="Link to this heading">¶</a></h2>
 <p><code class="docutils literal notranslate"><span class="pre">tools/chsound/README.md</span></code>. Short version: hold <code class="docutils literal notranslate"><span class="pre">c6-sdr</span></code>, flash
@@ -1177,6 +1397,17 @@ is written from the documented facts, not copied. Fine with the AGPL repo?</p></
 <li><a class="reference internal" href="#on-device-processing">13.3 On-device processing</a></li>
 <li><a class="reference internal" href="#stitching-with-one-sided-tones">13.4 Stitching with one-sided tones</a></li>
 <li><a class="reference internal" href="#preamble-misses">13.5 Preamble misses</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#absolute-path-length-on-the-30-cm-coax-and-what-one-known-path-can-calibrate">14. Absolute path length on the ~30 cm coax, and what one known path can calibrate</a><ul>
+<li><a class="reference internal" href="#what-one-known-path-can-and-can-t-separate">14.1 What one known path can and can’t separate</a></li>
+<li><a class="reference internal" href="#done-remotely-role-swap">14.2 Done remotely: role swap</a></li>
+<li><a class="reference internal" href="#cheapest-ways-to-separate-device-delay-from-path-delay">14.3 Cheapest ways to separate device delay from path delay</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#deployment-p4-c6-boards-and-standalone-c6-players">15. Deployment: P4+C6 boards and standalone C6 players</a><ul>
+<li><a class="reference internal" href="#p4-c6-c6-as-the-radio-front-end">15.1 P4+C6 (C6 as the radio front end)</a></li>
+<li><a class="reference internal" href="#standalone-c6-player-a-ranging-mode">15.2 Standalone C6 player: a ranging mode</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#reproduce">10. Reproduce</a></li>
