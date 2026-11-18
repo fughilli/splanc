@@ -5,7 +5,7 @@
 use splanc_ota::boot::{self, AppState, Handoff, Health, LoaderAction, LoaderInputs, Reason, Reset, Verdict};
 use splanc_ota::image::{self, ImageError, CHIP_ESP32C3, CHIP_ESP32C6, CHIP_ESP32P4};
 use splanc_ota::manifest::{self, Manifest, ENCODED_LEN, FLAG_LOADER};
-use splanc_ota::session::{self, Refusal, Resume, Session, Target, MAX_CHUNK, PERSIST_EVERY, SECTOR};
+use splanc_ota::session::{self, Refusal, Resume, Session, Target, MAX_CHUNK, MAX_CHUNK_P4, PERSIST_EVERY, SECTOR};
 use splanc_ota::sha256::{sha256, Sha256};
 
 fn hex(b: &[u8]) -> String {
@@ -570,4 +570,23 @@ mod keyring_tests {
         b[0] ^= 1;
         assert_eq!(EpochRecord::decode(&b), None, "magic");
     }
+}
+
+/// The P4 takes two-sector chunks (behind its front end's big windows); a C6 still one.
+/// (The size check comes before the image header's, so zeros show which.)
+#[test]
+fn p4_takes_bigger_chunks_than_a_c6() {
+    assert_eq!(session::max_chunk_for_chip(CHIP_ESP32C6), MAX_CHUNK);
+    assert_eq!(session::max_chunk_for_chip(CHIP_ESP32P4), MAX_CHUNK_P4);
+    let img = vec![0u8; 3 * MAX_CHUNK_P4 as usize];
+    let big = vec![0u8; MAX_CHUNK_P4 as usize];
+    let c6 = Session::begin(manifest_for(&img, 1), true, &target(0), false, None).unwrap();
+    assert_eq!(c6.plan(0, &big, CHIP_ESP32C6), Err(Refusal::BadChunk));
+    let mut m = manifest_for(&img, 1);
+    m.flags = splanc_ota::keyring::flags(splanc_ota::keyring::KEY_RELEASE, 0)
+        | ((manifest::BOARD_P4 as u32) << manifest::BOARD_SHIFT);
+    let p4t = Target { slot_size: SLOT, chip: CHIP_ESP32P4, installed_version: 0, board: manifest::BOARD_P4 };
+    let p4 = Session::begin(m, true, &p4t, false, None).unwrap();
+    assert_ne!(p4.plan(0, &big, CHIP_ESP32P4), Err(Refusal::BadChunk));
+    assert_eq!(p4.plan(0, &vec![0u8; MAX_CHUNK_P4 as usize + 1], CHIP_ESP32P4), Err(Refusal::BadChunk));
 }

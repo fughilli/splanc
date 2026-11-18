@@ -23,6 +23,18 @@ pub const SECTOR: u32 = 4096;
 /// Largest `ota_chunk.data`: one sector, and what fits the netstack's 6 KiB WS
 /// receive buffer with the envelope.
 pub const MAX_CHUNK: u32 = 4096;
+/// The P4's chunk limit: behind its C6 front end's big TCP windows (netstack
+/// `big_windows`) a chunk's fixed cost is most of its time, so it takes two sectors.
+pub const MAX_CHUNK_P4: u32 = 2 * MAX_CHUNK;
+
+/// The largest chunk a chip's receiver takes (ota_status.max_chunk advertises it).
+pub fn max_chunk_for_chip(chip: u16) -> u32 {
+    if chip == image::CHIP_ESP32P4 {
+        MAX_CHUNK_P4
+    } else {
+        MAX_CHUNK
+    }
+}
 /// Persist progress at most this often (NVS wear: ~32 writes per 2 MB image).
 pub const PERSIST_EVERY: u32 = 64 * 1024;
 /// The resume record: the manifest, then the offset (u32 LE).
@@ -163,6 +175,7 @@ pub struct Session {
     next: u32,
     erased: u32,
     persisted: u32,
+    max_chunk: u32,
 }
 
 const fn align_down(x: u32) -> u32 {
@@ -194,7 +207,7 @@ impl Session {
             }
             _ => 0,
         };
-        Ok(Session { manifest: m, next, erased: align_down(next), persisted: next })
+        Ok(Session { manifest: m, next, erased: align_down(next), persisted: next, max_chunk: max_chunk_for_chip(t.chip) })
     }
 
     /// The next byte wanted (= bytes received and durably written).
@@ -222,7 +235,7 @@ impl Session {
             return Err(Refusal::OutOfOrder { want: self.next });
         }
         let len = data.len() as u32;
-        if len == 0 || len > MAX_CHUNK {
+        if len == 0 || len > self.max_chunk {
             return Err(Refusal::BadChunk);
         }
         let end = offset.checked_add(len).ok_or(Refusal::Overflow)?;
