@@ -1409,8 +1409,9 @@ or a busy relay.
 
 - **Delivery** under the recommendation drops only during the 2.5 s before the block. After
   it, no forgery reaches anyone.
-- **Local blocking is harmful.** An honest relay that forwards forgeries is blocked by
-  its neighbours. It ships off.
+- **Local blocking is harmful.** An honest relay that forwards forgeries gets blocked by its
+  neighbours. Local blocks also stop the forgeries before the gateway has enough evidence to
+  name the forger, so the forger is never removed.
 - **Attacks on the quarantine itself:**
   - *One liar fabricating reports:* never reaches the 2-witness quorum, so no block. Reports
     about genuine packets are counted as lies.
