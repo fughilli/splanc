@@ -826,6 +826,8 @@ pub struct World {
     pub capacity_aware: bool,
     pub hop_limit: u8,
     pub adaptive_hops: bool,
+    /// Members at which live updates move to the broadcast authenticator, and back (Q19).
+    pub live_auth: (u16, u16),
     /// Each device's flash for images (80 KiB; the 1.5 MB firmware runs raise it).
     pub flash_bytes: usize,
     /// How long the app's grants last; with `auto_renew` the app signs a renewal (same
@@ -854,6 +856,7 @@ impl World {
             capacity_aware,
             hop_limit: 5,
             adaptive_hops: true,
+            live_auth: (splanc_mesh::tree::TREE_ENTER, splanc_mesh::tree::TREE_EXIT),
             flash_bytes: 80 * 1024,
             grant_ttl_s: 3600,
             auto_renew: true,
@@ -866,7 +869,7 @@ impl World {
     fn make_stack(&self, index: usize, id: NodeId, class: Class, counter_mark: u64) -> Stack {
         let port = SimPort { air: self.air.clone(), index };
         let fw_key = swarm_net::crypto::signing::p256_public_key(&FW_SECRET);
-        let cfg = StackConfig { firmware: 1, class, capacity_aware: self.capacity_aware, counter_mark, fw_key, hop_limit: self.hop_limit, adaptive_hops: self.adaptive_hops, ..StackConfig::default() };
+        let cfg = StackConfig { firmware: 1, class, capacity_aware: self.capacity_aware, counter_mark, fw_key, hop_limit: self.hop_limit, adaptive_hops: self.adaptive_hops, live_auth: self.live_auth, ..StackConfig::default() };
         let mut mac = [0x02, 0x5c, 0, 0, 0, 0];
         mac[4..].copy_from_slice(&id.to_be_bytes());
         MeshStack::new(id, mac, port, HostKey::from_seed(id as u64), TestRng(0xC0FFEE ^ id as u64 ^ counter_mark), cfg).expect("MTU")

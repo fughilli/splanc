@@ -38,6 +38,8 @@ use crate::node::{MtuTooSmall, Node, NodeConfig, Rx};
 use crate::ports::{ControlHeader, Inbound, Port, Role, RouteCtx, RouteReject, Router, Targets};
 use crate::rekey::{NewKeys, RekeyMember, RekeyMsg, RekeyOrder, Rekeyer};
 use crate::security::{Domain, FrameGuard, MeshSecurity};
+use crate::tesla::{self, Auth, Challenge, Signer, TeslaMsg, Verifier};
+use crate::tree::{Dist, Selector};
 
 /// Largest plain frame (a `JoinAccept` in its envelope) plus room.
 pub const PLAIN_MAX: usize = 192;
@@ -89,6 +91,10 @@ pub struct StackConfig {
     /// reach this node or its neighbours in the last 5 min, plus one (2..=15), discovered by
     /// a probe flood at the maximum limit once a minute.
     pub adaptive_hops: bool,
+    /// Members (roster + gateway) at or above which live updates use the broadcast
+    /// authenticator, and at or below which they return to per-receiver MACs (Q19; the same
+    /// hysteresis as the tree switch, Q18).
+    pub live_auth: (u16, u16),
 }
 
 impl Default for StackConfig {
@@ -104,8 +110,24 @@ impl Default for StackConfig {
             capacity_aware: true,
             hop_limit: 5,
             adaptive_hops: true,
+            live_auth: (crate::tree::TREE_ENTER, crate::tree::TREE_EXIT),
         }
     }
+}
+
+/// The live authenticator's counters (§7.9, Q19).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TeslaStats {
+    /// Gateway: live updates sent under the broadcast authenticator, and under per-receiver
+    /// MACs; chains built; Syncs answered.
+    pub auth_sent: u32,
+    pub per_receiver_sent: u32,
+    pub chains: u32,
+    pub syncs_sent: u32,
+    /// Member: chain requests sent, Syncs accepted, packets dropped while it had no chain.
+    pub reqs_sent: u32,
+    pub syncs_accepted: u32,
+    pub no_chain: u32,
 }
 
 /// What happened, for the device (dispatch, persist, tell the app).
@@ -242,6 +264,15 @@ pub struct MeshStack<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, cons
     renewal_asked: Option<(u32, u32)>,
     /// Session crypto jobs run so far (ECDSA verifies and ECDHs).
     pub crypto_jobs: u32,
+    /// Live authentication (Q19): the switch, the gateway's chain, a member's verifier for its
+    /// gateway's chain and its outstanding challenge.
+    live_sel: Selector,
+    pub tesla: Option<Signer>,
+    tesla_seq: u64,
+    pub tesla_v: Option<(NodeId, Verifier)>,
+    tesla_ch: Option<(NodeId, Challenge)>,
+    tesla_req_us: i64,
+    pub tesla_stats: TeslaStats,
     plain_tx: [u8; PLAIN_MAX],
     plain_sealed: [u8; PLAIN_MAX + 32],
 }
@@ -303,6 +334,13 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             pending_acks: [None; CRYPTO_ACKS],
             renewal_asked: None,
             crypto_jobs: 0,
+            live_sel: Selector::with(cfg.live_auth.0, cfg.live_auth.1),
+            tesla: None,
+            tesla_seq: 0,
+            tesla_v: None,
+            tesla_ch: None,
+            tesla_req_us: i64::MIN / 2,
+            tesla_stats: TeslaStats::default(),
             plain_tx: [0; PLAIN_MAX],
             plain_sealed: [0; PLAIN_MAX + 32],
         })
@@ -682,11 +720,16 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                     on(Event::Control { origin, header, inner });
                 }
             }
+            Port::LiveAuth => self.on_live_auth(now_us, origin, body, on),
             _ => on(Event::Packet { origin, port, body, admin }),
         }
     }
 
     fn on_freshness(&mut self, now_us: i64, origin: NodeId, body: &[u8], on: &mut dyn FnMut(Event<'_>)) {
+        if let Some(m) = TeslaMsg::decode(body) {
+            self.on_tesla(now_us, origin, m);
+            return;
+        }
         let me = self.me();
         let mesh_id = self.node.guard.mesh_id;
         if let Some(m) = SessionMsg::decode(body) {
@@ -797,6 +840,18 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             }
             return true;
         }
+        // A gateway whose live updates moved to the broadcast authenticator builds its chain
+        // here (CHAIN_LEN hashes), and the next one before this one runs out.
+        if self.gateway.is_some() && self.live_sel.mode == Dist::Tree && self.tesla.as_ref().is_none_or(|s| s.ending(now_us)) {
+            self.crypto_jobs += 1;
+            let mut seed = [0u8; 16];
+            self.rng.fill(&mut seed);
+            let mut c = [0u8; 2];
+            self.rng.fill(&mut c);
+            self.tesla = Some(Signer::new(&seed, u16::from_be_bytes(c), now_us, tesla::INTERVAL_US, tesla::DISCLOSE));
+            self.tesla_stats.chains += 1;
+            return true;
+        }
         false
     }
 
@@ -892,14 +947,120 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         if self.live.replace((conn, op_id, targets, inner.len(), buf)).is_some() {
             self.live_coalesced += 1;
         }
+        let members = self.gateway.as_ref().map_or(0, |g| g.len() as u16 + 1);
+        let mode = self.live_sel.update(now_us, members);
         if self.node.net.mesh.can_send() {
             if let Some((conn, op, targets, n, buf)) = self.live.take() {
-                self.send_control(now_us, conn, op, targets, &buf[..n])?;
+                // Large meshes: one broadcast-authenticated packet (Q19). Small ones, a node
+                // list, or before the chain is built: per-receiver MACs.
+                if mode == Dist::Tree && self.tesla.is_some() && !matches!(targets, Targets::Nodes { .. }) {
+                    self.send_live_auth(now_us, conn, op, targets, &buf[..n])?;
+                    self.tesla_stats.auth_sent += 1;
+                } else {
+                    self.send_control(now_us, conn, op, targets, &buf[..n])?;
+                    self.tesla_stats.per_receiver_sent += 1;
+                }
                 self.live_sent += 1;
                 self.live_last_op = op;
             }
         }
         Ok(())
+    }
+
+    /// One live update under the broadcast authenticator: `Auth ‖ seq ‖ ControlHeader ‖ inner`.
+    fn send_live_auth(&mut self, now_us: i64, conn: usize, op_id: u32, targets: Targets, inner: &[u8]) -> Result<(), SendError> {
+        let session = self.gate.session(conn).ok_or(SendError::Locked)?;
+        let mut body = [0u8; tesla::BODY_MAX];
+        let n = ControlHeader { op_id, targets }.encode(inner, &mut body).ok_or(SendError::TooBig)?;
+        self.tesla_seq += 1;
+        let ctx = tesla::Context { mesh_id: self.node.guard.mesh_id, session };
+        let signer = self.tesla.as_mut().ok_or(SendError::Locked)?;
+        let a = signer.seal(now_us, ctx, self.tesla_seq, Port::LiveAuth as u8, &body[..n]).ok_or(SendError::Counter)?;
+        let mut p = [0u8; tesla::AUTH_LEN + 8 + tesla::BODY_MAX];
+        a.encode(&mut p).ok_or(SendError::TooBig)?;
+        p[tesla::AUTH_LEN..tesla::AUTH_LEN + 8].copy_from_slice(&self.tesla_seq.to_be_bytes());
+        p[tesla::AUTH_LEN + 8..tesla::AUTH_LEN + 8 + n].copy_from_slice(&body[..n]);
+        self.node.net.send(BROADCAST, Port::LiveAuth as u8, &p[..tesla::AUTH_LEN + 8 + n], false).ok_or(SendError::QueueFull)?;
+        Ok(())
+    }
+
+    /// A broadcast-authenticated live update from `origin`: verify (buffer until its key is
+    /// out) and deliver as control; with no chain for this gateway, ask for it.
+    fn on_live_auth(&mut self, now_us: i64, origin: NodeId, body: &[u8], on: &mut dyn FnMut(Event<'_>)) {
+        if body.len() < tesla::AUTH_LEN + 8 {
+            return;
+        }
+        let Some(a) = Auth::decode(&body[..tesla::AUTH_LEN]) else { return };
+        let mut sb = [0u8; 8];
+        sb.copy_from_slice(&body[tesla::AUTH_LEN..tesla::AUTH_LEN + 8]);
+        let seq = u64::from_be_bytes(sb);
+        let payload = &body[tesla::AUTH_LEN + 8..];
+        if !self.tesla_v.as_ref().is_some_and(|(g, v)| *g == origin && v.chain == a.chain) {
+            self.tesla_stats.no_chain += 1;
+            self.tesla_request(now_us, origin);
+            return;
+        }
+        let me = self.me();
+        let groups = self.membership.groups();
+        if let Some((_, v)) = self.tesla_v.as_mut() {
+            v.on_packet(now_us, seq, Port::LiveAuth as u8, &a, payload, &mut |_, _, b| {
+                if let Some((header, inner)) = ControlHeader::decode(b) {
+                    if header.targets.includes(me, &groups) {
+                        on(Event::Control { origin, header, inner });
+                    }
+                }
+            });
+        }
+    }
+
+    /// Challenge `gw` for its chain (only a gateway we hold a synced session with).
+    fn tesla_request(&mut self, now_us: i64, gw: NodeId) {
+        if now_us - self.tesla_req_us < tesla::REQ_RETRY_US {
+            return;
+        }
+        let Some(s) = self.sessions.by_gateway(gw) else { return };
+        let (session, key) = (s.session, s.key);
+        let mut nb = [0u8; 8];
+        self.rng.fill(&mut nb);
+        let nonce = u64::from_be_bytes(nb);
+        let me = self.me();
+        self.tesla_ch = Some((gw, Challenge { session, nonce, t0_us: now_us }));
+        self.tesla_req_us = now_us;
+        self.send_tesla(gw, &TeslaMsg::Req { session, node: me, nonce, mac: tesla::req_mac(&key, session, me, nonce) });
+        self.tesla_stats.reqs_sent += 1;
+    }
+
+    fn send_tesla(&mut self, to: NodeId, m: &TeslaMsg) {
+        let mut b = [0u8; 64];
+        if let Some(n) = m.encode(&mut b) {
+            self.node.net.send(to, Port::Freshness as u8, &b[..n], false);
+        }
+    }
+
+    fn on_tesla(&mut self, now_us: i64, origin: NodeId, m: TeslaMsg) {
+        let me = self.me();
+        let mesh_id = self.node.guard.mesh_id;
+        match m {
+            TeslaMsg::Req { session, node, nonce, mac } => {
+                let Some(gs) = self.gateway.as_ref().filter(|g| g.grant.session == session) else { return };
+                let Some(e) = gs.entry(node).filter(|e| crate::crypto::ct_eq(&tesla::req_mac(&e.key, session, node, nonce), &mac)) else { return };
+                let key = e.key;
+                if let Some(s) = self.tesla.as_ref() {
+                    let reply = s.sync(now_us, session, node, nonce, &key);
+                    self.send_tesla(origin, &reply);
+                    self.tesla_stats.syncs_sent += 1;
+                }
+            }
+            TeslaMsg::Sync(body, mac) => {
+                let Some((gw, ch)) = self.tesla_ch.filter(|(g, _)| *g == origin) else { return };
+                let Some(key) = self.sessions.get(body.session).map(|s| s.key) else { return };
+                if let Some(v) = Verifier::from_sync(&ch, &body, &mac, &key, me, mesh_id) {
+                    self.tesla_v = Some((gw, v));
+                    self.tesla_ch = None;
+                    self.tesla_stats.syncs_accepted += 1;
+                }
+            }
+        }
     }
 
     pub fn command(&mut self, now_us: i64, conn: usize, c: &MemberCommand) -> Result<usize, SendError> {
