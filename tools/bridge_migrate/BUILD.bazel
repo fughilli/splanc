@@ -1,0 +1,29 @@
+"""tools/bridge_migrate — keep a Splanc Pi bridge paired across a reflash (README.md).
+
+bridge_migrate.py is a stdlib-only script the owner runs from a laptop (macOS or
+Linux); the Bazel targets are for the tests. The test drives the card path end to
+end through the image's own importer (//pi/bridge/image:splanc_image, bootconfig).
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+
+py_binary(
+    name = "bridge_migrate",
+    srcs = ["bridge_migrate.py"],
+)
+
+py_test(
+    name = "bridge_migrate_test",
+    size = "small",
+    srcs = [
+        "bridge_migrate.py",
+        "bridge_migrate_test.py",
+    ],
+    imports = ["."],
+    main = "bridge_migrate_test.py",
+    deps = [
+        "//pi/bridge/image:splanc_image",
+        requirement("pytest"),
+    ],
+)
