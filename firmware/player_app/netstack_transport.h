@@ -113,6 +113,8 @@ bool netstack_osc_send(const uint8_t *data, size_t len);
 // minutes after it), from udp/9001. Network (loop) task. 1 sent; 0 nobody subscribed;
 // -1 the radio refused it (its buffer pool was full): try again shortly.
 int netstack_log_send(const uint8_t *data, size_t len);
+// Whether a console subscriber is listening on udp/9001 (its lease not expired).
+bool netstack_log_subscribed();
 // OSC out and radio TX counters, one line for the front end's stats; *run_ended is set
 // when a run of TX refusals (the vendor buffer pool full) of 200 ms or more just ended.
 int netstack_osc_stats(char *buf, size_t cap, bool *run_ended);

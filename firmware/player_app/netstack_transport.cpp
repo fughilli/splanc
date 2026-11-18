@@ -918,6 +918,10 @@ bool netstack_osc_send(const uint8_t *data, size_t len) {
   return true;
 }
 
+bool netstack_log_subscribed() {
+  return g_leased && g_log_peer_port != 0 && (int32_t)(millis() - g_log_until_ms) <= 0;
+}
+
 int netstack_log_send(const uint8_t *data, size_t len) {
   if (!g_leased || g_log_peer_port == 0 || (int32_t)(millis() - g_log_until_ms) > 0) return 0;
   if (len > (size_t)(kTxIpCap - kUdpPayloadOff)) len = (size_t)(kTxIpCap - kUdpPayloadOff);
