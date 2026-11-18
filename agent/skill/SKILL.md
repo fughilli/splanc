@@ -202,9 +202,9 @@ effect:
    several players (or a room) you get ONE image per time of every fixture in the
    room frame, plus per-fixture stats.
 4. `deploy_effect {effect_id, source, description, tags}` — estimates each player's frame cost
-   first and deploys nowhere if any would overrun (`force: true` overrides;
-   the estimate is fitted to the C6 but can read low on branchy, buffer or
-   texture effects, so still measure), then uploads and activates
+   first and reports it, but the estimate is uncalibrated and never blocks a
+   deploy (it can read high or low; an over-budget estimate comes back as
+   `estimate_note`, so always measure), then uploads and activates
    everywhere. A player holds one effect at a time; the hub remembers the
    previous one per player.
 5. `measure_effect {seconds: 5, rollback_on_overrun: true}` — on-device frame cost
