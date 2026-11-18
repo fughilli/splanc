@@ -95,6 +95,7 @@ uint32_t ns_tcp_window_ack(uint8_t *out, uint32_t cap); // window-update ACK aft
 uint32_t ns_tcp_recv(uint8_t *out, uint32_t cap);
 void ns_tcp_listen(const uint8_t *src, uint16_t sport, uint32_t iss); // passive open (server)
 uint32_t ns_tcp_abort(uint8_t *out, uint32_t cap); // RST|ACK to the current peer (0 = none)
+uint32_t ns_tcp_seq_diag(uint32_t *out);           // bytes (acked, snd_nxt, high-water)
 uint32_t ns_tcp_state();
 uint32_t ns_tcp_snd_una(); // oldest unacked seq — advances on peer ACK (TX forward progress)
 uint32_t ns_tcp_rcv_nxt(); // next expected seq — advances on peer data (RX forward progress)
@@ -1030,6 +1031,27 @@ void handle_arp(const uint8_t *pt, int pl) {
 // CALLER gates this to the pre-connection window (no active wss) — a broadcast frame
 // interleaved with an ESTABLISHED wss dropped the peer's session (the improv_e2e wss
 // wedge), so we announce only until a client is connected, never during a live session.
+// Group-addressed announcements (gratuitous ARP, mDNS) wait until this millis(). A
+// reclaim's RST is a lone frame nobody retransmits, and arming the next frame while it is
+// still on air (MAC retries outlast tx_pace's budget) loses it: the idle-ARP that fired
+// the instant the slot went back to LISTEN killed ~1 in 25 reclaim RSTs, leaving the
+// browser's preconnected socket looking alive (preconnect_netstack dead_send).
+static uint32_t g_group_tx_quiet_until_ms = 0;
+static bool group_tx_quiet() { return (int32_t)(millis() - g_group_tx_quiet_until_ms) < 0; }
+
+// The last reclaim's RST and its two pending re-sends (see the reclaim gate).
+static uint8_t g_stale_rst[80];
+static uint32_t g_stale_rst_len = 0;
+static uint32_t g_stale_rst_due[2];
+static uint8_t g_stale_rst_left = 0;
+static void stale_rst_resend() {
+  if (g_stale_rst_left == 0 || g_stale_rst_len == 0) return;
+  const uint8_t i = 2 - g_stale_rst_left;
+  if ((int32_t)(millis() - g_stale_rst_due[i]) < 0) return;
+  send_ip(g_stale_rst, g_stale_rst_len);
+  g_stale_rst_left--;
+}
+
 void send_gratuitous_arp() {
   if (!g_leased) return;
   uint8_t payload[8 + 28];
@@ -2553,9 +2575,12 @@ void netstack_loop() {
     static uint32_t diag_last_state = 999;
     uint32_t st_now = ns_ble_state();
     if (st_now != diag_last_state) {
-      Serial.printf("[t=%lu] [ble] link state=%lu connected=%d leased=%d\n",
+      // disc=0x.. : the HCI reason of the last disconnect (0x08 supervision timeout,
+      // 0x13 central closed, 0x22 LL response timeout, 0x28 instant passed).
+      Serial.printf("[t=%lu] [ble] link state=%lu connected=%d leased=%d disc=0x%02lx\n",
                     (unsigned long)millis(), (unsigned long)st_now,
-                    improv_ble_central_connected(), g_leased ? 1 : 0);
+                    improv_ble_central_connected(), g_leased ? 1 : 0,
+                    (unsigned long)ns_ble_last_disc_reason());
       diag_last_state = st_now;
     }
   }
@@ -2946,7 +2971,7 @@ void netstack_loop() {
     uint32_t ts = ns_tcp_state();
     bool idle = (ts != 2 && ts != 6) && !g_ws_up;  // no client Established/SynRcvd, no wss
     static uint32_t garp_ms = 0;
-    if (st == DONE && g_leased && idle && millis() - garp_ms > 3000) {
+    if (st == DONE && g_leased && idle && !group_tx_quiet() && millis() - garp_ms > 3000) {
       garp_ms = millis();
       send_gratuitous_arp();
     }
@@ -2972,7 +2997,8 @@ void netstack_loop() {
         mdns_ms = 0;
       }
     }
-    if (st == DONE && g_leased && idle && millis() - mdns_ms > (mdns_sent < 3 ? 1000u : 60000u)) {
+    if (st == DONE && g_leased && idle && !group_tx_quiet() &&
+        millis() - mdns_ms > (mdns_sent < 3 ? 1000u : 60000u)) {
       mdns_ms = millis();
       send_igmp_mdns_report();
       send_mdns_announce();
@@ -3094,6 +3120,7 @@ void netstack_loop() {
     // Established — and once it exceeds ~3s (a real handshake+WS completes in <3s on the LAN),
     // force a fresh listener (ns_tcp_listen swaps the conn to a clean LISTEN), abandoning the
     // dead peer and freeing the slot. This is the tls_churn anti-wedge gate.
+    stale_rst_resend();
     {
       static uint32_t hs_since = 0;
       static uint32_t last_prog = 0;
@@ -3124,10 +3151,27 @@ void netstack_loop() {
           // Chrome later sends the request into the dead connection, gets the listener's
           // stale-segment RST, resends, and gives up (ERR_TOO_MANY_RETRIES on Android).
           // Reset now, while it's idle, so Chrome discards it and dials a fresh socket.
+          // An RST is a lone frame nobody retransmits, and on the rig ~1 in 25 never
+          // reached the AP (both of two back-to-back copies missing from a wlan0 capture
+          // while every other round showed them): a radio blackout longer than the gap
+          // between them — the shared radio's BLE advertising event is the fitting
+          // suspect. So send it now and again 25 and 75 ms later (stale_rst_resend), and
+          // keep group-addressed TX quiet behind it. Copies are identical: whichever lands
+          // resets the peer, and Linux ignores an RST for a socket that is already gone.
           {
-            uint8_t rst[80];
-            uint32_t rn = ns_tcp_abort(rst, sizeof rst);
-            if (rn > 0) send_ip(rst, rn);
+            uint32_t sq[3] = {0, 0, 0};
+            if (ns_tcp_seq_diag(sq))
+              Serial.printf("[reclaim] RST at sent=%lu (acked=%lu, high=%lu) bytes\n",
+                            (unsigned long)sq[1], (unsigned long)sq[0], (unsigned long)sq[2]);
+            g_stale_rst_len = ns_tcp_abort(g_stale_rst, sizeof g_stale_rst);
+            if (g_stale_rst_len > 0) {
+              send_ip(g_stale_rst, g_stale_rst_len);
+              const uint32_t now = millis();
+              g_stale_rst_due[0] = now + 25;
+              g_stale_rst_due[1] = now + 75;
+              g_stale_rst_left = 2;
+              g_group_tx_quiet_until_ms = now + 250;
+            }
           }
           static uint32_t riss = 0x5000;
           ns_tcp_listen(g_offer_ip, SERVER_PORT, riss);
