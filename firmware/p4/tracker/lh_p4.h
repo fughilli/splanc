@@ -56,6 +56,13 @@ void lh_status(LhStatus* out);
 void lh_profile(LhProfile* out);
 // Stream sweeps into the filter as their reports come (1, the default) or whole (0).
 void lh_set_stream(int on);
+// Slow solves off the tracker task (lh_p4.rs): lh_defer_solves(1), then hand each job from
+// lh_take_job (null: none) to a worker that calls lh_job_run, and its result back to
+// lh_job_done on the tracker task.
+void lh_defer_solves(int on);
+void* lh_take_job();
+void* lh_job_run(void* job);
+void lh_job_done(void* result);
 int lh_station_prior(uint32_t id, const float* p);
 
 }  // extern "C"

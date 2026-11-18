@@ -1,7 +1,12 @@
 //! The lighthouse tracker on the ESP32-P4: lh_device (handshake + report decoding)
 //! and lh_kernel (calibration + tracking) behind a small C ABI for tracker.cpp.
 //!
-//! Single-threaded by contract: every `lh_*` call comes from the tracker task.
+//! Single-threaded by contract: every `lh_*` call comes from the tracker task, except
+//! `lh_job_run`, which runs a slow solve (KernelConfig::defer_solves) on a worker task.
+//! It is pure (lh_kernel::kernel::run_job) and touches nothing here: the tracker task
+//! hands jobs out (`lh_take_job`) and takes their results back (`lh_job_done`), so a
+//! pose bootstrap (~1.5 s here) or a station calibration (several seconds) no longer stops
+//! the light and IMU going into the kernel.
 //!
 //! Latency (photon to photon, see tracker_module.cpp): each report comes with its arrival
 //! time on the P4's clock, which maps the tracker's 48 MHz clock onto the P4's
@@ -22,6 +27,8 @@
 
 extern crate alloc;
 
+use alloc::boxed::Box;
+use alloc::collections::VecDeque;
 use alloc::format;
 
 use alloc::vec::Vec;
@@ -29,7 +36,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use lh_device::clock::HostClock;
 use lh_device::{Decoder, Link, LinkError, Output};
 use lh_health::{Health, TrackHealth};
-use lh_kernel::kernel::{Event, Input, Kernel, KernelConfig};
+use lh_kernel::kernel::{run_job, Event, Input, Kernel, KernelConfig, SolveJob, SolveResult};
 use lh_kernel::linalg::Mat;
 use lh_kernel::math::{Pose, Quat, Vec3};
 use lh_protocol::devices::{self, DeviceType};
@@ -196,6 +203,8 @@ struct Tracker {
     trigger_us: i64,
     profile: LhProfile,
     health: TrackHealth,
+    /// Slow solves the kernel handed out, for lh_take_job.
+    jobs: VecDeque<SolveJob>,
 }
 
 static mut TRACKER: Option<Tracker> = None;
@@ -254,6 +263,7 @@ fn tracker() -> &'static mut Tracker {
             trigger_us: 0,
             profile: LhProfile::default(),
             health: TrackHealth::default(),
+            jobs: VecDeque::new(),
         })
     }
 }
@@ -324,6 +334,7 @@ impl Tracker {
                 Event::StationSeen { slot, info, .. } => {
                     log(&format!("lh: station {} in slot {} (mode {})", info.id, slot, info.mode))
                 }
+                Event::Solve(job) => self.jobs.push_back(job),
                 Event::TimingLocked { .. } => log("lh: sweep timing locked"),
                 Event::TimingLost { reason, .. } => log(&format!("lh: sweep timing lost ({:?})", reason)),
                 Event::StationsDisagree { pos, rot, count, .. } => log(&format!(
@@ -492,6 +503,55 @@ pub extern "C" fn lh_clock(us: i64) {
     }
     t.trigger_us = us;
     t.push(Input::Clock { dev, time: raw });
+    t.timing_counters();
+}
+
+/// Hand slow solves out (1) for a worker task (lh_take_job / lh_job_run / lh_job_done)
+/// instead of running them in the kernel on this task (0, the default).
+#[no_mangle]
+pub extern "C" fn lh_defer_solves(on: i32) {
+    tracker().kernel.cfg.defer_solves = on != 0;
+}
+
+/// The next slow solve for the worker (null if none): pass it to lh_job_run, which takes
+/// it over.
+#[no_mangle]
+pub extern "C" fn lh_take_job() -> *mut core::ffi::c_void {
+    match tracker().jobs.pop_front() {
+        Some(job) => Box::into_raw(Box::new(job)) as *mut core::ffi::c_void,
+        None => core::ptr::null_mut(),
+    }
+}
+
+/// A job's result, and what it cost on the worker.
+struct JobOut {
+    result: SolveResult,
+    kind: &'static str,
+    ms: u32,
+}
+
+/// Runs a job from lh_take_job (takes it over) and returns its result for lh_job_done.
+/// The one call made from another task: it touches no tracker state.
+#[no_mangle]
+pub unsafe extern "C" fn lh_job_run(job: *mut core::ffi::c_void) -> *mut core::ffi::c_void {
+    let job = *Box::from_raw(job as *mut SolveJob);
+    let kind = job.kind();
+    let t0 = p4_now_us();
+    let result = run_job(job);
+    let ms = ((p4_now_us() - t0) / 1000) as u32;
+    Box::into_raw(Box::new(JobOut { result, kind, ms })) as *mut core::ffi::c_void
+}
+
+/// A result from lh_job_run (takes it over) into the kernel.
+#[no_mangle]
+pub unsafe extern "C" fn lh_job_done(out: *mut core::ffi::c_void) {
+    let o = *Box::from_raw(out as *mut JobOut);
+    let t = tracker();
+    // Bootstraps come every 50 ms while not tracking; only the slow ones are worth a line.
+    if o.kind != "start" || o.ms >= 500 {
+        log(&format!("lh: {} solved in {} ms on the worker", o.kind, o.ms));
+    }
+    t.push(Input::Solved(o.result));
     t.timing_counters();
 }
 
