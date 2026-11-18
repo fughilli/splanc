@@ -8,6 +8,7 @@
 #include "firmware/p4/tracker/tracker_service.h"
 
 #include <freertos/FreeRTOS.h>
+#include <freertos/idf_additions.h>
 #include <freertos/queue.h>
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
@@ -360,7 +361,16 @@ void tracker_service_start(int prio, int tracking_prio, int usb_prio, int core) 
   // The kernel's EKF runs on the tracker task, its solves on the worker: big stacks for
   // both (the calibration's least squares). The worker first: without it the kernel solves
   // on the tracker task as before.
-  if (xTaskCreatePinnedToCore(worker, "lh_solve", 32 * 1024, nullptr, prio > 1 ? prio - 1 : 1, nullptr, core) == pdPASS) {
+  // Its stack in PSRAM: internal RAM is what the USB host allocates the tracker's
+  // endpoints from, and 32 KB more there left it short (ESP_ERR_NO_MEM claiming the IMU's
+  // interface: light but no IMU). The worker only computes, never touches flash.
+#ifdef CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM
+  const BaseType_t made = xTaskCreatePinnedToCoreWithCaps(worker, "lh_solve", 32 * 1024, nullptr, prio > 1 ? prio - 1 : 1,
+                                                          nullptr, core, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
+  const BaseType_t made = xTaskCreatePinnedToCore(worker, "lh_solve", 32 * 1024, nullptr, prio > 1 ? prio - 1 : 1, nullptr, core);
+#endif
+  if (made == pdPASS) {
     lh_defer_solves(1);
   } else {
     printf("[tracker] no memory for the solve worker; solving on the tracker task\n");
