@@ -23,11 +23,12 @@ pub const SECTOR: u32 = 4096;
 /// Largest `ota_chunk.data`: one sector, and what fits the netstack's 6 KiB WS
 /// receive buffer with the envelope.
 pub const MAX_CHUNK: u32 = 4096;
-/// The P4's chunk limit: the same as a C6's. Bigger chunks would cut the per-chunk cost,
-/// but its C6 front end's mbedTLS takes records of at most 6 KB (embedded's TLS record
-/// buffer), and a client sends a chunk as one record: 8 KB chunks dropped the connection
-/// (PixieLamp2, 2026-11-18). The P4 is fast with chunks pipelined instead ("ota_pipeline").
-pub const MAX_CHUNK_P4: u32 = MAX_CHUNK;
+/// The P4's chunk limit, as written (a compressed chunk's INFLATED size: "ota_deflate",
+/// ota_chunk.inflated_len). On the wire a chunk stays at most MAX_CHUNK (ota_status
+/// .max_chunk): its C6 front end's mbedTLS takes records of at most 6 KB (embedded's TLS
+/// record buffer), and a client sends a chunk as one record; 8 KB plain chunks dropped
+/// the connection (PixieLamp2, 2026-11-18).
+pub const MAX_CHUNK_P4: u32 = 4 * MAX_CHUNK;
 
 /// How far ahead the P4 erases: whole 64 KB blocks (the flash driver erases an aligned
 /// block with one block-erase command, far quicker per byte than its 16 sectors), so most

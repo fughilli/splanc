@@ -21,8 +21,27 @@ import json
 import ssl
 import sys
 import time
+import zlib
 
 import ota_core as oc
+
+DEFLATE_SLICES = (16384, 12288, 8192, 4096)
+
+
+def cut(image: bytes, offset: int, wire: int, deflate: bool) -> tuple[bytes, int, int]:
+    """(data on the wire, image bytes it carries, inflated_len or 0): as otaUpdate.ts's
+    chunker (the largest slice whose raw deflate fits `wire`, else plain)."""
+    if deflate:
+        for size in DEFLATE_SLICES:
+            sl = image[offset : offset + size]
+            if size > len(sl) and size != DEFLATE_SLICES[-1]:
+                continue
+            c = zlib.compressobj(6, zlib.DEFLATED, -15)
+            z = c.compress(sl) + c.flush()
+            if len(z) <= wire and len(z) < len(sl):
+                return z, len(sl), len(sl)
+    sl = image[offset : offset + wire]
+    return sl, len(sl), 0
 
 
 async def run(args) -> dict:
@@ -79,14 +98,16 @@ async def run(args) -> dict:
     end_at = m.size if args.chunks <= 0 else min(m.size, offset + args.chunks * chunk)
     sent_at: dict[int, float] = {}
     rtts: list[float] = []
+    wire_bytes = 0
     nxt = offset
     t0 = time.monotonic()
     while offset < end_at:
         while nxt < end_at and len(sent_at) < args.window:
-            e = min(nxt + chunk, end_at if args.chunks > 0 else m.size)
+            data, n, inflated = cut(image[: end_at], nxt, chunk, args.deflate)
             sent_at[nxt] = time.monotonic()
-            await sock.send(oc.client(ota_chunk=oc.pb.OtaChunk(offset=nxt, data=image[nxt:e])))
-            nxt = e
+            await sock.send(oc.client(ota_chunk=oc.pb.OtaChunk(offset=nxt, data=data, inflated_len=inflated)))
+            wire_bytes += len(data)
+            nxt += n
         st = await recv_arm("ota_status")
         now = time.monotonic()
         if st.state == oc.FAILED and st.error != "out_of_order":
@@ -108,6 +129,8 @@ async def run(args) -> dict:
         rtt_p95_ms=pick(95),
         rtt_max_ms=round(rtts[-1], 1) if rtts else None,
         window=args.window,
+        deflate=args.deflate,
+        wire_bytes=wire_bytes,
     )
     if args.install and offset >= m.size:
         await sock.send(oc.client(ota_finish=oc.pb.OtaFinish()))
@@ -131,6 +154,7 @@ def main() -> int:
     ap.add_argument("--chunk-bytes", type=int, default=0, help="0: the device's max_chunk")
     ap.add_argument("--chunks", type=int, default=150, help="chunks to send (0: the whole image)")
     ap.add_argument("--window", type=int, default=1, help="chunks in flight")
+    ap.add_argument("--deflate", action="store_true", help="compressed chunks (welcome \"ota_deflate\")")
     ap.add_argument("--ping", type=int, default=0, help="only time N get_ota_status round trips")
     ap.add_argument("--install", action="store_true", help="finish and install (needs --chunks 0)")
     r = asyncio.run(run(ap.parse_args()))
