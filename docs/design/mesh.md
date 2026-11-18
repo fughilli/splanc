@@ -1442,6 +1442,33 @@ fixture notices within a few tenths of a second and tells the gateway who handed
 
 ![containing an insider: delivery, latency, collateral](mesh/tree-quarantine.png)
 
+**What the admin sees (Q26, decided).** When the gateway blocks a fixture, the app first
+shows the evidence and only then offers removal (rotation, §7.6). Nothing is removed
+automatically. The gateway sends the app a `MeshQuarantine` event, and keeps the latest per
+blocked fixture in `MeshStatus` so an app that connects later sees it too:
+
+| Field              | Content                                                                                                                                                 |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node`, `key_hash` | The blocked fixture (node id, device-key hash: the app's device list names it)                                                                          |
+| `blocked_at`, `until` | Mesh time the block started and ends (60 s; renewed if the forging continues)                                                                        |
+| `forgeries`        | The forgeries it was a suspect in (≥ 3): each with its interval, the mesh time of the first report, and the witnesses                                  |
+| `witnesses`        | Per forgery, each side witness: reporter node id, its RSSI-consistency flag, the report's mesh time. Only side witnesses count toward the quorum of 2   |
+| `independent`      | Distinct reporters across all its forgeries (what the app headlines: "named by N fixtures, M times")                                                    |
+| `own_account`      | What the blocked fixture itself reported for those forgeries: silent, or the upstream it named, and why that did not clear it (no witness, or the chain led back to it) |
+| `protest`          | Whether the blocked fixture says it is being impersonated: frames under its id it did not send (T5), with their count and RSSI against its own        |
+| `lies`             | Reports from any fixture that the gateway proved false (about genuine packets), by reporter: a liar shows up here                                       |
+
+The app's view:
+- **Headline:** "Fixture X sent forged live moves: named by N fixtures in M forgeries."
+- **Details:** the witness list with timestamps, and the fixture's own account.
+- **A protest:** if the fixture says it is being impersonated, the app says so prominently
+  and suggests checking which fixture is near it, rather than removing it.
+- **Actions:** "Remove fixture" (rotation) and "Keep" (the block lapses).
+
+The gateway's `Forensics` keeps 6 forgeries × 24 witnesses, which covers this. The protest
+field needs T5, since a fixture can only notice frames under its own id once the link-layer
+source reaches the stack. Until then `protest` reads "unknown".
+
 ### 7.10 What remains unresolvable
 
 - **An eclipsed node** (its only neighbours are malicious) can be **desynced and starved**.
@@ -1993,7 +2020,7 @@ ones that depend on unknown hardware behaviour.
 | **M5b** | P4 + C6: the mesh on the C6 front end, relayed control forwarded over the link, C6↔P4 clock offset for `TIME_BASE`, effect blobs handed to the P4                                                                            | P4 + C6 bench run               |
 | **M6**  | Blob kind on the page protocol + effect distribution + scenes and catch-up; `mesh_effect` HITL                                                                                                                               |                                 |
 | **M7**  | Membership: closed mode (site secret, self-configuring formation, approval joins), the kiosk-style admin secret (`mesh_unlock` with a signed grant, per-receiver MACs, §7.9), groups; `mesh_join_admin` HITL                                            |                                 |
-| **M8**  | App: member list via gateway, target picker in live control and effects, mesh screen, admin secret export/import (copy, QR, file, backup)                                                                                    | web unit tests + manual run     |
+| **M8**  | App: member list via gateway, target picker in live control and effects, mesh screen, admin secret export/import (copy, QR, file, backup); the quarantine evidence view (Q26: `MeshQuarantine` from the gateway, witnesses, own account, protest; "Remove" and "Keep") | web unit tests + manual run; protest needs T5 |
 | **M8b** | Bridge: hub mesh route (`hub.ts`) through one gateway, admin secret in the bridge config, `list_players` via gateways                                                                                                        | agent tests + bench run         |
 | **M9a** | HITL gate: the multi-DUT suite in CI (`mesh_*`)                                                                                                                                                                              |                                 |
 
@@ -2164,8 +2191,7 @@ swarm code, and Splanc's own framing.
 
 **New (2026-11-18):**
 
-- **Q25.** Investigated: auto-quarantine by member reports and a gateway quorum (§7.9).
-  Recommended:
+- **Q25.** Decided: adopt gateway-quorum auto-quarantine (§7.9).
   - **Detection:** a forger is blocked mesh-wide in 2.5 s, with no honest fixture blocked by
     one liar. Delivery under attack is 95.5–96 % (68 % without), at 0.4–0.85 % airtime.
   - **Residual:** two colluders, or a forger impersonating a neighbour, can get an honest
@@ -2173,9 +2199,10 @@ swarm code, and Splanc's own framing.
 
 **New (2026-11-18):**
 
-- **Q26.** When the gateway blocks a fixture and alerts the admin, should the app offer
-  removal in one tap? Or should it first show the evidence: who reported, and whether the
-  named fixture itself reports being impersonated (a spoof protest, T5)?
+- **Q26.** Decided: on a quarantine the app shows the evidence first, then offers removal:
+  who reported, how many independent witnesses, timestamps, and whether the named fixture
+  says it is being impersonated. The gateway sends `MeshQuarantine` (§7.9); the protest needs
+  T5.
 
 ## 18. Sources
 
