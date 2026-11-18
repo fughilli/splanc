@@ -1065,6 +1065,8 @@ impl World {
     }
 }
 
+pub mod dist;
+
 #[cfg(test)]
 mod scenarios;
 

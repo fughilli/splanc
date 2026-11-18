@@ -77,6 +77,8 @@ probe!(MESH_RAM_rekeyer, Rekeyer);
 probe!(MESH_RAM_rekey_member, RekeyMember);
 probe!(MESH_RAM_router, Router);
 probe!(MESH_RAM_admin_gate, AdminGate);
+// The distribution tree (design §5.8): 16 neighbours, both radios' link estimates, positions.
+probe!(MESH_RAM_tree, splanc_mesh::tree::Tree);
 // Open mode (feature `open_mode`, M7b): what it will add.
 #[cfg(feature = "open_mode")]
 probe!(MESH_RAM_open_guest_table, splanc_mesh::guest::GuestTable<{ splanc_mesh::guest::GUESTS }>);
