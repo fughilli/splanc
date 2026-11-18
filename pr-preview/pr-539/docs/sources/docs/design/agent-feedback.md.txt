@@ -40,7 +40,11 @@ reason chip, and the report would have held the tool result that proves it.
    - **What will be sent**: one row per section, each with a switch and a
      summary such as "2 messages" or "1 turn, 3 tool calls". Under each row,
      "Show exactly what's sent" expands to the redacted JSON. The preview is
-     rebuilt on every change, so it is exactly the payload.
+     rebuilt on every change, so it is exactly the payload. **The conversation
+     and the effect code start switched off**: they are the user's own words and
+     work, so the user opts in. Next to those two switches the sheet says
+     "Including your conversation and the effect code helps us reproduce the
+     problem." The other sections start on.
    - **A line saying what is always sent and what is never sent.**
    - **A size line**, such as "About 9 KB. 4 private details masked."
    - **A consent box**: "Send this to the Splanc team to help fix the AI. It's
@@ -94,13 +98,14 @@ Schema `splanc-agent-feedback/1` (`web/src/feedback/agentTrace.ts`).
 - the grouping **signature**;
 - which sections the user left out, what was cut to fit, and how many items were masked.
 
-**Sections the user can switch off:**
+**Sections the user can switch on or off** (`conversation` and `source` start
+off, `DEFAULT_OMITTED`; the rest start on):
 
 | Section | What it holds |
 | --- | --- |
-| `conversation` | The visible chat: the user's asks and the AI's replies. The last 24 messages, each up to 4000 characters. |
-| `trace` | For each turn (up to 5, oldest first, ending at the reported turn): the start time, duration, outcome and error. For each round: its time and the model's text. For each tool call (up to 40): its name and arguments, its result, its time and duration, SENT or NOT SENT, the compile outcome, and whether an estimate was calibrated. Also the system prompt's **hash, length and tool list**, not the prompt itself. |
-| `source` | The effect source before and after the reported turn, up to 12,000 characters each. If `source` is off, any source inside tool arguments is replaced by its length. |
+| `conversation` (off by default) | The visible chat: the user's asks and the AI's replies. The last 24 messages, each up to 4000 characters. While it is off, the model's text in the trace is left out too. |
+| `trace` | For each turn (up to 5, oldest first, ending at the reported turn): the start time, duration, outcome and error. For each round: its time and the model's text (only when the conversation is included). For each tool call (up to 40): its name and arguments, its result, its time and duration, SENT or NOT SENT, the compile outcome, and whether an estimate was calibrated. Also the system prompt's **hash, length and tool list**, not the prompt itself. |
+| `source` (off by default) | The effect source before and after the reported turn, up to 12,000 characters each. If `source` is off, any source inside tool arguments is replaced by its length. |
 | `device` | For each connected fixture: board, firmware, features, channel count and LED count. |
 | `applog` | The last 80 entries of the app event log (#519). |
 
@@ -325,23 +330,46 @@ at: we couldn't reproduce it yet**, **Fixed in version X**, **Closed**, or
 6. If needed: move storage to R2 or a dedicated Durable Object, and block
    abusive sources.
 
-## Decisions for the owner
+## Decisions (owner, on #539)
 
-1. **Storage.** Is the relay's private store (Cloudflare Durable Object, 90 days)
-   acceptable? To turn intake on, set the secret:
-   `pnpm dlx wrangler@4 secret put FEEDBACK_ADMIN_TOKEN --config agent/relay/wrangler.toml`
-   (any long random string). Then redeploy the relay, and redeploy Pages so
-   `/feedback` is forwarded (`web/_worker.js` `RELAY_PATHS`). Until then,
-   reports stay queued on phones and can be exported.
-2. **Retention.** Is 90 days right? `FEEDBACK_RETENTION_DAYS` changes it.
-3. **Defaults.** Every section is on by default, and the user switches off what
-   they don't want to send. Should the conversation and source start off
-   instead?
-4. **Anonymous reports.** Should an app with no paired bridge be allowed to
-   send (6 an hour per IP), or should reports need a paired app?
-5. **A private GitHub repo as a mirror** for confirmed groups. Do we want one?
-6. **Found while building this.** The MCP `deploy_effect` refuses to deploy
-   when its *uncalibrated* default-table estimate says the effect would overrun
-   (`agent/src/server.ts`, `calibrated: false`), unless `force=true`. That goes
-   against "uncalibrated estimates never gate anything". #522 fixed this only
-   in the app. Should the hub get the same fix?
+1. **Storage:** the relay's private store (Cloudflare Durable Object). The owner
+   sets `FEEDBACK_ADMIN_TOKEN` and deploys after merge; see [Deploying](#deploying).
+2. **Retention:** 90 days (`FEEDBACK_RETENTION_DAYS` changes it).
+3. **Defaults:** the conversation and effect code sections start **off**, with
+   the note that including them helps us reproduce the problem. The others
+   start on.
+4. **Anonymous reports:** allowed from apps not paired with a bridge, with the
+   per-IP limit (6 an hour) and the global limit.
+
+Still open:
+
+- **A private GitHub repo as a mirror** for confirmed groups. Do we want one?
+- **Found while building this.** The MCP `deploy_effect` refuses to deploy
+  when its *uncalibrated* default-table estimate says the effect would overrun
+  (`agent/src/server.ts`, `calibrated: false`), unless `force=true`. That goes
+  against "uncalibrated estimates never gate anything". #522 fixed this only in
+  the app. Should the hub get the same fix?
+
+## Deploying
+
+After merge (needs `CLOUDFLARE_API_TOKEN` with Workers Scripts: Edit, and
+`CLOUDFLARE_ACCOUNT_ID`):
+
+1. Set the secret once (any long random string; keep it, it is the triage
+   CLI's `SPLANC_FEEDBACK_TOKEN`):
+   `cd agent/relay && pnpm dlx wrangler@4 secret put FEEDBACK_ADMIN_TOKEN --config wrangler.toml`
+2. Deploy the relay Worker: `agent/relay/deploy.sh`. Its smoke test prints
+   "agent feedback: configured" (`POST /feedback` with `{}` answers 400; 503
+   means the secret is missing).
+3. Deploy Pages so `splanc.pages.dev/feedback` and `/feedback/status` are
+   forwarded to the relay (`web/_worker.js` `RELAY_PATHS`): run the "Deploy
+   tested web app" workflow (`deploy-web.yml`) with the merge commit's
+   successful Test run id and `worker_only` **off**: this change also ships the
+   app's Report button, and `worker_only` refuses a diff outside `_worker.js`.
+4. Check end to end with the admin token: list
+   (`curl -H "authorization: Bearer $T" https://splanc.pages.dev/feedback`
+   answers `{"items": [...]}`; without the token, 401), send one report from
+   the app (it should leave the outbox), then
+   `SPLANC_FEEDBACK_TOKEN=$T splanc-agent feedback list --relay https://splanc.pages.dev`
+   and `feedback show <id>`, set `feedback status <id> wontfix`, and delete the
+   test report with `curl -X DELETE -H "authorization: Bearer $T" "https://splanc.pages.dev/feedback?id=<id>"`.

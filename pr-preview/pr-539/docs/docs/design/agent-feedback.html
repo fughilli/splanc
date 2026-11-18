@@ -362,7 +362,11 @@ the effect, but nothing was sent”. See <a class="reference internal" href="#au
 <li><p><strong>What will be sent</strong>: one row per section, each with a switch and a
 summary such as “2 messages” or “1 turn, 3 tool calls”. Under each row,
 “Show exactly what’s sent” expands to the redacted JSON. The preview is
-rebuilt on every change, so it is exactly the payload.</p></li>
+rebuilt on every change, so it is exactly the payload. <strong>The conversation
+and the effect code start switched off</strong>: they are the user’s own words and
+work, so the user opts in. Next to those two switches the sheet says
+“Including your conversation and the effect code helps us reproduce the
+problem.” The other sections start on.</p></li>
 <li><p><strong>A line saying what is always sent and what is never sent.</strong></p></li>
 <li><p><strong>A size line</strong>, such as “About 9 KB. 4 private details masked.”</p></li>
 <li><p><strong>A consent box</strong>: “Send this to the Splanc team to help fix the AI. It’s
@@ -418,7 +422,8 @@ treats them the same way.</p>
 <li><p>the grouping <strong>signature</strong>;</p></li>
 <li><p>which sections the user left out, what was cut to fit, and how many items were masked.</p></li>
 </ul>
-<p><strong>Sections the user can switch off:</strong></p>
+<p><strong>Sections the user can switch on or off</strong> (<code class="docutils literal notranslate"><span class="pre">conversation</span></code> and <code class="docutils literal notranslate"><span class="pre">source</span></code> start
+off, <code class="docutils literal notranslate"><span class="pre">DEFAULT_OMITTED</span></code>; the rest start on):</p>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
 <thead>
@@ -427,13 +432,13 @@ treats them the same way.</p>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">conversation</span></code></p></td>
-<td><p>The visible chat: the user’s asks and the AI’s replies. The last 24 messages, each up to 4000 characters.</p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">conversation</span></code> (off by default)</p></td>
+<td><p>The visible chat: the user’s asks and the AI’s replies. The last 24 messages, each up to 4000 characters. While it is off, the model’s text in the trace is left out too.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">trace</span></code></p></td>
-<td><p>For each turn (up to 5, oldest first, ending at the reported turn): the start time, duration, outcome and error. For each round: its time and the model’s text. For each tool call (up to 40): its name and arguments, its result, its time and duration, SENT or NOT SENT, the compile outcome, and whether an estimate was calibrated. Also the system prompt’s <strong>hash, length and tool list</strong>, not the prompt itself.</p></td>
+<td><p>For each turn (up to 5, oldest first, ending at the reported turn): the start time, duration, outcome and error. For each round: its time and the model’s text (only when the conversation is included). For each tool call (up to 40): its name and arguments, its result, its time and duration, SENT or NOT SENT, the compile outcome, and whether an estimate was calibrated. Also the system prompt’s <strong>hash, length and tool list</strong>, not the prompt itself.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">source</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">source</span></code> (off by default)</p></td>
 <td><p>The effect source before and after the reported turn, up to 12,000 characters each. If <code class="docutils literal notranslate"><span class="pre">source</span></code> is off, any source inside tool arguments is replaced by its length.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">device</span></code></p></td>
@@ -746,27 +751,51 @@ in our own words, per confirmed group.</p></li>
 abusive sources.</p></li>
 </ol>
 </section>
-<section id="decisions-for-the-owner">
-<h2>Decisions for the owner<a class="headerlink" href="#decisions-for-the-owner" title="Link to this heading">¶</a></h2>
+<section id="decisions-owner-on-539">
+<h2>Decisions (owner, on #539)<a class="headerlink" href="#decisions-owner-on-539" title="Link to this heading">¶</a></h2>
 <ol class="arabic simple">
-<li><p><strong>Storage.</strong> Is the relay’s private store (Cloudflare Durable Object, 90 days)
-acceptable? To turn intake on, set the secret:
-<code class="docutils literal notranslate"><span class="pre">pnpm</span> <span class="pre">dlx</span> <span class="pre">wrangler&#64;4</span> <span class="pre">secret</span> <span class="pre">put</span> <span class="pre">FEEDBACK_ADMIN_TOKEN</span> <span class="pre">--config</span> <span class="pre">agent/relay/wrangler.toml</span></code>
-(any long random string). Then redeploy the relay, and redeploy Pages so
-<code class="docutils literal notranslate"><span class="pre">/feedback</span></code> is forwarded (<code class="docutils literal notranslate"><span class="pre">web/_worker.js</span></code> <code class="docutils literal notranslate"><span class="pre">RELAY_PATHS</span></code>). Until then,
-reports stay queued on phones and can be exported.</p></li>
-<li><p><strong>Retention.</strong> Is 90 days right? <code class="docutils literal notranslate"><span class="pre">FEEDBACK_RETENTION_DAYS</span></code> changes it.</p></li>
-<li><p><strong>Defaults.</strong> Every section is on by default, and the user switches off what
-they don’t want to send. Should the conversation and source start off
-instead?</p></li>
-<li><p><strong>Anonymous reports.</strong> Should an app with no paired bridge be allowed to
-send (6 an hour per IP), or should reports need a paired app?</p></li>
+<li><p><strong>Storage:</strong> the relay’s private store (Cloudflare Durable Object). The owner
+sets <code class="docutils literal notranslate"><span class="pre">FEEDBACK_ADMIN_TOKEN</span></code> and deploys after merge; see <a class="reference internal" href="#deploying">Deploying</a>.</p></li>
+<li><p><strong>Retention:</strong> 90 days (<code class="docutils literal notranslate"><span class="pre">FEEDBACK_RETENTION_DAYS</span></code> changes it).</p></li>
+<li><p><strong>Defaults:</strong> the conversation and effect code sections start <strong>off</strong>, with
+the note that including them helps us reproduce the problem. The others
+start on.</p></li>
+<li><p><strong>Anonymous reports:</strong> allowed from apps not paired with a bridge, with the
+per-IP limit (6 an hour) and the global limit.</p></li>
+</ol>
+<p>Still open:</p>
+<ul class="simple">
 <li><p><strong>A private GitHub repo as a mirror</strong> for confirmed groups. Do we want one?</p></li>
 <li><p><strong>Found while building this.</strong> The MCP <code class="docutils literal notranslate"><span class="pre">deploy_effect</span></code> refuses to deploy
 when its <em>uncalibrated</em> default-table estimate says the effect would overrun
 (<code class="docutils literal notranslate"><span class="pre">agent/src/server.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">calibrated:</span> <span class="pre">false</span></code>), unless <code class="docutils literal notranslate"><span class="pre">force=true</span></code>. That goes
-against “uncalibrated estimates never gate anything”. #522 fixed this only
-in the app. Should the hub get the same fix?</p></li>
+against “uncalibrated estimates never gate anything”. #522 fixed this only in
+the app. Should the hub get the same fix?</p></li>
+</ul>
+</section>
+<section id="deploying">
+<h2>Deploying<a class="headerlink" href="#deploying" title="Link to this heading">¶</a></h2>
+<p>After merge (needs <code class="docutils literal notranslate"><span class="pre">CLOUDFLARE_API_TOKEN</span></code> with Workers Scripts: Edit, and
+<code class="docutils literal notranslate"><span class="pre">CLOUDFLARE_ACCOUNT_ID</span></code>):</p>
+<ol class="arabic simple">
+<li><p>Set the secret once (any long random string; keep it, it is the triage
+CLI’s <code class="docutils literal notranslate"><span class="pre">SPLANC_FEEDBACK_TOKEN</span></code>):
+<code class="docutils literal notranslate"><span class="pre">cd</span> <span class="pre">agent/relay</span> <span class="pre">&amp;&amp;</span> <span class="pre">pnpm</span> <span class="pre">dlx</span> <span class="pre">wrangler&#64;4</span> <span class="pre">secret</span> <span class="pre">put</span> <span class="pre">FEEDBACK_ADMIN_TOKEN</span> <span class="pre">--config</span> <span class="pre">wrangler.toml</span></code></p></li>
+<li><p>Deploy the relay Worker: <code class="docutils literal notranslate"><span class="pre">agent/relay/deploy.sh</span></code>. Its smoke test prints
+“agent feedback: configured” (<code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/feedback</span></code> with <code class="docutils literal notranslate"><span class="pre">{}</span></code> answers 400; 503
+means the secret is missing).</p></li>
+<li><p>Deploy Pages so <code class="docutils literal notranslate"><span class="pre">splanc.pages.dev/feedback</span></code> and <code class="docutils literal notranslate"><span class="pre">/feedback/status</span></code> are
+forwarded to the relay (<code class="docutils literal notranslate"><span class="pre">web/_worker.js</span></code> <code class="docutils literal notranslate"><span class="pre">RELAY_PATHS</span></code>): run the “Deploy
+tested web app” workflow (<code class="docutils literal notranslate"><span class="pre">deploy-web.yml</span></code>) with the merge commit’s
+successful Test run id and <code class="docutils literal notranslate"><span class="pre">worker_only</span></code> <strong>off</strong>: this change also ships the
+app’s Report button, and <code class="docutils literal notranslate"><span class="pre">worker_only</span></code> refuses a diff outside <code class="docutils literal notranslate"><span class="pre">_worker.js</span></code>.</p></li>
+<li><p>Check end to end with the admin token: list
+(<code class="docutils literal notranslate"><span class="pre">curl</span> <span class="pre">-H</span> <span class="pre">&quot;authorization:</span> <span class="pre">Bearer</span> <span class="pre">$T&quot;</span> <span class="pre">https://splanc.pages.dev/feedback</span></code>
+answers <code class="docutils literal notranslate"><span class="pre">{&quot;items&quot;:</span> <span class="pre">[...]}</span></code>; without the token, 401), send one report from
+the app (it should leave the outbox), then
+<code class="docutils literal notranslate"><span class="pre">SPLANC_FEEDBACK_TOKEN=$T</span> <span class="pre">splanc-agent</span> <span class="pre">feedback</span> <span class="pre">list</span> <span class="pre">--relay</span> <span class="pre">https://splanc.pages.dev</span></code>
+and <code class="docutils literal notranslate"><span class="pre">feedback</span> <span class="pre">show</span> <span class="pre">&lt;id&gt;</span></code>, set <code class="docutils literal notranslate"><span class="pre">feedback</span> <span class="pre">status</span> <span class="pre">&lt;id&gt;</span> <span class="pre">wontfix</span></code>, and delete the
+test report with <code class="docutils literal notranslate"><span class="pre">curl</span> <span class="pre">-X</span> <span class="pre">DELETE</span> <span class="pre">-H</span> <span class="pre">&quot;authorization:</span> <span class="pre">Bearer</span> <span class="pre">$T&quot;</span> <span class="pre">&quot;https://splanc.pages.dev/feedback?id=&lt;id&gt;&quot;</span></code>.</p></li>
 </ol>
 </section>
 </section>
@@ -824,7 +853,8 @@ in the app. Should the hub get the same fix?</p></li>
 <li><a class="reference internal" href="#feedback-to-the-reporter">Feedback to the reporter</a></li>
 <li><a class="reference internal" href="#owner-rules-this-keeps">Owner rules this keeps</a></li>
 <li><a class="reference internal" href="#plan-small-prs">Plan (small PRs)</a></li>
-<li><a class="reference internal" href="#decisions-for-the-owner">Decisions for the owner</a></li>
+<li><a class="reference internal" href="#decisions-owner-on-539">Decisions (owner, on #539)</a></li>
+<li><a class="reference internal" href="#deploying">Deploying</a></li>
 </ul>
 </li>
 </ul>
