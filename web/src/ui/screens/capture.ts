@@ -31,9 +31,11 @@ import { JERKY_MOTION_HINT, MotionGuide } from "../../cv/motionGuide";
 import { CvPipeline } from "../../cv/pipeline";
 import { DetectorGL } from "../../cv/detect";
 import {
+  type DriverCaptureController,
   type DriverCaptureResult,
   type DriverDecodeStats,
   driverActive,
+  driverCapture,
   registerDriverCapture,
   driverFixtureScene,
   setDriverCaptureError,
@@ -778,6 +780,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   let renegotiations = 0;
   // Where the capture's startup is, so a decode that never began says where it stalled.
   let driverPhase = "mounting";
+  // This screen's HITL driver controller (registered on mount under the driver).
+  let driverCtrl: DriverCaptureController | null = null;
   // The live capture's renegotiation, for the HITL driver's `renegotiate` command.
   let driverRenegotiate: ((opts: { symbols?: 2 | 4; bitPeriodMs?: number; brightness?: number }) => Promise<void>) | null =
     null;
@@ -1927,6 +1931,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       };
       driverRenegotiate = (opts) =>
         new Promise<void>((resolve, reject) => {
+          if (!capturing) {
+            reject(new Error("the capture is not running"));
+            return;
+          }
           const t = setTimeout(() => reject(new Error("renegotiation was not applied")), 15000);
           applyReconfigure(opts, () => {
             clearTimeout(t);
@@ -2851,7 +2859,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // Under the HITL driver, expose a controller so the harness can end the
       // capture and await the solved map (see driver/harness.ts finishCapture).
       if (driverActive()) {
-        registerDriverCapture({
+        driverCtrl = {
           stats: () => ({ ...driverDecodeStats, phase: driverPhase }),
           renegotiate: async (opts) => {
             // The capture starts (start_mapping) a moment after the screen mounts.
@@ -2867,7 +2875,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
               driverSolveReject = reject;
               void stopCapture();
             }),
-        });
+        };
+        registerDriverCapture(driverCtrl);
       }
       void startCapture();
     },
@@ -2877,7 +2886,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // end the device's mapping session too, as Cancel does — otherwise it
       // keeps playing the code and the next screen finds it mid-capture.
       if (capturing) void client()?.stopMappingNoSolve().catch(() => undefined);
-      if (driverActive()) registerDriverCapture(null);
+      // Only our own: a newer capture screen may already have registered.
+      if (driverActive() && driverCapture() === driverCtrl) registerDriverCapture(null);
       driverSolveReject?.(new Error("capture screen unmounted before solve"));
       driverSolveResolve = null;
       driverSolveReject = null;

@@ -251,7 +251,18 @@ async function handle(msg: Incoming): Promise<unknown> {
     // SOLVED map (how many LED positions were actually recovered). ----------------
     case "openCapture": {
       const leds = Number(p.ledCount ?? 0);
+      // Wait for THIS navigation's capture screen. The previous one (a cancelled
+      // capture) unmounts only on a later hashchange; on a slow phone the next
+      // command would otherwise drive the old, stopped capture's controller.
+      const prev = driverCapture();
       driverRouter?.navigate(leds > 0 ? `/capture?leds=${leds}` : "/capture");
+      const by = Date.now() + 20000;
+      while (Date.now() < by && (driverCapture() === null || driverCapture() === prev)) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      if (driverCapture() === null || driverCapture() === prev) {
+        throw new Error("the capture screen did not mount");
+      }
       return { route: location.hash };
     }
     case "captureStats": {
@@ -286,8 +297,6 @@ async function handle(msg: Incoming): Promise<unknown> {
     case "renegotiate": {
       // Mid-capture code renegotiation, exactly as the app's own servos do it
       // (configure → new code book + restamped epoch → rebuilt decoder).
-      const mountBy = Date.now() + 20000;
-      while (!driverCapture() && Date.now() < mountBy) await new Promise((r) => setTimeout(r, 100));
       const ctrl = driverCapture();
       if (!ctrl) throw new Error("no capture screen mounted — send openCapture first");
       const opts: { symbols?: 2 | 4; bitPeriodMs?: number; brightness?: number } = {};
@@ -298,7 +307,12 @@ async function handle(msg: Incoming): Promise<unknown> {
       return { applied: true, ...(ctrl.stats() as unknown as Record<string, Json>) };
     }
     case "cancelCapture": {
-      await driverCapture()?.cancel();
+      const ctrl = driverCapture();
+      await ctrl?.cancel();
+      // cancel() navigates away; wait until that screen has unmounted (its
+      // controller unregistered) so the next journey can't reach it.
+      const by = Date.now() + 10000;
+      while (ctrl && driverCapture() === ctrl && Date.now() < by) await new Promise((r) => setTimeout(r, 100));
       return { cancelled: true };
     }
     case "finishCapture": {
