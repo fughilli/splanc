@@ -8,12 +8,14 @@ The relay-side schema these must match is agent/relay/src/ops.ts, cross-checked
 by //agent:ops_test.
 """
 
+load("@aspect_bazel_lib//lib:copy_to_bin.bzl", "copy_to_bin")
 load("@rules_python//python:defs.bzl", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
 # Read by //agent:ops_test (every event / field a query names must exist).
-filegroup(
+# copy_to_bin: an action in //agent may only read bin-tree copies made here.
+copy_to_bin(
     name = "grafana_json",
     srcs = ["alerts.json"] + glob(["dashboards/*.json"]),
 )
