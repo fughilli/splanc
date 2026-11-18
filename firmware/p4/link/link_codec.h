@@ -50,6 +50,10 @@ enum {
   LK_OP_RESET = 3,
   LK_OP_NAME = 4,
   LK_OP_STATS = 5,
+  // Front end -> P4: payload[1] = 1 while a console subscriber listens on udp/9001, 0 when
+  // none does. Sent on a change and once a second. The P4 sends its console lines (LK_LOG)
+  // only while it is 1: unsubscribed, they cost the link and both chips for nothing.
+  LK_OP_LOG = 6,
 };
 
 typedef struct {
