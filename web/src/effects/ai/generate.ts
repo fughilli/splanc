@@ -36,7 +36,7 @@ import {
 } from "./provider";
 import { makeAnthropicProvider } from "./providers/anthropic";
 import { makeOpenAiProvider } from "./providers/openaiCompat";
-import { makeOpenRouterProvider } from "./providers/openrouter";
+import { freeTierVision, makeOpenRouterProvider } from "./providers/openrouter";
 import { makeWebLlmProvider } from "./providers/webllm";
 import { makeWllamaProvider } from "./providers/wllama";
 
@@ -65,7 +65,13 @@ export function activeProvider(): AiProvider {
   // OpenRouter (the free tier, or a user's own OpenRouter key): streaming,
   // free-model fallbacks and typed rate-limit errors (docs/design/ai-tiers.md).
   if (cfg.cloud.vendor === "openrouter") {
-    return makeOpenRouterProvider({ key: v.key, model: v.model, baseUrl: v.baseUrl || undefined });
+    return makeOpenRouterProvider({
+      key: v.key,
+      model: v.model,
+      baseUrl: v.baseUrl || undefined,
+      // Free tier: vision only on a 1000/day account (each capture is a request).
+      vision: freeTierVision(v.model),
+    });
   }
   return makeOpenAiProvider({ baseUrl: v.baseUrl, key: v.key, model: v.model, vision: false });
 }

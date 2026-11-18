@@ -29,8 +29,11 @@ import {
   beginOAuth,
   cleanedUrl,
   completeOAuthCode,
+  completeOAuthNative,
   completeOAuthRedirect,
+  NATIVE_CALLBACK_SCHEME,
 } from "../../effects/ai/openrouterOAuth";
+import { startWebAuth, webAuthAvailable, WebAuthCancelled } from "../../net/webAuth";
 import {
   applyAnthropicKey,
   applyFreeTier,
@@ -40,6 +43,7 @@ import {
   paidTierSupported,
   rememberTier,
   rememberedTier,
+  refreshFreeTierLimit,
   savePendingAsk,
   selectPaidTier,
   tierOf,
@@ -265,12 +269,21 @@ function freeCard(done: () => void, away: () => void): HTMLElement {
       err.set("");
       void (async () => {
         try {
-          if (ios) {
-            // iOS app: OpenRouter's headless mode shows a code to paste back.
-            const { url } = await beginOAuth({ mode: "code", returnHash: location.hash, model: sel.value });
-            window.open(url, "_blank");
-            codeRow.hidden = false;
-            codeInput.focus();
+          if (ios && webAuthAvailable()) {
+            // iOS app, one tap: the system sign-in sheet (shares Safari's
+            // OpenRouter login) returns straight to the app.
+            connect.disabled = true;
+            const { url } = await beginOAuth({ mode: "native", returnHash: location.hash, model: sel.value });
+            const back = await startWebAuth(url, NATIVE_CALLBACK_SCHEME);
+            const { key } = await completeOAuthNative(back);
+            applyFreeTier(key, sel.value);
+            void refreshFreeTierLimit(0);
+            toast("OpenRouter connected. Free tier ready.");
+            done();
+          } else if (ios) {
+            // iOS app without the sign-in plugin: OpenRouter's headless mode
+            // shows a code to paste back.
+            await startCodeFlow();
           } else {
             const { url } = await beginOAuth({ mode: "redirect", returnHash: location.hash, model: sel.value });
             rememberTier("free");
@@ -278,12 +291,32 @@ function freeCard(done: () => void, away: () => void): HTMLElement {
             location.assign(url);
           }
         } catch (e) {
-          err.set(msg(e));
+          if (!(e instanceof WebAuthCancelled)) err.set(msg(e));
+          if (ios && !(e instanceof WebAuthCancelled)) codeLink.hidden = false;
+        } finally {
+          connect.disabled = false;
         }
       })();
     },
   });
   connect.classList.add("aitier-primary");
+
+  const startCodeFlow = async (): Promise<void> => {
+    const { url } = await beginOAuth({ mode: "code", returnHash: location.hash, model: sel.value });
+    window.open(url, "_blank");
+    codeRow.hidden = false;
+    codeInput.focus();
+  };
+  // iOS fallback if the one-tap sheet fails: sign in with a pasted code.
+  const codeLink = Button({
+    label: "Sign in with a code instead",
+    variant: "quiet",
+    onClick: () => {
+      err.set("");
+      void startCodeFlow().catch((e: unknown) => err.set(msg(e)));
+    },
+  });
+  codeLink.hidden = true;
 
   // iOS: paste the one-time code OpenRouter shows.
   const codeRow = document.createElement("div");
@@ -301,6 +334,7 @@ function freeCard(done: () => void, away: () => void): HTMLElement {
       void completeOAuthCode(codeInput.value)
         .then(({ key }) => {
           applyFreeTier(key, sel.value);
+          void refreshFreeTierLimit(0);
           toast("OpenRouter connected. Free tier ready.");
           done();
         })
@@ -334,6 +368,7 @@ function freeCard(done: () => void, away: () => void): HTMLElement {
         })
         .then(() => {
           applyFreeTier(k, sel.value);
+          void refreshFreeTierLimit(0);
           toast("Free tier ready.");
           done();
         })
@@ -351,7 +386,7 @@ function freeCard(done: () => void, away: () => void): HTMLElement {
     },
   });
 
-  actions.append(sel, connect, codeRow, pasteLink, keyRow, err.el);
+  actions.append(sel, connect, codeLink, codeRow, pasteLink, keyRow, err.el);
   return el;
 }
 
@@ -436,6 +471,7 @@ export async function finishOpenRouterRedirect(): Promise<void> {
     const r = await completeOAuthRedirect(location.href);
     if (!r) return;
     applyFreeTier(r.key, r.pending.model);
+    void refreshFreeTierLimit(0);
     history.replaceState(null, "", cleanedUrl(location.href, r.pending.returnHash));
     toast("OpenRouter connected. Free tier ready.");
   } catch (e) {
@@ -480,7 +516,10 @@ export function openRouterAllowance(): HTMLElement {
   void fetchOpenRouterKeyInfo(key)
     .then((info) => {
       p.textContent = info.freeDaily
-        ? `Free-model requests today: ${info.freeDaily.used} of ${info.freeDaily.limit} used.`
+        ? `Free-model requests today: ${info.freeDaily.used} of ${info.freeDaily.limit} used. ` +
+          (info.freeDaily.limit >= 1000
+            ? "Preview images (vision) are on."
+            : "Preview images (vision) turn on with the 1000/day allowance.")
         : "Connected.";
     })
     .catch((e: unknown) => (p.textContent = msg(e)));

@@ -44,6 +44,7 @@ import { HardwareSetupScreen } from "../screens/hardwareSetup";
 import { AboutScreen } from "../screens/about";
 import { AiSettingsScreen } from "../screens/aiSettings";
 import { warmActiveProvider } from "../../effects/ai/generate";
+import { refreshFreeTierLimit } from "../../effects/ai/tiers";
 import { AcidModeScreen } from "../screens/acidMode";
 import { PlayModeScreen } from "../screens/playMode";
 import { installKioskChip } from "../screens/kioskChip";
@@ -260,6 +261,8 @@ async function main(): Promise<void> {
   // the chat system prompt; cloud / local-server providers no-op. Best-effort:
   // skips silently with no WebGPU, no selected model, or weights not yet cached.
   warmActiveProvider();
+  // Free tier: re-check the OpenRouter daily allowance (it decides vision).
+  void refreshFreeTierLimit();
 
   // FX-agent chat-log console dump (debugging, Option 1): a manual trigger from
   // DevTools, plus an on-boot dump when the "dump on launch" toggle is set — the

@@ -1,0 +1,3 @@
+# Xcode / SwiftPM per-user state, created when the package is resolved on a host.
+.swiftpm/
+.build/

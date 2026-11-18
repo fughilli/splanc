@@ -261,6 +261,10 @@ _TEST_SOURCE_DATA = {
         "src/effects/editor/videoTexture.ts",
         "src/ui/app/app.css",
     ],
+    # The iOS sign-in bounce page, run in a sandbox (docs/design/ai-tiers.md).
+    "tests/aiOpenRouterNative.test.ts": [
+        "public/oauth-callback.html",
+    ],
     # The hue-code kernel's staggered-pilot goldens (hue code v2 phase 2),
     # checked through the wasm binding.
     "tests/staggerCode.test.ts": [
@@ -311,6 +315,8 @@ js_test(
     data = [
         "_worker.js",
         "package.json",
+        # The relay's model list must match the app's free tier (FREE_MODELS).
+        "src/effects/ai/providers/openrouter.ts",
     ],
     entry_point = "tests/demoAiWorker.test.mjs",
 )

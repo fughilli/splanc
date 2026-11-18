@@ -120,6 +120,62 @@ export function freeFallbacks(primary: string, max = 3): string[] {
   return out.filter(isFreeModelId);
 }
 
+/** Curated free models that accept image input, best first. */
+export const FREE_VISION_MODELS: readonly string[] = FREE_MODELS.filter((m) => m.vision && !m.private).map((m) => m.id);
+
+export function isVisionFreeModel(id: string): boolean {
+  return FREE_MODELS.some((m) => m.id === id && m.vision);
+}
+
+function hasImages(messages: OaiMessage[]): boolean {
+  return messages.some((m) => Array.isArray(m.content) && m.content.some((p) => p.type === "image_url"));
+}
+
+// -- free-tier vision (owner decision 2026-11-18) ------------------------------------
+// capture_preview costs one request per image. On the 50/day allowance that is
+// too dear, so vision is ON only for accounts with the 1000/day allowance
+// (OpenRouter's GET /key reports `free_model_daily_requests.limit`). The last
+// seen limit is cached here; it is refreshed whenever key info is fetched, and
+// a 429 that names the daily limit updates it too.
+
+const FREE_LIMIT_KEY = "splanc.openrouter.freeDailyLimit";
+/** Free-model requests per day that turn vision on. */
+export const VISION_MIN_DAILY_LIMIT = 1000;
+
+function lsSafe(): Storage | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function recordFreeDailyLimit(limit: number, now = Date.now()): void {
+  if (!Number.isFinite(limit) || limit <= 0) return;
+  lsSafe()?.setItem(FREE_LIMIT_KEY, JSON.stringify({ limit, at: now }));
+}
+
+/** The last known daily free-request limit for the stored key, with when it
+ * was seen; null if never fetched. */
+export function cachedFreeDailyLimit(): { limit: number; at: number } | null {
+  try {
+    const v = JSON.parse(lsSafe()?.getItem(FREE_LIMIT_KEY) ?? "null") as { limit?: unknown; at?: unknown } | null;
+    return v && typeof v.limit === "number" && typeof v.at === "number" ? { limit: v.limit, at: v.at } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearFreeDailyLimit(): void {
+  lsSafe()?.removeItem(FREE_LIMIT_KEY);
+}
+
+/** Should the free tier advertise vision (capture_preview) for this model? */
+export function freeTierVision(model: string): boolean {
+  if (!isFreeModelId(model) || isPrivateFreeModel(model) || FREE_VISION_MODELS.length === 0) return false;
+  return (cachedFreeDailyLimit()?.limit ?? 0) >= VISION_MIN_DAILY_LIMIT;
+}
+
 // -- errors -------------------------------------------------------------------
 
 export type OpenRouterErrorKind =
@@ -217,6 +273,7 @@ export function openRouterError(status: number, body: unknown, now = Date.now())
     const daily = lower.includes("per-day") || lower.includes("per day") || limit === 50 || limit === 1000;
     if (daily) {
       const n = limit === 1000 ? "1000" : "50";
+      recordFreeDailyLimit(limit === 1000 ? 1000 : 50, now);
       return new OpenRouterError(
         `You've used today's free OpenRouter requests (${n} per day).${describeReset(resetAt, now)} ${OTHER_TIERS}`,
         "daily_limit",
@@ -303,15 +360,21 @@ export function openRouterRequestBody(
   opts: Pick<SendOptions, "system" | "tools" | "maxTokens">,
 ): Record<string, unknown> {
   const free = isFreeModelId(cfg.model);
+  const oaiMessages = toOpenAiMessages(opts.system, messages);
+  // A free text-only model can't take the capture_preview image: send that
+  // request to the curated free vision models instead (only reachable when
+  // vision is on, i.e. a 1000/day account; never for a private pick).
+  const toVision = free && hasImages(oaiMessages) && !isVisionFreeModel(cfg.model) && !isPrivateFreeModel(cfg.model);
+  const primary = toVision ? (FREE_VISION_MODELS[0] ?? cfg.model) : cfg.model;
   const body: Record<string, unknown> = {
-    model: cfg.model,
-    messages: toOpenAiMessages(opts.system, messages),
+    model: primary,
+    messages: oaiMessages,
     // Room for a whole set_script; a cut-off tool call wedges the loop.
     max_tokens: opts.maxTokens ?? 8000,
     stream: true,
   };
   if (free && cfg.fallbacks !== false) {
-    const chain = freeFallbacks(cfg.model);
+    const chain = toVision ? FREE_VISION_MODELS.slice(0, 3) : freeFallbacks(cfg.model);
     if (chain.length > 1) body.models = chain;
   }
   // Free models: no hidden reasoning (it can eat the whole budget before the
@@ -539,6 +602,7 @@ export async function fetchOpenRouterKeyInfo(
     };
   };
   const f = j.data?.free_model_daily_requests;
+  if (f && typeof f.limit === "number") recordFreeDailyLimit(f.limit);
   return {
     freeDaily:
       f && typeof f.limit === "number"

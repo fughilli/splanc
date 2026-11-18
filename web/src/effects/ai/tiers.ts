@@ -26,7 +26,14 @@ import {
   type AiConfig,
   type ProviderKind,
 } from "./provider";
-import { DEFAULT_FREE_MODEL, OPENROUTER_BASE_URL, isFreeModelId } from "./providers/openrouter";
+import {
+  DEFAULT_FREE_MODEL,
+  OPENROUTER_BASE_URL,
+  cachedFreeDailyLimit,
+  clearFreeDailyLimit,
+  fetchOpenRouterKeyInfo,
+  isFreeModelId,
+} from "./providers/openrouter";
 
 export type AiTier = "free" | "paid" | "self";
 
@@ -118,9 +125,28 @@ export function applyFreeTier(key: string, model: string = DEFAULT_FREE_MODEL): 
     ...cfg.cloud.vendors,
     openrouter: { key: key.trim(), model: isFreeModelId(model) ? model : DEFAULT_FREE_MODEL, baseUrl: OPENROUTER_BASE_URL },
   };
+  if (key.trim() !== cfg.cloud.vendors.openrouter.key) clearFreeDailyLimit(); // that limit was another key's
   const next = updateAiConfig({ kind: "cloud", cloud: { vendor: "openrouter", vendors } });
   rememberTier("free");
   return next;
+}
+
+/** Re-read the free tier's daily allowance (50 or 1000/day, which decides
+ * free-tier vision) when it is unknown or older than `maxAgeMs`. Best effort:
+ * never throws, no-op off the free tier. Called at boot and after connecting. */
+export async function refreshFreeTierLimit(
+  maxAgeMs = 6 * 3600 * 1000,
+  fetchImpl?: typeof fetch,
+  now = Date.now(),
+): Promise<void> {
+  try {
+    if (tierOf() !== "free") return;
+    const seen = cachedFreeDailyLimit();
+    if (seen && now - seen.at < maxAgeMs) return;
+    await fetchOpenRouterKeyInfo(openRouterKey(), fetchImpl); // records the limit
+  } catch {
+    /* offline / revoked: keep the last value; the send path reports errors */
+  }
 }
 
 /** The user's stored OpenRouter key ("" when not connected). */

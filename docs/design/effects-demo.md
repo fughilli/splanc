@@ -237,3 +237,18 @@ effect.
   every play-mode request in 1.7–2.5 s, after one 19 s cold start, and three of
   the four outputs compiled.
 
+
+## Free-tier models again (2026-11-18, #548)
+
+The owner moved the shared relay onto the app's free tier
+(docs/design/ai-tiers.md, "Shared demo relay").
+
+- **Models:** Nemotron 3.5 Lightning, then Nemotron 3 Ultra, then Nemotron 3.5
+  Super, in the same order as the app's `FREE_MODELS`. Preview images go only
+  to the vision model.
+- **Settings:** reasoning off and every attempt zero-priced. The paid Claude
+  lead from 2026-10-30 is removed.
+- **Prompt:** the client's system prompt passes through unchanged, so the demo
+  answers like a user's own free tier.
+- **Limits:** the per-client hourly limit is back to 30.
+- **Secret:** `OPENROUTER_API_KEY`, unchanged.

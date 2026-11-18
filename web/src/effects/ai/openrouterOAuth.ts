@@ -9,12 +9,16 @@
  *   3. OpenRouter redirects back to callback_url?code=…&state=…;
  *   4. POST /api/v1/auth/keys {code, code_verifier, code_challenge_method} → {key}.
  *
- * Two ways back, by platform:
+ * Three ways back, by platform:
  *   - "redirect" (PWA / browser): the callback is this page's own URL. The
  *     page reloads, so the verifier, state and where to return to are kept in
  *     localStorage (not sessionStorage: an installed Android PWA can come back
  *     in a browser tab, which shares localStorage but not sessionStorage).
- *   - "code" (iOS app): the Capacitor WKWebView opens off-origin pages in
+ *   - "native" (iOS app, one tap): the WebAuth plugin runs an
+ *     ASWebAuthenticationSession on the authorize URL with callback_url =
+ *     NATIVE_CALLBACK_URL (an https bounce page that forwards to splanc://);
+ *     the session returns the splanc:// URL, checked + exchanged here.
+ *   - "code" (iOS app without the plugin — fallback): the Capacitor WKWebView opens off-origin pages in
  *     Safari and nothing routes the redirect back into the app without a
  *     native URL handler, so we use OpenRouter's headless mode instead: no
  *     callback_url; OpenRouter shows a one-time code (valid 10 minutes) that
@@ -32,7 +36,14 @@ const PENDING_KEY = "splanc.openrouter.oauth";
  * sign-up detour. */
 export const PENDING_TTL_MS = 30 * 60 * 1000;
 
-export type OAuthMode = "redirect" | "code";
+export type OAuthMode = "redirect" | "code" | "native";
+
+/** iOS one-tap ("native" mode): OpenRouter needs an https callback, so it
+ * redirects to this bounce page (web/public/oauth-callback.html, deployed with
+ * the web app), which forwards code/state to `splanc://oauth/openrouter`; the
+ * app's ASWebAuthenticationSession (native-plugins/web-auth) captures that. */
+export const NATIVE_CALLBACK_URL = "https://splanc.io/app/oauth-callback.html";
+export const NATIVE_CALLBACK_SCHEME = "splanc";
 
 export interface PendingOAuth {
   verifier: string;
@@ -127,7 +138,8 @@ export async function beginOAuth(opts: {
   };
   store(opts.storage)?.setItem(PENDING_KEY, JSON.stringify(pending));
   const loc = opts.location ?? (typeof location !== "undefined" ? location : undefined);
-  const callbackUrl = opts.mode === "redirect" && loc ? callbackUrlFor(loc) : undefined;
+  const callbackUrl =
+    opts.mode === "native" ? NATIVE_CALLBACK_URL : opts.mode === "redirect" && loc ? callbackUrlFor(loc) : undefined;
   return { url: authorizeUrl({ challenge, callbackUrl, state, keyLabel: "Splanc" }), pending };
 }
 
@@ -249,5 +261,27 @@ export async function completeOAuthCode(
   if (!pending) throw new Error("Start “Connect OpenRouter” again — the sign-in request expired.");
   const key = await exchangeCode(code, pending.verifier, opts.fetchImpl);
   clearPendingOAuth(opts.storage);
+  return { key, pending };
+}
+
+/** Finish a native (iOS one-tap) connect with the callback URL the sign-in
+ * sheet returned (`splanc://oauth/openrouter?code=…&state=…`). The state is
+ * REQUIRED to match: the URL came through a custom scheme. */
+export async function completeOAuthNative(
+  callbackHref: string,
+  opts: { storage?: KVStore; fetchImpl?: typeof fetch; now?: number } = {},
+): Promise<{ key: string; pending: PendingOAuth }> {
+  const pending = readPendingOAuth(opts.storage, opts.now);
+  if (!pending || pending.mode !== "native") {
+    throw new Error("Start “Connect OpenRouter” again — the sign-in request expired.");
+  }
+  clearPendingOAuth(opts.storage);
+  const parsed = parseCallback(callbackHref);
+  if (parsed.kind === "error") throw new Error(`OpenRouter sign-in was cancelled (${parsed.message}).`);
+  if (parsed.kind === "none") throw new Error("OpenRouter didn't return a sign-in code. Try again.");
+  if (parsed.state !== pending.state) {
+    throw new Error("That OpenRouter sign-in didn't match this app's request. Connect again.");
+  }
+  const key = await exchangeCode(parsed.code, pending.verifier, opts.fetchImpl);
   return { key, pending };
 }
