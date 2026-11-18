@@ -1685,8 +1685,9 @@ swarm code, and Splanc's own framing.
 
 **Framing:**
 
-- **Q4.** Register an IEEE CID for the Splanc frame identifier before the first install (a
-  modest fee), or ship with the CID-format placeholder for now?
+- **Q4. Answered (2026-11-18):** register an IEEE CID now (public listing, about US $880 one-time).
+  The placeholder `0A 5C 4D` stays until the assigned CID arrives; the swap is one constant plus a
+  protocol version bump.
 
 **Security and admission:**
 
@@ -1694,8 +1695,10 @@ swarm code, and Splanc's own framing.
 - **Q6.** Open mode as designed: guests follow signed scenes and effects, live moves are
   unsigned but bounded, guests can never manage. Is accepting unsigned live moves on guests
   acceptable, or should guests only follow signed commits (coarser, but unforgeable)?
-- **Q7.** Should `mesh_follow = open` be the default for unprovisioned or home-built fixtures,
-  so the "show up and join" magic needs no setup?
+- **Q7. Answered (2026-11-18):** `mesh_follow = open` is **always off by default**, including for
+  unprovisioned and home-built fixtures. After a user commissions a fixture for the first time, the
+  app prompts them to turn it on ("follow open Splanc shows nearby"), so the magic is one tap away
+  but always opt-in.
 
 **UWB and ranging (later tracks):**
 
