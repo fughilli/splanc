@@ -47,6 +47,7 @@ import functools
 import http.server
 import json
 import os
+import re
 import shutil
 import ssl
 import subprocess
@@ -306,12 +307,16 @@ def ensure_browser() -> None:
     docs capture tool's flow — needs network the first time)."""
     from playwright.sync_api import sync_playwright
 
-    try:
-        with sync_playwright() as p:
-            p.chromium.launch(headless=True).close()
+    def launch_error() -> str | None:
+        try:
+            with sync_playwright() as p:
+                p.chromium.launch(headless=True).close()
+            return None
+        except Exception as e:  # noqa: BLE001
+            return str(e)
+
+    if launch_error() is None:
         return
-    except Exception:  # noqa: BLE001
-        pass
     _log("Installing Chromium for Playwright (one-time)…")
     env = dict(os.environ, PYTHONPATH=os.pathsep.join(x for x in sys.path if x))
     subprocess.run(
@@ -319,6 +324,19 @@ def ensure_browser() -> None:
         check=True,
         env=env,
     )
+    err = launch_error()
+    if err is None:
+        return
+    # The binary is there but cannot start: name the cause (a missing system
+    # library — see the hitl.yaml web-OTA step) instead of Playwright's opaque
+    # "Target page, context or browser has been closed".
+    missing = re.search(r"error while loading shared libraries: ([^:\s]+)", err)
+    if missing:
+        raise RuntimeError(
+            f"headless Chromium cannot start: system library {missing.group(1)} is missing "
+            "(install Playwright's Chromium dependencies: playwright install-deps chromium)"
+        )
+    raise RuntimeError(f"headless Chromium cannot start: {err.splitlines()[0] if err else '?'}")
 
 
 def run_browser(
