@@ -1,0 +1,1 @@
+var e=!1;function t(){return e}function n(t){e=t}var r=`virtual`;function i(e){r=e}function a(){return e&&r===`virtual`}var o=null;function s(e){o=e}function c(){return o}var l=null;function u(e){l=e}function d(){return l}var f=null;function p(e){f=e}function m(){return f}export{a,i as c,m as i,u as l,c as n,s as o,d as r,n as s,t,p as u};
