@@ -460,6 +460,14 @@ pins the bytes).</p></li>
 <td><p>Apple refund consumption requests</p></td>
 <td><p><strong>Yes, with consent.</strong> The app asks for the user’s opt-in (in the purchase flow and in AI settings); with it, the relay answers Apple’s CONSUMPTION_REQUEST with the pack’s consumption (<a class="reference internal" href="#apple-refund-requests-consumption-request">Apple refund requests</a>).</p></td>
 </tr>
+<tr class="row-odd"><td><p>16</p></td>
+<td><p>Refund preference in consumption answers</p></td>
+<td><p><strong>By usage:</strong> GRANT_FULL if none of the pack was used, GRANT_PRORATED if part was, DECLINE if all was.</p></td>
+</tr>
+<tr class="row-even"><td><p>17</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sampleContentProvided</span></code></p></td>
+<td><p><strong>true</strong>: the free tier counts as a sample.</p></td>
+</tr>
 </tbody>
 </table>
 </div>
@@ -937,9 +945,9 @@ own lot (<code class="docutils literal notranslate"><span class="pre">lotConsump
 <li><p><code class="docutils literal notranslate"><span class="pre">deliveryStatus:</span> <span class="pre">DELIVERED</span></code>: the credits were on the account and usable;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">consumptionPercentage</span></code>: the share of that pack’s credits spent;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">refundPreference</span></code>: GRANT_FULL if nothing was used, GRANT_PRORATED if part
-was, DECLINE if all was (a policy the owner can tune);</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">sampleContentProvided:</span> <span class="pre">true</span></code>: before buying, the free tier lets people
-try the AI, and the app shows what requests cost.</p></li>
+was, DECLINE if all was (owner decision 16);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sampleContentProvided:</span> <span class="pre">true</span></code>: the free tier counts as a sample (owner
+decision 17).</p></li>
 </ul>
 </li>
 <li><p><strong>Failures.</strong> If the API call fails, the relay answers the notification with
@@ -1610,8 +1618,6 @@ at volume.</p></li>
 alerts go to Grafana Cloud, and Apple’s consumption requests are answered with
 consent. Revisit later:</p>
 <ol class="arabic simple">
-<li><p><strong>Refund preference policy</strong> for Apple’s consumption answers (GRANT_FULL
-when unused, GRANT_PRORATED when partly used, DECLINE when used up).</p></li>
 <li><p><strong>Android / Play:</strong> stays a PWA with web checkout. Revisit only if
 distribution needs a Play app; then Play Billing applies.</p></li>
 <li><p><strong>US iOS link-out:</strong> stays off. Revisit after the Supreme Court rules on
