@@ -624,7 +624,8 @@ def run_on_hardware(args) -> int:
                 timeout=240,
             )
             if fp.returncode != 0:
-                _log(f"[live] flash failed rc={fp.returncode} — SKIP (bench)")
+                tail = ((fp.stdout or "") + (fp.stderr or "")).strip().splitlines()[-15:]
+                _log(f"[live] flash failed rc={fp.returncode} — SKIP (bench):\n  " + "\n  ".join(tail))
                 return 0
         try:
             redirect = wire_provision_dut(r, ssid, pw, 60)

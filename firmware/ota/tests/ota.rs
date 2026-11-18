@@ -572,23 +572,14 @@ mod keyring_tests {
     }
 }
 
-/// The P4 takes two-sector chunks (behind its front end's big windows); a C6 still one.
-/// (The size check comes before the image header's, so zeros show which.)
+/// Chunks are capped per chip (the P4's front end's TLS records cap it at a C6's 4 KB).
 #[test]
-fn p4_takes_bigger_chunks_than_a_c6() {
+fn chunks_are_capped_per_chip() {
     assert_eq!(session::max_chunk_for_chip(CHIP_ESP32C6), MAX_CHUNK);
     assert_eq!(session::max_chunk_for_chip(CHIP_ESP32P4), MAX_CHUNK_P4);
-    let img = vec![0u8; 3 * MAX_CHUNK_P4 as usize];
-    let big = vec![0u8; MAX_CHUNK_P4 as usize];
+    let img = vec![0u8; 3 * MAX_CHUNK as usize];
     let c6 = Session::begin(manifest_for(&img, 1), true, &target(0), false, None).unwrap();
-    assert_eq!(c6.plan(0, &big, CHIP_ESP32C6), Err(Refusal::BadChunk));
-    let mut m = manifest_for(&img, 1);
-    m.flags = splanc_ota::keyring::flags(splanc_ota::keyring::KEY_RELEASE, 0)
-        | ((manifest::BOARD_P4 as u32) << manifest::BOARD_SHIFT);
-    let p4t = Target { slot_size: SLOT, chip: CHIP_ESP32P4, installed_version: 0, board: manifest::BOARD_P4 };
-    let p4 = Session::begin(m, true, &p4t, false, None).unwrap();
-    assert_ne!(p4.plan(0, &big, CHIP_ESP32P4), Err(Refusal::BadChunk));
-    assert_eq!(p4.plan(0, &vec![0u8; MAX_CHUNK_P4 as usize + 1], CHIP_ESP32P4), Err(Refusal::BadChunk));
+    assert_eq!(c6.plan(0, &vec![0u8; MAX_CHUNK as usize + 1], CHIP_ESP32C6), Err(Refusal::BadChunk));
 }
 
 /// The P4 erases a 64 KB block ahead (one block erase), then writes into it with no erase;
@@ -602,12 +593,12 @@ fn p4_erases_a_block_ahead() {
     let p4t = Target { slot_size: SLOT, chip: CHIP_ESP32P4, installed_version: 0, board: manifest::BOARD_P4 };
     let mut p4 = Session::begin(m, true, &p4t, false, None).unwrap();
     // The first chunk (it carries the image header) erases a whole block ahead...
-    let first = p4.plan(0, &app_image(CHIP_ESP32P4, 8192), CHIP_ESP32P4).unwrap();
+    let first = p4.plan(0, &app_image(CHIP_ESP32P4, 4096), CHIP_ESP32P4).unwrap();
     assert_eq!(first.erase, Some((0, session::ERASE_BLOCK_P4)));
     p4.commit(&first);
     // ...so the next is written with no erase.
-    let at = |s: &Session, off: u32| s.plan(off, &vec![0u8; 8192], CHIP_ESP32P4);
-    let second = at(&p4, 8192).unwrap();
+    let at = |s: &Session, off: u32| s.plan(off, &vec![0u8; 4096], CHIP_ESP32P4);
+    let second = at(&p4, 4096).unwrap();
     assert_eq!(second.erase, None, "inside the block erased ahead");
     let c6 = Session::begin(manifest_for(&img, 1), true, &target(0), false, None).unwrap();
     let p = c6.plan(0, &app_image(CHIP_ESP32C6, 4096)[..4096], CHIP_ESP32C6).unwrap();

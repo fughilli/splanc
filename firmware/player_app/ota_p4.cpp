@@ -271,9 +271,7 @@ int reply_status(uint8_t state, uint8_t *out, size_t cap) {
   s.app_fw_version = LM_VERSION;
   s.loader_reason = "";
   s.last_result = g_last;
-  // Behind its C6 front end's big TCP windows (netstack big_windows, LM_NS_BIG_WINDOWS: a
-  // 14 KB WS buffer), twice the C6's chunk: per-chunk overhead is most of a chunk's time.
-  s.max_chunk = 2 * OTA_MAX_CHUNK;  // = the session's MAX_CHUNK_P4 (firmware/ota/src/session.rs)
+  s.max_chunk = OTA_MAX_CHUNK;  // 4 KB: see MAX_CHUNK_P4 (firmware/ota/src/session.rs)
   s.slot_size = g_next ? g_next->size : 0;
   s.key_epoch = g_keys.epoch;
   s.revoked_keys = g_keys.revoked;
