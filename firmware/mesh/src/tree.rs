@@ -112,6 +112,9 @@ pub struct TreeAd {
     pub children: u8,
     pub cap: u8,
     pub uwb: bool,
+    /// Its link to its parent is UWB (multi-hop UWB, §5.8: a relay forwards over UWB to the
+    /// children that name it over UWB, over 802.11 to the rest).
+    pub parent_uwb: bool,
     /// The last tree packet sequence this node has from the root (gap detection by children).
     pub seq: u16,
 }
@@ -120,7 +123,7 @@ impl TreeAd {
     pub const LEN: usize = 12;
 
     pub fn encode(&self, out: &mut [u8]) -> Option<usize> {
-        let flags = (self.role as u8) | ((self.uwb as u8) << 2);
+        let flags = (self.role as u8) | ((self.uwb as u8) << 2) | ((self.parent_uwb as u8) << 3);
         crate::codec::W::new(out).u16(self.root).u8(self.version).u16(self.rank).u8(flags).u16(self.parent).u8(self.children).u8(self.cap).u16(self.seq).done()
     }
 
@@ -136,7 +139,7 @@ impl TreeAd {
             2 => Role::Relay,
             _ => Role::Leaf,
         };
-        let ad = TreeAd { root, version, rank, role, parent: r.u16()?, children: r.u8()?, cap: r.u8()?, uwb: flags & 4 != 0, seq: r.u16()? };
+        let ad = TreeAd { root, version, rank, role, parent: r.u16()?, children: r.u8()?, cap: r.u8()?, uwb: flags & 4 != 0, parent_uwb: flags & 8 != 0, seq: r.u16()? };
         r.end()?;
         Some(ad)
     }
@@ -275,6 +278,7 @@ impl Tree {
             children: self.children,
             cap: advertised_cap(self.class),
             uwb: self.uwb,
+            parent_uwb: self.parent.is_some_and(|p| p.1 == Radio::Uwb),
             seq: self.seq,
         }
     }
@@ -507,6 +511,14 @@ impl Tree {
     }
 
     /// Forward tree packets on 802.11 (root, relays) or flood (orphans)?
+    /// Our children by the radio they reached us on: (802.11, UWB). A relay forwards on each
+    /// radio only if it has children there.
+    pub fn child_radios(&self) -> (u8, u8) {
+        let me = self.me;
+        let root = self.root.unwrap_or(0xFFFF);
+        self.nbrs.iter().flatten().filter(|n| n.ad.parent == me && n.ad.root == root).fold((0, 0), |(w, u), n| if n.ad.parent_uwb { (w, u + 1) } else { (w + 1, u) })
+    }
+
     pub fn forwards(&self) -> bool {
         matches!(self.role, Role::Root | Role::Relay | Role::Orphan)
     }
@@ -523,12 +535,202 @@ impl Tree {
     }
 }
 
+/// Members at or above which the root moves the mesh to the tree (Q18), and at or below which
+/// it returns to the flood; in between it keeps the current mode. The flood wins in small
+/// meshes (path redundancy, airtime trivial); the tree from ~24-32 members (§5.8).
+pub const TREE_ENTER: u16 = 24;
+pub const TREE_EXIT: u16 = 16;
+/// The member count must stay past a threshold this long before the mode changes (a fixture
+/// rebooting near the threshold does not flip the mesh).
+pub const SELECT_HOLD_US: i64 = 5_000_000;
+
+/// How the root distributes: the managed flood, or the tree.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Dist {
+    #[default]
+    Flood,
+    Tree,
+}
+
+/// The root's distribution mode by member count, with hysteresis (Q18). Every data packet
+/// carries the mode the root chose for it, so the mesh switches packet by packet: the tree is
+/// maintained in both modes (its fields ride on adverts anyway), so a switch is instant.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Selector {
+    pub mode: Dist,
+    since: Option<i64>,
+    pub switches: u32,
+}
+
+impl Selector {
+    pub const fn new() -> Selector {
+        Selector { mode: Dist::Flood, since: None, switches: 0 }
+    }
+
+    pub fn update(&mut self, now_us: i64, members: u16) -> Dist {
+        let want = match self.mode {
+            Dist::Flood if members >= TREE_ENTER => Some(Dist::Tree),
+            Dist::Tree if members <= TREE_EXIT => Some(Dist::Flood),
+            _ => None,
+        };
+        match want {
+            Some(m) => {
+                let t = *self.since.get_or_insert(now_us);
+                if now_us - t >= SELECT_HOLD_US {
+                    self.mode = m;
+                    self.since = None;
+                    self.switches += 1;
+                }
+            }
+            None => self.since = None,
+        }
+        self.mode
+    }
+}
+
+/// Reliable packets a relay keeps for its children's repair requests (§5.8, Q21).
+pub const CACHE_ENTRIES: usize = 4;
+/// The 802.11 mesh payload (§5.2).
+pub const CACHE_BYTES: usize = 200;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CacheStats {
+    pub hits: u32,
+    pub misses: u32,
+}
+
+/// The last `depth` (≤ N) reliable packets by sequence, B bytes each, oldest overwritten.
+pub struct RelayCache<const N: usize, const B: usize> {
+    seq: [u16; N],
+    len: [u16; N],
+    buf: [[u8; B]; N],
+    next: u8,
+    depth: u8,
+    pub stats: CacheStats,
+}
+
+impl<const N: usize, const B: usize> Default for RelayCache<N, B> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const N: usize, const B: usize> RelayCache<N, B> {
+    pub const fn new() -> Self {
+        RelayCache { seq: [0; N], len: [0; N], buf: [[0; B]; N], next: 0, depth: N as u8, stats: CacheStats { hits: 0, misses: 0 } }
+    }
+
+    /// Use only the first `depth` entries (a sizing experiment; firmware keeps N).
+    pub fn set_depth(&mut self, depth: usize) {
+        self.depth = depth.clamp(1, N) as u8;
+        self.next %= self.depth;
+        self.len = [0; N];
+    }
+
+    /// Keep `bytes` as packet `seq` (0 is not a sequence). False if it does not fit.
+    pub fn put(&mut self, seq: u16, bytes: &[u8]) -> bool {
+        if seq == 0 || bytes.len() > B {
+            return false;
+        }
+        let i = self.next as usize;
+        self.seq[i] = seq;
+        self.len[i] = bytes.len() as u16;
+        self.buf[i][..bytes.len()].copy_from_slice(bytes);
+        self.next = ((i + 1) % self.depth as usize) as u8;
+        true
+    }
+
+    /// Packet `seq`, if still kept.
+    pub fn get(&mut self, seq: u16) -> Option<&[u8]> {
+        let i = (0..self.depth as usize).find(|&i| self.len[i] != 0 && self.seq[i] == seq);
+        match i {
+            Some(i) => {
+                self.stats.hits += 1;
+                Some(&self.buf[i][..self.len[i] as usize])
+            }
+            None => {
+                self.stats.misses += 1;
+                None
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_selector_switches_with_hysteresis_and_hold() {
+        let mut s = Selector::new();
+        let mut t = 0;
+        // 20 members: between the thresholds, stays on the flood.
+        for _ in 0..20 {
+            t += 1_000_000;
+            assert_eq!(s.update(t, 20), Dist::Flood);
+        }
+        // 24 members: switches once the count has held for SELECT_HOLD_US (5 s).
+        let start = t + 1_000_000;
+        loop {
+            t += 1_000_000;
+            if s.update(t, 24) == Dist::Tree {
+                break;
+            }
+        }
+        assert_eq!(t - start, SELECT_HOLD_US);
+        // A dip to 16 for 3 s does not switch back; 20 (between) never does.
+        for m in [16, 16, 16, 20, 20, 20, 20, 20, 20, 20, 20] {
+            t += 1_000_000;
+            assert_eq!(s.update(t, m), Dist::Tree);
+        }
+        // 16 held for 5 s does.
+        let start = t + 1_000_000;
+        loop {
+            t += 1_000_000;
+            if s.update(t, 16) == Dist::Flood {
+                break;
+            }
+        }
+        assert_eq!(t - start, SELECT_HOLD_US);
+        assert_eq!(s.switches, 2);
+    }
+
+    #[test]
+    fn the_relay_cache_keeps_the_last_depth_packets() {
+        let mut c: RelayCache<4, 200> = RelayCache::new();
+        for q in 1..=6u16 {
+            assert!(c.put(q, &[q as u8; 50]));
+        }
+        assert_eq!(c.get(1), None);
+        assert_eq!(c.get(2), None);
+        assert_eq!(c.get(3), Some(&[3u8; 50][..]));
+        assert_eq!(c.get(6), Some(&[6u8; 50][..]));
+        assert!(!c.put(7, &[0; 201]));
+        c.set_depth(2);
+        for q in 10..=12u16 {
+            c.put(q, &[1]);
+        }
+        assert_eq!(c.get(10), None);
+        assert!(c.get(11).is_some() && c.get(12).is_some());
+        assert_eq!(c.stats, CacheStats { hits: 4, misses: 3 });
+    }
+
+    #[test]
+    fn child_radios_split_by_the_childs_parent_link() {
+        let mut now = 0;
+        let mut t = Tree::new(5, true, Class::P4);
+        t.set_root(Some(1), 1);
+        let kid = |p_uwb| TreeAd { parent_uwb: p_uwb, ..ad(1, 900, Role::Leaf, 5, 0, true) };
+        hear(&mut t, &mut now, 3, &[(1, Radio::Wifi, ad(1, 0, Role::Root, 0xFFFF, 3, true)), (20, Radio::Wifi, kid(true)), (21, Radio::Wifi, kid(false)), (22, Radio::Uwb, kid(true))]);
+        assert_eq!(t.child_radios(), (1, 2));
+        let a = t.ad();
+        let mut b = [0u8; TreeAd::LEN];
+        a.encode(&mut b).unwrap();
+        assert_eq!(TreeAd::decode(&b), Some(a));
+    }
+
     fn ad(root: NodeId, rank: u16, role: Role, parent: NodeId, children: u8, uwb: bool) -> TreeAd {
-        TreeAd { root, version: 1, rank, role, parent, children, cap: 8, uwb, seq: 0 }
+        TreeAd { root, version: 1, rank, role, parent, children, cap: 8, uwb, parent_uwb: false, seq: 0 }
     }
 
     /// Feed `t` adverts from its neighbours for `secs` seconds with perfect links.
@@ -679,7 +881,7 @@ mod tests {
 
     #[test]
     fn advert_roundtrip() {
-        let a = TreeAd { root: 7, version: 3, rank: 300, role: Role::Relay, parent: 9, children: 4, cap: 16, uwb: true, seq: 1234 };
+        let a = TreeAd { root: 7, version: 3, rank: 300, role: Role::Relay, parent: 9, children: 4, cap: 16, uwb: true, parent_uwb: true, seq: 1234 };
         let mut b = [0u8; 16];
         let n = a.encode(&mut b).unwrap();
         assert_eq!(n, TreeAd::LEN);

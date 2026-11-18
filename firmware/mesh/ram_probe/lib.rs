@@ -79,6 +79,9 @@ probe!(MESH_RAM_router, Router);
 probe!(MESH_RAM_admin_gate, AdminGate);
 // The distribution tree (design §5.8): 16 neighbours, both radios' link estimates, positions.
 probe!(MESH_RAM_tree, splanc_mesh::tree::Tree);
+// The relay cache every fixture keeps for its children's repair requests (Q21).
+probe!(MESH_RAM_relay_cache, splanc_mesh::tree::RelayCache<{ splanc_mesh::tree::CACHE_ENTRIES }, { splanc_mesh::tree::CACHE_BYTES }>);
+probe!(MESH_RAM_selector, splanc_mesh::tree::Selector);
 // Open mode (feature `open_mode`, M7b): what it will add.
 #[cfg(feature = "open_mode")]
 probe!(MESH_RAM_open_guest_table, splanc_mesh::guest::GuestTable<{ splanc_mesh::guest::GUESTS }>);
