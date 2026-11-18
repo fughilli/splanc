@@ -366,13 +366,16 @@ describe("crossfade_to (MCP, several players)", { skip }, () => {
     assert.match(none.text, /pass effect_id/);
   });
 
-  test("an over-budget effect changes nothing; firmware without decks is told to use deploy_effect", async () => {
+  test("an over-budget estimate never blocks (it is uncalibrated); firmware without decks is told to use deploy_effect", async () => {
     await call("deploy_effect", { effect_id: "calm", source: CALM, players: "all" });
     const heavy = `vec3 shade(Led led) { float a = 0.0; ${"a = a + sin(a + led.pos.x) * cos(a);".repeat(400)} return vec3(a); }`;
     const over = await call("crossfade_to", { effect_id: "heavy", source: heavy, players: "all" });
     if (over.isError) {
-      assert.match(over.text, /nothing changed|doesn't compile/);
-      for (const p of players) assert.equal(p.deckB, null);
+      // Only a compile failure may stop it, never the estimate.
+      assert.match(over.text, /doesn't compile/);
+    } else {
+      assert.doesNotMatch(over.text, /nothing changed/);
+      for (const p of players) assert.notEqual(p.deckB, null, "cued despite the estimate");
     }
     // A player whose firmware has no decks.
     players[1]!.features = ["effects", "perf", "stored_map"];

@@ -952,8 +952,9 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
     {
       description:
         "Compile (per firmware) and upload an effect to every selected player; activate=true makes it the running " +
-        "effect. Each player's frame cost is estimated first: if any would overrun its budget nothing is deployed " +
-        "(force=true deploys anyway). Several players are then put on one shared clock. The previous effect is " +
+        "effect. Each player's frame cost is estimated first and reported, but the estimate is uncalibrated and " +
+        "never blocks a deploy: the fixture is the measure (measure_effect after deploying). Several players are " +
+        "then put on one shared clock. force is accepted and ignored (kept for older callers). The previous effect is " +
         "remembered for rollback_effect." +
         (library
           ? " Pass library_id to deploy a library entry (search_effects) instead of source. Successful deploys " +
@@ -1057,14 +1058,15 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
             },
           ]),
         );
-        if (over.length && !force) {
-          const b = over[0]!.result!;
-          throw new ToolError(
-            `nothing deployed: the effect would overrun the frame budget on ${over.map((b) => b.player.name).join(", ")} ` +
-              `(${JSON.stringify(estimates)}). Simplify it, or pass force=true to deploy anyway.` +
-              findingsText(costFindings(b.c, source, b.leds)),
-          );
-        }
+        // The estimate is uncalibrated: it never gates a deploy (owner rule; the fixture is the
+        // performance gold standard). An over-budget estimate becomes a note, and measure_effect
+        // on the device is the real check.
+        void force;
+        const estimateNote = over.length
+          ? `The uncalibrated estimate suggests ${over.map((b) => b.player.name).join(", ")} may run over the frame ` +
+            `budget; deployed anyway. Run measure_effect to see the real cost on the fixture.` +
+            findingsText(costFindings(over[0]!.result!.c, source, over[0]!.result!.leds))
+          : undefined;
         const compiled = new Map(builds.map((b) => [b.player.id, b.result!.c]));
         // 2. Deploy everywhere.
         const deployed = await hub.each(sel, async (s, p) => {
@@ -1079,10 +1081,13 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
         if (okIds.length > 1 && (activate ?? true)) progress(`aligning ${okIds.length} clocks…`);
         const time = okIds.length > 1 && (activate ?? true) ? await hub.alignTime(okIds) : undefined;
         const out = shape(deployed, sel !== undefined) as Record<string, unknown>;
+        const note = estimateNote ? { estimate_note: estimateNote } : {};
         return ok(
           sel === undefined && deployed.length === 1
-            ? out
-            : { ...out, estimates, ...(time ? { time_base: time } : {}) },
+            ? out && typeof out === "object"
+              ? { ...out, ...note }
+              : out
+            : { ...out, estimates, ...(time ? { time_base: time } : {}), ...note },
         );
       })();
   server.registerTool(
@@ -1117,8 +1122,8 @@ export function createServer(target: DeviceSession | Hub, opts: ServerOptions = 
         "the idle deck) is loaded onto the idle FX deck, then the device blends A<->B over `seconds` with the " +
         "given curve; several players share one clock and fade in lockstep. The outgoing effect stays loaded on " +
         "its deck: rollback_effect fades back to it. It replaces anything already waiting on the idle deck (list_decks " +
-        "shows the decks). Frame cost is checked first like deploy_effect (both effects " +
-        "render during the fade). Deck B is runtime-only: after a reboot the player resumes deck A's effect. " +
+        "shows the decks). Frame cost is estimated like deploy_effect and reported, never blocking (both effects " +
+        "render during the fade; measure_effect is the real check). Deck B is runtime-only: after a reboot the player resumes deck A's effect. " +
         "library_id fades to an effects-library entry (search_effects) instead of source.",
       inputSchema: {
         effect_id: z.string().min(1).max(32).optional().describe("Default: from the library entry"),
@@ -1499,7 +1504,7 @@ interface CrossfadeArgs {
 
 /**
  * crossfade_to: (1) compile + estimate every target (when there is source) and
- * refuse an over-budget effect before touching any player; (2) cue it on each
+ * report the (uncalibrated, never-gating) estimate; (2) cue it on each
  * player's idle deck — loaded, running, not yet shown; (3) several players: one
  * shared effect clock (re-using the room epoch they already share, so the
  * outgoing effects don't jump in time); (4) every player's fade on ONE hub clock
@@ -1513,6 +1518,7 @@ async function crossfadeTo(hub: Hub, a: CrossfadeArgs): Promise<unknown> {
   if (a.source) knownSources.set(a.effect_id, a.source);
   let compiled: Map<string, CompileOutcome> | undefined;
   let estimates: Record<string, unknown> | undefined;
+  let estimateNote: string | undefined;
   if (source !== undefined) {
     const builds = await hub.each(sel, async (s, p) => {
       if (!s.decksUsable()) {
@@ -1546,12 +1552,12 @@ async function crossfadeTo(hub: Hub, a: CrossfadeArgs): Promise<unknown> {
       ]),
     );
     const over = builds.filter((b) => !(b.result!.est.budget.fraction <= 1));
-    if (over.length && !a.force) {
-      throw new ToolError(
-        `nothing changed: the effect would overrun the frame budget on ${over.map((b) => b.player.name).join(", ")} ` +
-          `(${JSON.stringify(estimates)}). Simplify it, or pass force=true.` +
-          findingsText(costFindings(over[0]!.result!.c, source, over[0]!.result!.leds)),
-      );
+    // Uncalibrated: never gates (owner rule). An over-budget estimate becomes a note.
+    if (over.length) {
+      estimateNote =
+        `The uncalibrated estimate suggests ${over.map((b) => b.player.name).join(", ")} may run over the frame ` +
+        `budget; crossfaded anyway. Run measure_effect to see the real cost on the fixture.` +
+        findingsText(costFindings(over[0]!.result!.c, source, over[0]!.result!.leds));
     }
     compiled = new Map(builds.map((b) => [b.player.id, b.result!.c]));
   }
@@ -1610,9 +1616,10 @@ async function crossfadeTo(hub: Hub, a: CrossfadeArgs): Promise<unknown> {
       : {}),
   };
   const sch = sched ? scheduleReport(sched.plan) : {};
+  const note = estimateNote ? { estimate_note: estimateNote } : {};
   return sel === undefined && results.length === 1
-    ? { ...out, ...extra, ...sch }
-    : { ...out, ...(estimates ? { estimates } : {}), ...(time ? { time_base: time } : {}), ...extra, ...sch };
+    ? { ...out, ...extra, ...sch, ...note }
+    : { ...out, ...(estimates ? { estimates } : {}), ...(time ? { time_base: time } : {}), ...extra, ...sch, ...note };
 }
 
 // -- scheduled changes (schedule.ts; docs/design/synced-show.md) ---------------------------
