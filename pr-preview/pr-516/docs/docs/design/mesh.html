@@ -1346,6 +1346,204 @@ value is.</p>
 “incompatible”, so the app can offer an update over a direct connection.</p></li>
 </ul>
 </section>
+<section id="two-tier-distribution-tree-uwb-to-relays-802-11-to-fixtures">
+<h3>5.8 Two-tier distribution tree: UWB to relays, 802.11 to fixtures<a class="headerlink" href="#two-tier-distribution-tree-uwb-to-relays-802-11-to-fixtures" title="Link to this heading">¶</a></h3>
+<p><strong>The owner’s direction.</strong> There will be two backhauls (UWB and 802.11), and every device’s
+position is known. Build a spanning distribution structure:</p>
+<ul class="simple">
+<li><p>the gateway sends over UWB to N L2 relays;</p></li>
+<li><p>each relay sends over 802.11 to M L3 fixtures, with N × M ≥ the mesh;</p></li>
+<li><p>the cooperative algorithm that builds it must survive moving scatterers (people) and moving
+fixtures.</p></li>
+</ul>
+<p>The flood stays as the bootstrap and the fallback. Code: <code class="docutils literal notranslate"><span class="pre">firmware/mesh/src/tree.rs</span></code> (state
+and decisions) and <code class="docutils literal notranslate"><span class="pre">firmware/mesh/meshsim/src/dist.rs</span></code> (the packet-level comparison).</p>
+<p><strong>Choice: an RPL-style DODAG with a two-tier objective function.</strong></p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Family</p></th>
+<th class="head"><p>Fit</p></th>
+<th class="head"><p>Verdict</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Connected dominating sets (CDS)</p></td>
+<td><p>Minimal relay sets, but building and repairing them needs 2-hop neighbourhood exchanges, and one moving node can invalidate the set far away</p></td>
+<td><p>No: control traffic and fragility under churn</p></td>
+</tr>
+<tr class="row-odd"><td><p>LEACH</p></td>
+<td><p>Random rotating cluster heads; ignores link quality and capacity; assumes the heads reach the sink directly</p></td>
+<td><p>No</p></td>
+</tr>
+<tr class="row-even"><td><p>HEED</p></td>
+<td><p>Cluster heads by a primary metric (capacity) and a secondary one (cost to join)</p></td>
+<td><p>Kept: consolidation onto existing relays</p></td>
+</tr>
+<tr class="row-odd"><td><p>CTP (collection tree)</p></td>
+<td><p>ETX gradient, link-estimator table management, datapath validation; built for convergecast</p></td>
+<td><p>Kept: ETX estimation and table admission</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>RPL DODAG (MRHOF, ETX)</strong></p></td>
+<td><p>Rank-based parent choice with hysteresis, local repair, loop avoidance by rank, any node as root</p></td>
+<td><p><strong>Chosen</strong>, with the objective below</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Objective.</strong> A node’s rank is <code class="docutils literal notranslate"><span class="pre">rank(parent)</span> <span class="pre">+</span> <span class="pre">w(radio)</span> <span class="pre">·</span> <span class="pre">ETX(link)</span></code>.</p>
+<ul class="simple">
+<li><p><strong>Radio weight.</strong> UWB links weigh 0.5 and 802.11 links 1.0. The root’s UWB neighbours
+therefore become the L2 tier on their own. Where neither end has UWB, the same rule builds a
+two-tier 802.11 tree.</p></li>
+<li><p><strong>Consolidation.</strong> Joining a parent that is still a leaf costs +0.5, as in HEED. Fixtures
+prefer existing relays, so N stays small.</p></li>
+<li><p><strong>Child cap.</strong> A parent advertises its child cap M: C6 8, P4 and Pi 12. Those are the class
+targets of 8/16/32, clamped so that the children plus 4 candidate parents fit in the 16-slot
+neighbour table.</p></li>
+<li><p><strong>The cap is soft.</strong> Joiners skip a parent that is full. Joiners that race on a stale count
+can overshoot, and children with no other eligible parent stay. Measured: the worst excess
+is 4, and with the full-MAC data plane (below) a relay’s child count costs no airtime.</p></li>
+<li><p><strong>No shedding.</strong> Shedding excess children was tried and removed: at 32 fixtures it raised
+parent changes from 1.7–5.3 to 4.3–7.4 per node-minute without bounding the excess.</p></li>
+</ul>
+<p><strong>Links and the neighbour table.</strong></p>
+<ul class="simple">
+<li><p><strong>ETX</strong> is kept per neighbour and per radio, from advert reception (1 s windows, EWMA ¼).
+802.11 adverts come once a second, as do UWB beacons (one TDMA slot per node per second).</p></li>
+<li><p><strong>Position priors.</strong> Localization gives a prior ETX for a link with under 3 windows of
+history: 802.11 good within ~8 m, UWB within ~15 m line of sight. A neighbour that moved
+more than 2 m has its history reset.</p></li>
+<li><p><strong>Table admission (CTP-style).</strong> The parent, children and the root are never evicted. A
+newcomer takes a free slot, or displaces the worst-ranked unprotected entry, but only if it
+names us as parent or ranks better than that entry. Otherwise it is ignored.</p></li>
+<li><p><strong>Why admission is needed.</strong> The first version admitted everyone by evicting the stalest
+entry. From 32 fixtures more neighbours were audible than the table holds, and it
+evicted about 2,000 entries per node-minute. Every parent loss in that version was an
+eviction.</p></li>
+</ul>
+<p><strong>Stability and repair.</strong></p>
+<ul class="simple">
+<li><p><strong>Hysteresis.</strong> A node switches parent only for a gain of ≥ 0.5 ETX, and at most once per 5 s.</p></li>
+<li><p><strong>Lost parent.</strong> A parent is lost after 3 s of silence, or after 2 s of advertising no
+route. The 2 s hold-down stops a relay’s brief repair from cascading through its subtree.</p></li>
+<li><p><strong>Local repair.</strong> A lost parent resets the node’s rank, so any non-child neighbour can
+take over. A neighbour that names us as parent is never chosen (no 2-cycles); otherwise
+loops are avoided by rank.</p></li>
+<li><p><strong>A defect the tests caught.</strong> Before the rank reset, a node whose only alternative had
+its own old rank stayed on a parent without a route indefinitely.</p></li>
+</ul>
+<p><strong>Data plane.</strong></p>
+<ul class="simple">
+<li><p><strong>Root.</strong> The root sends each update on UWB (its data slot every 4 ms; 80-byte frames, so a
+packet is fragmented and every fragment must arrive) and on 802.11.</p></li>
+<li><p><strong>Relays and leaves.</strong> Relays rebroadcast once on 802.11 (0–2 ms jitter). Leaves never relay.
+Orphans fall back to the managed flood.</p></li>
+<li><p><strong>Full MACs.</strong> Every packet carries every member’s per-receiver MAC entry (§7.9), exactly as
+in the flood, so any overheard copy delivers.</p></li>
+<li><p><strong>Subtree MACs were measured and rejected.</strong> Each packet carried only the forwarder’s
+subtree entries. That made the tree a single-path structure: at 32 fixtures it
+delivered 87–94 %, against 99.99 % with full MACs (64 fixtures: 63 %).</p></li>
+<li><p><strong>Reliable commands</strong> (1 per second in the model) carry a sequence. A node that sees a gap
+(a later sequence, or its parent’s advert naming a newer one) asks its parent by unicast
+NACK. Live updates are not repaired: the next one supersedes.</p></li>
+<li><p><strong>Relay cache.</strong> The model keeps 16 reliable packets per relay. On a C6, 4 × 200 B = 800 B
+covers 4 s of reliable commands at 1 Hz (an estimate, not measured).</p></li>
+</ul>
+<p><strong>Control overhead.</strong> The tree adds 12 bytes (<code class="docutils literal notranslate"><span class="pre">TreeAd</span></code>) plus the position (4 bytes) to
+adverts that exist anyway (§5.3). It also adds NACKs, repairs, and a child report from each
+relay every 5 s. Measured: 22–53 B per node per second.</p>
+<p><strong>Security</strong> is unchanged. The tree only decides who forwards. Per-receiver MACs and freshness
+are end to end (gateway → member), so a relay can drop packets but cannot forge or replay
+them. A malicious relay is an availability problem. Full MACs limit it: any other relay’s copy,
+or the flood fallback, delivers.</p>
+<p><strong>Any node can be the gateway</strong>, so there is one DODAG per root. The extra state per
+additional root is the rank, parent and role; the neighbour table is shared.</p>
+<p><strong>Results</strong> (<code class="docutils literal notranslate"><span class="pre">meshsim</span></code> <code class="docutils literal notranslate"><span class="pre">treesweep</span></code>, 30 Hz live updates plus one reliable command per second,
+3 % loss, people walking, 5 m grid; <code class="docutils literal notranslate"><span class="pre">docs/design/mesh/tree-*.png</span></code>, <code class="docutils literal notranslate"><span class="pre">tree.csv</span></code>):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Fixtures</p></th>
+<th class="head"><p>Flood: delivered / p99 / 802.11 airtime</p></th>
+<th class="head"><p>Tree, no UWB</p></th>
+<th class="head"><p>Tree, 50 % UWB</p></th>
+<th class="head"><p>Tree, all UWB</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>6</p></td>
+<td><p>99.9 % / 10 ms / 0.019</p></td>
+<td><p>93.2 % / 2 ms / 0.007</p></td>
+<td><p>98.8 % / 4 ms / 0.015</p></td>
+<td><p>99.8 % / 4 ms / 0.009</p></td>
+</tr>
+<tr class="row-odd"><td><p>16</p></td>
+<td><p>99.97 % / 9 ms / 0.043</p></td>
+<td><p>99.1 % / 5 ms / 0.028</p></td>
+<td><p>99.98 % / 5 ms / 0.032</p></td>
+<td><p>99.99 % / 4 ms / 0.040</p></td>
+</tr>
+<tr class="row-even"><td><p>32</p></td>
+<td><p>99.95 % / 12 ms / 0.155</p></td>
+<td><p>99.8 % / 7 ms / 0.113</p></td>
+<td><p>99.99 % / 6 ms / 0.110</p></td>
+<td><p>99.99 % / 7 ms / 0.133</p></td>
+</tr>
+<tr class="row-odd"><td><p>64</p></td>
+<td><p>99.5 % / 24 ms / 0.41</p></td>
+<td><p>99.3 % / 19 ms / 0.57</p></td>
+<td><p>99.6 % / 19 ms / 0.60</p></td>
+<td><p>99.3 % / 19 ms / 0.64</p></td>
+</tr>
+<tr class="row-even"><td><p>128</p></td>
+<td><p>85 % / 365 ms / 2.9</p></td>
+<td><p>77 % / 421 ms / 2.4</p></td>
+<td><p>82 % / 451 ms / 2.4</p></td>
+<td><p>87 % / 434 ms / 2.5</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p><strong>6 fixtures.</strong> The tree has no redundancy: most fixtures are the root’s direct children,
+and one broadcast lost to a walking person is lost. The flood costs only 2 % airtime here.</p></li>
+<li><p><strong>16–32 fixtures.</strong> The tree delivers as well as the flood. It halves p99 and uses 7–35 % less
+802.11 airtime. With people walking and 25 % of fixtures moving (0.3 m/s), it delivers
+99.99–100 % against the flood’s 99.95–100 %.</p></li>
+<li><p><strong>64 fixtures.</strong> p99 is still better (19 against 24 ms), but the tree spends more airtime.
+Its 13–16 relays all rebroadcast every part, while the flood’s duplicate cancellation
+suppresses more. Relay suppression is T3.</p></li>
+<li><p><strong>128 fixtures at 30 Hz</strong> fail in both. The per-receiver MAC bytes (127 × 8 B per update) are
+the limit, which is Q14’s broadcast authenticator.</p></li>
+<li><p><strong>Relay failure.</strong> Killing the busiest relay: its children re-parent in 3.0 s (the 3 s silence
+bound). Delivery during the repair stays at 99.7 %, because full MACs let the children use
+other relays’ copies.</p></li>
+<li><p><strong>Churn.</strong> Parent changes are 1.5–6 per node-minute up to 32 fixtures and 8–11 at 64–128.
+Unlike the 7 % at 6 fixtures, this does not cost delivery here.</p></li>
+<li><p><strong>UWB.</strong> At 50 % UWB the UWB tier carries 6–51 fixtures’ parents (32–128 fixtures). The root’s
+UWB range (~15 m with 3 dB enclosure loss per end) reaches only part of a large venue.
+Beyond that, relays are 802.11. UWB’s gain over a two-tier 802.11 tree is small in this
+model: it fixes the 6- and 16-fixture redundancy gap, and its airtime (≤ 5 %) is its own.</p></li>
+</ul>
+<p><img alt="Tree vs flood across mesh size" src="docs/design/mesh/tree-scale.png" /></p>
+<p><img alt="Walking people and moving fixtures, 32 fixtures" src="docs/design/mesh/tree-dynamics.png" /></p>
+<p><strong>Model limits.</strong> <code class="docutils literal notranslate"><span class="pre">dist.rs</span></code> is a packet-level model, lighter than the full <code class="docutils literal notranslate"><span class="pre">meshsim</span></code> stack: no
+crypto, queues or swarm pages. Its absolute live capacity is optimistic against §10.6, where
+the full stack gave 32 fixtures no rate at ≥ 99 %. The comparisons between schemes are the
+result; absolute rates are not. UWB is a link budget plus a fixed slot schedule (no
+DW3000-specific MAC behaviour) until U1/U2 hardware exists.</p>
+<p><strong>RAM on the C6:</strong> <code class="docutils literal notranslate"><span class="pre">Tree</span></code> is 736 B (measured, <code class="docutils literal notranslate"><span class="pre">MESH_RAM_tree</span></code>), plus the relay cache (800 B
+estimated). That is ~1.5 KB on top of the 15,472 B stack, and only on fixtures that run the
+tree.</p>
+<p><strong>Recommendation.</strong></p>
+<ul class="simple">
+<li><p>Flood up to ~16 fixtures, and the tree with full MACs from ~24–32. The root switches by
+member count and keeps the flood as the fallback.</p></li>
+<li><p>No relay suppression yet (T3 for 64+).</p></li>
+<li><p>UWB as the root’s first tier where present.</p></li>
+</ul>
+</section>
 </section>
 <section id="time-sync-and-apply-at-across-the-mesh">
 <h2>6. Time sync and apply_at across the mesh<a class="headerlink" href="#time-sync-and-apply-at-across-the-mesh" title="Link to this heading">¶</a></h2>
@@ -2629,6 +2827,8 @@ driver is GPL-derived. A Splanc UWB backhaul implements <code class="docutils li
 <code class="docutils literal notranslate"><span class="pre">may_send</span></code>, and needs a C6 port of the driver.</p></li>
 <li><p><strong>What it adds</strong>: ranging between every pair at ~20 Hz (§12), a backhaul on a different band
 from Wi-Fi and BLE (no coex), and µs-level time sync from DS-TWR timestamps.</p></li>
+<li><p><strong>As a distribution tier</strong>: §5.8 uses UWB as the gateway’s first hop to the L2 relays, with
+802.11 below them.</p></li>
 </ul>
 </section>
 <section id="ranging-and-realtime-localization-later">
@@ -3054,13 +3254,22 @@ per-receiver MACs (§7.9);</p></li>
 <tr class="row-odd"><td><p>U2</p></td>
 <td><p>UWB backhaul (TDMA, DS-TWR) behind <code class="docutils literal notranslate"><span class="pre">Backhaul</span></code>; C6 driver port</p></td>
 </tr>
-<tr class="row-even"><td><p>L1</p></td>
+<tr class="row-even"><td><p>T1</p></td>
+<td><p>Distribution tree (§5.8) in <code class="docutils literal notranslate"><span class="pre">MeshStack</span></code>: <code class="docutils literal notranslate"><span class="pre">TreeAd</span></code> in adverts, relay rebroadcast, reliable NACK repair with a 4-entry relay cache; flood ≤ 16 fixtures, tree above; <code class="docutils literal notranslate"><span class="pre">mesh_tree_repair</span></code> HITL (kill a relay)</p></td>
+</tr>
+<tr class="row-odd"><td><p>T2</p></td>
+<td><p>The UWB first tier: the root’s UWB data slot and per-node beacon slots on U2’s TDMA; measured UWB link budget through the enclosures</p></td>
+</tr>
+<tr class="row-even"><td><p>T3</p></td>
+<td><p>Relay suppression for 64+ fixtures (a relay skips its rebroadcast when its children were all covered by copies it heard) and churn damping at 64–128</p></td>
+</tr>
+<tr class="row-odd"><td><p>L1</p></td>
 <td><p>Ranges into the room solver as constraints</p></td>
 </tr>
-<tr class="row-odd"><td><p>L2</p></td>
+<tr class="row-even"><td><p>L2</p></td>
 <td><p>IMU + range fusion (<code class="docutils literal notranslate"><span class="pre">swarm_core</span></code>), placement of the filter (C6 rate, P4, or bridge)</p></td>
 </tr>
-<tr class="row-even"><td><p>R1–R3</p></td>
+<tr class="row-odd"><td><p>R1–R3</p></td>
 <td><p>§13.6 spikes S1a–S3 on the amd-rig</p></td>
 </tr>
 </tbody>
@@ -3222,6 +3431,22 @@ group-key live moves.</p></li>
 <li><p><strong>Q17.</strong> The custodian spill stays, behind the <code class="docutils literal notranslate"><span class="pre">custodian_spill</span></code> feature, off by default
 (§10.4, §10.6).</p></li>
 </ul>
+<p><strong>New (2026-11-18, the distribution tree, §5.8):</strong></p>
+<ul class="simple">
+<li><p><strong>Q18.</strong> When should the tree replace the flood? Proposed: flood up to ~16 fixtures, tree
+with full MACs from ~24–32, switched by the root from the member count. At 6 fixtures the
+tree delivered 93–99.8 % against the flood’s 99.9 %.</p></li>
+<li><p><strong>Q19.</strong> The tree assumes every packet carries every member’s MAC entry (full MACs). Per-subtree
+MACs save bytes but made the tree single-path (87–94 % at 32 fixtures), so they are
+rejected. Live updates at 64+ fixtures and 30 Hz therefore still need Q14’s broadcast
+authenticator, or a lower rate.</p></li>
+<li><p><strong>Q20.</strong> UWB reach: the gateway reached N L2 relays only within ~15 m (DW3000-class, 3 dB
+enclosure loss per end), 6–51 parents of 32–128 fixtures at 50 % UWB. For larger venues, should
+UWB relays also relay over UWB (a multi-hop UWB tier, not modelled yet), or is a one-hop UWB
+tier enough? This depends on Q8’s hardware and on measuring UWB through the enclosures (T2).</p></li>
+<li><p><strong>Q21.</strong> RAM: the tree costs 736 B on the C6 plus an ~800 B relay cache, only on fixtures
+that run it. Accept, or restrict relaying to P4 + C6 and Pi fixtures?</p></li>
+</ul>
 </section>
 <section id="sources">
 <h2>18. Sources<a class="headerlink" href="#sources" title="Link to this heading">¶</a></h2>
@@ -3327,6 +3552,7 @@ Microcontrollers” (espdr-tx test-tone TX on the S3):
 <li><a class="reference internal" href="#effect-programs-content-addressed-blobs">5.5 Effect programs: content-addressed blobs</a></li>
 <li><a class="reference internal" href="#scene-state-and-late-joiners">5.6 Scene state and late joiners</a></li>
 <li><a class="reference internal" href="#versioning">5.7 Versioning</a></li>
+<li><a class="reference internal" href="#two-tier-distribution-tree-uwb-to-relays-802-11-to-fixtures">5.8 Two-tier distribution tree: UWB to relays, 802.11 to fixtures</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#time-sync-and-apply-at-across-the-mesh">6. Time sync and apply_at across the mesh</a><ul>
