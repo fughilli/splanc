@@ -46,6 +46,10 @@ export const BILLING_EVENTS = [
   "ai_billing_error",
   "ai_billing_bad_pricing",
   "ai_metrics_push_failed",
+  "ai_checkout_created",
+  "ai_checkout_failed",
+  "ai_webhook_rejected",
+  "ai_purchase_rejected",
 ] as const;
 export type BillingEvent = (typeof BILLING_EVENTS)[number];
 
@@ -203,6 +207,24 @@ export function billingAlertRules(orgLimitUsd: number, alertFraction: number): A
       for: "0m",
       severity: "warn",
       summary: "Requests cost more than their reservation beyond the overdraft: check the reservation estimate.",
+    },
+    {
+      uid: "ai-web-payments",
+      title: "AI credits: web checkout / Stripe webhook problems",
+      expr: `sum(count_over_time(${SEL}, event=~"ai_checkout_failed|ai_purchase_rejected"} [1h]))`,
+      above: 0,
+      for: "0m",
+      severity: "page",
+      summary: "A paid Stripe checkout wasn't credited (rejected purchase), or checkout sessions can't be created.",
+    },
+    {
+      uid: "ai-webhook-signatures",
+      title: "AI credits: Stripe webhook signatures failing",
+      expr: `sum(count_over_time(${SEL}, event="ai_webhook_rejected"} [1h]))`,
+      above: 5,
+      for: "0m",
+      severity: "warn",
+      summary: "Webhook calls with bad signatures: a rotated signing secret, or someone probing the endpoint.",
     },
     {
       uid: "ai-consumption-failed",

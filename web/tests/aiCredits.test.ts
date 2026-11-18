@@ -26,6 +26,9 @@ import {
   getCreditsSession,
   mayBuyCredits,
   setAppleConsumptionConsent,
+  checkoutReturnUrl,
+  fetchCreditPacks,
+  startWebCheckout,
   fetchCreditsBalance,
   formatCredits,
   makeCreditsProvider,
@@ -201,4 +204,37 @@ test("account lifecycle: anonymous account, 18+ before Buy, deletion clears the 
   await deleteCreditsAccount(fn);
   assert.equal(calls[3]!.init.method, "DELETE");
   assert.equal(getCreditsSession(), null);
+});
+
+test("web checkout: packs for this platform, the checkout request, never on iOS", async () => {
+  g.localStorage.setItem("splanc.flags.aiCredits", "1");
+  g.localStorage.setItem("splanc.aiCredits.relay", "https://relay.example");
+  setCreditsSession({ account_id: "acct_x", token: "sst1.session" });
+  const calls: { url: string; init: RequestInit }[] = [];
+  let checkoutUrl = "https://checkout.stripe.com/c/pay/cs_test_1";
+  const fn = (async (url: string, init: RequestInit = {}) => {
+    calls.push({ url, init });
+    if (url.includes("/billing/pricing")) {
+      return new Response(JSON.stringify({ packs: [{ sku: "web.credits.10", channel: "web", credits: 833, reference_price_usd: 10 }] }));
+    }
+    return new Response(JSON.stringify({ url: checkoutUrl, id: "cs_test_1" }), { status: 201 });
+  }) as unknown as typeof fetch;
+  const loc = { origin: "https://splanc.io", pathname: "/app/" };
+  assert.equal(checkoutReturnUrl(loc), "https://splanc.io/app/#/settings/ai");
+  assert.deepEqual(await fetchCreditPacks(fn), [{ sku: "web.credits.10", channel: "web", credits: 833, reference_price_usd: 10 }]);
+  assert.equal(calls[0]!.url, "https://relay.example/billing/pricing?channel=web");
+  assert.equal(await startWebCheckout("web.credits.10", fn, loc), checkoutUrl);
+  assert.equal(calls[1]!.url, "https://relay.example/billing/checkout");
+  assert.equal(calls[1]!.init.body, JSON.stringify({ sku: "web.credits.10", return_url: "https://splanc.io/app/#/settings/ai" }));
+  assert.equal((calls[1]!.init.headers as Record<string, string>)["authorization"], "Bearer sst1.session");
+  // Only Stripe's own checkout host is ever opened.
+  checkoutUrl = "https://evil.example/pay";
+  await assert.rejects(startWebCheckout("web.credits.10", fn, loc));
+  // Inside the iOS app: no web checkout, and the packs asked for are Apple's.
+  g.Capacitor = { isNativePlatform: () => true, getPlatform: () => "ios" };
+  const before = calls.length;
+  await assert.rejects(startWebCheckout("web.credits.10", fn, loc), /App Store/);
+  assert.equal(calls.length, before);
+  await fetchCreditPacks(fn);
+  assert.equal(calls.at(-1)!.url, "https://relay.example/billing/pricing?channel=apple");
 });

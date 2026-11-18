@@ -23,8 +23,9 @@
 import { dir } from "../oauth";
 import { now, type Env } from "../platform";
 import { DoLedger, mintSession, newAccountId, verifySession } from "./account";
-import { MICRO, publicPricing, validatePricing, CHANNELS, type Channel, type PricingConfig } from "./pricing";
+import { MICRO, findPack, publicPricing, validatePricing, CHANNELS, type Channel, type PricingConfig } from "./pricing";
 import { proxyMessages, redact, type OrgSpend } from "./proxy";
+import { StripeError, createCheckoutSession, stripeAction, verifyStripeSignature, type StripeAction } from "./stripe";
 import { safeEqual } from "../crypto";
 import {
   FakeConsumptionSender,
@@ -47,6 +48,88 @@ export interface BillingContext {
   log?: ((ev: Record<string, unknown>) => void) | undefined;
   /** Apple "Send Consumption Information" (sandbox default: the fake). */
   consumption?: ConsumptionSender | undefined;
+  /** fetch toward api.stripe.com (tests: a fake Stripe). Defaults to fetch. */
+  stripeFetch?: typeof fetch | undefined;
+}
+
+/** Return URLs Checkout may send the user back to: the app, or local dev. */
+const RETURN_ORIGINS = /^(https:\/\/(www\.)?splanc\.io|https:\/\/splanc\.pages\.dev|https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?)$/;
+const DEFAULT_APP_URL = "https://splanc.io/app/#/settings/ai";
+
+export function safeReturnUrl(asked: unknown, configured: string | undefined): string {
+  const fallback = configured || DEFAULT_APP_URL;
+  if (typeof asked !== "string") return fallback;
+  try {
+    const u = new URL(asked);
+    return RETURN_ORIGINS.test(u.origin) ? u.href : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Stripe's webhook (`POST /billing/notify/web`): verify the signature on the
+ * RAW body, skip event ids already processed, act, then mark the id. A
+ * processing error answers 500 so Stripe retries; a permanent problem (not
+ * ours, wrong account, unknown pack) answers 200 with an alerting log line,
+ * since a retry can't fix it.
+ */
+async function stripeWebhook(
+  req: Request,
+  body: string,
+  env: Env,
+  ctx: BillingContext,
+  ready: Ready,
+  log: (ev: Record<string, unknown>) => void,
+  nowS: number,
+): Promise<Response> {
+  const v = await verifyStripeSignature(ready.stripe!.webhookSecret, req.headers.get("stripe-signature"), body, nowS);
+  if (!v.ok) {
+    log({ ev: "ai_webhook_rejected", reason: v.reason });
+    return ctx.json({ error: "bad_signature" }, 400);
+  }
+  let action: StripeAction;
+  try {
+    action = stripeAction(body);
+  } catch {
+    return ctx.json({ error: "bad_event" }, 400);
+  }
+  if ((await dir<{ seen: boolean }>(env, "/stripe/seen", { id: action.eventId })).body.seen) return ctx.json({ ok: true, replay: true });
+  try {
+    if (action.kind === "purchase") {
+      const ledger = new DoLedger(ready.ns, action.accountId);
+      try {
+        const r = await applyPurchase({
+          ledger,
+          claims: directoryClaims(env),
+          pricing: ready.pricing,
+          accountId: action.accountId,
+          purchase: action.purchase,
+          environment: "sandbox",
+        });
+        if (action.paymentIntent) {
+          await dir(env, "/pur/pi/set", { pi: action.paymentIntent, account: action.accountId, ref: `web:${action.purchase.transactionId}` });
+        }
+        log({ ev: "ai_purchase", account: action.accountId, channel: "web", sku: action.purchase.sku, replay: r.replay, amount: r.entry.amount });
+      } catch (e) {
+        if (!(e instanceof PurchaseError)) throw e;
+        log({ ev: "ai_purchase_rejected", alert: true, account: action.accountId, channel: "web", code: e.code });
+      }
+    } else if (action.kind === "refund") {
+      const rec = (await dir<{ rec: { account: string; ref: string } | null }>(env, "/pur/pi/get", { pi: action.paymentIntent })).body.rec;
+      if (rec) {
+        const r = await new DoLedger(ready.ns, rec.account).clawbackFraction(rec.ref, action.fraction, action.reason);
+        log({ ev: "ai_refund", channel: "web", kind: action.reason, account: rec.account, fraction: action.fraction, amount: r.entry && !r.replay ? r.entry.amount : 0 });
+      } else {
+        log({ ev: "ai_refund", channel: "web", kind: action.reason, account: null, amount: 0 });
+      }
+    }
+    await dir(env, "/stripe/mark", { id: action.eventId });
+    return ctx.json({ ok: true });
+  } catch (e) {
+    log({ ev: "ai_billing_error", path: "/billing/notify/web", detail: String(e) });
+    return ctx.json({ error: "retry" }, 500);
+  }
 }
 
 export const BILLING_PATHS = [
@@ -55,6 +138,7 @@ export const BILLING_PATHS = [
   "/billing/admin/status",
   "/billing/age",
   "/billing/balance",
+  "/billing/checkout",
   "/billing/consent",
   "/billing/pricing",
   "/billing/statement",
@@ -62,17 +146,38 @@ export const BILLING_PATHS = [
 export const isBillingPath = (p: string) =>
   BILLING_PATHS.includes(p) || /^\/billing\/(purchase|notify)\/[a-z]+$/.test(p);
 
-type Ready = { pricing: PricingConfig; apiKey: string; secret: string; storeKey: string; ns: NonNullable<Env["BILLING"]> };
+type Ready = {
+  pricing: PricingConfig;
+  apiKey: string;
+  secret: string;
+  /** The fake store's key (sandbox Apple purchases; fake web purchases when Stripe isn't set). */
+  storeKey: string | null;
+  /** Stripe TEST keys (sandbox): web checkout + its webhook. */
+  stripe: { secretKey: string; webhookSecret: string } | null;
+  ns: NonNullable<Env["BILLING"]>;
+};
 
 export const NOT_CONFIGURED = "Splanc AI credits aren't enabled on this relay.";
 
 /** Every precondition, or the reason it is off. Never says which secret is missing. */
 export function billingReady(env: Env): Ready | { off: string; detail?: string[] } {
   if (env.AI_BILLING !== "sandbox") return { off: env.AI_BILLING === "production" ? "production_not_supported" : "disabled" };
-  if (!env.ANTHROPIC_API_KEY || !env.BILLING_TOKEN_SECRET || !env.AI_BILLING_FAKE_STORE_KEY || !env.BILLING) return { off: "incomplete" };
+  if (!env.ANTHROPIC_API_KEY || !env.BILLING_TOKEN_SECRET || !env.BILLING) return { off: "incomplete" };
   const v = validatePricing(env.AI_PRICING ?? "");
   if (!v.ok) return { off: "bad_pricing", detail: v.errors };
-  return { pricing: v.config, apiKey: env.ANTHROPIC_API_KEY, secret: env.BILLING_TOKEN_SECRET, storeKey: env.AI_BILLING_FAKE_STORE_KEY, ns: env.BILLING };
+  // The sandbox only ever talks to Stripe in TEST mode: a live key is refused
+  // (the whole feature stays off, so it can't half-work with real money).
+  if (env.STRIPE_SECRET_KEY && !env.STRIPE_SECRET_KEY.startsWith("sk_test_")) return { off: "live_stripe_key_in_sandbox" };
+  const stripe =
+    env.STRIPE_SECRET_KEY && env.STRIPE_WEBHOOK_SECRET ? { secretKey: env.STRIPE_SECRET_KEY, webhookSecret: env.STRIPE_WEBHOOK_SECRET } : null;
+  return {
+    pricing: v.config,
+    apiKey: env.ANTHROPIC_API_KEY,
+    secret: env.BILLING_TOKEN_SECRET,
+    storeKey: env.AI_BILLING_FAKE_STORE_KEY ?? null,
+    stripe,
+    ns: env.BILLING,
+  };
 }
 
 function directoryClaims(env: Env): PurchaseClaims {
@@ -112,7 +217,9 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
   }
   const nowS = Math.floor(now(env) / 1000);
   const { pricing } = ready;
-  const log = (ev: Record<string, unknown>) => ctx.log?.(JSON.parse(redact(JSON.stringify(ev), ready.apiKey)) as Record<string, unknown>);
+  const secrets = [ready.apiKey, ready.secret, ready.stripe?.secretKey, ready.stripe?.webhookSecret].filter((x): x is string => !!x);
+  const log = (ev: Record<string, unknown>) =>
+    ctx.log?.(JSON.parse(secrets.reduce((l, k) => redact(l, k), JSON.stringify(ev)).replace(/\b(sk|rk|whsec)_(test|live)?_?[A-Za-z0-9]{8,}/g, "$1_[redacted]")) as Record<string, unknown>);
 
   try {
     // -- unauthenticated --------------------------------------------------------------
@@ -137,6 +244,8 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
       const channel = notify[1] as Channel;
       if (!(CHANNELS as readonly string[]).includes(channel)) return ctx.json({ error: "not_found" }, 404);
       const body = await req.text();
+      if (channel === "web" && ready.stripe) return stripeWebhook(req, body, env, ctx, ready, log, nowS);
+      if (!ready.storeKey) return ctx.json({ error: "not_configured", message: NOT_CONFIGURED }, 503);
       const n = await new FakeStoreVerifier(channel, ready.storeKey).parse(body, req.headers);
       if (n && "refund" in n) {
         const r = await applyRefund({ ledgerFor: (a) => new DoLedger(ready.ns, a), claims: directoryClaims(env), refund: n.refund });
@@ -239,10 +348,38 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
         })),
       });
     }
+    if (path === "/billing/checkout" && req.method === "POST") {
+      // Web checkout (Stripe). Never offered inside the iOS app (the app hides
+      // it; App Store rules): this route serves the PWA in a browser / Android.
+      if (!ready.stripe) return ctx.json({ error: "not_configured", message: "Web checkout isn't enabled on this relay." }, 503);
+      const a = (await ledger.account()).account;
+      if (!a || a.status !== "active") return ctx.json({ error: "inactive", message: "Splanc AI credits are not available on this account." }, 403);
+      if (a.adult_confirmed_at === undefined) return ctx.json({ error: "age_required", message: "Buying Splanc AI credits is for adults (18+). Please confirm your age first." }, 403);
+      const b = (await req.json().catch(() => ({}))) as { sku?: unknown; return_url?: unknown };
+      const pack = typeof b.sku === "string" ? findPack(pricing, "web", b.sku) : undefined;
+      if (!pack) return ctx.json({ error: "unknown_product", message: "No such credit pack." }, 400);
+      if (!pack.stripe_price_id) return ctx.json({ error: "not_configured", message: "This credit pack isn't on sale yet." }, 503);
+      const returnUrl = safeReturnUrl(b.return_url, env.BILLING_APP_URL);
+      try {
+        const s = await createCheckoutSession(
+          ready.stripe.secretKey,
+          { pack: { ...pack, stripe_price_id: pack.stripe_price_id }, accountId: account, accountRef: await accountRefFor(account), returnUrl },
+          { fetchImpl: ctx.stripeFetch },
+        );
+        log({ ev: "ai_checkout_created", account, sku: pack.sku, session: s.id });
+        return ctx.json({ url: s.url, id: s.id }, 201);
+      } catch (e) {
+        log({ ev: "ai_checkout_failed", alert: true, account, sku: pack.sku, detail: e instanceof StripeError ? e.message : String(e) });
+        return ctx.json({ error: "checkout_unavailable", message: "Checkout is unavailable right now. Try again later." }, 503);
+      }
+    }
     const buy = /^\/billing\/purchase\/([a-z]+)$/.exec(path);
     if (buy && req.method === "POST") {
       const channel = buy[1] as Channel;
       if (!(CHANNELS as readonly string[]).includes(channel)) return ctx.json({ error: "not_found" }, 404);
+      // Web purchases come from Stripe's webhook once Stripe is configured;
+      // this route is the fake store's (sandbox tests) only.
+      if (!ready.storeKey || (channel === "web" && ready.stripe)) return ctx.json({ error: "not_found" }, 404);
       const purchase = await new FakeStoreVerifier(channel, ready.storeKey).verify(await req.json().catch(() => null));
       const r = await applyPurchase({ ledger, claims: directoryClaims(env), pricing, accountId: account, purchase, environment: "sandbox" });
       log({ ev: "ai_purchase", account, channel, sku: purchase.sku, replay: r.replay, amount: r.entry.amount });

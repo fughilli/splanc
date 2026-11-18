@@ -65,7 +65,7 @@ export class BillingAccount {
         case "/credit":
           return json(await this.ledger.credit(b["kind"] as "purchase" | "adjust", String(b["ref"]), Number(b["amount"]), (b["meta"] ?? {}) as Partial<LedgerEntry>));
         case "/clawback":
-          return json(await this.ledger.clawback(String(b["ref"]), String(b["note"] ?? "refund")));
+          return json(await this.ledger.clawbackFraction(String(b["ref"]), Number(b["fraction"] ?? 1), String(b["note"] ?? "refund")));
         case "/statement":
           return json({ entries: await this.ledger.statement(Number(b["limit"] ?? 50)) });
         case "/consent":
@@ -142,7 +142,10 @@ export class DoLedger {
     return this.call<{ entry: LedgerEntry; replay: boolean }>("/credit", { kind, ref, amount, meta });
   }
   clawback(ref: string, note = "refund") {
-    return this.call<{ entry: LedgerEntry | null; replay: boolean }>("/clawback", { ref, note });
+    return this.clawbackFraction(ref, 1, note);
+  }
+  clawbackFraction(ref: string, fraction: number, note = "refund") {
+    return this.call<{ entry: LedgerEntry | null; replay: boolean }>("/clawback", { ref, fraction, note });
   }
   statement(limit = 50) {
     return this.call<{ entries: LedgerEntry[] }>("/statement", { limit });

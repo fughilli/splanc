@@ -195,14 +195,39 @@ export class Ledger {
    * already spent); spending is then refused until it is topped up.
    */
   clawback(ref: string, note = "refund"): Promise<{ entry: LedgerEntry | null; replay: boolean }> {
+    return this.clawbackFraction(ref, 1, note);
+  }
+
+  /**
+   * Claw back `fraction` (cumulative, 0..1) of purchase `ref`: a partial
+   * refund of 40 % then a full one debit 40 % then the remaining 60 %.
+   * Idempotent: the refund entries are keyed `<ref>@<cumulative µcredits>`,
+   * and a call that adds nothing returns the last refund entry as a replay.
+   */
+  clawbackFraction(ref: string, fraction: number, note = "refund"): Promise<{ entry: LedgerEntry | null; replay: boolean }> {
     return this.locked(async () => {
       const a = await this.acct();
       if (!a) throw new Error("no account");
-      const prior = await this.byRef("refund", ref);
-      if (prior) return { entry: prior, replay: true };
       const bought = await this.byRef("purchase", ref);
       if (!bought) return { entry: null, replay: false }; // nothing credited for it
-      const entry = await this.append(a, { kind: "refund", ref, amount: -bought.amount, note, channel: bought.channel, sku: bought.sku });
+      const f = Math.max(0, Math.min(1, fraction));
+      const target = Math.round(bought.amount * f);
+      const refunds = [...(await this.s.list<LedgerEntry>({ prefix: "led:" })).values()].filter(
+        (e) => e.kind === "refund" && e.ref.split("@")[0] === ref,
+      );
+      const already = refunds.reduce((n, e) => n - e.amount, 0);
+      if (target <= already) {
+        const last = refunds.sort((x, y) => y.seq - x.seq)[0] ?? null;
+        return { entry: last, replay: true };
+      }
+      const entry = await this.append(a, {
+        kind: "refund",
+        ref: `${ref}@${target}`,
+        amount: -(target - already),
+        note,
+        channel: bought.channel,
+        sku: bought.sku,
+      });
       return { entry, replay: false };
     });
   }
@@ -425,10 +450,12 @@ export function lotConsumption(entries: LedgerEntry[], ref: string): LotConsumpt
     if (e.amount > 0) {
       lots.push({ ref: e.kind === "purchase" ? e.ref : `${e.kind}:${e.seq}`, granted: e.amount, left: e.amount, refunded: false, spentAtRefund: 0 });
     } else if (e.kind === "refund") {
-      const lot = lots.find((l) => l.ref === e.ref);
+      // Refund entries are keyed `<purchase ref>@<cumulative>`; the first one
+      // fixes what had been spent, and the refunded credits leave the lot.
+      const lot = lots.find((l) => l.ref === e.ref.split("@")[0]);
       if (lot) {
-        lot.spentAtRefund = lot.granted - lot.left;
-        lot.left = 0;
+        if (!lot.refunded) lot.spentAtRefund = lot.granted - lot.left;
+        lot.left = Math.max(0, lot.left + e.amount);
         lot.refunded = true;
       }
     } else {

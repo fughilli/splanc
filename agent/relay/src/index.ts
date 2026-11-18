@@ -196,7 +196,14 @@ export default {
               // Worker log + (when configured) Grafana Cloud Logs; redacted against every secret.
               log: eventSink({
                 env,
-                secrets: [env.ANTHROPIC_API_KEY, env.BILLING_TOKEN_SECRET, env.GRAFANA_LOKI_TOKEN, env.BILLING_ADMIN_TOKEN].filter((x): x is string => !!x),
+                secrets: [
+                  env.ANTHROPIC_API_KEY,
+                  env.BILLING_TOKEN_SECRET,
+                  env.GRAFANA_LOKI_TOKEN,
+                  env.BILLING_ADMIN_TOKEN,
+                  env.STRIPE_SECRET_KEY,
+                  env.STRIPE_WEBHOOK_SECRET,
+                ].filter((x): x is string => !!x),
                 waitUntil: ectx ? (p) => ectx.waitUntil(p) : undefined,
               }),
             }, path));

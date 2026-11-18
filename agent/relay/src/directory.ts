@@ -106,6 +106,9 @@ export class Directory {
       const w = LIMITS[name as LimitName]?.[1] ?? 3600;
       if (Number(win) < Math.floor(t / w)) dead.push(k);
     }
+    for (const [k, v] of await this.state.storage.list<{ exp?: number }>({ prefix: "sevt:" })) {
+      if ((v.exp ?? 0) <= t) dead.push(k);
+    }
     for (const [k, v] of await this.state.storage.list<{ exp?: number }>({ prefix: "fbi:" })) {
       if ((v.exp ?? 0) <= t) dead.push(k, `fb:${k.slice(4)}`);
     }
@@ -113,7 +116,8 @@ export class Directory {
     const left =
       (await this.state.storage.list({ prefix: "rl:", limit: 1 })).size +
       (await this.state.storage.list({ prefix: "code:", limit: 1 })).size +
-      (await this.state.storage.list({ prefix: "fbi:", limit: 1 })).size;
+      (await this.state.storage.list({ prefix: "fbi:", limit: 1 })).size +
+      (await this.state.storage.list({ prefix: "sevt:", limit: 1 })).size;
     if (left > 0) await this.state.storage.setAlarm(now(this.env) + 600_000);
   }
 
@@ -183,6 +187,20 @@ export class Directory {
       }
       case "/org/get":
         return json({ total: (await this.state.storage.get<number>(`org:spend:${new Date(now(this.env)).toISOString().slice(0, 7)}`)) ?? 0 });
+      case "/pur/pi/set":
+        // Stripe PaymentIntent -> {account, ref}: refunds and disputes name the
+        // PaymentIntent, not the Checkout Session.
+        await this.state.storage.put(`pi:${body["pi"]}`, { account: body["account"], ref: body["ref"] });
+        return json({ ok: true });
+      case "/pur/pi/get":
+        return json({ rec: (await this.state.storage.get(`pi:${body["pi"]}`)) ?? null });
+      case "/stripe/seen":
+        return json({ seen: (await this.state.storage.get(`sevt:${body["id"]}`)) !== undefined });
+      case "/stripe/mark":
+        // Processed Stripe event ids, kept 30 days (Stripe retries for 3).
+        await this.state.storage.put(`sevt:${body["id"]}`, { exp: this.nowS() + 30 * 86400 });
+        await this.ensureAlarm();
+        return json({ ok: true });
       case "/pur/owner":
         return json({ owner: (await this.state.storage.get<string>(`pur:${body["channel"]}:${body["tx"]}`)) ?? null });
       case "/hmac/sign":

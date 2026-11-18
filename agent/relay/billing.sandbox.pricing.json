@@ -1,0 +1,108 @@
+{
+  "//": "Sandbox pricing for AI_PRICING (docs/design/ai-billing.md). Add each web pack stripe_price_id (TEST-mode price ids) before use.",
+  "version": 1,
+  "credits_per_usd": 100,
+  "usage_markup": 0,
+  "min_request_credits": 0.1,
+  "models": {
+    "claude-sonnet-5-5": {
+      "label": "Claude Sonnet 5.5",
+      "enabled": true,
+      "input": 2,
+      "output": 10,
+      "cache_write_5m": 2.5,
+      "cache_write_1h": 4,
+      "cache_read": 0.1
+    },
+    "claude-opus-5-5": {
+      "label": "Claude Opus 5.5",
+      "enabled": true,
+      "input": 4,
+      "output": 20,
+      "cache_write_5m": 5,
+      "cache_write_1h": 8,
+      "cache_read": 0.2
+    },
+    "claude-haiku-5-5": {
+      "label": "Claude Haiku 5.5",
+      "enabled": true,
+      "input": 0.1,
+      "output": 0.5,
+      "cache_write_5m": 0.125,
+      "cache_write_1h": 0.2,
+      "cache_read": 0.01,
+      "long_context": {
+        "above_prompt_tokens": 100000,
+        "rates": {
+          "input": 0.5,
+          "output": 2.5,
+          "cache_write_5m": 0.625,
+          "cache_write_1h": 1,
+          "cache_read": 0.05
+        }
+      }
+    }
+  },
+  "default_model": "claude-sonnet-5-5",
+  "max_output_tokens": 16000,
+  "channels": {
+    "apple": {
+      "fee_percent": 0.15,
+      "fee_fixed_usd": 0,
+      "markup": 0.4
+    },
+    "web": {
+      "fee_percent": 0.034,
+      "fee_fixed_usd": 0.3,
+      "markup": 0.2
+    }
+  },
+  "packs": [
+    {
+      "sku": "dev.splanc.app.credits.small",
+      "channel": "apple",
+      "price_usd": 4.99,
+      "enabled": true
+    },
+    {
+      "sku": "dev.splanc.app.credits.medium",
+      "channel": "apple",
+      "price_usd": 9.99,
+      "enabled": true
+    },
+    {
+      "sku": "dev.splanc.app.credits.large",
+      "channel": "apple",
+      "price_usd": 19.99,
+      "enabled": true
+    },
+    {
+      "sku": "web.credits.10",
+      "channel": "web",
+      "price_usd": 10,
+      "enabled": true
+    },
+    {
+      "sku": "web.credits.25",
+      "channel": "web",
+      "price_usd": 25,
+      "enabled": true
+    }
+  ],
+  "trial_credits": 0,
+  "low_balance_credits": 50,
+  "max_overdraft_credits": 25,
+  "caps": {
+    "per_request_max_credits": 300,
+    "daily_credits": 2000,
+    "monthly_credits": 20000,
+    "concurrent_requests": 2,
+    "requests_per_minute": 20
+  },
+  "min_margin": 0.05,
+  "org": {
+    "monthly_limit_usd": 1000,
+    "alert_fraction": 0.8,
+    "stop_fraction": 0.98
+  }
+}

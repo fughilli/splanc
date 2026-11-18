@@ -413,14 +413,82 @@ These are interfaces and fakes only in this PR (`PurchaseVerifier`,
     customer's consent ([below](#apple-refund-requests-consumption_request)).
   - Testing: the Xcode StoreKit configuration file and the Sandbox
     environment.
-- **Web (Stripe).**
-  - `POST /billing/checkout` (later) creates a Checkout Session server-side,
-    with the pack's price, `client_reference_id = account_ref`, Apple Pay and
-    Google Pay enabled, and Stripe Tax if chosen.
-  - Credit on the `checkout.session.completed` webhook. Its `Stripe-Signature`
-    HMAC is verified with the endpoint secret, and its id is the idempotency key.
-  - `charge.refunded` and `charge.dispute.created` claw back.
-  - Testing: test-mode keys and the Stripe CLI's `stripe trigger`.
+- **Web (Stripe):** built, see [Web checkout](#web-checkout-stripe).
+
+### Web checkout (Stripe)
+
+This is the web and Android channel (`stripe.ts`, `endpoint.ts`). The iOS app
+never offers it: `mayShowWebCheckout()` and `startWebCheckout` refuse inside
+the iOS app.
+
+- **Buy flow (app).** AI settings ▸ Splanc AI credits:
+  1. **Create account**: an anonymous device account.
+  2. **I'm 18 or older**: an explicit confirmation.
+  3. The packs from `GET /billing/pricing?channel=web` (credits and the US
+     reference price).
+  4. **Buy**: `POST /billing/checkout {sku, return_url}`, then the same tab
+     goes to Stripe Checkout. Only a `https://checkout.stripe.com/` URL is
+     ever opened.
+  5. Back in the app (`?checkout=success|cancel#/settings/ai`), a toast shows
+     and the balance is polled while the webhook credits.
+
+  **Delete Splanc AI account** shows the forfeit warning first.
+- **`POST /billing/checkout`** (session; account active; **18+ required**,
+  403 `age_required`). The pack must be an enabled web pack **with a
+  `stripe_price_id` in the pricing config**: price ids are config, never code,
+  and test-mode and live ids differ. The relay creates a Checkout Session
+  (`POST /v1/checkout/sessions`, `Stripe-Version: 2026-06-24.dahlia`) with:
+  - `mode=payment` and one line item, the pack's price;
+  - `client_reference_id` = the account ref;
+  - `metadata` on both the session and `payment_intent_data`: `account_id`,
+    `sku`, `channel` (refunds and disputes name the PaymentIntent);
+  - `automatic_tax[enabled]=true` (Stripe Tax: Checkout collects the address
+    tax needs);
+  - success / cancel URLs back into the app. Only `splanc.io`,
+    `splanc.pages.dev` and `localhost` return URLs are honoured
+    (`safeReturnUrl`); anything else falls back to `BILLING_APP_URL`, default
+    `https://splanc.io/app/#/settings/ai`.
+
+  Payment methods are Stripe's dynamic ones: cards, Apple Pay and Google Pay
+  as enabled in the Dashboard. Apple Pay is registered for `splanc.io` and
+  `splanc.pages.dev`. Stripe's error message is never passed through: the user
+  gets a 503 "Checkout is unavailable right now", and the log gets the error
+  type and code (`ai_checkout_failed`, which alerts).
+- **Webhook `POST /billing/notify/web`** (the test-mode destination points at
+  the relay's workers.dev address; events `checkout.session.completed`,
+  `checkout.session.async_payment_succeeded`, `charge.refunded`,
+  `charge.dispute.created`).
+  - **Signature.** `Stripe-Signature` is verified on the **raw** body:
+    HMAC-SHA256 of `<t>.<body>` with `STRIPE_WEBHOOK_SECRET`, a 5-minute
+    tolerance, and any `v1` matching (secret rolls). A bad signature is a 400
+    plus `ai_webhook_rejected`.
+  - **Idempotency.** A processed event id is remembered for 30 days (Directory
+    `sevt:<id>`), so a retried event is a 200 no-op. The credit itself is also
+    idempotent on `web:<session id>`, so `completed` followed by
+    `async_payment_succeeded` credits once.
+  - **Credit.** Only when `payment_status=paid`. `applyPurchase` checks:
+    - the environment: a live-mode event can't credit a sandbox relay;
+    - that `client_reference_id` equals the account ref of
+      `metadata.account_id`;
+    - that the pack exists;
+    - the global first claim.
+
+    It then records PaymentIntent → (account, `web:<session>`).
+  - **Claw back.** `charge.refunded` claws back the **cumulative** refunded
+    fraction (`amount_refunded / amount`; partial refunds are proportional,
+    and a later full refund takes the rest). `charge.dispute.created` claws
+    back everything and logs `kind=chargeback` (the dispute alert pages).
+  - **Errors.** A transient failure is a 500, so Stripe retries. A permanent
+    problem (wrong account, unknown pack, wrong environment) is a 200 plus
+    `ai_purchase_rejected` (an alert), because a retry can't fix it.
+- **Sandbox only.** In `AI_BILLING=sandbox` the relay accepts only an
+  `sk_test_` key: a live key turns the whole feature off. The fake web purchase
+  route closes once Stripe is configured.
+- **Tests** (`agent/tests/billing_stripe.test.ts`) use a fake `api.stripe.com`
+  and events signed like Stripe's: form encoding, session parameters,
+  signature checks, 18+, packs, credit-once, partial and full refunds,
+  disputes, wrong account, live events, the live-key guard, and no Stripe
+  secret in any response or log.
 
 ### Apple refund requests (CONSUMPTION_REQUEST)
 
@@ -814,15 +882,14 @@ accounts or secrets; everything else is code.
    **[owner]**: create the Sign in with Apple service id + key (Apple
    Developer, the owner's LLC team) and a Google OAuth client id; store the
    ids as Worker vars.
-4. **Web checkout:** `POST /billing/checkout` (Checkout Session; refuses
-   without 18+), the webhook (`Stripe-Signature`), refunds and disputes, Stripe
-   Tax on; Buy on web and Android. **[owner]**: activate the Stripe account
-   for the owner's LLC, turn on Stripe Tax (origin address, registrations),
-   create the two Prices (US$10, US$25; lookup keys `web.credits.10`,
-   `web.credits.25`), enable Apple Pay (domain verification for the app's
-   origin) and Google Pay, create the webhook endpoint, and `wrangler secret
-   put` `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` (test mode first, live
-   later).
+4. **Done (stacked PR): web checkout.** `POST /billing/checkout`, the Stripe
+   webhook, refunds and disputes, Stripe Tax on, the Buy flow on web and
+   Android, anonymous accounts and the 18+ step for the web path.
+   **[owner, done in test mode]:** the webhook destination, cards / Apple Pay
+   / Google Pay, the Apple Pay domains. **[owner, pending]:** the test-mode
+   US$10 / US$25 prices (their ids go in the sandbox pricing config), then the
+   [sandbox deploy](#sandbox-deploy-runbook). Live keys and live price ids
+   come in step 8.
 5. **iOS In-App Purchase:** the `storekit-bridge` plugin (StoreKit 2,
    `appAccountToken`), JWS verification (Apple Root CA G3), App Store Server
    Notifications v2 (REFUND, REVOKE, CONSUMPTION_REQUEST, with the real
@@ -861,6 +928,75 @@ accounts or secrets; everything else is code.
    environment, and the production Anthropic key **[owner]**; Workers Paid
    plan **[owner]**; App Review submission with a demo account and notes;
    privacy notice update (Anthropic as sub-processor; 30-day request logs).
+
+## Sandbox deploy runbook
+
+The owner runs this; the code is ready in the stacked PR. Run it from the repo
+root on the host, with `CLOUDFLARE_API_TOKEN` (Workers Scripts: Edit) and
+`CLOUDFLARE_ACCOUNT_ID` set. Secrets are piped from files, never typed or
+echoed; `tr -d '\n'` drops the files' trailing newline.
+
+```bash
+cd agent/relay
+W="pnpm dlx wrangler@4"
+
+# 1. Deploy the code: adds the BillingAccount Durable Object (migration v2).
+#    Billing stays off (503) until step 3.
+./deploy.sh
+
+# 2. Secrets.
+tr -d '\n' < ../../credentials/anthropic_relay_key.txt        | $W secret put ANTHROPIC_API_KEY     --config wrangler.toml
+tr -d '\n' < ../../credentials/stripe_test_secret_key.txt     | $W secret put STRIPE_SECRET_KEY     --config wrangler.toml
+tr -d '\n' < ../../credentials/stripe_test_webhook_secret.txt | $W secret put STRIPE_WEBHOOK_SECRET --config wrangler.toml
+node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("base64url"))' \
+  | $W secret put BILLING_TOKEN_SECRET --config wrangler.toml
+node -e 'process.stdout.write(require("crypto").randomBytes(24).toString("hex"))' \
+  > ../../credentials/billing_admin_token.txt
+tr -d '\n' < ../../credentials/billing_admin_token.txt        | $W secret put BILLING_ADMIN_TOKEN   --config wrangler.toml
+
+# 3. The pricing config, with the TEST-mode price ids, then turn sandbox mode on.
+jq --arg p10 price_TEST10_FROM_DASHBOARD --arg p25 price_TEST25_FROM_DASHBOARD \
+  '(.packs[] | select(.sku=="web.credits.10")).stripe_price_id=$p10
+   | (.packs[] | select(.sku=="web.credits.25")).stripe_price_id=$p25' \
+  billing.sandbox.pricing.json > /tmp/ai_pricing.json
+jq -c . /tmp/ai_pricing.json | $W secret put AI_PRICING --config wrangler.toml
+printf sandbox | $W secret put AI_BILLING --config wrangler.toml
+
+# 4. Check: pricing answers, an empty webhook is refused (bad signature).
+curl -fsS https://splanc-relay.<subdomain>.workers.dev/billing/pricing?channel=web
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://splanc-relay.<subdomain>.workers.dev/billing/notify/web -d '{}'   # 400
+```
+
+- **Pages forwarding** (`/billing/*` and `/ai/v1/messages` through
+  `splanc.pages.dev`, used by the app) ships with the web app. After the PR
+  merges and its Test run on main is green, run the **Deploy tested web app**
+  workflow with that run id. The Stripe webhook doesn't need it: it calls the
+  workers.dev address.
+- **End to end** (`agent/relay/billing_e2e.mjs`, no Stripe CLI needed). It
+  covers account, 18+, checkout, credit, one Haiku request, refund and delete:
+
+  ```bash
+  # Real Stripe test checkout: pay the printed URL with 4242 4242 4242 4242.
+  RELAY=https://splanc-relay.<subdomain>.workers.dev \
+  STRIPE_SECRET_KEY_FILE=credentials/stripe_test_secret_key.txt \
+    node agent/relay/billing_e2e.mjs --sku web.credits.10
+  # Or without a browser (a signed checkout.session.completed; tests the relay only):
+  RELAY=https://splanc-relay.<subdomain>.workers.dev \
+  STRIPE_WEBHOOK_SECRET_FILE=credentials/stripe_test_webhook_secret.txt \
+    node agent/relay/billing_e2e.mjs --signed-webhook
+  ```
+
+  If the Stripe CLI is installed, `stripe trigger checkout.session.completed`
+  also works. Its sessions carry no Splanc metadata, so the relay acknowledges
+  them and credits nothing, which is the expected result.
+- **In the app.** Open `https://splanc.io/app/`, run
+  `localStorage.setItem("splanc.flags.aiCredits","1")` in the console, reload,
+  then go to AI settings ▸ Splanc AI credits ▸ Create account ▸ 18+ ▸ Buy.
+- **Turn it off:** `$W secret delete AI_BILLING --config wrangler.toml` (every
+  route answers 503 again).
+- **Logs.** `[observability]` samples 5 % of requests (`head_sampling_rate`),
+  so Workers Logs won't show every billing event. The Grafana Cloud Logs push
+  (when configured) gets all of them.
 
 ## Risks
 
