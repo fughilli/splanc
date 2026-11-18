@@ -24,6 +24,7 @@ import {
   ZERO_USAGE,
   affordableMaxTokens,
   chargeMicro,
+  listCostUsd,
   reserveMicro,
   type PricingConfig,
   type Usage,
@@ -42,6 +43,14 @@ export const IMAGE_TOKEN_ESTIMATE = 5000;
 /** What the proxy needs from the account's ledger (Ledger, or the DO client). */
 export type LedgerClient = Pick<Ledger, "reserve" | "settle" | "release">;
 
+/** Month-to-date list cost of the whole Anthropic ORGANIZATION (every user),
+ * in µUSD: the Worker backs it with the Directory DO (`org:spend:<YYYY-MM>`). */
+export interface OrgSpend {
+  get(): Promise<number>;
+  /** Add `microUsd`; returns the new month-to-date total. */
+  add(microUsd: number): Promise<number>;
+}
+
 export interface ProxyDeps {
   pricing: PricingConfig;
   /** Our Anthropic key (Worker secret ANTHROPIC_API_KEY). */
@@ -55,6 +64,8 @@ export interface ProxyDeps {
   waitUntil?: ((p: Promise<unknown>) => void) | undefined;
   /** Random request ids (tests pin them). */
   newId?: (() => string) | undefined;
+  /** The org-wide spend counter (absent = no org guard). */
+  org?: OrgSpend | undefined;
 }
 
 // -- secrets ---------------------------------------------------------------------------
@@ -236,12 +247,15 @@ const REFUSALS: Record<string, [number, string]> = {
   duplicate: [409, "This request id was already used."],
 };
 
+export const BUSY_MESSAGE = "Splanc AI credits are busy right now. Try again later.";
+
 /** Map an upstream (Anthropic) failure to OUR error. The upstream body is read
  * only for its error `type`; its message is never shown (it is ours to debug,
- * from the log, redacted). */
+ * from the log, redacted). An org rate / spend limit (429) is "busy, try
+ * later" for the user and an alert for us. */
 function upstreamError(status: number, type: string): ProxyError {
   if (status === 400 || status === 413) return fail(400, "upstream_rejected", `The AI service rejected the request (${type || status}).`);
-  if (status === 429 || status === 529 || status >= 500) return fail(503, "ai_busy", "The AI service is busy. Try again in a moment.");
+  if (status === 429 || status === 529 || status >= 500) return fail(503, "ai_credits_busy", BUSY_MESSAGE);
   // 401/403/404 and the rest: our configuration (key, model access, spend
   // limit) — never the user's fault, never details.
   return fail(503, "ai_unavailable", "Splanc AI is unavailable right now.");
@@ -275,6 +289,14 @@ export async function proxyMessages(req: Request, accountId: string, deps: Proxy
   const idem = req.headers.get("idempotency-key");
   const id = idem && ID_RE.test(idem) ? idem : (deps.newId ?? (() => crypto.randomUUID().replace(/-/g, "")))();
 
+  // The org-wide guard: near the Anthropic organization's monthly limit, stop
+  // before calling (a graceful "busy" instead of a 429 halfway through a turn).
+  const orgLimit = cfg.org.monthly_limit_usd * MICRO;
+  if (deps.org && (await deps.org.get()) >= cfg.org.stop_fraction * orgLimit) {
+    safeLog(deps, { ev: "ai_org_spend_stop", account: accountId, limit_usd: cfg.org.monthly_limit_usd, alert: true });
+    return errorResponse(fail(503, "ai_credits_busy", BUSY_MESSAGE), { retry_after_s: 3600 });
+  }
+
   const prompt = estimatePromptTokens(body);
   let amount = reserveMicro(cfg, model, prompt, maxTokens);
   let r = await deps.ledger.reserve(id, amount, model, cfg.caps);
@@ -306,7 +328,7 @@ export async function proxyMessages(req: Request, accountId: string, deps: Proxy
   } catch (e) {
     await deps.ledger.release(id);
     safeLog(deps, { ev: "ai_upstream_unreachable", account: accountId, id, detail: String(e) });
-    return errorResponse(fail(503, "ai_busy", "The AI service is unreachable. Try again in a moment."));
+    return errorResponse(fail(503, "ai_credits_busy", BUSY_MESSAGE));
   }
   if (!up.ok || up.body === null) {
     // Anthropic does not bill a request it rejected; drop the hold.
@@ -318,7 +340,17 @@ export async function proxyMessages(req: Request, accountId: string, deps: Proxy
       // not JSON
     }
     await deps.ledger.release(id);
-    safeLog(deps, { ev: "ai_upstream_error", account: accountId, id, status: up.status, type, body: errText.slice(0, 500) });
+    // Anthropic's org spend limit: 429 with error_code enforced_spend_limit_reached.
+    const spendLimit = up.status === 429 && errText.includes("enforced_spend_limit_reached");
+    safeLog(deps, {
+      ev: spendLimit ? "ai_org_spend_limit_hit" : "ai_upstream_error",
+      ...(spendLimit || up.status === 429 ? { alert: true } : {}),
+      account: accountId,
+      id,
+      status: up.status,
+      type,
+      body: errText.slice(0, 500),
+    });
     return errorResponse(upstreamError(up.status, /^[a-z_]{1,40}$/.test(type) ? type : ""));
   }
 
@@ -339,6 +371,14 @@ export async function proxyMessages(req: Request, accountId: string, deps: Proxy
         return null;
       }
       const charge = chargeMicro(cfg, model, bill.usage);
+      const listMicroUsd = Math.ceil(listCostUsd(cfg.models[model]!, bill.usage) * MICRO);
+      if (deps.org) {
+        const total = await deps.org.add(listMicroUsd).catch(() => -1);
+        const alertAt = cfg.org.alert_fraction * orgLimit;
+        if (total >= alertAt && total - listMicroUsd < alertAt) {
+          safeLog(deps, { ev: "ai_org_spend_alert", alert: true, month_to_date_usd: total / MICRO, limit_usd: cfg.org.monthly_limit_usd });
+        }
+      }
       const { entry } = await deps.ledger.settle(
         id,
         charge,
@@ -352,6 +392,7 @@ export async function proxyMessages(req: Request, accountId: string, deps: Proxy
         model,
         usage: bill.usage,
         estimated: bill.estimated,
+        list_usd: listMicroUsd / MICRO,
         reserved: amount,
         charged: -entry.amount,
         written_off: entry.written_off ?? 0,

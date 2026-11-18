@@ -3,7 +3,8 @@
  *
  *   POST   /billing/account               a new device-bound account -> {account_id, token, account_ref}
  *   DELETE /billing/account               close it (in-app account deletion; the balance is forfeited)
- *   GET    /billing/balance               {balance_credits, held_credits, low, status}
+ *   GET    /billing/balance               {balance_credits, held_credits, low, status, adult}
+ *   POST   /billing/age                   {confirm: true}: the user confirmed 18+ (buying is 18+)
  *   GET    /billing/pricing?channel=      models + credits per MTok + this channel's packs (public)
  *   GET    /billing/statement             the newest ledger entries (no content, just numbers)
  *   POST   /billing/purchase/<channel>    the app's proof of purchase -> credit (idempotent)
@@ -21,7 +22,7 @@ import { dir } from "../oauth";
 import { now, type Env } from "../platform";
 import { DoLedger, mintSession, newAccountId, verifySession } from "./account";
 import { MICRO, publicPricing, validatePricing, CHANNELS, type Channel, type PricingConfig } from "./pricing";
-import { proxyMessages, redact } from "./proxy";
+import { proxyMessages, redact, type OrgSpend } from "./proxy";
 import { FakeStoreVerifier, PurchaseError, accountRefFor, applyPurchase, applyRefund, type PurchaseClaims } from "./purchases";
 
 export interface BillingContext {
@@ -33,7 +34,7 @@ export interface BillingContext {
   log?: ((ev: Record<string, unknown>) => void) | undefined;
 }
 
-export const BILLING_PATHS = ["/ai/v1/messages", "/billing/account", "/billing/balance", "/billing/pricing", "/billing/statement"];
+export const BILLING_PATHS = ["/ai/v1/messages", "/billing/account", "/billing/age", "/billing/balance", "/billing/pricing", "/billing/statement"];
 export const isBillingPath = (p: string) =>
   BILLING_PATHS.includes(p) || /^\/billing\/(purchase|notify)\/[a-z]+$/.test(p);
 
@@ -58,6 +59,17 @@ function directoryClaims(env: Env): PurchaseClaims {
     },
     async owner(channel, tx) {
       return (await dir<{ owner: string | null }>(env, "/pur/owner", { channel, tx })).body.owner ?? undefined;
+    },
+  };
+}
+
+function directoryOrgSpend(env: Env): OrgSpend {
+  return {
+    async get() {
+      return (await dir<{ total: number }>(env, "/org/get", {})).body.total;
+    },
+    async add(microUsd) {
+      return (await dir<{ total: number }>(env, "/org/add", { micro_usd: microUsd })).body.total;
     },
   };
 }
@@ -122,6 +134,7 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
         upstream: ctx.upstream ?? ((u, i) => fetch(u, i)),
         log,
         waitUntil: ctx.waitUntil,
+        org: directoryOrgSpend(env),
       });
     }
     if (path === "/billing/balance" && req.method === "GET") {
@@ -134,8 +147,15 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
         available_credits: avail / MICRO,
         low: avail < pricing.low_balance_credits * MICRO,
         status: a.status,
+        adult: a.adult_confirmed_at !== undefined,
         pricing_version: pricing.version,
       });
+    }
+    if (path === "/billing/age" && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as { confirm?: unknown };
+      if (b.confirm !== true) return ctx.json({ error: "invalid_request", message: "{confirm: true}" }, 400);
+      await ledger.confirmAdult();
+      return ctx.json({ ok: true, adult: true });
     }
     if (path === "/billing/statement" && req.method === "GET") {
       const { entries } = await ledger.statement(50);

@@ -73,6 +73,9 @@ export interface Account {
   balance: number;
   held: number;
   seq: number;
+  /** When the user confirmed they are 18 or older (owner decision: buying
+   * credits is 18+). The app gates Buy on it; web checkout refuses without it. */
+  adult_confirmed_at?: number | undefined;
 }
 
 export interface Hold {
@@ -305,6 +308,19 @@ export class Ledger {
       await this.s.delete(dead.map((h) => `hold:${h.id}`));
       await this.s.put({ acct: { ...a, held: a.held - dead.reduce((n, h) => n + h.amount, 0) } });
       return dead.map((h) => h.id);
+    });
+  }
+
+  /** Record the 18+ confirmation (idempotent; the first time is kept). */
+  confirmAdult(): Promise<Account> {
+    return this.locked(async () => {
+      const a = await this.acct();
+      if (!a) throw new Error("no account");
+      if (a.status === "closed") throw new Error("account closed");
+      if (a.adult_confirmed_at !== undefined) return a;
+      const next = { ...a, adult_confirmed_at: this.now() };
+      await this.s.put({ acct: next });
+      return next;
     });
   }
 

@@ -68,6 +68,8 @@ export class BillingAccount {
           return json(await this.ledger.clawback(String(b["ref"]), String(b["note"] ?? "refund")));
         case "/statement":
           return json({ entries: await this.ledger.statement(Number(b["limit"] ?? 50)) });
+        case "/adult":
+          return json(await this.ledger.confirmAdult());
         case "/status":
           return json(await this.ledger.setStatus(b["status"] === "suspended" ? "suspended" : "active"));
         case "/close":
@@ -100,7 +102,10 @@ export class DoLedger {
     return this.call<{ id: string; balance: number; held: number; status: string }>("/open", { id: this.accountId, trial: trialMicro });
   }
   account() {
-    return this.call<{ account: { id: string; balance: number; held: number; status: string } | null }>("/account", {});
+    return this.call<{ account: { id: string; balance: number; held: number; status: string; adult_confirmed_at?: number } | null }>("/account", {});
+  }
+  confirmAdult() {
+    return this.call<{ adult_confirmed_at: number }>("/adult", {});
   }
   reserve(id: string, amount: number, model: string, caps: Caps): Promise<ReserveResult> {
     return this.call("/reserve", { id, amount, model, caps });

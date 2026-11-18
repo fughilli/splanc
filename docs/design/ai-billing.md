@@ -1,8 +1,8 @@
 # Splanc AI credits: pay for Claude in the app
 
 Status: design + sandbox-only scaffold (this PR). Nothing is deployed, no store
-product or merchant account exists, and every route answers 503 until the
-owner turns it on.
+product exists, no merchant account is linked, and every route answers 503
+until the owner turns it on.
 
 Today the in-app AI (the effect editor's chat, Acid Mode) needs the user's own
 Anthropic API key. Most people don't have one. With **Splanc AI credits** a
@@ -21,7 +21,9 @@ your own key keeps working exactly as before.
 Everywhere: one balance in **credits**, shown live in AI settings and after
 each AI reply ("−2.3 credits · 351 left"); a warning below a low-balance mark;
 a clear refusal when the balance runs out ("Not enough Splanc AI credit. Buy
-more in AI settings."), never a silent failure. Credits bought on one platform
+more in AI settings."), never a silent failure. Buying is 18+: the app asks
+once before the first purchase. There is no free credit; the free tier is for
+trying the AI. Credits bought on one platform
 work on every platform the same account signs in on. Credits never expire
 (Apple requires that; it's also simpler).
 
@@ -47,6 +49,23 @@ the web gives 833. See [Margins](#costs-and-margins).
 4. **BYO key is unchanged.** "Cloud ▸ Anthropic" with your own key still calls
    Anthropic straight from the browser, with the same request as before (a test
    pins the bytes).
+
+### Owner decisions, second round (2026-11-18)
+
+| # | Question | Decision |
+| --- | --- | --- |
+| 1 | Seller | **The owner's LLC** is the merchant / seller everywhere (App Store, Stripe, Anthropic). Its legal name stays out of this repo; it lives only in the private store, Stripe and Anthropic account settings. |
+| 2 | Apple Small Business Program | **Enrol** → iOS markup **+40 %**. |
+| 3 | Markups and packs | iOS +40 %, web +20 %; iOS packs US$4.99 / 9.99 / 19.99, web US$10 / 25. |
+| 4 | Free trial | **None** (`trial_credits: 0`). The free tier (OpenRouter free models; `docs/design/ai-tiers.md`, the model-setup picker PR) covers trying the AI. |
+| 5 | Web tax | **Stripe Tax, we file.** Its 0.5 % is in the web channel fee (`fee_percent: 0.034`). |
+| 6 | Sign-in | **Sign in with Apple + Sign in with Google + anonymous device accounts** that can be linked later. No e-mail login. In-app account deletion stays (Apple 5.1.1(v)). |
+| 7 | Minors | **18+ gate on buying credits.** |
+| 8 | Retention | No prompt content; ledger / financial records as long as tax law requires; request logs 30 days. |
+| 9 | Deletion with credit left | **Forfeit, with a clear warning** before confirming. |
+| 10 | Models | **Claude Sonnet 5.5 (default), Claude Haiku 5.5, Claude Opus 5.5.** |
+| 11 | Caps | 2,000 credits a day, 20,000 a month, 2 concurrent per account. |
+| 12 | Anthropic usage tier | **Launch on the current tier**, raise it when needed. Monitoring and alerting for approaching the org spend limit, and a graceful "Splanc AI credits are busy right now. Try again later." when it is hit ([Org spend limit](#org-spend-limit)). |
 
 ### Store rules (checked 2026-11-18)
 
@@ -117,8 +136,10 @@ the web gives 833. See [Margins](#costs-and-margins).
   - Disclose that users are talking to an AI (Usage Policy, consumer chatbots).
     The editor already says so.
   - Minors: products serving under-18s have extra requirements
-    ([support article](https://support.claude.com/en/articles/9307344)). The
-    simplest route is an 18+ gate on buying credits. **Owner decision.**
+    ([support article](https://support.claude.com/en/articles/9307344)).
+    **Decided: buying credits is 18+.** The app asks once and the account
+    records it (`POST /billing/age`); Buy shows only for a confirmed adult,
+    and the web checkout will refuse without it.
 - **Data.** Anthropic doesn't train on API content (B). It deletes inputs and
   outputs within 30 days, or keeps them up to 2 years if flagged for a policy
   violation ([retention](https://privacy.claude.com/en/articles/7996866-how-long-do-you-store-my-organization-s-data)).
@@ -329,22 +350,33 @@ credits exactly one account, ever.
 
 ### Accounts and identity
 
-- **Stage 1 (scaffold):** a **device-bound anonymous account**. `POST
-  /billing/account` mints `acct_…` and a 180-day session token, rate-limited
-  per IP. The app stores the token next to its other settings.
-- **Before launch:** link the account to **Sign in with Apple** on iOS and
-  **Sign in with Google / email** on the web, so credits follow the person
-  across devices and survive reinstalls. Sign in with Apple is needed if any
-  social login is offered (4.8). An anonymous account can upgrade to a signed-in
-  one and keep its balance.
+- **Anonymous device accounts (scaffolded).** `POST /billing/account` mints
+  `acct_…` and a 180-day session token, rate-limited per IP. The app stores
+  the token next to its other settings. It starts with **no credit** (no
+  trial).
+- **Linking (decided: Apple + Google, no e-mail).** An anonymous account links
+  to **Sign in with Apple** or **Sign in with Google** and keeps its balance,
+  so credits follow the person across devices and survive reinstalls. Both
+  are offered on every platform; Sign in with Apple satisfies 4.8 on iOS. The
+  server verifies the provider's ID token (Apple's / Google's JWKS, our
+  client ids as audience) and stores only the provider's opaque subject id
+  (`link:<provider>:<sub>` → account). If that identity already has an
+  account, the app offers to switch to it; balances are never merged
+  automatically.
+- **Buying is 18+ (decided).** `POST /billing/age {confirm: true}` records the
+  confirmation on the account (`adult_confirmed_at`); `GET /billing/balance`
+  returns `adult`; the app shows Buy only for a confirmed adult
+  (`mayBuyCredits`). An Apple purchase is still credited if it somehow
+  arrives without it (the user has paid); the web checkout endpoint refuses
+  to start one.
 - **Restore.** Consumables don't restore through StoreKit, so "restore" means
   signing in on the new device. The balance is on the server.
 - **Account deletion (Apple 5.1.1(v)):** `DELETE /billing/account`, in the
-  app. It closes the account, forfeits the balance (the app warns first) and
-  drops open holds. Ledger entries hold no personal data and are kept for the
-  financial-records period. **Owner decision:** how many years, and whether to
-  offer a refund of the unused balance on deletion. Apple's refund flow stays
-  available anyway.
+  app. **Decided: any credit left is forfeited, after a clear warning**
+  (`DELETE_ACCOUNT_WARNING`: "Any credits left on it are lost and are not
+  refunded."). It closes the account, drops open holds and unlinks Apple /
+  Google identities. Ledger entries hold no personal data and are kept as long
+  as tax law requires. Apple's own refund flow stays available anyway.
 - **iOS account binding.** At purchase the app passes
   `appAccountToken = accountRefFor(account_id)` (a UUID derived from the
   account id). The server checks that the signed transaction carries the same
@@ -420,7 +452,7 @@ ledger entry is stamped with the config `version`.
   "max_output_tokens": 16000,
   "channels": {
     "apple": { "fee_percent": 0.15, "fee_fixed_usd": 0, "markup": 0.4 },
-    "web": { "fee_percent": 0.029, "fee_fixed_usd": 0.3, "markup": 0.2 }
+    "web": { "fee_percent": 0.034, "fee_fixed_usd": 0.3, "markup": 0.2 }
   },
   "packs": [
     { "sku": "dev.splanc.app.credits.small", "channel": "apple", "price_usd": 4.99, "enabled": true },
@@ -429,12 +461,13 @@ ledger entry is stamped with the config `version`.
     { "sku": "web.credits.10", "channel": "web", "price_usd": 10, "enabled": true },
     { "sku": "web.credits.25", "channel": "web", "price_usd": 25, "enabled": true }
   ],
-  "trial_credits": 50,
+  "trial_credits": 0,
   "low_balance_credits": 50,
   "max_overdraft_credits": 25,
   "caps": { "per_request_max_credits": 300, "daily_credits": 2000, "monthly_credits": 20000,
     "concurrent_requests": 2, "requests_per_minute": 20 },
-  "min_margin": 0.05
+  "min_margin": 0.05,
+  "org": { "monthly_limit_usd": 500, "alert_fraction": 0.8, "stop_fraction": 0.98 }
 }
 ```
 
@@ -448,9 +481,10 @@ only, so it never learns that web packs exist.
 
 | Route | Auth | What it does |
 | --- | --- | --- |
-| `POST /billing/account` | none (IP-limited) | New account → `{account_id, token, account_ref, balance_credits}` (trial granted once) |
+| `POST /billing/account` | none (IP-limited) | New anonymous account → `{account_id, token, account_ref, balance_credits}` (0: no trial) |
+| `POST /billing/age` | session | `{confirm: true}`: the user confirmed 18+ (buying is 18+) |
 | `DELETE /billing/account` | session | Close the account (deletion) |
-| `GET /billing/balance` | session | `{balance_credits, held_credits, available_credits, low, status, pricing_version}` |
+| `GET /billing/balance` | session | `{balance_credits, held_credits, available_credits, low, status, adult, pricing_version}` |
 | `GET /billing/pricing?channel=` | none | The public pricing view |
 | `GET /billing/statement` | session | The newest 50 entries (numbers only) |
 | `POST /billing/purchase/<apple\|web>` | session | Proof of purchase → credit (201; a replay is 200 with the same entry) |
@@ -466,7 +500,7 @@ Error shape: `{error, message}`. The errors are:
 | 403 | the account is suspended or closed |
 | 409 | duplicate request id, or a receipt already claimed |
 | 429 | concurrency or requests per minute |
-| 503 | `not_configured`, `ai_busy`, `ai_unavailable` |
+| 503 | `not_configured`, `ai_credits_busy` (Anthropic busy, or the org spend limit near / hit: "Splanc AI credits are busy right now. Try again later."), `ai_unavailable` |
 
 ### Flows
 
@@ -509,6 +543,8 @@ merge in either order, the integration surface is a few stable exports from
 
 ### Privacy
 
+- **Retention (decided):** no prompt content; ledger and financial records as
+  long as tax law requires; request logs 30 days.
 - **Default: no prompt content is retained by Splanc.**
   - The proxy streams bodies through and never stores them.
   - Ledger entries and log lines hold only ids, token counts, model, status
@@ -538,11 +574,41 @@ merge in either order, the integration surface is a few stable exports from
 | T7 | A stolen session token | Bearer token only to our relay over HTTPS; 180-day expiry plus refresh; sign-in linking (later) allows revocation (a per-account token generation). |
 | T8 | A bad config loses money | Strict validation plus the `min_margin` check per pack; invalid config = feature off. |
 
+### Org spend limit
+
+Anthropic's rate and spend limits are per **organization**: every Splanc user
+shares them. The owner launches on the current usage tier and raises it when
+needed, so the relay watches the org's spend and fails gracefully:
+
+- **Counter.** After each settle the proxy adds the request's Anthropic list
+  cost (µUSD) to a month-to-date counter in the Directory DO
+  (`org:spend:<YYYY-MM>`). The config's `org.monthly_limit_usd` is set to the
+  Console's actual monthly limit.
+- **Alert.** Crossing `org.alert_fraction` (80 %) logs `ai_org_spend_alert`
+  once, with `alert: true`. That is the signal to raise the tier.
+- **Graceful stop.** From `org.stop_fraction` (98 %) on, the proxy answers 503
+  `ai_credits_busy` ("Splanc AI credits are busy right now. Try again later.")
+  **before** calling Anthropic, so no turn dies halfway and nothing is
+  charged. It logs `ai_org_spend_stop` (`alert: true`).
+- **The real limit.** If Anthropic answers 429 `enforced_spend_limit_reached`
+  anyway (the counter is list cost, and the Console's limit may differ), the
+  proxy releases the reservation uncharged, answers the same busy message,
+  and logs `ai_org_spend_limit_hit` (`alert: true`). Other 429s (rate limits)
+  and 529 "overloaded" errors also answer busy, and 429s log with `alert: true`.
+- **Reconciliation.** The daily job (staged plan, Ops) replaces the estimate
+  with Anthropic's own cost report and alerts on drift.
+- **Alerting.** Any log event with `alert: true` goes to the alert channel (Workers
+  Logs → Grafana alert rule, or a Logpush filter).
+
 ### Observability
 
-- Structured log events, all content-free: `ai_settled`, `ai_refused`,
-  `ai_upstream_error`, `ai_released`, `ai_holds_expired`, `ai_purchase`,
-  `ai_refund`, `ai_account_opened` / `ai_account_closed`.
+- Structured log events, all content-free: `ai_settled` (with `list_usd`),
+  `ai_refused`, `ai_upstream_error`, `ai_released`, `ai_holds_expired`,
+  `ai_purchase`, `ai_refund`, `ai_account_opened` / `ai_account_closed`, and
+  the org alerts `ai_org_spend_alert`, `ai_org_spend_stop`,
+  `ai_org_spend_limit_hit`.
+- Request logs are kept **30 days** (owner decision): the Workers Logs
+  retention, or the Logpush destination's lifecycle rule.
 - Each carries the account, request id, model, usage, reserved vs charged,
   `written_off`, `estimated` and the pricing version.
 - A revenue / cost dashboard (the Grafana pattern from
@@ -561,13 +627,13 @@ Margin = (net proceeds after the channel fee − Anthropic list cost of the
 credits) / net. It assumes **all** credits get spent; unspent credits are
 extra.
 
-| Markup | Apple, Small Business 15 % (US$9.99) | Apple 30 % (US$9.99) | Web, Stripe 2.9 % + 30 ¢ (US$10) |
+| Markup | Apple, Small Business 15 % (US$9.99) | Apple 30 % (US$9.99) | Web, Stripe 2.9 % + 30 ¢ + Stripe Tax 0.5 % (US$10) |
 | --- | --- | --- | --- |
-| 10 % | **−7.0 %** (lose $0.59) | **−29.9 %** | +3.4 % (keep $0.32) |
-| 20 % | +2.0 % ($0.17) | **−19.0 %** | +11.4 % ($1.08) |
-| 30 % | +9.5 % ($0.81) | **−9.9 %** | +18.3 % ($1.72) |
-| 40 % (default iOS) | +16.0 % ($1.36) | **−2.0 %** | +24.1 % ($2.27) |
-| 55 % | +24.1 % ($2.05) | +7.8 % ($0.55) | +31.4 % ($2.96) |
+| 10 % | **−7.0 %** (lose $0.59) | **−29.9 %** | +2.9 % (keep $0.27) |
+| 20 % (web) | +2.0 % ($0.17) | **−19.0 %** | +11.0 % ($1.03) |
+| 30 % | +9.5 % ($0.81) | **−9.9 %** | +17.8 % ($1.67) |
+| 40 % (iOS) | +16.0 % ($1.36) | **−2.0 %** | +23.7 % ($2.22) |
+| 55 % | +24.1 % ($2.05) | +7.8 % ($0.55) | +31.1 % ($2.91) |
 
 **A markup smaller than the store's cut loses money on In-App Purchase.**
 Apple takes its 15–30 % of the *price*. A 20 % markup leaves 1.2 × 0.85 = 1.02
@@ -575,14 +641,14 @@ per 1.00 of usage before any other cost; at 30 %, 1.2 × 0.7 = 0.84, a loss. The
 config validation refuses such a pack, so a fee change without a markup change
 can't silently lose money.
 
-Recommendation:
-- **iOS: +40 %** with the Small Business Program (16 % margin). **+55 %** if we
-  are not enrolled, or once proceeds pass US$1 M (8 %).
-- **Web: +20 %** (11–13 % margin on US$10–25).
-- Use web packs of **US$10 and US$25**: Stripe's 30 ¢ fixed fee eats a US$5
-  pack (8.7 %).
-- Use iOS packs at **US$4.99 / 9.99 / 19.99**.
-- Give a **50-credit trial** (US$0.50 of usage, about 5–10 asks).
+Decided (owner, 2026-11-18):
+- **iOS: +40 %** with the Small Business Program (16 % margin). Move to
+  **+55 %** if proceeds ever pass US$1 M and Apple's rate becomes 30 % (8 %);
+  the validator refuses +40 % at a 30 % fee.
+- **Web: +20 %** (11–13 % margin on US$10–25, Stripe Tax included).
+- Web packs **US$10 and US$25** (Stripe's 30 ¢ fixed fee eats a US$5 pack).
+- iOS packs **US$4.99 / 9.99 / 19.99**.
+- **No free trial**: the free tier covers trying the AI.
 
 The default pack table:
 
@@ -591,14 +657,14 @@ The default pack table:
 | iOS US$4.99 (+40 %) | 356 | $4.24 | $3.56 | 16.1 % |
 | iOS US$9.99 (+40 %) | 713 | $8.49 | $7.13 | 16.0 % |
 | iOS US$19.99 (+40 %) | 1,427 | $16.99 | $14.27 | 16.0 % |
-| Web US$10 (+20 %) | 833 | $9.41 | $8.33 | 11.5 % |
-| Web US$25 (+20 %) | 2,083 | $23.97 | $20.83 | 13.1 % |
+| Web US$10 (+20 %) | 833 | $9.36 | $8.33 | 11.0 % |
+| Web US$25 (+20 %) | 2,083 | $23.85 | $20.83 | 12.7 % |
 
-These numbers leave out:
-- web sales tax / VAT, which we owe on web sales (US prices are tax-exclusive;
-  VAT-inclusive prices in the EU cut the margin by the VAT rate unless prices
-  are set per region);
-- Stripe Tax at 0.5 % if used;
+"Net after fee" includes Stripe Tax's 0.5 % on the web. These numbers leave
+out:
+- the web sales tax / VAT itself, which Stripe Tax computes and we collect and
+  file (US prices are tax-exclusive; VAT-inclusive prices in the EU cut the
+  margin by the VAT rate unless prices are set per region);
 - Cloudflare Workers Paid at US$5 a month (needed at any real volume: the free
   plan's 100 K requests a day and 10 ms CPU per request are tight for
   streaming);
@@ -606,37 +672,65 @@ These numbers leave out:
 
 Unspent balances are a liability on the books until spent or forfeited.
 
-## Staged plan (small PRs)
+## Staged plan to production
 
-1. **This PR**:
-   - the design;
-   - pricing config + validation;
-   - ledger with reserve-then-settle;
-   - the proxy against a fake upstream;
-   - purchase interfaces + fakes;
-   - relay routes behind `AI_BILLING=sandbox` (off otherwise);
-   - the client provider behind a flag (off), with a stub balance;
-   - tests (`//agent:billing_test`, `//web:aiCredits_test`).
-2. **Sandbox deploy** (owner):
-   - bind `BillingAccount` (wrangler migration `v2`, `new_sqlite_classes =
-     ["BillingAccount"]`);
-   - set `AI_BILLING=sandbox`, `AI_PRICING`, and the secrets (a *separate,
-     low-limit* Anthropic key with a spend cap);
-   - forward `/ai/*` and `/billing/*` in `web/_worker.js`;
-   - measure real credits per ask.
-3. **Accounts**: Sign in with Apple / Google / email, linking, token refresh
-   and revocation, the deletion UI, the consent sheet.
-4. **Web checkout**: Stripe Checkout Session endpoint, webhook verification,
-   refunds and disputes, Stripe Tax decision; Buy button on web and Android.
-5. **iOS IAP**: `storekit-bridge` plugin (StoreKit 2), App Store products,
-   JWS verification (Apple Root CA G3), App Store Server Notifications v2,
-   unfinished-transaction replay, StoreKit configuration file tests.
-6. **UX**: live balance under replies, low-balance and 402 handling in the
-   chat, the statement view, the model picker from `/billing/pricing`.
-7. **Ops**: KV-backed config, the reconciliation job (Anthropic usage report
-   vs ledger), dashboards, alerts, the admin tool (adjust, suspend).
-8. **Production**: allow `AI_BILLING=production` only once steps 3–5 have
-   real verifiers. App Review submission with a demo account.
+Each step is one or more small PRs. **[owner]** marks what needs the owner's
+accounts or secrets; everything else is code.
+
+1. **Done (this PR):** design; pricing config + validation; ledger
+   (reserve-then-settle); the proxy against a fake upstream, with the org
+   spend guard; purchase interfaces + fakes; anonymous accounts, the 18+
+   record, deletion; relay routes behind `AI_BILLING=sandbox`; the client
+   provider behind a flag (off).
+2. **Sandbox deploy** **[owner]**:
+   - create a *separate, low-limit* Anthropic API key under the owner's LLC
+     org (a workspace with its own spend cap), and `wrangler secret put`
+     `ANTHROPIC_API_KEY`, `BILLING_TOKEN_SECRET` (`newSessionSecret()`) and
+     `AI_BILLING_FAKE_STORE_KEY`;
+   - set `AI_BILLING=sandbox` and `AI_PRICING` (with `org.monthly_limit_usd`
+     = the Console's limit).
+   - code: bind `BillingAccount` (wrangler migration `v2`,
+     `new_sqlite_classes = ["BillingAccount"]`) and forward `/ai/*` +
+     `/billing/*` in `web/_worker.js`;
+   - measure real credits per ask on the three models.
+3. **Accounts:** Sign in with Apple + Google ID-token verification and
+   linking, token refresh / revocation, the deletion UI with the forfeit
+   warning, the 18+ sheet, the AI-data consent sheet (Apple 5.1.2(i)).
+   **[owner]**: create the Sign in with Apple service id + key (Apple
+   Developer, the owner's LLC team) and a Google OAuth client id; store the
+   ids as Worker vars.
+4. **Web checkout:** `POST /billing/checkout` (Checkout Session; refuses
+   without 18+), the webhook (`Stripe-Signature`), refunds and disputes, Stripe
+   Tax on; Buy on web and Android. **[owner]**: activate the Stripe account
+   for the owner's LLC, turn on Stripe Tax (origin address, registrations),
+   create the two Prices (US$10, US$25; lookup keys `web.credits.10`,
+   `web.credits.25`), enable Apple Pay (domain verification for the app's
+   origin) and Google Pay, create the webhook endpoint, and `wrangler secret
+   put` `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` (test mode first, live
+   later).
+5. **iOS In-App Purchase:** the `storekit-bridge` plugin (StoreKit 2,
+   `appAccountToken`), JWS verification (Apple Root CA G3), App Store Server
+   Notifications v2 (REFUND, REVOKE, CONSUMPTION_REQUEST), unfinished
+   transaction replay, a StoreKit configuration file for Simulator tests.
+   **[owner]**: sign the Paid Apps agreement and the banking / tax forms as
+   the owner's LLC, enrol in the Small Business Program, create the three
+   consumables (`dev.splanc.app.credits.small` / `.medium` / `.large` at
+   US$4.99 / 9.99 / 19.99) with review screenshots, set the Server
+   Notifications v2 URL (sandbox and production), create an In-App Purchase
+   key for the App Store Server API, and store its key id, issuer id and
+   private key as Worker secrets.
+6. **UX:** live balance under replies, low-balance and 402 handling in the
+   chat, the "busy, try later" state, the statement view, the model picker
+   from `/billing/pricing`.
+7. **Ops:** KV-backed pricing config; the daily reconciliation job against
+   Anthropic's usage / cost report (needs an Admin API key **[owner]**);
+   dashboards; alert routing for `alert: true` events **[owner]**: where
+   alerts go; the 30-day log retention; the admin tool (adjust, suspend).
+8. **Production:** allow `AI_BILLING=production` only once steps 3–5 have
+   real verifiers; switch Stripe to live keys, the production App Store
+   environment, and the production Anthropic key **[owner]**; Workers Paid
+   plan **[owner]**; App Review submission with a demo account and notes;
+   privacy notice update (Anthropic as sub-processor; 30-day request logs).
 
 ## Risks
 
@@ -648,50 +742,33 @@ Unspent balances are a liability on the books until spent or forfeited.
   ledger records the version used.
 - **Estimate gaps.** Cut-off streams are billed from an estimate. Daily
   reconciliation and the `estimated` flag find drift.
-- **Org-wide limits.** One user's burst can rate-limit everyone. Per-account
-  caps and concurrency limits help, and the usage tier needs raising before
-  launch.
+- **Org-wide limits.** One user's burst can rate-limit everyone, and we
+  launch on the current usage tier. Per-account caps, the org spend counter
+  with its 80 % alert, and the graceful 98 % stop keep it visible and polite;
+  raising the tier is the fix.
 - **Policy exposure.** A user's misuse can get our Anthropic account
   suspended. That's why we have caps, suspension, the allowlist, and lighting
   scope only.
-- **Tax on the web.** We owe it unless we use a merchant-of-record service.
-- **Legal entity.** Stores, Stripe and Anthropic's commercial terms all need a
-  business entity and bank account.
+- **Tax on the web.** We collect and file it (Stripe Tax computes it):
+  registration thresholds per US state / the EU need watching.
 - **Free plan.** Workers Free CPU and request limits may not cover streaming
   at volume.
 
 ## Decisions for the owner
 
-1. **Legal entity and accounts.** The business that is merchant / seller:
-   App Store Connect Paid Apps agreement, banking and tax forms; a Stripe
-   account; Anthropic commercial terms under that entity.
-2. **Apple Small Business Program:** enrol. It decides whether iOS needs +40 %
-   or +55 %.
-3. **Markups:** iOS +40 % (with the program) and web +20 % are proposed, as
-   is `usage_markup` 0.
-4. **Packs:** iOS US$4.99 / 9.99 / 19.99; web US$10 / 25. Or other sizes.
-5. **Free trial:** 50 credits per new account, or none (abuse: one per
-   device / sign-in?).
-6. **Web tax:** Stripe + Stripe Tax (we file), or a merchant-of-record service
-   (Stripe Managed Payments +3.5 % or Paddle 5 % + 50 ¢).
-7. **Sign-in:** which providers (Sign in with Apple is required on iOS if any
-   social login is offered), and whether to allow anonymous accounts at all.
-8. **Minors:** 18+ gate on buying credits, or the extra safeguards Anthropic
-   requires for under-18 users.
-9. **Data retention:**
-   - prompts: none (proposed default);
-   - ledger and financial records: how many years;
-   - logs: how long.
-10. **Deletion with a balance left:** forfeit (proposed, with a warning), or
-    refund on request.
-11. **Default model:** Sonnet 5.5 (proposed: half Opus's price); whether to
-    offer Opus 5.5 and Haiku 5.5.
-12. **Caps:** daily 2,000 / monthly 20,000 credits per account, 2 concurrent,
-    20 a minute, 300 per request.
-13. **Android:** stays a PWA with web checkout (decided). Revisit a Play app
-    only if distribution needs it; then Play Billing applies.
-14. **US link-out on iOS:** not used (decided). Revisit after the Supreme
-    Court rules on No. 25-1311.
+All of the first round is decided (see [Owner decisions, second
+round](#owner-decisions-second-round-2026-11-18)). Still open, none blocking
+the sandbox:
+
+1. **Org limit value:** the Console's current monthly spend limit, for
+   `org.monthly_limit_usd`, and when to raise the tier.
+2. **Alert destination** for `alert: true` events (e-mail, a chat channel,
+   Grafana).
+3. **CONSUMPTION_REQUEST:** whether to answer Apple's refund-consumption
+   requests (needs the customer's consent in the app).
+4. **Android / Play** stays a PWA with web checkout; revisit only if
+   distribution needs a Play app (then Play Billing applies). **US iOS
+   link-out** stays off; revisit after the Supreme Court rules on No. 25-1311.
 
 ## What is in this PR
 
@@ -705,7 +782,8 @@ Unspent balances are a liability on the books until spent or forfeited.
 - Relay wiring:
   - `index.ts`: routes, CORS, `BillingAccount` export (not bound in
     `wrangler.toml`);
-  - `directory.ts`: purchase claims, account-creation limits;
+  - `directory.ts`: purchase claims, account-creation limits, the org
+    month-to-date spend counter;
   - `platform.ts`: env.
 - `web/src/effects/ai/providers/credits.ts`: the flag-gated provider, session,
   stub balance.

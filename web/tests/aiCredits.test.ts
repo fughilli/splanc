@@ -8,7 +8,8 @@
  *   (no Anthropic key, no direct-browser header), with the very same body the
  *   BYO-key provider sends, and reads the live balance from `splanc_billing`;
  * - the BYO-key request is unchanged (same headers, same body);
- * - iOS buys through Apple and never shows the web checkout.
+ * - iOS buys through Apple and never shows the web checkout;
+ * - the account lifecycle: anonymous account, 18+ before Buy, deletion.
  */
 
 import assert from "node:assert/strict";
@@ -18,7 +19,12 @@ import { defaultConfig, isAiConfigured, kindLabel, normalizeConfig, type SendOpt
 import { makeAnthropicProvider, messagesRequestBody } from "../src/effects/ai/providers/anthropic";
 import {
   aiCreditsEnabled,
+  confirmAdult,
+  createCreditsAccount,
   creditsErrorMessage,
+  deleteCreditsAccount,
+  getCreditsSession,
+  mayBuyCredits,
   fetchCreditsBalance,
   formatCredits,
   makeCreditsProvider,
@@ -119,7 +125,7 @@ test("proxy refusals become friendly errors; no session = sign in", async () => 
 });
 
 test("balance is a stub that answers null when off or signed out", async () => {
-  const f = captureFetch(200, JSON.stringify({ balance_credits: 5, available_credits: 5, held_credits: 0, low: true, status: "active" }));
+  const f = captureFetch(200, JSON.stringify({ balance_credits: 5, available_credits: 5, held_credits: 0, low: true, status: "active", adult: true }));
   assert.equal(await fetchCreditsBalance(f.fn), null);
   g.localStorage.setItem("splanc.flags.aiCredits", "1");
   assert.equal(await fetchCreditsBalance(f.fn), null);
@@ -167,4 +173,28 @@ test("iOS buys through Apple and never shows the web checkout", () => {
   assert.equal(mayShowWebCheckout(), false);
   g.Capacitor = { isNativePlatform: () => true, getPlatform: () => "android" };
   assert.equal(purchaseChannel(), "web");
+});
+
+test("account lifecycle: anonymous account, 18+ before Buy, deletion clears the session", async () => {
+  g.localStorage.setItem("splanc.flags.aiCredits", "1");
+  const calls: { url: string; init: RequestInit }[] = [];
+  const fn = (async (url: string, init: RequestInit = {}) => {
+    calls.push({ url, init });
+    if (url.endsWith("/billing/account") && init.method === "POST") {
+      return new Response(JSON.stringify({ account_id: "acct_new", token: "sst1.new" }), { status: 201 });
+    }
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  }) as unknown as typeof fetch;
+  assert.deepEqual(await createCreditsAccount(fn), { account_id: "acct_new", token: "sst1.new" });
+  assert.equal(getCreditsSession()?.token, "sst1.new");
+  await confirmAdult(fn);
+  assert.equal(calls[1]!.init.body, JSON.stringify({ confirm: true }));
+  assert.equal((calls[1]!.init.headers as Record<string, string>)["authorization"], "Bearer sst1.new");
+  const bal = { balance_credits: 0, available_credits: 0, held_credits: 0, low: true, status: "active" };
+  assert.equal(mayBuyCredits({ ...bal, adult: false }), false);
+  assert.equal(mayBuyCredits({ ...bal, adult: true }), true);
+  assert.equal(mayBuyCredits(null), false);
+  await deleteCreditsAccount(fn);
+  assert.equal(calls[2]!.init.method, "DELETE");
+  assert.equal(getCreditsSession(), null);
 });

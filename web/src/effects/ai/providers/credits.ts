@@ -95,6 +95,8 @@ export interface CreditsBalance {
   held_credits: number;
   low: boolean;
   status: string;
+  /** The account confirmed 18+ (buying credits is 18+). */
+  adult: boolean;
 }
 
 /** The balance shown in AI settings and under the chat (STUB until the relay
@@ -108,6 +110,59 @@ export async function fetchCreditsBalance(fetchImpl: typeof fetch = fetch): Prom
   } catch {
     return null;
   }
+}
+
+// -- account lifecycle (owner decisions 2026-11-18) ------------------------------------
+//
+// Accounts start ANONYMOUS and device-bound (no sign-in needed to look); they
+// can be linked later to Sign in with Apple or Google (no e-mail login). There
+// is no free credit: the free tier covers trying the AI. Buying is 18+.
+// Deleting the account forfeits any credit left, after a clear warning.
+
+export const SIGN_IN_PROVIDERS = ["apple", "google"] as const;
+
+export const ADULT_CONFIRM_TEXT = "Buying Splanc AI credits is for adults. Please confirm you are 18 or older.";
+
+export const DELETE_ACCOUNT_WARNING =
+  "Deleting your Splanc AI account can't be undone. Any credits left on it are lost and are not refunded.";
+
+const authed = (s: CreditsSession) => ({ authorization: `Bearer ${s.token}` });
+
+/** Create an anonymous, device-bound credit account and keep its session. */
+export async function createCreditsAccount(fetchImpl: typeof fetch = fetch): Promise<CreditsSession> {
+  const r = await fetchImpl(`${creditsRelay()}/billing/account`, { method: "POST" });
+  const b = (await r.json().catch(() => null)) as { account_id?: string; token?: string; message?: string } | null;
+  if (!r.ok || !b?.account_id || !b.token) throw new Error(creditsErrorMessage(r.status, b));
+  const s = { account_id: b.account_id, token: b.token };
+  setCreditsSession(s);
+  return s;
+}
+
+/** Record the user's 18+ confirmation (call after they confirm ADULT_CONFIRM_TEXT). */
+export async function confirmAdult(fetchImpl: typeof fetch = fetch): Promise<void> {
+  const s = getCreditsSession();
+  if (!s) throw new Error("Sign in to use Splanc AI credits.");
+  const r = await fetchImpl(`${creditsRelay()}/billing/age`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...authed(s) },
+    body: JSON.stringify({ confirm: true }),
+  });
+  if (!r.ok) throw new Error(creditsErrorMessage(r.status, (await r.json().catch(() => null)) as { message?: string } | null));
+}
+
+/** May the Buy button show? Only for a confirmed adult. */
+export function mayBuyCredits(b: CreditsBalance | null): boolean {
+  return b !== null && b.adult === true && b.status === "active";
+}
+
+/** Delete the account (the iOS in-app deletion requirement). Show
+ * DELETE_ACCOUNT_WARNING and get a confirmation first. */
+export async function deleteCreditsAccount(fetchImpl: typeof fetch = fetch): Promise<void> {
+  const s = getCreditsSession();
+  if (!s) return;
+  const r = await fetchImpl(`${creditsRelay()}/billing/account`, { method: "DELETE", headers: authed(s) });
+  if (!r.ok && r.status !== 401) throw new Error(creditsErrorMessage(r.status, (await r.json().catch(() => null)) as { message?: string } | null));
+  setCreditsSession(null);
 }
 
 /** "1,234.5 credits" — the one place credits are formatted. */

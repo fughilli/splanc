@@ -945,9 +945,14 @@ function creditsPanel(cfg: AiConfig, set: (p: Partial<AiConfig>) => void): HTMLE
       balance.textContent = b ? formatCredits(b.available_credits) + (b.low ? " (low)" : "") : "Unavailable";
     });
   }
-  // Buying is not wired yet. On iOS it will be In-App Purchase only: the iOS
-  // app never shows or links to the web checkout (App Store rules).
-  g.append(note(mayShowWebCheckout() ? "Buying credits isn't available yet." : "Buying credits in the app isn't available yet."));
+  // Buying is not wired yet. It is 18+, and on iOS it will be In-App Purchase
+  // only: the iOS app never shows or links to the web checkout (App Store rules).
+  g.append(
+    note(
+      (mayShowWebCheckout() ? "Buying credits isn't available yet." : "Buying credits in the app isn't available yet.") +
+        " Buying is for adults (18+).",
+    ),
+  );
   return g;
 }
 

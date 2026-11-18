@@ -17,7 +17,8 @@
  *   error bodies, SSE frames and headers never appears in any response, header
  *   or log line, and the client's own headers are never forwarded;
  * - the relay routes: off (503) unless explicitly configured for the sandbox;
- *   account -> trial -> fake purchase -> refund -> proxy -> delete.
+ *   account -> 18+ -> fake purchases -> refund -> proxy -> delete; and the
+ *   Anthropic org spend-limit guard (alert, graceful "busy", the 429).
  */
 
 import assert from "node:assert/strict";
@@ -170,7 +171,7 @@ describe("pricing", () => {
     const ma = packMargin(c, apple);
     assert.ok(ma.margin > 0.15 && ma.margin < 0.17, String(ma.margin)); // net 4.24, cost 3.56
     const mw = packMargin(c, web);
-    assert.ok(mw.margin > 0.11 && mw.margin < 0.12, String(mw.margin)); // net 9.41, cost 8.33
+    assert.ok(mw.margin > 0.105 && mw.margin < 0.115, String(mw.margin)); // net 9.36 (Stripe + Stripe Tax), cost 8.33
     // Credits bought anywhere are the same unit: the overrides win.
     assert.equal(packCredits(c, { ...apple, credits: 300 }), 300);
   });
@@ -570,6 +571,52 @@ describe("proxy", () => {
   });
 });
 
+// -- the Anthropic organization's spend limit -------------------------------------------
+
+function memOrg(start = 0) {
+  let total = start;
+  return { get: async () => total, add: async (n: number) => (total += n), get total() { return total; } };
+}
+
+describe("org spend limit", () => {
+  test("the month-to-date counter grows by list cost; crossing the alert line logs one alert", async () => {
+    const c = cfg();
+    const limit = c.org.monthly_limit_usd * MICRO;
+    const org = memOrg(Math.floor(limit * 0.8) - 1);
+    const { deps, logs } = await proxyFixture();
+    deps.org = org;
+    for (let i = 0; i < 2; i++) await (await proxyMessages(post(chatBody()), "acct_test", deps)).text();
+    const list = Math.ceil(listCostUsd(c.models["claude-sonnet-5-5"]!, usage({ input_tokens: 2000, output_tokens: 500 })) * MICRO);
+    assert.equal(org.total, Math.floor(limit * 0.8) - 1 + 2 * list);
+    assert.equal(logs.filter((l) => l.includes('"ai_org_spend_alert"')).length, 1);
+  });
+
+  test("near the limit the proxy answers busy without calling Anthropic", async () => {
+    const c = cfg();
+    const { deps, up, l, logs } = await proxyFixture();
+    deps.org = memOrg(c.org.monthly_limit_usd * MICRO * c.org.stop_fraction);
+    const r = await proxyMessages(post(chatBody()), "acct_test", deps);
+    assert.equal(r.status, 503);
+    const b = (await r.json()) as { error: string; message: string };
+    assert.equal(b.error, "ai_credits_busy");
+    assert.match(b.message, /busy right now\. Try again later/);
+    assert.equal(up.calls.length, 0);
+    assert.equal((await l.getAccount())!.held, 0);
+    assert.ok(logs.some((x) => x.includes('"ai_org_spend_stop"') && x.includes('"alert":true')));
+  });
+
+  test("Anthropic's own spend-limit 429 becomes busy + an alert, released uncharged", async () => {
+    const { deps, l, logs } = await proxyFixture(100, () =>
+      new Response(JSON.stringify({ type: "error", error: { type: "rate_limit_error", message: "spend limit" }, error_code: "enforced_spend_limit_reached" }), { status: 429 }),
+    );
+    const r = await proxyMessages(post(chatBody()), "acct_test", deps);
+    assert.equal(r.status, 503);
+    assert.equal(((await r.json()) as { error: string }).error, "ai_credits_busy");
+    assert.equal((await l.getAccount())!.balance, 100 * MICRO);
+    assert.ok(logs.some((x) => x.includes('"ai_org_spend_limit_hit"') && x.includes('"alert":true')));
+  });
+});
+
 // -- the key never reaches a client ----------------------------------------------------
 
 describe("secrets", () => {
@@ -700,14 +747,21 @@ describe("relay routes", () => {
     assert.equal(await verifySession("b3RoZXItc2VjcmV0LW90aGVyLXNlY3JldC1vdGhlci0", tok, t + 1), null);
   });
 
-  test("account -> trial -> fake purchase -> refund -> AI -> delete", async () => {
+  test("account -> 18+ -> fake purchases -> refund -> AI -> delete", async () => {
     const env = await sandboxEnv();
     const logs: string[] = [];
     const ctx = ctxFor(logs);
     const made = await call(env, ctx, "/billing/account", { method: "POST" });
     assert.equal(made.status, 201);
-    assert.equal(made.body["balance_credits"], DEFAULT_PRICING.trial_credits);
+    assert.equal(made.body["balance_credits"], 0); // no free credit (owner decision)
     const auth = { authorization: `Bearer ${String(made.body["token"])}` };
+    // An empty balance: the AI refuses before calling anything.
+    assert.equal((await call(env, ctx, "/ai/v1/messages", { method: "POST", headers: auth, body: JSON.stringify(chatBody()) })).status, 402);
+    // Buying is 18+: the app asks once and records it.
+    assert.equal((await call(env, ctx, "/billing/balance", { headers: auth })).body["adult"], false);
+    assert.equal((await call(env, ctx, "/billing/age", { method: "POST", headers: auth, body: "{}" })).status, 400);
+    assert.equal((await call(env, ctx, "/billing/age", { method: "POST", headers: auth, body: JSON.stringify({ confirm: true }) })).status, 200);
+    assert.equal((await call(env, ctx, "/billing/balance", { headers: auth })).body["adult"], true);
     const accountId = String(made.body["account_id"]);
     assert.equal(made.body["account_ref"], await accountRefFor(accountId));
 
@@ -724,7 +778,10 @@ describe("relay routes", () => {
     const again = await call(env, ctx, "/billing/purchase/apple", { method: "POST", headers: auth, body: JSON.stringify(receipt) });
     assert.equal(again.status, 200);
     assert.equal(again.body["replay"], true);
-    assert.equal(again.body["balance_credits"], 406);
+    assert.equal(again.body["balance_credits"], 356);
+    const receipt2 = await store.sign({ sku: "dev.splanc.app.credits.medium", transactionId: "2000000000000002", purchasedAt: 0, accountRef: await accountRefFor(accountId) });
+    const buy2 = await call(env, ctx, "/billing/purchase/apple", { method: "POST", headers: auth, body: JSON.stringify(receipt2) });
+    assert.equal(buy2.body["balance_credits"], 356 + 713);
 
     // The same receipt on another account is refused.
     const other = await call(env, ctx, "/billing/account", { method: "POST" });
@@ -741,7 +798,7 @@ describe("relay routes", () => {
       assert.equal(r.status, 200);
     }
     let bal = await call(env, ctx, "/billing/balance", { headers: auth });
-    assert.equal(bal.body["balance_credits"], 50);
+    assert.equal(bal.body["balance_credits"], 713);
 
     // Spend through the proxy.
     const ai = await billingEndpoint(new Request("https://relay/ai/v1/messages", { method: "POST", headers: auth, body: JSON.stringify(chatBody()) }), env, ctx, "/ai/v1/messages");
@@ -749,10 +806,10 @@ describe("relay routes", () => {
     await ai.text();
     bal = await call(env, ctx, "/billing/balance", { headers: auth });
     const spent = chargeMicro(DEFAULT_PRICING, "claude-sonnet-5-5", usage({ input_tokens: 1000, output_tokens: 200 })) / MICRO;
-    assert.equal(bal.body["balance_credits"], 50 - spent);
+    assert.equal(bal.body["balance_credits"], 713 - spent);
     assert.equal(bal.body["held_credits"], 0);
     const st = await call(env, ctx, "/billing/statement", { headers: auth });
-    assert.deepEqual((st.body["entries"] as { kind: string }[]).map((e) => e.kind), ["usage", "refund", "purchase", "trial"]);
+    assert.deepEqual((st.body["entries"] as { kind: string }[]).map((e) => e.kind), ["usage", "refund", "purchase", "purchase"]);
     assert.ok(!JSON.stringify(st.body).includes("make it blue"), "no prompt content in the ledger");
 
     // No auth, no AI.

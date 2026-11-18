@@ -117,6 +117,11 @@ export interface PricingConfig {
    * channel fee) as margin over Anthropic list cost. Guards against a markup
    * smaller than the store's cut. */
   min_margin: number;
+  /** Our Anthropic ORGANIZATION's monthly spend limit (all users share it):
+   * the proxy keeps a month-to-date list-cost counter, logs an alert when it
+   * crosses `alert_fraction`, and answers "busy, try later" (no upstream call)
+   * from `stop_fraction` on, instead of letting Anthropic 429 mid-turn. */
+  org: { monthly_limit_usd: number; alert_fraction: number; stop_fraction: number };
 }
 
 export const MICRO = 1_000_000;
@@ -170,9 +175,9 @@ export const DEFAULT_PRICING: PricingConfig = {
     // Apple Small Business Program: 15 % (30 % without it — then raise the
     // markup: validatePricing refuses a pack that would lose money).
     apple: { fee_percent: 0.15, fee_fixed_usd: 0, markup: 0.4 },
-    // Stripe US cards / Apple Pay / Google Pay on the web: 2.9 % + 30 c.
-    // Sales tax / VAT is ours on the web (Stripe is not merchant of record).
-    web: { fee_percent: 0.029, fee_fixed_usd: 0.3, markup: 0.2 },
+    // Stripe US cards / Apple Pay / Google Pay on the web: 2.9 % + 30 c, plus
+    // Stripe Tax 0.5 % (owner decision: we collect and file web sales tax).
+    web: { fee_percent: 0.034, fee_fixed_usd: 0.3, markup: 0.2 },
   },
   packs: [
     { sku: "dev.splanc.app.credits.small", channel: "apple", price_usd: 4.99, enabled: true },
@@ -181,7 +186,8 @@ export const DEFAULT_PRICING: PricingConfig = {
     { sku: "web.credits.10", channel: "web", price_usd: 10, enabled: true },
     { sku: "web.credits.25", channel: "web", price_usd: 25, enabled: true },
   ],
-  trial_credits: 50,
+  // Owner decision 2026-11-18: no free credit (the free tier covers trying AI).
+  trial_credits: 0,
   low_balance_credits: 50,
   max_overdraft_credits: 25,
   caps: {
@@ -192,6 +198,9 @@ export const DEFAULT_PRICING: PricingConfig = {
     requests_per_minute: 20,
   },
   min_margin: 0.05,
+  // The current Anthropic usage tier's monthly limit (owner: launch on it,
+  // raise it when the alert fires). Set to the console's actual value.
+  org: { monthly_limit_usd: 500, alert_fraction: 0.8, stop_fraction: 0.98 },
 };
 
 /** Token usage of one request, as the Messages API reports it. */
@@ -333,6 +342,18 @@ export function validatePricing(raw: unknown): PricingResult {
     if (!isNum(o[k])) errors.push(`${k}: >= 0`);
   }
   if (!isNum(o["min_margin"]) || (o["min_margin"] as number) >= 1) errors.push("min_margin: 0..1");
+  const org = o["org"] as Record<string, unknown> | undefined;
+  if (
+    !org ||
+    !isNum(org["monthly_limit_usd"]) ||
+    (org["monthly_limit_usd"] as number) <= 0 ||
+    !isNum(org["alert_fraction"]) ||
+    !isNum(org["stop_fraction"]) ||
+    (org["alert_fraction"] as number) >= (org["stop_fraction"] as number) ||
+    (org["stop_fraction"] as number) > 1
+  ) {
+    errors.push("org: {monthly_limit_usd: > 0, alert_fraction < stop_fraction <= 1}");
+  }
 
   const models = o["models"];
   if (!models || typeof models !== "object" || Array.isArray(models) || Object.keys(models).length === 0) {

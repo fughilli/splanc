@@ -12,7 +12,9 @@
  *   -> its summary for listing; both carry `exp` and the alarm purges them;
  * - AI-credit purchase claims (billing/, docs/design/ai-billing.md):
  *   `pur:<channel>:<txid>` -> the account it credited (first claim wins), so one
- *   store transaction credits exactly one account. Kept forever (no content).
+ *   store transaction credits exactly one account. Kept forever (no content);
+ * - the Anthropic organization's month-to-date list cost (`org:spend:<YYYY-MM>`,
+ *   µUSD), for the org spend-limit alert and guard (billing/proxy.ts).
  *
  * Only the Worker talks to it (Durable Objects aren't publicly addressable).
  * Traffic is tiny: it is touched on pairing, registration and OAuth steps, never
@@ -172,6 +174,15 @@ export class Directory {
         if (owner === undefined) await this.state.storage.put(k, body["account"]!);
         return json({ ok: true });
       }
+      case "/org/add": {
+        // The Anthropic org's month-to-date list cost (µUSD), every account together.
+        const k = `org:spend:${new Date(now(this.env)).toISOString().slice(0, 7)}`;
+        const total = ((await this.state.storage.get<number>(k)) ?? 0) + Math.max(0, Math.floor(Number(body["micro_usd"]) || 0));
+        await this.state.storage.put(k, total);
+        return json({ total });
+      }
+      case "/org/get":
+        return json({ total: (await this.state.storage.get<number>(`org:spend:${new Date(now(this.env)).toISOString().slice(0, 7)}`)) ?? 0 });
       case "/pur/owner":
         return json({ owner: (await this.state.storage.get<string>(`pur:${body["channel"]}:${body["tx"]}`)) ?? null });
       case "/hmac/sign":
