@@ -31,9 +31,11 @@ import { JERKY_MOTION_HINT, MotionGuide } from "../../cv/motionGuide";
 import { CvPipeline } from "../../cv/pipeline";
 import { DetectorGL } from "../../cv/detect";
 import {
+  type DriverCaptureController,
   type DriverCaptureResult,
   type DriverDecodeStats,
   driverActive,
+  driverCapture,
   registerDriverCapture,
   driverFixtureScene,
   setDriverCaptureError,
@@ -774,6 +776,15 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   let driverSolveReject: ((e: unknown) => void) | null = null;
   // Live decode health for the harness (the same numbers the HUD shows).
   let driverDecodeStats: DriverDecodeStats = { ids: 0, total: 0, tracks: 0, observations: 0 };
+  // Mid-capture code renegotiations applied this run (applyReconfigure).
+  let renegotiations = 0;
+  // Where the capture's startup is, so a decode that never began says where it stalled.
+  let driverPhase = "mounting";
+  // This screen's HITL driver controller (registered on mount under the driver).
+  let driverCtrl: DriverCaptureController | null = null;
+  // The live capture's renegotiation, for the HITL driver's `renegotiate` command.
+  let driverRenegotiate: ((opts: { symbols?: 2 | 4; bitPeriodMs?: number; brightness?: number }) => Promise<void>) | null =
+    null;
 
   function client() {
     return appState.client;
@@ -1247,6 +1258,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       let lastAmbient: number | null = null;
       const skipProbe = profileRun?.skipProbe === true;
       if (!skipProbe) guideEl.textContent = "Measuring light…";
+      driverPhase = "probe";
       if (!skipProbe) await new Promise<void>((resolve) => {
         const deadline = setTimeout(resolve, 2500);
         let t0 = -1;
@@ -1307,6 +1319,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       };
 
       abandonIfDisposed();
+      driverPhase = "clock sync";
       await c.syncClock(4);
       // Per-channel capture whose first stage codes only a prefix (the curtain):
       // the device transmits just [0, ledCount) while capturing, so a channel
@@ -1316,7 +1329,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       const stage0 = channelPlan?.stages[0];
       const blankFirst = channelPlan !== null && stage0 !== undefined && stage0.ledCount < channelPlan.total;
       abandonIfDisposed();
+      driverPhase = "start_mapping";
       const started = await c.startMapping(ledCount, blankFirst ? { ...config, brightness: 0 } : config);
+      driverPhase = "capturing";
       mappingStarted = true;
       abandonIfDisposed();
       if (calibrateId !== null) startCalibrationUi(c);
@@ -1587,11 +1602,36 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
                   (scn ? ` clip ${pct(scn.clipFrac)}` : "")
                 : `LED ${br}%`) + expLine;
             driverDecodeStats = {
-              ids: s.uniqueIds.size,
+              // Ids decoded this RUN: a renegotiation rebuilds the pipeline (and its
+              // per-pipeline uniqueIds), but what was decoded stays decoded.
+              ids: decodedIds.size,
               total: params.ledCount,
               tracks: s.tracks,
               observations: localDetections.length,
               perf: ps,
+              // Why a decode is stuck, for the HITL journey's timeout message.
+              decoder: {
+                sync: params.syncPattern ?? "on_off",
+                symbols: params.symbols,
+                bitPeriodMs: params.bitPeriodMs,
+                cycleFrames: params.cycleFrames,
+                frameIntervalMs: monitor.frameIntervalMs(),
+                renegotiations,
+                blobs: blobs.length,
+                cycles: s.cyclesCompleted,
+                records: s.recordsEmitted,
+                alignMs: Math.round(s.alignShiftMs),
+                rejectedSync: s.rejectedSync,
+                rejectedGaps: s.rejectedGaps,
+                rejectedFec: s.rejectedFec,
+                rejectedLowConf: s.rejectedLowConf,
+                rejectedUnconfirmed: s.rejectedUnconfirmed,
+                pilotCycles: s.pilotCycles,
+                delimiterMisses: s.delimiterMisses,
+                phaseK: s.phaseK,
+                phaseRejects: s.phaseRejects,
+                rejectedPhaseUnlocked: s.rejectedPhaseUnlocked,
+              },
             };
             hudStats.textContent =
               `decoded ${s.uniqueIds.size}/${params.ledCount} ids · ${s.tracks} tracks · ` +
@@ -1616,6 +1656,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
                   `blobs=${blobs.length} align=${s.alignShiftMs.toFixed(0)}ms ` +
                   `obs=${localDetections.length} clipped=${truncatedFrames} shed=${shedFrames} ` +
                   `bit=${params.bitPeriodMs}ms sym=${params.symbols}` +
+                  (isStaggered(params)
+                    ? ` pilot k=${s.phaseK ?? "-"} cyc=${s.pilotCycles} miss=${s.delimiterMisses} ` +
+                      `unlocked=${s.rejectedPhaseUnlocked} phrej=${s.phaseRejects} fec=${s.rejectedFec} ` +
+                      `lowconf=${s.rejectedLowConf}`
+                    : "") +
+                  ` reneg=${renegotiations}` +
                   (pop ? ` sat=${pop.satFrac.toFixed(2)} medI=${pop.medianIntensity.toFixed(2)}` : "");
               console.info(diag);
               nativeLog(diag);
@@ -1863,7 +1909,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             if (ps.codeParams.symbols !== params.symbols) channelQuality.resetYield();
             params = ps.codeParams;
             epoch = ps.patternClockEpoch;
+            renegotiations++;
             pipeline = makePipeline(params, epoch);
+            // The player now plays the new code book from the restamped epoch; the
+            // synthetic scene must too, or it keeps rendering the old code (a symbol
+            // switch then never decodes again — every later window misreads).
+            syntheticSource?.setCode(params, epoch, (t) => c.clock.toServerTime(t));
             pipeline.updateSolved(liveLeds);
             const pl = pipeline;
             runLink?.attachDecoder(() => pl.stats);
@@ -1878,6 +1929,18 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             renegotiating = false;
           });
       };
+      driverRenegotiate = (opts) =>
+        new Promise<void>((resolve, reject) => {
+          if (!capturing) {
+            reject(new Error("the capture is not running"));
+            return;
+          }
+          const t = setTimeout(() => reject(new Error("renegotiation was not applied")), 15000);
+          applyReconfigure(opts, () => {
+            clearTimeout(t);
+            resolve();
+          });
+        });
 
       // What the run is using NOW goes into the profile a success records (the
       // start-of-run snapshot missed live diffuse / stride / exposure changes).
@@ -2284,7 +2347,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       driverSolveReject?.(
         new Error(
           solverAgent.available
-            ? "nothing to solve — no LEDs decoded from the synthetic scene"
+            ? "nothing to solve — no LEDs decoded from the synthetic scene" +
+                ` (decoder ${JSON.stringify(driverDecodeStats.decoder ?? null)})`
             : "the in-browser solver failed to load",
         ),
       );
@@ -2795,8 +2859,15 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // Under the HITL driver, expose a controller so the harness can end the
       // capture and await the solved map (see driver/harness.ts finishCapture).
       if (driverActive()) {
-        registerDriverCapture({
-          stats: () => driverDecodeStats,
+        driverCtrl = {
+          stats: () => ({ ...driverDecodeStats, phase: driverPhase }),
+          renegotiate: async (opts) => {
+            // The capture starts (start_mapping) a moment after the screen mounts.
+            const by = Date.now() + 20000;
+            while (driverRenegotiate === null && Date.now() < by) await new Promise((r) => setTimeout(r, 100));
+            if (driverRenegotiate === null) throw new Error("no capture running to renegotiate");
+            await driverRenegotiate(opts);
+          },
           cancel,
           finish: () =>
             new Promise<DriverCaptureResult>((resolve, reject) => {
@@ -2804,7 +2875,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
               driverSolveReject = reject;
               void stopCapture();
             }),
-        });
+        };
+        registerDriverCapture(driverCtrl);
       }
       void startCapture();
     },
@@ -2814,7 +2886,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // end the device's mapping session too, as Cancel does — otherwise it
       // keeps playing the code and the next screen finds it mid-capture.
       if (capturing) void client()?.stopMappingNoSolve().catch(() => undefined);
-      if (driverActive()) registerDriverCapture(null);
+      // Only our own: a newer capture screen may already have registered.
+      if (driverActive() && driverCapture() === driverCtrl) registerDriverCapture(null);
       driverSolveReject?.(new Error("capture screen unmounted before solve"));
       driverSolveResolve = null;
       driverSolveReject = null;

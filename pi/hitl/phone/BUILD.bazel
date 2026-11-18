@@ -227,6 +227,13 @@ py_test(
 )
 
 py_test(
+    name = "mock_device_test",
+    srcs = ["mock_device_test.py"],
+    imports = ["."],
+    deps = [":phone"],
+)
+
+py_test(
     name = "driver_server_test",
     srcs = ["driver_server_test.py"],
     imports = ["."],

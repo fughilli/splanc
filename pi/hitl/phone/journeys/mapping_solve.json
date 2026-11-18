@@ -1,15 +1,19 @@
 {
   "name": "mapping_solve",
   "description": "Full deep mapping: drive the real capture screen with the synthetic camera AND synthetic IMU (a body-frame inertial stream consistent with the same pose arc), let detections + IMU accumulate over the sweep, then run the real on-device VIO solve and assert a solved map — LED positions actually recovered, end to end through the app. Needs a connected device.",
-  "inputs": { "led_count": 24, "capture_ms": 9000 },
+  "inputs": { "led_count": 24, "capture_ms": 9000, "max_capture_ms": 45000 },
   "steps": [
     { "runFlow": "connect" },
     { "do": "openCapture", "with": { "ledCount": "${led_count}" } },
     {
-      "description": "let the synthetic arc + IMU accumulate, then end + run the VIO solve",
+      "description": "let the synthetic arc + IMU accumulate (and every LED decode, up to max_capture_ms), then end + run the VIO solve",
       "do": "finishCapture",
-      "with": { "captureMs": "${capture_ms}" },
-      "timeout": 120,
+      "with": {
+        "captureMs": "${capture_ms}",
+        "minIds": "${led_count}",
+        "maxCaptureMs": "${max_capture_ms}"
+      },
+      "timeout": 150,
       "expect": { "mapId": "present", "solved": "present" }
     }
   ]

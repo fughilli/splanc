@@ -251,7 +251,18 @@ async function handle(msg: Incoming): Promise<unknown> {
     // SOLVED map (how many LED positions were actually recovered). ----------------
     case "openCapture": {
       const leds = Number(p.ledCount ?? 0);
+      // Wait for THIS navigation's capture screen. The previous one (a cancelled
+      // capture) unmounts only on a later hashchange; on a slow phone the next
+      // command would otherwise drive the old, stopped capture's controller.
+      const prev = driverCapture();
       driverRouter?.navigate(leds > 0 ? `/capture?leds=${leds}` : "/capture");
+      const by = Date.now() + 20000;
+      while (Date.now() < by && (driverCapture() === null || driverCapture() === prev)) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      if (driverCapture() === null || driverCapture() === prev) {
+        throw new Error("the capture screen did not mount");
+      }
       return { route: location.hash };
     }
     case "captureStats": {
@@ -275,19 +286,49 @@ async function handle(msg: Incoming): Promise<unknown> {
           return st as unknown as Json;
         }
         if (Date.now() >= deadline) {
-          throw new Error(`decode timeout: ${st.ids}/${minIds} ids after ${p.timeoutMs ?? 30000}ms`);
+          throw new Error(
+            `decode timeout: ${st.ids}/${minIds} ids after ${p.timeoutMs ?? 30000}ms` +
+              ` (phase ${st.phase ?? "?"}, tracks ${st.tracks}, decoder ${JSON.stringify(st.decoder ?? null)})`,
+          );
         }
         await new Promise((r) => setTimeout(r, 250));
       }
     }
+    case "renegotiate": {
+      // Mid-capture code renegotiation, exactly as the app's own servos do it
+      // (configure → new code book + restamped epoch → rebuilt decoder).
+      const ctrl = driverCapture();
+      if (!ctrl) throw new Error("no capture screen mounted — send openCapture first");
+      const opts: { symbols?: 2 | 4; bitPeriodMs?: number; brightness?: number } = {};
+      if (p.symbols === 2 || p.symbols === 4) opts.symbols = p.symbols;
+      if (typeof p.bitPeriodMs === "number") opts.bitPeriodMs = p.bitPeriodMs;
+      if (typeof p.brightness === "number") opts.brightness = p.brightness;
+      await ctrl.renegotiate(opts);
+      return { applied: true, ...(ctrl.stats() as unknown as Record<string, Json>) };
+    }
     case "cancelCapture": {
-      await driverCapture()?.cancel();
+      const ctrl = driverCapture();
+      await ctrl?.cancel();
+      // cancel() navigates away; wait until that screen has unmounted (its
+      // controller unregistered) so the next journey can't reach it.
+      const by = Date.now() + 10000;
+      while (ctrl && driverCapture() === ctrl && Date.now() < by) await new Promise((r) => setTimeout(r, 100));
       return { cancelled: true };
     }
     case "finishCapture": {
       // Give the ~6 s synthetic arc time to render enough parallax before solving.
       const dwellMs = Number(p.captureMs ?? 7000);
       await new Promise((r) => setTimeout(r, dwellMs));
+      // Then, optionally, keep capturing until `minIds` ids have decoded (bounded by
+      // `maxCaptureMs` from the start): a slow phone, or a mid-capture code
+      // renegotiation that restarts the decoder, can still hold no records when
+      // the dwell ends, and solving then has nothing to solve.
+      const minIds = Number(p.minIds ?? 0);
+      const captureDeadline = Date.now() - dwellMs + Number(p.maxCaptureMs ?? dwellMs);
+      while (minIds > 0 && Date.now() < captureDeadline && !driverCaptureError()) {
+        if ((driverCapture()?.stats().ids ?? 0) >= minIds) break;
+        await new Promise((r) => setTimeout(r, 250));
+      }
       const error = driverCaptureError();
       if (error) throw new Error(`capture startup failed: ${error}`);
       const ctrl = driverCapture();
