@@ -423,6 +423,12 @@ export const RELAY_PATHS = new Set([
   "/bridge/register", "/bridge/connect", "/live", "/bugs", "/feedback", "/feedback/status",
   "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp",
   "/.well-known/oauth-authorization-server", "/.well-known/openid-configuration",
+  // Splanc AI credits (agent/relay/src/billing, docs/design/ai-billing.md). The
+  // relay answers 503 on all of them until billing is enabled there. Stripe's
+  // webhook and the admin route use the workers.dev address directly.
+  "/ai/v1/messages", "/billing/account", "/billing/age", "/billing/balance",
+  "/billing/checkout", "/billing/consent", "/billing/pricing", "/billing/statement",
+  "/billing/purchase/apple",
 ]);
 
 export function relayRoute(request, url, env) {
