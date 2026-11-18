@@ -398,7 +398,7 @@ def mesh_chart(agg, rtts, phase, label, nodes, roster, path):
     names = [node_label(roster, n) for n in nodes]
     for ax, title, fn, vmin, vmax in (
         (axes[0], "Flood delivery (%)", lambda a: a[0] / a[1] if a[1] else None, 0.5, 1.0),
-        (axes[1], "Mean hops", lambda a: a[2] / a[0] if a[0] else None, 0, 3),
+        (axes[1], "Mean relays (0 = direct)", lambda a: a[2] / a[0] if a[0] else None, 0, 3),
     ):
         ax.grid(False)
         m = [[None] * len(nodes) for _ in nodes]
@@ -526,7 +526,7 @@ def main():
         charts.append(
             (
                 f,
-                f"Phase {ph} {labels.get(ph, '')}: real-mesh flood delivery and hop count per "
+                f"Phase {ph} {labels.get(ph, '')}: real-mesh flood delivery and relay count (0 = direct) per "
                 "origin/receiver, and ping round trips from the collector.",
             )
         )
@@ -661,7 +661,7 @@ def main():
         lines += [
             f"## Mesh flood, phase {ph}{' — ' + labels[ph] if ph in labels else ''}",
             "",
-            "| origin→receiver | delivered | mean hops | hops min..max |",
+            "| origin→receiver | delivered | mean relays | relays min..max |",
             "| --- | --- | --- | --- |",
         ]
         for (p, o, r), v in sorted(rows):
@@ -677,7 +677,7 @@ def main():
                 by[r.node].append(r)
             lines += [
                 "",
-                "| ping to | replies | RTT p50 | p90 | max | hops out/back |",
+                "| ping to | replies | RTT p50 | p90 | max | relays out/back |",
                 "| --- | --- | --- | --- | --- | --- |",
             ]
             for n, v in sorted(by.items()):

@@ -905,7 +905,15 @@ void mesh_loop(uint32_t t) {
   FmApp a;
   MApp m;
   while (fm_next(&a, (uint8_t *)&m, sizeof(m)))
-    if (a.len >= 12 && m.magic[0] == 'F' && m.magic[1] == 'M') mesh_app(a, m);
+    if (a.len >= 12 && m.magic[0] == 'F' && m.magic[1] == 'M') {
+      mesh_app(a, m);
+    } else if (a.len == 4 && a.origin < 256) {
+      // `pimesh node` (a Pi on the same mesh) floods its app seq as a bare u32.
+      uint32_t seq;
+      memcpy(&seq, &m, 4);
+      MApp f = {{'F', 'M'}, M_FLOOD, (uint8_t)a.origin, seq, 0, 0, 0, {}};
+      mesh_app(a, f);
+    }
   if (g_cfg.quiet) return;
   if ((int32_t)(t - next_flood) >= 0) {
     next_flood = t + 900 + esp_random() % 200;
@@ -1431,6 +1439,19 @@ void loop() {
   if ((int32_t)(t - next_win) >= 0) {
     if (next_win) close_window();
     next_win = t + g_cfg.win_s * 1000;
+  }
+  // RX watchdog: once (rig dry run, ch 1) a node went deaf for minutes while still sending.
+  // Hearing none of our frames for 60 s restarts the radio (a lone node just restarts it
+  // once a minute, ~0.1 s off air).
+  static uint32_t last_seen_n = 0, last_seen_ms = 0, rx_restarts = 0;
+  if (g_seen.load() != last_seen_n || !last_seen_ms) {
+    last_seen_n = g_seen.load();
+    last_seen_ms = t;
+  } else if (g_cfg.id && t - last_seen_ms > 60000) {
+    rx_restarts++;
+    out("E,rx watchdog: nothing heard for 60 s, restarting the radio (%lu)\n", (unsigned long)rx_restarts);
+    apply_mac_and_channel();
+    last_seen_ms = t;
   }
   if ((int32_t)(t - next_stat) >= 0) {
     next_stat = t + 30000;
