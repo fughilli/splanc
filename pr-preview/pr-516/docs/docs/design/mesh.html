@@ -2682,8 +2682,9 @@ or a busy relay.</p>
 <ul class="simple">
 <li><p><strong>Delivery</strong> under the recommendation drops only during the 2.5 s before the block. After
 it, no forgery reaches anyone.</p></li>
-<li><p><strong>Local blocking is harmful.</strong> An honest relay that forwards forgeries is blocked by
-its neighbours. It ships off.</p></li>
+<li><p><strong>Local blocking is harmful.</strong> An honest relay that forwards forgeries gets blocked by its
+neighbours. Local blocks also stop the forgeries before the gateway has enough evidence to
+name the forger, so the forger is never removed.</p></li>
 <li><p><strong>Attacks on the quarantine itself:</strong></p>
 <ul>
 <li><p><em>One liar fabricating reports:</em> never reaches the 2-witness quorum, so no block. Reports
@@ -2720,6 +2721,56 @@ again after.</p></li>
 ignored for a minute. Nothing worse happens, because only the admin can remove a fixture.</p></li>
 </ul>
 <p><img alt="containing an insider: delivery, latency, collateral" src="docs/design/mesh/tree-quarantine.png" /></p>
+<p><strong>What the admin sees (Q26, decided).</strong> When the gateway blocks a fixture, the app first
+shows the evidence and only then offers removal (rotation, §7.6). Nothing is removed
+automatically. The gateway sends the app a <code class="docutils literal notranslate"><span class="pre">MeshQuarantine</span></code> event, and keeps the latest per
+blocked fixture in <code class="docutils literal notranslate"><span class="pre">MeshStatus</span></code> so an app that connects later sees it too:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Content</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">node</span></code>, <code class="docutils literal notranslate"><span class="pre">key_hash</span></code></p></td>
+<td><p>The blocked fixture (node id, device-key hash: the app’s device list names it)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">blocked_at</span></code>, <code class="docutils literal notranslate"><span class="pre">until</span></code></p></td>
+<td><p>Mesh time the block started and ends (60 s; renewed if the forging continues)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">forgeries</span></code></p></td>
+<td><p>The forgeries it was a suspect in (≥ 3): each with its interval, the mesh time of the first report, and the witnesses</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">witnesses</span></code></p></td>
+<td><p>Per forgery, each side witness: reporter node id, its RSSI-consistency flag, the report’s mesh time. Only side witnesses count toward the quorum of 2</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">independent</span></code></p></td>
+<td><p>Distinct reporters across all its forgeries (what the app headlines: “named by N fixtures, M times”)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">own_account</span></code></p></td>
+<td><p>What the blocked fixture itself reported for those forgeries: silent, or the upstream it named, and why that did not clear it (no witness, or the chain led back to it)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">protest</span></code></p></td>
+<td><p>Whether the blocked fixture says it is being impersonated: frames under its id it did not send (T5), with their count and RSSI against its own</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">lies</span></code></p></td>
+<td><p>Reports from any fixture that the gateway proved false (about genuine packets), by reporter: a liar shows up here</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The app’s view:</p>
+<ul class="simple">
+<li><p><strong>Headline:</strong> “Fixture X sent forged live moves: named by N fixtures in M forgeries.”</p></li>
+<li><p><strong>Details:</strong> the witness list with timestamps, and the fixture’s own account.</p></li>
+<li><p><strong>A protest:</strong> if the fixture says it is being impersonated, the app says so prominently
+and suggests checking which fixture is near it, rather than removing it.</p></li>
+<li><p><strong>Actions:</strong> “Remove fixture” (rotation) and “Keep” (the block lapses).</p></li>
+</ul>
+<p>The gateway’s <code class="docutils literal notranslate"><span class="pre">Forensics</span></code> keeps 6 forgeries × 24 witnesses, which covers this. The protest
+field needs T5, since a fixture can only notice frames under its own id once the link-layer
+source reaches the stack. Until then <code class="docutils literal notranslate"><span class="pre">protest</span></code> reads “unknown”.</p>
 </section>
 <section id="what-remains-unresolvable">
 <h3>7.10 What remains unresolvable<a class="headerlink" href="#what-remains-unresolvable" title="Link to this heading">¶</a></h3>
@@ -3611,8 +3662,8 @@ ones that depend on unknown hardware behaviour.</p>
 <td><p></p></td>
 </tr>
 <tr class="row-even"><td><p><strong>M8</strong></p></td>
-<td><p>App: member list via gateway, target picker in live control and effects, mesh screen, admin secret export/import (copy, QR, file, backup)</p></td>
-<td><p>web unit tests + manual run</p></td>
+<td><p>App: member list via gateway, target picker in live control and effects, mesh screen, admin secret export/import (copy, QR, file, backup); the quarantine evidence view (Q26: <code class="docutils literal notranslate"><span class="pre">MeshQuarantine</span></code> from the gateway, witnesses, own account, protest; “Remove” and “Keep”)</p></td>
+<td><p>web unit tests + manual run; protest needs T5</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>M8b</strong></p></td>
 <td><p>Bridge: hub mesh route (<code class="docutils literal notranslate"><span class="pre">hub.ts</span></code>) through one gateway, admin secret in the bridge config, <code class="docutils literal notranslate"><span class="pre">list_players</span></code> via gateways</p></td>
@@ -3935,8 +3986,7 @@ new chain.</p></li>
 </ul>
 <p><strong>New (2026-11-18):</strong></p>
 <ul class="simple">
-<li><p><strong>Q25.</strong> Investigated: auto-quarantine by member reports and a gateway quorum (§7.9).
-Recommended:</p>
+<li><p><strong>Q25.</strong> Decided: adopt gateway-quorum auto-quarantine (§7.9).</p>
 <ul>
 <li><p><strong>Detection:</strong> a forger is blocked mesh-wide in 2.5 s, with no honest fixture blocked by
 one liar. Delivery under attack is 95.5–96 % (68 % without), at 0.4–0.85 % airtime.</p></li>
@@ -3947,9 +3997,10 @@ fixture a 60 s block; only the admin removes a fixture.</p></li>
 </ul>
 <p><strong>New (2026-11-18):</strong></p>
 <ul class="simple">
-<li><p><strong>Q26.</strong> When the gateway blocks a fixture and alerts the admin, should the app offer
-removal in one tap? Or should it first show the evidence: who reported, and whether the
-named fixture itself reports being impersonated (a spoof protest, T5)?</p></li>
+<li><p><strong>Q26.</strong> Decided: on a quarantine the app shows the evidence first, then offers removal:
+who reported, how many independent witnesses, timestamps, and whether the named fixture
+says it is being impersonated. The gateway sends <code class="docutils literal notranslate"><span class="pre">MeshQuarantine</span></code> (§7.9); the protest needs
+T5.</p></li>
 </ul>
 </section>
 <section id="sources">
