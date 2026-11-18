@@ -3,6 +3,8 @@
 Every Splanc agent can file a bug against
 [fughilli/splanc](https://github.com/fughilli/splanc) with one shared tool, `file_bug`.
 
+When the *agent itself* misbehaved (it claimed a send that didn't happen, made the wrong effect, got stuck), a report holds the user's own conversation and code, so it goes to a private store instead: see [agent-feedback.md](agent-feedback.md) (the app's thumbs-down, and `file_bug` with `submit: "private"` on the hub).
+
 ## Where it is
 
 | Agent                                                                       | Where the tool is defined                                      | Diagnostics                                                       | Direct filing                                              |
