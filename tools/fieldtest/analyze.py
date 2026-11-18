@@ -489,6 +489,7 @@ def main():
                 dists[(ph, x, y)] = m
     links, series = build(ds)
     labels = ds.phase_labels()
+    labels.setdefault(0, "setup (before the first phase marker)")
     nodes = sorted({k[1] for k in links if k[2] != "*"} | {k[2] for k in links if k[2] != "*"})
     rates = sorted({k[3] for k in links}, key=rate_key)
     phases = sorted({k[0] for k in links})
