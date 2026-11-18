@@ -55,7 +55,7 @@ interface FrameEvent {
 interface CameraBridgePlugin {
   start(): Promise<{ width: number; height: number }>;
   stop(): Promise<void>;
-  setDetectParams(opts: { threshold?: number; downscale?: number }): Promise<void>;
+  setDetectParams(opts: { threshold?: number; downscale?: number; adaptive?: boolean }): Promise<void>;
   log(opts: { message: string }): Promise<void>;
   saveSessionLog(opts: { name: string; json: string }): Promise<{ path: string; bytes: number }>;
   setExposure(opts: { target: number; maxExposureMs?: number }): Promise<{
@@ -201,7 +201,9 @@ export class NativeCaptureSource implements CaptureSource {
   /** Push the detector's live threshold down to the native reduction. The threshold
    * servo retunes it as blob counts move, and the native pass must use the same
    * value or the servo is reacting to counts it isn't actually controlling. */
-  setDetectParams(p: { threshold?: number; downscale?: number }): void {
+  /** `adaptive`: diffuse mode's adaptive detector (AdaptiveDiffuse.swift, the
+   * port of cv/diffuseDetect.ts) instead of the threshold. */
+  setDetectParams(p: { threshold?: number; downscale?: number; adaptive?: boolean }): void {
     if (!this.running) return;
     void cameraBridge().setDetectParams(p);
   }

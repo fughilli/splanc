@@ -92,6 +92,8 @@ export class MediaStreamCaptureSource implements CaptureSource {
           facingMode: { ideal: "environment" },
           width: { ideal: 1280 },
           height: { ideal: 720 },
+          // Ask for 60: short code windows need the frames (BitRatePlanner).
+          frameRate: { ideal: 60 },
         },
       });
     } catch (e) {
@@ -113,6 +115,33 @@ export class MediaStreamCaptureSource implements CaptureSource {
   private async applyExposure(): Promise<void> {
     if (this.opts.exposure === undefined) return;
     await this.setExposure(this.opts.exposure, this.opts.maxExposureMs);
+  }
+
+  /**
+   * Keep the camera on AUTO exposure, biased by `ev` stops (exposureCompensation,
+   * clamped to the camera's range). Unlike a manual lock this keeps the frame
+   * rate: measured on a Pixel 10 Pro Fold (Chrome 2026-11), ANY manual
+   * exposureTime drops the camera to 30 fps and re-requesting 60 does not
+   * reliably bring it back, while AE at -4 EV holds 60 fps at a ~1 ms-equivalent
+   * exposure in a lit room. Best effort, like setExposure; resolves to whether
+   * the bias was applied.
+   */
+  async setExposureBias(ev: number): Promise<boolean> {
+    const track = this.stream?.getVideoTracks()[0];
+    const caps = track?.getCapabilities?.() as (MediaTrackCapabilities & { exposureCompensation?: { min: number; max: number } }) | undefined;
+    if (!track || !caps?.exposureCompensation) {
+      this.exposureApplied = "exposure bias unsupported by this camera";
+      return false;
+    }
+    const comp = Math.min(caps.exposureCompensation.max, Math.max(caps.exposureCompensation.min, ev));
+    try {
+      await track.applyConstraints({ advanced: [{ exposureMode: "continuous", exposureCompensation: comp } as MediaTrackConstraintSet] });
+      this.exposureApplied = `auto exposure, bias ${comp.toFixed(2)} EV`;
+      return true;
+    } catch (e) {
+      this.exposureApplied = `bias failed: ${e instanceof Error ? e.message : e}`;
+      return false;
+    }
   }
 
   /** Re-lock the camera exposure to `target01` (0 = shortest, 1 = longest).

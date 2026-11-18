@@ -69,11 +69,17 @@ final class FrameReducer {
     private var idxBuf = [UInt32](repeating: 0, count: FrameReducer.maxSparsePixels)
     private var pxBuf = [UInt8](repeating: 0, count: FrameReducer.maxSparsePixels * 4)
     private var measureBuf = [UInt8]()
+    /// Diffuse mode's adaptive detector (AdaptiveDiffuse.swift), used instead of
+    /// the threshold when `adaptive` is set.
+    private let adaptiveDetector = AdaptiveDiffuse()
+    /// The adaptive detector's last noise floor, [0,1] luma (diagnostics).
+    var lastAdaptiveFloor: Float { adaptiveDetector.lastFloor }
 
     func reduce(
         _ buffer: CVPixelBuffer,
         downscale: Int,
         threshold: Double,
+        adaptive: Bool = false,
         measureWidth: Int,
         wantMeasure: Bool
     ) -> Reduced? {
@@ -99,6 +105,29 @@ final class FrameReducer {
         var count = 0
         var truncated = false
 
+        if adaptive {
+            // Diffuse capture: the adaptive detector replaces the threshold (same
+            // sparse encoding, so JS runs the same CCL on it).
+            idxBuf.withUnsafeMutableBufferPointer { idxOut in
+                pxBuf.withUnsafeMutableBufferPointer { pxOut in
+                    adaptiveDetector.run(bgra: src, srcW: srcW, srcH: srcH, bytesPerRow: stride, ds: ds,
+                                         params: AdaptiveDiffuse.Params()) { i, r, g, b, a in
+                        if count >= cap {
+                            truncated = true
+                            return false
+                        }
+                        idxOut[count] = UInt32(i).littleEndian
+                        let po = count * 4
+                        pxOut[po] = r
+                        pxOut[po + 1] = g
+                        pxOut[po + 2] = b
+                        pxOut[po + 3] = a
+                        count += 1
+                        return true
+                    }
+                }
+            }
+        } else {
         idxBuf.withUnsafeMutableBufferPointer { idxOut in
             pxBuf.withUnsafeMutableBufferPointer { pxOut in
                 for y in 0..<h {
@@ -133,6 +162,7 @@ final class FrameReducer {
                     }
                 }
             }
+        }
         }
 
         let indices = idxBuf.withUnsafeBytes { Data($0.prefix(count * 4)) }

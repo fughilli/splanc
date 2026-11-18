@@ -216,6 +216,8 @@ ts_project(
             "tests/**/*.json",
         ],
         exclude = [
+            # Read at runtime from the test's data (tests/diffuseRope.test.ts), never imported.
+            "tests/testdata/diffuse_rope/**",
             "src/solver/spawn.ts",
             # Browser-only: import.meta worker URL / `self` — syntax-invalid or
             # meaningless under the CJS test compile (see their docstrings). The
@@ -271,6 +273,8 @@ _TEST_SOURCE_DATA = {
         ":kernel_golden_stagger16",
         ":kernel_golden_stagger16_sym4",
     ],
+    # Real diffused-rope frames + exact LED centres (tests/tools/build_diffuse_dataset.py).
+    "tests/diffuseRope.test.ts": glob(["tests/testdata/diffuse_rope/**"]),
 }
 
 # The kernel's staggered-pilot goldens, copied into this package (a js_test's
