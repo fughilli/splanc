@@ -7,7 +7,9 @@
  */
 
 import {
+  DEFAULT_OMITTED,
   FEEDBACK_REASONS,
+  OPT_IN_HINT,
   FEEDBACK_SECTIONS,
   sectionSummary,
   type FeedbackReason,
@@ -44,6 +46,7 @@ export function installAgentFeedbackStyles(): void {
 .afb-sec-text { flex: 1; min-width: 0; }
 .afb-sec-label { display: block; }
 .afb-sec-sum { display: block; color: var(--text-dim); font-size: var(--f-caption); }
+.afb-sec-hint { display: block; color: var(--accent); font-size: var(--f-caption); margin-top: 2px; }
 .afb-sec details { padding: 0 var(--sp-3) var(--sp-2); }
 .afb-sec summary { color: var(--text-dim); font-size: var(--f-caption); cursor: pointer; }
 .afb-pre { margin: var(--sp-1) 0 0; max-height: 180px; overflow: auto; white-space: pre-wrap; word-break: break-word;
@@ -109,7 +112,8 @@ export function openAgentFeedbackSheet(
     sheet.body.appendChild(root);
 
     const reasons = new Set<FeedbackReason>(opts.initialReasons ?? []);
-    const omit = new Set<FeedbackSectionId>();
+    // Conversation + effect code start OFF: the user opts in (owner decision).
+    const omit = new Set<FeedbackSectionId>(DEFAULT_OMITTED);
     let report: FeedbackReport | null = null;
     let building = 0;
 
@@ -174,8 +178,14 @@ export function openAgentFeedbackSheet(
       const sum = document.createElement("span");
       sum.className = "afb-sec-sum";
       text.append(label, sum);
+      if (DEFAULT_OMITTED.includes(s.id)) {
+        const hint = document.createElement("span");
+        hint.className = "afb-sec-hint";
+        hint.textContent = OPT_IN_HINT;
+        text.append(hint);
+      }
       const sw = Switch({
-        on: true,
+        on: !omit.has(s.id),
         label: `Include: ${s.label}`,
         onChange: (on) => {
           if (on) omit.delete(s.id);

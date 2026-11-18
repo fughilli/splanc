@@ -45,6 +45,13 @@ export const FEEDBACK_SECTIONS = [
 ] as const;
 export type FeedbackSectionId = (typeof FEEDBACK_SECTIONS)[number]["id"];
 
+/** Sections the report sheet starts with switched OFF (owner decision, #539):
+ * they hold the user's own words and code, so the user opts in to each. */
+export const DEFAULT_OMITTED: readonly FeedbackSectionId[] = ["conversation", "source"];
+
+/** The note shown next to the default-off sections' switches. */
+export const OPT_IN_HINT = "Including your conversation and the effect code helps us reproduce the problem.";
+
 /** Size caps (characters of JSON unless noted). */
 export const FEEDBACK_LIMITS = {
   /** The whole report as JSON: what the relay accepts. */
@@ -445,7 +452,12 @@ export function buildFeedbackReport(input: FeedbackInput): FeedbackReport {
         durationMs: t.durationMs,
         outcome: t.outcome,
         ...(t.error !== undefined ? { error: textOf(t.error) } : {}),
-        rounds: t.rounds.map((r) => ({ round: r.round, atMs: r.atMs, out: textOf(r.out) })),
+        // The model's text is the AI's reply: it rides with the conversation.
+        rounds: t.rounds.map((r) => ({
+          round: r.round,
+          atMs: r.atMs,
+          out: omit.has("conversation") ? (r.out ? "[left out with the conversation]" : "") : textOf(r.out),
+        })),
         tools: t.tools.slice(-FEEDBACK_LIMITS.toolCalls).map((c) => ({
           ...c,
           // Effect source inside tool inputs belongs to the "source" section.

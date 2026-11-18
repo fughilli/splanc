@@ -9,7 +9,9 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import {
+  DEFAULT_OMITTED,
   FEEDBACK_LIMITS,
+  OPT_IN_HINT,
   TRACE_SCHEMA,
   TurnHistory,
   TurnRecorder,
@@ -207,6 +209,26 @@ describe("buildFeedbackReport", () => {
     assert.match(inp["source"]!, /effect source omitted/);
     // The signature does not depend on what the user left out.
     assert.equal(r.signature, buildFeedbackReport(input()).signature);
+  });
+
+  test("the sheet's defaults: conversation and effect code start OFF (opt in), the rest on", () => {
+    assert.deepEqual([...DEFAULT_OMITTED], ["conversation", "source"]);
+    assert.match(OPT_IN_HINT, /conversation and the effect code helps us reproduce/);
+    const r = buildFeedbackReport(input({ omit: DEFAULT_OMITTED }));
+    assert.equal(r.sections.conversation, undefined);
+    assert.equal(r.sections.source, undefined);
+    assert.ok(r.sections.trace && r.sections.device && r.sections.applog);
+    assert.deepEqual(r.omitted, ["conversation", "source"]);
+    // Neither the user's words nor the effect code leak through other sections.
+    const s = JSON.stringify(r);
+    assert.ok(!s.includes("make it blue"), "the ask stays out");
+    assert.ok(!s.includes("calm blue"), "the AI's reply stays out of the trace too");
+    assert.ok(!s.includes("vec3(0,0,1)"), "the effect source stays out of tool inputs");
+    assert.deepEqual(r.flags, ["claimed_sent_not_sent"], "findings are still sent");
+    // Opting back in adds them.
+    const all = buildFeedbackReport(input({ omit: [] }));
+    assert.ok(all.sections.conversation && all.sections.source);
+    assert.equal(all.signature, r.signature);
   });
 
   test("stays under the size limit, noting what it cut", () => {

@@ -16,6 +16,12 @@
 #   pnpm dlx wrangler@4 secret put GITHUB_ISSUES_TOKEN --config wrangler.toml
 # Without it /bugs answers 503 not_configured and agents hand out issue links
 # (docs/design/agent-bug-reports.md).
+#
+# Agent feedback (POST /feedback, a private store) needs one more secret, any long
+# random string, which the triage CLI uses as SPLANC_FEEDBACK_TOKEN —
+#   pnpm dlx wrangler@4 secret put FEEDBACK_ADMIN_TOKEN --config wrangler.toml
+# Without it /feedback answers 503 not_configured and phones keep reports queued
+# (docs/design/agent-feedback.md).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
@@ -50,6 +56,13 @@ code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$url/mcp" -H 'content-ty
   echo "expected 401 from an unauthenticated /mcp, got $code" >&2
   exit 1
 }
+# Agent feedback: 400 (an empty report refused) = configured; 503 = no secret yet.
+fb="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$url/feedback" -H 'content-type: application/json' -d '{}')"
+case "$fb" in
+  400) echo "agent feedback: configured (/feedback refuses an empty report)" ;;
+  503) echo "agent feedback: NOT configured (set FEEDBACK_ADMIN_TOKEN, see the top of this script)" ;;
+  *) echo "agent feedback: unexpected $fb from /feedback" >&2 ;;
+esac
 echo "relay is up. MCP endpoint for connectors: $url/mcp"
 echo "public address (splanc.pages.dev forwards to this Worker, web/_worker.js): https://splanc.pages.dev/mcp"
 echo "run a bridge against it:  npx -y https://splanc.io/agent/splanc-agent.tgz bridge --relay $url"
