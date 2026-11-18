@@ -744,6 +744,7 @@ impl Flash for RamFlash {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Ev {
     Control { origin: NodeId, header: ControlHeader, inner: Vec<u8> },
+    LiveRejected { origin: NodeId, op_id: u32 },
     Packet { origin: NodeId, port: Port, body: Vec<u8>, admin: bool },
     Pending(PendingJoin),
     Joined { epoch: u8 },
@@ -758,6 +759,7 @@ impl From<Event<'_>> for Ev {
     fn from(e: Event<'_>) -> Ev {
         match e {
             Event::Control { origin, header, inner } => Ev::Control { origin, header, inner: inner.to_vec() },
+            Event::LiveRejected { origin, op_id } => Ev::LiveRejected { origin, op_id },
             Event::Packet { origin, port, body, admin } => Ev::Packet { origin, port, body: body.to_vec(), admin },
             Event::Pending(p) => Ev::Pending(p),
             Event::Joined { epoch } => Ev::Joined { epoch },
@@ -828,6 +830,8 @@ pub struct World {
     pub adaptive_hops: bool,
     /// Members at which live updates move to the broadcast authenticator, and back (Q19).
     pub live_auth: (u16, u16),
+    /// Apply-then-verify for authenticated live updates (Q22).
+    pub live_early: bool,
     /// Each device's flash for images (80 KiB; the 1.5 MB firmware runs raise it).
     pub flash_bytes: usize,
     /// How long the app's grants last; with `auto_renew` the app signs a renewal (same
@@ -857,6 +861,7 @@ impl World {
             hop_limit: 5,
             adaptive_hops: true,
             live_auth: (splanc_mesh::tree::TREE_ENTER, splanc_mesh::tree::TREE_EXIT),
+            live_early: true,
             flash_bytes: 80 * 1024,
             grant_ttl_s: 3600,
             auto_renew: true,
@@ -869,7 +874,7 @@ impl World {
     fn make_stack(&self, index: usize, id: NodeId, class: Class, counter_mark: u64) -> Stack {
         let port = SimPort { air: self.air.clone(), index };
         let fw_key = swarm_net::crypto::signing::p256_public_key(&FW_SECRET);
-        let cfg = StackConfig { firmware: 1, class, capacity_aware: self.capacity_aware, counter_mark, fw_key, hop_limit: self.hop_limit, adaptive_hops: self.adaptive_hops, live_auth: self.live_auth, ..StackConfig::default() };
+        let cfg = StackConfig { firmware: 1, class, capacity_aware: self.capacity_aware, counter_mark, fw_key, hop_limit: self.hop_limit, adaptive_hops: self.adaptive_hops, live_auth: self.live_auth, live_early: self.live_early, ..StackConfig::default() };
         let mut mac = [0x02, 0x5c, 0, 0, 0, 0];
         mac[4..].copy_from_slice(&id.to_be_bytes());
         MeshStack::new(id, mac, port, HostKey::from_seed(id as u64), TestRng(0xC0FFEE ^ id as u64 ^ counter_mark), cfg).expect("MTU")

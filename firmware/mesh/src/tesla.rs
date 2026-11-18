@@ -75,6 +75,26 @@ pub const BODY_MAX: usize = 64;
 /// A member re-asks for the chain this often while it has none.
 pub const REQ_RETRY_US: i64 = 1_000_000;
 
+/// Challenges a member makes per chain, ~1 s apart, keeping the tightest bound (Q24).
+pub const TRIES: u8 = 3;
+/// The one-way delivery latency `d` must also cover (p99 at 64-128 fixtures, §5.8).
+pub const LATENCY_MARGIN_US: u32 = 20_000;
+pub const D_MIN: u8 = 2;
+pub const D_MAX: u8 = 10;
+
+/// The disclosure delay that covers a member whose best round trip is `rtt_us` (Q24): the
+/// key of interval i must not be out before a packet from i reaches it, judged by its bound.
+pub const fn needed_d(rtt_us: u32, interval_us: u32) -> u8 {
+    let d = (rtt_us + LATENCY_MARGIN_US).div_ceil(interval_us) + 1;
+    if d < D_MIN as u32 {
+        D_MIN
+    } else if d > D_MAX as u32 {
+        D_MAX
+    } else {
+        d as u8
+    }
+}
+
 pub const T_TESLA_REQ: u8 = 0x44;
 pub const T_TESLA_SYNC: u8 = 0x45;
 
@@ -303,8 +323,8 @@ impl SyncBody {
     }
 }
 
-pub fn req_mac(pairwise: &[u8; 16], session: u32, node: NodeId, nonce: u64) -> [u8; 8] {
-    let h = hmac(pairwise, &[b"SMtreq1", &session.to_be_bytes(), &node.to_be_bytes(), &nonce.to_be_bytes()]);
+pub fn req_mac(pairwise: &[u8; 16], session: u32, node: NodeId, nonce: u64, rtt_us: u32) -> [u8; 8] {
+    let h = hmac(pairwise, &[b"SMtreq2", &session.to_be_bytes(), &node.to_be_bytes(), &nonce.to_be_bytes(), &rtt_us.to_be_bytes()]);
     let mut m = [0u8; 8];
     m.copy_from_slice(&h[..8]);
     m
@@ -314,7 +334,8 @@ pub fn req_mac(pairwise: &[u8; 16], session: u32, node: NodeId, nonce: u64) -> [
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TeslaMsg {
     /// Member → gateway: send me the chain, bound to this nonce.
-    Req { session: u32, node: NodeId, nonce: u64, mac: [u8; 8] },
+    /// `rtt_us`: the member's best round trip so far (0: none), for the gateway's `d` (Q24).
+    Req { session: u32, node: NodeId, nonce: u64, rtt_us: u32, mac: [u8; 8] },
     /// Gateway → member.
     Sync(SyncBody, [u8; 8]),
 }
@@ -323,8 +344,8 @@ impl TeslaMsg {
     pub fn encode(&self, out: &mut [u8]) -> Option<usize> {
         let mut w = W::new(out);
         match self {
-            TeslaMsg::Req { session, node, nonce, mac } => {
-                w.u8(T_TESLA_REQ).u32(*session).u16(*node).put(&nonce.to_be_bytes()).put(mac);
+            TeslaMsg::Req { session, node, nonce, rtt_us, mac } => {
+                w.u8(T_TESLA_REQ).u32(*session).u16(*node).put(&nonce.to_be_bytes()).u32(*rtt_us).put(mac);
             }
             TeslaMsg::Sync(s, mac) => {
                 w.u8(T_TESLA_SYNC);
@@ -338,7 +359,7 @@ impl TeslaMsg {
     pub fn decode(b: &[u8]) -> Option<TeslaMsg> {
         let mut r = R::new(b);
         let m = match r.u8()? {
-            T_TESLA_REQ => TeslaMsg::Req { session: r.u32()?, node: r.u16()?, nonce: u64::from_be_bytes(r.arr()?), mac: r.arr()? },
+            T_TESLA_REQ => TeslaMsg::Req { session: r.u32()?, node: r.u16()?, nonce: u64::from_be_bytes(r.arr()?), rtt_us: r.u32()?, mac: r.arr()? },
             T_TESLA_SYNC => {
                 let s = SyncBody {
                     session: r.u32()?,
@@ -365,6 +386,8 @@ pub struct VerifyStats {
     pub accepted: u32,
     /// Arrived after its key could have been disclosed (late, or a replay).
     pub unsafe_late: u32,
+    /// Claims an interval the gateway cannot have reached yet (only a forger sends these).
+    pub future: u32,
     pub bad_tag: u32,
     /// A disclosed key that does not hash back to the trusted one.
     pub bad_key: u32,
@@ -372,8 +395,15 @@ pub struct VerifyStats {
     /// Dropped from a full buffer.
     pub overflow: u32,
     pub wrong_chain: u32,
+    /// Applied on arrival (apply-then-verify), and of those, rolled back when the tag failed.
+    pub provisional: u32,
+    pub rolled_back: u32,
     pub hashes: u64,
 }
+
+/// After a provisional update fails verification, the member verifies before applying for
+/// this long: an insider gets at most one bounded glitch per cooldown (§7.9, Q22).
+pub const COOLDOWN_US: i64 = 10_000_000;
 
 #[derive(Clone, Copy)]
 struct Pending {
@@ -383,6 +413,17 @@ struct Pending {
     tag: [u8; TAG_LEN],
     len: u8,
     body: [u8; BODY_MAX],
+    applied: bool,
+}
+
+/// What a verifier tells its owner.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Out<'a> {
+    /// Render this update. `provisional`: applied on arrival, before its key is out
+    /// (apply-then-verify); it may still be rejected.
+    Apply { seq: u64, port: u8, body: &'a [u8], provisional: bool },
+    /// A provisional update failed verification: return to the last verified state.
+    Rejected { seq: u64, port: u8, body: &'a [u8] },
 }
 
 /// A member's view of the gateway's current chain.
@@ -398,7 +439,16 @@ pub struct Verifier {
     t0_us: i64,
     gw_at_reply_us: i64,
     pending: [Option<Pending>; PENDING],
+    /// Newest verified sequence, and newest verified sequence rendered.
     last_seq: u64,
+    shown_seq: u64,
+    /// Interval of the newest provisional update rendered. Provisional updates are ordered
+    /// by interval, not by sequence: a forger picks any sequence, but only an interval
+    /// inside the safe window, so a genuine update from a later interval overwrites it.
+    prov_interval: u16,
+    /// Apply-then-verify (Q22): render a safe update on arrival, verify when its key comes.
+    pub early: bool,
+    cool_until_us: i64,
     pub stats: VerifyStats,
 }
 
@@ -413,7 +463,7 @@ pub struct Challenge {
 impl Verifier {
     /// Accept a Sync for our challenge (MAC under the session's pairwise key).
     pub fn from_sync(ch: &Challenge, s: &SyncBody, mac: &[u8; 8], pairwise: &[u8; 16], me: NodeId, mesh_id: u32) -> Option<Verifier> {
-        if s.session != ch.session || s.nonce != ch.nonce || s.node != me || !ct_eq(&s.mac(pairwise), mac) || s.interval_us == 0 {
+        if s.session != ch.session || s.nonce != ch.nonce || s.node != me || !ct_eq(&s.mac(pairwise), mac) || s.interval_us == 0 || s.d == 0 {
             return None;
         }
         let gw_at_reply_us = s.gw_interval.saturating_sub(1) as i64 * s.interval_us as i64 + s.gw_into_us as i64;
@@ -428,20 +478,52 @@ impl Verifier {
             gw_at_reply_us,
             pending: [None; PENDING],
             last_seq: 0,
+            shown_seq: 0,
+            prov_interval: 0,
+            early: false,
+            cool_until_us: i64::MIN,
             stats: VerifyStats::default(),
         })
     }
 
+    pub fn disclose_delay(&self) -> u8 {
+        self.d
+    }
+
+    /// A later Sync for the same chain (best-of-N, Q24): keep whichever bound is tighter.
+    /// Returns whether it was.
+    pub fn rebound(&mut self, now_us: i64, other: &Verifier) -> bool {
+        if other.chain != self.chain || other.ctx != self.ctx {
+            return false;
+        }
+        if other.upper_interval(now_us) < self.upper_interval(now_us) || (other.upper_us(now_us) < self.upper_us(now_us)) {
+            self.t0_us = other.t0_us;
+            self.gw_at_reply_us = other.gw_at_reply_us;
+            return true;
+        }
+        false
+    }
+
+    /// The latest chain time (µs) the gateway can have reached at local time `now_us`.
+    fn upper_us(&self, now_us: i64) -> i64 {
+        let e = (now_us - self.t0_us).max(0);
+        self.gw_at_reply_us + e + e * DRIFT_PPM / 1_000_000
+    }
+
     /// The latest interval the gateway can be in at local time `now_us`.
     pub fn upper_interval(&self, now_us: i64) -> u32 {
-        let e = (now_us - self.t0_us).max(0);
-        let gw = self.gw_at_reply_us + e + e * DRIFT_PPM / 1_000_000;
-        (gw / self.interval_us as i64) as u32 + 1
+        (self.upper_us(now_us) / self.interval_us as i64) as u32 + 1
     }
 
     /// Would a packet from `interval` still be safe at local time `now_us`?
     pub fn safe(&self, interval: u32, now_us: i64) -> bool {
         interval > self.known_idx && self.upper_interval(now_us) < interval + self.d as u32
+    }
+
+    /// Is the member verifying before applying (cooling down after a rejected provisional
+    /// update, or apply-then-verify off)?
+    pub fn verify_first(&self, now_us: i64) -> bool {
+        !self.early || now_us < self.cool_until_us
     }
 
     /// A disclosed key: accept it if it hashes back to the trusted one.
@@ -463,16 +545,22 @@ impl Verifier {
         }
     }
 
-    /// A packet: buffer it if safe, take its disclosed key, and hand every packet whose key
-    /// is now known and whose tag checks to `deliver` (in sequence order).
-    pub fn on_packet(&mut self, now_us: i64, seq: u64, port: u8, a: &Auth, body: &[u8], deliver: &mut dyn FnMut(u64, u8, &[u8])) {
+    /// A packet: buffer it if safe (and, with apply-then-verify, apply it at once), take its
+    /// disclosed key, then settle every buffered packet whose key is now known: apply the
+    /// verified ones not yet applied, reject the provisional ones whose tag fails.
+    #[allow(clippy::too_many_arguments)]
+    pub fn on_packet(&mut self, now_us: i64, seq: u64, port: u8, a: &Auth, body: &[u8], out: &mut dyn FnMut(Out<'_>)) {
         if a.chain != self.chain {
             self.stats.wrong_chain += 1;
             return;
         }
         // The condition is checked on arrival, before the key it carries is taken.
         if body.len() <= BODY_MAX {
-            if !self.safe(a.interval as u32, now_us) {
+            if a.interval as u32 > self.upper_interval(now_us) {
+                // A genuine packet is never from an interval the gateway cannot have reached;
+                // a forger would pick one to keep its glitch on screen longer.
+                self.stats.future += 1;
+            } else if !self.safe(a.interval as u32, now_us) {
                 self.stats.unsafe_late += 1;
             } else if seq <= self.last_seq || self.pending.iter().flatten().any(|p| p.seq == seq) {
                 self.stats.stale_seq += 1;
@@ -486,14 +574,20 @@ impl Verifier {
                 };
                 let mut b = [0u8; BODY_MAX];
                 b[..body.len()].copy_from_slice(body);
-                self.pending[slot] = Some(Pending { interval: a.interval, seq, port, tag: a.tag, len: body.len() as u8, body: b });
+                let apply = !self.verify_first(now_us) && a.interval >= self.prov_interval;
+                self.pending[slot] = Some(Pending { interval: a.interval, seq, port, tag: a.tag, len: body.len() as u8, body: b, applied: apply });
+                if apply {
+                    self.prov_interval = a.interval;
+                    self.stats.provisional += 1;
+                    out(Out::Apply { seq, port, body, provisional: true });
+                }
             }
         }
         self.on_key(a.disclosed as u32, &a.key);
-        self.release(deliver);
+        self.release(now_us, out);
     }
 
-    fn release(&mut self, deliver: &mut dyn FnMut(u64, u8, &[u8])) {
+    fn release(&mut self, now_us: i64, out: &mut dyn FnMut(Out<'_>)) {
         loop {
             let next = (0..PENDING).filter(|&i| self.pending[i].is_some_and(|p| (p.interval as u32) <= self.known_idx)).min_by_key(|&i| self.pending[i].map_or(u64::MAX, |p| p.seq));
             let Some(i) = next else { break };
@@ -504,6 +598,12 @@ impl Verifier {
             let body = &p.body[..p.len as usize];
             if !ct_eq(&tag(&k, self.ctx, self.chain, p.interval, p.seq, p.port, body), &p.tag) {
                 self.stats.bad_tag += 1;
+                if p.applied {
+                    // A forgery was on screen: undo it, and verify first for a while.
+                    self.stats.rolled_back += 1;
+                    self.cool_until_us = now_us + COOLDOWN_US;
+                    out(Out::Rejected { seq: p.seq, port: p.port, body });
+                }
                 continue;
             }
             if p.seq <= self.last_seq {
@@ -512,7 +612,12 @@ impl Verifier {
             }
             self.last_seq = p.seq;
             self.stats.accepted += 1;
-            deliver(p.seq, p.port, body);
+            if p.seq > self.shown_seq {
+                self.shown_seq = p.seq;
+                if !p.applied {
+                    out(Out::Apply { seq: p.seq, port: p.port, body, provisional: false });
+                }
+            }
         }
     }
 
@@ -564,7 +669,7 @@ mod tests {
             let body = [seq as u8; 20];
             let a = s.seal(t, C, seq, 16, &body).unwrap();
             // Arrives 5 ms later, on the member's clock (1 s behind).
-            v.on_packet(t + 5_000 - 1_000_000, seq, 16, &a, &body, &mut |q, _, b| got.push((q, b[0])));
+            v.on_packet(t + 5_000 - 1_000_000, seq, 16, &a, &body, &mut |o| if let Out::Apply { seq: q, body: b, .. } = o { got.push((q, b[0])) });
         }
         // Everything but the last packets (their keys not yet disclosed) delivered, in order.
         assert!(got.len() >= 17, "{}", got.len());
@@ -578,15 +683,15 @@ mod tests {
         let mut got = Vec::new();
         let t = 1_000_000;
         let real = s.seal(t, C, 1, 16, b"real").unwrap();
-        v.on_packet(t + 1_000, 1, 16, &real, b"real", &mut |q, _, b| got.push((q, b.to_vec())));
+        v.on_packet(t + 1_000, 1, 16, &real, b"real", &mut |o| if let Out::Apply { seq: q, body: b, .. } = o { got.push((q, b.to_vec())) });
         // Three intervals later the gateway discloses K_i for that interval.
         let later = s.seal(t + 3 * INTERVAL_US as i64, C, 2, 16, b"next").unwrap();
         assert_eq!(later.disclosed, real.interval);
         // An insider who heard it forges a packet "from" that interval, with the true key.
         let k = later.key;
         let forged = Auth { tag: tag(&k, C, real.chain, real.interval, 3, 16, b"evil"), ..real };
-        v.on_packet(t + 3 * INTERVAL_US as i64 + 1_000, 2, 16, &later, b"next", &mut |q, _, b| got.push((q, b.to_vec())));
-        v.on_packet(t + 3 * INTERVAL_US as i64 + 2_000, 3, 16, &forged, b"evil", &mut |q, _, b| got.push((q, b.to_vec())));
+        v.on_packet(t + 3 * INTERVAL_US as i64 + 1_000, 2, 16, &later, b"next", &mut |o| if let Out::Apply { seq: q, body: b, .. } = o { got.push((q, b.to_vec())) });
+        v.on_packet(t + 3 * INTERVAL_US as i64 + 2_000, 3, 16, &forged, b"evil", &mut |o| if let Out::Apply { seq: q, body: b, .. } = o { got.push((q, b.to_vec())) });
         assert_eq!(got, vec![(1, b"real".to_vec())]);
         // Rejected by the security condition (its interval's key is already out).
         assert_eq!(v.stats.unsafe_late, 1);
@@ -594,13 +699,13 @@ mod tests {
         let t2 = t + 10 * INTERVAL_US as i64;
         let a = s.seal(t2, C, 10, 16, b"ok").unwrap();
         let bad = Auth { tag: [0; TAG_LEN], ..a };
-        v.on_packet(t2 + 1_000, 11, 16, &bad, b"evil", &mut |_, _, _| {});
+        v.on_packet(t2 + 1_000, 11, 16, &bad, b"evil", &mut |_| {});
         let a2 = s.seal(t2 + 4 * INTERVAL_US as i64, C, 12, 16, b"x").unwrap();
-        v.on_packet(t2 + 4 * INTERVAL_US as i64 + 1_000, 12, 16, &a2, b"x", &mut |_, _, _| {});
+        v.on_packet(t2 + 4 * INTERVAL_US as i64 + 1_000, 12, 16, &a2, b"x", &mut |_| {});
         assert_eq!(v.stats.bad_tag, 1);
         // A disclosed key that is not on the chain is refused.
         let wrong = Auth { disclosed: a2.disclosed + 1, key: [7; KEY_LEN], ..a2 };
-        v.on_packet(t2 + 5 * INTERVAL_US as i64, 13, 16, &wrong, b"y", &mut |_, _, _| {});
+        v.on_packet(t2 + 5 * INTERVAL_US as i64, 13, 16, &wrong, b"y", &mut |_| {});
         assert_eq!(v.stats.bad_key, 1);
     }
 
@@ -625,12 +730,106 @@ mod tests {
         // dropped and counted, never delivered.
         let a = s.seal(now, C, 1, 16, b"a").unwrap();
         let mut got = 0;
-        v.on_packet(now + 1_000, 1, 16, &a, b"a", &mut |_, _, _| got += 1);
+        v.on_packet(now + 1_000, 1, 16, &a, b"a", &mut |o| if matches!(o, Out::Apply { .. }) { got += 1 });
         assert_eq!((got, v.stats.unsafe_late), (0, 1));
         // With an honest 10 ms round trip the same packet is safe.
         let (mut s2, v2) = setup(0, t0, t0 + 5_000, 3);
         let a2 = s2.seal(t0 + 10_000, C, 1, 16, b"a").unwrap();
         assert!(v2.safe(a2.interval as u32, t0 + 11_000));
+    }
+
+    /// Apply-then-verify (Q22): a safe update renders on arrival; genuine ones are then
+    /// verified silently; a forged one (an insider who cannot know K_i) is rejected when its
+    /// key arrives, and the member verifies first for COOLDOWN_US after that.
+    #[test]
+    fn apply_then_verify_renders_at_once_and_bounds_a_forgery() {
+        let (mut s, mut v) = setup(0, 1_000_000, 1_005_000, 3);
+        v.early = true;
+        let mut log: Vec<(i64, &'static str, u64)> = Vec::new();
+        let mut t = 1_100_000;
+        let mut forged_at: Option<i64> = None;
+        for seq in 1..=30u64 {
+            t += 33_000;
+            let a = s.seal(t, C, seq, 16, b"real").unwrap();
+            let now = t + 3_000;
+            v.on_packet(now, seq, 16, &a, b"real", &mut |o| match o {
+                Out::Apply { seq, provisional: true, .. } => log.push((now, "prov", seq)),
+                Out::Apply { seq, .. } => log.push((now, "late", seq)),
+                Out::Rejected { seq, .. } => log.push((now, "reject", seq)),
+            });
+            if seq == 10 || seq == 12 {
+                // An insider forges an update for the current interval (it knows the time and
+                // the disclosed keys, not K_i), sequence far ahead.
+                let f = Auth { tag: [0xAA; TAG_LEN], ..a };
+                let fs = 1_000 + seq;
+                forged_at.get_or_insert(now + 500);
+                v.on_packet(now + 500, fs, 16, &f, b"evil", &mut |o| match o {
+                    Out::Apply { seq, provisional: true, .. } => log.push((now + 500, "prov", seq)),
+                    Out::Apply { seq, .. } => log.push((now + 500, "late", seq)),
+                    Out::Rejected { seq, .. } => log.push((now + 500, "reject", seq)),
+                });
+            }
+        }
+        // Genuine 1..=12 render on arrival (3 ms after sending): the forgery's far-ahead
+        // sequence (1010) does not hold them back, and genuine 11 (next interval) overwrites
+        // it 32.5 ms after it appeared.
+        let prov: Vec<u64> = log.iter().filter(|e| e.1 == "prov" && e.2 < 1_000).map(|e| e.2).collect();
+        assert_eq!(prov, (1..=12).collect::<Vec<_>>());
+        let shown = log.iter().find(|e| e.2 == 1_010 && e.1 == "prov").expect("forgery shown").0;
+        let next = log.iter().find(|e| e.2 == 11).unwrap().0;
+        assert_eq!(next - shown, 32_500);
+        // Genuine 12 (t = 1.496 s, interval 75) discloses K_72, the forgery's interval: it is
+        // rejected 65.5 ms after it appeared, within (d + 1) intervals + one packet gap.
+        let gone = log.iter().find(|e| e.2 == 1_010 && e.1 == "reject").expect("forgery rejected").0;
+        assert_eq!(gone - shown, 65_500);
+        // Then the cooldown: the second forgery (1012) is never shown, and genuine 13.. are
+        // verified first (shown ~d intervals late): every one whose interval's key the last
+        // packet disclosed.
+        assert!(!log.iter().any(|e| e.2 == 1_012 && e.1 == "prov"));
+        let disclosed = s.interval_at(t).0 - 3;
+        let last = (13..=30u64).filter(|q| s.interval_at(1_100_000 + *q as i64 * 33_000).0 <= disclosed).max().unwrap();
+        let late: Vec<u64> = log.iter().filter(|e| e.1 == "late").map(|e| e.2).collect();
+        assert_eq!(late, (13..=last).collect::<Vec<_>>());
+        assert!(last >= 27);
+        assert_eq!(v.stats.rolled_back, 1);
+        let _ = forged_at;
+    }
+
+    /// A forger cannot buy a long glitch by claiming a future interval: the member drops
+    /// packets from intervals the gateway cannot have reached.
+    #[test]
+    fn a_future_interval_is_refused() {
+        let (mut s, mut v) = setup(0, 1_000_000, 1_005_000, 3);
+        v.early = true;
+        let now = 1_200_000;
+        let a = s.seal(now, C, 1, 16, b"x").unwrap();
+        let f = Auth { interval: a.interval + 10, tag: [1; TAG_LEN], ..a };
+        let mut shown = 0;
+        v.on_packet(now + 1_000, 2, 16, &f, b"evil", &mut |o| {
+            if matches!(o, Out::Apply { .. }) {
+                shown += 1;
+            }
+        });
+        assert_eq!((shown, v.stats.future), (0, 1));
+    }
+
+    /// Best-of-N challenges (Q24): a later, faster round trip tightens the bound.
+    #[test]
+    fn a_tighter_round_trip_rebounds_the_clock() {
+        let s = Signer::new(&[1; 16], 3, 0, INTERVAL_US, 3);
+        let ch = |nonce, t0| Challenge { session: 9, nonce, t0_us: t0 };
+        // First round trip 100 ms (gateway answered at t0 + 80 ms), second 10 ms.
+        let TeslaMsg::Sync(b1, m1) = s.sync(1_080_000, 9, 5, 1, &PW) else { unreachable!() };
+        let mut v = Verifier::from_sync(&ch(1, 1_000_000), &b1, &m1, &PW, 5, 7).unwrap();
+        let TeslaMsg::Sync(b2, m2) = s.sync(2_005_000, 9, 5, 2, &PW) else { unreachable!() };
+        let v2 = Verifier::from_sync(&ch(2, 2_000_000), &b2, &m2, &PW, 5, 7).unwrap();
+        let now = 2_010_000;
+        let before = v.upper_interval(now);
+        assert!(v.rebound(now, &v2));
+        let after = v.upper_interval(now);
+        // The first bound carried 80 ms of slack, the second 5 ms: 75 ms, 3.75 intervals.
+        assert_eq!(before - after, 4);
+        assert!(!v.rebound(now, &v2));
     }
 
     #[test]
@@ -652,7 +851,7 @@ mod tests {
         let mut b = [0u8; 80];
         let n = m.encode(&mut b).unwrap();
         assert_eq!(TeslaMsg::decode(&b[..n]), Some(m));
-        let r = TeslaMsg::Req { session: 9, node: 5, nonce: 42, mac: req_mac(&PW, 9, 5, 42) };
+        let r = TeslaMsg::Req { session: 9, node: 5, nonce: 42, rtt_us: 12_000, mac: req_mac(&PW, 9, 5, 42, 12_000) };
         let n = r.encode(&mut b).unwrap();
         assert_eq!(TeslaMsg::decode(&b[..n]), Some(r));
         let a = Auth { chain: 1, interval: 2, tag: [3; 8], disclosed: 4, key: [5; 16] };

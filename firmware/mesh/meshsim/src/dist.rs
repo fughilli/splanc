@@ -24,7 +24,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use splanc_mesh::backhaul::Backhaul;
 use splanc_mesh::msg::Class;
-use splanc_mesh::tesla::{self, Auth, Challenge, Signer, TeslaMsg, Verifier};
+use splanc_mesh::tesla::{self, Auth, Challenge, Out, Signer, TeslaMsg, Verifier};
 use splanc_mesh::tree::{Dist, Radio, RelayCache, Role, Selector, Tree, TreeAd};
 
 use super::{Air, Placement, RadioModel, Rate, SimPort, MTU};
@@ -68,8 +68,16 @@ pub struct DistCfg {
     /// Live updates in tree mode under the broadcast authenticator (Q19): `(interval µs,
     /// disclosure delay d)`. None: per-receiver MACs everywhere.
     pub tesla: Option<(u32, u8)>,
-    /// The challenge round trip each member bootstraps its time bound with (ms).
+    /// The challenge round trip each member bootstraps its time bound with (ms). With
+    /// `tesla_adaptive` it is sampled instead: twice the member's measured delivery latency
+    /// plus 2 ms and an exponential queueing jitter of this mean (ms).
     pub tesla_rtt_ms: i64,
+    /// Apply-then-verify (Q22).
+    pub tesla_early: bool,
+    /// Best-of-N challenges and a gateway `d` sized from the reported round trips (Q24).
+    pub tesla_adaptive: bool,
+    /// An insider forging live updates for the current interval at this rate (Hz).
+    pub insider_hz: f64,
 }
 
 impl DistCfg {
@@ -95,6 +103,9 @@ impl DistCfg {
             members: Vec::new(),
             tesla: None,
             tesla_rtt_ms: 40,
+            tesla_early: false,
+            tesla_adaptive: false,
+            insider_hz: 0.0,
         }
     }
 }
@@ -151,6 +162,21 @@ pub struct DistOut {
     pub tesla_hashes_member_s: f64,
     pub tesla_hashes_gw_s: f64,
     pub update_bytes: usize,
+    /// The disclosure delay in use at the end, and chains built.
+    pub tesla_d: u8,
+    pub tesla_chains: u32,
+    /// Honest updates rolled back (should be none).
+    pub honest_rejected: u64,
+    /// The insider: forgeries sent, member-forgeries shown, how long each stayed on screen
+    /// (until a newer genuine update or its rejection; ms), and the share of member-time a
+    /// forged value was on screen.
+    pub forgeries: u64,
+    pub forged_shown: u64,
+    pub glitch_p50_ms: f64,
+    pub glitch_max_ms: f64,
+    pub forged_screen_share: f64,
+    /// The root's children (the members a per-receiver-MAC first hop would reach directly).
+    pub root_children: u8,
     pub series: Vec<Bin>,
 }
 
@@ -239,6 +265,12 @@ struct Node {
     /// The member's verifier for the gateway's chain, and the updates handed to it.
     tv: Option<Verifier>,
     fed: HashSet<u16>,
+    /// Q24: challenges made for the current chain, the last one's time, the best round trip.
+    tries: u8,
+    last_req: i64,
+    best_rtt: u32,
+    /// A forged update on screen since (seq, time).
+    forged_on: Option<(u16, i64)>,
 }
 
 struct Gen {
@@ -261,6 +293,13 @@ struct Sim<'a> {
     /// The gateway's chain and each authenticated update's trailer and body.
     signer: Option<Signer>,
     auth: HashMap<u16, (Auth, [u8; 12])>,
+    gen_t: HashMap<u16, i64>,
+    rtt_max: u32,
+    rebuild: bool,
+    chains: u32,
+    rng: u64,
+    glitches: Vec<f64>,
+    honest_rejected: u64,
 }
 
 /// The UWB link budget (dBm) from `a` to `b`: −14 dBm EIRP (−41.3 dBm/MHz over 500 MHz),
@@ -328,6 +367,10 @@ pub fn run(cfg: &DistCfg) -> DistOut {
                 seen: HashSet::new(),
                 tv: None,
                 fed: HashSet::new(),
+                tries: 0,
+                last_req: i64::MIN / 2,
+                best_rtt: 0,
+                forged_on: None,
             }
         })
         .collect();
@@ -340,7 +383,7 @@ pub fn run(cfg: &DistCfg) -> DistOut {
     for i in 0..n {
         air.0.borrow_mut().st[i].online = true;
     }
-    let mut sim = Sim { cfg, parts: HashMap::new(), hops: diameter(&air, n) + 1, ctrl: 0, nacks: 0, ages: Vec::new(), lacking: 0, signer: cfg.tesla.map(|(iv, d)| Signer::new(&[0x33; 16], 1, 0, iv, d)), auth: HashMap::new() };
+    let mut sim = Sim { cfg, parts: HashMap::new(), hops: diameter(&air, n) + 1, ctrl: 0, nacks: 0, ages: Vec::new(), lacking: 0, signer: cfg.tesla.map(|(iv, d)| Signer::new(&[0x33; 16], 1, 0, iv, d)), auth: HashMap::new(), gen_t: HashMap::new(), rtt_max: 0, rebuild: false, chains: 1, rng: cfg.seed ^ 0x7e57, glitches: Vec::new(), honest_rejected: 0 };
     let gw_hashes0 = sim.signer.as_ref().map_or(0, |s| s.hashes);
     let mut selector = Selector::new();
     let mut seq: u16 = 0;
@@ -354,6 +397,8 @@ pub fn run(cfg: &DistCfg) -> DistOut {
     let mut air_bins: Vec<(i64, usize, bool)> = Vec::new();
     let mut rr = 1usize;
     let mut updates = 0u64;
+    let mut forge_seq: u16 = 0x8000;
+    let mut forgeries = 0u64;
     let mut now = 0i64;
     while now < t_end {
         now += 1_000;
@@ -453,6 +498,21 @@ pub fn run(cfg: &DistCfg) -> DistOut {
                 Scheme::Auto => selector.update(now, members as u16),
             };
             gens.push(Gen { seq, t: now, reliable, tree: mode == Dist::Tree, alive: alive.clone() });
+            sim.gen_t.insert(seq, now);
+            sim.gen_t.remove(&seq.wrapping_sub(512));
+            // Q24: the gateway rebuilds its chain when a member's round trip needs a larger d.
+            if sim.rebuild {
+                sim.rebuild = false;
+                let d = tesla::needed_d(sim.rtt_max, sim.signer.as_ref().map_or(tesla::INTERVAL_US, |s| s.interval_us()));
+                let iv = sim.signer.as_ref().map_or(tesla::INTERVAL_US, |s| s.interval_us());
+                sim.chains += 1;
+                sim.signer = Some(Signer::new(&[0x34 ^ sim.chains as u8; 16], sim.chains as u16, now, iv, d));
+                sim.rtt_max = 0;
+                for nd in nodes.iter_mut() {
+                    nd.tv = None;
+                    nd.tries = 0;
+                }
+            }
             nodes[0].got.insert(seq, now);
             if reliable {
                 nodes[0].tree.seq = r;
@@ -485,6 +545,25 @@ pub fn run(cfg: &DistCfg) -> DistOut {
             if sim.parts.len() > 64 {
                 let old = seq.wrapping_sub(64);
                 sim.parts.remove(&old);
+            }
+        }
+        // The insider (the member half-way through the list) forges an update for the
+        // gateway's current interval: it knows the time and the disclosed keys, not K_i.
+        if cfg.insider_hz > 0.0 && now >= cfg.warmup_ms * 1000 && sim.signer.is_some() && (now / 1000) % ((1000.0 / cfg.insider_hz) as i64).max(1) == 7 {
+            let x = n / 2;
+            if nodes[x].alive {
+                forge_seq = forge_seq.wrapping_add(1) | 0x8000;
+                let s = sim.signer.as_mut().unwrap();
+                let (cur, _) = s.interval_at(now);
+                let d = s.disclose_delay() as u32;
+                let key = s.key(cur.saturating_sub(d));
+                let a = Auth { chain: s.chain, interval: cur as u16, tag: [0x5A; 8], disclosed: cur.saturating_sub(d) as u16, key };
+                sim.auth.insert(forge_seq, (a, [0xEE; 12]));
+                let recips: Vec<usize> = (1..n).filter(|&j| nodes[j].alive && j != x).collect();
+                sim.parts.insert(forge_seq, vec![recips]);
+                let f = frame(KIND_DATA, forge_seq, 0, 0, x as u16 + 1, 0, Dist::Tree, body_len(0, true));
+                let _ = nodes[x].port.send(&f, None);
+                forgeries += 1;
             }
         }
         // UWB: a 4 ms superframe of four 1 ms slots; slot 0 the root's, 1-3 round-robin.
@@ -721,6 +800,19 @@ pub fn run(cfg: &DistCfg) -> DistOut {
         nack_age_max: sim.ages.iter().copied().max().unwrap_or(0),
         nack_lacking: sim.lacking,
         mode_switches: selector.switches,
+        root_children: nodes[0].tree.children,
+        tesla_d: sim.signer.as_ref().map_or(0, |s| s.disclose_delay()),
+        tesla_chains: if sim.signer.is_some() { sim.chains } else { 0 },
+        honest_rejected: sim.honest_rejected,
+        forgeries,
+        forged_shown: sim.glitches.len() as u64,
+        glitch_p50_ms: {
+            let mut g = sim.glitches.clone();
+            g.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            g.get(g.len() / 2).copied().unwrap_or(0.0)
+        },
+        glitch_max_ms: sim.glitches.iter().cloned().fold(0.0, f64::max),
+        forged_screen_share: sim.glitches.iter().sum::<f64>() / 1000.0 / ((n - 1) as f64 * run_s),
         tesla_unsafe: nodes.iter().filter_map(|x| x.tv.as_ref()).map(|v| v.stats.unsafe_late as u64).sum(),
         tesla_hashes_member_s: {
             let v: Vec<f64> = nodes.iter().filter_map(|x| x.tv.as_ref()).map(|v| v.stats.hashes as f64).collect();
@@ -775,12 +867,31 @@ fn nack(sim: &mut Sim<'_>, nd: &mut Node, rseq: u16, parent: u16, now: i64) {
 
 /// A member's challenge-response with the gateway: the Req left `rtt` ago, the gateway
 /// answered half-way.
-fn bootstrap(sim: &Sim<'_>, i: usize, now: i64) -> Option<Verifier> {
+fn bootstrap(sim: &mut Sim<'_>, i: usize, now: i64, one_way_us: i64) -> Option<(Verifier, u32)> {
+    let rtt = if sim.cfg.tesla_adaptive {
+        // Twice the delivery latency this member just saw, 2 ms of processing, and queueing.
+        2 * one_way_us + 2_000 + (-(1.0 - rnd(&mut sim.rng)).ln() * sim.cfg.tesla_rtt_ms as f64 * 1000.0) as i64
+    } else {
+        sim.cfg.tesla_rtt_ms * 1000
+    };
     let s = sim.signer.as_ref()?;
-    let rtt = sim.cfg.tesla_rtt_ms * 1000;
     let ch = Challenge { session: CTX.session, nonce: i as u64, t0_us: now - rtt };
     let TeslaMsg::Sync(body, mac) = s.sync(now - rtt / 2, CTX.session, i as u16 + 1, i as u64, &PAIRWISE) else { return None };
-    Verifier::from_sync(&ch, &body, &mac, &PAIRWISE, i as u16 + 1, CTX.mesh_id)
+    Verifier::from_sync(&ch, &body, &mac, &PAIRWISE, i as u16 + 1, CTX.mesh_id).map(|v| (v, rtt as u32))
+}
+
+/// Q24: the member's Req carries its best round trip; the gateway raises d when needed.
+fn report_rtt(sim: &mut Sim<'_>, nd: &mut Node, rtt: u32) {
+    if !sim.cfg.tesla_adaptive {
+        return;
+    }
+    nd.best_rtt = if nd.best_rtt == 0 { rtt } else { nd.best_rtt.min(rtt) };
+    sim.rtt_max = sim.rtt_max.max(nd.best_rtt);
+    if let Some(s) = sim.signer.as_ref() {
+        if tesla::needed_d(nd.best_rtt, s.interval_us()) > s.disclose_delay() {
+            sim.rebuild = true;
+        }
+    }
 }
 
 fn on_data(sim: &mut Sim<'_>, nodes: &mut [Node], i: usize, from: usize, f: &[u8], now: i64, via_uwb: bool) {
@@ -801,19 +912,61 @@ fn on_data(sim: &mut Sim<'_>, nodes: &mut [Node], i: usize, from: usize, f: &[u8
         nodes[i].cache.put(key16(rseq, part), f);
     }
     if covered && f[0] == KIND_DATA && sim.auth.contains_key(&seq) {
-        // The broadcast authenticator: the first copy goes to the verifier; the update
-        // counts as delivered when its key is disclosed and its tag checks.
+        // The broadcast authenticator: the first copy goes to the verifier. A genuine update
+        // counts as delivered when it is rendered: on arrival (apply-then-verify) or when its
+        // key is out (verify-first).
         if nodes[i].seen.contains(&k) && nodes[i].tv_fed(seq) {
             let (a, body) = sim.auth[&seq];
-            if nodes[i].tv.is_none() {
-                nodes[i].tv = bootstrap(sim, i, now);
+            let one_way = sim.gen_t.get(&seq).map_or(5_000, |t| now - t);
+            let chain = sim.signer.as_ref().map(|s| s.chain);
+            if nodes[i].tv.as_ref().map(|v| v.chain) != chain {
+                let b = bootstrap(sim, i, now, one_way);
+                nodes[i].tries = 1;
+                nodes[i].last_req = now;
+                if let Some((mut v, rtt)) = b {
+                    v.early = sim.cfg.tesla_early;
+                    nodes[i].tv = Some(v);
+                    report_rtt(sim, &mut nodes[i], rtt);
+                }
+            } else if sim.cfg.tesla_adaptive && nodes[i].tries < tesla::TRIES && now - nodes[i].last_req >= tesla::REQ_RETRY_US {
+                // Best-of-N: another challenge; keep the tighter bound.
+                if let Some((v2, rtt)) = bootstrap(sim, i, now, one_way) {
+                    if let Some(v) = nodes[i].tv.as_mut() {
+                        v.rebound(now, &v2);
+                    }
+                    report_rtt(sim, &mut nodes[i], rtt);
+                }
+                nodes[i].tries += 1;
+                nodes[i].last_req = now;
             }
-            let mut released = Vec::new();
+            let mut out: Vec<(u16, bool)> = Vec::new();
             if let Some(v) = nodes[i].tv.as_mut() {
-                v.on_packet(now, seq as u64, 24, &a, &body, &mut |q, _, _| released.push(q as u16));
+                v.on_packet(now, seq as u64, 24, &a, &body, &mut |o| match o {
+                    Out::Apply { seq, .. } => out.push((seq as u16, true)),
+                    Out::Rejected { seq, .. } => out.push((seq as u16, false)),
+                });
             }
-            for q in released {
-                nodes[i].got.entry(q).or_insert(now);
+            for (q, ok) in out {
+                let forged = q & 0x8000 != 0;
+                if ok && !forged {
+                    nodes[i].got.entry(q).or_insert(now);
+                }
+                // A forged value stays on screen until a newer genuine one or its rejection.
+                if let Some((fq, t)) = nodes[i].forged_on {
+                    if (ok && !forged) || (!ok && q == fq) {
+                        sim.glitches.push((now - t) as f64 / 1000.0);
+                        nodes[i].forged_on = None;
+                    }
+                }
+                if ok && forged {
+                    if let Some((_, t)) = nodes[i].forged_on.take() {
+                        sim.glitches.push((now - t) as f64 / 1000.0);
+                    }
+                    nodes[i].forged_on = Some((q, now));
+                }
+                if !ok && !forged {
+                    sim.honest_rejected += 1;
+                }
             }
         }
     } else if covered && !nodes[i].got.contains_key(&seq) {

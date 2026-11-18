@@ -30,6 +30,9 @@ struct Case {
     /// Broadcast authenticator (interval µs, d), and the bootstrap round trip (ms).
     tesla: Option<(u32, u8)>,
     rtt: i64,
+    early: bool,
+    adaptive: bool,
+    insider_hz: f64,
 }
 
 fn rnd(s: &mut u64) -> f64 {
@@ -71,6 +74,9 @@ fn cfg(c: &Case, seed: u64) -> DistCfg {
     d.cache_depth = c.depth;
     d.tesla = c.tesla;
     d.tesla_rtt_ms = c.rtt;
+    d.tesla_early = c.early;
+    d.tesla_adaptive = c.adaptive;
+    d.insider_hz = c.insider_hz;
     if c.set == "cache" {
         d.run_ms = 60_000;
     }
@@ -82,7 +88,7 @@ fn cfg(c: &Case, seed: u64) -> DistCfg {
 }
 
 fn cases(set: &str) -> Vec<Case> {
-    let base = Case { set: "tree", n: 16, scheme: Scheme::Tree, uwb_frac: 0.5, walking: true, moving: 0.0, kill: false, multihop: true, depth: 4, loss: 0.03, ramp: false, tesla: None, rtt: 40 };
+    let base = Case { set: "tree", n: 16, scheme: Scheme::Tree, uwb_frac: 0.5, walking: true, moving: 0.0, kill: false, multihop: true, depth: 4, loss: 0.03, ramp: false, tesla: None, rtt: 40, early: false, adaptive: false, insider_hz: 0.0 };
     let mut v = Vec::new();
     match set {
         "switch" => {
@@ -114,6 +120,21 @@ fn cases(set: &str) -> Vec<Case> {
                 // Multi-hop UWB with the authenticator, all fixtures UWB.
                 for multihop in [false, true] {
                     v.push(Case { set: "auth", n, uwb_frac: 1.0, multihop, tesla: Some((20_000, 3)), ..base.clone() });
+                }
+            }
+        }
+        "live" => {
+            // Q22: keep live latency at 5-20 ms above 24 members. rtt here is the adaptive
+            // runs' queueing-jitter mean (ms).
+            let t = Some((20_000u32, 3u8));
+            for n in [32usize, 64, 128] {
+                v.push(Case { set: "live", n, ..base.clone() });
+                v.push(Case { set: "live", n, tesla: t, ..base.clone() });
+                v.push(Case { set: "live", n, tesla: t, adaptive: true, rtt: 5, ..base.clone() });
+                v.push(Case { set: "live", n, tesla: t, adaptive: true, rtt: 5, early: true, ..base.clone() });
+                v.push(Case { set: "live", n, tesla: Some((10_000, 3)), adaptive: true, rtt: 5, early: true, ..base.clone() });
+                for hz in [1.0, 30.0] {
+                    v.push(Case { set: "live", n, tesla: t, adaptive: true, rtt: 5, early: true, insider_hz: hz, ..base.clone() });
                 }
             }
         }
@@ -171,11 +192,11 @@ fn main() {
     });
     let mut rows = rows.into_inner().unwrap();
     rows.sort_by_key(|r| r.0);
-    println!("set,n,scheme,uwb_frac,walking,moving,kill,multihop,depth,loss,delivery,reliable_delivery,lat_p50_ms,lat_p99_ms,wifi_airtime,uwb_util,ctrl_bps,relays,max_children,orphans,parent_changes_per_node_min,repair_s,uwb_tier,uwb_depth,uwb_first,evictions_per_node_min,max_excess,nacks,cache_hits,cache_misses,nack_age_p90,nack_age_max,nack_lacking,mode_switches,tesla,rtt,tesla_unsafe,tesla_hashes_member_s,tesla_hashes_gw_s,update_bytes");
+    println!("set,n,scheme,uwb_frac,walking,moving,kill,multihop,depth,loss,delivery,reliable_delivery,lat_p50_ms,lat_p99_ms,wifi_airtime,uwb_util,ctrl_bps,relays,max_children,orphans,parent_changes_per_node_min,repair_s,uwb_tier,uwb_depth,uwb_first,evictions_per_node_min,max_excess,nacks,cache_hits,cache_misses,nack_age_p90,nack_age_max,nack_lacking,mode_switches,tesla,rtt,tesla_unsafe,tesla_hashes_member_s,tesla_hashes_gw_s,update_bytes,early,adaptive,insider_hz,tesla_d,tesla_chains,honest_rejected,forgeries,forged_shown,glitch_p50_ms,glitch_max_ms,forged_screen_share,root_children");
     for (_, c, o) in &rows {
         println!(
-            "{},{},{:?},{},{},{},{},{},{},{},{:.4},{:.4},{:.1},{:.1},{:.4},{:.4},{:.1},{},{},{},{:.2},{:.2},{},{},{:.3},{:.2},{},{},{},{},{},{},{},{},{},{},{},{:.1},{:.1},{}",
-            c.set, c.n, c.scheme, c.uwb_frac, c.walking, c.moving, c.kill, c.multihop, c.depth, c.loss, o.delivery, o.reliable_delivery, o.lat_p50_ms, o.lat_p99_ms, o.wifi_airtime, o.uwb_util, o.ctrl_bps, o.relays, o.max_children, o.orphans, o.parent_changes_per_node_min, o.repair_s, o.uwb_tier, o.uwb_depth, o.uwb_first, o.evictions_per_node_min, o.max_excess, o.nacks, o.cache_hits, o.cache_misses, o.nack_age_p90, o.nack_age_max, o.nack_lacking, o.mode_switches, c.tesla.map_or("none".to_string(), |(iv, d)| format!("{}ms/d{}", iv / 1000, d)), c.rtt, o.tesla_unsafe, o.tesla_hashes_member_s, o.tesla_hashes_gw_s, o.update_bytes
+            "{},{},{:?},{},{},{},{},{},{},{},{:.4},{:.4},{:.1},{:.1},{:.4},{:.4},{:.1},{},{},{},{:.2},{:.2},{},{},{:.3},{:.2},{},{},{},{},{},{},{},{},{},{},{},{:.1},{:.1},{},{},{},{},{},{},{},{},{},{:.1},{:.1},{:.5},{}",
+            c.set, c.n, c.scheme, c.uwb_frac, c.walking, c.moving, c.kill, c.multihop, c.depth, c.loss, o.delivery, o.reliable_delivery, o.lat_p50_ms, o.lat_p99_ms, o.wifi_airtime, o.uwb_util, o.ctrl_bps, o.relays, o.max_children, o.orphans, o.parent_changes_per_node_min, o.repair_s, o.uwb_tier, o.uwb_depth, o.uwb_first, o.evictions_per_node_min, o.max_excess, o.nacks, o.cache_hits, o.cache_misses, o.nack_age_p90, o.nack_age_max, o.nack_lacking, o.mode_switches, c.tesla.map_or("none".to_string(), |(iv, d)| format!("{}ms/d{}", iv / 1000, d)), c.rtt, o.tesla_unsafe, o.tesla_hashes_member_s, o.tesla_hashes_gw_s, o.update_bytes, c.early, c.adaptive, c.insider_hz, o.tesla_d, o.tesla_chains, o.honest_rejected, o.forgeries, o.forged_shown, o.glitch_p50_ms, o.glitch_max_ms, o.forged_screen_share, o.root_children
         );
     }
     if let Ok(path) = std::env::var("SERIES_OUT") {
@@ -211,7 +232,7 @@ fn bench() {
     let t = Instant::now();
     let mut got = 0;
     for (k, a) in auths.iter().enumerate() {
-        v.on_packet(1_000_000 + k as i64 * 33_000 + 2_000, k as u64 + 1, 24, a, &body, &mut |_, _, _| got += 1);
+        v.on_packet(1_000_000 + k as i64 * 33_000 + 2_000, k as u64 + 1, 24, a, &body, &mut |o| if matches!(o, tesla::Out::Apply { .. }) { got += 1 });
     }
     let verify = t.elapsed().as_secs_f64() * 1e6 / n as f64;
     let t = Instant::now();
