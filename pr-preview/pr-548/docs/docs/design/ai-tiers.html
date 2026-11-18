@@ -323,11 +323,13 @@
         <article role="main" id="furo-main-content">
           <section id="ai-tiers-free-paid-and-self-serve">
 <h1>AI tiers: free, paid and self-serve<a class="headerlink" href="#ai-tiers-free-paid-and-self-serve" title="Link to this heading">¶</a></h1>
-<p>Status, 2026-11-18: built on branch <code class="docutils literal notranslate"><span class="pre">agent/ai-tiers</span></code>. The free tier and the
-model-setup sheet work. The paid tier is a placeholder that turns on when
-ai-billing (branch <code class="docutils literal notranslate"><span class="pre">agent/ai-billing</span></code>, <code class="docutils literal notranslate"><span class="pre">docs/design/ai-billing.md</span></code>) lands. The OAuth redirect has only been tested
-against a mocked OpenRouter, and the iOS paste-the-code path has not been
-tried in the real app.</p>
+<p>Status, 2026-11-18: built on branch <code class="docutils literal notranslate"><span class="pre">agent/ai-tiers</span></code> (PR #548), with the
+owner’s decisions applied (last section). The free tier and the model-setup
+sheet work. The paid tier is a placeholder that turns on when ai-billing
+(branch <code class="docutils literal notranslate"><span class="pre">agent/ai-billing</span></code>, <code class="docutils literal notranslate"><span class="pre">docs/design/ai-billing.md</span></code>) lands. Not yet tried
+for real: the OAuth redirect with a real OpenRouter login (tested against a
+mock only), and the iOS one-tap sign-in in a real app build (needs the App
+Store build below; the Swift can’t be compiled in the container).</p>
 <section id="what-the-user-sees">
 <h2>What the user sees<a class="headerlink" href="#what-the-user-sees" title="Link to this heading">¶</a></h2>
 <p>The first time someone sends an AI prompt with nothing set up (in the effect
@@ -402,16 +404,63 @@ for that route and sends it.</p>
 <p>localStorage is used rather than sessionStorage because an installed Android
 PWA can come back in a browser tab. If the sheet is open in another tab, a
 <code class="docutils literal notranslate"><span class="pre">storage</span></code> event lets it pick up the new config.</p>
-<p><strong>iOS app (headless code).</strong> The Capacitor WKWebView opens off-origin pages in
-Safari, and nothing brings a redirect back into the app without a native URL
-handler. So the app uses OpenRouter’s headless mode: it omits <code class="docutils literal notranslate"><span class="pre">callback_url</span></code>.
-OpenRouter then shows a one-time code (valid 10 minutes) for the user to paste
-into the sheet. The PKCE exchange is the same.</p>
+<p><strong>iOS app (one tap).</strong> The Capacitor WKWebView opens off-origin pages in
+Safari, and nothing brings a redirect back into the app by itself. So the app
+ships a small first-party plugin, <code class="docutils literal notranslate"><span class="pre">&#64;splanc/web-auth</span></code>
+(<code class="docutils literal notranslate"><span class="pre">web/native-plugins/web-auth</span></code>), that runs an <code class="docutils literal notranslate"><span class="pre">ASWebAuthenticationSession</span></code>:
+the system sign-in sheet. It shares Safari’s cookies, so a user already signed
+in to OpenRouter just taps Authorize.</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">beginOAuth({mode:</span> <span class="pre">&quot;native&quot;})</span></code> stores the PKCE record and builds the
+authorize URL with <code class="docutils literal notranslate"><span class="pre">callback_url=https://splanc.io/app/oauth-callback.html</span></code>.
+OpenRouter needs an https callback.</p></li>
+<li><p>That bounce page (<code class="docutils literal notranslate"><span class="pre">web/public/oauth-callback.html</span></code>, deployed with the web
+app) forwards only <code class="docutils literal notranslate"><span class="pre">code</span></code> / <code class="docutils literal notranslate"><span class="pre">state</span></code> / <code class="docutils literal notranslate"><span class="pre">error</span></code> to
+<code class="docutils literal notranslate"><span class="pre">splanc://oauth/openrouter</span></code>.</p></li>
+<li><p>The session watches for the <code class="docutils literal notranslate"><span class="pre">splanc</span></code> scheme, captures that URL itself, and
+returns it to JS. No URL type or entitlement is registered, so another app
+claiming <code class="docutils literal notranslate"><span class="pre">splanc://</span></code> can’t intercept it. The PKCE verifier never leaves the
+app, so a leaked code is useless.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">completeOAuthNative</span></code> requires the state to match, then exchanges the code.
+Closing the sheet is a quiet cancel.</p></li>
+</ol>
+<p>If the plugin is missing or the sheet fails, the app falls back to OpenRouter’s
+headless mode: no <code class="docutils literal notranslate"><span class="pre">callback_url</span></code>, OpenRouter shows a one-time code (valid 10
+minutes) to paste into the sheet (“Sign in with a code instead”).</p>
 <p><strong>CORS.</strong> <code class="docutils literal notranslate"><span class="pre">openrouter.ai/api/v1/*</span></code> answers <code class="docutils literal notranslate"><span class="pre">Access-Control-Allow-Origin:</span> <span class="pre">*</span></code>
 for both <code class="docutils literal notranslate"><span class="pre">https://</span></code> and <code class="docutils literal notranslate"><span class="pre">capacitor://localhost</span></code>, so the app can call it
 directly. Checked with a live preflight.</p>
-<p>There is no Splanc server and no shared key. The relay key used by the website
-demo (<code class="docutils literal notranslate"><span class="pre">effects-demo.md</span></code>) is not touched and is not used here.</p>
+<p>There is no Splanc server and no shared key in the free tier.</p>
+</section>
+<section id="shared-demo-relay-acid-mode-kiosk-website-playground">
+<h2>Shared demo relay (Acid Mode / kiosk / website playground)<a class="headerlink" href="#shared-demo-relay-acid-mode-kiosk-website-playground" title="Link to this heading">¶</a></h2>
+<p>With no AI set up, Acid Mode, the kiosk and the website playground keep using
+the zero-setup shared relay (<code class="docutils literal notranslate"><span class="pre">web/_worker.js</span></code>, <code class="docutils literal notranslate"><span class="pre">/api/demo-ai/chat/completions</span></code>
+on the Cloudflare Pages project; key server-side only). Since this PR it
+behaves like the free tier:</p>
+<ul class="simple">
+<li><p><strong>Models:</strong> Nemotron 3.5 Lightning, then Nemotron 3 Ultra, then Nemotron 3.5
+Super. That is the same order as the app’s <code class="docutils literal notranslate"><span class="pre">FREE_MODELS</span></code> minus the private
+pick, and a unit test keeps the two lists equal. A request carrying an image
+goes only to the vision model.</p></li>
+<li><p><strong>Settings:</strong> reasoning off and every attempt zero-priced. The paid Claude
+models that led since 2026-10-30 are gone.</p></li>
+<li><p><strong>System prompt:</strong> the client’s, passed through unchanged. Both paths build it
+with the same <code class="docutils literal notranslate"><span class="pre">runChatTurn</span></code> / <code class="docutils literal notranslate"><span class="pre">CHAT_SYSTEM</span></code> / Acid persona. The relay only
+still rewrites the legacy Acid play persona that old app builds send.</p></li>
+<li><p><strong>Limits:</strong> per isolate 20/min, 8 in flight. Per client (IPv4 or IPv6 /64):
+6/min, 2 in flight, and 30/hour. The hourly share is back to 30 from 60, since
+the shared 1000/day free cap binds again. Optional <code class="docutils literal notranslate"><span class="pre">AI_RATE_LIMITER</span></code> binding
+adds edge enforcement.</p></li>
+<li><p><strong>Secret:</strong> <code class="docutils literal notranslate"><span class="pre">OPENROUTER_API_KEY</span></code> on the Pages project. It is the existing name
+and needs no change. Use a key whose account has bought ≥ $10 of credits
+(1000 free requests/day); the relay can no longer spend them. Optional:
+<code class="docutils literal notranslate"><span class="pre">DEMO_DEV_ORIGIN</span></code>.</p></li>
+</ul>
+<p>Checked with the relay code (not deployed) against the live API
+(<code class="docutils literal notranslate"><span class="pre">/workspace/.claude/aitiers/eval/relay_live.json</span></code>): an editor request with the
+app’s <code class="docutils literal notranslate"><span class="pre">CHAT_SYSTEM</span></code> was answered by Lightning in 2.0 s with a <code class="docutils literal notranslate"><span class="pre">set_script</span></code>
+call; a request with a preview image went to Nemotron 3.5 Super in 2.9 s.</p>
 </section>
 <section id="provider">
 <h2>Provider<a class="headerlink" href="#provider" title="Link to this heading">¶</a></h2>
@@ -535,9 +584,18 @@ gone). Rerun with
 <code class="docutils literal notranslate"><span class="pre">OPENROUTER_KEY_FILE=…</span> <span class="pre">python3</span> <span class="pre">openrouter_eval.py</span> <span class="pre">--fx-compile</span> <span class="pre">&lt;fx_compile&gt;</span></code>.</p></li>
 </ul>
 <p>Models without tool calling are not offered. If a user types such an id
-anyway, the existing loop falls back to plain chat with no tools. The free tier
-does not advertise vision: each <code class="docutils literal notranslate"><span class="pre">capture_preview</span></code> call costs one more request
-against a 50-per-day allowance.</p>
+anyway, the existing loop falls back to plain chat with no tools.</p>
+<p><strong>Vision (<code class="docutils literal notranslate"><span class="pre">capture_preview</span></code>) on the free tier</strong> is on only for accounts with
+the 1000/day allowance, because each capture is one more request.</p>
+<ul class="simple">
+<li><p>The limit comes from <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/api/v1/key</span></code> (<code class="docutils literal notranslate"><span class="pre">free_model_daily_requests.limit</span></code>).
+It is read at connect time, at boot when the cached value is older than 6 h,
+and whenever Settings ▸ AI shows the allowance. A 429 that names the daily
+limit also updates it.</p></li>
+<li><p>Lightning, the default, is text-only. A turn that carries a preview image is
+sent to the curated free vision models (Nemotron 3.5 Super) instead.</p></li>
+<li><p>Never for the private (Cohere) pick.</p></li>
+</ul>
 </section>
 <section id="privacy">
 <h2>Privacy<a class="headerlink" href="#privacy" title="Link to this heading">¶</a></h2>
@@ -567,23 +625,48 @@ but no session exists, the sheet sends the user there and keeps the prompt.</p><
 <p>A three-way merge of both branches’ edits to <code class="docutils literal notranslate"><span class="pre">generate.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">aiSettings.ts</span></code>,
 <code class="docutils literal notranslate"><span class="pre">provider.ts</span></code> and <code class="docutils literal notranslate"><span class="pre">anthropic.ts</span></code> has no conflicts.</p>
 </section>
-<section id="decisions-for-the-owner">
-<h2>Decisions for the owner<a class="headerlink" href="#decisions-for-the-owner" title="Link to this heading">¶</a></h2>
+<section id="owner-decisions-2026-11-18">
+<h2>Owner decisions (2026-11-18)<a class="headerlink" href="#owner-decisions-2026-11-18" title="Link to this heading">¶</a></h2>
 <ol class="arabic simple">
-<li><p><strong>Default free model:</strong> Nemotron 3.5 Lightning, which may train on prompts.
-Alternatively, default to the weaker but private Cohere model.</p></li>
-<li><p><strong>iOS one-tap connect:</strong> currently the user pastes a code. A native
-<code class="docutils literal notranslate"><span class="pre">ASWebAuthenticationSession</span></code> plugin, or a <code class="docutils literal notranslate"><span class="pre">splanc://</span></code> URL scheme with
-<code class="docutils literal notranslate"><span class="pre">&#64;capacitor/app</span></code>, would give one tap. Needs native work and an App Store
-build.</p></li>
-<li><p><strong>Acid Mode / kiosk</strong> still uses the shared demo relay when nothing is
-configured (zero setup for strangers), and it does not show the sheet. Keep
-it that way?</p></li>
-<li><p><strong>Free-tier vision:</strong> off, to save the 50/day allowance. Turn it on for
-accounts that have 1000/day?</p></li>
-<li><p><strong>OpenRouter app attribution:</strong> the <code class="docutils literal notranslate"><span class="pre">HTTP-Referer:</span> <span class="pre">https://splanc.io</span></code> and
-<code class="docutils literal notranslate"><span class="pre">X-Title:</span> <span class="pre">Splanc</span></code> headers make Splanc appear in OpenRouter’s app rankings.
-Keep them?</p></li>
+<li><p><strong>Default free model:</strong> Nemotron 3.5 Lightning.</p></li>
+<li><p><strong>iOS one tap:</strong> built (WebAuth plugin + bounce page, above).</p></li>
+<li><p><strong>Acid Mode / kiosk:</strong> stays on the zero-setup shared relay, now on the free
+tier’s models and prompt (above). The owner deploys after merge.</p></li>
+<li><p><strong>Free-tier vision:</strong> on only at 1000/day (above).</p></li>
+<li><p><strong>Attribution headers:</strong> kept (<code class="docutils literal notranslate"><span class="pre">HTTP-Referer:</span> <span class="pre">https://splanc.io</span></code>,
+<code class="docutils literal notranslate"><span class="pre">X-Title:</span> <span class="pre">Splanc</span></code>).</p></li>
+</ol>
+</section>
+<section id="shipping-the-ios-one-tap-build">
+<h2>Shipping the iOS one-tap build<a class="headerlink" href="#shipping-the-ios-one-tap-build" title="Link to this heading">¶</a></h2>
+<p>Nothing new in Info.plist or entitlements: <code class="docutils literal notranslate"><span class="pre">ASWebAuthenticationSession</span></code> needs
+neither, and the plugin is picked up by <code class="docutils literal notranslate"><span class="pre">cap</span> <span class="pre">sync</span></code> like the other first-party
+bridges.</p>
+<ol class="arabic simple">
+<li><p>Merge, then deploy the web app first, so
+<code class="docutils literal notranslate"><span class="pre">https://splanc.io/app/oauth-callback.html</span></code> is live before any app build
+uses it. Check that it loads and redirects to <code class="docutils literal notranslate"><span class="pre">splanc://oauth/openrouter?...</span></code>.</p></li>
+<li><p>Deploy the Pages worker (relay change) when convenient. It is independent of
+the app build.</p></li>
+<li><p>On the Mac, run <code class="docutils literal notranslate"><span class="pre">pnpm</span> <span class="pre">install</span></code> from the repo root. This links
+<code class="docutils literal notranslate"><span class="pre">&#64;splanc/web-auth</span></code>, a new <code class="docutils literal notranslate"><span class="pre">link:</span></code> dependency of <code class="docutils literal notranslate"><span class="pre">web/</span></code>.</p></li>
+<li><p>Run <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//tools:ios_testflight</span></code> (or the macOS workflow’s TestFlight
+job). Its <code class="docutils literal notranslate"><span class="pre">cap-sync</span></code> step adds <code class="docutils literal notranslate"><span class="pre">SplancWebAuth</span></code> to the CapApp-SPM package
+graph, then archives and uploads. For a quick device check first:
+<code class="docutils literal notranslate"><span class="pre">tools/iosctl</span> <span class="pre">rebuild</span></code> and <code class="docutils literal notranslate"><span class="pre">tools/iosctl</span> <span class="pre">launch</span> <span class="pre">--target</span> <span class="pre">&lt;UDID&gt;</span></code>.</p></li>
+<li><p>TestFlight check:</p>
+<ul class="simple">
+<li><p>Settings ▸ AI ▸ Model setup… ▸ Free ▸ Connect OpenRouter. The system sheet
+(“Splanc wants to use openrouter.ai to sign in”) appears.</p></li>
+<li><p>Sign in and Authorize. The sheet closes and the free tier is ready.</p></li>
+<li><p>Send a prompt.</p></li>
+<li><p>Repeat while already signed in to OpenRouter in Safari: it should be one tap.</p></li>
+<li><p>Cancel the sheet: no error.</p></li>
+</ul>
+</li>
+<li><p>App Review notes: AI sign-in uses the standard system sign-in sheet for the
+user’s own OpenRouter account. The free tier needs no purchase, and the paid
+tier stays behind its flag.</p></li>
 </ol>
 </section>
 </section>
@@ -646,11 +729,13 @@ Keep them?</p></li>
 <li><a class="reference internal" href="#">AI tiers: free, paid and self-serve</a><ul>
 <li><a class="reference internal" href="#what-the-user-sees">What the user sees</a></li>
 <li><a class="reference internal" href="#flows">Flows</a></li>
+<li><a class="reference internal" href="#shared-demo-relay-acid-mode-kiosk-website-playground">Shared demo relay (Acid Mode / kiosk / website playground)</a></li>
 <li><a class="reference internal" href="#provider">Provider</a></li>
 <li><a class="reference internal" href="#model-choice-eval">Model choice (eval)</a></li>
 <li><a class="reference internal" href="#privacy">Privacy</a></li>
 <li><a class="reference internal" href="#paid-tier-seam-with-agent-ai-billing">Paid-tier seam (with agent/ai-billing)</a></li>
-<li><a class="reference internal" href="#decisions-for-the-owner">Decisions for the owner</a></li>
+<li><a class="reference internal" href="#owner-decisions-2026-11-18">Owner decisions (2026-11-18)</a></li>
+<li><a class="reference internal" href="#shipping-the-ios-one-tap-build">Shipping the iOS one-tap build</a></li>
 </ul>
 </li>
 </ul>
