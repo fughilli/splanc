@@ -110,12 +110,22 @@ Where the events could reach userspace:
   nl80211 copy of each frame by sender and body; when nl80211 registration is impossible (AP
   mode, §4.3) the tap's body *is* the RX path.
 
-A kernel patch would be cleaner and is small (two hunks, upstreamable): pass
-`be32_to_cpu(rxframe->rssi)` instead of 0 in `brcmf_p2p_notify_action_frame_rx`, and let
-`brcmf_p2p_send_action_frame` send unknown action frames with the default configuration
-instead of rejecting them. With both, plain nl80211 would do TX (with cfg80211 TX status),
-RX and RSSI, and neither the passthrough nor the tap would be needed. It would mean carrying a
-brcmfmac patch in the Pi kernels until upstream takes it. The userspace path works today.
+**The kernel fix (prepared for upstream, owner's decision: keep the tap meanwhile).** A
+four-patch series for brcmfmac on wireless-next makes the plain nl80211 path work: (1) pass
+`rxframe->rssi` to cfg80211; (2) complete action frames sent without a dwell time on
+ACTION_FRAME_COMPLETE (the firmware sends no OFF_CHAN_COMPLETE for them, so each waited the
+2 s `P2P_AF_MAX_WAIT_TIME`); (3) count NO_ACK on a group-addressed frame as sent instead of
+retrying it; (4) send other action frames with the caller's dwell time instead of "Unknown
+Frame" (the P2P default of 200 ms makes the firmware answer `BCME_BUSY` to the next frame).
+Tested on the DUT Pis with brcmfmac rebuilt for their 6.12.87 kernel: `NL80211_CMD_FRAME`
+unicast 100/100 ACKed, absent peer 20/20 NO_ACK, broadcast 100/100 reported sent (94/100
+distinct received), `NL80211_CMD_REGISTER_FRAME` 92/100 received with
+`NL80211_ATTR_RX_SIGNAL_DBM`. Two limits remain: ~50 ms per send (the driver's 40 ms
+`P2P_AF_RETRY_DELAY_TIME` sleep before the first attempt, left alone), and the 6.12 trees lack
+upstream's mgmt_tx channel fix (f2d7c3c380bf): without it, `NL80211_CMD_FRAME` without a
+frequency sends with a bogus channel and the firmware answers `BCME_BUSY`. So the passthrough
+stays faster (~1–5 ms) and stays the Pi path until a kernel with the series ships. Patches,
+cover letter and `git send-email` steps: `/workspace/.claude/pimesh/upstream/` (not sent).
 
 **Per-send cost** (measured, §4.2): 0.3–0.5 ms CPU per `actframe`. Wall time is dominated by
 the SDIO control round trip: ~1.1–1.5 ms when the bus is awake, ~4.4 ms when it has clocked
@@ -349,9 +359,8 @@ the vendor command and registration, plus tracefs access for the tap). No kernel
 
 ## 8. Decisions for the owner
 
-1. **Kernel patch or kprobes?** The tap works on stock kernels today. The two-hunk brcmfmac
-   patch (§2.1) would make the plain nl80211 path work and is upstreamable; carrying it means
-   a patched Pi kernel until it lands. Recommend: keep the tap, send the patch upstream.
+1. **Kernel patch**: decided (keep the tap, send the series upstream). The series is ready for
+   the owner to sign off and send (§2.1).
 2. **Buy one AR9271 adapter** (~$15–35) for a HITL mesh sniffer. Nothing else is needed.
 3. **Open UDP 47811** in the Pi images when the IP backhaul ships (M10).
 

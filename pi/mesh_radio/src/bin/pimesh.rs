@@ -212,6 +212,7 @@ fn send(o: &Opts) -> io::Result<()> {
     let t0 = Instant::now();
     let (mut ok, mut err) = (0, 0);
     let mut errs: HashMap<String, u32> = HashMap::new();
+    let mut call_us: Vec<u32> = Vec::new();
     for seq in 0..o.count {
         let t = t0.elapsed().as_micros() as i64;
         bh.set_now(t);
@@ -230,6 +231,7 @@ fn send(o: &Opts) -> io::Result<()> {
                 *errs.entry(e.to_string()).or_default() += 1;
             }
         }
+        call_us.push(s.elapsed().as_micros() as u32);
         if seq < 3 {
             println!("send seq={seq} took_us={}", s.elapsed().as_micros());
         }
@@ -241,6 +243,7 @@ fn send(o: &Opts) -> io::Result<()> {
     let mut buf = [0u8; 2400];
     while bh.recv(&mut buf).is_some() {}
     println!("sent ok={ok} err={err} errors={errs:?} stats={:?}", bh.stats);
+    println!("send_call_us p50={} p90={} p99={} max={}", pct(&mut call_us, 0.5), pct(&mut call_us, 0.9), pct(&mut call_us, 0.99), pct(&mut call_us, 1.0));
     let log = bh.radio.take_tx_log();
     tx_report(o, &log);
     Ok(())
