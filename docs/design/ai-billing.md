@@ -59,7 +59,8 @@ the web gives 833. See [Margins](#costs-and-margins).
 | 3 | Markups and packs | iOS +40 %, web +20 %; iOS packs US$4.99 / 9.99 / 19.99, web US$10 / 25. |
 | 4 | Free trial | **None** (`trial_credits: 0`). The free tier (OpenRouter free models; `docs/design/ai-tiers.md`, the model-setup picker PR) covers trying the AI. |
 | 5 | Web tax | **Stripe Tax, we file.** Its 0.5 % is in the web channel fee (`fee_percent: 0.034`). |
-| 6 | Sign-in | **Sign in with Apple + Sign in with Google + anonymous device accounts** that can be linked later. No e-mail login. In-app account deletion stays (Apple 5.1.1(v)). |
+| 6 | Sign-in | **Sign in with Apple + Sign in with Google + anonymous device accounts** that can be linked later. In-app account deletion stays (Apple 5.1.1(v)). **Changed 2026-11-18:** accounts can also have a **verified email** used to **recover the account and its credits** on a new device or after the app's data was cleared (codes by email, no passwords; [Email and recovery](#email-and-recovery)). |
+| 6a | Is email required to buy? | **No, optional.** Users may stay anonymous and still buy, but the app tells them plainly that **without a verified email, losing the app's data or the device loses the credits**. The account records when they acknowledged that (`anonymous_ack_at`). `/billing/checkout` doesn't require an email. |
 | 7 | Minors | **18+ gate on buying credits.** |
 | 8 | Retention | No prompt content; ledger / financial records as long as tax law requires; request logs 30 days. |
 | 9 | Deletion with credit left | **Forfeit, with a clear warning** before confirming. |
@@ -627,7 +628,8 @@ only, so it never learns that web packs exist.
 | --- | --- | --- |
 | `POST /billing/account` | none (IP-limited) | New anonymous account → `{account_id, token, account_ref, balance_credits}` (0: no trial) |
 | `POST /billing/age` | session | `{confirm: true}`: the user confirmed 18+ (buying is 18+) |
-| `DELETE /billing/account` | session | Close the account (deletion) |
+| `DELETE /billing/account` | session | Close the account (deletion; erases the email, signs every device out) |
+| Email and recovery routes | | See [Email and recovery](#email-and-recovery) |
 | `GET /billing/balance` | session | `{balance_credits, held_credits, available_credits, low, status, adult, pricing_version}` |
 | `GET /billing/pricing?channel=` | none | The public pricing view |
 | `GET /billing/statement` | session | The newest 50 entries (numbers only) |
@@ -687,6 +689,133 @@ merge in either order, the integration surface is a few stable exports from
 - `makeCreditsProvider({ model })`, which `activeProvider()` already returns
   for that kind.
 
+### Email and recovery
+
+The problem it solves: credits sit on a server account, but an anonymous
+account lives only in the app's storage. Clearing that storage, or changing
+device, loses the session token and with it the balance. A verified email lets
+the user get back in. It is optional (decision 6a), and it uses one-time codes
+by email rather than passwords.
+
+**Endpoints** (`agent/relay/src/billing/email.ts`, `endpoint.ts`; the shapes
+the app's UI uses):
+
+| Route | Auth | Body → answer |
+| --- | --- | --- |
+| `POST /billing/account/email` | session | `{email}` → 202 `{ok, message}`. Sends a code. It gives the **same** 202 when the email already belongs to another account: that mailbox gets a "use Recover instead" note, not a code. |
+| `POST /billing/account/email/verify` | session | `{email, code}` → 200 `{ok, email_hint, email_verified: true}`, or 400 `invalid_code`, or 409 `email_in_use` (shown only after proving control of the mailbox). |
+| `DELETE /billing/account/email` | session | Removes the email (the address becomes free). |
+| `POST /billing/account/anonymous` | session | `{acknowledge: true}` → `{ok, anonymous_ack_at}`: the user chose to stay without an email after the warning. |
+| `POST /billing/recover/start` | none | `{email}` → **always** 202 `{ok, message: "If that email belongs to a Splanc AI account, we sent it a code…"}`. |
+| `POST /billing/recover/verify` | none | `{email, code, revoke_other_devices?}` → 200 `{account_id, token, account_ref, balance_credits}`, or 400 `invalid_code`. Other devices are signed out unless `revoke_other_devices: false`. |
+| `GET /billing/balance` | session | Adds `email_hint` ("k•••@gmail.com" or null), `email_verified`, and `anonymous_ack_at` (ISO or null). |
+
+**Rules.**
+- **Codes.** 6 digits from a uniform random source, valid **10 minutes**,
+  **single use**. A new code replaces the old one.
+- **Attempts.** Each code allows **5** attempts; the 5th wrong one burns it.
+- **Rate limits.** Codes sent: 10 an hour per IP, **5 an hour per address**
+  (and per account), 2,000 a day overall. Code checks: 30 an hour per IP.
+  That caps a guesser at about 25 tries an hour against a 1-in-a-million code.
+- **One email per account, one account per email.** Verifying a new address
+  replaces the old one and frees it. The map is claimed atomically, so a race
+  can't link one email to two accounts.
+- **Recovery signs other devices out.** Tokens are `sst2.<account>.<gen>.…`;
+  recovery bumps the account's session generation, so tokens minted before it
+  stop working (401). Deletion bumps it too. `sst1` tokens from before this
+  change count as generation 0. Like `sst1`, `sst2` tokens are scoped to the
+  billing mode (AI_BILLING): a sandbox token never opens a production relay.
+- **Emails are per billing mode.** The keyed hash includes the mode in
+  production (sandbox keeps the plain input), so the email map, codes and
+  per-address limits are separate per mode. An email verified on a sandbox
+  (test-money) account can't recover it once the relay runs in production;
+  the user attaches it again to their production account. Recovery also
+  refuses an account of the other environment.
+- **No account enumeration.**
+  - `recover/start` answers identically for known and unknown emails, and
+    sends in the background (`waitUntil`) so timing doesn't tell either.
+  - `account/email` answers identically for free and taken emails.
+  - **Every** code failure (wrong, expired, burned, or no code because the
+    email has no account) is the same 400 with the same text. Attempts left
+    are not reported.
+
+**What is stored, and why.**
+- **The lookup.** A **keyed hash** of the normalized address
+  (HMAC-SHA256 with `BILLING_EMAIL_HASH_KEY`) maps the email to the account
+  (`em:<hash>` in the Directory). Recovery needs exactly this lookup; with a
+  key, a storage leak can't be dictionary-attacked.
+- **On the account:** the same hash, a display hint (`k•••@gmail.com`) and
+  when it was verified.
+- **Not the address itself.** Every flow that sends a code gets the address
+  from the user in that same request, so the server never needs to keep it.
+  If a later feature has to email users unprompted (receipts, policy
+  notices), add an AES-GCM-encrypted copy under its own key then, and update
+  the privacy notice.
+- **Codes:** stored only as an HMAC with an expiry and an attempt count
+  (`ec:<purpose>:<hash>`). The alarm purges expired ones.
+- **Logs:** no address and no code (a test scans storage and logs for both).
+- **Normalization:** trim and lowercase only. No provider folding such as
+  Gmail dots: the code goes to what the user typed.
+- **`BILLING_EMAIL_HASH_KEY` is set once.** Rotating it orphans every stored
+  email.
+
+**Deletion.** `DELETE /billing/account` erases the email: it is removed from
+the account, the email → account map entry and any pending codes are deleted,
+and every device is signed out. The address can then be used on a new account.
+
+**Purchase flow (UI, on `agent/credits-flow-ui`).**
+- Before the first purchase, ask for an email ("so you can get your credits
+  back on a new phone"), with an explicit "Continue without email" that shows
+  the warning and records `POST /billing/account/anonymous`.
+- AI settings shows the email hint, or "No email: credits can't be recovered
+  if you lose this device's data", plus "Recover my account" on a fresh
+  install.
+
+**Privacy notice impact.**
+- We process an email address, only if the user adds one, to verify it and
+  to recover the account.
+- We keep only a keyed hash and a masked hint, not the address.
+- The address is passed to our email provider (a sub-processor, see below) to
+  deliver the code.
+- Deleting the account erases it.
+- App Store privacy label: "Email address: App functionality (account
+  recovery), linked to the user, not used for tracking".
+
+**Email provider: needs an owner decision.** Codes are sent through an
+`EmailSender` interface. The tests use `FakeEmailSender`;
+`ResendEmailSender` is ready but has never called the real API. Until
+`BILLING_EMAIL_HASH_KEY` plus a sender are configured, the email routes
+answer 503.
+
+| Provider | From a Worker | Deliverability | Cost (checked 2026-11-18) | Setup | Notes |
+| --- | --- | --- | --- | --- | --- |
+| **Resend** (recommended) | One HTTPS `fetch` + API key (`ResendEmailSender`) | Good; built for transactional mail | Free 3,000/month (100/day); Pro US$20/month for 50,000 | Account; verify a sending subdomain (SPF/DKIM/DMARC records at the current DNS host) | Simplest. The free tier covers sandbox and launch volumes of login codes. |
+| Postmark | HTTPS `fetch` | Best-in-class for transactional (separate transactional streams) | Free 100/month; paid from about US$15/month for 10,000 | Same DNS work; account approval | The pick if deliverability problems appear; costs more at our size. |
+| Amazon SES | HTTPS, but needs AWS SigV4 request signing in the Worker | Good once reputation is built | US$0.10 per 1,000; no lasting free tier | AWS account, leave the SES sandbox (manual review), DNS | Cheapest at volume; most setup and code. |
+| Cloudflare Email Service | Native Workers `send_email` binding, no key | Unproven (beta) | 3,000/month included, then US$0.35 per 1,000; **arbitrary recipients need Workers Paid** | Likely needs the domain on Cloudflare DNS (splanc.io's DNS is elsewhere) | Still **beta**. The free MailChannels-from-Workers route ended in 2024. Revisit when it's GA. |
+| Mailgun | HTTPS `fetch` | Good | Small free tier; paid from about US$15/month | DNS + account | Fine, but no advantage over Resend here. |
+
+Sources: [Resend pricing](https://resend.com/pricing),
+[Postmark pricing](https://postmarkapp.com/pricing),
+[Amazon SES pricing](https://aws.amazon.com/ses/pricing/),
+[Cloudflare Email Service](https://developers.cloudflare.com/email-service/) and its
+[pricing](https://developers.cloudflare.com/email-service/platform/pricing/).
+Third-party price summaries were cross-checked where vendor pages didn't load;
+re-check before signing up.
+
+**Recommendation: Resend.**
+- It is one `fetch` from the Worker, and the free tier covers sandbox and
+  early launch.
+- DNS records can stay where splanc.io's DNS already is.
+- Postmark is the fallback if deliverability becomes a problem.
+- **[owner]:**
+  - a Resend account for the owner's LLC;
+  - a sending subdomain (e.g. `mail.splanc.io`: add Resend's SPF and DKIM
+    records, plus a DMARC record);
+  - a **sending-only** API key → `RESEND_API_KEY` (secret);
+  - `BILLING_EMAIL_FROM` (e.g. `Splanc <codes@mail.splanc.io>`);
+  - `BILLING_EMAIL_HASH_KEY` (random, set once).
+
 ### Privacy
 
 - **Retention (decided):** no prompt content; ledger and financial records as
@@ -717,7 +846,9 @@ merge in either order, the integration surface is a few stable exports from
 | T4 | Replayed or forged receipts | Verify the store signature; check `appAccountToken`; global first-claim on the transaction id; environment check; idempotent credit. |
 | T5 | Refund after spending | Clawback can go negative and blocks spending; the overdraft cap bounds one request's overshoot. |
 | T6 | Abuse / AUP violations by a user | Suspension (`status`), opaque `metadata.user_id`, rate limits, the Report button. On notice from Anthropic, suspend the account. |
-| T7 | A stolen session token | Bearer token only to our relay over HTTPS; 180-day expiry plus refresh; sign-in linking (later) allows revocation (a per-account token generation). |
+| T7 | A stolen session token | Bearer token only to our relay over HTTPS; 180-day expiry; a per-account session generation: recovery (and deletion) signs every earlier token out. |
+| T9 | Account takeover through recovery | A code only to the verified address; 6 digits, 10 minutes, single use, 5 attempts; per-IP and per-address limits; recovery signs other devices out; the `biz-recovery-spike` alert. Whoever controls the mailbox controls the account (the usual email-recovery trade-off). |
+| T10 | Account enumeration by email | Identical answers and timing for known and unknown emails (`recover/start`, `account/email`); identical code failures; no attempts-left. |
 | T8 | A bad config loses money | Strict validation plus the `min_margin` check per pack; invalid config = feature off. |
 
 ### Org spend limit
@@ -981,6 +1112,11 @@ node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("base64
 node -e 'process.stdout.write(require("crypto").randomBytes(24).toString("hex"))' \
   > ../../credentials/billing_admin_token.txt
 tr -d '\n' < ../../credentials/billing_admin_token.txt        | $W secret put BILLING_ADMIN_TOKEN   --config wrangler.toml
+# Email + recovery (optional; once the provider is chosen, see "Email and recovery"):
+node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("base64url"))' \
+  | $W secret put BILLING_EMAIL_HASH_KEY --config wrangler.toml      # set ONCE, never rotate
+tr -d '\n' < ../../credentials/resend_api_key.txt              | $W secret put RESEND_API_KEY        --config wrangler.toml
+printf 'Splanc <codes@mail.splanc.io>' | $W secret put BILLING_EMAIL_FROM --config wrangler.toml
 
 # 3. The pricing config, with the TEST-mode price ids, then turn sandbox mode on.
 jq --arg p10 price_TEST10_FROM_DASHBOARD --arg p25 price_TEST25_FROM_DASHBOARD \

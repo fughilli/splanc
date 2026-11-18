@@ -58,6 +58,7 @@ LIGHT_TESTS = [
     "tests/billing_mode.test.ts",
     # The ops (Grafana) events + the dashboards / alert rules that read them.
     "tests/ops.test.ts",
+    "tests/billing_email.test.ts",
 ]
 
 TESTS = glob(

@@ -2,7 +2,13 @@
  * Splanc AI credits on the relay (docs/design/ai-billing.md §API): the router.
  *
  *   POST   /billing/account               a new device-bound account -> {account_id, token, account_ref}
- *   DELETE /billing/account               close it (in-app account deletion; the balance is forfeited)
+ *   DELETE /billing/account               close it (in-app account deletion; the balance is forfeited; the email is erased)
+ *   POST   /billing/account/email         {email}: send a code to attach it (202, the same answer if it's taken)
+ *   POST   /billing/account/email/verify  {email, code}: attach it (one email per account, one account per email)
+ *   DELETE /billing/account/email         remove the email
+ *   POST   /billing/account/anonymous     {acknowledge: true}: the user chose to stay without an email
+ *   POST   /billing/recover/start         {email}: send a recovery code (202, the same answer for any email)
+ *   POST   /billing/recover/verify        {email, code, revoke_other_devices?}: a new session for that account
  *   GET    /billing/balance               {balance_credits, held_credits, low, status, adult}
  *   POST   /billing/age                   {confirm: true}: the user confirmed 18+ (buying is 18+)
  *   POST   /billing/consent               {apple_consumption: bool}: share consumption data with Apple on refund requests
@@ -34,12 +40,26 @@
 
 import { dir } from "../oauth";
 import { now, type Env } from "../platform";
-import { DoLedger, mintSession, newAccountId, verifySession, type BillingMode } from "./account";
+import { DoLedger, mintSession, newAccountId, parseSession, type BillingMode } from "./account";
 import { MICRO, findPack, publicPricing, validatePricing, CHANNELS, type Channel, type PricingConfig } from "./pricing";
 import { proxyMessages, redact, type OrgSpend } from "./proxy";
 import { purchaseMoney, refundUsdEstimate } from "./metrics";
 import { StripeError, createCheckoutSession, stripeAction, verifyStripeSignature, type StripeAction } from "./stripe";
 import { safeEqual } from "../crypto";
+import {
+  ResendEmailSender,
+  accountForEmail,
+  alreadyLinkedEmail,
+  checkCode,
+  claimEmail,
+  codeEmail,
+  emailHash,
+  emailHint,
+  issueCode,
+  normalizeEmail,
+  releaseEmail,
+  type EmailSender,
+} from "./email";
 import {
   FakeConsumptionSender,
   FakeStoreVerifier,
@@ -63,6 +83,43 @@ export interface BillingContext {
   consumption?: ConsumptionSender | undefined;
   /** fetch toward api.stripe.com (tests: a fake Stripe). Defaults to fetch. */
   stripeFetch?: typeof fetch | undefined;
+  /** Email codes (tests: FakeEmailSender). Default: Resend when configured. */
+  emailSender?: EmailSender | undefined;
+}
+
+/** The email sender, or null when email isn't configured on this relay. */
+function emailSenderFor(env: Env, ctx: BillingContext): EmailSender | null {
+  if (!env.BILLING_EMAIL_HASH_KEY) return null;
+  if (ctx.emailSender) return ctx.emailSender;
+  return env.RESEND_API_KEY && env.BILLING_EMAIL_FROM ? new ResendEmailSender(env.RESEND_API_KEY, env.BILLING_EMAIL_FROM) : null;
+}
+
+const EMAIL_NOT_CONFIGURED = "Email isn't set up on this relay yet.";
+const RECOVER_SENT = "If that email belongs to a Splanc AI account, we sent it a code. It expires in 10 minutes.";
+const ATTACH_SENT = "We sent a code to that email. It expires in 10 minutes.";
+
+/** Count one code email against the per-IP, per-address (and per-account)
+ * and global limits; false when any is spent. */
+async function emailSendAllowed(env: Env, ip: string, eh: string, account?: string): Promise<boolean> {
+  if ((await dir(env, "/limit", { name: "emailSendIp", key: ip, global: "emailSendGlobal" })).status === 429) return false;
+  if ((await dir(env, "/limit", { name: "emailSendAddr", key: eh })).status === 429) return false;
+  if (account && (await dir(env, "/limit", { name: "emailSendAddr", key: `acct:${account}` })).status === 429) return false;
+  return true;
+}
+
+/** Send in the background when the runtime allows (same response time
+ * whether or not a mail goes out); a failure is logged, never shown. */
+async function background(ctx: BillingContext, p: Promise<void>, log: (ev: Record<string, unknown>) => void): Promise<void> {
+  const safe = p.catch((e: unknown) => log({ ev: "ai_email_failed", alert: true, detail: String(e) }));
+  if (ctx.waitUntil) ctx.waitUntil(safe);
+  else await safe;
+}
+
+/** Every code failure answers the SAME way (wrong, expired, used up, or no
+ * code because the email has no account), so a guesser learns nothing about
+ * which emails exist. The code record itself still counts the attempts. */
+function codeError(ctx: BillingContext, _c: { ok: false; error: string }): Response {
+  return ctx.json({ error: "invalid_code", message: "That code isn't right, or it expired or was used up. Check it, or ask for a new code." }, 400);
 }
 
 /** Return URLs Checkout may send the user back to: the app, or local dev. */
@@ -172,6 +229,11 @@ async function stripeWebhook(
 export const BILLING_PATHS = [
   "/ai/v1/messages",
   "/billing/account",
+  "/billing/account/anonymous",
+  "/billing/account/email",
+  "/billing/account/email/verify",
+  "/billing/recover/start",
+  "/billing/recover/verify",
   "/billing/admin/status",
   "/billing/age",
   "/billing/balance",
@@ -364,6 +426,49 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
       return ctx.json({ ok: true });
     }
 
+    if (path === "/billing/recover/start" && req.method === "POST") {
+      // Same answer whether or not the email has an account (no enumeration);
+      // the mail goes out in the background either way.
+      const sender = emailSenderFor(env, ctx);
+      if (!sender) return ctx.json({ error: "not_configured", message: EMAIL_NOT_CONFIGURED }, 503);
+      const email = normalizeEmail(((await req.json().catch(() => ({}))) as { email?: unknown }).email);
+      if (!email) return ctx.json({ error: "invalid_email", message: "That doesn't look like an email address." }, 400);
+      const eh = await emailHash(env.BILLING_EMAIL_HASH_KEY!, email, ready.environment);
+      if (!(await emailSendAllowed(env, ctx.clientIp, eh))) return ctx.json({ error: "rate_limited", message: "Too many codes requested; try again later." }, 429, { "retry-after": "3600" });
+      const owner = await accountForEmail(env, eh);
+      if (owner) {
+        const code = await issueCode(env, env.BILLING_EMAIL_HASH_KEY!, "recover", eh, nowS);
+        await background(ctx, sender.send({ to: email, ...codeEmail("recover", code) }), log);
+      }
+      log({ ev: "ai_recover_requested", known: owner !== null });
+      return ctx.json({ ok: true, message: RECOVER_SENT }, 202);
+    }
+    if (path === "/billing/recover/verify" && req.method === "POST") {
+      if (!emailSenderFor(env, ctx)) return ctx.json({ error: "not_configured", message: EMAIL_NOT_CONFIGURED }, 503);
+      const b = (await req.json().catch(() => ({}))) as { email?: unknown; code?: unknown; revoke_other_devices?: unknown };
+      const email = normalizeEmail(b.email);
+      if (!email) return ctx.json({ error: "invalid_email", message: "That doesn't look like an email address." }, 400);
+      if ((await dir(env, "/limit", { name: "emailVerifyIp", key: ctx.clientIp })).status === 429) {
+        return ctx.json({ error: "rate_limited", message: "Too many attempts; try again later." }, 429, { "retry-after": "3600" });
+      }
+      const eh = await emailHash(env.BILLING_EMAIL_HASH_KEY!, email, ready.environment);
+      const c = await checkCode(env, env.BILLING_EMAIL_HASH_KEY!, "recover", eh, b.code, nowS);
+      if (!c.ok) return codeError(ctx, c);
+      const owner = await accountForEmail(env, eh);
+      const led = owner ? new DoLedger(ready.ns, owner) : null;
+      const a = led ? (await led.account()).account : null;
+      // (The email hash is per mode already; the environment check is belt and braces.)
+      if (!owner || !led || !a || a.status === "closed" || (a.environment ?? "sandbox") !== ready.environment) return codeError(ctx, { ok: false, error: "no_code" });
+      // Recovery signs the other devices out unless the user says otherwise.
+      const gen = b.revoke_other_devices === false ? (a.session_gen ?? 0) : await led.bumpSessionGen();
+      log({ ev: "ai_account_recovered", account: owner, revoked_others: b.revoke_other_devices !== false });
+      return ctx.json({
+        account_id: owner,
+        token: await mintSession(ready.secret, owner, nowS, ready.environment, gen),
+        account_ref: await accountRefFor(owner),
+        balance_credits: a.balance / MICRO,
+      });
+    }
     if (path === "/billing/admin/status" && req.method === "POST") {
       const h = req.headers.get("authorization") ?? "";
       const admin = !!env.BILLING_ADMIN_TOKEN && h.startsWith("Bearer ") && safeEqual(h.slice(7), env.BILLING_ADMIN_TOKEN);
@@ -380,9 +485,15 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
     }
 
     // -- authenticated ----------------------------------------------------------------
-    const account = await verifySession(ready.secret, bearer(req), nowS, ready.environment);
-    if (!account) return ctx.json({ error: "unauthorized", message: "sign in to use Splanc AI credits" }, 401);
+    const session = await parseSession(ready.secret, bearer(req), nowS, ready.environment);
+    if (!session) return ctx.json({ error: "unauthorized", message: "sign in to use Splanc AI credits" }, 401);
+    const account = session.account;
     const ledger = new DoLedger(ready.ns, account);
+    // Tokens from before a recovery (or a deletion) are signed out.
+    const acct = (await ledger.account()).account;
+    if (!acct || (acct.session_gen ?? 0) !== session.gen) {
+      return ctx.json({ error: "unauthorized", message: "This device was signed out. Recover your account with its email." }, 401);
+    }
 
     if (path === "/ai/v1/messages" && req.method === "POST") {
       return proxyMessages(req, account, {
@@ -407,8 +518,60 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
         status: a.status,
         adult: a.adult_confirmed_at !== undefined,
         apple_consumption_consent: a.apple_consumption_consent?.consented === true,
+        email_hint: a.email?.hint ?? null,
+        email_verified: a.email !== undefined,
+        anonymous_ack_at: a.anonymous_ack_at !== undefined ? new Date(a.anonymous_ack_at).toISOString() : null,
         pricing_version: pricing.version,
       });
+    }
+    if (path === "/billing/account/email" && req.method === "POST") {
+      const sender = emailSenderFor(env, ctx);
+      if (!sender) return ctx.json({ error: "not_configured", message: EMAIL_NOT_CONFIGURED }, 503);
+      const email = normalizeEmail(((await req.json().catch(() => ({}))) as { email?: unknown }).email);
+      if (!email) return ctx.json({ error: "invalid_email", message: "That doesn't look like an email address." }, 400);
+      const eh = await emailHash(env.BILLING_EMAIL_HASH_KEY!, email, ready.environment);
+      if (!(await emailSendAllowed(env, ctx.clientIp, eh, account))) {
+        return ctx.json({ error: "rate_limited", message: "Too many codes requested; try again later." }, 429, { "retry-after": "3600" });
+      }
+      const owner = await accountForEmail(env, eh);
+      if (owner && owner !== account) {
+        // Same answer as a fresh address; that mailbox learns to use Recover.
+        await background(ctx, sender.send({ to: email, ...alreadyLinkedEmail() }), log);
+      } else {
+        const code = await issueCode(env, env.BILLING_EMAIL_HASH_KEY!, "attach", eh, nowS, account);
+        await background(ctx, sender.send({ to: email, ...codeEmail("attach", code) }), log);
+      }
+      return ctx.json({ ok: true, message: ATTACH_SENT }, 202);
+    }
+    if (path === "/billing/account/email/verify" && req.method === "POST") {
+      if (!emailSenderFor(env, ctx)) return ctx.json({ error: "not_configured", message: EMAIL_NOT_CONFIGURED }, 503);
+      const b = (await req.json().catch(() => ({}))) as { email?: unknown; code?: unknown };
+      const email = normalizeEmail(b.email);
+      if (!email) return ctx.json({ error: "invalid_email", message: "That doesn't look like an email address." }, 400);
+      if ((await dir(env, "/limit", { name: "emailVerifyIp", key: ctx.clientIp })).status === 429) {
+        return ctx.json({ error: "rate_limited", message: "Too many attempts; try again later." }, 429, { "retry-after": "3600" });
+      }
+      const eh = await emailHash(env.BILLING_EMAIL_HASH_KEY!, email, ready.environment);
+      const c = await checkCode(env, env.BILLING_EMAIL_HASH_KEY!, "attach", eh, b.code, nowS);
+      if (!c.ok) return codeError(ctx, c);
+      if (c.rec.account !== account) return codeError(ctx, { ok: false, error: "no_code" });
+      if (!(await claimEmail(env, eh, account))) return ctx.json({ error: "email_in_use", message: "That email already belongs to another Splanc AI account. Use Recover instead." }, 409);
+      const { previous } = await ledger.setEmail({ hash: eh, hint: emailHint(email) });
+      if (previous && previous.hash !== eh) await releaseEmail(env, previous.hash, account);
+      log({ ev: "ai_email_verified", account, replaced: !!previous && previous.hash !== eh });
+      return ctx.json({ ok: true, email_hint: emailHint(email), email_verified: true });
+    }
+    if (path === "/billing/account/email" && req.method === "DELETE") {
+      const { previous } = await ledger.setEmail(null);
+      if (previous) await releaseEmail(env, previous.hash, account);
+      log({ ev: "ai_email_removed", account });
+      return ctx.json({ ok: true, email_verified: false });
+    }
+    if (path === "/billing/account/anonymous" && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as { acknowledge?: unknown };
+      if (b.acknowledge !== true) return ctx.json({ error: "invalid_request", message: "{acknowledge: true}" }, 400);
+      const a = await ledger.ackAnonymous();
+      return ctx.json({ ok: true, anonymous_ack_at: new Date(a.anonymous_ack_at!).toISOString() });
     }
     if (path === "/billing/consent" && req.method === "POST") {
       const b = (await req.json().catch(() => ({}))) as { apple_consumption?: unknown };
@@ -484,6 +647,9 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
     }
     if (path === "/billing/account" && req.method === "DELETE") {
       const before = (await ledger.account()).account;
+      // Deletion erases the email too: the account forgets it (close) and the
+      // email -> account map and any pending codes go.
+      if (acct.email) await releaseEmail(env, acct.email.hash, account);
       await ledger.close();
       const forfeited = before && before.status !== "closed" ? Math.max(0, before.balance) : 0;
       log({

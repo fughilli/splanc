@@ -203,6 +203,8 @@ export default {
                   env.BILLING_ADMIN_TOKEN,
                   env.STRIPE_SECRET_KEY,
                   env.STRIPE_WEBHOOK_SECRET,
+                  env.RESEND_API_KEY,
+                  env.BILLING_EMAIL_HASH_KEY,
                 ].filter((x): x is string => !!x),
                 waitUntil: ectx ? (p) => ectx.waitUntil(p) : undefined,
               }),
