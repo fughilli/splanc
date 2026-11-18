@@ -13,6 +13,9 @@
  * - AI-credit purchase claims (billing/, docs/design/ai-billing.md):
  *   `pur:<channel>:<txid>` -> the account it credited (first claim wins), so one
  *   store transaction credits exactly one account. Kept forever (no content);
+ * - email on AI-credit accounts (billing/email.ts): `em:<emailHash>` -> account
+ *   (one email, one account) and one-time codes `ec:<purpose>:<emailHash>`
+ *   (hashed, 10 minutes; the alarm purges expired ones);
  * - the Anthropic organization's month-to-date list cost (`org:spend:<YYYY-MM>`,
  *   µUSD), for the org spend-limit alert and guard (billing/proxy.ts);
  * - sign-ins linked to AI-credit accounts (billing/signin.ts): `link:<provider>:<sub>`
@@ -60,6 +63,12 @@ export const LIMITS = {
   billingAccountGlobal: [2000, 86400],
   /** Sign-in attempts (POST /billing/signin, billing/signin.ts) per client IP. */
   signinIp: [60, 3600],
+  /** Email codes sent (billing/email.ts): per client IP, per address (keyed
+   * hash), everyone together; and code checks per IP. */
+  emailSendIp: [10, 3600],
+  emailSendAddr: [5, 3600],
+  emailSendGlobal: [2000, 86400],
+  emailVerifyIp: [30, 3600],
 } as const satisfies Record<string, readonly [number, number]>;
 
 export type LimitName = keyof typeof LIMITS;
@@ -115,6 +124,9 @@ export class Directory {
       const w = LIMITS[name as LimitName]?.[1] ?? 3600;
       if (Number(win) < Math.floor(t / w)) dead.push(k);
     }
+    for (const [k, v] of await this.state.storage.list<{ exp?: number }>({ prefix: "ec:" })) {
+      if ((v.exp ?? 0) <= t) dead.push(k);
+    }
     for (const [k, v] of await this.state.storage.list<{ exp?: number }>({ prefix: "sevt:" })) {
       if ((v.exp ?? 0) <= t) dead.push(k);
     }
@@ -130,7 +142,8 @@ export class Directory {
       (await this.state.storage.list({ prefix: "code:", limit: 1 })).size +
       (await this.state.storage.list({ prefix: "fbi:", limit: 1 })).size +
       (await this.state.storage.list({ prefix: "once:", limit: 1 })).size +
-      (await this.state.storage.list({ prefix: "sevt:", limit: 1 })).size;
+      (await this.state.storage.list({ prefix: "sevt:", limit: 1 })).size +
+      (await this.state.storage.list({ prefix: "ec:", limit: 1 })).size;
     if (left > 0) await this.state.storage.setAlarm(now(this.env) + 600_000);
   }
 
@@ -237,6 +250,38 @@ export class Directory {
         await this.state.storage.put(k, { exp: Number(body["exp"]) || this.nowS() + 3600 });
         await this.ensureAlarm();
         return json({ fresh: true });
+      }
+      case "/email/code/put":
+        await this.state.storage.put(String(body["k"]), body["rec"]);
+        await this.ensureAlarm();
+        return json({ ok: true });
+      case "/email/code/get":
+        return json({ rec: (await this.state.storage.get(String(body["k"]))) ?? null });
+      case "/email/code/miss": {
+        const k = String(body["k"]);
+        const rec = await this.state.storage.get<{ attempts: number }>(k);
+        if (!rec) return json({ attempts: 1_000_000 });
+        const attempts = rec.attempts + 1;
+        await this.state.storage.put(k, { ...rec, attempts });
+        return json({ attempts });
+      }
+      case "/email/code/del":
+        await this.state.storage.delete([String(body["k"])]);
+        return json({ ok: true });
+      case "/email/map/get":
+        return json({ account: (await this.state.storage.get<string>(`em:${body["eh"]}`)) ?? null });
+      case "/email/map/claim": {
+        const k = `em:${body["eh"]}`;
+        const owner = await this.state.storage.get<string>(k);
+        if (owner !== undefined && owner !== body["account"]) return json({ ok: false }, 409);
+        await this.state.storage.put(k, String(body["account"]));
+        return json({ ok: true });
+      }
+      case "/email/map/del": {
+        const k = `em:${body["eh"]}`;
+        if ((await this.state.storage.get<string>(k)) === body["account"]) await this.state.storage.delete([k]);
+        await this.state.storage.delete([`ec:attach:${body["eh"]}`, `ec:recover:${body["eh"]}`]);
+        return json({ ok: true });
       }
       case "/pur/pi/set":
         // Stripe PaymentIntent -> {account, ref}: refunds and disputes name the

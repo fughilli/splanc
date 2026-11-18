@@ -588,6 +588,23 @@ describe("sign-in routes", () => {
     assert.ok(!w.logs.join("\n").includes("001.jay"));
   });
 
+  test("after an email recovery (a new session generation) sign-in still works; the old token is signed out", async () => {
+    const w = await world();
+    const a = await w.anon(40);
+    assert.equal((await w.apple("001.rae", a.auth)).body["result"], "linked");
+    // What /billing/recover/verify does to the other devices (billing_email.test.ts).
+    const gen = await new DoLedger(w.env.BILLING!, a.id).bumpSessionGen();
+    assert.equal(gen, 1);
+    const again = await w.apple("001.rae");
+    assert.equal(again.body["result"], "signed_in");
+    const tok = String(again.body["token"]);
+    assert.equal(tok, await mintSession(SECRET, a.id, NOW_S, "sandbox", gen), "minted at the current generation");
+    assert.equal((await w.balance(bearer(tok)))["balance_credits"], 40);
+    // The pre-recovery token is refused by sign-in too, as by every other route.
+    assert.equal((await w.apple("001.rae", a.auth)).status, 401);
+    assert.equal((await w.call("/billing/balance", { headers: a.auth })).status, 401);
+  });
+
   test("sessions minted by sign-in are ordinary billing sessions", async () => {
     const w = await world();
     const r = await w.google("g-kim");

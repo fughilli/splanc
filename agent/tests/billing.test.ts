@@ -766,7 +766,7 @@ describe("relay routes", () => {
     // Delete the account: the balance is forfeited and the AI refuses.
     assert.equal((await call(env, ctx, "/billing/account", { method: "DELETE", headers: auth })).status, 200);
     const after = await call(env, ctx, "/ai/v1/messages", { method: "POST", headers: auth, body: JSON.stringify(chatBody()) });
-    assert.equal(after.status, 403);
+    assert.equal(after.status, 401); // deletion signs every device out
     assert.ok(logs.every((x) => !x.includes("make it blue")), "no prompt content in the logs");
   });
 
