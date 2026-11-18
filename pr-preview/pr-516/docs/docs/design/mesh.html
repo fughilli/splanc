@@ -3165,10 +3165,13 @@ swarm code, and Splanc’s own framing.</p>
 <ul class="simple">
 <li><p><strong>Q1. Answered (2026-11-17):</strong> chip antenna plus a u.FL connector. Test first with the antenna
 inside the enclosure through its windows; an external antenna on the u.FL is the fallback (§4.5, R0).</p></li>
-<li><p><strong>Q2.</strong> Who provisions the site secret, mesh id and admin key: Splanc before shipping, or the
-customer from the app on site?</p></li>
-<li><p><strong>Q3.</strong> Does the venue have Wi-Fi for the bridge, or should the Pi bridge host the network the
-fixtures join?</p></li>
+<li><p><strong>Q2. Answered (2026-11-18):</strong> the customer provisions on site, from the app. Fixtures ship
+unprovisioned; the first admin device creates the mesh (mesh id, site secret, admin key pair)
+and exports the admin secret for other administrators (§7.9).</p></li>
+<li><p><strong>Q3. Answered (2026-11-18):</strong> the radiolarians venue has <strong>no Wi-Fi</strong>. Administration is
+BLE from a phone to any fixture (the gateway), or a Pi bridge that hosts its own AP on the mesh
+channel (measured: a Pi hosting the AP reached a C6 member at 97 %, <code class="docutils literal notranslate"><span class="pre">mesh-pi-transport.md</span></code>).
+Nothing in the mesh depends on an infrastructure AP; AP-anchored time (§6.2) is a bonus only.</p></li>
 </ul>
 <p><strong>Framing:</strong></p>
 <ul class="simple">
