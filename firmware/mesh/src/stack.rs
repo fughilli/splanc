@@ -26,6 +26,7 @@ use crate::admin::{self, AdminGate, GatewaySession, Grant, SessionMsg, Sessions,
 use crate::backhaul::{Backhaul, NodeId};
 use crate::crypto::{key_hash, DeviceKey, Entropy, KeyHash};
 use crate::envelope::{Header, MicLen};
+use crate::gateway::{self, Fanout, ReplyMsg, StatusMsg, STATUS_EVERY_US, T_STATUS};
 #[cfg(feature = "open_mode")]
 use crate::guest::{FollowEvent, Follower};
 #[cfg(feature = "open_mode")]
@@ -36,7 +37,7 @@ use crate::meshtime::{MeshTime, ShowEpoch, TimeBeacon, BEACON_MAX};
 use crate::msg::GuestHello;
 use crate::msg::{Advert, Capacity, Class, Command as MemberCommand, PendingJoin, T_ADVERT, T_PENDING_JOIN, T_PROBE};
 use crate::node::{MtuTooSmall, Node, NodeConfig, Rx};
-use crate::ports::{ControlHeader, Inbound, Port, Role, RouteCtx, RouteReject, Router, Targets};
+use crate::ports::{ControlHeader, Inbound, Port, Role, RouteCtx, RouteReject, Router, Targets, SESSION_ENVELOPE};
 use crate::rekey::{NewKeys, RekeyMember, RekeyMsg, RekeyOrder, Rekeyer};
 use crate::security::{Domain, FrameGuard, MeshSecurity};
 
@@ -67,6 +68,33 @@ pub const PROBE_EVERY_US: i64 = 60_000_000;
 pub const DIAMETER_WINDOW_US: i64 = 300_000_000;
 /// The first bulk port (`swarm_net` relays it at the lowest priority).
 pub const BULK_FROM: u8 = Port::Bulk as u8;
+
+/// Who may start a show epoch (owner desk #79). Mesh time is shared by every member, and a
+/// new epoch re-times every scheduled change on all of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EpochPolicy {
+    /// Only a fixture an admin session is open on (the gateway), for a time base that
+    /// session's own connection set (or its own console); members only follow. Desk #79's
+    /// recommended option. Locked and open modes later need a signed epoch (`TIME_BASE`).
+    GatewaySession,
+    /// Any member whose app (or console) sets a time base (M4's behaviour).
+    AnyMember,
+}
+
+/// The one switch desk #79 decides ([`MeshStack::originate_epoch`] applies it).
+pub const EPOCH_POLICY: EpochPolicy = EpochPolicy::GatewaySession;
+
+/// Where a request to start a show epoch came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EpochSource {
+    /// The app's `set_time_base` on this device's connection `conn`.
+    Connection(usize),
+    /// The device's serial console (physical access; tests).
+    Console,
+}
+
+/// Default time a gateway collects member answers to a relayed control.
+pub const REPLY_TIMEOUT_US: i64 = 2_000_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StackConfig {
@@ -256,11 +284,14 @@ pub struct MeshStack<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, cons
     /// Mesh time (M4): time beacons, the neighbour fits, the show epoch.
     pub time: MeshTime,
     next_time_us: Option<i64>,
-}
-
-fn mesh_time_s(now_us: i64) -> u32 {
-    // TODO(M4): mesh time from `timesync::MeshClock`; until then the local clock.
-    (now_us.max(0) / 1_000_000) as u32
+    /// Gateway (M5): the member table and the relayed controls it collects answers for.
+    pub fanout: Fanout<R>,
+    /// This device's status as the firmware last reported it, and what was last broadcast.
+    status_local: Option<StatusMsg>,
+    status_sent: Option<StatusMsg>,
+    next_status_us: Option<i64>,
+    /// Epoch requests refused by [`EPOCH_POLICY`].
+    pub epochs_refused: u32,
 }
 
 impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> MeshStack<B, P, K, E, R> {
@@ -347,7 +378,24 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         w!(crypto_jobs, 0);
         w!(plain_tx, [0; PLAIN_MAX]);
         w!(plain_sealed, [0; PLAIN_MAX + 32]);
+        w!(fanout, Fanout::new());
+        w!(status_local, None);
+        w!(status_sent, None);
+        w!(next_status_us, None);
+        w!(epochs_refused, 0);
         Ok(())
+    }
+
+    /// Mesh seconds (grant expiry, M5): mesh time once synced, the local clock before.
+    pub fn mesh_s(&self, now_us: i64) -> u32 {
+        let t = if self.time.synced() { self.time.mesh_us(now_us) } else { now_us };
+        (t.max(0) / 1_000_000) as u32
+    }
+
+    /// No admin key is provisioned: a dev closed mesh (desk #67), where relayed control is
+    /// trusted on the envelope ([`crate::ports`]).
+    pub fn envelope_trust(&self) -> bool {
+        self.membership.admin_key().is_none()
     }
 
     pub fn me(&self) -> NodeId {
@@ -436,6 +484,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     }
 
     fn note_neighbour(&mut self, now_us: i64, id: NodeId, capacity: Capacity, diameter: u8, channel: u8) {
+        self.fanout.touch(now_us, id);
         let i = self
             .neighbours
             .iter()
@@ -591,7 +640,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             }
             if let Some(g) = self.gateway.as_ref().map(|g| g.grant) {
                 // Ask for a renewal well before expiry, once per expiry.
-                let now_s = mesh_time_s(now_us);
+                let now_s = self.mesh_s(now_us);
                 if g.not_after.saturating_sub(now_s) <= RENEW_AHEAD_S && self.renewal_asked != Some((g.session, g.not_after)) {
                     self.renewal_asked = Some((g.session, g.not_after));
                     on(Event::GrantRenewalDue { session: g.session, not_after: g.not_after });
@@ -643,6 +692,23 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         if let Some(m) = self.node.guard.wants_counter_reservation() {
             on(Event::PersistCounter(m));
         }
+        // 6b. Member status (M5): every 10 s and on a change, once the firmware reported one.
+        if self.membership.is_member() && self.node.net.mesh.can_send() {
+            if let Some(st) = self.status_local {
+                let due = self.next_status_us.is_none_or(|t| now_us >= t) || self.status_sent.is_none_or(|s| st.differs(&s));
+                if due {
+                    let mut b = [0u8; gateway::STATUS_LEN];
+                    if let Some(n) = st.encode(&mut b) {
+                        if self.node.net.send(BROADCAST, Port::Status as u8, &b[..n], false).is_some() {
+                            self.status_sent = Some(st);
+                            let jitter = (self.rng.u32() as i64).rem_euclid(STATUS_EVERY_US / 4);
+                            self.next_status_us = Some(now_us + STATUS_EVERY_US - jitter);
+                        }
+                    }
+                }
+            }
+        }
+        self.fanout.poll(now_us);
         // 7. Deliver application packets through the port policy.
         while let Some(pkt) = self.node.net.next_app() {
             if pkt.hops >= self.hops_seen.0 || now_us - self.hops_seen.1 >= DIAMETER_WINDOW_US {
@@ -680,11 +746,20 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         self.next_time_us = None;
     }
 
-    /// This device's app set (or cleared) its show epoch (§6.3): originate the next
-    /// generation in mesh time; every member's beacons gossip it from now on. M5 restricts
-    /// who may (the gateway's admin session); members only ever follow.
-    pub fn originate_epoch(&mut self, epoch_mesh_us: Option<i64>) -> ShowEpoch {
-        self.time.originate(epoch_mesh_us)
+    /// A show epoch (set, or cleared) for this device (§6.3), from `by`: originate the next
+    /// generation in mesh time if [`EPOCH_POLICY`] lets `by` start one; every member's beacons
+    /// gossip it from then on. None: refused (the device keeps following the mesh's epoch).
+    /// The one seam owner desk #79 decides.
+    pub fn originate_epoch(&mut self, by: EpochSource, epoch_mesh_us: Option<i64>) -> Option<ShowEpoch> {
+        let allowed = match (EPOCH_POLICY, by) {
+            (EpochPolicy::AnyMember, _) | (_, EpochSource::Console) => true,
+            (EpochPolicy::GatewaySession, EpochSource::Connection(conn)) => self.gate.is_unlocked(conn),
+        };
+        if !allowed {
+            self.epochs_refused += 1;
+            return None;
+        }
+        Some(self.time.originate(epoch_mesh_us))
     }
 
     fn send_session(&mut self, to: NodeId, m: &SessionMsg, want_ack: bool) {
@@ -738,7 +813,8 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             me: self.me(),
             role,
             groups: self.membership.groups(),
-            mesh_time_s: mesh_time_s(now_us),
+            mesh_time_s: self.mesh_s(now_us),
+            envelope_trust: self.envelope_trust(),
         };
         let r = self.router.route(&ctx, &mut self.sessions, origin, port, payload);
         let Inbound { origin, port, body, admin } = match r {
@@ -772,8 +848,19 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                     self.handle_note(now_us, note, on);
                 }
             }
+            Port::Status if body.first() == Some(&T_STATUS) => {
+                if let Some(st) = StatusMsg::decode(body) {
+                    self.fanout.on_status(now_us, origin, st);
+                }
+            }
+            Port::Reply if body.first() == Some(&gateway::T_REPLY) => {
+                if let Some(r) = ReplyMsg::decode(body) {
+                    self.fanout.on_reply(now_us, origin, &r);
+                }
+            }
             Port::Control => {
                 if let Some((header, inner)) = ControlHeader::decode(body) {
+                    self.fanout.touch(now_us, origin);
                     on(Event::Control { origin, header, inner });
                 }
             }
@@ -796,7 +883,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                         return;
                     }
                     let admin_key = self.membership.admin_key().copied();
-                    if let Ok(Some(ack)) = self.sessions.on_grant(now_us, mesh_time_s(now_us), &g, admin_key.as_ref(), mesh_id, me, &self.dev, &mut self.rng) {
+                    if let Ok(Some(ack)) = self.sessions.on_grant(now_us, self.mesh_s(now_us), &g, admin_key.as_ref(), mesh_id, me, &self.dev, &mut self.rng) {
                         self.send_session(g.gateway, &ack, false);
                     }
                 }
@@ -877,7 +964,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         if let Some(g) = self.pending_grant.take() {
             self.crypto_jobs += 1;
             let admin_key = self.membership.admin_key().copied();
-            if let Ok(Some(ack)) = self.sessions.on_grant(now_us, mesh_time_s(now_us), &g, admin_key.as_ref(), mesh_id, me, &self.dev, &mut self.rng) {
+            if let Ok(Some(ack)) = self.sessions.on_grant(now_us, self.mesh_s(now_us), &g, admin_key.as_ref(), mesh_id, me, &self.dev, &mut self.rng) {
                 self.send_session(g.gateway, &ack, false);
             }
             return true;
@@ -903,7 +990,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         let mesh_id = self.membership.mesh_id().unwrap_or(0);
         let admin_key = self.membership.admin_key().copied();
         let my_key = self.dev.public_key();
-        self.gate.unlock(now_us, mesh_time_s(now_us), conn, grant, admin_key.as_ref(), mesh_id, self.me(), &my_key)?;
+        self.gate.unlock(now_us, self.mesh_s(now_us), conn, grant, admin_key.as_ref(), mesh_id, self.me(), &my_key)?;
         match self.gateway.as_mut() {
             // A renewal keeps the roster and its pairwise keys; members verify the new expiry.
             Some(gs) if gs.grant.session == grant.session => {
@@ -926,6 +1013,26 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         let session = self.gate.session(conn).ok_or(SendError::Locked)?;
         if !self.membership.is_member() {
             return Err(SendError::NotMember);
+        }
+        if session == SESSION_ENVELOPE {
+            // Envelope trust (a dev closed mesh): one packet, no per-receiver MACs; targets
+            // are in the control header. Refused here if an admin key appeared since.
+            if !self.envelope_trust() {
+                return Err(SendError::Locked);
+            }
+            let seq = self.node.guard.next_sequence().ok_or(SendError::Counter)?;
+            let mut buf = [0u8; 256];
+            let len = admin::seal_command(self.node.guard.mesh_id, SESSION_ENVELOPE, seq, port as u8, body, &[], &mut buf).ok_or(SendError::TooBig)?;
+            if len > self.node.max_payload() {
+                return Err(SendError::TooBig);
+            }
+            self.node.net.send(BROADCAST, port as u8, &buf[..len], false).ok_or(SendError::QueueFull)?;
+            if port == Port::Membership {
+                if let Some(c) = MemberCommand::decode(body) {
+                    self.membership.on_command(now_us, &c);
+                }
+            }
+            return Ok(1);
         }
         let gs = self.gateway.as_ref().filter(|g| g.grant.session == session).ok_or(SendError::Locked)?;
         let mut rec = [(0u16, [0u8; 16]); R];
@@ -960,8 +1067,52 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
 
     /// Relayed control (§8.2 fan-out).
     pub fn send_control(&mut self, now_us: i64, conn: usize, op_id: u32, targets: Targets, inner: &[u8]) -> Result<usize, SendError> {
+        self.send_control_with(now_us, conn, ControlHeader::new(op_id, targets), inner)
+    }
+
+    /// Relayed control that collects the targets' answers (M5): sent like
+    /// [`MeshStack::send_control`] with the want-reply flag, and an operation in
+    /// [`MeshStack::fanout`] that finishes when every live target answered or `timeout_us`
+    /// passed ([`Fanout::take_done`]). Returns the members it expects answers from.
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_control_collect(&mut self, now_us: i64, conn: usize, op_id: u32, targets: Targets, inner: &[u8], arm: u8, timeout_us: i64) -> Result<usize, SendError> {
+        let h = ControlHeader { op_id, flags: ControlHeader::WANT_REPLY, targets };
+        self.send_control_with(now_us, conn, h, inner)?;
+        let me = self.me();
+        Ok(self.fanout.begin(now_us, conn, op_id, arm, &targets, timeout_us, me))
+    }
+
+    /// Open the gateway's admin session on connection `conn` without a grant: only on a mesh
+    /// with no admin key (envelope trust, desk #67). With an admin key the app must present a
+    /// grant ([`MeshStack::unlock`], M7).
+    pub fn open_gateway(&mut self, conn: usize) -> Result<(), UnlockError> {
+        if !self.envelope_trust() {
+            return Err(UnlockError::BadGrant);
+        }
+        self.gate.open_envelope(conn)
+    }
+
+    /// Connection `conn` opened or closed: whatever session it held is gone.
+    pub fn connection_changed(&mut self, conn: usize) {
+        self.gate.connection_changed(conn);
+    }
+
+    /// A member's answer to relayed control `op_id` from `gateway` (ACKed unicast, desk #70).
+    pub fn reply(&mut self, gateway: NodeId, r: &ReplyMsg) -> Result<u16, SendError> {
+        let mut b = [0u8; gateway::REPLY_LEN];
+        let n = r.encode(&mut b).ok_or(SendError::TooBig)?;
+        self.send(gateway, Port::Reply, &b[..n], true)
+    }
+
+    /// The firmware's view of this device for its status broadcasts (M5).
+    pub fn set_status(&mut self, st: StatusMsg) {
+        self.status_local = Some(st);
+    }
+
+    fn send_control_with(&mut self, now_us: i64, conn: usize, h: ControlHeader, inner: &[u8]) -> Result<usize, SendError> {
+        let targets = h.targets;
         let mut b = [0u8; 256];
-        let n = ControlHeader { op_id, targets }.encode(inner, &mut b).ok_or(SendError::TooBig)?;
+        let n = h.encode(inner, &mut b).ok_or(SendError::TooBig)?;
         let only = match targets {
             Targets::Nodes { ids, n } => Some((ids, n as usize)),
             _ => None,

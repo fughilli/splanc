@@ -36,6 +36,7 @@ pub mod backhaul;
 pub mod codec;
 pub mod crypto;
 pub mod envelope;
+pub mod gateway;
 pub mod groups;
 #[cfg(feature = "open_mode")]
 pub mod guest;

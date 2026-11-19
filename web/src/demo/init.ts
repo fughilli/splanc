@@ -19,6 +19,8 @@
  *                sensor, no saved capture settings, and answers the capture
  *                requests, so `#/capture?calibrate=__demo__` (the first library
  *                map) renders the Calibrate-IMU screen with its controls.
+ *   mesh       — (with `device`) the controller is a mesh gateway with two other
+ *                fixtures meshed with it (the device sheet's Mesh section, mesh M5).
  *   play / play-revert / play-nomap / play-off — Halloween play mode: a
  *                connected "SpookySplanc1" in kiosk mode (countdown 1:42) with a
  *                stored map; `play-revert` fires an idle revert after 5 s;
@@ -47,6 +49,7 @@ export function initDemoMode(scenarios: Set<string>): void {
   if (scenarios.has("effect")) setupEffectEditor();
   if (scenarios.has("flash")) setupFlashDemo();
   if (scenarios.has("imu")) setupImuDemo();
+  if (scenarios.has("mesh")) setupMeshDemo();
   const play = [...scenarios].find((s) => s === "play" || s.startsWith("play-"));
   if (play) void setupPlayDemo(play);
 }
@@ -197,6 +200,33 @@ function setupConnectedDevice(): void {
     certUrl: null,
     error: null,
   });
+}
+
+/** The demo controller is a mesh gateway with two others meshed with it (mesh M5). */
+function setupMeshDemo(): void {
+  const client = appState.client;
+  if (!client) return;
+  const state = {
+    on: true,
+    member: true,
+    node: 0x3a41,
+    meshId: 0x5e1f00d1,
+    channel: 6,
+    gateway: true,
+    envelopeTrust: true,
+    sync: 2,
+    timeErrUs: 41,
+    epochGen: 1,
+    members: [
+      { node: 0x7c02, rssi: -38, seenMsAgo: 400, fps: 80, sync: 2 },
+      { node: 0x91e4, rssi: -44, seenMsAgo: 700, fps: 80, sync: 2 },
+    ],
+  };
+  const c = client as unknown as Record<string, unknown>;
+  c["getMesh"] = async () => {
+    c["meshState_"] = state;
+    return state;
+  };
 }
 
 /** Give the demo controller a stored map + running IMU (the Maps tab's device

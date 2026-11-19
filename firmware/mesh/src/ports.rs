@@ -10,13 +10,22 @@
 //! - guests (open mode, §7.4) only ever get the follow ports (`SCENE`, `TIME_BASE`), and the
 //!   signatures those need are M7b's ([`Router::route`] refuses them until then);
 //! - a `CONTROL` packet whose targets don't include this node is dropped after the tag check
-//!   (§7.7: "members not in the group drop it").
+//!   (§7.7: "members not in the group drop it");
+//! - **envelope trust** (mesh M5): a closed mesh provisioned without an admin public key (the
+//!   dev site key, owner desk #67) has no admin sessions to verify. There, admin-class packets
+//!   framed for session [`SESSION_ENVELOPE`] (no per-receiver MACs) are accepted on the strength
+//!   of the mesh envelope alone, i.e. from any member. A mesh that holds an admin key
+//!   ([`RouteCtx::envelope_trust`] false) refuses that framing (M7's signed sessions only).
 //!
 //! Wire formats are Splanc's own, fixed-layout and big-endian (the protobuf `MeshControl`
 //! of §5.3 / §8.1 arrives with the gateway arms in M5; the target header here is what that
 //! message's `MeshTargets` lowers to).
 
 use crate::admin::{Command, Sessions, Verdict};
+
+/// The session id of an envelope-trust command (no grant, no per-receiver MACs; see the
+/// module docs). Real sessions are never 0 (the app picks them at random, non-zero).
+pub const SESSION_ENVELOPE: u32 = 0;
 use crate::backhaul::NodeId;
 use crate::groups::Groups;
 
@@ -149,27 +158,43 @@ impl Targets {
     }
 }
 
-/// The head of a `CONTROL` body: `op_id (4) ‖ targets`, then the inner ClientMessage bytes.
+/// The head of a `CONTROL` body: `op_id (4) ‖ flags (1) ‖ targets`, then the inner
+/// ClientMessage bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ControlHeader {
     pub op_id: u32,
+    /// [`ControlHeader::WANT_REPLY`]: each target answers on `REPLY` (M5 aggregation).
+    pub flags: u8,
     pub targets: Targets,
 }
 
 impl ControlHeader {
+    /// Targets answer with a [`crate::gateway::ReplyMsg`] (ACKed unicast to the origin).
+    pub const WANT_REPLY: u8 = 1;
+
+    pub fn new(op_id: u32, targets: Targets) -> ControlHeader {
+        ControlHeader { op_id, flags: 0, targets }
+    }
+
+    pub fn want_reply(&self) -> bool {
+        self.flags & Self::WANT_REPLY != 0
+    }
+
     pub fn encode(&self, inner: &[u8], out: &mut [u8]) -> Option<usize> {
         out.get_mut(..4)?.copy_from_slice(&self.op_id.to_be_bytes());
-        let t = self.targets.encode(out.get_mut(4..)?)?;
-        let n = 4 + t + inner.len();
-        out.get_mut(4 + t..n)?.copy_from_slice(inner);
+        *out.get_mut(4)? = self.flags;
+        let t = self.targets.encode(out.get_mut(5..)?)?;
+        let n = 5 + t + inner.len();
+        out.get_mut(5 + t..n)?.copy_from_slice(inner);
         Some(n)
     }
 
     /// The header and the inner bytes.
     pub fn decode(b: &[u8]) -> Option<(ControlHeader, &[u8])> {
         let op_id = u32::from_be_bytes(b.get(..4)?.try_into().ok()?);
-        let (targets, n) = Targets::decode(&b[4..])?;
-        Some((ControlHeader { op_id, targets }, &b[4 + n..]))
+        let flags = *b.get(4)?;
+        let (targets, n) = Targets::decode(&b[5..])?;
+        Some((ControlHeader { op_id, flags, targets }, &b[5 + n..]))
     }
 }
 
@@ -212,6 +237,8 @@ pub enum RouteReject {
     Unsigned,
     /// Not for this node (no MAC entry, or a `CONTROL` target that excludes it).
     NotTargeted,
+    /// Envelope-trust framing ([`SESSION_ENVELOPE`]) on a mesh that holds an admin key.
+    Untrusted,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -225,6 +252,9 @@ pub struct RouteStats {
     pub guest_forbidden: u32,
     pub unsigned: u32,
     pub not_targeted: u32,
+    pub untrusted: u32,
+    /// Admin-class packets accepted on envelope trust.
+    pub envelope: u32,
 }
 
 /// What [`Router::route`] needs to know about this node.
@@ -236,6 +266,9 @@ pub struct RouteCtx {
     pub groups: Groups,
     /// Mesh seconds (grant expiry; §6, M4).
     pub mesh_time_s: u32,
+    /// No admin key is provisioned (a dev closed mesh, desk #67): admin-class packets in the
+    /// [`SESSION_ENVELOPE`] framing are accepted from any member (module docs).
+    pub envelope_trust: bool,
 }
 
 #[derive(Default)]
@@ -256,6 +289,8 @@ impl Router {
                 guest_forbidden: 0,
                 unsigned: 0,
                 not_targeted: 0,
+                untrusted: 0,
+                envelope: 0,
             },
         }
     }
@@ -274,6 +309,12 @@ impl Router {
             Err(RouteReject::GuestForbidden) => s.guest_forbidden += 1,
             Err(RouteReject::Unsigned) => s.unsigned += 1,
             Err(RouteReject::NotTargeted) => s.not_targeted += 1,
+            Err(RouteReject::Untrusted) => s.untrusted += 1,
+        }
+        if let Ok(Inbound { admin: false, port, .. }) = r {
+            if port.admin_class() {
+                s.envelope += 1;
+            }
         }
         r
     }
@@ -297,19 +338,28 @@ impl Router {
             return Ok(Inbound { origin, port: p, body: payload, admin: false });
         }
         let c = Command::parse(payload).ok_or(RouteReject::Malformed)?;
-        match sessions.check(&c, origin, port, ctx.mesh_id, ctx.me, ctx.mesh_time_s) {
-            Verdict::Accept => {}
-            Verdict::NotForMe => return Err(RouteReject::NotTargeted),
-            Verdict::Hold { session } => return Err(RouteReject::Held { session }),
-            Verdict::Reject(r) => return Err(RouteReject::Refused(r)),
-        }
+        // Envelope trust: the mesh key vouches for the sender being a member, nothing more.
+        let signed = if c.session == SESSION_ENVELOPE {
+            if !ctx.envelope_trust {
+                return Err(RouteReject::Untrusted);
+            }
+            false
+        } else {
+            match sessions.check(&c, origin, port, ctx.mesh_id, ctx.me, ctx.mesh_time_s) {
+                Verdict::Accept => {}
+                Verdict::NotForMe => return Err(RouteReject::NotTargeted),
+                Verdict::Hold { session } => return Err(RouteReject::Held { session }),
+                Verdict::Reject(r) => return Err(RouteReject::Refused(r)),
+            }
+            true
+        };
         if p == Port::Control {
             let (h, _) = ControlHeader::decode(c.body).ok_or(RouteReject::Malformed)?;
             if !h.targets.includes(ctx.me, &ctx.groups) {
                 return Err(RouteReject::NotTargeted);
             }
         }
-        Ok(Inbound { origin, port: p, body: c.body, admin: true })
+        Ok(Inbound { origin, port: p, body: c.body, admin: signed })
     }
 }
 
@@ -323,7 +373,7 @@ mod tests {
     const MESH: u32 = 0xA1B2_C3D4;
 
     fn ctx(me: NodeId, groups: &[u8]) -> RouteCtx {
-        RouteCtx { mesh_id: MESH, me, role: Role::Member, groups: Groups::from_slice(groups), mesh_time_s: 0 }
+        RouteCtx { mesh_id: MESH, me, role: Role::Member, groups: Groups::from_slice(groups), mesh_time_s: 0, envelope_trust: false }
     }
 
     /// A member (id 5, key seed 5) with a synced session 7 from gateway 1.
@@ -341,7 +391,7 @@ mod tests {
 
     fn control(k: &[u8; 16], seq: u64, t: Targets, inner: &[u8]) -> Vec<u8> {
         let mut body = [0u8; 64];
-        let n = ControlHeader { op_id: 9, targets: t }.encode(inner, &mut body).unwrap();
+        let n = ControlHeader::new(9, t).encode(inner, &mut body).unwrap();
         let mut out = [0u8; 128];
         let m = seal_command(MESH, 7, seq, Port::Control as u8, &body[..n], &[(5, *k)], &mut out).unwrap();
         out[..m].to_vec()
@@ -399,6 +449,28 @@ mod tests {
         // An unknown session is held.
         let mut fresh = Sessions::new();
         assert_eq!(r.route(&c, &mut fresh, 1, 16, &control(&k, 204, Targets::All, b"x")), Err(RouteReject::Held { session: 7 }));
+    }
+
+    #[test]
+    fn envelope_trust_only_without_an_admin_key() {
+        let mut body = [0u8; 64];
+        let h = ControlHeader { op_id: 3, flags: ControlHeader::WANT_REPLY, targets: Targets::nodes(&[5, 6]).unwrap() };
+        let n = h.encode(b"inner", &mut body).unwrap();
+        assert_eq!(ControlHeader::decode(&body[..n]), Some((h, &b"inner"[..])));
+        let mut p = [0u8; 96];
+        let m = seal_command(MESH, SESSION_ENVELOPE, 1, Port::Control as u8, &body[..n], &[], &mut p).unwrap();
+        let mut r = Router::new();
+        let mut s = Sessions::new();
+        // A mesh with an admin key refuses it, from anyone.
+        assert_eq!(r.route(&ctx(5, &[]), &mut s, 1, 16, &p[..m]), Err(RouteReject::Untrusted));
+        // A dev mesh (no admin key) takes it from any member, for its targets only.
+        let dev = RouteCtx { envelope_trust: true, ..ctx(5, &[]) };
+        let got = r.route(&dev, &mut s, 4, 16, &p[..m]).unwrap();
+        assert!(!got.admin);
+        assert_eq!(ControlHeader::decode(got.body).unwrap().1, b"inner");
+        let other = RouteCtx { envelope_trust: true, ..ctx(7, &[]) };
+        assert_eq!(r.route(&other, &mut s, 4, 16, &p[..m]), Err(RouteReject::NotTargeted));
+        assert_eq!((r.stats.untrusted, r.stats.envelope, r.stats.not_targeted), (1, 1, 1));
     }
 
     #[test]

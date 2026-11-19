@@ -113,6 +113,8 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::GetEthernetState(_)
         | CMsg::DiscoverControllers(_)
         | CMsg::SetNetworkOutput(_)
+        | CMsg::MeshSend(_)
+        | CMsg::GetMesh(_)
         | CMsg::OtaBegin(_)
         | CMsg::OtaChunk(_)
         | CMsg::OtaFinish(_)
@@ -209,6 +211,8 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::GetEthernetState(_) => "get_ethernet_state",
         CMsg::DiscoverControllers(_) => "discover_controllers",
         CMsg::SetNetworkOutput(_) => "set_network_output",
+        CMsg::MeshSend(_) => "mesh_send",
+        CMsg::GetMesh(_) => "get_mesh",
         CMsg::OtaBegin(_) => "ota_begin",
         CMsg::OtaChunk(_) => "ota_chunk",
         CMsg::OtaFinish(_) => "ota_finish",

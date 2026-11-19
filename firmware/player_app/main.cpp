@@ -638,6 +638,8 @@ static const int32_t kArmSetUniforms = 23;
 static const int32_t kArmEffectUniforms = 16;
 static const int32_t kArmWelcome = 1;
 static const int32_t kArmSetFixturePose = 37;
+static const int32_t kArmSetTimeBase = 38;
+static const int32_t kArmErrorReply = 9;  // ServerMessage.error
 static const int32_t kArmBlendKeypoints = 44;
 
 // Coalesced effect-control save (set_effect / set_uniforms): slider drags
@@ -1821,6 +1823,13 @@ int lm_player_ble_reply(const uint8_t *in, size_t len, const uint8_t **reply) {
 // the transport's reassembly buffer (g_ws_rx / the BLE frame — never copied into rx),
 // compute the reply into the shared tx, and hand back a pointer to it.
 static bool live_post(const uint8_t *in, size_t len);  // the live-move mailbox (below)
+static int dispatch_gated(const uint8_t *in, size_t len, const uint8_t **reply);
+// The mesh gateway (netstack_transport.cpp, mesh M5).
+extern "C" int32_t lm_mesh_app(uint32_t conn, const uint8_t *in, size_t len, uint8_t *out, size_t cap,
+                               const uint8_t **inner, uint32_t *inner_len);
+extern "C" void lm_mesh_app_done(uint32_t status);
+extern "C" void lm_mesh_note_time_base(uint32_t conn);
+extern "C" void lm_mesh_sessions(uint32_t ws, uint32_t ble);
 
 int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
   g_reply_droppable = false;
@@ -1851,6 +1860,31 @@ int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
       return g;
     }
   }
+  // The mesh gateway (docs/design/mesh.md §8, mesh M5): mesh_send / get_mesh are the mesh's
+  // (netstack_transport.cpp lm_mesh_app); a mesh_send's inner is dispatched here too, exactly
+  // as if the app had sent it alone, and that is the app's reply.
+  {
+    const uint8_t *inner = nullptr;
+    uint32_t inner_len = 0;
+    int32_t r = lm_mesh_app(g_kiosk_src, in, len, tx, sizeof tx, &inner, &inner_len);
+    if (r >= 0) {
+      *reply = tx;
+      return r;
+    }
+    if (r == -3) {
+      int n = dispatch_gated(inner, inner_len, reply);
+      lm_mesh_app_done(n < 0 || (n > 0 && lm_envelope_arm(tx, (size_t)n) == kArmErrorReply) ? 1 : 0);
+      return n;
+    }
+  }
+  int n = dispatch_gated(in, len, reply);
+  // desk #79: the app's set_time_base starts a show epoch only through the gateway's session.
+  if (lm_envelope_arm(in, len) == kArmSetTimeBase) lm_mesh_note_time_base(g_kiosk_src);
+  return n;
+}
+
+// Everything after the kiosk gate (and the mesh arms): the live mailbox, or the shared handler.
+static int dispatch_gated(const uint8_t *in, size_t len, const uint8_t **reply) {
   // A live move (seq'd, uncommitted set_uniforms): stash it for the next frame and ack
   // now — never wait behind a render frame for the player mutex (lm_live_post).
   if (live_post(in, len)) {
@@ -1875,6 +1909,52 @@ int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
 }
 
 bool lm_ws_reply_droppable() { return g_reply_droppable; }
+
+// A control relayed over the mesh (mesh_glue.h, after the mesh tick, loopTask): dispatched
+// exactly as if the app had sent it here (the live mailbox or the shared handler), minus the
+// kiosk gate (the gateway's admin session sent it) and the transport reply (the mesh answers
+// the gateway). mesh_ffi already checked the relay allow-list. 0 = ok, else *code.
+extern "C" int32_t lm_mesh_member_dispatch(const uint8_t *in, uint32_t len, uint32_t *code) {
+  *code = 0;
+  const uint8_t *reply = nullptr;
+  g_kiosk_src = LM_KIOSK_SRC_INTERNAL;
+  int n = dispatch_gated(in, len, &reply);
+  g_kiosk_src = LM_KIOSK_SRC_WSS;
+  g_reply_droppable = false;
+  if (n < 0) {
+    *code = 0xfffe;
+    return 1;
+  }
+  if (n > 0 && lm_envelope_arm(tx, (size_t)n) == kArmErrorReply) {
+    *code = 1;
+    return 1;
+  }
+  return 0;
+}
+
+// A finished mesh_send result to the connection that sent it (mesh_glue.h).
+extern "C" void lm_mesh_push(uint32_t conn, uint8_t *frame, uint32_t len) {
+  if (conn == LM_KIOSK_SRC_BLE) {
+    if (improv_ble_central_connected()) player_ble_push(frame, len);
+  } else if (netstack_ws_open()) {
+    netstack_ws_send(frame, len);
+  }
+}
+
+// What a mesh member reports in its status broadcasts (mesh_glue.h, once a second).
+extern "C" void lm_mesh_status_fill(uint32_t *fps, uint32_t *brightness, uint32_t *firmware) {
+  *fps = lm_fps_current_fps();
+  *brightness = g_brightness;
+  // FNV-1a of the version string: enough for the gateway to tell versions apart.
+  uint32_t h = 2166136261u;
+  for (const char *c = LM_VERSION; *c; c++) h = (h ^ (uint8_t)*c) * 16777619u;
+  *firmware = h;
+}
+
+// The mesh gateway's sessions belong to a connection (mesh M5): when the wss session or the
+// BLE central goes away (or a new one replaces it), whatever session it held ends. The
+// edge state lives in the mesh's block (no statics while the mesh is off).
+static void poll_mesh_sessions() { lm_mesh_sessions(netstack_ws_open(), improv_ble_central_connected()); }
 
 bool lm_ws_session_busy() {
   if (upload_active) return true;
@@ -4295,6 +4375,9 @@ void loop() {
   emit_fps_lag_if_changed();
   poll_fx_debugger();
   poll_kiosk();
+#if defined(LM_NETSTACK)
+  poll_mesh_sessions();
+#endif
 
   static uint32_t last_report = 0;
   if (millis() - last_report > 5000 && xSemaphoreTake(player_mutex, 0) == pdTRUE) {

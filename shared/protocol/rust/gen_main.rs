@@ -365,5 +365,28 @@ fn main() -> std::io::Result<()> {
         }
     }
 
+    // Mesh gateway (docs/design/mesh.md §8, mesh M5): the netstack player answers
+    // mesh_send / get_mesh in mesh_ffi.rs (hand-encoded, zero-copy) before the player core,
+    // which only ever answers error{unsupported}; so the firmware profile carries none of
+    // their variable-size fields. The host profile sizes them for a real 16-member mesh.
+    for (field, host_len, bytes) in [
+        (".ledmapper.v1.MeshTargets.nodes", 8, false),
+        (".ledmapper.v1.MeshSend.inner", 200, true),
+        (".ledmapper.v1.MeshResult.members", 16, false),
+        (".ledmapper.v1.MeshState.members", 16, false),
+    ] {
+        if firmware {
+            g.configure(field, Config::new().skip(true));
+        } else if bytes {
+            g.configure(field, Config::new().max_bytes(host_len));
+        } else {
+            g.configure(field, Config::new().max_len(host_len));
+        }
+    }
+    if firmware {
+        g.configure(".ledmapper.v1.MeshInfo.result", Config::new().skip(true));
+        g.configure(".ledmapper.v1.MeshInfo.state", Config::new().skip(true));
+    }
+
     g.compile_fdset_file(&args[1], &args[2])
 }

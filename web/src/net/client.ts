@@ -75,6 +75,7 @@ import type { ColorBlock } from "@ledmapper/protocol";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
 import { decodeServer, encodeClient, type KioskStatusMessage, type SetKioskConfigMessage } from "./proto";
 import { LiveControl, applyAt } from "./liveControl";
+import { meshResultError, wrapForMesh, type MeshInfoMessage, type MeshResultInfo, type MeshStateInfo } from "./mesh";
 export { applyAt } from "./liveControl";
 import type { CaptureProfileFlat } from "../capture/captureProfile";
 import { normalizeWifiPolicy, wifiPolicyMessage, type WifiPolicy, type WifiPolicyRequest } from "./wifiPolicy";
@@ -375,6 +376,10 @@ export class LedMapperClient {
   // Kiosk mode: visitor activity this client sends (the countdown restarts on it).
   private activitySubs = new Set<() => void>();
   private kioskSubs = new Set<(s: KioskStatusMessage) => void>();
+  private meshSubs = new Set<(r: MeshResultInfo) => void>();
+  /** Live control drives every fixture meshed with this one (mesh M5; net/mesh.ts). */
+  private meshAll_ = false;
+  private meshState_: MeshStateInfo | null = null;
 
   /**
    * A stop_mapping(solveOnHost=false) the device has not acknowledged (it timed
@@ -1306,6 +1311,37 @@ export class LedMapperClient {
     return (await this.request(msg, "kiosk_status", timeoutMs)) as unknown as KioskStatusMessage;
   }
 
+  // -- The mesh gateway (docs/design/mesh.md §8; net/mesh.ts) -------------------
+
+  /** The mesh this fixture is in (players without one reject with error "unsupported"). On
+   * a dev mesh this also opens the gateway session for this connection. */
+  async getMesh(timeoutMs = 5000): Promise<MeshStateInfo> {
+    const r = (await this.request({ type: "get_mesh" } as unknown as ClientMessage, "mesh", timeoutMs)) as unknown as MeshInfoMessage;
+    this.meshState_ = r.state ?? {};
+    return this.meshState_;
+  }
+
+  /** The last mesh state read with {@link getMesh} (null before). */
+  get meshState(): MeshStateInfo | null {
+    return this.meshState_;
+  }
+
+  /** Whether live control (effect, sliders, brightness, crossfade) goes to the whole mesh
+   * through this fixture. */
+  get meshAll(): boolean {
+    return this.meshAll_;
+  }
+
+  setMeshAll(on: boolean): void {
+    this.meshAll_ = on;
+  }
+
+  /** Subscribe to pushed mesh results (a mesh_send with want_reply). */
+  onMeshResult(fn: (r: MeshResultInfo) => void): () => void {
+    this.meshSubs.add(fn);
+    return () => this.meshSubs.delete(fn);
+  }
+
   /** Subscribe to kiosk_status frames: replies AND the unsolicited pushes (idle
    * revert, first activity after a revert, config change). Returns an unsubscribe fn. */
   onKioskStatus(fn: (s: KioskStatusMessage) => void): () => void {
@@ -1703,7 +1739,10 @@ export class LedMapperClient {
   private send(msg: ClientMessage): boolean {
     if (this.sock === null || this.sock.readyState !== SOCKET_OPEN) return false;
     try {
-      this.sock.send(encodeClient(msg));
+      // Whole-mesh control: relayable messages go through this fixture to every member;
+      // the reply is still this fixture's own (net/mesh.ts).
+      const wire = this.meshAll_ ? (wrapForMesh(msg, encodeClient) ?? msg) : msg;
+      this.sock.send(encodeClient(wire));
       if (KIOSK_ACTIVITY_TYPES.has(msg.type as string)) for (const fn of this.activitySubs) fn();
       return true;
     } catch {
@@ -1755,6 +1794,24 @@ export class LedMapperClient {
         fw.resolve(msg);
       }
       return;
+    }
+    if ((msg.type as string) === "mesh") {
+      const info = msg as unknown as MeshInfoMessage;
+      if (info.result) {
+        // A mesh_send the gateway refused: the waiter for its inner's reply gets the error.
+        const err = meshResultError(info.result);
+        if (err !== null) {
+          const pending = [...this.waiters.entries()].find(([k]) => k !== "mesh");
+          if (pending) {
+            this.waiters.delete(pending[0]);
+            pending[1].reject(new ServerErrorReply("mesh", err));
+            return;
+          }
+          this.events.onServerError?.("mesh", err);
+        }
+        for (const fn of this.meshSubs) fn(info.result);
+        if (!this.waiters.has("mesh")) return;
+      }
     }
     if ((msg.type as string) === "kiosk_status") {
       // Subscribers see every kiosk_status (pushes included), then any waiter.

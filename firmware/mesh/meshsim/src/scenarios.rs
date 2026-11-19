@@ -255,7 +255,7 @@ fn foreign_unauthenticated_and_insider_nodes_are_refused() {
     let k1 = w.nodes[1].stack.sessions.get(SESSION).unwrap().key;
     let rec: Vec<(NodeId, [u8; 16])> = (1..6).map(|i| (id(i), k1)).collect();
     let mut body = [0u8; 64];
-    let bl = splanc_mesh::ports::ControlHeader { op_id: 666, targets: Targets::All }.encode(b"set_effect evil", &mut body).unwrap();
+    let bl = splanc_mesh::ports::ControlHeader::new(666, Targets::All).encode(b"set_effect evil", &mut body).unwrap();
     let mut buf = [0u8; 256];
     let seq = u64::MAX / 2;
     let n = admin::seal_command(w.mesh_id, SESSION, seq, Port::Control as u8, &body[..bl], &rec, &mut buf).unwrap();
@@ -603,7 +603,7 @@ fn mesh_time_and_apply_at_skew() {
     assert!((0..6).all(|i| w.nodes[i].stack.time.state == SyncState::Synced));
     // Node 0's app sets the show epoch 2 s ahead; a change is scheduled for epoch + 1.5 s.
     let epoch_mesh = w.nodes[0].stack.time.mesh_us(w.local(0)) + 2_000_000;
-    w.nodes[0].stack.originate_epoch(Some(epoch_mesh));
+    w.nodes[0].stack.originate_epoch(splanc_mesh::stack::EpochSource::Console, Some(epoch_mesh)).expect("console may");
     w.run_ms(2_000);
     let apply_mesh = epoch_mesh + 1_500_000;
     // Each member's local instant of the change, in global time.
@@ -635,4 +635,90 @@ fn mesh_time_and_apply_at_skew() {
     assert!(worst < 200, "mesh time spread {worst} µs");
     assert!(skew < 200, "apply_at skew {skew} µs");
     assert!(after < 200, "after the reboot {after} µs");
+}
+
+/// Mesh M5 (§8.2) on a dev closed mesh (no admin key, desk #67): the gateway opens its session
+/// on the envelope, fans control out, members answer per the relay allow-list, the gateway
+/// aggregates; member status reaches the gateway; only the gateway's session starts epochs.
+#[test]
+fn gateway_fan_out_on_envelope_trust() {
+    use splanc_mesh::gateway::{self, ReplyMsg, Status, StatusMsg};
+    use splanc_mesh::stack::EpochSource;
+    let mut w = room(3, 5);
+    let all: Vec<usize> = (0..3).collect();
+    let c = Credentials { mesh_id: w.mesh_id, site_secret: Some(SITE), ..Credentials::default() };
+    form(&mut w, &all, &c, 300, 15_000);
+    assert!(w.nodes.iter().all(|n| n.stack.envelope_trust()));
+    // Not open yet: no control, no epoch from the app's connection.
+    let t = w.local(GW);
+    assert_eq!(w.nodes[GW].stack.send_control(t, CONN, 1, Targets::All, b"x"), Err(SendError::Locked));
+    assert_eq!(w.nodes[GW].stack.originate_epoch(EpochSource::Connection(CONN), Some(5)), None);
+    w.nodes[GW].stack.open_gateway(CONN).expect("envelope trust");
+    assert!(w.nodes[GW].stack.originate_epoch(EpochSource::Connection(CONN), Some(5)).is_some());
+    assert_eq!(w.nodes[GW].stack.originate_epoch(EpochSource::Connection(CONN + 1), Some(6)), None, "another connection");
+    assert_eq!(w.nodes[1].stack.originate_epoch(EpochSource::Connection(CONN), Some(7)), None, "a member");
+    // Status reaches the gateway.
+    for (i, n) in w.nodes.iter_mut().enumerate() {
+        n.stack.set_status(StatusMsg { firmware: 9, fps: 80, heap_free: 50_000 + i as u32, sync: 2, ..StatusMsg::default() });
+    }
+    w.run_ms(3_000);
+    let listed: Vec<NodeId> = w.nodes[GW].stack.fanout.members.iter().flatten().filter(|m| m.status.is_some()).map(|m| m.node).collect();
+    assert!(listed.contains(&id(1)) && listed.contains(&id(2)), "{listed:?}");
+
+    // Members answer every control they get, as the firmware does (mesh_ffi).
+    let answer = |w: &mut World, seen: &mut std::collections::BTreeSet<(usize, u32)>| {
+        for i in 1..3 {
+            let ctls = w.nodes[i].controls();
+            for (_, origin, op, inner) in ctls {
+                if !seen.insert((i, op)) {
+                    continue;
+                }
+                let (status, arm, code) = match gateway::relay_arm(&inner) {
+                    Ok(a) => (Status::Ok, a as u8, 0),
+                    Err(r) => (Status::Refused, gateway::client_arm(&inner).map_or(0, |a| a.0 as u8), r.code()),
+                };
+                w.nodes[i].stack.reply(origin, &ReplyMsg { op_id: op, status, arm, code }).expect("reply");
+            }
+        }
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    let brightness: &[u8] = &[0xfa, 0x01, 5, 0x0d, 0, 0, 0, 0x3f];
+    let rename: &[u8] = &[0xda, 0x01, 3, 0x0a, 1, b'x'];
+    let mut results = Vec::new();
+    for (op, inner, arm) in [(10u32, brightness, 31u8), (11, rename, 27)] {
+        let t = w.local(GW);
+        let expect = w.nodes[GW].stack.send_control_collect(t, CONN, op, Targets::All, inner, arm, 2_000_000).expect("send");
+        assert_eq!(expect, 2);
+        let mut got = None;
+        for _ in 0..300 {
+            w.run_ms(10);
+            answer(&mut w, &mut seen);
+            if let Some(r) = w.nodes[GW].stack.fanout.take_done() {
+                got = Some(r);
+                break;
+            }
+        }
+        let r = got.expect("a result");
+        assert!(r.complete, "every member answered: {r:?}");
+        results.push(r);
+    }
+    assert!(results[0].status[..2].iter().all(|s| *s == Status::Ok));
+    assert!(results[1].status[..2].iter().all(|s| *s == Status::Refused));
+    assert!(results[1].code[..2].iter().all(|c| *c == 27));
+    let lat: Vec<u16> = results[0].latency_ms[..2].to_vec();
+    println!("gateway fan-out (3 nodes, envelope trust): answers in {lat:?} ms; refusals {:?}", &results[1].code[..2]);
+    // A mesh holding an admin key refuses the envelope framing, even from the real gateway.
+    let mut w2 = room(2, 6);
+    let c2 = creds(&w2);
+    form(&mut w2, &[0, 1], &c2, 300, 15_000);
+    assert!(!w2.nodes[GW].stack.envelope_trust());
+    assert!(w2.nodes[GW].stack.open_gateway(CONN).is_err());
+    let mut body = [0u8; 64];
+    let bl = splanc_mesh::ports::ControlHeader::new(77, Targets::All).encode(brightness, &mut body).unwrap();
+    let mut buf = [0u8; 128];
+    let n = admin::seal_command(w2.mesh_id, splanc_mesh::ports::SESSION_ENVELOPE, 1, Port::Control as u8, &body[..bl], &[], &mut buf).unwrap();
+    inject_as(&mut w2, GW, id(GW), Port::Control, &buf[..n]);
+    w2.run_ms(1_000);
+    assert!(w2.nodes[1].controls().is_empty());
+    assert_eq!(w2.nodes[1].stack.router.stats.untrusted, 1);
 }

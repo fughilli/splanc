@@ -42,11 +42,13 @@ use splanc_mesh::crypto::{DeviceKey, Entropy, PublicKey};
 use splanc_mesh::membership::{Credentials, Mode, Phase, ProvisionSource};
 use splanc_mesh::ports::Port;
 use splanc_mesh::meshtime::{ShowEpoch, SyncState};
-use splanc_mesh::stack::{Event, MeshStack, StackConfig};
+use splanc_mesh::stack::{EpochSource, Event, MeshStack, StackConfig};
 use splanc_mesh::timesync::Adjust;
 use splanc_mesh::wifi_p2p::{self, ChannelAction, ChannelRule, GroupPolicy, P2pConfig, Radio, RxVerdict, TxResult, WifiP2p};
 use splanc_mesh::NodeId;
 use swarm_net::update::Flash;
+
+pub mod mesh_gw;
 
 /// The 802.11 mesh payload (§5.2).
 const P: usize = 200;
@@ -233,6 +235,19 @@ pub struct Mesh {
     tb_align: bool,
     tstat_next_us: i64,
     last_state: SyncState,
+    // ---- the gateway and relayed control (M5, mesh_gw.rs) ----
+    gw: mesh_gw::Gw,
+    /// The op whose inner the transport is dispatching locally (`ns_mesh_gw_local_done`).
+    gw_local_op: u32,
+    /// The app's set_time_base just arrived on this connection (desk #79's seam decides).
+    tb_app: Option<usize>,
+    tb_refused: u32,
+    /// The transport's scratch for relayed control, results and the dev console (in the
+    /// block, so the transport has no static buffers: desk #68), the connections it last
+    /// reported (bit 0 wss, bit 1 BLE), and when it last reported the status inputs.
+    xfer: [u8; mesh_gw::XFER],
+    conns: u8,
+    status_us: i64,
 }
 
 impl Mesh {
@@ -330,6 +345,13 @@ pub unsafe extern "C" fn ns_mesh_create(block: *mut u8, len: u32, mac: *const u8
     f!((*p).tb_align).write(false);
     f!((*p).tstat_next_us).write(0);
     f!((*p).last_state).write(SyncState::Unsynced);
+    mesh_gw::Gw::init_in(f!((*p).gw));
+    f!((*p).gw_local_op).write(0);
+    f!((*p).tb_app).write(None);
+    f!((*p).tb_refused).write(0);
+    f!((*p).xfer).write_bytes(0, 1);
+    f!((*p).conns).write(0);
+    f!((*p).status_us).write(i64::MIN / 2);
     p
 }
 
@@ -457,9 +479,13 @@ pub unsafe extern "C" fn ns_mesh_epoch(m: *mut Mesh, delta_ms: i64, clear: u32, 
         return 0;
     }
     let e = if clear != 0 { None } else { Some(m.stack.time.mesh_us(now_us) + delta_ms * 1000) };
-    let se = m.stack.originate_epoch(e);
-    log_epoch(m, "originated", se);
-    1
+    match m.stack.originate_epoch(EpochSource::Console, e) {
+        Some(se) => {
+            log_epoch(m, "originated", se);
+            1
+        }
+        None => 0,
+    }
 }
 
 fn log_epoch(m: &mut Mesh, what: &str, e: ShowEpoch) {
@@ -486,17 +512,33 @@ unsafe fn time_base(m: &mut Mesh, now_us: i64) {
     }
     let player = (r == 1).then_some(cur);
     let off = m.stack.time.clock.offset_us;
-    // The app changed it (or set one before the mesh had an epoch): a new generation.
+    // The app changed it (or set one before the mesh had an epoch): a new generation, if
+    // the connection it came from may start one (desk #79, `EPOCH_POLICY`). Otherwise the
+    // time base goes back to the mesh's epoch below (members follow).
     let changed = match m.tb_mine {
         Some(mine) => mine != player,
         None => player.is_some() && m.stack.time.epoch.is_none(),
     };
     if changed {
-        let e = m.stack.originate_epoch(player.map(|ms| ms * 1000 + off));
-        m.tb_originated += 1;
-        m.tb_mine = Some(player);
-        m.tb_gen = Some((e.gen, e.origin));
-        log_epoch(m, "originated", e);
+        let by = m.tb_app.take();
+        match by.and_then(|c| m.stack.originate_epoch(EpochSource::Connection(c), player.map(|ms| ms * 1000 + off))) {
+            Some(e) => {
+                m.tb_originated += 1;
+                m.tb_mine = Some(player);
+                m.tb_gen = Some((e.gen, e.origin));
+                log_epoch(m, "originated", e);
+            }
+            None => {
+                m.tb_refused += 1;
+                let n = m.tb_refused;
+                m.log(format_args!("[mt] epoch refused (not the gateway's session: conn={}) n={n}", by.map_or(-1, |c| c as i64)));
+                if m.stack.time.epoch.is_none() {
+                    // Nothing to follow yet: leave the app's time base alone.
+                    m.tb_mine = Some(player);
+                    return;
+                }
+            }
+        }
     }
     let Some(e) = m.stack.time.epoch else { return };
     let want = e.epoch_mesh_us.map(|x| (x - off).div_euclid(1000) + i64::from((x - off).rem_euclid(1000) >= 500));
@@ -658,10 +700,20 @@ pub unsafe extern "C" fn ns_mesh_tick(m: *mut Mesh, now_us: i64, radio_ch: u8, a
     let mut mark = None;
     let (mut ctl, mut pkt) = (0u32, 0u32);
     let mut rx_log: [Option<(NodeId, u8, u8, u32)>; 4] = [None; 4];
+    // Relayed control for this member (M5): copied out of the tick, judged after it.
+    let mut ctl_in: [Option<(NodeId, u32, bool, u8, [u8; P])>; mesh_gw::INBOX] = [None; mesh_gw::INBOX];
     {
         let Mesh { stack, scratch, test_rx, .. } = m;
         stack.tick(now_us, &mut NoFlash, scratch, &mut |e| match e {
-            Event::Control { .. } => ctl += 1,
+            Event::Control { origin, header, inner } => {
+                ctl += 1;
+                if let Some(slot) = ctl_in.iter_mut().find(|s| s.is_none()) {
+                    let mut b = [0u8; P];
+                    let n = inner.len().min(P);
+                    b[..n].copy_from_slice(&inner[..n]);
+                    *slot = Some((origin, header.op_id, header.want_reply(), n as u8, b));
+                }
+            }
             Event::Packet { origin, port, body, .. } => {
                 pkt += 1;
                 if body.len() >= 10 && body[0] == T_TEST {
@@ -681,6 +733,9 @@ pub unsafe extern "C" fn ns_mesh_tick(m: *mut Mesh, now_us: i64, radio_ch: u8, a
     }
     m.controls += ctl;
     m.packets += pkt;
+    for (origin, op, want, n, b) in ctl_in.into_iter().flatten() {
+        mesh_gw::on_control(m, origin, op, want, &b[..n as usize]);
+    }
     for (origin, tag, port, seq) in rx_log.into_iter().flatten() {
         m.log(format_args!("[mesh] testrx first from={origin:04x} tag={tag} port={port} seq={seq}"));
     }
@@ -875,6 +930,7 @@ fn report(m: &Mesh, what: u32, idx: u32, now: i64, w: &mut Buf<'_>) -> bool {
                 b.clock.offset_us().unwrap_or(0),
             )
         }
+        (0, 1) => mesh_gw::report(m, w),
         (1, i) => {
             // Link neighbours (RSSI, ACKs), joined with the stack's advert table.
             let Some(n) = b.neighbours.iter().flatten().nth(i as usize) else { return false };
