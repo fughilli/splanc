@@ -126,4 +126,42 @@ class PskRejectWatch {
   uint32_t start_ms_ = 0;
 };
 
+// Re-send a join-failure Improv error while the central is still connected.
+// Found on the rig (HITL improv_wrong_password, 1 of 6 reports): the error notification
+// goes out while the join is busy re-trying the refused password, and on a marginal BLE
+// link (rig-2's RTL8851BU dongle, coex with that Wi-Fi traffic) a single notification can
+// be lost; the central then waited out its whole join timeout. The redirect has the same
+// re-send for the same reason. Each re-send notifies the same state + error value, which
+// every client treats as the same answer. A new SendWifi or a lease cancels it.
+constexpr uint32_t kErrorResendGapMs = 1000;
+constexpr uint32_t kErrorResends = 4;
+
+class ErrorResend {
+ public:
+  void arm(uint8_t reason, uint32_t now) {
+    reason_ = reason;
+    left_ = kErrorResends;
+    next_ms_ = now + kErrorResendGapMs;
+  }
+  void cancel() { left_ = 0; }
+  // The reason to re-send now (0: nothing due). Stops once the central has gone (it got
+  // the error, or the link is lost; a reconnecting central reads the error value).
+  uint8_t take(uint32_t now, bool central_connected) {
+    if (left_ == 0) return 0;
+    if (!central_connected) {
+      left_ = 0;
+      return 0;
+    }
+    if ((int32_t)(now - next_ms_) < 0) return 0;
+    left_--;
+    next_ms_ = now + kErrorResendGapMs;
+    return reason_;
+  }
+
+ private:
+  uint8_t reason_ = 0;
+  uint32_t left_ = 0;
+  uint32_t next_ms_ = 0;
+};
+
 }  // namespace lm_join

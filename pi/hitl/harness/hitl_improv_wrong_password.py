@@ -69,12 +69,12 @@ def _provisioner(res, ssid: str, password: str, timeout: float, address: str | N
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": "BLE transport failed: provisioner hung (ssh timeout)"}
     out = (proc.stdout or "").strip()
-    if proc.returncode != 0:
-        return {"ok": False, "error": f"provisioner exited {proc.returncode}"}
+    # A failed provision (the error this gate wants, or a timeout) exits 1 WITH its JSON
+    # result line; only a run with no JSON at all is the bench's problem.
     try:
         r = json.loads(out.splitlines()[-1])
     except (ValueError, IndexError):
-        return {"ok": False, "error": "provisioner gave no JSON"}
+        return {"ok": False, "error": f"provisioner gave no JSON (exit {proc.returncode})"}
     return {k: r.get(k) for k in ("ok", "error", "join_s")}
 
 

@@ -327,6 +327,7 @@ bool scan_latch_ap() {
 lm_wifi_scan::ScanSchedule g_scan_sched;
 lm_wifi_scan::ImprovScanReport g_improv_scan;  // Improv: report an SSID no sweep can see
 lm_join::PskRejectWatch g_psk_watch;  // Improv: report a password the AP rejects in seconds
+lm_join::ErrorResend g_join_err_resend;  // re-send that join-failure error (lossy BLE)
 lm_wifi_scan::ChannelHop g_hop;
 bool g_force_sweep = false;   // console WIFI SCAN: one sweep now
 bool g_sweep_forced = false;  // the running sweep was forced (not scheduled)
@@ -2280,6 +2281,7 @@ static void psk_reject_act(lm_join::PskRejectWatch::Action a) {
     return;
   }
   improv_ble_set_join_error(IMPROV_JOIN_FAILURE_PASSWORD_REJECTED);
+  g_join_err_resend.arm(IMPROV_JOIN_FAILURE_PASSWORD_REJECTED, now_ms);
   g_improv_join.forget();  // the corrected SendWifi is a fresh join, never a ride
   Serial.printf("[t=%lu] [ble] \"%s\": the AP rejected the password (4-way M2 refused in %lu "
                 "sessions, %lu ms after the Improv join) — Improv error UNABLE_TO_CONNECT "
@@ -2786,6 +2788,7 @@ void netstack_loop() {
         // it can re-send). The creds stay committed and the background rescan goes on —
         // the board still joins if the AP appears, and that lease clears the error.
         improv_ble_set_join_error(IMPROV_JOIN_FAILURE_NOT_FOUND);
+        g_join_err_resend.arm(IMPROV_JOIN_FAILURE_NOT_FOUND, now_ms);
         g_improv_join.forget();  // the app's retry SendWifi is a fresh join, never a ride
         Serial.printf("[t=%lu] [ble] \"%s\" not found in %lu sweeps over %lu s (directed probe "
                       "incl.) — Improv error UNABLE_TO_CONNECT; creds kept, background rescan "
@@ -2947,6 +2950,7 @@ void netstack_loop() {
         g_force_sweep = true;
         g_improv_scan.on_fresh_join(now_ms);  // an SSID no sweep sees is reported (wifi_scan.h)
         g_psk_watch.on_fresh_join(now_ms);    // so is a password the AP rejects (psk_reject.h)
+        g_join_err_resend.cancel();           // a previous join's error is history
         g_authw.reset();  // a fresh join gets a fresh unanswered-auth clock
         // Start deriving the PMK NOW (off the hot path), overlapped with auth/assoc, so it's
         // ready by the 4-way and we never freeze the loop (which would drop the BLE link
@@ -2975,6 +2979,10 @@ void netstack_loop() {
     // (Either report: the not-found one or the wrong-password one. Both run, so a lease
     // after both — not possible today: an answered auth disarms the not-found watch — still
     // clears each once.)
+    if (g_leased) g_join_err_resend.cancel();
+    if (uint8_t why = g_join_err_resend.take((uint32_t)millis(), improv_ble_central_connected())) {
+      improv_ble_set_join_error(why);  // the same answer again (a lost notify, psk_reject.h)
+    }
     bool cleared_psk = g_leased && g_psk_watch.take_clear_on_lease();
     if (g_leased && (g_improv_scan.take_clear_on_lease() | cleared_psk)) {
       // The AP showed up after we reported it not found: clear the Improv error. With the

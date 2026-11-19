@@ -39,7 +39,6 @@ INFRA_ERRORS = (
     "no Improv device found",
     "BLE transport failed",
     "provisioner gave no JSON",
-    "provisioner exited",
 )
 
 
