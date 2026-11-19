@@ -209,15 +209,22 @@ async def _rounds(
     host_epoch_ms: float,
     sent: list,
     errors: dict,
+    before=None,
+    before_wait: float = 0.0,
 ) -> None:
     """`n` scheduled brightness steps, the same apply_at_ms to every DUT; `sent` gets each
-    round's (harness monotonic µs, apply_at_ms)."""
+    round's (harness monotonic µs, apply_at_ms). `before` runs once every socket is open:
+    the firmware drops a BLE central when a NEW wss client appears (coex), so a BLE hold
+    starts after the sockets, and the rounds reuse them."""
     socks = {}
     for k, u in urls.items():
         try:
             socks[k] = await _hello(u)
         except Exception as e:  # noqa: BLE001 — recorded; the round goes on without it
             errors.setdefault(k, []).append(f"connect: {e!r}")
+    if before is not None:
+        await asyncio.get_running_loop().run_in_executor(None, before)
+        await asyncio.sleep(before_wait)
 
     async def one(k, s, msg):
         try:
@@ -294,12 +301,26 @@ def run(args: argparse.Namespace) -> int:
         s["series"] = {k: v for k, v in ag.diffs.items()}
         return s
 
-    def do_rounds(p: dict, n: int, labels: list[str] | None = None) -> None:
+    def do_rounds(
+        p: dict, n: int, labels: list[str] | None = None, before=None, before_wait: float = 0.0
+    ) -> None:
         urls = {d.label: d.url for d in duts if d.url and (labels is None or d.label in labels)}
         sent: list = []
         errors: dict = {}
         t0 = time.monotonic()
-        asyncio.run(_rounds(urls, n, args.round_gap, args.lead_ms, host_epoch[0], sent, errors))
+        asyncio.run(
+            _rounds(
+                urls,
+                n,
+                args.round_gap,
+                args.lead_ms,
+                host_epoch[0],
+                sent,
+                errors,
+                before,
+                before_wait,
+            )
+        )
         time.sleep(args.lead_ms / 1000 + 1.0)
         apps = {d.label: applies(d.window(t0)) for d in duts if d.label in urls}
         rs = rounds([s for s, _ in sent], int(args.round_gap * 1e6), apps, pairs_all())
@@ -496,13 +517,12 @@ def run(args: argparse.Namespace) -> int:
                     th = threading.Thread(
                         target=_ble_hold, args=(duts[1].res, duts[1].ble_mac, hold_s, out)
                     )
-                    th.start()
-                    time.sleep(15.0)  # scan + connect (mesh_ble_hold prints when it is up)
                     t0 = time.monotonic()
-                    do_rounds(p, args.coex_rounds)
-                    p["agreement"] = agree(t0, time.monotonic())
+                    do_rounds(p, args.coex_rounds, before=th.start, before_wait=15.0)
+                    p["agreement"] = agree(t0 + 15.0, time.monotonic())
                     th.join(timeout=hold_s + 180)
                     p["ble_hold"] = out
+                    p["ble_lines"] = [t for t in duts[1].since(0) if "[ble] link" in t][-4:]
 
             with phase("rejoin") as p:
                 b = duts[1]
@@ -551,6 +571,18 @@ def run(args: argparse.Namespace) -> int:
                 time.sleep(10.0)
                 p["agreement"] = agree(t0, time.monotonic())
                 do_rounds(p, args.rejoin_rounds)
+
+            if args.scan:
+                with phase("scan") as p:
+                    # M4 diagnostic: which MAC register is the RX vector's clock (the TSF
+                    # counter at 0x600AD020 read frozen on r1)?
+                    a = duts[0]
+                    for base, n in args.scan:
+                        m = a.mark()
+                        a.send(f"MESH REG {base} {n}")
+                        a.wait_raw(r"\[mesh\] ok reg", 20.0, m)
+                        p.setdefault("regs", []).extend(t for t in a.since(m) if "[mesh] reg " in t)
+                    p["floor_off"] = a.time_report().get("time", {}).get("floor_off")
 
             with phase("off") as p:
                 for d in duts:
@@ -614,17 +646,24 @@ def main() -> int:
     ap.add_argument("--pings", type=int, default=15)
     ap.add_argument("--epoch-ahead-ms", type=float, default=1500.0)
     ap.add_argument("--rounds", type=int, default=24)
-    ap.add_argument("--coex-rounds", type=int, default=16)
+    ap.add_argument("--coex-rounds", type=int, default=24)
     ap.add_argument("--rejoin-rounds", type=int, default=10)
     ap.add_argument("--round-gap", type=float, default=1.5)
     ap.add_argument("--lead-ms", type=float, default=600.0)
-    ap.add_argument("--coex-seconds", type=float, default=60.0)
+    ap.add_argument("--coex-seconds", type=float, default=75.0)
     ap.add_argument("--skip-coex", action="store_true")
     ap.add_argument("--rejoin-away", type=float, default=8.0)
     ap.add_argument("--lease-timeout", type=float, default=90.0)
     ap.add_argument("--settle", type=float, default=4.0)
     ap.add_argument("--bridge-seconds", type=float, default=2400.0)
     ap.add_argument("--no-ap-lock", action="store_true")
+    ap.add_argument(
+        "--scan",
+        type=lambda v: tuple(v.split(":")),
+        nargs="*",
+        default=[],
+        help="MAC register scans before off: base_hex:count (diagnostic)",
+    )
     ap.add_argument(
         "--out", default=os.environ.get("TEST_UNDECLARED_OUTPUTS_DIR", "/tmp/mesh_apply_at_skew")
     )

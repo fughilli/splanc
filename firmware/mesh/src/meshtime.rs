@@ -259,30 +259,33 @@ impl Fit {
         }
     }
 
-    fn line(&self, keep: &[bool; FIT_N], at: i64) -> Option<(i64, i128, i128, i64, i64)> {
-        let (mut n, mut st, mut sy) = (0i64, 0i128, 0i128);
+    /// Least squares over the kept samples, x in ms from `at` (i64 throughout: no 128-bit
+    /// arithmetic on the C6): (n, sxx, sxy, mean x, mean y).
+    fn line(&self, keep: &[bool; FIT_N], at: i64) -> Option<(i64, i64, i64, i64, i64)> {
+        let (mut n, mut sx, mut sy) = (0i64, 0i64, 0i64);
+        let y0 = self.y[self.head as usize];
         for k in 0..self.n as usize {
             if keep[k] {
                 let i = (self.head as usize + k) % FIT_N;
                 n += 1;
-                st += (self.t[i] - at) as i128;
-                sy += self.y[i] as i128;
+                sx += (self.t[i] - at) / 1000;
+                sy += self.y[i] - y0;
             }
         }
         if n == 0 {
             return None;
         }
-        let (mt, my) = ((st / n as i128) as i64, (sy / n as i128) as i64);
-        let (mut sxx, mut sxy) = (0i128, 0i128);
+        let (mx, my) = (sx / n, y0 + sy / n);
+        let (mut sxx, mut sxy) = (0i64, 0i64);
         for k in 0..self.n as usize {
             if keep[k] {
                 let i = (self.head as usize + k) % FIT_N;
-                let dx = (self.t[i] - at - mt) as i128;
+                let dx = (self.t[i] - at) / 1000 - mx;
                 sxx += dx * dx;
-                sxy += dx * (self.y[i] - my) as i128;
+                sxy += dx * (self.y[i] - my);
             }
         }
-        Some((n, sxx, sxy, mt, my))
+        Some((n, sxx, sxy, mx, my))
     }
 
     /// The line's value at `at` (our clock), after dropping outliers (more than 5 MADs and
@@ -291,37 +294,35 @@ impl Fit {
         if self.n == 0 {
             return None;
         }
+        let m = self.n as usize;
         let mut keep = [false; FIT_N];
-        for k in keep.iter_mut().take(self.n as usize) {
+        for k in keep.iter_mut().take(m) {
             *k = true;
         }
-        let eval = |keep: &[bool; FIT_N]| -> Option<(i64, i128, i128, i64)> {
-            let (n, sxx, sxy, mt, my) = self.line(keep, at)?;
-            // Value at `at` (dx = -mt from the mean); flat with fewer than 3 or a degenerate
-            // spread.
-            let y = if n >= 3 && sxx > 0 { my + ((sxy * (-mt) as i128) / sxx) as i64 } else { my };
-            Some((y, sxx, sxy, mt))
+        // (value at `at`, sxx, sxy, mean x): the value is the mean moved back by -mean x.
+        let eval = |keep: &[bool; FIT_N]| -> Option<(i64, i64, i64, i64)> {
+            let (n, sxx, sxy, mx, my) = self.line(keep, at)?;
+            let y = if n >= 3 && sxx > 0 { my - sxy * mx / sxx } else { my };
+            Some((y, sxx, sxy, mx))
         };
-        let resid = |keep: &[bool; FIT_N], y0: i64, sxx: i128, sxy: i128, out: &mut [i64; FIT_N]| {
-            for k in 0..self.n as usize {
+        let resid = |y0: i64, sxx: i64, sxy: i64, keep: &[bool; FIT_N], out: &mut [i64; FIT_N]| {
+            for k in 0..m {
                 let i = (self.head as usize + k) % FIT_N;
-                let dx = (self.t[i] - at) as i128;
-                let fit = y0 + if sxx > 0 { ((sxy * dx) / sxx) as i64 } else { 0 };
+                let dx = (self.t[i] - at) / 1000;
+                let fit = y0 + if sxx > 0 { sxy * dx / sxx } else { 0 };
                 out[k] = if keep[k] { self.y[i] - fit } else { 0 };
             }
         };
         let (y0, sxx, sxy, _) = eval(&keep)?;
         let mut r = [0i64; FIT_N];
-        resid(&keep, y0, sxx, sxy, &mut r);
-        if self.n >= 4 {
+        resid(y0, sxx, sxy, &keep, &mut r);
+        if m >= 4 {
             let mut a = [0i64; FIT_N];
-            let m = self.n as usize;
             for k in 0..m {
                 a[k] = r[k].abs();
             }
             a[..m].sort_unstable();
-            let mad = a[m / 2];
-            let lim = (5 * mad).max(60);
+            let lim = (5 * a[m / 2]).max(60);
             for k in 0..m {
                 if r[k].abs() > lim {
                     keep[k] = false;
@@ -329,11 +330,12 @@ impl Fit {
             }
         }
         let (y, sxx, sxy, _) = eval(&keep)?;
-        resid(&keep, y, sxx, sxy, &mut r);
-        let used = keep.iter().take(self.n as usize).filter(|&&k| k).count() as u8;
-        let ss: i128 = r.iter().take(self.n as usize).map(|&v| (v as i128) * (v as i128)).sum();
-        let rms = isqrt((ss / used.max(1) as i128) as u64) as i64;
-        let drift_ppb = if sxx > 0 { ((sxy * 1_000_000_000) / sxx) as i64 } else { 0 };
+        resid(y, sxx, sxy, &keep, &mut r);
+        let used = keep.iter().take(m).filter(|&&k| k).count() as u8;
+        let ss: i64 = r.iter().take(m).map(|&v| v.clamp(-1_000_000, 1_000_000).pow(2)).sum();
+        let rms = isqrt((ss / used.max(1) as i64) as u64) as i64;
+        // sxy / sxx is µs per ms: ×10^6 is ppb.
+        let drift_ppb = if sxx > 0 { sxy * 1_000_000 / sxx } else { 0 };
         Some(Predict { y, rms, used, drift_ppb })
     }
 }
@@ -772,18 +774,21 @@ pub fn combine(samples: &[Sample], f: usize) -> Estimate {
     if e.confidence != Confidence::High {
         return e;
     }
-    let (mut wsum, mut acc) = (0i128, 0i128);
+    // Offsets relative to the estimate (small), weights 1/err² scaled (err ≥ 1 µs).
+    let (mut wsum, mut acc) = (0i64, 0i64);
     for s in samples {
-        if (s.offset_us - e.offset_us).abs() <= s.err_us {
-            let w = 1_000_000_000_000i128 / ((s.err_us.max(1) as i128) * (s.err_us.max(1) as i128));
-            wsum += w.max(1);
-            acc += w.max(1) * s.offset_us as i128;
+        let d = s.offset_us - e.offset_us;
+        if d.abs() <= s.err_us {
+            let err = s.err_us.clamp(1, 1_000_000);
+            let w = (1_000_000_000 / (err * err)).max(1);
+            wsum += w;
+            acc += w * d;
         }
     }
     if wsum == 0 {
         return e;
     }
-    let m = (acc / wsum) as i64;
+    let m = e.offset_us + acc / wsum;
     let lo = e.offset_us - e.err_us;
     let hi = e.offset_us + e.err_us;
     Estimate { offset_us: m.clamp(lo, hi), ..e }

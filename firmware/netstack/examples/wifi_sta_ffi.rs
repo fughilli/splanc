@@ -607,16 +607,16 @@ pub extern "C" fn ns_mac_send_p2p(frame: *const u8, len: u32, queue: u32, rate: 
     }
 }
 
-/// The MAC's TSF counter (µs; mesh M4: the clock the RX vector stamps frames with, which
-/// mesh time maps onto `esp_timer`). `latch` = 0: read the counter register alone; 1: the
-/// vendor's latch sequence first (`hal_mac_tsf_get_time`, esp32-reverse 07).
+/// The MAC's µs clock for mesh time (M4). `which` = 0: the free-running counter at
+/// `0x600A_D000`, the RX vector's timestamp clock (`lmac::mac_us`); 1: the TSF counter
+/// after the vendor's latch sequence (`hal_mac_tsf_get_time`; reads frozen on our netstack).
 #[no_mangle]
-pub extern "C" fn ns_mac_tsf(latch: u32) -> u32 {
+pub extern "C" fn ns_mac_tsf(which: u32) -> u32 {
     unsafe {
-        if latch != 0 {
+        if which != 0 {
             lmac::tsf_now()
         } else {
-            lmac::tsf_raw()
+            lmac::mac_us()
         }
     }
 }

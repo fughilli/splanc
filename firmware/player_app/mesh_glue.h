@@ -28,6 +28,7 @@
 //                                 set_time_base on this device does the same)
 //   MESH TSF 0|1|2  MESH TB <ms>  TSF read mode (floor / raw / latched) / time beacon period (0 off)
 //   MESH CLK                      probe the TSF counter against esp_timer
+//   MESH REG <addr> <n>           (dev image) MAC registers that advance like a µs counter
 
 #pragma once
 
@@ -107,10 +108,11 @@ void create_task(void *arg) {
   vTaskDelete(nullptr);
 }
 
-// Mesh time (M4) maps RX-vector stamps onto esp_timer through the MAC's TSF counter. Probe
-// how it reads on this silicon: the counter register alone (mode 1), or after the vendor's
-// latch sequence (mode 2); a live counter advances with esp_timer. 0: neither (the Rust side
-// falls back to M3's reap-lag floor).
+// Mesh time (M4) maps RX-vector stamps onto esp_timer through the MAC's µs counter. Probe
+// it: mode 1 = the free-running counter at 0x600AD000 (the RX vector's clock, found by the
+// M4 r2 register scan), mode 2 = the TSF after the vendor latch (reads frozen on our
+// netstack); a live counter advances with esp_timer. 0: neither (the Rust side falls back to
+// M3's reap-lag floor).
 uint8_t probe_tsf(bool verbose) {
   int32_t d[3] = {0, 0, 0};
   int64_t e[3] = {0, 0, 0};
@@ -127,7 +129,7 @@ uint8_t probe_tsf(bool verbose) {
     if (!mode && d[latch + 1] > 0 && llabs((int64_t)d[latch + 1] - e[latch + 1]) <= 20) mode = (uint8_t)(latch + 1);
   }
   if (verbose || !mode)
-    Serial.printf("[mesh] tsf probe raw_d=%ld latch_d=%ld esp_d=%lld mode=%u tsf=%lu esp=%lld\n", (long)d[1], (long)d[2],
+    Serial.printf("[mesh] tsf probe mac_d=%ld latch_d=%ld esp_d=%lld mode=%u tsf=%lu esp=%lld\n", (long)d[1], (long)d[2],
                   (long long)e[1], mode, (unsigned long)ns_mac_tsf(mode == 2), (long long)esp_timer_get_time());
   return mode;
 }
@@ -345,6 +347,38 @@ bool console(const char *line) {
     Serial.printf("[mesh] %s tsf\n", ns_mesh_set(g_mesh, 5, strtoul(a + 4, nullptr, 0)) ? "ok" : "?");
   } else if (!strncmp(a, "TB ", 3)) {
     Serial.printf("[mesh] %s tb\n", ns_mesh_set(g_mesh, 6, strtoul(a + 3, nullptr, 0)) ? "ok" : "?");
+#if defined(LM_MESH_DEVKEY)
+  } else if (!strncmp(a, "REG ", 4)) {
+    // M4 diagnostic: find the clock the RX vector stamps with. Read <n> words from <addr>
+    // (MAC blocks only), 300 µs apart; print the ones that advance like a µs counter.
+    char *end = nullptr;
+    uint32_t base = strtoul(a + 4, &end, 16) & ~3u;
+    uint32_t n = end ? strtoul(end, nullptr, 0) : 16;
+    if (n > 256) n = 256;
+    if (base < 0x600A0000u || base + 4 * n > 0x600B0000u) {
+      Serial.printf("[mesh] ? reg: 0x600A0000..0x600AFFFF only\n");
+    } else {
+      uint32_t found = 0;
+      for (uint32_t i = 0; i < n; i++) {
+        volatile uint32_t *r = reinterpret_cast<volatile uint32_t *>(base + 4 * i);
+        int64_t e0 = esp_timer_get_time();
+        uint32_t v0 = *r;
+        while (esp_timer_get_time() - e0 < 300) {
+        }
+        int64_t e1 = esp_timer_get_time();
+        uint32_t v1 = *r;
+        int32_t d = (int32_t)(v1 - v0);
+        if (d != 0) {
+          found++;
+          Serial.printf("[mesh] reg %08lx v=%lu d=%ld esp_d=%lld esp_minus_v=%lld\n", (unsigned long)(base + 4 * i),
+                        (unsigned long)v1, (long)d, (long long)(e1 - e0), (long long)(e1 - (int64_t)v1));
+          delay(5);
+        }
+      }
+      Serial.printf("[mesh] ok reg base=%08lx n=%lu moving=%lu\n", (unsigned long)base, (unsigned long)n,
+                    (unsigned long)found);
+    }
+#endif
   } else if (!strcmp(a, "CLK")) {
     uint8_t mode = probe_tsf(true);
     Serial.printf("[mesh] ok clk mode=%u (in use %lu)\n", mode, (unsigned long)ns_mesh_get(g_mesh, 5));
