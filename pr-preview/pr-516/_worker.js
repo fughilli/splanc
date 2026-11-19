@@ -252,11 +252,62 @@ export function clientKey(ip) {
   return groups.slice(0, 4).map(g => (g || "0").toLowerCase().replace(/^0+(?=.)/, "")).join(":") + "::/64";
 }
 
+// -- Ops metrics (docs/design/ops-grafana.md) -------------------------------------
+// One content-free `demo_request` event per POST to Grafana Cloud Logs, when the
+// three GRAFANA_LOKI_* settings are present on the Pages project (off otherwise).
+// The JS twin of agent/relay/src/ops.ts for this one event: ONLY these fields,
+// each type-checked; never the IP / client key, origin, prompt, tools or reply.
+export const DEMO_OPS_FIELDS = Object.freeze({
+  outcome: /^[a-z_]{1,40}$/, status: "num", model: /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,79}$/,
+  attempts: "num", ms: "num", images: "bool",
+});
+export function demoOpsLine(ev) {
+  const out = { ev: "demo_request" };
+  for (const [k, t] of Object.entries(DEMO_OPS_FIELDS)) {
+    const v = ev[k];
+    if (t === "num" ? typeof v === "number" && Number.isFinite(v)
+      : t === "bool" ? typeof v === "boolean"
+      : typeof v === "string" && t.test(v)) out[k] = v;
+  }
+  return out;
+}
+export function demoOpsPush(env, ev, { fetchImpl = (...args) => fetch(...args), waitUntil, now = Date.now } = {}) {
+  if (!env.GRAFANA_LOKI_PUSH_URL || !env.GRAFANA_LOKI_USER || !env.GRAFANA_LOKI_TOKEN) return Promise.resolve();
+  const envName = /^[a-z][a-z0-9-]{0,19}$/.test(env.OPS_ENV ?? "") ? env.OPS_ENV : "production";
+  const stream = { service: "splanc-pages", component: "demo-relay", env: envName, event: "demo_request", alert: "false" };
+  let p;
+  try {
+    p = fetchImpl(env.GRAFANA_LOKI_PUSH_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Basic ${btoa(`${env.GRAFANA_LOKI_USER}:${env.GRAFANA_LOKI_TOKEN}`)}` },
+      body: JSON.stringify({ streams: [{ stream, values: [[`${BigInt(now()) * 1000000n}`, JSON.stringify(demoOpsLine(ev))]] }] }),
+    }).then(() => undefined, () => undefined);
+  } catch { p = Promise.resolve(); }
+  waitUntil?.(p);
+  return p;
+}
+
 export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now = Date.now,
-  attemptMs = 30000, totalMs = 70000, limits = DEMO_LIMITS } = {}) {
+  attemptMs = 30000, totalMs = 70000, limits = DEMO_LIMITS, opsFetch } = {}) {
+  const handle = createDemoHandler({ fetchImpl, now, attemptMs, totalMs, limits });
+  return async function demoAi(request, env, ctx) {
+    const meta = {};
+    const started = now();
+    const res = await handle(request, env, meta);
+    if (request.method === "POST") {
+      demoOpsPush(env, {
+        outcome: meta.outcome ?? "unknown", status: res.status, model: meta.model,
+        attempts: meta.attempts, ms: Math.max(0, now() - started), images: meta.images,
+      }, { fetchImpl: opsFetch, waitUntil: ctx?.waitUntil?.bind(ctx), now });
+    }
+    return res;
+  };
+}
+
+function createDemoHandler({ fetchImpl, now, attemptMs, totalMs, limits }) {
   const clients = new Map();
   let windowStart = 0, requests = 0, inFlight = 0;
-  return async function demoAi(request, env) {
+  return async function demoAi(request, env, meta) {
     const origin = request.headers.get("origin");
     const allowed = DEMO_ORIGINS.has(origin) || (env.DEMO_DEV_ORIGIN && origin === env.DEMO_DEV_ORIGIN);
     const headers = { "content-type": "application/json", "cache-control": "no-store", vary: "Origin" };
@@ -266,7 +317,8 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
       "access-control-expose-headers": "Retry-After",
     });
     const reply = (status, body, extra = {}) => new Response(JSON.stringify(body), { status, headers: { ...headers, ...extra } });
-    const error = (status, code, extra) => reply(status, { error: { code } }, extra);
+    // meta: the ops event's outcome (our own error-code vocabulary only).
+    const error = (status, code, extra) => { meta.outcome = code; return reply(status, { error: { code } }, extra); };
     if (!allowed) return error(403, "origin_not_allowed");
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
     if (request.method === "GET") return reply(200, { configured: Boolean(env.OPENROUTER_API_KEY), models: DEMO_MODELS });
@@ -318,10 +370,12 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
       body = engagePlay(body);
       const attempts = [];
       const images = body.messages.some(m => Array.isArray(m.content) && m.content.some(p => p?.type === "image_url"));
+      meta.images = images;
       for (const { id: model, maxPrice, reasoning } of DEMO_MODEL_SPECS.filter(m => !images || m.vision)) {
         if (total.signal.aborted) break;
         const diagnostic = { model, outcome: "pending" };
         attempts.push(diagnostic);
+        meta.attempts = attempts.length; meta.model = model;
         const attempt = new AbortController();
         const stop = () => attempt.abort();
         total.signal.addEventListener("abort", stop, { once: true });
@@ -373,6 +427,7 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
               String(metadata?.limit_source ?? "").startsWith("openrouter_");
             if (!providerQuota || platformQuota) {
               const retry = result.headers.get("retry-after") || quotaHeaders.get("retry-after") || "60";
+              meta.outcome = platformQuota ? "upstream_rate_limited_platform" : "upstream_rate_limited";
               return reply(429, { error: { code: "rate_limited", scope: platformQuota ? "platform" : "unknown" } }, { "retry-after": retry });
             }
             continue;
@@ -389,7 +444,7 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
           else if (diagnostic.outcome !== "output_limit") diagnostic.outcome = "empty_or_invalid_finish";
           const parsed = completion(json, body.tools);
           if (parsed?.refusal) return error(422, "request_declined");
-          if (parsed) return reply(200, { ...parsed, model });
+          if (parsed) { meta.outcome = "ok"; return reply(200, { ...parsed, model }); }
         } catch {
           diagnostic.outcome = attempt.signal.aborted ? "timeout" : "transport_error";
           // Network failures/attempt deadlines may try the next model.
@@ -401,6 +456,7 @@ export function createDemoRelay({ fetchImpl = (...args) => fetch(...args), now =
       }
       // Fixed model IDs, numeric status and our own outcome vocabulary only.
       // Never expose provider raw payloads, prompts, generated code or credentials.
+      meta.outcome = request.signal.aborted ? "cancelled" : total.signal.aborted ? "timeout" : "models_unavailable";
       return reply(request.signal.aborted ? 499 : total.signal.aborted ? 504 : 503, {
         error: { code: request.signal.aborted ? "cancelled" : "models_unavailable" }, attempts,
       });
@@ -423,6 +479,12 @@ export const RELAY_PATHS = new Set([
   "/bridge/register", "/bridge/connect", "/live", "/bugs", "/feedback", "/feedback/status",
   "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp",
   "/.well-known/oauth-authorization-server", "/.well-known/openid-configuration",
+  // Splanc AI credits (agent/relay/src/billing, docs/design/ai-billing.md). The
+  // relay answers 503 on all of them until billing is enabled there. Stripe's
+  // webhook and the admin route use the workers.dev address directly.
+  "/ai/v1/messages", "/billing/account", "/billing/age", "/billing/balance",
+  "/billing/checkout", "/billing/consent", "/billing/pricing", "/billing/statement",
+  "/billing/purchase/apple",
 ]);
 
 export function relayRoute(request, url, env) {
@@ -481,9 +543,9 @@ export function retiredOrigin(url) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    if (url.pathname === DEMO_PATH) return demoAi(request, env);
+    if (url.pathname === DEMO_PATH) return demoAi(request, env, ctx);
     if (url.pathname === "/gh-asset") return ghAsset(request);
     const relayed = relayRoute(request, url, env);
     if (relayed) return relayed;

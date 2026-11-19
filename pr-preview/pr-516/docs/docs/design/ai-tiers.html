@@ -619,8 +619,9 @@ things, matching <code class="docutils literal notranslate"><span class="pre">pr
 <li><p>Before the billing PR merges, <code class="docutils literal notranslate"><span class="pre">normalizeConfig</span></code> drops the unknown kind. The
 card checks this with the pure function <code class="docutils literal notranslate"><span class="pre">paidTierSupported()</span></code> and stays
 “Coming soon”.</p></li>
-<li><p>Sign-in and buying credits live in Settings ▸ AI. When credits are selected
-but no session exists, the sheet sends the user there and keeps the prompt.</p></li>
+<li><p>Buying credits is its own flow (<code class="docutils literal notranslate"><span class="pre">#/credits</span></code>, ai-billing.md); the account
+lives in Settings ▸ AI. When credits are selected but no session exists, the
+sheet opens that flow and keeps the prompt.</p></li>
 </ul>
 <p>A three-way merge of both branches’ edits to <code class="docutils literal notranslate"><span class="pre">generate.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">aiSettings.ts</span></code>,
 <code class="docutils literal notranslate"><span class="pre">provider.ts</span></code> and <code class="docutils literal notranslate"><span class="pre">anthropic.ts</span></code> has no conflicts.</p>
