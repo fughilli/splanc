@@ -42,7 +42,7 @@ import { MidiScreen } from "../screens/midi";
 import { ColorCorrectionScreen } from "../screens/colorCorrection";
 import { HardwareSetupScreen } from "../screens/hardwareSetup";
 import { AboutScreen } from "../screens/about";
-import { AiSettingsScreen } from "../screens/aiSettings";
+import { CreditsFlowScreen } from "../screens/creditsFlow";
 import { warmActiveProvider } from "../../effects/ai/generate";
 import { refreshFreeTierLimit } from "../../effects/ai/tiers";
 import { AcidModeScreen } from "../screens/acidMode";
@@ -199,8 +199,21 @@ async function main(): Promise<void> {
       return HardwareSetupScreen(router);
     })
     .add("/settings/ai", () => {
-      shell.setChrome({ title: "AI provider", back: true, tabs: true });
-      return AiSettingsScreen(router);
+      // Settings ▸ AI: the AI provider settings + Splanc AI credits account.
+      shell.setChrome({ title: "Settings", back: true, tabs: true });
+      return SettingsScreen(router, "ai");
+    })
+    .add("/credits", () => {
+      // The dedicated Splanc AI credits flow (one step per screen).
+      shell.setChrome({ title: "Splanc AI credits", back: true, tabs: false });
+      return CreditsFlowScreen(router, "buy");
+    })
+    .add("/credits/:mode", (m) => {
+      const mode = m.params["mode"];
+      const known = mode === "return" || mode === "restore" || mode === "email" || mode === "removeEmail" || mode === "delete";
+      // Coming back from Stripe: no app-bar Back (it would return to Stripe).
+      shell.setChrome({ title: "Splanc AI credits", back: mode !== "return", tabs: false });
+      return CreditsFlowScreen(router, known ? mode : "buy");
     })
     .add("/room", () => {
       shell.setChrome({ title: "Localize room", back: true, tabs: false });
@@ -246,6 +259,12 @@ async function main(): Promise<void> {
   if (/[?&](code|error)=/.test(location.search)) {
     const { finishOpenRouterRedirect } = await import("../screens/aiTierSheet");
     await finishOpenRouterRedirect();
+  }
+  // Stripe Checkout coming back (?checkout=success|cancel): show the credits
+  // flow's return screen whatever route the return URL carried (older builds
+  // returned to #/settings/ai).
+  if (/[?&]checkout=(success|cancel)\b/.test(location.search) && !location.hash.startsWith("#/credits/return")) {
+    history.replaceState(history.state, "", `${location.pathname}${location.search}#/credits/return`);
   }
   router.start();
 

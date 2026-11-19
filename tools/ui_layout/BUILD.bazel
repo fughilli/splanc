@@ -1,0 +1,36 @@
+# UI layout guard (owner rule, 2026-11-18: never cram buttons). See
+# layout_guard.py. The browser check is `bazel run` only (CI has no browser):
+#   bazel run //tools/ui_layout:ui_layout_check [-- --shots DIR]
+# The geometry is unit-tested in CI by :layout_guard_test.
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "layout_guard",
+    srcs = ["layout_guard.py"],
+    imports = ["."],
+)
+
+py_binary(
+    name = "ui_layout_check",
+    srcs = [
+        "credits_scenarios.py",
+        "ui_layout_check.py",
+    ],
+    data = ["//web:dist"],
+    main = "ui_layout_check.py",
+    deps = [
+        ":layout_guard",
+        requirement("playwright"),
+    ],
+)
+
+py_test(
+    name = "layout_guard_test",
+    size = "small",
+    srcs = ["layout_guard_test.py"],
+    deps = [":layout_guard"],
+)

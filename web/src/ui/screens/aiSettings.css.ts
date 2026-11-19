@@ -16,6 +16,26 @@ export function installAiSettingsStyles(): void {
 }
 
 const CSS = `
+.aiset-sub { color: var(--text-dim); margin: 0 0 var(--sp-3); line-height: 1.45; }
+/* Provider choices: a wrapping grid (>= 8 px gaps), full-width rows on phones. */
+.aiset-kinds {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--sp-2);
+}
+.aiset-kind {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  font: inherit;
+  text-align: left;
+  padding: 0.6rem var(--sp-3);
+  min-height: 44px;
+  cursor: pointer;
+}
+.aiset-kind:hover { border-color: var(--text-dim); }
+.aiset-kind.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface-2)); font-weight: 600; }
 .aiset-status {
   font-size: var(--f-caption);
   color: var(--text-dim);
@@ -45,8 +65,8 @@ const CSS = `
   border-radius: var(--radius, 8px);
   font: inherit;
 }
-.aiset-row { display: flex; gap: var(--sp-2); align-items: flex-end; }
-.aiset-row > .aiset-field { flex: 1 1 auto; }
+.aiset-row { display: flex; gap: var(--sp-3); align-items: flex-end; flex-wrap: wrap; }
+.aiset-row > .aiset-field { flex: 1 1 200px; margin-bottom: 0; }
 .aiset-row > button { flex: 0 0 auto; }
 .aiset-progress {
   height: 6px;

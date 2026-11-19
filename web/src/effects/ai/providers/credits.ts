@@ -99,6 +99,12 @@ export interface CreditsBalance {
   adult: boolean;
   /** Opted in to sharing consumption data with Apple on refund requests. */
   apple_consumption_consent?: boolean;
+  /** The recovery e-mail, masked by the server ("k•••@gmail.com"), when one
+   * is set (PR #557). */
+  email_hint?: string | null;
+  email_verified?: boolean;
+  /** When the user chose "Continue anonymously" (null: never). */
+  anonymous_ack_at?: string | null;
 }
 
 /** The balance shown in AI settings and under the chat (STUB until the relay
@@ -112,6 +118,34 @@ export async function fetchCreditsBalance(fetchImpl: typeof fetch = fetch): Prom
   } catch {
     return null;
   }
+}
+
+/** The balance, or why there is none: `signedOut` = the server no longer
+ * knows this device's session (401: restored on another device, or the
+ * account was deleted), so the UI offers "Restore account". */
+export type BalanceResult = { balance: CreditsBalance } | { signedOut: true } | { unreachable: true } | { none: true };
+
+export async function loadCreditsBalance(fetchImpl: typeof fetch = fetch): Promise<BalanceResult> {
+  const s = getCreditsSession();
+  if (!aiCreditsEnabled() || !s) return { none: true };
+  try {
+    const r = await fetchImpl(`${creditsRelay()}/billing/balance`, { headers: { authorization: `Bearer ${s.token}` } });
+    if (r.status === 401) return { signedOut: true };
+    return r.ok ? { balance: (await r.json()) as CreditsBalance } : { unreachable: true };
+  } catch {
+    return { unreachable: true };
+  }
+}
+
+/** The session was revoked / the account deleted (401 anywhere). */
+export function isSignedOut(e: unknown): boolean {
+  return e instanceof CreditsApiError && e.status === 401;
+}
+
+/** Forget this device's (dead) session so the user can restore or start over. */
+export function forgetCreditsSession(): void {
+  setCreditsSession(null);
+  ls()?.removeItem(EMAIL_KEY);
 }
 
 // -- account lifecycle (owner decisions 2026-11-18) ------------------------------------
@@ -189,15 +223,17 @@ export async function fetchCreditPacks(fetchImpl: typeof fetch = fetch): Promise
   return Array.isArray(b?.packs) ? b.packs : [];
 }
 
-/** Where Stripe sends the user back: this app's AI settings. */
+/** Where Stripe sends the user back: the credits flow's return screen
+ * (`#/credits/return`, which reads `?checkout=success|cancel`). */
+export const CHECKOUT_RETURN_ROUTE = "#/credits/return";
 export function checkoutReturnUrl(loc: { origin: string; pathname: string } = location): string {
-  return `${loc.origin}${loc.pathname}#/settings/ai`;
+  return `${loc.origin}${loc.pathname}${CHECKOUT_RETURN_ROUTE}`;
 }
 
 /**
  * Start a web checkout for `sku` and return the Stripe Checkout URL to open.
  * Refuses inside the iOS app (In-App Purchase only there). The caller
- * navigates to the URL (the same tab: Stripe returns to AI settings).
+ * navigates to the URL (the same tab: Stripe returns to the credits flow).
  */
 export async function startWebCheckout(sku: string, fetchImpl: typeof fetch = fetch, loc?: { origin: string; pathname: string }): Promise<string> {
   if (!mayShowWebCheckout()) throw new Error("Credits are bought through the App Store in the iOS app.");
@@ -243,7 +279,7 @@ export async function deleteCreditsAccount(fetchImpl: typeof fetch = fetch): Pro
   if (!s) return;
   const r = await fetchImpl(`${creditsRelay()}/billing/account`, { method: "DELETE", headers: authed(s) });
   if (!r.ok && r.status !== 401) throw new Error(creditsErrorMessage(r.status, (await r.json().catch(() => null)) as { message?: string } | null));
-  setCreditsSession(null);
+  forgetCreditsSession();
 }
 
 /** "1,234.5 credits" — the one place credits are formatted. */
@@ -254,9 +290,9 @@ export function formatCredits(n: number): string {
 
 /** The friendly message for a refusal the proxy sent (402/403/429/503). */
 export function creditsErrorMessage(status: number, body: { error?: string; message?: string } | null): string {
-  if (status === 401) return "Sign in to use Splanc AI credits.";
+  if (status === 401) return "This device is signed out of your Splanc AI account. Restore it in Settings ▸ AI.";
   if (body?.message) return body.message;
-  if (status === 402) return "Not enough Splanc AI credit. Buy more in AI settings.";
+  if (status === 402) return "You're out of Splanc AI credits. Buy more in Settings ▸ AI.";
   return `Splanc AI is unavailable right now (${status}).`;
 }
 
@@ -311,10 +347,292 @@ export function makeCreditsProvider(cfg: CreditsProviderConfig): AiProvider {
       });
       if (!resp.ok || resp.body === null) {
         const body = (await resp.json().catch(() => null)) as { error?: string; message?: string } | null;
-        throw new Error(creditsErrorMessage(resp.status, body));
+        throw new CreditsApiError(resp.status, body?.error ?? "", creditsErrorMessage(resp.status, body));
       }
-      const stream = cfg.onBilling ? sniffBilling(resp.body, cfg.onBilling) : resp.body;
+      const onBilling = (ev: { charged_credits: number; balance_credits: number }): void => {
+        noteBilling(ev);
+        cfg.onBilling?.(ev);
+      };
+      const stream = sniffBilling(resp.body, onBilling);
       return consumeChatStream(stream, opts.stream);
     },
   };
+}
+
+
+// -- typed errors -------------------------------------------------------------------
+
+/** A refusal from the billing API, with the HTTP status and the server's
+ * error code (`{error, message}`), so the UI can react to the kind (out of
+ * credit, wrong code, too many tries) instead of parsing text. */
+export class CreditsApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+    /** Seconds to wait before trying again (429 `retry_after_s`), when sent. */
+    readonly retryAfterS?: number,
+  ) {
+    super(message);
+    this.name = "CreditsApiError";
+  }
+}
+
+/** The proxy refused for lack of credit (402): offer to buy more. */
+export function isOutOfCredits(e: unknown): boolean {
+  return e instanceof CreditsApiError && e.status === 402;
+}
+
+async function billingCall<T>(
+  path: string,
+  init: { method: string; body?: unknown; auth?: boolean },
+  fetchImpl: typeof fetch,
+): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (init.body !== undefined) headers["content-type"] = "application/json";
+  if (init.auth) {
+    const s = getCreditsSession();
+    if (!s) throw new CreditsApiError(401, "unauthorized", "Sign in to use Splanc AI credits.");
+    Object.assign(headers, authed(s));
+  }
+  let r: Response;
+  try {
+    r = await fetchImpl(`${creditsRelay()}${path}`, {
+      method: init.method,
+      headers,
+      ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+    });
+  } catch {
+    throw new CreditsApiError(0, "network", "Can't reach Splanc right now. Check your connection and try again.");
+  }
+  const b = (await r.json().catch(() => null)) as (T & { error?: string; message?: string; retry_after_s?: number }) | null;
+  if (!r.ok) {
+    const code = b?.error ?? "";
+    throw new CreditsApiError(r.status, code, codeMessage(r.status, code) ?? creditsErrorMessage(r.status, b), b?.retry_after_s);
+  }
+  return (b ?? {}) as T;
+}
+
+/** Plain-language messages for the e-mail / code errors (server codes are
+ * assumed: invalid_email, invalid_code, expired_code, too_many_attempts,
+ * rate_limited). */
+function codeMessage(status: number, code: string): string | null {
+  switch (code) {
+    case "invalid_email":
+      return "That doesn't look like an e-mail address. Check it and try again.";
+    // The server answers every code failure the same way (wrong, expired,
+    // used, too many tries: anti-enumeration), so the message covers them all.
+    case "invalid_code":
+    case "expired_code":
+    case "too_many_attempts":
+      return "That code didn't work. Check the latest email or request a new code.";
+    case "email_in_use":
+      return "That email already belongs to another Splanc AI account. To use those credits here, restore that account instead.";
+    case "rate_limited":
+      return "Too many codes sent. Wait a minute, then try again.";
+  }
+  if (status === 429) return "Too many tries. Wait a minute, then try again.";
+  return null;
+}
+
+// -- recovery e-mail (owner 2026-11-18: optional; recovers credits on a new device) --
+
+const EMAIL_KEY = "splanc.aiCredits.email";
+const EMAIL_DECLINED_KEY = "splanc.aiCredits.emailDeclined";
+/** Default wait before "Resend code" when the server doesn't say. */
+export const DEFAULT_RESEND_S = 30;
+
+export function isValidEmail(s: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+}
+
+/** "kevin@example.com" -> "k•••@example.com" (what the app shows). */
+export function maskEmail(email: string): string {
+  const e = email.trim();
+  const at = e.lastIndexOf("@");
+  if (at < 1) return e;
+  if (e.slice(0, at).includes("•")) return e; // already masked by the server
+  return `${e[0]}•••${e.slice(at)}`;
+}
+
+/** The verified recovery e-mail this device knows (masked for display):
+ * the server's view when the balance carried one, else the local copy. */
+export function creditsEmail(b?: CreditsBalance | null): string | null {
+  if (b) {
+    if (typeof b.email_hint === "string" && b.email_hint && b.email_verified !== false) return maskEmail(b.email_hint);
+    // The server's view wins once it says there's no e-mail (removed elsewhere).
+    if (b.email_verified === false || b.email_hint === null) return null;
+  }
+  const local = ls()?.getItem(EMAIL_KEY);
+  return local ? maskEmail(local) : null;
+}
+
+/** The user chose "Continue without email" (so the buy flow doesn't ask again). */
+export function emailDeclined(b?: CreditsBalance | null): boolean {
+  return ls()?.getItem(EMAIL_DECLINED_KEY) === "1" || (typeof b?.anonymous_ack_at === "string" && b.anonymous_ack_at !== "");
+}
+export function setEmailDeclined(v: boolean): void {
+  if (v) ls()?.setItem(EMAIL_DECLINED_KEY, "1");
+  else ls()?.removeItem(EMAIL_DECLINED_KEY);
+}
+
+/** Send a one-time code to `email` to link it to this account. The server
+ * always answers 202 (an address that belongs to another account gets a "use
+ * Restore instead" e-mail); a taken address shows up as 409 at verify. */
+export async function startEmailLink(email: string, fetchImpl: typeof fetch = fetch): Promise<{ resendAfterS: number }> {
+  if (!isValidEmail(email)) throw new CreditsApiError(400, "invalid_email", codeMessage(400, "invalid_email")!);
+  const b = await billingCall<{ resend_after_s?: number }>("/billing/account/email", { method: "POST", auth: true, body: { email: email.trim() } }, fetchImpl);
+  return { resendAfterS: b.resend_after_s ?? DEFAULT_RESEND_S };
+}
+
+/** Check the code; on success the e-mail is the account's recovery address. */
+export async function verifyEmailLink(email: string, code: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  await billingCall("/billing/account/email/verify", { method: "POST", auth: true, body: { email: email.trim(), code: code.trim() } }, fetchImpl);
+  ls()?.setItem(EMAIL_KEY, email.trim());
+  setEmailDeclined(false);
+}
+
+/** "Continue anonymously": record that the user was told credits can't be
+ * recovered without an e-mail (POST /billing/account/anonymous). */
+export async function acknowledgeAnonymous(fetchImpl: typeof fetch = fetch): Promise<void> {
+  await billingCall("/billing/account/anonymous", { method: "POST", auth: true, body: { acknowledge: true } }, fetchImpl);
+  setEmailDeclined(true);
+}
+
+/** Remove the recovery e-mail (after a warning: recovery won't be possible). */
+export async function removeRecoveryEmail(fetchImpl: typeof fetch = fetch): Promise<void> {
+  await billingCall("/billing/account/email", { method: "DELETE", auth: true }, fetchImpl);
+  ls()?.removeItem(EMAIL_KEY);
+}
+
+/** Restore on a new device, step 1: the server answers the same whether or not
+ * the address has an account (no account probing). */
+export async function startRecovery(email: string, fetchImpl: typeof fetch = fetch): Promise<{ resendAfterS: number }> {
+  if (!isValidEmail(email)) throw new CreditsApiError(400, "invalid_email", codeMessage(400, "invalid_email")!);
+  const b = await billingCall<{ resend_after_s?: number }>("/billing/recover/start", { method: "POST", body: { email: email.trim() } }, fetchImpl);
+  return { resendAfterS: b.resend_after_s ?? DEFAULT_RESEND_S };
+}
+
+/** Restore, step 2: the code proves the address; the account's session is
+ * kept on this device and its balance returned. Other devices signed in to
+ * the account are signed out (the server's default; their token gets 401). */
+export async function verifyRecovery(email: string, code: string, fetchImpl: typeof fetch = fetch): Promise<{ balanceCredits: number }> {
+  const b = await billingCall<{ token?: string; account_ref?: string; account_id?: string; balance_credits?: number }>(
+    "/billing/recover/verify",
+    { method: "POST", body: { email: email.trim(), code: code.trim() } },
+    fetchImpl,
+  );
+  if (!b.token) throw new CreditsApiError(500, "bad_response", "Splanc AI is unavailable right now. Try again in a minute.");
+  setCreditsSession({ account_id: b.account_id ?? b.account_ref ?? "", token: b.token });
+  ls()?.setItem(EMAIL_KEY, email.trim());
+  setEmailDeclined(false);
+  return { balanceCredits: b.balance_credits ?? 0 };
+}
+
+// -- statement + public pricing --------------------------------------------------------
+
+export interface StatementEntry {
+  at: string;
+  kind: string;
+  credits: number;
+  balance_credits: number;
+  model?: string;
+  sku?: string;
+}
+
+/** The newest ledger entries (numbers only: no prompt text is ever stored). */
+export async function fetchCreditsStatement(fetchImpl: typeof fetch = fetch): Promise<StatementEntry[]> {
+  const b = await billingCall<{ entries?: StatementEntry[] }>("/billing/statement", { method: "GET", auth: true }, fetchImpl);
+  return Array.isArray(b.entries) ? b.entries : [];
+}
+
+/** A statement entry in words ("Credits bought", "AI request", …). */
+export function statementLabel(e: StatementEntry): string {
+  switch (e.kind) {
+    case "purchase":
+      return "Credits bought";
+    case "usage":
+      return "AI request";
+    case "refund":
+      return "Refund";
+    case "forfeit":
+      return "Account closed";
+    case "trial":
+      return "Starter credit";
+    case "adjust":
+      return "Adjustment";
+    default:
+      return e.kind;
+  }
+}
+
+export interface PublicPricing {
+  credits_per_usd: number;
+  low_balance_credits: number;
+  packs: CreditPack[];
+}
+
+/** The relay's public pricing view for this platform (null when unreachable). */
+export async function fetchCreditsPricing(fetchImpl: typeof fetch = fetch): Promise<PublicPricing | null> {
+  try {
+    const r = await fetchImpl(`${creditsRelay()}/billing/pricing?channel=${purchaseChannel()}`);
+    if (!r.ok) return null;
+    const b = (await r.json()) as Partial<PublicPricing> | null;
+    return {
+      credits_per_usd: typeof b?.credits_per_usd === "number" ? b.credits_per_usd : 100,
+      low_balance_credits: typeof b?.low_balance_credits === "number" ? b.low_balance_credits : 50,
+      packs: Array.isArray(b?.packs) ? b.packs : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** One editor ask on the default model costs roughly this many credits
+ * (docs/design/ai-billing.md: an estimate, 2–4 tool rounds on Sonnet 5.5). */
+export const TYPICAL_PROMPT_CREDITS = { min: 3, max: 12 } as const;
+
+/** "about 70–280 prompts" for a pack of `credits`, rounded to friendly numbers. */
+export function promptsFor(credits: number): { min: number; max: number } {
+  const nice = (n: number) => (n >= 100 ? Math.round(n / 10) * 10 : n >= 20 ? Math.round(n / 5) * 5 : Math.max(1, Math.round(n)));
+  return { min: nice(credits / TYPICAL_PROMPT_CREDITS.max), max: nice(credits / TYPICAL_PROMPT_CREDITS.min) };
+}
+
+/** "$10" / "$9.99" for a US-dollar amount. */
+export function formatUsd(n: number): string {
+  return Number.isInteger(n) ? `$${n}` : `$${n.toFixed(2)}`;
+}
+
+// -- the live balance the chat last saw (from `splanc_billing`) -------------------------
+
+let lastBilling: { charged_credits: number; balance_credits: number; at: number } | null = null;
+function noteBilling(ev: { charged_credits: number; balance_credits: number }): void {
+  lastBilling = { ...ev, at: Date.now() };
+}
+/** The balance after the newest metered request this session (null: none yet). */
+export function lastKnownBalance(): number | null {
+  return lastBilling ? lastBilling.balance_credits : null;
+}
+
+/** Credits are shown on this device: the flag is on and it isn't the iOS app
+ * (owner: iOS sells through Apple In-App Purchase later, never the web flow). */
+export function creditsVisible(): boolean {
+  return aiCreditsEnabled() && !isIosNative();
+}
+
+/** The server's default `low_balance_credits` (GET /billing/pricing). */
+export const LOW_BALANCE_CREDITS = 50;
+let lowWarned = false;
+/** True once each time the last known balance drops under the low mark (so the
+ * chat's heads-up doesn't repeat after every prompt). */
+export function takeLowBalanceWarning(threshold = LOW_BALANCE_CREDITS): number | null {
+  const b = lastKnownBalance();
+  if (b === null) return null;
+  if (b >= threshold) {
+    lowWarned = false;
+    return null;
+  }
+  if (lowWarned) return null;
+  lowWarned = true;
+  return b;
 }

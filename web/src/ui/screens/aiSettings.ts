@@ -15,7 +15,6 @@
  */
 
 import { Button, Card, PasswordReveal, icon, toast, type IconName } from "../kit";
-import type { Router, Screen } from "../app/router";
 import { installSettingsStyles } from "./settings.css";
 import { installAiSettingsStyles } from "./aiSettings.css";
 import { modelSetupRow, openRouterAllowance } from "./aiTierSheet";
@@ -33,25 +32,8 @@ import {
   type CloudVendor,
 } from "../../effects/ai/provider";
 import { listOpenAiModels, pullOllamaModel } from "../../effects/ai/providers/openaiCompat";
-import {
-  aiCreditsEnabled,
-  fetchCreditsBalance,
-  formatCredits,
-  getCreditsSession,
-  mayShowWebCheckout,
-  purchaseChannel,
-  setAppleConsumptionConsent,
-  APPLE_CONSUMPTION_CONSENT_TEXT,
-  ADULT_CONFIRM_TEXT,
-  DELETE_ACCOUNT_WARNING,
-  confirmAdult,
-  createCreditsAccount,
-  deleteCreditsAccount,
-  fetchCreditPacks,
-  mayBuyCredits,
-  startWebCheckout,
-  takeCheckoutResult,
-} from "../../effects/ai/providers/credits";
+import { creditsVisible } from "../../effects/ai/providers/credits";
+import { creditsAccountCard } from "./creditsAccount";
 import {
   isWllamaSupported,
   loadWllamaModel,
@@ -77,8 +59,9 @@ import {
 
 const KINDS: ProviderKind[] = ["cloud", "local", "webllm", "wllama"];
 
-/** The provider buttons: "Splanc AI credits" only while its flag is on. */
-const kinds = (): ProviderKind[] => (aiCreditsEnabled() ? [...KINDS, "credits"] : KINDS);
+/** The provider choices: "Splanc AI credits" only while its flag is on, and
+ * never in the iOS app (Apple In-App Purchase later). */
+const kinds = (): ProviderKind[] => (creditsVisible() ? [...KINDS, "credits"] : KINDS);
 
 /** A few small, tool-capable GGUFs (Qwen family → the `<tool_call>` convention
  * our parser expects) known to run on-CPU in-browser, lightest first. The URL
@@ -110,29 +93,28 @@ const RECOMMENDED_WLLAMA: { label: string; url: string }[] = [
 ];
 const VENDORS = Object.keys(CLOUD_VENDORS) as CloudVendor[];
 
-export function AiSettingsScreen(_router: Router): Screen {
+/**
+ * Settings ▸ AI (the tab body). App-wide AI settings live in the top-level
+ * Settings, not inside the effects workspace (owner, 2026-11-18); the editor
+ * keeps a shortcut that deep-links here (#/settings/ai).
+ */
+export function aiSettingsPanel(): HTMLElement {
   installSettingsStyles();
   installAiSettingsStyles();
 
   const el = document.createElement("div");
-  el.className = "screen screen--settings";
+  el.className = "aiset";
 
-  const head = document.createElement("h1");
-  head.className = "screen-headline";
-  head.textContent = "AI provider";
   const sub = document.createElement("p");
-  sub.className = "screen-sub";
-  sub.textContent = aiCreditsEnabled()
+  sub.className = "aiset-sub";
+  sub.textContent = creditsVisible()
     ? "Choose where effect generation and MIDI remapping run. Only Splanc AI credits go through Splanc's server."
-    : "Choose where effect generation and MIDI remapping run. Everything stays on your device — no proxy server.";
-  el.append(head, sub);
+    : "Choose where effect generation and MIDI remapping run. Everything stays on your device or goes straight to the provider you pick.";
 
   const status = document.createElement("p");
   status.className = "aiset-status";
-  el.append(status);
 
   const body = document.createElement("div");
-  el.appendChild(body);
 
   /** Persist + rebuild (category / vendor switches). */
   function set(patch: Partial<AiConfig>): void {
@@ -176,25 +158,35 @@ export function AiSettingsScreen(_router: Router): Screen {
         panel = cloudPanel(cfg, set, setLive);
         break;
     }
-    body.replaceChildren(kindGroup(cfg.kind, (k) => set({ kind: k })), panel);
+    const parts: HTMLElement[] = [kindGroup(cfg.kind, (k) => set({ kind: k })), panel];
+    // The credits account (balance, e-mail, activity, danger zone) is its own
+    // card, whichever provider is active: it's the user's account, not a model.
+    if (creditsVisible()) parts.push(creditsAccountCard(group));
+    body.replaceChildren(...parts);
   }
 
   rerender();
   // Model setup (docs/design/ai-tiers.md): the tier picker, reachable any time.
-  el.insertBefore(modelSetupRow(rerender), status);
-  return { el };
+  el.append(sub, modelSetupRow(rerender), status, body);
+  return el;
 }
 
 // -- category chooser (3 buttons) --------------------------------------------
 
 function kindGroup(active: ProviderKind, onPick: (k: ProviderKind) => void): HTMLElement {
   const g = group("Provider");
+  // A wrapping grid of choices (not a segmented bar: five long labels in one
+  // row overflowed / crammed on phones).
   const seg = document.createElement("div");
-  seg.className = "settings-seg";
+  seg.className = "aiset-kinds";
+  seg.setAttribute("role", "radiogroup");
   for (const k of kinds()) {
     const b = document.createElement("button");
     b.type = "button";
+    b.className = "aiset-kind";
     b.textContent = kindLabel(k);
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", String(k === active));
     if (k === active) b.classList.add("on");
     b.addEventListener("click", () => onPick(k));
     seg.appendChild(b);
@@ -947,119 +939,14 @@ function creditsPanel(cfg: AiConfig, set: (p: Partial<AiConfig>) => void): HTMLE
   const g = group("Splanc AI credits");
   g.append(
     note(
-      "Use Claude without your own API key: requests go through Splanc's server and are paid from your credit balance. " +
-        "Your own API key (Cloud) keeps working; switch back any time.",
+      "Claude without your own API key: requests go through Splanc's server and are paid from your credit balance. " +
+        "Your balance, recovery email and purchases are in the Splanc AI credits card below.",
     ),
     labeledSelect("Model", CREDIT_MODELS, (cfg.credits.model in CREDIT_MODELS ? cfg.credits.model : "claude-sonnet-5-5"), (m) =>
       set({ credits: { model: m } }),
     ),
   );
-  const balance = document.createElement("span");
-  balance.textContent = getCreditsSession() ? "Checking…" : "Not signed in";
-  g.append(settingsRow("Balance", "Credits left on your Splanc account", balance));
-  if (getCreditsSession()) {
-    void fetchCreditsBalance().then((b) => {
-      balance.textContent = b ? formatCredits(b.available_credits) + (b.low ? " (low)" : "") : "Unavailable";
-    });
-  }
-  // iOS: the opt-in to share pack consumption with Apple on refund requests.
-  if (purchaseChannel() === "apple" && getCreditsSession()) {
-    const row = settingsRow("Help Apple with refund requests", APPLE_CONSUMPTION_CONSENT_TEXT, document.createElement("span"));
-    const ctl = row.querySelector(".settings-row-ctl")!;
-    const render = (on: boolean) =>
-      ctl.replaceChildren(
-        onOff(on, (v) => {
-          void setAppleConsumptionConsent(v).then(
-            () => render(v),
-            (e: unknown) => toast(msg(e)),
-          );
-        }),
-      );
-    render(false);
-    void fetchCreditsBalance().then((b) => render(b?.apple_consumption_consent === true));
-    g.append(row);
-  }
-  const rerender = () => set({ credits: getAiConfig().credits });
-  if (!mayShowWebCheckout()) {
-    // iOS: In-App Purchase only (not wired yet). The iOS app never shows or
-    // links to the web checkout (App Store rules).
-    g.append(note("Buying credits in the app isn't available yet. Buying is for adults (18+)."));
-    return g;
-  }
-  g.append(webBuy(rerender, balance));
   return g;
-}
-
-/** The web / Android Buy flow: account -> 18+ -> packs -> Stripe Checkout. */
-function webBuy(rerender: () => void, balanceEl: HTMLElement): HTMLElement {
-  const box = document.createElement("div");
-  const fail = (e: unknown) => toast(msg(e), { error: true });
-  const back = takeCheckoutResult();
-  if (back === "success") {
-    toast("Payment received. Your credits arrive in a few seconds.");
-    // The webhook credits the account; refresh the balance a few times.
-    let tries = 0;
-    const poll = () =>
-      void fetchCreditsBalance().then((b) => {
-        if (b) balanceEl.textContent = formatCredits(b.available_credits) + (b.low ? " (low)" : "");
-        if (++tries < 5) setTimeout(poll, 2000);
-      });
-    poll();
-  } else if (back === "cancel") {
-    toast("Checkout cancelled. Nothing was charged.");
-  }
-  if (!getCreditsSession()) {
-    box.append(
-      note("Create a Splanc AI account on this device to buy and use credits. You can link it to Apple or Google later."),
-      Button({ label: "Create account", onClick: () => void createCreditsAccount().then(rerender, fail) }),
-    );
-    return box;
-  }
-  const status = note("Checking…");
-  box.append(status);
-  void fetchCreditsBalance().then(async (b) => {
-    if (!b) {
-      status.textContent = "Splanc AI credits are unavailable right now.";
-      return;
-    }
-    if (!b.adult) {
-      status.textContent = ADULT_CONFIRM_TEXT;
-      box.append(
-        Button({
-          label: "I'm 18 or older",
-          onClick: () => {
-            if (window.confirm(ADULT_CONFIRM_TEXT)) void confirmAdult().then(rerender, fail);
-          },
-        }),
-      );
-      return;
-    }
-    if (!mayBuyCredits(b)) {
-      status.textContent = "Buying isn't available on this account.";
-      return;
-    }
-    const packs = await fetchCreditPacks();
-    status.textContent = packs.length ? "Buy credits (secure checkout by Stripe; tax added at checkout):" : "No credit packs are on sale right now.";
-    for (const p of packs) {
-      const price = p.reference_price_usd !== undefined ? `US$${p.reference_price_usd.toFixed(2)}` : "";
-      box.append(
-        Button({
-          label: `${formatCredits(p.credits)}${price ? ` · ${price}` : ""}`,
-          onClick: () => void startWebCheckout(p.sku).then((url) => window.location.assign(url), fail),
-        }),
-      );
-    }
-  });
-  box.append(
-    Button({
-      label: "Delete Splanc AI account",
-      variant: "danger",
-      onClick: () => {
-        if (window.confirm(DELETE_ACCOUNT_WARNING)) void deleteCreditsAccount().then(rerender, fail);
-      },
-    }),
-  );
-  return box;
 }
 
 // -- small local builders ----------------------------------------------------

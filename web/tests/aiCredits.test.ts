@@ -220,12 +220,12 @@ test("web checkout: packs for this platform, the checkout request, never on iOS"
     return new Response(JSON.stringify({ url: checkoutUrl, id: "cs_test_1" }), { status: 201 });
   }) as unknown as typeof fetch;
   const loc = { origin: "https://splanc.io", pathname: "/app/" };
-  assert.equal(checkoutReturnUrl(loc), "https://splanc.io/app/#/settings/ai");
+  assert.equal(checkoutReturnUrl(loc), "https://splanc.io/app/#/credits/return");
   assert.deepEqual(await fetchCreditPacks(fn), [{ sku: "web.credits.10", channel: "web", credits: 833, reference_price_usd: 10 }]);
   assert.equal(calls[0]!.url, "https://relay.example/billing/pricing?channel=web");
   assert.equal(await startWebCheckout("web.credits.10", fn, loc), checkoutUrl);
   assert.equal(calls[1]!.url, "https://relay.example/billing/checkout");
-  assert.equal(calls[1]!.init.body, JSON.stringify({ sku: "web.credits.10", return_url: "https://splanc.io/app/#/settings/ai" }));
+  assert.equal(calls[1]!.init.body, JSON.stringify({ sku: "web.credits.10", return_url: "https://splanc.io/app/#/credits/return" }));
   assert.equal((calls[1]!.init.headers as Record<string, string>)["authorization"], "Bearer sst1.session");
   // Only Stripe's own checkout host is ever opened.
   checkoutUrl = "https://evil.example/pay";

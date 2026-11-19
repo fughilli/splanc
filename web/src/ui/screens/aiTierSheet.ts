@@ -51,6 +51,7 @@ import {
   type AiTier,
 } from "../../effects/ai/tiers";
 import { isIosNative } from "../../net/native";
+import { openCreditsFlow } from "./creditsFlow";
 
 const CONFIG_STORAGE = "ledmapper.ai.config";
 
@@ -391,7 +392,8 @@ function freeCard(done: () => void, away: () => void): HTMLElement {
 }
 
 function paidCard(done: () => void, away: () => void): HTMLElement {
-  const available = paidTierEnabled() && paidTierSupported();
+  // Never in the iOS app (credits there are Apple In-App Purchase, later).
+  const available = paidTierEnabled() && paidTierSupported() && !isIosNative();
   const { el, actions } = card("paid", available ? undefined : "Coming soon");
   if (!available) {
     el.classList.add("aitier-card--soon");
@@ -406,9 +408,10 @@ function paidCard(done: () => void, away: () => void): HTMLElement {
     onClick: () => {
       if (!selectPaidTier()) return err.set("Splanc AI credits aren't available in this version yet.");
       if (isAiConfigured()) return done();
-      // Sign-in / buying credits live in Settings ▸ AI (ai-billing).
+      // No account yet: the dedicated credits flow (intro -> account -> pack ->
+      // checkout). The prompt is kept and sent when the user comes back.
       away();
-      location.hash = "#/settings/ai";
+      openCreditsFlow("buy", { fromTier: true });
     },
   });
   b.classList.add("aitier-primary");
@@ -562,10 +565,15 @@ const CSS = `
 .aitier-facts dt { color: var(--text-dim); }
 .aitier-facts dd { margin: 0; }
 .aitier-actions { display: flex; flex-direction: column; gap: var(--sp-2); }
-.aitier-row { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; }
+.aitier-row { display: flex; gap: var(--sp-3); align-items: center; flex-wrap: wrap; }
 .aitier [hidden] { display: none !important; }
 .aitier-row > .k-pw, .aitier-row > .aitier-input { flex: 1 1 200px; min-width: 0; }
-.aitier-more { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.aitier-more { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+.aitier-actions { gap: var(--sp-3); }
+@media (max-width: 639px) {
+  .aitier-more { flex-direction: column; }
+  .aitier-more > .k-btn, .aitier-actions > .k-btn { width: 100%; }
+}
 .aitier-select {
   width: 100%; box-sizing: border-box; padding: var(--sp-2);
   background: var(--surface); color: var(--text);
@@ -574,7 +582,7 @@ const CSS = `
 .aitier-help { margin: 0; color: var(--text-dim); font-size: var(--f-caption); line-height: 1.4; }
 .aitier-err { margin: 0; color: var(--err); font-size: var(--f-caption); }
 .aitier-setrow {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2);
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap;
   margin: 0 0 var(--sp-3); font-size: var(--f-body);
 }
 `;
