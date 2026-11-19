@@ -20,8 +20,10 @@
 //!   transitions; [`msg`]: their messages and the capacity classes; [`guest`]: open mode
 //!   (feature `open_mode`, off until M7b).
 //! - [`ports`]: §5.3's ports and the dispatch policy in front of them.
-//! - [`timesync`]: mesh time aggregated over many peers (M4 wires it in); [`interp`]: members
-//!   interpolate live updates on their own render clock.
+//! - [`timesync`]: mesh time aggregated over many peers; [`meshtime`] (M4): the time beacons
+//!   (two-step completion stamps, two-way over broadcasts), per-neighbour clock fits, sync
+//!   states and the show epoch; [`interp`]: members interpolate live updates on their own
+//!   render clock.
 //! - [`stack`]: one device's mesh, all of the above around a [`Node`], with capacity classes
 //!   and the custodian store hook.
 //!
@@ -44,6 +46,7 @@ pub mod link;
 #[cfg(any(test, feature = "loopback", feature = "host"))]
 pub mod loopback;
 pub mod membership;
+pub mod meshtime;
 pub mod msg;
 pub mod node;
 pub mod ports;
@@ -54,7 +57,7 @@ pub mod stack;
 pub mod timesync;
 pub mod wifi_p2p;
 
-pub use backhaul::{Backhaul, BackhaulId, Busy, NodeId, RxMeta, TxClass};
+pub use backhaul::{Backhaul, BackhaulId, Busy, NodeId, RxMeta, TxClass, TxStamp};
 pub use node::{MtuTooSmall, Node, NodeConfig, NodeStats};
 pub use stack::{Event, MeshStack, StackConfig};
 

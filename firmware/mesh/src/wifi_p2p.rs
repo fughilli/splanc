@@ -24,7 +24,7 @@
 
 use ledmapper_netstack::p2p;
 
-use crate::backhaul::{Backhaul, BackhaulId, Busy, NodeId, RxMeta, TxClass};
+use crate::backhaul::{Backhaul, BackhaulId, Busy, NodeId, RxMeta, TxClass, TxStamp};
 use crate::envelope::Header;
 
 /// Envelope bytes per frame (§5.2: 250-byte bodies, short airtime at 1 Mb/s).
@@ -115,6 +115,11 @@ pub trait Radio {
     fn tx_done(&mut self) -> Option<TxResult>;
     /// Tell the other TX paths the radio is ours for `us` from `now_us` (their pacing).
     fn hold(&mut self, now_us: i64, us: u32);
+    /// This node's clock read now (µs), for completion stamps: the caller's `now_us` can be
+    /// a whole tick old. None: use the caller's.
+    fn now_us(&mut self) -> Option<i64> {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -206,6 +211,13 @@ pub struct P2pStats {
     /// Neighbours dropped to 1 Mb/s after repeated unicast failures.
     pub slowed: u32,
     pub channel_changes: u32,
+    /// Time beacons (M4): completions stamped, and lost (no completion reported).
+    pub time_stamped: u32,
+    pub time_lost: u32,
+    /// The longest any frame was held between arm and done (µs; BLE coex holds it), and the
+    /// widest completion bracket (µs).
+    pub hold_max_us: u32,
+    pub bracket_max_us: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -220,6 +232,8 @@ enum Dest {
 struct TxSlot {
     len: u16,
     dest: Dest,
+    /// A time beacon: stamp its completion.
+    stamp: bool,
     buf: [u8; FRAME_MAX],
 }
 
@@ -236,6 +250,9 @@ struct Current {
     inflight: bool,
     deadline_us: i64,
     not_before_us: i64,
+    /// When this attempt was armed, and the last poll that still saw it in flight.
+    armed_us: i64,
+    poll_us: i64,
 }
 
 #[derive(Clone, Copy)]
@@ -255,21 +272,117 @@ pub enum RxVerdict {
     Taken,
 }
 
-/// Maps the RX vector's 1 MHz timestamp onto this node's clock: the hardware clock runs a
-/// constant offset from `esp_timer` (M3a: ~0.70 s behind, stable to ~2 ms over minutes), and
-/// a frame is reaped some time after it arrived, never before. The smallest reap lag seen
-/// in the current and the previous window is the offset (plus the shortest reap delay).
+/// Maps the RX vector's 1 MHz timestamp onto this node's clock.
+///
+/// **Hardware anchor (M4).** The transport reads the MAC's TSF counter next to `esp_timer`
+/// every loop pass ([`RxClock::anchor`]); when the RX vector's stamp is that counter (M4
+/// checks it on silicon: the mapped arrival must precede its reap by a small, positive lag),
+/// an arrival maps exactly: `esp_timer = anchor_esp + (stamp - anchor_tsf)`, with no reap
+/// lag in it. Anchors whose read was interrupted (a wide `esp_timer` bracket) are skipped;
+/// a jump in the TSF-to-`esp_timer` offset (a MAC reset) is counted and re-anchored.
+///
+/// **Fallback (M3).** Without anchors, or for a stamp the anchor maps implausibly (it would
+/// arrive after its reap, or more than a second before it), the reap-lag floor: the
+/// hardware clock runs a constant offset from `esp_timer` (M3a: ~0.70 s behind), and a frame
+/// is reaped some time after it arrived, never before; the smallest lag in the current and
+/// the previous window is the offset.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RxClock {
     cur_min: Option<i64>,
     prev_min: Option<i64>,
     window_start_us: i64,
+    /// The newest good (esp_timer, TSF) pair, and the first of the current segment (the
+    /// drift baseline).
+    anchor: Option<(i64, u32)>,
+    seg: Option<(i64, u32)>,
+    pub stats: RxClockStats,
 }
 
+/// [`RxClock`]'s counters: how the hardware anchor behaves on silicon.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RxClockStats {
+    pub anchors: u32,
+    /// Anchor reads interrupted (bracket too wide) and skipped.
+    pub anchor_wide: u32,
+    /// The TSF-to-esp_timer offset moved more than [`ANCHOR_JUMP_US`] between anchors.
+    pub jumps: u32,
+    /// Arrivals mapped by the anchor, and by the floor (no anchor, or implausible).
+    pub mapped_hw: u32,
+    pub mapped_floor: u32,
+    pub implausible: u32,
+    /// Reap lag of anchor-mapped arrivals (µs): min and max.
+    pub lag_min_us: i32,
+    pub lag_max_us: i32,
+    /// esp_timer minus TSF (µs, the newest anchor), and the drift between them (ppb) over
+    /// the current segment.
+    pub offset_us: i64,
+    pub drift_ppb: i64,
+}
+
+/// An anchor read whose `esp_timer` bracket is wider than this was interrupted.
+pub const ANCHOR_BRACKET_US: i64 = 6;
+/// A TSF-to-esp_timer offset change larger than this between anchors is a jump.
+pub const ANCHOR_JUMP_US: i64 = 50;
+
 impl RxClock {
+    /// A (TSF, esp_timer) reading: `esp_before`, the TSF counter, `esp_after`.
+    pub fn anchor(&mut self, esp_before: i64, hw: u32, esp_after: i64) {
+        let bracket = esp_after - esp_before;
+        if !(0..=ANCHOR_BRACKET_US).contains(&bracket) {
+            self.stats.anchor_wide += 1;
+            return;
+        }
+        let esp = esp_before + bracket / 2;
+        if let Some((pe, ph)) = self.anchor {
+            let pred = pe + hw.wrapping_sub(ph) as i32 as i64;
+            let slack = ANCHOR_JUMP_US + (esp - pe).abs() / 10_000; // + 100 ppm
+            if (esp - pred).abs() > slack {
+                self.stats.jumps += 1;
+                self.seg = None;
+            }
+        }
+        let (se, sh) = *self.seg.get_or_insert((esp, hw));
+        let span = esp - se;
+        if span >= 10_000_000 {
+            let hw_span = hw.wrapping_sub(sh) as i64;
+            self.stats.drift_ppb = (span - hw_span) * 1_000_000_000 / span;
+            if span > 1_800_000_000 {
+                // Restart the baseline well before the 32-bit counter wraps (71 min).
+                self.seg = Some((esp, hw));
+            }
+        }
+        self.anchor = Some((esp, hw));
+        self.stats.anchors += 1;
+        self.stats.offset_us = esp - hw as i64;
+    }
+
+    /// Whether arrivals map through the hardware anchor.
+    pub fn anchored(&self) -> bool {
+        self.anchor.is_some()
+    }
+
     /// `reap_us`: this node's clock when the frame was reaped; `hw_ts`: the vector's stamp.
     /// The frame's arrival on this node's clock.
     pub fn map(&mut self, reap_us: i64, hw_ts: u32) -> i64 {
+        let floor = self.map_floor(reap_us, hw_ts);
+        if let Some((ae, ah)) = self.anchor {
+            let rx = ae + hw_ts.wrapping_sub(ah) as i32 as i64;
+            let lag = reap_us - rx;
+            if (-20..1_000_000).contains(&lag) {
+                let first = self.stats.mapped_hw == 0;
+                self.stats.mapped_hw += 1;
+                let l = lag as i32;
+                self.stats.lag_min_us = if first { l } else { self.stats.lag_min_us.min(l) };
+                self.stats.lag_max_us = if first { l } else { self.stats.lag_max_us.max(l) };
+                return rx;
+            }
+            self.stats.implausible += 1;
+        }
+        self.stats.mapped_floor += 1;
+        floor
+    }
+
+    fn map_floor(&mut self, reap_us: i64, hw_ts: u32) -> i64 {
         // Wrap-safe: the lag is the 32-bit difference (the hardware clock wraps at 2^32 µs).
         let lag = (reap_us as u32).wrapping_sub(hw_ts) as i32 as i64;
         if reap_us - self.window_start_us >= TS_WINDOW_US {
@@ -285,7 +398,8 @@ impl RxClock {
         reap_us - (lag - off).max(0)
     }
 
-    /// The current offset estimate (reap lag floor), µs.
+    /// The reap-lag floor's offset estimate, µs (M3's mapping; compare with
+    /// `stats.offset_us`).
     pub fn offset_us(&self) -> Option<i64> {
         match (self.cur_min, self.prev_min) {
             (Some(a), Some(b)) => Some(a.min(b)),
@@ -364,6 +478,10 @@ pub struct WifiP2p {
     last_data: [u8; FRAME_MAX],
     /// The newest clock reading seen (pump, on_frame): `send` has no clock argument.
     now_us: i64,
+    /// The last frame's (armed, done) times, any class (diagnostics, M4), and the last time
+    /// beacon's completion, until taken.
+    pub last_tx: TxStamp,
+    stamp: Option<TxStamp>,
 }
 
 impl WifiP2p {
@@ -378,7 +496,7 @@ impl WifiP2p {
             channel,
             seq: 0,
             rng: seed,
-            txq: [TxSlot { len: 0, dest: Dest::Broadcast, buf: [0; FRAME_MAX] }; TXQ],
+            txq: [TxSlot { len: 0, dest: Dest::Broadcast, stamp: false, buf: [0; FRAME_MAX] }; TXQ],
             tx_head: 0,
             tx_len: 0,
             cur: None,
@@ -388,6 +506,8 @@ impl WifiP2p {
             last_len: 0,
             last_data: [0; FRAME_MAX],
             now_us: 0,
+            last_tx: TxStamp::default(),
+            stamp: None,
         }
     }
 
@@ -444,7 +564,7 @@ impl WifiP2p {
         self.cur.is_some_and(|c| c.inflight)
     }
 
-    fn enqueue(&mut self, frame: &[u8], dest: Dest) -> Result<(), Busy> {
+    fn enqueue(&mut self, frame: &[u8], dest: Dest, stamp: bool) -> Result<(), Busy> {
         if frame.len() > MTU {
             self.stats.tx_oversize += 1;
             return Err(Busy);
@@ -468,6 +588,7 @@ impl WifiP2p {
         };
         s.len = n as u16;
         s.dest = dest;
+        s.stamp = stamp;
         self.tx_len += 1;
         self.stats.tx_queued += 1;
         Ok(())
@@ -493,7 +614,7 @@ impl WifiP2p {
             }
             None => Dest::Broadcast,
         };
-        self.enqueue(frame, dest)?;
+        self.enqueue(frame, dest, class == TxClass::Time)?;
         if class == TxClass::Data {
             let i = (self.tx_head + self.tx_len - 1) % TXQ;
             let n = self.txq[i].len as usize;
@@ -517,6 +638,7 @@ impl WifiP2p {
         s.buf[1] &= !p2p::FC1_RETRY;
         s.len = n as u16;
         s.dest = Dest::Broadcast;
+        s.stamp = false;
         self.tx_len += 1;
         true
     }
@@ -577,7 +699,7 @@ impl WifiP2p {
             }
             if self.cur.is_none() {
                 let Some(t) = self.next_target(now_us) else { return };
-                self.cur = Some(Current { target: t, attempt: 1, inflight: false, deadline_us: 0, not_before_us: now_us });
+                self.cur = Some(Current { target: t, attempt: 1, inflight: false, deadline_us: 0, not_before_us: now_us, armed_us: 0, poll_us: 0 });
             }
             let mut c = self.cur.unwrap();
             if now_us < c.not_before_us || !radio.tx_idle(now_us) {
@@ -614,7 +736,10 @@ impl WifiP2p {
             }
             let air = airtime_us(rate, len) + if ack { ack_exchange_us(rate) } else { 0 };
             radio.hold(now_us, air + 100);
+            let armed = radio.now_us().unwrap_or(now_us);
             c.inflight = true;
+            c.armed_us = armed;
+            c.poll_us = armed;
             c.deadline_us = now_us + air as i64 + COMPLETION_SLACK_US;
             self.cur = Some(c);
         }
@@ -625,11 +750,32 @@ impl WifiP2p {
     /// the frame is still in flight.
     pub fn settle(&mut self, now_us: i64, radio: &mut dyn Radio) -> bool {
         let Some(c) = self.cur.filter(|c| c.inflight) else { return false };
+        // Read the clock BEFORE the MAC: if it says done, the completion is between the last
+        // poll that saw it in flight and this reading (the two-step stamp's bracket).
+        let t = radio.now_us().unwrap_or(now_us);
         let outcome = match radio.tx_done() {
             Some(r) => Some(r),
             None if now_us >= c.deadline_us => None,
-            None => return true,
+            None => {
+                if let Some(cur) = self.cur.as_mut() {
+                    cur.poll_us = t.max(cur.poll_us);
+                }
+                return true;
+            }
         };
+        if outcome.is_some() {
+            let done = c.poll_us + (t - c.poll_us).max(0) / 2;
+            let st = TxStamp { armed_us: c.armed_us, done_us: done, err_us: (t - c.poll_us).max(0) / 2 };
+            self.last_tx = st;
+            self.stats.hold_max_us = self.stats.hold_max_us.max((t - c.armed_us).clamp(0, u32::MAX as i64) as u32);
+            self.stats.bracket_max_us = self.stats.bracket_max_us.max((t - c.poll_us).clamp(0, u32::MAX as i64) as u32);
+            if self.tx_len > 0 && self.txq[self.tx_head].stamp {
+                self.stamp = Some(st);
+                self.stats.time_stamped += 1;
+            }
+        } else if self.tx_len > 0 && self.txq[self.tx_head].stamp {
+            self.stats.time_lost += 1;
+        }
         self.finish(now_us, c, outcome);
         false
     }
@@ -785,6 +931,10 @@ impl Backhaul for WifiP2p {
 
     fn send_class(&mut self, frame: &[u8], dst: Option<NodeId>, class: TxClass) -> Result<(), Busy> {
         self.queue(self.now_us, frame, dst, class)
+    }
+
+    fn take_tx_stamp(&mut self) -> Option<TxStamp> {
+        self.stamp.take()
     }
 
     fn recv(&mut self, buf: &mut [u8]) -> Option<RxMeta> {

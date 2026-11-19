@@ -20,6 +20,17 @@
 //! **Group traffic** (desk #70, pending): data that must arrive fans out as ACKed unicasts
 //! by default (`GroupPolicy::Unicast`); `MESH POLICY bcast` switches to one broadcast.
 //!
+//! **Mesh time** (M4, `splanc_mesh::meshtime`): the backhaul stamps each time beacon's
+//! completion (the clock read before the MAC poll that saw it done, [`Radio::now_us`]), and
+//! maps RX-vector stamps onto `esp_timer` through the MAC's TSF counter, which the transport
+//! reads next to `esp_timer` every loop pass ([`ns_mesh_clock`]). The show epoch rides in
+//! the beacons: this crate maps it onto the player's time base (main.cpp `lm_mesh_tb`), so
+//! `apply_at_ms` lands at one instant on every member, and a time base the app sets on this
+//! device originates the next generation (M5's gateway session restricts who may). The
+//! AP's beacons are logged as an independent reference (`[mt] ap`), once per AP-TSF second:
+//! every member hears the same beacon at the same instant, which is how the HITL measures
+//! mesh time and `apply_at` skew without trusting mesh time itself.
+//!
 //! Reports are text lines this crate formats (no_std `core::fmt`) and the transport prints.
 
 #![cfg_attr(not(test), no_std)]
@@ -30,7 +41,9 @@ use core::fmt::Write;
 use splanc_mesh::crypto::{DeviceKey, Entropy, PublicKey};
 use splanc_mesh::membership::{Credentials, Mode, Phase, ProvisionSource};
 use splanc_mesh::ports::Port;
+use splanc_mesh::meshtime::{ShowEpoch, SyncState};
 use splanc_mesh::stack::{Event, MeshStack, StackConfig};
+use splanc_mesh::timesync::Adjust;
 use splanc_mesh::wifi_p2p::{self, ChannelAction, ChannelRule, GroupPolicy, P2pConfig, Radio, RxVerdict, TxResult, WifiP2p};
 use splanc_mesh::NodeId;
 use swarm_net::update::Flash;
@@ -44,7 +57,7 @@ const SCRATCH: usize = 1024;
 const TEST_PEERS: usize = 6;
 const TEST_SEQS: usize = 1024;
 /// The event log the transport drains after each tick.
-const LOG: usize = 384;
+const LOG: usize = 1024;
 /// Test packet magic (first byte).
 const T_TEST: u8 = b'T';
 
@@ -58,7 +71,17 @@ extern "C" {
     // main.cpp: the frame counter's high-water mark in littlefs (§7.5).
     fn lm_mesh_counter_store(mark: u64) -> u32;
     fn esp_random() -> u32;
+    fn esp_timer_get_time() -> i64;
+    // main.cpp: the player's shared time base under its mutex (try-lock: -1 = busy).
+    // op 0 = get (1: set, in *epoch_ms; 0: none), 1 = put *epoch_ms and shift the queued
+    // apply_at changes by `shift_ms`, 2 = clear, 3 = frame alignment on (*epoch_ms != 0).
+    fn lm_mesh_tb(op: i32, epoch_ms: *mut i64, shift_ms: i64) -> i32;
 }
+
+/// How often the player's time base is reconciled with the mesh's epoch.
+const TB_EVERY_US: i64 = 50_000;
+/// A periodic `[mt] st` line this often (the HITL's mesh-time trace).
+const TSTAT_EVERY_US: i64 = 2_000_000;
 
 /// The TX queue the mesh uses (the STA path's; pacing keeps them apart).
 const QUEUE: u32 = 0;
@@ -86,6 +109,9 @@ impl Radio for Mac {
     }
     fn hold(&mut self, _now_us: i64, us: u32) {
         unsafe { lm_mesh_tx_hold(us) }
+    }
+    fn now_us(&mut self) -> Option<i64> {
+        Some(unsafe { esp_timer_get_time() })
     }
 }
 
@@ -188,6 +214,25 @@ pub struct Mesh {
     /// (the tick runs on a stack in this block via a no-argument function).
     aux: [usize; 2],
     staged: (i64, u8, u8),
+    // ---- mesh time (M4) ----
+    /// The AP we are associated to (its beacons are the HITL's reference), and the AP-TSF
+    /// second last logged.
+    ap_bssid: [u8; 6],
+    ap_last_s: u64,
+    /// How the transport reads the TSF (0 = not at all: the reap-lag floor; 1 = the counter
+    /// register; 2 = the vendor latch sequence), from its probe at `MESH ON`.
+    tsf_mode: u8,
+    /// What this crate last wrote into the player's time base (None: never; Some(None):
+    /// cleared), for the generation it came from; when the player's differs, the app set it.
+    tb_mine: Option<Option<i64>>,
+    tb_gen: Option<(u32, u16)>,
+    tb_next_us: i64,
+    tb_writes: u32,
+    tb_busy: u32,
+    tb_originated: u32,
+    tb_align: bool,
+    tstat_next_us: i64,
+    last_state: SyncState,
 }
 
 impl Mesh {
@@ -273,6 +318,18 @@ pub unsafe extern "C" fn ns_mesh_create(block: *mut u8, len: u32, mac: *const u8
     f!((*p).log_len).write(0);
     f!((*p).aux).write([0; 2]);
     f!((*p).staged).write((0, 0, 0));
+    f!((*p).ap_bssid).write([0; 6]);
+    f!((*p).ap_last_s).write(0);
+    f!((*p).tsf_mode).write(0);
+    f!((*p).tb_mine).write(None);
+    f!((*p).tb_gen).write(None);
+    f!((*p).tb_next_us).write(0);
+    f!((*p).tb_writes).write(0);
+    f!((*p).tb_busy).write(0);
+    f!((*p).tb_originated).write(0);
+    f!((*p).tb_align).write(false);
+    f!((*p).tstat_next_us).write(0);
+    f!((*p).last_state).write(SyncState::Unsynced);
     p
 }
 
@@ -334,9 +391,185 @@ pub unsafe extern "C" fn ns_mesh_rx(m: *mut Mesh, frame: *const u8, len: u32, ha
     let f = core::slice::from_raw_parts(frame, len as usize);
     let rxv = if have_rxv != 0 { Some(&m.rxv[..]) } else { None };
     match m.stack.node.backhaul.on_frame(reap_us, f, rxv) {
-        RxVerdict::NotSplanc => 0,
+        RxVerdict::NotSplanc => {
+            if have_rxv != 0 {
+                ap_beacon(m, f, reap_us);
+            }
+            0
+        }
         RxVerdict::Taken => 1,
         RxVerdict::OtherKind(_) => 2,
+    }
+}
+
+/// Our AP's beacon (the HITL's common reference, M4): once per AP-TSF second, log the AP's
+/// TSF, the beacon's arrival on our clock (the same RX-vector mapping mesh time uses) and
+/// mesh time then. Every member hears the same beacon at the same instant (± propagation),
+/// so comparing these lines across members measures mesh-time agreement directly.
+fn ap_beacon(m: &mut Mesh, f: &[u8], reap_us: i64) {
+    // Beacon: FC 0x80, BSSID at 16..22, the TSF at 24..32 (little-endian).
+    if f.len() < 32 || f[0] != 0x80 || f[16..22] != m.ap_bssid || m.ap_bssid == [0; 6] {
+        return;
+    }
+    let Some(v) = ledmapper_netstack::p2p::RxVector::decode(&m.rxv) else { return };
+    let tsf = u64::from_le_bytes([f[24], f[25], f[26], f[27], f[28], f[29], f[30], f[31]]);
+    let s = tsf / 1_000_000;
+    if s == m.ap_last_s {
+        return;
+    }
+    m.ap_last_s = s;
+    let rx = m.stack.node.backhaul.clock.map(reap_us, v.timestamp_us);
+    let t = &m.stack.time;
+    let st = t.state.name();
+    let mesh = t.mesh_us(rx);
+    m.log(format_args!("[mt] ap tsf={tsf} rx={rx} hw={} mesh={mesh} st={st} lag={}", v.timestamp_us, reap_us - rx));
+}
+
+/// A TSF reading for the RX-stamp mapping: `esp_before`, the TSF counter, `esp_after`.
+#[no_mangle]
+pub unsafe extern "C" fn ns_mesh_clock(m: *mut Mesh, esp_before: i64, tsf: u32, esp_after: i64) {
+    (*m).stack.node.backhaul.clock.anchor(esp_before, tsf, esp_after);
+}
+
+/// The AP we are associated to (zero: none).
+#[no_mangle]
+pub unsafe extern "C" fn ns_mesh_set_ap(m: *mut Mesh, bssid: *const u8) {
+    (*m).ap_bssid = *(bssid as *const [u8; 6]);
+}
+
+/// Read a setting: 5 = the TSF read mode, 6 = mesh time synced (1/0).
+#[no_mangle]
+pub unsafe extern "C" fn ns_mesh_get(m: *mut Mesh, what: u32) -> u32 {
+    let m = &*m;
+    match what {
+        5 => m.tsf_mode as u32,
+        6 => m.stack.time.synced() as u32,
+        _ => 0,
+    }
+}
+
+/// Originate a show epoch `delta_ms` after mesh-time now (console `MESH EPOCH`, tests);
+/// `clear` != 0 clears it. 0 if mesh time is not synced yet.
+#[no_mangle]
+pub unsafe extern "C" fn ns_mesh_epoch(m: *mut Mesh, delta_ms: i64, clear: u32, now_us: i64) -> u32 {
+    let m = &mut *m;
+    if !m.stack.time.synced() {
+        return 0;
+    }
+    let e = if clear != 0 { None } else { Some(m.stack.time.mesh_us(now_us) + delta_ms * 1000) };
+    let se = m.stack.originate_epoch(e);
+    log_epoch(m, "originated", se);
+    1
+}
+
+fn log_epoch(m: &mut Mesh, what: &str, e: ShowEpoch) {
+    match e.epoch_mesh_us {
+        Some(x) => m.log(format_args!("[mt] epoch {what} gen={} origin={:04x} mesh={x}", e.gen, e.origin)),
+        None => m.log(format_args!("[mt] epoch {what} gen={} origin={:04x} cleared", e.gen, e.origin)),
+    }
+}
+
+/// Reconcile the player's time base with the mesh's show epoch (§6.3): a time base the app
+/// set here originates a new generation; otherwise the time base is the epoch mapped onto
+/// our clock (re-mapped as mesh time slews), and the queued apply_at changes move with it.
+unsafe fn time_base(m: &mut Mesh, now_us: i64) {
+    if now_us < m.tb_next_us || !m.stack.time.synced() {
+        return;
+    }
+    m.tb_next_us = now_us + TB_EVERY_US;
+    let mut cur = 0i64;
+    let r = lm_mesh_tb(0, &mut cur, 0);
+    if r < 0 {
+        m.tb_busy += 1;
+        m.tb_next_us = now_us + 2_000;
+        return;
+    }
+    let player = (r == 1).then_some(cur);
+    let off = m.stack.time.clock.offset_us;
+    // The app changed it (or set one before the mesh had an epoch): a new generation.
+    let changed = match m.tb_mine {
+        Some(mine) => mine != player,
+        None => player.is_some() && m.stack.time.epoch.is_none(),
+    };
+    if changed {
+        let e = m.stack.originate_epoch(player.map(|ms| ms * 1000 + off));
+        m.tb_originated += 1;
+        m.tb_mine = Some(player);
+        m.tb_gen = Some((e.gen, e.origin));
+        log_epoch(m, "originated", e);
+    }
+    let Some(e) = m.stack.time.epoch else { return };
+    let want = e.epoch_mesh_us.map(|x| (x - off).div_euclid(1000) + i64::from((x - off).rem_euclid(1000) >= 500));
+    let same_gen = m.tb_gen == Some((e.gen, e.origin));
+    if want != player {
+        let mut v = want.unwrap_or(0);
+        // Same generation: mesh time moved (a slew or step), so the queued changes move by
+        // the same amount and still land on their frames. A new generation re-bases.
+        let shift = match (same_gen, want, player) {
+            (true, Some(w), Some(p)) => w - p,
+            _ => 0,
+        };
+        let r = if want.is_some() { lm_mesh_tb(1, &mut v, shift) } else { lm_mesh_tb(2, &mut v, 0) };
+        if r < 0 {
+            m.tb_busy += 1;
+            m.tb_next_us = now_us + 2_000;
+            return;
+        }
+        m.tb_writes += 1;
+        if !same_gen {
+            let (g, o) = (e.gen, e.origin);
+            m.log(format_args!("[mt] timebase gen={g} origin={o:04x} local_ms={} shift={shift}", want.unwrap_or(-1)));
+        }
+    }
+    m.tb_mine = Some(want);
+    m.tb_gen = Some((e.gen, e.origin));
+    let align = want.is_some();
+    if align != m.tb_align {
+        let mut a = align as i64;
+        if lm_mesh_tb(3, &mut a, 0) >= 0 {
+            m.tb_align = align;
+        }
+    }
+}
+
+/// Mesh-time log lines: state changes, steps, and a periodic status.
+fn time_log(m: &mut Mesh, now_us: i64, adj_before: (u32, u32)) {
+    let t = &m.stack.time;
+    let (state, steps, epochs) = (t.state, t.stats.steps, t.stats.epochs);
+    if state != m.last_state {
+        let off = t.clock.offset_us;
+        let (j, f) = (t.stats.joined, t.stats.founded);
+        m.last_state = state;
+        m.log(format_args!("[mt] state {} off={off} joined={j} founded={f}", state.name()));
+    }
+    if steps != adj_before.0 {
+        if let Adjust::Step(d) = m.stack.time.last_adjust {
+            m.log(format_args!("[mt] step {d} us"));
+        }
+    }
+    if epochs != adj_before.1 {
+        if let Some(e) = m.stack.time.epoch {
+            log_epoch(m, "heard", e);
+        }
+    }
+    if now_us >= m.tstat_next_us {
+        m.tstat_next_us = now_us + TSTAT_EVERY_US;
+        let t = &m.stack.time;
+        let est = t.last_est;
+        let c = m.stack.node.backhaul.clock.stats;
+        let conf = est.map_or("none", |e| match e.confidence {
+            splanc_mesh::timesync::Confidence::High => "high",
+            splanc_mesh::timesync::Confidence::Low => "low",
+            splanc_mesh::timesync::Confidence::None => "none",
+        });
+        let (name, mesh, off, err, agree) = (t.state.name(), t.mesh_us(now_us), t.clock.offset_us, t.err_us, est.map_or(0, |e| e.agree));
+        let (slewed, steps) = (t.stats.slewed_us, t.stats.steps);
+        let peers = t.peers.iter().flatten().filter(|p| now_us - p.heard_us < 3_000_000).count();
+        let (tw, tbz) = (m.tb_writes, m.tb_busy);
+        m.log(format_args!(
+            "[mt] st {name} now={now_us} mesh={mesh} off={off} err={err} agree={agree} conf={conf} slewed={slewed} steps={steps} peers={peers} hw={} floor={} lag={}..{} tsf_off={} drift_ppb={} jumps={} tb_writes={tw} tb_busy={tbz}",
+            c.mapped_hw, c.mapped_floor, c.lag_min_us, c.lag_max_us, c.offset_us, c.drift_ppb, c.jumps,
+        ));
     }
 }
 
@@ -421,6 +654,7 @@ pub unsafe extern "C" fn ns_mesh_tick(m: *mut Mesh, now_us: i64, radio_ch: u8, a
     }
     // The stack.
     let was_member = m.stack.membership.is_member();
+    let adj_before = (m.stack.time.stats.steps, m.stack.time.stats.epochs);
     let mut mark = None;
     let (mut ctl, mut pkt) = (0u32, 0u32);
     let mut rx_log: [Option<(NodeId, u8, u8, u32)>; 4] = [None; 4];
@@ -464,6 +698,9 @@ pub unsafe extern "C" fn ns_mesh_tick(m: *mut Mesh, now_us: i64, radio_ch: u8, a
             m.counter_fail += 1;
         }
     }
+    // Mesh time (M4): the player's time base follows the mesh's show epoch.
+    time_base(m, now_us);
+    time_log(m, now_us, adj_before);
     // TX: a few frames per pass (one in flight at a time; the transport spins on
     // `ns_mesh_pump` only when the STA path needs the queue).
     if m.pause_since.is_none() {
@@ -502,9 +739,15 @@ fn note_test(rx: &mut [Option<TestRx>; TEST_PEERS], origin: NodeId, tag: u8, por
 #[no_mangle]
 pub unsafe extern "C" fn ns_mesh_take_log(m: *mut Mesh, out: *mut u8, cap: u32) -> u32 {
     let m = &mut *m;
-    let n = m.log_len.min(cap as usize);
+    // Whole lines that fit; the rest waits for the next pass (a 300-byte status line and a
+    // beacon line can share a pass).
+    let mut n = m.log_len.min(cap as usize);
+    if n < m.log_len {
+        n = m.log[..n].iter().rposition(|&c| c == b'\n').map_or(0, |i| i + 1);
+    }
     core::ptr::copy_nonoverlapping(m.log.as_ptr(), out, n);
-    m.log_len = 0;
+    m.log.copy_within(n..m.log_len, 0);
+    m.log_len -= n;
     n as u32
 }
 
@@ -523,7 +766,8 @@ pub unsafe extern "C" fn ns_mesh_dev_provision(m: *mut Mesh, mesh_id: u32, secre
 }
 
 /// Settings: `what` 0 = group policy (0 bcast, 1 unicast), 1 = broadcast rate code,
-/// 2 = unicast rate code, 3 = tries, 4 = TX power byte. Returns 1 if applied.
+/// 2 = unicast rate code, 3 = tries, 4 = TX power byte, 5 = TSF read mode (0 floor, 1 raw,
+/// 2 latched), 6 = time beacon period (ms, 0 off). Returns 1 if applied.
 #[no_mangle]
 pub unsafe extern "C" fn ns_mesh_set(m: *mut Mesh, what: u32, v: u32) -> u32 {
     let m = &mut *m;
@@ -534,6 +778,9 @@ pub unsafe extern "C" fn ns_mesh_set(m: *mut Mesh, what: u32, v: u32) -> u32 {
         2 if ledmapper_netstack::p2p::rate_kbps(v as u8) != 0 => c.rate_ucast = v as u8,
         3 if (1..=8).contains(&v) => c.tries = v as u8,
         4 if v <= 0x7f => m.radio.pwr = v as u8,
+        5 if v <= 2 => m.tsf_mode = v as u8,
+        // The time beacon period (ms; 0: off).
+        6 if v <= 10_000 => m.stack.set_time_beacon_us(v as i64 * 1000),
         _ => return 0,
     }
     1
@@ -684,6 +931,43 @@ fn report(m: &Mesh, what: u32, idx: u32, now: i64, w: &mut Buf<'_>) -> bool {
                 ms.originated, ms.delivered, ms.relayed, ms.relays_cancelled, ms.duplicates, ms.retries, ms.acked, ms.failed, ms.dropped_full, ms.oversize, ms.peak_relays, ms.peak_outbox, s.node.net.mesh.can_send() as u8, n.rx_plain, n.rx_guarded, n.rx_not_mesh, n.rx_own, n.tx_unsealed, mb.adverts_heard, mb.join_requests_heard, mb.foreign_plain, mb.malformed, s.neighbours.iter().flatten().count(),
             )
         }
+        (5, 0) => {
+            let t = &s.time;
+            let st = &t.stats;
+            let c = &b.clock.stats;
+            let l = &b.stats;
+            write!(
+                w,
+                "[mt] time st={} off={} err={} seq={} tx={} rx={} stamps={} coarse={} stamped={} lost={} hold_max_us={} bracket_max_us={} steps={} slews={} slewed={} founded={} joined={} epochs={} bad={} tsf_mode={} anchors={} wide={} jumps={} hw={} floor={} implausible={} lag={}..{} tsf_off={} drift_ppb={} floor_off={} tb_writes={} tb_busy={} tb_orig={} align={} epoch={}",
+                t.state.name(), t.clock.offset_us, t.err_us, t.seq, st.beacons_tx, st.beacons_rx, st.stamps, st.stamps_coarse, l.time_stamped, l.time_lost, l.hold_max_us, l.bracket_max_us, st.steps, st.slews, st.slewed_us, st.founded, st.joined, st.epochs, st.bad,
+                m.tsf_mode, c.anchors, c.anchor_wide, c.jumps, c.mapped_hw, c.mapped_floor, c.implausible, c.lag_min_us, c.lag_max_us, c.offset_us, c.drift_ppb, b.clock.offset_us().unwrap_or(0),
+                m.tb_writes, m.tb_busy, m.tb_originated, m.tb_align as u8,
+                t.epoch.map_or(-1, |e| e.gen as i64),
+            )
+        }
+        (6, i) => {
+            let Some(p) = s.time.peers.iter().flatten().nth(i as usize) else { return false };
+            let q = p.fit.predict(now);
+            write!(
+                w,
+                "[mt] peer id={:04x} st={} age_ms={} n={} used={} theta={} rms={} drift_ppb={} lat={} off={} samples={} outliers={} resets={} coarse={} unpaired={}",
+                p.id,
+                p.state.name(),
+                (now - p.heard_us) / 1000,
+                p.fit.len(),
+                q.map_or(0, |q| q.used),
+                p.theta(now).map_or(i64::MIN, |t| t.0),
+                q.map_or(-1, |q| q.rms),
+                q.map_or(0, |q| q.drift_ppb),
+                p.lat_us.unwrap_or(i64::MIN),
+                p.off_us,
+                p.samples,
+                p.outliers,
+                p.resets,
+                p.coarse,
+                p.unpaired,
+            )
+        }
         (4, i) => {
             let Some(r) = m.test_rx.iter().flatten().nth(i as usize) else { return false };
             write!(w, "[mesh] testrx from={:04x} tag={} port={} uniq={} dups={} max_seq={} sent_here={}", r.origin, r.tag, r.port, r.uniq, r.dups, r.max_seq, m.test.sent)
@@ -723,6 +1007,14 @@ mod stubs {
     #[no_mangle]
     extern "C" fn esp_random() -> u32 {
         0x1234_5678
+    }
+    #[no_mangle]
+    extern "C" fn esp_timer_get_time() -> i64 {
+        0
+    }
+    #[no_mangle]
+    extern "C" fn lm_mesh_tb(_: i32, _: *mut i64, _: i64) -> i32 {
+        0
     }
 }
 

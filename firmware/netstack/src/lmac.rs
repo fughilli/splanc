@@ -193,6 +193,15 @@ pub unsafe fn init(retention_mask: u32) {
     datapath::txrx_init();
 }
 
+/// Read the TSF counter register alone, without the latch sequence (mesh M4 probes whether
+/// it is live: two reads some µs apart must differ by that many).
+///
+/// # Safety
+/// MMIO; the MAC must be initialized.
+pub unsafe fn tsf_raw() -> u32 {
+    mmio::read32(0x600A_D020)
+}
+
 /// Read the TSF timer (`0x600A_D014` latch control + `0x600A_D020` counter).
 ///
 /// # Safety

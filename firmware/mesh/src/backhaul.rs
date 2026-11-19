@@ -24,6 +24,20 @@ pub enum TxClass {
     /// Mesh packets (floods, relays, page protocol): must arrive.
     #[default]
     Data,
+    /// A time beacon (M4, [`crate::meshtime`]): one broadcast, never retried (a retry would
+    /// carry the first attempt's stamp), whose completion the backhaul stamps
+    /// ([`Backhaul::take_tx_stamp`]).
+    Time,
+}
+
+/// When a frame went out on this node's clock (µs): armed, and done (the midpoint of the
+/// bracket between the last poll that saw it in flight and the one that saw it done; the
+/// bracket's half-width is `err_us`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TxStamp {
+    pub armed_us: i64,
+    pub done_us: i64,
+    pub err_us: i64,
 }
 
 /// Back-pressure: the backhaul cannot queue the frame now.
@@ -59,6 +73,11 @@ pub trait Backhaul {
     fn send_class(&mut self, frame: &[u8], dst: Option<NodeId>, class: TxClass) -> Result<(), Busy> {
         let _ = class;
         self.send(frame, dst)
+    }
+    /// The completion of the last [`TxClass::Time`] frame (taken once), for the two-step
+    /// stamp. Backhauls that cannot tell when a frame went out keep the default.
+    fn take_tx_stamp(&mut self) -> Option<TxStamp> {
+        None
     }
     /// Next received frame, copied into `buf` (at least `mtu()` bytes), with its metadata.
     fn recv(&mut self, buf: &mut [u8]) -> Option<RxMeta>;

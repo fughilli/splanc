@@ -51,6 +51,9 @@ enum FrameType {
   // it sends a BEACON instead (summary set, broadcast). Later milestones add the mesh's own
   // beacon fields (design §5.3).
   FRAME_TYPE_BEACON = 10;
+  // Splanc (mesh M4): a time beacon (payload: splanc_mesh::meshtime::TimeBeacon, its own
+  // fixed layout). One hop, broadcast, never relayed or retried.
+  FRAME_TYPE_TIME = 11;
 }
 
 // Worst-case encoded header (all ids >= 16384, seq >= 128): ver 2 + type 2 + src 4 + dst 4 +

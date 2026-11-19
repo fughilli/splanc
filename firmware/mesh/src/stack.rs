@@ -31,6 +31,7 @@ use crate::guest::{FollowEvent, Follower};
 #[cfg(feature = "open_mode")]
 use crate::membership::Follow;
 use crate::membership::{Credentials, Groups, Membership, Mode, Note, Out, Phase, ProvisionSource};
+use crate::meshtime::{MeshTime, ShowEpoch, TimeBeacon, BEACON_MAX};
 #[cfg(feature = "open_mode")]
 use crate::msg::GuestHello;
 use crate::msg::{Advert, Capacity, Class, Command as MemberCommand, PendingJoin, T_ADVERT, T_PENDING_JOIN, T_PROBE};
@@ -89,6 +90,8 @@ pub struct StackConfig {
     /// reach this node or its neighbours in the last 5 min, plus one (2..=15), discovered by
     /// a probe flood at the maximum limit once a minute.
     pub adaptive_hops: bool,
+    /// The time beacon period (M4, [`crate::meshtime`]); 0: no mesh time.
+    pub time_beacon_us: i64,
 }
 
 impl Default for StackConfig {
@@ -104,6 +107,7 @@ impl Default for StackConfig {
             capacity_aware: true,
             hop_limit: 5,
             adaptive_hops: true,
+            time_beacon_us: crate::meshtime::BEACON_US,
         }
     }
 }
@@ -128,6 +132,9 @@ pub enum Event<'a> {
     StateChanged,
     /// Persist this frame-counter mark before it is needed (§7.5; once per 2^16 frames).
     PersistCounter(u64),
+    /// A newer show epoch (§6.3, M4) arrived in a time beacon: map it onto this device's
+    /// time base.
+    ShowEpoch(ShowEpoch),
     /// An admin session's gateway confirmed our freshness: its commands are accepted.
     SessionSynced { session: u32, gateway: NodeId },
     /// Gateway: this session's grant expires at `not_after` (mesh seconds); the app should
@@ -246,6 +253,9 @@ pub struct MeshStack<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, cons
     pub crypto_jobs: u32,
     plain_tx: [u8; PLAIN_MAX],
     plain_sealed: [u8; PLAIN_MAX + 32],
+    /// Mesh time (M4): time beacons, the neighbour fits, the show epoch.
+    pub time: MeshTime,
+    next_time_us: Option<i64>,
 }
 
 fn mesh_time_s(now_us: i64) -> u32 {
@@ -328,6 +338,8 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         w!(live_sent, 0);
         w!(live_last_op, 0);
         w!(hops_seen, (0, 0));
+        MeshTime::init_in(addr_of_mut!((*dst).time), me);
+        w!(next_time_us, None);
         w!(next_probe_us, None);
         w!(pending_grant, None);
         w!(pending_acks, [None; CRYPTO_ACKS]);
@@ -480,7 +492,12 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     /// Run the device's mesh for one step: receive, timers, adverts, sessions, the mesh slot,
     /// deliver. `scratch` must hold `scratch_len()` bytes. Bounded work; never blocks.
     pub fn tick(&mut self, now_us: i64, flash: &mut dyn Flash, scratch: &mut [u8], on: &mut dyn FnMut(Event<'_>)) {
-        // 1. Receive: link frames into the mesh, plain frames to membership.
+        // 0. The last time beacon's completion (two-step stamp, M4).
+        if let Some(st) = self.node.backhaul.take_tx_stamp() {
+            self.time.on_stamp(st.done_us, st.err_us);
+        }
+        // 1. Receive: link frames into the mesh, plain frames to membership, time beacons
+        // to mesh time.
         loop {
             let before = self.node.guard.stats;
             match self.node.poll_rx(now_us, flash, scratch) {
@@ -499,6 +516,14 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                     buf[..n].copy_from_slice(&body[..n]);
                     self.on_plain(now_us, &header, &buf[..n], on);
                 }
+                Rx::Time { meta, src, body } => match TimeBeacon::decode(body) {
+                    Some(b) => {
+                        if let Some(e) = self.time.on_beacon(now_us, src, meta.rx_us, &b) {
+                            on(Event::ShowEpoch(e));
+                        }
+                    }
+                    None => self.time.stats.bad += 1,
+                },
             }
         }
         // 2. Membership timers (bounded).
@@ -531,6 +556,21 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             let diameter = self.diameter(now_us);
             if let Some(n) = self.membership.advert(&mut self.rng, 0, mtu, capacity, epoch, diameter, &mut self.plain_tx) {
                 self.send_plain_buf(n);
+            }
+        }
+        // 3b. The time beacon (M4): one hop, broadcast, its completion stamped.
+        let period = self.cfg.time_beacon_us;
+        if period > 0 && self.membership.is_member() && now_us >= *self.next_time_us.get_or_insert(now_us) {
+            let jitter = (self.rng.u32() as i64).rem_euclid((period / 4).max(1));
+            self.next_time_us = Some(now_us + period - jitter);
+            let b = self.time.beacon(now_us);
+            let mut body = [0u8; BEACON_MAX];
+            let sent = match b.encode(&mut body) {
+                Some(n) => self.node.send_time(now_us, &body[..n], &mut self.plain_tx, &mut self.plain_sealed),
+                None => false,
+            };
+            if !sent {
+                self.time.cancel_pending();
             }
         }
         // 4. The follower (guests).
@@ -632,6 +672,19 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                 }
             }
         }
+    }
+
+    /// The time beacon period (µs; 0 stops mesh time beacons).
+    pub fn set_time_beacon_us(&mut self, us: i64) {
+        self.cfg.time_beacon_us = us.max(0);
+        self.next_time_us = None;
+    }
+
+    /// This device's app set (or cleared) its show epoch (§6.3): originate the next
+    /// generation in mesh time; every member's beacons gossip it from now on. M5 restricts
+    /// who may (the gateway's admin session); members only ever follow.
+    pub fn originate_epoch(&mut self, epoch_mesh_us: Option<i64>) -> ShowEpoch {
+        self.time.originate(epoch_mesh_us)
     }
 
     fn send_session(&mut self, to: NodeId, m: &SessionMsg, want_ack: bool) {

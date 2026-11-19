@@ -4524,6 +4524,21 @@ pub unsafe extern "C" fn lm_time_base(epoch_ms: *mut i64) -> bool {
     }
 }
 
+/// Set (or clear) the shared time base from the mesh's show epoch (mesh M4,
+/// docs/design/mesh.md §6.3): the same effect as a set_time_base from the app, plus
+/// moving the queued apply_at changes by `shift_ms` when mesh time slewed under them
+/// (same generation), so each still lands on its frame.
+///
+/// # Safety
+/// Under the player mutex (main.cpp `lm_mesh_tb`).
+#[no_mangle]
+pub unsafe extern "C" fn lm_time_base_put(epoch_ms: i64, set: bool, shift_ms: i64) {
+    player().set_time_base_ms(if set { Some(epoch_ms) } else { None });
+    if shift_ms != 0 {
+        (*addr_of_mut!(SCHED)).shift(shift_ms);
+    }
+}
+
 /// The previous effect frame's `now - epoch` (ms, >= 0) under the shared time base,
 /// for update()'s dt ([`lm_fx_clock`]); None off the time base.
 static mut FX_TB_PREV_SINCE: Option<i64> = None;

@@ -26,7 +26,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use splanc_mesh::admin::Grant;
-use splanc_mesh::backhaul::{Backhaul, BackhaulId, Busy, NodeId, RxMeta};
+use splanc_mesh::backhaul::{Backhaul, BackhaulId, Busy, NodeId, RxMeta, TxClass, TxStamp};
 use splanc_mesh::crypto::DeviceKey;
 use splanc_mesh::host_keys::{AdminSigner, HostKey, TestRng};
 use splanc_mesh::membership::{Credentials, MeshState, ProvisionSource};
@@ -280,9 +280,12 @@ struct Station {
     place: Placement,
     id: NodeId,
     online: bool,
-    queue: VecDeque<(Vec<u8>, Option<NodeId>)>,
+    /// (frame, link destination, a time beacon whose completion is stamped).
+    queue: VecDeque<(Vec<u8>, Option<NodeId>, bool)>,
     /// When the head of the queue next tries the medium.
     attempt_us: Option<i64>,
+    /// The last time beacon's completion on this node's clock (M4), until taken.
+    stamp: Option<TxStamp>,
     rx: VecDeque<(i64, Vec<u8>, RxMeta)>,
     last_tx_us: Option<i64>,
     ctl: RateCtl,
@@ -514,7 +517,7 @@ impl Medium {
                     self.st[i].attempt_us = Some(busy + b);
                     continue;
                 }
-                let Some((bytes, dst)) = self.st[i].queue.pop_front() else {
+                let Some((bytes, dst, stamp)) = self.st[i].queue.pop_front() else {
                     self.st[i].attempt_us = None;
                     continue;
                 };
@@ -522,6 +525,13 @@ impl Medium {
                 let air = rate.airtime_us(bytes.len());
                 self.stats.frames += 1;
                 self.stats.airtime_us += air;
+                if stamp {
+                    // The firmware's two-step stamp: the completion seen by a poll up to
+                    // 30 µs after the frame ends, reported as the bracket's midpoint.
+                    let end = self.local(i, self.now + air);
+                    let poll = (self.rand() * 30.0) as i64;
+                    self.st[i].stamp = Some(TxStamp { armed_us: self.local(i, self.now), done_us: end + poll / 2, err_us: 15 });
+                }
                 self.sniffer.push(Sniffed { from: i, start_us: self.now, bytes: bytes.clone() });
                 self.air.push(Tx { from: i, start: self.now, end: self.now + air, bytes, dst, rate });
                 self.st[i].last_tx_us = Some(self.now);
@@ -591,7 +601,7 @@ impl Air {
     fn add(&self, id: NodeId, place: Placement) -> usize {
         let mut m = self.0.borrow_mut();
         let i = m.st.len();
-        m.st.push(Station { place, id, online: false, queue: VecDeque::new(), attempt_us: None, rx: VecDeque::new(), last_tx_us: None, ctl: RateCtl::default() });
+        m.st.push(Station { place, id, online: false, queue: VecDeque::new(), attempt_us: None, stamp: None, rx: VecDeque::new(), last_tx_us: None, ctl: RateCtl::default() });
         for row in m.shadow.iter_mut() {
             row.push((0.0, 0));
         }
@@ -660,7 +670,7 @@ impl Air {
     pub fn inject(&self, from: usize, bytes: Vec<u8>) {
         let mut m = self.0.borrow_mut();
         let now = m.now;
-        m.st[from].queue.push_back((bytes, None));
+        m.st[from].queue.push_back((bytes, None, false));
         if m.st[from].attempt_us.is_none() {
             m.st[from].attempt_us = Some(now);
         }
@@ -679,6 +689,14 @@ impl Backhaul for SimPort {
     }
 
     fn send(&mut self, frame: &[u8], dst: Option<NodeId>) -> Result<(), Busy> {
+        self.send_class(frame, dst, TxClass::Data)
+    }
+
+    fn take_tx_stamp(&mut self) -> Option<TxStamp> {
+        self.air.0.borrow_mut().st[self.index].stamp.take()
+    }
+
+    fn send_class(&mut self, frame: &[u8], dst: Option<NodeId>, class: TxClass) -> Result<(), Busy> {
         assert!(frame.len() <= MTU, "frame of {} bytes over the MTU", frame.len());
         let mut m = self.air.0.borrow_mut();
         let (qmax, now, i) = (m.m.queue, m.now, self.index);
@@ -686,7 +704,7 @@ impl Backhaul for SimPort {
             m.stats.queue_full += 1;
             return Err(Busy);
         }
-        m.st[i].queue.push_back((frame.to_vec(), dst));
+        m.st[i].queue.push_back((frame.to_vec(), dst, class == TxClass::Time));
         if m.st[i].attempt_us.is_none() {
             let b = m.backoff();
             let p = m.st[i].place;
@@ -752,6 +770,7 @@ pub enum Ev {
     PersistCounter(u64),
     SessionSynced { session: u32, gateway: NodeId },
     GrantRenewalDue { session: u32, not_after: u32 },
+    ShowEpoch(splanc_mesh::meshtime::ShowEpoch),
 }
 
 impl From<Event<'_>> for Ev {
@@ -766,6 +785,9 @@ impl From<Event<'_>> for Ev {
             Event::PersistCounter(m) => Ev::PersistCounter(m),
             Event::SessionSynced { session, gateway } => Ev::SessionSynced { session, gateway },
             Event::GrantRenewalDue { session, not_after } => Ev::GrantRenewalDue { session, not_after },
+            Event::ShowEpoch(e) => Ev::ShowEpoch(e),
+            #[allow(unreachable_patterns)]
+            _ => Ev::StateChanged,
         }
     }
 }

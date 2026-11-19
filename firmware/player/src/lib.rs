@@ -1526,6 +1526,13 @@ impl Player {
         self.time_base_ms
     }
 
+    /// Set or clear the time-base epoch directly (device-clock ms): what a
+    /// set_time_base does, for the firmware's mesh (mesh M4 maps the mesh's show
+    /// epoch onto this device's clock).
+    pub fn set_time_base_ms(&mut self, epoch_ms: Option<i64>) {
+        self.time_base_ms = epoch_ms;
+    }
+
     /// Move the time-base epoch by `delta_ms` (device clock): after the device
     /// clock steps by `delta_ms`, shifting the epoch the same way keeps effect
     /// time (now - epoch) continuous, so the fixture stays in step.

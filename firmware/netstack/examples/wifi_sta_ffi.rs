@@ -607,6 +607,20 @@ pub extern "C" fn ns_mac_send_p2p(frame: *const u8, len: u32, queue: u32, rate: 
     }
 }
 
+/// The MAC's TSF counter (µs; mesh M4: the clock the RX vector stamps frames with, which
+/// mesh time maps onto `esp_timer`). `latch` = 0: read the counter register alone; 1: the
+/// vendor's latch sequence first (`hal_mac_tsf_get_time`, esp32-reverse 07).
+#[no_mangle]
+pub extern "C" fn ns_mac_tsf(latch: u32) -> u32 {
+    unsafe {
+        if latch != 0 {
+            lmac::tsf_now()
+        } else {
+            lmac::tsf_raw()
+        }
+    }
+}
+
 /// 1 once `queue`'s last arm has completed (the TX state machine's completed bitmap), and
 /// its result word (PMD) in `*pmd` (if non-null): decode with [`ns_p2p_tx_status`].
 #[no_mangle]
