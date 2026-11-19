@@ -421,18 +421,37 @@ This is the web and Android channel (`stripe.ts`, `endpoint.ts`). The iOS app
 never offers it: `mayShowWebCheckout()` and `startWebCheckout` refuse inside
 the iOS app.
 
-- **Buy flow (app).** AI settings ▸ Splanc AI credits:
-  1. **Create account**: an anonymous device account.
-  2. **I'm 18 or older**: an explicit confirmation.
-  3. The packs from `GET /billing/pricing?channel=web` (credits and the US
-     reference price).
-  4. **Buy**: `POST /billing/checkout {sku, return_url}`, then the same tab
-     goes to Stripe Checkout. Only a `https://checkout.stripe.com/` URL is
-     ever opened.
-  5. Back in the app (`?checkout=success|cancel#/settings/ai`), a toast shows
-     and the balance is polled while the webhook credits.
+- **Buy flow (app).** A dedicated flow, one step per screen with one primary
+  action each (`web/src/ui/screens/creditsFlow.ts`; the pure state machine is
+  `web/src/effects/ai/creditsFlow.ts`). Entry points: Settings ▸ AI ▸ Splanc
+  AI credits, the "Set up AI" sheet's credits card, and the editor's
+  out-of-credits (402) / low-balance messages.
+  1. **Intro** (`#/credits`): what credits are, 1 credit = US$0.01 of AI usage
+     with our fee in the pack price, a typical prompt's 3–12 credits, and that
+     prompts aren't stored.
+  2. **Account + 18+**: an anonymous device account, created together with an
+     explicit "I'm 18 or older" consent (`POST /billing/account`, then
+     `POST /billing/age`).
+  3. **Recovery email (optional)**: "Add email (recommended)" sends a 6-digit
+     code (`POST /billing/account/email`, then `/verify`); "Continue without
+     email" first shows that credits can't be recovered without one, then
+     records `POST /billing/account/anonymous`.
+  4. **Pack** cards from `GET /billing/pricing?channel=web` (price, credits,
+     about how many prompts).
+  5. **Hand-off**: explains the secure Stripe page, then
+     `POST /billing/checkout {sku, return_url}` and the same tab goes to Stripe
+     Checkout. Only a `https://checkout.stripe.com/` URL is ever opened.
+  6. **Return** (`?checkout=success|cancel#/credits/return`): the balance is
+     polled until the webhook's credit lands (success, with the balance
+     counting in), or "still processing" after ~16 s; cancel says nothing was
+     charged and offers the packs again.
 
-  **Delete Splanc AI account** shows the forfeit warning first.
+  Settings ▸ AI shows the account: balance (low / empty), Buy more, the
+  recovery email (masked; change / remove with a warning), recent activity
+  (`GET /billing/statement`) and a danger zone. **Delete account** is its own
+  confirmation step with the forfeit warning. A fresh device restores with
+  **Restore an existing account** (`/billing/recover/start`, then `/verify`),
+  which signs the account out elsewhere; any 401 offers "Restore account".
 - **`POST /billing/checkout`** (session; account active; **18+ required**,
   403 `age_required`). The pack must be an enabled web pack **with a
   `stripe_price_id` in the pricing config**: price ids are config, never code,
@@ -447,7 +466,8 @@ the iOS app.
   - success / cancel URLs back into the app. Only `splanc.io`,
     `splanc.pages.dev` and `localhost` return URLs are honoured
     (`safeReturnUrl`); anything else falls back to `BILLING_APP_URL`, default
-    `https://splanc.io/app/#/settings/ai`.
+    `https://splanc.io/app/#/settings/ai` (the app sends any `?checkout=` return
+    to `#/credits/return`).
 
   Payment methods are Stripe's dynamic ones: cards, Apple Pay and Google Pay
   as enabled in the Dashboard. Apple Pay is registered for `splanc.io` and
@@ -991,7 +1011,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://splanc-relay.<subdomain
   them and credits nothing, which is the expected result.
 - **In the app.** Open `https://splanc.io/app/`, run
   `localStorage.setItem("splanc.flags.aiCredits","1")` in the console, reload,
-  then go to AI settings ▸ Splanc AI credits ▸ Create account ▸ 18+ ▸ Buy.
+  then go to Settings ▸ AI ▸ Splanc AI credits ▸ Get Splanc AI credits.
 - **Turn it off:** `$W secret delete AI_BILLING --config wrangler.toml` (every
   route answers 503 again).
 - **Logs.** `[observability]` samples 5 % of requests (`head_sampling_rate`),

@@ -909,19 +909,38 @@ environment.</p></li>
 never offers it: <code class="docutils literal notranslate"><span class="pre">mayShowWebCheckout()</span></code> and <code class="docutils literal notranslate"><span class="pre">startWebCheckout</span></code> refuse inside
 the iOS app.</p>
 <ul>
-<li><p><strong>Buy flow (app).</strong> AI settings ▸ Splanc AI credits:</p>
+<li><p><strong>Buy flow (app).</strong> A dedicated flow, one step per screen with one primary
+action each (<code class="docutils literal notranslate"><span class="pre">web/src/ui/screens/creditsFlow.ts</span></code>; the pure state machine is
+<code class="docutils literal notranslate"><span class="pre">web/src/effects/ai/creditsFlow.ts</span></code>). Entry points: Settings ▸ AI ▸ Splanc
+AI credits, the “Set up AI” sheet’s credits card, and the editor’s
+out-of-credits (402) / low-balance messages.</p>
 <ol class="arabic simple">
-<li><p><strong>Create account</strong>: an anonymous device account.</p></li>
-<li><p><strong>I’m 18 or older</strong>: an explicit confirmation.</p></li>
-<li><p>The packs from <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/pricing?channel=web</span></code> (credits and the US
-reference price).</p></li>
-<li><p><strong>Buy</strong>: <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/checkout</span> <span class="pre">{sku,</span> <span class="pre">return_url}</span></code>, then the same tab
-goes to Stripe Checkout. Only a <code class="docutils literal notranslate"><span class="pre">https://checkout.stripe.com/</span></code> URL is
-ever opened.</p></li>
-<li><p>Back in the app (<code class="docutils literal notranslate"><span class="pre">?checkout=success|cancel#/settings/ai</span></code>), a toast shows
-and the balance is polled while the webhook credits.</p></li>
+<li><p><strong>Intro</strong> (<code class="docutils literal notranslate"><span class="pre">#/credits</span></code>): what credits are, 1 credit = US$0.01 of AI usage
+with our fee in the pack price, a typical prompt’s 3–12 credits, and that
+prompts aren’t stored.</p></li>
+<li><p><strong>Account + 18+</strong>: an anonymous device account, created together with an
+explicit “I’m 18 or older” consent (<code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/account</span></code>, then
+<code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/age</span></code>).</p></li>
+<li><p><strong>Recovery email (optional)</strong>: “Add email (recommended)” sends a 6-digit
+code (<code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/account/email</span></code>, then <code class="docutils literal notranslate"><span class="pre">/verify</span></code>); “Continue without
+email” first shows that credits can’t be recovered without one, then
+records <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/account/anonymous</span></code>.</p></li>
+<li><p><strong>Pack</strong> cards from <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/pricing?channel=web</span></code> (price, credits,
+about how many prompts).</p></li>
+<li><p><strong>Hand-off</strong>: explains the secure Stripe page, then
+<code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/checkout</span> <span class="pre">{sku,</span> <span class="pre">return_url}</span></code> and the same tab goes to Stripe
+Checkout. Only a <code class="docutils literal notranslate"><span class="pre">https://checkout.stripe.com/</span></code> URL is ever opened.</p></li>
+<li><p><strong>Return</strong> (<code class="docutils literal notranslate"><span class="pre">?checkout=success|cancel#/credits/return</span></code>): the balance is
+polled until the webhook’s credit lands (success, with the balance
+counting in), or “still processing” after ~16 s; cancel says nothing was
+charged and offers the packs again.</p></li>
 </ol>
-<p><strong>Delete Splanc AI account</strong> shows the forfeit warning first.</p>
+<p>Settings ▸ AI shows the account: balance (low / empty), Buy more, the
+recovery email (masked; change / remove with a warning), recent activity
+(<code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/statement</span></code>) and a danger zone. <strong>Delete account</strong> is its own
+confirmation step with the forfeit warning. A fresh device restores with
+<strong>Restore an existing account</strong> (<code class="docutils literal notranslate"><span class="pre">/billing/recover/start</span></code>, then <code class="docutils literal notranslate"><span class="pre">/verify</span></code>),
+which signs the account out elsewhere; any 401 offers “Restore account”.</p>
 </li>
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/checkout</span></code></strong> (session; account active; <strong>18+ required</strong>,
 403 <code class="docutils literal notranslate"><span class="pre">age_required</span></code>). The pack must be an enabled web pack <strong>with a
@@ -938,7 +957,8 @@ tax needs);</p></li>
 <li><p>success / cancel URLs back into the app. Only <code class="docutils literal notranslate"><span class="pre">splanc.io</span></code>,
 <code class="docutils literal notranslate"><span class="pre">splanc.pages.dev</span></code> and <code class="docutils literal notranslate"><span class="pre">localhost</span></code> return URLs are honoured
 (<code class="docutils literal notranslate"><span class="pre">safeReturnUrl</span></code>); anything else falls back to <code class="docutils literal notranslate"><span class="pre">BILLING_APP_URL</span></code>, default
-<code class="docutils literal notranslate"><span class="pre">https://splanc.io/app/#/settings/ai</span></code>.</p></li>
+<code class="docutils literal notranslate"><span class="pre">https://splanc.io/app/#/settings/ai</span></code> (the app sends any <code class="docutils literal notranslate"><span class="pre">?checkout=</span></code> return
+to <code class="docutils literal notranslate"><span class="pre">#/credits/return</span></code>).</p></li>
 </ul>
 <p>Payment methods are Stripe’s dynamic ones: cards, Apple Pay and Google Pay
 as enabled in the Dashboard. Apple Pay is registered for <code class="docutils literal notranslate"><span class="pre">splanc.io</span></code> and
@@ -1724,7 +1744,7 @@ them and credits nothing, which is the expected result.</p>
 </li>
 <li><p><strong>In the app.</strong> Open <code class="docutils literal notranslate"><span class="pre">https://splanc.io/app/</span></code>, run
 <code class="docutils literal notranslate"><span class="pre">localStorage.setItem(&quot;splanc.flags.aiCredits&quot;,&quot;1&quot;)</span></code> in the console, reload,
-then go to AI settings ▸ Splanc AI credits ▸ Create account ▸ 18+ ▸ Buy.</p></li>
+then go to Settings ▸ AI ▸ Splanc AI credits ▸ Get Splanc AI credits.</p></li>
 <li><p><strong>Turn it off:</strong> <code class="docutils literal notranslate"><span class="pre">$W</span> <span class="pre">secret</span> <span class="pre">delete</span> <span class="pre">AI_BILLING</span> <span class="pre">--config</span> <span class="pre">wrangler.toml</span></code> (every
 route answers 503 again).</p></li>
 <li><p><strong>Logs.</strong> <code class="docutils literal notranslate"><span class="pre">[observability]</span></code> samples 5 % of requests (<code class="docutils literal notranslate"><span class="pre">head_sampling_rate</span></code>),
