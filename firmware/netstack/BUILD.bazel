@@ -543,3 +543,34 @@ flash_bundle(
     flash = ":wifi_sniff_flash",
     tags = ["manual"],
 )
+
+# wifi_tx_rate_probe — mesh M3a: the vendor's per-queue TX register words for each PHY
+# rate (the recipe the heapless direct TX path needs to send OFDM). Vendor stack as an
+# oracle; a measurement tool, not the heapless stack.
+cc_binary(
+    name = "wifi_tx_rate_probe",
+    srcs = ["examples/wifi_tx_rate_probe.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + ["@embedded//libs/vendor:wifi"],
+)
+
+firmware_binary(
+    name = "wifi_tx_rate_probe_esp32c6",
+    binary = ":wifi_tx_rate_probe",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_tx_rate_probe_flash",
+    app = ":wifi_tx_rate_probe_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_tx_rate_probe_flashbundle",
+    flash = ":wifi_tx_rate_probe_flash",
+    tags = ["manual"],
+)

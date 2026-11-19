@@ -762,7 +762,40 @@ NETSTACK_VARIANTS = [
         "_ctrltrace",
         ["LM_CTRL_TRACE=1"],
     ),
+    # Mesh spike M3a (docs/design/mesh.md §4.4): Splanc Public Action frames on the
+    # netstack, driven from the serial console by //pi/hitl/harness:mesh_smoke. Test-only.
+    (
+        "_meshspike",
+        ["LM_MESH_SPIKE=1"],
+    ),
 ]
+
+# Players whose transport is a twin of :netstack_transport (same defines).
+_TRANSPORT_TWINS = ("_ctrltrace", "_meshspike")
+
+# The M2 mesh envelope (seal/open + replay window) for the mesh spike's C++ side
+# (mesh_spike_impl.h). No statics: the replay table lives in the heap block the spike
+# allocates on MESH ON. Linked only into :player_app_netstack_meshspike.
+rust_static_library(
+    name = "mesh_spike_ffi",
+    srcs = ["mesh_spike_ffi.rs"],
+    crate_name = "mesh_spike_ffi",
+    edition = "2021",
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = ["//firmware/mesh:mesh_fw"],
+)
+
+rust_test(
+    name = "mesh_spike_ffi_test",
+    size = "small",
+    srcs = ["mesh_spike_ffi.rs"],
+    crate_name = "mesh_spike_ffi",
+    edition = "2021",
+    deps = ["//firmware/mesh"],
+)
 
 [cc_binary(
     name = "player_app_netstack" + sfx,
@@ -823,8 +856,8 @@ NETSTACK_VARIANTS = [
         ":device_cert",  # per-device TLS key + cert (first-boot keygen, littlefs-persisted)
         ":improv_ble_netstack",
         ":improv_codec",
-        # The LM_CTRL_TRACE image links the stamping transport twin (see below).
-        ":netstack_transport_ctrltrace" if sfx == "_ctrltrace" else ":netstack_transport",
+        # The LM_CTRL_TRACE / LM_MESH_SPIKE images link their transport twin (see below).
+        ":netstack_transport" + (sfx if sfx in _TRANSPORT_TWINS else ""),
         ":ota_app",  # OTA handoff + health (docs/design/ota.md)
         ":player_ffi",
         ":ws_codec",
@@ -836,7 +869,10 @@ NETSTACK_VARIANTS = [
     ] + select({
         ":heap_census_on": [":heap_census"],
         "//conditions:default": [],
-    }),
+    }) + ([
+        ":mesh_spike_ffi",
+        "//firmware/mesh/swarm:swarm_crypto",  # SHA-256/HMAC under the envelope's HKDF
+    ] if sfx == "_meshspike" else []),
 ) for sfx, extra in NETSTACK_VARIANTS]
 
 # -- ESP32-C6 front end for the P4 player (docs/design/p4-c6-split.md §2, §4) ----------
@@ -990,6 +1026,7 @@ cc_library(
         "dhcp_reply.h",
         "icmp_echo.h",
         "join_guard.h",
+        "mesh_spike_impl.h",
         "netstack_transport.cpp",
         "serial_log.h",
         "session_takeover.h",
@@ -1028,6 +1065,10 @@ cc_library(
     (
         "_ctrltrace",
         ["LM_CTRL_TRACE=1"],
+    ),
+    (
+        "_meshspike",
+        ["LM_MESH_SPIKE=1"],
     ),
 ]]
 
@@ -1094,6 +1135,20 @@ esptool_flash(
 flash_bundle(
     name = "esp32c6_netstack_ctrltrace_flashbundle",
     flash = ":flash_esp32c6_netstack_ctrltrace",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32c6_netstack_meshspike",
+    app = ":esp32c6_netstack_meshspike",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+# The mesh spike image //pi/hitl/harness:mesh_smoke flashes (M3a; not shipped).
+flash_bundle(
+    name = "esp32c6_netstack_meshspike_flashbundle",
+    flash = ":flash_esp32c6_netstack_meshspike",
     tags = ["manual"],
 )
 

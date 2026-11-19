@@ -37,6 +37,7 @@ pub mod ble;
 pub mod gap;
 pub mod mac;
 pub mod tx;
+pub mod p2p;
 pub mod coex;
 pub mod http;
 pub mod pb;

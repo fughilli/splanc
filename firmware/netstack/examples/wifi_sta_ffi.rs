@@ -10,6 +10,7 @@
 
 use ledmapper_netstack::lmac;
 use ledmapper_netstack::mac::{rx_frame, RxRing};
+use ledmapper_netstack::{p2p, tx};
 use ledmapper_netstack::sta::{Out, Sta};
 use ledmapper_netstack::tx::TxRing;
 use ledmapper_netstack::wpa::PmkDeriv;
@@ -547,6 +548,179 @@ pub extern "C" fn ns_mac_send(frame: *const u8, len: u32, queue: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn ns_mac_send_sec(frame: *const u8, len: u32, queue: u32) -> u32 {
     unsafe { submit(frame, len, queue, true) }
+}
+
+// ---- Peer-to-peer frames (mesh, docs/design/mesh.md §4.1/§4.4; M3a spike) ---------------
+// Pure helpers plus a second submit path with a rate, a power and an optional ACK. None of
+// it holds state, so a build that never calls it (the shipping player) links none of it.
+
+/// [`ns_mac_recv`] that also copies the frame's 92-byte hardware RX vector into `rxv`
+/// (`p2p::RXV_LEN` bytes; skipped if null). Returns the frame length, or 0.
+#[no_mangle]
+pub extern "C" fn ns_mac_recv_rxv(out: *mut u8, cap: u32, rxv: *mut u8) -> u32 {
+    unsafe {
+        rx_reap();
+        if let Some((idx, buf)) = RX.next_frame() {
+            let frame = rx_frame(buf);
+            let n = frame.len().min(cap as usize);
+            core::ptr::copy_nonoverlapping(frame.as_ptr(), out, n);
+            if !rxv.is_null() {
+                let v = buf.len().min(p2p::RXV_LEN);
+                core::ptr::copy_nonoverlapping(buf.as_ptr(), rxv, v);
+            }
+            RX.recycle(idx);
+            n as u32
+        } else {
+            0
+        }
+    }
+}
+
+/// `ns_mac_send_p2p` flags: expect the peer's ACK (unicast; PLCP0 ack-type 1).
+pub const P2P_ACK: u32 = 1;
+/// `ns_mac_send_p2p` flags: keep the frame's sequence number (a retry of the same MPDU).
+pub const P2P_KEEP_SEQ: u32 = 2;
+
+/// Submit an 802.11 `frame` on `queue` at MAC rate index `rate` and power byte `pwr`
+/// (`TxRing::set_rate_ex`), with `flags` ([`P2P_ACK`], [`P2P_KEEP_SEQ`]). Same slot
+/// rotation and arm wait as [`ns_mac_send`]. Poll [`ns_mac_tx_done`] for the outcome.
+#[no_mangle]
+pub extern "C" fn ns_mac_send_p2p(frame: *const u8, len: u32, queue: u32, rate: u32, pwr: u32, flags: u32) -> u32 {
+    unsafe {
+        let f = core::slice::from_raw_parts_mut(frame as *mut u8, len as usize);
+        if flags & P2P_KEEP_SEQ == 0 {
+            stamp_tx_seq(f);
+        }
+        let q = queue as usize;
+        match TX.load_frame_next(f, q) {
+            Ok(idx) => {
+                let mut polls = 0u32;
+                while TxRing::<4>::arm_pending(q) && polls < ARM_WAIT_POLLS {
+                    polls += 1;
+                }
+                TX.set_rate_ex(idx, rate as u8, pwr as u8);
+                TX.arm_ex(idx, flags & P2P_ACK != 0);
+                1
+            }
+            Err(_) => 0,
+        }
+    }
+}
+
+/// 1 once `queue`'s last arm has completed (the TX state machine's completed bitmap), and
+/// its result word (PMD) in `*pmd` (if non-null): decode with [`ns_p2p_tx_status`].
+#[no_mangle]
+pub extern "C" fn ns_mac_tx_done(queue: u32, pmd: *mut u32) -> u32 {
+    unsafe {
+        let done = tx::txq_completed(queue as usize);
+        if !pmd.is_null() {
+            *pmd = tx::txq_result(queue as usize);
+        }
+        done as u32
+    }
+}
+
+/// TX completion status from a PMD word: 0 = OK, 5 = ACK timeout, else the raw code.
+#[no_mangle]
+pub extern "C" fn ns_p2p_tx_status(pmd: u32) -> u32 {
+    match p2p::tx_status(pmd) {
+        p2p::TxStatus::Ok => 0,
+        p2p::TxStatus::AckTimeout => 5,
+        p2p::TxStatus::Other(n) => n as u32,
+    }
+}
+
+/// Build a Splanc Public Action frame (`p2p::encode`). Returns its length, or 0.
+#[no_mangle]
+pub extern "C" fn ns_p2p_encode(da: *const u8, sa: *const u8, kind: u32, payload: *const u8, plen: u32,
+                                out: *mut u8, cap: u32) -> u32 {
+    unsafe {
+        let da = &*(da as *const [u8; 6]);
+        let sa = &*(sa as *const [u8; 6]);
+        let payload = if plen == 0 { &[][..] } else { core::slice::from_raw_parts(payload, plen as usize) };
+        let out = core::slice::from_raw_parts_mut(out, cap as usize);
+        p2p::encode(da, sa, 0, kind as u8, payload, out).unwrap_or(0) as u32
+    }
+}
+
+/// A parsed Splanc frame header for C (`p2p::parse`).
+#[repr(C)]
+pub struct P2pFrame {
+    pub da: [u8; 6],
+    pub sa: [u8; 6],
+    pub seq: u16,
+    pub retry: u8,
+    pub kind: u8,
+    pub payload_off: u16,
+    pub payload_len: u16,
+}
+
+/// Parse `frame`: 1 and `*info` filled if it is a Splanc frame, else 0.
+#[no_mangle]
+pub extern "C" fn ns_p2p_parse(frame: *const u8, len: u32, info: *mut P2pFrame) -> u32 {
+    unsafe {
+        let f = core::slice::from_raw_parts(frame, len as usize);
+        match p2p::parse(f) {
+            Some(p) => {
+                *info = P2pFrame {
+                    da: p.da,
+                    sa: p.sa,
+                    seq: p.seq,
+                    retry: p.retry as u8,
+                    kind: p.kind,
+                    payload_off: p2p::OVERHEAD as u16,
+                    payload_len: p.payload.len() as u16,
+                };
+                1
+            }
+            None => 0,
+        }
+    }
+}
+
+/// The RX-vector fields the mesh uses, for C (`p2p::RxVector`).
+#[repr(C)]
+pub struct P2pRxv {
+    pub timestamp_us: u32,
+    pub rate_kbps: u32,
+    pub sig_len: u16,
+    pub dump_len: u16,
+    pub rssi: i8,
+    pub noise_floor: i8,
+    pub rate: u8,
+    pub bb_format: u8,
+    pub channel: u8,
+    pub rx_state: u8,
+    pub rxend_state: u8,
+    pub is_group: u8,
+}
+
+/// Decode a 92-byte RX vector into `*out`. Returns 1, or 0 if `len` is short.
+#[no_mangle]
+pub extern "C" fn ns_p2p_rxv(rxv: *const u8, len: u32, out: *mut P2pRxv) -> u32 {
+    unsafe {
+        let v = core::slice::from_raw_parts(rxv, len as usize);
+        match p2p::RxVector::decode(v) {
+            Some(r) => {
+                *out = P2pRxv {
+                    timestamp_us: r.timestamp_us,
+                    rate_kbps: r.rate_kbps(),
+                    sig_len: r.sig_len,
+                    dump_len: r.dump_len,
+                    rssi: r.rssi,
+                    noise_floor: r.noise_floor,
+                    rate: r.rate,
+                    bb_format: r.bb_format,
+                    channel: r.channel,
+                    rx_state: r.rx_state,
+                    rxend_state: r.rxend_state,
+                    is_group: r.is_group as u8,
+                };
+                1
+            }
+            None => 0,
+        }
+    }
 }
 
 /// Diagnostic: read back TX descriptor `idx`'s word0 after hardware processing

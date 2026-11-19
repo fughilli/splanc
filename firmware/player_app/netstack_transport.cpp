@@ -340,6 +340,9 @@ bool g_policy_changed = false;   // a provision changed the mode itself (the app
 bool g_scan_decayed = false;     // auto: the sparse period is in force
 bool g_link_reset_pending = false;  // going offline: drop the join state on the next loop
 bool g_authenticating = true;    // mirror of the loop's join state (st == AUTH), for status
+#if defined(LM_MESH_SPIKE)
+bool g_mspike_hold = false;      // mesh spike (M3a): radio up, never scan or join (MESH IDLE)
+#endif
 // Network last seen (a scan match or a lease), as seconds of uptime; unseen time carried
 // over from previous boots (main.cpp persists it, so a nightly power cycle doesn't reset
 // the decay clock).
@@ -357,6 +360,9 @@ void mark_seen() {
 // Whether the board may scan / join on its own right now.
 bool autonomous(uint32_t now_ms) {
   if (!g_radio_up || g_silent) return false;
+#if defined(LM_MESH_SPIKE)
+  if (g_mspike_hold) return false;
+#endif
   switch (g_policy.mode) {
     case lm_wifi_scan::kModeAuto:
     case lm_wifi_scan::kModeFixed:
@@ -1497,8 +1503,29 @@ uint8_t g_rxf[kRxFrameCap];
 uint8_t g_rx_pt[kRxFrameCap];
 bool g_rx_draining = false;
 
+#if defined(LM_MESH_SPIKE)
+// Mesh spike (M3a, mesh_spike_impl.h). Off until MESH ON, and then the only cost is the
+// heap block it allocates: mesh_spike_rxv() is null while off and both RX paths reap as
+// before; while on they reap with the RX vector and offer every frame to the spike before
+// the STA path.
+bool mesh_spike_rx(uint8_t *rx, uint32_t n, const uint8_t *rxv);
+uint8_t *mesh_spike_rxv();
+extern "C" uint32_t ns_mac_recv_rxv(uint8_t *out, uint32_t cap, uint8_t *rxv);
+static uint32_t link_recv(uint8_t *out, uint32_t cap) {
+  uint8_t *v = mesh_spike_rxv();
+  if (!v) return ns_mac_recv(out, cap);
+  for (int i = 0; i < 16; i++) {  // bounded: a flood of mesh frames can't pin the drain
+    uint32_t n = ns_mac_recv_rxv(out, cap, v);
+    if (n == 0 || !mesh_spike_rx(out, n, v)) return n;
+  }
+  return 0;
+}
+#else
+static inline uint32_t link_recv(uint8_t *out, uint32_t cap) { return ns_mac_recv(out, cap); }
+#endif
+
 static void pump_link_once() {
-  uint32_t n = g_rx_draining ? 0 : ns_mac_recv(g_rxf, sizeof(g_rxf));
+  uint32_t n = g_rx_draining ? 0 : link_recv(g_rxf, sizeof(g_rxf));
   NS_TRACE(if (!g_rx_draining) {  // a skipped RX (see g_rx_draining) is not an empty ring
     if (n == 0) g_ns_rx_stamps.empty_poll_us = ns_now_us();
     else g_ns_rx_stamps.reap_us = ns_now_us();
@@ -2038,6 +2065,12 @@ static void coex_timer_cb(void *) {
   mode = want;
 }
 
+#if defined(LM_MESH_SPIKE)
+namespace {  // with mesh_spike_rx's forward declaration (pump_link_once, above)
+#include "mesh_spike_impl.h"
+}  // namespace
+#endif
+
 // Service the transport once per app loop(): RX drain + on_ip + DHCP + BLE-Improv join +
 // TLS handshake + WS pump (dispatched via lm_ws_dispatch). Non-blocking; returns quickly.
 // A provision for a DIFFERENT network (wired PROV / BLE Improv kJoin): the lease, TCP and
@@ -2309,7 +2342,7 @@ void netstack_loop() {
   uint32_t n = 0;
   int drained = 0;
   g_rx_draining = true;
-  while (g_radio_up && drained++ < 32 && (n = ns_mac_recv(rx, kRxFrameCap)) > 0) {
+  while (g_radio_up && drained++ < 32 && (n = link_recv(rx, kRxFrameCap)) > 0) {
   NS_TRACE(g_ns_rx_stamps.reap_us = ns_now_us());
   bgscan_on_frame(rx, n);  // a background sweep listens to every BSS (wifi_scan.h)
   // Broad DONE-state RX trace: what frames actually reach our ring post-link?
@@ -2463,6 +2496,9 @@ void netstack_loop() {
   } // end RX drain loop
   g_rx_draining = false;
   NS_TRACE(if (n == 0) g_ns_rx_stamps.empty_poll_us = ns_now_us());
+#if defined(LM_MESH_SPIKE)
+  mesh_spike_tick();
+#endif
 
   // Commit WiFi credentials before associating. Two runtime provisioning paths, no baked creds:
   //  (1) BLE Improv — the provisioner writes wifi-settings over GATT (handled below); and
@@ -2523,6 +2559,10 @@ void netstack_loop() {
             Serial.printf("[t=%lu] [wire] PROV received (ssid=%s) -> associating\n",
                           (unsigned long)millis(), g_ssid);
           }
+#if defined(LM_MESH_SPIKE)
+        } else if (plen >= 5 && mesh_spike_console(pbuf)) {
+          // mesh spike console (mesh_spike_impl.h)
+#endif
         } else if (plen >= 5 && strncasecmp(pbuf, "kiosk", 5) == 0) {
           // Kiosk mode (kiosk_ffi.rs): "kiosk off" (the recovery path) / "kiosk status".
           netstack_console_hook(pbuf, plen);

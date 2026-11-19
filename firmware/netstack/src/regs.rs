@@ -113,6 +113,18 @@ pub mod mac {
     // TX error-state register: `1<<queue`.
     pub const TXQ_ERR_STATE: usize = 0x600A_4CB4;
 
+    // TX state machine (okhsunrog/esp32c6-open-mac, `hal_mac_get_txq_state` /
+    // `hal_mac_clr_txq_state`): STATE_B bits 0-3 = the completed-queue bitmap
+    // `lmacProcessTxComplete` reads; a queue's bit is cleared by setting it in CLR_STATE_B.
+    pub const TXQ_STATE_A: usize = 0x600A_4CB0;
+    pub const TXQ_STATE_B: usize = 0x600A_4CB8;
+    pub const TXQ_CLR_STATE_B: usize = TXQ_ERR_STATE;
+    // Per-queue PMD / completion result, `0x600a54e8 - queue*0x74`: status nibble in bits
+    // 12-15 (0 = success, 5 = ACK timeout), error code in 8-11 (`p2p::tx_status`).
+    pub const TXQ_PMD_BASE: usize = 0x600A_54E8;
+    // Per-queue TX power/rate-duration word (`0x600a54ac - queue*0x74`): power bytes.
+    pub const TXQ_PWR_BASE: usize = 0x600A_54AC;
+
     // Per-queue completion/status block at `0x600a54e0 - queue*0x74`
     // (state/error bits read from offsets +0x0/+0x8/+0x14).
     pub const TXQ_STATUS_BASE: usize = 0x600A_54E0;
