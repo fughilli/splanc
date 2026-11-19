@@ -1028,6 +1028,7 @@ cc_library(
         "join_guard.h",
         "mesh_spike_impl.h",
         "netstack_transport.cpp",
+        "psk_reject.h",
         "serial_log.h",
         "session_takeover.h",
         "sta_mac.h",
@@ -1894,6 +1895,21 @@ cc_test(
     srcs = ["wifi_scan_test.cc"],
     deps = [
         ":wifi_scan",
+        "@rules_requirements//cc:case",
+    ],
+)
+
+# Improv: a Wi-Fi password the AP rejects (4-way M2 refused) is reported in seconds.
+cc_library(
+    name = "psk_reject",
+    hdrs = ["psk_reject.h"],
+)
+
+cc_test(
+    name = "psk_reject_test",
+    srcs = ["psk_reject_test.cc"],
+    deps = [
+        ":psk_reject",
         "@rules_requirements//cc:case",
     ],
 )

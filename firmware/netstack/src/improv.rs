@@ -65,6 +65,19 @@ pub enum ErrorState {
     NotAuthorized = 0x04,
 }
 
+/// Splanc's reason byte after `UnableToConnect` in the error-state value: `[0x03, reason]`.
+/// Improv clients read the error code from byte 0 (the app, the HITL harness, ESPHome's
+/// clients), so they all keep seeing a standard "unable to connect"; the Splanc app also
+/// reads byte 1 to say WHY (firmware/player_app/improv_codec.h, web/src/net/improv.ts).
+pub mod join_failure {
+    /// No detail (a 1-byte error value, as before).
+    pub const NONE: u8 = 0x00;
+    /// The SSID isn't on the air where the board can hear it.
+    pub const NOT_FOUND: u8 = 0x01;
+    /// The AP rejected the password (4-way M2 refused).
+    pub const PASSWORD_REJECTED: u8 = 0x02;
+}
+
 /// RPC command identifiers (first byte of an RPC packet).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -113,6 +126,8 @@ pub enum Action {
 pub struct Improv {
     pub state: State,
     pub error: ErrorState,
+    /// Splanc join-failure reason sent after `UnableToConnect` ([`join_failure`]; 0 = none).
+    pub error_detail: u8,
     /// The last RPC result payload to expose on the RPC-result characteristic.
     result: Buf<64>,
     /// 1 = supports identify (bit0 of the capabilities characteristic).
@@ -124,6 +139,7 @@ impl Improv {
         Improv {
             state: State::Authorized, // no user-authorization gate
             error: ErrorState::None,
+            error_detail: join_failure::NONE,
             result: Buf::new(),
             capabilities: 0x00,
         }
@@ -137,9 +153,15 @@ impl Improv {
     pub fn current_state(&self) -> [u8; 1] {
         [self.state as u8]
     }
-    /// Error-state characteristic value (1 byte).
-    pub fn error_state(&self) -> [u8; 1] {
-        [self.error as u8]
+    /// Error-state characteristic value: the Improv error code, plus Splanc's reason byte
+    /// after an `UnableToConnect` that carries one.
+    pub fn error_state(&self) -> Buf<2> {
+        let mut b: Buf<2> = Buf::new();
+        let _ = b.extend(&[self.error as u8]);
+        if self.error == ErrorState::UnableToConnect && self.error_detail != join_failure::NONE {
+            let _ = b.extend(&[self.error_detail]);
+        }
+        b
     }
     /// RPC-result characteristic value.
     pub fn rpc_result(&self) -> &[u8] {
@@ -152,6 +174,7 @@ impl Improv {
     /// `Action::None`.
     pub fn on_rpc(&mut self, pkt: &[u8]) -> Action {
         self.error = ErrorState::None;
+        self.error_detail = join_failure::NONE;
         // Framing: [command][data_len][data..data_len][checksum].
         if pkt.len() < 3 {
             self.error = ErrorState::InvalidRpcPacket;
@@ -219,7 +242,13 @@ impl Improv {
     /// (each `&str`) are packed into the SendWifi RPC result; on failure the state
     /// reverts to Authorized with `error = UnableToConnect`.
     pub fn provisioning_result(&mut self, ok: bool, redirect_urls: &[&str]) {
+        self.provisioning_result_detail(ok, join_failure::NONE, redirect_urls);
+    }
+
+    /// [`Self::provisioning_result`] with a [`join_failure`] reason for a failed join.
+    pub fn provisioning_result_detail(&mut self, ok: bool, detail: u8, redirect_urls: &[&str]) {
         self.result.clear();
+        self.error_detail = if ok { join_failure::NONE } else { detail };
         if !ok {
             self.state = State::Authorized;
             self.error = ErrorState::UnableToConnect;
@@ -341,7 +370,7 @@ impl ImprovService {
             .add_characteristic(Uuid::U128(IMPROV_CHAR_CURRENT_STATE), PROP_READ | PROP_NOTIFY, &improv.current_state())
             .unwrap_or(0);
         let h_error = db
-            .add_characteristic(Uuid::U128(IMPROV_CHAR_ERROR_STATE), PROP_READ | PROP_NOTIFY, &improv.error_state())
+            .add_characteristic(Uuid::U128(IMPROV_CHAR_ERROR_STATE), PROP_READ | PROP_NOTIFY, improv.error_state().as_slice())
             .unwrap_or(0);
         let h_rpc_cmd = db
             .add_characteristic(Uuid::U128(IMPROV_CHAR_RPC_COMMAND), PROP_WRITE | PROP_WRITE_NO_RSP, &[])
@@ -390,7 +419,7 @@ impl ImprovService {
     /// Copy the current Improv state into the characteristic values.
     fn sync(&mut self) {
         self.db.set_value(self.h_current, &self.improv.current_state());
-        self.db.set_value(self.h_error, &self.improv.error_state());
+        self.db.set_value(self.h_error, self.improv.error_state().as_slice());
         self.db.set_value(self.h_rpc_result, self.improv.rpc_result());
     }
 
@@ -426,7 +455,12 @@ impl ImprovService {
     /// After a provisioning attempt completes, update state + values (call before
     /// notifying the changed handles).
     pub fn finish_provisioning(&mut self, ok: bool, redirect_urls: &[&str]) {
-        self.improv.provisioning_result(ok, redirect_urls);
+        self.finish_provisioning_detail(ok, join_failure::NONE, redirect_urls);
+    }
+
+    /// [`Self::finish_provisioning`] with a [`join_failure`] reason for a failed join.
+    pub fn finish_provisioning_detail(&mut self, ok: bool, detail: u8, redirect_urls: &[&str]) {
+        self.improv.provisioning_result_detail(ok, detail, redirect_urls);
         self.sync();
     }
 
@@ -580,6 +614,39 @@ mod tests {
         let pkt = [Command::SendWifi as u8, 200, 0x00];
         assert!(matches!(im.on_rpc(&pkt), Action::None));
         assert_eq!(im.error, ErrorState::InvalidRpcPacket);
+    }
+
+    #[test]
+    fn failed_join_carries_the_splanc_reason_byte() {
+        let mut im = Improv::new();
+        im.state = State::Provisioning;
+        // No reason: the 1-byte value every Improv client knows.
+        im.provisioning_result(false, &[]);
+        assert_eq!(im.error_state().as_slice(), &[0x03]);
+        // A rejected password: still "unable to connect" in byte 0, the reason in byte 1.
+        im.provisioning_result_detail(false, join_failure::PASSWORD_REJECTED, &[]);
+        assert_eq!(im.state, State::Authorized);
+        assert_eq!(im.error_state().as_slice(), &[0x03, 0x02]);
+        im.provisioning_result_detail(false, join_failure::NOT_FOUND, &[]);
+        assert_eq!(im.error_state().as_slice(), &[0x03, 0x01]);
+        // The next SendWifi clears both bytes.
+        let mut data: Buf<64> = Buf::new();
+        data.extend(&[3]).unwrap();
+        data.extend(b"net").unwrap();
+        data.extend(&[0]).unwrap();
+        let pkt = rpc(Command::SendWifi as u8, data.as_slice());
+        assert!(matches!(im.on_rpc(pkt.as_slice()), Action::Provision(_)));
+        assert_eq!(im.error_state().as_slice(), &[0x00]);
+        // Success never carries a reason.
+        im.provisioning_result_detail(true, join_failure::PASSWORD_REJECTED, &["http://x/"]);
+        assert_eq!(im.error_state().as_slice(), &[0x00]);
+    }
+
+    #[test]
+    fn service_exposes_the_reason_byte() {
+        let mut svc = ImprovService::new();
+        svc.finish_provisioning_detail(false, join_failure::PASSWORD_REJECTED, &[]);
+        assert_eq!(svc.improv.error_state().as_slice(), &[0x03, 0x02]);
     }
 
     #[test]

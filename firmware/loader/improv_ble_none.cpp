@@ -16,5 +16,6 @@ uint32_t improv_ble_last_acl_ms() { return 0; }
 uint32_t improv_ble_conn_interval() { return 0; }
 void improv_ble_set_state(uint8_t) {}
 void improv_ble_set_error(uint8_t) {}
+void improv_ble_set_join_error(uint8_t) {}
 void improv_ble_send_redirect(const char *) {}
 void player_ble_poll() {}

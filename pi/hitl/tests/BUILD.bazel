@@ -45,6 +45,7 @@ py_test(
         "test_improv.py",
         "test_improv_find.py",
         "test_improv_fresh_join_core.py",
+        "test_improv_wrong_password_core.py",
         "test_jit_soak.py",
         "test_kiosk_core.py",
         "test_lan_relay.py",

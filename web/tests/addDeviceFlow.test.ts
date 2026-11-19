@@ -16,7 +16,7 @@
 
 import assert from "node:assert/strict";
 import { after, afterEach, beforeEach, mock, test } from "node:test";
-import { installFakeDom, typeInto } from "./fakeDom";
+import { installFakeDom, typeInto, type FakeElement } from "./fakeDom";
 
 const dom = installFakeDom();
 // One mocked-timer session for the whole file: the app singletons (connection
@@ -29,6 +29,7 @@ import { setDriverActive } from "../src/driver/guard";
 import { improvDeviceById } from "../src/net/capacitorImprov";
 import {
   IMPROV_SERVICE,
+  ImprovError,
   buildWifiSettings,
   provisionViaBle,
   requestImprovDevice,
@@ -36,7 +37,8 @@ import {
 import { deviceStore } from "../src/store/deviceStore";
 import { prefs } from "../src/store/prefs";
 import { appState } from "../src/ui/app/state";
-import { openAddDevice } from "../src/ui/screens/addDevice";
+import { bleRediscover, openAddDevice } from "../src/ui/screens/addDevice";
+import { wifiDraft } from "../src/store/wifiDraft";
 import {
   FakeCapacitorBle,
   FakeImprovDevice,
@@ -60,6 +62,7 @@ beforeEach(() => {
   // that exercise it call it directly.
   dom.document.hidden = true;
   localStorage.clear();
+  wifiDraft.clear();
   lan = new FakeLan();
   restoreWs = lan.install();
 });
@@ -131,8 +134,172 @@ test("a board that cannot join the network says why, and nothing is saved or con
     assert.deepEqual(prefs.getWifiList(), [], "a network the board could not join is not remembered");
     assert.deepEqual(deviceStore.list(), [], "no device record");
     assert.equal(lan.sockets.length, 0, "no connection attempted");
-    assert.equal(button("Scan for device").disabled, false, "the user can retry from the same sheet");
+    assert.equal(button("Try again").disabled, false, "the user can retry from the same sheet");
     assert.equal(all(".k-sheet").length, 1, "the sheet stays open");
+  } finally {
+    bt.restore();
+  }
+});
+
+/** The add-device sheet's SSID + password inputs. */
+function wifiFields(): { ssid: FakeElement; pass: FakeElement } {
+  const [ssid, pass] = all(".wifi-sheet .sheet-input");
+  return { ssid: ssid!, pass: pass! };
+}
+
+/** Visible (not [hidden]) buttons in the add-device sheet, by label text. */
+function visibleButtons(): string[] {
+  return all(".wifi-sheet .k-btn")
+    .filter((b) => !b.hidden)
+    .map((b) => b.textContent.trim());
+}
+
+test("a mistyped password returns to the password field, and the corrected one joins without re-picking the device", async () => {
+  const board = new FakeImprovDevice({ id: "bt-pw", password: "hunter22", redirect: ["http://192.168.1.51/"] });
+  const bt = installBluetooth(() => board);
+  lan.add("192.168.1.51", { mac: "58:E6:C5:5E:ED:51", deviceName: "Porch" });
+  try {
+    openAddDevice("ble");
+    enterWifi("HomeNet", "hunter2");
+    button("Scan for device").click();
+    await advance(1500);
+
+    const status = all(".wifi-status")[0]!;
+    assert.equal(status.textContent, 'Wrong Wi-Fi password: "HomeNet" rejected it. Check the password and try again.');
+    assert.ok(status.classList.contains("wifi-status--error"), "shown as an error");
+    const { ssid, pass } = wifiFields();
+    assert.equal(document.activeElement, pass as unknown as Element, "the password field has focus");
+    assert.equal(pass.disabled, false);
+    assert.equal(ssid.value, "HomeNet", "what was typed is still there");
+    assert.equal(pass.value, "hunter2");
+    assert.deepEqual(visibleButtons(), ["Try again", "Choose a different device"], "one primary, one secondary");
+    assert.deepEqual(prefs.getWifiList(), [], "a refused password is not saved");
+    assert.equal(board.disconnects, 0, "the link stays up for the retry");
+
+    typeInto(pass, "hunter22");
+    button("Try again").click();
+    await advance(1500);
+
+    assert.equal(bt.requests.length, 1, "no second Bluetooth chooser");
+    assert.equal(board.delivered.length, 2);
+    assert.deepEqual(parseWifiSettings(board.delivered[1]!), { ssid: "HomeNet", password: "hunter22" });
+    assert.equal(appState.client?.url, "wss://192.168.1.51/ws");
+    assert.deepEqual(prefs.getWifiList()[0], { ssid: "HomeNet", password: "hunter22" });
+    assert.equal(all(".k-sheet").length, 0, "the sheet closed on success");
+  } finally {
+    bt.restore();
+  }
+});
+
+test("a network the device can't hear returns to the SSID field and says so", async () => {
+  const board = new FakeImprovDevice({ errorCode: 0x03, errorReason: 0x01 });
+  const bt = installBluetooth(() => board);
+  try {
+    openAddDevice("ble");
+    enterWifi("HomeNet-5G", "hunter22");
+    button("Scan for device").click();
+    await advance(1500);
+
+    assert.equal(
+      all(".wifi-status")[0]?.textContent,
+      'The device can\'t find "HomeNet-5G". Check the network name, and that it\'s a 2.4 GHz network in range.',
+    );
+    assert.equal(document.activeElement, wifiFields().ssid as unknown as Element, "the SSID field has focus");
+  } finally {
+    bt.restore();
+  }
+});
+
+test("backing out keeps what was typed: reopening the sheet shows it again", async () => {
+  prefs.addWifi({ ssid: "SavedNet", password: "saved-pass" });
+  openAddDevice("ble");
+  assert.equal(wifiFields().ssid.value, "SavedNet", "first open: the most recent saved network");
+  enterWifi("CafeNet", "typo-pass");
+  clearOverlays(); // the user closes the sheet
+
+  openAddDevice("ble");
+  assert.equal(wifiFields().ssid.value, "CafeNet", "reopened with the typed SSID");
+  assert.equal(wifiFields().pass.value, "typo-pass", "and the typed password");
+  clearOverlays();
+
+  // The same draft serves the by-address flow.
+  openAddDevice("manual");
+  assert.equal(wifiFields().ssid.value, "CafeNet");
+});
+
+test("while waiting for the join, 'Edit Wi-Fi details' stops waiting and unlocks the fields", async () => {
+  const board = new FakeImprovDevice({ silent: true });
+  const bt = installBluetooth(() => board);
+  try {
+    openAddDevice("ble");
+    enterWifi("HomeNet", "hunter2");
+    button("Scan for device").click();
+    await advance(1500);
+
+    assert.equal(all(".wifi-status")[0]?.textContent, "Waiting for the device to join the network…");
+    assert.deepEqual(visibleButtons(), ["Edit Wi-Fi details"], "the only action while waiting");
+    assert.equal(wifiFields().pass.disabled, true, "fields locked while the device joins");
+
+    button("Edit Wi-Fi details").click();
+    await settle();
+
+    assert.equal(all(".wifi-status")[0]?.textContent, "Stopped waiting. Edit the Wi-Fi details, then try again.");
+    assert.ok(!all(".wifi-status")[0]!.classList.contains("wifi-status--error"), "not an error");
+    assert.equal(wifiFields().pass.disabled, false);
+    assert.equal(document.activeElement, wifiFields().pass as unknown as Element);
+    assert.deepEqual(visibleButtons(), ["Try again", "Choose a different device"]);
+    assert.equal(board.disconnects, 1, "the BLE link was dropped");
+
+    // The 45 s join timeout of the abandoned wait never fires into the edited form.
+    await advance(50_000, 1000);
+    assert.equal(all(".wifi-status")[0]?.textContent, "Stopped waiting. Edit the Wi-Fi details, then try again.");
+    assert.equal(all(".k-sheet").length, 1);
+  } finally {
+    bt.restore();
+  }
+});
+
+test("closing the sheet mid-join stops waiting, drops the link, and keeps the draft", async () => {
+  const board = new FakeImprovDevice({ silent: true });
+  const bt = installBluetooth(() => board);
+  try {
+    openAddDevice("ble");
+    enterWifi("HomeNet", "hunter2");
+    button("Scan for device").click();
+    await advance(1500);
+    clearOverlays();
+    await settle();
+    assert.equal(board.disconnects, 1);
+    await advance(50_000, 1000);
+    assert.ok(!toasts().some((t) => t.includes("timed out")), "no late timeout toast");
+
+    openAddDevice("ble");
+    assert.equal(wifiFields().pass.value, "hunter2");
+  } finally {
+    bt.restore();
+  }
+});
+
+test("re-discover with a saved password the network now refuses opens the Wi-Fi dialog on the password", async () => {
+  prefs.addWifi({ ssid: "HomeNet", password: "old-pass" });
+  const board = new FakeImprovDevice({ id: "bt-re", password: "new-pass", redirect: ["http://192.168.1.52/"] });
+  const bt = installBluetooth(() => board);
+  lan.add("192.168.1.52", { mac: "58:E6:C5:5E:ED:52", deviceName: "Den" });
+  try {
+    bleRediscover();
+    await advance(1500);
+
+    assert.equal(all(".k-sheet").length, 1, "the Wi-Fi dialog opened");
+    assert.match(all(".wifi-status")[0]!.textContent, /^Wrong Wi-Fi password/);
+    assert.equal(wifiFields().pass.value, "old-pass");
+    assert.equal(document.activeElement, wifiFields().pass as unknown as Element);
+
+    typeInto(wifiFields().pass, "new-pass");
+    button("Try again").click();
+    await advance(1500);
+    assert.equal(bt.requests.length, 1, "the picked device is re-used");
+    assert.equal(appState.client?.url, "wss://192.168.1.52/ws");
+    assert.deepEqual(prefs.getWifiList()[0], { ssid: "HomeNet", password: "new-pass" });
   } finally {
     bt.restore();
   }
@@ -199,6 +366,30 @@ test("the native app provisions through the Capacitor Bluetooth plugin with the 
     ]);
     assert.equal(plugin.writes.length, 1);
     assert.deepEqual(Array.from(plugin.writes[0]!.bytes), Array.from(buildWifiSettings("HomeNet", "hunter22")));
+  } finally {
+    undo();
+  }
+});
+
+test("the native app hears a rejected password too, and the corrected re-send joins on the same link", async () => {
+  const plugin = new FakeCapacitorBle();
+  plugin.redirect = "http://192.168.1.89/";
+  plugin.password = "hunter22";
+  const undo = plugin.install();
+  try {
+    const device = await improvDeviceById("ios-peripheral-8", "splanc-hall");
+    const first = provisionViaBle(device, "HomeNet", "hunter2");
+    first.catch(() => undefined); // graded below; no unhandled-rejection noise meanwhile
+    await advance(1000);
+    const r = await outcome(first);
+    assert.equal(r.state, "rejected");
+    assert.ok((r as { reason: unknown }).reason instanceof ImprovError);
+    assert.equal(((r as { reason: unknown }).reason as ImprovError).kind, "wrong-password");
+    assert.ok(!plugin.calls.includes("disconnect:ios-peripheral-8"), "the link stays up for the retry");
+
+    const second = provisionViaBle(device, "HomeNet", "hunter22");
+    await advance(1000);
+    assert.deepEqual(await outcome(second), { state: "fulfilled", value: ["http://192.168.1.89/"] });
   } finally {
     undo();
   }

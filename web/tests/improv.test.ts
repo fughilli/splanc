@@ -7,8 +7,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  ImprovError,
   bridgeHostFromRedirect,
   buildWifiSettings,
+  improvErrorFromState,
   parseRpcResult,
   wsUrlFromRedirect,
 } from "../src/net/improv";
@@ -106,4 +108,25 @@ test("retryGatt rethrows the last error after exhausting attempts", async () => 
     /fail 3/,
   );
   assert.equal(calls, 3);
+});
+
+test("error state: byte 0 is the Improv code, byte 1 Splanc's join-failure reason", () => {
+  // [0x03, 0x02]: the AP rejected the password (firmware psk_reject.h).
+  const pw = improvErrorFromState(new Uint8Array([0x03, 0x02]), "HomeNet");
+  assert.ok(pw instanceof ImprovError);
+  assert.equal(pw.kind, "wrong-password");
+  assert.equal(pw.code, 0x03);
+  assert.match(pw.message, /Wrong Wi-Fi password: "HomeNet"/);
+  // [0x03, 0x01]: the SSID isn't on the air (firmware wifi_scan.h).
+  assert.equal(improvErrorFromState(new Uint8Array([0x03, 0x01]), "x").kind, "not-found");
+  // Older firmware: a 1-byte UNABLE_TO_CONNECT keeps the generic message.
+  const old = improvErrorFromState(new Uint8Array([0x03]), "x");
+  assert.equal(old.kind, "unable-to-connect");
+  assert.equal(old.message, "unable to connect to the network (check SSID/password)");
+  // An unknown reason byte is no worse than no reason.
+  assert.equal(improvErrorFromState(new Uint8Array([0x03, 0x7f]), "x").kind, "unable-to-connect");
+  // Other codes: the spec's name, or the number.
+  assert.equal(improvErrorFromState(new Uint8Array([0x01]), "x").message, "invalid RPC packet");
+  assert.equal(improvErrorFromState(new Uint8Array([0x80, 0x02]), "x").message, "device error 128");
+  assert.equal(improvErrorFromState(new Uint8Array([0x80]), "x").kind, "device");
 });

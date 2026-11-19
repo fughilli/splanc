@@ -40,6 +40,14 @@ ERROR_NAMES = {
     3: "unable_to_connect",
 }
 
+# Splanc's reason byte after unable_to_connect: a failed join's error-state value is
+# [0x03, reason] (firmware/player_app/improv_codec.h IMPROV_JOIN_FAILURE_*). Byte 0 stays
+# the Improv code every client reads; older firmware sends no byte 1.
+JOIN_FAILURE_NAMES = {
+    1: "not_found",
+    2: "password_rejected",
+}
+
 
 def build_wifi_rpc(ssid: str, password: str) -> bytes:
     """Encode a CMD_WIFI_SETTINGS packet: [cmd, len, ssid_len, ssid, pw_len, pw, cksum]."""
@@ -68,5 +76,9 @@ def parse_result(buf: bytes) -> list[str]:
     return out
 
 
-def error_name(code: int) -> str:
-    return ERROR_NAMES.get(code, f"error {code}")
+def error_name(code: int, reason: int = 0) -> str:
+    """ "unable_to_connect", or with Splanc's reason byte "unable_to_connect:password_rejected"."""
+    name = ERROR_NAMES.get(code, f"error {code}")
+    if code == 3 and reason:
+        name += ":" + JOIN_FAILURE_NAMES.get(reason, f"reason {reason}")
+    return name

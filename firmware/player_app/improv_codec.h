@@ -33,6 +33,16 @@ enum {
   IMPROV_ERROR_UNABLE_TO_CONNECT = 0x03,
 };
 
+// Splanc's reason byte after UNABLE_TO_CONNECT: the error-state value of a failed join is
+// [0x03, reason]. Improv clients read the code from byte 0 (so they all still see "unable
+// to connect"); the Splanc app reads byte 1 too, to say why (web/src/net/improv.ts).
+// Mirrors netstack/src/improv.rs join_failure.
+enum {
+  IMPROV_JOIN_FAILURE_NONE = 0x00,
+  IMPROV_JOIN_FAILURE_NOT_FOUND = 0x01,          // the SSID isn't on the air (wifi_scan.h)
+  IMPROV_JOIN_FAILURE_PASSWORD_REJECTED = 0x02,  // the AP refused our 4-way M2 (psk_reject.h)
+};
+
 static inline uint8_t improv_checksum_(const uint8_t *p, size_t n) {
   unsigned sum = 0;
   for (size_t i = 0; i < n; i++) sum += p[i];

@@ -372,18 +372,22 @@ async def provision(
     connect_timeout: float = 12.0,
 ):
     done = asyncio.Event()
-    state = {"urls": None, "error": None, "state": None}
+    # write_t/answer_t: SendWifi write -> the device's answer (result or error), the
+    # "time to error" a wrong-password gate measures (join_s in the JSON).
+    state = {"urls": None, "error": None, "state": None, "write_t": None, "answer_t": None}
 
     def on_result(_sender, data):
         log(f"[improv] <- RPC_RESULT {bytes(data).hex()}")
         state["urls"] = parse_result(bytes(data))
+        state["answer_t"] = state["answer_t"] or time.monotonic()
         done.set()
 
     def on_error(_sender, data):
         code = data[0] if data else 0
         log(f"[improv] <- ERROR {bytes(data).hex()} (code={code})")
         if code != 0:
-            state["error"] = error_name(code)
+            state["error"] = error_name(code, data[1] if len(data) > 1 else 0)
+            state["answer_t"] = time.monotonic()
             done.set()
 
     def on_state(_sender, data):
@@ -394,6 +398,7 @@ async def provision(
         # completing here — not only on RPC_RESULT — is what makes the join
         # deterministic instead of racing the disconnect.
         if state["state"] == STATE_PROVISIONED:
+            state["answer_t"] = state["answer_t"] or time.monotonic()
             done.set()
 
     client = None
@@ -439,7 +444,8 @@ async def provision(
             except Exception as e:
                 log(f"[improv] STATE subscribe failed: {type(e).__name__}: {e}")
             rpc = build_wifi_rpc(ssid, password)
-            log(f"[improv] -> RPC_CMD {rpc.hex()}")
+            # Never the bytes: the packet carries the Wi-Fi password in clear.
+            log(f"[improv] -> RPC_CMD wifi-settings ({len(rpc)} bytes)")
             # Hold the per-rig AP-exclusive lock across ONLY the DHCP-join window: the
             # RPC write triggers the DUT to bring up Wi-Fi and DHCP-DISCOVER, and its
             # AP's DHCP OFFER — a broadcast/group frame that is never 802.11-ACKed — is
@@ -449,6 +455,7 @@ async def provision(
             # INSIDE the adapter lock (order adapter→AP; see _ap_lock). Best-effort:
             # no lock dir (rig not yet redeployed) ⇒ unserialized, exactly as today.
             async with _ap_lock("DHCP-join window"):
+                state["write_t"] = time.monotonic()
                 await client.write_gatt_char(CH_RPC_CMD, rpc, response=True)
                 log("[improv] write ack; awaiting join…")
                 try:
@@ -480,9 +487,20 @@ async def provision(
                 await client.disconnect()
             except Exception:
                 pass
+    join_s = (
+        round(state["answer_t"] - state["write_t"], 2)
+        if state["write_t"] is not None and state["answer_t"] is not None
+        else None
+    )
     if state["error"]:
-        return {"ok": False, "error": state["error"], "device": device}
-    return {"ok": True, "urls": state["urls"], "state": state["state"], "device": device}
+        return {"ok": False, "error": state["error"], "device": device, "join_s": join_s}
+    return {
+        "ok": True,
+        "urls": state["urls"],
+        "state": state["state"],
+        "device": device,
+        "join_s": join_s,
+    }
 
 
 def main() -> int:

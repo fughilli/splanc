@@ -44,6 +44,68 @@ export const ERROR_UNABLE_TO_CONNECT = 0x03;
 
 const CMD_WIFI_SETTINGS = 0x01;
 
+/** Splanc's reason byte after UNABLE_TO_CONNECT: a failed join's error-state value
+ * is `[0x03, reason]` (firmware/player_app/improv_codec.h IMPROV_JOIN_FAILURE_*).
+ * Improv clients read the code from byte 0, so any client still sees "unable to
+ * connect"; this app reads byte 1 to say why. Older firmware sends no byte 1. */
+export const JOIN_FAILURE_NOT_FOUND = 0x01;
+export const JOIN_FAILURE_PASSWORD_REJECTED = 0x02;
+
+/** What went wrong with a provisioning attempt, for the UI to react to. */
+export type ImprovFailureKind =
+  /** The AP refused the password (firmware reason byte 0x02). */
+  | "wrong-password"
+  /** The network isn't on the air where the device can hear it (reason 0x01). */
+  | "not-found"
+  /** UNABLE_TO_CONNECT without a reason (older firmware). */
+  | "unable-to-connect"
+  /** No answer within the join timeout. */
+  | "timeout"
+  /** The user stopped waiting (AbortSignal). */
+  | "cancelled"
+  /** Any other device error code. */
+  | "device";
+
+/** A provisioning failure the device (or the wait for it) reported. */
+export class ImprovError extends Error {
+  constructor(
+    readonly kind: ImprovFailureKind,
+    message: string,
+    readonly code?: number,
+  ) {
+    super(message);
+    this.name = kind === "cancelled" ? "AbortError" : "ImprovError";
+  }
+}
+
+/** Classify an error-state value (`bytes[0]` = Improv code, `bytes[1]` = Splanc's
+ * optional reason) into an `ImprovError` with a user-facing message. Pure. */
+export function improvErrorFromState(bytes: Uint8Array, ssid: string): ImprovError {
+  const code = bytes[0] ?? 0;
+  const reason = bytes.length > 1 ? bytes[1]! : 0;
+  if (code === ERROR_UNABLE_TO_CONNECT && reason === JOIN_FAILURE_PASSWORD_REJECTED) {
+    return new ImprovError(
+      "wrong-password",
+      `Wrong Wi-Fi password: "${ssid}" rejected it. Check the password and try again.`,
+      code,
+    );
+  }
+  if (code === ERROR_UNABLE_TO_CONNECT && reason === JOIN_FAILURE_NOT_FOUND) {
+    return new ImprovError(
+      "not-found",
+      `The device can't find "${ssid}". Check the network name, and that it's a 2.4 GHz network in range.`,
+      code,
+    );
+  }
+  if (code === ERROR_UNABLE_TO_CONNECT) {
+    return new ImprovError("unable-to-connect", IMPROV_ERRORS[code]!, code);
+  }
+  return new ImprovError("device", IMPROV_ERRORS[code] ?? `device error ${code}`, code);
+}
+
+/** How long `provisionViaBle` waits for the device to join after sending. */
+export const JOIN_TIMEOUT_MS = 45_000;
+
 export const IMPROV_ERRORS: Record<number, string> = {
   0x01: "invalid RPC packet",
   0x02: "unknown RPC command",
@@ -175,6 +237,8 @@ export async function retryGatt<T>(
     onRetry?: (attempt: number, err: unknown) => void;
     delayMs?: (attempt: number) => number;
     sleepFn?: (ms: number) => Promise<void>;
+    /** Stop retrying once aborted (the failure is then the abort, not a flake). */
+    signal?: AbortSignal | undefined;
   } = {},
 ): Promise<T> {
   const attempts = opts.attempts ?? 4;
@@ -182,10 +246,12 @@ export async function retryGatt<T>(
   const sleepFn = opts.sleepFn ?? sleep;
   let lastErr: unknown;
   for (let i = 1; i <= attempts; i++) {
+    if (opts.signal?.aborted) throw cancelledError();
     try {
       return await fn();
     } catch (e) {
       lastErr = e;
+      if (opts.signal?.aborted) throw cancelledError();
       if (i < attempts) {
         opts.onRetry?.(i, e);
         await sleepFn(delayMs(i));
@@ -222,18 +288,33 @@ export async function requestImprovDevice(): Promise<ImprovDevice> {
   })) as ImprovDevice;
 }
 
+function cancelledError(): ImprovError {
+  return new ImprovError("cancelled", "stopped waiting for the device");
+}
+
+export interface ProvisionOpts {
+  /** Abort to stop waiting (the user went back to edit the Wi-Fi details): the
+   * promise rejects with an `ImprovError` of kind "cancelled" and the BLE link drops. */
+  signal?: AbortSignal | undefined;
+}
+
 /**
  * Provision a picked device: send credentials, await the device's redirect
  * URL strings (typically one: its http address on the joined network).
+ * Failures reject with an `ImprovError` whose `kind` says what to fix (a
+ * rejected password, an SSID the device can't hear, a timeout, a cancel).
  */
 export async function provisionViaBle(
   device: ImprovDevice,
   ssid: string,
   password: string,
   onStatus: (msg: string) => void = () => undefined,
+  opts: ProvisionOpts = {},
 ): Promise<string[]> {
   const gatt = device.gatt;
   if (!gatt) throw new Error("device has no GATT server");
+  const { signal } = opts;
+  if (signal?.aborted) throw cancelledError();
   onStatus("Connecting…");
 
   // Android's BLE stack flakes "GATT operation failed for unknown reason" on
@@ -263,6 +344,7 @@ export async function provisionViaBle(
     },
     {
       attempts: 5,
+      signal,
       onRetry: (attempt) => {
         try {
           gatt.disconnect(); // clean slate — the next connect re-discovers
@@ -279,18 +361,49 @@ export async function provisionViaBle(
   // seconds after the write, so attaching listeners here misses nothing. This
   // is NOT a GATT flake, so it is not wrapped in the BLE retry — just a
   // generous timeout.
+  if (signal?.aborted) {
+    try {
+      gatt.disconnect();
+    } catch {
+      // already disconnected — fine
+    }
+    throw cancelledError();
+  }
   onStatus("Waiting for the device to join the network…");
   return new Promise<string[]>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error("timed out waiting for the device to join the network")),
-      45_000,
-    );
+    // Listeners from an earlier attempt on the same characteristics (a retry after a
+    // wrong password re-uses the connected device) stay attached; `done` makes each
+    // attempt's handlers inert once that attempt settled.
+    let done = false;
+    const finish = (): boolean => {
+      if (done) return false;
+      done = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      return true;
+    };
+    const timer = setTimeout(() => {
+      if (finish())
+        reject(new ImprovError("timeout", "timed out waiting for the device to join the network"));
+    }, JOIN_TIMEOUT_MS);
+    const onAbort = (): void => {
+      if (!finish()) return;
+      // Drop the link: frees the device's shared radio; a retry reconnects.
+      try {
+        gatt.disconnect();
+      } catch {
+        // already disconnected — fine
+      }
+      reject(cancelledError());
+    };
+    signal?.addEventListener("abort", onAbort);
     rpcResult.addEventListener("characteristicvaluechanged", (ev) => {
+      if (done) return;
       const dv = (ev.target as BleChar).value;
       if (!dv) return;
       const strings = parseRpcResult(new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength));
       if (strings) {
-        clearTimeout(timer);
+        finish();
         // Drop the BLE link now that the redirect is in hand. The player shares one
         // 2.4GHz radio between BLE and its WiFi/TLS stack and is heap-tight; holding the
         // BLE central open starves the wss TLS handshake on :443, so the app then hangs
@@ -307,11 +420,12 @@ export async function provisionViaBle(
       }
     });
     errorState.addEventListener("characteristicvaluechanged", (ev) => {
+      if (done) return;
       const dv = (ev.target as BleChar).value;
       const code = dv && dv.byteLength > 0 ? dv.getUint8(0) : 0;
-      if (code !== ERROR_NONE) {
-        clearTimeout(timer);
-        reject(new Error(IMPROV_ERRORS[code] ?? `device error ${code}`));
+      if (code !== ERROR_NONE && dv && finish()) {
+        // The link stays up: a retry with corrected credentials re-sends at once.
+        reject(improvErrorFromState(new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength), ssid));
       }
     });
   });

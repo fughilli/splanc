@@ -293,6 +293,13 @@ void improv_ble_set_error(uint8_t error) {
   g_error->notify();
 }
 
+void improv_ble_set_join_error(uint8_t reason) {
+  if (!g_error) return;
+  const uint8_t v[2] = {IMPROV_ERROR_UNABLE_TO_CONNECT, reason};
+  g_error->setValue(const_cast<uint8_t *>(v), reason ? 2 : 1);
+  g_error->notify();
+}
+
 void improv_ble_send_redirect(const char *url) {
   if (!g_result) return;
   uint8_t pkt[64];

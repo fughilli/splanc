@@ -586,6 +586,21 @@ pub extern "C" fn ns_ble_provision_result(ok: u32, url: *const u8, url_len: u32)
     }
 }
 
+/// Report a FAILED Wi-Fi join with Splanc's reason byte (`improv::join_failure`: 1 = the
+/// SSID isn't on the air, 2 = the AP rejected the password). The error-state value becomes
+/// `[UnableToConnect, reason]`: Improv clients read byte 0 and see "unable to connect"; the
+/// Splanc app reads byte 1 too. Same notifications as [`ns_ble_provision_result`].
+#[no_mangle]
+pub extern "C" fn ns_ble_provision_fail(reason: u32) {
+    unsafe {
+        let Some(svc) = IMPROV.as_mut() else { return };
+        svc.finish_provisioning_detail(false, reason as u8, &[]);
+        let (c, e, r) =
+            (svc.current_state_handle(), svc.error_state_handle(), svc.rpc_result_handle());
+        queue_notifications(&[c, e, r]);
+    }
+}
+
 /// Set the advertised local name (the scan response) and the GAP Device Name.
 /// Before bring-up it rides the initial advertising setup; afterwards (a live
 /// rename) the host re-sends LE Set Scan Response Data on the next

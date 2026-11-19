@@ -14,6 +14,7 @@
 
 import { Button, PasswordReveal, Sheet, confirmDialog, toast } from "../kit";
 import {
+  ImprovError,
   bridgeHostFromRedirect,
   provisionViaBle,
   requestImprovDevice,
@@ -21,6 +22,7 @@ import {
   type ImprovDevice,
 } from "../../net/improv";
 import { prefs, type WifiCreds } from "../../store/prefs";
+import { wifiDraft } from "../../store/wifiDraft";
 import { deviceStore, type KnownDevice } from "../../store/deviceStore";
 import { appState } from "../app/state";
 import { isNativePlatform } from "../../net/native";
@@ -41,13 +43,41 @@ async function chooseImprovDevice(): Promise<ImprovDevice> {
 
 export type AddMethod = "ble" | "manual";
 
-/** Open the Wi-Fi dialog, then the chosen method. */
-export function openAddDevice(method: AddMethod, onDone?: () => void): void {
-  const sheet = Sheet(method === "ble" ? "Add device over Bluetooth" : "Add device by address");
+/** Options for reopening the sheet on a specific state (bleRediscover's failure). */
+export interface AddDeviceOpts {
+  /** A device already picked: "Try again" re-sends to it without the chooser. */
+  device?: ImprovDevice;
+  /** Prefill these details (instead of the session draft / saved networks). */
+  creds?: WifiCreds;
+  /** Open showing this failure (focuses the field to fix). */
+  error?: unknown;
+}
+
+/** Open the Wi-Fi dialog, then the chosen method.
+ *
+ * The fields prefill from what the user typed earlier this session (the draft,
+ * store/wifiDraft.ts) — a mistyped password is never lost by backing out — or
+ * else the most recent saved network. While a BLE provision is in flight the
+ * fields lock and a secondary "Edit Wi-Fi details" stops waiting; a failure the
+ * device reports (a rejected password, a network it can't see) returns straight
+ * to the field to fix, with the picked device kept so "Try again" re-sends at once. */
+export function openAddDevice(method: AddMethod, onDone?: () => void, opts: AddDeviceOpts = {}): void {
+  // Closing the sheet mid-provision stops waiting (and drops the BLE link); closing
+  // it after a failure drops the link a retry would have re-used.
+  let inflight: AbortController | null = null;
+  let provisioned = false;
+  const sheet = Sheet(method === "ble" ? "Add device over Bluetooth" : "Add device by address", {
+    onClose: () => {
+      if (inflight) inflight.abort();
+      else if (picked && !provisioned) dropLink(picked);
+    },
+  });
   sheet.body.className = "wifi-sheet";
 
   const saved = prefs.getWifiList();
-  const first = saved[0] ?? { ssid: "", password: "" };
+  const first = opts.creds ?? wifiDraft.get() ?? saved[0] ?? { ssid: "", password: "" };
+  // The device picked for this sheet: a retry re-sends to it (no second chooser).
+  let picked: ImprovDevice | null = opts.device ?? null;
 
   const lead = document.createElement("p");
   lead.className = "wifi-lead";
@@ -63,6 +93,7 @@ export function openAddDevice(method: AddMethod, onDone?: () => void): void {
   const ssidInput = document.createElement("input");
   ssidInput.className = "sheet-input";
   ssidInput.placeholder = "Wi-Fi network (SSID)";
+  ssidInput.setAttribute("aria-label", "Wi-Fi network (SSID)");
   ssidInput.value = first.ssid;
   ssidInput.setAttribute("autocomplete", "off");
   ssidInput.setAttribute("autocapitalize", "off");
@@ -79,6 +110,12 @@ export function openAddDevice(method: AddMethod, onDone?: () => void): void {
   // saved network below only swaps the value, so the current visibility stays.
   const pass = PasswordReveal(passInput, { autocomplete: "new-password", className: "sheet-pw" });
 
+  const current = (): WifiCreds => ({ ssid: ssidInput.value.trim(), password: passInput.value });
+  // Every edit updates the session draft, so reopening the sheet shows it again.
+  const keepDraft = (): void => wifiDraft.set({ ssid: ssidInput.value, password: passInput.value });
+  ssidInput.addEventListener("input", keepDraft);
+  passInput.addEventListener("input", keepDraft);
+
   const renderPicks = (): void => {
     picks.replaceChildren();
     for (const net of prefs.getWifiList()) {
@@ -90,25 +127,31 @@ export function openAddDevice(method: AddMethod, onDone?: () => void): void {
       b.addEventListener("click", () => {
         ssidInput.value = net.ssid;
         passInput.value = net.password;
+        keepDraft();
         renderPicks();
       });
       picks.appendChild(b);
     }
   };
   renderPicks();
+  ssidInput.addEventListener("input", renderPicks);
 
   const status = document.createElement("div");
   status.className = "wifi-status metric";
-  const setStatus = (s: string): void => {
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+  const setStatus = (s: string, kind: "info" | "error" = "info"): void => {
     status.textContent = s;
+    status.classList.toggle("wifi-status--error", kind === "error");
   };
 
+  const goLabel = method === "ble" ? "Scan for device" : "Enter address";
   const go = Button({
-    label: method === "ble" ? "Scan for device" : "Enter address",
+    label: goLabel,
     icon: method === "ble" ? "bluetooth" : "link",
     block: true,
     onClick: () => {
-      const creds: WifiCreds = { ssid: ssidInput.value.trim(), password: passInput.value };
+      const creds = current();
       if (method === "manual") {
         if (creds.ssid) prefs.addWifi(creds);
         sheet.close();
@@ -116,22 +159,110 @@ export function openAddDevice(method: AddMethod, onDone?: () => void): void {
         onDone?.();
         return;
       }
-      // BLE: chooser FIRST (gesture), then provision with the chosen network.
-      go.disabled = true;
-      void runBleProvision(creds, setStatus)
-        .then((ok) => {
-          if (ok) {
-            sheet.close();
-            onDone?.();
-          } else {
-            go.disabled = false;
-          }
-        })
-        .catch(() => {
-          go.disabled = false;
-        });
+      // BLE: chooser FIRST (gesture) — unless this sheet already has the device
+      // (a retry) — then provision with the chosen network.
+      void runBle(creds, picked);
     },
   });
+  const setGoLabel = (label: string): void => {
+    const span = go.querySelector("span");
+    if (span) span.textContent = label;
+  };
+
+  // Secondary actions, visually subordinate to the one primary button and on their
+  // own rows: stop waiting (while a provision is in flight) and, after a failure
+  // with a device picked, choose a different one.
+  const stopBtn = Button({
+    label: "Edit Wi-Fi details",
+    icon: "edit",
+    variant: "quiet",
+    block: true,
+    onClick: () => inflight?.abort(),
+  });
+  stopBtn.classList.add("wifi-secondary");
+  stopBtn.hidden = true;
+  const otherBtn = Button({
+    label: "Choose a different device",
+    variant: "quiet",
+    block: true,
+    onClick: () => {
+      if (picked) dropLink(picked);
+      picked = null;
+      otherBtn.hidden = true;
+      void runBle(current(), null);
+    },
+  });
+  otherBtn.classList.add("wifi-secondary");
+  otherBtn.hidden = true;
+
+  /** Lock the form while a provision runs (the stop button is the way back). */
+  const setBusy = (busy: boolean): void => {
+    ssidInput.disabled = busy;
+    passInput.disabled = busy;
+    for (const b of picks.querySelectorAll("button")) (b as HTMLButtonElement).disabled = busy;
+    go.hidden = busy;
+    stopBtn.hidden = !busy;
+    if (busy) otherBtn.hidden = true;
+  };
+
+  /** Back to editing after a failure: say what happened, focus what to fix. */
+  const showFailure = (e: unknown): void => {
+    setBusy(false);
+    const kind = e instanceof ImprovError ? e.kind : null;
+    if (kind === "cancelled") {
+      setStatus("Stopped waiting. Edit the Wi-Fi details, then try again.");
+    } else if (kind === "wrong-password" || kind === "not-found") {
+      setStatus(msg(e), "error");
+    } else if (kind === "timeout") {
+      setStatus(
+        "The device didn't join the network in time. Check the Wi-Fi details, then try again.",
+        "error",
+      );
+    } else {
+      setStatus(`Setup failed: ${msg(e)}`, "error");
+    }
+    const fix = kind === "not-found" ? ssidInput : passInput;
+    fix.focus();
+    fix.select();
+    if (picked) {
+      setGoLabel("Try again");
+      otherBtn.hidden = false;
+    }
+  };
+
+  const runBle = async (creds: WifiCreds, device: ImprovDevice | null): Promise<void> => {
+    if (!device) {
+      go.disabled = true;
+      try {
+        device = await chooseImprovDevice(); // FIRST async call — the (web) gesture
+      } catch (e) {
+        if (!isCancel(e)) setStatus(`Bluetooth: ${msg(e)}`, "error");
+        return;
+      } finally {
+        go.disabled = false;
+      }
+      picked = device;
+    }
+    if (!creds.ssid) {
+      setStatus("Enter a Wi-Fi network name.", "error");
+      ssidInput.focus();
+      return;
+    }
+    const ctl = new AbortController();
+    inflight = ctl;
+    setBusy(true);
+    setStatus("Connecting…");
+    try {
+      await provisionWithDevice(device, creds, (s) => setStatus(s), ctl.signal);
+      inflight = null;
+      provisioned = true;
+      sheet.close();
+      onDone?.();
+    } catch (e) {
+      inflight = null;
+      showFailure(e);
+    }
+  };
 
   sheet.body.append(lead);
   if (saved.length > 0) {
@@ -140,15 +271,18 @@ export function openAddDevice(method: AddMethod, onDone?: () => void): void {
     cap.textContent = "Saved networks";
     sheet.body.append(cap, picks);
   }
-  sheet.body.append(ssidInput, pass.el, go, status);
-  ssidInput.focus();
+  sheet.body.append(ssidInput, pass.el, status, go, stopBtn, otherBtn);
+  if (opts.error !== undefined) showFailure(opts.error);
+  else ssidInput.focus();
 }
 
 /** Per-device "re-discover over Bluetooth": straight to the BLE picker, then
  * provision with the most-recent saved network (falling back to the dialog if
  * none is saved yet). When re-discovering a KNOWN device, warns first if the
  * user picked a DIFFERENT physical device (a mismatched Web Bluetooth id) — so
- * they don't accidentally re-point it and overwrite its name. */
+ * they don't accidentally re-point it and overwrite its name. A failure the user
+ * can fix (a rejected password, a network the device can't see) opens the Wi-Fi
+ * dialog on that field, with the picked device kept for "Try again". */
 export function bleRediscover(known?: KnownDevice, onDone?: () => void): void {
   void (async () => {
     let device: ImprovDevice;
@@ -173,43 +307,30 @@ export function bleRediscover(known?: KnownDevice, onDone?: () => void): void {
     const creds = prefs.getWifiList()[0];
     if (!creds || !creds.ssid) {
       toast("Pick a Wi-Fi network first", { error: true });
-      openAddDevice("ble", onDone);
+      openAddDevice("ble", onDone, { device });
       return;
     }
     try {
       await provisionWithDevice(device, creds, (s) => toast(s));
       onDone?.();
     } catch (e) {
-      toast(`Setup failed: ${msg(e)}`, { error: true });
+      if (e instanceof ImprovError && e.kind !== "device") {
+        openAddDevice("ble", onDone, { device, creds, error: e });
+      } else {
+        toast(`Setup failed: ${msg(e)}`, { error: true });
+      }
     }
   })();
 }
 
 // -- internals ---------------------------------------------------------------
 
-/** Run the BLE chooser + provisioning for `openAddDevice`. Returns true on a
- * completed provision. `requestImprovDevice` is called first for the gesture. */
-async function runBleProvision(
-  creds: WifiCreds,
-  setStatus: (s: string) => void,
-): Promise<boolean> {
-  let device: ImprovDevice;
+/** Best-effort BLE disconnect (frees the device's shared radio). */
+function dropLink(device: ImprovDevice): void {
   try {
-    device = await chooseImprovDevice();
-  } catch (e) {
-    if (!isCancel(e)) setStatus(`Bluetooth: ${msg(e)}`);
-    return false;
-  }
-  if (!creds.ssid) {
-    setStatus("Enter a Wi-Fi network name.");
-    return false;
-  }
-  try {
-    await provisionWithDevice(device, creds, setStatus);
-    return true;
-  } catch (e) {
-    setStatus(`Setup failed: ${msg(e)}`);
-    return false;
+    device.gatt?.disconnect();
+  } catch {
+    // already disconnected — fine
   }
 }
 
@@ -219,9 +340,11 @@ async function provisionWithDevice(
   device: ImprovDevice,
   creds: WifiCreds,
   setStatus: (s: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const urls = await provisionViaBle(device, creds.ssid, creds.password, setStatus);
+  const urls = await provisionViaBle(device, creds.ssid, creds.password, setStatus, { signal });
   prefs.addWifi(creds); // only after the device reports it JOINED
+  wifiDraft.clear(); // the draft is now a saved network
   // A Splanc bridge (Pi) joined the network: it isn't a player to connect to, it
   // pairs with the code on its screen (Live via bridge). Don't add it as a device.
   const bridgeHost = urls.map((u) => bridgeHostFromRedirect(u)).find((h) => h !== null);
