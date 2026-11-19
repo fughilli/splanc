@@ -655,20 +655,45 @@ uint8_t *tx_ip_slot() { return g_txf + kTxIp; }
 // nearly every time, and the RTO's resend of the same pair lost it again (the #358
 // "DEVICE SILENT" trace-dump stall). So never arm before the previous frame's worst-case
 // airtime has passed: 6 Mb/s legacy OFDM (4/3 us per byte) plus preamble, SIFS and the
-// AP's ACK. Bounded at 4 ms; a frame sent after an idle gap pays nothing.
+// AP's ACK. A frame sent after an idle gap pays nothing.
+//
+// Paced on the rate the frame actually goes out at (mesh M3a, docs/design/mesh-m3a.md):
+// this path's PLCP1 rate field is 0, so every frame is 1 Mb/s DSSS (long preamble), not
+// the 6 Mb/s OFDM the old formula assumed: a 1400-byte segment is ~11.4 ms on air, not
+// ~2 ms. 192 us PLCP + 8 us/byte (incl. FCS) + SIFS + a 1 Mb/s ACK (304 us) + margin;
+// bounded at 16 ms (a 1700-byte frame).
+//
+// The mesh (mesh_glue.h, while on) shares queue 0: tx_pace_before first lets an in-flight
+// mesh frame complete (its ACK or timeout; never arming another), and the mesh never arms
+// before this path's frame is off the air (lm_mesh_tx_idle).
 static uint32_t g_tx_busy_until_us = 0;
+static void *g_mesh = nullptr;  // the mesh (mesh_ffi.rs), while on: the only static it costs
+extern "C" uint32_t ns_mesh_settle(void *m, int64_t now_us) __attribute__((weak));
+constexpr uint32_t kTxPaceCapUs = 16000;
 static void tx_pace_before() {
+  if (g_mesh) {
+    const int64_t t0 = esp_timer_get_time();
+    while (ns_mesh_settle(g_mesh, esp_timer_get_time()) && esp_timer_get_time() - t0 < kTxPaceCapUs) {
+    }
+  }
   const uint32_t now = (uint32_t)esp_timer_get_time();
   int32_t left = (int32_t)(g_tx_busy_until_us - now);
   if (left <= 0) return;
-  if (left > 4000) left = 4000;
+  if (left > (int32_t)kTxPaceCapUs) left = kTxPaceCapUs;
   const uint32_t end = now + (uint32_t)left;
   while ((int32_t)(end - (uint32_t)esp_timer_get_time()) > 0) {
   }
 }
+// Airtime of a `frame_len`-byte (no FCS) frame at 1 Mb/s plus SIFS and the AP's ACK, us.
+static uint32_t tx_airtime_1m_us(uint32_t frame_len) { return 192 + (frame_len + 4) * 8 + 10 + 304; }
 static void tx_pace_after(uint32_t frame_len) {
-  g_tx_busy_until_us = (uint32_t)esp_timer_get_time() + 150 + (frame_len * 4) / 3;
+  g_tx_busy_until_us = (uint32_t)esp_timer_get_time() + 50 + tx_airtime_1m_us(frame_len);
 }
+// The mesh backhaul's view of the shared pacing (mesh_ffi.rs's Radio).
+extern "C" uint32_t lm_mesh_tx_idle() {
+  return (int32_t)(g_tx_busy_until_us - (uint32_t)esp_timer_get_time()) <= 0;
+}
+extern "C" void lm_mesh_tx_hold(uint32_t us) { g_tx_busy_until_us = (uint32_t)esp_timer_get_time() + us; }
 
 uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char *label) {
   if (plen < 0 || plen > (int)(sizeof g_txf - kTxL2)) return 0;
@@ -1503,26 +1528,11 @@ uint8_t g_rxf[kRxFrameCap];
 uint8_t g_rx_pt[kRxFrameCap];
 bool g_rx_draining = false;
 
-#if defined(LM_MESH_SPIKE)
-// Mesh spike (M3a, mesh_spike_impl.h). Off until MESH ON, and then the only cost is the
-// heap block it allocates: mesh_spike_rxv() is null while off and both RX paths reap as
-// before; while on they reap with the RX vector and offer every frame to the spike before
-// the STA path.
-bool mesh_spike_rx(uint8_t *rx, uint32_t n, const uint8_t *rxv);
-uint8_t *mesh_spike_rxv();
-extern "C" uint32_t ns_mac_recv_rxv(uint8_t *out, uint32_t cap, uint8_t *rxv);
-static uint32_t link_recv(uint8_t *out, uint32_t cap) {
-  uint8_t *v = mesh_spike_rxv();
-  if (!v) return ns_mac_recv(out, cap);
-  for (int i = 0; i < 16; i++) {  // bounded: a flood of mesh frames can't pin the drain
-    uint32_t n = ns_mac_recv_rxv(out, cap, v);
-    if (n == 0 || !mesh_spike_rx(out, n, v)) return n;
-  }
-  return 0;
-}
-#else
-static inline uint32_t link_recv(uint8_t *out, uint32_t cap) { return ns_mac_recv(out, cap); }
-#endif
+// The mesh (docs/design/mesh.md M3, mesh_glue.h): off until MESH ON, and then the only
+// cost is its heap block. link_recv is ns_mac_recv while it is off; while on it reaps with
+// the RX vector and offers every frame to the mesh before the STA path. (The M3a spike
+// image, LM_MESH_SPIKE, keeps its own path there while the mainline mesh is off.)
+#include "mesh_glue.h"
 
 static void pump_link_once() {
   uint32_t n = g_rx_draining ? 0 : link_recv(g_rxf, sizeof(g_rxf));
@@ -2499,6 +2509,7 @@ void netstack_loop() {
 #if defined(LM_MESH_SPIKE)
   mesh_spike_tick();
 #endif
+  if (g_mesh) lm_mesh::service(st == DONE);
 
   // Commit WiFi credentials before associating. Two runtime provisioning paths, no baked creds:
   //  (1) BLE Improv — the provisioner writes wifi-settings over GATT (handled below); and
@@ -2561,7 +2572,10 @@ void netstack_loop() {
           }
 #if defined(LM_MESH_SPIKE)
         } else if (plen >= 5 && mesh_spike_console(pbuf)) {
-          // mesh spike console (mesh_spike_impl.h)
+          // mesh spike console (mesh_spike_impl.h; the spike image's MESH commands)
+#else
+        } else if (plen >= 5 && lm_mesh::console(pbuf)) {
+          // the mesh console (mesh_glue.h)
 #endif
         } else if (plen >= 5 && strncasecmp(pbuf, "kiosk", 5) == 0) {
           // Kiosk mode (kiosk_ffi.rs): "kiosk off" (the recovery path) / "kiosk status".

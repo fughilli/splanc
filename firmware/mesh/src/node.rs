@@ -19,7 +19,7 @@
 use swarm_net::net::NetOf;
 use swarm_net::update::Flash;
 
-use crate::backhaul::{Backhaul, RxMeta};
+use crate::backhaul::{Backhaul, RxMeta, TxClass};
 use crate::envelope::Header;
 use crate::link::{self, Frame, Reject, MIN_MTU};
 use crate::security::{FrameGuard, Opened, Plain};
@@ -114,13 +114,39 @@ impl<B: Backhaul, const P: usize, G: FrameGuard> Node<B, P, G> {
 
     /// Wrap `net` around `backhaul` behind `guard`: the mesh payload limit comes from the
     /// backhaul's MTU less the guard's overhead.
-    pub fn with_guard(mut net: NetOf<P>, backhaul: B, guard: G, cfg: NodeConfig) -> Result<Node<B, P, G>, MtuTooSmall> {
+    pub fn with_guard(net: NetOf<P>, backhaul: B, guard: G, cfg: NodeConfig) -> Result<Node<B, P, G>, MtuTooSmall> {
+        let mut n = core::mem::MaybeUninit::<Self>::uninit();
+        // SAFETY: init_in writes every field on Ok; on Err it wrote nothing.
+        unsafe {
+            Self::init_in(n.as_mut_ptr(), |p| p.write(net), backhaul, guard, cfg)?;
+            Ok(n.assume_init())
+        }
+    }
+
+    /// [`Node::with_guard`] built in place at `dst`, the net written by `net` (given its
+    /// slot): firmware builds a ~16 KB `MeshStack` this way without ~50 KB of stack
+    /// temporaries (mesh M3: a by-value build overflowed a 40 KB task stack).
+    ///
+    /// # Safety
+    /// `dst` is valid for writes; on `Ok` every field is initialised, on `Err` none is and
+    /// `net` was not called. `net` must initialise its slot.
+    pub unsafe fn init_in(dst: *mut Self, net: impl FnOnce(*mut NetOf<P>), backhaul: B, guard: G, cfg: NodeConfig) -> Result<(), MtuTooSmall> {
+        use core::ptr::addr_of_mut;
         let mtu = backhaul.mtu().saturating_sub(cfg.frame_overhead + guard.overhead());
         if mtu < MIN_MTU {
             return Err(MtuTooSmall { mtu, min: MIN_MTU });
         }
-        net.mesh.set_max_payload(link::mesh_payload_for_mtu(mtu));
-        Ok(Node { net, backhaul, guard, cfg, stats: NodeStats::default(), mtu, next_slot_us: None, next_beacon_us: None })
+        let np = addr_of_mut!((*dst).net);
+        net(np);
+        (*np).mesh.set_max_payload(link::mesh_payload_for_mtu(mtu));
+        addr_of_mut!((*dst).backhaul).write(backhaul);
+        addr_of_mut!((*dst).guard).write(guard);
+        addr_of_mut!((*dst).cfg).write(cfg);
+        addr_of_mut!((*dst).stats).write(NodeStats::default());
+        addr_of_mut!((*dst).mtu).write(mtu);
+        addr_of_mut!((*dst).next_slot_us).write(None);
+        addr_of_mut!((*dst).next_beacon_us).write(None);
+        Ok(())
     }
 
     /// The link-frame MTU this node sizes frames for (the backhaul's, less overheads).
@@ -216,7 +242,7 @@ impl<B: Backhaul, const P: usize, G: FrameGuard> Node<B, P, G> {
             self.stats.tx_unsealed += 1;
             return false;
         };
-        match self.backhaul.send(&scratch[..n], None) {
+        match self.backhaul.send_class(&scratch[..n], None, TxClass::Discovery) {
             Ok(()) => {
                 self.stats.tx += 1;
                 true
@@ -267,7 +293,7 @@ impl<B: Backhaul, const P: usize, G: FrameGuard> Node<B, P, G> {
             let (s, n) = self.net.summary();
             if let Some(m) = link::encode(me, Frame::Summary(&s[..n]), frame) {
                 if let Some(k) = self.guard.seal(now_us, &frame[..m], sealed) {
-                    if self.backhaul.send(&sealed[..k], None).is_ok() {
+                    if self.backhaul.send_class(&sealed[..k], None, TxClass::Discovery).is_ok() {
                         self.stats.beacons += 1;
                         // Up to a quarter of the period early, varying per node and beacon, so
                         // nodes that powered up together never beacon in step.
@@ -292,7 +318,7 @@ impl<B: Backhaul, const P: usize, G: FrameGuard> Node<B, P, G> {
                 self.stats.tx_unsealed += 1;
                 continue;
             };
-            match self.backhaul.send(&sealed[..k], f.dst()) {
+            match self.backhaul.send_class(&sealed[..k], f.dst(), TxClass::Data) {
                 Ok(()) => self.stats.tx += 1,
                 Err(_) => self.stats.tx_busy += 1,
             }

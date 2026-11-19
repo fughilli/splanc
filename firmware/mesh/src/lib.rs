@@ -52,8 +52,9 @@ pub mod replay;
 pub mod security;
 pub mod stack;
 pub mod timesync;
+pub mod wifi_p2p;
 
-pub use backhaul::{Backhaul, BackhaulId, Busy, NodeId, RxMeta};
+pub use backhaul::{Backhaul, BackhaulId, Busy, NodeId, RxMeta, TxClass};
 pub use node::{MtuTooSmall, Node, NodeConfig, NodeStats};
 pub use stack::{Event, MeshStack, StackConfig};
 
