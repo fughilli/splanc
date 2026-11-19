@@ -27,6 +27,7 @@ py_test(
         "pytest_main.py",
         "test_agent_manifest_check.py",
         "test_ap_lock.py",
+        "test_ble_rename_core.py",
         "test_board_caps.py",
         "test_catalog_multidut_isolation.py",
         "test_catalog_stable_identity.py",

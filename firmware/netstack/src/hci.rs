@@ -77,6 +77,13 @@ pub struct BleHost {
     /// timeout (RF/coex), 0x13 the central closed it, 0x22 LL response timeout, 0x28
     /// instant passed, 0x3e failed to establish. Telemetry only.
     last_disc_reason: u8,
+    /// The scan response changed (a live rename) after bring-up already sent it to
+    /// the controller: re-send LE Set Scan Response Data at the next safe point
+    /// (now if advertising, else when advertising resumes after a disconnect).
+    scan_rsp_dirty: bool,
+    /// A live-refresh LE Set Scan Response Data is outstanding (its Command Complete
+    /// is consumed here, not by the bring-up sequencer).
+    scan_rsp_inflight: bool,
 }
 
 impl BleHost {
@@ -89,6 +96,8 @@ impl BleHost {
             rand_addr: [0x01, 0x00, 0x00, 0x00, 0xDE, 0xC0], // C0:DE:00:00:00:01
             conn_interval: 0,
             last_disc_reason: 0,
+            scan_rsp_dirty: false,
+            scan_rsp_inflight: false,
         }
     }
 
@@ -121,17 +130,52 @@ impl BleHost {
     /// (SCAN_REQ). Must NOT contain the Flags AD type (invalid in a scan response).
     pub fn set_scan_rsp(&mut self, ad: &[u8]) {
         let n = ad.len().min(31);
+        if self.scan_rsp[0] as usize == n && self.scan_rsp[1..1 + n] == ad[..n] {
+            return; // unchanged: no HCI traffic
+        }
+        self.scan_rsp = [0; 32];
         self.scan_rsp[1..1 + n].copy_from_slice(&ad[..n]);
         self.scan_rsp[0] = n as u8; // HCI scan-response-data length field
+        // Before the bring-up reaches LE Set Scan Response Data it sends this buffer
+        // anyway; from then on the controller holds a copy, so a change (a live
+        // rename) must be re-sent — see `poll_cmd` / the EV_DISCONN branch.
+        self.scan_rsp_dirty = !matches!(
+            self.state,
+            HostState::Init
+                | HostState::ResetSent
+                | HostState::EvtMaskSent
+                | HostState::LeMaskSent
+                | HostState::BufSizeSent
+                | HostState::FeatSent
+                | HostState::RandAddrSent
+                | HostState::AdvParamsSent
+                | HostState::AdvDataSent
+        );
     }
 
-    /// Produce the next HCI command to send for bring-up, or 0 bytes when there's
-    /// nothing to do (advertising / connected).
+    /// Whether a scan-response change is still waiting to reach the controller.
+    pub fn scan_rsp_pending(&self) -> bool {
+        self.scan_rsp_dirty || self.scan_rsp_inflight
+    }
+
+    /// Produce the next HCI command to send: the bring-up Reset, or — while
+    /// advertising — a live scan-response refresh after a rename. 0 bytes when
+    /// there's nothing to do. Safe to call every loop.
+    ///
+    /// The refresh is a bare LE Set Scan Response Data with advertising left ON:
+    /// for legacy advertising the spec lets the host change the data while enabled
+    /// (the controller uses it from the next advertising event), which avoids an
+    /// Enable(0)/Enable(1) gap in which the board is undiscoverable.
     pub fn poll_cmd(&mut self, out: &mut Buf<64>) -> usize {
         match self.state {
             HostState::Init => {
                 self.state = HostState::ResetSent;
                 cmd(OP_RESET, &[], out)
+            }
+            HostState::Advertising if self.scan_rsp_dirty && !self.scan_rsp_inflight => {
+                self.scan_rsp_dirty = false;
+                self.scan_rsp_inflight = true;
+                cmd(OP_LE_SET_SCAN_RSP, &self.scan_rsp[..32], out)
             }
             _ => 0,
         }
@@ -148,6 +192,11 @@ impl BleHost {
         match code {
             EV_CMD_COMPLETE if params.len() >= 3 => {
                 let op = u16::from_le_bytes([params[1], params[2]]);
+                if op == OP_LE_SET_SCAN_RSP && self.scan_rsp_inflight {
+                    // The live refresh's completion — not a bring-up step.
+                    self.scan_rsp_inflight = false;
+                    return 0;
+                }
                 self.after_complete(op, out)
             }
             EV_CMD_STATUS => 0,
@@ -183,9 +232,16 @@ impl BleHost {
                 if params.len() >= 4 {
                     self.last_disc_reason = params[3];
                 }
+                self.conn_interval = 0;
+                if self.scan_rsp_dirty {
+                    // Renamed while connected: load the new scan response first, then
+                    // the bring-up tail (ScanRspSent -> Adv Enable) resumes advertising.
+                    self.scan_rsp_dirty = false;
+                    self.state = HostState::ScanRspSent;
+                    return cmd(OP_LE_SET_SCAN_RSP, &self.scan_rsp[..32], out);
+                }
                 // back to advertising after a disconnect
                 self.state = HostState::AdvEnableSent;
-                self.conn_interval = 0;
                 cmd(OP_LE_SET_ADV_ENABLE, &[0x01], out)
             }
             _ => 0,
@@ -292,6 +348,35 @@ impl Default for BleHost {
     }
 }
 
+/// Largest name that fits a legacy scan response as one AD structure
+/// (31 bytes - length - type).
+pub const NAME_AD_MAX: usize = 29;
+
+/// Build the scan-response Local Name AD structure for `name` into `out`
+/// (`[len][type][name..]`), returning its length (0 for an empty name). A name
+/// that fits is a Complete Local Name (0x09); a longer one is cut to
+/// [`NAME_AD_MAX`] bytes at a UTF-8 character boundary and marked Shortened
+/// (0x08), so it never overflows the 31-byte payload nor ends in half a character.
+pub fn name_ad(name: &[u8], out: &mut [u8; 31]) -> usize {
+    if name.is_empty() {
+        return 0;
+    }
+    let (n, ty) = if name.len() <= NAME_AD_MAX {
+        (name.len(), 0x09)
+    } else {
+        let mut n = NAME_AD_MAX;
+        // Back off continuation bytes (10xxxxxx) so the cut lands on a char start.
+        while n > 0 && name[n] & 0xC0 == 0x80 {
+            n -= 1;
+        }
+        (n, 0x08)
+    };
+    out[0] = (n + 1) as u8;
+    out[1] = ty;
+    out[2..2 + n].copy_from_slice(&name[..n]);
+    n + 2
+}
+
 /// Build an HCI ACL packet carrying an L2CAP PDU on `handle` (first fragment).
 pub fn acl<const N: usize>(handle: u16, l2cap: &[u8], out: &mut Buf<N>) -> Result<usize, Overflow> {
     out.clear();
@@ -369,5 +454,164 @@ mod tests {
         acl(0x40, &l2, &mut out).unwrap();
         let (hh, data) = parse_acl(out.as_slice()).unwrap();
         assert_eq!((hh, data), (0x40, &l2[..]));
+    }
+
+    fn bring_up(h: &mut BleHost) {
+        let mut out: Buf<64> = Buf::new();
+        h.poll_cmd(&mut out);
+        for op in [
+            OP_RESET,
+            OP_SET_EVENT_MASK,
+            OP_LE_SET_EVENT_MASK,
+            OP_LE_READ_BUF_SIZE,
+            OP_LE_READ_LOCAL_FEAT,
+            OP_LE_SET_RANDOM_ADDR,
+            OP_LE_SET_ADV_PARAMS,
+            OP_LE_SET_ADV_DATA,
+            OP_LE_SET_SCAN_RSP,
+            OP_LE_SET_ADV_ENABLE,
+        ] {
+            h.on_event(&cmd_complete(op), &mut out);
+        }
+        assert_eq!(h.state, HostState::Advertising);
+    }
+
+    fn opcode(out: &Buf<64>) -> u16 {
+        let s = out.as_slice();
+        u16::from_le_bytes([s[1], s[2]])
+    }
+
+    fn name_rsp(name: &[u8]) -> ([u8; 31], usize) {
+        let mut ad = [0u8; 31];
+        let n = name_ad(name, &mut ad);
+        (ad, n)
+    }
+
+    #[test]
+    fn name_ad_complete_and_shortened() {
+        let (ad, n) = name_rsp(b"Kitchen");
+        assert_eq!(&ad[..n], &[8, 0x09, b'K', b'i', b't', b'c', b'h', b'e', b'n']);
+        // Exactly 29 bytes still fits as Complete.
+        let name29 = [b'a'; 29];
+        let (ad, n) = name_rsp(&name29);
+        assert_eq!((n, ad[0], ad[1]), (31, 30, 0x09));
+        // 32 bytes (the firmware maximum) is cut to 29 and marked Shortened.
+        let name32 = [b'b'; 32];
+        let (ad, n) = name_rsp(&name32);
+        assert_eq!((n, ad[0], ad[1]), (31, 30, 0x08));
+        assert!(ad[2..31].iter().all(|&c| c == b'b'));
+        assert_eq!(name_rsp(b"").1, 0);
+    }
+
+    #[test]
+    fn name_ad_cuts_on_utf8_boundary() {
+        // 28 ASCII bytes + a 3-byte char straddles the 29-byte budget: drop the char.
+        let mut name = [b'x'; 31];
+        name[28..31].copy_from_slice("€".as_bytes());
+        let (ad, n) = name_rsp(&name);
+        assert_eq!((n, ad[0], ad[1]), (30, 29, 0x08));
+        assert!(core::str::from_utf8(&ad[2..n]).is_ok());
+    }
+
+    #[test]
+    fn rename_while_advertising_resends_scan_rsp_only() {
+        let mut h = BleHost::new();
+        let (ad, n) = name_rsp(b"Old");
+        h.set_scan_rsp(&ad[..n]); // before bring-up: rides the bring-up, no refresh
+        bring_up(&mut h);
+        let mut out: Buf<64> = Buf::new();
+        assert_eq!(h.poll_cmd(&mut out), 0);
+        assert!(!h.scan_rsp_pending());
+
+        let (ad, n) = name_rsp(b"New name");
+        h.set_scan_rsp(&ad[..n]);
+        assert!(h.scan_rsp_pending());
+        assert!(h.poll_cmd(&mut out) > 0);
+        assert_eq!(opcode(&out), OP_LE_SET_SCAN_RSP);
+        // HCI param block: [len][31 bytes data] — the new name AD, zero padded.
+        let p = &out.as_slice()[4..];
+        assert_eq!(p.len(), 32);
+        assert_eq!(p[0] as usize, n);
+        assert_eq!(&p[1..1 + n], &ad[..n]);
+        assert!(p[1 + n..].iter().all(|&b| b == 0));
+        // One in flight at a time; advertising stays enabled throughout.
+        assert_eq!(h.poll_cmd(&mut out), 0);
+        assert_eq!(h.on_event(&cmd_complete(OP_LE_SET_SCAN_RSP), &mut out), 0);
+        assert_eq!(h.state, HostState::Advertising);
+        assert!(!h.scan_rsp_pending());
+        assert_eq!(h.poll_cmd(&mut out), 0);
+        // Setting the same name again is free.
+        h.set_scan_rsp(&ad[..n]);
+        assert!(!h.scan_rsp_pending());
+    }
+
+    #[test]
+    fn rename_during_inflight_refresh_queues_another() {
+        let mut h = BleHost::new();
+        bring_up(&mut h);
+        let mut out: Buf<64> = Buf::new();
+        let (ad, n) = name_rsp(b"A");
+        h.set_scan_rsp(&ad[..n]);
+        assert!(h.poll_cmd(&mut out) > 0);
+        let (ad, n) = name_rsp(b"B");
+        h.set_scan_rsp(&ad[..n]);
+        assert_eq!(h.poll_cmd(&mut out), 0); // waits for the first completion
+        h.on_event(&cmd_complete(OP_LE_SET_SCAN_RSP), &mut out);
+        assert!(h.poll_cmd(&mut out) > 0);
+        assert_eq!(out.as_slice()[7], b'B');
+    }
+
+    #[test]
+    fn rename_while_connected_applies_when_advertising_resumes() {
+        let mut h = BleHost::new();
+        bring_up(&mut h);
+        let mut out: Buf<64> = Buf::new();
+        let conn = [H4_EVT, EV_LE_META, 0x13, LE_CONN_COMPLETE, 0x00, 0x40, 0x00, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        h.on_event(&conn, &mut out);
+        assert_eq!(h.conn_handle(), Some(0x40));
+        let (ad, n) = name_rsp(b"Renamed");
+        h.set_scan_rsp(&ad[..n]);
+        // Connected: nothing is sent, the link is untouched.
+        assert_eq!(h.poll_cmd(&mut out), 0);
+        assert_eq!(h.conn_handle(), Some(0x40));
+        // Disconnect: new scan response first, then advertising enable.
+        let disc = [H4_EVT, EV_DISCONN, 0x04, 0x00, 0x40, 0x00, 0x13];
+        assert!(h.on_event(&disc, &mut out) > 0);
+        assert_eq!(opcode(&out), OP_LE_SET_SCAN_RSP);
+        assert_eq!(&out.as_slice()[5..5 + n], &ad[..n]);
+        assert!(h.on_event(&cmd_complete(OP_LE_SET_SCAN_RSP), &mut out) > 0);
+        assert_eq!(opcode(&out), OP_LE_SET_ADV_ENABLE);
+        h.on_event(&cmd_complete(OP_LE_SET_ADV_ENABLE), &mut out);
+        assert_eq!(h.state, HostState::Advertising);
+        assert!(!h.scan_rsp_pending());
+    }
+
+    #[test]
+    fn disconnect_without_rename_just_reenables() {
+        let mut h = BleHost::new();
+        bring_up(&mut h);
+        h.state = HostState::Connected(0x40);
+        let mut out: Buf<64> = Buf::new();
+        let disc = [H4_EVT, EV_DISCONN, 0x04, 0x00, 0x40, 0x00, 0x13];
+        h.on_event(&disc, &mut out);
+        assert_eq!(opcode(&out), OP_LE_SET_ADV_ENABLE);
+    }
+
+    #[test]
+    fn rename_mid_bringup_rides_the_bringup() {
+        let mut h = BleHost::new();
+        let mut out: Buf<64> = Buf::new();
+        h.poll_cmd(&mut out);
+        for op in [OP_RESET, OP_SET_EVENT_MASK, OP_LE_SET_EVENT_MASK, OP_LE_READ_BUF_SIZE,
+                   OP_LE_READ_LOCAL_FEAT, OP_LE_SET_RANDOM_ADDR, OP_LE_SET_ADV_PARAMS] {
+            h.on_event(&cmd_complete(op), &mut out);
+        }
+        assert_eq!(h.state, HostState::AdvDataSent);
+        let (ad, n) = name_rsp(b"Early");
+        h.set_scan_rsp(&ad[..n]);
+        assert!(!h.scan_rsp_pending());
+        h.on_event(&cmd_complete(OP_LE_SET_ADV_DATA), &mut out);
+        assert_eq!(opcode(&out), OP_LE_SET_SCAN_RSP);
+        assert_eq!(&out.as_slice()[5..5 + n], &ad[..n]);
     }
 }

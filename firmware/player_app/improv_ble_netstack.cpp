@@ -234,6 +234,11 @@ void improv_ble_poll() {
     if (n) hci_send(out, n);
     s_tail = (s_tail + 1) & 7;
   }
+  // A host-initiated command the state machine has queued: a live rename's scan-response
+  // refresh that had to wait for the previous one to complete (ns_ble_poll_cmd is idle
+  // otherwise — it never emits mid-bring-up or while a central is connected).
+  uint32_t c = ns_ble_poll_cmd(out, sizeof out);
+  if (c) hci_send(out, c);
   // Flush queued characteristic notifications on EVERY poll, not only when an HCI packet
   // just arrived. The Improv redirect (current-state -> Provisioned + the RPC-result URL) is
   // queued by ns_ble_provision_result from the Wi-Fi service loop once the DHCP lease lands —
@@ -335,7 +340,18 @@ void improv_ble_send_redirect(const char *url) {
   ns_ble_provision_result(1, reinterpret_cast<const uint8_t *>(url), url ? strlen(url) : 0);
 }
 
-// A live rename mid-session would need re-advertising to take effect and the board
-// is already discoverable by its Improv service UUID + address; leave the name set
-// at begin().
-void improv_ble_set_name(const char *) {}
+// Live rename (after set_device_name): update the scan-response name and the GAP Device
+// Name, and push the new scan response to the controller now if advertising (advertising
+// stays on — no undiscoverable gap). With a central connected nothing is sent; the host
+// loads the new name when advertising resumes on disconnect, so the link is never dropped.
+// Before improv_ble_begin (or on a build where it never runs) only the name is stored.
+void improv_ble_set_name(const char *device_name) {
+  if (!device_name || !device_name[0]) return;
+  ns_ble_set_name(reinterpret_cast<const uint8_t *>(device_name), strlen(device_name));
+  if (!g_up) return;
+  uint8_t buf[64];
+  uint32_t n = ns_ble_poll_cmd(buf, sizeof buf);
+  if (n) hci_send(buf, n);
+  Log().printf("[ble] renamed advertisement to \"%s\"%s\n", device_name,
+               improv_ble_central_connected() ? " (applies when the central disconnects)" : "");
+}
