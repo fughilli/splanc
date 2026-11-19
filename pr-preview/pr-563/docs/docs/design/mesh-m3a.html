@@ -329,7 +329,7 @@ on the mesh path) and exchange Splanc Public Action frames: category 4, action 9
 Splanc CID <code class="docutils literal notranslate"><span class="pre">0A:5C:4D</span></code>, kind <code class="docutils literal notranslate"><span class="pre">0xF3</span></code> (link probe, test-only), each carrying an <strong>M2 envelope</strong>
 (AES-128-CCM, long header, 64-bit counter, MIC 8, replay window) under a dev-only key.
 No Espressif OUI and no ESP-NOW framing anywhere.</p>
-<p>Measured by <code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:mesh_smoke</span></code> (runs r4 and r5, 2026-11-19; full logs and JSON
+<p>Measured by <code class="docutils literal notranslate"><span class="pre">//pi/hitl/harness:mesh_smoke</span></code> (runs r4, r5 and r6 on the rebased image, all on 2026-11-19; full logs and JSON
 under <code class="docutils literal notranslate"><span class="pre">/workspace/.claude/mesh/m3a/runs/</span></code>). The boards sit centimetres apart (RSSI −8 to
 −22 dBm), so these numbers say what the radio path does, not what range it has (that is R0).</p>
 <section id="exit-criteria">
@@ -364,13 +364,13 @@ under <code class="docutils literal notranslate"><span class="pre">/workspace/.c
 <td><p>No hardware TX timestamp for our own frames; completion is polled (µs-resolution software stamp). The receiver’s vector does carry a <strong>probable ACK-TX timestamp</strong> (bytes 76–79, present only on unicast to us: RX ts + 2 130 µs for a 260-byte 1 Mb/s frame)</p></td>
 </tr>
 <tr class="row-odd"><td><p>Loss with BLE active</p></td>
-<td><p>Gateway (BLE central connected) <strong>receives</strong> broadcast 96–97 %; <strong>transmits</strong> broadcast 79–96 %; unicast both ways 100 %</p></td>
+<td><p>Gateway holding a BLE central: broadcast <strong>79–97 %</strong> either way across r4–r6 (depends on the connection’s timing); <strong>unicast both ways 100 %</strong></p></td>
 </tr>
 </tbody>
 </table>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">mesh_smoke</span></code>’s gate: ≥ 95 % both ways, idle and associated, for unicast and for broadcast
-with advertising off; timestamp validated; no DUT reset. <strong>r5: PASS.</strong></p>
+with advertising off; timestamp validated; no DUT reset. <strong>r5 and r6: PASS.</strong></p>
 <p><img alt="one-hop delivery" src="docs/design/img/mesh-m3a-delivery.png" /></p>
 </section>
 <section id="what-the-spike-found">
@@ -393,9 +393,10 @@ reports the same code. Golden words are in <code class="docutils literal notrans
 <p><strong>BLE advertising costs broadcast ~4–8 %.</strong> The player advertises every 200 ms; each event
 blinds the receiver for one 1 Mb/s frame. Lost probes fall ~20 apart at 10 ms spacing, and
 with advertising stopped (<code class="docutils literal notranslate"><span class="pre">MESH</span> <span class="pre">BLEADV</span> <span class="pre">0</span></code>) broadcast is 100 %. A BLE <em>connection</em> stops
-advertising, so a gateway with a phone attached receives better (96–97 %) but transmits worse:
-with a 50 ms connection interval, every frame armed inside the BLE window was lost (79 %,
-r5; r4 96 %, interval not captured). Unicast retries recover both cases.</p>
+advertising, but the connection’s own windows take its place: with a central attached,
+broadcast ran 96–97 % in r4 and 79–82 % in r5/r6 (in r5, every frame the gateway armed inside
+its BLE window, every 50 ms, was lost; the negotiated interval is not logged yet). Unicast
+retries recover every case.</p>
 <p><img alt="loss phase" src="docs/design/img/mesh-m3a-loss-phase.png" /></p>
 <p><strong>High rates saturate at centimetre range.</strong> 11 and 24 Mb/s broadcasts lost up to 24 % at
 power byte 0x14 and RSSI −16 dBm; at 0x0C/0x04 (−24 to −39 dBm) they delivered 97–99 %. The
