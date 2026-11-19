@@ -597,7 +597,7 @@ pub extern "C" fn ns_ble_provision_fail(reason: u32) {
         svc.finish_provisioning_detail(false, reason as u8, &[]);
         // State + error only: a failed join has no RPC result, and an empty result
         // notification reads as "join done, no URL" to a central that missed the error
-        // (the HITL provisioner). The firmware may call this again to re-send (lossy BLE).
+        // (the HITL provisioner).
         queue_notifications(&[svc.current_state_handle(), svc.error_state_handle()]);
     }
 }

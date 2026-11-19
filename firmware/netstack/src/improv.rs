@@ -78,6 +78,18 @@ pub mod join_failure {
     pub const PASSWORD_REJECTED: u8 = 0x02;
 }
 
+/// The error-state characteristic value: 1 byte, or 2 with Splanc's reason byte.
+pub struct ErrorValue {
+    b: [u8; 2],
+    n: u8,
+}
+
+impl ErrorValue {
+    pub fn as_slice(&self) -> &[u8] {
+        &self.b[..self.n as usize]
+    }
+}
+
 /// RPC command identifiers (first byte of an RPC packet).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -155,13 +167,9 @@ impl Improv {
     }
     /// Error-state characteristic value: the Improv error code, plus Splanc's reason byte
     /// after an `UnableToConnect` that carries one.
-    pub fn error_state(&self) -> Buf<2> {
-        let mut b: Buf<2> = Buf::new();
-        let _ = b.extend(&[self.error as u8]);
-        if self.error == ErrorState::UnableToConnect && self.error_detail != join_failure::NONE {
-            let _ = b.extend(&[self.error_detail]);
-        }
-        b
+    pub fn error_state(&self) -> ErrorValue {
+        let two = self.error == ErrorState::UnableToConnect && self.error_detail != join_failure::NONE;
+        ErrorValue { b: [self.error as u8, self.error_detail], n: if two { 2 } else { 1 } }
     }
     /// RPC-result characteristic value.
     pub fn rpc_result(&self) -> &[u8] {

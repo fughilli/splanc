@@ -152,25 +152,6 @@ static void test_quick_window_is_wrap_safe() {
   assert(w.on_session_end(true, 0x00000100u) == A::kAbandon);  // 512 ms later, wrapped
 }
 
-static void test_error_resend_window() {
-  lm_join::ErrorResend r;
-  assert(r.take(0, true) == 0);  // nothing armed
-  r.arm(2, 1000);
-  assert(r.take(1999, true) == 0);
-  uint32_t sent = 0;
-  for (uint32_t t = 2000; t < 10000; t += 100)
-    if (r.take(t, true) == 2) sent++;
-  assert(sent == lm_join::kErrorResends);
-  // The central left: stop at once.
-  r.arm(1, 0);
-  assert(r.take(1000, false) == 0);
-  assert(r.take(2000, true) == 0);
-  // A new SendWifi cancels.
-  r.arm(2, 0);
-  r.cancel();
-  assert(r.take(5000, true) == 0);
-}
-
 int main(int argc, char **argv) {
   return rr::RunCases(
       argc, argv, "psk_reject",
@@ -186,6 +167,5 @@ int main(int argc, char **argv) {
           {"unarmed_or_cancelled_never_reports", test_unarmed_or_cancelled_never_reports},
           {"fresh_join_rearms", test_fresh_join_rearms},
           {"quick_window_is_wrap_safe", test_quick_window_is_wrap_safe},
-          {"error_resend_window", test_error_resend_window},
       });
 }
