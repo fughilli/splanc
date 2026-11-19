@@ -35,6 +35,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from urllib.parse import urlparse
@@ -47,7 +48,8 @@ _SHIP = [
     os.path.join(_HERE, n)
     for n in ("ble_name_watch.py", "hitl_ble_player.py", "hitl_improv.py", "improv.py")
 ]
-REMOTE = "/tmp/blern"
+# /tmp: provision._run_provisioner runs /tmp/hitl_improv.py (the shared layout).
+REMOTE = "/tmp"
 
 
 def _log(msg: str) -> None:
@@ -133,21 +135,32 @@ async def _wss_setup(ws_url: str, fxb: bytes, leds: int) -> None:
 
 
 def _name_phase(res, ws_url: str, address: str, name: str, args, prefix_len: int = 0) -> dict:
+    """Start the rig-side scanner FIRST (it needs the adapter lock + bleak start-up,
+    seconds under contention), give it --pre-scan seconds, then rename over wss — so
+    the scan is already running when the firmware applies the name and the serial
+    clock gives the latency itself, not just a bound (ble_rename_core.fw_latency)."""
     p: dict = {"want": name}
+    want = name[:prefix_len] if prefix_len else name
+    got: dict = {}
+    t_launch = time.monotonic()
+    th = threading.Thread(
+        target=lambda: got.update(
+            _watch(res, address, want, args.pre_scan + args.watch_timeout, bool(prefix_len))
+        ),
+        daemon=True,
+    )
+    th.start()
+    time.sleep(args.pre_scan)
     try:
-        w = asyncio.run(_wss_rename(ws_url, name))
+        w = asyncio.run(asyncio.wait_for(_wss_rename(ws_url, name), timeout=90))
         p["reply_name"] = w.get("deviceName")
     except (SystemExit, OSError, RuntimeError, asyncio.TimeoutError) as e:
         p["error"] = f"wss rename failed: {e!r}"
-        return p
     t_reply = time.monotonic()
-    want = name[:prefix_len] if prefix_len else name
-    lead_start = t_reply
-    w = _watch(res, address, want, args.watch_timeout, prefix=bool(prefix_len))
-    # The watcher's clock starts when its scan does (after ssh + python start-up + the
-    # adapter lock): add that lead, so on_air_s is the elapsed time from the trigger
-    # to the first sighting (an upper bound on the true latency).
-    lead = lead_start - t_reply + float(w.get("startup_s") or 0.0)
+    th.join(timeout=args.pre_scan + args.watch_timeout + 180)
+    w = got or {"ok": False, "names": [], "error": "ssh timeout (scanner thread hung)"}
+    # Harness-clock fallback: elapsed from the rename's reply to the first sighting.
+    lead = (t_launch - t_reply) + float(w.get("startup_s") or 0.0)
     p["watch"] = w
     p["lead_s"] = round(lead, 2)
     p["on_air_s"] = core.on_air_s(w, lead)
@@ -217,7 +230,6 @@ def run(args) -> int:
         if not creds:
             raise SystemExit("rig serves no AP")
         ssid, password = creds
-        res.ssh(f"mkdir -p {REMOTE}")
         res.scp_to([args.bundle, *_SHIP], f"{REMOTE}/")
         _log("[setup] flash --erase-fs")
         proc = res.ssh_serialized(
@@ -291,7 +303,10 @@ def run(args) -> int:
         f"RESULT unit={res._unit} budget={args.budget:g}s "
         + " ".join(f"{k}={c['verdict']}" for k, c in g["checks"].items())
         + " "
-        + " ".join(f"{k}_s={(phases[k] or {}).get('on_air_s')}" for k in ("adv", "conn", "final"))
+        + " ".join(
+            f"{k}_fw_s={((phases[k] or {}).get('fw') or {}).get('fw_s')}"
+            for k in ("adv", "conn", "final")
+        )
         + f" verdict={g['verdict']}"
     )
     for p in g["problems"]:
@@ -311,6 +326,12 @@ def main() -> None:
     ap.add_argument("--leds", type=int, default=120)
     ap.add_argument("--budget", type=float, default=5.0, help="rename -> new name on the air (s)")
     ap.add_argument("--watch-timeout", type=float, default=20.0)
+    ap.add_argument(
+        "--pre-scan",
+        type=float,
+        default=12.0,
+        help="start the scanner this long before each wss rename (adapter lock + start-up)",
+    )
     ap.add_argument("--lease-timeout", type=float, default=90.0)
     ap.add_argument("--improv-budget", type=float, default=60.0)
     args = ap.parse_args()

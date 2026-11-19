@@ -109,3 +109,48 @@ def test_grade_overall():
     # Infra on the core phase: SKIP, not PASS.
     g = core.grade(dict(phases, adv=name_phase("new", [], None)), RUNNING, 5.0)
     assert g["verdict"] == "SKIP"
+
+
+# Serial capture lines are stamped with the container's UTC clock (seconds of day here:
+# 04:53:16.896Z = 17596.896), the same clock ble_name_watch stamps sightings with.
+DAY = 1_700_000_000 - (1_700_000_000 % 86400)  # a UTC midnight
+SERIAL = (
+    '04:53:16.896Z [ble] renamed advertisement to "new"\n'
+    '04:53:35.921Z [ble] renamed advertisement to "c" (applies when the central disconnects)\n'
+    "04:53:44.332Z [t=131471] [ble] link state=6 connected=0 leased=1 disc=0x08\n"
+)
+
+
+def watched(want, seen_sod, start_sod):
+    names = [[0.1, "old", True, DAY + start_sod + 0.1], [1.0, want, True, DAY + seen_sod]]
+    w = {"ok": True, "seen_s": 1.0, "names": names, "scan_start_wall": DAY + start_sod}
+    return {"want": want, "watch": w, "lead_s": 0.0, "on_air_s": 1.0}
+
+
+def test_fw_latency_from_the_firmware_rename_line():
+    p = watched("new", 17597.4, 17590.0)
+    fw = core.fw_latency(p, SERIAL)
+    assert fw == {"fw_s": 0.504, "bracketed": True}
+    late = watched("new", 17597.4, 17597.0)  # scan started after the firmware applied it
+    assert core.fw_latency(late, SERIAL)["bracketed"] is False
+    assert core.fw_latency(p, "") is None
+    assert core.fw_latency(watched("zzz", 1.0, 0.0), SERIAL) is None
+
+
+def test_fw_latency_after_disconnect_counts_from_the_link_drop():
+    p = watched("c", 17625.1, 17620.0)
+    assert core.fw_latency(p, SERIAL, after_disconnect=True) == {"fw_s": 0.768, "bracketed": True}
+
+
+def test_grade_prefers_the_firmware_clock():
+    # Harness clock says 7 s (scanner lead), firmware clock 0.5 s with the scan running.
+    p = dict(watched("new", 17597.4, 17590.0), on_air_s=7.0)
+    p["fw"] = core.fw_latency(p, SERIAL)
+    v, why = core.grade_name_phase(p, 5.0)
+    assert v == "PASS" and "0.50s" in why
+    slow = dict(watched("new", 17606.0, 17590.0), on_air_s=9.0)
+    slow["fw"] = core.fw_latency(slow, SERIAL)
+    assert core.grade_name_phase(slow, 5.0)[0] == "FAIL"
+    unbracketed = dict(watched("new", 17606.0, 17600.0), on_air_s=9.0)
+    unbracketed["fw"] = core.fw_latency(unbracketed, SERIAL)
+    assert core.grade_name_phase(unbracketed, 5.0)[0] == "SKIP"

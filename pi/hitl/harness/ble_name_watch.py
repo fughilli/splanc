@@ -5,10 +5,10 @@
 Active-scans (BlueZ via bleak) for the board at --address and records every name it
 reports, with the time since the scan started, until a sighting carries the --want
 name (and still advertises the Improv service) or --timeout passes. Prints one JSON
-line on stdout: {ok, seen_s, names: [[t, name, improv], ...], startup_s, lock_wait_s,
-error}: `t`/`seen_s` count from the scan start; `startup_s` is process start -> scan
-start (python + bleak import + the adapter-lock wait), so the harness can bound the
-time from its trigger to a sighting.
+line on stdout: {ok, seen_s, names: [[t, name, improv, wall], ...], startup_s,
+scan_start_wall, lock_wait_s, error}: `t`/`seen_s` count from the scan start, `wall` is
+the container's time.time() — the same clock that stamps the reservation's serial
+capture, so a sighting lines up with the firmware's own "[ble] renamed" line.
 
 The name rides in the board's scan response, so this is the name a phone's Bluetooth
 list / the app's picker shows. BlueZ updates a known device's Name only from a
@@ -56,7 +56,7 @@ async def watch(address: str, want: str, timeout: float, prefix: bool) -> dict:
         improv = SVC.lower() in [u.lower() for u in (adv.service_uuids or [])]
         t = round(time.monotonic() - t0, 2)
         if not names or names[-1][1] != nm or names[-1][2] != improv:
-            names.append([t, nm, improv])
+            names.append([t, nm, improv, round(time.time(), 3)])
             log(f"[watch] {t:6.2f}s name={nm!r} improv={improv}")
         if nm and match(nm) and improv and "t" not in hit:
             hit["t"] = t
@@ -66,13 +66,14 @@ async def watch(address: str, want: str, timeout: float, prefix: bool) -> dict:
     await scanner.start()
     t0 = time.monotonic()
     startup_s = round(t0 - _PROC_T0, 2)
+    scan_wall = round(time.time(), 3)
     try:
         await asyncio.wait_for(done.wait(), timeout=timeout)
     except asyncio.TimeoutError:
         pass
     finally:
         await scanner.stop()
-    out = {"names": names, "startup_s": startup_s}
+    out = {"names": names, "startup_s": startup_s, "scan_start_wall": scan_wall}
     if "t" in hit:
         return {"ok": True, "seen_s": hit["t"], **out}
     return {"ok": False, "seen_s": None, **out, "error": f"no {want!r} in {timeout:g}s"}
