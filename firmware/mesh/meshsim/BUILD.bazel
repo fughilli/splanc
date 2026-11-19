@@ -1,0 +1,42 @@
+"""meshsim (docs/design/mesh.md §14.1): Splanc mesh devices (//firmware/mesh's MeshStack:
+swarm_net, envelope, membership, ports) over a simulated 802.11 channel with airtime, CSMA,
+collisions, loss, latency and per-node clocks. Host only; the scenarios are its tests:
+
+  bazel test //firmware/mesh/meshsim:meshsim_test --test_arg=--nocapture
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "meshsim",
+    srcs = glob(["src/*.rs"]),
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    deps = [
+        "//firmware/mesh",
+        "//firmware/mesh/swarm:swarm_net",
+    ],
+)
+
+rust_test(
+    name = "meshsim_test",
+    size = "large",
+    crate = ":meshsim",
+    edition = "2021",
+)
+
+# The heterogeneous-capacity sweep (design §10.6): CSV on stdout. Long-running, so not a test:
+#   bazel run -c opt //firmware/mesh/meshsim:sweep > sweep.csv
+#   python3 firmware/mesh/meshsim/sweep/plot.py sweep.csv <out dir>
+rust_binary(
+    name = "sweep",
+    srcs = ["sweep/main.rs"],
+    edition = "2021",
+    deps = [
+        ":meshsim",
+        "//firmware/mesh",
+        "//firmware/mesh/swarm:swarm_net",
+    ],
+)
