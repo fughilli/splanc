@@ -34,6 +34,11 @@ build --workspace_status_command="bash tools/build_info/status.sh"
 #     network re-fetch — the real first-build bottleneck).
 build --disk_cache=.bazel-disk-cache
 common --repository_cache=.bazel-repo-cache
+# Retry truncated downloads (ContentLengthMismatchException). A cut-off fetch of
+# a Rust toolchain from static.rust-lang.org aborted analysis on CI runners
+# (test-macos on app-v1.15.7, and an earlier clippy fetch); Bazel 7 doesn't retry
+# by default.
+common --experimental_repository_downloader_retries=5
 
 # Reasonable test ergonomics: only show output for failing tests.
 test --test_output=errors
