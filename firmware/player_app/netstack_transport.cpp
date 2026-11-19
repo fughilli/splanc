@@ -2275,18 +2275,16 @@ static void psk_reject_act(lm_join::PskRejectWatch::Action a) {
   if (a == A::kNone) return;
   uint32_t now_ms = (uint32_t)millis();
   if (a == A::kAbandon) {
-    Serial.printf("[t=%lu] [join] 4-way: the AP keeps re-sending M1 (our M2 refused) — "
-                  "session %lu rejected, re-joining from auth\n", (unsigned long)now_ms,
-                  (unsigned long)g_psk_watch.rejected_sessions());
+    Serial.printf("[t=%lu] [join] 4-way: M2 refused (M1 re-sent), session %lu rejected\n",
+                  (unsigned long)now_ms, (unsigned long)g_psk_watch.rejected_sessions());
     return;
   }
   improv_ble_set_join_error(IMPROV_JOIN_FAILURE_PASSWORD_REJECTED);
   g_join_err_resend.arm(IMPROV_JOIN_FAILURE_PASSWORD_REJECTED, now_ms);
   g_improv_join.forget();  // the corrected SendWifi is a fresh join, never a ride
-  Serial.printf("[t=%lu] [ble] \"%s\": the AP rejected the password (4-way M2 refused in %lu "
-                "sessions, %lu ms after the Improv join) — Improv error UNABLE_TO_CONNECT "
-                "(password rejected); creds kept, the join keeps retrying\n",
-                (unsigned long)now_ms, g_ssid, (unsigned long)g_psk_watch.rejected_sessions(),
+  Serial.printf("[t=%lu] [ble] \"%s\": password rejected (%lu sessions, %lu ms) — Improv "
+                "UNABLE_TO_CONNECT\n", (unsigned long)now_ms, g_ssid,
+                (unsigned long)g_psk_watch.rejected_sessions(),
                 (unsigned long)(now_ms - g_psk_watch.started_ms()));
 }
 
@@ -2988,9 +2986,8 @@ void netstack_loop() {
       // The AP showed up after we reported it not found: clear the Improv error. With the
       // central still connected the redirect below does it (PROVISIONED + result); with
       // it gone, set the same state now so a central that reconnects reads success.
-      Serial.printf("[t=%lu] [ble] \"%s\" joined after the %s report — clearing the "
-                    "Improv error\n", (unsigned long)millis(), g_ssid,
-                    cleared_psk ? "password-rejected" : "not-found");
+      Serial.printf("[t=%lu] [ble] \"%s\" joined after a failure report — clearing the "
+                    "Improv error\n", (unsigned long)millis(), g_ssid);
       if (!improv_ble_central_connected()) {
         char url[40];
         snprintf(url, sizeof url, "http://%u.%u.%u.%u/", g_offer_ip[0], g_offer_ip[1],

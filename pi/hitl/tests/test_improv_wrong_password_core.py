@@ -5,14 +5,10 @@ import improv_wrong_password_core as core
 from improv import error_name
 
 REJECTED = (
-    '[t=9100] [ble] "hitl-rig-1": the AP rejected the password (4-way M2 refused in 2 '
-    "sessions, 4630 ms after the Improv join) — Improv error UNABLE_TO_CONNECT (password "
-    "rejected); creds kept, the join keeps retrying\n"
+    '[t=9100] [ble] "hitl-rig-1": password rejected (2 sessions, 4630 ms) — Improv '
+    "UNABLE_TO_CONNECT\n"
 )
-ABANDON = (
-    "[t=6500] [join] 4-way: the AP keeps re-sending M1 (our M2 refused) — session 1 "
-    "rejected, re-joining from auth\n"
-)
+ABANDON = "[t=6500] [join] 4-way: M2 refused (M1 re-sent), session 1 rejected\n"
 OK = {"ok": True, "join_s": 4.2}
 WRONG = {"ok": False, "error": core.WRONG_ERROR, "join_s": 4.8}
 TIMEOUT = {"ok": False, "error": core.JOIN_TIMEOUT, "join_s": None}

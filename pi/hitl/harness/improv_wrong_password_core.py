@@ -24,10 +24,9 @@ UNABLE = "unable_to_connect"
 JOIN_TIMEOUT = "timed out waiting for the player to join"
 
 REJECTED_RE = re.compile(
-    r"\[ble\] \"[^\"]*\": the AP rejected the password \(4-way M2 refused in (\d+) sessions, "
-    r"(\d+) ms after the Improv join\)"
+    r"\[ble\] \"[^\"]*\": password rejected \((\d+) sessions, (\d+) ms\) — Improv UNABLE_TO_CONNECT"
 )
-ABANDON_RE = re.compile(r"\[join\] 4-way: the AP keeps re-sending M1 \(our M2 refused\)")
+ABANDON_RE = re.compile(r"\[join\] 4-way: M2 refused \(M1 re-sent\), session \d+ rejected")
 FRESH_RE = re.compile(r"\[ble\] wifi-settings received \(ssid=[^)]*\) -> fresh join")
 LEASE_RE = re.compile(r"DHCP LEASE ACQUIRED")
 CRASH_RE = re.compile(

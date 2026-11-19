@@ -67,7 +67,7 @@ class PskRejectWatch {
     reset_session();
   }
   // We answered a 4-way M1 with an M2 at `now`.
-  Action on_m1_answered(uint32_t now) {
+  __attribute__((noinline)) Action on_m1_answered(uint32_t now) {
     if (!armed_) return Action::kNone;
     answered_++;
     last_m2_ms_ = now;
@@ -81,7 +81,7 @@ class PskRejectWatch {
   }
   // The session ended without M3. `by_ap`: the AP deauthed/disassociated us (else our own
   // FOURWAY watchdog re-drove the join).
-  Action on_session_end(bool by_ap, uint32_t now) {
+  __attribute__((noinline)) Action on_session_end(bool by_ap, uint32_t now) {
     if (!armed_) return Action::kNone;
     bool quick = by_ap && answered_ >= 1 && (uint32_t)(now - last_m2_ms_) < kQuickRejectMs;
     if (answered_ >= 2 || quick) return reject();
@@ -146,7 +146,7 @@ class ErrorResend {
   void cancel() { left_ = 0; }
   // The reason to re-send now (0: nothing due). Stops once the central has gone (it got
   // the error, or the link is lost; a reconnecting central reads the error value).
-  uint8_t take(uint32_t now, bool central_connected) {
+  __attribute__((noinline)) uint8_t take(uint32_t now, bool central_connected) {
     if (left_ == 0) return 0;
     if (!central_connected) {
       left_ = 0;
