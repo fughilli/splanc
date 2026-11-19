@@ -860,6 +860,11 @@ Mesh time must not depend on any single peer (owner, 2026-11-17).
 - **AP-anchored bonus**: members associated to one AP all hear its beacons, whose TSF is a
   common clock (reference-broadcast sync). The fit can use AP beacons as extra observations.
 
+**M4 on hardware** ([mesh-m4.md](mesh-m4.md)): two-step completion stamps (no hardware TX
+timestamp), two-way over the beacons, RX stamps on the MAC's µs counter (`0x600AD000`):
+three C6s agree within 47 µs; a scheduled change lands within 0.76 ms (2 ms under BLE coex),
+always on the same frame. The show epoch rides in the time beacon (outside the admin port).
+
 ### 6.3 Mapping the show clock
 
 1. The app syncs with the gateway as today (`TimeSyncPing`/`Pong`, `web/src/net/clocksync.ts`)
