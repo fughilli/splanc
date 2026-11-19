@@ -14,7 +14,9 @@
  *   `pur:<channel>:<txid>` -> the account it credited (first claim wins), so one
  *   store transaction credits exactly one account. Kept forever (no content);
  * - the Anthropic organization's month-to-date list cost (`org:spend:<YYYY-MM>`,
- *   µUSD), for the org spend-limit alert and guard (billing/proxy.ts).
+ *   µUSD), for the org spend-limit alert and guard (billing/proxy.ts);
+ * - the running AI-credit liability (`org:liability`, µcredits, one number) for
+ *   the ops dashboards (docs/design/ops-grafana.md).
  *
  * Only the Worker talks to it (Durable Objects aren't publicly addressable).
  * Traffic is tiny: it is touched on pairing, registration and OAuth steps, never
@@ -165,7 +167,8 @@ export class Directory {
           [`fb:${b.id}`]: { ...rec, ...b.patch },
           [`fbi:${b.id}`]: { ...sum, ...(status ? { status } : {}), ...(fixedIn ? { fixedIn } : {}) },
         });
-        return json({ ok: true });
+        // The summary as it was (no content): the ops event's age + labels.
+        return json({ ok: true, before: sum });
       }
       case "/fb/delete": {
         const n = await this.state.storage.delete([`fb:${body["id"]}`, `fbi:${body["id"]}`]);
@@ -183,6 +186,17 @@ export class Directory {
         const k = `org:spend:${new Date(now(this.env)).toISOString().slice(0, 7)}`;
         const total = ((await this.state.storage.get<number>(k)) ?? 0) + Math.max(0, Math.floor(Number(body["micro_usd"]) || 0));
         await this.state.storage.put(k, total);
+        return json({ total });
+      }
+      case "/org/liability": {
+        // Ops (docs/design/ops-grafana.md): the running credit liability, every
+        // account's balance together (µcredits): +trial/+purchase, -usage,
+        // -refund/clawback, -forfeit. Starts at 0 when first used; a number
+        // only, never per account.
+        const k = "org:liability";
+        const delta = Math.trunc(Number(body["delta_micro"]) || 0);
+        const total = ((await this.state.storage.get<number>(k)) ?? 0) + delta;
+        if (delta !== 0) await this.state.storage.put(k, total);
         return json({ total });
       }
       case "/org/get":

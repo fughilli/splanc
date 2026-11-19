@@ -96,11 +96,13 @@ export interface Env {
   BILLING_APP_URL?: string;
   /** Worker SECRET: the owner's token for /billing/admin/* (suspensions). */
   BILLING_ADMIN_TOKEN?: string;
-  /** Grafana Cloud Logs push (billing/metrics.ts); all three or none. */
+  /** Grafana Cloud Logs push (ops.ts: billing, feedback); all three or none. */
   GRAFANA_LOKI_PUSH_URL?: string;
   GRAFANA_LOKI_USER?: string;
   /** Worker SECRET: a logs:write-only access-policy token. */
   GRAFANA_LOKI_TOKEN?: string;
+  /** Optional `env` label for the ops push (ops.ts): production / sandbox / synthetic. */
+  OPS_ENV?: string;
   /** The BillingAccount Durable Object namespace (one object per account). Not
    * bound in wrangler.toml yet (staged plan, step 3). */
   BILLING?: DONamespace;

@@ -19,7 +19,8 @@
  *   drops it uncharged (the upstream failed before any usage).
  * - `acct`: the cached balance / held / seq, written in the same atomic
  *   multi-key put as the entry that changes it.
- * - `spend:d:<YYYY-MM-DD>` / `spend:m:<YYYY-MM>` / `rpm:<minute>`: cap counters.
+ * - `spend:d:<YYYY-MM-DD>` / `spend:w:<YYYY-Www>` / `spend:m:<YYYY-MM>` / `rpm:<minute>`:
+ *   cap counters (the week one only feeds the ops "active this week" flag).
  *
  * No prompt or reply content is ever stored here: entries hold token counts,
  * the model id, the pricing version and an opaque request id.
@@ -80,6 +81,19 @@ export interface Account {
    * Apple for a refund (App Store Server API "Send Consumption Information").
    * Withdrawable; absent = never asked = not consented. */
   apple_consumption_consent?: { consented: boolean; at: number } | undefined;
+  /** When the account first bought credits (ops metrics: "paying" accounts). */
+  paying_since?: number | undefined;
+}
+
+/** Ops flags from a settle (docs/design/ops-grafana.md): was this the
+ * account's first charged request of the UTC day / ISO week / month, and has
+ * it ever bought credits. They let Grafana count active (paying) accounts
+ * without any account id leaving the ledger. */
+export interface SettleActivity {
+  day: boolean;
+  week: boolean;
+  month: boolean;
+  paying: boolean;
 }
 
 export interface Hold {
@@ -112,6 +126,16 @@ export const HOLD_TTL_MS = 20 * 60 * 1000;
 const pad = (n: number) => String(n).padStart(12, "0");
 const dayKey = (t: number) => `spend:d:${new Date(t).toISOString().slice(0, 10)}`;
 const monthKey = (t: number) => `spend:m:${new Date(t).toISOString().slice(0, 7)}`;
+/** ISO-8601 week (`spend:w:2026-W47`): Monday-based, week 1 holds the year's first Thursday. */
+export function isoWeek(t: number): string {
+  const d = new Date(t);
+  const day = (d.getUTCDay() + 6) % 7; // Mon=0
+  const thu = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day + 3));
+  const jan4 = new Date(Date.UTC(thu.getUTCFullYear(), 0, 4));
+  const week = 1 + Math.round((thu.getTime() - jan4.getTime()) / 86_400_000 / 7 - ((jan4.getUTCDay() + 6) % 7) / 7 + 3 / 7);
+  return `${thu.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+const weekKey = (t: number) => `spend:w:${isoWeek(t)}`;
 const rpmKey = (t: number) => `rpm:${Math.floor(t / 60_000)}`;
 
 export class Ledger {
@@ -176,7 +200,12 @@ export class Ledger {
    * (kind, ref): a store retrying its notification, or the app re-sending a
    * receipt on restore, credits once and returns the original entry.
    */
-  credit(kind: "purchase" | "adjust" | "trial", ref: string, amount: number, meta: Partial<LedgerEntry> = {}): Promise<{ entry: LedgerEntry; replay: boolean }> {
+  credit(
+    kind: "purchase" | "adjust" | "trial",
+    ref: string,
+    amount: number,
+    meta: Partial<LedgerEntry> = {},
+  ): Promise<{ entry: LedgerEntry; replay: boolean; first_purchase?: boolean }> {
     return this.locked(async () => {
       const a = await this.acct();
       if (!a) throw new Error("no account");
@@ -184,8 +213,9 @@ export class Ledger {
       if (prior) return { entry: prior, replay: true };
       if (kind !== "adjust" && amount <= 0) throw new Error("a credit must be positive");
       if (a.status === "closed") throw new Error("account closed");
-      const entry = await this.append(a, { ...meta, kind, ref, amount });
-      return { entry, replay: false };
+      const first = kind === "purchase" && a.paying_since === undefined;
+      const entry = await this.append(first ? { ...a, paying_since: this.now() } : a, { ...meta, kind, ref, amount });
+      return { entry, replay: false, ...(kind === "purchase" ? { first_purchase: first } : {}) };
     });
   }
 
@@ -279,7 +309,7 @@ export class Ledger {
     chargeMicro: number,
     meta: { model: string; usage: Usage; pricing_version: number; estimated?: boolean },
     overdraftMicro: number,
-  ): Promise<{ entry: LedgerEntry; replay: boolean }> {
+  ): Promise<{ entry: LedgerEntry; replay: boolean; activity?: SettleActivity }> {
     return this.locked(async () => {
       const a = await this.acct();
       if (!a) throw new Error("no account");
@@ -292,8 +322,11 @@ export class Ledger {
       const debit = Math.min(chargeMicro, Math.max(0, a.balance - floor));
       const writtenOff = chargeMicro - debit;
       const t = this.now();
-      const day = (await this.s.get<number>(dayKey(t))) ?? 0;
-      const month = (await this.s.get<number>(monthKey(t))) ?? 0;
+      const dayRaw = await this.s.get<number>(dayKey(t));
+      const monthRaw = await this.s.get<number>(monthKey(t));
+      const week = await this.s.get<number>(weekKey(t));
+      const day = dayRaw ?? 0;
+      const month = monthRaw ?? 0;
       await this.s.delete([`hold:${id}`]);
       const entry = await this.append(
         { ...a, held: a.held - hold.amount },
@@ -307,9 +340,15 @@ export class Ledger {
           ...(meta.estimated ? { estimated: true } : {}),
           ...(writtenOff > 0 ? { written_off: writtenOff } : {}),
         },
-        { [dayKey(t)]: day + debit, [monthKey(t)]: month + debit },
+        { [dayKey(t)]: day + debit, [weekKey(t)]: (week ?? 0) + debit, [monthKey(t)]: month + debit },
       );
-      return { entry, replay: false };
+      // "First of the period" = no settle recorded in it yet (the keys are
+      // written by every settle, even one that debited 0).
+      return {
+        entry,
+        replay: false,
+        activity: { day: dayRaw === undefined, week: week === undefined, month: monthRaw === undefined, paying: a.paying_since !== undefined },
+      };
     });
   }
 

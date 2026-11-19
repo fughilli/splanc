@@ -25,6 +25,7 @@ import { now, type Env } from "../platform";
 import { DoLedger, mintSession, newAccountId, verifySession } from "./account";
 import { MICRO, findPack, publicPricing, validatePricing, CHANNELS, type Channel, type PricingConfig } from "./pricing";
 import { proxyMessages, redact, type OrgSpend } from "./proxy";
+import { purchaseMoney, refundUsdEstimate } from "./metrics";
 import { StripeError, createCheckoutSession, stripeAction, verifyStripeSignature, type StripeAction } from "./stripe";
 import { safeEqual } from "../crypto";
 import {
@@ -85,7 +86,7 @@ async function stripeWebhook(
 ): Promise<Response> {
   const v = await verifyStripeSignature(ready.stripe!.webhookSecret, req.headers.get("stripe-signature"), body, nowS);
   if (!v.ok) {
-    log({ ev: "ai_webhook_rejected", reason: v.reason });
+    log({ ev: "ai_webhook_rejected", reason: v.reason.replace(/\s+/g, "_") });
     return ctx.json({ error: "bad_signature" }, 400);
   }
   let action: StripeAction;
@@ -110,7 +111,16 @@ async function stripeWebhook(
         if (action.paymentIntent) {
           await dir(env, "/pur/pi/set", { pi: action.paymentIntent, account: action.accountId, ref: `web:${action.purchase.transactionId}` });
         }
-        log({ ev: "ai_purchase", account: action.accountId, channel: "web", sku: action.purchase.sku, replay: r.replay, amount: r.entry.amount });
+        log({
+          ev: "ai_purchase",
+          account: action.accountId,
+          channel: "web",
+          sku: action.purchase.sku,
+          replay: r.replay,
+          amount: r.entry.amount,
+          ...(r.replay ? {} : { ...purchaseMoney(ready.pricing, "web", action.purchase.sku, r.entry.amount), first_purchase: r.first_purchase === true }),
+        });
+        if (!r.replay) await bumpLiability(env, log, r.entry.amount);
       } catch (e) {
         if (!(e instanceof PurchaseError)) throw e;
         log({ ev: "ai_purchase_rejected", alert: true, account: action.accountId, channel: "web", code: e.code });
@@ -119,9 +129,21 @@ async function stripeWebhook(
       const rec = (await dir<{ rec: { account: string; ref: string } | null }>(env, "/pur/pi/get", { pi: action.paymentIntent })).body.rec;
       if (rec) {
         const r = await new DoLedger(ready.ns, rec.account).clawbackFraction(rec.ref, action.fraction, action.reason);
-        log({ ev: "ai_refund", channel: "web", kind: action.reason, account: rec.account, fraction: action.fraction, amount: r.entry && !r.replay ? r.entry.amount : 0 });
+        const amount = r.entry && !r.replay ? r.entry.amount : 0;
+        log({
+          ev: "ai_refund",
+          channel: "web",
+          kind: action.reason,
+          account: rec.account,
+          fraction: action.fraction,
+          amount,
+          matched: true,
+          credits: Math.abs(amount) / MICRO,
+          usd_est: refundUsdEstimate(ready.pricing, "web", amount),
+        });
+        await bumpLiability(env, log, amount);
       } else {
-        log({ ev: "ai_refund", channel: "web", kind: action.reason, account: null, amount: 0 });
+        log({ ev: "ai_refund", channel: "web", kind: action.reason, account: null, amount: 0, matched: false, credits: 0 });
       }
     }
     await dir(env, "/stripe/mark", { id: action.eventId });
@@ -200,7 +222,23 @@ function directoryOrgSpend(env: Env): OrgSpend {
     async add(microUsd) {
       return (await dir<{ total: number }>(env, "/org/add", { micro_usd: microUsd })).body.total;
     },
+    liability: (delta) => liabilityAdd(env, delta),
   };
+}
+
+/** Ops: move the running credit liability by `deltaMicro`; returns the total (µcredits). */
+async function liabilityAdd(env: Env, deltaMicro: number): Promise<number> {
+  return (await dir<{ total: number }>(env, "/org/liability", { delta_micro: deltaMicro })).body.total;
+}
+
+/** Ops: move the liability and log its new total (`ai_liability`). Never throws. */
+async function bumpLiability(env: Env, log: (ev: Record<string, unknown>) => void, deltaMicro: number): Promise<void> {
+  if (!deltaMicro) return;
+  try {
+    log({ ev: "ai_liability", liability_credits: (await liabilityAdd(env, deltaMicro)) / MICRO, delta_credits: deltaMicro / MICRO });
+  } catch {
+    // ops only
+  }
 }
 
 const bearer = (req: Request) => {
@@ -233,7 +271,8 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
       if (lim.status === 429) return ctx.json({ error: "rate_limited", message: "Too many new accounts from here; try later." }, 429, { "retry-after": "3600" });
       const id = newAccountId();
       const a = await new DoLedger(ready.ns, id).open(Math.round(pricing.trial_credits * MICRO));
-      log({ ev: "ai_account_opened", account: id });
+      log({ ev: "ai_account_opened", account: id, trial_credits: pricing.trial_credits });
+      await bumpLiability(env, log, Math.round(pricing.trial_credits * MICRO));
       return ctx.json(
         { account_id: id, token: await mintSession(ready.secret, id, nowS), account_ref: await accountRefFor(id), balance_credits: a.balance / MICRO },
         201,
@@ -249,7 +288,18 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
       const n = await new FakeStoreVerifier(channel, ready.storeKey).parse(body, req.headers);
       if (n && "refund" in n) {
         const r = await applyRefund({ ledgerFor: (a) => new DoLedger(ready.ns, a), claims: directoryClaims(env), refund: n.refund });
-        log({ ev: "ai_refund", channel, kind: n.refund.kind, account: r?.accountId ?? null, amount: r?.entry?.amount ?? 0 });
+        const amount = r?.entry?.amount ?? 0;
+        log({
+          ev: "ai_refund",
+          channel,
+          kind: n.refund.kind,
+          account: r?.accountId ?? null,
+          amount,
+          matched: !!r,
+          credits: Math.abs(amount) / MICRO,
+          usd_est: refundUsdEstimate(pricing, channel, amount),
+        });
+        await bumpLiability(env, log, amount);
       }
       if (n && "consumptionRequest" in n) {
         // Apple asks how much of a purchase was used (the customer asked Apple
@@ -382,12 +432,28 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
       if (!ready.storeKey || (channel === "web" && ready.stripe)) return ctx.json({ error: "not_found" }, 404);
       const purchase = await new FakeStoreVerifier(channel, ready.storeKey).verify(await req.json().catch(() => null));
       const r = await applyPurchase({ ledger, claims: directoryClaims(env), pricing, accountId: account, purchase, environment: "sandbox" });
-      log({ ev: "ai_purchase", account, channel, sku: purchase.sku, replay: r.replay, amount: r.entry.amount });
+      log({
+        ev: "ai_purchase",
+        account,
+        channel,
+        sku: purchase.sku,
+        replay: r.replay,
+        amount: r.entry.amount,
+        ...(r.replay ? {} : { ...purchaseMoney(pricing, channel, purchase.sku, r.entry.amount), first_purchase: r.first_purchase === true }),
+      });
+      if (!r.replay) await bumpLiability(env, log, r.entry.amount);
       return ctx.json({ credited_credits: r.entry.amount / MICRO, balance_credits: r.entry.balance / MICRO, replay: r.replay }, r.replay ? 200 : 201);
     }
     if (path === "/billing/account" && req.method === "DELETE") {
+      const before = (await ledger.account()).account;
       await ledger.close();
-      log({ ev: "ai_account_closed", account });
+      const forfeited = before && before.status !== "closed" ? Math.max(0, before.balance) : 0;
+      log({
+        ev: "ai_account_closed",
+        account,
+        forfeited_credits: forfeited / MICRO,
+      });
+      await bumpLiability(env, log, -forfeited);
       return ctx.json({ ok: true, closed: account });
     }
     return ctx.json({ error: "method_not_allowed" }, 405);

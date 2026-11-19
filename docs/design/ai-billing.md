@@ -781,8 +781,9 @@ needed, so the relay watches the org's spend and fails gracefully:
     metrics (`count_over_time`, `unwrap`), so one write path covers both.
   - Without the three settings, the push is off. Nothing is configured
     in-repo.
-- **Alert rules (code: `billingAlertRules`, provisioning JSON:
-  `grafanaProvisioning`).** Each rule is a LogQL query, reduced to its last
+- **Alert rules (code: `ops/grafana/business/alerts.json`, applied by
+  `ops/grafana/business/sync.py`; see docs/design/ops-grafana.md, which
+  supersedes this table).** Each rule is a LogQL query, reduced to its last
   value, with a threshold.
 
   | Rule | Query (on the billing streams) | Fires when |
@@ -797,8 +798,9 @@ needed, so the relay watches the org's spend and fails gracefully:
   | Written-off usage | sum of `written_off` (1 d) | > 500 credits (US$5) |
   | Apple consumption answer failed | count of `ai_consumption_failed` (1 h) | > 0 |
 
-  A test checks that every rule names only real events, that the org rule is
-  sized from the config (US$800), and that the provisioning JSON is complete.
+  A test checks that every rule names only real events and fields
+  (`agent/tests/ops.test.ts`). The org rule now reads `org_fraction` (> 0.8),
+  so it follows the configured limit without a code change.
 - **Reconciliation** (`reconcileUsage`, `reconcileStore`, run daily by the Ops
   job):
   - the ledger's list-price usage against Anthropic's Usage & Cost report for
@@ -929,9 +931,8 @@ accounts or secrets; everything else is code.
    - KV-backed pricing config;
    - the daily reconciliation job, which needs an Anthropic Admin API key
      **[owner]**, plus the store transaction lists from step 4 / 5;
-   - the dashboard JSON;
-   - a sync step that applies `grafanaProvisioning(...)` through Grafana's
-     alerting provisioning API;
+   - the dashboard JSON and a sync step for the alert rules (done:
+     `ops/grafana/business/`, docs/design/ops-grafana.md);
    - the admin CLI (adjust, suspend).
    - **[owner]** in Grafana Cloud:
      - create a `logs:write`-only access-policy token for the relay, and set
@@ -1065,8 +1066,9 @@ consent. Revisit later:
     `wrangler.toml`);
   - `directory.ts`: purchase claims, account-creation limits, the org
     month-to-date spend counter;
-- `agent/relay/src/billing/metrics.ts`: the event list, the Grafana Cloud
-  Logs push, the alert rules + provisioning JSON, reconciliation;
+- `agent/relay/src/billing/metrics.ts`: the event sink, purchase money,
+  reconciliation; `agent/relay/src/ops.ts`: the allowlisted Grafana Cloud Logs
+  push (docs/design/ops-grafana.md);
   - `platform.ts`: env.
 - `web/src/effects/ai/providers/credits.ts`: the flag-gated provider, session,
   stub balance.

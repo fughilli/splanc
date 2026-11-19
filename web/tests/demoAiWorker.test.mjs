@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { clientKey, createDemoRelay, DEMO_LIMITS, DEMO_TOOLS, DEMO_MODELS, RELAY_PATHS, engagePlay, DEMO_PLAY } from '../_worker.js';
+import worker, { clientKey, createDemoRelay, DEMO_LIMITS, DEMO_TOOLS, DEMO_MODELS, RELAY_PATHS, engagePlay, DEMO_PLAY, DEMO_OPS_FIELDS, demoOpsLine } from '../_worker.js';
 const { marker: PLAY_MARKER, persona: PLAY_PERSONA } = DEMO_PLAY;
 const url = 'https://splanc.pages.dev/api/demo-ai/chat/completions';
 const env = { OPENROUTER_API_KEY: 'unit-test-secret' };
@@ -418,4 +418,35 @@ test('Acid play requests get the engaging persona, summary description and token
     return Response.json({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'Boo' } }] }); } });
   assert.equal((await relay(req(play), env)).status, 200);
   assert.ok(sent.messages[0].content.endsWith(PLAY_PERSONA)); assert.equal(sent.max_tokens, 4000);
+});
+
+// -- ops metrics (docs/design/ops-grafana.md) ---------------------------------------
+const GRAFANA = { GRAFANA_LOKI_PUSH_URL: 'https://logs.example/loki/api/v1/push', GRAFANA_LOKI_USER: '7', GRAFANA_LOKI_TOKEN: 'glc_test_token_not_real_000' };
+
+test('ops: the same fields as the relay schema (agent/relay/src/ops.ts demo_request)', () => {
+  assert.deepEqual(Object.keys(DEMO_OPS_FIELDS).sort(), ['attempts', 'images', 'model', 'ms', 'outcome', 'status']);
+  assert.deepEqual(demoOpsLine({ outcome: 'ok', status: 200, model: DEMO_MODELS[0], ip: '1.2.3.4', prompt: 'x', attempts: 1, ms: 5, images: false, origin: 'https://splanc.io' }),
+    { ev: 'demo_request', outcome: 'ok', status: 200, model: DEMO_MODELS[0], attempts: 1, ms: 5, images: false });
+  assert.deepEqual(demoOpsLine({ outcome: 'Has Spaces', status: '200', images: 'yes' }), { ev: 'demo_request' });
+});
+
+test('ops: one content-free event per POST when configured, none otherwise', async () => {
+  const pushes = [];
+  const opsFetch = async (u, init) => { pushes.push(JSON.parse(init.body)); return new Response('', { status: 204 }); };
+  const relay = createDemoRelay({ fetchImpl: async () => success(), opsFetch });
+  const waits = [];
+  const ctx = { waitUntil: (p) => waits.push(p) };
+  assert.equal((await relay(req(), env, ctx)).status, 200);
+  assert.equal(pushes.length, 0); // not configured
+  const on = { ...env, ...GRAFANA };
+  assert.equal((await relay(req(), on, ctx)).status, 200);
+  for (let i = 0; i < 6; i++) await relay(req(), on, ctx); // the per-client minute cap: 429s
+  await relay(new Request(url, { headers: { origin: 'https://splanc.io' } }), on, ctx); // GET: not counted
+  await Promise.all(waits);
+  const lines = pushes.map((p) => { assert.deepEqual(p.streams[0].stream, { service: 'splanc-pages', component: 'demo-relay', env: 'production', event: 'demo_request', alert: 'false' }); return JSON.parse(p.streams[0].values[0][1]); });
+  assert.equal(lines.length, 7);
+  assert.deepEqual({ ...lines[0], ms: 0 }, { ev: 'demo_request', outcome: 'ok', status: 200, model: DEMO_MODELS[0], attempts: 1, ms: 0, images: false });
+  assert.ok(lines.some((l) => l.status === 429 && l.outcome === 'client_rate_limited'));
+  const all = JSON.stringify(pushes);
+  for (const bad of ['1.2.3.4', 'rainbow', 'unit-test-secret', 'splanc.io']) assert.ok(!all.includes(bad), bad);
 });
