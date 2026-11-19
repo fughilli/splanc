@@ -18,8 +18,8 @@
     "risks_mitigated": 3,
     "mitigations": 12,
     "mitigations_verified": 3,
-    "test_cases": 34,
-    "gaps": 44
+    "test_cases": 32,
+    "gaps": 42
   },
   "levels": [
     {
@@ -1584,18 +1584,6 @@
       "message": "no test evidence",
       "route": "human-gate",
       "demanded_level": "hitl"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:heavy_effect_reachability",
-      "message": "//pi/hitl/harness:heavy_effect_reachability pi/hitl/harness/heavy_effect_reachability error and traces to no requirement",
-      "route": "autonomous"
-    },
-    {
-      "kind": "untraced-failure",
-      "entity": "//pi/hitl/harness:no_reboot_no_park",
-      "message": "//pi/hitl/harness:no_reboot_no_park pi/hitl/harness/no_reboot_no_park error and traces to no requirement",
-      "route": "autonomous"
     },
     {
       "kind": "high-risk-open",
