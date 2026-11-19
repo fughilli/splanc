@@ -58,12 +58,19 @@ pub const PORT_ACK: u8 = 0;
 const SEEN_LEN: usize = 64;
 const DELIVERED_LEN: usize = 32;
 // Splanc: sized for the real traffic (docs/design/mesh.md §10.3: one fader stream, beacons,
-// status; bulk is pull-based from flash), not 8 worst-case packets each (upstream).
-/// Relay slots.
+// status; bulk is pull-based from flash), not 8 worst-case packets each (upstream). A
+// high-capacity node (P4 + C6, Pi) gets depth from its custodian store instead (spill).
+/// Relay slots (the most this instance holds; `relay_cap` may lower it at run time).
 pub const RELAY_LEN: usize = 4;
 /// Originated packets awaiting their send or ack.
 pub const OUTBOX_LEN: usize = 4;
 const EVENTS_LEN: usize = 4;
+
+/// Splanc: relay priority classes, lowest first (`MeshConfig::priority`).
+pub const PRIO_BULK: usize = 0;
+pub const PRIO_NORMAL: usize = 1;
+pub const PRIO_HIGH: usize = 2;
+pub const PRIO_CLASSES: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MeshConfig {
@@ -78,6 +85,26 @@ pub struct MeshConfig {
     pub ack_timeout_us: i64,
     /// Transmissions of a want-ack packet before giving up.
     pub max_tries: u8,
+    /// Splanc: ports 0..32 relayed at high priority (bit per port; acks always are).
+    pub high_ports: u32,
+    /// Splanc: ports at or above this are bulk (lowest priority). 255: none.
+    pub bulk_from: u8,
+    /// Splanc: slots added to a bulk packet's relay delay (negative: earlier). High-capacity
+    /// nodes relay bulk first, so constrained ones hear it and cancel theirs.
+    pub bulk_relay_bias: i8,
+}
+
+impl MeshConfig {
+    /// The relay priority class of `port`.
+    pub fn priority(&self, port: u8) -> usize {
+        if port == PORT_ACK || (port < 32 && self.high_ports & (1 << port) != 0) {
+            PRIO_HIGH
+        } else if port >= self.bulk_from {
+            PRIO_BULK
+        } else {
+            PRIO_NORMAL
+        }
+    }
 }
 
 impl Default for MeshConfig {
@@ -89,6 +116,9 @@ impl Default for MeshConfig {
             rssi_weak: -90.0,
             ack_timeout_us: 1_000_000,
             max_tries: 3,
+            high_ports: 0,
+            bulk_from: 255,
+            bulk_relay_bias: 0,
         }
     }
 }
@@ -200,15 +230,24 @@ pub struct MeshStats {
     pub acked: u32,
     pub failed: u32,
     pub dropped_full: u32,
+    /// Splanc: relays dropped for room, by priority class (the drop policy's record).
+    pub dropped_by_prio: [u32; PRIO_CLASSES],
+    /// Splanc: relays handed to the custodian store instead of dropped.
+    pub spilled: u32,
+    /// Splanc: the most relay / outbox slots ever in use at once.
+    pub peak_relays: u8,
+    pub peak_outbox: u8,
     /// Splanc: packets not sent or relayed because their payload exceeds this instance's
     /// `max_payload` (the backhaul MTU), though they fit its capacity.
     pub oversize: u32,
 }
 
 #[derive(Clone, Copy)]
-struct Relay<const P: usize> {
-    packet: PacketOf<P>,
-    due_slot: u32,
+pub struct Relay<const P: usize> {
+    pub packet: PacketOf<P>,
+    pub due_slot: u32,
+    /// Insertion order (the drop policy evicts the oldest of the lowest class).
+    seq: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -240,6 +279,18 @@ pub struct MeshOf<const P: usize> {
     ev_len: usize,
     slot: u32,
     rng: u32,
+    /// Splanc: run-time queue limits (≤ RELAY_LEN / OUTBOX_LEN).
+    relay_cap: usize,
+    outbox_cap: usize,
+    /// Splanc: a high-capacity node keeps what the drop policy evicts here for its
+    /// custodian store ([`MeshOf::take_spilled`]) instead of dropping it. Feature
+    /// `custodian_spill` (off on firmware: the slot costs ~230 B on every C6 and the sweeps
+    /// never used it; docs/design/mesh.md §10.6).
+    #[cfg(feature = "custodian_spill")]
+    pub spill: bool,
+    #[cfg(feature = "custodian_spill")]
+    spilled: Option<Relay<P>>,
+    relay_seq: u32,
 }
 
 /// The swarm's mesh: 88-byte payloads.
@@ -275,6 +326,13 @@ impl<const P: usize> MeshOf<P> {
             ev_len: 0,
             slot: 0,
             rng: seed | 1,
+            relay_cap: RELAY_LEN,
+            outbox_cap: OUTBOX_LEN,
+            #[cfg(feature = "custodian_spill")]
+            spill: false,
+            #[cfg(feature = "custodian_spill")]
+            spilled: None,
+            relay_seq: 0,
         }
     }
 
@@ -283,6 +341,47 @@ impl<const P: usize> MeshOf<P> {
     /// it; received packets up to `P` are still delivered.
     pub fn set_max_payload(&mut self, n: usize) {
         self.max_payload = n.clamp(MAX_PAYLOAD, P);
+    }
+
+    /// Splanc: limit the relay and outbox queues (a constrained node's budget).
+    pub fn set_caps(&mut self, relays: usize, outbox: usize) {
+        self.relay_cap = relays.clamp(1, RELAY_LEN);
+        self.outbox_cap = outbox.clamp(1, OUTBOX_LEN);
+    }
+
+    /// Relay slots free (the credit a node advertises to its neighbours).
+    pub fn relay_room(&self) -> usize {
+        self.relay_cap.saturating_sub(self.relays.iter().filter(|r| r.is_some()).count())
+    }
+
+    /// Splanc: a relay the drop policy evicted, for the custodian store.
+    #[cfg(feature = "custodian_spill")]
+    pub fn take_spilled(&mut self) -> Option<Relay<P>> {
+        self.spilled.take()
+    }
+
+    /// Splanc: put a stored relay back (due now); false if there is no room.
+    #[cfg(feature = "custodian_spill")]
+    pub fn requeue_relay(&mut self, r: Relay<P>) -> bool {
+        let used = self.relays.iter().filter(|x| x.is_some()).count();
+        let Some(i) = self.relays.iter().position(|x| x.is_none()).filter(|_| used < self.relay_cap) else { return false };
+        self.relay_seq = self.relay_seq.wrapping_add(1);
+        self.relays[i] = Some(Relay { due_slot: self.slot, seq: self.relay_seq, ..r });
+        self.peak_relays_now();
+        true
+    }
+
+    /// A free outbox slot within `outbox_cap`.
+    fn outbox_slot(&self) -> Option<usize> {
+        let used = self.outbox.iter().filter(|o| o.is_some()).count();
+        self.outbox.iter().position(|o| o.is_none()).filter(|_| used < self.outbox_cap)
+    }
+
+    fn peak_relays_now(&mut self) {
+        let n = self.relays.iter().filter(|r| r.is_some()).count() as u8;
+        self.stats.peak_relays = self.stats.peak_relays.max(n);
+        let o = self.outbox.iter().filter(|r| r.is_some()).count() as u8;
+        self.stats.peak_outbox = self.stats.peak_outbox.max(o);
     }
 
     pub fn max_payload(&self) -> usize {
@@ -305,7 +404,7 @@ impl<const P: usize> MeshOf<P> {
             self.stats.oversize += 1;
             return None;
         }
-        let slot = self.outbox.iter().position(|o| o.is_none())?;
+        let slot = self.outbox_slot()?;
         self.next_id = self.next_id.wrapping_add(1);
         let id = self.next_id;
         let header = Header {
@@ -320,13 +419,14 @@ impl<const P: usize> MeshOf<P> {
         };
         let packet = PacketOf::new(header, payload)?;
         self.outbox[slot] = Some(Pending { packet, tries: 0, next_us: i64::MIN });
+        self.peak_relays_now();
         self.stats.originated += 1;
         Some(id)
     }
 
     /// Room in the outbox for another packet?
     pub fn can_send(&self) -> bool {
-        self.outbox.iter().any(|o| o.is_none())
+        self.outbox_slot().is_some()
     }
 
     /// A mesh frame heard off the air.
@@ -454,7 +554,7 @@ impl<const P: usize> MeshOf<P> {
     }
 
     fn send_ack(&mut self, to: u16, id: u16) {
-        let Some(slot) = self.outbox.iter().position(|o| o.is_none()) else {
+        let Some(slot) = self.outbox_slot() else {
             self.stats.dropped_full += 1;
             return;
         };
@@ -473,6 +573,7 @@ impl<const P: usize> MeshOf<P> {
         let n = wire::ack(id as u32, &mut body).unwrap();
         let packet = PacketOf::new(header, &body[..n]).unwrap();
         self.outbox[slot] = Some(Pending { packet, tries: 0, next_us: i64::MIN });
+        self.peak_relays_now();
     }
 
     fn ack_received(&mut self, from: u16, id: u16) {
@@ -486,9 +587,33 @@ impl<const P: usize> MeshOf<P> {
     }
 
     fn schedule_relay(&mut self, mut p: PacketOf<P>, rssi: f32) {
-        let Some(slot) = self.relays.iter().position(|r| r.is_none()) else {
-            self.stats.dropped_full += 1;
-            return;
+        let prio = self.cfg.priority(p.header.port);
+        let used = self.relays.iter().filter(|r| r.is_some()).count();
+        let slot = match self.relays.iter().position(|r| r.is_none()).filter(|_| used < self.relay_cap) {
+            Some(s) => s,
+            None => {
+                // Splanc drop policy: evict the oldest relay of the lowest class below this
+                // one's (control, time and membership are never starved by bulk); if none
+                // is lower, this one goes. A custodian spills instead of dropping.
+                let victim = (0..RELAY_LEN)
+                    .filter_map(|i| self.relays[i].map(|r| (i, self.cfg.priority(r.packet.header.port), r.seq)))
+                    .filter(|&(_, vp, _)| vp < prio)
+                    .min_by_key(|&(_, vp, seq)| (vp, seq));
+                match victim {
+                    Some((i, vp, _)) => {
+                        let old = self.relays[i].take();
+                        self.lose(old, vp);
+                        i
+                    }
+                    None => {
+                        p.header.hop_limit -= 1;
+                        self.relay_seq = self.relay_seq.wrapping_add(1);
+                        let r = Relay { packet: p, due_slot: self.slot, seq: self.relay_seq };
+                        self.lose(Some(r), prio);
+                        return;
+                    }
+                }
+            }
         };
         p.header.hop_limit -= 1;
         let span = self.cfg.rssi_strong - self.cfg.rssi_weak;
@@ -496,8 +621,28 @@ impl<const P: usize> MeshOf<P> {
         // Strong signal -> later; plus a little jitter so equals don't tie.
         let base = (frac * self.cfg.relay_window as f32 + 0.5) as u32;
         let jitter = self.rand() % 2;
-        let delay = (base + jitter).min(self.cfg.relay_window);
-        self.relays[slot] = Some(Relay { packet: p, due_slot: self.slot.wrapping_add(delay) });
+        let mut delay = (base + jitter).min(self.cfg.relay_window) as i32;
+        if prio == PRIO_BULK {
+            delay = (delay + self.cfg.bulk_relay_bias as i32).max(0);
+        }
+        self.relay_seq = self.relay_seq.wrapping_add(1);
+        self.relays[slot] = Some(Relay { packet: p, due_slot: self.slot.wrapping_add(delay as u32), seq: self.relay_seq });
+        self.peak_relays_now();
+    }
+
+    /// A relay with no room: spilled to the custodian (one slot, drained each tick) or dropped.
+    /// High-priority traffic (live control, time, membership) is never spilled: relayed late
+    /// it is worse than not at all (the sweep's 64-node runs: p99 1.9 s with it spilled).
+    fn lose(&mut self, r: Option<Relay<P>>, prio: usize) {
+        #[cfg(feature = "custodian_spill")]
+        if self.spill && prio < PRIO_HIGH && self.spilled.is_none() {
+            self.spilled = r;
+            self.stats.spilled += 1;
+            return;
+        }
+        let _ = r;
+        self.stats.dropped_full += 1;
+        self.stats.dropped_by_prio[prio] += 1;
     }
 
     fn is_seen(&self, origin: u16, id: u16, attempt: u8) -> bool {

@@ -74,6 +74,15 @@ shim (UWB radio, TDMA, DS-TWR, fusion).
 8. **Queues sized for the real traffic.** `RELAY_LEN`, `OUTBOX_LEN`, `EVENTS_LEN` and the
    app queue go from 8 to 4 (docs/design/mesh.md §10.3: one fader stream, beacons, status;
    bulk is pull-based from flash): C6 RAM 12.6 KB → 9.1 KB at P = 200.
+9. **Capacity classes (M2, docs/design/mesh.md §10.6).** Run-time queue caps
+   (`MeshOf::set_caps`). A full relay queue evicts the oldest relay of the lowest priority
+   class below the new one (`MeshConfig::high_ports`, `bulk_from`; acks are always high),
+   counted per class (`MeshStats::dropped_by_prio`). A high-capacity node can spill evicted
+   bulk/normal relays to a custodian store (`spill`, `take_spilled`, `requeue_relay`;
+   feature `custodian_spill`, off on firmware). Bulk relays can be biased earlier or later
+   (`bulk_relay_bias`, 0 by default). `Updater::set_preferred` makes page requests prefer
+   custodians among equally advanced neighbours. Peak occupancy is recorded (`peak_relays`,
+   `peak_outbox`).
 
 The Splanc layer on top (backhaul trait, link frame codec, node driver, loopback backhaul)
 is `//firmware/mesh`, outside this directory.
