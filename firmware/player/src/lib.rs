@@ -768,7 +768,9 @@ impl Player {
             | CMsg::SetEthernetConfig(_)
             | CMsg::GetEthernetState(_)
             | CMsg::DiscoverControllers(_)
-            | CMsg::SetNetworkOutput(_) => Some(error("unsupported", "handled by the firmware, not the player core")),
+            | CMsg::SetNetworkOutput(_)
+            // Opt-in device metrics: player_app metrics_ffi.rs.
+            | CMsg::GetDeviceMetrics(_) => Some(error("unsupported", "handled by the firmware, not the player core")),
             // Fire-and-forget: Pi-profile telemetry, set_texture (a video frame),
             // and set_jit (the JIT debug/bench toggle) — all handled by the fx
             // layer before they reach here. Dropped.

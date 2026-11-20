@@ -490,6 +490,9 @@ pub extern "C" fn ns_mac_recv(out: *mut u8, cap: u32) -> u32 {
     unsafe {
         rx_reap();
         if let Some((idx, buf)) = RX.next_frame() {
+            // The RX vector leads with the frame's RSSI (signed dBm, the first byte of
+            // the C6's wifi_pkt_rx_ctrl_t): kept for ns_mac_last_rssi (device metrics).
+            LAST_RSSI = buf.first().copied().unwrap_or(0) as i8;
             let frame = rx_frame(buf);
             let n = frame.len().min(cap as usize);
             core::ptr::copy_nonoverlapping(frame.as_ptr(), out, n);
@@ -499,6 +502,16 @@ pub extern "C" fn ns_mac_recv(out: *mut u8, cap: u32) -> u32 {
             0
         }
     }
+}
+
+/// RSSI (dBm) of the last frame [`ns_mac_recv`] returned; 0 before the first.
+static mut LAST_RSSI: i8 = 0;
+
+/// The RSSI of the frame the last [`ns_mac_recv`] returned (the transport keeps a
+/// smoothed value of its AP's frames for the opt-in device metrics).
+#[no_mangle]
+pub extern "C" fn ns_mac_last_rssi() -> i32 {
+    unsafe { LAST_RSSI as i32 }
 }
 
 /// Bound on the wait for the queue's previous arm to be taken (`TxRing::arm_pending`),

@@ -590,6 +590,34 @@ void lm_kiosk_push_done(void);
 // Console "kiosk off|status" (the text after "kiosk "): a one-line reply, -1 unknown.
 int32_t lm_kiosk_console(const uint8_t *line, size_t len, uint8_t *out, size_t cap);
 
+// -- Opt-in device metrics (metrics_ffi.rs, docs/design/device-metrics.md) -----
+// Filled by the firmware on request (get_device_metrics, under the player mutex).
+// Zero = not measured. Layout mirrors metrics_ffi.rs LmSysMetrics.
+typedef struct {
+  uint32_t uptime_s;
+  uint32_t reset_reason;  // esp_reset_reason_t of this boot
+  uint32_t boot_count;    // since the last power-on (RTC no-init)
+  uint32_t wdt_resets;
+  uint32_t panic_resets;
+  uint32_t brownout_resets;
+  uint32_t heap_free;
+  uint32_t heap_min_free;
+  uint32_t heap_largest_free;
+  uint32_t led_count;
+  uint32_t wifi_joins;
+  uint32_t wifi_link_losses;
+  int32_t wifi_rssi_dbm;
+  uint32_t ble_drops;
+  uint32_t mesh_mode;  // 0 = no mesh
+  uint32_t mesh_members;
+  uint32_t mesh_delivery_permille;
+  uint32_t mesh_airtime_permille;
+  uint32_t mesh_relay_load_permille;
+  uint32_t mesh_mode_switches;
+} LmSysMetrics;
+// Register the filler (once, at boot).
+void lm_metrics_set_source(void (*fill)(LmSysMetrics *out));
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

@@ -32,6 +32,7 @@
 #include <esp_memory_utils.h>  // esp_ptr_executable — validate scanned stack words are code
 #include <esp_system.h>
 #include <esp_timer.h>
+#include <esp_attr.h>  // RTC_NOINIT_ATTR: the device-metrics boot counters
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -3605,6 +3606,53 @@ void netstack_console_hook(const char *line, size_t len) {
 }
 #endif
 
+// -- Opt-in device metrics (docs/design/device-metrics.md) ---------------------------
+// Boots and crash / watchdog / brownout resets since the last power-on, in RTC memory
+// (kept across a reset, cleared by a power cycle): 20 bytes of LP RAM, none of the heap.
+// The rest of the snapshot is read only when the app asks (get_device_metrics).
+struct MetricsBootRec {
+  uint32_t magic, boots, wdt, panic, brownout;
+};
+static RTC_NOINIT_ATTR MetricsBootRec g_mboot;
+static uint32_t g_mreset_reason = 0;
+static constexpr uint32_t kMetricsBootMagic = 0x4d455431;  // "MET1"
+
+static void metrics_boot(esp_reset_reason_t rr) {
+  if (rr == ESP_RST_POWERON || g_mboot.magic != kMetricsBootMagic) g_mboot = {kMetricsBootMagic, 0, 0, 0, 0};
+  g_mboot.boots++;
+  if (rr == ESP_RST_INT_WDT || rr == ESP_RST_TASK_WDT || rr == ESP_RST_WDT) g_mboot.wdt++;
+  else if (rr == ESP_RST_PANIC) g_mboot.panic++;
+  else if (rr == ESP_RST_BROWNOUT) g_mboot.brownout++;
+  g_mreset_reason = (uint32_t)rr;
+}
+
+// Called by the Rust core inside lm_player_handle (the player mutex is held).
+static void metrics_fill(LmSysMetrics *m) {
+  m->uptime_s = (uint32_t)(esp_timer_get_time() / 1000000);
+  m->reset_reason = g_mreset_reason;
+  m->boot_count = g_mboot.boots;
+  m->wdt_resets = g_mboot.wdt;
+  m->panic_resets = g_mboot.panic;
+  m->brownout_resets = g_mboot.brownout;
+  m->heap_free = esp_get_free_heap_size();
+  m->heap_min_free = esp_get_minimum_free_heap_size();
+  m->heap_largest_free = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
+  uint32_t leds = 0;
+  for (uint32_t ch = 0; ch < 2; ch++) {
+    int32_t n = lm_led_count(ch);
+    if (n > 0) leds += (uint32_t)n;
+  }
+  m->led_count = leds;
+#if defined(LM_NETSTACK)
+  NetstackMetrics nm = {};
+  netstack_metrics(&nm);
+  m->wifi_joins = nm.wifi_joins;
+  m->wifi_link_losses = nm.wifi_link_losses;
+  m->wifi_rssi_dbm = nm.wifi_rssi_dbm;
+  m->ble_drops = nm.ble_drops;
+#endif
+}
+
 void setup() {
   Serial.begin(115200);
   // Logging is async (serial_log.h): Log() only appends to an in-RAM ring, and
@@ -3639,6 +3687,7 @@ void setup() {
                     : rr == ESP_RST_USB       ? "USB"
                                               : "OTHER";
     Log().printf("[boot] reset_reason=%s (%d)\n", n, (int)rr);
+    metrics_boot(rr);
   }
   // OTA (docs/design/ota.md): crash-loop guard + the health deadline of a fresh install.
   ota_app_boot();
@@ -3697,6 +3746,7 @@ void setup() {
   tex_mutex = xSemaphoreCreateMutex();
   lm_player_init(g_led_cap);
   lm_set_led_limits(g_led_cap, g_led_max_heap);
+  lm_metrics_set_source(metrics_fill);  // opt-in device metrics: read only on request
   // Install this board's static capability descriptor (GPIO safety catalog + LED
   // modes), compiled from board_caps.textproto and embedded in the image, so the
   // app's Hardware Setup pin picker reflects THIS board. Ignored if it can't

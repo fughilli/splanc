@@ -107,6 +107,7 @@ rust_static_library(
         "ffi.rs",
         "fxdbg.rs",
         "kiosk_ffi.rs",
+        "metrics_ffi.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
         "wifi_ffi.rs",
@@ -163,6 +164,7 @@ rust_library(
         "ffi.rs",
         "fxdbg.rs",
         "kiosk_ffi.rs",
+        "metrics_ffi.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
         "wifi_ffi.rs",
@@ -236,6 +238,20 @@ rust_test(
 rust_test(
     name = "wifi_policy_test",
     srcs = ["tests/wifi_policy.rs"],
+    edition = "2021",
+    env = {"RUST_MIN_STACK": "100663296"},
+    deps = [
+        ":player_ffi_host",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# Opt-in device metrics (metrics_ffi.rs): get_device_metrics through the C ABI. Own binary
+# (the snapshot source is process-global).
+rust_test(
+    name = "device_metrics_test",
+    srcs = ["tests/device_metrics.rs"],
     edition = "2021",
     env = {"RUST_MIN_STACK": "100663296"},
     deps = [
@@ -854,6 +870,7 @@ rust_static_library(
         "ffi.rs",
         "fxdbg.rs",
         "kiosk_ffi.rs",
+        "metrics_ffi.rs",
         "sensor_ffi.rs",
         "uniform_pool.rs",
         "wifi_ffi.rs",

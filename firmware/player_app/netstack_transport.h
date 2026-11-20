@@ -49,6 +49,15 @@ void netstack_restore_credentials(const char *ssid, const char *pass);
 // rekey is visible even when it scrolls past the serial-log tail).
 uint32_t netstack_rekey_count(void);
 
+// Opt-in device metrics (docs/design/device-metrics.md): link counters since boot.
+typedef struct {
+  uint32_t wifi_joins;        // DHCP leases obtained
+  uint32_t wifi_link_losses;  // leases lost (deauth / disassoc / expiry)
+  int32_t wifi_rssi_dbm;      // smoothed RSSI of our AP's frames, 0 = none heard
+  uint32_t ble_drops;         // BLE links ended by anything but a clean close
+} NetstackMetrics;
+void netstack_metrics(NetstackMetrics *out);
+
 // Diagnostics for the periodic status line: TCP receive/retransmit counters, RX-ring
 // high-water / full polls, and the longest gap between two netstack_loop() passes since the
 // last call (reset on read). Formats one "[net] ..." fragment into `buf`.

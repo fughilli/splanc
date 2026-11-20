@@ -50,6 +50,7 @@ void ns_mac_rx_stats(uint32_t *out);  // [ring high-water, full-ring polls] (hig
 void ns_tcp_stats(uint32_t *out);     // [segs, ooo, dup, trunc, zero_wnd, rto, fast_rexmit]
 uint32_t ns_aes_selftest(uint8_t *out); // FIPS-197 AES-128: bit0=enc ok, bit1=dec ok; out=ciphertext
 uint32_t ns_mac_recv(uint8_t *out, uint32_t cap);
+int32_t ns_mac_last_rssi(void);  // RSSI of the frame the last ns_mac_recv returned
 uint32_t ns_mac_rx_pending(void);
 uint32_t ns_mac_send(const uint8_t *frame, uint32_t len, uint32_t queue);
 uint32_t ns_mac_send_sec(const uint8_t *frame, uint32_t len, uint32_t queue); // HW CCMP encrypt
@@ -1251,6 +1252,7 @@ void handle_l3(const uint8_t *pt, int pl) {
         Serial.printf("[t=%lu] [dhcp] NAK -> re-DISCOVER\n", (unsigned long)millis());
       } else if (mt == 5) {
         bool first = !g_leased;
+        if (first) g_m_joins++;
         g_leased = true;
         mark_seen();
         g_window_until = 0;  // manual: the join window did its job
@@ -1749,6 +1751,23 @@ void netstack_restore_credentials(const char *ssid, const char *pass) {
 // External linkage (g_rekey_serviced lives in the anonymous namespace above but is visible
 // in this TU): count of AP group-key rekeys serviced, surfaced in the status line.
 uint32_t netstack_rekey_count() { return g_rekey_serviced; }
+
+// Opt-in device metrics (docs/design/device-metrics.md): a few counters, read only when
+// the app asks (get_device_metrics). Leases obtained / lost (deauth, expiry; not a
+// re-provision or going offline), Bluetooth links that dropped, and the RSSI of our AP's
+// frames, smoothed (x16 fixed point; 0 = none heard yet).
+static uint32_t g_m_joins = 0, g_m_losses = 0, g_m_ble_drops = 0;
+static int32_t g_m_rssi_x16 = 0;
+static inline void note_ap_rssi(int32_t dbm) {
+  if (dbm >= 0 || dbm < -110) return;  // not a plausible RSSI: ignore
+  g_m_rssi_x16 = g_m_rssi_x16 == 0 ? dbm * 16 : g_m_rssi_x16 + (dbm * 16 - g_m_rssi_x16) / 8;
+}
+void netstack_metrics(NetstackMetrics *out) {
+  out->wifi_joins = g_m_joins;
+  out->wifi_link_losses = g_m_losses;
+  out->wifi_rssi_dbm = g_m_rssi_x16 / 16;
+  out->ble_drops = g_m_ble_drops;
+}
 
 // Longest gap between two netstack_loop() passes (us) since the last status line: while
 // loopTask is away (render holding the CPU, a long TLS write spin, a flash write) nothing
@@ -2337,6 +2356,7 @@ void netstack_loop() {
   bool a1_group = (rx[4] & 0x01) != 0;
   if (n >= 24 && (a1_us || a1_group) &&
       (memcmp(rx + 10, g_bssid, 6) == 0 || memcmp(rx + 16, g_bssid, 6) == 0)) {
+    if (memcmp(rx + 10, g_bssid, 6) == 0) note_ap_rssi(ns_mac_last_rssi());  // sent by our AP
     if (rx[0] == 0xb0 && st == AUTH) { // auth resp
       uint16_t status = rx[28] | (rx[29] << 8);
       g_authw.on_auth_response();
@@ -2376,6 +2396,7 @@ void netstack_loop() {
       st = AUTH;
       inited = false;
       t = 0;
+      if (g_leased) g_m_losses++;
       g_leased = false;
       g_tcp_started = false;
       if (TLS_SERVER) {
@@ -2575,6 +2596,10 @@ void netstack_loop() {
     static uint32_t diag_last_state = 999;
     uint32_t st_now = ns_ble_state();
     if (st_now != diag_last_state) {
+      // A connected link (7) that ends for any reason but a clean close (0x13 remote /
+      // 0x16 local user terminated) is a drop (device metrics).
+      uint32_t why = ns_ble_last_disc_reason();
+      if (diag_last_state == 7 && st_now != 7 && why != 0x13 && why != 0x16) g_m_ble_drops++;
       // disc=0x.. : the HCI reason of the last disconnect (0x08 supervision timeout,
       // 0x13 central closed, 0x22 LL response timeout, 0x28 instant passed).
       Serial.printf("[t=%lu] [ble] link state=%lu connected=%d leased=%d disc=0x%02lx\n",
@@ -2957,6 +2982,7 @@ void netstack_loop() {
     }
     if (age >= g_lease_secs) { // expired with no ACK — fall back to a fresh DORA
       Serial.println("[dhcp] lease EXPIRED — re-DISCOVER");
+      g_m_losses++;
       g_leased = false;
       g_have_offer = false;
     }

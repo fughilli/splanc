@@ -66,6 +66,9 @@ pub use wifi_ffi::*;
 // The FX debugger (docs/design/fx-debugger.md): pause / step / snapshot.
 mod fxdbg;
 pub use fxdbg::*;
+// Opt-in device metrics (docs/design/device-metrics.md): get_device_metrics.
+mod metrics_ffi;
+pub use metrics_ffi::{lm_metrics_set_source, LmSysMetrics};
 // Kiosk mode (docs/design/kiosk-mode.md): the lock gate, idle revert, owner unlock.
 // A public module (not glob re-exported: its pure helpers share names with wifi_ffi's).
 pub mod kiosk_ffi;
@@ -1981,6 +1984,8 @@ pub unsafe extern "C" fn lm_player_handle(
         // Wi-Fi rejoin policy (wifi_ffi.rs): zero-copy replies into `out`.
         Some(ARM_SET_WIFI_POLICY) => return wifi_ffi::handle_set_wifi_policy(frame, out, out_cap),
         Some(ARM_GET_WIFI_POLICY) => return wifi_ffi::handle_get_wifi_policy(out, out_cap),
+        // Opt-in device metrics (metrics_ffi.rs): built on request, zero-copy into `out`.
+        Some(metrics_ffi::ARM_GET_DEVICE_METRICS) => return metrics_ffi::handle_get_device_metrics(out, out_cap),
         // Kiosk mode (kiosk_ffi.rs): zero-copy replies into `out`.
         Some(kiosk_ffi::ARM_GET_KIOSK_STATUS) => return kiosk_ffi::handle_get(recv_ms as u32, out, out_cap),
         Some(kiosk_ffi::ARM_SET_KIOSK_CONFIG) => {
@@ -2847,6 +2852,8 @@ macro_rules! features {
         // staggered pilot (docs/design/hue-code-v2.md). The render loop walks LEDs
         // in order, so pattern_color's memoised stagger_next walk is amortised.
         "hue_stagger_pilot",
+        // get_device_metrics (opt-in health counters): docs/design/device-metrics.md.
+        "device_metrics",
         $($extra),*
     ] };
 }
@@ -6086,6 +6093,9 @@ pub unsafe extern "C" fn lm_fps_take_lag_notify(lagging: *mut bool) -> bool {
         return false;
     }
     FPS_LAG_REPORTED = now;
+    if now {
+        metrics_ffi::note_lag_start();
+    }
     true
 }
 
