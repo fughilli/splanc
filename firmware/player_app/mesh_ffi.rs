@@ -12,10 +12,14 @@
 //! background sweep has the radio elsewhere. Mesh-only mode (`kModeMesh`) is the next PR: it
 //! acts on [`ChannelAction::Camp`], which this build only reports.
 //!
-//! **Keys** (desk #67): until M7's membership, the only way in is the dev-only site key
-//! ([`ns_mesh_dev_provision`]), which the transport exposes on the console only in the
-//! `LM_MESH_DEVKEY` image. The M2 envelope is always on: nothing leaves unsealed except
-//! membership's plain adverts.
+//! **Membership** (M7, mesh_gw.rs `mesh_admin`): the app provisions a fixture into a closed
+//! mesh (the mesh id, the site secret or none for an approval join, the admin public key);
+//! the state is persisted in littlefs (`/lfs/mesh.bin`, power-loss safe) and the mesh comes
+//! back on at boot. The device key is the per-device TLS key (P-256, its ECDH in main.cpp on
+//! MbedTLS, [`DevKey`]); session crypto runs one job per pass outside the tick
+//! ([`ns_mesh_crypto`]). The dev-only site key ([`ns_mesh_dev_provision`], desk #67) stays in
+//! the `LM_MESH_DEVKEY` image for the older HITLs; it is never persisted. The M2 envelope is
+//! always on: nothing leaves unsealed except membership's plain adverts and join messages.
 //!
 //! **Group traffic** (desk #70, pending): data that must arrive fans out as ACKed unicasts
 //! by default (`GroupPolicy::Unicast`); `MESH POLICY bcast` switches to one broadcast.
@@ -39,7 +43,7 @@
 use core::fmt::Write;
 
 use splanc_mesh::crypto::{DeviceKey, Entropy, PublicKey};
-use splanc_mesh::membership::{Credentials, Mode, Phase, ProvisionSource};
+use splanc_mesh::membership::{Credentials, MeshState, Mode, Phase, ProvisionSource, STATE_LEN};
 use splanc_mesh::ports::Port;
 use splanc_mesh::meshtime::{ShowEpoch, SyncState};
 use splanc_mesh::stack::{EpochSource, Event, MeshStack, StackConfig};
@@ -74,6 +78,11 @@ extern "C" {
     fn lm_mesh_counter_store(mark: u64) -> u32;
     fn esp_random() -> u32;
     fn esp_timer_get_time() -> i64;
+    // main.cpp (M7): this device's P-256 key, the per-device TLS identity's (65 bytes,
+    // uncompressed; 0 if there is none yet), and ECDH with it (the shared X; 0 if `peer`
+    // is not a valid point). The private key never leaves MbedTLS's context.
+    fn lm_mesh_device_key(out: *mut u8) -> u32;
+    fn lm_mesh_ecdh(peer: *const u8, out: *mut u8) -> u32;
     // main.cpp: the player's shared time base under its mutex (try-lock: -1 = busy).
     // op 0 = get (1: set, in *epoch_ms; 0: none), 1 = put *epoch_ms and shift the queued
     // apply_at changes by `shift_ms`, 2 = clear, 3 = frame alignment on (*epoch_ms != 0).
@@ -117,18 +126,37 @@ impl Radio for Mac {
     }
 }
 
-/// The device key until M7 (firmware `DeviceKey` on MbedTLS): a dev placeholder. Only joins
-/// by approval and admin sessions use it; site-secret members never do.
-struct DevKey([u8; 6]);
+/// The device key (M7): the per-device TLS key (docs/design/per-device-cert.md), whose ECDH
+/// runs in MbedTLS (main.cpp); only the public half is here. `ok` false: no identity yet
+/// (first boot before keygen): joins by approval and admin sessions cannot work.
+struct DevKey {
+    pk: PublicKey,
+    ok: bool,
+}
 impl DeviceKey for DevKey {
     fn public_key(&self) -> PublicKey {
-        let mut k = [0u8; 65];
-        k[0] = 0x04;
-        k[1..7].copy_from_slice(&self.0);
-        k
+        self.pk
     }
-    fn ecdh(&self, _: &PublicKey) -> Option<[u8; 32]> {
-        None
+    fn ecdh(&self, peer: &PublicKey) -> Option<[u8; 32]> {
+        if !self.ok {
+            return None;
+        }
+        let mut out = [0u8; 32];
+        (unsafe { lm_mesh_ecdh(peer.as_ptr(), out.as_mut_ptr()) } != 0).then_some(out)
+    }
+}
+
+impl DevKey {
+    fn load(mac: &[u8; 6]) -> DevKey {
+        let mut pk = [0u8; 65];
+        if unsafe { lm_mesh_device_key(pk.as_mut_ptr()) } != 0 && pk[0] == 0x04 {
+            return DevKey { pk, ok: true };
+        }
+        // A placeholder that names the device (no ECDH): site-secret members still work.
+        pk = [0u8; 65];
+        pk[0] = 0x04;
+        pk[1..7].copy_from_slice(mac);
+        DevKey { pk, ok: false }
     }
 }
 
@@ -248,6 +276,15 @@ pub struct Mesh {
     xfer: [u8; mesh_gw::XFER],
     conns: u8,
     status_us: i64,
+    // ---- membership (M7) ----
+    /// The mesh state changed since it was last persisted (`ns_mesh_persist`); `persist`:
+    /// it is the app's (or restored), not the dev key's (never written).
+    dirty: bool,
+    persist: bool,
+    /// Leave: the transport erases the persisted state and turns the mesh off.
+    want_off: bool,
+    crypto_us_max: u32,
+    crypto_us_last: u32,
 }
 
 impl Mesh {
@@ -352,6 +389,11 @@ pub unsafe extern "C" fn ns_mesh_create(block: *mut u8, len: u32, mac: *const u8
     f!((*p).xfer).write_bytes(0, 1);
     f!((*p).conns).write(0);
     f!((*p).status_us).write(i64::MIN / 2);
+    f!((*p).dirty).write(false);
+    f!((*p).persist).write(false);
+    f!((*p).want_off).write(false);
+    f!((*p).crypto_us_max).write(0);
+    f!((*p).crypto_us_last).write(0);
     p
 }
 
@@ -360,7 +402,93 @@ pub unsafe extern "C" fn ns_mesh_create(block: *mut u8, len: u32, mac: *const u8
 unsafe fn build_stack(dst: *mut Stack, me: NodeId, mac: [u8; 6], channel: u8, counter_mark: u64) -> bool {
     let w = WifiP2p::new(P2pConfig::new(mac), channel);
     let cfg = StackConfig { counter_mark, ..StackConfig::default() };
-    MeshStack::init_in(dst, me, mac, w, DevKey(mac), EspRng, cfg).is_ok()
+    MeshStack::init_in(dst, me, mac, w, DevKey::load(&mac), EspRng, cfg).is_ok()
+}
+
+/// The persisted mesh state (`/lfs/mesh.bin`, `len` bytes) at `MESH ON` (M7): the device is
+/// provisioned as before and searches for its mesh. 1 if it was valid.
+#[no_mangle]
+pub unsafe extern "C" fn ns_mesh_restore(m: *mut Mesh, state: *const u8, len: u32, now_us: i64) -> u32 {
+    let m = &mut *m;
+    let Some(s) = MeshState::decode(core::slice::from_raw_parts(state, len as usize)) else {
+        m.log(format_args!("[mesh] stored state unusable ({len} B): not restored"));
+        return 0;
+    };
+    m.stack.node.backhaul.cfg.mesh_id = Some(s.mesh_id);
+    m.stack.restore(now_us, s);
+    m.provisioned_us = Some(now_us);
+    m.persist = true;
+    let me = m.stack.me();
+    m.log(format_args!(
+        "[mesh] restored id={me:04x} mesh_id={:08x} epoch={} mode={} admin_key={} site_secret={} revoked={} groups={}",
+        s.mesh_id,
+        s.epoch,
+        mode_name(s.mode),
+        s.admin_key.is_some() as u8,
+        s.site_secret.is_some() as u8,
+        s.revoked.len(),
+        s.groups.len()
+    ));
+    1
+}
+
+/// The mesh state to persist, if it changed (call after each pass, on loopTask): -1 = erase
+/// the stored state, 0 = nothing to do, n = write `out[..n]` (`cap` >= [`ns_mesh_state_len`]).
+#[no_mangle]
+pub unsafe extern "C" fn ns_mesh_persist(m: *mut Mesh, out: *mut u8, cap: u32) -> i32 {
+    let m = &mut *m;
+    if !m.dirty {
+        return 0;
+    }
+    m.dirty = false;
+    if !m.persist {
+        return 0;
+    }
+    match m.stack.membership.state {
+        None => -1,
+        Some(s) => s.encode_into(core::slice::from_raw_parts_mut(out, cap as usize)) as i32,
+    }
+}
+
+/// Bytes of the persisted state.
+#[no_mangle]
+pub extern "C" fn ns_mesh_state_len() -> u32 {
+    STATE_LEN as u32
+}
+
+/// One session crypto job (a grant's ECDSA verify plus an ECDH, or a member Ack's ECDH),
+/// if any is waiting. The transport calls it after the tick on the tick's stack: never on
+/// the render task, never per command (design §7.9). 1 if it ran one.
+#[no_mangle]
+pub unsafe extern "C" fn ns_mesh_crypto(m: *mut Mesh, now_us: i64) -> u32 {
+    let m = &mut *m;
+    if !m.stack.crypto_pending() {
+        return 0;
+    }
+    let t0 = esp_timer_get_time();
+    let ran = m.stack.run_crypto(now_us);
+    let dt = (esp_timer_get_time() - t0).clamp(0, u32::MAX as i64) as u32;
+    if ran {
+        m.crypto_us_last = dt;
+        m.crypto_us_max = m.crypto_us_max.max(dt);
+        let n = m.stack.crypto_jobs;
+        m.log(format_args!("[mesh] crypto job={n} us={dt}"));
+    }
+    ran as u32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ns_mesh_crypto_staged(m: *mut Mesh) {
+    let t = (*m).staged.0;
+    ns_mesh_crypto(m, t);
+}
+
+pub(crate) fn mode_name(m: Mode) -> &'static str {
+    match m {
+        Mode::Open => "open",
+        Mode::Closed => "closed",
+        Mode::Locked => "locked",
+    }
 }
 
 /// The raw block the mesh was built in (the transport keeps the tick stack after it).
@@ -459,13 +587,17 @@ pub unsafe extern "C" fn ns_mesh_set_ap(m: *mut Mesh, bssid: *const u8) {
     (*m).ap_bssid = *(bssid as *const [u8; 6]);
 }
 
-/// Read a setting: 5 = the TSF read mode, 6 = mesh time synced (1/0).
+/// Read a setting: 5 = the TSF read mode, 6 = mesh time synced (1/0), 7 = the mesh wants
+/// to be turned off (it left, or was ejected; M7), 8 = session crypto is waiting.
 #[no_mangle]
 pub unsafe extern "C" fn ns_mesh_get(m: *mut Mesh, what: u32) -> u32 {
     let m = &*m;
     match what {
         5 => m.tsf_mode as u32,
         6 => m.stack.time.synced() as u32,
+        7 => m.want_off as u32,
+        8 => m.stack.crypto_pending() as u32,
+        9 => (m.dirty && m.persist) as u32,
         _ => 0,
     }
 }
@@ -702,6 +834,14 @@ pub unsafe extern "C" fn ns_mesh_tick(m: *mut Mesh, now_us: i64, radio_ch: u8, a
     let mut rx_log: [Option<(NodeId, u8, u8, u32)>; 4] = [None; 4];
     // Relayed control for this member (M5): copied out of the tick, judged after it.
     let mut ctl_in: [Option<(NodeId, u32, bool, u8, [u8; P])>; mesh_gw::INBOX] = [None; mesh_gw::INBOX];
+    // Membership (M7): what changed, logged and persisted after the tick.
+    let mut changed = false;
+    let mut ejected = false;
+    let mut joined: Option<u8> = None;
+    let mut rekeyed: Option<u8> = None;
+    let mut pending: Option<splanc_mesh::msg::PendingJoin> = None;
+    let mut synced: Option<(u32, NodeId)> = None;
+    let mut renew: Option<(u32, u32)> = None;
     {
         let Mesh { stack, scratch, test_rx, .. } = m;
         stack.tick(now_us, &mut NoFlash, scratch, &mut |e| match e {
@@ -728,8 +868,42 @@ pub unsafe extern "C" fn ns_mesh_tick(m: *mut Mesh, now_us: i64, radio_ch: u8, a
                 }
             }
             Event::PersistCounter(c) => mark = Some(c),
+            Event::Joined { epoch } => {
+                changed = true;
+                joined = Some(epoch);
+            }
+            Event::Rekeyed { epoch } => {
+                changed = true;
+                rekeyed = Some(epoch);
+            }
+            Event::StateChanged => changed = true,
+            Event::Ejected => ejected = true,
+            Event::Pending(p) => pending = Some(p),
+            Event::SessionSynced { session, gateway } => synced = Some((session, gateway)),
+            Event::GrantRenewalDue { session, not_after } => renew = Some((session, not_after)),
             _ => {}
         });
+    }
+    m.dirty |= changed || ejected;
+    if ejected {
+        m.want_off = true;
+        m.log(format_args!("[mesh] ejected by the admin: left the mesh"));
+    }
+    if let Some(e) = joined {
+        m.log(format_args!("[mesh] joined epoch={e}"));
+    }
+    if let Some(e) = rekeyed {
+        let n = m.stack.membership.state.map_or(0, |s| s.revoked.len());
+        m.log(format_args!("[mesh] rekeyed epoch={e} revoked={n}"));
+    }
+    if let Some(p) = pending {
+        m.log(format_args!("[mesh] pending join node={:04x} key={:016x} heard_by={:04x}", p.node, u64::from_be_bytes(p.key_hash), p.heard_by));
+    }
+    if let Some((s, g)) = synced {
+        m.log(format_args!("[mesh] session synced session={s} gateway={g:04x}"));
+    }
+    if let Some((s, t)) = renew {
+        m.log(format_args!("[mesh] grant renewal due session={s} not_after={t}"));
     }
     m.controls += ctl;
     m.packets += pkt;
@@ -818,6 +992,56 @@ pub unsafe extern "C" fn ns_mesh_dev_provision(m: *mut Mesh, mesh_id: u32, secre
     m.stack.provision(now_us, &c, ProvisionSource::App);
     m.provisioned_us = Some(now_us);
     m.member_us = None;
+    // Never persisted (desk #67): the dev key lives only until MESH OFF or a reboot.
+    m.persist = false;
+}
+
+/// Leave the mesh from the console (`MESH LEAVE`, physical access: the recovery path when the
+/// app lost the admin secret, design §7.9): the state and its admin key are erased and the
+/// mesh turns off.
+#[no_mangle]
+pub unsafe extern "C" fn ns_mesh_leave(m: *mut Mesh) {
+    let m = &mut *m;
+    m.stack.leave();
+    m.persist = true;
+    m.dirty = true;
+    m.want_off = true;
+    m.log(format_args!("[mesh] left the mesh (console)"));
+}
+
+/// Dev image only (`MESH FORGE`): what an insider holding the mesh key could put on the air,
+/// to prove members refuse it on a mesh with an admin key. `kind` 0: relay `data` (an encoded
+/// ClientMessage) as envelope-trust control, no grant, no per-receiver MACs; 1: originate a
+/// show epoch `data` (i64 ms after mesh-time now, little-endian) in our beacons, bypassing
+/// the epoch policy. 1 if it went out.
+#[no_mangle]
+pub unsafe extern "C" fn ns_mesh_dev_forge(m: *mut Mesh, kind: u32, data: *const u8, len: u32, now_us: i64) -> u32 {
+    let m = &mut *m;
+    let d = core::slice::from_raw_parts(data, len as usize);
+    match kind {
+        0 => {
+            let st = &mut m.stack;
+            let mut body = [0u8; P];
+            let Some(n) = splanc_mesh::ports::ControlHeader::new(0x7e57_0000 | (now_us as u32 & 0xffff), splanc_mesh::ports::Targets::All).encode(d, &mut body) else { return 0 };
+            let Some(seq) = st.node.guard.next_sequence() else { return 0 };
+            let mut buf = [0u8; P + 16];
+            let mesh_id = st.node.guard.mesh_id;
+            let Some(k) = splanc_mesh::admin::seal_command(mesh_id, splanc_mesh::ports::SESSION_ENVELOPE, seq, Port::Control as u8, &body[..n], &[], &mut buf) else { return 0 };
+            if k > st.node.max_payload() {
+                return 0;
+            }
+            let ok = st.node.net.send(swarm_net::mesh::BROADCAST, Port::Control as u8, &buf[..k], false).is_some();
+            m.log(format_args!("[mesh] forged envelope control len={} sent={}", d.len(), ok as u8));
+            ok as u32
+        }
+        1 if d.len() == 8 && m.stack.time.synced() => {
+            let ms = i64::from_le_bytes(d.try_into().unwrap_or([0; 8]));
+            let e = m.stack.time.originate(Some(m.stack.time.mesh_us(now_us) + ms * 1000));
+            log_epoch(m, "forged", e);
+            1
+        }
+        _ => 0,
+    }
 }
 
 /// Settings: `what` 0 = group policy (0 bcast, 1 unicast), 1 = broadcast rate code,
@@ -931,6 +1155,8 @@ fn report(m: &Mesh, what: u32, idx: u32, now: i64, w: &mut Buf<'_>) -> bool {
             )
         }
         (0, 1) => mesh_gw::report(m, w),
+        (0, 2) => mesh_gw::report_membership(m, now, w),
+        (0, 3) => mesh_gw::report_admin(m, w),
         (1, i) => {
             // Link neighbours (RSSI, ACKs), joined with the stack's advert table.
             let Some(n) = b.neighbours.iter().flatten().nth(i as usize) else { return false };
@@ -1072,6 +1298,28 @@ mod stubs {
     extern "C" fn lm_mesh_tb(_: i32, _: *mut i64, _: i64) -> i32 {
         0
     }
+    // The device key (main.cpp on MbedTLS): a fixed P-256 key on the host's p256.
+    fn host_key() -> splanc_mesh::host_keys::HostKey {
+        splanc_mesh::host_keys::HostKey::from_seed(0x3170)
+    }
+    #[no_mangle]
+    extern "C" fn lm_mesh_device_key(out: *mut u8) -> u32 {
+        use splanc_mesh::crypto::DeviceKey;
+        unsafe { core::ptr::copy_nonoverlapping(host_key().public_key().as_ptr(), out, 65) };
+        1
+    }
+    #[no_mangle]
+    extern "C" fn lm_mesh_ecdh(peer: *const u8, out: *mut u8) -> u32 {
+        use splanc_mesh::crypto::DeviceKey;
+        let p = unsafe { *(peer as *const [u8; 65]) };
+        match host_key().ecdh(&p) {
+            Some(x) => {
+                unsafe { core::ptr::copy_nonoverlapping(x.as_ptr(), out, 32) };
+                1
+            }
+            None => 0,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1110,6 +1358,93 @@ mod tests {
             assert_eq!(ns_mesh_test(m, 0xFFFF, 16, 1, 1000, 20, 0, 1, t), 0, "CONTROL is admin-class");
             assert_eq!(ns_mesh_test(m, 0xFFFF, 18, 3, 1000, 20, 0, 1, t), 1);
             assert_eq!(ns_mesh_destroy(m), raw);
+        }
+    }
+
+    /// M7 over the FFI: the app's mesh_admin provisions (persisted), the admin's grant unlocks
+    /// the connection, leave needs it, and the stored bytes restore the membership.
+    #[test]
+    fn mesh_admin_provision_unlock_leave_restore() {
+        use splanc_mesh::crypto::DeviceKey;
+        use splanc_mesh::host_keys::AdminSigner;
+        fn frame(op: u32, body: impl FnOnce(&mut mesh_gw::Pb<'_>)) -> std::vec::Vec<u8> {
+            let mut b = [0u8; 400];
+            let n = {
+                let mut w = mesh_gw::Pb::new(&mut b);
+                w.msg(101, |a| a.msg(op, body));
+                assert!(w.ok);
+                w.n
+            };
+            b[..n].to_vec()
+        }
+        let app = |m: *mut Mesh, conn: u32, f: &[u8]| -> std::vec::Vec<u8> {
+            let mut out = [0u8; 1024];
+            let (mut ip, mut il) = (core::ptr::null(), 0u32);
+            let n = unsafe { mesh_gw::ns_mesh_app(m, conn, f.as_ptr(), f.len() as u32, 0, out.as_mut_ptr(), out.len() as u32, &mut ip, &mut il) };
+            assert!(n > 0, "a reply");
+            out[..n as usize].to_vec()
+        };
+        // ServerMessage{mesh{admin{op, error}}}: the error byte, 0 if absent (OK).
+        let error = |r: &[u8]| -> u8 { r.windows(1).zip(r.iter().skip(1)).find(|(w, _)| w[0] == 0x10).map_or(0, |(_, e)| *e) };
+        const MESH: u32 = 0x5350_4c37;
+        let admin = AdminSigner::from_secret(b"m7-admin-secret!", MESH);
+        let mut block = vec![0u8; ns_mesh_size() as usize];
+        let mac = [0x8c, 0xfd, 0x49, 0x12, 0x31, 0x70];
+        let m = unsafe { ns_mesh_create(block.as_mut_ptr(), ns_mesh_size(), mac.as_ptr(), 1, 0, 0) };
+        assert!(!m.is_null());
+        let pk = admin.public();
+        let prov = frame(mesh_gw::op::PROVISION, |p| {
+            p.u(1, MESH.into());
+            p.bytes(2, &[0x51; 32]);
+            p.bytes(3, &pk);
+        });
+        assert_eq!(error(&app(m, 1, &prov)), 0);
+        unsafe {
+            assert_eq!(ns_mesh_get(m, 9), 1, "to persist");
+            let mut st = vec![0u8; STATE_LEN];
+            assert_eq!(ns_mesh_persist(m, st.as_mut_ptr(), st.len() as u32), STATE_LEN as i32);
+            assert_eq!(ns_mesh_get(m, 9), 0);
+            let mut t = 0;
+            while t < 6_000_000 {
+                t += 5_000;
+                ns_mesh_tick(m, t, 1, 1);
+            }
+            assert!((*m).stack.membership.is_member());
+            assert!(!(*m).stack.envelope_trust(), "an admin key");
+            // Leave (or re-provision) needs a grant on a fixture that holds an admin key.
+            let leave = frame(mesh_gw::op::LEAVE, |_| {});
+            assert_eq!(error(&app(m, 1, &leave)) as u32, mesh_gw::aerr::LOCKED);
+            // A grant for this fixture's device key (the TLS key: the host stub's).
+            let me = (*m).stack.me();
+            let dk = (*m).stack.dev.public_key();
+            let g = admin.grant(MESH, 7, me, dk, 3_600);
+            let mut gb = [0u8; 200];
+            let gn = splanc_mesh::admin::SessionMsg::Grant(g).encode(&mut gb).unwrap();
+            let unlock = frame(mesh_gw::op::UNLOCK, |p| p.bytes(1, &gb[..gn]));
+            assert_eq!(error(&app(m, 1, &unlock)), 0);
+            assert!((*m).stack.signing_session(1));
+            // A grant signed by someone else, on another connection: refused, then locked out.
+            let rogue = AdminSigner::from_secret(b"not-the-admin!!!", MESH).grant(MESH, 8, me, dk, 3_600);
+            let gn2 = splanc_mesh::admin::SessionMsg::Grant(rogue).encode(&mut gb).unwrap();
+            let bad = frame(mesh_gw::op::UNLOCK, |p| p.bytes(1, &gb[..gn2]));
+            assert_eq!(error(&app(m, 2, &bad)) as u32, mesh_gw::aerr::BAD_GRANT);
+            assert_eq!(error(&app(m, 2, &bad)) as u32, mesh_gw::aerr::LOCKED_OUT);
+            // get_mesh lists the membership: mode, phase, the device key, the session.
+            let state = app(m, 1, &[0xa2, 0x06, 0x00]);
+            assert!(state.windows(dk.len()).any(|w| w == dk), "device key in the state");
+            // The grant's connection may leave: state erased, the mesh turns off.
+            assert_eq!(error(&app(m, 1, &leave)), 0);
+            assert_eq!(ns_mesh_get(m, 7), 1, "wants off");
+            assert_eq!(ns_mesh_persist(m, st.as_mut_ptr(), st.len() as u32), -1, "erase");
+            assert_eq!(ns_mesh_destroy(m), block.as_mut_ptr());
+            // The stored bytes bring the membership back in a fresh mesh.
+            let mut block2 = vec![0u8; ns_mesh_size() as usize];
+            let m2 = ns_mesh_create(block2.as_mut_ptr(), ns_mesh_size(), mac.as_ptr(), 1, 0, 0);
+            assert_eq!(ns_mesh_restore(m2, st.as_ptr(), 10, 0), 0, "torn");
+            assert_eq!(ns_mesh_restore(m2, st.as_ptr(), st.len() as u32, 0), 1);
+            let s = (*m2).stack.membership.state.unwrap();
+            assert_eq!((s.mesh_id, s.admin_key, s.site_secret), (MESH, Some(pk), Some([0x51; 32])));
+            ns_mesh_destroy(m2);
         }
     }
 

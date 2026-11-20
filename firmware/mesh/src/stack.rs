@@ -31,7 +31,7 @@ use crate::gateway::{self, Fanout, ReplyMsg, StatusMsg, STATUS_EVERY_US, T_STATU
 use crate::guest::{FollowEvent, Follower};
 #[cfg(feature = "open_mode")]
 use crate::membership::Follow;
-use crate::membership::{Credentials, Groups, Membership, Mode, Note, Out, Phase, ProvisionSource};
+use crate::membership::{Credentials, Groups, MeshState, Membership, Mode, Note, Out, Phase, ProvisionSource};
 use crate::meshtime::{MeshTime, ShowEpoch, TimeBeacon, BEACON_MAX};
 #[cfg(feature = "open_mode")]
 use crate::msg::GuestHello;
@@ -81,7 +81,10 @@ pub enum EpochPolicy {
     AnyMember,
 }
 
-/// The one switch desk #79 decides ([`MeshStack::originate_epoch`] applies it).
+/// The one switch desk #79 decides ([`MeshStack::originate_epoch`] applies it). On a mesh
+/// with an admin key (mesh M7) the epoch is always the admin session's: only a connection
+/// that presented a grant may start one, and members take it only from that session's
+/// signed `TIME_BASE` (beacon gossip of any other epoch is ignored, [`MeshTime::authorise`]).
 pub const EPOCH_POLICY: EpochPolicy = EpochPolicy::GatewaySession;
 
 /// Where a request to start a show epoch came from.
@@ -168,6 +171,9 @@ pub enum Event<'a> {
     /// Gateway: this session's grant expires at `not_after` (mesh seconds); the app should
     /// sign a renewal (same session, later expiry) and present it with `unlock`.
     GrantRenewalDue { session: u32, not_after: u32 },
+    /// The admin ejected this device (mesh M7, issue #571's seam): its mesh state is gone;
+    /// the firmware forgets the persisted state and turns the mesh off.
+    Ejected,
     #[cfg(feature = "open_mode")]
     FollowStarted { mesh_id: u32 },
     #[cfg(feature = "open_mode")]
@@ -292,6 +298,12 @@ pub struct MeshStack<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, cons
     next_status_us: Option<i64>,
     /// Epoch requests refused by [`EPOCH_POLICY`].
     pub epochs_refused: u32,
+    /// Gateway on a signed mesh (M7): the epoch it originated still has to go out as the
+    /// session's `TIME_BASE` (it is also re-sent with every grant broadcast).
+    epoch_announce: bool,
+    /// Signed `TIME_BASE` commands sent (gateway) and taken (member).
+    pub epochs_sent: u32,
+    pub epochs_signed: u32,
 }
 
 impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> MeshStack<B, P, K, E, R> {
@@ -383,6 +395,9 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         w!(status_sent, None);
         w!(next_status_us, None);
         w!(epochs_refused, 0);
+        w!(epoch_announce, false);
+        w!(epochs_sent, 0);
+        w!(epochs_signed, 0);
         Ok(())
     }
 
@@ -418,6 +433,45 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     pub fn provision(&mut self, now_us: i64, c: &Credentials, source: ProvisionSource) {
         self.membership.provision(c, source, now_us);
         self.sync_keys(now_us);
+    }
+
+    /// The persisted mesh state at boot (mesh M7): as provisioned, searching first.
+    pub fn restore(&mut self, now_us: i64, s: MeshState) {
+        self.membership.restore(s, now_us);
+        self.sync_keys(now_us);
+    }
+
+    /// Leave the mesh (the app's `mesh_admin.leave`, or the admin's eject): every credential,
+    /// session and key is dropped; nothing is sealed or accepted until provisioned again.
+    pub fn leave(&mut self) {
+        let id = self.node.guard.mesh_id;
+        self.membership.leave();
+        self.node.guard.set_none(id);
+        self.installed = None;
+        self.sessions = Sessions::new();
+        self.gateway = None;
+        self.rekeyer = None;
+        self.rekey_member = RekeyMember::default();
+        self.gate = AdminGate::new();
+        self.held = None;
+        self.live = None;
+        self.pending_grant = None;
+        self.pending_acks = [None; CRYPTO_ACKS];
+        self.epoch_announce = false;
+        self.time.epoch_allowed = None;
+    }
+
+    /// Connection `conn` holds a grant for this gateway's live session (not envelope trust).
+    pub fn signing_session(&self, conn: usize) -> bool {
+        match (self.gate.session(conn), self.gateway.as_ref()) {
+            (Some(s), Some(g)) => s != SESSION_ENVELOPE && g.grant.session == s,
+            _ => false,
+        }
+    }
+
+    /// A connection holding a signing session, if any (the console's epochs go out under it).
+    pub fn signing_conn(&self) -> Option<usize> {
+        (0..admin::MAX_CONNECTIONS).find(|&c| self.signing_session(c))
     }
 
     /// The `mesh_follow` device setting (§7.2).
@@ -541,6 +595,8 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     /// Run the device's mesh for one step: receive, timers, adverts, sessions, the mesh slot,
     /// deliver. `scratch` must hold `scratch_len()` bytes. Bounded work; never blocks.
     pub fn tick(&mut self, now_us: i64, flash: &mut dyn Flash, scratch: &mut [u8], on: &mut dyn FnMut(Event<'_>)) {
+        // Signed epochs (M7): with an admin key, only the session's TIME_BASE sets the epoch.
+        self.time.epoch_signed = !self.envelope_trust();
         // 0. The last time beacon's completion (two-step stamp, M4).
         if let Some(st) = self.node.backhaul.take_tx_stamp() {
             self.time.on_stamp(st.done_us, st.err_us);
@@ -648,7 +704,13 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
                 if now_us >= *self.next_grant_us.get_or_insert(now_us) {
                     self.next_grant_us = Some(now_us + GRANT_EVERY_US);
                     self.send_session(BROADCAST, &SessionMsg::Grant(g), false);
+                    // The epoch this gateway originated goes again with the grant, for
+                    // members that joined or rebooted since (M7).
+                    self.epoch_announce |= self.time.epoch.is_some_and(|e| e.origin == self.me());
                 }
+            }
+            if self.epoch_announce && self.node.net.mesh.can_send() {
+                self.announce_epoch(now_us);
             }
             // Only when the outbox has room: a packet the mesh can't queue would be lost
             // until the next round (a C6 gateway's outbox holds 4).
@@ -751,15 +813,45 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
     /// gossip it from then on. None: refused (the device keeps following the mesh's epoch).
     /// The one seam owner desk #79 decides.
     pub fn originate_epoch(&mut self, by: EpochSource, epoch_mesh_us: Option<i64>) -> Option<ShowEpoch> {
-        let allowed = match (EPOCH_POLICY, by) {
-            (EpochPolicy::AnyMember, _) | (_, EpochSource::Console) => true,
-            (EpochPolicy::GatewaySession, EpochSource::Connection(conn)) => self.gate.is_unlocked(conn),
+        // A mesh with an admin key (M7): only a grant's session, and the epoch goes out as
+        // its signed TIME_BASE (members ignore any other). The console, too, needs one.
+        let signed = !self.envelope_trust();
+        let allowed = match (signed, EPOCH_POLICY, by) {
+            (true, _, EpochSource::Connection(conn)) => self.signing_session(conn),
+            (true, _, EpochSource::Console) => self.signing_conn().is_some(),
+            (false, EpochPolicy::AnyMember, _) | (false, _, EpochSource::Console) => true,
+            (false, EpochPolicy::GatewaySession, EpochSource::Connection(conn)) => self.gate.is_unlocked(conn),
         };
         if !allowed {
             self.epochs_refused += 1;
             return None;
         }
-        Some(self.time.originate(epoch_mesh_us))
+        let e = self.time.originate(epoch_mesh_us);
+        self.epoch_announce = signed;
+        Some(e)
+    }
+
+    /// Send the epoch this gateway originated as its session's signed `TIME_BASE`.
+    fn announce_epoch(&mut self, now_us: i64) {
+        let (Some(conn), Some(e)) = (self.signing_conn(), self.time.epoch) else {
+            self.epoch_announce = false;
+            return;
+        };
+        if e.origin != self.me() {
+            self.epoch_announce = false;
+            return;
+        }
+        let mut b = [0u8; ShowEpoch::LEN];
+        let Some(n) = e.encode(&mut b) else { return };
+        match self.send_admin(now_us, conn, Port::TimeBase, &b[..n], None) {
+            Ok(_) => {
+                self.epochs_sent += 1;
+                self.epoch_announce = false;
+            }
+            // No member confirmed yet: the next grant round tries again.
+            Err(SendError::NoRecipients) => self.epoch_announce = false,
+            Err(_) => {}
+        }
     }
 
     fn send_session(&mut self, to: NodeId, m: &SessionMsg, want_ack: bool) {
@@ -837,8 +929,26 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
             Port::Freshness => self.on_freshness(now_us, origin, body, on),
             Port::Membership => {
                 if let Some(c) = MemberCommand::decode(body) {
+                    if let MemberCommand::Eject { node, key_hash } = c {
+                        // Only an authenticated command reaches here (admin session, or
+                        // envelope trust on a dev mesh); it names this device by id and key.
+                        if node == self.me() && key_hash == self.key_hash() {
+                            self.leave();
+                            on(Event::Ejected);
+                        }
+                        return;
+                    }
                     let note = self.membership.on_command(now_us, &c);
                     self.handle_note(now_us, note, on);
+                }
+            }
+            Port::TimeBase if admin => {
+                // The admin session's show epoch (M7, desk #79): authoritative.
+                if let Some(e) = ShowEpoch::decode(body) {
+                    self.epochs_signed += 1;
+                    if let Some(e) = self.time.authorise(e) {
+                        on(Event::ShowEpoch(e));
+                    }
                 }
             }
             Port::Status if body.first() == Some(&T_PROBE) => {}
@@ -1162,6 +1272,12 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         self.command(now_us, conn, &MemberCommand::AssignGroups { node, groups: Groups::from_slice(groups) })
     }
 
+    /// Eject one member (M7; issue #571's seam): it leaves the mesh. Not a removal (no
+    /// rotation): use [`MeshStack::rotate`] with a revocation to keep it out.
+    pub fn eject(&mut self, now_us: i64, conn: usize, node: NodeId, key_hash: KeyHash) -> Result<usize, SendError> {
+        self.command(now_us, conn, &MemberCommand::Eject { node, key_hash })
+    }
+
     pub fn set_mode(&mut self, now_us: i64, conn: usize, mode: Mode) -> Result<usize, SendError> {
         let generation = self.membership.state.map(|s| s.generation).unwrap_or(0).wrapping_add(1);
         self.command(now_us, conn, &MemberCommand::SetMode { mode, generation })
@@ -1176,6 +1292,12 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         let admin_key = self.membership.admin_key().copied().ok_or(SendError::BadOrder)?;
         let rk = Rekeyer::start(now_us, gs, order, mesh_key, site_secret, &admin_key, exclude, &mut self.rng).ok_or(SendError::BadOrder)?;
         self.rekeyer = Some(rk);
+        // The removed get no wrap, and no command MACs from now on (M7).
+        if let Some(gs) = self.gateway.as_mut() {
+            for &n in exclude {
+                gs.remove(n);
+            }
+        }
         let keys = NewKeys { epoch: order.epoch, mesh_key: *mesh_key, site_secret: *site_secret, rev_version: order.rev_version, revoked: order.revoked, n_revoked: order.n_revoked };
         self.install(now_us, &keys, on);
         Ok(())

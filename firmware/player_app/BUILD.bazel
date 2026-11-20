@@ -817,6 +817,12 @@ _MESH_FFI_SYMS = [
     "ns_mesh_xfer",
     "ns_mesh_status_due",
     "ns_mesh_conns",
+    # Membership and administration (mesh M7).
+    "ns_mesh_restore",
+    "ns_mesh_persist",
+    "ns_mesh_state_len",
+    "ns_mesh_crypto_staged",
+    "ns_mesh_leave",
 ]
 
 # The mesh (docs/design/mesh.md M3): MeshStack over the 802.11 backhaul

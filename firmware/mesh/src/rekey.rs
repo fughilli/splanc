@@ -78,10 +78,8 @@ impl Revocations {
     }
 
     pub fn encode_into(&self, w: &mut W<'_>) {
-        w.u16(self.version).u8(self.n);
-        for h in &self.h {
-            w.put(h);
-        }
+        // The table as one run of bytes (no per-entry code: firmware flash, mesh M7).
+        w.u16(self.version).u8(self.n).put(self.h.as_flattened());
     }
 
     pub fn decode_from(r: &mut R<'_>) -> Option<Revocations> {
@@ -91,9 +89,7 @@ impl Revocations {
             return None;
         }
         let mut h = [[0u8; 8]; REVOKED_MAX];
-        for x in h.iter_mut() {
-            *x = r.arr()?;
-        }
+        h.as_flattened_mut().copy_from_slice(r.take(REVOKED_MAX * 8)?);
         Some(Revocations { version, n, h })
     }
 }
@@ -158,12 +154,24 @@ impl RekeyOrder {
         o
     }
 
+    /// The order on its own ([`RekeyOrder::LEN`] bytes): what the app hands the gateway
+    /// (`mesh_admin.revoke`, mesh M7).
+    pub fn encode(&self, out: &mut [u8]) -> Option<usize> {
+        let mut w = W::new(out);
+        self.encode_into(&mut w);
+        w.done()
+    }
+
+    pub fn decode(b: &[u8]) -> Option<RekeyOrder> {
+        let mut r = R::new(b);
+        let o = Self::decode_from(&mut r)?;
+        r.end()?;
+        Some(o)
+    }
+
     fn encode_into(&self, w: &mut W<'_>) {
         w.u32(self.mesh_id).u8(self.epoch).put(&self.keys_hash).u16(self.rev_version).u8(self.n_revoked);
-        for h in &self.revoked {
-            w.put(h);
-        }
-        w.put(&self.sig);
+        w.put(self.revoked.as_flattened()).put(&self.sig);
     }
 
     fn decode_from(r: &mut R<'_>) -> Option<RekeyOrder> {
@@ -173,9 +181,7 @@ impl RekeyOrder {
         let rev_version = r.u16()?;
         let n_revoked = r.u8()?;
         let mut revoked = [[0u8; 8]; ORDER_REVOKED];
-        for h in revoked.iter_mut() {
-            *h = r.arr()?;
-        }
+        revoked.as_flattened_mut().copy_from_slice(r.take(ORDER_REVOKED * 8)?);
         if n_revoked as usize > ORDER_REVOKED {
             return None;
         }
@@ -603,5 +609,19 @@ mod tests {
         assert_eq!(RekeyHead::LEN, 185);
         assert_eq!(RekeyWraps::len_for(7), 189);
         assert_eq!(RekeyWraps::len_for(1) - RekeyWraps::len_for(0), 26);
+    }
+
+    #[test]
+    fn order_roundtrips_on_its_own() {
+        let admin = crate::host_keys::AdminSigner::from_secret(b"0123456789abcdef", 7);
+        let o = RekeyOrder::sign(&admin, 7, 2, &[1; 16], &[2; 32], 3, &[[9; 8]]);
+        let mut b = [0u8; RekeyOrder::LEN + 4];
+        let n = o.encode(&mut b).unwrap();
+        assert_eq!(n, RekeyOrder::LEN);
+        let d = RekeyOrder::decode(&b[..n]).unwrap();
+        assert_eq!(d, o);
+        assert!(d.verify(&admin.public()));
+        assert_eq!(RekeyOrder::decode(&b[..n - 1]), None);
+        assert_eq!(RekeyOrder::decode(&b[..n + 1]), None);
     }
 }

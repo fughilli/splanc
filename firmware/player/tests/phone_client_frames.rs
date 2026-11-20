@@ -115,6 +115,7 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::SetNetworkOutput(_)
         | CMsg::MeshSend(_)
         | CMsg::GetMesh(_)
+        | CMsg::MeshAdmin(_)
         | CMsg::OtaBegin(_)
         | CMsg::OtaChunk(_)
         | CMsg::OtaFinish(_)
@@ -213,6 +214,7 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::SetNetworkOutput(_) => "set_network_output",
         CMsg::MeshSend(_) => "mesh_send",
         CMsg::GetMesh(_) => "get_mesh",
+        CMsg::MeshAdmin(_) => "mesh_admin",
         CMsg::OtaBegin(_) => "ota_begin",
         CMsg::OtaChunk(_) => "ota_chunk",
         CMsg::OtaFinish(_) => "ota_finish",

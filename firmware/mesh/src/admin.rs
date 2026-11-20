@@ -338,6 +338,11 @@ impl Sessions {
         }
     }
 
+    /// Sessions whose gateway confirmed our freshness (their commands are accepted).
+    pub fn synced(&self) -> usize {
+        self.s.iter().flatten().filter(|s| s.floor.is_some()).count()
+    }
+
     pub fn get(&self, session: u32) -> Option<&MemberSession> {
         self.s.iter().flatten().find(|s| s.session == session)
     }
@@ -549,6 +554,15 @@ impl<const N: usize> GatewaySession<N> {
         }
         self.stats.acks += 1;
         Some((node, SessionMsg::Confirm { session, node, nonce, counter, mac: confirm_mac(&k, session, node, nonce, counter) }))
+    }
+
+    /// A member removed by a rotation (M7): no more per-receiver MACs for it.
+    pub fn remove(&mut self, node: NodeId) {
+        for e in self.roster.iter_mut() {
+            if e.is_some_and(|e| e.node == node) {
+                *e = None;
+            }
+        }
     }
 
     pub fn roster(&self) -> impl Iterator<Item = &RosterEntry> {

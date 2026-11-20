@@ -803,6 +803,32 @@ extern "C" uint32_t lm_mesh_counter_store(uint64_t mark) {
   return fs_write_file(kMeshCounterPath, reinterpret_cast<const uint8_t *>(&mark), sizeof mark) ? 1 : 0;
 }
 
+// The mesh membership (docs/design/mesh.md §7.2, mesh M7): one small file, written only when
+// membership changes (provision, join, rotation, groups), through the power-loss-safe writer
+// (temp + fsync + rename), so a reset mid-write leaves the old state or the new, never a
+// torn one. Present = this fixture is in a mesh: the transport turns the mesh on at boot.
+// Erased on leave or eject. mesh_glue.h calls these.
+static const char kMeshStatePath[] = "/lfs/mesh.bin";
+
+extern "C" uint32_t lm_mesh_state_load(uint8_t *buf, uint32_t cap) {
+  FILE *f = fs_open(kMeshStatePath, "rb");
+  if (f == nullptr) return 0;
+  size_t n = fread(buf, 1, cap, f);
+  fclose(f);
+  return (uint32_t)n;
+}
+
+extern "C" uint32_t lm_mesh_state_store(const uint8_t *buf, uint32_t len) {
+  if (buf == nullptr || len == 0) {
+    remove(kMeshStatePath);
+    FILE *f = fs_open(kMeshStatePath, "rb");
+    if (f == nullptr) return 1;
+    fclose(f);
+    return 0;
+  }
+  return fs_write_file(kMeshStatePath, buf, len) ? 1 : 0;
+}
+
 // Mesh time (docs/design/mesh.md §6.3, mesh M4): mesh_ffi.rs maps the mesh's show epoch
 // onto the player's time base through this, from loopTask, with a TRY-lock (the render
 // task holds the mutex for a whole frame; the mesh retries next pass rather than wait).

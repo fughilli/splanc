@@ -75,7 +75,16 @@ import type { ColorBlock } from "@ledmapper/protocol";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
 import { decodeServer, encodeClient, type KioskStatusMessage, type SetKioskConfigMessage } from "./proto";
 import { LiveControl, applyAt } from "./liveControl";
-import { meshResultError, wrapForMesh, type MeshInfoMessage, type MeshResultInfo, type MeshStateInfo } from "./mesh";
+import {
+  meshAdminMessage,
+  meshResultError,
+  wrapForMesh,
+  type MeshAdminOp,
+  type MeshAdminResultInfo,
+  type MeshInfoMessage,
+  type MeshResultInfo,
+  type MeshStateInfo,
+} from "./mesh";
 export { applyAt } from "./liveControl";
 import type { CaptureProfileFlat } from "../capture/captureProfile";
 import { normalizeWifiPolicy, wifiPolicyMessage, type WifiPolicy, type WifiPolicyRequest } from "./wifiPolicy";
@@ -1321,6 +1330,14 @@ export class LedMapperClient {
     const r = (await this.request({ type: "get_mesh" } as unknown as ClientMessage, "mesh", timeoutMs)) as unknown as MeshInfoMessage;
     this.meshState_ = r.state ?? {};
     return this.meshState_;
+  }
+
+  /** Membership and administration (mesh M7): provision this fixture into a mesh, unlock
+   * it as the gateway with the admin's grant, admit, revoke, leave. Resolves with the
+   * fixture's answer (check it with net/mesh.ts meshAdminError). */
+  async meshAdmin(op: MeshAdminOp, timeoutMs = 8000): Promise<MeshAdminResultInfo> {
+    const r = (await this.request(meshAdminMessage(op), "mesh", timeoutMs)) as unknown as MeshInfoMessage;
+    return r.admin ?? {};
   }
 
   /** The last mesh state read with {@link getMesh} (null before). */

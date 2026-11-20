@@ -101,6 +101,8 @@ const CLIENT_ARMS: Record<string, string> = {
   // The mesh gateway (docs/design/mesh.md §8; net/mesh.ts).
   mesh_send: "meshSend",
   get_mesh: "getMesh",
+  // Membership and administration (mesh M7; net/mesh.ts MeshAdminOp).
+  mesh_admin: "meshAdmin",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -171,7 +173,8 @@ const VEC3_LIST_KEYS = new Set(["trajectory", "polyline"]);
 // Keys carrying a proto `bytes` field. proto3 JSON encodes bytes as a base64
 // string, but the flat TS shapes use Uint8Array (submit_effect.fxb outbound,
 // effect_uniforms.manifest inbound) — convert at this boundary.
-const BYTES_KEYS = new Set(["fxb", "manifest"]);
+// deviceKey / keyHash: the mesh's device keys (MeshState, MeshPending; mesh M7).
+const BYTES_KEYS = new Set(["fxb", "manifest", "deviceKey", "keyHash"]);
 // `data` is a bytes field on both SetTexture (outbound, a Uint8Array we send)
 // and StoredMapChunk (inbound, kept as a base64 string the map decoder unpacks
 // itself). So convert it on ENCODE only, leaving the inbound StoredMapChunk.data
