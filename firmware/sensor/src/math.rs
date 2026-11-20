@@ -14,6 +14,23 @@
 /// Standard gravity, m/s² (same constant as swarm_core::estimator::GRAVITY).
 pub const GRAVITY: f32 = 9.80665;
 
+/// `f32::clamp` minus its formatted panic message, whose `{:?}` of two f32s is the
+/// firmware's only use of core's float formatter (~15 KB of flash). Same result for
+/// every input (NaN passes through) and the same panic on `min > max` or a NaN bound.
+#[inline]
+#[track_caller]
+pub fn clampf(x: f32, min: f32, max: f32) -> f32 {
+    assert!(min <= max);
+    let mut x = x;
+    if x < min {
+        x = min;
+    }
+    if x > max {
+        x = max;
+    }
+    x
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Vec3 {
     pub x: f32,

@@ -504,6 +504,23 @@ fn fract(x: f32) -> f32 {
     x - floorf(x)
 }
 
+/// `f32::clamp` minus its formatted panic message, whose `{:?}` of two f32s is the
+/// firmware's only use of core's float formatter (~15 KB of flash). Same result for
+/// every input (NaN passes through) and the same panic on `min > max` or a NaN bound.
+#[inline]
+#[track_caller]
+fn clampf(x: f32, min: f32, max: f32) -> f32 {
+    assert!(min <= max);
+    let mut x = x;
+    if x < min {
+        x = min;
+    }
+    if x > max {
+        x = max;
+    }
+    x
+}
+
 /// RGB (0..1) → HSV (hue 0..1 wrapping). Grey reports hue 0, saturation 0.
 pub fn rgb_to_hsv(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     let max = r.max(g).max(b);
@@ -659,9 +676,9 @@ pub fn blend(rules: &Rules, sources: &[&Packed], weights: &[f32], fill: &Packed,
                     continue;
                 }
                 let (rr, gg, bb) = hsv_to_rgb(h, s.clamp(0.0, 1.0), v);
-                out[o] = rr.clamp(r.min, r.max);
-                out[o + 1] = gg.clamp(r.min, r.max);
-                out[o + 2] = bb.clamp(r.min, r.max);
+                out[o] = clampf(rr, r.min, r.max);
+                out[o + 1] = clampf(gg, r.min, r.max);
+                out[o + 2] = clampf(bb, r.min, r.max);
                 for c in o + 3..o + wd {
                     out[c] = (0..n).map(|i| w(i) * val(i, c)).sum::<f32>();
                 }
@@ -679,7 +696,7 @@ pub fn blend(rules: &Rules, sources: &[&Packed], weights: &[f32], fill: &Packed,
                         x = r.min + floorf((x - r.min) / r.step + 0.5) * r.step;
                     }
                     if r.min <= r.max {
-                        x = x.clamp(r.min, r.max);
+                        x = clampf(x, r.min, r.max);
                     }
                     out[c] = x;
                 }
