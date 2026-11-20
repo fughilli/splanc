@@ -98,6 +98,9 @@ const CLIENT_ARMS: Record<string, string> = {
   get_ethernet_state: "getEthernetState",
   discover_controllers: "discoverControllers",
   set_network_output: "setNetworkOutput",
+  // The mesh gateway (docs/design/mesh.md §8; net/mesh.ts).
+  mesh_send: "meshSend",
+  get_mesh: "getMesh",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -137,6 +140,7 @@ const SERVER_ARMS: Record<string, string> = {
   kiosk_status: "kioskStatus",
   ethernet_state: "ethernetState",
   controller_list: "controllerList",
+  mesh: "mesh",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -172,7 +176,7 @@ const BYTES_KEYS = new Set(["fxb", "manifest"]);
 // and StoredMapChunk (inbound, kept as a base64 string the map decoder unpacks
 // itself). So convert it on ENCODE only, leaving the inbound StoredMapChunk.data
 // as-is. `payload` is UploadChunk's outbound byte-window (same encode-only need).
-const BYTES_KEYS_OUT = new Set([...BYTES_KEYS, "data", "payload", "keyEpoch"]);
+const BYTES_KEYS_OUT = new Set([...BYTES_KEYS, "data", "payload", "keyEpoch", "inner"]);
 
 function bytesToB64(bytes: Uint8Array): string {
   let bin = "";

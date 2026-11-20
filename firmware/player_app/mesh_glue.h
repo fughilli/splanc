@@ -29,6 +29,14 @@
 //   MESH TSF 0|1|2  MESH TB <ms>  TSF read mode (floor / raw / latched) / time beacon period (0 off)
 //   MESH CLK                      probe the TSF counter against esp_timer
 //   MESH REG <addr> <n>           (dev image) MAC registers that advance like a µs counter
+//   MESH CTL <hex>                (dev image) relay one encoded ClientMessage to every member
+//                                 WITHOUT the gateway's allow-list check, collecting answers
+//                                 (the HITL's proof that members refuse what it leaves out)
+//
+// The gateway (M5, mesh_gw.rs): the app's mesh_send / get_mesh reach lm_mesh_app (below,
+// from main.cpp's lm_ws_dispatch, after the kiosk gate); relayed control for this member is
+// dispatched after each tick through main.cpp's lm_mesh_member_dispatch, on loopTask's stack
+// (never the tick's), and finished mesh_send results are pushed to their connection.
 
 #pragma once
 
@@ -63,6 +71,28 @@ uint32_t ns_mesh_epoch(void *m, int64_t delta_ms, uint32_t clear, int64_t now_us
 uintptr_t *ns_mesh_aux(void *m) __attribute__((weak));
 void ns_mesh_stage(void *m, int64_t now_us, uint8_t radio_ch, uint8_t ap_ch) __attribute__((weak));
 void ns_mesh_tick_staged(void *m) __attribute__((weak));
+// The gateway and relayed control (M5, mesh_gw.rs).
+int32_t ns_mesh_app(void *m, uint32_t conn, const uint8_t *frame, uint32_t len, int64_t now_us, uint8_t *out,
+                    uint32_t cap, const uint8_t **inner, uint32_t *inner_len) __attribute__((weak));
+// With the mesh off (no block): get_mesh -> state{on: false}, mesh_send -> NO_MESH, else -2.
+int32_t ns_mesh_app_off(const uint8_t *frame, uint32_t len, uint8_t *out, uint32_t cap) __attribute__((weak));
+void ns_mesh_gw_local_done(void *m, uint32_t status) __attribute__((weak));
+void ns_mesh_app_time_base(void *m, uint32_t conn) __attribute__((weak));
+void ns_mesh_conn_closed(void *m, uint32_t conn) __attribute__((weak));
+uint32_t ns_mesh_take_result(void *m, uint8_t *out, uint32_t cap, uint32_t *conn) __attribute__((weak));
+uint32_t ns_mesh_take_control(void *m, uint8_t *out, uint32_t cap, uint32_t *op) __attribute__((weak));
+void ns_mesh_control_done(void *m, uint32_t status, uint32_t code) __attribute__((weak));
+void ns_mesh_status(void *m, uint32_t fps, uint32_t heap_free, uint32_t heap_min, uint32_t brightness,
+                    uint32_t uptime_s, uint32_t firmware) __attribute__((weak));
+uint32_t ns_mesh_dev_ctl(void *m, const uint8_t *inner, uint32_t len, int64_t now_us) __attribute__((weak));
+uint8_t *ns_mesh_xfer(void *m, uint32_t *cap) __attribute__((weak));
+uint32_t ns_mesh_status_due(void *m, int64_t now_us) __attribute__((weak));
+void ns_mesh_conns(void *m, uint32_t ws, uint32_t ble) __attribute__((weak));
+// main.cpp (the player; absent from the OTA loader): dispatch a relayed control as if the
+// app sent it (0 ok, else *code), push a server frame to a connection, and the status inputs.
+int32_t lm_mesh_member_dispatch(const uint8_t *in, uint32_t len, uint32_t *code) __attribute__((weak));
+void lm_mesh_push(uint32_t conn, uint8_t *frame, uint32_t len) __attribute__((weak));
+void lm_mesh_status_fill(uint32_t *fps, uint32_t *brightness, uint32_t *firmware) __attribute__((weak));
 // main.cpp (the player): the frame counter's mark in littlefs.
 uint32_t lm_mesh_counter_load(uint64_t *mark) __attribute__((weak));
 uint32_t ns_mac_recv_rxv(uint8_t *out, uint32_t cap, uint8_t *rxv);
@@ -236,6 +266,35 @@ void service(bool assoc) {
   const int64_t t0 = esp_timer_get_time();
   while (ns_mesh_pump(g_mesh, esp_timer_get_time()) && esp_timer_get_time() - t0 < kPumpBudgetUs) {
   }
+  // Relayed control for this member (M5): dispatched here, on loopTask's stack, like an app
+  // message; at most two per pass (the inbox holds two). Buffers are the mesh block's
+  // (ns_mesh_xfer): the transport keeps no static ones (desk #68).
+  uint32_t xcap = 0;
+  uint8_t *x = ns_mesh_xfer(g_mesh, &xcap);
+  if (lm_mesh_member_dispatch) {
+    for (int i = 0; i < 2; i++) {
+      uint32_t op = 0;
+      uint32_t cn = ns_mesh_take_control(g_mesh, x, xcap, &op);
+      if (!cn) break;
+      uint32_t code = 0;
+      int32_t st = lm_mesh_member_dispatch(x, cn, &code);
+      ns_mesh_control_done(g_mesh, st == 0 ? 0 : 1, code);
+    }
+  }
+  // Finished mesh_send results (want_reply): pushed to the connection that sent them.
+  {
+    uint32_t conn = 0;
+    uint32_t rn = ns_mesh_take_result(g_mesh, x, xcap, &conn);
+    if (rn && lm_mesh_push) lm_mesh_push(conn, x, rn);
+  }
+  // The status members broadcast (and the gateway lists), once a second.
+  int64_t snow = esp_timer_get_time();
+  if (ns_mesh_status_due(g_mesh, snow)) {
+    uint32_t fps = 0, bright = 0, fw = 0;
+    if (lm_mesh_status_fill) lm_mesh_status_fill(&fps, &bright, &fw);
+    ns_mesh_status(g_mesh, fps, (uint32_t)esp_get_free_heap_size(), (uint32_t)esp_get_minimum_free_heap_size(), bright,
+                   (uint32_t)(snow / 1000000), fw);
+  }
   char buf[400];
   uint32_t n = ns_mesh_take_log(g_mesh, reinterpret_cast<uint8_t *>(buf), sizeof buf - 1);
   if (n) {
@@ -377,6 +436,23 @@ bool console(const char *line) {
       }
       Serial.printf("[mesh] ok reg base=%08lx n=%lu moving=%lu\n", (unsigned long)base, (unsigned long)n,
                     (unsigned long)found);
+    }
+#endif
+#if defined(LM_MESH_DEVKEY)
+  } else if (!strncmp(a, "CTL ", 4)) {
+    // Dev: relay raw ClientMessage bytes (hex) to every member, bypassing the gateway's
+    // allow-list (members must refuse what it leaves out).
+    uint32_t xcap = 0;
+    uint8_t *inner = ns_mesh_xfer(g_mesh, &xcap);
+    if (xcap > 200) xcap = 200;
+    const char *h = a + 4;
+    size_t hl = strlen(h);
+    uint32_t n = (uint32_t)(hl / 2);
+    if (hl % 2 || n == 0 || n > xcap || !parse_hex(h, inner, (int)n)) {
+      Serial.printf("[mesh] ? ctl wants <hex> (<= %u bytes)\n", (unsigned)xcap);
+    } else {
+      uint32_t op = ns_mesh_dev_ctl(g_mesh, inner, n, now);
+      Serial.printf("[mesh] %s ctl op=%lu len=%lu\n", op ? "ok" : "fail", (unsigned long)op, (unsigned long)n);
     }
 #endif
   } else if (!strcmp(a, "CLK")) {

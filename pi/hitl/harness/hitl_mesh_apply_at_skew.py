@@ -189,6 +189,9 @@ async def _set_epoch(url: str, pings: int, ahead_ms: float) -> tuple[int, float,
     Returns (device epoch ms, host epoch ms on time.time(), the sync's RTT ms)."""
     sock = await _hello(url)
     async with sock:
+        # Mesh M5 (desk #79): only the gateway's session may start a show epoch; get_mesh
+        # opens it for this connection (dev mesh, no admin key).
+        await _rpc(sock, {"type": "get_mesh"}, ("mesh",))
         samples = []
         for _ in range(pings):
             t0 = time.time() * 1000.0

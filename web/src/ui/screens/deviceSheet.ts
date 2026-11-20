@@ -28,6 +28,8 @@ import { inLoader } from "../../net/otaUpdate";
 import { formatWifiStatus } from "../../net/wifiPolicy";
 import { WifiPolicySection } from "./wifiPolicySection";
 import { KioskSection } from "./kioskSection";
+import { MeshGatewaySection } from "./meshGatewaySection";
+import { deviceHasMesh, meshPeers } from "../../net/mesh";
 import { deviceHasKiosk } from "../../net/kiosk";
 import { isBleUrl } from "../../net/bleTransport";
 
@@ -37,6 +39,9 @@ let openHandle: { close: () => void } | null = null;
 // re-render (one per status change while connecting), so its animation is phase-
 // synced to a global clock via the --conn-phase delay to avoid restarting.
 const CONN_ANIM_MS = 1200;
+
+/** The open device list's re-render (the mesh switch changes its connected line). */
+let rerenderList: (() => void) | null = null;
 
 export function openDeviceSheet(): void {
   if (openHandle) return; // already open — don't stack
@@ -50,6 +55,7 @@ export function openDeviceSheet(): void {
       unsubApp();
       unsubProbe();
       openHandle = null;
+      rerenderList = null;
     },
   });
   openHandle = sheet;
@@ -58,6 +64,7 @@ export function openDeviceSheet(): void {
     sheet.body.innerHTML = "";
     sheet.body.append(render());
   };
+  rerenderList = rerender;
   unsubDev = deviceStore.subscribe(rerender);
   unsubApp = appState.subscribe(rerender);
   // Reachability comes from the shared background prober (lazy: 1/min → 1/10min).
@@ -409,7 +416,10 @@ function connectedMeta(status = appState.status): string {
   // the round-trip latency (the kept min-RTT sample) instead: small, and an
   // actual connection-quality signal. Infinity until the first clock sync lands.
   const rtt = c.clock.rttMs;
-  return Number.isFinite(rtt) ? `${status.text} · ${Math.round(rtt)} ms RTT` : status.text;
+  const base = Number.isFinite(rtt) ? `${status.text} · ${Math.round(rtt)} ms RTT` : status.text;
+  // Whole-mesh control (mesh M5): say so wherever this fixture's connection is shown.
+  const peers = meshPeers(c.meshState).length;
+  return c.meshAll && peers > 0 ? `${base} · controls ${peers + 1} meshed fixtures` : base;
 }
 
 /** Detail popup: an inline-editable display name, quick actions, and the recorded
@@ -642,6 +652,20 @@ function openDeviceDetail(dev: KnownDevice): void {
     const wifiDivider = document.createElement("hr");
     wifiDivider.className = "device-detail-divider";
     sheet.body.append(wifiLine, wifiDivider, section);
+  }
+
+  // -- Mesh (mesh M5; firmware advertising "mesh", the mesh variant): shown once the fixture
+  // reports others meshed with it; its one switch sends live control through this fixture to
+  // the whole mesh.
+  if (isActive && client && deviceHasMesh(client.welcome)) {
+    const meshDivider = document.createElement("hr");
+    meshDivider.className = "device-detail-divider";
+    meshDivider.hidden = true;
+    const section = MeshGatewaySection(client, {
+      onShown: (shown) => (meshDivider.hidden = !shown),
+      onChange: () => rerenderList?.(),
+    });
+    sheet.body.append(meshDivider, section);
   }
 
   // -- Kiosk mode (firmware advertising "kiosk"): the owner's public-install controls.

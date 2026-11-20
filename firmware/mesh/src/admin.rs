@@ -623,6 +623,20 @@ impl AdminGate {
         Ok(())
     }
 
+    /// Envelope trust (a mesh with no admin key, mesh M5): connection `conn` holds the
+    /// gateway's session without a grant ([`crate::ports::SESSION_ENVELOPE`]). The caller
+    /// checks that no admin key is provisioned.
+    pub fn open_envelope(&mut self, conn: usize) -> Result<(), UnlockError> {
+        let u = self.unlocked.get_mut(conn).ok_or(UnlockError::BadConnection)?;
+        *u = Some(crate::ports::SESSION_ENVELOPE);
+        Ok(())
+    }
+
+    /// Any connection holds a session (this device is acting as a gateway).
+    pub fn any(&self) -> bool {
+        self.unlocked.iter().any(|u| u.is_some())
+    }
+
     pub fn session(&self, conn: usize) -> Option<u32> {
         self.unlocked.get(conn).copied().flatten()
     }

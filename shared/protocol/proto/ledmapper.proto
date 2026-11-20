@@ -1192,6 +1192,151 @@ message ClientMessage {
     GetEthernetState get_ethernet_state = 96;
     DiscoverControllers discover_controllers = 97;
     SetNetworkOutput set_network_output = 98;
+    // The mesh gateway (docs/design/mesh.md §8, mesh M5): relay a control message to the
+    // fixtures meshed with this one, and read the mesh.
+    MeshSend mesh_send = 99;
+    GetMesh get_mesh = 100;
+  }
+}
+
+// --- Mesh gateway (docs/design/mesh.md §8, mesh M5) ---------------------------
+//
+// Any fixture the app is connected to is a gateway to the fixtures meshed with it.
+// Players without a mesh answer both arms with error{unsupported}.
+
+// Who a relayed message is for. No nodes and group 0: every member.
+message MeshTargets {
+  // Mesh node ids (MeshMember.node), at most 8.
+  repeated uint32 nodes = 1;
+  // A group (1..255); 0 = none.
+  uint32 group = 2;
+  // The gateway itself does not apply it (by default it does, at the same instant).
+  bool skip_gateway = 3;
+}
+
+// Relay one ClientMessage to mesh members. The gateway checks `inner` against the relay
+// allow-list (set_effect, set_uniforms, set_brightness, set_crossfade, blend_keypoints, and
+// a submit_effect small enough for one mesh packet; never firmware updates, renames, Wi-Fi
+// or trust), and every member checks it again. The direct reply is the gateway's own reply
+// to `inner` (as if sent alone: playback_state, welcome, control_ack, ...), or a
+// mesh.result when the gateway skips it or refuses the message. With want_reply, a
+// mesh.result with every member's answer is pushed when all answered or timeout_ms passed.
+message MeshSend {
+  // The app's id for this message (echoed in mesh.result); 0 = the gateway picks one.
+  uint32 op_id = 1;
+  MeshTargets targets = 2;
+  // One encoded ClientMessage (at most ~170 bytes: one mesh packet).
+  bytes inner = 3;
+  bool want_reply = 4;
+  // How long to wait for member answers (0 = 2000 ms).
+  uint32 timeout_ms = 5;
+  // Schedule `inner` on the mesh's show clock this far ahead (its apply_at_ms, unless it
+  // carries one): the gateway and every member apply it on the same frame. 0 = on arrival.
+  // Use >= 150 ms per mesh hop.
+  uint32 lead_ms = 6;
+}
+
+// Read the mesh this fixture is in (reply: mesh.state). Also opens the gateway's admin
+// session for this connection on a mesh with no admin key (mesh M5, dev site key).
+message GetMesh {}
+
+enum MeshMemberStatus {
+  MESH_MEMBER_OK = 0;
+  // No answer before the timeout.
+  MESH_MEMBER_MISSING = 1;
+  // Not on the relay allow-list: not applied.
+  MESH_MEMBER_REFUSED = 2;
+  // Applied; the member's player answered with an error.
+  MESH_MEMBER_FAILED = 3;
+}
+
+message MeshMemberResult {
+  uint32 node = 1;
+  MeshMemberStatus status = 2;
+  // REFUSED: the refused arm; otherwise 0.
+  uint32 code = 3;
+  // From the gateway sending it to the member's answer.
+  uint32 latency_ms = 4;
+}
+
+enum MeshSendError {
+  MESH_SEND_OK = 0;
+  // The mesh is off on this fixture, or it is not a member yet.
+  MESH_SEND_NO_MESH = 1;
+  // `inner` is not on the relay allow-list (the gateway refused it; nothing was sent).
+  MESH_SEND_NOT_ALLOWED = 2;
+  // Too big for one mesh packet (effects that big are M6's blob distribution).
+  MESH_SEND_TOO_BIG = 3;
+  // The mesh's queue is full; retry.
+  MESH_SEND_BUSY = 4;
+  // This connection holds no gateway session (send get_mesh first).
+  MESH_SEND_LOCKED = 5;
+  MESH_SEND_BAD_REQUEST = 6;
+}
+
+// The outcome of one mesh_send.
+message MeshResult {
+  uint32 op_id = 1;
+  MeshSendError error = 2;
+  // Members expected to answer, and their answers (want_reply).
+  repeated MeshMemberResult members = 3;
+  // Every expected member answered (false: the timeout ran out).
+  bool complete = 4;
+  // The apply_at_ms the gateway scheduled it for (lead_ms), if any.
+  optional uint32 apply_at_ms = 5;
+  // The gateway's own answer to `inner`, when it applied it: 0 ok, else the error.
+  uint32 gateway_status = 6;
+}
+
+message MeshMember {
+  uint32 node = 1;
+  // The gateway's last RSSI from it (dBm; 0 = not a direct neighbour).
+  sint32 rssi = 2;
+  // Since the gateway last heard from it.
+  uint32 seen_ms_ago = 3;
+  // From its last status broadcast (0 if none yet).
+  uint32 firmware = 4;
+  uint32 uptime_s = 5;
+  uint32 fps = 6;
+  uint32 heap_free = 7;
+  uint32 heap_min = 8;
+  // 0..255.
+  uint32 brightness = 9;
+  // Mesh time: 0 unsynced, 1 forming, 2 synced; and its error estimate.
+  uint32 sync = 10;
+  uint32 time_err_us = 11;
+  // The last relayed message it refused or failed (the code), and that op's id (low 16 bits).
+  uint32 last_error = 12;
+  uint32 last_error_op = 13;
+}
+
+message MeshState {
+  // The mesh is on and this fixture is a member.
+  bool on = 1;
+  bool member = 2;
+  uint32 node = 3;
+  uint32 mesh_id = 4;
+  uint32 channel = 5;
+  // This connection holds the gateway's admin session (it may mesh_send and start the
+  // show clock).
+  bool gateway = 6;
+  // Relayed control is trusted on the mesh envelope (no admin key: the dev site key).
+  bool envelope_trust = 7;
+  // Mesh time: 0 unsynced, 1 forming, 2 synced; error estimate; show epoch generation.
+  uint32 sync = 8;
+  uint32 time_err_us = 9;
+  uint32 epoch_gen = 10;
+  repeated MeshMember members = 11;
+  // The last finished mesh_send on this gateway.
+  MeshResult last_result = 12;
+}
+
+// The mesh gateway's replies: `result` answers mesh_send (and is pushed when its member
+// answers are in), `state` answers get_mesh.
+message MeshInfo {
+  oneof info {
+    MeshResult result = 1;
+    MeshState state = 2;
   }
 }
 
@@ -2282,5 +2427,9 @@ message ServerMessage {
     EthernetState ethernet_state = 53;
     // Reply to discover_controllers.
     ControllerList controller_list = 54;
+    // Reply to mesh_send / get_mesh, and the pushed mesh_send result (docs/design/mesh.md §8).
+    // One envelope arm: each extra arm grows every by-value ServerMessage frame in the debug
+    // host builds (the fx_debug lesson).
+    MeshInfo mesh = 55;
   }
 }
