@@ -330,6 +330,10 @@ lm_join::PskRejectWatch g_psk_watch;  // Improv: report a password the AP reject
 lm_join::LastGoodNetwork g_last_good;  // where a rejected password falls back to (D-74)
 bool g_fallback_pending = false;       // set by the report; netstack_loop does the switch
 lm_wifi_scan::ChannelHop g_hop;
+// BLE supervision timeouts asked of the central: the connect-time one (ble_ffi.rs) and
+// the longer one for an Improv fresh join waiting on an SSID no sweep has seen.
+constexpr uint32_t kBleSupervisionMs = 6000;
+constexpr uint32_t kImprovWaitSupervisionMs = 20000;
 bool g_force_sweep = false;   // console WIFI SCAN: one sweep now
 bool g_sweep_forced = false;  // the running sweep was forced (not scheduled)
 bool g_force_giveup = false;  // console WIFI GIVEUP: take the random-MAC fallback now
@@ -2872,13 +2876,27 @@ void netstack_loop() {
                           : (unsigned long)(lm_wifi_scan::policy_delay_ms(g_policy, 0, unseen_s()) / 1000),
                       g_scan_decayed ? " (decayed: network unseen for a long time)" : "");
       }
-      if (g_improv_scan.on_sweep_done(g_hop.found(), now_ms) ==
-          lm_wifi_scan::ImprovScanReport::Action::kReportNotFound) {
+      bool improv_was_armed = g_improv_scan.armed();
+      lm_wifi_scan::ImprovScanReport::Action ia = g_improv_scan.on_sweep_done(g_hop.found(), now_ms);
+      // The Improv fresh join's first sweep missed an SSID we know nothing about (no BSSID
+      // to auth to): the central now waits ~30 s through more sweeps with nothing else on
+      // the link. Measured on rig-2, BLE connection events go unserviced in stretches that
+      // start around a sweep's channel switches and can outlast the 6 s supervision timeout
+      // even with the radio handed to BLE between sweeps (coex_timer_cb) — the link then
+      // dies and the not-found report below goes nowhere. Ask the central for a longer
+      // timeout for this wait, while the link is fresh and Wi-Fi idle (the LL update's
+      // instant lands in the gap before the next sweep); the report puts 6 s back. A central
+      // that declines (iOS caps it at 6 s) keeps its parameters.
+      if (improv_was_armed && g_improv_scan.armed() && g_improv_scan.misses() == 1 &&
+          !g_latch_known && improv_ble_central_connected())
+        improv_ble_request_supervision_timeout(kImprovWaitSupervisionMs);
+      if (ia == lm_wifi_scan::ImprovScanReport::Action::kReportNotFound) {
         // Tell the provisioning app instead of letting it time out on "waiting for the
         // device to join": Improv error UNABLE_TO_CONNECT (state back to AUTHORIZED, so
         // it can re-send). The creds stay committed and the background rescan goes on —
         // the board still joins if the AP appears, and that lease clears the error.
         improv_ble_set_join_error(IMPROV_JOIN_FAILURE_NOT_FOUND);
+        improv_ble_request_supervision_timeout(kBleSupervisionMs);  // queued behind the error
         g_improv_join.forget();  // the app's retry SendWifi is a fresh join, never a ride
         Serial.printf("[t=%lu] [ble] \"%s\" not found in %lu sweeps over %lu s (directed probe "
                       "incl.) — Improv error UNABLE_TO_CONNECT; creds kept, background rescan "

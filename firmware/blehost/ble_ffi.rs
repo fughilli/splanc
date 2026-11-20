@@ -306,19 +306,43 @@ fn wrap_att_acl(handle: u16, att: &[u8], out: *mut u8, cap: u32) -> u32 {
 /// 0x28 Instant Passed (see hci.rs). BlueZ applies it via a proper LL update; we
 /// pick up the new interval from the LE Connection Update Complete event.
 fn conn_param_update_req_acl(handle: u16, out: *mut u8, cap: u32) -> u32 {
+    conn_param_req_acl(handle, 600, out, cap)
+}
+
+/// The request itself, with supervision timeout `timeout_10ms` (10 ms units). Each
+/// request carries a fresh signaling identifier (1..=255).
+fn conn_param_req_acl(handle: u16, timeout_10ms: u16, out: *mut u8, cap: u32) -> u32 {
+    static mut SIG_ID: u8 = 0;
+    let id = unsafe {
+        SIG_ID = SIG_ID.wrapping_add(1).max(1);
+        SIG_ID
+    };
     let mut l2: Buf<20> = Buf::new();
     let _ = l2.extend(&12u16.to_le_bytes()); // L2CAP basic length = 12 (the C-frame below)
     let _ = l2.extend(&[0x05, 0x00]); // CID = 0x0005 (LE signaling)
-    let _ = l2.extend(&[0x12, 0x01, 0x08, 0x00]); // Code=Conn Param Update Req, Id=1, CmdLen=8
+    let _ = l2.extend(&[0x12, id, 0x08, 0x00]); // Code=Conn Param Update Req, Id, CmdLen=8
     let _ = l2.extend(&24u16.to_le_bytes()); // interval min = 24 * 1.25ms = 30ms
     let _ = l2.extend(&40u16.to_le_bytes()); // interval max = 40 * 1.25ms = 50ms
     let _ = l2.extend(&0u16.to_le_bytes()); // slave latency = 0 (answer every event when we can)
-    let _ = l2.extend(&600u16.to_le_bytes()); // supervision timeout = 600 * 10ms = 6s
+    let _ = l2.extend(&timeout_10ms.to_le_bytes()); // supervision timeout (600 = 6 s on connect)
     let mut aclb: Buf<24> = Buf::new();
     if acl(handle, l2.as_slice(), &mut aclb).is_err() {
         return 0;
     }
     copy_out(aclb.as_slice(), out, cap)
+}
+
+/// Ask the central (L2CAP Connection Parameter Update Request, same interval 30-50 ms,
+/// latency 0) for a supervision timeout of `timeout_10ms` x 10 ms on the current link, as
+/// a ready-to-send ACL into `out`; 0 bytes if not connected. The central owns the LL
+/// instant, as with the connect-time request. A central that declines (iOS caps the
+/// timeout at 6 s) just keeps the current parameters: the response is ignored.
+#[no_mangle]
+pub extern "C" fn ns_ble_supervision_timeout_req(timeout_10ms: u32, out: *mut u8, cap: u32) -> u32 {
+    let Some(h) = (unsafe { HOST.conn_handle() }) else {
+        return 0;
+    };
+    conn_param_req_acl(h, timeout_10ms.clamp(10, 3200) as u16, out, cap)
 }
 
 /// Process a received HCI packet (event or ACL). Writes any response ACL into

@@ -10,6 +10,7 @@ void improv_ble_set_name(const char *) {}
 bool improv_ble_take_credentials(char *, size_t, char *, size_t) { return false; }
 bool improv_ble_central_connected() { return false; }
 void improv_ble_request_disconnect() {}
+void improv_ble_request_supervision_timeout(uint32_t) {}
 extern "C" uint32_t ns_ble_state() { return 0; }
 extern "C" uint32_t ns_ble_last_disc_reason() { return 0; }
 uint32_t improv_ble_last_acl_ms() { return 0; }

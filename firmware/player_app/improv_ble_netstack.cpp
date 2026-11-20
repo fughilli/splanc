@@ -29,6 +29,7 @@ void ns_ble_setup();
 uint32_t ns_ble_poll_cmd(uint8_t *out, uint32_t cap);
 uint32_t ns_ble_on_hci(const uint8_t *pkt, uint32_t len, uint8_t *out, uint32_t cap);
 uint32_t ns_ble_disconnect(uint8_t *out, uint32_t cap);
+uint32_t ns_ble_supervision_timeout_req(uint32_t timeout_10ms, uint8_t *out, uint32_t cap);
 uint32_t ns_ble_state();
 uint32_t ns_ble_conn_interval();
 uint32_t ns_ble_poll_notify(uint8_t *out, uint32_t cap);
@@ -321,6 +322,12 @@ bool improv_ble_central_connected() { return ns_ble_state() == 7; }
 void improv_ble_request_disconnect() {
   uint8_t buf[16];
   uint32_t n = ns_ble_disconnect(buf, sizeof buf);
+  if (n) hci_send(buf, n);
+}
+
+void improv_ble_request_supervision_timeout(uint32_t ms) {
+  uint8_t buf[32];
+  uint32_t n = ns_ble_supervision_timeout_req(ms / 10, buf, sizeof buf);
   if (n) hci_send(buf, n);
 }
 

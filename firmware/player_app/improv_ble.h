@@ -42,6 +42,10 @@ bool improv_ble_central_connected();
 // connected; the host re-advertises afterward so the device stays connectable.
 void improv_ble_request_disconnect();
 
+// Ask the connected central for a BLE supervision timeout of `ms` (L2CAP Connection
+// Parameter Update Request; the central may decline). No-op if not connected.
+void improv_ble_request_supervision_timeout(uint32_t ms);
+
 // Raw BLE link state (Rust FFI ns_ble_state): 7 == central connected+subscribed.
 // Exposed for diagnostics (distinguish link-drop vs notification-loss).
 extern "C" uint32_t ns_ble_state();
