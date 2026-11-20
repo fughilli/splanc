@@ -23,7 +23,8 @@ const LIB = [
   fx("builtin-color-test", "Color test (gradient)", ["starter", "test"]),
   fx("builtin-agentic-pulse", "Agentic chaser", ["starter", "topology"]),
   fx("builtin-rainbow-sweep", "Rainbow sweep", ["starter"]),
-  fx("demo-tree", "Tree of Light", ["demo", "topology", "spatial"]),
+  fx("builtin-tenere-acid", "Tree of Light", ["demo", "topology", "spatial"]),
+  fx("u3", "Tree of Light (copy)", ["demo"]),
   fx("u1", "Porch glow", ["porch", "warm"]),
   fx("u2", "Breathing pulse (copy)", ["starter"]),
 ];
@@ -49,7 +50,7 @@ test("the user's own effects come first once they have some; a copy of a starter
   );
   assert.deepEqual(
     s[0]!.items.map((e) => e.id),
-    ["u1", "u2"],
+    ["u3", "u1", "u2"],
   );
   assert.equal(s[2]!.title, "Examples for the sample maps");
 });
@@ -60,7 +61,7 @@ test("every curated starter has a blurb; non-starters have none", () => {
 });
 
 test("tag chips list only the user's own tags", () => {
-  assert.deepEqual(userTags(LIB), ["porch", "starter", "warm"]);
+  assert.deepEqual(userTags(LIB), ["demo", "porch", "starter", "warm"]);
   assert.deepEqual(userTags(LIB.slice(0, 4)), []);
 });
 

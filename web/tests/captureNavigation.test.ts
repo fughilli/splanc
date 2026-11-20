@@ -168,6 +168,17 @@ beforeEach(() => {
 
 // -- Router ------------------------------------------------------------------------
 
+test("no hash (the installed app's start_url) goes to the fallback, not /onboard", async () => {
+  nav = installHistory("");
+  const log: string[] = [];
+  makeRouter(log, (r) => {
+    r.add("/onboard", () => stub("onboard", log));
+    r.setFallback(() => stub("fallback", log));
+  });
+  await settle();
+  assert.deepEqual(log, ["fallback"]);
+});
+
 test("leave() back to the origin pops the one-shot entry; Forward can't re-enter it", async () => {
   nav = installHistory("#/maps");
   const log: string[] = [];

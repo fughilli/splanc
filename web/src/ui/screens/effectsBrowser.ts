@@ -206,36 +206,6 @@ export function EffectsBrowserScreen(router: Router): Screen {
 
   el.append(card, toolbar, tagRow, listEl);
 
-  // Build the ephemeral "On <device>" section (FUG-110): the effects the app
-  // has pushed to the currently-connected device, in most-recently-cued order.
-  // Null when offline or nothing has been sent to this device yet.
-  function deviceSection(all: StoredEffect[]): HTMLElement | null {
-    if (onDeviceIds.size === 0) return null;
-    const byId = new Map(all.map((e) => [e.id, e]));
-    const devId = deviceStore.activeId();
-    const ordered = deviceEffects
-      .list(devId)
-      .map((id) => byId.get(id))
-      .filter((e): e is StoredEffect => e !== undefined);
-    if (ordered.length === 0) return null;
-
-    const section = document.createElement("div");
-    section.className = "fxlib-devsection";
-    const header = document.createElement("div");
-    header.className = "fxlib-devsection-head";
-    header.append(icon("device"));
-    const label = document.createElement("span");
-    label.textContent = `On ${deviceName || "device"}`;
-    header.append(label);
-    const count = document.createElement("span");
-    count.className = "fxlib-devsection-count metric";
-    count.textContent = String(ordered.length);
-    header.append(count);
-    section.append(header);
-    for (const e of ordered) section.append(row(e));
-    return section;
-  }
-
   async function refresh(): Promise<void> {
     // Which effects live on the connected device (drives the badge + section).
     const devId = appState.client?.isConnected ? deviceStore.activeId() : null;
@@ -288,8 +258,8 @@ export function EffectsBrowserScreen(router: Router): Screen {
       appendGrouped(listEl, rows, (e) => e.folder, row, { scope: "effects" });
       return;
     }
-    const section = deviceSection(all);
-    if (section) listEl.append(section);
+    // (No FUG-110 "On <device>" list here any more: the fixture card and the
+    // Playing mark say what's on the lights; the green dot marks effects sent.)
     for (const sec of effectSections(rows)) {
       const head = document.createElement("h3");
       head.className = "fxhome-section-head";
@@ -335,7 +305,7 @@ export function EffectsBrowserScreen(router: Router): Screen {
     name.textContent = e.name;
     // Green "on device" badge (FUG-110) when this effect has been pushed to the
     // connected device.
-    if (onDeviceIds.has(e.id)) {
+    if (onDeviceIds.has(e.id) && !isPlaying) {
       const badge = document.createElement("span");
       badge.className = "fx-device-badge";
       badge.title = `On ${deviceName || "device"}`;

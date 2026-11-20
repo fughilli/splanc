@@ -487,9 +487,10 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     sections: [
       {
         body: [
-          "The Effects tab is a library of animations, mirroring the maps browser: a " +
-            "search box, tag chips, folders, and a row per saved effect. Tap one to open " +
-            "the editor; the + button creates a new effect from a starter template.",
+          "The Effects tab is the app's home: a card on top says which fixture is " +
+            "connected and what it's playing, then the library: Starters, Examples and " +
+            "your own effects. Tap one to play it on your fixture and adjust its sliders " +
+            "and colours; Open in editor changes its code. The + button creates a new effect.",
         ],
       },
       {
@@ -508,8 +509,8 @@ export const GUIDE_TOPICS: GuideTopic[] = [
       {
         title: "The effects library",
         body:
-          "Animations live here. Each effect is a small shader program that runs on the " +
-          "device. Tap one to edit it, or use the + button to start a new one.",
+          "Animations live here, starters first. Tap one to play it on your fixture and " +
+          "adjust it; Open in editor changes its code. The + button starts a new one.",
       },
       {
         target: ".fab",
@@ -527,8 +528,9 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     tab: "effects",
     route: "/effects",
     summary: "Write, preview, and push shader effects with the exact on-device VM.",
-    screenshot: "#/effects",
-    screenshotClick: ".map-row",
+    // A tap on a library row now plays + tunes (the tune sheet); open the
+    // editor directly.
+    screenshot: "#/effects/edit/builtin-rainbow-sweep",
     screenshotDemo: "effect",
     screenshotWaitMs: 2800,
     steps: [
@@ -559,7 +561,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
         caption:
           "Disassembly — the compiled `.fxb` bytecode as a readable op listing, straight from " +
           "the Rust disassembler the device uses.",
-        clicks: [".map-row", ".fxlayout-tablist >> text=Disassembly"],
+        clicks: [".fxlayout-tablist >> text=Disassembly"],
         waitMs: 1200,
       },
       {
@@ -567,7 +569,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
         caption:
           "Device — with a controller connected, push the compiled effect and drive its live " +
           "uniforms straight onto the fixture.",
-        clicks: [".map-row", ".fxlayout-tablist >> text=Device"],
+        clicks: [".fxlayout-tablist >> text=Device"],
         waitMs: 1000,
       },
     ],

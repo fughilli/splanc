@@ -31,15 +31,19 @@ SCENARIOS = [
         search=KNOWN,
         steps=[LIST, ("click", ".map-row"), ("wait", 1500)],
         settle_ms=1200,
+        root=".k-sheet",
+        expect=".fxtune-adjust",
     ),
     # Tap a starter with nothing connected: the sheet says so + Connect.
     Scenario(
         "oobe-3b-tune-offline",
         "#/effects",
         steps=[LIST, ("click", ".map-row"), ("wait", 800)],
+        root=".k-sheet",
     ),
-    # A returning user lands on the app's home (no hash).
-    Scenario("oobe-4-home", "", search=KNOWN, steps=[("wait", 2500)]),
+    # A returning user opens the app (no hash, like the installed start_url):
+    # home, not "Set up your device".
+    Scenario("oobe-4-home", "", search=KNOWN, steps=[LIST], expect=".fxhome-card"),
     # (The device drawer is #577's; its layout is checked there.)
     # The maps library (the old landing screen).
     Scenario("oobe-6-maps", "#/maps", search=KNOWN, steps=[LIST]),
