@@ -122,7 +122,12 @@ _CODEC = os.path.join(_HERE, "improv.py")
 
 
 def _run_provisioner(
-    res, ssid: str, password: str, timeout: float, address: str | None = None
+    res,
+    ssid: str,
+    password: str,
+    timeout: float,
+    address: str | None = None,
+    result_out: dict | None = None,
 ) -> str:
     """One ImprovBLE provisioning attempt; returns the redirect URL or raises.
 
@@ -148,6 +153,11 @@ def _run_provisioner(
     out = (proc.stdout or "").strip()
     if proc.stderr:
         sys.stderr.write(proc.stderr)
+    if result_out is not None:  # the provisioner's JSON (join_s etc.), pass or fail
+        try:
+            result_out.update(json.loads(out.splitlines()[-1]))
+        except (ValueError, IndexError):
+            pass
     if proc.returncode != 0:
         raise HarnessError(f"provisioner exited {proc.returncode}: {out}")
     try:

@@ -146,6 +146,63 @@ def metrics(log: str, absent_prefix: str = "hitl-absent-") -> dict:
     }
 
 
+GATE = "improv_fresh_join"
+
+
+def _rec(metric: str, value, unit: str, phase: str | None = None, limit=None, **kw) -> dict:
+    r = {"v": 1, "gate": GATE, "metric": metric, "unit": unit, "value": value}
+    if phase:
+        r["phase"] = phase
+    if limit is not None:
+        r.update(limit=limit, cmp="<=", ok=value <= limit)
+    r.update(kw)
+    return r
+
+
+def metric_records(phases: dict, mx: dict | None, budget_s: float, absent_budget_s: float):
+    """The gate's metrics as schema-v1 records (pi/hitl/observability metrics README):
+    join_latency / not_found_report_latency (s, the provisioner's write ack -> PROVISIONED or
+    UNABLE_TO_CONNECT, rig-side; a timeout records the elapsed budget, not ok), and from the
+    DUT serial ble_notify_latency (ms, firmware send -> the central's LL ack; p50 + max) and
+    ble_drops (count, phase absent: supervision timeouts that killed the absent window's link).
+    """
+    out: list[dict] = []
+    for name in PHASES + (RECOVER,):
+        r = phases.get(name) or {}
+        if r.get("join_s") is not None and classify(r) != "infra":
+            out.append(_rec("join_latency", r["join_s"], "s", name, budget_s))
+    ra = phases.get(ABSENT) or {}
+    if ra.get("join_s") is not None and classify(ra) != "infra":
+        out.append(_rec("not_found_report_latency", ra["join_s"], "s", ABSENT, absent_budget_s))
+    if mx:
+        acks = mx["ble_notify_ack_ms"]
+        if acks:
+            out.append(
+                _rec(
+                    "ble_notify_latency",
+                    mx["ble_notify_ack_ms_p50"],
+                    "ms",
+                    "improv",
+                    stat="p50",
+                    n=len(acks),
+                )
+            )
+            out.append(
+                _rec(
+                    "ble_notify_latency",
+                    mx["ble_notify_ack_ms_max"],
+                    "ms",
+                    "improv",
+                    stat="max",
+                    n=len(acks),
+                )
+            )
+        out.append(_rec("ble_drops", mx["absent_ble_drops"], "count", ABSENT))
+        for ms in mx["absent_report_ms"]:
+            out.append(_rec("not_found_report_fw_latency", round(ms / 1000, 2), "s", ABSENT))
+    return out
+
+
 def parse_serial(log: str) -> dict:
     """The Improv facts the DUT serial log shows (whole run)."""
     log = log or ""

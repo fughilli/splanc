@@ -212,3 +212,33 @@ def test_metrics_notify_acks_report_time_and_absent_drops():
     late = log.replace("[t=52000]", "[t=58000]")
     assert core.metrics(late)["absent_ble_drops"] == 0
     assert core.metrics("")["ble_notify_ack_ms_max"] is None
+
+
+def test_join_s_budget_is_graded_and_metric_records():
+    s = core.parse_serial(SETUP + FIXED_SAME + NOT_FOUND)
+    slow = dict(OK, join_s=21.5)
+    ph = _all(dict(OK, join_s=2.1), absent=dict(UNABLE, join_s=30.9))
+    ph["joined"] = slow
+    g = core.grade(OK, ph, s, 20.0, 45.0)
+    assert g["verdict"] == "FAIL" and any("joined: joined in 21.5s" in p for p in g["problems"])
+    mx = core.metrics(
+        "[t=1] [ble] improv notify acked in 40 ms\n[t=2] [ble] improv notify acked in 900 ms\n"
+    )
+    recs = core.metric_records(ph, mx, 20.0, 45.0)
+    by = {(r["metric"], r.get("phase"), r.get("stat")): r for r in recs}
+    assert by[("join_latency", "joined", None)]["ok"] is False
+    assert by[("join_latency", "stored", None)] == {
+        "v": 1,
+        "gate": "improv_fresh_join",
+        "metric": "join_latency",
+        "unit": "s",
+        "value": 2.1,
+        "phase": "stored",
+        "limit": 20.0,
+        "cmp": "<=",
+        "ok": True,
+    }
+    assert by[("not_found_report_latency", "absent", None)]["value"] == 30.9
+    assert by[("ble_notify_latency", "improv", "max")]["value"] == 900
+    assert by[("ble_notify_latency", "improv", "p50")]["n"] == 2
+    assert by[("ble_drops", "absent", None)]["value"] == 0

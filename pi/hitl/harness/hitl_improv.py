@@ -373,14 +373,23 @@ async def provision(
 ):
     done = asyncio.Event()
     got_result = asyncio.Event()
-    # write_t/answer_t: SendWifi write -> the device's answer (result or error), the
-    # "time to error" a wrong-password gate measures (join_s in the JSON).
-    state = {"urls": None, "error": None, "state": None, "write_t": None, "answer_t": None}
+    # ack_t/answer_t: the RPC write's ack -> the device's answer (result, PROVISIONED or
+    # error), the latency the Improv budgets are defined on (join_s in the JSON).
+    state = {"urls": None, "error": None, "state": None, "ack_t": None, "answer_t": None}
+
+    def answered():
+        state["answer_t"] = state["answer_t"] or time.monotonic()
+
+    def join_s():
+        if state["ack_t"] is None:
+            return None
+        end = state["answer_t"] if state["answer_t"] is not None else time.monotonic()
+        return round(end - state["ack_t"], 2)
 
     def on_result(_sender, data):
         log(f"[improv] <- RPC_RESULT {bytes(data).hex()}")
         state["urls"] = parse_result(bytes(data))
-        state["answer_t"] = state["answer_t"] or time.monotonic()
+        answered()
         got_result.set()
         done.set()
 
@@ -389,7 +398,7 @@ async def provision(
         log(f"[improv] <- ERROR {bytes(data).hex()} (code={code})")
         if code != 0:
             state["error"] = error_name(code, data[1] if len(data) > 1 else 0)
-            state["answer_t"] = time.monotonic()
+            answered()
             done.set()
 
     def on_state(_sender, data):
@@ -400,7 +409,7 @@ async def provision(
         # completing here — not only on RPC_RESULT — is what makes the join
         # deterministic instead of racing the disconnect.
         if state["state"] == STATE_PROVISIONED:
-            state["answer_t"] = state["answer_t"] or time.monotonic()
+            answered()
             done.set()
 
     client = None
@@ -457,8 +466,8 @@ async def provision(
             # INSIDE the adapter lock (order adapter→AP; see _ap_lock). Best-effort:
             # no lock dir (rig not yet redeployed) ⇒ unserialized, exactly as today.
             async with _ap_lock("DHCP-join window"):
-                state["write_t"] = time.monotonic()
                 await client.write_gatt_char(CH_RPC_CMD, rpc, response=True)
+                state["ack_t"] = time.monotonic()
                 log("[improv] write ack; awaiting join…")
                 try:
                     await asyncio.wait_for(done.wait(), timeout)
@@ -468,6 +477,7 @@ async def provision(
                             "ok": False,
                             "error": "timed out waiting for the player to join",
                             "device": device,
+                            "join_s": join_s(),  # the elapsed budget at give-up
                         }
                 if state["state"] == STATE_PROVISIONED and state["urls"] is None:
                     # PROVISIONED and the RPC result (the redirect URL) are separate
@@ -499,19 +509,14 @@ async def provision(
                 await client.disconnect()
             except Exception:
                 pass
-    join_s = (
-        round(state["answer_t"] - state["write_t"], 2)
-        if state["write_t"] is not None and state["answer_t"] is not None
-        else None
-    )
     if state["error"]:
-        return {"ok": False, "error": state["error"], "device": device, "join_s": join_s}
+        return {"ok": False, "error": state["error"], "device": device, "join_s": join_s()}
     return {
         "ok": True,
         "urls": state["urls"],
         "state": state["state"],
         "device": device,
-        "join_s": join_s,
+        "join_s": join_s(),
     }
 
 

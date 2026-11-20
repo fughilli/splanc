@@ -105,8 +105,9 @@ def _improv(res, ssid: str, password: str, budget: float, address: str | None) -
     out: dict = {}
     for attempt in (1, 2):
         t0 = time.monotonic()
+        rj: dict = {}
         try:
-            url = _run_provisioner(res, ssid, password, budget, address=address)
+            url = _run_provisioner(res, ssid, password, budget, address=address, result_out=rj)
             out = {"ok": True, "url": url, "wall_s": round(time.monotonic() - t0, 1)}
         except HarnessError as e:
             out = {"ok": False, "error": str(e), "wall_s": round(time.monotonic() - t0, 1)}
@@ -118,6 +119,8 @@ def _improv(res, ssid: str, password: str, budget: float, address: str | None) -
                 "error": "BLE transport failed: provisioner hung (ssh timeout)",
                 "wall_s": round(time.monotonic() - t0, 1),
             }
+        # write ack -> answer, rig-side: what the Improv budgets are defined on (grade + metrics)
+        out["join_s"] = rj.get("join_s")
         _log(f"  attempt {attempt}: {json.dumps(out)}")
         if core.classify(out) != "infra":
             break
@@ -209,11 +212,18 @@ def run(args) -> int:
     if g["verdict"] == "FAIL" and log:
         _log("----- DUT serial log (tail) -----")
         _log(log[-12000:])
-    mx = core.metrics(log) if log else None  # dashboard numbers (core.metrics names/units)
+    # Dashboard metrics (pi/hitl/observability metrics schema v1): one HITL_METRIC line
+    # each, and the same records in the results JSON.
+    recs = core.metric_records(
+        phases, core.metrics(log) if log else None, args.join_budget, args.absent_budget
+    )
+    for r in recs:
+        r.update({"dut": res._unit, "fw": os.environ.get("GITHUB_SHA", ""), "ts": time.time()})
+        _log("HITL_METRIC " + json.dumps(r, separators=(",", ":")))
     _log(
         "IMPROV_FRESH_JOIN_JSON "
         + json.dumps(
-            {"setup": setup, "phases": phases, "serial": serial, "metrics": mx, **g},
+            {"setup": setup, "phases": phases, "serial": serial, "metrics": recs, **g},
             sort_keys=True,
         )
     )
