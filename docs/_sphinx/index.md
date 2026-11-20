@@ -132,6 +132,7 @@ Raspberry Pi bridge <docs/pi-bridge>
 Host player: WLED / DDP / Art-Net <docs/host-player>
 Use Splanc from a cloud agent <docs/guides/cloud-agent>
 Run your own relay with Tailscale <docs/guides/relay-tailscale>
+Build a Vive-tracked lamp <docs/guides/vive-tracker-lamp>
 docs/runbook
 Roadmap <next_steps>
 ```
