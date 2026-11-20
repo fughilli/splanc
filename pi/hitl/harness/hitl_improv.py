@@ -372,6 +372,7 @@ async def provision(
     connect_timeout: float = 12.0,
 ):
     done = asyncio.Event()
+    got_result = asyncio.Event()
     # write_t/answer_t: SendWifi write -> the device's answer (result or error), the
     # "time to error" a wrong-password gate measures (join_s in the JSON).
     state = {"urls": None, "error": None, "state": None, "write_t": None, "answer_t": None}
@@ -380,6 +381,7 @@ async def provision(
         log(f"[improv] <- RPC_RESULT {bytes(data).hex()}")
         state["urls"] = parse_result(bytes(data))
         state["answer_t"] = state["answer_t"] or time.monotonic()
+        got_result.set()
         done.set()
 
     def on_error(_sender, data):
@@ -467,6 +469,16 @@ async def provision(
                             "error": "timed out waiting for the player to join",
                             "device": device,
                         }
+                if state["state"] == STATE_PROVISIONED and state["urls"] is None:
+                    # PROVISIONED and the RPC result (the redirect URL) are separate
+                    # notifications, state first, and the result can land a connection
+                    # event or more later (the firmware re-sends both every 400 ms).
+                    # Returning on the state alone raced it: "no redirect URL" with the
+                    # board joined. The app completes on the result (web/src/net/improv.ts).
+                    try:
+                        await asyncio.wait_for(got_result.wait(), 3.0)
+                    except asyncio.TimeoutError:
+                        pass
     except _TRANSPORT_ERRORS as e:
         # The board tears BLE down the instant it joins (soft-AP off, STA-only),
         # so a disconnect *after* we've seen PROVISIONED (or the redirect URL) is
