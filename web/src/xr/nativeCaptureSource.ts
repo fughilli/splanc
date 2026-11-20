@@ -53,7 +53,7 @@ interface FrameEvent {
 }
 
 interface CameraBridgePlugin {
-  start(): Promise<{ width: number; height: number }>;
+  start(): Promise<{ width: number; height: number; customExposureSupported?: boolean }>;
   stop(): Promise<void>;
   setDetectParams(opts: { threshold?: number; downscale?: number; adaptive?: boolean }): Promise<void>;
   log(opts: { message: string }): Promise<void>;
@@ -162,8 +162,17 @@ export class NativeCaptureSource implements CaptureSource {
     this.clock = new ClockOffset();
     const b = cameraBridge();
     this.listener = await b.addListener("cameraFrame", (e) => this.onNativeFrame(e));
-    await b.start();
+    const info = await b.start();
+    // Every iPhone back camera supports .custom; trust the plugin's answer
+    // and assume yes from an older plugin that doesn't report it.
+    this.customExposure = info.customExposureSupported !== false;
     this.running = true;
+  }
+
+  private customExposure = false;
+  /** The owned AVCaptureSession takes a custom (manual) exposure lock. */
+  manualExposureSupported(): boolean {
+    return this.customExposure;
   }
 
   async stop(): Promise<void> {

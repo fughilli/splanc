@@ -87,6 +87,9 @@ export interface LinkExposureSample {
   clipFrac: number | null;
   blobCount: number | null;
   marginEma: number | null;
+  /** Light servo (cv/lightServo.ts): why exposure/brightness last moved —
+   * the gate that fired, a floor hit, "hold". Null on the legacy AE path. */
+  servo?: string | null;
 }
 
 export interface LinkTimelineSample {

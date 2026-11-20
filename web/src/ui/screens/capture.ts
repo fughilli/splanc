@@ -19,7 +19,6 @@ import {
   blobPopulation,
   EXPOSURE_SERVO_START,
   ExposureMonitor,
-  planExposureServo,
   planLedBrightness,
   planReconfigure,
   BitRatePlanner,
@@ -31,6 +30,7 @@ import { AlphabetPlanner, ChannelQuality, channelSnapshot, formatPrediction } fr
 import { JERKY_MOTION_HINT, MotionGuide } from "../../cv/motionGuide";
 import { CvPipeline } from "../../cv/pipeline";
 import { DetectorGL } from "../../cv/detect";
+import { blobCrowding, CrowdingWindow, formatLightServo, initialLightServo, planLightServo } from "../../cv/lightServo";
 import {
   type DriverCaptureController,
   type DriverCaptureResult,
@@ -237,7 +237,12 @@ const forcedBrightness = ((): number | null => {
   const v = parseFloat(qs.get("brightness") ?? "");
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : null;
 })();
+// Exposure-first light servo (cv/lightServo.ts) is the default wherever the
+// camera takes a manual exposure lock. `?exposure=servo` forces it on;
+// `?exposure=auto` keeps the old camera auto-exposure + LED-brightness servo
+// (planLedBrightness) for A/B comparison.
 const servoExposure = qs.get("exposure") === "servo";
+const legacyLightServo = qs.get("exposure") === "auto";
 // Interim phone solves during capture feed the live overlay on devices without
 // a host solver (FUG-112); `?livesolve=0` turns them off.
 const liveSolveEnabled = qs.get("livesolve") !== "0";
@@ -1223,6 +1228,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         setExposure(t: number, capMs?: number): unknown;
         /** Auto exposure biased by `ev` stops; absent where the camera path can't. */
         setExposureBias?(ev: number): Promise<boolean>;
+        /** True when the camera takes a hard manual exposure lock (the light servo's precondition). */
+        manualExposureSupported?(): boolean;
       };
       let detectGl: WebGL2RenderingContext;
       if (driverActive()) {
@@ -1270,6 +1277,23 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         exposureTarget = ms;
         detectGl = ms.gl;
       }
+      // The camera exposure is ours (servoed) unless pinned (URL / recorded
+      // profile), opted out, the camera has no manual lock (then: AE +
+      // brightness-only, today's behaviour minus the ratchet), or the run is
+      // diffuse: diffuse capture negotiates its own short exposure (biased AE,
+      // then the manual pin; DIFFUSE_AE_BIAS_EV) and the servo runs
+      // brightness-only there. `?exposure=servo` forces the servo on regardless.
+      let exposureServoOn =
+        !legacyLightServo &&
+        (servoExposure ||
+          (initialExposure === null && !diffuse && exposureTarget.manualExposureSupported?.() === true));
+      let lightServo = initialLightServo({
+        exposureSupported: exposureServoOn,
+        exposure: initialExposure ?? EXPOSURE_SERVO_START,
+        brightness: 1,
+        brightnessLocked: forcedBrightness !== null,
+      });
+      const crowding = new CrowdingWindow();
       // IMU: on iOS it comes from CoreMotion via the capture plugin, whose axes
       // are documented and already in the camera frame — ImuRecorder's
       // DeviceMotion mapping was fitted on an Android handset and has never been
@@ -1396,13 +1420,21 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         ...(params.brightness !== undefined ? { brightness: params.brightness } : {}),
         ...(profileRun?.exposure !== undefined ? { exposure: profileRun.exposure } : {}),
       };
-      if (initialExposure !== null) {
-        void exposureTarget.setExposure(initialExposure, params.bitPeriodMs / 2);
+      const startExposure = initialExposure ?? (exposureServoOn ? EXPOSURE_SERVO_START : null);
+      if (startExposure !== null) {
+        void exposureTarget.setExposure(startExposure, params.bitPeriodMs / 2);
       }
       /** Diffuse exposure: biased AE where the camera path supports it (60 fps),
        * else the manual short-exposure pin. */
       const enterDiffuseExposure = (): void => {
         if (initialExposure !== null || manualMode || servoExposure || diffuseExposure !== "none") return;
+        // Switched into diffuse mid-run with the light servo owning the camera
+        // exposure: hand exposure to the diffuse negotiation, keep the servo on
+        // LED brightness only.
+        if (exposureServoOn) {
+          exposureServoOn = false;
+          lightServo = { ...lightServo, mode: "brightness-only", expProbe: null, lastReason: "diffuse: exposure negotiated" };
+        }
         if (exposureTarget.setExposureBias) {
           diffuseExposure = "ae-bias";
           void exposureTarget.setExposureBias(DIFFUSE_AE_BIAS_EV);
@@ -1504,7 +1536,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           },
           forced: { exposure: forcedExposure, brightness: forcedBrightness, symbols: forcedSymbols, bitMs: forcedBitMs },
           codeParams: params,
-          lastExposure: servoExposure || initialExposure !== null ? servoedExposure : null,
+          lastExposure: exposureServoOn || initialExposure !== null || diffuseExposure === "pinned" ? servoedExposure : null,
+          lightServo: legacyLightServo
+            ? null
+            : { mode: lightServo.mode, exposureFloor: lightServo.exposureFloor, lastReason: lightServo.lastReason },
           lastBrightness: params.brightness ?? null,
           stripPrior: finalSolveOptions(runChannelPlan !== null).stripPrior === true,
           liveSolve: liveSolveEnabled,
@@ -1572,6 +1607,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           scene: measured,
           blobs: blobPopulation(blobs),
         });
+        if (measured !== undefined) crowding.push(f.tCaptureMs, blobCrowding(blobs));
         lastAmbient = f.ambientIntensity ?? lastAmbient;
         runLink?.frame(f.tCaptureMs, clipped);
 
@@ -1653,7 +1689,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             const scn = monitor.scene();
             const br = Math.round((params.brightness ?? 1) * 100);
             const pct = (x: number): string => `${Math.round(x * 100)}%`;
-            const expLine = servoExposure ? ` · exp ${servoedExposure.toFixed(2)}` : "";
+            const expLine = legacyLightServo ? " · legacy AE" : `\n${formatLightServo(lightServo)}`;
             const servoLine =
               (pop
                 ? `LED ${br}% · sat ${pop.satFrac.toFixed(2)} split ${pct(pop.splitFrac)} ` +
@@ -2166,7 +2202,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // Link telemetry: the settings in effect over the window this report
         // measured (before this tick's servo steps change them).
         runLink?.exposure(performance.now(), {
-          exposure: servoExposure || manualMode || initialExposure !== null ? servoedExposure : null,
+          exposure: exposureServoOn || manualMode || initialExposure !== null || diffuseExposure === "pinned" ? servoedExposure : null,
+          servo: legacyLightServo ? null : lightServo.lastReason,
           brightness: params.brightness ?? null,
           threshold: detector.threshold,
           frameIntervalMs: report.frameIntervalMs,
@@ -2199,21 +2236,26 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           diffuseClipTicks = pop.satFrac >= DIFFUSE_CLIP_SAT_FRAC ? diffuseClipTicks + 1 : 0;
           if (diffuseClipTicks >= DIFFUSE_CLIP_TICKS) pinDiffuseExposure(`spot cores clipping, sat ${pop.satFrac.toFixed(2)}`);
         }
-        if (servoExposure && !manualMode && pop !== null) {
-          const nextExp = planExposureServo(servoedExposure, {
-            blobCount: report.blobCount,
-            ledCount,
-            satFrac: pop.satFrac,
-            grayFrac: pop.grayFrac,
-            medianIntensity: pop.medianIntensity,
-          });
-          if (nextExp !== null) {
-            servoedExposure = nextExp;
-            void exposureTarget.setExposure(nextExp, params.bitPeriodMs / 2);
+        // One controller: exposure first, LED brightness only once exposure is
+        // on its measured floor (cv/lightServo.ts). Exposure applies now;
+        // brightness goes through the two-tick confirmation below.
+        let servoBright: number | null = null;
+        if (!legacyLightServo && !manualMode && pop !== null) {
+          const step = planLightServo(
+            { ...lightServo, exposure: servoedExposure },
+            { blobCount: report.blobCount, ledCount, ...pop, clipFrac: report.clipFrac, crowding: crowding.value() },
+            params.brightness ?? 1,
+          );
+          lightServo = step.state;
+          servoBright = step.brightness;
+          if (step.exposure !== null) {
+            servoedExposure = step.exposure;
+            void exposureTarget.setExposure(step.exposure, params.bitPeriodMs / 2);
           }
         }
-        const wantBright =
-          !servoExposure && forcedBrightness === null && !manualMode && pop !== null
+        const wantBright = !legacyLightServo
+          ? servoBright
+          : forcedBrightness === null && !manualMode && pop !== null
             ? planLedBrightness(params.brightness ?? 1, {
                 blobCount: report.blobCount,
                 ledCount,
