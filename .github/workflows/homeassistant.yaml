@@ -53,5 +53,7 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
-          # Not in home-assistant/brands yet (needs a submission there first).
-          ignore: brands
+          # brands: not in home-assistant/brands yet (needs a submission there).
+          # topics: HACS wants GitHub topics on the repo (a repo setting, not a
+          # file); drop this once the repo has e.g. "home-assistant" + "hacs".
+          ignore: brands topics

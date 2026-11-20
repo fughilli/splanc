@@ -17,7 +17,8 @@ from .lamp import CannotConnect, CertificateMismatch, LampError, SplancLamp
 
 PLATFORMS = [Platform.LIGHT, Platform.EVENT]
 
-type SplancConfigEntry = ConfigEntry[SplancLamp]
+# (Not a PEP 695 `type` alias: the repo's lint runs on Python 3.11.)
+SplancConfigEntry = ConfigEntry[SplancLamp]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: SplancConfigEntry) -> bool:
