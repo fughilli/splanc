@@ -10,9 +10,9 @@
  *
  * The bottom CTA tracks the shared connection: it reads "Skip — work offline"
  * until a device is connected (recalled on refresh or freshly added), then
- * flips to a solid "Continue" in the accent colour (and Connect steps down to a
- * secondary button, so the screen keeps one primary action). Either way it lands
- * on the Maps tab.
+ * flips to a solid "Choose an effect" in the accent colour (and Connect steps
+ * down to a secondary button, so the screen keeps one primary action). Either
+ * way it lands on the Effects tab, the app's home.
  */
 
 import { Button, Card } from "../kit";
@@ -29,10 +29,10 @@ export function OnboardingScreen(router: Router): Screen {
   intro.className = "screen-sub";
   intro.textContent = "Connect a fixture, or skip and work offline — you can add one later.";
 
-  const done = (): void => router.navigate("/maps");
+  const done = (): void => router.navigate("/effects"); // home: pick an effect
 
   // Adding a device here does NOT whisk the user away — provisioning connects in
-  // the background and the bottom CTA flips to "Continue" once it lands, so they
+  // the background and the bottom CTA flips to "Choose an effect" once it lands, so they
   // stay put and see it succeed. (The CTA is the one thing that navigates on.)
   const card = document.createElement("div");
   card.className = "onboard-add-card";
@@ -51,12 +51,12 @@ export function OnboardingScreen(router: Router): Screen {
       cap.textContent = "On this network";
       found.append(cap, FoundList(fresh));
     }
-    // One primary per screen: found fixtures' Connect buttons (or Continue) take
+    // One primary per screen: found fixtures' Connect buttons (or "Choose an effect") take
     // the accent once there are any.
     actions.replaceChildren(ConnectActions({ quietConnect: connected || fresh.length > 0 }));
     ctaWrap.replaceChildren(
       connected
-        ? Button({ label: "Continue", block: true, onClick: done })
+        ? Button({ label: "Choose an effect", block: true, onClick: done })
         : Button({ label: "Skip — work offline", variant: "quiet", block: true, onClick: done }),
     );
   };

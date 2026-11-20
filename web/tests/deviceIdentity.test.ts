@@ -157,13 +157,17 @@ test("the device list tells same-named devices apart by MAC suffix, never by nam
     stored("wss://10.0.0.13/ws", { label: "Garage", bleMac: "58:E6:C5:00:00:13", named: true }),
   ]);
   openDeviceSheet();
-  // meta line (host · tag) -> display name, for every row in the list
+  // address (the meta line's tooltip) + the meta line's tag -> display name, for
+  // every row in the list. (The meta line itself reads "<status> · <tag>": no IP,
+  // which clipped on a phone.)
   const rowMeta = (): Record<string, string> =>
     Object.fromEntries(
-      all(".device-row").map((r) => [
-        r.querySelector(".device-url")!.textContent,
-        r.querySelector(".device-name")!.textContent,
-      ]),
+      all(".device-row").map((r) => {
+        const meta = r.querySelector(".device-url")!;
+        const parts = meta.textContent.split(" · ");
+        const tag = parts.length > 1 ? ` · ${parts[parts.length - 1]}` : "";
+        return [`${meta.getAttribute("title")}${tag}`, r.querySelector(".device-name")!.textContent];
+      }),
     );
 
   assert.deepEqual(rowMeta(), {

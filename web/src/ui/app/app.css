@@ -3019,7 +3019,36 @@ input.device-name-input {
 .device-btns {
   display: flex;
   align-items: center;
-  gap: var(--sp-1);
+  /* ≥ 8 px between Disconnect / Connect and the ⋮ (layout guard). */
+  gap: var(--sp-2);
+  flex-shrink: 0;
+}
+/* A row with a second line of its own (the connected fixture's "Choose an
+   effect", an unreachable fixture's note) wraps it under the row. */
+.device-row--lead,
+.device-row--stale {
+  flex-wrap: wrap;
+}
+.device-next,
+.device-stale {
+  flex-basis: 100%;
+}
+.device-stale {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  /* Line up under the name (past the 10 px dot and the row gap). */
+  padding-left: calc(10px + var(--sp-3));
+}
+.device-stale-text {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  line-height: 1.4;
+}
+.device-row--stale .device-url {
+  color: var(--err);
 }
 /* Connecting: gray plug that breathes, with a slash "wave" sweeping across —
    reads as in-progress, before it settles to the red disconnect. */

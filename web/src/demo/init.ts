@@ -24,6 +24,8 @@
  *   discovered — fixtures heard on the network (net/discovery.ts): two new ones
  *                ("Porch Arch", "Stair Rail") and a known "Kitchen" at a new
  *                address, so the lists show "On this network".
+ *   stale      — a known "Bedroom" that was looked for and not found (a fixture
+ *                moved to another Wi-Fi), so its row shows what to do about it.
  *   nousb      — no Web Serial / WebUSB (an iPhone-like browser), so "Flash a
  *                new device" shows the plug-into-a-laptop pictogram.
  *   play / play-revert / play-nomap / play-off — Halloween play mode: a
@@ -56,6 +58,7 @@ export function initDemoMode(scenarios: Set<string>): void {
   if (scenarios.has("imu")) setupImuDemo();
   if (scenarios.has("mesh")) setupMeshDemo();
   if (scenarios.has("discovered")) void setupDiscovered();
+  if (scenarios.has("stale")) void setupStale();
   if (scenarios.has("nousb")) setupNoUsb();
   const play = [...scenarios].find((s) => s === "play" || s.startsWith("play-"));
   if (play) void setupPlayDemo(play);
@@ -432,6 +435,14 @@ async function setupDiscovered(): Promise<void> {
   discovery.report({ ...base, key: "AA:BB:CC:00:11:22", id: "AA:BB:CC:00:11:22", name: "Kitchen", host: "192.168.1.31", url: "wss://192.168.1.31/ws" });
   discovery.report({ ...base, key: "AA:BB:CC:33:44:55", id: "AA:BB:CC:33:44:55", name: "Porch Arch", host: "192.168.1.42", url: "wss://192.168.1.42/ws" });
   discovery.report({ ...base, key: "AA:BB:CC:66:77:88", id: "AA:BB:CC:66:77:88", name: "Stair Rail", host: "192.168.1.57", url: "wss://192.168.1.57/ws" });
+}
+
+/** A known fixture that isn't on this network (see the scenario list above). */
+async function setupStale(): Promise<void> {
+  const { deviceProber } = await import("../net/deviceProber");
+  const dev = deviceStore.upsert("wss://192.168.1.77/ws", "Bedroom");
+  deviceStore.applyWelcome(dev.id, { mac: "AA:BB:CC:99:00:77", deviceName: "Bedroom" });
+  deviceProber.noteUnreachable(dev.id);
 }
 
 /** A browser without Web Serial or WebUSB (iPhone/iPad, Safari, Firefox). */

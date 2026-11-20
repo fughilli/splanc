@@ -13,8 +13,14 @@
  * connect picker, shared with the welcome screen), with "Flash a new device" on
  * its own row below it (D-72).
  *
+ * The connected fixture's row leads on with one primary "Choose an effect" (the
+ * Effects tab), so connecting here is never a dead end. A known fixture that was
+ * looked for and not found says what to do about it: a network move needs Wi-Fi
+ * set up again over Bluetooth, never a reflash (the same copy as the Effects
+ * tab's fixture card), with a "Set up Wi-Fi again" action.
+ *
  * Each row's 3-dots (⋮) menu opens a detail popup with the recorded LAN address,
- * MAC, Bluetooth name, the editable display name (reflected to the device — and
+ * MAC, Bluetooth name (rows don't repeat the address: it clips on a phone), the editable display name (reflected to the device — and
  * its Bluetooth advertisement — on connect), and Forget. Delete lives in there,
  * not as a one-tap top-level button, so it can't be hit by accident.
  */
@@ -29,7 +35,7 @@ import {
   deviceDisambiguator,
   type KnownDevice,
 } from "../../store/deviceStore";
-import { bleRediscover, connectOverBle } from "./addDevice";
+import { bleRediscover, connectOverBle, openAddDevice } from "./addDevice";
 import { discovery, type FoundFixture } from "../../net/discovery";
 import { ConnectActions, FoundList } from "./connectPicker";
 import { appendGrouped, openFolderPicker } from "./folders";
@@ -82,9 +88,10 @@ export function openDeviceSheet(): void {
   unsubDev = deviceStore.subscribe(rerender);
   unsubApp = appState.subscribe(rerender);
   // Reachability comes from the shared background prober (lazy: 1/min → 1/10min).
-  // Opening the sheet asks it for a fresh, prompt look.
+  // Opening the sheet looks for every known fixture now, so a row says "Can't
+  // reach it" only after it was actually looked for.
   unsubProbe = deviceProber.subscribe(rerender);
-  deviceProber.refresh();
+  void deviceProber.probeAllNow();
   // Fixtures on the network appear by themselves while the sheet is open.
   unsubFound = discovery.subscribe(rerender);
   stopDiscovery = discovery.start();
@@ -173,6 +180,7 @@ function render(): HTMLElement {
         deviceProber.isReachable(dev.id) || found.matched.has(dev.id),
         (nameCounts.get(dev.label) ?? 0) > 1,
         found.matched.get(dev.id),
+        deviceProber.hasProbed(dev.id),
       ),
     { scope: "devices" },
   );
@@ -231,6 +239,9 @@ function deviceRow(
   ambiguousName = false,
   // Heard on the network just now (net/discovery.ts): its current address.
   found?: FoundFixture,
+  // Looked for at least once since boot (deviceProber): "not reachable" is a
+  // finding, not just "not asked yet".
+  probed = false,
 ): HTMLElement {
   const row = document.createElement("div");
   row.className = "device-row";
@@ -239,6 +250,9 @@ function deviceRow(
   // "connected"). "connecting…" and "syncing clock…" both report state
   // "connecting", so both keep the in-progress affordance below.
   const fullyConnected = isActive && status.state === "connected";
+  // A Wi-Fi fixture that was looked for and isn't there (not one only ever
+  // reached over Bluetooth: that has no network to have moved off).
+  const stale = !isActive && !isReachable && !isBleUrl(dev.wssUrl);
   const dot = document.createElement("span");
   dot.className = "device-dot";
   dot.dataset["state"] = isActive
@@ -254,11 +268,18 @@ function deviceRow(
   name.textContent = dev.label;
   const meta = document.createElement("div");
   meta.className = "device-url";
+  // No IP in the subtitle: next to the row's buttons it clips on a phone. The
+  // address is in the ⋮ details (and the tooltip).
   const base = isActive
     ? connectedMeta(status)
     : isReachable
-      ? `on this network · ${found ? found.host : deviceHost(dev)}`
-      : deviceHost(dev);
+      ? "on this network"
+      : stale
+        ? probed
+          ? "Can't reach it"
+          : "Looking for it…"
+        : "Bluetooth";
+  meta.title = found ? found.host : deviceHost(dev);
   // Disambiguate colliding display names with the stable MAC suffix so two
   // devices both called "Kitchen" are still tellable apart.
   const tag = ambiguousName ? deviceDisambiguator(dev) : "";
@@ -296,9 +317,8 @@ function deviceRow(
       rowAction("Wi-Fi", `Connect over Wi-Fi (${hostOfUrl(lanUrl)})`, () => appState.connect(lanUrl, dev.label)),
       rowAction("Find", "Find over Bluetooth", () => bleRediscover(dev), "quiet"),
     );
-  } else {
-    // Unreachable on the LAN: the connect affordance opens the BLE picker
-    // directly to re-discover / re-provision the device (Improv flow).
+  } else if (!stale) {
+    // Reached only over Bluetooth before: find it there again.
     btns.append(rowAction("Find", "Find over Bluetooth", () => bleRediscover(dev), "quiet"));
   }
   // The 3-dots menu opens the device config (rename, folder, color correction,
@@ -307,6 +327,49 @@ function deviceRow(
   btns.append(IconButton("more", { title: "Options", onClick: () => openDeviceDetail(dev) }));
 
   row.append(dot, info, btns);
+
+  // The connected fixture leads on: the one primary action in the sheet.
+  if (fullyConnected) {
+    const next = Button({
+      label: "Choose an effect",
+      icon: "sparkles",
+      block: true,
+      onClick: () => {
+        openHandle?.close();
+        location.hash = "#/effects";
+      },
+    });
+    next.classList.add("device-next");
+    row.classList.add("device-row--lead");
+    row.append(next);
+  }
+  // Looked for and not found: say what to do, not just a grey dot (D-219). The
+  // same copy as the Effects tab's fixture card.
+  if (stale && probed) {
+    row.classList.add("device-row--stale");
+    const note = document.createElement("div");
+    note.className = "device-stale";
+    const p = document.createElement("p");
+    p.className = "device-stale-text";
+    p.textContent =
+      "Check it's plugged in and on the same Wi-Fi as this phone. Moved it to a different " +
+      "Wi-Fi? Set it up again over Bluetooth. No need to flash it again.";
+    const again = Button({
+      label: "Set up Wi-Fi again",
+      icon: "bluetooth",
+      variant: "quiet",
+      onClick: () => {
+        // Straight into "Set up a new fixture" (Bluetooth → Wi-Fi): pick the new
+        // network, then the fixture in the Bluetooth list.
+        openHandle?.close();
+        openAddDevice("ble");
+      },
+    });
+    again.classList.add("device-stale-act");
+    again.title = `Set up ${dev.label}'s Wi-Fi again over Bluetooth`;
+    note.append(p, again);
+    row.append(note);
+  }
   return row;
 }
 
