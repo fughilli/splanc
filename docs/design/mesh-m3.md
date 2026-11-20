@@ -57,7 +57,11 @@ own stack 14 KB), back to 93 112 after `OFF`. Building it takes a short-lived 26
 stack (22.5 KB used), so the heap's minimum dips to ~30 KB once at `ON`. The dev-only key's
 entry point (`ns_mesh_dev_provision`) is not in the default image.
 
-The flash cost is real even when off: the OTA layout check has ~32 B of headroom (desk #73).
+The flash cost is real even when off. On top of the size diet (#569, -267 KB), the default
+app with M3 is **2 158 096 B**: `//firmware/loader:layout_test` passes with 135 664 B under its
+64 KiB margin (desk D-86: the mesh in every C6 player, off by default). The dev-only site key
+stays out of it: only `_meshdev` (the HITL image, never published) has `MESH KEY`, and CI fails
+if the shipping ELF links `ns_mesh_dev_provision`.
 
 ## What changed
 
