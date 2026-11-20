@@ -871,7 +871,7 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
     if (gis) return gis;
     const slot = googleSlot();
     gis = slot;
-    const width = Math.min(400, (wrap.clientWidth || 360) - 2);
+    const width = Math.min(400, (wrap.clientWidth || 360) - 2); // = the .cf-sso list width (max 400 px, GIS's own cap)
     void getSigninNonce()
       .then((n) =>
         renderGoogleButton(slot, signinCfg!, n, (proof) => {
@@ -927,8 +927,8 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
     cards.className = "cf-summary";
     const cur = c?.current?.balance_credits ?? 0;
     cards.append(
-      kv("This device's account", formatCredits(cur)),
-      kv(`The account linked to this ${noun}`, formatCredits(c?.other.balance_credits ?? 0)),
+      kv("On this device", formatCredits(cur)),
+      kv(`Linked to this ${noun}`, formatCredits(c?.other.balance_credits ?? 0)),
     );
     const curRecoverable = (c?.current?.identities.length ?? 0) > 0 || creditsEmail(balance) !== null;
     const strand = cur > 0 && !curRecoverable;
