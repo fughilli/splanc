@@ -44,6 +44,7 @@ import {
 } from "../../store/chatLogStore";
 import { remoteChatEnabled, setRemoteChatEnabled } from "../../net/remoteChat";
 import { debugModeEnabled, setDebugModeEnabled } from "../../store/debugMode";
+import { AI_CREDITS_FLAG, aiCreditsEnabled } from "../../effects/ai/providers/credits";
 import { captureBundlesGroup } from "./captureBundles";
 import { backupGroup } from "./backupSection";
 import { diagnosticsGroup } from "./diagnosticsSection";
@@ -133,6 +134,7 @@ export function SettingsScreen(router: Router, initialTab: SettingsTab = "appear
         diagnosticsGroup(group, row, segmented),
         captureBundlesGroup(group, row, segmented),
         chatLogsDebugGroup(),
+        previewsGroup(),
       ];
     } else {
       panels = [
@@ -433,6 +435,35 @@ export function SettingsScreen(router: Router, initialTab: SettingsTab = "appear
             // Rebuild so the Debugging tab appears/disappears immediately.
             rerender();
             toast(v === "on" ? "Debug settings enabled" : "Debug settings hidden");
+          },
+        ),
+      ),
+    );
+    return g;
+  }
+
+  // -- Feature previews (Debugging tab) -----------------------------------
+  // The Splanc AI credits flag, switchable without a console: a TestFlight
+  // build's web view can't be inspected, and the sandbox test needs it on.
+  function previewsGroup(): HTMLElement {
+    const g = group("Feature previews");
+    g.append(
+      row(
+        "Splanc AI credits",
+        "Shows Splanc AI credits in Settings ▸ AI (sandbox: test purchases only). Off by default until launch.",
+        segmented<"on" | "off">(
+          [
+            ["off", "Off"],
+            ["on", "On"],
+          ],
+          aiCreditsEnabled() ? "on" : "off",
+          (v) => {
+            try {
+              localStorage.setItem(AI_CREDITS_FLAG, v === "on" ? "1" : "0");
+            } catch {
+              // storage blocked: nothing to remember
+            }
+            toast(v === "on" ? "Splanc AI credits on. Reopen the app to start App Store deliveries." : "Splanc AI credits hidden");
           },
         ),
       ),

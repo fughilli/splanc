@@ -106,6 +106,11 @@ const CSS = `
 }
 .cf-pack.on .cf-pack-mark { background: var(--accent); border-color: var(--accent); color: #fff; }
 .cf-pack-mark svg { width: 14px; height: 14px; }
+/* A two-way choice (the iOS refund-request consent): the pack cards' look,
+   one per row so neither option is favoured, nothing preselected. */
+.cf-choices { grid-template-columns: 1fr; }
+.cf-choice { padding-right: calc(var(--sp-4) + 32px); }
+.cf-choice-title { font-weight: 600; }
 
 .cf-summary, .cf-panel {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card);

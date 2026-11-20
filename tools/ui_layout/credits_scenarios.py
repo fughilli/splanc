@@ -21,6 +21,12 @@ PACKS = [
     {"sku": "web.credits.10", "channel": "web", "credits": 833, "reference_price_usd": 10},
     {"sku": "web.credits.25", "channel": "web", "credits": 2083, "reference_price_usd": 25},
 ]
+APPLE_PACKS = [
+    {"sku": "dev.splanc.app.credits.small", "channel": "apple", "credits": 356},
+    {"sku": "dev.splanc.app.credits.medium", "channel": "apple", "credits": 713},
+    {"sku": "dev.splanc.app.credits.large", "channel": "apple", "credits": 1427},
+]
+ACCOUNT_REF = "6f1c2a9e-1b2c-5d3e-8f40-0123456789ab"
 STATEMENT = [
     {
         "at": "2026-11-18T19:42:00Z",
@@ -73,6 +79,8 @@ class FakeBilling:
         email_in_use=False,
         statement=None,
         low_mark=50,
+        consent=None,
+        apple_fail=False,
     ):
         self.balance = balance
         self.adult = adult
@@ -85,6 +93,9 @@ class FakeBilling:
         self.low_mark = low_mark
         self.paid = False
         self.return_url = ""
+        self.query = ""
+        self.consent = consent  # None = never asked; True / False = answered
+        self.apple_fail = apple_fail  # the relay can't credit an App Store purchase
 
     def balance_body(self):
         hint = (self.email[0] + "•••" + self.email[self.email.index("@") :]) if self.email else None
@@ -98,6 +109,9 @@ class FakeBilling:
             "email_hint": hint,
             "email_verified": bool(self.email),
             "anonymous_ack_at": "2026-11-18T10:00:00Z" if self.anon else None,
+            "apple_consumption_consent": self.consent is True,
+            "apple_consumption_asked": self.consent is not None,
+            "account_ref": ACCOUNT_REF,
         }
 
     def handler(self):
@@ -120,6 +134,7 @@ class FakeBilling:
             if request.method == "OPTIONS":
                 return route.fulfill(status=204, headers=CORS) or True
             body = json.loads(request.post_data) if request.post_data else {}
+            self.query = u.query
             status, out = self.api(request.method, u.path, body)
             return (
                 route.fulfill(
@@ -142,7 +157,7 @@ class FakeBilling:
                 "low_balance_credits": self.low_mark,
                 "default_model": "claude-sonnet-5-5",
                 "models": [],
-                "packs": PACKS,
+                "packs": APPLE_PACKS if "channel=apple" in self.query else PACKS,
             }
         if key == "POST /billing/account/recover" or key == "POST /billing/recover/start":
             return 202, {"ok": True, "message": "If an account uses this address, we sent a code."}
@@ -202,6 +217,23 @@ class FakeBilling:
             return 200, {"ok": True}
         if key == "GET /billing/statement":
             return 200, {"entries": self.statement}
+        if key == "POST /billing/consent":
+            self.consent = bool(body.get("apple_consumption"))
+            return 200, {"ok": True, "apple_consumption_consent": self.consent}
+        if key == "POST /billing/purchase/apple":
+            if self.apple_fail:
+                return 500, {"error": "billing_error", "message": "Something went wrong."}
+            self.balance += 356
+            self.statement = [
+                {
+                    "at": "2026-11-20T20:00:00Z",
+                    "kind": "purchase",
+                    "credits": 356,
+                    "balance_credits": self.balance,
+                    "sku": "dev.splanc.app.credits.small",
+                }
+            ] + self.statement
+            return 201, {"credited_credits": 356, "balance_credits": self.balance, "replay": False}
         if key == "POST /billing/checkout":
             self.return_url = body.get("return_url", "")
             return 200, {"url": "https://checkout.stripe.com/c/pay/cs_test_fake"}
@@ -456,5 +488,170 @@ SCENARIOS = [
         seed={},
         network=fake(),
         expect=title("aren't available here"),
+    ),
+]
+
+
+# -- the iOS app (Apple In-App Purchase) ---------------------------------------------------
+#
+# A fake Capacitor runtime that says "iOS app" and a fake StoreKitBridge plugin
+# (web/native-plugins/storekit-bridge): Apple's localized products, and a
+# purchase that completes, waits for Ask to Buy, or never returns (the sheet
+# still up). Every other native plugin rejects, as on a build without it.
+
+
+def ios_js(mode: str = "purchased", storekit: bool = True) -> str:
+    return """
+(() => {
+  const mode = %s;
+  const product = (id, n, price) => ({
+    id: "dev.splanc.app.credits." + id, displayName: n + " Splanc AI credits", description: "",
+    displayPrice: "$" + price, price: Number(price), currencyCode: "USD",
+  });
+  const products = [
+    product("small", "356", "4.99"), product("medium", "713", "9.99"), product("large", "1,427", "19.99"),
+  ];
+  const tx = {
+    transactionId: "2000000000000001", originalTransactionId: "2000000000000001",
+    productId: "dev.splanc.app.credits.small", jws: "fake.jws.sig",
+  };
+  const storeKit = {
+    products: async (o) => ({ products: products.filter((p) => o.ids.includes(p.id)) }),
+    purchase: () =>
+      mode === "hang" ? new Promise(() => {}) :
+      Promise.resolve(mode === "pending" ? { status: "pending" } : { status: "purchased", transaction: tx }),
+    finish: async () => ({ finished: true }),
+    unfinished: async () => ({ transactions: [] }),
+    sync: async () => {},
+    canMakePayments: async () => ({ allowed: true }),
+    addListener: async () => ({ remove: async () => {} }),
+  };
+  const nope = async () => { throw new Error("not in this build"); };
+  const missing = new Proxy({}, { get: (_t, k) => (k === "then" ? undefined : nope) });
+  window.Capacitor = {
+    isNativePlatform: () => true,
+    getPlatform: () => "ios",
+    isPluginAvailable: (n) => %s && n === "StoreKitBridge",
+    registerPlugin: (n) => (n === "StoreKitBridge" && %s ? storeKit : missing),
+  };
+})();
+""" % (
+        json.dumps(mode),
+        "true" if storekit else "false",
+        "true" if storekit else "false",
+    )
+
+
+IOS_TO_CONSENT = [
+    ("click", btn("Get started")),
+    ("wait_for", title("Help Apple with refund requests?")),
+]
+IOS_TO_PACKS = IOS_TO_CONSENT + [
+    ("click", btn("Yes, share my usage")),
+    ("click", btn("Continue")),
+    ("wait_for", btn("Buy for $4.99")),
+]
+IOS_BUY = IOS_TO_PACKS + [("click", btn("Buy for $4.99"))]
+IOS_READY = {"adult": True, "anon": True}
+
+SCENARIOS += [
+    Scenario(
+        "ios-flow-01-consent",
+        "#/credits",
+        seed=SIGNED_IN,
+        network=fake(**IOS_READY),
+        init_js=ios_js(),
+        steps=IOS_TO_CONSENT,
+        expect=title("Help Apple with refund requests?"),
+    ),
+    Scenario(
+        "ios-flow-02-consent-chosen",
+        "#/credits",
+        seed=SIGNED_IN,
+        network=fake(**IOS_READY),
+        init_js=ios_js(),
+        steps=IOS_TO_CONSENT + [("click", btn("No, don't share"))],
+        expect='.cf-choice.on:has-text("No, don\'t share")',
+    ),
+    Scenario(
+        "ios-flow-03-packs",
+        "#/credits",
+        seed=SIGNED_IN,
+        network=fake(**IOS_READY),
+        init_js=ios_js(),
+        steps=IOS_TO_PACKS,
+        expect=btn("Buy for $4.99"),
+    ),
+    Scenario(
+        "ios-flow-04-purchasing",
+        "#/credits",
+        seed=SIGNED_IN,
+        network=fake(**IOS_READY),
+        init_js=ios_js("hang"),
+        steps=IOS_BUY + [("wait_for", title("Complete the purchase with Apple"))],
+        expect=title("Complete the purchase with Apple"),
+    ),
+    Scenario(
+        "ios-flow-05-success",
+        "#/credits",
+        seed=SIGNED_IN,
+        network=fake(**IOS_READY),
+        init_js=ios_js(),
+        steps=IOS_BUY + [("wait_for", ".cf-balance"), ("wait", 1200)],
+        expect=title("You're all set"),
+    ),
+    Scenario(
+        "ios-flow-06-ask-to-buy",
+        "#/credits",
+        seed=SIGNED_IN,
+        network=fake(**IOS_READY),
+        init_js=ios_js("pending"),
+        steps=IOS_BUY + [("wait_for", title("Waiting for approval"))],
+        expect=title("Waiting for approval"),
+    ),
+    Scenario(
+        "ios-flow-07-paid-not-credited",
+        "#/credits",
+        seed=SIGNED_IN,
+        network=fake(apple_fail=True, **IOS_READY),
+        init_js=ios_js(),
+        steps=IOS_BUY + [("wait_for", btn("Check again"))],
+        expect=title("Payment received, adding credits"),
+    ),
+    Scenario(
+        "ios-flow-08-returning-buyer",
+        "#/credits",
+        seed=SIGNED_IN,
+        network=fake(balance=12.5, consent=False, **IOS_READY),
+        init_js=ios_js(),
+        steps=[("click", btn("Get started")), ("wait_for", btn("Buy for $4.99"))],
+        expect=btn("Buy for $4.99"),
+    ),
+    Scenario(
+        "ios-flow-09-old-build",
+        "#/credits",
+        seed=FRESH,
+        network=fake(),
+        init_js=ios_js(storekit=False),
+        expect=title("Update Splanc to buy credits"),
+    ),
+    Scenario(
+        "ios-ai-tab-account",
+        "#/settings/ai",
+        seed=SIGNED_IN,
+        network=fake(balance=412.5, consent=True, statement=STATEMENT, **IOS_READY),
+        init_js=ios_js(),
+        settle_ms=1200,
+        expect=btn("Check for purchases"),
+    ),
+    Scenario(
+        "ios-ai-tier-sheet",
+        "#/settings/ai",
+        seed=FRESH,
+        network=fake(),
+        init_js=ios_js(),
+        steps=[("click", btn("Model setup")), ("wait", 600)],
+        root=".k-sheet",
+        expect=btn("Use Splanc AI credits"),
     ),
 ]

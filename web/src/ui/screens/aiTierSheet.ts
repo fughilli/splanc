@@ -51,6 +51,7 @@ import {
   type AiTier,
 } from "../../effects/ai/tiers";
 import { isIosNative } from "../../net/native";
+import { storeKitAvailable } from "../../net/storeKit";
 import { openCreditsFlow } from "./creditsFlow";
 
 const CONFIG_STORAGE = "ledmapper.ai.config";
@@ -392,8 +393,9 @@ function freeCard(done: () => void, away: () => void): HTMLElement {
 }
 
 function paidCard(done: () => void, away: () => void): HTMLElement {
-  // Never in the iOS app (credits there are Apple In-App Purchase, later).
-  const available = paidTierEnabled() && paidTierSupported() && !isIosNative();
+  // In the iOS app only when the build can buy through the App Store
+  // (StoreKit plugin); the web checkout is never offered there.
+  const available = paidTierEnabled() && paidTierSupported() && (!isIosNative() || storeKitAvailable());
   const { el, actions } = card("paid", available ? undefined : "Coming soon");
   if (!available) {
     el.classList.add("aitier-card--soon");
