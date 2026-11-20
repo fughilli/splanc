@@ -8,8 +8,9 @@
  * Not bound in wrangler.toml yet: binding it needs a `v2` migration
  * (`new_sqlite_classes = ["BillingAccount"]`), staged plan step 3.
  *
- * Also: account session tokens (`sst1.<account>.<exp>.<mac>`, HMAC with the
- * BILLING_TOKEN_SECRET Worker secret) and the account ids.
+ * Also: account session tokens (`sst2.<account>.<gen>.<exp>.<mac>`, HMAC with
+ * the BILLING_TOKEN_SECRET Worker secret; `gen` is the account's session
+ * generation, so recovery can sign other devices out) and the account ids.
  */
 
 import { b64url, hmac, randomBytes, safeEqual } from "../crypto";
@@ -76,6 +77,12 @@ export class BillingAccount {
           return json(await this.ledger.setAppleConsumptionConsent(b["apple_consumption"] === true));
         case "/consumption":
           return json({ consumption: await this.ledger.consumptionOf(String(b["ref"])) });
+        case "/email":
+          return json(await this.ledger.setEmail((b["email"] as { hash: string; hint: string } | null) ?? null));
+        case "/anonymous":
+          return json(await this.ledger.ackAnonymous());
+        case "/session/bump":
+          return json({ gen: await this.ledger.bumpSessionGen() });
         case "/adult":
           return json(await this.ledger.confirmAdult());
         case "/status":
@@ -119,8 +126,20 @@ export class DoLedger {
         environment?: BillingMode;
         adult_confirmed_at?: number;
         apple_consumption_consent?: { consented: boolean; at: number };
+        email?: { hash: string; hint: string; verified_at: number };
+        anonymous_ack_at?: number;
+        session_gen?: number;
       } | null;
     }>("/account", {});
+  }
+  setEmail(email: { hash: string; hint: string } | null) {
+    return this.call<{ previous?: { hash: string; hint: string; verified_at: number } }>("/email", { email });
+  }
+  ackAnonymous() {
+    return this.call<{ anonymous_ack_at: number }>("/anonymous", {});
+  }
+  async bumpSessionGen(): Promise<number> {
+    return (await this.call<{ gen: number }>("/session/bump", {})).gen;
   }
   setAppleConsumptionConsent(consented: boolean) {
     return this.call<{ id: string }>("/consent", { apple_consumption: consented });
@@ -172,30 +191,56 @@ export function newAccountId(): string {
 }
 
 /**
- * The MAC'd message of a session token. Sessions are scoped to the billing
+ * The MAC'd messages of session tokens. Sessions are scoped to the billing
  * mode (AI_BILLING): a production token is MAC'd over a different message, so
  * a token minted while the relay ran in sandbox mode (test-money credits)
  * never opens anything once it runs in production, and vice versa, even with
- * the same BILLING_TOKEN_SECRET. Sandbox keeps the original message, so the
- * existing sandbox sessions stay valid.
+ * the same BILLING_TOKEN_SECRET.
+ *
+ * - `sst1` (before session generations; read only, counts as generation 0):
+ *   sandbox keeps the original message, so existing sandbox sessions stay valid.
+ * - `sst2` (minted now): carries the account's session generation, so a
+ *   recovery on a new device can sign the other devices out. Its message
+ *   always names the mode.
  */
 const sessionMsg = (account: string, exp: number, mode: BillingMode) =>
   mode === "sandbox" ? `splanc-billing-session\n${account}\n${exp}` : `splanc-billing-session\n${mode}\n${account}\n${exp}`;
+const sessionMsg2 = (account: string, gen: number, exp: number, mode: BillingMode) => `splanc-billing-session2\n${mode}\n${account}\n${gen}\n${exp}`;
 
-export async function mintSession(secret: string, account: string, nowS: number, mode: BillingMode = "sandbox"): Promise<string> {
+export async function mintSession(secret: string, account: string, nowS: number, mode: BillingMode = "sandbox", gen = 0): Promise<string> {
   const exp = nowS + SESSION_TTL_S;
-  return `sst1.${account}.${exp}.${await hmac(secret, sessionMsg(account, exp, mode))}`;
+  return `sst2.${account}.${gen}.${exp}.${await hmac(secret, sessionMsg2(account, gen, exp, mode))}`;
 }
 
-/** The account a session token names, or null (bad shape / signature / expired / other mode). */
-export async function verifySession(secret: string, token: string | null, nowS: number, mode: BillingMode = "sandbox"): Promise<string | null> {
+/** The account + session generation a token names, or null (bad shape /
+ * signature / expired / other mode). `sst1` tokens count as generation 0. */
+export async function parseSession(
+  secret: string,
+  token: string | null,
+  nowS: number,
+  mode: BillingMode = "sandbox",
+): Promise<{ account: string; gen: number } | null> {
   if (!token) return null;
+  const m2 = /^sst2\.(acct_[a-z2-7]{20})\.(\d{1,6})\.(\d{1,12})\.([A-Za-z0-9_-]{43})$/.exec(token);
+  if (m2) {
+    const [, account, genS, expS, mac] = m2 as unknown as [string, string, string, string, string];
+    const gen = Number(genS);
+    const exp = Number(expS);
+    if (exp <= nowS) return null;
+    return safeEqual(await hmac(secret, sessionMsg2(account, gen, exp, mode)), mac) ? { account, gen } : null;
+  }
   const m = /^sst1\.(acct_[a-z2-7]{20})\.(\d{1,12})\.([A-Za-z0-9_-]{43})$/.exec(token);
   if (!m) return null;
   const [, account, expS, mac] = m as unknown as [string, string, string, string];
   const exp = Number(expS);
   if (exp <= nowS) return null;
-  return safeEqual(await hmac(secret, sessionMsg(account, exp, mode)), mac) ? account : null;
+  return safeEqual(await hmac(secret, sessionMsg(account, exp, mode)), mac) ? { account, gen: 0 } : null;
+}
+
+/** The account a session token names (signature + expiry + mode only; the
+ * endpoint also checks the generation against the account). */
+export async function verifySession(secret: string, token: string | null, nowS: number, mode: BillingMode = "sandbox"): Promise<string | null> {
+  return (await parseSession(secret, token, nowS, mode))?.account ?? null;
 }
 
 /** A fresh BILLING_TOKEN_SECRET value (for `wrangler secret put`). */

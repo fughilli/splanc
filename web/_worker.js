@@ -484,7 +484,8 @@ export const RELAY_PATHS = new Set([
   // webhook and the admin route use the workers.dev address directly.
   "/ai/v1/messages", "/billing/account", "/billing/age", "/billing/balance",
   "/billing/checkout", "/billing/consent", "/billing/pricing", "/billing/statement",
-  "/billing/purchase/apple",
+  "/billing/purchase/apple", "/billing/account/anonymous", "/billing/account/email",
+  "/billing/account/email/verify", "/billing/recover/start", "/billing/recover/verify",
 ]);
 
 export function relayRoute(request, url, env) {
