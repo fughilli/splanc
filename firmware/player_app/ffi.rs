@@ -734,7 +734,10 @@ fn texture_ack(seq: u32, queued: u32) -> pb::ServerMessage {
 }
 
 /// Device-clock discontinuity guard. On a c6 the millis() clock was seen to step
-/// BACK ~230 s mid-stream (root cause unknown; esp_timer/systimer). Every
+/// BACK ~230 s mid-stream (root cause unknown; esp_timer/systimer). The steps seen
+/// in CI are whole multiples of 2^24 systimer ticks (1048.576 ms) — 1 to 82 of them —
+/// so the smallest one, taken across a ~50 ms frame, reads as a dt of only ~-1000 ms:
+/// any step BACK counts (millis() never legitimately runs backwards). Every
 /// absolute device time held here — the shared time-base epoch and the queued
 /// video present times — would then sit minutes in the future: video freezes and
 /// effects lose step. The render task calls this every frame with millis(); a step
@@ -755,7 +758,7 @@ pub unsafe extern "C" fn lm_clock_observe(now_ms: i64) -> i64 {
         return 0;
     }
     let dt = now_ms - last;
-    if dt < -1000 {
+    if dt < 0 {
         let shift = dt - CLOCK_LAST_DT;
         player().shift_time_base(shift);
         (*addr_of_mut!(SCHED)).shift(shift);

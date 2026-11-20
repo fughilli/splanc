@@ -83,8 +83,8 @@ bool lm_fx_clock(int64_t now_ms, uint32_t wall_dt_ms, float *time_s, float *dt_s
 // (SetTexture.present_at_ms on the shared time base) has come. Once per effect
 // frame, under the player mutex, before lm_fx_update. `now_ms` = millis().
 void lm_tex_present(uint32_t now_ms);
-// Device-clock step guard, every render frame under the player mutex: a millis() step
-// back > 1 s shifts the time base + queued video times by it. Returns the shift (0 = none).
+// Device-clock step guard, every render frame under the player mutex: any millis() step
+// back shifts the time base + queued video times by it. Returns the shift (0 = none).
 int64_t lm_clock_observe(int64_t now_ms);
 // Scheduled changes (apply_at_ms on set_uniforms / set_effect / set_crossfade /
 // set_brightness): apply those due by `now_ms` (millis), in order. Every render frame
