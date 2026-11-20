@@ -234,6 +234,7 @@
 <li class="toctree-l1"><a class="reference internal" href="host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
@@ -267,6 +268,7 @@
 <li class="toctree-l2"><a class="reference internal" href="design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/ai-tiers.html">AI tiers (free / paid / self-serve)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/ios-support.html">iOS support</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/on-device-models.html">On-device models</a></li>
 <li class="toctree-l2"><a class="reference internal" href="design/effects-demo.html">Effects demo</a></li>
@@ -494,12 +496,12 @@ message is sized by its <em>largest</em> arm, and it lands on the stack of whate
 task handles the frame. One rarely used arm, the 4 KiB board-capabilities
 catalog, made <em>every</em> <code class="docutils literal notranslate"><span class="pre">ServerMessage</span></code> 4,104 bytes. That inflated every handler
 frame on the hottest task.</p>
-<p><code class="docutils literal notranslate"><span class="pre">oss/pbview</span></code> generates borrowed <em>views</em> instead. A view is two words that read
-fields straight out of the received bytes, validated once, with no allocation,
+<p><a class="reference external" href="https://github.com/fughilli/pbview">pbview</a> generates borrowed <em>views</em> instead. A view is two
+words that read fields straight out of the received bytes, validated once, with no allocation,
 no <code class="docutils literal notranslate"><span class="pre">unsafe</span></code> and no panics on any input. The firmware now dispatches every
 request in place from the RX buffer (#265), and the firmware’s own
-<code class="docutils literal notranslate"><span class="pre">ServerMessage</span></code> is 656 bytes. pbview is self-contained under <code class="docutils literal notranslate"><span class="pre">oss/</span></code> because it
-is useful to anyone doing protobuf on <code class="docutils literal notranslate"><span class="pre">no_std</span></code>.</p>
+<code class="docutils literal notranslate"><span class="pre">ServerMessage</span></code> is 656 bytes. pbview lives in its own repository because it is useful to
+anyone doing protobuf on <code class="docutils literal notranslate"><span class="pre">no_std</span></code>.</p>
 </section>
 <section id="why-ble-and-wi-fi-at-the-same-time">
 <h2>Why BLE and Wi-Fi at the same time?<a class="headerlink" href="#why-ble-and-wi-fi-at-the-same-time" title="Link to this heading">¶</a></h2>

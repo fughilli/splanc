@@ -168,6 +168,11 @@ The publish tree is staged the same way for both targets — the layout lives in
 
 ## Testing with a phone against the virtual wall (no LED hardware)
 
+To test with the **installed** phone app (add the wall by address like any
+player, including hue-code captures), use `bazel run //pi/player_rs:wall --
+--leds 400` instead: see docs/host-player.md "Virtual LED wall". The flow below
+serves the app itself from the M2 dev server.
+
 One command serves everything (M2 + built app, HTTPS with a persistent
 self-signed cert under `.ledmapper/`):
 
@@ -206,8 +211,35 @@ skipping auto-negotiation for that field), `?imumap=+a,+b,+g;+x,+y,+z`
 (DeviceMotion axis-mapping override — fit a new device with
 `bazelisk run //pi/reconstruction:vio_replay -- <trace> <decoded> --diagnose`),
 `?fx=` (focal seed; otherwise a cached calibration, otherwise a 70°-FOV
-guess — fx error shifts metric scale ~1:1, shape is unaffected). Wall page:
-`?cols=N`, `?gap`, `?margin`, `?dot` (dot diameter as a fraction of pitch).
+guess — fx error shifts metric scale ~1:1, shape is unaffected),
+`?sync=stagger_pilot|v1` (debug override of the sync pattern request; see below). Wall
+page: `?cols=N`, `?gap`, `?margin`, `?dot` (dot diameter as a fraction of
+pitch), `?sync=stagger_pilot|on_off` (FORCE the rendered sync pattern).
+
+### Testing hue code v2 (staggered pilot) against the wall
+
+The staggered-pilot code (`syncPattern: "stagger_pilot"`,
+docs/design/hue-code-v2.md phase 2) is the default. The phone asks for it from every
+player that advertises `hue_stagger_pilot`: start_mapping carries
+`syncPattern`, and the phone decodes whatever `codeParams.syncPattern` the
+device answers with. A player on older firmware keeps v1 and says so;
+`?sync=v1` forces v1 for debugging. Supporting devices: C6/P4 firmware with
+splanc#517, the virtual wall player (`bazel run
+//pi/player_rs:wall`, docs/host-player.md; it advertises `hue_stagger_pilot`)
+and this dev server. The dev server can also hand the code out to every
+capture without the request: `bazelisk run //web:serve -- --sync-pattern
+stagger_pilot`.
+
+The wall renders what the device runs. Its status line reads
+`sync stagger_pilot`. The phone HUD adds `pilot k … · cyc … miss … φrej …`:
+
+- `pilot k`: the locked whole-frame latency;
+- `cyc`: per-track pilots found;
+- `miss`: delimiter misses;
+- `φrej`: phase-check rejects.
+
+`wall.html?sync=…` forces the wall's rendering only (debugging); the phone must
+then be decoding the same pattern.
 
 ### The hue code + auto-negotiated capture configuration
 

@@ -29,15 +29,16 @@ bazel-bin/pi/player_rs/player_host --output ddp://wled-desk.local --leds 300 --n
 
 `bazel run //pi/player_rs:player_host -- --output … --leds …` works too.
 
-| Flag              | Meaning                                                                                                                                                                                               |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--output SPEC`   | An output driver. Repeat it to split one strip across several controllers, in order. Default `null`.                                                                                                  |
-| `--leds N`        | The strip length. Defaults to the outputs' `#N` counts added together.                                                                                                                                |
-| `--fps F`         | The output frame rate. Default 40.                                                                                                                                                                    |
-| `--name NAME`     | The device name the app shows. Default "Splanc Host".                                                                                                                                                 |
-| `--serve-port P`  | The WSS port. Default 8443. Use a different port for each process.                                                                                                                                    |
-| `--state-dir DIR` | Where the map and effect are saved (`""` keeps them in memory only). Default `~/Library/Application Support/Splanc/player_host/<port>` on macOS, `~/.local/state/splanc/player_host/<port>` on Linux. |
-| `--start N`       | Show an N-LED mapping pattern at startup without the app, to check wiring.                                                                                                                            |
+| Flag                     | Meaning                                                                                                                                                                                                   |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--output SPEC`          | An output driver. Repeat it to split one strip across several controllers, in order. Default `null`.                                                                                                      |
+| `--leds N`               | The strip length. Defaults to the outputs' `#N` counts added together.                                                                                                                                    |
+| `--fps F`                | The output frame rate. Default 40.                                                                                                                                                                        |
+| `--name NAME`            | The device name the app shows. Default "Splanc Host".                                                                                                                                                     |
+| `--serve-port P`         | The WSS port. Default 8443. Use a different port for each process.                                                                                                                                        |
+| `--state-dir DIR`        | Where the map and effect are saved (`""` keeps them in memory only). Default `~/Library/Application Support/Splanc/player_host/<port>` on macOS, `~/.local/state/splanc/player_host/<port>` on Linux.     |
+| `--start N`              | Show an N-LED mapping pattern at startup without the app, to check wiring.                                                                                                                                |
+| `--output-latency-ms MS` | Render effects MS milliseconds ahead of the shared time base, to cancel the network and controller latency to the LEDs. Default 0. See [Shared time and output latency](#shared-time-and-output-latency). |
 
 ### Output specs (`pi/player_rs/src/output.rs`)
 
@@ -76,15 +77,75 @@ applied on top of that.
 1. Start `player_host`. It logs `add it in the app at wss://<this host>:8443`.
 2. In the app, choose **Add device → Enter address** and enter
    `wss://<mac-hostname-or-ip>:8443`. The player uses a self-signed certificate,
-   like the devices do. The first time, open `https://<host>:8443` in the same
-   browser and accept the warning. The page itself then shows an error, which is
-   expected.
+   like the devices do. The app offers to trust it the first time (or open
+   `https://<host>:8443` in the same browser and accept the warning); the page
+   then confirms the certificate and shows the address to enter.
 3. Map it the usual way: set the LED count, run the capture with the phone
    camera, and solve. The player shows the mapping patterns over DDP or Art-Net
    and reports back which frame it showed, as the devices do. Effects need the
    solved map on the player, so make sure the app uploads it.
 4. Push effects from the Effects tab. The map and the active effect are saved to
    the state directory and come back after a restart.
+
+## Shared time and output latency
+
+The bridge's `align_time` (agent `alignTime`) gives every player the same effect
+clock: it syncs each player's clock with `time_sync_ping` and sends
+`set_time_base` with a common epoch in that player's own clock. The host player
+and the Pi player advertise the `time_base` feature and take part like a C6:
+
+- `time_sync_pong` is stamped with the player's monotonic clock (ms since the
+  process started), the same clock the render loop reads.
+- While a time base is set, effect `time` = (now − epoch) / 1000 s, held at 0
+  before the epoch, and update()'s `dt` = this frame's time − the previous
+  frame's, in whole Q16.16 ticks, so `phase += dt * speed` comes out the same
+  on every synced player. The bridge's small drift-slewing epoch nudges (1–2 ms)
+  flow into `dt` the same way they move `time`. The rule is the C6's
+  (`time_base_frame` in `firmware/player_app/ffi.rs`, ported to
+  `pi/player_rs/src/clock.rs`): `dt` is 0 before the epoch and 0 when shared
+  time steps back, and when it jumps forward by more than a frame + 250 ms (a
+  re-align) `dt` is the normal frame period. `set_time_base` with `clear` goes
+  back to the free-running clock.
+
+The Pi player only shows mapping and counting patterns today, so its time base
+has nothing to drive yet. It is kept so an effects layer can use it.
+
+### Output latency (`--output-latency-ms`)
+
+A C6 lights its LEDs right after it renders a frame. A host player's frame goes
+over UDP to a WLED board, which buffers it and drives the strip, so it lights
+some milliseconds later. On the same effect time, the WLED fixture is behind.
+`--output-latency-ms MS` makes the player render at shared time + MS. Set MS to
+the measured latency and the two fixtures line up. Negative values work too.
+The offset applies only while a time base is set. It is per player: run one
+`player_host` per controller if two controllers need different offsets. The
+welcome reports it as the feature string `output_latency_ms=MS`, and the
+player logs it at startup.
+
+How to measure it:
+
+1. Put a C6 fixture and the WLED fixture side by side and run `align_time` on
+   both.
+2. Deploy an effect with a sharp edge in time, for example a full white flash for
+   one frame each second: `vec3 shade(Led led) { return vec3(fract(time) < 0.05 ? 1.0 : 0.0); }`.
+3. Record both with something that resolves a few ms:
+   - A logic analyser on both data lines (the C6's LED GPIO and the WLED board's
+     output pin). The gap between the starts of the two bursts is the latency,
+     plus the difference in strip transfer time (about 30 µs per LED for
+     WS2812). Compare the first LED of each strip.
+   - Or a phone in slow-motion video (240 fps is about 4 ms per frame). Count the
+     frames between the two flashes over a few flashes and average.
+4. Restart `player_host` with `--output-latency-ms <gap>` and check again: the
+   flashes should start in the same frame.
+
+Typical values on wired Ethernet are about 10–40 ms. Wi-Fi adds more and varies
+more. The latency changes with the frame rate, the LED count and WLED's settings,
+so measure again when you change those.
+
+Scheduled commands: `pi/player_rs/src/schedule.rs` and `server::apply_due` hold
+the seam for an `apply_at` time on control commands. The render loop applies due
+commands at each frame boundary, at now + the output latency, so a scheduled
+change lands ahead by the same offset as the effect clock.
 
 ## What is supported
 
@@ -97,6 +158,7 @@ The effects layer is `pi/player_rs/src/fx.rs`. These are served:
 - On one deck: `submit_effect`, `set_effect`, `set_uniforms` (with
   `control_ack`), `get_effect_uniforms` and `list_effects`.
 - Output brightness.
+- Shared time (`time_sync_ping`, `set_time_base`) and the output latency offset.
 
 Not served yet. The welcome's feature list leaves these out, so the app doesn't
 offer them:
@@ -112,12 +174,69 @@ offer them:
 Uniform values are not saved. After a restart the effect starts from its
 manifest defaults.
 
+## Virtual LED wall: map a screen from the phone app
+
+`//pi/player_rs:wall` turns a laptop screen into a fixture the installed phone
+app adds by address, with no LED hardware:
+
+```sh
+bazel run //pi/player_rs:wall -- --leds 400
+```
+
+It runs `player_host` with no LED output (`--output null`) and has it serve the
+built web app's virtual wall (`web/wall.html`) on its own WSS port
+(`--web-root`). It prints the two URLs and a QR code:
+
+1. **On the laptop**, open `https://localhost:8443/wall.html`, accept the
+   certificate warning, and press **Fullscreen**. The wall idles (dim dots)
+   until the phone starts mapping.
+2. **On the phone**, in the Splanc app: **Device** tab → link icon (_Enter
+   address manually_) → **Enter address** (the Wi-Fi fields can stay empty) →
+   `wss://<laptop IP>:8443`. The app shows its "trust the certificate" card the
+   first time, as for a real player; its popup lands on the player's trust page,
+   which hands the app back. Scanning the printed QR code opens that trust page
+   directly instead.
+3. **Map it**: LED count = the `--leds` value, point the camera at the wall,
+   capture and solve as usual.
+
+How it works. The player is the real session core, so the phone sees an
+ordinary fixture: `start_mapping` sets the code book and stamps the pattern
+epoch on the player's clock. The wall page is a second client of the same
+player. Loaded from the player's origin, it connects same-origin to
+`wss://localhost:8443/ws` with the certificate the browser already accepted.
+It syncs to the player clock (`time_sync`), polls `get_pattern` for the code
+book and epoch, and renders every frame itself with the WASM hue-code kernel at
+the display's refresh rate. Nothing is streamed over the network, so frame
+timing is the browser's vsync on the player's clock, as on a real fixture.
+
+Notes:
+
+- A firewall prompt on the Mac must allow incoming connections for
+  `player_host`. The phone and the laptop must be on the same network.
+- The wall's own flags still work: `wall.html?cols=20&dot=0.5`, and
+  `?url=wss://host:port/ws` points a wall page served elsewhere (e.g.
+  `bazel run //web:serve`) at any control plane, as before.
+- Only mapping is rendered: LED counting, effects and brightness from the app
+  reach the player but do not show on the wall.
+- Any `player_host` flag passes through (`--serve-port`, `--name`, …). Giving an
+  `--output` drives real LEDs too, in step with the wall.
+- Every Pi and host player now answers a plain `https://<player>/` with the
+  trust page (it posts `ledmapper-cert-ok` back to the app's popup, like the
+  netstack firmware) instead of an empty response.
+
+Headless check: `bazel run //pi/player_rs:wall_smoke` starts the wall player,
+opens the wall in headless Chromium and starts a mapping from a second client
+(standing in for the phone). It checks that the canvas, sampled at every LED
+centre, matches the kernel's colours for one frame of the cycle, and that this
+frame is the one the player's clock has due.
+
 ## Testing
 
 - Unit tests: `bazel test //pi/player_rs:player_rs_test`. These cover the DDP and
   Art-Net packet formats, output specs and pixel layout, and the effects layer
   end to end with a real compiled shader (map, chunked upload, uniforms,
-  uniforms manifest, restore).
+  uniforms manifest, restore), plus time sync, the time base (effect time and
+  `dt`) and the output latency offset.
 - Live smoke test, no hardware needed: `pi/player_rs/tools/smoke_host.py` (usage
   in its header). It runs the real binary, connects over real WSS and checks the
   DDP pixels that come out.
@@ -138,9 +257,9 @@ It was written and tested in the Linux dev container, then run on a Mac:
   non-bypassable `ERR_SSL_KEY_USAGE_INCOMPATIBLE`, because the self-signed cert
   was built as a CA (key usage `keyCertSign` / `cRLSign` only). It is now an
   end-entity cert with `digitalSignature` (`server.rs`, `self_signed_config`).
-  This fixes the Pi player too. After you accept the warning, the browser shows
-  `ERR_EMPTY_RESPONSE`, which is expected: the player only answers WebSocket
-  upgrades.
+  This fixes the Pi player too. After you accept the warning, the browser
+  showed `ERR_EMPTY_RESPONSE`, because the player only answered WebSocket
+  upgrades. It now serves the trust page there (see "Virtual LED wall").
 
 Next steps:
 
