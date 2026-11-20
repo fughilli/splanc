@@ -39,6 +39,16 @@ def _log(msg: str) -> None:
     print(msg, file=sys.stderr)
 
 
+def _user_path(p: str) -> str:
+    """A path as the user typed it: `bazel run` starts us in the runfiles tree,
+    so relative paths resolve against where the command was run."""
+    if os.path.isabs(p):
+        return p
+    return os.path.abspath(
+        os.path.join(os.environ.get("BUILD_WORKING_DIRECTORY") or os.getcwd(), p)
+    )
+
+
 def repo_dir(arg: str | None) -> str:
     return arg or os.environ.get("BUILD_WORKSPACE_DIRECTORY") or os.getcwd()
 
@@ -86,9 +96,7 @@ def cmd_record(args) -> int:
         sys.exit(f"release_clips: no built app at {dist} (bazel build //web:dist)")
     plan_json: dict = {}
     if args.spec:
-        specs = [
-            clipspec.load_spec(repo, os.path.relpath(os.path.abspath(p), repo)) for p in args.spec
-        ]
+        specs = [clipspec.load_spec(repo, os.path.relpath(_user_path(p), repo)) for p in args.spec]
     else:
         plan = make_plan(args)
         plan_json = plan.to_json()
@@ -403,10 +411,9 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=cmd_publish)
 
     args = ap.parse_args(argv)
-    if getattr(args, "out", None):
-        args.out = os.path.abspath(args.out)
-    if getattr(args, "clips", None):
-        args.clips = os.path.abspath(args.clips)
+    for name in ("out", "clips", "dist"):
+        if getattr(args, name, None):
+            setattr(args, name, _user_path(getattr(args, name)))
     return args.fn(args)
 
 

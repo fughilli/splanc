@@ -218,9 +218,12 @@ function externalLink(href: string, text: string, className?: string): HTMLAncho
 // (then the poster shows with a play mark). Tapping one opens it full size with
 // controls. No sound track, so autoplay needs no gesture.
 
-/** A wide card shows the desktop recording when there is one. */
+/** A wide card shows the desktop recording when there is one. The card's own
+ * width decides, not the window's: on a desktop the card is a side sheet. */
 function wideCard(): boolean {
-  return typeof matchMedia === "function" && matchMedia("(min-width: 760px)").matches;
+  const sheet = typeof document !== "undefined" ? document.querySelector<HTMLElement>(".wn-sheet") : null;
+  const width = sheet?.clientWidth || (typeof innerWidth === "number" ? innerWidth : 0);
+  return width >= 640;
 }
 
 let clipObserver: IntersectionObserver | null = null;
@@ -332,7 +335,8 @@ function openClipViewer(clip: FeatureClip, base: string, opener: HTMLElement): v
   wrap.setAttribute("aria-label", clip.title);
   const box = document.createElement("div");
   box.className = "wn-viewer-box";
-  const v = clipVideo(clip, wideCard(), base);
+  // Full size: the desktop recording whenever the window is wide.
+  const v = clipVideo(clip, typeof innerWidth === "number" && innerWidth >= 900, base);
   v.controls = true;
   v.preload = "auto";
   v.autoplay = !prefersReducedMotion();
@@ -709,7 +713,7 @@ function installWhatsNewStyles(): void {
 .wn-viewer {
   position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center;
   padding: max(var(--sp-4), env(safe-area-inset-top)) var(--sp-4) max(var(--sp-4), env(safe-area-inset-bottom));
-  background: rgba(0, 0, 0, .82);
+  background: rgba(0, 0, 0, .94);
 }
 .wn-viewer-box { display: flex; flex-direction: column; gap: var(--sp-3); max-width: min(960px, 100%); max-height: 100%; min-height: 0; }
 .wn-viewer-box video { display: block; max-width: 100%; max-height: calc(100dvh - 160px); width: auto; height: auto; margin: 0 auto; border-radius: var(--r-ctrl); background: #000; }
