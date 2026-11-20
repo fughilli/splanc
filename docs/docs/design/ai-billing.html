@@ -234,6 +234,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
@@ -1397,8 +1398,9 @@ metrics (<code class="docutils literal notranslate"><span class="pre">count_over
 in-repo.</p></li>
 </ul>
 </li>
-<li><p><strong>Alert rules (code: <code class="docutils literal notranslate"><span class="pre">billingAlertRules</span></code>, provisioning JSON:
-<code class="docutils literal notranslate"><span class="pre">grafanaProvisioning</span></code>).</strong> Each rule is a LogQL query, reduced to its last
+<li><p><strong>Alert rules (code: <code class="docutils literal notranslate"><span class="pre">ops/grafana/business/alerts.json</span></code>, applied by
+<code class="docutils literal notranslate"><span class="pre">ops/grafana/business/sync.py</span></code>; see docs/design/ops-grafana.md, which
+supersedes this table).</strong> Each rule is a LogQL query, reduced to its last
 value, with a threshold.</p>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
@@ -1448,8 +1450,9 @@ value, with a threshold.</p>
 </tbody>
 </table>
 </div>
-<p>A test checks that every rule names only real events, that the org rule is
-sized from the config (US$800), and that the provisioning JSON is complete.</p>
+<p>A test checks that every rule names only real events and fields
+(<code class="docutils literal notranslate"><span class="pre">agent/tests/ops.test.ts</span></code>). The org rule now reads <code class="docutils literal notranslate"><span class="pre">org_fraction</span></code> (&gt; 0.8),
+so it follows the configured limit without a code change.</p>
 </li>
 <li><p><strong>Reconciliation</strong> (<code class="docutils literal notranslate"><span class="pre">reconcileUsage</span></code>, <code class="docutils literal notranslate"><span class="pre">reconcileStore</span></code>, run daily by the Ops
 job):</p>
@@ -1658,9 +1661,8 @@ from <code class="docutils literal notranslate"><span class="pre">/billing/prici
 <li><p>KV-backed pricing config;</p></li>
 <li><p>the daily reconciliation job, which needs an Anthropic Admin API key
 <strong>[owner]</strong>, plus the store transaction lists from step 4 / 5;</p></li>
-<li><p>the dashboard JSON;</p></li>
-<li><p>a sync step that applies <code class="docutils literal notranslate"><span class="pre">grafanaProvisioning(...)</span></code> through Grafana’s
-alerting provisioning API;</p></li>
+<li><p>the dashboard JSON and a sync step for the alert rules (done:
+<code class="docutils literal notranslate"><span class="pre">ops/grafana/business/</span></code>, docs/design/ops-grafana.md);</p></li>
 <li><p>the admin CLI (adjust, suspend).</p></li>
 <li><p><strong>[owner]</strong> in Grafana Cloud:</p>
 <ul>
@@ -1809,8 +1811,9 @@ No. 25-1311.</p></li>
 month-to-date spend counter;</p></li>
 </ul>
 </li>
-<li><p><code class="docutils literal notranslate"><span class="pre">agent/relay/src/billing/metrics.ts</span></code>: the event list, the Grafana Cloud
-Logs push, the alert rules + provisioning JSON, reconciliation;</p>
+<li><p><code class="docutils literal notranslate"><span class="pre">agent/relay/src/billing/metrics.ts</span></code>: the event sink, purchase money,
+reconciliation; <code class="docutils literal notranslate"><span class="pre">agent/relay/src/ops.ts</span></code>: the allowlisted Grafana Cloud Logs
+push (docs/design/ops-grafana.md);</p>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">platform.ts</span></code>: env.</p></li>
 </ul>
