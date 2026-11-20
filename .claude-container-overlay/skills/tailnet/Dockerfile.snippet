@@ -1,0 +1,19 @@
+# ─── tailnet access ─────────────────────────────────────────────────────────
+# Append this to .claude-container-overlay/Dockerfile. Installs the tailscale
+# client into the image; the daemon is STARTED per container by tailnet-up.sh
+# (a daemon can't live in an image layer). Pin distro codename to the base image
+# (`noble` = Ubuntu 24.04; use `jammy` for 22.04, etc. — check the base image).
+#
+# Companion overlay.json keys are REQUIRED (see SKILL.md):
+#   "capabilities": ["NET_ADMIN"]   create the tailscale0 interface
+#   "devices": ["/dev/net/tun"]     the TUN device it is built on
+#   "env": ["TS_AUTHKEY"]           forwarded BY NAME, so the key value comes from
+#                                   the launching shell and never lands in argv
+RUN curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg \
+        -o /usr/share/keyrings/tailscale-archive-keyring.gpg \
+    && curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list \
+        -o /etc/apt/sources.list.d/tailscale.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends tailscale \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/lib/tailscale /var/run/tailscale
