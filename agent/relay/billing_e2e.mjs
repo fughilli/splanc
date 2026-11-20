@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // End-to-end check of Splanc AI credits on a SANDBOX relay with Stripe in TEST
-// mode (docs/design/ai-billing.md §Sandbox deploy). Run it after the deploy:
+// mode (docs/design/ai-billing.md §Sandbox deploy), or, with --live, the
+// go-live smoke test on a PRODUCTION relay (docs/ops/billing-go-live.md): a
+// real purchase with a real card, then a real refund. Run it after the deploy:
 //
 //   RELAY=https://splanc-relay.<subdomain>.workers.dev \
 //   STRIPE_SECRET_KEY_FILE=credentials/stripe_test_secret_key.txt \
@@ -22,7 +24,9 @@
 //   6. deletes the account.
 //
 // It never prints a key: secrets are read from files and only sent to Stripe.
-// It refuses a live key (sk_live_).
+// Without --live it refuses a live key; with --live it requires one, refuses
+// --signed-webhook (that would mint real credits without a payment), and checks
+// that the relay reports environment=production.
 
 import { readFileSync } from "node:fs";
 import { createHmac } from "node:crypto";
@@ -35,10 +39,19 @@ if (!/^(https:\/\/|http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$)/.test(RELAY)) {
 const args = process.argv.slice(2);
 const SKU = args.includes("--sku") ? args[args.indexOf("--sku") + 1] : "web.credits.10";
 const SIGNED = args.includes("--signed-webhook");
+const LIVE = args.includes("--live");
 const read = (f) => (f ? readFileSync(f, "utf8").trim() : "");
 const SK = read(process.env.STRIPE_SECRET_KEY_FILE);
-if (SK && !SK.startsWith("sk_test_")) {
-  console.error("refusing: STRIPE_SECRET_KEY_FILE is not a TEST key");
+if (LIVE && SIGNED) {
+  console.error("refusing: --signed-webhook can't be used with --live (it would credit without a payment)");
+  process.exit(2);
+}
+if (LIVE && !/^(sk|rk)_live_/.test(SK)) {
+  console.error("--live needs STRIPE_SECRET_KEY_FILE with the LIVE key (for the refund)");
+  process.exit(2);
+}
+if (!LIVE && SK && !/^(sk|rk)_test_/.test(SK)) {
+  console.error("refusing: STRIPE_SECRET_KEY_FILE is not a TEST key (use --live for the go-live smoke test)");
   process.exit(2);
 }
 
@@ -75,7 +88,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 step("1. pricing");
 const pricing = await api("/billing/pricing?channel=web");
-if (pricing.status !== 200) fail(`pricing ${pricing.status}: ${pricing.text.slice(0, 200)} (is AI_BILLING=sandbox set?)`);
+if (pricing.status !== 200) fail(`pricing ${pricing.status}: ${pricing.text.slice(0, 200)} (is AI_BILLING set?)`);
+const wantEnv = LIVE ? "production" : "sandbox";
+if (pricing.body.environment && pricing.body.environment !== wantEnv) fail(`the relay is in ${pricing.body.environment} mode, expected ${wantEnv}`);
+if (LIVE && pricing.body.environment !== "production") fail("the relay doesn't report environment=production");
 const pack = pricing.body.packs?.find((p) => p.sku === SKU);
 if (!pack) fail(`no web pack ${SKU}`);
 console.log(`pack ${SKU}: ${pack.credits} credits, US$${pack.reference_price_usd}`);
@@ -113,7 +129,11 @@ if (SIGNED) {
   const co = await api("/billing/checkout", { method: "POST", body: JSON.stringify({ sku: SKU }) }, token);
   if (co.status !== 201) fail(`checkout ${co.status}: ${co.text.slice(0, 200)}`);
   sessionId = co.body.id;
-  console.log(`open and pay with 4242 4242 4242 4242:\n  ${co.body.url}`);
+  console.log(
+    LIVE
+      ? `open and pay with a REAL card (US$${pack.reference_price_usd} + tax is charged, then refunded below):\n  ${co.body.url}`
+      : `open and pay with 4242 4242 4242 4242:\n  ${co.body.url}`,
+  );
 }
 let bal = 0;
 for (let i = 0; i < 120; i++) {
@@ -138,7 +158,7 @@ const b = JSON.parse(billing[1]);
 console.log(`charged ${b.charged_credits} credits, balance ${b.balance_credits}`);
 
 if (!SIGNED && SK) {
-  step("5. refund (Stripe test API)");
+  step(`5. refund (Stripe ${LIVE ? "LIVE" : "test"} API)`);
   const session = await stripe(`/checkout/sessions/${sessionId}`);
   await stripe("/refunds", { payment_intent: session.payment_intent });
   let after = bal;

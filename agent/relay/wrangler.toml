@@ -22,7 +22,8 @@ name = "DIRECTORY"
 class_name = "Directory"
 
 # Splanc AI credits: one object per credit account (agent/relay/src/billing,
-# docs/design/ai-billing.md). Inert unless the AI_BILLING secret is "sandbox".
+# docs/design/ai-billing.md). Inert unless the AI_BILLING secret is "sandbox"
+# or "production" (docs/ops/billing-go-live.md).
 [[durable_objects.bindings]]
 name = "BILLING"
 class_name = "BillingAccount"

@@ -67,8 +67,8 @@ esac
 # "Sandbox deploy runbook").
 ai="$(curl -s -o /dev/null -w '%{http_code}' "$url/billing/pricing")"
 case "$ai" in
-  200) echo "AI credits: ENABLED ($(curl -fsS "$url/billing/pricing" | grep -o '"version":[0-9]*'))" ;;
-  503) echo "AI credits: off (AI_BILLING not set to sandbox, or config incomplete)" ;;
+  200) echo "AI credits: ENABLED ($(curl -fsS "$url/billing/pricing" | grep -oE '"(version":[0-9]*|environment":"[a-z]*")' | tr '\n' ' '))" ;;
+  503) echo "AI credits: off (AI_BILLING not sandbox/production, or config incomplete)" ;;
   *) echo "AI credits: unexpected $ai from /billing/pricing" >&2 ;;
 esac
 echo "relay is up. MCP endpoint for connectors: $url/mcp"

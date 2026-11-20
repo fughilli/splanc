@@ -13,16 +13,28 @@
  *   POST   /billing/notify/<channel>      store / processor server notifications (refunds)
  *   POST   /ai/v1/messages                the metered AI proxy (proxy.ts)
  *
- * SANDBOX-ONLY SCAFFOLD. Everything answers 503 not_configured unless the
- * Worker has AI_BILLING=sandbox AND a valid AI_PRICING AND the secrets
- * ANTHROPIC_API_KEY, BILLING_TOKEN_SECRET and AI_BILLING_FAKE_STORE_KEY AND the
- * BILLING Durable Object binding. "production" is refused: purchases are only
- * verified by the fake store (purchases.ts) until the real verifiers land.
+ * MODES (`billingReady`). Everything answers 503 not_configured unless
+ * AI_BILLING is exactly "sandbox" or "production" AND AI_PRICING is valid AND
+ * ANTHROPIC_API_KEY, BILLING_TOKEN_SECRET and the BILLING Durable Object
+ * binding are there. The mode decides everything money-related, never a mix:
+ *
+ *   sandbox     Stripe TEST keys only (sk_test_ / rk_test_; a live key turns
+ *               the feature off); only test-mode (livemode=false) events
+ *               credit or claw back; the fake store (AI_BILLING_FAKE_STORE_KEY)
+ *               serves Apple purchases and, without Stripe, web purchases.
+ *   production  Stripe LIVE keys required (sk_live_ / rk_live_ and a webhook
+ *               secret; a test key or none turns the feature off) plus
+ *               BILLING_ADMIN_TOKEN; only livemode=true events count; the fake
+ *               store is never used, even if its key is set (Apple purchases
+ *               wait for the real StoreKit verifier, desk item D-142).
+ *
+ * Sessions, account tags and the liability counter are per mode, so credits
+ * bought with test money in the sandbox can't be spent in production.
  */
 
 import { dir } from "../oauth";
 import { now, type Env } from "../platform";
-import { DoLedger, mintSession, newAccountId, verifySession } from "./account";
+import { DoLedger, mintSession, newAccountId, verifySession, type BillingMode } from "./account";
 import { MICRO, findPack, publicPricing, validatePricing, CHANNELS, type Channel, type PricingConfig } from "./pricing";
 import { proxyMessages, redact, type OrgSpend } from "./proxy";
 import { purchaseMoney, refundUsdEstimate } from "./metrics";
@@ -106,7 +118,7 @@ async function stripeWebhook(
           pricing: ready.pricing,
           accountId: action.accountId,
           purchase: action.purchase,
-          environment: "sandbox",
+          environment: ready.environment,
         });
         if (action.paymentIntent) {
           await dir(env, "/pur/pi/set", { pi: action.paymentIntent, account: action.accountId, ref: `web:${action.purchase.transactionId}` });
@@ -120,11 +132,14 @@ async function stripeWebhook(
           amount: r.entry.amount,
           ...(r.replay ? {} : { ...purchaseMoney(ready.pricing, "web", action.purchase.sku, r.entry.amount), first_purchase: r.first_purchase === true }),
         });
-        if (!r.replay) await bumpLiability(env, log, r.entry.amount);
+        if (!r.replay) await bumpLiability(env, ready.environment, log, r.entry.amount);
       } catch (e) {
         if (!(e instanceof PurchaseError)) throw e;
         log({ ev: "ai_purchase_rejected", alert: true, account: action.accountId, channel: "web", code: e.code });
       }
+    } else if (action.kind === "refund" && action.environment !== ready.environment) {
+      // A refund / dispute from the other Stripe mode never touches this mode's ledger.
+      log({ ev: "ai_purchase_rejected", alert: true, account: null, channel: "web", code: "wrong_environment" });
     } else if (action.kind === "refund") {
       const rec = (await dir<{ rec: { account: string; ref: string } | null }>(env, "/pur/pi/get", { pi: action.paymentIntent })).body.rec;
       if (rec) {
@@ -141,7 +156,7 @@ async function stripeWebhook(
           credits: Math.abs(amount) / MICRO,
           usd_est: refundUsdEstimate(ready.pricing, "web", amount),
         });
-        await bumpLiability(env, log, amount);
+        await bumpLiability(env, ready.environment, log, amount);
       } else {
         log({ ev: "ai_refund", channel: "web", kind: action.reason, account: null, amount: 0, matched: false, credits: 0 });
       }
@@ -169,34 +184,57 @@ export const isBillingPath = (p: string) =>
   BILLING_PATHS.includes(p) || /^\/billing\/(purchase|notify)\/[a-z]+$/.test(p);
 
 type Ready = {
+  /** AI_BILLING: which store / processor environment this relay accepts. */
+  environment: BillingMode;
   pricing: PricingConfig;
   apiKey: string;
   secret: string;
-  /** The fake store's key (sandbox Apple purchases; fake web purchases when Stripe isn't set). */
+  /** The fake store's key (sandbox Apple purchases; fake web purchases when
+   * Stripe isn't set). Always null in production. */
   storeKey: string | null;
-  /** Stripe TEST keys (sandbox): web checkout + its webhook. */
+  /** Stripe keys of the mode (sandbox: test, optional; production: live, required). */
   stripe: { secretKey: string; webhookSecret: string } | null;
   ns: NonNullable<Env["BILLING"]>;
 };
 
 export const NOT_CONFIGURED = "Splanc AI credits aren't enabled on this relay.";
 
+/** The Stripe mode a secret key belongs to (secret `sk_` or restricted `rk_`), or null. */
+export function stripeKeyMode(key: string): BillingMode | null {
+  if (/^(sk|rk)_test_/.test(key)) return "sandbox";
+  if (/^(sk|rk)_live_/.test(key)) return "production";
+  return null;
+}
+
+/** AI_BILLING as a mode, or null (unset / anything else = off). */
+export function billingMode(env: { AI_BILLING?: string | undefined }): BillingMode | null {
+  return env.AI_BILLING === "sandbox" || env.AI_BILLING === "production" ? env.AI_BILLING : null;
+}
+
 /** Every precondition, or the reason it is off. Never says which secret is missing. */
 export function billingReady(env: Env): Ready | { off: string; detail?: string[] } {
-  if (env.AI_BILLING !== "sandbox") return { off: env.AI_BILLING === "production" ? "production_not_supported" : "disabled" };
+  const mode = billingMode(env);
+  if (!mode) return { off: "disabled" };
   if (!env.ANTHROPIC_API_KEY || !env.BILLING_TOKEN_SECRET || !env.BILLING) return { off: "incomplete" };
   const v = validatePricing(env.AI_PRICING ?? "");
   if (!v.ok) return { off: "bad_pricing", detail: v.errors };
-  // The sandbox only ever talks to Stripe in TEST mode: a live key is refused
-  // (the whole feature stays off, so it can't half-work with real money).
-  if (env.STRIPE_SECRET_KEY && !env.STRIPE_SECRET_KEY.startsWith("sk_test_")) return { off: "live_stripe_key_in_sandbox" };
+  // Stripe keys must match the mode; a mismatch turns the WHOLE feature off,
+  // so it can't half-work (test money in production, real money in the sandbox).
+  const keyMode = env.STRIPE_SECRET_KEY ? stripeKeyMode(env.STRIPE_SECRET_KEY) : null;
+  if (mode === "sandbox" && env.STRIPE_SECRET_KEY && keyMode !== "sandbox") return { off: "live_stripe_key_in_sandbox" };
+  if (mode === "production") {
+    if (!env.STRIPE_SECRET_KEY || !env.STRIPE_WEBHOOK_SECRET || !env.BILLING_ADMIN_TOKEN) return { off: "incomplete" };
+    if (keyMode !== "production") return { off: "test_stripe_key_in_production" };
+  }
   const stripe =
     env.STRIPE_SECRET_KEY && env.STRIPE_WEBHOOK_SECRET ? { secretKey: env.STRIPE_SECRET_KEY, webhookSecret: env.STRIPE_WEBHOOK_SECRET } : null;
   return {
+    environment: mode,
     pricing: v.config,
     apiKey: env.ANTHROPIC_API_KEY,
     secret: env.BILLING_TOKEN_SECRET,
-    storeKey: env.AI_BILLING_FAKE_STORE_KEY ?? null,
+    // The fake store can mint credits from nothing: sandbox only.
+    storeKey: mode === "sandbox" ? (env.AI_BILLING_FAKE_STORE_KEY ?? null) : null,
     stripe,
     ns: env.BILLING,
   };
@@ -214,7 +252,7 @@ function directoryClaims(env: Env): PurchaseClaims {
   };
 }
 
-function directoryOrgSpend(env: Env): OrgSpend {
+function directoryOrgSpend(env: Env, mode: BillingMode): OrgSpend {
   return {
     async get() {
       return (await dir<{ total: number }>(env, "/org/get", {})).body.total;
@@ -222,20 +260,20 @@ function directoryOrgSpend(env: Env): OrgSpend {
     async add(microUsd) {
       return (await dir<{ total: number }>(env, "/org/add", { micro_usd: microUsd })).body.total;
     },
-    liability: (delta) => liabilityAdd(env, delta),
+    liability: (delta) => liabilityAdd(env, mode, delta),
   };
 }
 
-/** Ops: move the running credit liability by `deltaMicro`; returns the total (µcredits). */
-async function liabilityAdd(env: Env, deltaMicro: number): Promise<number> {
-  return (await dir<{ total: number }>(env, "/org/liability", { delta_micro: deltaMicro })).body.total;
+/** Ops: move this mode's running credit liability by `deltaMicro`; returns the total (µcredits). */
+async function liabilityAdd(env: Env, mode: BillingMode, deltaMicro: number): Promise<number> {
+  return (await dir<{ total: number }>(env, "/org/liability", { delta_micro: deltaMicro, env: mode })).body.total;
 }
 
 /** Ops: move the liability and log its new total (`ai_liability`). Never throws. */
-async function bumpLiability(env: Env, log: (ev: Record<string, unknown>) => void, deltaMicro: number): Promise<void> {
+async function bumpLiability(env: Env, mode: BillingMode, log: (ev: Record<string, unknown>) => void, deltaMicro: number): Promise<void> {
   if (!deltaMicro) return;
   try {
-    log({ ev: "ai_liability", liability_credits: (await liabilityAdd(env, deltaMicro)) / MICRO, delta_credits: deltaMicro / MICRO });
+    log({ ev: "ai_liability", liability_credits: (await liabilityAdd(env, mode, deltaMicro)) / MICRO, delta_credits: deltaMicro / MICRO });
   } catch {
     // ops only
   }
@@ -264,17 +302,17 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
     if (path === "/billing/pricing" && req.method === "GET") {
       const ch = new URL(req.url).searchParams.get("channel");
       const channel = (CHANNELS as readonly string[]).includes(ch ?? "") ? (ch as Channel) : null;
-      return ctx.json(publicPricing(pricing, channel), 200, { "cache-control": "public, max-age=300" });
+      return ctx.json({ ...publicPricing(pricing, channel), environment: ready.environment }, 200, { "cache-control": "public, max-age=300" });
     }
     if (path === "/billing/account" && req.method === "POST") {
       const lim = await dir(env, "/limit", { name: "billingAccountIp", key: ctx.clientIp, global: "billingAccountGlobal" });
       if (lim.status === 429) return ctx.json({ error: "rate_limited", message: "Too many new accounts from here; try later." }, 429, { "retry-after": "3600" });
       const id = newAccountId();
-      const a = await new DoLedger(ready.ns, id).open(Math.round(pricing.trial_credits * MICRO));
+      const a = await new DoLedger(ready.ns, id).open(Math.round(pricing.trial_credits * MICRO), ready.environment);
       log({ ev: "ai_account_opened", account: id, trial_credits: pricing.trial_credits });
-      await bumpLiability(env, log, Math.round(pricing.trial_credits * MICRO));
+      await bumpLiability(env, ready.environment, log, Math.round(pricing.trial_credits * MICRO));
       return ctx.json(
-        { account_id: id, token: await mintSession(ready.secret, id, nowS), account_ref: await accountRefFor(id), balance_credits: a.balance / MICRO },
+        { account_id: id, token: await mintSession(ready.secret, id, nowS, ready.environment), account_ref: await accountRefFor(id), balance_credits: a.balance / MICRO },
         201,
       );
     }
@@ -299,7 +337,7 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
           credits: Math.abs(amount) / MICRO,
           usd_est: refundUsdEstimate(pricing, channel, amount),
         });
-        await bumpLiability(env, log, amount);
+        await bumpLiability(env, ready.environment, log, amount);
       }
       if (n && "consumptionRequest" in n) {
         // Apple asks how much of a purchase was used (the customer asked Apple
@@ -342,7 +380,7 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
     }
 
     // -- authenticated ----------------------------------------------------------------
-    const account = await verifySession(ready.secret, bearer(req), nowS);
+    const account = await verifySession(ready.secret, bearer(req), nowS, ready.environment);
     if (!account) return ctx.json({ error: "unauthorized", message: "sign in to use Splanc AI credits" }, 401);
     const ledger = new DoLedger(ready.ns, account);
 
@@ -354,7 +392,7 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
         upstream: ctx.upstream ?? ((u, i) => fetch(u, i)),
         log,
         waitUntil: ctx.waitUntil,
-        org: directoryOrgSpend(env),
+        org: directoryOrgSpend(env, ready.environment),
       });
     }
     if (path === "/billing/balance" && req.method === "GET") {
@@ -431,7 +469,7 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
       // this route is the fake store's (sandbox tests) only.
       if (!ready.storeKey || (channel === "web" && ready.stripe)) return ctx.json({ error: "not_found" }, 404);
       const purchase = await new FakeStoreVerifier(channel, ready.storeKey).verify(await req.json().catch(() => null));
-      const r = await applyPurchase({ ledger, claims: directoryClaims(env), pricing, accountId: account, purchase, environment: "sandbox" });
+      const r = await applyPurchase({ ledger, claims: directoryClaims(env), pricing, accountId: account, purchase, environment: ready.environment });
       log({
         ev: "ai_purchase",
         account,
@@ -441,7 +479,7 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
         amount: r.entry.amount,
         ...(r.replay ? {} : { ...purchaseMoney(pricing, channel, purchase.sku, r.entry.amount), first_purchase: r.first_purchase === true }),
       });
-      if (!r.replay) await bumpLiability(env, log, r.entry.amount);
+      if (!r.replay) await bumpLiability(env, ready.environment, log, r.entry.amount);
       return ctx.json({ credited_credits: r.entry.amount / MICRO, balance_credits: r.entry.balance / MICRO, replay: r.replay }, r.replay ? 200 : 201);
     }
     if (path === "/billing/account" && req.method === "DELETE") {
@@ -453,7 +491,7 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
         account,
         forfeited_credits: forfeited / MICRO,
       });
-      await bumpLiability(env, log, -forfeited);
+      await bumpLiability(env, ready.environment, log, -forfeited);
       return ctx.json({ ok: true, closed: account });
     }
     return ctx.json({ error: "method_not_allowed" }, 405);

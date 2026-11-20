@@ -1,0 +1,11 @@
+{
+  "//": "Stripe Price ids of the web credit packs, per billing mode (not secrets: Checkout shows them). billing_go_live.mjs merges them into AI_PRICING; docs/ops/billing-go-live.md. Both are one-time, tax-exclusive USD prices on the same Stripe account.",
+  "sandbox": {
+    "web.credits.10": "price_1UdD2CRj4rmWPRAqMMU6eSvj",
+    "web.credits.25": "price_1UdD2qRj4rmWPRAqT4S5WgN3"
+  },
+  "production": {
+    "web.credits.10": "price_1UdCuYRj4rmWPRAq6Z9hO4WJ",
+    "web.credits.25": "price_1UdCvmRj4rmWPRAqhxhJM7TM"
+  }
+}

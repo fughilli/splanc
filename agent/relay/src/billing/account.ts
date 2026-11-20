@@ -16,6 +16,10 @@ import { b64url, hmac, randomBytes, safeEqual } from "../crypto";
 import { now, type DONamespace, type DOState, type Env } from "../platform";
 import { Ledger, type LedgerEntry, type LotConsumption, type ReserveResult, type SettleActivity } from "./ledger";
 import type { Caps, Usage } from "./pricing";
+import type { StoreEnvironment } from "./purchases";
+
+/** The relay's billing mode (AI_BILLING): the store environment it accepts. */
+export type BillingMode = StoreEnvironment;
 
 const json = (obj: unknown, status = 200) => new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json" } });
 
@@ -43,7 +47,7 @@ export class BillingAccount {
     try {
       switch (path) {
         case "/open":
-          return json(await this.ledger.open(String(b["id"]), Number(b["trial"] ?? 0)));
+          return json(await this.ledger.open(String(b["id"]), Number(b["trial"] ?? 0), b["environment"] === "production" ? "production" : "sandbox"));
         case "/account":
           return json({ account: (await this.ledger.getAccount()) ?? null });
         case "/reserve": {
@@ -102,8 +106,8 @@ export class DoLedger {
     return j;
   }
 
-  open(trialMicro: number) {
-    return this.call<{ id: string; balance: number; held: number; status: string }>("/open", { id: this.accountId, trial: trialMicro });
+  open(trialMicro: number, environment: BillingMode = "sandbox") {
+    return this.call<{ id: string; balance: number; held: number; status: string; environment?: BillingMode }>("/open", { id: this.accountId, trial: trialMicro, environment });
   }
   account() {
     return this.call<{
@@ -112,6 +116,7 @@ export class DoLedger {
         balance: number;
         held: number;
         status: string;
+        environment?: BillingMode;
         adult_confirmed_at?: number;
         apple_consumption_consent?: { consented: boolean; at: number };
       } | null;
@@ -166,22 +171,31 @@ export function newAccountId(): string {
   return "acct_" + [...randomBytes(20)].map((x) => a[x % 32]).join("");
 }
 
-const sessionMsg = (account: string, exp: number) => `splanc-billing-session\n${account}\n${exp}`;
+/**
+ * The MAC'd message of a session token. Sessions are scoped to the billing
+ * mode (AI_BILLING): a production token is MAC'd over a different message, so
+ * a token minted while the relay ran in sandbox mode (test-money credits)
+ * never opens anything once it runs in production, and vice versa, even with
+ * the same BILLING_TOKEN_SECRET. Sandbox keeps the original message, so the
+ * existing sandbox sessions stay valid.
+ */
+const sessionMsg = (account: string, exp: number, mode: BillingMode) =>
+  mode === "sandbox" ? `splanc-billing-session\n${account}\n${exp}` : `splanc-billing-session\n${mode}\n${account}\n${exp}`;
 
-export async function mintSession(secret: string, account: string, nowS: number): Promise<string> {
+export async function mintSession(secret: string, account: string, nowS: number, mode: BillingMode = "sandbox"): Promise<string> {
   const exp = nowS + SESSION_TTL_S;
-  return `sst1.${account}.${exp}.${await hmac(secret, sessionMsg(account, exp))}`;
+  return `sst1.${account}.${exp}.${await hmac(secret, sessionMsg(account, exp, mode))}`;
 }
 
-/** The account a session token names, or null (bad shape / signature / expired). */
-export async function verifySession(secret: string, token: string | null, nowS: number): Promise<string | null> {
+/** The account a session token names, or null (bad shape / signature / expired / other mode). */
+export async function verifySession(secret: string, token: string | null, nowS: number, mode: BillingMode = "sandbox"): Promise<string | null> {
   if (!token) return null;
   const m = /^sst1\.(acct_[a-z2-7]{20})\.(\d{1,12})\.([A-Za-z0-9_-]{43})$/.exec(token);
   if (!m) return null;
   const [, account, expS, mac] = m as unknown as [string, string, string, string];
   const exp = Number(expS);
   if (exp <= nowS) return null;
-  return safeEqual(await hmac(secret, sessionMsg(account, exp)), mac) ? account : null;
+  return safeEqual(await hmac(secret, sessionMsg(account, exp, mode)), mac) ? account : null;
 }
 
 /** A fresh BILLING_TOKEN_SECRET value (for `wrangler secret put`). */
