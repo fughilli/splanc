@@ -211,5 +211,6 @@ These steps need approval and aren't done by this PR.
 5. **Firmware.** Release a firmware version with `device_metrics`. Older
    firmware is skipped silently.
 6. **Stores.** Update the App Store privacy answers and the Play data-safety
-   form from [store-privacy-labels.md](../store-privacy-labels.md), and publish
-   the privacy notice ([privacy.md](../privacy.md)) where the app links it.
+   form (PR #579: `docs/store/app-store-privacy.md`,
+   `docs/store/play-data-safety.md`), and publish the privacy notice
+   (`docs/privacy.md`, also #579) where the app links it.
