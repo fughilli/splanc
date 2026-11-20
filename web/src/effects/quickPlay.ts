@@ -52,13 +52,15 @@ const BLURBS: Record<string, string> = {
   "builtin-color-test": "A test gradient for checking colour and order",
 };
 
-export function isStarter(e: Pick<EffectLike, "id">): boolean {
-  return e.id.startsWith("builtin-");
+/** Seeded showcase scenes (made for the sample maps; some carry builtin- ids),
+ * not the user's work. A user's copy drops the builtin- id but keeps #demo, so
+ * only built-in ids count. */
+export function isExample(e: EffectLike): boolean {
+  return e.id.startsWith("builtin-") ? e.tags.includes("demo") : false;
 }
 
-/** Seeded showcase scenes (made for the sample maps), not the user's work. */
-export function isExample(e: EffectLike): boolean {
-  return !isStarter(e) && e.tags.includes("demo");
+export function isStarter(e: EffectLike): boolean {
+  return e.id.startsWith("builtin-") && !isExample(e);
 }
 
 /** One plain-language line for a built-in, or null for anything else. */

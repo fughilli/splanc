@@ -14,6 +14,9 @@ export function installEffectsHomeStyles(): void {
 }
 
 const CSS = `
+/* Room under the last row for the floating "+" button. */
+.screen--effects-lib { padding-bottom: calc(3.5rem + var(--sp-8)); }
+
 /* -- fixture card: what the app is connected to, and the next step -- */
 .fxhome-card {
   display: flex;

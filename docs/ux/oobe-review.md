@@ -31,16 +31,17 @@ listed at the end.
 
 ## Root causes
 
-| #   | Area        | Root cause                                                                                                                                                                                                                                                                                  |
-| --- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Error state | A known fixture that can't be reached shows only as offline. No copy separates "different Wi-Fi" from "unplugged", and none says a network move needs Bluetooth setup, not a reflash.                                                                                                       |
-| 2   | Flow        | After setup the app landed on **Maps**, the mapping library, and so did every later launch. Mapping is an advanced step that most fixtures never need. The effects were one tab over, and nothing pointed there.                                                                            |
-| 2   | Flow        | Tapping an effect opened the **full code editor**: code, a pane strip, disassembly, MIDI, AI chat. "Apply and tune" was buried inside an authoring tool.                                                                                                                                    |
-| 2   | Copy        | The effects list led with seeded developer tags (`#demo #spatial #starter #test #topology #volumetric`). Every row showed the same sparkle icon and a seed date ("Nov 20") instead of what the effect looks like. Starters, map showcases and the user's own drafts were mixed in one list. |
-| 2   | Copy        | Tuning controls showed raw shader names (`drift`, `base`).                                                                                                                                                                                                                                  |
-| 3   | Flow        | The device drawer is a dead end: connecting there doesn't lead anywhere. (Owned by #577.)                                                                                                                                                                                                   |
-| 4   | Layout      | On a phone the code editor's pane strip overflows. Tabs run under the move/hide controls and off the right edge, and the toolbar buttons sit 0–5 px apart. A first-time user only saw this because a tap on an effect opened the editor.                                                    |
-| 5   | Updates     | Testers can sit on old builds. Nothing tells them a newer build exists. #506 ("What's new?") only speaks up after an update has happened.                                                                                                                                                   |
+| #    | Area        | Root cause                                                                                                                                                                                                                                                                                                                |
+| ---- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | Error state | A known fixture that can't be reached shows only as offline. No copy separates "different Wi-Fi" from "unplugged", and none says a network move needs Bluetooth setup, not a reflash.                                                                                                                                     |
+| 1, 2 | Flow        | **Every launch opened "Set up your device".** The installed app starts at a URL with no `#` route, and the router turned an empty route into `/onboard`. The "first run → setup, otherwise home" fallback was unreachable. A returning user with a known, working lamp saw the setup screen and a row of unlabeled icons. |
+| 2    | Flow        | After setup the app landed on **Maps**, the mapping library, and so did every later launch. Mapping is an advanced step that most fixtures never need. The effects were one tab over, and nothing pointed there.                                                                                                          |
+| 2    | Flow        | Tapping an effect opened the **full code editor**: code, a pane strip, disassembly, MIDI, AI chat. "Apply and tune" was buried inside an authoring tool.                                                                                                                                                                  |
+| 2    | Copy        | The effects list led with seeded developer tags (`#demo #spatial #starter #test #topology #volumetric`). Every row showed the same sparkle icon and a seed date ("Nov 20") instead of what the effect looks like. Starters, map showcases and the user's own drafts were mixed in one list.                               |
+| 2    | Copy        | Tuning controls showed raw shader names (`drift`, `base`).                                                                                                                                                                                                                                                                |
+| 3    | Flow        | The device drawer is a dead end: connecting there doesn't lead anywhere. (Owned by #577.)                                                                                                                                                                                                                                 |
+| 4    | Layout      | On a phone the code editor's pane strip overflows. Tabs run under the move/hide controls and off the right edge, and the toolbar buttons sit 0–5 px apart. A first-time user only saw this because a tap on an effect opened the editor.                                                                                  |
+| 5    | Updates     | Testers can sit on old builds. Nothing tells them a newer build exists. #506 ("What's new?") only speaks up after an update has happened.                                                                                                                                                                                 |
 
 ## What crisp looks like
 
@@ -66,6 +67,9 @@ The tab bar is now Effects · Maps · Device, so the home tab comes first.
 
 ## Fixed in this PR
 
+- **Opening the app goes home, not to setup.** An empty route now reaches the
+  router's fallback: setup on a first run (no known fixture), otherwise
+  Effects. (`app/router.ts`, with a router test.)
 - **Home is Effects.** A returning user and setup's Continue both land there,
   and Effects is the first tab. (`app/main.ts` fallback, `shell.ts`, one line
   in `onboarding.ts`.)
@@ -84,7 +88,12 @@ The tab bar is now Effects · Maps · Device, so the home tab comes first.
   Examples for the sample maps, and Your effects (which come first once you
   have some). Built-ins show a description instead of a date. Tag chips show
   only the user's own tags. The playing effect gets a green "Playing" mark.
-  Names wrap to two lines instead of clipping to "Agentic c…" on desktop.
+  Names wrap to two lines instead of clipping to "Agentic c…" on desktop. The
+  FUG-110 "On <device>" list is gone from this view, because the card and the
+  Playing mark already show what's on the lights. The last row no longer sits
+  under the floating + button.
+- **User guide** copy and capture steps updated for the new tap behaviour
+  (regenerated `docs/user-guide*`).
 - **Layout guard** scenarios for the whole path (`tools/ui_layout/oobe_scenarios.py`)
   at phone and desktop, light and dark, plus a `fxstub` demo seam so the tune
   sheet renders without the compiler wasm.
@@ -120,7 +129,13 @@ connect picker:
    **Choose an effect**. It lands on `#/effects` (this PR changes the `done`
    route; keep that line when rebasing). Update the onboarding doc comment,
    which still says "lands on the Maps tab".
-4. **Drawer rows on a phone:** the subtitle "on this network · 192.168.1.…"
+4. **Drawer layout.** On main, the layout guard fails the device drawer at both
+   widths: the connected row's ⋯ overlaps the sheet's ✕, Disconnect and
+   Options, and Disconnect sits 4 px from Options. Run
+   `bazel run //tools/ui_layout:ui_layout_check` with a drawer scenario
+   against #577's drawer (`?demo=device,discovered`, click
+   `.tab[data-tab=device]`, root `.k-sheet`) before merging.
+5. **Drawer rows on a phone:** the subtitle "on this network · 192.168.1.…"
    truncates next to Connect + ⋯. Drop the IP from the subtitle (it's in the
    ⋯ details) so the row never clips.
 
