@@ -571,8 +571,8 @@ Infinity datasource;</p></li>
 <h2>Alerts (<code class="docutils literal notranslate"><span class="pre">ops/grafana/business/alerts.json</span></code>, rule group <code class="docutils literal notranslate"><span class="pre">splanc-business</span></code>)<a class="headerlink" href="#alerts-ops-grafana-business-alerts-json-rule-group-splanc-business" title="Link to this heading">¶</a></h2>
 <p>Each rule is a LogQL query, reduced to its last value, then a threshold or a
 math condition. The group evaluates every 5 minutes. The rules watch
-<code class="docutils literal notranslate"><span class="pre">env=~&quot;production|sandbox&quot;</span></code> (<code class="docutils literal notranslate"><span class="pre">alert_env</span></code>); narrow that to production once it
-exists.</p>
+<code class="docutils literal notranslate"><span class="pre">env=~&quot;production|sandbox&quot;</span></code> (<code class="docutils literal notranslate"><span class="pre">alert_env</span></code>); narrow that to production at the
+go-live (<a class="reference internal" href="../ops/billing-go-live.html#grafana-alert-env"><span class="std std-ref">docs/ops/billing-go-live.md</span></a>).</p>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
 <thead>
