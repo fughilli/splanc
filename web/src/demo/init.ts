@@ -21,6 +21,11 @@
  *                map) renders the Calibrate-IMU screen with its controls.
  *   mesh       — (with `device`) the controller is a mesh gateway with two other
  *                fixtures meshed with it (the device sheet's Mesh section, mesh M5).
+ *   discovered — fixtures heard on the network (net/discovery.ts): two new ones
+ *                ("Porch Arch", "Stair Rail") and a known "Kitchen" at a new
+ *                address, so the lists show "On this network".
+ *   nousb      — no Web Serial / WebUSB (an iPhone-like browser), so "Flash a
+ *                new device" shows the plug-into-a-laptop pictogram.
  *   play / play-revert / play-nomap / play-off — Halloween play mode: a
  *                connected "SpookySplanc1" in kiosk mode (countdown 1:42) with a
  *                stored map; `play-revert` fires an idle revert after 5 s;
@@ -50,6 +55,8 @@ export function initDemoMode(scenarios: Set<string>): void {
   if (scenarios.has("flash")) setupFlashDemo();
   if (scenarios.has("imu")) setupImuDemo();
   if (scenarios.has("mesh")) setupMeshDemo();
+  if (scenarios.has("discovered")) void setupDiscovered();
+  if (scenarios.has("nousb")) setupNoUsb();
   const play = [...scenarios].find((s) => s === "play" || s.startsWith("play-"));
   if (play) void setupPlayDemo(play);
 }
@@ -413,4 +420,28 @@ function setupEffectEditor(): void {
     return new Orig(url, opts);
   } as unknown as typeof Worker;
   globalThis.Worker = Patched;
+}
+
+/** Fixtures heard on the network (see the scenario list above). */
+async function setupDiscovered(): Promise<void> {
+  const { discovery } = await import("../net/discovery");
+  const known = deviceStore.upsert("wss://192.168.1.23/ws", "Kitchen");
+  deviceStore.applyWelcome(known.id, { mac: "AA:BB:CC:00:11:22", deviceName: "Kitchen" });
+  const now = Date.now();
+  const base = { source: "mdns" as const, seenAt: now, fw: "1.21.0" };
+  discovery.report({ ...base, key: "AA:BB:CC:00:11:22", id: "AA:BB:CC:00:11:22", name: "Kitchen", host: "192.168.1.31", url: "wss://192.168.1.31/ws" });
+  discovery.report({ ...base, key: "AA:BB:CC:33:44:55", id: "AA:BB:CC:33:44:55", name: "Porch Arch", host: "192.168.1.42", url: "wss://192.168.1.42/ws" });
+  discovery.report({ ...base, key: "AA:BB:CC:66:77:88", id: "AA:BB:CC:66:77:88", name: "Stair Rail", host: "192.168.1.57", url: "wss://192.168.1.57/ws" });
+}
+
+/** A browser without Web Serial or WebUSB (iPhone/iPad, Safari, Firefox). */
+function setupNoUsb(): void {
+  for (const k of ["serial", "usb"]) {
+    try {
+      delete (Navigator.prototype as unknown as Record<string, unknown>)[k];
+      delete (navigator as unknown as Record<string, unknown>)[k];
+    } catch {
+      // not configurable here: the shot just shows the flasher instead
+    }
+  }
 }

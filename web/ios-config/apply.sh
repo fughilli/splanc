@@ -152,7 +152,16 @@ set_str NSBluetoothPeripheralUsageDescription \
 # Local network: reaching the device's wss:// control plane on the LAN (iOS 14+
 # gates all local-network traffic behind this prompt).
 set_str NSLocalNetworkUsageDescription \
-  "Splanc talks to your Splanc device directly on your local network to map fixtures and drive effects."
+  "Splanc finds the Splanc lights on your network and talks to them directly to map fixtures and drive effects."
+# Bonjour: the connect list finds fixtures on the network by their mDNS adverts
+# (_splanc._tcp, firmware/mdns) through the WssBridge plugin's NetServiceBrowser
+# (net/discovery.ts). iOS 14+ only lets an app browse the service types it
+# declares here; an undeclared type fails with NoAuth (-65555). Rebuilt each run
+# (Delete then Add), so re-running cannot stack duplicates.
+"$pb" -c "Delete :NSBonjourServices" "$plist" 2>/dev/null || true
+"$pb" -c "Add :NSBonjourServices array" "$plist"
+"$pb" -c "Add :NSBonjourServices:0 string _splanc._tcp" "$plist"
+echo "Bonjour: NSBonjourServices = [_splanc._tcp]"
 # Microphone + speech recognition: Acid Mode's voice control (ui/acid/voice.ts)
 # drives the Web Speech API. In a WKWebView both strings are REQUIRED — without
 # them iOS denies the mic and SpeechRecognition errors with "not-allowed" (the

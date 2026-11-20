@@ -37,7 +37,8 @@ import {
 import { deviceStore } from "../src/store/deviceStore";
 import { prefs } from "../src/store/prefs";
 import { appState } from "../src/ui/app/state";
-import { bleRediscover, openAddDevice } from "../src/ui/screens/addDevice";
+import { bleRediscover, normalizeDeviceAddress, openAddDevice } from "../src/ui/screens/addDevice";
+import { savedNetworks } from "../src/store/savedNetworks";
 import { wifiDraft } from "../src/store/wifiDraft";
 import {
   FakeCapacitorBle,
@@ -96,7 +97,7 @@ test("adding a device over Bluetooth provisions it and connects to the address i
   try {
     openAddDevice("ble");
     enterWifi("HomeNet", "hunter22");
-    button("Scan for device").click();
+    button("Connect").click();
     await advance(1500);
 
     assert.deepEqual(bt.requests, [{ filters: [{ services: [IMPROV_SERVICE] }] }], "chooser lists Improv boards only");
@@ -118,20 +119,23 @@ test("adding a device over Bluetooth provisions it and connects to the address i
   }
 });
 
-test("a board that cannot join the network says why, and nothing is saved or connected [rr:PR-13]", async () => {
+test("a board that cannot join the network says why; the network is saved but nothing is connected [rr:PR-13]", async () => {
   const board = new FakeImprovDevice({ errorCode: 0x03 });
   const bt = installBluetooth(() => board);
   try {
     openAddDevice("ble");
     enterWifi("HomeNet", "wrong-password");
-    button("Scan for device").click();
+    button("Connect").click();
     await advance(1500);
 
     assert.equal(
       all(".wifi-status")[0]?.textContent,
       "Setup failed: unable to connect to the network (check SSID/password)",
     );
-    assert.deepEqual(prefs.getWifiList(), [], "a network the board could not join is not remembered");
+    // Pressing Connect saves what was entered (D-72); the failed join leaves it unverified.
+    assert.deepEqual(savedNetworks.list(), [
+      { ssid: "HomeNet", password: "wrong-password", state: "unverified", lastUsed: savedNetworks.list()[0]!.lastUsed },
+    ]);
     assert.deepEqual(deviceStore.list(), [], "no device record");
     assert.equal(lan.sockets.length, 0, "no connection attempted");
     assert.equal(button("Try again").disabled, false, "the user can retry from the same sheet");
@@ -161,7 +165,7 @@ test("a mistyped password returns to the password field, and the corrected one j
   try {
     openAddDevice("ble");
     enterWifi("HomeNet", "hunter2");
-    button("Scan for device").click();
+    button("Connect").click();
     await advance(1500);
 
     const status = all(".wifi-status")[0]!;
@@ -173,7 +177,8 @@ test("a mistyped password returns to the password field, and the corrected one j
     assert.equal(ssid.value, "HomeNet", "what was typed is still there");
     assert.equal(pass.value, "hunter2");
     assert.deepEqual(visibleButtons(), ["Try again", "Choose a different device"], "one primary, one secondary");
-    assert.deepEqual(prefs.getWifiList(), [], "a refused password is not saved");
+    assert.equal(savedNetworks.get("HomeNet")?.state, "rejected", "saved on Connect, flagged as rejected");
+    assert.equal(savedNetworks.get("HomeNet")?.password, "hunter2");
     assert.equal(board.disconnects, 0, "the link stays up for the retry");
 
     typeInto(pass, "hunter22");
@@ -184,7 +189,8 @@ test("a mistyped password returns to the password field, and the corrected one j
     assert.equal(board.delivered.length, 2);
     assert.deepEqual(parseWifiSettings(board.delivered[1]!), { ssid: "HomeNet", password: "hunter22" });
     assert.equal(appState.client?.url, "wss://192.168.1.51/ws");
-    assert.deepEqual(prefs.getWifiList()[0], { ssid: "HomeNet", password: "hunter22" });
+    assert.deepEqual(prefs.getWifiList(), [{ ssid: "HomeNet", password: "hunter22" }], "one entry, corrected");
+    assert.equal(savedNetworks.get("HomeNet")?.state, "joined");
     assert.equal(all(".k-sheet").length, 0, "the sheet closed on success");
   } finally {
     bt.restore();
@@ -197,7 +203,7 @@ test("a network the device can't hear returns to the SSID field and says so", as
   try {
     openAddDevice("ble");
     enterWifi("HomeNet-5G", "hunter22");
-    button("Scan for device").click();
+    button("Connect").click();
     await advance(1500);
 
     assert.equal(
@@ -220,11 +226,6 @@ test("backing out keeps what was typed: reopening the sheet shows it again", asy
   openAddDevice("ble");
   assert.equal(wifiFields().ssid.value, "CafeNet", "reopened with the typed SSID");
   assert.equal(wifiFields().pass.value, "typo-pass", "and the typed password");
-  clearOverlays();
-
-  // The same draft serves the by-address flow.
-  openAddDevice("manual");
-  assert.equal(wifiFields().ssid.value, "CafeNet");
 });
 
 test("while waiting for the join, 'Edit Wi-Fi details' stops waiting and unlocks the fields", async () => {
@@ -233,7 +234,7 @@ test("while waiting for the join, 'Edit Wi-Fi details' stops waiting and unlocks
   try {
     openAddDevice("ble");
     enterWifi("HomeNet", "hunter2");
-    button("Scan for device").click();
+    button("Connect").click();
     await advance(1500);
 
     assert.equal(all(".wifi-status")[0]?.textContent, "Waiting for the device to join the network…");
@@ -265,7 +266,7 @@ test("closing the sheet mid-join stops waiting, drops the link, and keeps the dr
   try {
     openAddDevice("ble");
     enterWifi("HomeNet", "hunter2");
-    button("Scan for device").click();
+    button("Connect").click();
     await advance(1500);
     clearOverlays();
     await settle();
@@ -300,45 +301,53 @@ test("re-discover with a saved password the network now refuses opens the Wi-Fi 
     assert.equal(bt.requests.length, 1, "the picked device is re-used");
     assert.equal(appState.client?.url, "wss://192.168.1.52/ws");
     assert.deepEqual(prefs.getWifiList()[0], { ssid: "HomeNet", password: "new-pass" });
+    assert.equal(savedNetworks.get("HomeNet")?.state, "joined");
   } finally {
     bt.restore();
   }
 });
 
-test("adding a device by address connects to the typed wss URL [rr:PR-13]", async () => {
+test("adding a device by address connects to the typed address [rr:PR-13]", async () => {
   lan.add("192.168.1.77", { mac: "58:E6:C5:00:01:77", deviceName: "Hall" });
-  const asked: string[] = [];
-  (globalThis as { prompt?: unknown }).prompt = (message: string): string => {
-    asked.push(message);
-    return "wss://192.168.1.77/ws";
-  };
 
   openAddDevice("manual");
-  enterWifi("HomeNet", "hunter22");
-  button("Enter address").click();
-  await settle();
+  assert.equal(all(".k-sheet h2")[0]?.textContent, "Connect by network address");
+  assert.equal(all(".wifi-sheet .sheet-input").length, 1, "one field: no Wi-Fi details needed");
+  typeInto(all(".wifi-sheet .sheet-input")[0]!, "192.168.1.77");
+  button("Connect").click();
+  await advance(500);
 
-  assert.equal(asked.length, 1, "asked for the address once");
   assert.equal(appState.status.state, "connected");
-  assert.equal(appState.client?.url, "wss://192.168.1.77/ws");
+  assert.equal(appState.client?.url, "wss://192.168.1.77/ws", "a bare IP becomes the player's wss URL");
   const rec = deviceStore.active()!;
   assert.equal(rec.wssUrl, "wss://192.168.1.77/ws");
   assert.equal(rec.label, "Hall", "the device's own name replaces the host label");
-  assert.deepEqual(prefs.getWifiList()[0], { ssid: "HomeNet", password: "hunter22" });
+  assert.equal(all(".k-sheet").length, 0, "the sheet closed");
 });
 
-test("an address without a ws:// or wss:// scheme is rejected without connecting [rr:PR-13]", async () => {
-  (globalThis as { prompt?: unknown }).prompt = (): string => "192.168.1.77";
-
+test("something that isn't an address is refused in the sheet without connecting [rr:PR-13]", async () => {
   openAddDevice("manual");
-  enterWifi("HomeNet", "hunter22");
-  button("Enter address").click();
+  typeInto(all(".wifi-sheet .sheet-input")[0]!, "ftp://nope");
+  button("Connect").click();
   await settle();
 
-  assert.ok(toasts().includes("Address must start with ws:// or wss://"));
+  assert.match(all(".wifi-status")[0]!.textContent, /doesn't look like an address/);
   assert.equal(lan.sockets.length, 0);
   assert.deepEqual(deviceStore.list(), []);
   assert.equal(appState.client, null);
+  assert.equal(all(".k-sheet").length, 1, "the sheet stays open to fix it");
+});
+
+test("addresses normalize to the player's wss URL", () => {
+  assert.equal(normalizeDeviceAddress("192.168.1.40"), "wss://192.168.1.40/ws");
+  assert.equal(normalizeDeviceAddress(" kitchen.local "), "wss://kitchen.local/ws");
+  assert.equal(normalizeDeviceAddress("10.0.0.5:8443"), "wss://10.0.0.5:8443/ws");
+  assert.equal(normalizeDeviceAddress("http://192.168.1.40/"), "wss://192.168.1.40/ws");
+  assert.equal(normalizeDeviceAddress("wss://192.168.1.40/ws"), "wss://192.168.1.40/ws");
+  assert.equal(normalizeDeviceAddress("ws://localhost:8080/ws"), "ws://localhost:8080/ws");
+  assert.equal(normalizeDeviceAddress(""), null);
+  assert.equal(normalizeDeviceAddress("ftp://x"), null);
+  assert.equal(normalizeDeviceAddress("not an address"), null);
 });
 
 test("the native app provisions through the Capacitor Bluetooth plugin with the same Improv exchange [rr:PR-13]", async () => {

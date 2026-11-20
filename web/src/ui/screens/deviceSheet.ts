@@ -5,6 +5,14 @@
  * uses — a device answers `welcome` with its MAC + name), and lets the user
  * connect, re-discover over Bluetooth when unreachable, rename, and forget.
  *
+ * Fixtures on the network are found by themselves (net/discovery.ts: native mDNS
+ * in the iOS app, a paired bridge's view, the background prober): known ones
+ * light up as reachable with their current address, new ones are listed under
+ * "On this network" with a Connect button. Nothing to pull down or refresh.
+ * Adding one more goes through the one labelled "Connect a fixture" button (the
+ * connect picker, shared with the welcome screen), with "Flash a new device" on
+ * its own row below it (D-72).
+ *
  * Each row's 3-dots (⋮) menu opens a detail popup with the recorded LAN address,
  * MAC, Bluetooth name, the editable display name (reflected to the device — and
  * its Bluetooth advertisement — on connect), and Forget. Delete lives in there,
@@ -21,7 +29,9 @@ import {
   deviceDisambiguator,
   type KnownDevice,
 } from "../../store/deviceStore";
-import { bleRediscover, connectOverBle, openAddDevice } from "./addDevice";
+import { bleRediscover, connectOverBle } from "./addDevice";
+import { discovery, type FoundFixture } from "../../net/discovery";
+import { ConnectActions, FoundList } from "./connectPicker";
 import { appendGrouped, openFolderPicker } from "./folders";
 import { deviceImuReady } from "../../store/deviceMap";
 import { inLoader } from "../../net/otaUpdate";
@@ -48,12 +58,16 @@ export function openDeviceSheet(): void {
   let unsubDev: () => void = () => {};
   let unsubApp: () => void = () => {};
   let unsubProbe: () => void = () => {};
+  let unsubFound: () => void = () => {};
+  let stopDiscovery: () => void = () => {};
 
   const sheet = Sheet("Devices", {
     onClose: () => {
       unsubDev();
       unsubApp();
       unsubProbe();
+      unsubFound();
+      stopDiscovery();
       openHandle = null;
       rerenderList = null;
     },
@@ -71,98 +85,10 @@ export function openDeviceSheet(): void {
   // Opening the sheet asks it for a fresh, prompt look.
   unsubProbe = deviceProber.subscribe(rerender);
   deviceProber.refresh();
+  // Fixtures on the network appear by themselves while the sheet is open.
+  unsubFound = discovery.subscribe(rerender);
+  stopDiscovery = discovery.start();
   rerender();
-  // Pull down on the list for a one-shot poll of every device's reachability.
-  attachPullToRefresh(sheet.body, () => deviceProber.probeAllNow());
-}
-
-/** Pull-to-refresh on the sheet's scroll container: dragging down while scrolled
- * to the top, past a threshold, fires a one-shot poll. The indicator lives
- * between the head and the list, so the pull reveals it in place. Touch-only —
- * desktop uses the auto-poll + reopening the sheet (which calls refresh()). */
-function attachPullToRefresh(body: HTMLElement, onRefresh: () => Promise<void>): void {
-  const scroller = body.parentElement; // .k-sheet (overflow-y: auto)
-  if (!scroller) return;
-  const ind = document.createElement("div");
-  ind.className = "device-ptr";
-  const spin = document.createElement("div");
-  spin.className = "device-ptr-spin"; // frozen while pulling, spins on release
-  ind.append(spin);
-  scroller.insertBefore(ind, body);
-
-  const THRESHOLD = 60;
-  const MAX = 90;
-  let startY = 0;
-  let pulling = false;
-  let busy = false;
-  let pull = 0;
-
-  const setPull = (px: number): void => {
-    pull = px;
-    ind.style.height = `${px}px`;
-    // The spinner rides the bottom edge (flex-end) — it slides in from the fold —
-    // and fades up to full as the pull clears the threshold.
-    spin.style.opacity = `${Math.min(1, px / THRESHOLD)}`;
-  };
-  const reset = (): void => {
-    ind.classList.remove("device-ptr--active", "device-ptr--busy", "device-ptr--done");
-    ind.style.height = "";
-    spin.style.opacity = "";
-    pull = 0;
-    pulling = false;
-    busy = false;
-  };
-
-  scroller.addEventListener(
-    "touchstart",
-    (e) => {
-      if (busy) return;
-      pulling = scroller.scrollTop <= 0 && e.touches.length === 1;
-      startY = e.touches[0]!.clientY;
-    },
-    { passive: true },
-  );
-  scroller.addEventListener(
-    "touchmove",
-    (e) => {
-      if (!pulling || busy) return;
-      if (scroller.scrollTop > 0) {
-        setPull(0);
-        pulling = false;
-        return;
-      }
-      const dy = e.touches[0]!.clientY - startY;
-      if (dy <= 0) {
-        setPull(0);
-        return;
-      }
-      e.preventDefault(); // take over from native overscroll while pulling
-      ind.classList.add("device-ptr--active");
-      setPull(Math.min(MAX, dy * 0.5));
-    },
-    { passive: false },
-  );
-  const end = (): void => {
-    if (!pulling || busy) return;
-    ind.classList.remove("device-ptr--active");
-    if (pull >= THRESHOLD) {
-      // Release past the threshold: settle to the threshold height and start the
-      // spinner spinning; when the poll resolves, pop it out, then collapse.
-      busy = true;
-      ind.classList.add("device-ptr--busy");
-      ind.style.height = `${THRESHOLD}px`;
-      spin.style.opacity = "1";
-      void onRefresh().finally(() => {
-        ind.classList.remove("device-ptr--busy");
-        ind.classList.add("device-ptr--done"); // spinner pops out
-        window.setTimeout(reset, 240);
-      });
-    } else {
-      reset();
-    }
-  };
-  scroller.addEventListener("touchend", end);
-  scroller.addEventListener("touchcancel", end);
 }
 
 function render(): HTMLElement {
@@ -170,6 +96,7 @@ function render(): HTMLElement {
   const status = appState.status;
   const activeId = deviceStore.activeId();
   const devices = deviceStore.list();
+  const found = discovery.view();
 
   // -- inline cert-trust (design doc §6.2): when the active device needs its
   // self-signed cert trusted, show the trust action here (mirrored in the pill).
@@ -223,10 +150,10 @@ function render(): HTMLElement {
     wrap.append(e);
   }
 
-  if (devices.length === 0) {
+  if (devices.length === 0 && found.fresh.length === 0) {
     const empty = document.createElement("div");
     empty.className = "device-empty";
-    empty.textContent = "No devices yet. Add one to get started.";
+    empty.textContent = "No devices yet. Connect one to get started.";
     wrap.append(empty);
   }
 
@@ -243,11 +170,20 @@ function render(): HTMLElement {
         dev,
         dev.id === activeId,
         status,
-        deviceProber.isReachable(dev.id),
+        deviceProber.isReachable(dev.id) || found.matched.has(dev.id),
         (nameCounts.get(dev.label) ?? 0) > 1,
+        found.matched.get(dev.id),
       ),
     { scope: "devices" },
   );
+
+  // -- fixtures found on the network that aren't in the list yet.
+  if (found.fresh.length > 0) {
+    const cap = document.createElement("div");
+    cap.className = "device-add-label device-found-label";
+    cap.textContent = "On this network";
+    wrap.append(cap, FoundList(found.fresh));
+  }
 
   // -- the connected device's own firmware update (over Wi-Fi). Shown whenever the
   // active device can take one (welcome feature "ota") or sits in its updater; the
@@ -267,38 +203,20 @@ function render(): HTMLElement {
     wrap.append(upd);
   }
 
-  // -- add-device section (compact icon buttons under a labelled divider).
+  // -- connect / flash: the same two labelled actions as the welcome screen.
+  // Connect steps down to secondary once the list has rows of its own (their
+  // Connect buttons are the accent actions then).
   const addSection = document.createElement("div");
   addSection.className = "device-add";
-  const addLabel = document.createElement("div");
-  addLabel.className = "device-add-label";
-  addLabel.textContent = "Add device…";
-  const addRow = document.createElement("div");
-  addRow.className = "device-add-row";
-  addRow.append(
-    IconButton("bluetooth", {
-      title: "Add device (Bluetooth)",
-      onClick: () => openAddDevice("ble"),
-    }),
-    // Connect over Bluetooth with no Wi-Fi/cert — for networks where the
-    // device's https cert-accept page won't load (a hotspot with no upstream
-    // internet), so wss:// can't be trusted. Runs the full protocol over GATT.
-    IconButton("plug", {
-      title: "Connect over Bluetooth (offline)",
-      onClick: () => connectOverBle(),
-    }),
-    IconButton("link", {
-      title: "Enter address manually",
-      onClick: () => openAddDevice("manual"),
-    }),
-    // Flash a new/blank board over USB (WebSerial). The whole flasher — esptool-js
-    // and the USB code — is loaded lazily so it never weighs on the main bundle.
-    IconButton("chip", {
-      title: "Flash a new board (USB)",
-      onClick: () => void import("./flashSheet").then((m) => m.openFlashSheet()),
-    }),
-  );
-  addSection.append(addLabel, addRow);
+  addSection.append(ConnectActions({ quietConnect: devices.length > 0 || found.fresh.length > 0 }));
+  if (discovery.reach() === "browser" && found.fresh.length === 0) {
+    const hint = document.createElement("p");
+    hint.className = "device-hint";
+    hint.textContent =
+      "A browser can't search your network for new fixtures by itself. Fixtures you have " +
+      "connected before show up here; the Splanc app (or a paired Splanc bridge) also finds new ones.";
+    addSection.append(hint);
+  }
   wrap.append(addSection);
   return wrap;
 }
@@ -311,6 +229,8 @@ function deviceRow(
   // Set when another device in the list shares this display name: append the
   // MAC-suffix disambiguator so the two entries are distinguishable.
   ambiguousName = false,
+  // Heard on the network just now (net/discovery.ts): its current address.
+  found?: FoundFixture,
 ): HTMLElement {
   const row = document.createElement("div");
   row.className = "device-row";
@@ -337,7 +257,7 @@ function deviceRow(
   const base = isActive
     ? connectedMeta(status)
     : isReachable
-      ? `on this network · ${deviceHost(dev)}`
+      ? `on this network · ${found ? found.host : deviceHost(dev)}`
       : deviceHost(dev);
   // Disambiguate colliding display names with the stable MAC suffix so two
   // devices both called "Kitchen" are still tellable apart.
@@ -348,13 +268,7 @@ function deviceRow(
   const btns = document.createElement("div");
   btns.className = "device-btns";
   if (fullyConnected) {
-    btns.append(
-      IconButton("plug-off", {
-        title: "Disconnect",
-        className: "device-disconnect",
-        onClick: () => appState.disconnect(),
-      }),
-    );
+    btns.append(rowAction("Disconnect", "Disconnect", () => appState.disconnect(), "quiet"));
   } else if (isActive) {
     // Active but not fully connected yet (connecting, syncing clock, or awaiting
     // cert trust): a gray, pulsing plug so it reads as in-progress. Tap cancels.
@@ -369,35 +283,23 @@ function deviceRow(
     connectingBtn.style.setProperty("--conn-phase", `-${nowMs % CONN_ANIM_MS}ms`);
     btns.append(connectingBtn);
   } else if (isReachable) {
-    btns.append(
-      IconButton("plug", {
-        title: "Connect",
-        className: "device-connect",
-        onClick: () => appState.connect(dev.wssUrl, dev.label),
-      }),
-    );
+    // A device heard on the network connects at the address it was heard at
+    // (it may have moved since this record was made).
+    const url = found?.url ?? dev.wssUrl;
+    btns.append(rowAction("Connect", "Connect", () => appState.connect(url, dev.label)));
   } else if (isBleUrl(dev.wssUrl) && dev.lanUrl) {
     // Reached over Bluetooth before, with a known Wi-Fi address: going back to
     // Wi-Fi is one tap, not a re-add by IP (#444 — the BLE fallback used to swallow
     // the device's Wi-Fi record).
     const lanUrl = dev.lanUrl;
     btns.append(
-      IconButton("plug", {
-        title: `Connect over Wi-Fi (${hostOfUrl(lanUrl)})`,
-        className: "device-connect",
-        onClick: () => appState.connect(lanUrl, dev.label),
-      }),
-      IconButton("ble-search", { title: "Find over Bluetooth", onClick: () => bleRediscover(dev) }),
+      rowAction("Wi-Fi", `Connect over Wi-Fi (${hostOfUrl(lanUrl)})`, () => appState.connect(lanUrl, dev.label)),
+      rowAction("Find", "Find over Bluetooth", () => bleRediscover(dev), "quiet"),
     );
   } else {
     // Unreachable on the LAN: the connect affordance opens the BLE picker
     // directly to re-discover / re-provision the device (Improv flow).
-    btns.append(
-      IconButton("ble-search", {
-        title: "Find over Bluetooth",
-        onClick: () => bleRediscover(dev),
-      }),
-    );
+    btns.append(rowAction("Find", "Find over Bluetooth", () => bleRediscover(dev), "quiet"));
   }
   // The 3-dots menu opens the device config (rename, folder, color correction,
   // and Forget). Delete lives in there rather than as a top-level trash button,
@@ -406,6 +308,16 @@ function deviceRow(
 
   row.append(dot, info, btns);
   return row;
+}
+
+/** A small labelled row button; `title` names the action in full (tooltip,
+ * accessible name). */
+function rowAction(label: string, title: string, onClick: () => void, variant?: "quiet"): HTMLButtonElement {
+  const b = Button({ label, onClick, ...(variant ? { variant } : {}) });
+  b.classList.add("device-act");
+  b.title = title;
+  b.setAttribute("aria-label", title);
+  return b;
 }
 
 function connectedMeta(status = appState.status): string {

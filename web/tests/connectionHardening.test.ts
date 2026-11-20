@@ -516,7 +516,8 @@ test("falling back to Bluetooth keeps the device's Wi-Fi address, and switching 
   const bt = installBluetooth(() => board);
   try {
     openDeviceSheet();
-    buttonTitled("Connect over Bluetooth (offline)").click();
+    buttonTitled("Connect a fixture").click();
+    buttonTitled("Connect directly over Bluetooth").click();
     await advance(1000);
     assert.equal(appState.status.state, "connected");
     const rec = deviceStore.active()!;

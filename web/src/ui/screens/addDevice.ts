@@ -1,9 +1,11 @@
 /**
- * Add-device flow — shared by the device sheet and the onboarding screen.
+ * Add-device flows — reached from the connect picker (connectPicker.ts), which
+ * the welcome screen and the device sheet both open.
  *
- * Both "add" affordances open a Wi-Fi dialog first (pick a saved network or
- * enter a new one), then proceed to their method: the native BLE device
- * scanner/picker (Improv provisioning) or manual address entry. The per-device
+ * "Set up a new fixture" opens a Wi-Fi dialog (pick a saved network or enter a
+ * new one; pressing Connect saves it, store/savedNetworks.ts), then the BLE
+ * scanner/picker and Improv provisioning. "Connect by network address" is its own
+ * one-field sheet (no Wi-Fi details needed). The per-device
  * "re-discover over Bluetooth" chip button skips the dialog and goes straight to
  * the picker, provisioning with the most-recently-used network.
  *
@@ -22,6 +24,7 @@ import {
   type ImprovDevice,
 } from "../../net/improv";
 import { prefs, type WifiCreds } from "../../store/prefs";
+import { savedNetworks } from "../../store/savedNetworks";
 import { wifiDraft } from "../../store/wifiDraft";
 import { deviceStore, type KnownDevice } from "../../store/deviceStore";
 import { appState } from "../app/state";
@@ -62,11 +65,16 @@ export interface AddDeviceOpts {
  * device reports (a rejected password, a network it can't see) returns straight
  * to the field to fix, with the picked device kept so "Try again" re-sends at once. */
 export function openAddDevice(method: AddMethod, onDone?: () => void, opts: AddDeviceOpts = {}): void {
+  // Connecting by address needs no Wi-Fi details: its own sheet.
+  if (method === "manual") {
+    openAddressSheet(onDone);
+    return;
+  }
   // Closing the sheet mid-provision stops waiting (and drops the BLE link); closing
   // it after a failure drops the link a retry would have re-used.
   let inflight: AbortController | null = null;
   let provisioned = false;
-  const sheet = Sheet(method === "ble" ? "Add device over Bluetooth" : "Add device by address", {
+  const sheet = Sheet("Set up a new fixture", {
     onClose: () => {
       if (inflight) inflight.abort();
       else if (picked && !provisioned) dropLink(picked);
@@ -82,9 +90,8 @@ export function openAddDevice(method: AddMethod, onDone?: () => void, opts: AddD
   const lead = document.createElement("p");
   lead.className = "wifi-lead";
   lead.textContent =
-    method === "ble"
-      ? "Choose the Wi-Fi network the device should join, then pick it in the Bluetooth chooser."
-      : "Choose the Wi-Fi network the device is on, then enter its address.";
+    "Choose the Wi-Fi network the fixture should join, then pick the fixture in the Bluetooth list. " +
+    "The network is saved for next time.";
 
   // Saved-network pick list (tap to fill the fields below).
   const picks = document.createElement("div");
@@ -124,6 +131,10 @@ export function openAddDevice(method: AddMethod, onDone?: () => void, opts: AddD
       b.className = "wifi-pick";
       if (net.ssid === ssidInput.value) b.classList.add("wifi-pick--on");
       b.textContent = net.ssid;
+      if (savedNetworks.get(net.ssid)?.state === "rejected") {
+        b.classList.add("wifi-pick--rejected");
+        b.title = "A fixture rejected this password last time";
+      }
       b.addEventListener("click", () => {
         ssidInput.value = net.ssid;
         passInput.value = net.password;
@@ -145,22 +156,19 @@ export function openAddDevice(method: AddMethod, onDone?: () => void, opts: AddD
     status.classList.toggle("wifi-status--error", kind === "error");
   };
 
-  const goLabel = method === "ble" ? "Scan for device" : "Enter address";
   const go = Button({
-    label: goLabel,
-    icon: method === "ble" ? "bluetooth" : "link",
+    label: "Connect",
+    icon: "bluetooth",
     block: true,
     onClick: () => {
       const creds = current();
-      if (method === "manual") {
-        if (creds.ssid) prefs.addWifi(creds);
-        sheet.close();
-        promptManualAddress();
-        onDone?.();
-        return;
-      }
-      // BLE: chooser FIRST (gesture) — unless this sheet already has the device
-      // (a retry) — then provision with the chosen network.
+      // Whatever is entered when Connect is pressed is saved (D-72), upserted by
+      // SSID; the join's outcome is recorded on it below. Synchronous, so the
+      // Bluetooth chooser that follows still has the click's user gesture.
+      savedNetworks.saveOnConnect(creds);
+      renderPicks();
+      // Chooser FIRST (gesture) — unless this sheet already has the device (a
+      // retry) — then provision with the chosen network.
       void runBle(creds, picked);
     },
   });
@@ -260,6 +268,8 @@ export function openAddDevice(method: AddMethod, onDone?: () => void, opts: AddD
       onDone?.();
     } catch (e) {
       inflight = null;
+      if (e instanceof ImprovError && e.kind === "wrong-password") savedNetworks.markResult(creds, "rejected");
+      renderPicks();
       showFailure(e);
     }
   };
@@ -314,6 +324,7 @@ export function bleRediscover(known?: KnownDevice, onDone?: () => void): void {
       await provisionWithDevice(device, creds, (s) => toast(s));
       onDone?.();
     } catch (e) {
+      if (e instanceof ImprovError && e.kind === "wrong-password") savedNetworks.markResult(creds, "rejected");
       if (e instanceof ImprovError && e.kind !== "device") {
         openAddDevice("ble", onDone, { device, creds, error: e });
       } else {
@@ -421,14 +432,77 @@ async function pickPlayerDeviceNative(): Promise<BleDevice> {
   });
 }
 
-function promptManualAddress(): void {
-  const url = prompt("Device address (wss://host:port):", "wss://");
-  if (!url) return;
-  if (!/^wss?:\/\//.test(url)) {
-    toast("Address must start with ws:// or wss://", { error: true });
-    return;
+/** Turn what the user typed into the player's wss URL: a bare host or IP
+ * (`192.168.1.40`, `kitchen.local`), an http(s) page address (what a device
+ * reports), or a ws(s):// URL kept as given. Null when it isn't an address. */
+export function normalizeDeviceAddress(input: string): string | null {
+  const raw = input.trim();
+  if (!raw) return null;
+  if (/^wss?:\/\//i.test(raw)) {
+    try {
+      const u = new URL(raw);
+      return u.hostname ? raw : null;
+    } catch {
+      return null;
+    }
   }
-  appState.connect(url);
+  if (/^https?:\/\//i.test(raw)) return wsUrlFromRedirect(raw);
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) return null; // some other scheme
+  try {
+    const u = new URL(`https://${raw}`);
+    if (!u.hostname || /\s/.test(raw)) return null;
+    const port = u.port && u.port !== "443" ? `:${u.port}` : "";
+    return `wss://${u.hostname}${port}/ws`;
+  } catch {
+    return null;
+  }
+}
+
+/** "Connect by network address": one field and one Connect button. For a fixture
+ * already on the network whose address the user knows (the router's client list,
+ * the fixture's own screen, a `<name>.local` hostname). */
+export function openAddressSheet(onDone?: () => void): void {
+  const sheet = Sheet("Connect by network address");
+  sheet.body.className = "wifi-sheet";
+  const lead = document.createElement("p");
+  lead.className = "wifi-lead";
+  lead.textContent =
+    "For a fixture that is already on your Wi-Fi. Enter its IP address or name, as shown in your " +
+    "router's device list (for example 192.168.1.40 or living-room.local).";
+  const input = document.createElement("input");
+  input.className = "sheet-input";
+  input.placeholder = "192.168.1.40";
+  input.setAttribute("aria-label", "Fixture address");
+  input.setAttribute("autocomplete", "off");
+  input.setAttribute("autocapitalize", "off");
+  input.setAttribute("autocorrect", "off");
+  input.setAttribute("spellcheck", "false");
+  input.setAttribute("inputmode", "url");
+  const status = document.createElement("div");
+  status.className = "wifi-status metric";
+  status.setAttribute("role", "status");
+  const go = Button({
+    label: "Connect",
+    icon: "link",
+    block: true,
+    onClick: () => {
+      const url = normalizeDeviceAddress(input.value);
+      if (!url) {
+        status.textContent = "That doesn't look like an address. Try something like 192.168.1.40.";
+        status.classList.add("wifi-status--error");
+        input.focus();
+        return;
+      }
+      sheet.close();
+      appState.connect(url);
+      onDone?.();
+    },
+  });
+  input.addEventListener("keydown", (e) => {
+    if ((e as KeyboardEvent).key === "Enter") go.click();
+  });
+  sheet.body.append(lead, input, status, go);
+  input.focus();
 }
 
 function msg(e: unknown): string {

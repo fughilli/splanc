@@ -347,7 +347,8 @@ test("a Bluetooth device's record is keyed on its Bluetooth id, never its editab
   const connectVia = async (board: FakePlayerGatt): Promise<void> => {
     picked = board;
     openDeviceSheet();
-    buttonTitled("Connect over Bluetooth (offline)").click();
+    buttonTitled("Connect a fixture").click();
+    buttonTitled("Connect directly over Bluetooth").click();
     await advance(1000);
     assert.equal(appState.status.state, "connected");
     clearOverlays();
