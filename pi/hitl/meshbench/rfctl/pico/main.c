@@ -6,6 +6,10 @@
  *   GP4  SPI0 RX   <- QH' of the last chip (selftest) GP7  SYNC out (toggles every commit)
  *   GP8  sync LED (board device "syncled")           GP10..GP21  FSTI inputs 0..11
  *   GP25 on-board LED (heartbeat; solid = fault)
+ *   UART attenuators (board devices of kind atten_uart, default table): one PIO
+ *   TX state machine per unit on the device's GPIO (GP22 26 27 28, 23 24, 29),
+ *   115200 8N1; GP9 = the shared acknowledge line (UART1 RX), every unit's TX
+ *   joined through a Schottky diode (wired-AND, 4.7k pull-up), read by `attcheck`.
  *
  * Boot: /OE is held high (outputs hi-Z, the external pull-ups/downs define the
  * lines) until the safe vector is shifted in and latched; only then are the 595
@@ -17,11 +21,14 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "hardware/clocks.h"
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
+#include "hardware/pio.h"
 #include "hardware/spi.h"
 #include "hardware/sync.h"
 #include "hardware/timer.h"
+#include "hardware/uart.h"
 #include "hardware/watchdog.h"
 #include "pico/bootrom.h"
 #include "pico/stdlib.h"
@@ -37,6 +44,9 @@
 #define N_FSTI 12
 #define PIN_LED 25
 #define SPI_HZ (10 * 1000 * 1000)
+#define PIN_ACK 9 /* UART1 RX */
+#define UART_BAUD 115200
+#define UART_BIT_US 9 /* 8.68 us, rounded up */
 #define EARLY_US 20
 
 static rfctl g_c;
@@ -47,6 +57,90 @@ static uint32_t g_cap_mask, g_cap_holdoff;
 static uint64_t g_last_edge[N_FSTI];
 
 uint64_t rfctl_hal_now_us(void) { return time_us_64(); }
+
+/* ---- UART attenuators: PIO transmitters ---------------------------------------
+ * pico-examples uart_tx.pio, assembled: 8N1, LSB first, 8 PIO clocks per bit.
+ *   .side_set 1 opt
+ *   pull       side 1 [7]   ; stop bit / idle high, wait for a byte
+ *   set x, 7   side 0 [7]   ; start bit
+ *   bitloop: out pins, 1
+ *   jmp x-- bitloop   [6]
+ */
+static const uint16_t kUartTxInsns[] = {0x9fa0, 0xf727, 0x6001, 0x0642};
+static const struct pio_program kUartTxProgram = {
+    .instructions = kUartTxInsns, .length = 4, .origin = -1};
+static bool g_uart_ready[RFCTL_UART_MAX];
+
+static PIO uart_pio(uint8_t unit) { return unit < 4 ? pio0 : pio1; }
+
+static void uart_tx_init(uint8_t unit, uint8_t gpio) {
+  static int offset[2] = {-1, -1};
+  PIO pio = uart_pio(unit);
+  uint sm = unit & 3u, k = unit < 4 ? 0 : 1;
+  if (offset[k] < 0) offset[k] = (int)pio_add_program(pio, &kUartTxProgram);
+  pio_sm_set_pins_with_mask(pio, sm, 1u << gpio, 1u << gpio); /* idle high */
+  pio_sm_set_pindirs_with_mask(pio, sm, 1u << gpio, 1u << gpio);
+  pio_gpio_init(pio, gpio);
+  pio_sm_config c = pio_get_default_sm_config();
+  sm_config_set_wrap(&c, (uint)offset[k], (uint)offset[k] + 3);
+  sm_config_set_sideset(&c, 2, true, false);
+  sm_config_set_out_shift(&c, true, false, 32);
+  sm_config_set_out_pins(&c, gpio, 1);
+  sm_config_set_sideset_pins(&c, gpio);
+  sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX); /* 8 deep: one whole command */
+  sm_config_set_clkdiv(&c, (float)clock_get_hz(clk_sys) / (8.0f * UART_BAUD));
+  pio_sm_init(pio, sm, (uint)offset[k], &c);
+  pio_sm_set_enabled(pio, sm, true);
+  g_uart_ready[unit] = true;
+}
+
+bool __not_in_flash_func(rfctl_hal_uart_send)(uint8_t unit, uint8_t gpio, const char *cmd,
+                                              uint8_t n) {
+  (void)gpio;
+  if (unit >= RFCTL_UART_MAX || !g_uart_ready[unit]) return true; /* no such unit: drop */
+  PIO pio = uart_pio(unit);
+  uint sm = unit & 3u;
+  uint32_t irq = save_and_disable_interrupts(); /* commit IRQ vs main loop: whole commands */
+  bool ok = 8u - pio_sm_get_tx_fifo_level(pio, sm) >= n;
+  if (ok)
+    for (uint8_t i = 0; i < n; i++) pio_sm_put(pio, sm, (uint8_t)cmd[i]);
+  restore_interrupts(irq);
+  return ok;
+}
+
+int rfctl_hal_uart_txn(uint8_t unit, uint8_t gpio, const char *cmd, uint8_t n, uint32_t timeout_us,
+                       uint32_t *latency_us) {
+  if (unit >= RFCTL_UART_MAX || !g_uart_ready[unit]) return -2;
+  PIO pio = uart_pio(unit);
+  uint sm = unit & 3u;
+  /* wait for the unit's own transmitter to drain, then for an idle (high) bus */
+  uint64_t t = time_us_64();
+  while (!pio_sm_is_tx_fifo_empty(pio, sm) && time_us_64() - t < 5000) tight_loop_contents();
+  busy_wait_us(2 * 10 * UART_BIT_US);
+  t = time_us_64();
+  while (!gpio_get(PIN_ACK)) {
+    if (time_us_64() - t > 2000) return -1; /* an unpowered unit holds the bus low */
+  }
+  while (uart_is_readable(uart1)) (void)uart_getc(uart1);
+  if (!rfctl_hal_uart_send(unit, gpio, cmd, n)) return 0;
+  uint64_t t_end = time_us_64() + (uint64_t)n * 10u * UART_BIT_US;
+  int state = 0; /* 0 nothing, 1 saw 'o' */
+  while (time_us_64() < t_end + timeout_us) {
+    watchdog_update();
+    if (!uart_is_readable(uart1)) continue;
+    char ch = (char)uart_getc(uart1);
+    if (ch == 'o' || ch == 'O') {
+      state = 1;
+    } else if (state == 1 && (ch == 'k' || ch == 'K')) {
+      uint64_t now = time_us_64();
+      *latency_us = now > t_end ? (uint32_t)(now - t_end) : 0;
+      return 1;
+    } else {
+      state = 0;
+    }
+  }
+  return 0;
+}
 
 static void shift_bytes(const uint8_t *bytes, uint16_t nbits, uint8_t *rx) {
   /* farthest chip first, MSB first: chip k output Qj = bit j of bytes[k] */
@@ -178,9 +272,18 @@ static void init_pins(void) {
   gpio_set_function(PIN_RX, GPIO_FUNC_SPI);
   /* direct device lines: outputs, driven low until the safe state is applied */
   const rfctl_board *b = &rfctl_default_board;
-  for (unsigned i = 0; i < b->ndevices; i++)
+  for (unsigned i = 0; i < b->ndevices; i++) {
+    if (b->dev[i].kind == RFCTL_ATTEN_UART) {
+      uart_tx_init(b->dev[i].aux, (uint8_t)(b->dev[i].line[0] & 0xff)); /* idles high */
+      continue;
+    }
     for (unsigned k = 0; k < b->dev[i].nlines; k++)
       if (b->dev[i].line[k] & RFCTL_DIRECT) g_direct_mask |= 1u << (b->dev[i].line[k] & 0xff);
+  }
+  /* the shared acknowledge line of the UART units (only `attcheck` reads it) */
+  uart_init(uart1, UART_BAUD);
+  gpio_set_function(PIN_ACK, GPIO_FUNC_UART);
+  gpio_pull_up(PIN_ACK);
   for (uint g = 0; g < 30; g++) {
     if (!((g_direct_mask >> g) & 1u)) continue;
     gpio_init(g);

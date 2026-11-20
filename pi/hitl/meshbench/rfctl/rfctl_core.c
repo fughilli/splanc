@@ -22,13 +22,18 @@ static const char *kind_name(uint8_t k) {
     case RFCTL_SWITCH: return "switch";
     case RFCTL_ATTEN_PARALLEL: return "atten";
     case RFCTL_ATTEN_SERIAL: return "atten_serial";
+    case RFCTL_ATTEN_UART: return "atten_uart";
   }
   return "?";
 }
 
 static bool is_atten(const rfctl_device *d) {
-  return d->kind == RFCTL_ATTEN_PARALLEL || d->kind == RFCTL_ATTEN_SERIAL;
+  return d->kind == RFCTL_ATTEN_PARALLEL || d->kind == RFCTL_ATTEN_SERIAL ||
+         d->kind == RFCTL_ATTEN_UART;
 }
+
+/* hundredths of a dB per value step: 0.5 dB for the DSAs, 0.25 dB for UART units */
+static unsigned step_cdb(const rfctl_device *d) { return d->kind == RFCTL_ATTEN_UART ? 25u : 50u; }
 
 /* ---- output ------------------------------------------------------------------ */
 
@@ -63,7 +68,8 @@ static void set_line(uint16_t line, int bit, uint8_t *chain, uint64_t *mask, uin
 
 void rfctl_encode(const rfctl_board *b, const uint16_t *values, uint8_t *chain,
                   uint64_t *gpio_mask, uint64_t *gpio_val) {
-  memset(chain, 0, RFCTL_CHAIN_BITS / 8);
+  /* bits no device owns sit at their pull level (high) on boards that ask for it */
+  memset(chain, b->spare_high ? 0xff : 0, RFCTL_CHAIN_BITS / 8);
   *gpio_mask = 0;
   *gpio_val = 0;
   for (unsigned i = 0; i < b->ndevices; i++) {
@@ -74,7 +80,7 @@ void rfctl_encode(const rfctl_board *b, const uint16_t *values, uint8_t *chain,
     } else if (d->kind == RFCTL_ATTEN_PARALLEL) {
       pattern = values[i];
     } else {
-      continue; /* serial attenuators are written by rfctl_serial_words */
+      continue; /* serial and UART attenuators are written by their own helpers */
     }
     for (unsigned k = 0; k < d->nlines; k++) {
       int bit = (int)((pattern >> k) & 1u) ^ (int)((d->invert >> k) & 1u);
@@ -103,20 +109,25 @@ int rfctl_parse_value(const rfctl_device *d, const char *s, uint16_t *outv) {
       *outv = d->max_value;
       return 0;
     }
-    /* decimal dB, a multiple of 0.5 */
+    /* decimal dB with up to two decimals, a multiple of the device's step */
+    if (*s < '0' || *s > '9') return -1;
     char *end;
     long whole = strtol(s, &end, 10);
-    if (end == s || whole < 0) return -1;
-    long half = 0;
+    if (end == s || whole < 0 || whole > 1000) return -1;
+    long frac = 0;
     if (*end == '.') {
       const char *f = end + 1;
-      if (f[0] == '5' && (f[1] == 0 || (f[1] == '0' && f[2] == 0))) half = 1;
-      else if (f[0] == '0' && (f[1] == 0 || (f[1] == '0' && f[2] == 0))) half = 0;
-      else return -1;
+      int nd = 0;
+      while (f[nd] >= '0' && f[nd] <= '9' && nd < 3) nd++;
+      if (nd == 0 || nd > 2 || f[nd] != 0) return -1;
+      frac = (f[0] - '0') * 10 + (nd == 2 ? f[1] - '0' : 0);
     } else if (*end != 0) {
       return -1;
     }
-    long v = whole * 2 + half;
+    long cdb = whole * 100 + frac;
+    unsigned st = step_cdb(d);
+    if (cdb % (long)st) return -1;
+    long v = cdb / (long)st;
     if (v > d->max_value) return -2;
     *outv = (uint16_t)v;
     return 0;
@@ -130,8 +141,30 @@ int rfctl_parse_value(const rfctl_device *d, const char *s, uint16_t *outv) {
 }
 
 void rfctl_format_value(const rfctl_device *d, uint16_t v, char *buf, size_t n) {
-  if (is_atten(d)) snprintf(buf, n, "%u.%u", (unsigned)(v / 2), (unsigned)((v % 2) * 5));
-  else snprintf(buf, n, "%u", (unsigned)v);
+  if (is_atten(d)) {
+    unsigned cdb = (unsigned)v * step_cdb(d), frac = cdb % 100;
+    if (frac % 10) snprintf(buf, n, "%u.%02u", cdb / 100, frac); /* 12.25 */
+    else snprintf(buf, n, "%u.%u", cdb / 100, frac / 10);       /* 12.5, 31.0 */
+  } else {
+    snprintf(buf, n, "%u", (unsigned)v);
+  }
+}
+
+int rfctl_uart_format(uint16_t q, char *buf, size_t n) {
+  /* hand-rolled (no printf): this runs in the commit IRQ */
+  if (n < RFCTL_UART_CMD_LEN + 1) return 0;
+  unsigned cdb = (unsigned)q * 25u;
+  if (cdb > 9999u) cdb = 9999u;
+  buf[0] = 'w';
+  buf[1] = 'v';
+  buf[2] = '0';
+  buf[3] = (char)('0' + cdb / 1000);
+  buf[4] = (char)('0' + cdb / 100 % 10);
+  buf[5] = (char)('0' + cdb / 10 % 10);
+  buf[6] = (char)('0' + cdb % 10);
+  buf[7] = '\n';
+  buf[8] = 0;
+  return RFCTL_UART_CMD_LEN;
 }
 
 /* ---- staging and commit ------------------------------------------------------------ */
@@ -157,6 +190,45 @@ void rfctl_serial_words(rfctl *c, bool all) {
     if (d->invert) w = (uint8_t)(~w & 0x3f);
     rfctl_hal_serial_atten((uint8_t)(d->line[0] & 0xff), (uint8_t)(d->line[1] & 0xff),
                            (uint8_t)(d->line[2] & 0xff), w);
+  }
+  rfctl_uart_words(c, all); /* UART units start right after the latch edge */
+}
+
+static bool uart_send_value(rfctl *c, unsigned i, uint16_t v) {
+  const rfctl_device *d = &c->board->dev[i];
+  char cmd[RFCTL_UART_CMD_LEN + 1];
+  int n = rfctl_uart_format(v, cmd, sizeof cmd);
+  if (!rfctl_hal_uart_send(d->aux, (uint8_t)(d->line[0] & 0xff), cmd, (uint8_t)n)) return false;
+  c->uart_sent++;
+  return true;
+}
+
+void rfctl_uart_words(rfctl *c, bool all) {
+  for (unsigned i = 0; i < c->board->ndevices; i++) {
+    if (c->board->dev[i].kind != RFCTL_ATTEN_UART) continue;
+    if (!all && c->shadow[i] == c->value[i] && !c->uart_pending[i]) continue;
+    if (uart_send_value(c, i, c->shadow[i])) {
+      c->uart_pending[i] = 0;
+    } else {
+      /* the unit is still sending its previous command: rfctl_poll sends the
+       * committed value as soon as it can (counted, and flagged as a fault) */
+      c->uart_pending[i] = 1;
+      c->uart_deferred++;
+      c->faults |= RFCTL_F_UART;
+    }
+  }
+}
+
+static void uart_service(rfctl *c, uint64_t now) {
+  for (unsigned i = 0; i < c->board->ndevices; i++)
+    if (c->uart_pending[i] && uart_send_value(c, i, c->value[i])) c->uart_pending[i] = 0;
+  /* the units power up at 0 dB and may boot after the controller: repeat the
+   * committed values for a while after every safe state */
+  if (!c->playing && now < c->uart_refresh_until && now >= c->uart_refresh_next) {
+    c->uart_refresh_next = now + RFCTL_UART_REFRESH_US;
+    for (unsigned i = 0; i < c->board->ndevices; i++)
+      if (c->board->dev[i].kind == RFCTL_ATTEN_UART && !c->uart_pending[i])
+        (void)uart_send_value(c, i, c->value[i]);
   }
 }
 
@@ -191,9 +263,12 @@ void rfctl_apply_safe(rfctl *c) {
   g_staged_kind = KIND_IMMEDIATE;
   stage(c);
   c->staged = STAGED_READY;
-  /* the serial attenuators must all be written at power-up */
+  /* the serial and UART attenuators must all be written at power-up */
   for (unsigned i = 0; i < c->board->ndevices; i++) c->value[i] = (uint16_t)~c->shadow[i];
   rfctl_hal_commit_now(c);
+  uint64_t now = rfctl_hal_now_us();
+  c->uart_refresh_next = now + RFCTL_UART_REFRESH_US;
+  c->uart_refresh_until = now + RFCTL_UART_REFRESH_FOR_US;
 }
 
 static void finish_step(rfctl *c) {
@@ -217,6 +292,7 @@ static void finish_step(rfctl *c) {
 
 void rfctl_poll(rfctl *c, uint64_t now) {
   if (c->staged == STAGED_DONE) finish_step(c);
+  uart_service(c, now);
   if (c->lease_deadline >= 0 && (int64_t)now > c->lease_deadline) {
     c->faults |= RFCTL_F_LEASE;
     c->lease_deadline = -1;
@@ -340,12 +416,16 @@ void rfctl_exec(rfctl *c, const char *line) {
   int nargs = ntok - 1;
 
   if (!strcmp(cmd, "hello")) {
-    out(c, tag, "ok rfctl proto=%d board=%s devices=%u chain=%u timeline_cap=%u edge_lines=%u",
+    unsigned nuart = 0;
+    for (unsigned i = 0; i < c->board->ndevices; i++) nuart += c->board->dev[i].kind == RFCTL_ATTEN_UART;
+    out(c, tag,
+        "ok rfctl proto=%d board=%s devices=%u chain=%u timeline_cap=%u edge_lines=%u uart=%u",
         RFCTL_PROTO_VERSION, c->board->name, (unsigned)c->board->ndevices,
-        (unsigned)c->board->chain_bits, (unsigned)RFCTL_TIMELINE_CAP, (unsigned)RFCTL_EDGE_LINES);
+        (unsigned)c->board->chain_bits, (unsigned)RFCTL_TIMELINE_CAP, (unsigned)RFCTL_EDGE_LINES,
+        nuart);
   } else if (!strcmp(cmd, "help")) {
     out(c, tag, "# hello list get set safe time ping at clear play stop status state lease");
-    out(c, tag, "# clearfaults latelimit cap capread log selftest bootsel reset");
+    out(c, tag, "# clearfaults latelimit cap capread log selftest attcheck bootsel reset");
     out(c, tag, "ok help");
   } else if (!strcmp(cmd, "list")) {
     cmd_list(c, tag);
@@ -427,12 +507,12 @@ void rfctl_exec(rfctl *c, const char *line) {
     out(c, tag,
         "ok status playing=%d next=%u n=%u t=%llu t0=%llu steps=%u late_last_us=%lld "
         "late_max_us=%lld late_limit_us=%u faults=0x%02x lease_ms_left=%lld sync=%u cap_mask=0x%04x "
-        "edges=%u dropped=%u",
+        "edges=%u dropped=%u uart_sent=%u uart_deferred=%u",
         c->playing ? 1 : 0, (unsigned)c->next, (unsigned)c->n_entries, (unsigned long long)now,
         (unsigned long long)c->t0, (unsigned)c->steps, (long long)c->late_last_us,
         (long long)c->late_max_us, (unsigned)c->late_limit_us, (unsigned)c->faults, left,
         (unsigned)c->sync_count, (unsigned)c->cap_mask, (unsigned)(c->edge_w - c->edge_r),
-        (unsigned)c->edge_dropped);
+        (unsigned)c->edge_dropped, (unsigned)c->uart_sent, (unsigned)c->uart_deferred);
   } else if (!strcmp(cmd, "state")) {
     char v[16], hex[RFCTL_CHAIN_BITS / 4 + 4];
     for (unsigned i = 0; i < c->board->ndevices; i++) {
@@ -506,6 +586,30 @@ void rfctl_exec(rfctl *c, const char *line) {
     } else res = "pass";
     if (nbits) rfctl_hal_chain_shift(c->chain, nbits); /* restore; outputs never moved */
     out(c, tag, "ok selftest chain=%s bits=%u", res, (unsigned)nbits);
+  } else if (!strcmp(cmd, "attcheck")) {
+    /* re-send every UART attenuator's committed value, one unit at a time, and wait
+     * for its "ok" on the shared acknowledge line (idempotent; outputs unchanged) */
+    if (c->playing) FAIL("err busy timeline playing (stop first)");
+    unsigned n = 0, good = 0;
+    for (unsigned i = 0; i < c->board->ndevices; i++) {
+      const rfctl_device *d = &c->board->dev[i];
+      if (d->kind != RFCTL_ATTEN_UART) continue;
+      if (nargs) {
+        bool want = false;
+        for (int a = 0; a < nargs; a++) want |= rfctl_find_device(c, arg[a]) == (int)i;
+        if (!want) continue;
+      }
+      char cmdb[RFCTL_UART_CMD_LEN + 1], v[16];
+      int len = rfctl_uart_format(c->value[i], cmdb, sizeof cmdb);
+      uint32_t lat = 0;
+      int r = rfctl_hal_uart_txn(d->aux, (uint8_t)(d->line[0] & 0xff), cmdb, (uint8_t)len, 50000u, &lat);
+      rfctl_format_value(d, c->value[i], v, sizeof v);
+      const char *res = r == 1 ? "ok" : r == 0 ? "timeout" : r == -1 ? "stuck_low" : "absent";
+      out(c, tag, "att %s %s value=%s latency_us=%u", d->name, res, v, (unsigned)(r == 1 ? lat : 0));
+      n++;
+      good += r == 1;
+    }
+    out(c, tag, "ok attcheck n=%u ok=%u fail=%u", n, good, n - good);
   } else if (!strcmp(cmd, "bootsel")) {
     rfctl_apply_safe(c);
     out(c, tag, "ok bootsel");

@@ -205,9 +205,18 @@ def run_hardware(args) -> int:
                 timeout=60,
             ).stdout
             names = json.loads(list_out.strip().splitlines()[-1])
-            bench = sc.Bench(
-                names, fixed_loss_db=float(rig_env.get("HITL_MESHBENCH_FIXED_DB", 42.0))
-            )
+            # bench_cal.json (atten_cal.py, §5.8) on the rig host, once calibrated
+            cal = None
+            if rig_env.get("HITL_MESHBENCH_CAL_JSON"):
+                cal = json.loads(
+                    res.ssh(
+                        f"cat {shlex.quote(rig_env['HITL_MESHBENCH_CAL_JSON'])}",
+                        capture=True,
+                        timeout=30,
+                    ).stdout
+                )
+            fixed = rig_env.get("HITL_MESHBENCH_FIXED_DB")
+            bench = sc.Bench(names, fixed_loss_db=float(fixed) if fixed else None, cal=cal)
             scen = sc.LIBRARY[args.scenario](bench, **scenario_params)
             comp = sc.compile(scen, bench)
             for w in comp.warnings:
