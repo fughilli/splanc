@@ -258,7 +258,9 @@ itself; installing one always takes a press on the OLED HAT.
 - **Without the OLED HAT**, install over SSH: `sudo splanc-system-update install` (system) or
   `sudo splanc-bridge update` (Splanc software).
 - Writing the card again with the flasher also works, but starts fresh: you pair your agents again
-  afterwards.
+  afterwards. To keep the pairing (for example to move a bridge written before system updates
+  existed onto a current card), back it up and restore it onto the new card with
+  [bridge_migrate](../tools/bridge_migrate/README.md).
 
 ## Changing settings later
 

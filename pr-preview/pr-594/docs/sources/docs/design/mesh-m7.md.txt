@@ -15,7 +15,7 @@ the app (M8). Logs and JSON: `/workspace/.claude/mesh/m7/runs/`.
 
 ## Results
 
-Runs r1 and r2 (2026-11-20), both **PASS**, numbers from r2 (r1 within a few %).
+Runs r1, r2 and r3 (2026-11-20), all **PASS**; numbers from r2 (r1 and r3 within a few %).
 
 | Phase | What happened |
 | --- | --- |
