@@ -2807,8 +2807,15 @@ void netstack_loop() {
                                             g_scan_matched, g_authw.waited_ms(now_ms));
     // Improv fresh join: retry the sweep a few seconds apart before reporting the SSID
     // not found (a hotspot that beacons slowly), while the join is still waiting on it.
+    // Nothing to auth to while a central waits: spread the sweeps (wifi_scan.h); past
+    // kImprovSweeps misses short of the floor, back to the short gap so the report is
+    // never pushed a whole slow gap later.
+    uint32_t retry_gap = (!g_latch_known && improv_ble_central_connected() &&
+                          g_improv_scan.misses() < lm_wifi_scan::kImprovSweeps)
+                             ? lm_wifi_scan::kImprovRescanSlowGapMs
+                             : lm_wifi_scan::kImprovRescanGapMs;
     if (!g_hop.active() && g_radio_up && !g_silent && st == AUTH && !g_scan_matched &&
-        g_improv_scan.take_retry(now_ms)) {
+        g_improv_scan.take_retry(now_ms, retry_gap)) {
       g_force_sweep = true;
       Serial.printf("[t=%lu] [ble] \"%s\" not seen yet — Improv retry sweep %lu (%lu s into "
                     "the join; reported unreachable after %lu s)%s\n", (unsigned long)now_ms,
