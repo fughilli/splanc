@@ -75,9 +75,10 @@ export interface Env {
   FEEDBACK_ADMIN_TOKEN?: string;
   /** Days a feedback report is kept (default 90). */
   FEEDBACK_RETENTION_DAYS?: string;
-  /** Splanc AI credits (billing/, docs/design/ai-billing.md). OFF unless this is
-   * exactly "sandbox"; every /ai and /billing route answers 503 otherwise.
-   * ("production" is refused too until real store verification lands.) */
+  /** Splanc AI credits (billing/, docs/design/ai-billing.md): "sandbox" (Stripe
+   * test mode + the fake store) or "production" (Stripe live mode only). OFF
+   * otherwise: every /ai and /billing route answers 503. billing/endpoint.ts
+   * billingReady has the per-mode rules (docs/ops/billing-go-live.md). */
   AI_BILLING?: string;
   /** The pricing config JSON (billing/pricing.ts), validated on every request. */
   AI_PRICING?: string;
@@ -88,8 +89,8 @@ export interface Env {
   /** Worker SECRET (sandbox only, optional): the fake store's test signing key
    * (fake Apple purchases; fake web purchases when Stripe isn't set). */
   AI_BILLING_FAKE_STORE_KEY?: string;
-  /** Worker SECRETS: Stripe (web checkout). In sandbox mode only test keys
-   * (sk_test_…) are accepted. */
+  /** Worker SECRETS: Stripe (web checkout). Sandbox mode accepts only test
+   * keys (sk_test_ / rk_test_), production only live ones (sk_live_ / rk_live_). */
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
   /** Where Checkout sends the user back (default https://splanc.io/app/). */

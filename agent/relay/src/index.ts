@@ -20,7 +20,7 @@
  *                                docs/design/agent-feedback.md)
  *   /ai/v1/messages, /billing/*  Splanc AI credits: the metered AI proxy + the
  *                                credit ledger (billing/; docs/design/ai-billing.md).
- *                                503 unless AI_BILLING=sandbox and fully configured.
+ *                                503 unless AI_BILLING=sandbox or production and fully configured.
  *
  * The Worker itself is a thin router (the free plan gives it 10 ms CPU per
  * request); signatures, tokens and the tunnel live in the Durable Objects.

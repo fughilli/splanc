@@ -15,8 +15,8 @@
  *   store transaction credits exactly one account. Kept forever (no content);
  * - the Anthropic organization's month-to-date list cost (`org:spend:<YYYY-MM>`,
  *   µUSD), for the org spend-limit alert and guard (billing/proxy.ts);
- * - the running AI-credit liability (`org:liability`, µcredits, one number) for
- *   the ops dashboards (docs/design/ops-grafana.md).
+ * - the running AI-credit liability (`org:liability`, µcredits, one number;
+ *   `org:liability:production` in production mode) for the ops dashboards (docs/design/ops-grafana.md).
  *
  * Only the Worker talks to it (Durable Objects aren't publicly addressable).
  * Traffic is tiny: it is touched on pairing, registration and OAuth steps, never
@@ -192,8 +192,10 @@ export class Directory {
         // Ops (docs/design/ops-grafana.md): the running credit liability, every
         // account's balance together (µcredits): +trial/+purchase, -usage,
         // -refund/clawback, -forfeit. Starts at 0 when first used; a number
-        // only, never per account.
-        const k = "org:liability";
+        // only, never per account. One per billing mode: test-money credits
+        // left from the sandbox never count toward the production liability
+        // (sandbox keeps the original key).
+        const k = body["env"] === "production" ? "org:liability:production" : "org:liability";
         const delta = Math.trunc(Number(body["delta_micro"]) || 0);
         const total = ((await this.state.storage.get<number>(k)) ?? 0) + delta;
         if (delta !== 0) await this.state.storage.put(k, total);

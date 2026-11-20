@@ -145,7 +145,7 @@ export async function verifyStripeSignature(secret: string, header: string | nul
 /** What a verified Stripe event means for the ledger. */
 export type StripeAction =
   | { kind: "purchase"; eventId: string; purchase: VerifiedPurchase; accountId: string; paymentIntent: string | null }
-  | { kind: "refund"; eventId: string; paymentIntent: string; fraction: number; reason: "refund" | "chargeback" }
+  | { kind: "refund"; eventId: string; paymentIntent: string; fraction: number; reason: "refund" | "chargeback"; environment: StoreEnvironment }
   | { kind: "ignore"; eventId: string; why: string };
 
 interface StripeEvent {
@@ -187,13 +187,13 @@ export function stripeAction(raw: string): StripeAction {
       const refunded = Number(o["amount_refunded"] ?? 0);
       if (!pi || !(amount > 0)) return { kind: "ignore", eventId: ev.id, why: "no payment intent" };
       // Cumulative: a second partial refund raises the fraction.
-      return { kind: "refund", eventId: ev.id, paymentIntent: pi, fraction: Math.min(1, refunded / amount), reason: "refund" };
+      return { kind: "refund", eventId: ev.id, paymentIntent: pi, fraction: Math.min(1, refunded / amount), reason: "refund", environment };
     }
     case "charge.dispute.created": {
       const pi = str(o["payment_intent"]);
       if (!pi) return { kind: "ignore", eventId: ev.id, why: "no payment intent" };
       // The disputed amount is withdrawn from us now: claw back all of it.
-      return { kind: "refund", eventId: ev.id, paymentIntent: pi, fraction: 1, reason: "chargeback" };
+      return { kind: "refund", eventId: ev.id, paymentIntent: pi, fraction: 1, reason: "chargeback", environment };
     }
     default:
       return { kind: "ignore", eventId: ev.id, why: `unhandled ${ev.type}` };

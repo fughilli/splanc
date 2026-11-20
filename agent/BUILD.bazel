@@ -55,6 +55,7 @@ RELAY_SRCS = glob(["relay/src/**/*.ts"])
 LIGHT_TESTS = [
     "tests/billing.test.ts",
     "tests/billing_stripe.test.ts",
+    "tests/billing_mode.test.ts",
     # The ops (Grafana) events + the dashboards / alert rules that read them.
     "tests/ops.test.ts",
 ]

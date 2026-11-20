@@ -71,6 +71,11 @@ export interface Account {
   id: string;
   created: number;
   status: "active" | "suspended" | "closed";
+  /** The billing mode (AI_BILLING) the account was opened under. Absent on
+   * accounts opened before modes existed: those are sandbox accounts. Anything
+   * that re-issues a session for an existing account (email recovery, sign-in
+   * linking) must refuse an account of the other mode. */
+  environment?: "sandbox" | "production" | undefined;
   balance: number;
   held: number;
   seq: number;
@@ -178,11 +183,11 @@ export class Ledger {
   }
 
   /** Create the account (idempotent) and grant the trial once. */
-  open(id: string, trialMicro: number): Promise<Account> {
+  open(id: string, trialMicro: number, environment: "sandbox" | "production" = "sandbox"): Promise<Account> {
     return this.locked(async () => {
       let a = await this.acct();
       if (!a) {
-        a = { id, created: this.now(), status: "active", balance: 0, held: 0, seq: 0 };
+        a = { id, created: this.now(), status: "active", balance: 0, held: 0, seq: 0, environment };
         await this.s.put({ acct: a });
         if (trialMicro > 0) await this.append(a, { kind: "trial", amount: trialMicro, ref: "trial" });
         a = (await this.acct())!;
