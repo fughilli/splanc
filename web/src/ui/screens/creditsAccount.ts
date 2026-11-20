@@ -4,9 +4,13 @@
  * recent activity (the statement) and the danger zone. Every multi-step task
  * (buying, e-mail, restore, delete) opens the dedicated flow
  * (ui/screens/creditsFlow.ts); this card only shows state and entry points.
+ * In the iOS app it adds the App Store pieces: "Check for purchases" (re-send
+ * what StoreKit still holds) and the Apple refund-request consent switch.
  */
 
-import { Button } from "../kit";
+import { Button, toast } from "../kit";
+import { isIosNative } from "../../net/native";
+import { checkForPurchases, onIapCredited } from "../../effects/ai/iap";
 import { installCreditsFlowStyles } from "./creditsFlow.css";
 import { openCreditsFlow } from "./creditsFlow";
 import {
@@ -16,6 +20,7 @@ import {
   fetchCreditsStatement,
   formatCredits,
   getCreditsSession,
+  setAppleConsumptionConsent,
   statementLabel,
   TYPICAL_PROMPT_CREDITS,
   type CreditsBalance,
@@ -45,7 +50,7 @@ export function creditsAccountCard(group: (legend: string) => HTMLElement): HTML
   const load = (): void => {
     void loadCreditsBalance().then((r) => {
       if ("balance" in r) {
-        box.replaceChildren(...account(r.balance));
+        box.replaceChildren(...account(r.balance, load));
       } else if ("signedOut" in r) {
         // 401: restored on another device (which signs this one out), or the
         // account was deleted. Offer to restore; or start over.
@@ -68,10 +73,13 @@ export function creditsAccountCard(group: (legend: string) => HTMLElement): HTML
     });
   };
   load();
+  // iOS: credits that arrive in the background (Ask to Buy approved, a
+  // re-sent purchase) refresh the card while it's in the page.
+  const off = onIapCredited(() => (box.isConnected ? load() : off()));
   return g;
 }
 
-function account(b: CreditsBalance): HTMLElement[] {
+function account(b: CreditsBalance, reload: () => void): HTMLElement[] {
   const out: HTMLElement[] = [];
 
   // Balance (+ low / empty).
@@ -147,6 +155,8 @@ function account(b: CreditsBalance): HTMLElement[] {
     });
   out.push(act);
 
+  if (isIosNative()) out.push(...appStoreSections(b, reload));
+
   // Danger zone.
   const dz = section("Danger zone");
   dz.classList.add("cacct-danger");
@@ -158,6 +168,56 @@ function account(b: CreditsBalance): HTMLElement[] {
   );
   out.push(dz);
   return out;
+}
+
+/** iOS only: the App Store purchase check and the refund-request consent. */
+function appStoreSections(b: CreditsBalance, reload: () => void): HTMLElement[] {
+  const store = section("App Store purchases");
+  const check = Button({
+    label: "Check for purchases",
+    variant: "quiet",
+    onClick: () => {
+      check.disabled = true;
+      void checkForPurchases()
+        .then((r) => {
+          if (r.credited > 0) toast(`${formatCredits(r.credited)} added.`);
+          else if (r.failed > 0) toast("A purchase is still waiting. Splanc will try again; check your connection.");
+          else toast("Nothing waiting: every App Store purchase is on your account.");
+          reload();
+        })
+        .catch((e: unknown) => toast(e instanceof Error ? e.message : String(e)))
+        .finally(() => (check.disabled = false));
+    },
+  });
+  store.append(line("Bought credits that didn't arrive? Splanc can check with the App Store again.", check));
+
+  const consent = section("Apple refund requests");
+  const on = b.apple_consumption_consent === true;
+  const toggle = Button({
+    label: on ? "Stop sharing" : "Share usage",
+    variant: "quiet",
+    onClick: () => {
+      toggle.disabled = true;
+      void setAppleConsumptionConsent(!on)
+        .then(() => {
+          toast(on ? "Splanc won't share usage with Apple." : "Splanc will share usage with Apple on refund requests.");
+          reload();
+        })
+        .catch((e: unknown) => {
+          toggle.disabled = false;
+          toast(e instanceof Error ? e.message : String(e));
+        });
+    },
+  });
+  consent.append(
+    line(
+      on
+        ? "On: if you ask Apple for a refund of a credit pack, Splanc tells Apple how much of it you used. Nothing else is shared."
+        : "Off: if you ask Apple for a refund of a credit pack, Splanc doesn't tell Apple how much of it you used.",
+      toggle,
+    ),
+  );
+  return [store, consent];
 }
 
 function activityRow(e: StatementEntry): HTMLElement {

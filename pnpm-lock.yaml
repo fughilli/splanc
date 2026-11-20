@@ -89,6 +89,9 @@ importers:
       '@splanc/speech-bridge':
         specifier: link:./native-plugins/speech-bridge
         version: link:native-plugins/speech-bridge
+      '@splanc/storekit-bridge':
+        specifier: link:./native-plugins/storekit-bridge
+        version: link:native-plugins/storekit-bridge
       '@splanc/web-auth':
         specifier: link:./native-plugins/web-auth
         version: link:native-plugins/web-auth

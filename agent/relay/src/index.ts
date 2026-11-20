@@ -203,6 +203,7 @@ export default {
                   env.BILLING_ADMIN_TOKEN,
                   env.STRIPE_SECRET_KEY,
                   env.STRIPE_WEBHOOK_SECRET,
+                  env.APPLE_IAP_KEY,
                 ].filter((x): x is string => !!x),
                 waitUntil: ectx ? (p) => ectx.waitUntil(p) : undefined,
               }),

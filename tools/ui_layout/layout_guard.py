@@ -174,6 +174,10 @@ class Scenario:
     settle_ms: extra wait after the steps (animations, polling)
     expect:  a selector that must be visible once settled (proves the scenario
              reached the intended screen, not an error or fallback state)
+    init_js: extra script run before the app boots (e.g. a fake Capacitor
+             runtime + native plugin for the iOS-app screens)
+    no_controls: the screen has nothing to press by design (a system sheet is
+             up); `expect` still proves it rendered
     """
 
     id: str
@@ -185,6 +189,8 @@ class Scenario:
     root: str = ".shell-outlet, .k-sheet"
     settle_ms: int = 700
     expect: str | None = None
+    init_js: str = ""
+    no_controls: bool = False
 
 
 BASE_SEED = {
@@ -277,6 +283,8 @@ def run_scenarios(
                             viewport=vp, device_scale_factor=2, color_scheme=theme
                         )
                         ctx.add_init_script(seed_js(sc.seed, theme))
+                        if sc.init_js:
+                            ctx.add_init_script(sc.init_js)
                         handler = sc.network() if sc.network else None
 
                         def on_route(route, request, handler=handler):
@@ -310,7 +318,7 @@ def run_scenarios(
                                         "expected element not visible: wrong screen",
                                     )
                                 )
-                            if n == 0:
+                            if n == 0 and not sc.no_controls:
                                 v.append(
                                     Violation(
                                         "empty",

@@ -8,6 +8,9 @@
  * Modes (entry points):
  *   buy      intro -> account (+18+ consent) -> recovery e-mail (optional)
  *            -> pack -> hand-off to Stripe Checkout
+ *            iOS app: ... -> recovery e-mail -> Apple refund-request consent
+ *            (asked once) -> pack -> the App Store sheet (purchasing) ->
+ *            success | pending (Ask to Buy) | back to the packs (cancelled)
  *   return   Stripe sent the user back: confirming -> success | pending,
  *            or cancelled / failed with a way back to the packs
  *   restore  a fresh device: e-mail -> code -> restored (balance)
@@ -33,6 +36,10 @@ export type FlowStep =
   | "packs"
   | "handoff"
   | "redirecting"
+  // iOS: Apple In-App Purchase
+  | "appleConsent"
+  | "purchasing"
+  | "purchasePending"
   // return from Stripe
   | "confirming"
   | "returnSuccess"
@@ -54,8 +61,12 @@ export type FlowStep =
 export interface FlowContext {
   /** The credits flag is on. */
   enabled: boolean;
-  /** Inside the iOS app: credits are never shown (Apple IAP later). */
+  /** Inside the iOS app: credits are bought with Apple In-App Purchase. */
   ios: boolean;
+  /** The iOS build has the StoreKit plugin (an older one can't buy). */
+  iap: boolean;
+  /** The user answered the Apple refund-request consent (yes or no). */
+  consentAsked: boolean;
   hasSession: boolean;
   /** The account confirmed 18+. */
   adult: boolean;
@@ -98,6 +109,13 @@ export type FlowEvent =
   | { type: "emailVerified" }
   | { type: "selectPack"; sku: string }
   | { type: "continueToPayment" }
+  | { type: "consentAnswered" }
+  | { type: "purchaseStarted" }
+  | { type: "purchased"; balance: number }
+  | { type: "purchasePending" }
+  | { type: "purchaseCancelled" }
+  /** Paid, but the relay hasn't credited yet (kept and re-sent). */
+  | { type: "paidNotCredited" }
   | { type: "checkoutOpening" }
   | { type: "balanceArrived"; balance: number }
   | { type: "pollTimedOut" }
@@ -110,20 +128,23 @@ export type FlowEvent =
   | { type: "done" };
 
 /** The purchase phases shown in the progress bar ("Step 2 of 4"). */
-export type Phase = "account" | "email" | "pack" | "payment";
+export type Phase = "account" | "email" | "consent" | "pack" | "payment";
 const PHASE_OF: Partial<Record<FlowStep, Phase>> = {
   account: "account",
   emailChoice: "email",
   anonConfirm: "email",
   emailEntry: "email",
   emailCode: "email",
+  appleConsent: "consent",
   packs: "pack",
   handoff: "payment",
   redirecting: "payment",
+  purchasing: "payment",
 };
 export const PHASE_LABEL: Record<Phase, string> = {
   account: "Account",
   email: "Recovery email",
+  consent: "Refund requests",
   pack: "Choose credits",
   payment: "Payment",
 };
@@ -133,6 +154,7 @@ export function buyPhases(ctx: FlowContext): Phase[] {
   const p: Phase[] = [];
   if (!ctx.hasSession || !ctx.adult) p.push("account");
   if (!ctx.emailVerified && !ctx.emailDeclined) p.push("email");
+  if (needsConsent(ctx)) p.push("consent");
   p.push("pack", "payment");
   return p;
 }
@@ -153,7 +175,7 @@ export type CheckoutResult = "success" | "cancel" | null;
 
 export function startFlow(mode: FlowMode, ctx: FlowContext, checkout: CheckoutResult = null): FlowState {
   const base = { mode, history: [] as FlowStep[], ctx };
-  if (!ctx.enabled || ctx.ios) return { ...base, step: "unavailable" };
+  if (!ctx.enabled || (ctx.ios && !ctx.iap)) return { ...base, step: "unavailable" };
   switch (mode) {
     case "buy":
       return { ...base, step: "intro", phases: buyPhases(ctx) };
@@ -173,10 +195,15 @@ export function startFlow(mode: FlowMode, ctx: FlowContext, checkout: CheckoutRe
   }
 }
 
+/** The iOS flow asks the Apple refund-request consent once, before the first
+ * purchase (owner decision; Apple: opt-in, never preselected). */
+const needsConsent = (ctx: FlowContext) => ctx.ios && !ctx.consentAsked;
+
 /** The first buy step after `from` that still needs doing. */
-function nextBuyStep(ctx: FlowContext, from: "intro" | "account" | "email"): FlowStep {
+function nextBuyStep(ctx: FlowContext, from: "intro" | "account" | "email" | "consent"): FlowStep {
   if (from === "intro" && (!ctx.hasSession || !ctx.adult)) return "account";
-  if (from !== "email" && !ctx.emailVerified && !ctx.emailDeclined) return "emailChoice";
+  if ((from === "intro" || from === "account") && !ctx.emailVerified && !ctx.emailDeclined) return "emailChoice";
+  if (from !== "consent" && needsConsent(ctx)) return "appleConsent";
   return "packs";
 }
 
@@ -198,6 +225,8 @@ export function reduce(s: FlowState, ev: FlowEvent): FlowState {
     case "cancel":
       return exit(s);
     case "back": {
+      // The App Store sheet is up: it owns the outcome.
+      if (s.step === "purchasing") return s;
       // Leaving a transient / terminal step backs out of the flow.
       if (s.history.length === 0 || TERMINAL.has(s.step)) return exit(s);
       const history = s.history.slice(0, -1);
@@ -206,6 +235,8 @@ export function reduce(s: FlowState, ev: FlowEvent): FlowState {
     case "fail":
       // A failed redirect returns to the hand-off with the reason.
       if (s.step === "redirecting") return { ...s, step: "handoff", error: ev.message };
+      // The App Store refused or failed: back to the packs with the reason.
+      if (s.step === "purchasing") return { ...s, step: "packs", error: ev.message };
       return { ...s, error: ev.message };
     case "done":
       return exit(s);
@@ -221,12 +252,14 @@ export function reduce(s: FlowState, ev: FlowEvent): FlowState {
       if (ev.type === "chooseEmail") return go(s, "emailEntry");
       if (ev.type === "skipEmail") return go(s, "anonConfirm");
       return s;
-    case "anonConfirm":
+    case "anonConfirm": {
       // "Go back and add email" is the safe default; "Continue anonymously"
       // records the choice so the flow doesn't ask again.
       if (ev.type === "chooseEmail") return go(s, "emailEntry");
-      if (ev.type === "confirmAnon") return go({ ...s, ctx: { ...s.ctx, emailDeclined: true } }, "packs");
-      return s;
+      if (ev.type !== "confirmAnon") return s;
+      const ctx = { ...s.ctx, emailDeclined: true };
+      return go({ ...s, ctx }, nextBuyStep(ctx, "email"));
+    }
     case "emailEntry":
       return ev.type === "codeSent" ? go(s, "emailCode", { email: ev.email }) : s;
     case "emailCode":
@@ -234,11 +267,25 @@ export function reduce(s: FlowState, ev: FlowEvent): FlowState {
       if (ev.type === "codeSent") return { ...s, email: ev.email, error: undefined }; // resent
       if (ev.type !== "emailVerified") return s;
       if (s.mode === "email") return exit(s, "Recovery email saved.");
-      return go({ ...s, ctx: { ...s.ctx, emailVerified: true } }, "packs");
+      return go({ ...s, ctx: { ...s.ctx, emailVerified: true } }, nextBuyStep({ ...s.ctx, emailVerified: true }, "email"));
+    case "appleConsent":
+      if (ev.type !== "consentAnswered") return s;
+      return go({ ...s, ctx: { ...s.ctx, consentAsked: true } }, "packs");
     case "packs":
       if (ev.type === "selectPack") return { ...s, packSku: ev.sku, error: undefined };
-      if (ev.type === "continueToPayment" && s.packSku) return go(s, "handoff");
+      // iOS: the App Store sheet is the confirmation, so no hand-off screen.
+      if (ev.type === "purchaseStarted" && s.packSku && s.ctx.ios) return swap(s, "purchasing");
+      if (ev.type === "continueToPayment" && s.packSku && !s.ctx.ios) return go(s, "handoff");
       return s;
+    case "purchasing":
+      if (ev.type === "purchased") return swap(s, "returnSuccess", { balance: ev.balance, history: [] });
+      if (ev.type === "purchasePending") return swap(s, "purchasePending", { history: [] });
+      if (ev.type === "paidNotCredited") return swap(s, "returnPending", { history: [] });
+      if (ev.type === "purchaseCancelled") return swap(s, "packs");
+      return s;
+    case "purchasePending":
+      // Approved while the screen is open: the background delivery credited it.
+      return ev.type === "balanceArrived" ? swap(s, "returnSuccess", { balance: ev.balance }) : s;
     case "handoff":
       return ev.type === "checkoutOpening" ? swap(s, "redirecting") : s;
     case "confirming":
@@ -267,7 +314,17 @@ export function reduce(s: FlowState, ev: FlowEvent): FlowState {
 }
 
 /** Steps from which Back leaves the flow instead of stepping back. */
-const TERMINAL = new Set<FlowStep>(["returnSuccess", "returnPending", "returnCancelled", "returnFailed", "restored", "deleted", "unavailable", "confirming"]);
+const TERMINAL = new Set<FlowStep>([
+  "returnSuccess",
+  "returnPending",
+  "returnCancelled",
+  "returnFailed",
+  "restored",
+  "deleted",
+  "unavailable",
+  "confirming",
+  "purchasePending",
+]);
 
 /** Seconds left before "Resend code" is allowed again. */
 export function resendCooldownLeft(sentAtMs: number, cooldownS: number, nowMs: number): number {

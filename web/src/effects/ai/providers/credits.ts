@@ -12,13 +12,14 @@
  * alike; the reply is the same Anthropic event stream plus one
  * `splanc_billing` event with the charge and the new balance.
  *
- * Purchases are NOT wired yet. When they are: iOS buys Apple consumables
- * (StoreKit) and never shows or links to the web checkout; every other
- * platform (browser PWA, Android) uses the web checkout. Credits live on the
- * server account, so they work on every platform the account signs in on.
+ * Purchases: the iOS app buys Apple consumables (StoreKit 2, effects/ai/iap.ts)
+ * and never shows or links to the web checkout; every other platform (browser
+ * PWA, Android) uses the web checkout (Stripe). Credits live on the server
+ * account, so they work on every platform the account signs in on.
  */
 
 import { isIosNative } from "../../../net/native";
+import { storeKitAvailable } from "../../../net/storeKit";
 import type { AiProvider, ChatMessage, SendOptions, SendResult } from "../provider";
 import { consumeChatStream, messagesRequestBody } from "./anthropic";
 
@@ -99,6 +100,10 @@ export interface CreditsBalance {
   adult: boolean;
   /** Opted in to sharing consumption data with Apple on refund requests. */
   apple_consumption_consent?: boolean;
+  /** The user answered that question (yes or no); the iOS flow asks once. */
+  apple_consumption_asked?: boolean;
+  /** StoreKit's appAccountToken for this account (a UUID). */
+  account_ref?: string;
   /** The recovery e-mail, masked by the server ("k•••@gmail.com"), when one
    * is set (PR #557). */
   email_hint?: string | null;
@@ -203,6 +208,17 @@ export async function setAppleConsumptionConsent(consented: boolean, fetchImpl: 
     body: JSON.stringify({ apple_consumption: consented }),
   });
   if (!r.ok) throw new Error(creditsErrorMessage(r.status, (await r.json().catch(() => null)) as { message?: string } | null));
+}
+
+// -- Apple In-App Purchase: the iOS app only (effects/ai/iap.ts drives StoreKit) --------
+
+/** Credit a StoreKit 2 transaction (its signed `jwsRepresentation`). 201 =
+ * credited now; 200 with `replay` = it already was. */
+export async function submitApplePurchase(
+  jws: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ credited_credits: number; balance_credits: number; replay: boolean }> {
+  return billingCall("/billing/purchase/apple", { method: "POST", body: { jws }, auth: true }, fetchImpl);
 }
 
 // -- web checkout (Stripe): the PWA in a browser and on Android, NEVER iOS ------------
@@ -430,6 +446,15 @@ function codeMessage(status: number, code: string): string | null {
       return "That email already belongs to another Splanc AI account. To use those credits here, restore that account instead.";
     case "rate_limited":
       return "Too many codes sent. Wait a minute, then try again.";
+    // App Store purchases (POST /billing/purchase/apple).
+    case "wrong_account":
+      return "This App Store purchase belongs to another Splanc AI account. Restore that account on this device and its credits arrive.";
+    case "wrong_environment":
+      return "This purchase was made in a different App Store environment (for example a TestFlight build) and can't be used here.";
+    case "bad_receipt":
+    case "unknown_product":
+    case "unsupported_quantity":
+      return "Splanc couldn't confirm this App Store purchase, so no credits were added. If you were charged, you can ask Apple for a refund at reportaproblem.apple.com.";
   }
   if (status === 429) return "Too many tries. Wait a minute, then try again.";
   return null;
@@ -614,10 +639,11 @@ export function lastKnownBalance(): number | null {
   return lastBilling ? lastBilling.balance_credits : null;
 }
 
-/** Credits are shown on this device: the flag is on and it isn't the iOS app
- * (owner: iOS sells through Apple In-App Purchase later, never the web flow). */
+/** Credits are shown on this device: the flag is on, and inside the iOS app
+ * only when the build has the StoreKit plugin (iOS sells through Apple
+ * In-App Purchase, never the web flow; an older build keeps them hidden). */
 export function creditsVisible(): boolean {
-  return aiCreditsEnabled() && !isIosNative();
+  return aiCreditsEnabled() && (!isIosNative() || storeKitAvailable());
 }
 
 /** The server's default `low_balance_credits` (GET /billing/pricing). */

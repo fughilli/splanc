@@ -51,7 +51,7 @@ import { installKioskChip } from "../screens/kioskChip";
 import { isPlayHash } from "../../halloween/playSession";
 import { installShakeToEnter } from "../acid/shake";
 import { shakeConfirmLine, SHAKE_CONFIRM_LINES } from "../acid/narrate";
-import { confirmDialog } from "../kit";
+import { confirmDialog, toast } from "../kit";
 import { initAppearance } from "../../store/appearance";
 import { maybeShowSplash } from "./splash";
 import { maybeShowFirstRunHint } from "../guide/tour";
@@ -268,6 +268,15 @@ async function main(): Promise<void> {
     history.replaceState(history.state, "", `${location.pathname}${location.search}#/credits/return`);
   }
   router.start();
+
+  // iOS: App Store purchases still waiting for their credit (a crash or no
+  // network between paying and crediting) and Ask to Buy approvals, from
+  // launch on. A no-op elsewhere, or with credits off (effects/ai/iap.ts).
+  void import("../../effects/ai/iap")
+    .then(({ startIapDelivery }) =>
+      startIapDelivery((r) => toast(`Splanc AI credits: ${Math.floor(r.credited)} credits added.`)),
+    )
+    .catch(() => {});
 
   // Warm the offline firmware cache with the latest release in the background, so a
   // released image is flashable over USB even with no network later. Dynamic-imported

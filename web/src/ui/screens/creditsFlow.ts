@@ -4,7 +4,8 @@
  *
  * One step per screen, one primary action each. The pure state machine is
  * effects/ai/creditsFlow.ts; this file renders `state.step` and runs the side
- * effects (account, e-mail codes, Stripe Checkout, balance polling).
+ * effects (account, e-mail codes, Stripe Checkout, balance polling; in the
+ * iOS app the App Store sheet instead, via effects/ai/iap.ts).
  *
  * Routes: #/credits (buy), #/credits/return (Stripe comes back here),
  * #/credits/restore (a fresh device), #/credits/email (add / change the
@@ -56,6 +57,8 @@ import {
   takeCheckoutResult,
   verifyEmailLink,
   verifyRecovery,
+  setAppleConsumptionConsent,
+  APPLE_CONSUMPTION_CONSENT_TEXT,
   DELETE_ACCOUNT_WARNING,
   TYPICAL_PROMPT_CREDITS,
   type CreditPack,
@@ -64,6 +67,8 @@ import {
 import { getAiConfig, isAiConfigured } from "../../effects/ai/provider";
 import { selectPaidTier } from "../../effects/ai/tiers";
 import { isIosNative } from "../../net/native";
+import { storeKit, storeKitAvailable, StoreKitError, type StoreProduct } from "../../net/storeKit";
+import { buyCreditPack, deliverUnfinished, loadIapPacks, onIapCredited } from "../../effects/ai/iap";
 
 const RETURN_KEY = "splanc.aiCredits.flowReturn";
 const PRE_BALANCE_KEY = "splanc.aiCredits.preCheckoutBalance";
@@ -101,7 +106,10 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
   el.append(wrap);
 
   let balance: CreditsBalance | null = null;
-  let packs: CreditPack[] | null = null;
+  /** The packs on sale here; in the iOS app each carries the App Store product. */
+  let packs: (CreditPack & { product?: StoreProduct })[] | null = null;
+  /** The iOS consent choice on the consent step (null: not chosen yet). */
+  let consentChoice: boolean | null = null;
   let packsError = "";
   let busy = false;
   let disposed = false;
@@ -116,6 +124,8 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
   const ctx = (): FlowContext => ({
     enabled: aiCreditsEnabled(),
     ios: isIosNative(),
+    iap: storeKitAvailable(),
+    consentAsked: balance?.apple_consumption_asked === true,
     hasSession: getCreditsSession() !== null,
     adult: balance?.adult === true,
     emailVerified: creditsEmail(balance) !== null,
@@ -233,9 +243,9 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
       case "unavailable":
         return page({
           hero: "info",
-          title: "Splanc AI credits aren't available here",
+          title: isIosNative() && aiCreditsEnabled() ? "Update Splanc to buy credits" : "Splanc AI credits aren't available here",
           lead: isIosNative()
-            ? "In the iOS app, credits will be sold through the App Store. For now, use the Free tier or your own API key in Settings ▸ AI."
+            ? "This version of the app can't buy Splanc AI credits. Update Splanc from the App Store, or use the Free tier or your own API key in Settings ▸ AI."
             : "Credits aren't switched on for this version of the app yet. You can use the Free tier or your own API key in Settings ▸ AI.",
           actions: actions(primaryBtn("Back to AI settings", () => dispatch({ type: "done" }))),
         });
@@ -414,6 +424,19 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
         }
         for (const p of packs ?? []) list.append(packCard(p));
         const retry = packsError ? quietBtn("Try again", () => ((packs = null), (packsError = ""), render(false))) : null;
+        if (state.ctx.ios) {
+          const chosen = (packs ?? []).find((p) => p.sku === state.packSku);
+          return page({
+            title: "Choose your credits",
+            lead: "Pick a pack. You pay with your Apple Account, and the credits are added as soon as the App Store confirms.",
+            body: [list, para("Apple shows the final price before you pay. Prompt counts are estimates; bigger effects use more credits.", "cf-note")],
+            actions: actions(
+              primaryBtn(chosen?.product ? `Buy for ${chosen.product.displayPrice}` : "Buy", () => void buyWithApple(), { disabled: !chosen?.product }),
+              ...(retry ? [retry] : []),
+              backBtn(),
+            ),
+          });
+        }
         return page({
           title: "Choose your credits",
           lead: "Pick a pack. Credits are added to your account as soon as payment goes through.",
@@ -425,6 +448,64 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
           ),
         });
       }
+
+      case "appleConsent": {
+        const choices = document.createElement("div");
+        choices.className = "cf-packs cf-choices";
+        choices.setAttribute("role", "radiogroup");
+        choices.setAttribute("aria-label", "Share usage with Apple on refund requests");
+        const go = primaryBtn(
+          "Continue",
+          () =>
+            void run(async () => {
+              const yes = consentChoice === true;
+              await setAppleConsumptionConsent(yes);
+              if (balance) balance = { ...balance, apple_consumption_consent: yes, apple_consumption_asked: true };
+              dispatch({ type: "consentAnswered" });
+            }),
+          { disabled: consentChoice === null },
+        );
+        for (const [value, title, text] of [
+          [true, "Yes, share my usage", "Only if I ask Apple for a refund of a credit pack."],
+          [false, "No, don't share", "Apple decides refunds without it."],
+        ] as const) {
+          choices.append(
+            choiceCard(title, text, consentChoice === value, () => {
+              consentChoice = value;
+              render(false);
+            }),
+          );
+        }
+        return page({
+          hero: "help",
+          title: "Help Apple with refund requests?",
+          lead: APPLE_CONSUMPTION_CONSENT_TEXT,
+          body: [
+            facts([
+              ["eye-off", "What's shared", "How much of that pack you used, and that the credits reached your account. Never your prompts, your effects or anything else about you."],
+              ["info", "Your choice", "Nothing else depends on it: buying and using credits work the same either way."],
+            ]),
+            choices,
+          ],
+          actions: actions(go, backBtn()),
+        });
+      }
+
+      case "purchasing":
+        return page({
+          title: "Complete the purchase with Apple",
+          lead: "Confirm in the App Store sheet. Your credits are added as soon as the App Store confirms.",
+          body: [spinner()],
+          actions: actions(null),
+        });
+
+      case "purchasePending":
+        return page({
+          hero: "info",
+          title: "Waiting for approval",
+          lead: "This purchase needs approval first, for example from a family organizer through Ask to Buy. Nothing is charged until then. Once it's approved, the credits are added automatically, even if you close the app.",
+          actions: actions(primaryBtn("Done", () => dispatch({ type: "done" }))),
+        });
 
       case "handoff": {
         const p = (packs ?? []).find((x) => x.sku === state.packSku);
@@ -482,7 +563,11 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
           hero: "check",
           heroTone: "ok",
           title: restored ? "Welcome back" : "You're all set",
-          lead: restored ? "Your account is restored on this device. Here's your balance:" : "Payment received. Your new balance:",
+          lead: restored
+            ? "Your account is restored on this device. Here's your balance:"
+            : state.ctx.ios
+              ? "Purchase complete. Your new balance:"
+              : "Payment received. Your new balance:",
           body: [big],
           actions: actions(
             primaryBtn("Start creating", () => {
@@ -497,8 +582,10 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
       case "returnPending":
         return page({
           hero: "info",
-          title: "Payment still processing",
-          lead: "Stripe has your payment, but the credits haven't reached your account yet. This can take a minute. You won't be charged twice.",
+          title: state.ctx.ios ? "Payment received, adding credits" : "Payment still processing",
+          lead: state.ctx.ios
+            ? "The App Store has your payment, but your credits haven't reached your account yet. Splanc keeps trying, also the next time you open the app. You won't be charged twice."
+            : "Stripe has your payment, but the credits haven't reached your account yet. This can take a minute. You won't be charged twice.",
           actions: actions(
             primaryBtn("Check again", () => {
               dispatch({ type: "checkAgain" });
@@ -596,7 +683,7 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
     }
   }
 
-  function packCard(p: CreditPack): HTMLElement {
+  function packCard(p: CreditPack & { product?: StoreProduct }): HTMLElement {
     const on = state.packSku === p.sku;
     const b = document.createElement("button");
     b.type = "button";
@@ -606,7 +693,7 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
     b.dataset.sku = p.sku;
     const price = document.createElement("span");
     price.className = "cf-pack-price";
-    price.textContent = p.reference_price_usd !== undefined ? formatUsd(p.reference_price_usd) : "";
+    price.textContent = p.product ? p.product.displayPrice : p.reference_price_usd !== undefined ? formatUsd(p.reference_price_usd) : "";
     const credits = document.createElement("span");
     credits.className = "cf-pack-credits";
     credits.textContent = formatCredits(p.credits);
@@ -625,19 +712,87 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
   async function loadPacks(): Promise<void> {
     const pr = await fetchCreditsPricing();
     if (disposed) return;
+    let list: (CreditPack & { product?: StoreProduct })[] = pr?.packs ?? [];
+    if (pr && state.ctx.ios) {
+      // The App Store's own products and prices (an unapproved one is left out).
+      try {
+        list = await loadIapPacks(pr.packs);
+        if (!(await storeKit().canMakePayments()).allowed) packsError = "Purchases aren't allowed on this device. Check Screen Time ▸ Content & Privacy Restrictions.";
+      } catch (e) {
+        packsError = e instanceof StoreKitError ? e.message : "Can't reach the App Store right now. Check your connection and try again.";
+        list = [];
+      }
+      if (disposed) return;
+    }
     if (!pr) packsError = "Can't load prices right now. Check your connection and try again.";
-    else if (pr.packs.length === 0) packsError = "No credit packs are on sale right now. Please try again later.";
-    packs = pr?.packs ?? [];
+    else if (list.length === 0 && !packsError) packsError = "No credit packs are on sale right now. Please try again later.";
+    packs = list;
     // Preselect the smallest pack so Continue is one tap away.
     if (!state.packSku && packs[0]) state = { ...state, packSku: packs[0].sku };
     render(false);
   }
 
-  /** After Stripe's "success": poll the balance until the webhook's credit lands. */
+  /** Credits just landed: if nothing else is set up (or the user came from
+   * the tier picker), use credits for AI from now on. */
+  function useCreditsNow(): void {
+    if (store()?.getItem(FROM_TIER_KEY) === "1" || !isAiConfigured(getAiConfig())) selectPaidTier();
+    store()?.removeItem(FROM_TIER_KEY);
+  }
+
+  /** iOS: the App Store sheet, then the relay's credit. */
+  async function buyWithApple(): Promise<void> {
+    if (busy) return;
+    const sku = state.packSku;
+    if (!sku) return;
+    busy = true;
+    dispatch({ type: "purchaseStarted" });
+    try {
+      if (!balance?.account_ref) balance = (await fetchCreditsBalance()) ?? balance;
+      const r = await buyCreditPack(sku, balance?.account_ref ?? "");
+      if (disposed) return;
+      if (r.status === "cancelled") {
+        toast("Purchase cancelled. Nothing was charged.");
+        dispatch({ type: "purchaseCancelled" });
+      } else if (r.status === "pending") {
+        dispatch({ type: "purchasePending" });
+      } else {
+        const b = await fetchCreditsBalance();
+        if (b) balance = b;
+        useCreditsNow();
+        dispatch({ type: "purchased", balance: b?.available_credits ?? r.balance ?? 0 });
+      }
+    } catch (e) {
+      if (disposed) return;
+      // Paid, but not credited yet: StoreKit keeps it; we send it again.
+      if (e instanceof CreditsApiError && e.code !== "no_account_ref") dispatch({ type: "paidNotCredited" });
+      else dispatch({ type: "fail", message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      busy = false;
+      if (!disposed && !state.exit) render(false);
+    }
+  }
+
+  /** After Stripe's "success": poll the balance until the webhook's credit
+   * lands. iOS ("Check again" after paid-not-credited): re-send what the App
+   * Store still holds, then read the balance. */
   async function confirmPurchase(): Promise<void> {
     if (!getCreditsSession()) {
       state = { ...state, step: "returnFailed" };
       render(true);
+      return;
+    }
+    if (state.ctx.ios) {
+      const r = await deliverUnfinished().catch(() => ({ credited: 0, balance: null, failed: 1 }));
+      if (disposed || state.step !== "confirming") return;
+      const b = await fetchCreditsBalance();
+      if (disposed || state.step !== "confirming") return;
+      if (b) balance = b;
+      if (r.credited > 0) {
+        useCreditsNow();
+        dispatch({ type: "balanceArrived", balance: b?.available_credits ?? r.balance ?? 0 });
+      } else {
+        dispatch({ type: "pollTimedOut" });
+      }
       return;
     }
     const raw = store()?.getItem(PRE_BALANCE_KEY);
@@ -649,8 +804,7 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
       if (b && purchaseLanded(b.available_credits, before)) {
         store()?.removeItem(PRE_BALANCE_KEY);
         // Came from the tier picker / nothing set up yet: use credits now.
-        if (store()?.getItem(FROM_TIER_KEY) === "1" || !isAiConfigured(getAiConfig())) selectPaidTier();
-        store()?.removeItem(FROM_TIER_KEY);
+        useCreditsNow();
         dispatch({ type: "balanceArrived", balance: b.available_credits });
         return;
       }
@@ -710,11 +864,21 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
     });
   }
   if (state.step === "confirming") void confirmPurchase();
+  // iOS: an Ask to Buy approval (or a re-sent purchase) credited in the
+  // background while this screen is open.
+  const offCredited = onIapCredited((r) => {
+    if (disposed) return;
+    if (state.step === "purchasePending" || state.step === "returnPending") {
+      useCreditsNow();
+      dispatch({ type: "balanceArrived", balance: r.balance });
+    }
+  });
 
   return {
     el,
     onUnmount: () => {
       disposed = true;
+      offCredited();
       if (tick) clearInterval(tick);
       if (pollTimer) clearTimeout(pollTimer);
     },
@@ -747,6 +911,27 @@ function facts(rows: [IconName, string, string][]): HTMLElement {
     ul.append(li);
   }
   return ul;
+}
+
+/** One option of a radio group, styled like the pack cards. */
+function choiceCard(title: string, text: string, on: boolean, pick: () => void): HTMLElement {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "cf-pack cf-choice" + (on ? " on" : "");
+  b.setAttribute("role", "radio");
+  b.setAttribute("aria-checked", String(on));
+  const t = document.createElement("span");
+  t.className = "cf-choice-title";
+  t.textContent = title;
+  const what = document.createElement("span");
+  what.className = "cf-pack-what";
+  what.textContent = text;
+  const mark = document.createElement("span");
+  mark.className = "cf-pack-mark";
+  mark.append(icon("check"));
+  b.append(t, what, mark);
+  b.addEventListener("click", pick);
+  return b;
 }
 
 function consent(label: string, explain: string): { el: HTMLElement; input: HTMLInputElement } {

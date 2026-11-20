@@ -7,7 +7,8 @@
  * - the optional recovery e-mail (add / continue anonymously with an honest
  *   confirmation);
  * - Stripe's return: success (balance lands), pending (webhook slow), cancel;
- * - restore on a fresh device; delete; errors; iOS never shows credits.
+ * - restore on a fresh device; delete; errors; an iOS build without the
+ *   StoreKit plugin never shows credits (iap.test.ts covers the iOS path).
  */
 
 import assert from "node:assert/strict";
@@ -70,7 +71,16 @@ beforeEach(() => {
   delete g.Capacitor;
 });
 
-const fresh: FlowContext = { enabled: true, ios: false, hasSession: false, adult: false, emailVerified: false, emailDeclined: false };
+const fresh: FlowContext = {
+  enabled: true,
+  ios: false,
+  iap: false,
+  consentAsked: false,
+  hasSession: false,
+  adult: false,
+  emailVerified: false,
+  emailDeclined: false,
+};
 const run = (s: FlowState, ...evs: FlowEvent[]): FlowState => evs.reduce(reduce, s);
 
 // -- buy ---------------------------------------------------------------------------
@@ -231,7 +241,7 @@ test("delete: a confirmation step, then deleted; not offered without an account"
   assert.equal(startFlow("delete", fresh).step, "unavailable");
 });
 
-test("iOS (and flag off) never shows credits: every entry point is unavailable", () => {
+test("an iOS build without StoreKit (and flag off) never shows credits: every entry point is unavailable", () => {
   for (const mode of ["buy", "return", "restore", "email", "delete"] as const) {
     assert.equal(startFlow(mode, { ...fresh, ios: true, hasSession: true }).step, "unavailable", mode);
     assert.equal(startFlow(mode, { ...fresh, enabled: false }).step, "unavailable", mode);
@@ -239,7 +249,9 @@ test("iOS (and flag off) never shows credits: every entry point is unavailable",
   g.localStorage.setItem("splanc.flags.aiCredits", "1");
   assert.equal(creditsVisible(), true);
   g.Capacitor = { isNativePlatform: () => true, getPlatform: () => "ios" };
-  assert.equal(creditsVisible(), false);
+  assert.equal(creditsVisible(), false, "no StoreKit plugin in this build");
+  g.Capacitor = { isNativePlatform: () => true, getPlatform: () => "ios", isPluginAvailable: (n: string) => n === "StoreKitBridge" };
+  assert.equal(creditsVisible(), true, "a build with the StoreKit plugin sells credits");
 });
 
 test("resend cooldown counts down whole seconds", () => {
