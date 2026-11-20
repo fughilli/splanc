@@ -24,7 +24,7 @@
 import { assetUrl } from "../../assetBase";
 import { appBuildInfo } from "../../buildInfo";
 import { isNativePlatform } from "../../net/native";
-import { Button, Sheet, icon } from "../kit";
+import { Button, IconButton, Sheet, icon } from "../kit";
 import { installHintStyles } from "../guide/tour";
 import {
   APP_PRODUCT,
@@ -33,12 +33,14 @@ import {
   jumpTargets,
   parseIndex,
   parseProductNotes,
+  pickClipVariant,
   pickProduct,
   planBoot,
   productHistory,
   releaseAnchor,
   serializeWhatsNewState,
   type CardMode,
+  type FeatureClip,
   type NoteNode,
   type ProductInfo,
   type ReleaseNotes,
@@ -209,6 +211,168 @@ function externalLink(href: string, text: string, className?: string): HTMLAncho
   return a;
 }
 
+// -- feature-preview clips -------------------------------------------------------
+//
+// A release's clips (docs/release-clips.md) sit above its notes: short, muted,
+// looping demos. They play only while on screen and never with reduced motion
+// (then the poster shows with a play mark). Tapping one opens it full size with
+// controls. No sound track, so autoplay needs no gesture.
+
+/** A wide card shows the desktop recording when there is one. */
+function wideCard(): boolean {
+  return typeof matchMedia === "function" && matchMedia("(min-width: 760px)").matches;
+}
+
+let clipObserver: IntersectionObserver | null = null;
+function observeClip(v: HTMLVideoElement): void {
+  if (prefersReducedMotion() || typeof IntersectionObserver === "undefined") return;
+  clipObserver ??= new IntersectionObserver(
+    (entries) => {
+      for (const e of entries) {
+        const vid = e.target as HTMLVideoElement;
+        if (e.isIntersecting && e.intersectionRatio >= 0.5) {
+          if (vid.preload === "none") vid.preload = "auto";
+          void vid.play().catch(() => undefined); // a refused play leaves the poster
+        } else vid.pause();
+      }
+    },
+    { threshold: [0, 0.5] },
+  );
+  clipObserver.observe(v);
+}
+
+function stopClips(): void {
+  clipObserver?.disconnect();
+  clipObserver = null;
+  closeClipViewer();
+}
+
+function clipVideo(clip: FeatureClip, wide: boolean, base: string): HTMLVideoElement {
+  const cv = pickClipVariant(clip, wide);
+  const v = document.createElement("video");
+  v.muted = true;
+  v.defaultMuted = true;
+  v.loop = true;
+  v.playsInline = true;
+  v.setAttribute("playsinline", "");
+  v.preload = "none";
+  if (cv.poster) v.poster = new URL(cv.poster, base).href;
+  if (cv.width && cv.height) {
+    v.width = cv.width;
+    v.height = cv.height;
+  }
+  for (const [src, type] of [
+    [cv.mp4, "video/mp4"],
+    [cv.webm, "video/webm"],
+  ] as const) {
+    if (!src) continue;
+    const s = document.createElement("source");
+    s.src = new URL(src, base).href;
+    s.type = type;
+    v.appendChild(s);
+  }
+  return v;
+}
+
+function clipStrip(clips: FeatureClip[], base: string): HTMLElement {
+  const wide = wideCard();
+  const strip = document.createElement("div");
+  strip.className = "wn-clips";
+  strip.setAttribute("role", "list");
+  strip.setAttribute("aria-label", "Feature previews");
+  for (const clip of clips) {
+    const fig = document.createElement("figure");
+    fig.className = `wn-clip wn-clip--${pickClipVariant(clip, wide).framing}`;
+    fig.setAttribute("role", "listitem");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "wn-clip-media";
+    btn.setAttribute("aria-label", `Play the preview "${clip.title}" full size`);
+    const v = clipVideo(clip, wide, base);
+    v.setAttribute("aria-hidden", "true"); // the button carries the label
+    v.tabIndex = -1;
+    const mark = document.createElement("span");
+    mark.className = "wn-clip-play";
+    mark.setAttribute("aria-hidden", "true");
+    mark.appendChild(icon("play"));
+    btn.append(v, mark);
+    v.addEventListener("playing", () => btn.classList.add("is-playing"));
+    v.addEventListener("pause", () => btn.classList.remove("is-playing"));
+    btn.addEventListener("click", () => openClipViewer(clip, base, btn));
+    const cap = document.createElement("figcaption");
+    const t = document.createElement("strong");
+    t.textContent = clip.title;
+    cap.appendChild(t);
+    if (clip.summary) {
+      const p = document.createElement("span");
+      p.textContent = clip.summary;
+      cap.appendChild(p);
+    }
+    fig.append(btn, cap);
+    strip.appendChild(fig);
+    observeClip(v);
+  }
+  return strip;
+}
+
+let clipViewer: { el: HTMLElement; close: () => void } | null = null;
+
+function closeClipViewer(): void {
+  clipViewer?.close();
+}
+
+/** The tapped clip, full size with controls, over the card. Escape, the close
+ * button or a tap on the backdrop closes it; focus returns to the clip. */
+function openClipViewer(clip: FeatureClip, base: string, opener: HTMLElement): void {
+  closeClipViewer();
+  const wrap = document.createElement("div");
+  wrap.className = "wn-viewer";
+  wrap.setAttribute("role", "dialog");
+  wrap.setAttribute("aria-modal", "true");
+  wrap.setAttribute("aria-label", clip.title);
+  const box = document.createElement("div");
+  box.className = "wn-viewer-box";
+  const v = clipVideo(clip, wideCard(), base);
+  v.controls = true;
+  v.preload = "auto";
+  v.autoplay = !prefersReducedMotion();
+  const cap = document.createElement("div");
+  cap.className = "wn-viewer-cap";
+  const t = document.createElement("strong");
+  t.textContent = clip.title;
+  cap.appendChild(t);
+  if (clip.summary) {
+    const p = document.createElement("span");
+    p.textContent = clip.summary;
+    cap.appendChild(p);
+  }
+  const close = IconButton("close", { title: "Close preview", onClick: () => done() });
+  close.classList.add("wn-viewer-close");
+  box.append(v, cap);
+  wrap.append(close, box);
+  const onKey = (ev: KeyboardEvent): void => {
+    if (ev.key !== "Escape") return;
+    ev.stopImmediatePropagation(); // close the preview, not the card under it
+    ev.preventDefault();
+    done();
+  };
+  const done = (): void => {
+    if (clipViewer?.el !== wrap) return;
+    clipViewer = null;
+    document.removeEventListener("keydown", onKey, true);
+    v.pause();
+    wrap.remove();
+    if (opener.isConnected) opener.focus();
+  };
+  wrap.addEventListener("click", (ev) => {
+    if (ev.target === wrap) done();
+  });
+  document.addEventListener("keydown", onKey, true);
+  document.body.appendChild(wrap);
+  clipViewer = { el: wrap, close: done };
+  close.focus();
+}
+
 function releaseSection(product: ProductInfo, r: ReleaseNotes, base: string, fresh: boolean): HTMLElement {
   const sec = document.createElement("section");
   sec.className = "wn-release";
@@ -233,8 +397,10 @@ function releaseSection(product: ProductInfo, r: ReleaseNotes, base: string, fre
   const notes = document.createElement("div");
   notes.className = "wn-notes";
   if (r.body.length) notes.appendChild(renderNotes(r.body, base));
-  else notes.textContent = "No notes for this release.";
-  sec.append(head, notes);
+  else if (!r.clips?.length) notes.textContent = "No notes for this release.";
+  sec.appendChild(head);
+  if (r.clips?.length) sec.appendChild(clipStrip(r.clips, base));
+  sec.appendChild(notes);
   if (r.url) sec.appendChild(externalLink(r.url, "View on GitHub", "wn-release-link"));
   return sec;
 }
@@ -268,6 +434,7 @@ export function openWhatsNew(mode: CardMode = { kind: "history" }, opener?: HTML
   const sheet = Sheet("What's new", {
     onClose: () => {
       openCard = null;
+      stopClips();
       document.removeEventListener("keydown", onKey);
       if (returnFocus?.isConnected) returnFocus.focus();
     },
@@ -519,6 +686,37 @@ function installWhatsNewStyles(): void {
 .wn-release-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .wn-foot { display: flex; flex-direction: column; gap: var(--sp-3); border-top: 1px solid var(--border); padding-top: var(--sp-4); }
 .wn-foot .wn-release-link { align-self: center; }
+.wn-clips {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--sp-4) var(--sp-3); margin: var(--sp-1) 0 var(--sp-2); min-width: 0;
+}
+.wn-clip { margin: 0; display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+.wn-clip--desktop { grid-column: 1 / -1; }
+.wn-clip-media {
+  position: relative; display: block; width: 100%; padding: 0; margin: 0; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--r-ctrl); overflow: hidden; background: var(--surface-2);
+}
+.wn-clip-media:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.wn-clip-media video { display: block; width: 100%; height: auto; }
+.wn-clip-media.is-playing .wn-clip-play { opacity: 0; }
+.wn-clip-play {
+  position: absolute; right: var(--sp-2); bottom: var(--sp-2); display: grid; place-items: center;
+  width: 36px; height: 36px; border-radius: 50%; color: #fff; background: rgba(0, 0, 0, .55); opacity: .9;
+}
+.wn-clip-play svg { width: 18px; height: 18px; }
+.wn-clip figcaption { display: flex; flex-direction: column; gap: 2px; font-size: var(--f-caption); line-height: 1.4; color: var(--text-dim); overflow-wrap: anywhere; }
+.wn-clip figcaption strong { color: var(--text); font-size: var(--f-body); }
+.wn-viewer {
+  position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center;
+  padding: max(var(--sp-4), env(safe-area-inset-top)) var(--sp-4) max(var(--sp-4), env(safe-area-inset-bottom));
+  background: rgba(0, 0, 0, .82);
+}
+.wn-viewer-box { display: flex; flex-direction: column; gap: var(--sp-3); max-width: min(960px, 100%); max-height: 100%; min-height: 0; }
+.wn-viewer-box video { display: block; max-width: 100%; max-height: calc(100dvh - 160px); width: auto; height: auto; margin: 0 auto; border-radius: var(--r-ctrl); background: #000; }
+.wn-viewer-cap { display: flex; flex-direction: column; gap: 2px; color: #eee; font-size: var(--f-caption); line-height: 1.4; text-align: center; }
+.wn-viewer-cap strong { color: #fff; font-size: var(--f-body); }
+.wn-viewer-close { position: absolute; top: max(var(--sp-3), env(safe-area-inset-top)); right: var(--sp-3); color: #fff; }
+@media (prefers-reduced-motion: no-preference) { .wn-clip-media .wn-clip-play { transition: opacity .2s; } }
 `;
   document.head.appendChild(style);
 }
