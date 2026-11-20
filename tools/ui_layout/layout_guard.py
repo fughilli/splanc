@@ -307,6 +307,18 @@ def run_scenarios(
                             )
                             page.wait_for_timeout(1200)
                             run_steps(page, sc.steps)
+                            if sc.expect:
+                                # Wait for the screen itself, not just a fixed
+                                # delay: a cold first load (lazy chunks, a busy
+                                # machine) can take longer than the 1.2 s above,
+                                # and the check then saw an empty page. A
+                                # timeout falls through to the "state" failure.
+                                try:
+                                    page.locator(sc.expect).first.wait_for(
+                                        state="visible", timeout=15000
+                                    )
+                                except Exception:  # noqa: BLE001 - reported below
+                                    pass
                             page.wait_for_timeout(sc.settle_ms)
                             v, n = check_page(page, sc.root)
                             if sc.expect and not page.locator(sc.expect).first.is_visible():
