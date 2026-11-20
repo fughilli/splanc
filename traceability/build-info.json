@@ -1,12 +1,12 @@
 {
-  "commit": "7a28f9aabb3eb631fd8c0484d22edd58bd468095",
-  "generated": "2026-11-20 11:52 UTC",
+  "commit": "6b28b3efe39c8b29694700cf142d05b375d7873e",
+  "generated": "2026-11-20 13:19 UTC",
   "software": {
-    "run": "https://github.com/fughilli/splanc/actions/runs/44726596440",
-    "commit": "7a28f9aabb3eb631fd8c0484d22edd58bd468095"
+    "run": "https://github.com/fughilli/splanc/actions/runs/44730962856",
+    "commit": "6b28b3efe39c8b29694700cf142d05b375d7873e"
   },
   "hitl": {
-    "run": "https://github.com/fughilli/splanc/actions/runs/44714908429",
-    "commit": "9d5dbb123de23d9780bd28b4497aa49c7c9c743e"
+    "run": "https://github.com/fughilli/splanc/actions/runs/44730962976",
+    "commit": "6b28b3efe39c8b29694700cf142d05b375d7873e"
   }
 }
