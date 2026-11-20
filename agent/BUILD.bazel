@@ -57,6 +57,8 @@ LIGHT_TESTS = [
     "tests/billing_stripe.test.ts",
     # The ops (Grafana) events + the dashboards / alert rules that read them.
     "tests/ops.test.ts",
+    # Opt-in device metrics intake + deletion (docs/design/device-metrics.md).
+    "tests/deviceMetrics.test.ts",
 ]
 
 TESTS = glob(

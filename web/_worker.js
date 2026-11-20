@@ -485,6 +485,9 @@ export const RELAY_PATHS = new Set([
   "/ai/v1/messages", "/billing/account", "/billing/age", "/billing/balance",
   "/billing/checkout", "/billing/consent", "/billing/pricing", "/billing/statement",
   "/billing/purchase/apple",
+  // Opt-in device metrics (agent/relay/src/deviceMetrics.ts, docs/design/device-metrics.md).
+  // The admin queue (/metrics/deletions) uses the workers.dev address directly.
+  "/metrics", "/metrics/delete",
 ]);
 
 export function relayRoute(request, url, env) {

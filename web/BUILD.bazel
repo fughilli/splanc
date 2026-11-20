@@ -102,6 +102,9 @@ copy_to_bin(
         "src/feedback/agentTrace.ts",
         "src/feedback/feedbackClient.ts",
         "src/feedback/feedbackQueue.ts",
+        # Device metrics (docs/design/device-metrics.md): the one field list +
+        # the upload validator the relay's POST /metrics runs.
+        "src/metrics/metricsSchema.ts",
         "src/store/appLog.ts",
         # Capture profile + IMU extrinsic solve (types used by net/client.ts).
         "src/capture/captureProfile.ts",

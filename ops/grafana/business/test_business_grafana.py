@@ -36,12 +36,13 @@ class Dashboards(unittest.TestCase):
                 f"{name} is stale: run python3 ops/grafana/business/gen_dashboards.py",
             )
 
-    def test_the_four_dashboards(self):
+    def test_the_dashboards(self):
         titles = sorted(d["title"] for d in sync.load_dashboards())
         self.assertEqual(
             titles,
             [
                 "Splanc — AI spend & margin",
+                "Splanc — Device health",
                 "Splanc — Free tier & demo",
                 "Splanc — Revenue & credits",
                 "Splanc — User feedback",
@@ -129,7 +130,7 @@ class DryRun(unittest.TestCase):
         text = out.getvalue()
         self.assertIn("DRY RUN", text)
         self.assertIn("remove role grants: Viewer, Editor", text)
-        self.assertEqual(text.count("  dashboard "), 4)
+        self.assertEqual(text.count("  dashboard "), 5)
         self.assertGreaterEqual(text.count("  alert biz-"), 14)
 
     def test_apply_touches_only_its_folder(self):

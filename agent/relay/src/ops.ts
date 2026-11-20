@@ -28,19 +28,27 @@
  * that already sits in the line (`last_over_time … unwrap`).
  */
 
+import { DEVICE_FIELDS, PLATFORMS, TRANSPORTS, USAGE_FIELDS } from "../../../web/src/metrics/metricsSchema";
+
 export const OPS_SERVICE = "splanc-relay";
-export type OpsComponent = "ai-billing" | "feedback" | "demo-relay";
+export type OpsComponent = "ai-billing" | "feedback" | "demo-relay" | "device-metrics";
 
 /** A field's type. Strings are never free text: they must match a pattern. */
-type Field = "num" | "bool" | "token" | "version" | "day" | readonly string[];
+type Field = "num" | "bool" | "token" | "version" | "day" | "pseudonym" | readonly string[];
 
-const PATTERNS: Record<"token" | "version" | "day", RegExp> = {
+const PATTERNS: Record<"token" | "version" | "day" | "pseudonym", RegExp> = {
+  // device metrics only: the app's random, rotatable install / player pseudonyms
+  // (docs/design/device-metrics.md). Never an account, bridge, MAC or IP.
+  pseudonym: /^[A-Za-z0-9_-]{12,24}$/,
   // model ids, skus, reasons, kinds, enum-ish labels, fnv signatures
   token: /^[A-Za-z0-9][A-Za-z0-9_.:/,\-]{0,63}$/,
   // app / firmware versions: 1.6.0, app-v1.3.0, 1.6.0-rc1+abc123
   version: /^[A-Za-z0-9][A-Za-z0-9_.+\-]{0,31}$/,
   day: /^\d{4}-\d{2}-\d{2}$/,
 };
+
+/** Every device-metrics line: the install pseudonym (for deletion), app version, platform. */
+const DM_BASE: Record<string, Field> = { install: "pseudonym", app: "version", platform: PLATFORMS };
 
 const REFUND_KINDS = ["refund", "revoke", "chargeback", "partial_refund"] as const;
 const CHANNELS = ["apple", "web", "google"] as const;
@@ -159,6 +167,27 @@ export const OPS_SCHEMA: Record<string, { component: OpsComponent; service?: str
   },
   fb_deleted: { component: "feedback", fields: { by: ["reporter", "admin"] } },
 
+  // -- device metrics (agent/relay/src/deviceMetrics.ts) -----------------------------
+  // Opt-in only. Fields are built from the one shared list
+  // (web/src/metrics/metricsSchema.ts): numbers / booleans, versions, closed enums.
+  dm_upload: { component: "device-metrics", fields: { ...DM_BASE, devices: "num", categories: "token" } },
+  dm_device: {
+    component: "device-metrics",
+    fields: {
+      ...DM_BASE,
+      dev: "pseudonym",
+      fw: "version",
+      board: "token",
+      transport: TRANSPORTS,
+      age_s: "num",
+      ...Object.fromEntries(DEVICE_FIELDS.map((f) => [f.name, f.kind === "bool" ? "bool" : "num"] as const)),
+    },
+  },
+  dm_usage: { component: "device-metrics", fields: { ...DM_BASE, ...Object.fromEntries(USAGE_FIELDS.map((f) => [f.name, "num"] as const)) } },
+  dm_rejected: { component: "device-metrics", fields: { status: "num" } },
+  dm_rate_limited: { component: "device-metrics", fields: { by: ["install", "ip"] } },
+  dm_delete_requested: { component: "device-metrics", fields: { outcome: ["deleted", "queued"] } },
+
   // -- shared demo relay (web/_worker.js; mirrored there in JS) ---------------------
   demo_request: {
     component: "demo-relay",
@@ -177,7 +206,7 @@ function keep(v: unknown, t: Field): unknown {
     case "bool":
       return typeof v === "boolean" ? v : undefined;
     default:
-      return typeof v === "string" && PATTERNS[t as "token" | "version" | "day"].test(v) ? v : undefined;
+      return typeof v === "string" && PATTERNS[t as "token" | "version" | "day" | "pseudonym"].test(v) ? v : undefined;
   }
 }
 

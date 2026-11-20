@@ -365,5 +365,14 @@ fn main() -> std::io::Result<()> {
         }
     }
 
+    // Device metrics (docs/design/device-metrics.md): the netstack player encodes
+    // the reply zero-copy (player_app/metrics_ffi.rs), so the firmware profile drops
+    // its only variable-size field; the host profile fits a board id.
+    if firmware {
+        g.configure(".ledmapper.v1.DeviceMetrics.board", Config::new().skip(true));
+    } else {
+        g.configure(".ledmapper.v1.DeviceMetrics.board", Config::new().max_bytes(16));
+    }
+
     g.compile_fdset_file(&args[1], &args[2])
 }

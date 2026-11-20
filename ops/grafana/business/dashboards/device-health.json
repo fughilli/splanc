@@ -1,0 +1,1779 @@
+{
+  "uid": "splanc-biz-device-health",
+  "title": "Splanc — Device health",
+  "description": "Opt-in device metrics (\"Send feedback to Fug Studio\", docs/design/device-metrics.md): frame rates, memory, restarts, Wi-Fi / Bluetooth and mesh delivery from players whose owners switched it on. Counters and gauges only; installs and players are random, rotating pseudonyms.",
+  "tags": ["splanc-business", "private"],
+  "timezone": "utc",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "refresh": "15m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["5m", "15m", "1h", "6h"]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "env",
+        "label": "Environment",
+        "type": "custom",
+        "description": "Which relay's events: production, sandbox (Stripe TEST mode), synthetic (made-up test data). Synthetic is never selected by default.",
+        "query": "production,sandbox,synthetic",
+        "multi": true,
+        "includeAll": false,
+        "current": {
+          "text": ["production", "sandbox"],
+          "value": ["production", "sandbox"]
+        },
+        "options": [
+          {
+            "text": "production",
+            "value": "production",
+            "selected": true
+          },
+          {
+            "text": "sandbox",
+            "value": "sandbox",
+            "selected": true
+          },
+          {
+            "text": "synthetic",
+            "value": "synthetic",
+            "selected": false
+          }
+        ]
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "name": "App releases",
+        "enable": true,
+        "iconColor": "purple",
+        "datasource": {
+          "type": "yesoreyeram-infinity-datasource",
+          "uid": "grafanacloud-infinity"
+        },
+        "target": {
+          "refId": "Anno",
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "https://api.github.com/repos/fughilli/splanc/releases?per_page=100",
+          "url_options": {
+            "method": "GET"
+          },
+          "root_selector": "$[$match(tag_name, /^app-v/)]",
+          "columns": [
+            {
+              "selector": "published_at",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "tag_name",
+              "text": "title",
+              "type": "string"
+            }
+          ]
+        },
+        "mappings": {
+          "time": {
+            "source": "field",
+            "value": "time"
+          },
+          "title": {
+            "source": "field",
+            "value": "title"
+          },
+          "text": {
+            "source": "field",
+            "value": "title"
+          }
+        }
+      }
+    ]
+  },
+  "links": [
+    {
+      "type": "dashboards",
+      "tags": ["splanc-business"],
+      "asDropdown": true,
+      "title": "Business dashboards",
+      "includeVars": true,
+      "keepTime": true
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Coverage (selected range)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Installs reporting",
+      "description": "Distinct install pseudonyms that uploaded (an app rotates its pseudonym every 30 days, so a long range over-counts).",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "count(sum by (install) (count_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_upload\"} | json [$__range])))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Players reporting",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "count(sum by (dev) (count_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json [$__range])))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Uploads",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_upload\"} [$__range]))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Player samples",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} [$__range]))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Deletion requests",
+      "description": "\"Delete my data\" requests (outcome: deleted in Grafana now, or queued for the owner).",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_delete_requested\"} [$__range]))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Rejected / rate-limited",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=~\"dm_rejected|dm_rate_limited\"} [$__range]))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Uploads per day by category set",
+      "description": "Which categories users switch on (each upload lists them).",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "sum by (categories) (count_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_upload\"} | json [1d]))",
+          "legendFormat": "{{categories}}",
+          "queryType": "range",
+          "editorMode": "code"
+        }
+      ],
+      "interval": "1d",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal"
+            },
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "bargauge",
+      "title": "Players by firmware",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "count by (fw) (sum by (fw, dev) (count_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json [$__range])))",
+          "legendFormat": "{{fw}}",
+          "queryType": "range",
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "maxDataPoints": 20,
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "values": false,
+          "fields": ""
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Performance",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Achieved frame rate (p10 / p50 / p90 of samples)",
+      "description": "fps_achieved: what the last ~30 frames really ran at.",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "max(quantile_over_time(0.1, {service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | unwrap fps_achieved [1h]))",
+          "legendFormat": "p10",
+          "queryType": "range",
+          "editorMode": "code"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "B",
+          "expr": "max(quantile_over_time(0.5, {service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | unwrap fps_achieved [1h]))",
+          "legendFormat": "p50",
+          "queryType": "range",
+          "editorMode": "code"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "C",
+          "expr": "max(quantile_over_time(0.9, {service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | unwrap fps_achieved [1h]))",
+          "legendFormat": "p90",
+          "queryType": "range",
+          "editorMode": "code"
+        }
+      ],
+      "interval": "1h",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: fps",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "stacking": {
+              "mode": "none"
+            },
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Samples with a lagging effect",
+      "description": "An effect below its minimum (or pinned) frame rate keeps playing as fast as it can (never parked).",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 14,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | fps_lagging=\"true\" [1h]))",
+          "legendFormat": "lagging",
+          "queryType": "range",
+          "editorMode": "code"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "B",
+          "expr": "sum(count_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | fps_lagging=\"false\" [1h]))",
+          "legendFormat": "on rate",
+          "queryType": "range",
+          "editorMode": "code"
+        }
+      ],
+      "interval": "1h",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal"
+            },
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Least free memory since boot (p10 / min)",
+      "description": "heap_min_free: the low-water mark. The C6's TLS handshake needs ~8 KB contiguous.",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "max(quantile_over_time(0.1, {service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | unwrap heap_min_free [1h]))",
+          "legendFormat": "p10",
+          "queryType": "range",
+          "editorMode": "code"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "B",
+          "expr": "min(min_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | unwrap heap_min_free [1h]))",
+          "legendFormat": "min",
+          "queryType": "range",
+          "editorMode": "code"
+        }
+      ],
+      "interval": "1h",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "stacking": {
+              "mode": "none"
+            },
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "bargauge",
+      "title": "LED count of reporting players",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 22,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "count by (led_count) (sum by (led_count, dev) (count_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | led_count!=\"\" [$__range])))",
+          "legendFormat": "{{led_count}} LEDs",
+          "queryType": "range",
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "maxDataPoints": 20,
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "values": false,
+          "fields": ""
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "row",
+      "title": "Reliability",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 16,
+      "type": "bargauge",
+      "title": "Why players last started",
+      "description": "Each player counted once per reason seen. Crash, watchdog and brownout are the ones to watch.",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "count by (reset_reason) (sum by (reset_reason, dev) (count_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | reset_reason!=\"\" [$__range])))",
+          "legendFormat": "{{reset_reason}}",
+          "queryType": "range",
+          "editorMode": "code"
+        }
+      ],
+      "maxDataPoints": 20,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "0"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "0: unknown"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "1"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "1: power on"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "2"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "2: external pin"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "3"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "3: software (update / restart)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "4"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "4: crash (panic)"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "5"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "5: interrupt watchdog"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "6"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "6: task watchdog"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "7"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "7: other watchdog"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "8"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "8: deep sleep"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "9"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "9: brownout"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "10"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "10: SDIO"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "11"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "11: USB"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "12"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "12: JTAG"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "13"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "13: eFuse"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "14"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "14: power glitch"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "15"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "15: CPU lockup"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "values": false,
+          "fields": ""
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Players with a crash / watchdog / brownout restart",
+      "description": "Since the player was last powered on (the counters survive restarts, not power cycles).",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 31,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "count(sum by (dev) (count_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | panic_resets > 0 [1d])))",
+          "legendFormat": "crash",
+          "queryType": "range",
+          "editorMode": "code"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "B",
+          "expr": "count(sum by (dev) (count_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | wdt_resets > 0 [1d])))",
+          "legendFormat": "watchdog",
+          "queryType": "range",
+          "editorMode": "code"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "C",
+          "expr": "count(sum by (dev) (count_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | brownout_resets > 0 [1d])))",
+          "legendFormat": "brownout",
+          "queryType": "range",
+          "editorMode": "code"
+        }
+      ],
+      "interval": "1d",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal"
+            },
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Wi-Fi signal (p10 / p50)",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 39,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "max(quantile_over_time(0.1, {service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | wifi_rssi_dbm < 0 | unwrap wifi_rssi_dbm [1h]))",
+          "legendFormat": "p10",
+          "queryType": "range",
+          "editorMode": "code"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "B",
+          "expr": "max(quantile_over_time(0.5, {service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | wifi_rssi_dbm < 0 | unwrap wifi_rssi_dbm [1h]))",
+          "legendFormat": "p50",
+          "queryType": "range",
+          "editorMode": "code"
+        }
+      ],
+      "interval": "1h",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dBm",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "stacking": {
+              "mode": "none"
+            },
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Wi-Fi link losses and Bluetooth drops (mean per sample)",
+      "description": "Counted since the player started; read with the uptime (a long-running player accumulates).",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 39,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "max(avg_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | unwrap wifi_link_losses [1h]))",
+          "legendFormat": "Wi-Fi link losses",
+          "queryType": "range",
+          "editorMode": "code"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "B",
+          "expr": "max(avg_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | unwrap ble_drops [1h]))",
+          "legendFormat": "BLE drops",
+          "queryType": "range",
+          "editorMode": "code"
+        }
+      ],
+      "interval": "1h",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "stacking": {
+              "mode": "none"
+            },
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "Mesh (adaptive flood / tree, #573)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 47,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 21,
+      "type": "bargauge",
+      "title": "Players by mesh mode",
+      "description": "Players without a mesh send no mesh fields at all.",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "count by (mesh_mode) (sum by (mesh_mode, dev) (count_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | mesh_mode!=\"\" [$__range])))",
+          "legendFormat": "mode {{mesh_mode}} (1 flood, 2 tree)",
+          "queryType": "range",
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "maxDataPoints": 20,
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "values": false,
+          "fields": ""
+        }
+      }
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Mesh delivery (p10 / p50, per mille)",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "max(quantile_over_time(0.1, {service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | unwrap mesh_delivery_permille [1h]))",
+          "legendFormat": "p10",
+          "queryType": "range",
+          "editorMode": "code"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "B",
+          "expr": "max(quantile_over_time(0.5, {service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | unwrap mesh_delivery_permille [1h]))",
+          "legendFormat": "p50",
+          "queryType": "range",
+          "editorMode": "code"
+        }
+      ],
+      "interval": "1h",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "stacking": {
+              "mode": "none"
+            },
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "Mesh airtime and relay load (p90, per mille)",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "max(quantile_over_time(0.9, {service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | unwrap mesh_airtime_permille [1h]))",
+          "legendFormat": "airtime p90",
+          "queryType": "range",
+          "editorMode": "code"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "B",
+          "expr": "max(quantile_over_time(0.9, {service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | unwrap mesh_relay_load_permille [1h]))",
+          "legendFormat": "relay load p90",
+          "queryType": "range",
+          "editorMode": "code"
+        }
+      ],
+      "interval": "1h",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "stacking": {
+              "mode": "none"
+            },
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "Mode switches (sum of per-player maxima per day)",
+      "description": "A mesh flapping between flood and tree mid-show shows up here first (hysteresis / dwell, #573).",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "sum(max by (dev) (max_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_device\"} | json | unwrap mesh_mode_switches [1d])))",
+          "legendFormat": "switches",
+          "queryType": "range",
+          "editorMode": "code"
+        }
+      ],
+      "interval": "1d",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal"
+            },
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 25,
+      "type": "row",
+      "title": "Usage",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 64,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "App sessions per day",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 65,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "sum(sum_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_usage\"} | json | unwrap sessions [1d]))",
+          "legendFormat": "sessions",
+          "queryType": "range",
+          "editorMode": "code"
+        }
+      ],
+      "interval": "1d",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal"
+            },
+            "showPoints": "never"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 27,
+      "type": "bargauge",
+      "title": "Screens opened (selected range)",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "grafanacloud-logs"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 65,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "A",
+          "expr": "sum(sum_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_usage\"} | json | unwrap screen_play [$__range]))",
+          "legendFormat": "play",
+          "queryType": "range",
+          "editorMode": "code"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "B",
+          "expr": "sum(sum_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_usage\"} | json | unwrap screen_editor [$__range]))",
+          "legendFormat": "editor",
+          "queryType": "range",
+          "editorMode": "code"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "C",
+          "expr": "sum(sum_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_usage\"} | json | unwrap screen_mapping [$__range]))",
+          "legendFormat": "mapping",
+          "queryType": "range",
+          "editorMode": "code"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "D",
+          "expr": "sum(sum_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_usage\"} | json | unwrap screen_maps [$__range]))",
+          "legendFormat": "maps",
+          "queryType": "range",
+          "editorMode": "code"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "grafanacloud-logs"
+          },
+          "refId": "E",
+          "expr": "sum(sum_over_time({service=\"splanc-relay\", component=\"device-metrics\", env=~\"$env\", event=\"dm_usage\"} | json | unwrap screen_settings [$__range]))",
+          "legendFormat": "settings",
+          "queryType": "range",
+          "editorMode": "code"
+        }
+      ],
+      "maxDataPoints": 20,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "values": false,
+          "fields": ""
+        }
+      }
+    },
+    {
+      "id": 28,
+      "type": "text",
+      "title": "What this board can't show",
+      "gridPos": {
+        "x": 0,
+        "y": 73,
+        "w": 24,
+        "h": 3
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Only players whose owners switched on **Send feedback to Fug Studio** report, and only the categories they chose. No names, SSIDs, addresses, locations or effect content are ever sent; installs and players are random pseudonyms that rotate every 30 days. Data is kept at most 90 days and deleted on request (docs/design/device-metrics.md)."
+      }
+    }
+  ]
+}

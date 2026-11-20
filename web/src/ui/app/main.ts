@@ -9,6 +9,7 @@
 
 import { installAppLog } from "../../store/appLogStore";
 import { installFeedbackFlusher } from "../../feedback/appFeedback";
+import { installDeviceMetrics } from "../../metrics/appMetrics";
 import "../kit/fonts.css";
 import "../kit/tokens.css";
 import "./app.css";
@@ -62,6 +63,8 @@ async function main(): Promise<void> {
   installAppLog();
   // Agent-feedback reports queued while offline go out when the app is back.
   installFeedbackFlusher();
+  // Opt-in device metrics ("Send feedback to Fug Studio"): inert while off.
+  installDeviceMetrics();
   // The hue-code kernel (wasm) must be callable before any capture / decode /
   // sim render runs; already resolved wherever it compiled synchronously.
   await codeKernelReady;
@@ -197,6 +200,11 @@ async function main(): Promise<void> {
     .add("/settings/hardware", () => {
       shell.setChrome({ title: "Hardware Setup", back: true, tabs: true });
       return HardwareSetupScreen(router);
+    })
+    .add("/settings/privacy", () => {
+      // Settings ▸ Privacy: "Send feedback to Fug Studio" (opt-in device metrics).
+      shell.setChrome({ title: "Settings", back: true, tabs: true });
+      return SettingsScreen(router, "privacy");
     })
     .add("/settings/ai", () => {
       // Settings ▸ AI: the AI provider settings + Splanc AI credits account.

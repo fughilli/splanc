@@ -37,6 +37,7 @@ def sel(component: str, event: str | None = None, service: str = "splanc-relay")
 BILL = lambda ev=None: sel("ai-billing", ev)  # noqa: E731
 FB = lambda ev=None: sel("feedback", ev)  # noqa: E731
 DEMO = lambda ev=None: sel("demo-relay", ev, service="splanc-pages")  # noqa: E731
+DM = lambda ev=None: sel("device-metrics", ev)  # noqa: E731
 
 
 def count(s: str, filt: str = "", window: str = "$__interval", by: str | None = None) -> str:
@@ -912,11 +913,303 @@ def demo() -> dict:
     return b.model()
 
 
+# esp_reset_reason_t (ESP-IDF): DeviceMetrics.reset_reason.
+RESET_REASONS = {
+    0: "unknown",
+    1: "power on",
+    2: "external pin",
+    3: "software (update / restart)",
+    4: "crash (panic)",
+    5: "interrupt watchdog",
+    6: "task watchdog",
+    7: "other watchdog",
+    8: "deep sleep",
+    9: "brownout",
+    10: "SDIO",
+    11: "USB",
+    12: "JTAG",
+    13: "eFuse",
+    14: "power glitch",
+    15: "CPU lockup",
+}
+
+
+def device_health() -> dict:
+    b = Board(
+        "splanc-biz-device-health",
+        "Splanc — Device health",
+        'Opt-in device metrics ("Send feedback to Fug Studio", docs/design/device-metrics.md): '
+        "frame rates, memory, restarts, Wi-Fi / Bluetooth and mesh delivery from players whose owners "
+        "switched it on. Counters and gauges only; installs and players are random, rotating pseudonyms.",
+        "now-7d",
+    )
+    U = DM("dm_upload")
+    D = DM("dm_device")
+    US = DM("dm_usage")
+    b.row("Coverage (selected range)")
+    stat(
+        b,
+        "Installs reporting",
+        f"count(sum by (install) (count_over_time({U} | json [$__range])))",
+        "none",
+        "Distinct install pseudonyms that uploaded (an app rotates its pseudonym every 30 days, so a "
+        "long range over-counts).",
+    )
+    stat(
+        b,
+        "Players reporting",
+        f"count(sum by (dev) (count_over_time({D} | json [$__range])))",
+        "none",
+    )
+    stat(b, "Uploads", count(U, "", "$__range"), "none")
+    stat(b, "Player samples", count(D, "", "$__range"), "none")
+    stat(
+        b,
+        "Deletion requests",
+        count(DM("dm_delete_requested"), "", "$__range"),
+        "none",
+        '"Delete my data" requests (outcome: deleted in Grafana now, or queued for the owner).',
+    )
+    stat(
+        b,
+        "Rejected / rate-limited",
+        f"sum(count_over_time({DM('dm_rejected|dm_rate_limited')} [$__range]))",
+        "none",
+    )
+    series(
+        b,
+        "Uploads per day by category set",
+        [q(count(U, "", "1d", by="categories"), "{{categories}}")],
+        "none",
+        "Which categories users switch on (each upload lists them).",
+    )
+    bargauge(
+        b,
+        "Players by firmware",
+        f"count by (fw) (sum by (fw, dev) (count_over_time({D} | json [$__range])))",
+        "{{fw}}",
+        "none",
+    )
+    b.row("Performance")
+    series(
+        b,
+        "Achieved frame rate (p10 / p50 / p90 of samples)",
+        [
+            q(f"max(quantile_over_time({qq}, {D} | json | unwrap fps_achieved [1h]))", lg)
+            for qq, lg in (("0.1", "p10"), ("0.5", "p50"), ("0.9", "p90"))
+        ],
+        "suffix: fps",
+        "fps_achieved: what the last ~30 frames really ran at.",
+        bars=False,
+        stack=False,
+        interval="1h",
+    )
+    series(
+        b,
+        "Samples with a lagging effect",
+        [
+            q(count(D, ' | fps_lagging="true"', "1h"), "lagging"),
+            q(count(D, ' | fps_lagging="false"', "1h"), "on rate"),
+        ],
+        "none",
+        "An effect below its minimum (or pinned) frame rate keeps playing as fast as it can (never parked).",
+        interval="1h",
+    )
+    series(
+        b,
+        "Least free memory since boot (p10 / min)",
+        [
+            q(f"max(quantile_over_time(0.1, {D} | json | unwrap heap_min_free [1h]))", "p10"),
+            q(f"min(min_over_time({D} | json | unwrap heap_min_free [1h]))", "min"),
+        ],
+        "bytes",
+        "heap_min_free: the low-water mark. The C6's TLS handshake needs ~8 KB contiguous.",
+        bars=False,
+        stack=False,
+        interval="1h",
+    )
+    bargauge(
+        b,
+        "LED count of reporting players",
+        f'count by (led_count) (sum by (led_count, dev) (count_over_time({D} | json | led_count!="" [$__range])))',
+        "{{led_count}} LEDs",
+        "none",
+    )
+    b.row("Reliability")
+    b.add(
+        "bargauge",
+        "Why players last started",
+        [
+            q(
+                "count by (reset_reason) (sum by (reset_reason, dev) "
+                f'(count_over_time({D} | json | reset_reason!="" [$__range])))',
+                "{{reset_reason}}",
+            )
+        ],
+        12,
+        8,
+        "Each player counted once per reason seen. Crash, watchdog and brownout are the ones to watch.",
+        maxDataPoints=20,
+        fieldConfig={
+            "defaults": {"unit": "none", "min": 0, "color": {"mode": "palette-classic"}},
+            "overrides": [
+                {
+                    "matcher": {"id": "byName", "options": str(k)},
+                    "properties": [{"id": "displayName", "value": f"{k}: {v}"}],
+                }
+                for k, v in RESET_REASONS.items()
+            ],
+        },
+        options={
+            "orientation": "horizontal",
+            "displayMode": "basic",
+            "showUnfilled": True,
+            "reduceOptions": {"calcs": ["lastNotNull"], "values": False, "fields": ""},
+        },
+    )
+    series(
+        b,
+        "Players with a crash / watchdog / brownout restart",
+        [
+            q(f"count(sum by (dev) (count_over_time({D} | json | {f} > 0 [1d])))", lg)
+            for f, lg in (
+                ("panic_resets", "crash"),
+                ("wdt_resets", "watchdog"),
+                ("brownout_resets", "brownout"),
+            )
+        ],
+        "none",
+        "Since the player was last powered on (the counters survive restarts, not power cycles).",
+    )
+    series(
+        b,
+        "Wi-Fi signal (p10 / p50)",
+        [
+            q(
+                f"max(quantile_over_time({qq}, {D} | json | wifi_rssi_dbm < 0 | unwrap wifi_rssi_dbm [1h]))",
+                lg,
+            )
+            for qq, lg in (("0.1", "p10"), ("0.5", "p50"))
+        ],
+        "dBm",
+        bars=False,
+        stack=False,
+        interval="1h",
+    )
+    series(
+        b,
+        "Wi-Fi link losses and Bluetooth drops (mean per sample)",
+        [
+            q(
+                f"max(avg_over_time({D} | json | unwrap wifi_link_losses [1h]))",
+                "Wi-Fi link losses",
+            ),
+            q(f"max(avg_over_time({D} | json | unwrap ble_drops [1h]))", "BLE drops"),
+        ],
+        "none",
+        "Counted since the player started; read with the uptime (a long-running player accumulates).",
+        bars=False,
+        stack=False,
+        interval="1h",
+    )
+    b.row("Mesh (adaptive flood / tree, #573)")
+    bargauge(
+        b,
+        "Players by mesh mode",
+        f'count by (mesh_mode) (sum by (mesh_mode, dev) (count_over_time({D} | json | mesh_mode!="" [$__range])))',
+        "mode {{mesh_mode}} (1 flood, 2 tree)",
+        "none",
+        "Players without a mesh send no mesh fields at all.",
+    )
+    series(
+        b,
+        "Mesh delivery (p10 / p50, per mille)",
+        [
+            q(f"max(quantile_over_time({qq}, {D} | json | unwrap mesh_delivery_permille [1h]))", lg)
+            for qq, lg in (("0.1", "p10"), ("0.5", "p50"))
+        ],
+        "none",
+        bars=False,
+        stack=False,
+        interval="1h",
+    )
+    series(
+        b,
+        "Mesh airtime and relay load (p90, per mille)",
+        [
+            q(
+                f"max(quantile_over_time(0.9, {D} | json | unwrap mesh_airtime_permille [1h]))",
+                "airtime p90",
+            ),
+            q(
+                f"max(quantile_over_time(0.9, {D} | json | unwrap mesh_relay_load_permille [1h]))",
+                "relay load p90",
+            ),
+        ],
+        "none",
+        bars=False,
+        stack=False,
+        interval="1h",
+    )
+    series(
+        b,
+        "Mode switches (sum of per-player maxima per day)",
+        [
+            q(
+                f"sum(max by (dev) (max_over_time({D} | json | unwrap mesh_mode_switches [1d])))",
+                "switches",
+            )
+        ],
+        "none",
+        "A mesh flapping between flood and tree mid-show shows up here first (hysteresis / dwell, #573).",
+    )
+    b.row("Usage")
+    series(
+        b,
+        "App sessions per day",
+        [q(total(US, "sessions", "", "1d"), "sessions")],
+        "none",
+    )
+    b.add(
+        "bargauge",
+        "Screens opened (selected range)",
+        [
+            q(total(US, f"screen_{k}", "", "$__range"), k)
+            for k in ("play", "editor", "mapping", "maps", "settings")
+        ],
+        12,
+        8,
+        "",
+        maxDataPoints=20,
+        fieldConfig={
+            "defaults": {"unit": "none", "min": 0, "color": {"mode": "palette-classic"}},
+            "overrides": [],
+        },
+        options={
+            "orientation": "horizontal",
+            "displayMode": "basic",
+            "showUnfilled": True,
+            "reduceOptions": {"calcs": ["lastNotNull"], "values": False, "fields": ""},
+        },
+    )
+    b.text(
+        "What this board can't show",
+        "Only players whose owners switched on **Send feedback to Fug Studio** report, and only the "
+        "categories they chose. No names, SSIDs, addresses, locations or effect content are ever sent; "
+        "installs and players are random pseudonyms that rotate every 30 days. Data is kept at most 90 "
+        "days and deleted on request (docs/design/device-metrics.md).",
+        24,
+        3,
+    )
+    return b.model()
+
+
 BOARDS = {
     "revenue.json": revenue,
     "ai-spend.json": spend,
     "feedback.json": feedback,
     "demo.json": demo,
+    "device-health.json": device_health,
 }
 
 

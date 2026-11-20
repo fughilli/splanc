@@ -44,6 +44,12 @@ class ConnectionRegistry {
   clientFor(wssUrl: string): LedMapperClient | undefined {
     return this.byHost.get(deviceHostKey(wssUrl));
   }
+
+  /** Every registered comms client (the opt-in device-metrics collector reads
+   * the connected ones; metrics/collector.ts). */
+  clients(): LedMapperClient[] {
+    return [...this.byHost.values()];
+  }
 }
 
 export const connectionRegistry = new ConnectionRegistry();

@@ -11,7 +11,7 @@ folder, dashboard or rule):
   2. make it private: remove the Viewer and Editor ROLE grants on that folder
      only (org Admins keep access; the service account that created it keeps
      its creator Admin grant, which it needs for later syncs);
-  3. create-or-update the four dashboards in dashboards/ inside that folder;
+  3. create-or-update the five dashboards in dashboards/ inside that folder;
   4. create-or-update the alert rules in alerts.json in that folder (rule
      group `splanc-business`), routed by the DEFAULT notification policy.
 

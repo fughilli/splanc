@@ -41,6 +41,7 @@ import {
 import { halloweenBleAvailable, isNativeBle, parseFixtureName } from "../../net/halloweenConnect";
 import { installPlayStyles } from "./playMode.css";
 import type { Router, Screen } from "../app/router";
+import { countEffectDeployed } from "../../metrics/appMetrics";
 
 function msg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -367,6 +368,7 @@ export function PlayModeScreen(router: Router, query: URLSearchParams): Screen {
       void swapPreview(r);
       const dp = await forDevice(c, p);
       await withDeviceLock(() => c.submitEffect(presetEffectId(p), r.bytecode, true, 0));
+      countEffectDeployed();
       if (selected === p) {
         // Visitor values are live-only (kiosk firmware never persists them anyway).
         c.setUniforms(presetUniformValues(dp, r.uniforms, sliderValues.get(p.id)), false);

@@ -1192,6 +1192,9 @@ message ClientMessage {
     GetEthernetState get_ethernet_state = 96;
     DiscoverControllers discover_controllers = 97;
     SetNetworkOutput set_network_output = 98;
+    // 99-119: left free for in-flight branches (mesh M5 takes 99/100, OSC 110).
+    // Device metrics (docs/design/device-metrics.md); reply: device_metrics.
+    GetDeviceMetrics get_device_metrics = 120;
   }
 }
 
@@ -1980,6 +1983,65 @@ message DiscoveredController {
   string kind = 6;
 }
 
+// --- Device metrics (docs/design/device-metrics.md) -----------------------------
+//
+// Read the player's health counters (reply: device_metrics). The app asks only
+// when its user switched on "Send feedback to Fug Studio", and sends on only the
+// categories they chose. Counters and gauges, no names, SSIDs, addresses or
+// content. Answered over wss and the BLE player transport; a player without it
+// answers error{unsupported}.
+message GetDeviceMetrics {}
+
+// Every field is "since the player started" unless it says otherwise; 0 / unset
+// means not measured on this player. Field numbers are grouped by the app's
+// categories (web/src/metrics/metricsSchema.ts).
+message DeviceMetrics {
+  // This message's layout (1).
+  uint32 version = 1;
+  // "esp32c6", "esp32p4", "host".
+  string board = 2;
+  // -- performance --
+  // SetFps pin (0 = automatic), the rate it is set to run at, what the last ~30
+  // frames achieved, and the autoscaler's lowest / highest rung for this strip.
+  uint32 fps_target = 10;
+  uint32 fps_current = 11;
+  uint32 fps_achieved = 12;
+  uint32 fps_min = 13;
+  uint32 fps_max = 14;
+  bool fps_lagging = 15;
+  // Times an effect started lagging.
+  uint32 lag_events = 16;
+  uint32 heap_free = 17;
+  uint32 heap_min_free = 18;
+  uint32 heap_largest_free = 19;
+  uint32 led_count = 20;
+  // -- reliability --
+  uint32 uptime_s = 30;
+  // esp_reset_reason_t of this boot (1 power on, 3 software, 4 panic, 5-7 watchdog, 9 brownout).
+  uint32 reset_reason = 31;
+  // Boots, and watchdog / panic / brownout resets, since the last power-on
+  // (RTC memory: survives a reset, not a power cycle).
+  uint32 boot_count = 32;
+  uint32 wdt_resets = 33;
+  uint32 panic_resets = 34;
+  uint32 brownout_resets = 35;
+  // Wi-Fi leases obtained (1 = joined once, never dropped) and lost.
+  uint32 wifi_joins = 36;
+  uint32 wifi_link_losses = 37;
+  // Smoothed RSSI of frames from the joined AP (0 = unknown).
+  sint32 wifi_rssi_dbm = 38;
+  // Bluetooth links that dropped (supervision / LL timeout; not a clean close).
+  uint32 ble_drops = 39;
+  // -- mesh (reported once the mesh stack is in the player; mesh_mode 0 = none) --
+  // 1 flood, 2 tree.
+  uint32 mesh_mode = 50;
+  uint32 mesh_members = 51;
+  uint32 mesh_delivery_permille = 52;
+  uint32 mesh_airtime_permille = 53;
+  uint32 mesh_relay_load_permille = 54;
+  uint32 mesh_mode_switches = 55;
+}
+
 message ControllerList {
   repeated DiscoveredController controllers = 1;
   // Empty, or why the scan couldn't run ("no_link", "no_ethernet").
@@ -2282,5 +2344,8 @@ message ServerMessage {
     EthernetState ethernet_state = 53;
     // Reply to discover_controllers.
     ControllerList controller_list = 54;
+    // 55-63: left free for in-flight branches (mesh M5 takes 55, OSC 60).
+    // Reply to get_device_metrics (docs/design/device-metrics.md).
+    DeviceMetrics device_metrics = 64;
   }
 }

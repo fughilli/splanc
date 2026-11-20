@@ -73,7 +73,7 @@ import {
 } from "./proto";
 import type { ColorBlock } from "@ledmapper/protocol";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
-import { decodeServer, encodeClient, type KioskStatusMessage, type SetKioskConfigMessage } from "./proto";
+import { decodeServer, encodeClient, type DeviceMetricsMessage, type KioskStatusMessage, type SetKioskConfigMessage } from "./proto";
 import { LiveControl, applyAt } from "./liveControl";
 export { applyAt } from "./liveControl";
 import type { CaptureProfileFlat } from "../capture/captureProfile";
@@ -1281,6 +1281,15 @@ export class LedMapperClient {
   async setWifiPolicy(req: WifiPolicyRequest): Promise<WifiPolicy> {
     const r = await this.request(wifiPolicyMessage(req) as unknown as ClientMessage, "wifi_policy_state");
     return normalizeWifiPolicy(r as unknown as Record<string, unknown>);
+  }
+
+  // -- Device metrics (docs/design/device-metrics.md; metrics/collector.ts) -------
+
+  /** The player's health counters. Needs the "device_metrics" feature. Only the
+   * opt-in collector calls this. */
+  async getDeviceMetrics(timeoutMs = 5000): Promise<DeviceMetricsMessage> {
+    const r = await this.request({ type: "get_device_metrics" } as unknown as ClientMessage, "device_metrics", timeoutMs);
+    return r as unknown as DeviceMetricsMessage;
   }
 
   // -- Kiosk mode (docs/design/kiosk-mode.md; the "kiosk" feature) --------------
