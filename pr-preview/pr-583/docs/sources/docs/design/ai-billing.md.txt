@@ -635,9 +635,14 @@ the iOS app.
   - **Errors.** A transient failure is a 500, so Stripe retries. A permanent
     problem (wrong account, unknown pack, wrong environment) is a 200 plus
     `ai_purchase_rejected` (an alert), because a retry can't fix it.
-- **Sandbox only.** In `AI_BILLING=sandbox` the relay accepts only an
-  `sk_test_` key: a live key turns the whole feature off. The fake web purchase
-  route closes once Stripe is configured.
+- **Modes.** `AI_BILLING=sandbox` accepts only test keys (`sk_test_` /
+  `rk_test_`) and test-mode events; a live key turns the whole feature off. The
+  fake web purchase route closes once Stripe is configured.
+  `AI_BILLING=production` requires live keys (`sk_live_` / `rk_live_`), the
+  webhook secret and `BILLING_ADMIN_TOKEN`, counts only live-mode events, and
+  never uses the fake store. Sessions, account tags and the liability counter
+  are per mode. The switch is
+  [docs/ops/billing-go-live.md](../ops/billing-go-live.md).
 - **Tests** (`agent/tests/billing_stripe.test.ts`) use a fake `api.stripe.com`
   and events signed like Stripe's: form encoding, session parameters,
   signature checks, 18+, packs, credit-once, partial and full refunds,
@@ -1080,8 +1085,10 @@ accounts or secrets; everything else is code.
        `warn`;
      - 30-day retention on the billing streams;
      - `BILLING_ADMIN_TOKEN`.
-8. **Production:** allow `AI_BILLING=production` only once steps 3–5 have
-   real verifiers; switch Stripe to live keys, the production App Store
+8. **Production:** `AI_BILLING=production` exists for the web channel (Stripe
+   live mode; runbook and script: [docs/ops/billing-go-live.md](../ops/billing-go-live.md),
+   `agent/relay/billing_go_live.mjs`). Apple stays off in production until step 5
+   has its real verifier. Switch Stripe to live keys, the production App Store
    environment, and the production Anthropic key **[owner]**; Workers Paid
    plan **[owner]**; App Review submission with a demo account and notes;
    privacy notice update (Anthropic as sub-processor; 30-day request logs).
