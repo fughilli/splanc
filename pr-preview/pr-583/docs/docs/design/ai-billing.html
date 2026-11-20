@@ -1028,38 +1028,101 @@ curl<span class="w"> </span>-fsS<span class="w"> </span>https://splanc-relay.&lt
 RELAY_PATHS), which ships with the web app deploy; Apple’s notifications call
 the workers.dev address directly.</p>
 </section>
-<section id="purchases-purchases-ts">
-<h3>Purchases (<code class="docutils literal notranslate"><span class="pre">purchases.ts</span></code>)<a class="headerlink" href="#purchases-purchases-ts" title="Link to this heading">¶</a></h3>
-<p>These are interfaces and fakes only in this PR (<code class="docutils literal notranslate"><span class="pre">PurchaseVerifier</span></code>,
-<code class="docutils literal notranslate"><span class="pre">NotificationVerifier</span></code>, <code class="docutils literal notranslate"><span class="pre">PurchaseClaims</span></code>, <code class="docutils literal notranslate"><span class="pre">FakeStoreVerifier</span></code>).</p>
+<section id="purchases-purchases-ts-apple-ts-stripe-ts">
+<h3>Purchases (<code class="docutils literal notranslate"><span class="pre">purchases.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">apple.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">stripe.ts</span></code>)<a class="headerlink" href="#purchases-purchases-ts-apple-ts-stripe-ts" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">purchases.ts</span></code> holds the interfaces (<code class="docutils literal notranslate"><span class="pre">PurchaseVerifier</span></code>, <code class="docutils literal notranslate"><span class="pre">NotificationVerifier</span></code>,
+<code class="docutils literal notranslate"><span class="pre">PurchaseClaims</span></code>, <code class="docutils literal notranslate"><span class="pre">ConsumptionSender</span></code>), the shared credit / refund logic
+(<code class="docutils literal notranslate"><span class="pre">applyPurchase</span></code>, <code class="docutils literal notranslate"><span class="pre">applyRefund</span></code>) and the sandbox fakes (<code class="docutils literal notranslate"><span class="pre">FakeStoreVerifier</span></code>,
+<code class="docutils literal notranslate"><span class="pre">FakeConsumptionSender</span></code>).</p>
 <ul class="simple">
-<li><p><strong>Apple.</strong></p>
-<ul>
-<li><p>The app buys with StoreKit 2 through a small Capacitor plugin
-(<code class="docutils literal notranslate"><span class="pre">web/native-plugins/storekit-bridge</span></code>, alongside camera-, speech- and
-wss-bridge).</p></li>
-<li><p>It sends <code class="docutils literal notranslate"><span class="pre">Transaction.jwsRepresentation</span></code> to <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/purchase/apple</span></code>.</p></li>
-<li><p>The server verifies:</p>
-<ul>
-<li><p>the JWS x5c chain up to Apple Root CA G3;</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">bundleId</span> <span class="pre">=</span> <span class="pre">dev.splanc.app</span></code>;</p></li>
-<li><p>the product id, which must be an enabled pack;</p></li>
-<li><p>the environment (Sandbox / Production);</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">appAccountToken</span></code>.</p></li>
-</ul>
-</li>
-<li><p>It then credits the account, claims the transaction, and the app
-<strong>finishes</strong> the transaction.</p></li>
-<li><p>Unfinished transactions are re-sent at app start (<code class="docutils literal notranslate"><span class="pre">Transaction.unfinished</span></code>),
-so a crash between paying and crediting heals itself.</p></li>
-<li><p>App Store Server Notifications v2 arrive at <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/notify/apple</span></code>:
-REFUND and REVOKE claw back. CONSUMPTION_REQUEST is answered with the
-customer’s consent (<a class="reference internal" href="#apple-refund-requests-consumption-request">below</a>).</p></li>
-<li><p>Testing: the Xcode StoreKit configuration file and the Sandbox
-environment.</p></li>
-</ul>
-</li>
+<li><p><strong>Apple (built: <code class="docutils literal notranslate"><span class="pre">apple.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">web/native-plugins/storekit-bridge</span></code>,
+<code class="docutils literal notranslate"><span class="pre">web/src/effects/ai/iap.ts</span></code>).</strong> See
+<a class="reference internal" href="#apple-in-app-purchase">Apple In-App Purchase</a>.</p></li>
 <li><p><strong>Web (Stripe):</strong> built, see <a class="reference internal" href="#web-checkout-stripe">Web checkout</a>.</p></li>
+</ul>
+</section>
+<section id="apple-in-app-purchase">
+<h3>Apple In-App Purchase<a class="headerlink" href="#apple-in-app-purchase" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>App (StoreKit 2).</strong> The first-party Capacitor plugin
+<code class="docutils literal notranslate"><span class="pre">&#64;splanc/storekit-bridge</span></code> (JS <code class="docutils literal notranslate"><span class="pre">StoreKitBridge</span></code>, Swift package
+<code class="docutils literal notranslate"><span class="pre">SplancStorekitBridge</span></code>, iOS 15+) wraps <code class="docutils literal notranslate"><span class="pre">Product.products</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Product.purchase(options:</span> <span class="pre">[.appAccountToken(…)])</span></code>, <code class="docutils literal notranslate"><span class="pre">Transaction.finish</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Transaction.unfinished</span></code>, <code class="docutils literal notranslate"><span class="pre">Transaction.updates</span></code> (listened to from launch,
+events retained until the web side subscribes), <code class="docutils literal notranslate"><span class="pre">AppStore.sync</span></code> and
+<code class="docutils literal notranslate"><span class="pre">AppStore.canMakePayments</span></code>. It passes on only transactions StoreKit itself
+verified, as <code class="docutils literal notranslate"><span class="pre">{transactionId,</span> <span class="pre">originalTransactionId,</span> <span class="pre">productId,</span> <span class="pre">jws}</span></code>.
+<code class="docutils literal notranslate"><span class="pre">web/src/net/storeKit.ts</span></code> binds it; <code class="docutils literal notranslate"><span class="pre">web/src/effects/ai/iap.ts</span></code> is the
+logic:</p>
+<ul>
+<li><p><strong>Packs</strong> are the relay’s <code class="docutils literal notranslate"><span class="pre">apple</span></code> packs (credits) that the App Store also
+returns (Apple’s localized <code class="docutils literal notranslate"><span class="pre">displayPrice</span></code>), in the relay’s order. A
+product not yet approved in App Store Connect is simply not shown.</p></li>
+<li><p><strong>Purchase.</strong> <code class="docutils literal notranslate"><span class="pre">appAccountToken</span></code> = the account’s <code class="docutils literal notranslate"><span class="pre">account_ref</span></code> (from
+<code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/balance</span></code>). The signed transaction goes to
+<code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/purchase/apple</span> <span class="pre">{jws}</span></code>; the transaction is <strong>finished only
+once the relay credited it</strong>.</p></li>
+<li><p><strong>Finishing rules.</strong> Finish on 201 (credited), 200 (<code class="docutils literal notranslate"><span class="pre">replay</span></code>), 409
+<code class="docutils literal notranslate"><span class="pre">already_claimed</span></code> and 400 <code class="docutils literal notranslate"><span class="pre">revoked</span></code> (nothing is owed on this device).
+Keep it unfinished on 401 (signed out), 403 <code class="docutils literal notranslate"><span class="pre">wrong_account</span></code> (bought for
+another account, e.g. before a restore), a network error or a relay
+failure: StoreKit hands it back at every launch, and “Check for App Store
+purchases” re-sends it on demand. The relay credits once whatever is
+re-sent.</p></li>
+<li><p><strong>Background delivery</strong> (<code class="docutils literal notranslate"><span class="pre">startIapDelivery</span></code>, at app start on iOS with the
+flag on): unfinished transactions are re-sent, and <code class="docutils literal notranslate"><span class="pre">Transaction.updates</span></code>
+(Ask to Buy approved, a pending payment cleared) is credited and
+announced with a toast. Deliveries are de-duplicated per transaction.</p></li>
+<li><p><strong>Outcomes in the flow:</strong> purchased → success with the new balance;
+<code class="docutils literal notranslate"><span class="pre">pending</span></code> (Ask to Buy, or a payment that needs another step) → “Waiting
+for approval”, credited automatically later; cancelled → back to the
+packs (“Nothing was charged”); a StoreKit error → the packs with a plain
+message; paid but not credited yet → “Payment received, adding credits”
+with Check again.</p></li>
+<li><p><strong>Restore.</strong> Consumables don’t restore. The balance lives on the account
+(restore it with the recovery email); “Check for App Store purchases”
+(<code class="docutils literal notranslate"><span class="pre">AppStore.sync</span></code> + re-send) covers a purchase whose credit never landed.</p></li>
+<li><p><strong>No web checkout</strong> inside the iOS app: <code class="docutils literal notranslate"><span class="pre">startWebCheckout</span></code> refuses, and
+no Stripe copy or link is shown. An older iOS build without the plugin
+keeps credits hidden (“Update Splanc to buy credits”).</p></li>
+</ul>
+</li>
+<li><p><strong>Relay (<code class="docutils literal notranslate"><span class="pre">apple.ts</span></code>).</strong></p>
+<ul>
+<li><p><strong>JWS verification, local.</strong> The x5c chain must be exactly leaf →
+intermediate → root, the root <strong>byte-equal</strong> to the pinned Apple Root
+CA G3 (SHA-256 <code class="docutils literal notranslate"><span class="pre">63:34:3A:…:91:79</span></code>), the intermediate a CA with Apple’s
+WWDR marker (<code class="docutils literal notranslate"><span class="pre">1.2.840.113635.100.6.2.1</span></code>), the leaf with the App Store
+signing marker (<code class="docutils literal notranslate"><span class="pre">1.2.840.113635.100.6.11.1</span></code>), every signature valid
+(ECDSA P-384 / P-256, a small DER reader since Workers have no X.509
+parser), every certificate valid at the payload’s <code class="docutils literal notranslate"><span class="pre">signedDate</span></code>, nothing
+signed in the future, and the JWS itself ES256 by the leaf. That is what
+Apple’s <code class="docutils literal notranslate"><span class="pre">app-store-server-library</span></code> <code class="docutils literal notranslate"><span class="pre">SignedDataVerifier</span></code> does with online
+(OCSP) checks off. No network call and no secret are needed to verify.</p></li>
+<li><p><strong>A purchase</strong> must be for <code class="docutils literal notranslate"><span class="pre">dev.splanc.app</span></code>, Sandbox or Production
+(Xcode / LocalTesting transactions are signed locally and refused), type
+<code class="docutils literal notranslate"><span class="pre">Consumable</span></code>, not revoked, quantity 1, an enabled <code class="docutils literal notranslate"><span class="pre">apple</span></code> pack, and carry
+the account’s <code class="docutils literal notranslate"><span class="pre">appAccountToken</span></code> (compared case-insensitively). The credit
+key is <code class="docutils literal notranslate"><span class="pre">apple:&lt;originalTransactionId&gt;</span></code> (= <code class="docutils literal notranslate"><span class="pre">transactionId</span></code> for a
+consumable), plus the Directory’s first-claim <code class="docutils literal notranslate"><span class="pre">pur:apple:&lt;id&gt;</span></code>.</p></li>
+<li><p><strong>App Store Server Notifications v2</strong> (<code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/notify/apple</span></code>,
+<code class="docutils literal notranslate"><span class="pre">{signedPayload}</span></code>): verified the same way, bundle id checked, the
+signed transaction inside verified too. REFUND and REVOKE claw back once
+(a retried notification is a replay: nothing more is clawed back or
+counted). CONSUMPTION_REQUEST is answered with consent
+(<a class="reference internal" href="#apple-refund-requests-consumption-request">below</a>). TEST,
+ONE_TIME_CHARGE (the app credits from the transaction itself),
+REFUND_DECLINED and REFUND_REVERSED (rare; adjust by hand) are
+acknowledged and logged (<code class="docutils literal notranslate"><span class="pre">ai_apple_notification</span></code>). Answers: 400 for a bad
+signature or another app; 200 for another environment (a Production
+notification on the sandbox relay), so Apple stops retrying; 500 when
+processing failed, so Apple retries.</p></li>
+<li><p><strong>Environments.</strong> <code class="docutils literal notranslate"><span class="pre">AI_BILLING=sandbox</span></code> credits only <strong>Sandbox</strong>
+transactions (TestFlight and development builds); a Production one is
+<code class="docutils literal notranslate"><span class="pre">wrong_environment</span></code>. Production stays refused until the production
+switch (staged plan step 8).</p></li>
+</ul>
+</li>
 </ul>
 </section>
 <section id="web-checkout-stripe">
@@ -1186,12 +1249,12 @@ The body’s fields are <code class="docutils literal notranslate"><span class="
 milliunits), <code class="docutils literal notranslate"><span class="pre">deliveryStatus</span></code>, <code class="docutils literal notranslate"><span class="pre">refundPreference</span></code> and <code class="docutils literal notranslate"><span class="pre">sampleContentProvided</span></code>
 (<a class="reference external" href="https://developer.apple.com/documentation/appstoreserverapi/consumptionrequest">ConsumptionRequest</a>,
 and the field set in Apple’s <code class="docutils literal notranslate"><span class="pre">app-store-server-library</span></code> 3.1.0).</p>
-<ul>
+<ul class="simple">
 <li><p><strong>Consent (owner decision: yes).</strong> On iOS the app shows
 <code class="docutils literal notranslate"><span class="pre">APPLE_CONSUMPTION_CONSENT_TEXT</span></code> with an explicit Yes / No, once in the
 purchase flow (before the first purchase) and as a switch in AI settings.
 The default is off.</p>
-<ul class="simple">
+<ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/consent</span> <span class="pre">{apple_consumption:</span> <span class="pre">true|false}</span></code> records it on the
 account with its time.</p></li>
 <li><p>Withdrawing the consent stops every later answer.</p></li>
@@ -1201,7 +1264,7 @@ account with its time.</p></li>
 <li><p><strong>The answer.</strong> Credits are one pooled balance, so the relay attributes
 usage <strong>FIFO</strong>: the oldest credits are spent first, and a refund ends its
 own lot (<code class="docutils literal notranslate"><span class="pre">lotConsumption</span></code> in <code class="docutils literal notranslate"><span class="pre">ledger.ts</span></code>). From that it sends:</p>
-<ul class="simple">
+<ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">deliveryStatus:</span> <span class="pre">DELIVERED</span></code>: the credits were on the account and usable;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">consumptionPercentage</span></code>: the share of that pack’s credits spent;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">refundPreference</span></code>: GRANT_FULL if nothing was used, GRANT_PRORATED if part
@@ -1214,18 +1277,27 @@ decision 17).</p></li>
 500 so that Apple retries, and logs <code class="docutils literal notranslate"><span class="pre">ai_consumption_failed</span></code> (an alert). An
 unknown transaction, or one without consent, is logged
 <code class="docutils literal notranslate"><span class="pre">ai_consumption_skipped</span></code> and nothing is sent.</p></li>
-<li><p><strong>Scaffold.</strong> The fake store emits signed CONSUMPTION_REQUESTs and
-<code class="docutils literal notranslate"><span class="pre">FakeConsumptionSender</span></code> records the answers. The tests check:</p>
-<ul class="simple">
-<li><p>nothing is sent without consent;</p></li>
-<li><p>the answer is sent with consent;</p></li>
-<li><p>a withdrawn consent stops answers;</p></li>
-<li><p>a failure returns 500;</p></li>
-<li><p>FIFO attribution.</p></li>
-</ul>
-<p>The real sender signs an App Store Server API JWT with the In-App Purchase
-key (staged plan step 5).</p>
-</li>
+<li><p><strong>The sender</strong> (<code class="docutils literal notranslate"><span class="pre">AppStoreConsumptionSender</span></code>, <code class="docutils literal notranslate"><span class="pre">apple.ts</span></code>):
+<code class="docutils literal notranslate"><span class="pre">PUT</span> <span class="pre">/inApps/v2/transactions/consumption/{transactionId}</span></code> on
+<code class="docutils literal notranslate"><span class="pre">api.storekit-sandbox.apple.com</span></code> or <code class="docutils literal notranslate"><span class="pre">api.storekit.apple.com</span></code> (by the
+notification’s environment), 202 expected, authenticated with an ES256 JWT
+(<code class="docutils literal notranslate"><span class="pre">kid</span></code> = key id, <code class="docutils literal notranslate"><span class="pre">iss</span></code> = issuer id, <code class="docutils literal notranslate"><span class="pre">aud:</span> <span class="pre">appstoreconnect-v1</span></code>,
+<code class="docutils literal notranslate"><span class="pre">bid:</span> <span class="pre">dev.splanc.app</span></code>, 5 minutes) signed with the In-App Purchase key
+(Worker secrets <code class="docutils literal notranslate"><span class="pre">APPLE_IAP_KEY</span></code>, <code class="docutils literal notranslate"><span class="pre">APPLE_IAP_KEY_ID</span></code>,
+<code class="docutils literal notranslate"><span class="pre">APPLE_IAP_ISSUER_ID</span></code>). Errors carry only the status and Apple’s numeric
+<code class="docutils literal notranslate"><span class="pre">errorCode</span></code>. Without the key, a consented request is a 500 plus
+<code class="docutils literal notranslate"><span class="pre">ai_consumption_failed</span> <span class="pre">{reason:</span> <span class="pre">not_configured}</span></code> (an alert).</p></li>
+<li><p><strong>In the app.</strong> The iOS buy flow asks once, before the first purchase, on
+its own step: two equal options (“Yes, share my usage” / “No, don’t
+share”), nothing preselected, Continue disabled until one is chosen
+(<code class="docutils literal notranslate"><span class="pre">apple_consumption_asked</span></code> on <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/balance</span></code> records that it was
+answered). Settings ▸ AI ▸ Splanc AI credits ▸ Apple refund requests turns
+it on or off.</p></li>
+<li><p><strong>Tests.</strong> The fake store’s CONSUMPTION_REQUESTs (<code class="docutils literal notranslate"><span class="pre">billing.test.ts</span></code>) and
+real-format signed notifications (<code class="docutils literal notranslate"><span class="pre">billing_apple.test.ts</span></code>) check: nothing
+is sent without consent (never asked, or no), the answer with consent (the
+sandbox host, the JWT, the body), a withdrawn consent stops answers, a
+failure or a missing key returns 500, and FIFO attribution.</p></li>
 </ul>
 </section>
 <section id="pricing-config-pricing-ts">
@@ -1311,7 +1383,7 @@ only, so it never learns that web packs exist.</p>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/balance</span></code></p></td>
 <td><p>session</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">{balance_credits,</span> <span class="pre">held_credits,</span> <span class="pre">available_credits,</span> <span class="pre">low,</span> <span class="pre">status,</span> <span class="pre">adult,</span> <span class="pre">pricing_version}</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{balance_credits,</span> <span class="pre">held_credits,</span> <span class="pre">available_credits,</span> <span class="pre">low,</span> <span class="pre">status,</span> <span class="pre">adult,</span> <span class="pre">apple_consumption_consent,</span> <span class="pre">apple_consumption_asked,</span> <span class="pre">account_ref,</span> <span class="pre">pricing_version}</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/billing/pricing?channel=</span></code></p></td>
 <td><p>none</p></td>
@@ -1323,7 +1395,7 @@ only, so it never learns that web packs exist.</p>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/purchase/&lt;apple|web&gt;</span></code></p></td>
 <td><p>session</p></td>
-<td><p>Proof of purchase → credit (201; a replay is 200 with the same entry)</p></td>
+<td><p>Proof of purchase → credit (201; a replay is 200 with the same entry). Apple: <code class="docutils literal notranslate"><span class="pre">{jws}</span></code> = StoreKit 2’s <code class="docutils literal notranslate"><span class="pre">jwsRepresentation</span></code></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/consent</span></code></p></td>
 <td><p>session</p></td>
@@ -1331,7 +1403,7 @@ only, so it never learns that web packs exist.</p>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/notify/&lt;apple|web&gt;</span></code></p></td>
 <td><p>store signature</p></td>
-<td><p>Refunds / revocations → claw back; Apple CONSUMPTION_REQUEST → consumption answer (with consent)</p></td>
+<td><p>Refunds / revocations → claw back; Apple CONSUMPTION_REQUEST → consumption answer (with consent). Apple: App Store Server Notifications v2 <code class="docutils literal notranslate"><span class="pre">{signedPayload}</span></code></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/admin/status</span></code></p></td>
 <td><p>admin token (<code class="docutils literal notranslate"><span class="pre">BILLING_ADMIN_TOKEN</span></code>)</p></td>
@@ -1382,11 +1454,12 @@ only, so it never learns that web packs exist.</p>
 <section id="flows">
 <h3>Flows<a class="headerlink" href="#flows" title="Link to this heading">¶</a></h3>
 <ul class="simple">
-<li><p><strong>Buy (iOS).</strong> Panel ▸ Buy ▸ StoreKit sheet with Apple’s price → the
-plugin returns the signed transaction → <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/purchase/apple</span></code> →
-credited → <code class="docutils literal notranslate"><span class="pre">finish()</span></code> → the balance updates. On a crash in between, the
-unfinished transaction is re-sent at the next start. The credit is
-idempotent.</p></li>
+<li><p><strong>Buy (iOS).</strong> The credits flow (intro → account + 18+ → recovery email →
+the Apple refund-request consent, once → packs with Apple’s prices) ▸
+“Buy for $4.99” ▸ the App Store sheet → the plugin returns the signed
+transaction → <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/billing/purchase/apple</span></code> → credited → <code class="docutils literal notranslate"><span class="pre">finish()</span></code> → the
+balance. On a crash in between, the unfinished transaction is re-sent at
+the next start. The credit is idempotent.</p></li>
 <li><p><strong>Buy (web / Android).</strong> Panel ▸ Buy ▸ Stripe Checkout (card, Apple Pay,
 Google Pay) → return to the app → poll the balance until the webhook has
 credited it (it usually arrives within seconds).</p></li>
@@ -1809,18 +1882,16 @@ Android, anonymous accounts and the 18+ step for the web path.
 US$10 / US$25 prices (their ids go in the sandbox pricing config), then the
 <a class="reference internal" href="#sandbox-deploy-runbook">sandbox deploy</a>. Live keys and live price ids
 come in step 8.</p></li>
-<li><p><strong>iOS In-App Purchase:</strong> the <code class="docutils literal notranslate"><span class="pre">storekit-bridge</span></code> plugin (StoreKit 2,
-<code class="docutils literal notranslate"><span class="pre">appAccountToken</span></code>), JWS verification (Apple Root CA G3), App Store Server
-Notifications v2 (REFUND, REVOKE, CONSUMPTION_REQUEST, with the real
-<code class="docutils literal notranslate"><span class="pre">ConsumptionSender</span></code>: an App Store Server API JWT), unfinished
-transaction replay, a StoreKit configuration file for Simulator tests.
-<strong>[owner]</strong>: sign the Paid Apps agreement and the banking / tax forms as
-the owner’s LLC, enrol in the Small Business Program, create the three
-consumables (<code class="docutils literal notranslate"><span class="pre">dev.splanc.app.credits.small</span></code> / <code class="docutils literal notranslate"><span class="pre">.medium</span></code> / <code class="docutils literal notranslate"><span class="pre">.large</span></code> at
-US$4.99 / 9.99 / 19.99) with review screenshots, set the Server
-Notifications v2 URL (sandbox and production), create an In-App Purchase
-key for the App Store Server API, and store its key id, issuer id and
-private key as Worker secrets.</p></li>
+<li><p><strong>Built (PR: iOS In-App Purchase): iOS In-App Purchase.</strong> The
+<code class="docutils literal notranslate"><span class="pre">storekit-bridge</span></code> plugin (StoreKit 2, <code class="docutils literal notranslate"><span class="pre">appAccountToken</span></code>), local JWS
+verification (Apple Root CA G3), App Store Server Notifications v2
+(REFUND, REVOKE, CONSUMPTION_REQUEST with the real <code class="docutils literal notranslate"><span class="pre">ConsumptionSender</span></code>,
+TEST), unfinished-transaction replay and <code class="docutils literal notranslate"><span class="pre">Transaction.updates</span></code>, the iOS
+buy flow with the consent step. No StoreKit configuration file: Xcode’s
+local transactions aren’t signed by Apple, so the relay can’t credit them;
+tests use TestFlight (the Sandbox environment).
+<strong>[owner]</strong>: everything in the
+<a class="reference internal" href="#ios-in-app-purchase-runbook">App Store Connect checklist</a>.</p></li>
 <li><p><strong>UX:</strong> live balance under replies, low-balance and 402 handling in the
 chat, the “busy, try later” state, the statement view, the model picker
 from <code class="docutils literal notranslate"><span class="pre">/billing/pricing</span></code>.</p></li>
@@ -1924,6 +1995,156 @@ so Workers Logs won’t show every billing event. The Grafana Cloud Logs push
 (when configured) gets all of them.</p></li>
 </ul>
 </section>
+<section id="ios-in-app-purchase-runbook">
+<h2>iOS In-App Purchase runbook<a class="headerlink" href="#ios-in-app-purchase-runbook" title="Link to this heading">¶</a></h2>
+<p>The owner does the App Store Connect part; the relay part needs the owner’s
+approval (secrets and a deploy). Nothing here is in the repo but names.</p>
+<section id="app-store-connect-checklist">
+<h3>App Store Connect checklist<a class="headerlink" href="#app-store-connect-checklist" title="Link to this heading">¶</a></h3>
+<ol class="arabic">
+<li><p><strong>Agreements, Tax, and Banking:</strong> the <strong>Paid Apps</strong> agreement active,
+with the bank account and tax forms, as the owner’s company (the account
+holder). Without it, products can’t be bought, not even in the sandbox.</p></li>
+<li><p><strong>App Store Small Business Program:</strong> enrol (the 15 % rate is what the
+<code class="docutils literal notranslate"><span class="pre">apple</span></code> channel’s <code class="docutils literal notranslate"><span class="pre">fee_percent:</span> <span class="pre">0.15</span></code> and <code class="docutils literal notranslate"><span class="pre">markup:</span> <span class="pre">0.4</span></code> assume). It
+applies from the first full month after approval.</p></li>
+<li><p><strong>Products</strong> (Splanc ▸ Monetization ▸ In-App Purchases ▸ +), each
+<strong>Consumable</strong>, exactly these product ids (the relay’s <code class="docutils literal notranslate"><span class="pre">apple</span></code> packs;
+the credits are the relay’s, not Apple’s):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Reference name</p></th>
+<th class="head"><p>Product ID</p></th>
+<th class="head"><p>Price (USA, base)</p></th>
+<th class="head"><p>Credits</p></th>
+<th class="head"><p>Display name (suggested)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Splanc AI credits S</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">dev.splanc.app.credits.small</span></code></p></td>
+<td><p>US$4.99</p></td>
+<td><p>356</p></td>
+<td><p>356 Splanc AI credits</p></td>
+</tr>
+<tr class="row-odd"><td><p>Splanc AI credits M</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">dev.splanc.app.credits.medium</span></code></p></td>
+<td><p>US$9.99</p></td>
+<td><p>713</p></td>
+<td><p>713 Splanc AI credits</p></td>
+</tr>
+<tr class="row-even"><td><p>Splanc AI credits L</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">dev.splanc.app.credits.large</span></code></p></td>
+<td><p>US$19.99</p></td>
+<td><p>1,427</p></td>
+<td><p>1,427 Splanc AI credits</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>For each: availability in all countries (Apple sets the local prices from
+the US base price), a description (“Prepaid credits for Claude in
+Splanc’s effect editor. 1 credit = US$0.01 of AI usage.”), the review
+screenshot (the packs screen of the iOS flow), review notes (how to reach
+it: Settings ▸ AI ▸ Splanc AI credits; the flag is on for the review
+build). Submit them with the next app version (the first In-App Purchases must ride along with
+an app submission).</p>
+</li>
+<li><p><strong>App Store Server Notifications</strong> (Splanc ▸ App Information ▸ App Store
+Server Notifications): <strong>Sandbox Server URL</strong> =
+<code class="docutils literal notranslate"><span class="pre">https://splanc-relay.&lt;subdomain&gt;.workers.dev/billing/notify/apple</span></code>,
+<strong>Version 2</strong>. Leave the <strong>Production Server URL</strong> empty until the
+production switch (the sandbox relay would acknowledge and ignore them).</p></li>
+<li><p><strong>In-App Purchase key</strong> (Users and Access ▸ Integrations ▸ In-App
+Purchase ▸ Generate): name “Splanc relay”. Download the <code class="docutils literal notranslate"><span class="pre">.p8</span></code> once
+(<code class="docutils literal notranslate"><span class="pre">SubscriptionKey_&lt;KEYID&gt;.p8</span></code>) and store, on the host only:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">credentials/apple_iap_key.p8</span></code>: the downloaded file, unchanged;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">credentials/apple_iap_key_id.txt</span></code>: the key id (10 characters);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">credentials/apple_iap_issuer_id.txt</span></code>: the issuer id shown on the same
+page (a UUID).</p></li>
+</ul>
+<p>It is only used to answer CONSUMPTION_REQUEST (and by
+<code class="docutils literal notranslate"><span class="pre">apple_iap_check.mjs</span></code>). It is <strong>not</strong> the App Store Connect API key the
+TestFlight upload uses.</p>
+</li>
+<li><p><strong>Sandbox tester</strong> (Users and Access ▸ Sandbox ▸ Test Accounts ▸ +): an
+address that is not an Apple Account yet, storefront United States. On the
+test iPhone: Settings ▸ Developer ▸ Sandbox Apple Account (developer mode
+on), or sign in when the purchase sheet asks. Needed for development
+builds installed from Xcode (<code class="docutils literal notranslate"><span class="pre">tools/ios_deploy</span></code>); <strong>TestFlight builds buy
+with the tester’s own Apple Account in the sandbox, free of charge</strong>, so a
+TestFlight run needs none.</p></li>
+<li><p><strong>App privacy</strong> (Splanc ▸ App Privacy): add <strong>Purchases ▸ Purchase
+history</strong> (App Functionality, linked to the user’s account, not tracking)
+and, for the consumption answers, <strong>Usage Data ▸ Product Interaction</strong>
+shared with Apple for App Functionality.</p></li>
+</ol>
+</section>
+<section id="relay-secrets-and-deploy-owner-approval">
+<h3>Relay: secrets and deploy (owner approval)<a class="headerlink" href="#relay-secrets-and-deploy-owner-approval" title="Link to this heading">¶</a></h3>
+<p>Run on the host from the repo root with <code class="docutils literal notranslate"><span class="pre">CLOUDFLARE_API_TOKEN</span></code> and
+<code class="docutils literal notranslate"><span class="pre">CLOUDFLARE_ACCOUNT_ID</span></code> set, after this PR merges. Verification needs no
+secret; only the consumption answers need the key.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>agent/relay
+<span class="nv">W</span><span class="o">=</span><span class="s2">&quot;pnpm dlx wrangler@4&quot;</span>
+./deploy.sh<span class="w">                                   </span><span class="c1"># the code (no new bindings or migrations)</span>
+<span class="nv">$W</span><span class="w"> </span>secret<span class="w"> </span>put<span class="w"> </span>APPLE_IAP_KEY<span class="w">        </span>--config<span class="w"> </span>wrangler.toml<span class="w"> </span>&lt;<span class="w"> </span>../../credentials/apple_iap_key.p8
+tr<span class="w"> </span>-d<span class="w"> </span><span class="s1">&#39;\n&#39;</span><span class="w"> </span>&lt;<span class="w"> </span>../../credentials/apple_iap_key_id.txt<span class="w">    </span><span class="p">|</span><span class="w"> </span><span class="nv">$W</span><span class="w"> </span>secret<span class="w"> </span>put<span class="w"> </span>APPLE_IAP_KEY_ID<span class="w">    </span>--config<span class="w"> </span>wrangler.toml
+tr<span class="w"> </span>-d<span class="w"> </span><span class="s1">&#39;\n&#39;</span><span class="w"> </span>&lt;<span class="w"> </span>../../credentials/apple_iap_issuer_id.txt<span class="w"> </span><span class="p">|</span><span class="w"> </span><span class="nv">$W</span><span class="w"> </span>secret<span class="w"> </span>put<span class="w"> </span>APPLE_IAP_ISSUER_ID<span class="w"> </span>--config<span class="w"> </span>wrangler.toml
+<span class="nb">cd</span><span class="w"> </span>../..
+<span class="c1"># Check: the apple packs, a forged notification refused, and Apple&#39;s own TEST</span>
+<span class="c1"># notification delivered to the Sandbox Server URL and verified by the relay.</span>
+<span class="nv">RELAY</span><span class="o">=</span>https://splanc-relay.&lt;subdomain&gt;.workers.dev<span class="w"> </span><span class="se">\</span>
+<span class="nv">APPLE_IAP_KEY_FILE</span><span class="o">=</span>credentials/apple_iap_key.p8<span class="w"> </span><span class="se">\</span>
+<span class="nv">APPLE_IAP_KEY_ID_FILE</span><span class="o">=</span>credentials/apple_iap_key_id.txt<span class="w"> </span><span class="se">\</span>
+<span class="nv">APPLE_IAP_ISSUER_ID_FILE</span><span class="o">=</span>credentials/apple_iap_issuer_id.txt<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>node<span class="w"> </span>agent/relay/apple_iap_check.mjs
+</pre></div>
+</div>
+<p>The pricing config needs no change: <code class="docutils literal notranslate"><span class="pre">billing.sandbox.pricing.json</span></code> already
+has the three <code class="docutils literal notranslate"><span class="pre">apple</span></code> packs. The Pages forwarding already passes
+<code class="docutils literal notranslate"><span class="pre">/billing/purchase/apple</span></code>; Apple calls the workers.dev address directly.</p>
+</section>
+<section id="sandbox-test-on-a-testflight-build">
+<h3>Sandbox test on a TestFlight build<a class="headerlink" href="#sandbox-test-on-a-testflight-build" title="Link to this heading">¶</a></h3>
+<ol class="arabic simple">
+<li><p>Ship a TestFlight build from this branch (Actions ▸ macOS ▸ Run workflow;
+the plugin is compiled by <code class="docutils literal notranslate"><span class="pre">cap</span> <span class="pre">sync</span></code>, no Info.plist or entitlement
+change: In-App Purchase needs none).</p></li>
+<li><p>On the iPhone, in Splanc: Settings ▸ Behavior ▸ Developer ▸ Enable Debug
+Settings <strong>On</strong>, then Settings ▸ Debugging ▸ Feature previews ▸ Splanc AI
+credits <strong>On</strong> (a TestFlight build’s web view can’t be inspected, so the
+flag has this switch), then relaunch the app.</p></li>
+<li><p>Settings ▸ AI ▸ Splanc AI credits ▸ <strong>Get Splanc AI credits</strong>: Get
+started → Create account (18+) → Continue without email → Continue
+anonymously → the refund-request question (choose <strong>Yes</strong>) → the packs
+show Apple’s prices → <strong>Buy for $4.99</strong> → the sheet says
+“[Environment: Sandbox]” → confirm. Expected: “You’re all set”, 356
+credits; Recent activity shows the purchase; the relay log has
+<code class="docutils literal notranslate"><span class="pre">ai_purchase</span> <span class="pre">{channel:</span> <span class="pre">apple}</span></code>.</p></li>
+<li><p><strong>Cancel:</strong> buy again, cancel the sheet → “Purchase cancelled. Nothing
+was charged.”, back on the packs.</p></li>
+<li><p><strong>Crash between paying and crediting:</strong> turn on Airplane Mode after the
+sheet confirms (or kill the app right after) → “Payment received, adding
+credits”. Reconnect and relaunch → a toast “356 credits added”; the
+balance is credited once.</p></li>
+<li><p><strong>Check for purchases:</strong> Settings ▸ AI ▸ Splanc AI credits ▸ App Store
+purchases ▸ Check for purchases → “Nothing waiting…”.</p></li>
+<li><p><strong>Refunds and consumption answers</strong> in the sandbox need an in-app refund
+request (StoreKit <code class="docutils literal notranslate"><span class="pre">beginRefundRequest</span></code>), which the app doesn’t offer yet
+(see the decisions); reportaproblem.apple.com doesn’t handle sandbox
+purchases. The relay side (REFUND clawback, CONSUMPTION_REQUEST answered
+with consent through the sandbox API) is covered by
+<code class="docutils literal notranslate"><span class="pre">agent/tests/billing_apple.test.ts</span></code>, and the TEST notification above
+proves the URL, the signature check and the key against Apple itself.</p></li>
+<li><p><strong>Ask to Buy</strong> can’t be simulated against Apple’s sandbox servers; the
+path is covered by the unit tests (<code class="docutils literal notranslate"><span class="pre">web/tests/iap.test.ts</span></code>).</p></li>
+<li><p>Delete the account (danger zone) when done.</p></li>
+</ol>
+</section>
+</section>
 <section id="risks">
 <h2>Risks<a class="headerlink" href="#risks" title="Link to this heading">¶</a></h2>
 <ul class="simple">
@@ -1990,6 +2211,10 @@ push (docs/design/ops-grafana.md);</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">web/src/effects/ai/providers/credits.ts</span></code>: the flag-gated provider, session,
 stub balance.</p></li>
+<li><p>Apple In-App Purchase (later PR): <code class="docutils literal notranslate"><span class="pre">agent/relay/src/billing/apple.ts</span></code>,
+<code class="docutils literal notranslate"><span class="pre">web/native-plugins/storekit-bridge</span></code>, <code class="docutils literal notranslate"><span class="pre">web/src/net/storeKit.ts</span></code>,
+<code class="docutils literal notranslate"><span class="pre">web/src/effects/ai/iap.ts</span></code>, tests <code class="docutils literal notranslate"><span class="pre">agent/tests/billing_apple.test.ts</span></code> and
+<code class="docutils literal notranslate"><span class="pre">web/tests/iap.test.ts</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">provider.ts</span></code>: the <code class="docutils literal notranslate"><span class="pre">credits</span></code> kind, gated by the flag.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">generate.ts</span></code>: <code class="docutils literal notranslate"><span class="pre">activeProvider</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">anthropic.ts</span></code>: <code class="docutils literal notranslate"><span class="pre">messagesRequestBody</span></code> shared; the BYO request is unchanged.</p></li>
@@ -2057,7 +2282,8 @@ without the bridge and wasm);</p></li>
 <li><a class="reference internal" href="#ledger-ledger-ts-account-ts">Ledger (<code class="docutils literal notranslate"><span class="pre">ledger.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">account.ts</span></code>)</a></li>
 <li><a class="reference internal" href="#accounts-and-identity">Accounts and identity</a></li>
 <li><a class="reference internal" href="#sign-in-with-apple-and-google-signin-ts-jwt-ts">Sign in with Apple and Google (<code class="docutils literal notranslate"><span class="pre">signin.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">jwt.ts</span></code>)</a></li>
-<li><a class="reference internal" href="#purchases-purchases-ts">Purchases (<code class="docutils literal notranslate"><span class="pre">purchases.ts</span></code>)</a></li>
+<li><a class="reference internal" href="#purchases-purchases-ts-apple-ts-stripe-ts">Purchases (<code class="docutils literal notranslate"><span class="pre">purchases.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">apple.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">stripe.ts</span></code>)</a></li>
+<li><a class="reference internal" href="#apple-in-app-purchase">Apple In-App Purchase</a></li>
 <li><a class="reference internal" href="#web-checkout-stripe">Web checkout (Stripe)</a></li>
 <li><a class="reference internal" href="#apple-refund-requests-consumption-request">Apple refund requests (CONSUMPTION_REQUEST)</a></li>
 <li><a class="reference internal" href="#pricing-config-pricing-ts">Pricing config (<code class="docutils literal notranslate"><span class="pre">pricing.ts</span></code>)</a></li>
@@ -2073,6 +2299,12 @@ without the bridge and wasm);</p></li>
 <li><a class="reference internal" href="#costs-and-margins">Costs and margins</a></li>
 <li><a class="reference internal" href="#staged-plan-to-production">Staged plan to production</a></li>
 <li><a class="reference internal" href="#sandbox-deploy-runbook">Sandbox deploy runbook</a></li>
+<li><a class="reference internal" href="#ios-in-app-purchase-runbook">iOS In-App Purchase runbook</a><ul>
+<li><a class="reference internal" href="#app-store-connect-checklist">App Store Connect checklist</a></li>
+<li><a class="reference internal" href="#relay-secrets-and-deploy-owner-approval">Relay: secrets and deploy (owner approval)</a></li>
+<li><a class="reference internal" href="#sandbox-test-on-a-testflight-build">Sandbox test on a TestFlight build</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#risks">Risks</a></li>
 <li><a class="reference internal" href="#decisions-for-the-owner">Decisions for the owner</a></li>
 <li><a class="reference internal" href="#what-is-in-this-pr">What is in this PR</a></li>
