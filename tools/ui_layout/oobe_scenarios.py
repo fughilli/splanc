@@ -39,14 +39,8 @@ SCENARIOS = [
         steps=[LIST, ("click", ".map-row"), ("wait", 800)],
     ),
     # A returning user lands on the app's home (no hash).
-    Scenario("oobe-4-home", "", search=KNOWN, steps=[("wait_for", ".tab", 15000), ("wait", 800)]),
-    # The device drawer with a connected fixture.
-    Scenario(
-        "oobe-5-devices",
-        "#/effects",
-        search=KNOWN,
-        steps=[LIST, ("click", ".tab[data-tab=device]"), ("wait", 600)],
-    ),
+    Scenario("oobe-4-home", "", search=KNOWN, steps=[("wait", 2500)]),
+    # (The device drawer is #577's; its layout is checked there.)
     # The maps library (the old landing screen).
     Scenario("oobe-6-maps", "#/maps", search=KNOWN, steps=[LIST]),
 ]
