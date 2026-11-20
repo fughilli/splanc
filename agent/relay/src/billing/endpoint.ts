@@ -9,8 +9,10 @@
  *   POST   /billing/admin/status          admin (BILLING_ADMIN_TOKEN): {account, status: active|suspended}
  *   GET    /billing/pricing?channel=      models + credits per MTok + this channel's packs (public)
  *   GET    /billing/statement             the newest ledger entries (no content, just numbers)
- *   POST   /billing/purchase/<channel>    the app's proof of purchase -> credit (idempotent)
- *   POST   /billing/notify/<channel>      store / processor server notifications (refunds)
+ *   POST   /billing/purchase/<channel>    the app's proof of purchase -> credit (idempotent);
+ *                                         apple: {jws} = StoreKit 2's signed transaction
+ *   POST   /billing/notify/<channel>      store / processor server notifications: Stripe's
+ *                                         webhook (web), App Store Server Notifications v2 (apple)
  *   POST   /ai/v1/messages                the metered AI proxy (proxy.ts)
  *
  * MODES (`billingReady`). Everything answers 503 not_configured unless
@@ -25,11 +27,16 @@
  *   production  Stripe LIVE keys required (sk_live_ / rk_live_ and a webhook
  *               secret; a test key or none turns the feature off) plus
  *               BILLING_ADMIN_TOKEN; only livemode=true events count; the fake
- *               store is never used, even if its key is set (Apple purchases
- *               wait for the real StoreKit verifier, desk item D-142).
+ *               store is never used, even if its key is set.
  *
  * Sessions, account tags and the liability counter are per mode, so credits
  * bought with test money in the sandbox can't be spent in production.
+ *
+ * Apple purchases are StoreKit 2 signed transactions ({jws}) and App Store
+ * Server Notifications v2, verified against Apple's root (apple.ts). Only the
+ * mode's App Store environment counts: Sandbox transactions (TestFlight and
+ * development builds) in sandbox, Production ones in production; the other is
+ * refused (purchases) or acknowledged and ignored (notifications).
  */
 
 import { dir } from "../oauth";
@@ -40,6 +47,7 @@ import { proxyMessages, redact, type OrgSpend } from "./proxy";
 import { purchaseMoney, refundUsdEstimate } from "./metrics";
 import { StripeError, createCheckoutSession, stripeAction, verifyStripeSignature, type StripeAction } from "./stripe";
 import { safeEqual } from "../crypto";
+import { AppStoreConsumptionSender, AppleStoreVerifier, appStoreApiKeyFrom, type AppleVerifierOptions } from "./apple";
 import {
   FakeConsumptionSender,
   FakeStoreVerifier,
@@ -50,6 +58,8 @@ import {
   consumptionRequestFor,
   type ConsumptionSender,
   type PurchaseClaims,
+  type StoreNotification,
+  type VerifiedPurchase,
 } from "./purchases";
 
 export interface BillingContext {
@@ -63,6 +73,118 @@ export interface BillingContext {
   consumption?: ConsumptionSender | undefined;
   /** fetch toward api.stripe.com (tests: a fake Stripe). Defaults to fetch. */
   stripeFetch?: typeof fetch | undefined;
+  /** fetch toward the App Store Server API (tests: a fake). Defaults to fetch. */
+  appStoreFetch?: typeof fetch | undefined;
+  /** Trusted roots for App Store signed data (tests: a test root). Default:
+   * Apple Root CA G3, pinned in apple.ts. */
+  appleRoots?: Uint8Array<ArrayBuffer>[] | undefined;
+}
+
+function appleOptions(env: Env, ctx: BillingContext): AppleVerifierOptions {
+  const id = Number(env.APPLE_APP_ID);
+  return { roots: ctx.appleRoots, now: now(env), ...(env.APPLE_APP_ID && Number.isFinite(id) ? { appAppleId: id } : {}) };
+}
+
+/** Is this body an App Store Server Notification v2 (`{"signedPayload": …}`)? */
+function isSignedPayload(body: string): boolean {
+  try {
+    return typeof (JSON.parse(body) as { signedPayload?: unknown }).signedPayload === "string";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * App Store Server Notifications v2 (`POST /billing/notify/apple`): verify the
+ * signed payload, ignore other environments (200, so Apple stops retrying),
+ * then act. A bad signature is a 400; a processing failure a 500 (Apple
+ * retries); a permanent problem with the transaction inside is a 200 plus a
+ * log line, since a retry can't fix it.
+ */
+async function appleNotification(body: string, env: Env, ctx: BillingContext, ready: Ready, log: (ev: Record<string, unknown>) => void): Promise<Response> {
+  const v = new AppleStoreVerifier(appleOptions(env, ctx));
+  let verified: Awaited<ReturnType<AppleStoreVerifier["notification"]>>;
+  try {
+    verified = await v.notification(body);
+  } catch (e) {
+    if (!(e instanceof PurchaseError)) throw e;
+    log({ ev: "ai_webhook_rejected", channel: "apple", reason: e.code });
+    return ctx.json({ error: e.code }, 400);
+  }
+  if (!verified) return ctx.json({ error: "bad_notification" }, 400);
+  const { n, environment } = verified;
+  const seen = { ev: "ai_apple_notification", type: n.notificationType, subtype: n.subtype ?? null, environment };
+  if (environment !== ready.environment) {
+    log({ ...seen, ignored: true });
+    return ctx.json({ ok: true, ignored: "environment" });
+  }
+  let action: StoreNotification;
+  try {
+    action = await v.act(n, environment);
+  } catch (e) {
+    if (!(e instanceof PurchaseError)) throw e;
+    log({ ev: "ai_webhook_rejected", channel: "apple", reason: e.code });
+    return ctx.json({ ok: true, ignored: e.code });
+  }
+  log({ ...seen, ignored: false });
+  const key = appStoreApiKeyFrom(env);
+  const sender = ctx.consumption ?? (key ? new AppStoreConsumptionSender(key, { fetchImpl: ctx.appStoreFetch, nowS: () => Math.floor(now(env) / 1000) }) : null);
+  return actOnNotification(action, "apple", env, ctx, ready, log, sender);
+}
+
+/** Refunds claw back; Apple's CONSUMPTION_REQUEST is answered (with consent). */
+async function actOnNotification(
+  n: StoreNotification,
+  channel: Channel,
+  env: Env,
+  ctx: BillingContext,
+  ready: Ready,
+  log: (ev: Record<string, unknown>) => void,
+  sender: ConsumptionSender | null,
+): Promise<Response> {
+  if (n.refund) {
+    const r = await applyRefund({ ledgerFor: (a) => new DoLedger(ready.ns, a), claims: directoryClaims(env), refund: n.refund });
+    // A retried notification is a replay: nothing more is clawed back (or counted).
+    const amount = r?.entry && !r.replay ? r.entry.amount : 0;
+    log({
+      ev: "ai_refund",
+      channel,
+      kind: n.refund.kind,
+      account: r?.accountId ?? null,
+      amount,
+      matched: !!r,
+      credits: Math.abs(amount) / MICRO,
+      usd_est: refundUsdEstimate(ready.pricing, channel, amount),
+    });
+    await bumpLiability(env, ready.environment, log, amount);
+  }
+  if (n.consumptionRequest) {
+    // Apple asks how much of a purchase was used (the customer asked Apple
+    // for a refund). Answer ONLY with the customer's consent; otherwise
+    // don't respond at all (Apple's rule). A failed answer is a 500 so
+    // Apple retries the notification (12-hour deadline).
+    const cr = n.consumptionRequest;
+    const owner = await directoryClaims(env).owner("apple", cr.transactionId);
+    const a = owner ? (await new DoLedger(ready.ns, owner).account()).account : null;
+    if (!owner || !a || a.apple_consumption_consent?.consented !== true) {
+      log({ ev: "ai_consumption_skipped", account: owner ?? null, reason: !owner ? "unknown_transaction" : "no_consent" });
+      return ctx.json({ ok: true });
+    }
+    if (!sender) {
+      log({ ev: "ai_consumption_failed", alert: true, account: owner, reason: "not_configured" });
+      return ctx.json({ error: "consumption_failed" }, 500);
+    }
+    const c = await new DoLedger(ready.ns, owner).consumptionOf(`apple:${cr.transactionId}`);
+    const answer = consumptionRequestFor(c);
+    try {
+      await sender.send(cr.apiTransactionId ?? cr.transactionId, cr.environment, answer);
+    } catch (e) {
+      log({ ev: "ai_consumption_failed", alert: true, account: owner, reason: "send_failed", detail: String(e) });
+      return ctx.json({ error: "consumption_failed" }, 500);
+    }
+    log({ ev: "ai_consumption_sent", account: owner, consumption_milli: answer.consumptionPercentage ?? null, preference: answer.refundPreference ?? null });
+  }
+  return ctx.json({ ok: true });
 }
 
 /** Return URLs Checkout may send the user back to: the app, or local dev. */
@@ -98,7 +220,7 @@ async function stripeWebhook(
 ): Promise<Response> {
   const v = await verifyStripeSignature(ready.stripe!.webhookSecret, req.headers.get("stripe-signature"), body, nowS);
   if (!v.ok) {
-    log({ ev: "ai_webhook_rejected", reason: v.reason.replace(/\s+/g, "_") });
+    log({ ev: "ai_webhook_rejected", channel: "web", reason: v.reason.replace(/\s+/g, "_") });
     return ctx.json({ error: "bad_signature" }, 400);
   }
   let action: StripeAction;
@@ -293,7 +415,7 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
   }
   const nowS = Math.floor(now(env) / 1000);
   const { pricing } = ready;
-  const secrets = [ready.apiKey, ready.secret, ready.stripe?.secretKey, ready.stripe?.webhookSecret].filter((x): x is string => !!x);
+  const secrets = [ready.apiKey, ready.secret, ready.stripe?.secretKey, ready.stripe?.webhookSecret, env.APPLE_IAP_KEY].filter((x): x is string => !!x);
   const log = (ev: Record<string, unknown>) =>
     ctx.log?.(JSON.parse(secrets.reduce((l, k) => redact(l, k), JSON.stringify(ev)).replace(/\b(sk|rk|whsec)_(test|live)?_?[A-Za-z0-9]{8,}/g, "$1_[redacted]")) as Record<string, unknown>);
 
@@ -322,46 +444,11 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
       if (!(CHANNELS as readonly string[]).includes(channel)) return ctx.json({ error: "not_found" }, 404);
       const body = await req.text();
       if (channel === "web" && ready.stripe) return stripeWebhook(req, body, env, ctx, ready, log, nowS);
+      if (channel === "apple" && isSignedPayload(body)) return appleNotification(body, env, ctx, ready, log);
       if (!ready.storeKey) return ctx.json({ error: "not_configured", message: NOT_CONFIGURED }, 503);
       const n = await new FakeStoreVerifier(channel, ready.storeKey).parse(body, req.headers);
-      if (n && "refund" in n) {
-        const r = await applyRefund({ ledgerFor: (a) => new DoLedger(ready.ns, a), claims: directoryClaims(env), refund: n.refund });
-        const amount = r?.entry?.amount ?? 0;
-        log({
-          ev: "ai_refund",
-          channel,
-          kind: n.refund.kind,
-          account: r?.accountId ?? null,
-          amount,
-          matched: !!r,
-          credits: Math.abs(amount) / MICRO,
-          usd_est: refundUsdEstimate(pricing, channel, amount),
-        });
-        await bumpLiability(env, ready.environment, log, amount);
-      }
-      if (n && "consumptionRequest" in n) {
-        // Apple asks how much of a purchase was used (the customer asked Apple
-        // for a refund). Answer ONLY with the customer's consent; otherwise
-        // don't respond at all (Apple's rule). A failed answer is a 500 so
-        // Apple retries the notification (12-hour deadline).
-        const cr = n.consumptionRequest;
-        const owner = await directoryClaims(env).owner("apple", cr.transactionId);
-        const a = owner ? (await new DoLedger(ready.ns, owner).account()).account : null;
-        if (!owner || !a || a.apple_consumption_consent?.consented !== true) {
-          log({ ev: "ai_consumption_skipped", account: owner ?? null, reason: !owner ? "unknown_transaction" : "no_consent" });
-          return ctx.json({ ok: true });
-        }
-        const c = await new DoLedger(ready.ns, owner).consumptionOf(`apple:${cr.transactionId}`);
-        const answer = consumptionRequestFor(c);
-        try {
-          await (ctx.consumption ?? new FakeConsumptionSender()).send(cr.transactionId, cr.environment, answer);
-        } catch (e) {
-          log({ ev: "ai_consumption_failed", alert: true, account: owner, detail: String(e) });
-          return ctx.json({ error: "consumption_failed" }, 500);
-        }
-        log({ ev: "ai_consumption_sent", account: owner, consumption_milli: answer.consumptionPercentage ?? null, preference: answer.refundPreference ?? null });
-      }
-      return ctx.json({ ok: true });
+      if (!n) return ctx.json({ ok: true });
+      return actOnNotification(n, channel, env, ctx, ready, log, ctx.consumption ?? new FakeConsumptionSender());
     }
 
     if (path === "/billing/admin/status" && req.method === "POST") {
@@ -407,6 +494,11 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
         status: a.status,
         adult: a.adult_confirmed_at !== undefined,
         apple_consumption_consent: a.apple_consumption_consent?.consented === true,
+        // The user answered the Apple consent question (yes or no): the iOS
+        // flow asks it once, before the first purchase.
+        apple_consumption_asked: a.apple_consumption_consent !== undefined,
+        // StoreKit's appAccountToken for this account (purchases.ts accountRefFor).
+        account_ref: await accountRefFor(account),
         pricing_version: pricing.version,
       });
     }
@@ -466,10 +558,24 @@ export async function billingEndpoint(req: Request, env: Env, ctx: BillingContex
       const channel = buy[1] as Channel;
       if (!(CHANNELS as readonly string[]).includes(channel)) return ctx.json({ error: "not_found" }, 404);
       // Web purchases come from Stripe's webhook once Stripe is configured;
-      // this route is the fake store's (sandbox tests) only.
-      if (!ready.storeKey || (channel === "web" && ready.stripe)) return ctx.json({ error: "not_found" }, 404);
-      const purchase = await new FakeStoreVerifier(channel, ready.storeKey).verify(await req.json().catch(() => null));
-      const r = await applyPurchase({ ledger, claims: directoryClaims(env), pricing, accountId: account, purchase, environment: ready.environment });
+      // for web this route is the fake store's (sandbox tests) only. Apple:
+      // the app posts StoreKit 2's signed transaction ({jws}); the fake
+      // store's receipts ({payload, sig}) still work when its key is set.
+      if (channel === "web" && ready.stripe) return ctx.json({ error: "not_found" }, 404);
+      const raw = (await req.json().catch(() => null)) as { jws?: unknown } | null;
+      const real = channel === "apple" && typeof raw?.jws === "string";
+      if (!real && !ready.storeKey) {
+        return channel === "apple" ? ctx.json({ error: "bad_receipt", message: "{jws} required" }, 400) : ctx.json({ error: "not_found" }, 404);
+      }
+      let purchase: VerifiedPurchase;
+      let r: Awaited<ReturnType<typeof applyPurchase>>;
+      try {
+        purchase = real ? await new AppleStoreVerifier(appleOptions(env, ctx)).verify(raw) : await new FakeStoreVerifier(channel, ready.storeKey!).verify(raw);
+        r = await applyPurchase({ ledger, claims: directoryClaims(env), pricing, accountId: account, purchase, environment: ready.environment });
+      } catch (e) {
+        if (e instanceof PurchaseError) log({ ev: "ai_purchase_rejected", account, channel, code: e.code });
+        throw e;
+      }
       log({
         ev: "ai_purchase",
         account,

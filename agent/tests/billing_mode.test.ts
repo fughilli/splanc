@@ -205,9 +205,12 @@ describe("production relay", () => {
     const env = await relayEnv("production", { AI_BILLING_FAKE_STORE_KEY: "fake-store-test-key" });
     const ctx = ctxFor();
     const a = await account(env, ctx);
-    for (const ch of ["web", "apple"]) {
-      assert.equal((await call(env, ctx, `/billing/purchase/${ch}`, { method: "POST", headers: a.auth, body: "{}" })).status, 404, ch);
-    }
+    assert.equal((await call(env, ctx, "/billing/purchase/web", { method: "POST", headers: a.auth, body: "{}" })).status, 404);
+    // Apple's route is the real StoreKit 2 verifier (#587): it takes only a signed
+    // transaction ({jws}), never a fake-store receipt.
+    const apple = await call(env, ctx, "/billing/purchase/apple", { method: "POST", headers: a.auth, body: JSON.stringify({ payload: "{}", sig: "x" }) });
+    assert.equal(apple.status, 400);
+    assert.equal(apple.body["error"], "bad_receipt");
     assert.equal((await call(env, ctx, "/billing/notify/apple", { method: "POST", body: "{}" })).status, 503);
   });
 

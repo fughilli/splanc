@@ -1,19 +1,21 @@
 /**
- * Purchase validation (docs/design/ai-billing.md §Purchases): INTERFACES and
- * sandbox FAKES only. Nothing here talks to Apple or Stripe yet.
+ * Purchase validation (docs/design/ai-billing.md §Purchases): the interfaces,
+ * the shared credit / refund logic, and the sandbox FAKES. The real stores
+ * live next to it: apple.ts (StoreKit 2 JWS + App Store Server Notifications
+ * v2 + the App Store Server API) and stripe.ts (web checkout).
  *
  * Owner decision 2026-11-18: iOS sells consumable In-App Purchases (channel
  * "apple"); the web app (every browser, Android included) uses web checkout
  * (Stripe, channel "web"). No Google Play Billing for now.
  *
- * The real implementations (later PRs, see the staged plan):
- * - Apple: the app sends StoreKit 2's signed transaction (JWS). The server
+ * The real implementations:
+ * - Apple (apple.ts): the app sends StoreKit 2's signed transaction (JWS). The server
  *   verifies the x5c chain to Apple Root CA G3, the bundle id
  *   `dev.splanc.app`, the product id, the environment, and that the
  *   transaction's `appAccountToken` equals the account's (the app sets it at
  *   purchase), then credits. App Store Server Notifications V2 (REFUND,
  *   REVOKE, CONSUMPTION_REQUEST) arrive signed the same way.
- * - Stripe: Checkout Session created server-side with the account id as
+ * - Stripe (stripe.ts): Checkout Session created server-side with the account id as
  *   `client_reference_id`; credit on the `checkout.session.completed` webhook
  *   (Stripe-Signature HMAC); claw back on `charge.refunded` /
  *   `charge.dispute.created`.
@@ -57,14 +59,21 @@ export interface PurchaseVerifier {
  * Apple for a refund (App Store Server Notifications v2 CONSUMPTION_REQUEST). */
 export interface ConsumptionRequestNotice {
   channel: "apple";
+  /** The credit's key (the original transaction id). */
   transactionId: string;
+  /** The id to answer Apple for, when it differs (the transaction Apple named). */
+  apiTransactionId?: string | undefined;
   environment: StoreEnvironment;
 }
 
-export type StoreNotification =
-  | { purchase: VerifiedPurchase }
-  | { refund: RefundNotice }
-  | { consumptionRequest: ConsumptionRequestNotice };
+/** What a notification asks for (at most one action), plus what it was. */
+export interface StoreNotification {
+  purchase?: VerifiedPurchase | undefined;
+  refund?: RefundNotice | undefined;
+  consumptionRequest?: ConsumptionRequestNotice | undefined;
+  /** The store's own type (Apple notificationType / subtype), for the log. */
+  info?: { type: string; subtype: string | null; environment: StoreEnvironment } | undefined;
+}
 
 /** Parses a store / processor server-to-server notification (Apple ASSN v2,
  * Stripe webhook). Returns null for a notification we don't act on. */
@@ -213,11 +222,11 @@ export async function applyRefund(opts: {
   ledgerFor: (accountId: string) => Pick<Ledger, "clawback">;
   claims: PurchaseClaims;
   refund: RefundNotice;
-}): Promise<{ accountId: string; entry: LedgerEntry | null } | null> {
+}): Promise<{ accountId: string; entry: LedgerEntry | null; replay: boolean } | null> {
   const owner = await opts.claims.owner(opts.refund.channel, opts.refund.transactionId);
   if (!owner) return null; // never credited (or not ours)
   const r = await opts.ledgerFor(owner).clawback(`${opts.refund.channel}:${opts.refund.transactionId}`, opts.refund.kind);
-  return { accountId: owner, entry: r.entry };
+  return { accountId: owner, entry: r.entry, replay: r.replay };
 }
 
 // -- sandbox fakes ---------------------------------------------------------------------

@@ -44,6 +44,8 @@ const PATTERNS: Record<"token" | "version" | "day", RegExp> = {
 
 const REFUND_KINDS = ["refund", "revoke", "chargeback", "partial_refund"] as const;
 const CHANNELS = ["apple", "web", "google"] as const;
+const REFUND_PREFERENCES = ["GRANT_FULL", "GRANT_PRORATED", "DECLINE"] as const;
+const STORE_ENVS = ["sandbox", "production"] as const;
 
 /** Every event that may reach Grafana, its component, and its allowed fields. */
 export const OPS_SCHEMA: Record<string, { component: OpsComponent; service?: string; fields: Record<string, Field> }> = {
@@ -107,9 +109,13 @@ export const OPS_SCHEMA: Record<string, { component: OpsComponent; service?: str
     component: "ai-billing",
     fields: { channel: CHANNELS, kind: REFUND_KINDS, fraction: "num", matched: "bool", credits: "num", usd_est: "num" },
   },
-  ai_consumption_sent: { component: "ai-billing", fields: { consumption_milli: "num", preference: "num" } },
+  ai_consumption_sent: { component: "ai-billing", fields: { consumption_milli: "num", preference: REFUND_PREFERENCES } },
   ai_consumption_skipped: { component: "ai-billing", fields: { reason: "token" } },
-  ai_consumption_failed: { component: "ai-billing", fields: {} },
+  ai_consumption_failed: { component: "ai-billing", fields: { reason: "token" } },
+  /** An App Store Server Notification v2 that verified (type / subtype are
+   * Apple's enums; `ignored`: another environment, or a problem a retry
+   * can't fix). */
+  ai_apple_notification: { component: "ai-billing", fields: { type: "token", subtype: "token", environment: STORE_ENVS, ignored: "bool" } },
   ai_reconcile_usage: {
     component: "ai-billing",
     fields: { day: "day", ledger_usd: "num", anthropic_usd: "num", diff_usd: "num", mismatch_fraction: "num" },
@@ -120,7 +126,7 @@ export const OPS_SCHEMA: Record<string, { component: OpsComponent; service?: str
   ai_metrics_push_failed: { component: "ai-billing", fields: { status: "num" } },
   ai_checkout_created: { component: "ai-billing", fields: { sku: "token" } },
   ai_checkout_failed: { component: "ai-billing", fields: { sku: "token" } },
-  ai_webhook_rejected: { component: "ai-billing", fields: { reason: "token" } },
+  ai_webhook_rejected: { component: "ai-billing", fields: { channel: CHANNELS, reason: "token" } },
   ai_purchase_rejected: { component: "ai-billing", fields: { channel: CHANNELS, code: "token" } },
 
   // -- agent feedback (agent/relay/src/feedback.ts) ---------------------------------

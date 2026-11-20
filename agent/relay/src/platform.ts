@@ -93,6 +93,16 @@ export interface Env {
    * keys (sk_test_ / rk_test_), production only live ones (sk_live_ / rk_live_). */
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
+  /** Worker SECRETS: the App Store Server API In-App Purchase key (App Store
+   * Connect > Users and Access > Integrations > In-App Purchase): the .p8
+   * contents, its key id and the issuer id. Only used to answer Apple's
+   * CONSUMPTION_REQUEST; purchases verify without any secret. */
+  APPLE_IAP_KEY?: string;
+  APPLE_IAP_KEY_ID?: string;
+  APPLE_IAP_ISSUER_ID?: string;
+  /** Optional: the app's numeric App Store id (Apple ID), checked on
+   * production notifications. */
+  APPLE_APP_ID?: string;
   /** Where Checkout sends the user back (default https://splanc.io/app/). */
   BILLING_APP_URL?: string;
   /** Worker SECRET: the owner's token for /billing/admin/* (suspensions). */

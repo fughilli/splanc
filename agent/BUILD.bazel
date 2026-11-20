@@ -56,6 +56,8 @@ LIGHT_TESTS = [
     "tests/billing.test.ts",
     "tests/billing_stripe.test.ts",
     "tests/billing_mode.test.ts",
+    # Apple In-App Purchase (JWS chain, ASSN v2, App Store Server API) with a test chain.
+    "tests/billing_apple.test.ts",
     # The ops (Grafana) events + the dashboards / alert rules that read them.
     "tests/ops.test.ts",
 ]
@@ -157,6 +159,7 @@ copy_to_directory(
         name = f.removeprefix("tests/").removesuffix(".test.ts") + "_test_bundle",
         srcs = BUILD_INPUTS + glob(["tests/*.ts"]) + [
             "relay/billing.sandbox.pricing.json",
+            "tests/fixtures/apple/chain.json",
             "//ops/grafana/business:grafana_json",
         ],
         outs = ["dist-test/{n}/{n}.test.mjs".format(n = f.removeprefix("tests/").removesuffix(".test.ts"))],
@@ -190,6 +193,7 @@ tsc_bin.tsc_test(
     chdir = package_name(),
     data = BUILD_INPUTS + glob(["tests/*.ts"]) + [
         "relay/billing.sandbox.pricing.json",
+        "tests/fixtures/apple/chain.json",
         ":node_modules/@types/multicast-dns",
         ":node_modules/@types/node",
         ":node_modules/@types/ws",
