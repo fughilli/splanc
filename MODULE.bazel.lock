@@ -1875,7 +1875,7 @@
           "@@lighthouse~//host-lock.json": "07046c68a19b72887fb9924e6d723df8d9579b3f5b4317bf12e2e6e66e839ef0",
           "@@lighthouse~//nostd-lock.json": "bb9024e4e6a073a42e9ed61c54a59f6b5eae9383ab7b8a083ff11d1ff94e6d19",
           "@@lighthouse~//nostd-Cargo.lock": "112c57cb73232b652c45f61a855e60b035d5409627a3eb99447eaf32235ca7b4",
-          "@@//MODULE.bazel": "960ce864bed8fe9d9c68f6b6fdf5bc769667e2cec9ef7e225a912d774184b79d",
+          "@@//MODULE.bazel": "ec67227c3a115b17e173899315f6b28993e1b59189fbaac9bab6a4d89c67687f",
           "@@rules_rust~~rust_host_tools~rust_host_tools//rust_host_tools": "ENOENT"
         },
         "recordedDirentsInputs": {},
@@ -3403,7 +3403,7 @@
         "bzlTransitiveDigest": "vt4SxWkQ68m/aCDZsNn52k7/n0uWiqqPHns004YWnPk=",
         "usagesDigest": "28S0c0v9E9ZvyYWD0ltX6dRQnIcS6QTp9mhHSIJVP2Q=",
         "recordedFileInputs": {
-          "@@//MODULE.bazel": "960ce864bed8fe9d9c68f6b6fdf5bc769667e2cec9ef7e225a912d774184b79d",
+          "@@//MODULE.bazel": "ec67227c3a115b17e173899315f6b28993e1b59189fbaac9bab6a4d89c67687f",
           "@@rules_rust~~rust_host_tools~rust_host_tools//rust_host_tools": "ENOENT"
         },
         "recordedDirentsInputs": {},

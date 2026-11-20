@@ -1,0 +1,58 @@
+diff --git a/nix/arduino_esp32.BUILD b/nix/arduino_esp32.BUILD
+index d7572d3..5c21a8d 100644
+--- a/nix/arduino_esp32.BUILD
++++ b/nix/arduino_esp32.BUILD
+@@ -503,6 +503,9 @@ _C_COPTS = [
+         "-fstrict-volatile-bitfields",
+         "-fno-jump-tables",
+         "-fno-tree-switch-conversion",
++        # platform.txt compiler.optimization_flags: Arduino builds the core -Os
++        # (the flags/ files carry no -O, and this toolchain adds none: -O0).
++        "-Os",
+         "-Wno-old-style-declaration",
+         "-DCHIP_HAVE_CONFIG_H",
+         "-Wno-strict-prototypes",
+@@ -531,6 +534,9 @@ _CXX_COPTS = [
+         "-fstrict-volatile-bitfields",
+         "-fno-jump-tables",
+         "-fno-tree-switch-conversion",
++        # platform.txt compiler.optimization_flags: Arduino builds the core -Os
++        # (the flags/ files carry no -O, and this toolchain adds none: -O0).
++        "-Os",
+         "-fexceptions",
+         "-fuse-cxa-atexit",
+         "-DCHIP_HAVE_CONFIG_H",
+@@ -1594,6 +1600,9 @@ _C_COPTS_ESP32C3 = [
+         "-fstrict-volatile-bitfields",
+         "-fno-jump-tables",
+         "-fno-tree-switch-conversion",
++        # platform.txt compiler.optimization_flags: Arduino builds the core -Os
++        # (the flags/ files carry no -O, and this toolchain adds none: -O0).
++        "-Os",
+         "-Wno-old-style-declaration",
+         "-DCHIP_HAVE_CONFIG_H",
+         "-Wno-strict-prototypes",
+@@ -1622,6 +1631,9 @@ _CXX_COPTS_ESP32C3 = [
+         "-fstrict-volatile-bitfields",
+         "-fno-jump-tables",
+         "-fno-tree-switch-conversion",
++        # platform.txt compiler.optimization_flags: Arduino builds the core -Os
++        # (the flags/ files carry no -O, and this toolchain adds none: -O0).
++        "-Os",
+         "-fexceptions",
+         "-fuse-cxa-atexit",
+         "-DCHIP_HAVE_CONFIG_H",
+diff --git a/nix/mbedtls_src.BUILD b/nix/mbedtls_src.BUILD
+index 7112184..62cf228 100644
+--- a/nix/mbedtls_src.BUILD
++++ b/nix/mbedtls_src.BUILD
+@@ -18,6 +18,9 @@ _MBEDTLS_COPTS = [
+     "-fstrict-volatile-bitfields",
+     "-fno-jump-tables",
+     "-fno-tree-switch-conversion",
++    # IDF builds mbedtls -Os (CONFIG_COMPILER_OPTIMIZATION_SIZE, the SDK default); this
++    # toolchain adds no -O, so without it the library compiled -O0 (~2x the flash).
++    "-Os",
+     "-std=gnu17",
+     "-w",
+     # Enable dynamic buffers. The SDK's sdkconfig.h (on the include path via
