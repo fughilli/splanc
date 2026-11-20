@@ -137,7 +137,22 @@ jobs:
       - name: Build firmware flash bundles (esp32c6 netstack)
         run: |
           bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
+            //firmware/player_app:esp32c6_netstack \
             //firmware/player_app:esp32c6_netstack_flashbundle
+          # The mesh is in every C6 player (off by default), its dev-only site key never
+          # (owner desk #67): the key's entry point exists only in the _meshdev HITL image.
+          if grep -qa ns_mesh_dev_provision bazel-bin/firmware/player_app/esp32c6_netstack.elf; then
+            echo "the shipping image carries the mesh dev key (ns_mesh_dev_provision)" >&2; exit 1
+          fi
+
+      # The mesh HITL images (//pi/hitl/harness:mesh_*): _meshdev (dev-only site key, never
+      # published: release.yaml refuses it) and the M3a spike. Build-only, so a PR can't break
+      # them unnoticed; the mesh HITL gates run on request, on hitl-rig-1.
+      - name: Build the mesh HITL images (esp32c6, build-only)
+        run: |
+          bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
+            //firmware/player_app:esp32c6_netstack_meshdev_flashbundle \
+            //firmware/player_app:esp32c6_netstack_meshspike_flashbundle
 
       # esp32c3 is a BUILD-ONLY target (see //MODULE.bazel + firmware/netstack
       # ccmp.rs): build-gate that the c3 flashbundle compiles + links on every PR

@@ -192,6 +192,8 @@ pub struct Neighbour {
     pub id: NodeId,
     pub capacity: Capacity,
     pub diameter: u8,
+    /// The channel its advert announces (§4.2: where the mesh is).
+    pub channel: u8,
     pub last_us: i64,
 }
 
@@ -252,60 +254,88 @@ fn mesh_time_s(now_us: i64) -> u32 {
 }
 
 impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> MeshStack<B, P, K, E, R> {
-    pub fn new(me: NodeId, mac: [u8; 6], backhaul: B, dev: K, mut rng: E, mut cfg: StackConfig) -> Result<Self, MtuTooSmall> {
-        let mut net = NetOf::<P>::new(me, None, cfg.fw_key, cfg.firmware, rng.u32());
-        net.mesh.cfg.high_ports = Port::HIGH_PRIORITY;
-        net.mesh.cfg.hop_limit = cfg.hop_limit.clamp(1, MAX_HOPS);
-        net.mesh.cfg.bulk_from = BULK_FROM;
-        if cfg.capacity_aware {
-            // No relay-delay bias by class (`bulk_relay_bias` stays 0): the stress sweep showed
-            // a custodian relaying early makes a C6 cut vertex hear the duplicate and cancel
-            // the only relay toward the far side (far-cluster delivery 3 %). The flood's
-            // RSSI-based delay is what gives coverage; capacity must not override it.
-            #[cfg(feature = "custodian_spill")]
-            {
-                net.mesh.spill = cfg.class.custodian();
-            }
-        } else {
+    pub fn new(me: NodeId, mac: [u8; 6], backhaul: B, dev: K, rng: E, cfg: StackConfig) -> Result<Self, MtuTooSmall> {
+        let mut m = core::mem::MaybeUninit::<Self>::uninit();
+        // SAFETY: init_in writes every field on Ok; on Err it wrote nothing.
+        unsafe {
+            Self::init_in(m.as_mut_ptr(), me, mac, backhaul, dev, rng, cfg)?;
+            Ok(m.assume_init())
+        }
+    }
+
+    /// [`MeshStack::new`] built in place at `dst` (firmware: in its heap block, with ~a
+    /// tenth of the stack a by-value build needs; mesh M3).
+    ///
+    /// # Safety
+    /// `dst` is valid for writes. On `Ok` every field is initialised; on `Err` none is.
+    pub unsafe fn init_in(dst: *mut Self, me: NodeId, mac: [u8; 6], backhaul: B, dev: K, mut rng: E, mut cfg: StackConfig) -> Result<(), MtuTooSmall> {
+        use core::ptr::addr_of_mut;
+        if !cfg.capacity_aware {
             cfg.class = Class::C6;
         }
+        let seed = rng.u32();
         let guard = MeshSecurity::new(me, cfg.mic, backhaul.mtu(), cfg.counter_mark);
-        let node = Node::with_guard(net, backhaul, guard, cfg.node)?;
+        let c = cfg;
+        Node::init_in(
+            addr_of_mut!((*dst).node),
+            |np: *mut NetOf<P>| {
+                np.write(NetOf::<P>::new(me, None, c.fw_key, c.firmware, seed));
+                let net = &mut *np;
+                net.mesh.cfg.high_ports = Port::HIGH_PRIORITY;
+                net.mesh.cfg.hop_limit = c.hop_limit.clamp(1, MAX_HOPS);
+                net.mesh.cfg.bulk_from = BULK_FROM;
+                // No relay-delay bias by class (`bulk_relay_bias` stays 0): the stress sweep
+                // showed a custodian relaying early makes a C6 cut vertex hear the duplicate
+                // and cancel the only relay toward the far side (far-cluster delivery 3 %).
+                // The flood's RSSI-based delay is what gives coverage; capacity must not
+                // override it.
+                #[cfg(feature = "custodian_spill")]
+                if c.capacity_aware {
+                    net.mesh.spill = c.class.custodian();
+                }
+            },
+            backhaul,
+            guard,
+            cfg.node,
+        )?;
         #[cfg(feature = "open_mode")]
         let kh = key_hash(&dev.public_key());
-        Ok(MeshStack {
-            node,
-            membership: Membership::new(me, mac, cfg.firmware),
-            router: Router::new(),
-            sessions: Sessions::new(),
-            gateway: None,
-            rekeyer: None,
-            rekey_member: RekeyMember::default(),
-            #[cfg(feature = "open_mode")]
-            follower: Follower::new(Follow::Off, me, kh, cfg.firmware),
-            gate: AdminGate::new(),
-            dev,
-            rng,
-            neighbours: [None; NEIGHBOURS],
-            cfg,
-            next_advert_us: None,
-            next_grant_us: None,
-            last_bulk_us: None,
-            installed: None,
-            held: None,
-            live: None,
-            live_coalesced: 0,
-            live_sent: 0,
-            live_last_op: 0,
-            hops_seen: (0, 0),
-            next_probe_us: None,
-            pending_grant: None,
-            pending_acks: [None; CRYPTO_ACKS],
-            renewal_asked: None,
-            crypto_jobs: 0,
-            plain_tx: [0; PLAIN_MAX],
-            plain_sealed: [0; PLAIN_MAX + 32],
-        })
+        macro_rules! w {
+            ($f:ident, $v:expr) => {
+                addr_of_mut!((*dst).$f).write($v)
+            };
+        }
+        w!(membership, Membership::new(me, mac, cfg.firmware));
+        w!(router, Router::new());
+        w!(sessions, Sessions::new());
+        w!(gateway, None);
+        w!(rekeyer, None);
+        w!(rekey_member, RekeyMember::default());
+        #[cfg(feature = "open_mode")]
+        w!(follower, Follower::new(Follow::Off, me, kh, cfg.firmware));
+        w!(gate, AdminGate::new());
+        w!(dev, dev);
+        w!(rng, rng);
+        w!(neighbours, [None; NEIGHBOURS]);
+        w!(cfg, cfg);
+        w!(next_advert_us, None);
+        w!(next_grant_us, None);
+        w!(last_bulk_us, None);
+        w!(installed, None);
+        w!(held, None);
+        w!(live, None);
+        w!(live_coalesced, 0);
+        w!(live_sent, 0);
+        w!(live_last_op, 0);
+        w!(hops_seen, (0, 0));
+        w!(next_probe_us, None);
+        w!(pending_grant, None);
+        w!(pending_acks, [None; CRYPTO_ACKS]);
+        w!(renewal_asked, None);
+        w!(crypto_jobs, 0);
+        w!(plain_tx, [0; PLAIN_MAX]);
+        w!(plain_sealed, [0; PLAIN_MAX + 32]);
+        Ok(())
     }
 
     pub fn me(&self) -> NodeId {
@@ -393,14 +423,14 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         }
     }
 
-    fn note_neighbour(&mut self, now_us: i64, id: NodeId, capacity: Capacity, diameter: u8) {
+    fn note_neighbour(&mut self, now_us: i64, id: NodeId, capacity: Capacity, diameter: u8, channel: u8) {
         let i = self
             .neighbours
             .iter()
             .position(|n| n.is_some_and(|n| n.id == id))
             .or_else(|| self.neighbours.iter().position(|n| n.is_none()))
             .unwrap_or_else(|| (0..NEIGHBOURS).min_by_key(|&i| self.neighbours[i].map_or(i64::MIN, |n| n.last_us)).unwrap_or(0));
-        self.neighbours[i] = Some(Neighbour { id, capacity, diameter, last_us: now_us });
+        self.neighbours[i] = Some(Neighbour { id, capacity, diameter, channel, last_us: now_us });
         if self.cfg.capacity_aware {
             let mut pref = [0xFFFFu16; swarm_net::update::PREFERRED];
             for (p, n) in pref.iter_mut().zip(self.neighbours.iter().flatten().filter(|n| n.capacity.class.custodian() && now_us - n.last_us < 5_000_000)) {
@@ -427,6 +457,18 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         let id = self.send(BROADCAST, Port::Bulk, body, false)?;
         self.last_bulk_us = Some(now_us);
         Ok(id)
+    }
+
+    /// The channel the freshest advert of our mesh announces (§4.2), if any in 10 s.
+    pub fn heard_channel(&self, now_us: i64) -> Option<u8> {
+        self.neighbours.iter().flatten().filter(|n| now_us - n.last_us < 10_000_000).max_by_key(|n| n.last_us).map(|n| n.channel)
+    }
+
+    /// Set the channel this member's adverts announce (AP-anchored: the AP's, §4.2).
+    pub fn set_channel(&mut self, ch: u8) {
+        if let Some(s) = self.membership.state.as_mut() {
+            s.channel = ch;
+        }
     }
 
     /// The lowest relay credit any recently heard neighbour advertises (custodians release
@@ -603,7 +645,7 @@ impl<B: Backhaul, const P: usize, K: DeviceKey, E: Entropy, const R: usize> Mesh
         if body.first() == Some(&T_ADVERT) {
             if let Some(a) = Advert::decode(body) {
                 if Some(h.mesh_id) == self.membership.mesh_id() {
-                    self.note_neighbour(now_us, h.src, a.capacity, a.diameter);
+                    self.note_neighbour(now_us, h.src, a.capacity, a.diameter, a.channel);
                 }
                 #[cfg(feature = "open_mode")]
                 if self.membership.state.is_none() {

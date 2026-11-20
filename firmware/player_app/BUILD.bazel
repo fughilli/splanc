@@ -768,10 +768,74 @@ NETSTACK_VARIANTS = [
         "_meshspike",
         ["LM_MESH_SPIKE=1"],
     ),
+    # Mesh M3 with the DEV-ONLY site key on the console (`MESH KEY`, owner desk #67):
+    # what //pi/hitl/harness:mesh_smoke flashes. Never a release image before M7. The
+    # mesh itself is in every player (off by default, no RAM while off: mesh_ffi.rs).
+    (
+        "_meshdev",
+        ["LM_MESH_DEVKEY=1"],
+    ),
 ]
 
 # Players whose transport is a twin of :netstack_transport (same defines).
-_TRANSPORT_TWINS = ("_ctrltrace", "_meshspike")
+_TRANSPORT_TWINS = ("_ctrltrace", "_meshspike", "_meshdev")
+
+# The transport reaches the mesh through WEAK symbols (mesh_glue.h; the OTA loader has none),
+# and a weak reference never pulls an archive member: the player names them undefined, so
+# the linker takes mesh_ffi in.
+_MESH_FFI_SYMS = [
+    "ns_mesh_size",
+    "ns_mesh_create",
+    "ns_mesh_destroy",
+    "ns_mesh_rxv",
+    "ns_mesh_rx",
+    "ns_mesh_settle",
+    "ns_mesh_pump",
+    "ns_mesh_tick",
+    "ns_mesh_take_log",
+    "ns_mesh_set",
+    "ns_mesh_test",
+    "ns_mesh_test_reset",
+    "ns_mesh_replay",
+    "ns_mesh_report",
+    "ns_mesh_block",
+    "ns_mesh_aux",
+    "ns_mesh_stage",
+    "ns_mesh_tick_staged",
+]
+
+# The mesh (docs/design/mesh.md M3): MeshStack over the 802.11 backhaul
+# (splanc_mesh::wifi_p2p) for mesh_glue.h. No statics: everything lives in the heap block
+# the transport allocates on MESH ON (desk #68), so linking it costs no RAM while off.
+# Every netstack player links it; the OTA loader does not (mesh_glue.h's weak symbols).
+rust_static_library(
+    name = "mesh_ffi",
+    srcs = ["mesh_ffi.rs"],
+    crate_name = "mesh_ffi",
+    edition = "2021",
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        "//firmware/mesh:mesh_fw",
+        "//firmware/mesh/swarm:swarm_net_fw",
+        "//firmware/netstack",
+    ],
+)
+
+rust_test(
+    name = "mesh_ffi_test",
+    size = "small",
+    srcs = ["mesh_ffi.rs"],
+    crate_name = "mesh_ffi",
+    edition = "2021",
+    deps = [
+        "//firmware/mesh",
+        "//firmware/mesh/swarm:swarm_net",
+        "//firmware/netstack",
+    ],
+)
 
 # The M2 mesh envelope (seal/open + replay window) for the mesh spike's C++ side
 # (mesh_spike_impl.h). No statics: the replay table lives in the heap block the spike
@@ -828,7 +892,13 @@ rust_test(
     # libbt.a symbols (improv_ble_netstack.cpp, gated on LM_CHIP_ESP32C3), and the
     # mbedtls HW-ECC port (esp_ecc.c) is dropped for the C3 (no HW ECC peripheral)
     # in favour of the software ECP (@mbedtls_src//:mbedtls_src_esp32c3).
-    linkopts = ["-Wl,--allow-multiple-definition"],
+    linkopts = ["-Wl,--allow-multiple-definition"] + select({
+        # The dev-only site key's entry point (desk #67) only in the LM_MESH_DEVKEY image.
+        "@embedded//platforms:is_esp32c6": ["-Wl,-u," + s for s in _MESH_FFI_SYMS + (
+            ["ns_mesh_dev_provision"] if sfx == "_meshdev" else []
+        )],
+        "//conditions:default": [],
+    }),
     local_defines = [
         "LM_NETSTACK",
         # Sensor core (sensor_bus.cpp): I2C IMU probe at boot + sensor task.
@@ -869,9 +939,15 @@ rust_test(
     ] + select({
         ":heap_census_on": [":heap_census"],
         "//conditions:default": [],
+    }) + select({
+        # The mesh (C6 only for now: the backhaul is the C6 MAC's).
+        "@embedded//platforms:is_esp32c6": [
+            ":mesh_ffi",
+            "//firmware/mesh/swarm:swarm_crypto",  # SHA-256/HMAC under the envelope's HKDF
+        ],
+        "//conditions:default": [],
     }) + ([
         ":mesh_spike_ffi",
-        "//firmware/mesh/swarm:swarm_crypto",  # SHA-256/HMAC under the envelope's HKDF
     ] if sfx == "_meshspike" else []),
 ) for sfx, extra in NETSTACK_VARIANTS]
 
@@ -1026,6 +1102,7 @@ cc_library(
         "dhcp_reply.h",
         "icmp_echo.h",
         "join_guard.h",
+        "mesh_glue.h",
         "mesh_spike_impl.h",
         "netstack_transport.cpp",
         "psk_reject.h",
@@ -1070,6 +1147,10 @@ cc_library(
     (
         "_meshspike",
         ["LM_MESH_SPIKE=1"],
+    ),
+    (
+        "_meshdev",
+        ["LM_MESH_DEVKEY=1"],
     ),
 ]]
 
@@ -1146,7 +1227,22 @@ esptool_flash(
     tags = ["manual"],
 )
 
-# The mesh spike image //pi/hitl/harness:mesh_smoke flashes (M3a; not shipped).
+esptool_flash(
+    name = "flash_esp32c6_netstack_meshdev",
+    app = ":esp32c6_netstack_meshdev",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+# The mesh M3 image //pi/hitl/harness:mesh_smoke flashes (the dev site key on the console;
+# not shipped).
+flash_bundle(
+    name = "esp32c6_netstack_meshdev_flashbundle",
+    flash = ":flash_esp32c6_netstack_meshdev",
+    tags = ["manual"],
+)
+
+# The mesh spike image //pi/hitl/harness:mesh_spike flashes (M3a; not shipped).
 flash_bundle(
     name = "esp32c6_netstack_meshspike_flashbundle",
     flash = ":flash_esp32c6_netstack_meshspike",

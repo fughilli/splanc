@@ -779,6 +779,28 @@ static bool tls_store_write(const uint8_t *buf, size_t len) {
   return fs_write_file(kTlsIdentityPath, buf, len);
 }
 
+// The mesh envelope's frame-counter high-water mark (docs/design/mesh.md §7.5, mesh M3):
+// reserved ahead in blocks of 2^16 and persisted BEFORE a counter in the block is used, so
+// a reboot never reuses an AES-CCM nonce. Written once per block (rarely), through the same
+// power-loss-safe writer. mesh_ffi.rs / mesh_glue.h call these; absent the file, 0.
+static const char kMeshCounterPath[] = "/lfs/mesh_ctr.bin";  // an array: flash, not a .data pointer
+
+extern "C" uint32_t lm_mesh_counter_load(uint64_t *mark) {
+  *mark = 0;
+  FILE *f = fs_open(kMeshCounterPath, "rb");
+  if (f == nullptr) return 0;
+  uint64_t v = 0;
+  size_t n = fread(&v, 1, sizeof v, f);
+  fclose(f);
+  if (n != sizeof v) return 0;
+  *mark = v;
+  return 1;
+}
+
+extern "C" uint32_t lm_mesh_counter_store(uint64_t mark) {
+  return fs_write_file(kMeshCounterPath, reinterpret_cast<const uint8_t *>(&mark), sizeof mark) ? 1 : 0;
+}
+
 static const DeviceCertStore kTlsStore = {tls_store_read, tls_store_write};
 #endif
 

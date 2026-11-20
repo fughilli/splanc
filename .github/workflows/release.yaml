@@ -114,6 +114,8 @@ jobs:
           mkdir -p _assets
           cp bazel-bin/firmware/player_app/esp32c6_netstack_flashbundle.tar "_assets/esp32c6-netstack-${VER}.tar"
           cp "bazel-bin/agent/splanc-agent-${VER}.tgz" "bazel-bin/agent/splanc-agent-${VER}.tgz.sha256" _assets/
+          # The mesh HITL image carries the dev-only site key (owner desk #67): never published.
+          if ls _assets | grep -qi meshdev; then echo "refusing to publish a meshdev image" >&2; exit 1; fi
 
       # Over-the-air updates (docs/design/ota.md): sign the app with the release key
       # (the loader in esp32c6-ota-<ver>.tar trusts only firmware/ota/keys/release.pub)

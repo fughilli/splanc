@@ -13,6 +13,19 @@ pub type NodeId = u16;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct BackhaulId(pub u8);
 
+/// What a frame is for, so a backhaul can pick how to carry it (M3, design §4.1/§4.3): on
+/// 802.11, discovery (beacons, adverts, joins) always goes out as one broadcast, where a lost
+/// frame costs nothing (the next one comes within a second); data can go as unicasts with
+/// MAC ACKs and retries to each neighbour instead (`wifi_p2p::GroupPolicy`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TxClass {
+    /// Beacons, adverts, join traffic: periodic, loss tolerated.
+    Discovery,
+    /// Mesh packets (floods, relays, page protocol): must arrive.
+    #[default]
+    Data,
+}
+
 /// Back-pressure: the backhaul cannot queue the frame now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Busy;
@@ -41,6 +54,12 @@ pub trait Backhaul {
     /// backhaul reports a full queue through [`Backhaul::may_send`] first, so `Busy` is a race
     /// and the frame is dropped (the flood's redundancy and want-ack retries cover it).
     fn send(&mut self, frame: &[u8], dst: Option<NodeId>) -> Result<(), Busy>;
+    /// [`Backhaul::send`] with what the frame is for. Backhauls that carry every frame the
+    /// same way keep this default.
+    fn send_class(&mut self, frame: &[u8], dst: Option<NodeId>, class: TxClass) -> Result<(), Busy> {
+        let _ = class;
+        self.send(frame, dst)
+    }
     /// Next received frame, copied into `buf` (at least `mtu()` bytes), with its metadata.
     fn recv(&mut self, buf: &mut [u8]) -> Option<RxMeta>;
     /// Whether this node may transmit now (its TDMA slot on UWB; on 802.11 whenever the TX
