@@ -1,0 +1,57 @@
+name: Home Assistant integration
+# custom_components/splanc (HACS). The Bazel test //integrations/homeassistant:protocol_test
+# (the codec vs ledmapper.proto) runs in test.yaml with everything else; this
+# workflow runs what needs Home Assistant itself.
+on:
+  pull_request:
+    paths:
+      - 'custom_components/**'
+      - 'integrations/homeassistant/**'
+      - 'hacs.json'
+      - 'shared/protocol/proto/ledmapper.proto'
+      - '.github/workflows/homeassistant.yaml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'custom_components/**'
+      - 'integrations/homeassistant/**'
+      - 'hacs.json'
+      - 'shared/protocol/proto/ledmapper.proto'
+      - '.github/workflows/homeassistant.yaml'
+  workflow_dispatch:
+  # Home Assistant ships monthly: catch a breaking change before users do.
+  schedule:
+    - cron: '17 6 * * 1'
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # pytest-homeassistant-custom-component's Home Assistant needs it.
+          python-version: '3.14'
+      - name: Install the Home Assistant test harness
+        run: pip install -r integrations/homeassistant/requirements-test.txt
+      # Against a fake lamp: a real wss server on 127.0.0.1 with a self-signed
+      # certificate (tests/fake_lamp.py), so the TLS pinning, the one-session
+      # takeover rule and the pushes all run for real.
+      - name: pytest
+        working-directory: integrations/homeassistant
+        run: python -m pytest -q -p no:cacheprovider
+
+  hassfest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hacs/action@main
+        with:
+          category: integration
+          # Not in home-assistant/brands yet (needs a submission there first).
+          ignore: brands
