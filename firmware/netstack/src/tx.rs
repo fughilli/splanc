@@ -383,6 +383,53 @@ impl<const N: usize> TxRing<N> {
         mmio::write32(mac::txq_reg(0x600A_54BC, queue, s), 0x0040_0004);
     }
 
+    /// [`set_rate`] at an explicit TX rate code (`p2p::tx_words`) and TX power byte
+    /// (`pwr`, the low byte of the queue's power word; 0x14 is the template's), for the
+    /// P2P path (mesh M3a). Rate 0 with `pwr = 0x14` writes exactly what [`set_rate`] does.
+    ///
+    /// # Safety
+    /// MMIO; the MAC + PHY must be initialized.
+    pub unsafe fn set_rate_ex(&self, idx: usize, rate: u8, pwr: u8) {
+        if idx >= N {
+            return;
+        }
+        let queue = self.slots[idx].queue;
+        let w = crate::p2p::tx_words(rate, self.slots[idx].frame_len_802);
+        mmio::write32(mac::txq_reg(0x600A_4D68, queue, mac::TXQ_STRIDE), 0x1200_0077);
+        let s = mac::TXQ_STATUS_STRIDE;
+        mmio::write32(mac::txq_reg(0x600A_5488, queue, s), w.plcp1);
+        mmio::write32(mac::txq_reg(0x600A_548C, queue, s), 0x0002_0000);
+        mmio::write32(mac::txq_reg(0x600A_5490, queue, s), 0x0011_1110);
+        mmio::write32(mac::txq_reg(mac::TXQ_PWR_BASE, queue, s), 0x1414_0000 | pwr as u32);
+        mmio::write32(mac::txq_reg(0x600A_54B0, queue, s), 0x0000_4081);
+        mmio::write32(mac::txq_reg(0x600A_54B4, queue, s), 0x0040_0000);
+        mmio::write32(mac::txq_reg(0x600A_54B8, queue, s), w.txlen);
+        mmio::write32(mac::txq_reg(0x600A_54BC, queue, s), w.resp_dur);
+    }
+
+    /// [`arm`], optionally expecting an ACK (PLCP0 ack-type 1, `p2p::PLCP0_ACK_NORMAL`):
+    /// the MAC then waits for the peer's ACK and reports the outcome in the queue's PMD
+    /// word ([`txq_result`]). Clears the queue's completed bit first, so
+    /// [`txq_completed`] reports this frame.
+    ///
+    /// # Safety
+    /// As [`arm`].
+    pub unsafe fn arm_ex(&mut self, idx: usize, ack: bool) {
+        if idx >= N {
+            return;
+        }
+        let queue = self.slots[idx].queue;
+        txq_clear(queue);
+        let len = (self.slots[idx].len as u32) & TX_SIZE_MASK;
+        self.descs[idx].buf = self.slots[idx].buf.as_ptr() as u32;
+        self.descs[idx].next = 0;
+        self.descs[idx].word0 = TX_OWN | TX_EOF | (len << TX_LEN_SHIFT) | len;
+        let desc_addr = core::ptr::addr_of!(self.descs[idx]) as u32;
+        let plcp = mac::txq_reg(mac::TXQ_PLCP0_BASE, queue, mac::TXQ_STRIDE);
+        let ackf = if ack { crate::p2p::PLCP0_ACK_NORMAL } else { 0 };
+        mmio::write32(plcp, plcp0_for_desc(desc_addr) | ackf);
+    }
+
     /// Poll each hardware queue for completion and, if done, clear the state and
     /// free the slot (read the per-queue status block, then write `1<<queue` to
     /// the completion-clear register). Returns `true` if a completion was
@@ -413,6 +460,33 @@ impl<const N: usize> TxRing<N> {
 impl<const N: usize> Default for TxRing<N> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Whether queue `queue`'s last arm has completed (the TX state machine's completed-queue
+/// bitmap, `TXQ_STATE_B` bit `queue`, queues 0-3).
+///
+/// # Safety
+/// MMIO; the MAC must be initialized.
+pub unsafe fn txq_completed(queue: usize) -> bool {
+    queue < 4 && mmio::read32(mac::TXQ_STATE_B) & (1 << queue) != 0
+}
+
+/// Queue `queue`'s completion result word (PMD); decode with `p2p::tx_status`.
+///
+/// # Safety
+/// MMIO; the MAC must be initialized.
+pub unsafe fn txq_result(queue: usize) -> u32 {
+    mmio::read32(mac::txq_reg(mac::TXQ_PMD_BASE, queue, mac::TXQ_STATUS_STRIDE))
+}
+
+/// Clear queue `queue`'s completed bit (`hal_mac_clr_txq_state(2, queue)`).
+///
+/// # Safety
+/// MMIO; the MAC must be initialized.
+pub unsafe fn txq_clear(queue: usize) {
+    if queue < 4 {
+        mmio::write32(mac::TXQ_CLR_STATE_B, mmio::read32(mac::TXQ_CLR_STATE_B) | (1 << queue));
     }
 }
 
@@ -447,6 +521,43 @@ mod tests {
         assert_eq!(seen, [0, 1, 2, 3, 0, 1, 2, 3]);
         assert_eq!(ring.slots[3].buf[TX_HDR_LEN], 7);
         assert_eq!(ring.slots[2].buf[TX_HDR_LEN], 6);
+    }
+
+    #[test]
+    fn set_rate_ex_at_rate_zero_writes_the_legacy_template() {
+        // The P2P path at 1 Mb/s / default power must program the queue exactly like the
+        // path every netstack frame has used since M1b.
+        let mut ring: TxRing<2> = TxRing::new();
+        let i = ring.load_frame_next(&[0xd0; 120], 0).unwrap();
+        let regs = [0x600A_4D68, 0x600A_5488, 0x600A_548C, 0x600A_5490, 0x600A_54AC, 0x600A_54B0,
+                    0x600A_54B4, 0x600A_54B8, 0x600A_54BC];
+        mmio::test_reset();
+        unsafe { ring.set_rate(i) };
+        let legacy: Vec<_> = regs.iter().map(|&a| mmio::test_get(a)).collect();
+        mmio::test_reset();
+        unsafe { ring.set_rate_ex(i, 0, 0x14) };
+        let ex: Vec<_> = regs.iter().map(|&a| mmio::test_get(a)).collect();
+        assert_eq!(legacy, ex);
+        // 6 Mb/s OFDM: the rate code in PLCP1, a 6 Mb/s ACK expected (the vendor's words).
+        unsafe { ring.set_rate_ex(i, crate::p2p::RATE_6M, 0x14) };
+        assert_eq!(mmio::test_get(0x600A_5488).unwrap(), 0xb000 | 124);
+        assert_eq!(mmio::test_get(0x600A_54BC).unwrap(), 0x0040_02c4);
+    }
+
+    #[test]
+    fn arm_ex_sets_ack_type_only_when_asked() {
+        let mut ring: TxRing<2> = TxRing::new();
+        let i = ring.load_frame_next(&[0xd0; 40], 0).unwrap();
+        let plcp = mac::txq_reg(mac::TXQ_PLCP0_BASE, 0, mac::TXQ_STRIDE);
+        mmio::test_reset();
+        unsafe { ring.arm_ex(i, false) };
+        let no_ack = mmio::test_get(plcp).unwrap();
+        assert_eq!(no_ack & 0x0700_0000, 0);
+        assert_eq!(no_ack & PLCP0_ARM, PLCP0_ARM);
+        unsafe { ring.arm_ex(i, true) };
+        assert_eq!(mmio::test_get(plcp).unwrap(), no_ack | crate::p2p::PLCP0_ACK_NORMAL);
+        // arm_ex clears the queue's completed bit first (hal_mac_clr_txq_state(2, q)).
+        assert_eq!(mmio::test_get(mac::TXQ_CLR_STATE_B).unwrap() & 1, 1);
     }
 
     #[test]
