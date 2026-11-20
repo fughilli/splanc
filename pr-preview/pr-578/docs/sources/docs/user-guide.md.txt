@@ -185,7 +185,10 @@ refine and use the map.
 - **Inspect the solve** in 3D: orbit, zoom, and auto-scale/recenter the view.
 - **Edit topology** — the skeleton graph that says which LEDs are neighbors. A single Cleanup knob
   handles most fixtures; a Fine-tune disclosure exposes the full extraction options.
-- **Send to / pull from a device** so the fixture and the app agree on the map.
+- **Push to a device** so the fixture gets this map and its topology. To copy a device's map into
+  your library, use **Save to this phone** on the device card at the top of the Maps tab.
+- **Digital twin** imports an OBJ or STL mesh of the fixture so you can align it with the LEDs as a
+  gray overlay. It never moves the LEDs.
 - **Supplement** re-scans part of the fixture and merges the new scan into the map, to fill gaps or
   improve weak LEDs. If the map kept its raw capture data, weak LEDs are re-solved from both
   captures. A map without that data (copied from a device, imported, or captured before it was kept)

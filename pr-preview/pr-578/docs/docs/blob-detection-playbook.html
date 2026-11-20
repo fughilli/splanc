@@ -234,6 +234,7 @@
 <li class="toctree-l1"><a class="reference internal" href="host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
@@ -331,7 +332,11 @@ to watch so a change can be judged, not guessed.</p>
 <h2>Baseline (where we are)<a class="headerlink" href="#baseline-where-we-are" title="Link to this heading">¶</a></h2>
 <p>Locking the camera exposure to the Nyquist-capped sweet spot
 (<code class="docutils literal notranslate"><span class="pre">?exposure=servo</span></code>, capped at <code class="docutils literal notranslate"><span class="pre">bitPeriodMs/2</span></code>, see <code class="docutils literal notranslate"><span class="pre">cv/exposure.ts</span></code>
-<code class="docutils literal notranslate"><span class="pre">planExposureServo</span></code> + <code class="docutils literal notranslate"><span class="pre">xr/exposureControl.ts</span></code>) transformed detection:</p>
+<code class="docutils literal notranslate"><span class="pre">planExposureServo</span></code> + <code class="docutils literal notranslate"><span class="pre">xr/exposureControl.ts</span></code>) transformed detection.
+Since 2026-11 this is the DEFAULT wherever the camera takes a manual exposure
+lock, run by the exposure-first light servo (<code class="docutils literal notranslate"><span class="pre">cv/lightServo.ts</span></code>: exposure
+before LED brightness, a measured exposure floor, no brightness ratchet);
+<code class="docutils literal notranslate"><span class="pre">?exposure=auto</span></code> restores camera auto-exposure + the legacy brightness servo:</p>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
 <thead>
