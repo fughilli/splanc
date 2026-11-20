@@ -1411,6 +1411,9 @@ static void tls_session_reset() {
 // steady state holds only the parsed structures — as it did with the baked cert. On a
 // parse failure the identity is discarded and regenerated (device_cert_reject).
 static bool g_identity_installed = false;
+namespace lm_mesh {
+void boot();  // mesh_glue.h: a fixture in a mesh turns it back on once its device key is here (M7)
+}
 static bool tls_install_identity() {
   size_t kl = 0, cl = 0;
   const uint8_t *key = device_cert_key_der(&kl);
@@ -1430,6 +1433,7 @@ static bool tls_install_identity() {
   }
   mbedtls_ssl_conf_own_cert(&g_conf, &g_srvcert, &g_pk);
   g_identity_installed = true;
+  lm_mesh::boot();
   return true;
 }
 
@@ -1779,7 +1783,13 @@ extern "C" int32_t lm_mesh_app(uint32_t conn, const uint8_t *in, size_t len, uin
                                const uint8_t **inner, uint32_t *inner_len) {
   // The mesh off (no block): this player still answers its own arms (get_mesh state{on: false},
   // mesh_send result{error: NO_MESH}; ns_mesh_app_off), so the app's mesh section stays hidden.
-  if (!g_mesh || !ns_mesh_app) return ns_mesh_app_off ? ns_mesh_app_off(in, (uint32_t)len, out, (uint32_t)cap) : -2;
+  if (!g_mesh || !ns_mesh_app) {
+    int32_t r = ns_mesh_app_off ? ns_mesh_app_off(in, (uint32_t)len, out, (uint32_t)cap) : -2;
+    // -4: mesh_admin provision / leave (M7): the mesh comes on first, then handles it (a
+    // join persists the state; leave erases it and turns the mesh off again).
+    if (r != -4) return r;
+    if (!lm_mesh::on()) return -2;  // the player core answers error{unsupported}
+  }
   return ns_mesh_app(g_mesh, conn, in, (uint32_t)len, esp_timer_get_time(), out, (uint32_t)cap, inner, inner_len);
 }
 extern "C" void lm_mesh_app_done(uint32_t status) {

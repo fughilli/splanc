@@ -118,6 +118,7 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::ListStoredEffects(_)
         | CMsg::LoadStoredEffect(_)
         | CMsg::DeleteStoredEffect(_)
+        | CMsg::MeshAdmin(_)
         | CMsg::OtaBegin(_)
         | CMsg::OtaChunk(_)
         | CMsg::OtaFinish(_)
@@ -219,6 +220,7 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::ListStoredEffects(_) => "list_stored_effects",
         CMsg::LoadStoredEffect(_) => "load_stored_effect",
         CMsg::DeleteStoredEffect(_) => "delete_stored_effect",
+        CMsg::MeshAdmin(_) => "mesh_admin",
         CMsg::OtaBegin(_) => "ota_begin",
         CMsg::OtaChunk(_) => "ota_chunk",
         CMsg::OtaFinish(_) => "ota_finish",

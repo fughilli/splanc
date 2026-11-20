@@ -11,6 +11,7 @@
 //! | 0x11 | `AssignGroups` | `MEMBERSHIP` port, admin session command                   | ≤ 12  |
 //! | 0x12 | `SetMode`      | `MEMBERSHIP` port, admin session command                   | 6     |
 //! | 0x13 | `AllowListAdd` | `MEMBERSHIP` port, admin session command                   | ≤ 162 |
+//! | 0x15 | `Eject`        | `MEMBERSHIP` port, admin session command                   | 11    |
 //! | 0x20 | `PendingJoin`  | `STATUS` port (a member tells gateways)           | 23    |
 //!
 //! Plain messages never enter the flood (members do not relay them), so an outsider cannot
@@ -37,6 +38,7 @@ pub const T_SET_MODE: u8 = 0x12;
 pub const T_ALLOW_LIST_ADD: u8 = 0x13;
 /// Reserved for key rotation (§7.6, M7c): `Rekey{epoch, wrapped key}`, `RekeyRequest`.
 pub const T_REKEY: u8 = 0x14;
+pub const T_EJECT: u8 = 0x15;
 pub const T_PENDING_JOIN: u8 = 0x20;
 /// A tiny flood at the maximum hop limit, once a minute per node: how far the mesh reaches
 /// (the adaptive hop limit's discovery, §10.6). `STATUS` port, body is just this byte.
@@ -248,6 +250,11 @@ pub enum Command {
     SetMode { mode: Mode, generation: u32 },
     /// Add device-key hashes to the allow-list (the closed → locked proposal, §7.6).
     AllowListAdd { hashes: [KeyHash; Command::ALLOW_BATCH], n: u8 },
+    /// The admin ejects one member (mesh M7, the seam for issue #571): the fixture with this
+    /// node id and device-key hash leaves the mesh (drops its mesh state; the firmware turns
+    /// the mesh off so the fixture can be connected to directly). Not a removal: the others
+    /// keep their keys (a removal is a rotation, §7.6).
+    Eject { node: NodeId, key_hash: KeyHash },
 }
 
 impl Command {
@@ -257,6 +264,7 @@ impl Command {
         let mut w = W::new(out);
         match self {
             Command::Admit { node, key_hash } => w.u8(T_ADMIT).u16(*node).put(key_hash),
+            Command::Eject { node, key_hash } => w.u8(T_EJECT).u16(*node).put(key_hash),
             Command::AssignGroups { node, groups } => w.u8(T_ASSIGN_GROUPS).u16(*node).u8(groups.len() as u8).put(groups.as_slice()),
             Command::SetMode { mode, generation } => w.u8(T_SET_MODE).u8(*mode as u8).u32(*generation),
             Command::AllowListAdd { hashes, n } => {
@@ -274,6 +282,7 @@ impl Command {
         let mut r = R::new(b);
         let c = match r.u8()? {
             T_ADMIT => Command::Admit { node: r.u16()?, key_hash: r.arr()? },
+            T_EJECT => Command::Eject { node: r.u16()?, key_hash: r.arr()? },
             T_ASSIGN_GROUPS => {
                 let node = r.u16()?;
                 let n = r.u8()? as usize;
@@ -372,6 +381,7 @@ mod tests {
         rt(GuestHello { node: 9, key_hash: [1; 8], firmware: 3 }, GuestHello::LEN, GuestHello::encode, GuestHello::decode);
         rt(PendingJoin { node: 9, mac: [0; 6], key_hash: [1; 8], firmware: 3, heard_by: 2 }, PendingJoin::LEN, PendingJoin::encode, PendingJoin::decode);
         rt(Command::Admit { node: 7, key_hash: [3; 8] }, 11, Command::encode, Command::decode);
+        rt(Command::Eject { node: 7, key_hash: [3; 8] }, 11, Command::encode, Command::decode);
         rt(Command::AssignGroups { node: 7, groups: Groups::from_slice(&[1, 2, 9]) }, 7, Command::encode, Command::decode);
         rt(Command::SetMode { mode: Mode::Open, generation: 4 }, 6, Command::encode, Command::decode);
         let mut hashes = [[0u8; 8]; Command::ALLOW_BATCH];

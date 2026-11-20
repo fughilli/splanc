@@ -1276,6 +1276,9 @@ message ClientMessage {
     ListStoredEffects list_stored_effects = 140;
     LoadStoredEffect load_stored_effect = 141;
     DeleteStoredEffect delete_stored_effect = 142;
+    // Mesh membership and administration (mesh M7): join or leave a mesh, unlock the
+    // admin session with a signed grant, admit, revoke, eject. Reply: mesh.admin.
+    MeshAdmin mesh_admin = 101;
   }
 }
 
@@ -1409,15 +1412,158 @@ message MeshState {
   repeated MeshMember members = 11;
   // The last finished mesh_send on this gateway.
   MeshResult last_result = 12;
+  // Membership (mesh M7).
+  MeshMode mode = 13;
+  // 0 unprovisioned, 1 searching, 2 joining (waiting for approval), 3 member.
+  uint32 phase = 14;
+  // The mesh key's epoch (it moves on each rotation).
+  uint32 key_epoch = 15;
+  // Provisioned with an admin key (false: a dev mesh, envelope trust) / a site secret.
+  bool admin_key = 16;
+  bool site_secret = 17;
+  // This fixture's device key (65 bytes, uncompressed P-256): what a grant names.
+  bytes device_key = 18;
+  // The admin session this connection unlocked (0: none), and the members in its roster.
+  uint32 session = 19;
+  uint32 roster = 20;
+  repeated MeshPending pending = 21;
+  // Device keys on the revocation list.
+  uint32 revoked = 22;
+  repeated uint32 groups = 23;
+  // Admin sessions this fixture (as a member) is synced with.
+  uint32 sessions_synced = 24;
+  // Mesh time in seconds (what a grant's expiry is in).
+  uint32 mesh_s = 25;
 }
 
 // The mesh gateway's replies: `result` answers mesh_send (and is pushed when its member
-// answers are in), `state` answers get_mesh.
+// answers are in), `state` answers get_mesh, `admin` answers mesh_admin.
 message MeshInfo {
   oneof info {
     MeshResult result = 1;
     MeshState state = 2;
+    MeshAdminResult admin = 3;
   }
+}
+
+// --- Mesh membership and administration (docs/design/mesh.md §7, mesh M7) ------
+//
+// A closed mesh: every fixture holds the mesh id and, to join by itself, the site secret
+// (32 bytes the app makes per installation); without it a fixture asks to join and the
+// admin approves it. Administering the mesh needs the admin secret, which only the app
+// (and the bridge) hold: the app signs a session grant for the fixture it is connected to,
+// and presents it with `unlock`. Fixtures hold only the admin public key.
+//
+// On a fixture that already holds an admin key, `provision` and `leave` need this
+// connection unlocked first (a grant), or the USB console (`MESH LEAVE`, physical access).
+
+enum MeshMode {
+  MESH_MODE_CLOSED = 0;
+  MESH_MODE_LOCKED = 1;
+  // Open mode (guests) is M7b.
+  MESH_MODE_OPEN = 2;
+}
+
+// Join a mesh (or re-provision): turns the mesh on, persists it (it stays on across
+// reboots until `leave`).
+message MeshProvision {
+  uint32 mesh_id = 1;
+  // 32 bytes. Absent: the fixture joins by approval (`admit`).
+  bytes site_secret = 2;
+  // The admin public key (65 bytes, uncompressed P-256). Absent only on dev meshes.
+  bytes admin_key = 3;
+  MeshMode mode = 4;
+  // 0: follow the AP (or derive one from the mesh id).
+  uint32 channel = 5;
+  repeated uint32 groups = 6;
+}
+
+// Unlock this fixture as the gateway: the admin's signed grant ("this fixture may command
+// session S until T", 144 bytes, mesh.md §7.9). Lasts until the connection drops.
+message MeshUnlock {
+  bytes grant = 1;
+}
+
+// Admit a fixture waiting to join (MeshState.pending).
+message MeshAdmit {
+  uint32 node = 1;
+  bytes key_hash = 2;
+}
+
+// Remove fixtures for good: a rotation to a new mesh key and site secret that leaves them
+// out, and their device keys on the revocation list (signed by the admin; mesh.md §7.6).
+message MeshRevoke {
+  // The signed RekeyOrder (128 bytes).
+  bytes order = 1;
+  // The new mesh key (16 bytes) and site secret (32 bytes) the order commits to.
+  bytes mesh_key = 2;
+  bytes site_secret = 3;
+  // Node ids that get no new key (the revoked ones).
+  repeated uint32 exclude = 4;
+}
+
+// This fixture leaves its mesh: the mesh turns off and its state is erased.
+message MeshLeave {}
+
+message MeshAssignGroups {
+  uint32 node = 1;
+  repeated uint32 groups = 2;
+}
+
+// The admin sends one fixture out of the mesh (it leaves, as with `leave`). Not a removal:
+// it could rejoin with the site secret; use `revoke` for that.
+message MeshEject {
+  uint32 node = 1;
+  bytes key_hash = 2;
+}
+
+message MeshAdmin {
+  oneof op {
+    MeshProvision provision = 1;
+    MeshUnlock unlock = 2;
+    MeshAdmit admit = 3;
+    MeshRevoke revoke = 4;
+    MeshLeave leave = 5;
+    MeshAssignGroups groups = 6;
+    MeshEject eject = 7;
+  }
+}
+
+enum MeshAdminError {
+  MESH_ADMIN_OK = 0;
+  MESH_ADMIN_BAD_REQUEST = 1;
+  // This connection holds no admin session (unlock first), or the grant was refused.
+  MESH_ADMIN_LOCKED = 2;
+  // A wrong grant was presented less than 2 s ago (device-wide).
+  MESH_ADMIN_LOCKED_OUT = 3;
+  // The grant is not signed by this mesh's admin key, not for this fixture, or expired.
+  MESH_ADMIN_BAD_GRANT = 4;
+  // The fixture is not a member (no mesh, or still joining).
+  MESH_ADMIN_NO_MESH = 5;
+  // No member has joined the admin session yet (nothing to send to).
+  MESH_ADMIN_NO_MEMBERS = 6;
+  MESH_ADMIN_BUSY = 7;
+  // The rotation order does not verify or does not match the keys.
+  MESH_ADMIN_BAD_ORDER = 8;
+  // Not available on this fixture (no device key, the mesh is not built in).
+  MESH_ADMIN_UNSUPPORTED = 9;
+}
+
+message MeshAdminResult {
+  // The MeshAdmin.op field number this answers.
+  uint32 op = 1;
+  MeshAdminError error = 2;
+  // unlock: the session; admit / revoke / eject: mesh packets sent.
+  uint32 value = 3;
+}
+
+// A fixture waiting to join this mesh (approval: MeshAdmin.admit).
+message MeshPending {
+  uint32 node = 1;
+  bytes key_hash = 2;
+  uint32 firmware = 3;
+  // The member that heard it.
+  uint32 heard_by = 4;
 }
 
 // --- FX debugger (docs/design/fx-debugger.md) --------------------------------
