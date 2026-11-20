@@ -57,7 +57,9 @@ async def run(args) -> dict:
     async def recv_arm(want: str, timeout: float = 30.0):
         end = time.monotonic() + timeout
         while True:
-            arm, msg = oc.server(await asyncio.wait_for(sock.recv(), max(0.01, end - time.monotonic())))
+            arm, msg = oc.server(
+                await asyncio.wait_for(sock.recv(), max(0.01, end - time.monotonic()))
+            )
             if arm == want:
                 return msg
             if arm == "error":
@@ -88,7 +90,9 @@ async def run(args) -> dict:
     out["state"] = oc.pb.OtaStatus.State.Name(st.state)
     out["max_chunk"] = st.max_chunk
     if st.state == oc.REBOOTING:
-        out["note"] = "the device hands off to its loader (a C6): bench it there with --device-ws again"
+        out["note"] = (
+            "the device hands off to its loader (a C6): bench it there with --device-ws again"
+        )
         await sock.close()
         return out
     chunk = min(args.chunk_bytes or st.max_chunk or 4096, st.max_chunk or 4096)
@@ -103,9 +107,11 @@ async def run(args) -> dict:
     t0 = time.monotonic()
     while offset < end_at:
         while nxt < end_at and len(sent_at) < args.window:
-            data, n, inflated = cut(image[: end_at], nxt, chunk, args.deflate)
+            data, n, inflated = cut(image[:end_at], nxt, chunk, args.deflate)
             sent_at[nxt] = time.monotonic()
-            await sock.send(oc.client(ota_chunk=oc.pb.OtaChunk(offset=nxt, data=data, inflated_len=inflated)))
+            await sock.send(
+                oc.client(ota_chunk=oc.pb.OtaChunk(offset=nxt, data=data, inflated_len=inflated))
+            )
             wire_bytes += len(data)
             nxt += n
         st = await recv_arm("ota_status")
@@ -119,12 +125,17 @@ async def run(args) -> dict:
         offset = max(offset, st.offset)
     dt = time.monotonic() - t0
     rtts.sort()
-    pick = lambda p: round(rtts[min(len(rtts) - 1, int(p / 100 * len(rtts)))], 1) if rtts else None  # noqa: E731
+
+    def pick(p):
+        return round(rtts[min(len(rtts) - 1, int(p / 100 * len(rtts)))], 1) if rtts else None
+
     out.update(
         bytes=offset - start,
         seconds=round(dt, 2),
         kib_s=round((offset - start) / 1024 / dt, 1) if dt > 0 else None,
-        full_image_s=round(m.size / ((offset - start) / dt), 1) if dt > 0 and offset > start else None,
+        full_image_s=(
+            round(m.size / ((offset - start) / dt), 1) if dt > 0 and offset > start else None
+        ),
         rtt_p50_ms=pick(50),
         rtt_p95_ms=pick(95),
         rtt_max_ms=round(rtts[-1], 1) if rtts else None,
@@ -154,7 +165,9 @@ def main() -> int:
     ap.add_argument("--chunk-bytes", type=int, default=0, help="0: the device's max_chunk")
     ap.add_argument("--chunks", type=int, default=150, help="chunks to send (0: the whole image)")
     ap.add_argument("--window", type=int, default=1, help="chunks in flight")
-    ap.add_argument("--deflate", action="store_true", help="compressed chunks (welcome \"ota_deflate\")")
+    ap.add_argument(
+        "--deflate", action="store_true", help='compressed chunks (welcome "ota_deflate")'
+    )
     ap.add_argument("--ping", type=int, default=0, help="only time N get_ota_status round trips")
     ap.add_argument("--install", action="store_true", help="finish and install (needs --chunks 0)")
     r = asyncio.run(run(ap.parse_args()))
