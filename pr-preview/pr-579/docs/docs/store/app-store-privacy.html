@@ -234,6 +234,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
@@ -343,7 +344,7 @@ and replace the device-feedback-only table in <code class="docutils literal notr
 <td><p>Optional recovery email (#557)</p></td>
 </tr>
 <tr class="row-even"><td><p><strong>sign-in</strong></p></td>
-<td><p>Sign in with Apple and Google (<code class="docutils literal notranslate"><span class="pre">agent/sign-in-apple-google</span></code>): <strong>pending</strong></p></td>
+<td><p>Sign in with Apple and Google (#583)</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>metrics</strong></p></td>
 <td><p>“Send feedback to Fug Studio” (#574)</p></td>
@@ -396,7 +397,7 @@ cross-app tracking, so the app never shows the App Tracking Transparency prompt.
 <td><p><strong>Yes</strong></p></td>
 <td><p>No</p></td>
 <td><p>App Functionality</p></td>
-<td><p>The Splanc AI credits account id (<code class="docutils literal notranslate"><span class="pre">acct_…</span></code>) and its session token; Apple/Google’s opaque subject id once sign-in ships (<code class="docutils literal notranslate"><span class="pre">billing/account.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">ai-billing.md</span></code> › Accounts and identity)</p></td>
+<td><p>The Splanc AI credits account id (<code class="docutils literal notranslate"><span class="pre">acct_…</span></code>) and its session token; Apple’s / Google’s opaque user id (<code class="docutils literal notranslate"><span class="pre">sub</span></code>) for each linked sign-in, with the client id and link time; for Apple, an encrypted refresh token kept only to revoke it (<code class="docutils literal notranslate"><span class="pre">billing/account.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">billing/signin.ts</span></code>, #583)</p></td>
 <td><p>credits, sign-in</p></td>
 </tr>
 <tr class="row-even"><td><p>Identifiers ▸ <strong>Device ID</strong></p></td>
@@ -493,6 +494,11 @@ receives the text, as part of a prompt (see the owner decision on audio).</p></l
 <section id="data-not-counted-as-collected">
 <h2>Data not counted as collected<a class="headerlink" href="#data-not-counted-as-collected" title="Link to this heading">¶</a></h2>
 <ul class="simple">
+<li><p><strong>Sign-in name and email.</strong> The app asks Apple for no name or email scope, and
+Google only for <code class="docutils literal notranslate"><span class="pre">openid</span></code>. Google’s ID token still carries email, name and
+picture claims; the relay verifies the token and drops it without reading or
+keeping them (#583 <code class="docutils literal notranslate"><span class="pre">signin.ts</span></code>), so <strong>Email Address and Name are not added
+for sign-in</strong>. Email Address stays declared for the recovery email only.</p></li>
 <li><p><strong>The Free AI option and your own key</strong> send prompts straight from the device
 to OpenRouter or the user’s chosen provider, under the user’s own account.
 Neither we nor a partner of ours receive them.</p></li>

@@ -234,6 +234,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
@@ -348,7 +349,7 @@ the Stripe web checkout for credits as it stands.</p>
 <td><p><strong>Yes</strong> (HTTPS / WSS to our relay; the LAN link to players is local and isn’t collection)</p></td>
 </tr>
 <tr class="row-even"><td><p>Which of the following methods of account creation does your app support?</p></td>
-<td><p>Accounts are created <strong>anonymously</strong> (no username or password) for Splanc AI credits, optionally with a verified email for recovery, and Sign in with Google / Apple once that ships. Select the options the Console offers that match: “OAuth” (when sign-in ships) and “Other: anonymous account”</p></td>
+<td><p>Accounts are created <strong>anonymously</strong> (no username or password) for Splanc AI credits, optionally with a verified email for recovery, and optionally linked to Sign in with Google / Apple (#583). Select “OAuth” and “Other: anonymous account”</p></td>
 </tr>
 <tr class="row-odd"><td><p>Do you provide a way for users to request that their data is deleted?</p></td>
 <td><p><strong>Yes</strong>: in the app (Settings ▸ AI ▸ Delete account; Settings ▸ Privacy ▸ Delete my data)</p></td>
@@ -399,7 +400,7 @@ own OpenRouter or provider key), as sharing. So <strong>Shared is No</strong> th
 <td><p>No</p></td>
 <td><p>Optional (only for Splanc AI credits)</p></td>
 <td><p>Account management, App functionality, Fraud prevention, security and compliance</p></td>
-<td><p>Credits account id; Google/Apple subject id once sign-in ships</p></td>
+<td><p>Credits account id; Google’s / Apple’s opaque user id for a linked sign-in, with its client id and link time; Apple’s refresh token, encrypted, kept only to revoke it at removal or deletion (#583)</p></td>
 </tr>
 <tr class="row-even"><td><p>Financial info ▸ <strong>Purchase history</strong></p></td>
 <td><p>Yes</p></td>
@@ -479,11 +480,25 @@ own OpenRouter or provider key), as sharing. So <strong>Shared is No</strong> th
 <p>Every type is <strong>optional</strong>: Splanc works without an account, without sending
 reports and with device feedback off.</p>
 </section>
+<section id="sign-in-note">
+<h2>Sign-in note<a class="headerlink" href="#sign-in-note" title="Link to this heading">¶</a></h2>
+<p>Google’s ID token carries the user’s email, name and picture. The relay
+verifies it and drops it without reading or keeping those claims (#583
+<code class="docutils literal notranslate"><span class="pre">signin.ts</span></code>). Play counts data the app’s server receives as collected, even
+briefly, so declare:</p>
+<ul class="simple">
+<li><p><strong>Personal info ▸ Name</strong>: collected, not shared, <strong>processed ephemerally</strong>,
+optional, Account management (only when the user links Google);</p></li>
+<li><p><strong>Personal info ▸ Email address</strong>: keep the row above (not ephemeral,
+because the recovery email’s hash is kept). Sign-in adds nothing to it.</p></li>
+</ul>
+<p>Apple sends no name or email, because the app asks for no scopes.</p>
+</section>
 <section id="not-collected">
 <h2>Not collected<a class="headerlink" href="#not-collected" title="Link to this heading">¶</a></h2>
 <ul class="simple">
 <li><p><strong>Location</strong> (approximate or precise).</p></li>
-<li><p><strong>Personal info</strong> other than email: name, address, phone, race and ethnicity,
+<li><p><strong>Personal info</strong> other than email and name (see the sign-in note): address, phone, race and ethnicity,
 political or religious beliefs, sexual orientation, other info.</p></li>
 <li><p><strong>Financial info</strong> other than purchase history.</p></li>
 <li><p><strong>Health and fitness</strong>, <strong>Messages</strong> (emails, SMS), <strong>Photos and videos</strong>,
@@ -545,6 +560,7 @@ billing program. This is an owner decision before any Play submission.</p>
 <li><a class="reference internal" href="#">Google Play Console ▸ Data safety answers</a><ul>
 <li><a class="reference internal" href="#overview-questions">Overview questions</a></li>
 <li><a class="reference internal" href="#data-types">Data types</a></li>
+<li><a class="reference internal" href="#sign-in-note">Sign-in note</a></li>
 <li><a class="reference internal" href="#not-collected">Not collected</a></li>
 <li><a class="reference internal" href="#payments-note-blocking-for-a-play-build">Payments note (blocking for a Play build)</a></li>
 </ul>

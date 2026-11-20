@@ -7,14 +7,14 @@ and replace the device-feedback-only table in `docs/store-privacy-labels.md`
 
 **Ship gate.** Enter a row only once the build that collects it is in review:
 
-| Row tag     | Ships with                                                                |
-| ----------- | ------------------------------------------------------------------------- |
-| **credits** | Splanc AI credits on iOS (In-App Purchase, `agent/ios-iap`)               |
-| **email**   | Optional recovery email (#557)                                            |
-| **sign-in** | Sign in with Apple and Google (`agent/sign-in-apple-google`): **pending** |
-| **metrics** | "Send feedback to Fug Studio" (#574)                                      |
-| **reports** | AI problem reports (#539): already shipped                                |
-| **bugs**    | Bug reports via `POST /bugs`: already shipped                             |
+| Row tag     | Ships with                                                  |
+| ----------- | ----------------------------------------------------------- |
+| **credits** | Splanc AI credits on iOS (In-App Purchase, `agent/ios-iap`) |
+| **email**   | Optional recovery email (#557)                              |
+| **sign-in** | Sign in with Apple and Google (#583)                        |
+| **metrics** | "Send feedback to Fug Studio" (#574)                        |
+| **reports** | AI problem reports (#539): already shipped                  |
+| **bugs**    | Bug reports via `POST /bugs`: already shipped               |
 
 ## Page 1: data collection
 
@@ -32,18 +32,18 @@ data type, so a type that is linked anywhere is answered **Yes**.
 **Tracking: No for every type.** There is no advertising, no data broker and no
 cross-app tracking, so the app never shows the App Tracking Transparency prompt.
 
-| Data type                               | Linked to the user | Tracking | Purposes                     | What it is (source)                                                                                                                                                                                                      | Row tag          |
-| --------------------------------------- | ------------------ | -------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------- |
-| Contact Info ▸ **Email Address**        | **Yes**            | No       | App Functionality            | Optional recovery email. We keep a keyed hash and a masked hint (`k•••@gmail.com`), not the address; Resend delivers the code (`agent/relay/src/billing/email.ts`, #557). Apple counts a hash of an email as email data. | email            |
-| Identifiers ▸ **User ID**               | **Yes**            | No       | App Functionality            | The Splanc AI credits account id (`acct_…`) and its session token; Apple/Google's opaque subject id once sign-in ships (`billing/account.ts`, `ai-billing.md` › Accounts and identity)                                   | credits, sign-in |
-| Identifiers ▸ **Device ID**             | No                 | No       | Analytics, App Functionality | The random, 30-day rotating install and player codes of device feedback (#574 `device-metrics.md`)                                                                                                                       | metrics          |
-| Purchases ▸ **Purchase History**        | **Yes**            | No       | App Functionality            | Transaction id, pack and channel per purchase, refunds; on the user's opt-in, the consumption answer to Apple's refund request (`billing/purchases.ts`, `ledger.ts`, `ai-billing.md` › Apple refund requests)            | credits          |
-| Usage Data ▸ **Product Interaction**    | **Yes**            | No       | App Functionality, Analytics | Linked: the credits ledger's per-request entries (model, token counts, time), for billing. Not linked: device feedback's usage category (app opens, screens, effects-sent counts)                                        | credits, metrics |
-| User Content ▸ **Other User Content**   | **Yes**            | No       | App Functionality            | Prompts and effect code sent to Anthropic through the relay for Splanc AI credits; Anthropic keeps them up to 30 days with the opaque account id (`billing/proxy.ts`, `ai-billing.md` › Privacy)                         | credits          |
-| User Content ▸ **Customer Support**     | No                 | No       | App Functionality            | AI problem reports: reasons, note, and (opt-in) conversation and effect code; bug reports the user confirms (`agent-feedback.md`, `agent-bug-reports.md`)                                                                | reports, bugs    |
-| Diagnostics ▸ **Crash Data**            | No                 | No       | App Functionality, Analytics | Device feedback: restart reasons, crash, watchdog and brownout counts                                                                                                                                                    | metrics          |
-| Diagnostics ▸ **Performance Data**      | No                 | No       | App Functionality, Analytics | Device feedback: frame rates, memory headroom, Wi-Fi signal, link drops, mesh delivery                                                                                                                                   | metrics          |
-| Diagnostics ▸ **Other Diagnostic Data** | No                 | No       | App Functionality, Analytics | Device feedback: uptime, versions, board, LED count. AI problem reports: the tool trace, app log, device board and firmware                                                                                              | metrics, reports |
+| Data type                               | Linked to the user | Tracking | Purposes                     | What it is (source)                                                                                                                                                                                                                                                                    | Row tag          |
+| --------------------------------------- | ------------------ | -------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| Contact Info ▸ **Email Address**        | **Yes**            | No       | App Functionality            | Optional recovery email. We keep a keyed hash and a masked hint (`k•••@gmail.com`), not the address; Resend delivers the code (`agent/relay/src/billing/email.ts`, #557). Apple counts a hash of an email as email data.                                                               | email            |
+| Identifiers ▸ **User ID**               | **Yes**            | No       | App Functionality            | The Splanc AI credits account id (`acct_…`) and its session token; Apple's / Google's opaque user id (`sub`) for each linked sign-in, with the client id and link time; for Apple, an encrypted refresh token kept only to revoke it (`billing/account.ts`, `billing/signin.ts`, #583) | credits, sign-in |
+| Identifiers ▸ **Device ID**             | No                 | No       | Analytics, App Functionality | The random, 30-day rotating install and player codes of device feedback (#574 `device-metrics.md`)                                                                                                                                                                                     | metrics          |
+| Purchases ▸ **Purchase History**        | **Yes**            | No       | App Functionality            | Transaction id, pack and channel per purchase, refunds; on the user's opt-in, the consumption answer to Apple's refund request (`billing/purchases.ts`, `ledger.ts`, `ai-billing.md` › Apple refund requests)                                                                          | credits          |
+| Usage Data ▸ **Product Interaction**    | **Yes**            | No       | App Functionality, Analytics | Linked: the credits ledger's per-request entries (model, token counts, time), for billing. Not linked: device feedback's usage category (app opens, screens, effects-sent counts)                                                                                                      | credits, metrics |
+| User Content ▸ **Other User Content**   | **Yes**            | No       | App Functionality            | Prompts and effect code sent to Anthropic through the relay for Splanc AI credits; Anthropic keeps them up to 30 days with the opaque account id (`billing/proxy.ts`, `ai-billing.md` › Privacy)                                                                                       | credits          |
+| User Content ▸ **Customer Support**     | No                 | No       | App Functionality            | AI problem reports: reasons, note, and (opt-in) conversation and effect code; bug reports the user confirms (`agent-feedback.md`, `agent-bug-reports.md`)                                                                                                                              | reports, bugs    |
+| Diagnostics ▸ **Crash Data**            | No                 | No       | App Functionality, Analytics | Device feedback: restart reasons, crash, watchdog and brownout counts                                                                                                                                                                                                                  | metrics          |
+| Diagnostics ▸ **Performance Data**      | No                 | No       | App Functionality, Analytics | Device feedback: frame rates, memory headroom, Wi-Fi signal, link drops, mesh delivery                                                                                                                                                                                                 | metrics          |
+| Diagnostics ▸ **Other Diagnostic Data** | No                 | No       | App Functionality, Analytics | Device feedback: uptime, versions, board, LED count. AI problem reports: the tool trace, app log, device board and firmware                                                                                                                                                            | metrics, reports |
 
 Notes on the choices:
 
@@ -76,6 +76,12 @@ Answer **not collected** for:
 - **Other Data.**
 
 ## Data not counted as collected
+
+- **Sign-in name and email.** The app asks Apple for no name or email scope, and
+  Google only for `openid`. Google's ID token still carries email, name and
+  picture claims; the relay verifies the token and drops it without reading or
+  keeping them (#583 `signin.ts`), so **Email Address and Name are not added
+  for sign-in**. Email Address stays declared for the recovery email only.
 
 - **The Free AI option and your own key** send prompts straight from the device
   to OpenRouter or the user's chosen provider, under the user's own account.

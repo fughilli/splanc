@@ -44,17 +44,17 @@ players, and never sent to us:
 
 ## What we receive, and when
 
-| Feature                                                         | When                                       | What we receive                                                              | Kept                                                                        |
-| --------------------------------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| [Splanc AI credits account](#splanc-ai-credits)                 | Only if you use Splanc AI credits          | A random account id, your balance and ledger, purchases, an 18+ confirmation | Until you delete the account; financial records as long as tax law requires |
-| [Recovery email](#optional-recovery-email)                      | Only if you add one                        | A scrambled (keyed-hash) copy and a masked hint, not the address             | Until you remove it or delete the account                                   |
-| [Sign in with Apple or Google](#sign-in-with-apple-or-google)   | Only if you link one                       | Pending: see that section                                                    | Until you unlink it or delete the account                                   |
-| [AI requests](#ai-requests)                                     | When you ask the AI something              | Depends on the AI option you choose (below)                                  | Splanc stores no prompt content                                             |
-| [AI problem reports](#ai-problem-reports)                       | Only when you send one                     | Your note and the parts of the report you leave switched on                  | 90 days                                                                     |
-| [Bug reports](#bug-reports)                                     | Only when you confirm filing one           | The issue text you approve. It becomes a **public** GitHub issue             | As long as the issue exists                                                 |
-| [Device feedback](#device-feedback-send-feedback-to-fug-studio) | Only if you turn it on. **Off by default** | Counters and measurements, in the categories you choose                      | At most 90 days                                                             |
-| [Cloud relay (remote control)](#cloud-relay-remote-control)     | Only if you pair a bridge                  | Your AI client's commands to your lights, passed through                     | Not stored, except hashes of access tokens                                  |
-| [Service operation](#running-the-service)                       | Whenever you use a cloud feature           | Your IP address (for rate limits) and request logs                           | IP: at most 1 day; logs: 30 days                                            |
+| Feature                                                         | When                                       | What we receive                                                                  | Kept                                                                        |
+| --------------------------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| [Splanc AI credits account](#splanc-ai-credits)                 | Only if you use Splanc AI credits          | A random account id, your balance and ledger, purchases, an 18+ confirmation     | Until you delete the account; financial records as long as tax law requires |
+| [Recovery email](#optional-recovery-email)                      | Only if you add one                        | A scrambled (keyed-hash) copy and a masked hint, not the address                 | Until you remove it or delete the account                                   |
+| [Sign in with Apple or Google](#sign-in-with-apple-or-google)   | Only if you link one                       | The anonymous id Apple or Google gives us for you; for Apple, an encrypted token | Until you unlink it or delete the account                                   |
+| [AI requests](#ai-requests)                                     | When you ask the AI something              | Depends on the AI option you choose (below)                                      | Splanc stores no prompt content                                             |
+| [AI problem reports](#ai-problem-reports)                       | Only when you send one                     | Your note and the parts of the report you leave switched on                      | 90 days                                                                     |
+| [Bug reports](#bug-reports)                                     | Only when you confirm filing one           | The issue text you approve. It becomes a **public** GitHub issue                 | As long as the issue exists                                                 |
+| [Device feedback](#device-feedback-send-feedback-to-fug-studio) | Only if you turn it on. **Off by default** | Counters and measurements, in the categories you choose                          | At most 90 days                                                             |
+| [Cloud relay (remote control)](#cloud-relay-remote-control)     | Only if you pair a bridge                  | Your AI client's commands to your lights, passed through                         | Not stored, except hashes of access tokens                                  |
+| [Service operation](#running-the-service)                       | Whenever you use a cloud feature           | Your IP address (for rate limits) and request logs                               | IP: at most 1 day; logs: 30 days                                            |
 
 ## Splanc AI credits
 
@@ -96,8 +96,10 @@ rules), handle refunds, and keep the financial records the law requires.
 
 - **Any credits left are forfeited and not refunded.** The app warns you before
   you confirm.
-- The account is closed, your recovery email is erased, any linked Apple or
-  Google sign-in is removed, and every device is signed out.
+- We first tell Apple to end any Sign in with Apple link (we revoke Apple's
+  token for Splanc and erase it). Then the account is closed, your recovery
+  email is erased, every Apple or Google sign-in is removed, and every device
+  is signed out.
 - The ledger and purchase records, which hold no name or contact details, are
   kept as long as tax and accounting law requires
   **[OWNER: retention period, e.g. 7 years]**.
@@ -126,11 +128,52 @@ without one, after the app tells you that the credits can't then be recovered.
 
 ## Sign in with Apple or Google
 
-**Pending.** This feature is being built. Its section will list exactly what is
-stored before it ships. The current design stores only the opaque account id
-that Apple or Google gives us for you (not your name or email), so that your
-credits follow you across devices. Unlinking, or deleting your Splanc AI
-account, removes the link.
+You can link your Splanc AI credits account to Sign in with Apple or Sign in
+with Google, so that your credits follow you to another device. It is
+optional.
+
+**What we keep**, for each sign-in you link (at most one Apple and one
+Google):
+
+- **The anonymous id Apple or Google gives Splanc for you.** It is not your name
+  or email. We use it only to find your account when you sign in on another
+  device.
+- **Which Splanc app it came from** (the iOS app or the web app), because
+  Apple needs that to end the sign-in later.
+- **When you linked it**, which Settings ▸ AI shows.
+- **For Sign in with Apple only, Apple's token for Splanc, encrypted.** We keep
+  it only so we can tell Apple to end the sign-in when you remove it or delete
+  your account. We never use it to get data from Apple.
+
+To stop a sign-in being replayed, we also keep a random one-time code for 10
+minutes. It isn't linked to you.
+
+**What we don't keep:**
+
+- **your name, email, a hashed email or your profile photo.** We ask Apple for
+  no name or email, and Google only for the basic sign-in. Google's sign-in
+  answer still contains your name, email and picture; our server checks the
+  sign-in and discards the answer without reading or keeping them;
+- any Google token;
+- the sign-in id in our logs. Our logs record that a sign-in happened, with
+  our own account id, for 30 days.
+
+**Who is involved:** you sign in on Apple's or Google's own screen. Our server
+asks Apple and Google to confirm the sign-in. In the web app, Apple's and
+Google's sign-in scripts load only when you open the sign-in screen. Apple
+tells us if you stop using Sign in with Apple with Splanc or delete your Apple
+ID, and we then remove the link.
+
+**Your controls** (Settings ▸ AI):
+
+- **Sign out** forgets the sign-in on this device only. Nothing is deleted on
+  our server.
+- **Remove** a sign-in deletes what we keep for it. For Apple, we also revoke
+  and erase Apple's token.
+- **Delete account** does the same for every sign-in, then closes the account
+  (see [Deleting your account](#splanc-ai-credits)).
+- If a sign-in already belongs to another Splanc AI account, nothing is
+  merged: you choose which account this device uses.
 
 ## AI requests
 
@@ -275,20 +318,20 @@ instead (see the cloud agent guide).
 
 ## Who processes data for us
 
-| Provider                         | What for                                                                    | What it receives                                                                           |
-| -------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| **Cloudflare**                   | Hosts the app, the website and our relay                                    | All requests to our servers, including your IP address; the data our relay stores          |
-| **Anthropic**                    | Answers Splanc AI credits requests (Claude)                                 | Your prompts and the opaque account id                                                     |
-| **Stripe**                       | Web and Android payments, sales tax (Stripe Tax)                            | What you enter at checkout; your account id with the payment                               |
-| **Apple**                        | iOS In-App Purchase; iOS speech recognition                                 | Your purchase (Apple holds the payment); on your yes, how much of a refunded pack you used |
-| **Google**                       | Google Fonts on the website; Chrome's speech recognition                    | Your IP address; your spoken words, if you use voice in Chrome                             |
-| **OpenRouter**                   | The website demo's free AI models; the Free option (under your own account) | Prompts                                                                                    |
-| **Grafana Labs** (Grafana Cloud) | Private business monitoring and device feedback                             | Allowlisted counts and labels; device feedback, if you turn it on                          |
-| **Resend**                       | Sending recovery-email codes                                                | Your email address and the code                                                            |
-| **GitHub**                       | Public bug reports you confirm                                              | The issue text you approve                                                                 |
+| Provider                         | What for                                                                      | What it receives                                                                                                                                                                                                     |
+| -------------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Cloudflare**                   | Hosts the app, the website and our relay                                      | All requests to our servers, including your IP address; the data our relay stores                                                                                                                                    |
+| **Anthropic**                    | Answers Splanc AI credits requests (Claude)                                   | Your prompts and the opaque account id                                                                                                                                                                               |
+| **Stripe**                       | Web and Android payments, sales tax (Stripe Tax)                              | What you enter at checkout; your account id with the payment                                                                                                                                                         |
+| **Apple**                        | iOS In-App Purchase; iOS speech recognition; Sign in with Apple               | Your purchase (Apple holds the payment); on your yes, how much of a refunded pack you used; your sign-in on Apple's screen, our checks of it, and our request to revoke it when you remove it or delete your account |
+| **Google**                       | Google Fonts on the website; Chrome's speech recognition; Sign in with Google | Your IP address; your spoken words, if you use voice in Chrome; your sign-in on Google's screen and our check of it                                                                                                  |
+| **OpenRouter**                   | The website demo's free AI models; the Free option (under your own account)   | Prompts                                                                                                                                                                                                              |
+| **Grafana Labs** (Grafana Cloud) | Private business monitoring and device feedback                               | Allowlisted counts and labels; device feedback, if you turn it on                                                                                                                                                    |
+| **Resend**                       | Sending recovery-email codes                                                  | Your email address and the code                                                                                                                                                                                      |
+| **GitHub**                       | Public bug reports you confirm                                                | The issue text you approve                                                                                                                                                                                           |
 
-When Sign in with Apple or Google ships, Apple and Google also receive your
-sign-in request, under their own privacy policies.
+Apple's and Google's own privacy policies cover what you enter on their
+sign-in screens.
 
 Some of these providers process data in the United States and other countries.
 
@@ -298,7 +341,7 @@ If you are in the UK, the EU or a similar jurisdiction, these are our legal
 bases:
 
 - **To provide a service you asked for (contract):** your Splanc AI credits
-  account, purchases, AI requests through credits, the cloud relay, and bug
+  account, sign-ins you link, purchases, AI requests through credits, the cloud relay, and bug
   reports you choose to file.
 - **Your consent:** device feedback, AI problem reports, the recovery email,
   and the iOS refund-information choice. You can withdraw consent at any time
@@ -316,6 +359,9 @@ bases:
 | Ledger and purchase records              | As long as tax and accounting law requires **[OWNER: period]**, also after deletion |
 | Recovery email (scrambled copy and hint) | Until you remove it or delete the account                                           |
 | Email codes                              | 10 minutes, or until used                                                           |
+| Apple / Google sign-in link              | Until you remove it, delete the account, or Apple tells us you stopped using it     |
+| Apple's token (encrypted)                | Revoked and erased when you remove the sign-in or delete the account                |
+| Sign-in one-time codes                   | 10 minutes                                                                          |
 | Prompts                                  | Not stored by Splanc; Anthropic: up to 30 days (2 years if flagged)                 |
 | AI problem reports                       | 90 days                                                                             |
 | Device feedback                          | At most 90 days                                                                     |
@@ -330,7 +376,8 @@ bases:
   - your AI credits account: Settings ▸ AI ▸ Delete account;
   - your device feedback: Settings ▸ Privacy ▸ Delete my data;
   - an AI problem report: ask us;
-  - your recovery email: Settings ▸ AI.
+  - your recovery email: Settings ▸ AI;
+  - an Apple or Google sign-in: Settings ▸ AI ▸ Remove.
 - **Stop:** turn device feedback off, choose not to send reports, and use the
   AI options that keep prompts on your device or with your own provider.
 - **See:** Settings ▸ AI shows your balance and recent activity; Settings ▸

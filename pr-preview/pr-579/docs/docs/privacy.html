@@ -234,6 +234,7 @@
 <li class="toctree-l1"><a class="reference internal" href="host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
@@ -392,7 +393,7 @@ Bluetooth or your local network, never to us);</p></li>
 </tr>
 <tr class="row-even"><td><p><a class="reference internal" href="#sign-in-with-apple-or-google">Sign in with Apple or Google</a></p></td>
 <td><p>Only if you link one</p></td>
-<td><p>Pending: see that section</p></td>
+<td><p>The anonymous id Apple or Google gives us for you; for Apple, an encrypted token</p></td>
 <td><p>Until you unlink it or delete the account</p></td>
 </tr>
 <tr class="row-odd"><td><p><a class="reference internal" href="#ai-requests">AI requests</a></p></td>
@@ -467,8 +468,10 @@ rules), handle refunds, and keep the financial records the law requires.</p>
 <ul class="simple">
 <li><p><strong>Any credits left are forfeited and not refunded.</strong> The app warns you before
 you confirm.</p></li>
-<li><p>The account is closed, your recovery email is erased, any linked Apple or
-Google sign-in is removed, and every device is signed out.</p></li>
+<li><p>We first tell Apple to end any Sign in with Apple link (we revoke Apple’s
+token for Splanc and erase it). Then the account is closed, your recovery
+email is erased, every Apple or Google sign-in is removed, and every device
+is signed out.</p></li>
 <li><p>The ledger and purchase records, which hold no name or contact details, are
 kept as long as tax and accounting law requires
 <strong>[OWNER: retention period, e.g. 7 years]</strong>.</p></li>
@@ -499,11 +502,50 @@ account. We can’t send you anything else, because we don’t have your address
 </section>
 <section id="sign-in-with-apple-or-google">
 <h2>Sign in with Apple or Google<a class="headerlink" href="#sign-in-with-apple-or-google" title="Link to this heading">¶</a></h2>
-<p><strong>Pending.</strong> This feature is being built. Its section will list exactly what is
-stored before it ships. The current design stores only the opaque account id
-that Apple or Google gives us for you (not your name or email), so that your
-credits follow you across devices. Unlinking, or deleting your Splanc AI
-account, removes the link.</p>
+<p>You can link your Splanc AI credits account to Sign in with Apple or Sign in
+with Google, so that your credits follow you to another device. It is
+optional.</p>
+<p><strong>What we keep</strong>, for each sign-in you link (at most one Apple and one
+Google):</p>
+<ul class="simple">
+<li><p><strong>The anonymous id Apple or Google gives Splanc for you.</strong> It is not your name
+or email. We use it only to find your account when you sign in on another
+device.</p></li>
+<li><p><strong>Which Splanc app it came from</strong> (the iOS app or the web app), because
+Apple needs that to end the sign-in later.</p></li>
+<li><p><strong>When you linked it</strong>, which Settings ▸ AI shows.</p></li>
+<li><p><strong>For Sign in with Apple only, Apple’s token for Splanc, encrypted.</strong> We keep
+it only so we can tell Apple to end the sign-in when you remove it or delete
+your account. We never use it to get data from Apple.</p></li>
+</ul>
+<p>To stop a sign-in being replayed, we also keep a random one-time code for 10
+minutes. It isn’t linked to you.</p>
+<p><strong>What we don’t keep:</strong></p>
+<ul class="simple">
+<li><p><strong>your name, email, a hashed email or your profile photo.</strong> We ask Apple for
+no name or email, and Google only for the basic sign-in. Google’s sign-in
+answer still contains your name, email and picture; our server checks the
+sign-in and discards the answer without reading or keeping them;</p></li>
+<li><p>any Google token;</p></li>
+<li><p>the sign-in id in our logs. Our logs record that a sign-in happened, with
+our own account id, for 30 days.</p></li>
+</ul>
+<p><strong>Who is involved:</strong> you sign in on Apple’s or Google’s own screen. Our server
+asks Apple and Google to confirm the sign-in. In the web app, Apple’s and
+Google’s sign-in scripts load only when you open the sign-in screen. Apple
+tells us if you stop using Sign in with Apple with Splanc or delete your Apple
+ID, and we then remove the link.</p>
+<p><strong>Your controls</strong> (Settings ▸ AI):</p>
+<ul class="simple">
+<li><p><strong>Sign out</strong> forgets the sign-in on this device only. Nothing is deleted on
+our server.</p></li>
+<li><p><strong>Remove</strong> a sign-in deletes what we keep for it. For Apple, we also revoke
+and erase Apple’s token.</p></li>
+<li><p><strong>Delete account</strong> does the same for every sign-in, then closes the account
+(see <a class="reference internal" href="#splanc-ai-credits">Deleting your account</a>).</p></li>
+<li><p>If a sign-in already belongs to another Splanc AI account, nothing is
+merged: you choose which account this device uses.</p></li>
+</ul>
 </section>
 <section id="ai-requests">
 <h2>AI requests<a class="headerlink" href="#ai-requests" title="Link to this heading">¶</a></h2>
@@ -698,12 +740,12 @@ your IP address as part of the request.</p></li>
 <td><p>What you enter at checkout; your account id with the payment</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>Apple</strong></p></td>
-<td><p>iOS In-App Purchase; iOS speech recognition</p></td>
-<td><p>Your purchase (Apple holds the payment); on your yes, how much of a refunded pack you used</p></td>
+<td><p>iOS In-App Purchase; iOS speech recognition; Sign in with Apple</p></td>
+<td><p>Your purchase (Apple holds the payment); on your yes, how much of a refunded pack you used; your sign-in on Apple’s screen, our checks of it, and our request to revoke it when you remove it or delete your account</p></td>
 </tr>
 <tr class="row-even"><td><p><strong>Google</strong></p></td>
-<td><p>Google Fonts on the website; Chrome’s speech recognition</p></td>
-<td><p>Your IP address; your spoken words, if you use voice in Chrome</p></td>
+<td><p>Google Fonts on the website; Chrome’s speech recognition; Sign in with Google</p></td>
+<td><p>Your IP address; your spoken words, if you use voice in Chrome; your sign-in on Google’s screen and our check of it</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>OpenRouter</strong></p></td>
 <td><p>The website demo’s free AI models; the Free option (under your own account)</p></td>
@@ -724,8 +766,8 @@ your IP address as part of the request.</p></li>
 </tbody>
 </table>
 </div>
-<p>When Sign in with Apple or Google ships, Apple and Google also receive your
-sign-in request, under their own privacy policies.</p>
+<p>Apple’s and Google’s own privacy policies cover what you enter on their
+sign-in screens.</p>
 <p>Some of these providers process data in the United States and other countries.</p>
 </section>
 <section id="why-we-may-use-it-legal-bases">
@@ -734,7 +776,7 @@ sign-in request, under their own privacy policies.</p>
 bases:</p>
 <ul class="simple">
 <li><p><strong>To provide a service you asked for (contract):</strong> your Splanc AI credits
-account, purchases, AI requests through credits, the cloud relay, and bug
+account, sign-ins you link, purchases, AI requests through credits, the cloud relay, and bug
 reports you choose to file.</p></li>
 <li><p><strong>Your consent:</strong> device feedback, AI problem reports, the recovery email,
 and the iOS refund-information choice. You can withdraw consent at any time
@@ -767,25 +809,34 @@ aggregate (counts without identifiers).</p></li>
 <tr class="row-odd"><td><p>Email codes</p></td>
 <td><p>10 minutes, or until used</p></td>
 </tr>
-<tr class="row-even"><td><p>Prompts</p></td>
+<tr class="row-even"><td><p>Apple / Google sign-in link</p></td>
+<td><p>Until you remove it, delete the account, or Apple tells us you stopped using it</p></td>
+</tr>
+<tr class="row-odd"><td><p>Apple’s token (encrypted)</p></td>
+<td><p>Revoked and erased when you remove the sign-in or delete the account</p></td>
+</tr>
+<tr class="row-even"><td><p>Sign-in one-time codes</p></td>
+<td><p>10 minutes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Prompts</p></td>
 <td><p>Not stored by Splanc; Anthropic: up to 30 days (2 years if flagged)</p></td>
 </tr>
-<tr class="row-odd"><td><p>AI problem reports</p></td>
+<tr class="row-even"><td><p>AI problem reports</p></td>
 <td><p>90 days</p></td>
 </tr>
-<tr class="row-even"><td><p>Device feedback</p></td>
+<tr class="row-odd"><td><p>Device feedback</p></td>
 <td><p>At most 90 days</p></td>
 </tr>
-<tr class="row-odd"><td><p>Request logs</p></td>
+<tr class="row-even"><td><p>Request logs</p></td>
 <td><p>30 days</p></td>
 </tr>
-<tr class="row-even"><td><p>Business-monitoring counts</p></td>
+<tr class="row-odd"><td><p>Business-monitoring counts</p></td>
 <td><p>No personal data; kept as long as useful</p></td>
 </tr>
-<tr class="row-odd"><td><p>IP rate-limit counters</p></td>
+<tr class="row-even"><td><p>IP rate-limit counters</p></td>
 <td><p>At most 1 day</p></td>
 </tr>
-<tr class="row-even"><td><p>Stripe event ids</p></td>
+<tr class="row-odd"><td><p>Stripe event ids</p></td>
 <td><p>30 days</p></td>
 </tr>
 </tbody>
@@ -800,7 +851,8 @@ aggregate (counts without identifiers).</p></li>
 <li><p>your AI credits account: Settings ▸ AI ▸ Delete account;</p></li>
 <li><p>your device feedback: Settings ▸ Privacy ▸ Delete my data;</p></li>
 <li><p>an AI problem report: ask us;</p></li>
-<li><p>your recovery email: Settings ▸ AI.</p></li>
+<li><p>your recovery email: Settings ▸ AI;</p></li>
+<li><p>an Apple or Google sign-in: Settings ▸ AI ▸ Remove.</p></li>
 </ul>
 </li>
 <li><p><strong>Stop:</strong> turn device feedback off, choose not to send reports, and use the
