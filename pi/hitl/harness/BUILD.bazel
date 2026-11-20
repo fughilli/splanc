@@ -1268,8 +1268,8 @@ py_test(
 py_binary(
     name = "ota_bench",
     srcs = ["hitl_ota_bench.py"],
-    main = "hitl_ota_bench.py",
     imports = ["."],
+    main = "hitl_ota_bench.py",
     tags = ["manual"],
     deps = [
         ":harness",
