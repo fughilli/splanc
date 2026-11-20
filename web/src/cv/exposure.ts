@@ -513,6 +513,11 @@ export class ExposureMonitor {
     return this.samples.length;
   }
 
+  /** Forget every sample (a re-probe after the detector changed). */
+  reset(): void {
+    this.samples = [];
+  }
+
   /** Median camera frame interval (ms) — the shutter-speed proxy. */
   frameIntervalMs(): number | null {
     if (this.samples.length < 4) return null;
