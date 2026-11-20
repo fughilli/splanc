@@ -81,6 +81,10 @@ class FakeBilling:
         low_mark=50,
         consent=None,
         apple_fail=False,
+        signin=False,
+        identities=None,
+        conflict=False,
+        no_account=False,
     ):
         self.balance = balance
         self.adult = adult
@@ -96,6 +100,12 @@ class FakeBilling:
         self.query = ""
         self.consent = consent  # None = never asked; True / False = answered
         self.apple_fail = apple_fail  # the relay can't credit an App Store purchase
+        # Sign in with Apple / Google (billing/signin.ts).
+        self.signin = signin
+        self.identities = list(identities or [])
+        self.conflict = conflict
+        self.no_account = no_account
+        self.auth = None
 
     def balance_body(self):
         hint = (self.email[0] + "•••" + self.email[self.email.index("@") :]) if self.email else None
@@ -112,6 +122,9 @@ class FakeBilling:
             "apple_consumption_consent": self.consent is True,
             "apple_consumption_asked": self.consent is not None,
             "account_ref": ACCOUNT_REF,
+            "identities": [
+                {"provider": p, "linked_at": "2026-11-20T09:30:00Z"} for p in self.identities
+            ],
         }
 
     def handler(self):
@@ -129,8 +142,12 @@ class FakeBilling:
                 )
                 self.paid = True
                 return route.fulfill(status=200, content_type="text/html", body=html) or True
+            if u.hostname in SCRIPT_STUBS and u.path in SCRIPT_STUBS[u.hostname]:
+                body = SCRIPT_STUBS[u.hostname][u.path]
+                return route.fulfill(status=200, content_type="text/javascript", body=body) or True
             if u.hostname != RELAY_HOST:
                 return False
+            self.auth = request.headers.get("authorization")
             if request.method == "OPTIONS":
                 return route.fulfill(status=204, headers=CORS) or True
             body = json.loads(request.post_data) if request.post_data else {}
@@ -173,6 +190,49 @@ class FakeBilling:
                 "account_ref": "SPL-7Q2K",
                 "balance_credits": 412.5,
             }
+        if key == "GET /billing/signin/config":
+            return 200, SIGNIN_CONFIG if self.signin else {"apple": None, "google": None}
+        if key == "POST /billing/signin/nonce":
+            return 200, {"nonce": "sn1.fake", "provider_nonce": "fakehash", "expires_at": 0}
+        if key == "POST /billing/signin":
+            p = body.get("provider", "apple")
+            if self.conflict and self.auth:
+                return 409, {
+                    "error": "identity_in_use",
+                    "message": "in use",
+                    "current": {"balance_credits": self.balance, "identities": []},
+                    "other": {
+                        "balance_credits": 412.5,
+                        "identities": [{"provider": p, "linked_at": "2026-11-02T09:30:00Z"}],
+                    },
+                    "switch_ticket": "sw1.fake",
+                }
+            if self.no_account and body.get("create") is False:
+                return 404, {"error": "no_account", "message": "no account"}
+            if p not in self.identities:
+                self.identities.append(p)
+            if self.auth:
+                return 200, {"result": "linked", "account_id": "acct_demo", **self.summary()}
+            self.signed_out = False
+            self.balance, self.adult, self.statement = 412.5, True, STATEMENT
+            return 200, {
+                "result": "signed_in",
+                "account_id": "acct_demo",
+                "token": "tok_signed_in",
+                **self.summary(),
+            }
+        if key == "POST /billing/signin/switch":
+            self.balance, self.adult, self.statement = 412.5, True, STATEMENT
+            self.identities = ["apple"]
+            return 200, {
+                "result": "switched",
+                "account_id": "acct_other",
+                "token": "tok_other",
+                **self.summary(),
+            }
+        if key == "POST /billing/signin/unlink":
+            self.identities = [x for x in self.identities if x != body.get("provider")]
+            return 200, {"ok": True, "identities": self.summary()["identities"]}
         if key == "POST /billing/account":
             return 201, {
                 "account_id": "acct_demo",
@@ -239,6 +299,70 @@ class FakeBilling:
             return 200, {"url": "https://checkout.stripe.com/c/pay/cs_test_fake"}
         return 404, {"error": "not_found", "message": key}
 
+    def summary(self):
+        return {
+            "balance_credits": self.balance,
+            "identities": self.balance_body()["identities"],
+        }
+
+
+SIGNIN_CONFIG = {
+    "apple": {
+        "ios": True,
+        "web": {"client_id": "dev.splanc.app.signin", "redirect_uri": "https://splanc.io/app/"},
+    },
+    "google": {
+        "web": {"client_id": "111-web.apps.googleusercontent.com"},
+        "ios": {
+            "client_id": "222-ios.apps.googleusercontent.com",
+            "redirect_uri": "com.googleusercontent.apps.222-ios:/oauth2redirect",
+        },
+    },
+}
+
+# Local stand-ins for Apple's and Google's sign-in scripts (no real network).
+# The Google one draws a look-alike of GIS's "Continue with Google" button.
+APPLE_JS_STUB = """
+window.AppleID = { auth: {
+  init(o) { this.o = o; },
+  signIn() { return Promise.resolve({ authorization: { code: "c", id_token: "t", state: this.o.state } }); },
+} };
+"""
+GOOGLE_G = (
+    '<svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.7 '
+    "1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.6 13.3l7.9 6.2C12.4 13.6 17.7 9."
+    '5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5'
+    '.3-4.6 6.9l7.4 5.7c4.3-4 6.9-9.9 6.9-17.1z"/><path fill="#FBBC05" d="M10.5 28.6c-.5-1.4-.8'
+    '-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.2C.9 16.5 0 20.1 0 24s.9 7.5 2.6 10.8l7.9-6.2z"/><path fill='
+    '"#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.3-8.5 2.3-6.3 0-11.6-4'
+    '.1-13.5-9.9l-7.9 6.2C6.6 42.6 14.6 48 24 48z"/></svg><span>Continue with Google</span>'
+)
+GSI_STUB = """
+window.google = { accounts: { id: {
+  initialize(o) { this.o = o; },
+  renderButton(el, opt) {
+    const b = document.createElement("div");
+    b.setAttribute("role", "button");
+    b.tabIndex = 0;
+    const dark = opt.theme === "filled_black";
+    b.style.cssText = "display:flex;align-items:center;justify-content:center;gap:10px;height:40px;" +
+      "border-radius:20px;font:500 14px Roboto,Arial,sans-serif;cursor:pointer;box-sizing:border-box;" +
+      "width:" + opt.width + "px;" + (dark ? "background:#131314;color:#e3e3e3;border:1px solid #8e918f;"
+                                          : "background:#fff;color:#1f1f1f;border:1px solid #747775;");
+    b.innerHTML = '__GOOGLE_G__';
+    b.onclick = () => this.o.callback({ credential: "gtok" });
+    el.replaceChildren(b);
+  },
+} } };
+"""
+GSI_STUB = GSI_STUB.replace("__GOOGLE_G__", GOOGLE_G)
+SCRIPT_STUBS = {
+    "appleid.cdn-apple.com": {
+        "/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js": APPLE_JS_STUB
+    },
+    "accounts.google.com": {"/gsi/client": GSI_STUB},
+}
+
 
 def fake(**kw):
     return lambda: FakeBilling(**kw).handler()
@@ -275,6 +399,13 @@ TO_SUCCESS = TO_HANDOFF + [
     ("click", "#pay"),
     ("wait_for", ".cf-balance", 20000),
     ("wait", 1200),
+]
+
+TO_SIGNIN_CHOICE = TO_ACCOUNT + [
+    ("check", ".cf-consent input"),
+    ("click", btn("Create account")),
+    ("wait_for", ".cf-sso-btn--apple"),
+    ("wait", 400),
 ]
 
 FRESH = {**FLAG}
@@ -480,6 +611,117 @@ SCENARIOS = [
         seed=SIGNED_IN,
         network=fake(balance=412.5, adult=True, email="kim@example.com"),
         steps=[("check", ".cf-consent input")],
+        expect=title("Delete your Splanc AI account?"),
+    ),
+    # Sign in with Apple / Google (billing/signin.ts)
+    Scenario(
+        "signin-01-buy-keep-safe",
+        "#/credits",
+        seed=FRESH,
+        network=fake(signin=True),
+        steps=TO_SIGNIN_CHOICE,
+        expect=title("Keep your credits safe"),
+    ),
+    Scenario(
+        "signin-02-buy-linked-packs",
+        "#/credits",
+        seed=FRESH,
+        network=fake(signin=True),
+        steps=TO_SIGNIN_CHOICE + [("click", ".cf-sso-btn--apple"), ("wait_for", ".cf-pack")],
+        expect=title("Choose your credits"),
+    ),
+    Scenario(
+        "signin-03-conflict",
+        "#/credits",
+        seed=FRESH,
+        network=fake(signin=True, balance=40, conflict=True),
+        steps=TO_SIGNIN_CHOICE
+        + [("click", ".cf-sso-btn--apple"), ("wait_for", btn("Switch to that account"))],
+        expect=title("has another account"),
+    ),
+    Scenario(
+        "signin-04-restore",
+        "#/credits/restore",
+        seed=FRESH,
+        network=fake(signin=True),
+        steps=[("wait_for", ".cf-sso-btn--apple"), ("wait", 400)],
+        expect=title("Restore your account"),
+    ),
+    Scenario(
+        "signin-05-restore-no-account",
+        "#/credits/restore",
+        seed=FRESH,
+        network=fake(signin=True, no_account=True),
+        steps=[
+            ("wait_for", ".cf-sso-btn--apple"),
+            ("click", ".cf-sso-btn--apple"),
+            ("wait_for", btn("Try another sign-in")),
+        ],
+        expect=title("No account for this Apple ID"),
+    ),
+    Scenario(
+        "signin-06-restored",
+        "#/credits/restore",
+        seed=FRESH,
+        network=fake(signin=True),
+        steps=[
+            ("wait_for", ".cf-sso-btn--apple"),
+            ("click", ".cf-sso-btn--apple"),
+            ("wait_for", ".cf-balance"),
+            ("wait", 1200),
+        ],
+        expect=title("Welcome back"),
+    ),
+    Scenario(
+        "signin-07-linked-done",
+        "#/credits/signin",
+        seed=SIGNED_IN,
+        network=fake(signin=True, balance=412.5, adult=True),
+        steps=[
+            ("wait_for", ".cf-sso-btn--apple"),
+            ("click", ".cf-sso-btn--apple"),
+            ("wait_for", btn("Done")),
+        ],
+        expect=title("Linked to Apple"),
+    ),
+    Scenario(
+        "signin-08-settings-signed-in",
+        "#/settings/ai",
+        seed=SIGNED_IN,
+        network=fake(
+            signin=True, balance=412.5, adult=True, identities=["apple"], statement=STATEMENT
+        ),
+        settle_ms=1200,
+        expect=btn("Sign out…"),
+    ),
+    Scenario(
+        "signin-09-settings-not-signed-in",
+        "#/settings/ai",
+        seed=SIGNED_IN,
+        network=fake(signin=True, balance=412.5, adult=True, statement=STATEMENT),
+        settle_ms=1200,
+        expect=btn("Sign in with Apple or Google"),
+    ),
+    Scenario(
+        "signin-10-sign-out",
+        "#/credits/signout",
+        seed=SIGNED_IN,
+        network=fake(signin=True, balance=412.5, adult=True, identities=["apple", "google"]),
+        expect=title("Sign out of Splanc AI?"),
+    ),
+    Scenario(
+        "signin-11-unlink-last",
+        "#/credits/unlinkApple",
+        seed=SIGNED_IN,
+        network=fake(signin=True, balance=412.5, adult=True, identities=["apple"]),
+        expect=title("Remove Apple sign-in?"),
+    ),
+    Scenario(
+        "signin-12-delete-with-signin",
+        "#/credits/delete",
+        seed=SIGNED_IN,
+        network=fake(signin=True, balance=412.5, adult=True, identities=["apple"]),
+        settle_ms=1200,
         expect=title("Delete your Splanc AI account?"),
     ),
     Scenario(

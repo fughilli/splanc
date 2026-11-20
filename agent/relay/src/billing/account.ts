@@ -14,7 +14,7 @@
 
 import { b64url, hmac, randomBytes, safeEqual } from "../crypto";
 import { now, type DONamespace, type DOState, type Env } from "../platform";
-import { Ledger, type LedgerEntry, type LotConsumption, type ReserveResult, type SettleActivity } from "./ledger";
+import { Ledger, type IdentityProvider, type LedgerEntry, type LinkedIdentity, type LotConsumption, type ReserveResult, type SettleActivity } from "./ledger";
 import type { Caps, Usage } from "./pricing";
 import type { StoreEnvironment } from "./purchases";
 
@@ -80,6 +80,10 @@ export class BillingAccount {
           return json(await this.ledger.confirmAdult());
         case "/status":
           return json(await this.ledger.setStatus(b["status"] === "suspended" ? "suspended" : "active"));
+        case "/identity/link":
+          return json(await this.ledger.linkIdentity(b["provider"] as IdentityProvider, b["identity"] as Omit<LinkedIdentity, "linked_at">));
+        case "/identity/unlink":
+          return json({ removed: await this.ledger.unlinkIdentity(b["provider"] as IdentityProvider, typeof b["sub"] === "string" ? b["sub"] : undefined) });
         case "/close":
           return json(await this.ledger.close());
         default:
@@ -119,8 +123,15 @@ export class DoLedger {
         environment?: BillingMode;
         adult_confirmed_at?: number;
         apple_consumption_consent?: { consented: boolean; at: number };
+        identities?: Partial<Record<IdentityProvider, LinkedIdentity>>;
       } | null;
     }>("/account", {});
+  }
+  linkIdentity(provider: IdentityProvider, identity: Omit<LinkedIdentity, "linked_at">) {
+    return this.call<{ id: string; identities?: Partial<Record<IdentityProvider, LinkedIdentity>> }>("/identity/link", { provider, identity });
+  }
+  async unlinkIdentity(provider: IdentityProvider, sub?: string): Promise<LinkedIdentity | null> {
+    return (await this.call<{ removed: LinkedIdentity | null }>("/identity/unlink", { provider, ...(sub ? { sub } : {}) })).removed;
   }
   setAppleConsumptionConsent(consented: boolean) {
     return this.call<{ id: string }>("/consent", { apple_consumption: consented });

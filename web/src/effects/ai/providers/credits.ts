@@ -110,6 +110,8 @@ export interface CreditsBalance {
   email_verified?: boolean;
   /** When the user chose "Continue anonymously" (null: never). */
   anonymous_ack_at?: string | null;
+  /** Linked Sign in with Apple / Google (providers/creditsSignin.ts). */
+  identities?: { provider: "apple" | "google"; linked_at: string }[];
 }
 
 /** The balance shown in AI settings and under the chat (STUB until the relay

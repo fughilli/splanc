@@ -9,8 +9,10 @@
  *
  * Routes: #/credits (buy), #/credits/return (Stripe comes back here),
  * #/credits/restore (a fresh device), #/credits/email (add / change the
- * recovery e-mail), #/credits/delete (danger zone). Enter with
- * openCreditsFlow() so the flow knows where to go back to.
+ * recovery e-mail), #/credits/delete (danger zone), #/credits/signin (Sign in
+ * with Apple / Google: link or sign in), #/credits/signout,
+ * #/credits/unlinkApple, #/credits/unlinkGoogle. Enter with openCreditsFlow()
+ * so the flow knows where to go back to.
  */
 
 import { Button, icon, toast, type IconName } from "../kit";
@@ -64,6 +66,26 @@ import {
   type CreditPack,
   type CreditsBalance,
 } from "../../effects/ai/providers/credits";
+import {
+  IDENTITY_NOUN,
+  PROVIDER_LABEL,
+  SigninCancelled,
+  availableProviders,
+  conflictIsHarmless,
+  fetchSigninConfig,
+  getSigninNonce,
+  providerProof,
+  renderGoogleButton,
+  signOutCredits,
+  submitSignin,
+  switchAccount,
+  unlinkSignin,
+  type ProviderProof,
+  type PublicSigninConfig,
+  type SigninProvider,
+  type SigninResult,
+} from "../../effects/ai/providers/creditsSignin";
+import { appIsLight, appleButton, googleButton, googleSlot, ssoList } from "./signinButtons";
 import { getAiConfig, isAiConfigured } from "../../effects/ai/provider";
 import { selectPaidTier } from "../../effects/ai/tiers";
 import { isIosNative } from "../../net/native";
@@ -120,6 +142,14 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
   let tick: ReturnType<typeof setInterval> | null = null;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   const checkout: CheckoutResult = mode === "return" ? takeCheckoutResult() : null;
+  /** Sign in with Apple / Google: the relay's config and what this device offers. */
+  let signinCfg: PublicSigninConfig | null = null;
+  let providers: SigninProvider[] = [];
+  /** The conflict being asked about (signInConflict). */
+  let conflict: Extract<SigninResult, { kind: "conflict" }> | null = null;
+  /** Google Identity Services' button (browser), kept across re-renders so a
+   * busy re-render doesn't redraw it; dropped once its nonce is used. */
+  let gis: HTMLElement | null = null;
 
   const ctx = (): FlowContext => ({
     enabled: aiCreditsEnabled(),
@@ -130,6 +160,8 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
     adult: balance?.adult === true,
     emailVerified: creditsEmail(balance) !== null,
     emailDeclined: emailDeclined(balance),
+    signinAvailable: providers.length > 0,
+    signedIn: (balance?.identities?.length ?? 0) > 0,
   });
 
   let state: FlowState = startFlow(mode, ctx(), checkout);
@@ -171,8 +203,8 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
   // -- shared pieces ------------------------------------------------------------
 
   function page(opts: {
-    hero?: IconName;
-    heroTone?: "ok" | "warn" | "danger";
+    hero?: IconName | undefined;
+    heroTone?: "ok" | "warn" | "danger" | undefined;
     title: string;
     lead?: string | undefined;
     body?: (HTMLElement | null)[];
@@ -287,7 +319,9 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
         return page({
           title: needsAccount ? "Create your account" : "Confirm your age",
           lead: needsAccount
-            ? "Your Splanc AI account holds your credits. It's anonymous: no name, no password, no email needed. It lives on this device; next you can add a recovery email, and you'll be able to link Apple or Google sign-in later."
+            ? providers.length
+              ? "Your Splanc AI account holds your credits. It's anonymous: no name, no password, no email needed. It lives on this device; next you can sign in with Apple or Google so your credits are safe."
+              : "Your Splanc AI account holds your credits. It's anonymous: no name, no password, no email needed. It lives on this device; next you can add a recovery email, and you'll be able to link Apple or Google sign-in later."
             : "Before you buy credits, please confirm your age.",
           body: [box.el],
           actions: actions(go, backBtn()),
@@ -611,7 +645,9 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
           hero: "alert",
           heroTone: "warn",
           title: "We couldn't confirm your payment",
-          lead: "This device isn't signed in to a Splanc AI account any more. If you were charged, your credits are safe on your account: restore it with your recovery email.",
+          lead: providers.length
+            ? "This device isn't signed in to a Splanc AI account any more. If you were charged, your credits are safe on your account: sign in again, or restore it with your recovery email."
+            : "This device isn't signed in to a Splanc AI account any more. If you were charged, your credits are safe on your account: restore it with your recovery email.",
           actions: actions(
             primaryBtn("Restore account", () => switchTo("restore")),
             quietBtn("Back to AI settings", () => dispatch({ type: "done" })),
@@ -646,6 +682,114 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
         });
       }
 
+      case "signInChoice":
+        return signInChoicePage();
+
+      case "signInConflict":
+        return conflictPage();
+
+      case "signInNoAccount": {
+        const noun = IDENTITY_NOUN[state.provider ?? "apple"];
+        return page({
+          hero: "info",
+          title: `No account for this ${noun}`,
+          lead: `There's no Splanc AI account linked to this ${noun}. If you used a different ${noun}, or Sign in with ${state.provider === "apple" ? "Google" : "Apple"}, try that one.`,
+          actions: actions(
+            primaryBtn("Try another sign-in", () => dispatch({ type: "back" })),
+            quietBtn("Use a recovery email", () => dispatch({ type: "chooseEmail" })),
+            quietBtn("Start a new account", () => switchTo("buy")),
+          ),
+        });
+      }
+
+      case "signInDone": {
+        const p = PROVIDER_LABEL[state.provider ?? "apple"];
+        const kind = state.signinKind;
+        const moved = kind === "signed_in" || kind === "switched";
+        return page({
+          hero: "check",
+          heroTone: "ok",
+          title: moved ? "You're signed in" : kind === "created" ? "Account created" : `Linked to ${p}`,
+          lead: moved
+            ? `This device now uses the Splanc AI account linked to ${p}. Balance: ${formatCredits(state.balance ?? 0)}.`
+            : kind === "created"
+              ? `Your new Splanc AI account is linked to ${p}. Sign in with ${p} on any device to use its credits.`
+              : `Your credits are safe: sign in with ${p} on a new device, or after clearing this app's data, to get them back.`,
+          actions: actions(primaryBtn("Done", () => dispatch({ type: "done" }))),
+        });
+      }
+
+      case "signOutConfirm": {
+        const ids = balance?.identities ?? [];
+        const recoverable = ids.length > 0 || creditsEmail(balance) !== null;
+        const how = ids.length
+          ? `Sign in with ${ids.map((i) => PROVIDER_LABEL[i.provider]).join(" or ")} to use them again.`
+          : "Restore the account with its recovery email to use them again.";
+        if (!recoverable) {
+          return page({
+            hero: "alert",
+            heroTone: "warn",
+            title: "Link a sign-in first",
+            lead: "This account isn't linked to Apple, Google or an email. If you sign out, nothing leads back to it and its credits are lost. Link a sign-in first, then sign out.",
+            actions: actions(
+              primaryBtn("Link a sign-in", () => switchTo("signin")),
+              quietBtn("Stay signed in", () => dispatch({ type: "cancel" })),
+            ),
+          });
+        }
+        return page({
+          hero: "info",
+          title: "Sign out of Splanc AI?",
+          lead: `This device forgets your Splanc AI account. Your credits stay on the account. ${how}`,
+          actions: actions(
+            primaryBtn("Sign out", () => {
+              signOutCredits();
+              setEmailDeclined(false);
+              balance = null;
+              dispatch({ type: "signedOut" });
+            }),
+            quietBtn("Stay signed in", () => dispatch({ type: "cancel" })),
+          ),
+        });
+      }
+
+      case "unlinkConfirm": {
+        const prov = state.provider ?? "apple";
+        const ids = balance?.identities ?? [];
+        const others = ids.filter((i) => i.provider !== prov).length + (creditsEmail(balance) !== null ? 1 : 0);
+        const atRisk = others === 0 && (balance?.available_credits ?? 0) > 0;
+        const box = atRisk ? consent("I understand I may lose these credits", "") : null;
+        const go = primaryBtn(
+          `Remove ${PROVIDER_LABEL[prov]} sign-in`,
+          () =>
+            void run(async () => {
+              await unlinkSignin(prov, atRisk);
+              balance = await fetchCreditsBalance();
+              dispatch({ type: "unlinked" });
+            }),
+          { danger: true, disabled: box ? !box.input.checked : false },
+        );
+        box?.input.addEventListener("change", () => (go.disabled = busy || !box.input.checked));
+        const warn = document.createElement("div");
+        warn.className = "cf-panel" + (atRisk ? " cf-panel--danger" : "");
+        warn.append(
+          para(
+            atRisk
+              ? `It's the only way back to this account. Without it, the ${formatCredits(balance?.available_credits ?? 0)} on it can't be recovered if this app's data is cleared, or this device is lost or replaced.`
+              : `You can still get back to this account with ${others > 1 ? "your other sign-ins" : "your other sign-in"}.`,
+            "",
+          ),
+          ...(prov === "apple" ? [para("Splanc also stops using your Apple ID (we tell Apple to end the sign-in).", "cf-note")] : []),
+        );
+        return page({
+          hero: "link",
+          heroTone: atRisk ? "warn" : undefined,
+          title: `Remove ${PROVIDER_LABEL[prov]} sign-in?`,
+          body: [warn, box?.el ?? null],
+          actions: actions(go, quietBtn("Keep it", () => dispatch({ type: "cancel" }))),
+        });
+      }
+
       case "deleteConfirm": {
         const box = consent("I understand my credits will be lost and can't be refunded", "");
         const left = balance ? formatCredits(balance.available_credits) : null;
@@ -663,7 +807,13 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
         box.input.addEventListener("change", () => (del.disabled = busy || !box.input.checked));
         const warn = document.createElement("div");
         warn.className = "cf-panel cf-panel--danger";
-        warn.append(para(DELETE_ACCOUNT_WARNING, ""), ...(left ? [para(`Credits on this account now: ${left}.`, "cf-strong")] : []));
+        warn.append(
+          para(DELETE_ACCOUNT_WARNING, ""),
+          ...(left ? [para(`Credits on this account now: ${left}.`, "cf-strong")] : []),
+          ...(balance?.identities?.length
+            ? [para(`Its ${balance.identities.map((i) => PROVIDER_LABEL[i.provider]).join(" and ")} sign-in is removed too${balance.identities.some((i) => i.provider === "apple") ? ", and Splanc stops using your Apple ID" : ""}.`, "cf-note")]
+            : []),
+        );
         return page({
           hero: "trash",
           heroTone: "danger",
@@ -681,6 +831,136 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
           actions: actions(primaryBtn("Done", () => dispatch({ type: "done" }))),
         });
     }
+  }
+
+  // -- Sign in with Apple / Google --------------------------------------------------
+
+  function signInChoicePage(): HTMLElement[] {
+    const restore = state.mode === "restore";
+    const buy = state.mode === "buy";
+    const hasSession = getCreditsSession() !== null;
+    const buttons: HTMLElement[] = [];
+    for (const p of providers) {
+      if (p === "apple") buttons.push(appleButton(() => void doSignin("apple")));
+      else if (isIosNative()) buttons.push(googleButton(() => void doSignin("google")));
+      else buttons.push(gisButton());
+    }
+    for (const b of buttons) if (b instanceof HTMLButtonElement) b.disabled = busy;
+    const list = ssoList(...buttons);
+    const title = restore ? "Restore your account" : buy || hasSession ? "Keep your credits safe" : "Sign in to Splanc AI";
+    const lead = restore
+      ? "Sign in the way you did before. Your credits come with your account."
+      : buy || hasSession
+        ? "Sign in with Apple or Google so you can get your credits back on a new device, or after clearing this app's data."
+        : "Sign in with the Apple ID or Google account you used before, or create a new account with it.";
+    const secondary: HTMLElement[] = [];
+    secondary.push(quietBtn(restore ? "Use a recovery email instead" : "Use an email instead", () => dispatch({ type: "chooseEmail" })));
+    if (buy) secondary.push(quietBtn("Continue without signing in", () => dispatch({ type: "skipEmail" })));
+    if (!buy) secondary.push(backBtn());
+    return page({
+      hero: restore ? undefined : "link",
+      title,
+      lead,
+      body: [list, para("We keep only an anonymous ID from Apple or Google: never your name or email, and we never post anything.", "cf-note")],
+      actions: actions(null, ...secondary),
+    });
+  }
+
+  /** Google's own button (browser), drawn once per nonce. */
+  function gisButton(): HTMLElement {
+    if (gis) return gis;
+    const slot = googleSlot();
+    gis = slot;
+    const width = Math.min(400, (wrap.clientWidth || 360) - 2);
+    void getSigninNonce()
+      .then((n) =>
+        renderGoogleButton(slot, signinCfg!, n, (proof) => {
+          gis = null; // its nonce is spent
+          void run(() => afterProof(proof));
+        }, { dark: !appIsLight(), width }),
+      )
+      .catch((e: unknown) => {
+        if (gis === slot) gis = null;
+        if (!disposed && state.step === "signInChoice") dispatch({ type: "fail", message: e instanceof Error ? e.message : String(e) });
+      });
+    return slot;
+  }
+
+  async function doSignin(p: SigninProvider): Promise<void> {
+    await run(async () => {
+      let proof: ProviderProof;
+      try {
+        proof = await providerProof(p, signinCfg!);
+      } catch (e) {
+        if (e instanceof SigninCancelled) return;
+        throw e;
+      }
+      await afterProof(proof);
+    });
+  }
+
+  async function afterProof(proof: ProviderProof): Promise<void> {
+    const r = await submitSignin(proof, { create: state.mode !== "restore" });
+    await settle(r);
+  }
+
+  async function settle(r: SigninResult): Promise<void> {
+    if (r.kind === "no_account") {
+      dispatch({ type: "noAccount", provider: r.provider });
+      return;
+    }
+    if (r.kind === "conflict") {
+      // Nothing to lose on this device's account: just switch.
+      if (conflictIsHarmless(r, creditsEmail(balance) !== null)) return settle(await switchAccount(r.ticket, r.provider));
+      conflict = r;
+      dispatch({ type: "signinConflict", provider: r.provider });
+      return;
+    }
+    balance = await fetchCreditsBalance();
+    dispatch({ type: "signedIn", kind: r.kind, provider: r.provider, balance: balance?.available_credits ?? r.balance_credits, adult: balance?.adult === true });
+  }
+
+  function conflictPage(): HTMLElement[] {
+    const c = conflict;
+    const noun = IDENTITY_NOUN[state.provider ?? "apple"];
+    const cards = document.createElement("div");
+    cards.className = "cf-summary";
+    const cur = c?.current?.balance_credits ?? 0;
+    cards.append(
+      kv("This device's account", formatCredits(cur)),
+      kv(`The account linked to this ${noun}`, formatCredits(c?.other.balance_credits ?? 0)),
+    );
+    const curRecoverable = (c?.current?.identities.length ?? 0) > 0 || creditsEmail(balance) !== null;
+    const strand = cur > 0 && !curRecoverable;
+    const box = strand ? consent(`I understand this device's ${formatCredits(cur)} stay behind`, "") : null;
+    const sw = primaryBtn(
+      "Switch to that account",
+      () =>
+        void run(async () => {
+          if (!c) throw new Error("Please sign in again.");
+          await settle(await switchAccount(c.ticket, c.provider));
+          conflict = null;
+        }),
+      { disabled: box ? !box.input.checked : false },
+    );
+    box?.input.addEventListener("change", () => (sw.disabled = busy || !box.input.checked));
+    return page({
+      hero: "alert",
+      heroTone: "warn",
+      title: `This ${noun} has another account`,
+      lead: `It's already linked to a different Splanc AI account than the one on this device. Splanc never combines two accounts' credits. Choose which account this device uses.`,
+      body: [
+        cards,
+        strand
+          ? para(
+              `This device's account isn't linked to any sign-in or email. If you switch, nothing leads back to it and its credits can't be recovered.`,
+              "cf-note",
+            )
+          : para("You can switch back later by signing in to the other account.", "cf-note"),
+        box?.el ?? null,
+      ],
+      actions: actions(sw, quietBtn("Keep this device's account", () => dispatch({ type: "keepCurrent" }))),
+    });
   }
 
   function packCard(p: CreditPack & { product?: StoreProduct }): HTMLElement {
@@ -833,12 +1113,30 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
     }
   }
 
+  // Sign-in options come from the relay (which providers are configured). The
+  // restore / sign-in screens start from them, so they wait (briefly); the
+  // others pick them up when they arrive.
+  const needsSignin = mode === "restore" || mode === "signin";
+  const signinReady = aiCreditsEnabled()
+    ? Promise.race([fetchSigninConfig(), new Promise<null>((r) => setTimeout(() => r(null), 4000))]).then((cfg) => {
+        signinCfg = cfg;
+        providers = availableProviders(cfg);
+      })
+    : Promise.resolve();
   // Removing the e-mail depends on the account's state (the address may have
   // been added on another device): wait for the balance before deciding.
-  let waiting = mode === "removeEmail" && getCreditsSession() !== null && creditsVisible();
-  if (waiting) {
+  let waiting = (mode === "removeEmail" || mode === "signout" || mode === "unlinkApple" || mode === "unlinkGoogle") && getCreditsSession() !== null && creditsVisible();
+  if (needsSignin && !waiting && aiCreditsEnabled()) {
     wrap.replaceChildren(spinner());
-    void fetchCreditsBalance().then((b) => {
+    void Promise.all([signinReady, getCreditsSession() ? fetchCreditsBalance().then((b) => (balance = b)) : null]).then(() => {
+      if (disposed) return;
+      state = startFlow(mode, ctx());
+      if (state.exit) leave(state.exit.notice);
+      else render(true);
+    });
+  } else if (waiting) {
+    wrap.replaceChildren(spinner());
+    void Promise.all([fetchCreditsBalance(), signinReady]).then(([b]) => {
       if (disposed) return;
       balance = b;
       waiting = false;
@@ -861,6 +1159,13 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
       // Still on the intro: plan the steps from the real account state.
       state = { ...state, ctx: c, ...(state.mode === "buy" && state.step === "intro" ? { phases: buyPhases(c) } : {}) };
       if (state.step === "deleteConfirm") render(false);
+    });
+  }
+  if (!needsSignin) {
+    void signinReady.then(() => {
+      if (disposed) return;
+      const c = ctx();
+      state = { ...state, ctx: c, ...(state.mode === "buy" && state.step === "intro" ? { phases: buyPhases(c) } : {}) };
     });
   }
   if (state.step === "confirming") void confirmPurchase();

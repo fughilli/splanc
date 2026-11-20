@@ -88,6 +88,25 @@ export interface Account {
   apple_consumption_consent?: { consented: boolean; at: number } | undefined;
   /** When the account first bought credits (ops metrics: "paying" accounts). */
   paying_since?: number | undefined;
+  /** Linked sign-ins (billing/signin.ts), at most one per provider: the
+   * provider's stable subject id, never a name or an email. */
+  identities?: Partial<Record<IdentityProvider, LinkedIdentity>> | undefined;
+}
+
+/** Sign-in providers an account can link (owner decision: Apple + Google). */
+export type IdentityProvider = "apple" | "google";
+
+export interface LinkedIdentity {
+  /** The provider's subject id (`sub`): opaque, stable per app / team. */
+  sub: string;
+  linked_at: number;
+  /** The client id the token was issued to (Apple: the bundle id or the
+   * Services ID), which revocation has to name again. */
+  aud: string;
+  /** Apple only: the refresh token from the code exchange, AES-GCM encrypted
+   * (APPLE_SIGNIN_TOKEN_KEY). Kept only to revoke it when the account is
+   * deleted or unlinked (Apple requirement). */
+  apple_rt?: { iv: string; ct: string } | undefined;
 }
 
 /** Ops flags from a settle (docs/design/ops-grafana.md): was this the
@@ -432,6 +451,38 @@ export class Ledger {
   /** Close the account (in-app account deletion): forfeit the balance, drop
    * open holds. The entries stay (no personal data in them) for the financial
    * retention period the owner picks. */
+  /** Link `provider` (or refresh the same identity's stored token). Throws
+   * "provider_linked" when the account already has ANOTHER identity of that
+   * provider: one per provider, unlink first. */
+  linkIdentity(provider: IdentityProvider, ident: Omit<LinkedIdentity, "linked_at">): Promise<Account> {
+    return this.locked(async () => {
+      const a = await this.acct();
+      if (!a) throw new Error("no account");
+      if (a.status === "closed") throw new Error("account closed");
+      const have = a.identities?.[provider];
+      if (have && have.sub !== ident.sub) throw new Error("provider_linked");
+      const next: Account = { ...a, identities: { ...a.identities, [provider]: { ...ident, linked_at: have?.linked_at ?? this.now() } } };
+      await this.s.put({ acct: next });
+      return next;
+    });
+  }
+
+  /** Unlink `provider` (only if it is still `sub`, when given). Returns what
+   * was removed, so the caller can revoke its token. */
+  unlinkIdentity(provider: IdentityProvider, sub?: string): Promise<LinkedIdentity | null> {
+    return this.locked(async () => {
+      const a = await this.acct();
+      const have = a?.identities?.[provider];
+      if (!a || !have || (sub !== undefined && have.sub !== sub)) return null;
+      const identities = { ...a.identities };
+      delete identities[provider];
+      const next: Account = { ...a, identities };
+      if (!Object.keys(identities).length) delete next.identities;
+      await this.s.put({ acct: next });
+      return have;
+    });
+  }
+
   close(): Promise<Account> {
     return this.locked(async () => {
       let a = await this.acct();
