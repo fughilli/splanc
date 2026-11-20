@@ -422,18 +422,37 @@ This is the web and Android channel (`stripe.ts`, `endpoint.ts`). The iOS app
 never offers it: `mayShowWebCheckout()` and `startWebCheckout` refuse inside
 the iOS app.
 
-- **Buy flow (app).** AI settings ▸ Splanc AI credits:
-  1. **Create account**: an anonymous device account.
-  2. **I'm 18 or older**: an explicit confirmation.
-  3. The packs from `GET /billing/pricing?channel=web` (credits and the US
-     reference price).
-  4. **Buy**: `POST /billing/checkout {sku, return_url}`, then the same tab
-     goes to Stripe Checkout. Only a `https://checkout.stripe.com/` URL is
-     ever opened.
-  5. Back in the app (`?checkout=success|cancel#/settings/ai`), a toast shows
-     and the balance is polled while the webhook credits.
+- **Buy flow (app).** A dedicated flow, one step per screen with one primary
+  action each (`web/src/ui/screens/creditsFlow.ts`; the pure state machine is
+  `web/src/effects/ai/creditsFlow.ts`). Entry points: Settings ▸ AI ▸ Splanc
+  AI credits, the "Set up AI" sheet's credits card, and the editor's
+  out-of-credits (402) / low-balance messages.
+  1. **Intro** (`#/credits`): what credits are, 1 credit = US$0.01 of AI usage
+     with our fee in the pack price, a typical prompt's 3–12 credits, and that
+     prompts aren't stored.
+  2. **Account + 18+**: an anonymous device account, created together with an
+     explicit "I'm 18 or older" consent (`POST /billing/account`, then
+     `POST /billing/age`).
+  3. **Recovery email (optional)**: "Add email (recommended)" sends a 6-digit
+     code (`POST /billing/account/email`, then `/verify`); "Continue without
+     email" first shows that credits can't be recovered without one, then
+     records `POST /billing/account/anonymous`.
+  4. **Pack** cards from `GET /billing/pricing?channel=web` (price, credits,
+     about how many prompts).
+  5. **Hand-off**: explains the secure Stripe page, then
+     `POST /billing/checkout {sku, return_url}` and the same tab goes to Stripe
+     Checkout. Only a `https://checkout.stripe.com/` URL is ever opened.
+  6. **Return** (`?checkout=success|cancel#/credits/return`): the balance is
+     polled until the webhook's credit lands (success, with the balance
+     counting in), or "still processing" after ~16 s; cancel says nothing was
+     charged and offers the packs again.
 
-  **Delete Splanc AI account** shows the forfeit warning first.
+  Settings ▸ AI shows the account: balance (low / empty), Buy more, the
+  recovery email (masked; change / remove with a warning), recent activity
+  (`GET /billing/statement`) and a danger zone. **Delete account** is its own
+  confirmation step with the forfeit warning. A fresh device restores with
+  **Restore an existing account** (`/billing/recover/start`, then `/verify`),
+  which signs the account out elsewhere; any 401 offers "Restore account".
 - **`POST /billing/checkout`** (session; account active; **18+ required**,
   403 `age_required`). The pack must be an enabled web pack **with a
   `stripe_price_id` in the pricing config**: price ids are config, never code,
@@ -448,7 +467,8 @@ the iOS app.
   - success / cancel URLs back into the app. Only `splanc.io`,
     `splanc.pages.dev` and `localhost` return URLs are honoured
     (`safeReturnUrl`); anything else falls back to `BILLING_APP_URL`, default
-    `https://splanc.io/app/#/settings/ai`.
+    `https://splanc.io/app/#/settings/ai` (the app sends any `?checkout=` return
+    to `#/credits/return`).
 
   Payment methods are Stripe's dynamic ones: cards, Apple Pay and Google Pay
   as enabled in the Dashboard. Apple Pay is registered for `splanc.io` and
@@ -482,9 +502,14 @@ the iOS app.
   - **Errors.** A transient failure is a 500, so Stripe retries. A permanent
     problem (wrong account, unknown pack, wrong environment) is a 200 plus
     `ai_purchase_rejected` (an alert), because a retry can't fix it.
-- **Sandbox only.** In `AI_BILLING=sandbox` the relay accepts only an
-  `sk_test_` key: a live key turns the whole feature off. The fake web purchase
-  route closes once Stripe is configured.
+- **Modes.** `AI_BILLING=sandbox` accepts only test keys (`sk_test_` /
+  `rk_test_`) and test-mode events; a live key turns the whole feature off. The
+  fake web purchase route closes once Stripe is configured.
+  `AI_BILLING=production` requires live keys (`sk_live_` / `rk_live_`), the
+  webhook secret and `BILLING_ADMIN_TOKEN`, counts only live-mode events, and
+  never uses the fake store. Sessions, account tags and the liability counter
+  are per mode. The switch is
+  [docs/ops/billing-go-live.md](../ops/billing-go-live.md).
 - **Tests** (`agent/tests/billing_stripe.test.ts`) use a fake `api.stripe.com`
   and events signed like Stripe's: form encoding, session parameters,
   signature checks, 18+, packs, credit-once, partial and full refunds,
@@ -698,7 +723,14 @@ the app's UI uses):
 - **Recovery signs other devices out.** Tokens are `sst2.<account>.<gen>.…`;
   recovery bumps the account's session generation, so tokens minted before it
   stop working (401). Deletion bumps it too. `sst1` tokens from before this
-  change count as generation 0.
+  change count as generation 0. Like `sst1`, `sst2` tokens are scoped to the
+  billing mode (AI_BILLING): a sandbox token never opens a production relay.
+- **Emails are per billing mode.** The keyed hash includes the mode in
+  production (sandbox keeps the plain input), so the email map, codes and
+  per-address limits are separate per mode. An email verified on a sandbox
+  (test-money) account can't recover it once the relay runs in production;
+  the user attaches it again to their production account. Recovery also
+  refuses an account of the other environment.
 - **No account enumeration.**
   - `recover/start` answers identically for known and unknown emails, and
     sends in the background (`waitUntil`) so timing doesn't tell either.
@@ -815,7 +847,7 @@ re-check before signing up.
 | T5 | Refund after spending | Clawback can go negative and blocks spending; the overdraft cap bounds one request's overshoot. |
 | T6 | Abuse / AUP violations by a user | Suspension (`status`), opaque `metadata.user_id`, rate limits, the Report button. On notice from Anthropic, suspend the account. |
 | T7 | A stolen session token | Bearer token only to our relay over HTTPS; 180-day expiry; a per-account session generation: recovery (and deletion) signs every earlier token out. |
-| T9 | Account takeover through recovery | A code only to the verified address; 6 digits, 10 minutes, single use, 5 attempts; per-IP and per-address limits; recovery signs other devices out; the `ai-recovery-spike` alert. Whoever controls the mailbox controls the account (the usual email-recovery trade-off). |
+| T9 | Account takeover through recovery | A code only to the verified address; 6 digits, 10 minutes, single use, 5 attempts; per-IP and per-address limits; recovery signs other devices out; the `biz-recovery-spike` alert. Whoever controls the mailbox controls the account (the usual email-recovery trade-off). |
 | T10 | Account enumeration by email | Identical answers and timing for known and unknown emails (`recover/start`, `account/email`); identical code failures; no attempts-left. |
 | T8 | A bad config loses money | Strict validation plus the `min_margin` check per pack; invalid config = feature off. |
 
@@ -885,8 +917,9 @@ needed, so the relay watches the org's spend and fails gracefully:
     metrics (`count_over_time`, `unwrap`), so one write path covers both.
   - Without the three settings, the push is off. Nothing is configured
     in-repo.
-- **Alert rules (code: `billingAlertRules`, provisioning JSON:
-  `grafanaProvisioning`).** Each rule is a LogQL query, reduced to its last
+- **Alert rules (code: `ops/grafana/business/alerts.json`, applied by
+  `ops/grafana/business/sync.py`; see docs/design/ops-grafana.md, which
+  supersedes this table).** Each rule is a LogQL query, reduced to its last
   value, with a threshold.
 
   | Rule | Query (on the billing streams) | Fires when |
@@ -901,8 +934,9 @@ needed, so the relay watches the org's spend and fails gracefully:
   | Written-off usage | sum of `written_off` (1 d) | > 500 credits (US$5) |
   | Apple consumption answer failed | count of `ai_consumption_failed` (1 h) | > 0 |
 
-  A test checks that every rule names only real events, that the org rule is
-  sized from the config (US$800), and that the provisioning JSON is complete.
+  A test checks that every rule names only real events and fields
+  (`agent/tests/ops.test.ts`). The org rule now reads `org_fraction` (> 0.8),
+  so it follows the configured limit without a code change.
 - **Reconciliation** (`reconcileUsage`, `reconcileStore`, run daily by the Ops
   job):
   - the ledger's list-price usage against Anthropic's Usage & Cost report for
@@ -1033,9 +1067,8 @@ accounts or secrets; everything else is code.
    - KV-backed pricing config;
    - the daily reconciliation job, which needs an Anthropic Admin API key
      **[owner]**, plus the store transaction lists from step 4 / 5;
-   - the dashboard JSON;
-   - a sync step that applies `grafanaProvisioning(...)` through Grafana's
-     alerting provisioning API;
+   - the dashboard JSON and a sync step for the alert rules (done:
+     `ops/grafana/business/`, docs/design/ops-grafana.md);
    - the admin CLI (adjust, suspend).
    - **[owner]** in Grafana Cloud:
      - create a `logs:write`-only access-policy token for the relay, and set
@@ -1047,8 +1080,10 @@ accounts or secrets; everything else is code.
        `warn`;
      - 30-day retention on the billing streams;
      - `BILLING_ADMIN_TOKEN`.
-8. **Production:** allow `AI_BILLING=production` only once steps 3–5 have
-   real verifiers; switch Stripe to live keys, the production App Store
+8. **Production:** `AI_BILLING=production` exists for the web channel (Stripe
+   live mode; runbook and script: [docs/ops/billing-go-live.md](../ops/billing-go-live.md),
+   `agent/relay/billing_go_live.mjs`). Apple stays off in production until step 5
+   has its real verifier. Switch Stripe to live keys, the production App Store
    environment, and the production Anthropic key **[owner]**; Workers Paid
    plan **[owner]**; App Review submission with a demo account and notes;
    privacy notice update (Anthropic as sub-processor; 30-day request logs).
@@ -1120,7 +1155,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://splanc-relay.<subdomain
   them and credits nothing, which is the expected result.
 - **In the app.** Open `https://splanc.io/app/`, run
   `localStorage.setItem("splanc.flags.aiCredits","1")` in the console, reload,
-  then go to AI settings ▸ Splanc AI credits ▸ Create account ▸ 18+ ▸ Buy.
+  then go to Settings ▸ AI ▸ Splanc AI credits ▸ Get Splanc AI credits.
 - **Turn it off:** `$W secret delete AI_BILLING --config wrangler.toml` (every
   route answers 503 again).
 - **Logs.** `[observability]` samples 5 % of requests (`head_sampling_rate`),
@@ -1174,8 +1209,9 @@ consent. Revisit later:
     `wrangler.toml`);
   - `directory.ts`: purchase claims, account-creation limits, the org
     month-to-date spend counter;
-- `agent/relay/src/billing/metrics.ts`: the event list, the Grafana Cloud
-  Logs push, the alert rules + provisioning JSON, reconciliation;
+- `agent/relay/src/billing/metrics.ts`: the event sink, purchase money,
+  reconciliation; `agent/relay/src/ops.ts`: the allowlisted Grafana Cloud Logs
+  push (docs/design/ops-grafana.md);
   - `platform.ts`: env.
 - `web/src/effects/ai/providers/credits.ts`: the flag-gated provider, session,
   stub balance.
