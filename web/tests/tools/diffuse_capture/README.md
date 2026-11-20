@@ -18,12 +18,12 @@ here, put them beside a data directory with the same layout.
 
 ## Setup that was measured
 
-| Part | What |
-|---|---|
-| Fixture | DemoPixieLamp: a 250-LED WS2812 rope, wired GRB, inside a white braided diffuser coiled on a lamp form. About 190 LEDs are visible from the camera; the rest are hidden behind the form. |
-| Camera | Pixel 10 Pro Fold rear camera, 720x1280 portrait, Chrome `getUserMedia`, on a stand. `data/camera.json` holds its capabilities. Manual exposure (ISO 30, white balance locked 5000 K) unless noted. |
-| LED control | `set_counting_pattern` through the app's own device client (found with `capture/findclient.mjs`). Note that the firmware keeps only the first 32 blocks. |
-| Exposure scale | `x` in [0,1] is `planExposure`'s geometric map between the camera minimum (0.057 ms) and 55 ms. For example, x = 0.35 is about 0.63 ms and x = 0.45 about 1.3 ms. |
+| Part           | What                                                                                                                                                                                                |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fixture        | DemoPixieLamp: a 250-LED WS2812 rope, wired GRB, inside a white braided diffuser coiled on a lamp form. About 190 LEDs are visible from the camera; the rest are hidden behind the form.            |
+| Camera         | Pixel 10 Pro Fold rear camera, 720x1280 portrait, Chrome `getUserMedia`, on a stand. `data/camera.json` holds its capabilities. Manual exposure (ISO 30, white balance locked 5000 K) unless noted. |
+| LED control    | `set_counting_pattern` through the app's own device client (found with `capture/findclient.mjs`). Note that the firmware keeps only the first 32 blocks.                                            |
+| Exposure scale | `x` in [0,1] is `planExposure`'s geometric map between the camera minimum (0.057 ms) and 55 ms. For example, x = 0.35 is about 0.63 ms and x = 0.45 about 1.3 ms.                                   |
 
 There were two sessions with different phone placements, each with its own LED
 centres and reference scans:
@@ -35,24 +35,24 @@ centres and reference scans:
 
 ## Data (here: `data/`; frames: Mac mini)
 
-| File | What |
-|---|---|
+| File                                             | What                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `centers_s1_clean.json`, `centers_s2_clean.json` | Exact per-LED spot centres (full-res px) for each session. Each is a merge of the dim (`centers_lo*`, white 0.6 at x = 0.35) and bright (`centers_hi*`, white 1.0 at x = 0.55) single-LED scans: the bright scan unless saturated, else the dim one. `src: "none"` marks LEDs that are hidden, too faint, or "ghosts" whose light only escapes at a shared indirect-glow point. Use these, not the raw scans. |
-| `plan_*.json` | Capture plans, inputs to `capture/runplan.mjs`. **`plan_stride.json` is invalid**: it sends more than 32 blocks, which the firmware silently truncates. `plan_stride2.json` (32-block windows) replaced it, and `frames/stride` is the stride2 capture. |
-| `plans_done/<frames dir>.json` | What each capture actually did: per step, the exposure, exposure time and the exact lit blocks with their colours. The scorers read these as `frames/<dir>/plan_done.json`. |
-| `detectable_<frames dir>.json` | Per step, the lit LEDs and the subset that is **detectable**: the known-location response (frame minus dark, max channel, gaussian σ 3) is above 5× noise. Recall is scored against these. The `ae` set uses per-frame matched darks. |
+| `plan_*.json`                                    | Capture plans, inputs to `capture/runplan.mjs`. **`plan_stride.json` is invalid**: it sends more than 32 blocks, which the firmware silently truncates. `plan_stride2.json` (32-block windows) replaced it, and `frames/stride` is the stride2 capture.                                                                                                                                                       |
+| `plans_done/<frames dir>.json`                   | What each capture actually did: per step, the exposure, exposure time and the exact lit blocks with their colours. The scorers read these as `frames/<dir>/plan_done.json`.                                                                                                                                                                                                                                   |
+| `detectable_<frames dir>.json`                   | Per step, the lit LEDs and the subset that is **detectable**: the known-location response (frame minus dark, max channel, gaussian σ 3) is above 5× noise. Recall is scored against these. The `ae` set uses per-frame matched darks.                                                                                                                                                                         |
 
 Frame sets on the Mac mini (`frames/`):
 
-| Set | Content |
-|---|---|
-| `sweep` | 240 frames of the **real mapping code** (v1, stride 3) at 4 LED brightness levels × 6 exposures. There's no per-frame ground truth, since the lit set comes from the code. |
-| `single_s1`, `single_hi_s1`, `single_s2`, `single_hi_s2` | One-LED-at-a-time reference scans, 2 frames per LED plus darks, per session. The dim scan is white 0.6 at x = 0.35; the bright one (`_hi`) is white 1.0 at x = 0.55. |
-| `stride` | Every 3rd LED in 32-LED windows, random R/G/B, at 4 brightness levels × 6 exposures, with darks per exposure. |
-| `extra` | All six code colours (R, B, M, Y, W, G), stride 3 at 2 brightness levels × 4 exposures, plus stride 2. |
-| `extra2` | The palette at the brightness/exposure extremes. |
-| `ae` | Stride 3, R/G/B and palette patterns under the camera's **auto exposure** (the failure regime: about 17 ms, merged spots), each with a matched dark taken at the exposure and ISO that AE chose (`dark_<step>_0.png`). |
-| `check*`, `probe`, `branch` | Drift checks and probes. |
+| Set                                                      | Content                                                                                                                                                                                                                |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sweep`                                                  | 240 frames of the **real mapping code** (v1, stride 3) at 4 LED brightness levels × 6 exposures. There's no per-frame ground truth, since the lit set comes from the code.                                             |
+| `single_s1`, `single_hi_s1`, `single_s2`, `single_hi_s2` | One-LED-at-a-time reference scans, 2 frames per LED plus darks, per session. The dim scan is white 0.6 at x = 0.35; the bright one (`_hi`) is white 1.0 at x = 0.55.                                                   |
+| `stride`                                                 | Every 3rd LED in 32-LED windows, random R/G/B, at 4 brightness levels × 6 exposures, with darks per exposure.                                                                                                          |
+| `extra`                                                  | All six code colours (R, B, M, Y, W, G), stride 3 at 2 brightness levels × 4 exposures, plus stride 2.                                                                                                                 |
+| `extra2`                                                 | The palette at the brightness/exposure extremes.                                                                                                                                                                       |
+| `ae`                                                     | Stride 3, R/G/B and palette patterns under the camera's **auto exposure** (the failure regime: about 17 ms, merged spots), each with a matched dark taken at the exposure and ISO that AE chose (`dark_<step>_0.png`). |
+| `check*`, `probe`, `branch`                              | Drift checks and probes.                                                                                                                                                                                               |
 
 The data dir also has `bundles/` (the v1/v2 capture bundles from main this
 morning: 6/250 vs 122/250 LEDs placed) and `console*.log` (phone console

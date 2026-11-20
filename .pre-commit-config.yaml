@@ -41,7 +41,14 @@ repos:
     rev: 7.0.0
     hooks:
       - id: flake8
-        args: [--max-line-length=120, --extend-ignore=E203]
+        # Bench-analysis scripts set sys.path before importing siblings and use short
+        # lambdas/loop names on purpose; only those style codes are relaxed there.
+        args:
+          [
+            --max-line-length=120,
+            --extend-ignore=E203,
+            '--per-file-ignores=web/tests/tools/diffuse_capture/*:E402,E731,E741',
+          ]
 
   # Shell script linting (shellcheck-py: no docker dependency, runs anywhere)
   - repo: https://github.com/shellcheck-py/shellcheck-py

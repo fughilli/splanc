@@ -10,13 +10,19 @@
    bar for "this spot is clearly in the frame".
 Writes truth.json: {centers: [[x,y],...], frames: {name: {lit: [idx...], sigma}}}.
 """
-import glob, json, os, sys
+
+import glob
+import json
+import os
+import sys
+
 import numpy as np
 from PIL import Image
 from scipy import ndimage as ndi
 
 D = os.path.dirname(os.path.abspath(__file__))
 files = sorted(glob.glob(f"{D}/frames/sweep/*.png"))
+
 
 def response(path):
     a = np.asarray(Image.open(path).convert("RGB")).astype(np.float32) / 255.0
@@ -26,12 +32,20 @@ def response(path):
     mad = np.median(np.abs(r - np.median(r))) * 1.4826 + 1e-6
     return r, mad
 
+
 R = {}
 for f in files:
     R[os.path.basename(f)[:-4]] = response(f)
 
 # High-SNR set for positions.
-hi = [k for k in R if any(k.startswith(p) for p in ("b100_x0.22", "b100_x0.32", "b60_x0.32", "b100_x0.14", "b60_x0.22"))]
+hi = [
+    k
+    for k in R
+    if any(
+        k.startswith(p)
+        for p in ("b100_x0.22", "b100_x0.32", "b60_x0.32", "b100_x0.14", "b60_x0.22")
+    )
+]
 pts = []
 for k in hi:
     r, s = R[k]
@@ -44,14 +58,17 @@ print("peaks", len(pts), "from", len(hi), "frames", file=sys.stderr)
 # Greedy clustering, radius 7 px.
 centers, counts = [], []
 used = np.zeros(len(pts), bool)
-order = np.argsort(-np.array([R[hi[0]][0][int(y), int(x)] for x, y in pts]))  # arbitrary but deterministic
+order = np.argsort(
+    -np.array([R[hi[0]][0][int(y), int(x)] for x, y in pts])
+)  # arbitrary but deterministic
 for i in order:
     if used[i]:
         continue
     d = np.hypot(*(pts - pts[i]).T)
     m = (d < 7) & ~used
     used |= m
-    centers.append(pts[m].mean(0)); counts.append(int(m.sum()))
+    centers.append(pts[m].mean(0))
+    counts.append(int(m.sum()))
 centers, counts = np.array(centers), np.array(counts)
 keep = counts >= 3
 centers = centers[keep]
@@ -66,6 +83,7 @@ json.dump(out, open(f"{D}/truth.json", "w"))
 # Overlay on one bright frame for eyeballing.
 im = Image.open(f"{D}/frames/sweep/b100_x0.22_003.png").convert("RGB")
 from PIL import ImageDraw, ImageEnhance
+
 im = ImageEnhance.Brightness(im).enhance(2.5)
 dr = ImageDraw.Draw(im)
 lit = set(out["frames"]["b100_x0.22_003"]["lit"])

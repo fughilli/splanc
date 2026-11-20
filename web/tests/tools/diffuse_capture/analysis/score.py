@@ -14,7 +14,12 @@ Metrics per (brightness, exposure):
   miss_lit  blobs per frame near lit-but-undetectable LEDs (bonus finds, not penalised)
 Usage: score.py <eval.json> [config ...]
 """
-import json, os, sys, re
+
+import json
+import os
+import re
+import sys
+
 import numpy as np
 from PIL import Image
 from scipy import ndimage as ndi
@@ -43,7 +48,14 @@ else:
             m = ndi.gaussian_filter((ld(f"{D}/frames/{FR}/{name}_0.png") - dk).max(2), 3)
             sig = float(1.4826 * np.median(np.abs(m - np.median(m)))) + 1e-3
             lit = [b["start"] for b in s["blocks"]]
-            DET[name] = {"lit": lit, "det": [i for i in lit if GOOD[i] and m[int(round(XY[i, 1])), int(round(XY[i, 0]))] > 5 * sig]}
+            DET[name] = {
+                "lit": lit,
+                "det": [
+                    i
+                    for i in lit
+                    if GOOD[i] and m[int(round(XY[i, 1])), int(round(XY[i, 0]))] > 5 * sig
+                ],
+            }
             continue
         if x not in darks:
             a, b = ld(f"{D}/frames/{FR}/dark_x{x}_0.png"), ld(f"{D}/frames/{FR}/dark_x{x}_1.png")
@@ -52,8 +64,16 @@ else:
         dk, sig = darks[x]
         m = ndi.gaussian_filter((ld(f"{D}/frames/{FR}/{name}_0.png") - dk).max(2), 3)
         lit = [b["start"] for b in s["blocks"]]
-        DET[name] = {"lit": lit, "det": [i for i in lit if GOOD[i] and m[int(round(XY[i, 1])), int(round(XY[i, 0]))] > 5 * sig]}
+        DET[name] = {
+            "lit": lit,
+            "det": [
+                i
+                for i in lit
+                if GOOD[i] and m[int(round(XY[i, 1])), int(round(XY[i, 0]))] > 5 * sig
+            ],
+        }
     json.dump(DET, open(_cache, "w"))
+
 
 def score(frames):
     agg = {}
@@ -61,13 +81,14 @@ def score(frames):
         name = key[:-2]  # strip _0 frame suffix
         mm = re.search(r"b([\d.]+)_x([\d.a-z]+)_", name)
         k = (float(mm.group(1)), -1.0 if mm.group(2) == "ae" else float(mm.group(2)))
-        a = agg.setdefault(k, {"det": 0, "hit": 0, "fp": 0, "split": 0, "err": [], "n": 0, "bonus": 0})
+        a = agg.setdefault(
+            k, {"det": 0, "hit": 0, "fp": 0, "split": 0, "err": [], "n": 0, "bonus": 0}
+        )
         a["n"] += 1
         lit, det = DET[name]["lit"], set(DET[name]["det"])
         a["det"] += len(det)
         B = np.array([[b[0], b[1]] for b in blobs]) if blobs else np.zeros((0, 2))
         litxy = XY[lit]
-        matched = set()
         # pairs sorted by distance between blobs and detectable LEDs
         pairs = []
         for j, (bx, by) in enumerate(B):
@@ -83,9 +104,11 @@ def score(frames):
         for d, j, i in pairs:
             if j in used_b or i in used_l:
                 continue
-            used_b.add(j); used_l.add(i)
+            used_b.add(j)
+            used_l.add(i)
             if i in det:
-                a["hit"] += 1; a["err"].append(d)
+                a["hit"] += 1
+                a["err"].append(d)
             else:
                 a["bonus"] += 1
         # blobs near a lit LED but not assigned = splits
@@ -95,8 +118,20 @@ def score(frames):
     for k in sorted(agg):
         a = agg[k]
         e = np.array(a["err"]) if a["err"] else np.array([np.nan])
-        rows.append((k[0], k[1], a["det"] / a["n"], a["hit"] / max(1, a["det"]), a["fp"] / a["n"], a["split"] / a["n"], np.nanmedian(e), np.nanpercentile(e, 90)))
+        rows.append(
+            (
+                k[0],
+                k[1],
+                a["det"] / a["n"],
+                a["hit"] / max(1, a["det"]),
+                a["fp"] / a["n"],
+                a["split"] / a["n"],
+                np.nanmedian(e),
+                np.nanpercentile(e, 90),
+            )
+        )
     return rows
+
 
 if __name__ == "__main__":
     res = json.load(open(sys.argv[1]))
@@ -107,6 +142,15 @@ if __name__ == "__main__":
         print(" bright  exp  | detectable/frm  recall   fp/frm  split/frm  err50  err90")
         for r in rows:
             print(" %5.1f  %4.2f |   %6.1f       %5.2f   %6.1f    %5.1f    %5.1f  %5.1f" % r)
-        R_ = np.array([r[3] for r in rows]); W_ = np.array([r[2] for r in rows])
+        R_ = np.array([r[3] for r in rows])
+        W_ = np.array([r[2] for r in rows])
         tot = sum(r[2] * r[3] for r in rows) / sum(W_)
-        print(" OVERALL recall %.3f  mean fp/frm %.1f  mean split/frm %.1f  median err %.1f" % (tot, np.mean([r[4] for r in rows]), np.mean([r[5] for r in rows]), np.nanmedian([r[6] for r in rows])))
+        print(
+            " OVERALL recall %.3f  mean fp/frm %.1f  mean split/frm %.1f  median err %.1f"
+            % (
+                tot,
+                np.mean([r[4] for r in rows]),
+                np.mean([r[5] for r in rows]),
+                np.nanmedian([r[6] for r in rows]),
+            )
+        )

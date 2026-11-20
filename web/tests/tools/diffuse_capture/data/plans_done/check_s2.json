@@ -1,1 +1,33 @@
-[{"name":"dark","exposure":0.35,"exposureTime":6.313745523734554,"blocks":[{"start":0,"count":250,"rgb":[0,0,0]}]},{"name":"led133","exposure":0.35,"blocks":[{"start":133,"count":1,"rgb":[0.6,0.6,0.6]}]},{"name":"led199","exposure":0.35,"blocks":[{"start":199,"count":1,"rgb":[0.6,0.6,0.6]}]},{"name":"led242","exposure":0.35,"blocks":[{"start":242,"count":1,"rgb":[0.6,0.6,0.6]}]},{"name":"led020","exposure":0.35,"blocks":[{"start":20,"count":1,"rgb":[0.6,0.6,0.6]}]},{"name":"led180","exposure":0.35,"blocks":[{"start":180,"count":1,"rgb":[0.6,0.6,0.6]}]}]
+[
+  {
+    "name": "dark",
+    "exposure": 0.35,
+    "exposureTime": 6.313745523734554,
+    "blocks": [{ "start": 0, "count": 250, "rgb": [0, 0, 0] }]
+  },
+  {
+    "name": "led133",
+    "exposure": 0.35,
+    "blocks": [{ "start": 133, "count": 1, "rgb": [0.6, 0.6, 0.6] }]
+  },
+  {
+    "name": "led199",
+    "exposure": 0.35,
+    "blocks": [{ "start": 199, "count": 1, "rgb": [0.6, 0.6, 0.6] }]
+  },
+  {
+    "name": "led242",
+    "exposure": 0.35,
+    "blocks": [{ "start": 242, "count": 1, "rgb": [0.6, 0.6, 0.6] }]
+  },
+  {
+    "name": "led020",
+    "exposure": 0.35,
+    "blocks": [{ "start": 20, "count": 1, "rgb": [0.6, 0.6, 0.6] }]
+  },
+  {
+    "name": "led180",
+    "exposure": 0.35,
+    "blocks": [{ "start": 180, "count": 1, "rgb": [0.6, 0.6, 0.6] }]
+  }
+]

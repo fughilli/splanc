@@ -1,52 +1,47 @@
 {
- "label": "camera 0, facing back",
- "settings": {
-  "aspectRatio": 0.5625,
-  "colorTemperature": 0,
-  "exposureCompensation": 0,
-  "exposureMode": "none",
-  "exposureTime": 12.86965,
-  "facingMode": "environment",
-  "focusDistance": 0,
-  "focusMode": "continuous",
-  "frameRate": 60,
-  "height": 1280,
-  "iso": 30,
-  "resizeMode": "none",
-  "torch": false,
-  "whiteBalanceMode": "continuous",
-  "width": 720,
-  "zoom": 1
- },
- "caps": {
-  "exposureMode": [
-   "continuous",
-   "manual"
-  ],
-  "exposureTime": {
-   "max": 160000.02085,
-   "min": 0.56968,
-   "step": 0.1
+  "label": "camera 0, facing back",
+  "settings": {
+    "aspectRatio": 0.5625,
+    "colorTemperature": 0,
+    "exposureCompensation": 0,
+    "exposureMode": "none",
+    "exposureTime": 12.86965,
+    "facingMode": "environment",
+    "focusDistance": 0,
+    "focusMode": "continuous",
+    "frameRate": 60,
+    "height": 1280,
+    "iso": 30,
+    "resizeMode": "none",
+    "torch": false,
+    "whiteBalanceMode": "continuous",
+    "width": 720,
+    "zoom": 1
   },
-  "iso": {
-   "max": 7563,
-   "min": 30,
-   "step": 1
-  },
-  "width": {
-   "max": 4000,
-   "min": 1
-  },
-  "height": {
-   "max": 3000,
-   "min": 1
-  },
-  "frameRate": {
-   "max": 60,
-   "min": 0
-  },
-  "facingMode": [
-   "environment"
-  ]
- }
+  "caps": {
+    "exposureMode": ["continuous", "manual"],
+    "exposureTime": {
+      "max": 160000.02085,
+      "min": 0.56968,
+      "step": 0.1
+    },
+    "iso": {
+      "max": 7563,
+      "min": 30,
+      "step": 1
+    },
+    "width": {
+      "max": 4000,
+      "min": 1
+    },
+    "height": {
+      "max": 3000,
+      "min": 1
+    },
+    "frameRate": {
+      "max": 60,
+      "min": 0
+    },
+    "facingMode": ["environment"]
+  }
 }
