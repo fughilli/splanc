@@ -171,3 +171,20 @@ def test_no_scanmiss_ack_is_infra():
 def test_absent_budget_is_reported_in_the_hang_problem():
     hang = core.grade(OK, _all(OK, absent=TIMEOUT), None, 20.0, 45.0)
     assert any("45s budget (the app hangs)" in p for p in hang["problems"])
+
+
+def test_parse_counts_mid_join_ble_drops_and_names_them():
+    # 0x08 with no lease = the central lost mid-join; after a lease it is the central
+    # closing while the DUT missed LL_TERMINATE (benign) and does not count.
+    drop = "[t=72327] [ble] link state=6 connected=0 leased=0 disc=0x08\n"
+    benign = "[t=27441] [ble] link state=6 connected=0 leased=1 disc=0x08\n"
+    closed = "[t=70646] [ble] link state=6 connected=0 leased=0 disc=0x13\n"
+    s = core.parse_serial(SETUP + FIXED_SAME + NOT_FOUND + drop + benign + closed)
+    assert s["ble_drops"] == 1
+    g = core.grade(OK, _all(OK, absent=TIMEOUT), s, 20.0)
+    assert g["verdict"] == "FAIL"
+    assert any("BLE link was lost" in p for p in g["problems"])
+    quiet = core.parse_serial(SETUP + FIXED_SAME + NOT_FOUND + benign)
+    assert quiet["ble_drops"] == 0
+    g = core.grade(OK, _all(OK, absent=TIMEOUT), quiet, 20.0)
+    assert not any("BLE link was lost" in p for p in g["problems"])

@@ -62,6 +62,12 @@ BLIND_ACK_RE = re.compile(r"\[wifi\] console: the next ([1-9]\d*) sweep\(s\) hea
 REDIRECT_RE = re.compile(r"\[ble\] PROVISIONED -> redirect (\S+)")
 LEASE_RE = re.compile(r"DHCP LEASE ACQUIRED.*?IP\s+(\d{1,3}(?:\.\d{1,3}){3})")
 RESTORED_RE = re.compile(r"\[wifi\] restored stored credentials \(ssid=([^)]*)\)")
+# BLE supervision timeouts (0x08) while the board held no lease: either the link died
+# mid-join (every Improv result/error after it is lost: the absent phase's ~33 s of sweeps
+# before the WiFi-idle coex handover) or a central that closed after the not-found report
+# while the DUT missed its LL_TERMINATE. The leased=1 kind (the central closing after the
+# redirect) is not counted. Telemetry; it names the cause when the absent phase hangs.
+BLE_DROP_RE = re.compile(r"\[ble\] link state=6 connected=0 leased=0 disc=0x08")
 CRASH_RE = re.compile(
     r"Guru Meditation|abort\(\) was called|Backtrace:|rst:0x[0-9a-f]+ \((?:PANIC|TG|LP_WDT|RTC_WDT)"
 )
@@ -98,6 +104,7 @@ def parse_serial(log: str) -> dict:
         "blind_ack": len(BLIND_ACK_RE.findall(log)),
         "redirects": len(REDIRECT_RE.findall(log)),
         "leases": len(LEASE_RE.findall(log)),
+        "ble_drops": len(BLE_DROP_RE.findall(log)),
         "restored": RESTORED_RE.search(log) is not None,
         "crashed": CRASH_RE.search(log) is not None,
     }
@@ -169,8 +176,10 @@ def grade(
         if ca == "ok":
             problems.append(f"{ABSENT}: an SSID that is not on the air reported PROVISIONED")
         elif JOIN_TIMEOUT in err:
+            lost = serial is not None and serial.get("ble_drops")
             problems.append(
                 f"{ABSENT}: no Improv error within the {absent_budget_s:g}s budget (the app hangs)"
+                + (" — the BLE link was lost mid-join (supervision timeout)" if lost else "")
             )
         elif UNABLE not in err:
             problems.append(f"{ABSENT}: want error {UNABLE}, got {err}")
