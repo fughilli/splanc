@@ -1313,8 +1313,10 @@ export class LedMapperClient {
 
   // -- The mesh gateway (docs/design/mesh.md §8; net/mesh.ts) -------------------
 
-  /** The mesh this fixture is in (players without one reject with error "unsupported"). On
-   * a dev mesh this also opens the gateway session for this connection. */
+  /** The mesh this fixture is in. Only for players advertising "mesh" (net/mesh.ts
+   * deviceHasMesh); others reject with an error ("unsupported", or "bad_message" on firmware
+   * older than the mesh arms). On a dev
+   * mesh this also opens the gateway session for this connection. */
   async getMesh(timeoutMs = 5000): Promise<MeshStateInfo> {
     const r = (await this.request({ type: "get_mesh" } as unknown as ClientMessage, "mesh", timeoutMs)) as unknown as MeshInfoMessage;
     this.meshState_ = r.state ?? {};

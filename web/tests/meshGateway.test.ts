@@ -79,3 +79,10 @@ test("gateway errors and the card's summary", () => {
   assert.equal(meshSummary({ on: false }), null);
   assert.equal(meshSummary({ on: true, member: true, node: 1, sync: 0, members: [{ node: 4 }] }), "Meshed with 1 other fixture · time not synced yet");
 });
+
+test("the mesh UI is for players that advertise the mesh variant", async () => {
+  const { deviceHasMesh } = await import("../src/net/mesh");
+  assert.equal(deviceHasMesh({ features: ["effects", "mesh"] }), true);
+  assert.equal(deviceHasMesh({ features: ["effects", "ota"] }), false);
+  assert.equal(deviceHasMesh(null), false);
+});

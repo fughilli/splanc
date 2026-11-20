@@ -29,7 +29,7 @@ import { formatWifiStatus } from "../../net/wifiPolicy";
 import { WifiPolicySection } from "./wifiPolicySection";
 import { KioskSection } from "./kioskSection";
 import { MeshGatewaySection } from "./meshGatewaySection";
-import { meshPeers } from "../../net/mesh";
+import { deviceHasMesh, meshPeers } from "../../net/mesh";
 import { deviceHasKiosk } from "../../net/kiosk";
 import { isBleUrl } from "../../net/bleTransport";
 
@@ -654,9 +654,10 @@ function openDeviceDetail(dev: KnownDevice): void {
     sheet.body.append(wifiLine, wifiDivider, section);
   }
 
-  // -- Mesh (mesh M5): shown once the fixture reports others meshed with it; its one switch
-  // sends live control through this fixture to the whole mesh.
-  if (isActive && client) {
+  // -- Mesh (mesh M5; firmware advertising "mesh", the mesh variant): shown once the fixture
+  // reports others meshed with it; its one switch sends live control through this fixture to
+  // the whole mesh.
+  if (isActive && client && deviceHasMesh(client.welcome)) {
     const meshDivider = document.createElement("hr");
     meshDivider.className = "device-detail-divider";
     meshDivider.hidden = true;

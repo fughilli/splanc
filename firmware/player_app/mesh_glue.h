@@ -74,6 +74,8 @@ void ns_mesh_tick_staged(void *m) __attribute__((weak));
 // The gateway and relayed control (M5, mesh_gw.rs).
 int32_t ns_mesh_app(void *m, uint32_t conn, const uint8_t *frame, uint32_t len, int64_t now_us, uint8_t *out,
                     uint32_t cap, const uint8_t **inner, uint32_t *inner_len) __attribute__((weak));
+// With the mesh off (no block): get_mesh -> state{on: false}, mesh_send -> NO_MESH, else -2.
+int32_t ns_mesh_app_off(const uint8_t *frame, uint32_t len, uint8_t *out, uint32_t cap) __attribute__((weak));
 void ns_mesh_gw_local_done(void *m, uint32_t status) __attribute__((weak));
 void ns_mesh_app_time_base(void *m, uint32_t conn) __attribute__((weak));
 void ns_mesh_conn_closed(void *m, uint32_t conn) __attribute__((weak));

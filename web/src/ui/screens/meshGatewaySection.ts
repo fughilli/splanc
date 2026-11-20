@@ -87,7 +87,7 @@ export function MeshGatewaySection(
     el.append(h, line, row);
   };
 
-  // No mesh on this player (error "unsupported"), or no answer: nothing to show.
+  // The mesh is off on this player (state.on false), or no answer: nothing to show.
   const hide = (): void => {
     el.hidden = true;
     opts.onShown?.(false);

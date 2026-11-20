@@ -1773,7 +1773,9 @@ bool netstack_ws_send(uint8_t *data, size_t len) { return netstack_ws_send_frame
 // -3 = dispatch *inner too and answer with its reply (then lm_mesh_app_done).
 extern "C" int32_t lm_mesh_app(uint32_t conn, const uint8_t *in, size_t len, uint8_t *out, size_t cap,
                                const uint8_t **inner, uint32_t *inner_len) {
-  if (!g_mesh || !ns_mesh_app) return -2;
+  // The mesh off (no block): this player still answers its own arms (get_mesh state{on: false},
+  // mesh_send result{error: NO_MESH}; ns_mesh_app_off), so the app's mesh section stays hidden.
+  if (!g_mesh || !ns_mesh_app) return ns_mesh_app_off ? ns_mesh_app_off(in, (uint32_t)len, out, (uint32_t)cap) : -2;
   return ns_mesh_app(g_mesh, conn, in, (uint32_t)len, esp_timer_get_time(), out, (uint32_t)cap, inner, inner_len);
 }
 extern "C" void lm_mesh_app_done(uint32_t status) {

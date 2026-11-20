@@ -495,6 +495,35 @@ pub unsafe extern "C" fn ns_mesh_app(m: *mut Mesh, conn: u32, frame: *const u8, 
     }
 }
 
+/// The app's mesh arms while the mesh is off (no block): `get_mesh` answers `state{on: false}`
+/// and `mesh_send` `result{error: NO_MESH}`, so a mesh-variant player always answers its own
+/// arms. -2 for anything else.
+#[no_mangle]
+pub unsafe extern "C" fn ns_mesh_app_off(frame: *const u8, len: u32, out: *mut u8, cap: u32) -> i32 {
+    let frame = core::slice::from_raw_parts(frame, len as usize);
+    let out = core::slice::from_raw_parts_mut(out, cap as usize);
+    app_off(frame, out)
+}
+
+fn app_off(frame: &[u8], out: &mut [u8]) -> i32 {
+    match client_arm(frame) {
+        Some((gateway::arm::GET_MESH, _)) => {
+            let mut w = Pb::new(out);
+            w.msg(SMSG_MESH, |i| i.msg(2, |_| {}));
+            if w.ok {
+                w.n as i32
+            } else {
+                0
+            }
+        }
+        Some((gateway::arm::MESH_SEND, _)) => {
+            let op = parse_send(frame).map_or(0, |s| s.op_id);
+            encode_result::<16>(out, op, err::NO_MESH, None, None, 0) as i32
+        }
+        _ => -2,
+    }
+}
+
 /// Check, schedule and send one `mesh_send`. Ok: (the rescheduled inner's length in
 /// `m.gw.out`, if it was rescheduled; its apply_at_ms).
 fn gateway_send(m: &mut Mesh, conn: usize, op: u32, s: &Send<'_>, now_us: i64) -> Result<(Option<usize>, Option<u32>), u32> {
@@ -793,6 +822,23 @@ pub fn report(m: &Mesh, w: &mut crate::Buf<'_>) -> core::fmt::Result {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mesh_off_answers_its_own_arms() {
+        let mut out = [0u8; 64];
+        // get_mesh (ClientMessage field 100, empty) -> ServerMessage{mesh(55){state(2){}}}.
+        let n = app_off(&[0xa2, 0x06, 0x00], &mut out);
+        assert_eq!(&out[..n as usize], &[0xba, 0x03, 0x02, 0x12, 0x00]);
+        // mesh_send (field 99) -> mesh{result(1){error: NO_MESH}}, op_id echoed.
+        let send = [0x9a, 0x06, 0x02, 0x08, 0x07];
+        let n = app_off(&send, &mut out) as usize;
+        assert_eq!(&out[..2], &[0xba, 0x03]);
+        let body = &out[..n];
+        assert!(body.windows(2).any(|w| w == [0x08, 0x07]), "op_id 7: {body:02x?}");
+        assert!(body.windows(2).any(|w| w == [0x10, err::NO_MESH as u8]), "NO_MESH: {body:02x?}");
+        // Anything else is not the mesh's.
+        assert_eq!(app_off(&[0x0a, 0x00], &mut out), -2);
+    }
 
     #[test]
     fn pb_nested_and_parse_send() {

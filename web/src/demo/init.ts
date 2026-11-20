@@ -222,6 +222,10 @@ function setupMeshDemo(): void {
       { node: 0x91e4, rssi: -44, seenMsAgo: 700, fps: 80, sync: 2 },
     ],
   };
+  // A mesh-variant player says so in welcome.features (the app's mesh UI is gated on it).
+  const base = client.welcome;
+  const welcome = { ...base, features: [...(base?.features ?? []), "mesh"] };
+  Object.defineProperty(client, "welcome", { configurable: true, get: () => welcome });
   const c = client as unknown as Record<string, unknown>;
   c["getMesh"] = async () => {
     c["meshState_"] = state;

@@ -127,6 +127,13 @@ export function meshResultError(r: MeshResultInfo | undefined): string | null {
   return SEND_ERRORS[name] ?? name;
 }
 
+/** Whether the player runs the mesh firmware variant: it advertises "mesh" in
+ * welcome.features and answers get_mesh / mesh_send (desk #76). Other players don't know
+ * the mesh arms at all, so the app never sends them one. */
+export function deviceHasMesh(w: { features?: string[] } | null | undefined): boolean {
+  return (w?.features ?? []).includes("mesh");
+}
+
 /** The fixtures meshed with the connected one (it never lists itself). */
 export function meshPeers(s: MeshStateInfo | null | undefined): MeshMemberInfo[] {
   if (!s || !s.on || !s.member) return [];

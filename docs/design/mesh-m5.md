@@ -68,8 +68,13 @@ The app's switch (device sheet, phone width; desktop and the off state in the PR
   netstack player encodes them by hand in `mesh_gw.rs`, and the player core answers both arms
   `error{unsupported}` (as every non-mesh player does). A golden frame is shared by the Rust
   and the web tests.
-- Additive and backward compatible: old firmware answers `unsupported`; the app only shows
-  the mesh UI when `get_mesh` lists members.
+- Additive and backward compatible. The C6 players (the mesh is in every one, off by
+  default) advertise `"mesh"` in `welcome.features`; the app sends `get_mesh` and shows the
+  mesh UI only to those players, and only when `get_mesh` lists members. Players without the
+  mesh (the P4, the C3, firmware before it) never get a mesh arm from the app, and answer one
+  with an error (`unsupported`, or `bad_message` before the arms existed). With the mesh off,
+  a C6 player answers `get_mesh` with `state{on: false}` and `mesh_send` with
+  `result{error: NO_MESH}` (`mesh_gw.rs` `ns_mesh_app_off`).
 
 **The direct reply to `mesh_send` is the gateway's own reply to `inner`** (`playback_state`,
 `welcome`, `control_ack`, `result_ready`), exactly as if the app had sent `inner` alone, so
@@ -161,9 +166,9 @@ the wss phase, closes it, then the BLE phase.
   minimum dips to 22.3 KB once, at `MESH ON` (the create task's stack), as before.
 - **Flash** (default image): **+28.4 KB text, +2.1 KB rodata** over M4 (`.flash.text`
   2 036 872 B). Mostly the gateway path inlined into `ns_mesh_app` (7.4 KB with the hand
-  protobuf encoders), the stack's fan-out/aggregation and the member status. Desk #76: the
-  mesh images stay a variant; not shrunk here. `//firmware/loader:layout_test` fails as since
-  M3 (desk #73/#76).
+  protobuf encoders), the stack's fan-out/aggregation and the member status. With #569's size
+  diet the default app is **2 220 432 B**: `//firmware/loader:layout_test` passes with
+  73 328 B under its 64 KiB margin (138 864 B left in `ota_0`; desk D-86).
 - **Stack** (call-graph walk over the ELF, long calls resolved): `ns_mesh_tick` 9.0 KB of its
   14 KB (M4 8.4 KB; the copied relayed controls), `ns_mesh_app` 2.8 KB on loopTask, returning
   before the inner is dispatched (that dispatch is the ordinary app path). Measured: loopTask

@@ -118,11 +118,13 @@ rust_static_library(
     rustc_env = led_cap_rustc_env(),
     # PERF_CPU_HZ: the P4's cycle counter runs at 400 MHz, the C6's and C3's at 160.
     # lm_ota_inapp: the P4 takes its updates in the app (ota_p4.cpp; welcome "ota_inapp").
+    # lm_mesh: the C6 players link the mesh (mesh_ffi; off by default): welcome "mesh".
     rustc_flags = select({
         "@embedded//platforms:is_esp32p4": [
             "--cfg=lm_cpu_400m",
             "--cfg=lm_ota_inapp",
         ],
+        "@embedded//platforms:is_esp32c6": ["--cfg=lm_mesh"],
         "//conditions:default": [],
     }),
     # esp32c3 is a build-only target (see //MODULE.bazel + firmware/netstack);
@@ -804,6 +806,7 @@ _MESH_FFI_SYMS = [
     "ns_mesh_tick_staged",
     # The gateway and relayed control (mesh M5, mesh_gw.rs).
     "ns_mesh_app",
+    "ns_mesh_app_off",
     "ns_mesh_gw_local_done",
     "ns_mesh_app_time_base",
     "ns_mesh_conn_closed",

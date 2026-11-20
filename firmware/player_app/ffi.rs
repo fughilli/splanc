@@ -2851,8 +2851,14 @@ macro_rules! features {
     ] };
 }
 
-#[cfg(not(lm_ota_inapp))]
+#[cfg(not(any(lm_ota_inapp, lm_mesh)))]
 pub const FEATURES: &[&str] = features!();
+/// The C6 players carry the mesh (off by default; mesh_ffi.rs) and answer its arms
+/// (`mesh_send` / `get_mesh` -> `mesh`, mesh M5; mesh_gw.rs): the app shows its mesh UI only
+/// to players that say so. Players without it (the P4, the C3, firmware before the mesh)
+/// answer those arms with an error.
+#[cfg(all(lm_mesh, not(lm_ota_inapp)))]
+pub const FEATURES: &[&str] = features!("mesh");
 /// The ESP32-P4 player (docs/design/p4-c6-split.md §5.1) takes its update in the app
 /// itself, through the C6 front end: no restart into a loader before the transfer.
 #[cfg(lm_ota_inapp)]
