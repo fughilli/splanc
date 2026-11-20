@@ -42,6 +42,7 @@
 #include "esp_mac.h"        // esp_read_mac: the factory STA MAC
 #include "sta_mac.h"        // stable (factory) vs opt-in random station MAC
 #include "join_guard.h"     // per-boot 802.11 sequence numbers + the unanswered-auth guard
+#include "psk_reject.h"     // Improv: report a password the AP rejects (4-way M2 refused)
 #include "serial_log.h"     // Console(): the ordered, lossless log ring (identity lines)
 
 extern "C" {
@@ -325,6 +326,9 @@ bool scan_latch_ap() {
 // frame in all-frames mode), one non-blocking hop per pass, while render keeps going.
 lm_wifi_scan::ScanSchedule g_scan_sched;
 lm_wifi_scan::ImprovScanReport g_improv_scan;  // Improv: report an SSID no sweep can see
+lm_join::PskRejectWatch g_psk_watch;  // Improv: report a password the AP rejects in seconds
+lm_join::LastGoodNetwork g_last_good;  // where a rejected password falls back to (D-74)
+bool g_fallback_pending = false;       // set by the report; netstack_loop does the switch
 lm_wifi_scan::ChannelHop g_hop;
 bool g_force_sweep = false;   // console WIFI SCAN: one sweep now
 bool g_sweep_forced = false;  // the running sweep was forced (not scheduled)
@@ -1261,6 +1265,7 @@ void handle_l3(const uint8_t *pt, int pl) {
         mark_seen();
         g_window_until = 0;  // manual: the join window did its job
         g_persist.on_lease((uint32_t)millis());  // proves freshly provisioned creds (wifi_creds.h)
+        g_last_good.remember(g_ssid, g_pass);    // the network to fall back to (psk_reject.h)
         g_lease_ms = millis(); // (re)start the lease clock for T1 renewal
         memcpy(g_offer_ip, dh + 16, 4); // commit the leased IP
         // Drift fork: the TCP listener binds our IP exactly ONCE (g_tcp_started one-shot at
@@ -1771,6 +1776,7 @@ void netstack_restore_credentials(const char *ssid, const char *pass) {
   g_restore_pending = true;
   g_using_stored = true;
   g_persist.on_restored();
+  g_last_good.remember(g_ssid, g_pass);  // stored = leased once: a fallback target
   Serial.printf("[wifi] restored stored credentials (ssid=%s) -> joining\n", g_ssid);
 }
 // External linkage (g_rekey_serviced lives in the anonymous namespace above but is visible
@@ -2261,6 +2267,55 @@ static bool takeover_finish(bool slot_open) {
   return true;
 }
 
+// Act on the Improv wrong-password watch (psk_reject.h). kAbandon: the caller re-drives
+// the join from auth (this 4-way session is lost; the AP would only re-send M1 until its
+// own deauth). kReportRejected: also tell the Improv central — error UNABLE_TO_CONNECT +
+// the password-rejected reason (state back to AUTHORIZED, so the app can re-send). The
+// creds stay committed and the join keeps retrying; a lease clears the error. The
+// passphrase itself is never logged.
+static void psk_reject_act(lm_join::PskRejectWatch::Action a) {
+  using A = lm_join::PskRejectWatch::Action;
+  if (a == A::kNone) return;
+  uint32_t now_ms = (uint32_t)millis();
+  if (a == A::kAbandon) {
+    Serial.printf("[t=%lu] [join] 4-way: M2 refused (M1 re-sent), session %lu rejected\n",
+                  (unsigned long)now_ms, (unsigned long)g_psk_watch.rejected_sessions());
+    return;
+  }
+  // D-74: a board with a previous network goes back to it (netstack_loop, next pass).
+  g_fallback_pending = g_last_good.fallback_for(g_ssid, g_pass);
+  improv_ble_set_join_error(g_fallback_pending ? IMPROV_JOIN_FAILURE_PASSWORD_REJECTED_FELL_BACK
+                                               : IMPROV_JOIN_FAILURE_PASSWORD_REJECTED);
+  g_improv_join.forget();  // the corrected SendWifi is a fresh join, never a ride
+  Serial.printf("[t=%lu] [ble] \"%s\": password rejected (%lu sessions, %lu ms) — Improv "
+                "UNABLE_TO_CONNECT\n", (unsigned long)now_ms, g_ssid,
+                (unsigned long)g_psk_watch.rejected_sessions(),
+                (unsigned long)(now_ms - g_psk_watch.started_ms()));
+}
+
+// D-74 "fall back after reporting": swap the rejected credentials for the last network
+// that leased and re-join it the way a fresh provision would (re-latch, forced sweep, PMK
+// off the hot path). Nothing is written to NVS (that network is the stored one, or leased
+// this boot), the Improv error stays (its lease is not the reported network joining), and
+// the caller drops the pending redirect. Effects keep running throughout.
+static void fall_back_to_last_good(uint32_t now_ms) {
+  Serial.printf("[t=%lu] [wifi] password for \"%s\" rejected -> back to \"%s\"\n",
+                (unsigned long)now_ms, g_ssid, g_last_good.ssid());
+  strncpy(g_ssid, g_last_good.ssid(), sizeof g_ssid - 1);
+  strncpy(g_pass, g_last_good.pass(), sizeof g_pass - 1);
+  g_ssid[sizeof g_ssid - 1] = 0;
+  g_pass[sizeof g_pass - 1] = 0;
+  g_using_stored = true;
+  g_persist.on_restored();
+  g_psk_watch.on_fell_back();
+  g_ap_latched = false;
+  drop_link_for_new_network();
+  g_scan_sched.due(false, 0);
+  g_force_sweep = true;
+  g_authw.reset();
+  ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass));
+}
+
 void netstack_loop() {
   {
     uint32_t now_us = (uint32_t)micros();
@@ -2406,6 +2461,10 @@ void netstack_loop() {
       uint16_t reason = (n >= 26) ? (uint16_t)(rx[24] | (rx[25] << 8)) : 0;
       Serial.printf("[t=%lu] *** WiFi %s (reason=%u) — re-joining ***\n",
                     (unsigned long)millis(), rx[0] == 0xc0 ? "DEAUTH" : "DISASSOC", reason);
+      // Mid-4-way (reason 15 = handshake timeout, 2/23 = an AP that refuses outright):
+      // evidence for the wrong-password watch (psk_reject.h). The re-join below is the
+      // same either way; a report also tells the Improv central.
+      if (st == FOURWAY) psk_reject_act(g_psk_watch.on_session_end(true, (uint32_t)millis()));
       st = AUTH;
       inited = false;
       t = 0;
@@ -2456,6 +2515,20 @@ void netstack_loop() {
           if (!once) { once = true; dump_txstat("eapol-good"); } // baseline: this TX succeeds
           for (int k = 0; k < 2; k++) { delay(3); ns_mac_send(f, dl, 0); }
         }
+        // M1 (ACK, no MIC) answered with our M2: an AP that keeps re-sending M1 is refusing
+        // that M2 — the wrong-password watch (psk_reject.h) may abandon this session
+        // (re-drive auth now rather than sit out the AP's M1 retries) or report it.
+        if (code == 1 && rl > 0 && (kinfo & 0x0100) == 0 && (kinfo & 0x0080) != 0) {
+          lm_join::PskRejectWatch::Action pa = g_psk_watch.on_m1_answered((uint32_t)millis());
+          if (pa != lm_join::PskRejectWatch::Action::kNone) {
+            psk_reject_act(pa);
+            st = AUTH;
+            inited = false;
+            t = 0;
+            continue;
+          }
+        }
+        if (code == 2) g_psk_watch.on_m3();  // the AP took our M2: the password is right
         if (code == 2) {
           st = DONE;
           Serial.printf("[t=%lu] *** 4-WAY COMPLETE — CCMP KEYS INSTALLED, LINK UP ***\n", (unsigned long)millis());
@@ -2549,6 +2622,8 @@ void netstack_loop() {
             g_persist.on_committed();  // written to NVS once this network leases
             g_improv_join.forget();    // the next Improv write is fresh, whatever it carries
             g_improv_scan.cancel();    // and owes the Improv central no not-found report
+            g_psk_watch.cancel();      // nor a wrong-password one
+            g_fallback_pending = false;  // these creds replace any pending fallback
             g_ap_latched = false;  // re-latch THIS SSID's BSSID/channel from the scan cache
             st = AUTH;             // restart the join from AUTH (mirrors the BLE take path)
             inited = false;        // the 4-way re-inits for the new AP / PMK
@@ -2739,7 +2814,7 @@ void netstack_loop() {
         // device to join": Improv error UNABLE_TO_CONNECT (state back to AUTHORIZED, so
         // it can re-send). The creds stay committed and the background rescan goes on —
         // the board still joins if the AP appears, and that lease clears the error.
-        improv_ble_set_error(IMPROV_ERROR_UNABLE_TO_CONNECT);
+        improv_ble_set_join_error(IMPROV_JOIN_FAILURE_NOT_FOUND);
         g_improv_join.forget();  // the app's retry SendWifi is a fresh join, never a ride
         Serial.printf("[t=%lu] [ble] \"%s\" not found in %lu sweeps over %lu s (directed probe "
                       "incl.) — Improv error UNABLE_TO_CONNECT; creds kept, background rescan "
@@ -2820,6 +2895,7 @@ void netstack_loop() {
   if ((st == ASSOC && millis() - t > 1000) || (st == FOURWAY && millis() - t > 4000)) {
     Serial.printf("[t=%lu] join stalled in %s — re-joining from auth\n", (unsigned long)millis(),
                   st == ASSOC ? "assoc" : "4-way");
+    if (st == FOURWAY) psk_reject_act(g_psk_watch.on_session_end(false, (uint32_t)millis()));
     st = AUTH;
     inited = false;
     t = 0;
@@ -2844,6 +2920,14 @@ void netstack_loop() {
   if (PLAYER_MODE) {
     static bool ble_creds_pending = false;
     static uint32_t redirect_first_ms = 0, redirect_last_ms = 0;
+    if (g_fallback_pending) {  // (before the take below: a SendWifi in the same pass wins)
+      g_fallback_pending = false;
+      ble_creds_pending = false;  // the old network's lease answers no redirect
+      fall_back_to_last_good((uint32_t)millis());
+      st = AUTH;
+      inited = false;
+      t = 0;
+    }
     char s[33], p[65];
     if (improv_ble_take_credentials(s, sizeof s, p, sizeof p)) {
       // The user's rule: a Wi-Fi join triggered through Improv is ALWAYS fresh — scan and
@@ -2899,6 +2983,7 @@ void netstack_loop() {
         g_scan_sched.due(false, 0);  // disarm + reset the backoff
         g_force_sweep = true;
         g_improv_scan.on_fresh_join(now_ms);  // an SSID no sweep sees is reported (wifi_scan.h)
+        g_psk_watch.on_fresh_join(now_ms);    // so is a password the AP rejects (psk_reject.h)
         g_authw.reset();  // a fresh join gets a fresh unanswered-auth clock
         // Start deriving the PMK NOW (off the hot path), overlapped with auth/assoc, so it's
         // ready by the 4-way and we never freeze the loop (which would drop the BLE link
@@ -2924,11 +3009,15 @@ void netstack_loop() {
     // reliable). Re-advertising for a short window gives the central many chances to catch one
     // copy; it stops once the central disconnects (it got it). Harmless on a good link — the
     // provisioner completes on the first copy and drops the link.
-    if (g_leased && g_improv_scan.take_clear_on_lease()) {
+    // (Either report: the not-found one or the wrong-password one. Both run, so a lease
+    // after both — not possible today: an answered auth disarms the not-found watch — still
+    // clears each once.)
+    bool cleared_psk = g_leased && g_psk_watch.take_clear_on_lease();
+    if (g_leased && (g_improv_scan.take_clear_on_lease() | cleared_psk)) {
       // The AP showed up after we reported it not found: clear the Improv error. With the
       // central still connected the redirect below does it (PROVISIONED + result); with
       // it gone, set the same state now so a central that reconnects reads success.
-      Serial.printf("[t=%lu] [ble] \"%s\" joined after the not-found report — clearing the "
+      Serial.printf("[t=%lu] [ble] \"%s\" joined after a failure report — clearing the "
                     "Improv error\n", (unsigned long)millis(), g_ssid);
       if (!improv_ble_central_connected()) {
         char url[40];

@@ -3298,6 +3298,18 @@ input.device-name-input {
   font-size: var(--f-caption);
   min-height: 1em;
 }
+.wifi-status--error {
+  color: var(--err);
+}
+/* Hidden flow buttons (k-btn sets display, which outranks the UA [hidden] rule). */
+.wifi-sheet .k-btn[hidden] {
+  display: none;
+}
+/* Secondary actions (stop waiting, choose another device) sit on their own row,
+   12 px below the primary (sheet gap 8 + 4), never jammed against it. */
+.wifi-secondary {
+  margin-top: var(--sp-1);
+}
 
 /* Onboarding reuses the device-add row, a touch larger. */
 .onboard-cta {

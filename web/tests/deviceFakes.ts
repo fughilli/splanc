@@ -469,6 +469,11 @@ export interface FakeImprovOpts {
   redirect?: string[];
   /** Answer with this Improv error code instead of a redirect. */
   errorCode?: number;
+  /** Splanc's reason byte sent after `errorCode` (firmware IMPROV_JOIN_FAILURE_*). */
+  errorReason?: number;
+  /** The network's password: any other one is refused like the firmware does it
+   * (UNABLE_TO_CONNECT + the password-rejected reason byte). */
+  password?: string;
   /** Modeled WiFi-join time between receiving credentials and answering. */
   joinDelayMs?: number;
   /** Result notifications per join (the firmware's redirect resend window). */
@@ -593,12 +598,24 @@ export class FakeImprovDevice implements ImprovDevice {
    * subscribed characteristics. */
   private deliver(pkt: Uint8Array): void {
     this.delivered.push(pkt);
-    if (!parseWifiSettings(pkt) || this.opts.silent) return;
+    const creds = parseWifiSettings(pkt);
+    if (!creds || this.opts.silent) return;
+    // A new SendWifi clears the previous error (the firmware's on_rpc).
+    this.errorState.emit(new Uint8Array([0x00]));
     const answers = this.opts.answers ?? 1;
+    const refused = this.opts.password !== undefined && creds.password !== this.opts.password;
     for (let i = 0; i < answers; i++) {
       setTimeout(
         () => {
-          if (this.opts.errorCode) this.errorState.emit(new Uint8Array([this.opts.errorCode]));
+          if (refused) this.errorState.emit(new Uint8Array([0x03, 0x02]));
+          else if (this.opts.errorCode)
+            this.errorState.emit(
+              new Uint8Array(
+                this.opts.errorReason !== undefined
+                  ? [this.opts.errorCode, this.opts.errorReason]
+                  : [this.opts.errorCode],
+              ),
+            );
           else this.rpcResult.emit(improvResultPacket(this.opts.redirect ?? ["http://192.168.1.50/"]));
         },
         (this.opts.joinDelayMs ?? 20) + i * 1000,
@@ -738,6 +755,8 @@ export class FakeCapacitorBle {
   redirect = "http://192.168.1.50/";
   /** Fail the next N connect() calls. */
   failConnects = 0;
+  /** The network's password: any other is refused ([0x03, 0x02] on ERROR_STATE). */
+  password: string | undefined = undefined;
   private scanCb: ((r: ScanResultLike) => void) | null = null;
   private readonly notify = new Map<string, (v: DataView) => void>();
 
@@ -776,8 +795,14 @@ export class FakeCapacitorBle {
       this.calls.push(`write:${char.slice(-4)}`);
       const bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength).slice();
       this.writes.push({ deviceId, char, bytes });
-      if (char === CHAR_RPC_COMMAND && parseWifiSettings(bytes)) {
+      const creds = char === CHAR_RPC_COMMAND ? parseWifiSettings(bytes) : null;
+      if (creds) {
         setTimeout(() => {
+          if (this.password !== undefined && creds.password !== this.password) {
+            const err = new Uint8Array([0x03, 0x02]);
+            this.notify.get(`${deviceId}|${CHAR_ERROR_STATE}`)?.(new DataView(err.buffer));
+            return;
+          }
           const pkt = improvResultPacket([this.redirect]);
           this.notify.get(`${deviceId}|${CHAR_RPC_RESULT}`)?.(new DataView(pkt.buffer));
         }, 20);

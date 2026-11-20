@@ -39,6 +39,7 @@ void ns_ble_player_notify(const uint8_t *data, uint32_t len);
 uint32_t ns_ble_player_poll_notify(uint8_t *out, uint32_t cap);
 uint32_t ns_ble_take_wifi(uint8_t *ssid, uint32_t ssid_cap, uint8_t *pass, uint32_t pass_cap);
 void ns_ble_provision_result(uint32_t ok, const uint8_t *url, uint32_t url_len);
+void ns_ble_provision_fail(uint32_t reason);
 void ns_ble_set_name(const uint8_t *name, uint32_t len);
 void ns_ble_set_addr(const uint8_t *mac);
 
@@ -334,6 +335,7 @@ uint32_t improv_ble_conn_interval() { return ns_ble_conn_interval(); }
 // via improv_ble_send_redirect/improv_ble_set_error below), so these are no-ops.
 void improv_ble_set_state(uint8_t) {}
 void improv_ble_set_error(uint8_t) { ns_ble_provision_result(0, nullptr, 0); }
+void improv_ble_set_join_error(uint8_t reason) { ns_ble_provision_fail(reason); }
 
 // Report success + the redirect URL the provisioner reads to reach the joined board.
 void improv_ble_send_redirect(const char *url) {

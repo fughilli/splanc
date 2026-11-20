@@ -59,6 +59,9 @@ uint32_t improv_ble_conn_interval();
 // Update + notify the Improv state / error characteristics.
 void improv_ble_set_state(uint8_t state);
 void improv_ble_set_error(uint8_t error);
+// A failed Wi-Fi join: error UNABLE_TO_CONNECT plus Splanc's reason byte
+// (IMPROV_JOIN_FAILURE_*, improv_codec.h), state back to AUTHORIZED so the app can re-send.
+void improv_ble_set_join_error(uint8_t reason);
 
 // Notify the RPC result for the wifi-settings command: the player's
 // redirect URL (its http address on the joined network).
