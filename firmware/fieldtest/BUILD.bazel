@@ -1,0 +1,89 @@
+"""Mesh radio field kit (docs/design/mesh-fieldtest.md): a TEST-ONLY C6 node on the vendor
+Wi-Fi stack that measures every link of a kit of nodes with Splanc's own Public Action
+frames (kind 0xF1, never the mesh envelope). Host side: //tools/fieldtest."""
+
+load("@embedded//rules:firmware.bzl", "firmware_binary")
+load("@embedded//rules:flash.bzl", "esptool_flash")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_rust//rust:defs.bzl", "rust_static_library")
+load("//tools:flash_bundle.bzl", "flash_bundle")
+
+package(default_visibility = ["//visibility:public"])
+
+_C6 = select({
+    "@embedded//platforms:is_esp32c6": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+# Mesh mode (stretch, TEST-ONLY): the real M1 splanc_mesh::Node on the vendor stack through a
+# raw-frame shim, a stand-in for M3's netstack backhaul (mesh_ffi.rs).
+rust_static_library(
+    name = "field_mesh_ffi",
+    srcs = ["mesh_ffi.rs"],
+    crate_name = "field_mesh_ffi",
+    edition = "2021",
+    target_compatible_with = _C6,
+    deps = [
+        "//firmware/mesh:mesh_fw",
+        "//firmware/mesh/swarm:swarm_net_fw",
+    ],
+)
+
+_DEPS = [
+    ":field_mesh_ffi",
+    "//firmware/mesh/swarm:swarm_crypto",
+    "@embedded//libs/board:arduino_core",
+    "@embedded//libs/vendor:preferences",
+    "@embedded//libs/vendor:wifi",
+]
+
+# The field build: channel 6 by default (set per site with `ch`), runs until powered off.
+cc_binary(
+    name = "field_node",
+    srcs = ["field_node.cpp"],
+    copts = [
+        "-fno-rtti",
+        "-DFIELD_MESH=1",
+    ],
+    target_compatible_with = _C6,
+    deps = _DEPS,
+)
+
+# The HITL dry-run build: channel 11 (off the rig APs' channel 1) and quiet after 15 min,
+# so a node left on a shared rig stops using airtime.
+cc_binary(
+    name = "field_node_rig",
+    srcs = ["field_node.cpp"],
+    copts = [
+        "-fno-rtti",
+        "-DFIELD_DEFAULT_CH=11",
+        "-DFIELD_DEFAULT_RUN_S=900",
+        "-DFIELD_RIG=1",
+        "-DFIELD_MESH=1",
+    ],
+    target_compatible_with = _C6,
+    deps = _DEPS,
+)
+
+[
+    (
+        firmware_binary(
+            name = n + "_esp32c6",
+            binary = ":" + n,
+            board = "esp32c6",
+            opt_mode = "opt",
+            tags = ["manual"],
+        ),
+        esptool_flash(
+            name = n + "_flash",
+            app = ":" + n + "_esp32c6",
+            tags = ["manual"],
+        ),
+        flash_bundle(
+            name = n + "_flashbundle",
+            flash = ":" + n + "_flash",
+            tags = ["manual"],
+        ),
+    )
+    for n in ("field_node", "field_node_rig")
+]

@@ -1,0 +1,21 @@
+"""Host side of the mesh radio field kit (firmware/fieldtest): drive nodes over USB
+(fieldkit.py, pyserial), decode what they record (fieldwire.py), and turn a day of logs into
+link matrices, charts and a report (analyze.py, matplotlib). The scripts also run standalone
+on a laptop with `pip3 install pyserial esptool matplotlib`."""
+
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "fieldwire",
+    srcs = ["fieldwire.py"],
+    imports = ["."],
+)
+
+py_test(
+    name = "fieldwire_test",
+    size = "small",
+    srcs = ["fieldwire_test.py"],
+    deps = [":fieldwire"],
+)
