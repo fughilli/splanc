@@ -454,6 +454,37 @@ test("opening a Map Detail editor panel keeps the 3D view's size and closing rel
   }
 });
 
+test("Map Detail's Digital twin is a panel tile beside Transform and Topology, and there is no Pull [rr:PR-4]", async () => {
+  const { el, dispose } = await openMapDetail();
+  try {
+    const labels = el.querySelectorAll(".detail-actions .k-actiontile").map((t) => textOf(t));
+    assert.deepEqual(labels.slice(0, 4), ["Transform", "Topology", "Digital twin", "Push"]);
+    assert.ok(!labels.includes("Pull"), "copying the device's map lives on the Maps tab's device card");
+    assert.ok(el.querySelector(".detail-actions details") === null, "no collapsible card under the tiles");
+
+    const tile = (label: string): FakeElement =>
+      el.querySelectorAll(".k-actiontile").find((t) => textOf(t) === label)!;
+    const mesh = el.querySelector(".detail-panelregion > .detail-mesh")!;
+    const xform = el.querySelector(".detail-panelregion > .detail-xform")!;
+    assert.ok(textOf(mesh).includes("Digital twin"), "the mesh controls live in the editor-panel region");
+    assert.ok(!mesh.classList.contains("detail-panel--show"));
+
+    tile("Transform").click();
+    tile("Digital twin").click(); // switching closes Transform
+    assert.ok(mesh.classList.contains("detail-panel--show"));
+    assert.ok(!xform.classList.contains("detail-panel--show"));
+    assert.ok(tile("Digital twin").classList.contains("k-actiontile--on"));
+    assert.ok(!tile("Transform").classList.contains("k-actiontile--on"));
+    assert.ok(el.querySelector(".detail-panelregion")!.classList.contains("detail-panelregion--open"));
+
+    tile("Digital twin").click(); // toggles closed
+    assert.ok(!mesh.classList.contains("detail-panel--show"));
+    assert.ok(!tile("Digital twin").classList.contains("k-actiontile--on"));
+  } finally {
+    dispose();
+  }
+});
+
 // -- app shell ----------------------------------------------------------------------
 
 test("tab-specific actions fold into the app bar's ⋯ menu instead of taking screen space [rr:PR-4]", () => {

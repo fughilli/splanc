@@ -7,7 +7,6 @@
 export type IconName =
   | "device"
   | "map-to-device"
-  | "map-from-device"
   | "effect-to-device"
   | "effect-from-device"
   | "link"
@@ -16,6 +15,7 @@ export type IconName =
   | "map"
   | "graph"
   | "tree"
+  | "cube"
   | "autoscale"
   | "center"
   | "reset"
@@ -87,7 +87,6 @@ const PATHS: Record<IconName, string> = {
   // vertical arrow — pointing DOWN into the device (send) or UP out of it
   // (pull). One consistent design language for send/pull across maps + effects.
   "map-to-device": `${MAP_TOP}${DEVICE_MAP}${cut(MAP_ARROW_DOWN)}`,
-  "map-from-device": `${MAP_TOP}${DEVICE_MAP}${cut(MAP_ARROW_UP)}`,
   "effect-to-device": `${SPARK_TOP}${DEVICE_MAP}${cut(MAP_ARROW_DOWN)}`,
   "effect-from-device": `${SPARK_TOP}${DEVICE_MAP}${cut(MAP_ARROW_UP)}`,
   link: `<path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/>`,
@@ -136,6 +135,8 @@ const PATHS: Record<IconName, string> = {
   folder: `<path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`,
   chevron: `<path d="M9 6l6 6-6 6"/>`,
   // Four-way move arrows (relocate a pane between regions).
+  // Isometric wireframe cube (the digital-twin mesh overlay).
+  cube: `<path d="M12 2.8 20 7.4V16.6L12 21.2 4 16.6V7.4Z"/><path d="M4 7.4 12 12 20 7.4M12 12V21.2"/>`,
   move: `<path d="M12 3v18M3 12h18"/><path d="M12 3l-2.5 2.5M12 3l2.5 2.5"/><path d="M12 21l-2.5-2.5M12 21l2.5-2.5"/><path d="M3 12l2.5-2.5M3 12l2.5 2.5"/><path d="M21 12l-2.5-2.5M21 12l-2.5 2.5"/>`,
   // 3x3 reference grid (floor overlay toggle).
   grid: `<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 9.3h16M4 14.7h16M9.3 4v16M14.7 4v16"/>`,

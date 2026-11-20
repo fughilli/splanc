@@ -1,7 +1,7 @@
 /**
  * Map Detail / mapping workspace (design doc §4.3 / §7.4) — the working surface
  * for a single captured map: inspect the 3D solve, edit + clean the skelgraph
- * topology, send to / pull from a device, jump to Effects, and manage metadata.
+ * topology, align a digital-twin mesh, send to a device, and export.
  *
  * Reuses MapView (3D), topology/extract.ts (unchanged, incl. cooperative
  * AbortSignal + onProgress), and net/client for upload/download. The topology
@@ -109,9 +109,13 @@ export function MapDetailScreen(
   const xformPanel = document.createElement("div");
   xformPanel.className = "detail-topo detail-xform detail-panel";
 
+  // Digital twin (mesh overlay) — filled in load() once the record is known.
+  const meshPanel = document.createElement("div");
+  meshPanel.className = "detail-topo detail-mesh detail-panel";
+
   const panelRegion = document.createElement("div");
   panelRegion.className = "detail-panelregion";
-  panelRegion.append(xformPanel, topoPanel);
+  panelRegion.append(xformPanel, topoPanel, meshPanel);
   // Once the region has fully rolled up (height reached 0), drop scroll mode and
   // release the frozen 3D-view height — deferred to here (not on the toggle) so
   // closing rolls up cleanly instead of the view snapping back mid-animation.
@@ -141,10 +145,12 @@ export function MapDetailScreen(
   let cleanup = 0.5;
   const raw = { ...DEFAULTS };
 
-  // The Transform / Topology action tiles double as mutually-exclusive toggles:
-  // the open panel's tile lights up (accent), and opening one closes the other.
+  // The Transform / Topology / Digital twin action tiles double as mutually-
+  // exclusive toggles: the open panel's tile lights up (accent), and opening one
+  // closes the others.
   let xformTile: HTMLElement | null = null;
   let topoTile: HTMLElement | null = null;
+  let meshTile: HTMLElement | null = null;
   // Topology "Save" (floppy) — greyed until the working topology differs from the
   // one stored in the record. `storedTopoSig` is that record's signature.
   let topoSaveBtn: HTMLButtonElement | null = null;
@@ -301,18 +307,22 @@ export function MapDetailScreen(
     );
 
     // Primary paths — icon+label tiles (like the app's other action grids).
-    // Transform / Topology are toggles (light up when their panel is open);
-    // Push / Pull are one-shot actions. Effects navigation lives in the bottom
-    // tab strip, so it's not repeated here.
+    // Transform / Topology / Digital twin are toggles (light up when their panel
+    // is open); Push is a one-shot action. Copying the device's map into the
+    // library lives on the Maps tab's "On <device>" card (Save to this phone),
+    // which adds a map rather than replacing one. Effects navigation lives in
+    // the bottom tab strip, so it's not repeated here.
     const grid = document.createElement("div");
     grid.className = "k-actiongrid";
     xformTile = actionTile("move", "Transform", toggleXform);
     topoTile = actionTile("tree", "Topology", toggleTopo);
+    meshTile = actionTile("cube", "Digital twin", toggleMesh);
+    meshPanel.append(MeshPanel(mapId, rec.mesh ?? null, (mesh) => view?.setMesh(mesh), () => refreshPanelHeight()));
     grid.append(
       xformTile,
       topoTile,
+      meshTile,
       actionTile("map-to-device", "Push", () => void sendToDevice()),
-      actionTile("map-from-device", "Pull", () => void pullFromDevice()),
       // Export for other show software (TouchDesigner CSV / Chromatik .lxf).
       // Exports what's on screen, including unsaved transform edits.
       actionTile("download", "Export", () => {
@@ -347,7 +357,7 @@ export function MapDetailScreen(
         ),
       );
     }
-    actions.append(grid, MeshPanel(mapId, rec.mesh ?? null, mesh => view?.setMesh(mesh)));
+    actions.append(grid);
     // Calibrate IMU (sensor-core.md §7.3): only offered when the connected
     // fixture reports a running motion sensor.
     // Gated on the device serving the extrinsic calibration (imu_extrinsic), so
@@ -449,7 +459,10 @@ export function MapDetailScreen(
 
   // Only one editor panel is open at a time. Switching crossfades the panels
   // while the region's split divider animates to the new height (roll out / up).
-  let activePanel: "none" | "xform" | "topo" = "none";
+  type PanelId = "none" | "xform" | "topo" | "mesh";
+  let activePanel: PanelId = "none";
+  const panelEl = (which: Exclude<PanelId, "none">): HTMLElement =>
+    which === "xform" ? xformPanel : which === "topo" ? topoPanel : meshPanel;
 
   // Set the region to the active panel's full natural height (absolute panels
   // size to their content) — the region never scrolls internally; the overall
@@ -459,11 +472,10 @@ export function MapDetailScreen(
       panelRegion.style.height = "0px";
       return;
     }
-    const panel = activePanel === "xform" ? xformPanel : topoPanel;
-    panelRegion.style.height = `${panel.scrollHeight}px`;
+    panelRegion.style.height = `${panelEl(activePanel).scrollHeight}px`;
   }
 
-  function setActivePanel(which: "none" | "xform" | "topo"): void {
+  function setActivePanel(which: PanelId): void {
     const wasOpen = activePanel !== "none";
     activePanel = which;
     if (which === "xform" && !xformBuilt) {
@@ -481,11 +493,13 @@ export function MapDetailScreen(
     // Crossfade to the active panel; roll the divider to the new height.
     xformPanel.classList.toggle("detail-panel--show", which === "xform");
     topoPanel.classList.toggle("detail-panel--show", which === "topo");
+    meshPanel.classList.toggle("detail-panel--show", which === "mesh");
     panelRegion.classList.toggle("detail-panelregion--open", which !== "none");
     refreshPanelHeight();
-    // Light up the active toggle tile (Transform / Topology are mutually exclusive).
+    // Light up the active toggle tile (the panels are mutually exclusive).
     xformTile?.classList.toggle("k-actiontile--on", which === "xform");
     topoTile?.classList.toggle("k-actiontile--on", which === "topo");
+    meshTile?.classList.toggle("k-actiontile--on", which === "mesh");
   }
 
   // Open the topology panel (no routing — the /topology route deep-links it on
@@ -498,6 +512,10 @@ export function MapDetailScreen(
   function toggleTopo(): void {
     if (activePanel === "topo") setActivePanel("none");
     else openTopoPanel();
+  }
+
+  function toggleMesh(): void {
+    setActivePanel(activePanel === "mesh" ? "none" : "mesh");
   }
 
   // -- transform tools (translate / rotate / scale + auto-fixes) --------------
@@ -990,24 +1008,6 @@ export function MapDetailScreen(
       toast("Sent to device");
     } catch (e) {
       toast(`Send failed: ${e instanceof Error ? e.message : e}`, { error: true });
-    }
-  }
-
-  async function pullFromDevice(): Promise<void> {
-    const client = appState.client;
-    if (client === null || !client.isConnected) {
-      toast("No device connected", { error: true });
-      openDeviceSheet();
-      return;
-    }
-    try {
-      toast("Pulling map from device…");
-      const bundle = await client.pullStoredMap();
-      const id = await mapStore.importBundleObject(bundle, { source: "pull" });
-      toast("Map pulled from device");
-      router.navigate(`/map/${id}`);
-    } catch (e) {
-      toast(`Pull failed: ${e instanceof Error ? e.message : e}`, { error: true });
     }
   }
 
