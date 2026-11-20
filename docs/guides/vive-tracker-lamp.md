@@ -2,9 +2,9 @@
 
 This guide shows how to build a Splanc lamp that knows where it is in the room, and how to use a
 second tracker as a flashlight that lights the lamp's LEDs wherever its beam hits them. It's the
-setup from the demo videos. The lamp has a Vive tracker wired into it and tracks itself. A
-handheld tracker (the stylus) is tracked by a computer, which streams the beam to the lamp over
-OSC.
+setup from the [show-and-tell video](https://www.youtube.com/watch?v=KiVoWSGRvJg). The lamp has a
+Vive tracker wired into it and tracks itself. A handheld tracker (the stylus) is tracked by a
+computer, which streams the beam to the lamp over OSC.
 
 ```text
  base station(s) ──light──► lamp tracker ──USB──► ESP32-P4 player ──► LEDs
