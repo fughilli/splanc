@@ -234,6 +234,7 @@
 <li class="toctree-l1"><a class="reference internal" href="host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
@@ -654,7 +655,9 @@ itself. Only updates signed by Splanc are accepted.</p></li>
 <li><p><strong>Without the OLED HAT</strong>, install over SSH: <code class="docutils literal notranslate"><span class="pre">sudo</span> <span class="pre">splanc-system-update</span> <span class="pre">install</span></code> (system) or
 <code class="docutils literal notranslate"><span class="pre">sudo</span> <span class="pre">splanc-bridge</span> <span class="pre">update</span></code> (Splanc software).</p></li>
 <li><p>Writing the card again with the flasher also works, but starts fresh: you pair your agents again
-afterwards.</p></li>
+afterwards. To keep the pairing (for example to move a bridge written before system updates
+existed onto a current card), back it up and restore it onto the new card with
+<a class="reference internal" href="#../tools/bridge_migrate/README.md"><span class="xref myst">bridge_migrate</span></a>.</p></li>
 </ul>
 </section>
 <section id="changing-settings-later">
