@@ -51,7 +51,9 @@ def manifest(reply: dict) -> list[dict]:
 POOL_NAMES = {"tracker", "mount", "pose", "tracker_ok", "tracker_state"}
 
 
-def pick_slot(reply: dict, want: int | None, moving: set[int] = frozenset()) -> tuple[int, float, float, float] | None:
+def pick_slot(
+    reply: dict, want: int | None, moving: set[int] = frozenset()
+) -> tuple[int, float, float, float] | None:
     """(slot, lo, hi, current) of a scalar slider uniform to drag: not one the device (or
     anything else) is changing by itself (`moving`), nor a pool uniform."""
     cur = current_values(reply)
@@ -113,12 +115,16 @@ async def drag_one(url: str, args, out: dict) -> dict:
         return out
     slot, lo, hi, orig = picked
     out["slot"] = slot
-    out["name"] = next((u.get("name") for u in manifest(reply) if int(u.get("slot", -1)) == slot), None)
+    out["name"] = next(
+        (u.get("name") for u in manifest(reply) if int(u.get("slot", -1)) == slot), None
+    )
     out["uniforms"] = [f"{u.get('name')}@{u.get('slot')}x{u.get('width')}" for u in manifest(reply)]
     out["range"] = [lo, hi]
 
     acks = "control_ack" in feats
-    sender = core.LiveSender(acks=acks, commit_ok="uniform_commit" in feats, min_interval_s=0.008, ack_timeout_s=None)
+    sender = core.LiveSender(
+        acks=acks, commit_ok="uniform_commit" in feats, min_interval_s=0.008, ack_timeout_s=None
+    )
     pend: list[dict] = []
     wake = asyncio.Event()
     inputs: list[tuple[float, float]] = []  # (time, value), in order
@@ -195,7 +201,9 @@ async def drag_one(url: str, args, out: dict) -> dict:
     pumper.cancel()
     # Release (commit what the drag left), then put the original value back, committed.
     c.on_msg = None
-    await c.send({"type": "set_uniforms", "values": [{"slot": slot, "value": [orig]}], "commit": True})
+    await c.send(
+        {"type": "set_uniforms", "values": [{"slot": slot, "value": [orig]}], "commit": True}
+    )
     await asyncio.sleep(0.3)
     await sock.close()
 
@@ -253,7 +261,12 @@ async def run(args) -> int:
         try:
             r = await drag_one(url, args, state)
         except Exception as e:  # noqa: BLE001
-            r = {**state, "device": url, "ok": False, "why": f"{type(e).__name__} during {state.get('stage')}: {e}"}
+            r = {
+                **state,
+                "device": url,
+                "ok": False,
+                "why": f"{type(e).__name__} during {state.get('stage')}: {e}",
+            }
         print(json.dumps(r), flush=True)
         bad += not r.get("ok")
     return 1 if bad else 0
@@ -261,13 +274,21 @@ async def run(args) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--device-ws", action="append", required=True, help="a player's wss://<ip>/ws (repeat)")
-    ap.add_argument("--slot", type=int, help="the uniform slot to drag (default: the first scalar float)")
+    ap.add_argument(
+        "--device-ws", action="append", required=True, help="a player's wss://<ip>/ws (repeat)"
+    )
+    ap.add_argument(
+        "--slot", type=int, help="the uniform slot to drag (default: the first scalar float)"
+    )
     ap.add_argument("--seconds", type=float, default=4.0)
-    ap.add_argument("--hz", type=float, default=60.0, help="input events per second (a pointer drag)")
+    ap.add_argument(
+        "--hz", type=float, default=60.0, help="input events per second (a pointer drag)"
+    )
     ap.add_argument("--probe-hz", type=float, default=10.0)
     ap.add_argument("--max-lag-ms", type=float, default=150.0)
-    ap.add_argument("--raw", action="append", help="debug: send these JSON messages after hello, print replies")
+    ap.add_argument(
+        "--raw", action="append", help="debug: send these JSON messages after hello, print replies"
+    )
     return asyncio.run(run(ap.parse_args()))
 
 
