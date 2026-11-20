@@ -801,6 +801,67 @@ extern "C" uint32_t lm_mesh_counter_store(uint64_t mark) {
   return fs_write_file(kMeshCounterPath, reinterpret_cast<const uint8_t *>(&mark), sizeof mark) ? 1 : 0;
 }
 
+// Mesh time (docs/design/mesh.md §6.3, mesh M4): mesh_ffi.rs maps the mesh's show epoch
+// onto the player's time base through this, from loopTask, with a TRY-lock (the render
+// task holds the mutex for a whole frame; the mesh retries next pass rather than wait).
+// op 0 = get (1: set, *epoch_ms; 0: none), 1 = put *epoch_ms (shift the queued apply_at
+// changes by shift_ms), 2 = clear, 3 = phase-align frames to the time base (*epoch_ms != 0).
+// Returns -1 when the mutex is busy.
+static bool g_tb_align = false;
+extern "C" int32_t lm_mesh_tb(int32_t op, int64_t *epoch_ms, int64_t shift_ms) {
+  if (player_mutex == nullptr || xSemaphoreTake(player_mutex, 0) != pdTRUE) return -1;
+  int32_t r = 1;
+  switch (op) {
+    case 0:
+      r = lm_time_base(epoch_ms) ? 1 : 0;
+      break;
+    case 1:
+      lm_time_base_put(*epoch_ms, true, shift_ms);
+      break;
+    case 2:
+      lm_time_base_put(0, false, 0);
+      break;
+    case 3:
+      g_tb_align = *epoch_ms != 0;
+      break;
+    default:
+      r = 0;
+  }
+  xSemaphoreGive(player_mutex);
+  return r;
+}
+
+// Frames on the time-base grid (mesh M4): with the mesh's time base set, every member's
+// frames start at epoch + k * period (in its own clock, i.e. at the same mesh instants), and
+// a scheduled change applies on grid frame ceil(apply_at / period) wherever that frame's
+// start jitters, so members change on the same frame. Under the player mutex.
+// grid_sched_ms: the time to compare apply_at dues against at this frame start (millis()
+// off the grid). pace_adjust_us: how much earlier the next frame should start to land on
+// the grid (bounded to a quarter period per frame, so the cadence never jumps).
+static int64_t grid_sched_ms(int64_t now_us, int64_t *k_out) {
+  int64_t ep;
+  *k_out = -1;
+  if (!g_tb_align || !lm_time_base(&ep)) return now_us / 1000;
+  int64_t period = (int64_t)(lm_fps_budget_cycles() / (kCpuHz / 1000000u));
+  int64_t rel = now_us - ep * 1000;
+  if (period <= 0 || rel <= 0) return now_us / 1000;
+  int64_t k = (rel + period / 2) / period;
+  if (llabs(rel - k * period) >= period / 4) return now_us / 1000;  // off the grid: plain time
+  *k_out = k;
+  return ep + (k * period) / 1000;
+}
+static int64_t pace_adjust_us(int64_t next_start_us, uint32_t period_us) {
+  int64_t ep;
+  if (!g_tb_align || period_us == 0 || !lm_time_base(&ep)) return 0;
+  int64_t p = period_us;
+  int64_t e = (next_start_us - ep * 1000) % p;
+  if (e < 0) e += p;
+  if (e > p / 2) e -= p;  // e > 0: the next start would be late by e
+  if (e > p / 4) e = p / 4;
+  if (e < -p / 4) e = -p / 4;
+  return e;
+}
+
 static const DeviceCertStore kTlsStore = {tls_store_read, tls_store_write};
 #endif
 
@@ -2165,7 +2226,22 @@ static uint32_t render_once() {
   // Control changes scheduled on the shared time base (apply_at_ms) land now, at the
   // frame boundary, before anything below reads the effect / crossfade / brightness —
   // so fixtures given the same apply time change on the same frame.
+#if defined(LM_NETSTACK)
+  {
+    int64_t sched_k;
+    int64_t sched_us = esp_timer_get_time();
+    uint32_t sched_bits = lm_sched_apply(grid_sched_ms(sched_us, &sched_k));
+    if (sched_bits & 2) poll_brightness();
+#if defined(LM_MESH_DEVKEY)
+    // The mesh_apply_at_skew HITL's observable: when this frame applied a scheduled change.
+    if (sched_bits & 1)
+      Log().printf("[mt] apply us=%lld k=%lld ms=%lld\n", (long long)sched_us, (long long)sched_k,
+                   (long long)millis());
+#endif
+  }
+#else
   if (lm_sched_apply((int64_t)millis()) & 2) poll_brightness();
+#endif
   // An active mapping capture (the gray-code flashing) and the counting probe
   // are deliberate, transient device takeovers for the phone's camera, so they
   // MUST preempt whatever show is playing. A persisted effect resumed on boot
@@ -2556,6 +2632,11 @@ static uint32_t render_once() {
       uint32_t period_us = lm_fps_budget_cycles() / (kCpuHz / 1000000u);
       if (cost_us <= period_us && fx_elapsed_us >= 0 && (uint64_t)fx_elapsed_us < period_us) {
         uint32_t want_us = period_us - (uint32_t)fx_elapsed_us;
+#if defined(LM_NETSTACK)
+        // On the mesh's time base: steer the next start onto the grid (mesh M4).
+        int64_t adj = pace_adjust_us(s_fx_frame_start_us + period_us, period_us);
+        want_us = (int64_t)want_us > adj ? (uint32_t)((int64_t)want_us - adj) : 0;
+#endif
         next_delay_ms = (want_us + 500) / 1000;
         if (next_delay_ms < share_ms) next_delay_ms = share_ms;
       }

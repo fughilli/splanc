@@ -607,6 +607,20 @@ pub extern "C" fn ns_mac_send_p2p(frame: *const u8, len: u32, queue: u32, rate: 
     }
 }
 
+/// The MAC's µs clock for mesh time (M4). `which` = 0: the free-running counter at
+/// `0x600A_D000`, the RX vector's timestamp clock (`lmac::mac_us`); 1: the TSF counter
+/// after the vendor's latch sequence (`hal_mac_tsf_get_time`; reads frozen on our netstack).
+#[no_mangle]
+pub extern "C" fn ns_mac_tsf(which: u32) -> u32 {
+    unsafe {
+        if which != 0 {
+            lmac::tsf_now()
+        } else {
+            lmac::mac_us()
+        }
+    }
+}
+
 /// 1 once `queue`'s last arm has completed (the TX state machine's completed bitmap), and
 /// its result word (PMD) in `*pmd` (if non-null): decode with [`ns_p2p_tx_status`].
 #[no_mangle]

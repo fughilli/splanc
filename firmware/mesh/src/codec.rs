@@ -31,6 +31,9 @@ impl<'a> W<'a> {
     pub fn u32(&mut self, v: u32) -> &mut Self {
         self.put(&v.to_be_bytes())
     }
+    pub fn i64(&mut self, v: i64) -> &mut Self {
+        self.put(&v.to_be_bytes())
+    }
     pub fn done(&self) -> Option<usize> {
         self.ok.then_some(self.n)
     }
@@ -64,6 +67,9 @@ impl<'a> R<'a> {
     }
     pub fn u32(&mut self) -> Option<u32> {
         Some(u32::from_be_bytes(self.arr()?))
+    }
+    pub fn i64(&mut self) -> Option<i64> {
+        Some(i64::from_be_bytes(self.arr()?))
     }
     pub fn rest(self) -> &'a [u8] {
         self.b

@@ -19,7 +19,7 @@
 use swarm_net::net::NetOf;
 use swarm_net::update::Flash;
 
-use crate::backhaul::{Backhaul, RxMeta, TxClass};
+use crate::backhaul::{Backhaul, NodeId, RxMeta, TxClass};
 use crate::envelope::Header;
 use crate::link::{self, Frame, Reject, MIN_MTU};
 use crate::security::{FrameGuard, Opened, Plain};
@@ -74,6 +74,9 @@ pub struct NodeStats {
     pub rx_plain: u32,
     /// `tick` calls skipped because the scratch buffer was shorter than `scratch_len()`.
     pub scratch_short: u32,
+    /// Time beacons sent and received (M4).
+    pub time_tx: u32,
+    pub time_rx: u32,
 }
 
 /// What [`Node::poll_rx`] did with one received frame.
@@ -85,6 +88,15 @@ pub enum Rx<'a> {
     Handled,
     /// A plain frame (membership traffic) for the caller.
     Plain { meta: RxMeta, header: Header, body: &'a [u8] },
+    /// A time beacon from neighbour `src` (opened; M4) for the caller.
+    Time { meta: RxMeta, src: NodeId, body: &'a [u8] },
+}
+
+/// What [`Node::on_rx`] hands up instead of feeding the mesh.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Up<'f> {
+    Plain(Header, &'f [u8]),
+    Time(NodeId, &'f [u8]),
 }
 
 pub struct Node<B: Backhaul, const P: usize, G: FrameGuard = Plain> {
@@ -175,15 +187,15 @@ impl<B: Backhaul, const P: usize, G: FrameGuard> Node<B, P, G> {
     /// One received backhaul frame (for backhauls that hand frames over themselves; `tick`
     /// drains [`Backhaul::recv`] through this). The guard opens it in place; a link frame
     /// goes to the mesh, a plain frame comes back to the caller.
-    pub fn on_rx<'f>(&mut self, now_us: i64, frame: &'f mut [u8], meta: &RxMeta, flash: &mut dyn Flash) -> Option<(Header, &'f [u8])> {
+    pub fn on_rx<'f>(&mut self, now_us: i64, frame: &'f mut [u8], meta: &RxMeta, flash: &mut dyn Flash) -> Option<Up<'f>> {
         match self.guard.open(now_us, frame) {
             Opened::Link(r) => {
-                self.on_link(&frame[r], meta, flash);
-                None
+                let frame: &'f [u8] = frame;
+                self.on_link(&frame[r], meta, flash).map(|(src, b)| Up::Time(src, b))
             }
             Opened::Plain { header, body } => {
                 self.stats.rx_plain += 1;
-                Some((header, &frame[body]))
+                Some(Up::Plain(header, &frame[body]))
             }
             Opened::Dropped => {
                 self.stats.rx_guarded += 1;
@@ -192,23 +204,24 @@ impl<B: Backhaul, const P: usize, G: FrameGuard> Node<B, P, G> {
         }
     }
 
-    /// One link frame (already opened).
-    pub fn on_link(&mut self, frame: &[u8], meta: &RxMeta, flash: &mut dyn Flash) {
+    /// One link frame (already opened). A time beacon is not the swarm's: it comes back
+    /// (its sender and body) for the caller.
+    pub fn on_link<'f>(&mut self, frame: &'f [u8], meta: &RxMeta, flash: &mut dyn Flash) -> Option<(NodeId, &'f [u8])> {
         let r = match link::decode(frame) {
             Ok(r) => r,
             Err(Reject::NotMesh) => {
                 self.stats.rx_not_mesh += 1;
-                return;
+                return None;
             }
             Err(_) => {
                 self.stats.rx_rejected += 1;
-                return;
+                return None;
             }
         };
         let me = self.net.me();
         if r.src == me {
             self.stats.rx_own += 1;
-            return;
+            return None;
         }
         self.stats.rx += 1;
         let t = meta.rx_us;
@@ -222,7 +235,12 @@ impl<B: Backhaul, const P: usize, G: FrameGuard> Node<B, P, G> {
             Frame::FwData(b) => self.net.on_fw_data(t, b, flash),
             Frame::FwManifest(b) => self.net.on_fw_manifest(b, flash),
             Frame::Summary(s) => self.net.on_summary(t, r.src, s),
+            Frame::Time(b) => {
+                self.stats.time_rx += 1;
+                return Some((r.src, b));
+            }
         }
+        None
     }
 
     /// Receive one frame from the backhaul: a link frame goes to the mesh, a plain frame is
@@ -231,8 +249,37 @@ impl<B: Backhaul, const P: usize, G: FrameGuard> Node<B, P, G> {
         let Some(meta) = self.backhaul.recv(scratch) else { return Rx::Idle };
         let len = meta.len.min(scratch.len());
         match self.on_rx(now_us, &mut scratch[..len], &meta, flash) {
-            Some((header, body)) => Rx::Plain { meta, header, body },
+            Some(Up::Plain(header, body)) => Rx::Plain { meta, header, body },
+            Some(Up::Time(src, body)) => Rx::Time { meta, src, body },
             None => Rx::Handled,
+        }
+    }
+
+    /// Send a time beacon body (one hop, broadcast, sealed; [`TxClass::Time`] so the
+    /// backhaul stamps its completion). `frame` and `sealed` are scratch for the link frame
+    /// and the envelope.
+    pub fn send_time(&mut self, now_us: i64, body: &[u8], frame: &mut [u8], sealed: &mut [u8]) -> bool {
+        if !self.guard.can_seal() {
+            return false;
+        }
+        let Some(m) = link::encode(self.net.me(), Frame::Time(body), frame) else {
+            self.stats.tx_encode_failed += 1;
+            return false;
+        };
+        let Some(k) = self.guard.seal(now_us, &frame[..m], sealed) else {
+            self.stats.tx_unsealed += 1;
+            return false;
+        };
+        match self.backhaul.send_class(&sealed[..k], None, TxClass::Time) {
+            Ok(()) => {
+                self.stats.tx += 1;
+                self.stats.time_tx += 1;
+                true
+            }
+            Err(_) => {
+                self.stats.tx_busy += 1;
+                false
+            }
         }
     }
 

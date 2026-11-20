@@ -193,6 +193,17 @@ pub unsafe fn init(retention_mask: u32) {
     datapath::txrx_init();
 }
 
+/// The MAC's free-running 1 MHz counter at `0x600A_D000`: the clock the RX vector stamps
+/// frames with (bytes 12-15). Found on silicon by mesh M4 (`MESH REG` scan, run r2): it
+/// advances 1 µs per µs and runs a constant ~0.688 s behind `esp_timer` (the MAC's start),
+/// exactly the RX stamps' offset. `0x600A_D020` (below) reads frozen on our netstack.
+///
+/// # Safety
+/// MMIO; the MAC must be initialized.
+pub unsafe fn mac_us() -> u32 {
+    mmio::read32(0x600A_D000)
+}
+
 /// Read the TSF timer (`0x600A_D014` latch control + `0x600A_D020` counter).
 ///
 /// # Safety

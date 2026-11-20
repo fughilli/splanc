@@ -1,9 +1,11 @@
 """Serial console bridge for the mesh spike — runs INSIDE a rig reservation container.
 
 stdin lines -> the DUT's USB-serial console; every console line -> stdout, prefixed with
-the container's monotonic ms ("<ms> <line>"). Opens the port WITHOUT resetting the C6
-(RTS dropped before DTR, as serial_capture.py does), so a DUT keeps its
-link and its running effect. Exits on stdin EOF or after --seconds.
+the container's monotonic ms ("<ms> <line>"), or with --abs the host's CLOCK_MONOTONIC in
+µs (shared by every reservation container on a rig, so lines from several DUTs compare;
+reads return at the first byte, so the stamp is the line's arrival, not a buffer flush).
+Opens the port WITHOUT resetting the C6 (RTS dropped before DTR, as serial_capture.py
+does), so a DUT keeps its link and its running effect. Exits on stdin EOF or after --seconds.
 
     python3 mesh_serial_bridge.py [--port /dev/ttyACM0] [--seconds 900]
 """
@@ -22,6 +24,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default="/dev/ttyACM0")
     ap.add_argument("--seconds", type=float, default=900.0)
+    ap.add_argument("--abs", action="store_true", help="host-monotonic µs stamps")
     a = ap.parse_args()
     # Linux cdc-acm raises DTR+RTS together on open, which leaves the C6 running; then drop
     # RTS FIRST, then DTR (serial_capture.py): the other order passes through EN low = reset.
@@ -41,11 +44,16 @@ def main() -> int:
     t0 = time.monotonic()
     stop = threading.Event()
 
+    def stamp() -> int:
+        if a.abs:
+            return time.monotonic_ns() // 1000
+        return int((time.monotonic() - t0) * 1000)
+
     def reader() -> None:
         buf = b""
         while not stop.is_set():
             try:
-                chunk = s.read(4096)
+                chunk = s.read(max(1, s.in_waiting)) if a.abs else s.read(4096)
             except Exception as e:  # noqa: BLE001 — a re-enumerating port ends the bridge
                 print(f"{int((time.monotonic() - t0) * 1000)} #bridge read error {e!r}", flush=True)
                 stop.set()
@@ -55,8 +63,7 @@ def main() -> int:
             buf += chunk
             while b"\n" in buf:
                 line, buf = buf.split(b"\n", 1)
-                ms = int((time.monotonic() - t0) * 1000)
-                print(f"{ms} {line.decode('utf-8', 'replace').rstrip()}", flush=True)
+                print(f"{stamp()} {line.decode('utf-8', 'replace').rstrip()}", flush=True)
 
     th = threading.Thread(target=reader, daemon=True)
     th.start()

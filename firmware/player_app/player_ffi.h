@@ -70,6 +70,10 @@ bool lm_fixture_pose_commit(void);
 // Shared effect-time epoch (set_time_base), device-clock ms: true + *epoch_ms when
 // set. The render loop derives effect time = (now - epoch) / 1000.
 bool lm_time_base(int64_t *epoch_ms);
+// Set (or clear) the shared time base from the mesh's show epoch (mesh M4), moving the
+// queued apply_at changes by `shift_ms` (mesh time slewed: they keep their frames).
+// Under the player mutex.
+void lm_time_base_put(int64_t epoch_ms, bool set, int64_t shift_ms);
 // The effect clock on the shared time base, once per effect frame under the player
 // mutex: when a time base is set, *time_s = (now - epoch) / 1000 and *dt_s = the
 // change in that time since the last frame (not the local frame period), so

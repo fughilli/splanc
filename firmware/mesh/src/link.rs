@@ -61,6 +61,9 @@ pub enum Frame<'a> {
     FwManifest(&'a [u8]),
     /// The sender's Summary: a BEACON (backhauls without TDMA), or a UWB POLL's rider.
     Summary(&'a [u8]),
+    /// A time beacon ([`crate::meshtime::TimeBeacon`], M4): one hop, link broadcast, never
+    /// relayed.
+    Time(&'a [u8]),
 }
 
 impl<'a> Frame<'a> {
@@ -112,6 +115,7 @@ pub fn encode(src: NodeId, frame: Frame<'_>, out: &mut [u8]) -> Option<usize> {
         Frame::FwData(b) => (pb::FrameType::FwData, b),
         Frame::FwManifest(b) => (pb::FrameType::FwManifest, b),
         Frame::Summary(b) => (pb::FrameType::Beacon, b),
+        Frame::Time(b) => (pb::FrameType::Time, b),
     };
     let dst = frame.dst();
     pb::LinkFrameEnc::encode(out, |m| {
@@ -148,6 +152,7 @@ pub fn decode(b: &[u8]) -> Result<Received<'_>, Reject> {
         Ok(pb::FrameType::FwManifest) => Frame::FwManifest(f.payload()),
         Ok(pb::FrameType::Beacon) => Frame::Summary(f.summary()),
         Ok(pb::FrameType::Poll) if !f.summary().is_empty() => Frame::Summary(f.summary()),
+        Ok(pb::FrameType::Time) => Frame::Time(f.payload()),
         _ => return Err(Reject::NotMesh),
     };
     Ok(Received { src, dst, frame })
@@ -193,6 +198,15 @@ mod tests {
         for name in ["link_response", "link_report", "link_result"] {
             assert_eq!(decode(&golden(name)), Err(Reject::NotMesh), "{name}");
         }
+    }
+
+    #[test]
+    fn time_frames_round_trip() {
+        let mut b = [0u8; 64];
+        let n = encode(0x1130, Frame::Time(&[1, 2, 3]), &mut b).unwrap();
+        assert!(n <= link_overhead(false, 3) + 3);
+        let r = decode(&b[..n]).unwrap();
+        assert_eq!((r.src, r.dst, r.frame), (0x1130, None, Frame::Time(&[1, 2, 3])));
     }
 
     #[test]

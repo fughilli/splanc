@@ -574,3 +574,65 @@ fn rate_adaptation_climbs_and_survives_walking() {
     assert!(ratio >= 0.98, "{ratio}");
     eprintln!("rate adaptation (6 fixtures, walking): rates now {rates:?} Mb/s, {changes} changes in {} s; 30 Hz control delivered {:.1}%", w.now() / 1_000_000, ratio * 100.0);
 }
+
+/// Mesh time and `apply_at` across the radiolarians (M4, §6): clocks off by up to ~0.2 s and
+/// ±20 ppm, CSMA, collisions and RX-stamp jitter. Mesh time forms with no root, every member
+/// maps one show epoch onto its own clock, and a scheduled change lands at one instant; a
+/// member that reboots rejoins the running time (it never founds a second one).
+#[test]
+fn mesh_time_and_apply_at_skew() {
+    use splanc_mesh::meshtime::SyncState;
+    let mut w = room(6, 41);
+    let all: Vec<usize> = (0..6).collect();
+    let c = creds(&w);
+    form(&mut w, &all, &c, 150, 20_000);
+    w.run_ms(15_000);
+    // The spread of mesh time across the members at one instant, sampled for 60 s.
+    let spread = |w: &World| -> i64 {
+        let m: Vec<i64> = (0..6).map(|i| w.nodes[i].stack.time.mesh_us(w.local(i))).collect();
+        m.iter().max().unwrap() - m.iter().min().unwrap()
+    };
+    let mut worst = 0;
+    let mut sum = 0;
+    for _ in 0..120 {
+        w.run_ms(500);
+        let s = spread(&w);
+        worst = worst.max(s);
+        sum += s;
+    }
+    assert!((0..6).all(|i| w.nodes[i].stack.time.state == SyncState::Synced));
+    // Node 0's app sets the show epoch 2 s ahead; a change is scheduled for epoch + 1.5 s.
+    let epoch_mesh = w.nodes[0].stack.time.mesh_us(w.local(0)) + 2_000_000;
+    w.nodes[0].stack.originate_epoch(Some(epoch_mesh));
+    w.run_ms(2_000);
+    let apply_mesh = epoch_mesh + 1_500_000;
+    // Each member's local instant of the change, in global time.
+    let mut global: Vec<i64> = Vec::new();
+    for i in 0..6 {
+        let n = &w.nodes[i].stack.time;
+        assert_eq!(n.epoch.and_then(|e| e.epoch_mesh_us), Some(epoch_mesh), "node {i} has the epoch");
+        let local_at = n.local_us(apply_mesh);
+        // Invert the node's clock: local = g + off + g*ppm.
+        let p = w.air.0.borrow().st[w.nodes[i].index].place;
+        let g = ((local_at - p.clock_offset_us) as f64 / (1.0 + p.clock_ppm / 1e6)) as i64;
+        global.push(g);
+    }
+    let skew = global.iter().max().unwrap() - global.iter().min().unwrap();
+    // A member reboots: it rejoins the running time.
+    w.reboot(3);
+    w.run_ms(20_000);
+    let t3 = &w.nodes[3].stack.time;
+    assert!(t3.stats.joined >= 1 && t3.stats.founded == 0, "{:?}", t3.stats);
+    let mut after = 0;
+    for _ in 0..20 {
+        w.run_ms(500);
+        after = after.max(spread(&w));
+    }
+    println!(
+        "mesh time (6 nodes): spread mean {} µs worst {worst} µs; apply_at skew {skew} µs; after a reboot worst {after} µs",
+        sum / 120
+    );
+    assert!(worst < 200, "mesh time spread {worst} µs");
+    assert!(skew < 200, "apply_at skew {skew} µs");
+    assert!(after < 200, "after the reboot {after} µs");
+}
