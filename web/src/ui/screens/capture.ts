@@ -19,7 +19,15 @@ import {
   blobPopulation,
   EXPOSURE_SERVO_START,
   ExposureMonitor,
+  AE_BIAS_MAX,
+  AE_BIAS_MIN,
+  AE_BIAS_STEP,
+  DiffuseServo,
+  EXPOSURE_FINE_STEP,
+  type ExposureLever,
+  HELD_ALONE_TICKS,
   planLedBrightness,
+  spotSignals,
   planReconfigure,
   BitRatePlanner,
   recommendConfig,
@@ -289,6 +297,10 @@ const DIFFUSE_CLIP_TICKS = 2;
  * exposure doesn't move when the bit rate is renegotiated. */
 const DIFFUSE_EXPOSURE = 0.35;
 const DIFFUSE_EXPOSURE_CAP_MS = 55;
+/** The diffuse servo's range for the manual pin: the band the 2026-11-18 rope
+ * sweep covered (shorter starves every spot into quantisation; longer blooms). */
+const DIFFUSE_EXPOSURE_MIN = 0.15;
+const DIFFUSE_EXPOSURE_MAX = 0.65;
 const forcedExposure = ((): number | null => {
   const v = parseFloat(qs.get("exposure") ?? "");
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : null;
@@ -1235,6 +1247,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       // manual pin as the fallback. Set once the capture source exists.
       let diffuseExposure: "none" | "ae-bias" | "pinned" = "none";
       let diffuseClipTicks = 0;
+      /** The diffuse servo's AE bias (EV) while on biased auto exposure. */
+      let diffuseBiasEv = DIFFUSE_AE_BIAS_EV;
       let servoedExposure = initialExposure ?? EXPOSURE_SERVO_START;
       // iOS takes the camera natively: WebKit's getUserMedia offers no exposure
       // control at all and its camera is unreachable from this process, so the
@@ -1679,6 +1693,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           blobCount: blobs.length,
           scene: measured,
           blobs: blobPopulation(blobs),
+          // Diffuse servo (D-178): spot SNR over the detector's own noise floor.
+          ...(diffuse ? { spots: spotSignals(blobs, detector.lastNoise?.floor ?? null) ?? undefined } : {}),
         });
         if (measured !== undefined) crowding.push(f.tCaptureMs, blobCrowding(blobs));
         lastAmbient = f.ambientIntensity ?? lastAmbient;
@@ -2256,6 +2272,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         maybeAdvanceStage();
       };
 
+      // Diffuse capture runs its own servo (cv/exposure.ts DiffuseServo, D-178)
+      // in place of the light servo, unless the user or a URL pinned the levers
+      // or asked for the legacy/forced servos.
+      const diffuseServo = new DiffuseServo();
+      const diffuseServoOn =
+        !servoExposure && !legacyLightServo && forcedBrightness === null && profileRun?.brightness === undefined;
       const exposureTick = setInterval(() => {
         if (!capturing) {
           clearInterval(exposureTick);
@@ -2306,8 +2328,44 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         const wantBit =
           forcedBitMs === null ? planReconfigure(params.bitPeriodMs, report.frameIntervalMs, framesPerBit) : null;
         const pop = monitor.blobPopulation();
-        // Diffuse on biased AE: fall back to the manual pin once spot cores clip.
-        if (diffuseExposure === "ae-bias" && diffuse && pop !== null) {
+        // Diffuse servo (D-178): steers on spot SNR over the detector's noise
+        // floor and per-channel core clipping — not the blob-count / intensity
+        // gates the light servo reads, which assume an unstrided scene. Exposure
+        // is the fine lever (every tick); LED brightness the coarse one, settled
+        // at the start of the capture, then held to a stride-phase boundary.
+        const servoNow = diffuseServoOn && diffuse && !manualMode;
+        const spots = servoNow ? monitor.spotSignals() : null;
+        if (servoNow && spots !== null) {
+          const lever: ExposureLever | null =
+            diffuseExposure === "ae-bias"
+              ? { value: diffuseBiasEv, lo: AE_BIAS_MIN, hi: AE_BIAS_MAX, step: AE_BIAS_STEP }
+              : diffuseExposure === "pinned"
+                ? { value: servoedExposure, lo: DIFFUSE_EXPOSURE_MIN, hi: DIFFUSE_EXPOSURE_MAX, step: EXPOSURE_FINE_STEP }
+                : null;
+          const st = diffuseServo.tick(performance.now(), params.brightness ?? 1, lever, spots);
+          if (st.exposure !== undefined) {
+            if (diffuseExposure === "ae-bias") {
+              diffuseBiasEv = st.exposure;
+              void exposureTarget.setExposureBias?.(st.exposure);
+            } else {
+              servoedExposure = st.exposure;
+              void exposureTarget.setExposure(st.exposure, DIFFUSE_EXPOSURE_CAP_MS);
+            }
+          }
+          // Settle stage only; afterwards brightness waits for a phase boundary.
+          if (st.brightness !== undefined) applyReconfigure({ brightness: st.brightness });
+          if (st.exposure !== undefined || st.brightness !== undefined) {
+            nativeLog(
+              `[servo] diffuse${diffuseServo.settling ? " (settling)" : ""}: snr ${spots.snr.toFixed(1)} ` +
+                `clip ${spots.coreClip.toFixed(2)}${spots.clipChannel >= 0 ? "rgb"[spots.clipChannel] : ""}` +
+                (st.exposure !== undefined ? ` -> exposure ${st.exposure.toFixed(2)}` : "") +
+                (st.brightness !== undefined ? ` -> LED ${Math.round(st.brightness * 100)}%` : ""),
+            );
+          }
+          if (st.brightness !== undefined) return;
+        }
+        // Diffuse on biased AE without the servo: fall back to the manual pin once spot cores clip.
+        if (!servoNow && diffuseExposure === "ae-bias" && diffuse && pop !== null) {
           diffuseClipTicks = pop.satFrac >= DIFFUSE_CLIP_SAT_FRAC ? diffuseClipTicks + 1 : 0;
           if (diffuseClipTicks >= DIFFUSE_CLIP_TICKS) pinDiffuseExposure(`spot cores clipping, sat ${pop.satFrac.toFixed(2)}`);
         }
@@ -2315,7 +2373,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // on its measured floor (cv/lightServo.ts). Exposure applies now;
         // brightness goes through the two-tick confirmation below.
         let servoBright: number | null = null;
-        if (!legacyLightServo && !manualMode && pop !== null) {
+        if (!servoNow && !legacyLightServo && !manualMode && pop !== null) {
           const step = planLightServo(
             { ...lightServo, exposure: servoedExposure },
             { blobCount: report.blobCount, ledCount, ...pop, clipFrac: report.clipFrac, crowding: crowding.value() },
@@ -2328,7 +2386,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             void exposureTarget.setExposure(step.exposure, params.bitPeriodMs / 2);
           }
         }
-        const wantBright = !legacyLightServo
+        const wantBright = servoNow
+          ? null
+          : !legacyLightServo
           ? servoBright
           : forcedBrightness === null && !manualMode && pop !== null
             ? planLedBrightness(params.brightness ?? 1, {
@@ -2376,9 +2436,18 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           if (performance.now() - lastPhaseAt > dwellMs) {
             phaseIdx = (phaseIdx + 1) % phaseTotal;
             lastPhaseAt = performance.now();
-            applyReconfigure({ stridePhase: phaseIdx });
+            // A held diffuse-servo brightness change rides the phase switch's restart.
+            const heldBright = servoNow ? diffuseServo.atPhaseBoundary() : null;
+            applyReconfigure({ stridePhase: phaseIdx, ...(heldBright !== null ? { brightness: heldBright } : {}) });
             guideEl.textContent = (channelPlan !== null ? `${stageLabel(channelPlan, stageIdx)} · ` : "") + strideLine();
           }
+        }
+        // No phase switch coming (one phase, or a stride that never rotates):
+        // a held brightness change that stays wanted for HELD_ALONE_TICKS
+        // applies on its own — rarely, and costing one decoder restart.
+        if (servoNow && !renegotiating && performance.now() - lastPhaseAt > 3 * Math.max(3000, 4 * params.cycleFrames * params.bitPeriodMs)) {
+          const held = diffuseServo.takeHeld(HELD_ALONE_TICKS);
+          if (held !== null) applyReconfigure({ brightness: held });
         }
       }, 2000);
     } catch (e) {
