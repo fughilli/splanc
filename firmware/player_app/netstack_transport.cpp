@@ -2082,6 +2082,7 @@ extern "C" void pm_go_to_sleep();
 // The loop recomputes the flag every pass (g_coex_wifi_idle, below), so a sweep or an
 // auth reclaims the radio at the next tick.
 volatile bool g_coex_wifi_idle = false;
+static const uint32_t kImprovNotifyHoldMs = 1500;  // cap on BLE's radio priority per report
 static const uint32_t COEX_TICK_US = 4000;  // 4ms
 static void coex_timer_cb(void *) {
   static int mode = 0;  // 0 = MAC force-awake (WiFi), 1 = MAC asleep (BLE owns the slice)
@@ -2103,6 +2104,12 @@ static void coex_timer_cb(void *) {
   int want;
   if (g_coex_wifi_idle) {
     want = 1;  // nothing on the WiFi side: the radio is BLE's
+  } else if (improv_ble_notify_hold(now, kImprovNotifyHoldMs)) {
+    // An Improv state/error/result notification is waiting for its LL ack: BLE gets the
+    // radio until the central has it (capped). Under the event windows alone, a report
+    // queued mid-join (the wrong-password report during 4-way retries, the redirect right
+    // after the lease) sat 0.5-3 s waiting for a serviced connection event (desk #75).
+    want = 1;
   } else if (g_creds_ready && !ns_pmk_ready()) {
     want = ((now % 20) < 16) ? 1 : 0;  // PMK derive (WiFi idle): ~80% to BLE, no alignment needed
   } else {
@@ -2766,6 +2773,12 @@ void netstack_loop() {
                     (unsigned long)ns_ble_last_disc_reason());
       diag_last_state = st_now;
     }
+  }
+  {
+    uint32_t ack_ms;
+    if (improv_ble_take_notify_ack_ms(&ack_ms))  // HITL metric: send -> central has it
+      Serial.printf("[t=%lu] [ble] improv notify acked in %lu ms\n", (unsigned long)millis(),
+                    (unsigned long)ack_ms);
   }
   if (!PLAYER_MODE) g_creds_ready = true;  // non-player transport demo associates immediately
   // As soon as the SSID is committed, latch the AP's real BSSID + channel from the scan

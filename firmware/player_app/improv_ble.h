@@ -46,6 +46,13 @@ void improv_ble_request_disconnect();
 // Parameter Update Request; the central may decline). No-op if not connected.
 void improv_ble_request_supervision_timeout(uint32_t ms);
 
+// Improv notifications (state / error / RPC result) sent but not yet LL-acked by the
+// central, for at most cap_ms since the first went out: the coex arbiter gives BLE the
+// radio meanwhile. Safe from any task (reads two volatiles).
+bool improv_ble_notify_hold(uint32_t now_ms, uint32_t cap_ms);
+// Once per delivered burst: send -> LL ack in ms (the central has it).
+bool improv_ble_take_notify_ack_ms(uint32_t *ms);
+
 // Raw BLE link state (Rust FFI ns_ble_state): 7 == central connected+subscribed.
 // Exposed for diagnostics (distinguish link-drop vs notification-loss).
 extern "C" uint32_t ns_ble_state();
