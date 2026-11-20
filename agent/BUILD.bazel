@@ -139,11 +139,16 @@ copy_to_directory(
         data = [
             ":mcp",
             ":wasm",
-        ] + ([":bundle"] if f == "tests/site.test.ts" else []) + glob([
-            "tests/fixtures/**",
-            "skill/*.md",
-            "skill/examples/*.fx",
-        ]),
+        ] + ([":bundle"] if f == "tests/site.test.ts" else []) + glob(
+            [
+                "tests/fixtures/**",
+                "skill/*.md",
+                "skill/examples/*.fx",
+            ],
+            # Bundled into the light billing tests instead (their vite srcs);
+            # listing it here too makes two conflicting copy actions.
+            exclude = ["tests/fixtures/apple/**"],
+        ),
         entry_point = ":" + f.removeprefix("tests/").removesuffix(".test.ts") + "_test_bundle",
         # Local TLS + WebSocket servers on 127.0.0.1.
         tags = ["requires-network"],
