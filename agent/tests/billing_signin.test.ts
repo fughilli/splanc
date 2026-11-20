@@ -336,6 +336,31 @@ describe("sign-in routes", () => {
     assert.ok(!c.text.includes("PRIVATE") && !c.text.includes(TOKEN_KEY) && !c.text.includes("KEY1234567"));
   });
 
+  test("modes: a sandbox account is never signed into in production, and the sandbox link survives", async () => {
+    const w = await world();
+    const a = await w.anon(250);
+    assert.equal((await w.apple("001.modes", a.auth)).body["result"], "linked");
+    // The owner goes live (billing_go_live.mjs --apply): same relay, same Durable Objects.
+    const live = {
+      AI_BILLING: "production",
+      STRIPE_SECRET_KEY: ["sk", "live", "51CANARYcanaryCANARYcanary0123456789"].join("_"),
+      STRIPE_WEBHOOK_SECRET: "whsec_CANARYliveWEBHOOKsecret0123456789ab",
+      BILLING_ADMIN_TOKEN: "admin-test-token-0001",
+    };
+    Object.assign(w.env, live);
+    const prod = await w.apple("001.modes");
+    assert.equal(prod.status, 201, prod.text);
+    assert.equal(prod.body["result"], "created", "a fresh production account, not the sandbox one");
+    assert.notEqual(prod.body["account_id"], a.id);
+    assert.notEqual(prod.body["balance_credits"], 250, "test-money credits stay in the sandbox");
+    assert.equal((await w.balance(a.auth))["error"], "unauthorized", "the sandbox session doesn't open here");
+    // Rolled back: the Apple ID still signs in to its sandbox account.
+    Object.assign(w.env, { AI_BILLING: "sandbox", STRIPE_SECRET_KEY: undefined, STRIPE_WEBHOOK_SECRET: undefined });
+    const back = await w.apple("001.modes");
+    assert.equal(back.body["result"], "signed_in", back.text);
+    assert.equal(back.body["account_id"], a.id);
+  });
+
   test("link: an anonymous account links Apple and keeps its credits; a new device recovers it", async () => {
     const w = await world();
     const a = await w.anon(250);
