@@ -234,6 +234,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../docs/host-player.html">Host player: WLED / DDP / Art-Net</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/guides/cloud-agent.html">Use Splanc from a cloud agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/guides/relay-tailscale.html">Run your own relay with Tailscale</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../docs/guides/vive-tracker-lamp.html">Build a Vive-tracked lamp</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../docs/runbook.html">Runbook</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
@@ -267,6 +268,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/agent-multi-fixture.html">Multi-fixture agent hub</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/cloud-relay.html">Cloud relay + LAN bridge</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/app-ux-overhaul.html">App UX overhaul</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../docs/design/ai-tiers.html">AI tiers (free / paid / self-serve)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/ios-support.html">iOS support</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/on-device-models.html">On-device models</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../docs/design/effects-demo.html">Effects demo</a></li>
@@ -603,17 +605,18 @@ skipping auto-negotiation for that field), <code class="docutils literal notrans
 <code class="docutils literal notranslate"><span class="pre">bazelisk</span> <span class="pre">run</span> <span class="pre">//pi/reconstruction:vio_replay</span> <span class="pre">--</span> <span class="pre">&lt;trace&gt;</span> <span class="pre">&lt;decoded&gt;</span> <span class="pre">--diagnose</span></code>),
 <code class="docutils literal notranslate"><span class="pre">?fx=</span></code> (focal seed; otherwise a cached calibration, otherwise a 70°-FOV
 guess — fx error shifts metric scale ~1:1, shape is unaffected),
-<code class="docutils literal notranslate"><span class="pre">?sync=stagger_pilot</span></code> (REQUEST the hue code v2 staggered pilot; see below). Wall
+<code class="docutils literal notranslate"><span class="pre">?sync=stagger_pilot|v1</span></code> (debug override of the sync pattern request; see below). Wall
 page: <code class="docutils literal notranslate"><span class="pre">?cols=N</span></code>, <code class="docutils literal notranslate"><span class="pre">?gap</span></code>, <code class="docutils literal notranslate"><span class="pre">?margin</span></code>, <code class="docutils literal notranslate"><span class="pre">?dot</span></code> (dot diameter as a fraction of
 pitch), <code class="docutils literal notranslate"><span class="pre">?sync=stagger_pilot|on_off</span></code> (FORCE the rendered sync pattern).</p>
 <section id="testing-hue-code-v2-staggered-pilot-against-the-wall">
 <h3>Testing hue code v2 (staggered pilot) against the wall<a class="headerlink" href="#testing-hue-code-v2-staggered-pilot-against-the-wall" title="Link to this heading">¶</a></h3>
 <p>The staggered-pilot code (<code class="docutils literal notranslate"><span class="pre">syncPattern:</span> <span class="pre">&quot;stagger_pilot&quot;</span></code>,
-docs/design/hue-code-v2.md phase 2) is opt-in. The phone asks for it when the
-capture page is opened with <code class="docutils literal notranslate"><span class="pre">?sync=stagger_pilot</span></code>: start_mapping carries
+docs/design/hue-code-v2.md phase 2) is the default. The phone asks for it from every
+player that advertises <code class="docutils literal notranslate"><span class="pre">hue_stagger_pilot</span></code>: start_mapping carries
 <code class="docutils literal notranslate"><span class="pre">syncPattern</span></code>, and the phone decodes whatever <code class="docutils literal notranslate"><span class="pre">codeParams.syncPattern</span></code> the
-device answers with. A player that doesn’t support it (every C6/P4 today) keeps
-v1 and says so. Supporting devices: the virtual wall player (<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//pi/player_rs:wall</span></code>, docs/host-player.md; it advertises <code class="docutils literal notranslate"><span class="pre">hue_stagger_pilot</span></code>)
+device answers with. A player on older firmware keeps v1 and says so;
+<code class="docutils literal notranslate"><span class="pre">?sync=v1</span></code> forces v1 for debugging. Supporting devices: C6/P4 firmware with
+splanc#517, the virtual wall player (<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//pi/player_rs:wall</span></code>, docs/host-player.md; it advertises <code class="docutils literal notranslate"><span class="pre">hue_stagger_pilot</span></code>)
 and this dev server. The dev server can also hand the code out to every
 capture without the request: <code class="docutils literal notranslate"><span class="pre">bazelisk</span> <span class="pre">run</span> <span class="pre">//web:serve</span> <span class="pre">--</span> <span class="pre">--sync-pattern</span> <span class="pre">stagger_pilot</span></code>.</p>
 <p>The wall renders what the device runs. Its status line reads
