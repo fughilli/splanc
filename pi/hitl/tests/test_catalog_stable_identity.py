@@ -38,7 +38,13 @@ import pytest
 
 _PR30 = pytest.mark.requirements("PR-30")
 
-_CATALOG_NAMES = ("catalog.json", "catalog-sdr.json", "catalog-phone.json", "catalog-mac.json")
+_CATALOG_NAMES = (
+    "catalog.json",
+    "catalog-sdr.json",
+    "catalog-phone.json",
+    "catalog-mac.json",
+    "catalog-meshbench.json",
+)
 
 
 def _repo_file(relpath):
@@ -90,6 +96,7 @@ _CO_DEPLOYED = (
     ("amd-rig", ("catalog-sdr.json", "catalog-phone.json")),
     ("hitl-rig", ("catalog.json",)),
     ("mac", ("catalog-mac.json",)),
+    ("mesh-rig", ("catalog-meshbench.json",)),
 )
 
 

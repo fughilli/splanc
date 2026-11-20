@@ -137,7 +137,7 @@
     "type": "esp32c6",
     "kind": "usb",
     "capabilities": "flash, monitor, jtag, gdb, improv, wss-app, led-strip",
-    "identifier": "58:E6:C5:11:FC:D8",
+    "identifier": "8C:FD:49:11:32:18",
     "discovered": false,
     "pin_only": false,
     "source": "catalog-phone.json"

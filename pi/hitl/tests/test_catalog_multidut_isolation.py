@@ -34,7 +34,13 @@ from hitl_client import Reservation, _unit_serves
 pytestmark = pytest.mark.usefixtures("clean_hitl_env")
 _PR24 = pytest.mark.requirements("PR-24")
 
-_CATALOG_NAMES = ("catalog.json", "catalog-sdr.json", "catalog-phone.json", "catalog-mac.json")
+_CATALOG_NAMES = (
+    "catalog.json",
+    "catalog-sdr.json",
+    "catalog-phone.json",
+    "catalog-mac.json",
+    "catalog-meshbench.json",
+)
 
 
 def _repo_file(relpath):
@@ -78,6 +84,7 @@ _CO_DEPLOYED = (
     ("amd-rig", ("catalog-sdr.json", "catalog-phone.json")),
     ("hitl-rig", ("catalog.json",)),
     ("mac", ("catalog-mac.json",)),
+    ("mesh-rig", ("catalog-meshbench.json",)),  # docs/design/mesh-hitl-rig.md, own host
 )
 
 _BYID_RE = re.compile(r"usb-Espressif_USB_JTAG_serial_debug_unit_([0-9A-Fa-f:]+)-if00")

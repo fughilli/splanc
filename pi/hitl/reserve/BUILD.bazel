@@ -29,4 +29,5 @@ exports_files([
     "catalog-sdr.json",
     "catalog-phone.json",  # amd-rig phone bench (//pi/hitl:hitl_sdr's second daemon)
     "catalog-mac.json",  # Mac mini iOS bench (nix/hitl-darwin.nix); test data only here
+    "catalog-meshbench.json",  # mesh HITL bench (docs/design/mesh-hitl-rig.md); not deployed yet
 ])
