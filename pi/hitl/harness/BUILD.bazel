@@ -133,6 +133,7 @@ py_test(
 py_library(
     name = "harness",
     srcs = [
+        "ble_rename_core.py",
         "board_caps.py",
         "ctrl_budget_core.py",
         "ctrl_budget_probe.py",
@@ -820,6 +821,47 @@ py_test(
     },
     imports = ["."],
     main = "hitl_no_reboot_no_park.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# A rename changes the ADVERTISED BLE name live (owner report: it only changed at the
+# next boot on the netstack C6): over wss with no central, over the BLE player
+# transport with one connected (applies when advertising resumes, link kept), a 32-byte
+# name (Shortened, Improv advert intact), then Improv still provisions; no reset and
+# the effect keeps rendering throughout. Pure logic: ble_rename_core.
+py_test(
+    name = "ble_rename",
+    timeout = "eternal",
+    srcs = [
+        "hitl_ble_rename.py",
+        "hitl_map_upload.py",
+    ],
+    data = [
+        # Shipped into the rig container (scp) and run there.
+        "ble_name_watch.py",
+        "hitl_ble_player.py",
+        ":plasma_hue_fixed_fxb",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "BLE_RENAME_FXB_RUNFILE": "_main/pi/hitl/harness/plasmaHueFixed.fxb",
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        # netstack: chunk the map into 1 KB windows (one TLS record each).
+        "HITL_CHUNK_BYTES": "1024",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_ble_rename.py",
     tags = [
         "hitl",
         "manual",

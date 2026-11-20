@@ -10,7 +10,7 @@
 use ledmapper_netstack::ble::att::AttPdu;
 use ledmapper_netstack::gatt::{GATT_RSP_MAX, GATT_VAL_MAX};
 use ledmapper_netstack::ble::{AclPacket, L2capReassembler};
-use ledmapper_netstack::hci::{acl, BleHost, HostState, H4_ACL, H4_EVT};
+use ledmapper_netstack::hci::{acl, name_ad, BleHost, HostState, H4_ACL, H4_EVT};
 use ledmapper_netstack::improv::{Action, ImprovService, IMPROV_SVC_UUID, MAX_PASS, MAX_SSID};
 use ledmapper_netstack::rx::Buf;
 
@@ -30,9 +30,9 @@ unsafe fn reset_improv() {
 /// The board's live device name (set by the firmware via `ns_ble_set_name`). Kept
 /// here so it can be re-applied to the GAP Device-Name (0x2A00) characteristic
 /// every time the Improv service is rebuilt on a fresh connection — otherwise a
-/// reconnect would reset the name to the build default. Bounded to the 29-byte
-/// legacy scan-response name budget.
-static mut DEVICE_NAME: Buf<29> = Buf::new();
+/// reconnect would reset the name to the build default. Holds the full name (the
+/// firmware caps it at 32 bytes); only the scan response is cut to 29.
+static mut DEVICE_NAME: Buf<32> = Buf::new();
 
 // Pending provisioning request handed to the firmware (which owns Wi-Fi), plus a
 // queue of value handles to notify the central after an RPC.
@@ -245,7 +245,10 @@ pub extern "C" fn ns_ble_setup() {
     }
 }
 
-/// Next HCI command to send for bring-up (the initial Reset). 0 when idle.
+/// Next HCI command to send: the bring-up Reset, or a live scan-response refresh
+/// after `ns_ble_set_name` while advertising. 0 when idle. The firmware calls it
+/// every BLE poll, so a rename made while a central is connected goes out when
+/// advertising resumes (the disconnect path re-sends it itself — see hci.rs).
 #[no_mangle]
 pub extern "C" fn ns_ble_poll_cmd(out: *mut u8, cap: u32) -> u32 {
     let mut b: Buf<64> = Buf::new();
@@ -583,20 +586,23 @@ pub extern "C" fn ns_ble_provision_result(ok: u32, url: *const u8, url_len: u32)
     }
 }
 
-/// Override the advertised local name (scan-response Complete Local Name) before
-/// advertising starts. Lets the player advertise its device name instead of the
-/// build-fixed default so the provisioner's name scan (and humans) see the board.
+/// Set the advertised local name (the scan response) and the GAP Device Name.
+/// Before bring-up it rides the initial advertising setup; afterwards (a live
+/// rename) the host re-sends LE Set Scan Response Data on the next
+/// `ns_ble_poll_cmd` while advertising, or when advertising resumes after a
+/// connection — never touching a live link. A name over 29 bytes is advertised
+/// Shortened (hci::name_ad); the primary advertisement (Flags + the Improv
+/// service UUID the app filters on) is unchanged.
 #[no_mangle]
 pub extern "C" fn ns_ble_set_name(name: *const u8, len: u32) {
     if name.is_null() || len == 0 {
         return;
     }
-    let s = unsafe { core::slice::from_raw_parts(name, (len as usize).min(29)) };
-    let mut sr: Buf<31> = Buf::new();
-    let _ = sr.extend(&[(s.len() + 1) as u8, 0x09]); // AD length, type=Complete Local Name
-    let _ = sr.extend(s);
+    let s = unsafe { core::slice::from_raw_parts(name, (len as usize).min(32)) };
+    let mut sr = [0u8; 31];
+    let n = name_ad(s, &mut sr);
     unsafe {
-        HOST.set_scan_rsp(sr.as_slice());
+        HOST.set_scan_rsp(&sr[..n]);
         // Remember the name and expose it over GATT (GAP Device Name 0x2A00) so a
         // central can read it on connect even when coex starves the scan-response —
         // the binding iOS-bench failure (board surfaces UNNAMED). DEVICE_NAME is
