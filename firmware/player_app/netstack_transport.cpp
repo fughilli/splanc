@@ -191,6 +191,12 @@ lm_wifi::ImprovJoin g_improv_join;  // the last Improv fresh join (re-send coale
 // DHCP lease state (DORA).
 uint8_t g_offer_ip[4] = {0}, g_server_id[4] = {0};
 bool g_have_offer = false, g_leased = false;
+// Opt-in device metrics (docs/design/device-metrics.md): a few counters, read only when
+// the app asks (get_device_metrics). Leases obtained / lost (deauth, expiry; not a
+// re-provision or going offline), Bluetooth links that dropped, and the RSSI of our AP's
+// frames, smoothed (x16 fixed point; 0 = none heard yet).
+static uint32_t g_m_joins = 0, g_m_losses = 0, g_m_ble_drops = 0;
+static int32_t g_m_rssi_x16 = 0;
 // Lease lifetime (option 51) + when it was (re)acquired, for T1 renewal. A commercial
 // AP hands short leases and DROPS a client whose lease lapses without renewing — the
 // heapless netstack acquired the lease once and never renewed, so it went unreachable
@@ -1752,12 +1758,7 @@ void netstack_restore_credentials(const char *ssid, const char *pass) {
 // in this TU): count of AP group-key rekeys serviced, surfaced in the status line.
 uint32_t netstack_rekey_count() { return g_rekey_serviced; }
 
-// Opt-in device metrics (docs/design/device-metrics.md): a few counters, read only when
-// the app asks (get_device_metrics). Leases obtained / lost (deauth, expiry; not a
-// re-provision or going offline), Bluetooth links that dropped, and the RSSI of our AP's
-// frames, smoothed (x16 fixed point; 0 = none heard yet).
-static uint32_t g_m_joins = 0, g_m_losses = 0, g_m_ble_drops = 0;
-static int32_t g_m_rssi_x16 = 0;
+// Opt-in device metrics: the counters are declared next to g_leased (above).
 static inline void note_ap_rssi(int32_t dbm) {
   if (dbm >= 0 || dbm < -110) return;  // not a plausible RSSI: ignore
   g_m_rssi_x16 = g_m_rssi_x16 == 0 ? dbm * 16 : g_m_rssi_x16 + (dbm * 16 - g_m_rssi_x16) / 8;
