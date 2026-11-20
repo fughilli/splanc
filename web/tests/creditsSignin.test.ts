@@ -190,7 +190,7 @@ test("Google on iOS: code + PKCE in the system sheet, state checked", async () =
 
 // -- the flow --------------------------------------------------------------------------
 
-const fresh: FlowContext = { enabled: true, ios: false, hasSession: false, adult: false, emailVerified: false, emailDeclined: false, signinAvailable: true };
+const fresh: FlowContext = { enabled: true, ios: false, iap: false, consentAsked: false, hasSession: false, adult: false, emailVerified: false, emailDeclined: false, signinAvailable: true };
 const run = (s: FlowState, ...evs: FlowEvent[]): FlowState => evs.reduce(reduce, s);
 const signed = (adult: boolean, kind: "linked" | "signed_in" | "switched" | "created" = "linked"): FlowEvent => ({ type: "signedIn", kind, provider: "apple", balance: 12, adult });
 
@@ -212,6 +212,21 @@ test("buy: the safety step offers sign-in; linking goes straight to the packs", 
   assert.equal(run(startFlow("buy", { ...fresh, signinAvailable: false }), { type: "next" }, { type: "accountReady" }).step, "emailChoice");
   // Already signed in: no safety phase at all.
   assert.deepEqual(buyPhases({ ...fresh, hasSession: true, adult: true, signedIn: true }), ["pack", "payment"]);
+});
+
+test("iOS buy: sign-in replaces the e-mail step, and the Apple refund consent still comes before the packs", () => {
+  const ios: FlowContext = { ...fresh, ios: true, iap: true, consentAsked: false };
+  let s = startFlow("buy", ios);
+  assert.deepEqual(s.phases, ["account", "signin", "consent", "pack", "payment"]);
+  s = run(s, { type: "next" }, { type: "accountReady" });
+  assert.equal(s.step, "signInChoice");
+  const consent = run(s, signed(true));
+  assert.equal(consent.step, "appleConsent", "signing in doesn't skip Apple's opt-in");
+  assert.equal(run(consent, { type: "consentAnswered" }).step, "packs");
+  // Signed in to an account that never confirmed 18+: account, then the consent.
+  assert.equal(run(s, signed(false, "switched"), { type: "accountReady" }).step, "appleConsent");
+  // Asked before: straight to the packs.
+  assert.equal(run(startFlow("buy", { ...ios, consentAsked: true }), { type: "next" }, { type: "accountReady" }, signed(true)).step, "packs");
 });
 
 test("conflict: keep this device's account (back to the choice) or switch", () => {
