@@ -20,7 +20,7 @@
 //! docs/design/sensor-core.md §Fusion for the attitude-only (6-state) cut that
 //! fits the C6 budget.
 
-use crate::math::{Quat, Vec3, GRAVITY};
+use crate::math::{clampf, Quat, Vec3, GRAVITY};
 
 /// The fusion seam. One sample per call, in the FIXTURE frame (mount rotation
 /// already applied), gyro NOT bias-corrected (the filter owns its bias).
@@ -108,7 +108,7 @@ impl AttitudeFilter for Mahony {
             // Integral feedback lives in the bias estimate.
             let lim = self.params.bias_limit;
             let b = self.bias.sub(e.scale(self.params.ki * dt));
-            self.bias = Vec3::new(b.x.clamp(-lim, lim), b.y.clamp(-lim, lim), b.z.clamp(-lim, lim));
+            self.bias = Vec3::new(clampf(b.x, -lim, lim), clampf(b.y, -lim, lim), clampf(b.z, -lim, lim));
             w = w.add(e.scale(self.params.kp));
         }
         // First-order quaternion integration q += 0.5 q (0, w) dt, renormalized
