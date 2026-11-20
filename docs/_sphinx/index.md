@@ -134,6 +134,7 @@ Use Splanc from a cloud agent <docs/guides/cloud-agent>
 Run your own relay with Tailscale <docs/guides/relay-tailscale>
 Build a Vive-tracked lamp <docs/guides/vive-tracker-lamp>
 docs/runbook
+Feature-preview clips <docs/release-clips>
 Roadmap <next_steps>
 ```
 

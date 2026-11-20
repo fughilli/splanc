@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "id": "ai-settings-tab",
+  "title": "AI settings have their own tab",
+  "summary": "Pick where effect generation runs (cloud, a local server, or in the browser) from Settings → AI, available from anywhere in the app.",
+  "prs": [558],
+  "route": "#/maps",
+  "framing": ["phone", "desktop"],
+  "theme": "dark",
+  "steps": [
+    { "click": ".appbar-menu-wrap button[title='More']", "wait": 650 },
+    { "click": ".appbar-menu-item:has-text('Settings')", "wait": 900 },
+    { "click": ".settings-tab:has-text('AI')", "wait": 1100 },
+    { "click": ".aiset-kind:has-text('Local server')", "wait": 1000 },
+    { "click": ".aiset-kind:has-text('In-browser (CPU)')", "wait": 1000 },
+    { "click": ".aiset-kind:has-text('Cloud')", "wait": 900 }
+  ]
+}
