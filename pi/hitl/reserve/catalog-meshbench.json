@@ -1,0 +1,151 @@
+{
+  "comment": "Mesh HITL bench catalog (docs/design/mesh-hitl-rig.md §10). NOT DEPLOYED YET: the bench host (a NanoPi-class SBC, question Q1) has no sbc-deploy board target, and every board serial below is a placeholder (00:00:00:00:C6:0n for the C6 DUTs, 00:00:00:00:F4:0n for the P4 boards, SERIAL_* for the instruments) that the assembly checklist (§12 step 9) replaces with the real USB serials. One composite, pin_only unit: the RP2350 RF controller, four TinyC6 u.FL DUTs on the conducted RF matrix, two P4+C6 boards, the overhead camera and the 16-channel analyser, reserved atomically (the timing measurement needs all of them at once, and nothing else may touch the conducted DUTs). Per-DUT env follows the c6-sdr convention: HITL_TTY / HITL_ADAPTER_SERIAL for DUT 0 and the _N suffix for DUT N, so the toolbox's --dut N works unchanged. The instruments are addressed by HITL_RFCTL_TTY, HITL_CAMERA_DEV and HITL_LA_DRIVER; HITL_LA_MAP names what each analyser channel taps (a DUT strip, or the controller's SYNC line) and HITL_MESHBENCH_LAYOUT_JSON is the camera's ROI layout (§7.4), both filled at assembly.",
+  "workspace": "splanc",
+  "lease_seconds": 3600,
+  "ssh_port_base": 2222,
+  "resource_types": {
+    "esp32c6": {
+      "kind": "usb",
+      "capabilities": [
+        "flash",
+        "monitor",
+        "jtag",
+        "gdb",
+        "improv",
+        "wss-app",
+        "led-strip",
+        "ufl",
+        "rf-conducted"
+      ]
+    },
+    "esp32p4-c6": {
+      "kind": "usb",
+      "capabilities": ["flash", "monitor", "led-strip", "led-strip-16", "p4", "c6-coproc"]
+    },
+    "rp2350-rfctl": {
+      "kind": "usb",
+      "capabilities": ["rf-switch", "rf-atten", "rf-delay", "frame-timestamps"]
+    },
+    "uvc-camera": {
+      "kind": "usb",
+      "capabilities": ["camera", "camera-120fps", "global-shutter"]
+    },
+    "dslogic-16": {
+      "kind": "usb",
+      "capabilities": ["logic-analyzer-16", "logic-analyzer-led-strip"]
+    }
+  },
+  "components": [
+    {
+      "comment": "TinyC6 u.FL DUT 0: conducted node 0 of the RF matrix (its u.FL -> pigtail -> node 0 splitter). Strips on GPIO20 (ch0) and GPIO14 (ch1), tapped by analyser D0 and D1.",
+      "name": "c6-0",
+      "type": "esp32c6",
+      "devices": [
+        "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_00:00:00:00:C6:00-if00:/dev/ttyACM0"
+      ],
+      "env": {
+        "HITL_ADAPTER_SERIAL": "00:00:00:00:C6:00",
+        "HITL_TTY": "/dev/ttyACM0"
+      }
+    },
+    {
+      "comment": "TinyC6 u.FL DUT 1: conducted node 1 of the RF matrix (its u.FL -> pigtail -> node 1 splitter). Strips on GPIO20 (ch0) and GPIO14 (ch1), tapped by analyser D2 and D3.",
+      "name": "c6-1",
+      "type": "esp32c6",
+      "devices": [
+        "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_00:00:00:00:C6:01-if00:/dev/ttyACM1"
+      ],
+      "env": {
+        "HITL_ADAPTER_SERIAL_1": "00:00:00:00:C6:01",
+        "HITL_TTY_1": "/dev/ttyACM1"
+      }
+    },
+    {
+      "comment": "TinyC6 u.FL DUT 2: conducted node 2 of the RF matrix (its u.FL -> pigtail -> node 2 splitter). Strips on GPIO20 (ch0) and GPIO14 (ch1), tapped by analyser D4 and D5.",
+      "name": "c6-2",
+      "type": "esp32c6",
+      "devices": [
+        "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_00:00:00:00:C6:02-if00:/dev/ttyACM2"
+      ],
+      "env": {
+        "HITL_ADAPTER_SERIAL_2": "00:00:00:00:C6:02",
+        "HITL_TTY_2": "/dev/ttyACM2"
+      }
+    },
+    {
+      "comment": "TinyC6 u.FL DUT 3: conducted node 3 of the RF matrix (its u.FL -> pigtail -> node 3 splitter). Strips on GPIO20 (ch0) and GPIO14 (ch1), tapped by analyser D6 and D7.",
+      "name": "c6-3",
+      "type": "esp32c6",
+      "devices": [
+        "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_00:00:00:00:C6:03-if00:/dev/ttyACM3"
+      ],
+      "env": {
+        "HITL_ADAPTER_SERIAL_3": "00:00:00:00:C6:03",
+        "HITL_TTY_3": "/dev/ttyACM3"
+      }
+    },
+    {
+      "comment": "P4+C6 board 0 (DUT 4): the P4's USB-Serial-JTAG (flash/monitor the P4; the P4 reflashes its C6, firmware/p4/c6flash). Over the air, not conducted, unless its C6 has an antenna connector (question Q3). Two strips per board today (PARLIO lanes on GPIO20/21), sixteen once the 16-lane encoder lands; analyser D8 taps lane 0.",
+      "name": "p4-0",
+      "type": "esp32p4-c6",
+      "devices": [
+        "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_00:00:00:00:F4:00-if00:/dev/ttyACM4"
+      ],
+      "env": {
+        "HITL_ADAPTER_SERIAL_4": "00:00:00:00:F4:00",
+        "HITL_TTY_4": "/dev/ttyACM4"
+      }
+    },
+    {
+      "comment": "P4+C6 board 1 (DUT 5): the P4's USB-Serial-JTAG (flash/monitor the P4; the P4 reflashes its C6, firmware/p4/c6flash). Over the air, not conducted, unless its C6 has an antenna connector (question Q3). Two strips per board today (PARLIO lanes on GPIO20/21), sixteen once the 16-lane encoder lands; analyser D9 taps lane 0.",
+      "name": "p4-1",
+      "type": "esp32p4-c6",
+      "devices": [
+        "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_00:00:00:00:F4:01-if00:/dev/ttyACM5"
+      ],
+      "env": {
+        "HITL_ADAPTER_SERIAL_5": "00:00:00:00:F4:01",
+        "HITL_TTY_5": "/dev/ttyACM5"
+      }
+    },
+    {
+      "comment": "The RP2350 (Pico 2) RF controller running pi/hitl/meshbench/rfctl (USB CDC, product 'rfctl mesh-bench'). Drives every switch and attenuator of the matrix through the 74HC595 chain, toggles SYNC (analyser D12) on each commit, and timestamps frame starts on its FSTI inputs.",
+      "name": "rfctl-0",
+      "type": "rp2350-rfctl",
+      "devices": ["/dev/serial/by-id/usb-splanc_rfctl_mesh-bench_SERIAL_RFCTL-if00:/dev/ttyACM9"],
+      "env": {
+        "HITL_RFCTL_TTY": "/dev/ttyACM9",
+        "HITL_MESHBENCH_FIXED_DB": "42"
+      }
+    },
+    {
+      "comment": "Overhead global-shutter UVC camera (§7.1), MJPEG at 120 fps. HITL_MESHBENCH_LAYOUT_JSON (strips + syncled ROI boxes) is written once at assembly with `mesh_bench --calibrate-layout`.",
+      "name": "cam-0",
+      "type": "uvc-camera",
+      "devices": ["/dev/v4l/by-id/usb-SERIAL_CAMERA-video-index0:/dev/video0"],
+      "env": {
+        "HITL_CAMERA_DEV": "/dev/video0",
+        "HITL_CAMERA_LINE_TIME": "0",
+        "HITL_MESHBENCH_LAYOUT_JSON": ""
+      }
+    },
+    {
+      "comment": "16-channel logic analyser (DSLogic Plus class, sigrok driver dreamsourcelab-dslogic). Raw USB, no tty: like the c6-sdr HackRF it needs the privileged single-unit environment. Channel map: D0-D7 = c6-0..3 strips 0/1, D8-D9 = p4-0/p4-1 lane 0, D10-D11 = p4-0 lanes 1 and 15 (lane skew), D12 = controller SYNC, D13-D15 spare.",
+      "name": "la-0",
+      "type": "dslogic-16",
+      "env": {
+        "HITL_LA_DRIVER": "dreamsourcelab-dslogic",
+        "HITL_LA_MAP": "D0=c6-0/s0,D1=c6-0/s1,D2=c6-1/s0,D3=c6-1/s1,D4=c6-2/s0,D5=c6-2/s1,D6=c6-3/s0,D7=c6-3/s1,D8=p4-0/s0,D9=p4-1/s0,D10=p4-0/s1,D11=p4-0/s15,D12=sync"
+      }
+    }
+  ],
+  "units": [
+    {
+      "comment": "The whole bench as one atomic, pin_only unit (the c6-sdr pattern): reachable only by name or by type mesh-bench, so caps-only netstack jobs can never land on the conducted DUTs. Reserve with `--unit mesh-bench-1` or `--type mesh-bench`.",
+      "name": "mesh-bench-1",
+      "type": "mesh-bench",
+      "pin_only": true,
+      "components": ["c6-0", "c6-1", "c6-2", "c6-3", "p4-0", "p4-1", "rfctl-0", "cam-0", "la-0"]
+    }
+  ]
+}

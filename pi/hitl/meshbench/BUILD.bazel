@@ -1,0 +1,83 @@
+"""Mesh HITL bench (docs/design/mesh-hitl-rig.md): RF scenarios, the controller
+driver, camera and analyser flip timing, results and the harness.
+
+Unit tests run in the normal `bazel test //...` (pure logic + the controller
+simulator + synthetic captures). `:mesh_bench` is the on-hardware driver (manual;
+`--simulate` runs the whole pipeline without hardware); `:flip_cv` analyses a
+recorded video.
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "meshbench",
+    srcs = [
+        "bench_core.py",
+        "benchsim.py",
+        "camsim.py",
+        "flip_cv.py",
+        "hitl_mesh_bench.py",
+        "la_phase.py",
+        "meshbench_rig.py",
+        "rfctl.py",
+        "scenarios.py",
+    ],
+    data = [
+        "meshFlipClock.fx",
+        "//pi/hitl/meshbench/rfctl:rfctl_sim",
+    ],
+    imports = ["."],
+    deps = [
+        "//pi/hitl/harness",
+        requirement("numpy"),
+        requirement("opencv-python-headless"),
+        requirement("pyserial"),
+    ],
+)
+
+py_test(
+    name = "meshbench_test",
+    size = "medium",
+    srcs = [
+        "pytest_main.py",
+        "test_bench.py",
+        "test_flip_cv.py",
+        "test_la_phase.py",
+        "test_rfctl.py",
+    ],
+    imports = ["."],
+    main = "pytest_main.py",
+    deps = [
+        ":meshbench",
+        requirement("pytest"),
+    ],
+)
+
+py_binary(
+    name = "mesh_bench",
+    srcs = ["hitl_mesh_bench.py"],
+    main = "hitl_mesh_bench.py",
+    tags = ["manual"],
+    deps = [":meshbench"],
+)
+
+py_binary(
+    name = "flip_cv",
+    srcs = ["flip_cv.py"],
+    main = "flip_cv.py",
+    deps = [":meshbench"],
+)
+
+py_binary(
+    name = "accuracy",
+    srcs = ["accuracy.py"],
+    main = "accuracy.py",
+    tags = ["manual"],
+    deps = [
+        ":meshbench",
+        requirement("matplotlib"),
+    ],
+)

@@ -1,0 +1,41 @@
+"""rfctl: the mesh-bench RF switch controller (docs/design/mesh-hitl-rig.md §5).
+
+The portable core and the board table build here for the host: the unit test and
+the simulator (the shipped protocol + scheduler behind a simulated HAL, which the
+Python driver's tests and the bench simulation run against). The RP2350 firmware
+itself builds with pico-sdk's CMake (pico/CMakeLists.txt, pico/build.sh): pico-sdk's
+Bazel support would add an ARM toolchain and picotool to the root module for one
+target.
+"""
+
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "rfctl_core",
+    srcs = [
+        "board_default.c",
+        "rfctl_core.c",
+    ],
+    hdrs = ["rfctl_core.h"],
+    copts = ["-std=c11"],
+)
+
+cc_test(
+    name = "rfctl_core_test",
+    srcs = ["rfctl_core_test.c"],
+    copts = ["-std=c11"],
+    deps = [":rfctl_core"],
+)
+
+cc_binary(
+    name = "rfctl_sim",
+    srcs = ["sim/sim_main.c"],
+    copts = ["-std=c11"],
+    deps = [":rfctl_core"],
+)
+
+exports_files(glob(["pico/**"]))

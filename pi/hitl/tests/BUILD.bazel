@@ -90,6 +90,7 @@ py_test(
         "//pi/hitl/ci:overrides.toml",
         "//pi/hitl/reserve:catalog.json",
         "//pi/hitl/reserve:catalog-mac.json",
+        "//pi/hitl/reserve:catalog-meshbench.json",
         "//pi/hitl/reserve:catalog-phone.json",
         "//pi/hitl/reserve:catalog-sdr.json",
         # test_fx_bench pins the fx_bench gate's fxBenchMargins (margins + floor).
