@@ -149,7 +149,16 @@ export function SettingsScreen(router: Router, initialTab: SettingsTab = "appear
         captureResetRow(),
       ];
     }
-    body.replaceChildren(tabBar(), ...panels);
+    const bar = tabBar();
+    body.replaceChildren(bar, ...panels);
+    // A narrow phone scrolls the tab row: keep the selected tab in view.
+    // (After layout: on first render the screen isn't mounted yet.)
+    requestAnimationFrame(() => {
+      const on = bar.querySelector<HTMLElement>(".settings-tab.on");
+      if (on && on.offsetLeft + on.offsetWidth > bar.scrollLeft + bar.clientWidth) {
+        bar.scrollLeft = on.offsetLeft + on.offsetWidth - bar.clientWidth;
+      }
+    });
   }
 
   // The AI tab (AI provider + Splanc AI credits) loads on demand: it pulls in

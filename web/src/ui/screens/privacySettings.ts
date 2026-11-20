@@ -80,7 +80,7 @@ export function privacyPanel(group: GroupFn, row: RowFn, segmented: SegmentedFn,
   }
   const actions = document.createElement("div");
   actions.className = "privacy-actions";
-  actions.append(Button({ label: "See exactly what's sent", icon: "eye", block: true, onClick: () => void openWhatsSent(m) }));
+  actions.append(Button({ label: "See exactly what's sent", icon: "eye", variant: "quiet", block: true, onClick: () => void openWhatsSent(m) }));
   g.append(actions);
 
   // -- Your data --------------------------------------------------------------
@@ -107,7 +107,11 @@ export function privacyPanel(group: GroupFn, row: RowFn, segmented: SegmentedFn,
   notice.textContent = "Read the privacy notice";
   const del = document.createElement("div");
   del.className = "privacy-actions";
-  del.append(Button({ label: "Delete my data", icon: "trash", variant: "danger", block: true, onClick: () => void deleteFlow(m, rerender) }));
+  // Quiet (red text), not a solid red block: a destructive action is never the
+  // screen's most prominent control; the confirmation is where it turns red.
+  const delBtn = Button({ label: "Delete my data", icon: "trash", variant: "quiet", block: true, onClick: () => void deleteFlow(m, rerender) });
+  delBtn.classList.add("privacy-delete");
+  del.append(delBtn);
   d.append(notice, del);
   return [g, d];
 }
@@ -223,6 +227,7 @@ export function installPrivacyStyles(): void {
   const st = document.createElement("style");
   st.textContent = `
 .privacy-actions { display: flex; flex-direction: column; gap: var(--sp-3); margin-top: var(--sp-3); }
+.privacy-delete { color: var(--err); }
 .privacy-link { display: inline-block; margin-top: var(--sp-2); color: var(--accent); }
 .privacy-sheet { display: flex; flex-direction: column; gap: var(--sp-3); padding-bottom: var(--sp-5); }
 .privacy-h { margin: var(--sp-3) 0 0; font-size: var(--f-body); }
