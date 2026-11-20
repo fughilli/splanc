@@ -176,6 +176,8 @@ class Scenario:
              reached the intended screen, not an error or fallback state)
     init_js: extra script run before the app boots (e.g. a fake Capacitor
              runtime + native plugin for the iOS-app screens)
+    no_controls: the screen has nothing to press by design (a system sheet is
+             up); `expect` still proves it rendered
     """
 
     id: str
@@ -188,6 +190,7 @@ class Scenario:
     settle_ms: int = 700
     expect: str | None = None
     init_js: str = ""
+    no_controls: bool = False
 
 
 BASE_SEED = {
@@ -315,7 +318,7 @@ def run_scenarios(
                                         "expected element not visible: wrong screen",
                                     )
                                 )
-                            if n == 0:
+                            if n == 0 and not sc.no_controls:
                                 v.append(
                                     Violation(
                                         "empty",

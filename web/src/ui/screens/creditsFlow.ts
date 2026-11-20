@@ -482,7 +482,7 @@ export function CreditsFlowScreen(router: Router, mode: FlowMode): Screen {
           lead: APPLE_CONSUMPTION_CONSENT_TEXT,
           body: [
             facts([
-              ["eye-off", "What's shared", "How much of that pack you used, and that the credits reached your account. Never your prompts, effects or anything about you."],
+              ["eye-off", "What's shared", "How much of that pack you used, and that the credits reached your account. Never your prompts, your effects or anything else about you."],
               ["info", "Your choice", "Nothing else depends on it: buying and using credits work the same either way."],
             ]),
             choices,

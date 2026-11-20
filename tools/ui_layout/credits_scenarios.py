@@ -528,12 +528,16 @@ def ios_js(mode: str = "purchased", storekit: bool = True) -> str:
   };
   const nope = async () => { throw new Error("not in this build"); };
   const missing = new Proxy({}, { get: (_t, k) => (k === "then" ? undefined : nope) });
-  window.Capacitor = {
+  const fake = {
     isNativePlatform: () => true,
     getPlatform: () => "ios",
     isPluginAvailable: (n) => %s && n === "StoreKitBridge",
     registerPlugin: (n) => (n === "StoreKitBridge" && %s ? storeKit : missing),
   };
+  // @capacitor/core (bundled for the native paths) rebuilds window.Capacitor
+  // for the browser on load; ignore its writes so the page stays "the iOS app".
+  const cap = new Proxy(fake, { set: () => true, defineProperty: () => true });
+  Object.defineProperty(window, "Capacitor", { get: () => cap, set: () => {}, configurable: false });
 })();
 """ % (
         json.dumps(mode),
@@ -590,6 +594,7 @@ SCENARIOS += [
         init_js=ios_js("hang"),
         steps=IOS_BUY + [("wait_for", title("Complete the purchase with Apple"))],
         expect=title("Complete the purchase with Apple"),
+        no_controls=True,
     ),
     Scenario(
         "ios-flow-05-success",
