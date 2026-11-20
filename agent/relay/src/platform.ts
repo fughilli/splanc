@@ -101,6 +101,11 @@ export interface Env {
   GRAFANA_LOKI_USER?: string;
   /** Worker SECRET: a logs:write-only access-policy token. */
   GRAFANA_LOKI_TOKEN?: string;
+  /** Device metrics (deviceMetrics.ts): "off" refuses uploads (the kill switch). */
+  DEVICE_METRICS?: string;
+  /** Worker SECRET (optional): a logs:delete access-policy token, so "delete my
+   * data" is carried out in Grafana right away instead of queued for the owner. */
+  GRAFANA_LOKI_DELETE_TOKEN?: string;
   /** Optional `env` label for the ops push (ops.ts): production / sandbox / synthetic. */
   OPS_ENV?: string;
   /** The BillingAccount Durable Object namespace (one object per account). Not

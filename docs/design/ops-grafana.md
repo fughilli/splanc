@@ -22,7 +22,9 @@ Everything reaches Grafana through **one** function, `opsLine` in
 - a boolean;
 - a closed enum;
 - or a short token or version that matches a strict pattern (no spaces, at
-  most 64 characters).
+  most 64 characters);
+- for opt-in device metrics only, a random rotating pseudonym (`install`,
+  `dev`; see below).
 
 Everything else is dropped. An event that isn't in the schema is never pushed.
 
@@ -36,6 +38,15 @@ Everything else is dropped. An event that isn't in the schema is never pushed.
 
 The Worker log (Cloudflare's own, sampled) keeps the ids it always had.
 Grafana does not.
+
+**Device metrics are the one exception.** Opt-in device metrics
+([device-metrics.md](device-metrics.md), component `device-metrics`) carry two
+random pseudonyms, `install` and `dev`, as fields in the line, never as labels:
+
+- They are derived from a secret only the app holds, rotate every 30 days, and
+  are never linked to an account, a bridge or an IP.
+- They exist so that "delete my data" can find those lines (a Loki delete
+  request) and so the Device health board can count distinct players.
 
 **There is no per-account id at all.** The per-account questions are answered
 where the data lives:
@@ -111,6 +122,7 @@ The Worker POSTs JSON lines to Loki's push API in the background
 | Reconciliation | `ai_reconcile_usage`, `ai_reconcile_store` | day, ledger vs Anthropic USD, mismatch fraction, missing / unknown counts |
 | Feedback | `fb_received`, `fb_reason` (one per reason chip), `fb_status`, `fb_duplicate`, `fb_rate_limited`, `fb_rejected`, `fb_deleted` | surface, reasons, signature, failing tool, app / firmware version, AI kind/vendor/model, status, prev, age_h |
 | Demo relay | `demo_request` (one per POST) | outcome (our own vocabulary), status, model, attempts, ms, images |
+| Device metrics (opt-in) | `dm_upload`, `dm_device` (one per player sample), `dm_usage`, `dm_rejected`, `dm_rate_limited`, `dm_delete_requested` | install / dev pseudonyms, app, platform, fw, board, and the fields in `web/src/metrics/metricsSchema.ts` |
 
 **The free tier is not measured server-side.** The app's free tier calls
 OpenRouter from the browser with the user's own key (docs/design/ai-tiers.md),
@@ -118,6 +130,10 @@ so no Splanc server sees it. The demo relay, which serves the same free models
 to the website and Acid Mode, is measured.
 
 ## Dashboards (folder "Splanc business (private)")
+
+A fifth board, **Splanc — Device health** (`/d/splanc-biz-device-health`, last
+7 days), reads the opt-in device metrics: coverage, performance, reliability,
+mesh and usage ([device-metrics.md](device-metrics.md)).
 
 These are code in `ops/grafana/business/`:
 

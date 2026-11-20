@@ -52,6 +52,7 @@ import { FxCompilerWorker } from "../../effects/editor/compiler";
 import { KeypointStrip } from "./keypointStrip";
 import { appState } from "../app/state";
 import type { Router, Screen } from "../app/router";
+import { countEffectDeployed } from "../../metrics/appMetrics";
 
 interface DeckState {
   effectId: string | null;
@@ -107,6 +108,7 @@ export function ShowModeScreen(_router: Router): Screen {
     }
     try {
       await c.submitEffect(e.id, r.bytecode, true, deck);
+      countEffectDeployed();
       deviceEffects.markSent(deviceStore.activeId(), e.id);
       decks[deck] = { effectId: e.id, name: e.name, playing: true };
       toast(`Cued "${e.name}" → Deck ${deck === 0 ? "A" : "B"}`);

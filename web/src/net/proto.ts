@@ -98,6 +98,8 @@ const CLIENT_ARMS: Record<string, string> = {
   get_ethernet_state: "getEthernetState",
   discover_controllers: "discoverControllers",
   set_network_output: "setNetworkOutput",
+  // Opt-in device metrics (docs/design/device-metrics.md; metrics/collector.ts).
+  get_device_metrics: "getDeviceMetrics",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -137,6 +139,7 @@ const SERVER_ARMS: Record<string, string> = {
   kiosk_status: "kioskStatus",
   ethernet_state: "ethernetState",
   controller_list: "controllerList",
+  device_metrics: "deviceMetrics",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -770,6 +773,21 @@ export interface SetWifiPolicyMessage {
   sparseIntervalS?: number;
   force?: boolean;
   rejoinNow?: boolean;
+}
+
+/** Read the player's health counters (proto GetDeviceMetrics; docs/design/device-metrics.md).
+ * Sent only when the user opted in to "Send feedback to Fug Studio". Reply: device_metrics. */
+export interface GetDeviceMetricsMessage {
+  type: "get_device_metrics";
+}
+
+/** Reply to get_device_metrics (proto DeviceMetrics). Unset numbers decode as 0;
+ * metrics/metricsSchema.ts lists which category each field belongs to. */
+export interface DeviceMetricsMessage {
+  type: "device_metrics";
+  version: number;
+  board: string;
+  [field: string]: string | number | boolean;
 }
 
 /** Read the Wi-Fi rejoin policy (proto GetWifiPolicy). Reply: wifi_policy_state. */

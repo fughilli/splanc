@@ -33,6 +33,7 @@ py_test(
         "test_ci_orchestration.py",
         "test_ctrl_budget.py",
         "test_device_cert_core.py",
+        "test_device_metrics_core.py",
         "test_e2e_phases.py",
         "test_fx_bench.py",
         "test_fx_debug_core.py",

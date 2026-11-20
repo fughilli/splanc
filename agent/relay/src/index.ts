@@ -18,6 +18,10 @@
  *   /feedback, /feedback/status  agent-feedback reports: a private store the
  *                                owner's FEEDBACK_ADMIN_TOKEN reads (feedback.ts;
  *                                docs/design/agent-feedback.md)
+ *   /metrics, /metrics/delete    opt-in device metrics ("Send feedback to Fug
+ *                                Studio"): allowlisted lines to Grafana only, and
+ *                                "delete my data" (deviceMetrics.ts;
+ *                                docs/design/device-metrics.md)
  *   /ai/v1/messages, /billing/*  Splanc AI credits: the metered AI proxy + the
  *                                credit ledger (billing/; docs/design/ai-billing.md).
  *                                503 unless AI_BILLING=sandbox and fully configured.
@@ -32,6 +36,7 @@ import { billingEndpoint, isBillingPath } from "./billing/endpoint";
 import { eventSink } from "./billing/metrics";
 import { bugsEndpoint } from "./bugs";
 import { RECEIPT_HEADER, feedbackEndpoint } from "./feedback";
+import { metricsEndpoint } from "./deviceMetrics";
 import { BRIDGE_ID_RE, ed25519Verify, normalizePairingCode, randomBridgeId } from "./crypto";
 import { Directory } from "./directory";
 import { SCOPES_SUPPORTED, checkClientSecret, dir, redirectAllowed, register, resolveClient, type OAuthClient } from "./oauth";
@@ -133,6 +138,10 @@ export default {
         case "/feedback":
         case "/feedback/status":
           return feedbackEndpoint(req, env, { ...bugsContext(req, env, origin), waitUntil: ectx ? (p) => ectx.waitUntil(p) : undefined }, path);
+        case "/metrics":
+        case "/metrics/delete":
+        case "/metrics/deletions":
+          return metricsEndpoint(req, env, { json, clientIp: clientIp(req), waitUntil: ectx ? (p) => ectx.waitUntil(p) : undefined }, path);
         case "/.well-known/oauth-protected-resource":
         case "/.well-known/oauth-protected-resource/mcp":
           return json(

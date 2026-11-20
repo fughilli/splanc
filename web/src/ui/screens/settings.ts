@@ -47,12 +47,13 @@ import { debugModeEnabled, setDebugModeEnabled } from "../../store/debugMode";
 import { captureBundlesGroup } from "./captureBundles";
 import { backupGroup } from "./backupSection";
 import { diagnosticsGroup } from "./diagnosticsSection";
+import { installPrivacyStyles, privacyPanel } from "./privacySettings";
 
-export type SettingsTab = "appearance" | "behavior" | "ai" | "debugging";
+export type SettingsTab = "appearance" | "behavior" | "ai" | "privacy" | "debugging";
 
 /** Each tab's deep link (the AI tab is #/settings/ai: the editor's "AI
  * settings" shortcut and Stripe-era links land on it). */
-const TAB_ROUTE: Partial<Record<SettingsTab, string>> = { ai: "#/settings/ai" };
+const TAB_ROUTE: Partial<Record<SettingsTab, string>> = { ai: "#/settings/ai", privacy: "#/settings/privacy" };
 
 // The Debugging tab is hidden until the user opts in (Behavior ▸ "Enable Debug
 // Settings"), so the developer affordances don't clutter the default surface.
@@ -127,6 +128,10 @@ export function SettingsScreen(router: Router, initialTab: SettingsTab = "appear
       panels = [themeGroup(), typeGroup(), viewGroup(), startupGroup(), experimentalGroup(), appearanceResetRow()];
     } else if (tab === "ai") {
       panels = [aiPanel()];
+    } else if (tab === "privacy") {
+      // "Send feedback to Fug Studio" (opt-in device metrics; privacySettings.ts).
+      installPrivacyStyles();
+      panels = privacyPanel(group, row, segmented, rerender);
     } else if (tab === "debugging") {
       panels = [
         debugServerGroup(),
@@ -144,7 +149,16 @@ export function SettingsScreen(router: Router, initialTab: SettingsTab = "appear
         captureResetRow(),
       ];
     }
-    body.replaceChildren(tabBar(), ...panels);
+    const bar = tabBar();
+    body.replaceChildren(bar, ...panels);
+    // A narrow phone scrolls the tab row: keep the selected tab in view.
+    // (After layout: on first render the screen isn't mounted yet.)
+    requestAnimationFrame(() => {
+      const on = bar.querySelector<HTMLElement>(".settings-tab.on");
+      if (on && on.offsetLeft + on.offsetWidth > bar.scrollLeft + bar.clientWidth) {
+        bar.scrollLeft = on.offsetLeft + on.offsetWidth - bar.clientWidth;
+      }
+    });
   }
 
   // The AI tab (AI provider + Splanc AI credits) loads on demand: it pulls in
@@ -187,7 +201,7 @@ export function SettingsScreen(router: Router, initialTab: SettingsTab = "appear
       return b;
     };
     bar.setAttribute("role", "tablist");
-    bar.append(mk("appearance", "Appearance"), mk("behavior", "Behavior"), mk("ai", "AI"));
+    bar.append(mk("appearance", "Appearance"), mk("behavior", "Behavior"), mk("ai", "AI"), mk("privacy", "Privacy"));
     // Debugging is a first-class tab, shown only once opted in.
     if (debugSettingsEnabled()) bar.append(mk("debugging", "Debugging"));
     return bar;

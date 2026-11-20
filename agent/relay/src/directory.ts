@@ -53,6 +53,14 @@ export const LIMITS = {
   /** New AI-credit accounts (POST /billing/account, billing/endpoint.ts). */
   billingAccountIp: [5, 3600],
   billingAccountGlobal: [2000, 86400],
+  /** Device-metrics uploads (POST /metrics, deviceMetrics.ts): per install
+   * pseudonym, per client IP (the counter is the IP's only trace, gone after
+   * the hour), and everyone together. The app uploads at most ~4 times a day. */
+  metricsInstall: [12, 86400],
+  metricsIp: [60, 3600],
+  metricsGlobal: [50000, 86400],
+  /** "Delete my data" requests per client IP. */
+  metricsDeleteIp: [10, 3600],
 } as const satisfies Record<string, readonly [number, number]>;
 
 export type LimitName = keyof typeof LIMITS;
@@ -114,12 +122,18 @@ export class Directory {
     for (const [k, v] of await this.state.storage.list<{ exp?: number }>({ prefix: "fbi:" })) {
       if ((v.exp ?? 0) <= t) dead.push(k, `fb:${k.slice(4)}`);
     }
+    // Device-metrics deletion tombstones + queued requests (deviceMetrics.ts).
+    for (const prefix of ["dmdel:", "dmq:"]) {
+      for (const [k, v] of await this.state.storage.list<{ exp?: number }>({ prefix })) if ((v.exp ?? 0) <= t) dead.push(k);
+    }
     for (let i = 0; i < dead.length; i += 128) await this.state.storage.delete(dead.slice(i, i + 128));
     const left =
       (await this.state.storage.list({ prefix: "rl:", limit: 1 })).size +
       (await this.state.storage.list({ prefix: "code:", limit: 1 })).size +
       (await this.state.storage.list({ prefix: "fbi:", limit: 1 })).size +
-      (await this.state.storage.list({ prefix: "sevt:", limit: 1 })).size;
+      (await this.state.storage.list({ prefix: "sevt:", limit: 1 })).size +
+      (await this.state.storage.list({ prefix: "dmdel:", limit: 1 })).size +
+      (await this.state.storage.list({ prefix: "dmq:", limit: 1 })).size;
     if (left > 0) await this.state.storage.setAlarm(now(this.env) + 600_000);
   }
 
@@ -172,6 +186,24 @@ export class Directory {
       }
       case "/fb/delete": {
         const n = await this.state.storage.delete([`fb:${body["id"]}`, `fbi:${body["id"]}`]);
+        return n > 0 ? json({ ok: true }) : json({ error: "not found" }, 404);
+      }
+      // Device metrics (deviceMetrics.ts): deletion tombstones (dmdel:) refuse
+      // later uploads from a deleted pseudonym; dmq: is the owner's queue when
+      // the relay can't delete in Grafana itself. Both expire with the retention.
+      case "/dm/tomb":
+        return json({ dead: (await this.state.storage.get(`dmdel:${body["install"]}`)) !== undefined });
+      case "/dm/delete": {
+        const b = body as unknown as { install: string; exp: number; queued: boolean; at: string };
+        await this.state.storage.put(`dmdel:${b.install}`, { exp: b.exp });
+        if (b.queued) await this.state.storage.put(`dmq:${b.install}`, { install: b.install, requested: b.at, exp: b.exp });
+        await this.ensureAlarm();
+        return json({ ok: true });
+      }
+      case "/dm/queue":
+        return json({ items: [...(await this.state.storage.list({ prefix: "dmq:" })).values()] });
+      case "/dm/done": {
+        const n = await this.state.storage.delete([`dmq:${body["install"]}`]);
         return n > 0 ? json({ ok: true }) : json({ error: "not found" }, 404);
       }
       case "/pur/claim": {

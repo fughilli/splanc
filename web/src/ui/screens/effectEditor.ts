@@ -132,6 +132,7 @@ import { FxDebugPanel } from "../../effects/editor/fxDebugPanel";
 import { renderMarkdown } from "../markdown";
 import { loadChat, saveChat, clearChat, type ChatTranscriptEntry } from "../../store/chatStore";
 import type { Router, Screen } from "../app/router";
+import { countEffectDeployed } from "../../metrics/appMetrics";
 
 const COMPILE_DEBOUNCE_MS = 300;
 const SAVE_DEBOUNCE_MS = 800;
@@ -2028,6 +2029,7 @@ export function EffectEditorScreen(router: Router, effectId: string, screenOpts:
     devStatus.textContent = "Uploading…";
     try {
       await c.submitEffect(effectId, bytecode, true);
+      countEffectDeployed();
       lastPushedFxb = bytecode; // flashed — auto-push dedupes against this
       lastPushedDevice = deviceStore.activeId();
       if (heldDraft !== null && bytesEqual(heldDraft, bytecode)) heldDraft = null;

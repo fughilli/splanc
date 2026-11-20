@@ -137,6 +137,7 @@ py_library(
         "ctrl_budget_core.py",
         "ctrl_budget_probe.py",
         "device_cert_core.py",
+        "device_metrics_core.py",
         "e2e_phases.py",
         "fx_bench_core.py",
         "fx_debug_core.py",
@@ -1219,6 +1220,42 @@ py_test(
     },
     imports = ["."],
     main = "hitl_kiosk.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Opt-in device metrics (docs/design/device-metrics.md): get_device_metrics on a real
+# netstack C6 -- feature advertised, uptime counting, reset reason / boot count, heap
+# consistency, wifi_joins, a plausible AP RSSI (the RX-vector byte), no mesh fields.
+# Gate: SKIP on bench failures, FAIL on any check on a reached DUT (device_metrics_core).
+#   bazel run //pi/hitl/harness:device_metrics_netstack -- --server http://hitl-rig-2:8087
+py_test(
+    name = "device_metrics_netstack",
+    timeout = "eternal",
+    srcs = [
+        "hitl_ble_player.py",
+        "hitl_device_metrics.py",
+        "hitl_kiosk.py",
+        "hitl_led_capture.py",
+    ],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "@hitl_reserve//cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_SKU": "esp32c6",
+    },
+    imports = ["."],
+    main = "hitl_device_metrics.py",
     tags = [
         "hitl",
         "manual",
