@@ -86,3 +86,21 @@ test("the mesh UI is for players that advertise the mesh variant", async () => {
   assert.equal(deviceHasMesh({ features: ["effects", "ota"] }), false);
   assert.equal(deviceHasMesh(null), false);
 });
+
+test("mesh_admin (M7): the wire both ways, and the firmware's answer", async () => {
+  const { meshAdminMessage, meshAdminError } = await import("../src/net/mesh");
+  const site = new Uint8Array(32).fill(7);
+  const key = new Uint8Array(65).fill(4);
+  const wire = encodeClient(meshAdminMessage({ provision: { meshId: 0x1234, siteSecret: site, adminKey: key, groups: [3] } }));
+  const back = decodeClient(wire) as unknown as { type: string; provision: Record<string, unknown> };
+  assert.equal(back.type, "mesh_admin");
+  assert.equal(back.provision["meshId"], 0x1234);
+  assert.deepEqual(back.provision["groups"], [3]);
+  // ServerMessage{mesh{admin{op: UNLOCK, error: BAD_GRANT}}} as mesh_gw.rs encode_admin writes it.
+  const m = decodeServer(unhex("ba03061a0408021004")) as unknown as MeshInfoMessage;
+  assert.equal(m.type, "mesh");
+  assert.equal(m.admin?.op, 2);
+  assert.equal(m.admin?.error, "MESH_ADMIN_BAD_GRANT");
+  assert.match(meshAdminError(m.admin) ?? "", /grant was refused/);
+  assert.equal(meshAdminError({ op: 1, error: "MESH_ADMIN_OK" }), null);
+});

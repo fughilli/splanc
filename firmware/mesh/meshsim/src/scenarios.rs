@@ -602,8 +602,11 @@ fn mesh_time_and_apply_at_skew() {
     }
     assert!((0..6).all(|i| w.nodes[i].stack.time.state == SyncState::Synced));
     // Node 0's app sets the show epoch 2 s ahead; a change is scheduled for epoch + 1.5 s.
+    // On a mesh with an admin key the epoch is the admin session's (M7): node 0 holds one,
+    // and the members take the epoch from its signed TIME_BASE.
+    w.unlock_and_sync(0, SESSION, &all, 15_000).expect("session");
     let epoch_mesh = w.nodes[0].stack.time.mesh_us(w.local(0)) + 2_000_000;
-    w.nodes[0].stack.originate_epoch(splanc_mesh::stack::EpochSource::Console, Some(epoch_mesh)).expect("console may");
+    w.nodes[0].stack.originate_epoch(splanc_mesh::stack::EpochSource::Console, Some(epoch_mesh)).expect("console under a session");
     w.run_ms(2_000);
     let apply_mesh = epoch_mesh + 1_500_000;
     // Each member's local instant of the change, in global time.
@@ -721,4 +724,124 @@ fn gateway_fan_out_on_envelope_trust() {
     w2.run_ms(1_000);
     assert!(w2.nodes[1].controls().is_empty());
     assert_eq!(w2.nodes[1].stack.router.stats.untrusted, 1);
+}
+
+/// Mesh M7 (§7.3, §7.6, §7.9), the `mesh_join_admin` HITL's script on the simulated air: a
+/// closed mesh forms from the site secret; a fixture without it cannot join until the admin
+/// admits it; control and the show epoch need the admin's signed session (an insider with the
+/// mesh key can do neither: envelope framing and beacon epochs are refused); a revocation
+/// rotates the keys without the removed fixture and survives a reboot (through the persisted
+/// bytes); an eject sends one fixture out.
+#[test]
+fn join_admin_closed_mesh() {
+    use splanc_mesh::meshtime::ShowEpoch;
+    use splanc_mesh::stack::EpochSource;
+    let mut w = room(3, 11);
+    let c = creds(&w);
+    let formed_ms = form(&mut w, &[0, 1], &c, 300, 15_000);
+    assert!(!w.nodes[GW].stack.envelope_trust(), "an admin key: signed sessions only");
+    // c knows the mesh and the admin key, not the site secret: it asks, and waits.
+    let bare = Credentials { mesh_id: w.mesh_id, admin_key: Some(w.admin.public()), ..Credentials::default() };
+    w.power_on(2, Some((&bare, ProvisionSource::App)));
+    w.run_ms(15_000);
+    assert_eq!(w.nodes[2].stack.membership.phase(), Phase::Joining, "unapproved: not a member");
+    assert_eq!(w.nodes[2].stack.node.guard.epoch(), None, "holds no mesh key");
+    let p = *w.nodes[GW].pending().iter().find(|p| p.node == id(2)).expect("the gateway lists it");
+    assert_eq!(p.key_hash, w.nodes[2].stack.key_hash());
+    assert!(w.nodes[GW].stack.membership.gateway_pending.iter().flatten().any(|q| q.node == id(2)));
+
+    // Locked until a grant: no control, no admit, no epoch.
+    let t = w.local(GW);
+    assert_eq!(w.nodes[GW].stack.send_control(t, CONN, 1, Targets::All, b"x"), Err(SendError::Locked));
+    assert_eq!(w.nodes[GW].stack.admit(t, CONN, &p), Err(SendError::Locked));
+    assert_eq!(w.nodes[GW].stack.originate_epoch(EpochSource::Connection(CONN), Some(5)), None);
+    assert_eq!(w.nodes[GW].stack.originate_epoch(EpochSource::Console, Some(5)), None, "the console too");
+    // An insider (b, holding the mesh key) frames control for "the gateway" on envelope trust.
+    let brightness: &[u8] = &[0xfa, 0x01, 5, 0x0d, 0, 0, 0, 0x3f];
+    let mut body = [0u8; 64];
+    let bl = splanc_mesh::ports::ControlHeader::new(66, Targets::All).encode(brightness, &mut body).unwrap();
+    let mut buf = [0u8; 128];
+    let n = admin::seal_command(w.mesh_id, splanc_mesh::ports::SESSION_ENVELOPE, 1, Port::Control as u8, &body[..bl], &[], &mut buf).unwrap();
+    inject_as(&mut w, 1, id(1), Port::Control, &buf[..n]);
+    w.run_ms(1_000);
+    assert!(w.nodes[GW].controls().is_empty(), "refused");
+    assert_eq!(w.nodes[GW].stack.router.stats.untrusted, 1);
+
+    // The admin unlocks a, b syncs; the admin admits c; c joins (approval) and syncs too.
+    let sync_ms = w.unlock_and_sync(GW, SESSION, &[1], 10_000).expect("b syncs");
+    let t = w.local(GW);
+    w.nodes[GW].stack.admit(t, CONN, &p).expect("admit");
+    let admit_ms = w.run_until(15_000, |w| is_member(w, 2)).expect("admitted");
+    assert_eq!(w.nodes[2].stack.membership.admin_key(), Some(&w.admin.public()));
+    w.run_until(15_000, |w| w.nodes[2].synced(SESSION)).expect("c syncs");
+    let sent = control(&mut w, 2, Targets::All);
+    w.run_ms(1_000);
+    assert_eq!(receivers(&w, 2, sent).iter().map(|g| g.0).collect::<Vec<_>>(), [1, 2]);
+
+    // The show epoch: only a's session starts one, members take it from the signed TIME_BASE.
+    let t = w.local(GW);
+    let at = w.nodes[GW].stack.time.mesh_us(t) + 2_000_000;
+    assert_eq!(w.nodes[1].stack.originate_epoch(EpochSource::Connection(CONN), Some(at)), None, "b holds no grant");
+    let e = w.nodes[GW].stack.originate_epoch(EpochSource::Connection(CONN), Some(at)).expect("a's session");
+    w.run_ms(2_000);
+    for i in 1..3 {
+        assert_eq!(w.nodes[i].stack.time.epoch, Some(e), "node {i} follows the signed epoch");
+        assert!(w.nodes[i].stack.epochs_signed >= 1);
+    }
+    // b forges a later epoch into its beacons (what an insider's firmware could do): ignored.
+    let forged = w.nodes[1].stack.time.originate(Some(at + 9_000_000));
+    assert!(forged.newer_than(&e));
+    w.run_ms(4_000);
+    assert_eq!(w.nodes[GW].stack.time.epoch, Some(e));
+    assert_eq!(w.nodes[2].stack.time.epoch, Some(e));
+    assert!(w.nodes[2].stack.time.stats.unsigned >= 1);
+    let _ = ShowEpoch::LEN;
+
+    // Revoke c: a rotation to b only, c's key on the revocation list.
+    let kh2 = w.nodes[2].stack.key_hash();
+    let (mk, ss) = ([0x3cu8; 16], [0xc3u8; 32]);
+    let order = RekeyOrder::sign(&w.admin, w.mesh_id, 2, &mk, &ss, 1, &[kh2]);
+    let t = w.local(GW);
+    w.nodes[GW].stack.rotate(t, CONN, order, &mk, &ss, &[id(2)], &mut |_| {}).expect("rotate");
+    w.run_until(30_000, |w| w.nodes[1].stack.node.guard.epoch() == Some(2) && w.nodes[GW].stack.node.guard.epoch() == Some(2)).expect("a and b on epoch 2");
+    assert_eq!(w.nodes[2].stack.node.guard.epoch(), Some(1), "c keeps the old key");
+    w.run_ms(61_000);
+    let sent = control(&mut w, 3, Targets::All);
+    w.run_ms(1_500);
+    assert_eq!(receivers(&w, 3, sent).iter().map(|g| g.0).collect::<Vec<_>>(), [1], "c gets nothing");
+    let refused_before: u32 = (0..2).map(|i| w.nodes[i].stack.membership.stats.revoked).sum();
+    assert!(refused_before > 0, "c's rejoin is refused");
+
+    // Both members reboot: the revocation (and the new epoch) come back from the stored bytes.
+    w.reboot(GW);
+    w.reboot(1);
+    w.run_until(15_000, |w| is_member(w, 0) && is_member(w, 1)).expect("back in the mesh");
+    for i in 0..2 {
+        let s = w.nodes[i].stack.membership.state.unwrap();
+        assert_eq!((s.epoch, s.revoked.contains(&kh2)), (2, true), "node {i}");
+    }
+    w.run_ms(10_000);
+    let refused_after: u32 = (0..2).map(|i| w.nodes[i].stack.membership.stats.revoked).sum();
+    assert!(refused_after > 0, "still refused after the reboot");
+    assert!(!is_member(&w, 2) || w.nodes[2].stack.node.guard.epoch() == Some(1));
+    // The admin unlocks again (RAM sessions are gone) and b is commandable; c still is not.
+    w.unlock_and_sync(GW, SESSION + 1, &[1], 15_000).expect("b syncs again");
+    let t = w.local(GW);
+    w.nodes[GW].stack.send_control(t, CONN, 4, Targets::All, b"set_uniforms{speed=0.5}").expect("control");
+    let sent = w.now();
+    w.run_ms(1_500);
+    assert_eq!(receivers(&w, 4, sent).iter().map(|g| g.0).collect::<Vec<_>>(), [1]);
+
+    // Eject b (issue #571's seam): it leaves the mesh and forgets it.
+    let kh1 = w.nodes[1].stack.key_hash();
+    let t = w.local(GW);
+    w.nodes[GW].stack.eject(t, CONN, id(1), kh1).expect("eject");
+    w.run_until(3_000, |w| w.nodes[1].stack.membership.state.is_none()).expect("ejected");
+    assert!(w.nodes[1].events.iter().any(|(_, e)| *e == Ev::Ejected));
+    eprintln!(
+        "join_admin: closed mesh formed in {formed_ms} ms; b synced {sync_ms} ms after unlock; c admitted {admit_ms} ms after the tap; \
+         insider control refused ({} untrusted), forged epoch ignored ({} unsigned); revocation refused {refused_before} rejoins, {refused_after} after a reboot",
+        w.nodes[GW].stack.router.stats.untrusted,
+        w.nodes[2].stack.time.stats.unsigned
+    );
 }

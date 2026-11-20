@@ -37,6 +37,8 @@ pub mod arm {
     pub const SET_WIFI_POLICY: u32 = 90;
     pub const MESH_SEND: u32 = 99;
     pub const GET_MESH: u32 = 100;
+    /// Membership and administration (mesh M7): never relayed.
+    pub const MESH_ADMIN: u32 = 101;
 }
 
 /// The arms a member dispatches from the mesh (module docs).
