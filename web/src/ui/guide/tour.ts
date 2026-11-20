@@ -192,7 +192,9 @@ function waitForTarget(selector: string, maxFrames = 40): Promise<HTMLElement | 
 }
 
 let hintStylesInstalled = false;
-function installHintStyles(): void {
+/** The corner anchor (`.tour-hint-anchor`) the first-run hint sits in; the
+ * "What's new?" sparkle bubble reuses it so both occupy the exact same spot. */
+export function installHintStyles(): void {
   if (hintStylesInstalled || typeof document === "undefined") return;
   hintStylesInstalled = true;
   const style = document.createElement("style");

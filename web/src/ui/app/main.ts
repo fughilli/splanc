@@ -55,6 +55,7 @@ import { confirmDialog } from "../kit";
 import { initAppearance } from "../../store/appearance";
 import { maybeShowSplash } from "./splash";
 import { maybeShowFirstRunHint } from "../guide/tour";
+import { initWhatsNew } from "../whatsnew/whatsNew";
 import { chatLogStore, chatLogDumpOnBootEnabled } from "../../store/chatLogStore";
 
 async function main(): Promise<void> {
@@ -296,7 +297,13 @@ async function main(): Promise<void> {
   // recallable from Settings ▸ Help & tutorial.
   const effectsDemo = router.path().startsWith("/effects/edit/") &&
     new URLSearchParams(location.hash.split("?")[1]).get("workspace") === "demo";
-  if (!effectsDemo && !startedInPlay && !isPlayHash(location.hash)) maybeShowFirstRunHint(router);
+  //
+  // "What's new?" (release notes) runs first: after an update it shows a sparkle
+  // bubble in the same corner and the tour hint stays away this launch; on a
+  // fresh install it stays quiet and the tour hint owns the corner.
+  const cornerSuppressed = effectsDemo || startedInPlay || isPlayHash(location.hash);
+  const whatsNewShown = initWhatsNew({ suppressed: cornerSuppressed });
+  if (!cornerSuppressed && !whatsNewShown) maybeShowFirstRunHint(router);
 
   // Kiosk countdown chip on every screen but play mode (effects workspace, Acid
   // Mode…) while the connected device is in kiosk mode.

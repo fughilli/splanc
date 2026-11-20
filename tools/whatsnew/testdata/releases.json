@@ -1,0 +1,134 @@
+[
+  {
+    "tag_name": "firmware-v1.9.0",
+    "name": "firmware-v1.9.0",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-11-10T10:00:00Z",
+    "html_url": "https://github.com/fughilli/splanc/releases/tag/firmware-v1.9.0",
+    "body": "Faster Wi-Fi rejoin.",
+    "body_html": "<p>Faster Wi-Fi rejoin.</p>",
+    "assets": [
+      {
+        "id": 90,
+        "name": "esp32c6-netstack-1.9.0.ota",
+        "content_type": "application/octet-stream",
+        "browser_download_url": "https://github.com/fughilli/splanc/releases/download/firmware-v1.9.0/esp32c6-netstack-1.9.0.ota",
+        "updated_at": "2026-11-10T10:00:00Z"
+      }
+    ]
+  },
+  {
+    "tag_name": "app-v1.10.0",
+    "name": "Splanc 1.10.0",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-11-12T08:00:00Z",
+    "html_url": "https://github.com/fughilli/splanc/releases/tag/app-v1.10.0",
+    "body": "## Highlights\n<img alt=\"New editor\" src=\"https://github.com/user-attachments/assets/aaaa-1111\" />\n\nhttps://github.com/user-attachments/assets/bbbb-2222\n",
+    "body_html": "<h2>Highlights</h2>\n<p><a target=\"_blank\" rel=\"noopener noreferrer\" href=\"https://github.com/user-attachments/assets/aaaa-1111\"><img alt=\"New editor\" src=\"https://github.com/user-attachments/assets/aaaa-1111\" style=\"max-width: 100%;\" width=\"640\" onerror=\"alert(1)\"></a></p>\n<details open=\"\" class=\"details-reset border rounded-2\"><summary class=\"px-3 py-2\"><span aria-label=\"Video description\" class=\"m-1\">demo.mp4</span></summary><video src=\"https://github.com/user-attachments/assets/bbbb-2222\" data-canonical-src=\"https://github.com/user-attachments/assets/bbbb-2222\" controls=\"controls\" muted=\"muted\" class=\"d-block\" style=\"max-height:640px\"></video></details>\n<ul class=\"contains-task-list\">\n<li class=\"task-list-item\"><input type=\"checkbox\" class=\"task-list-item-checkbox\" checked=\"\" disabled=\"\"> Done thing</li>\n<li>Uses <code>fixed()</code> &amp; <b>bold</b> <a href=\"javascript:alert(1)\">bad link</a> <a href=\"https://example.com/x\" onclick=\"steal()\">good link</a></li>\n</ul>\n<script>alert('xss')</script><style>body{display:none}</style>\n<iframe src=\"https://evil.example\"><p>inside iframe</p></iframe>\n<p><img src=\"data:image/png;base64,AAAA\" alt=\"inline data\"><img src=\"https://camo.githubusercontent.com/broken\" alt=\"Broken pic\"></p>\n<div class=\"markdown-heading\"><h3 class=\"heading-element\">Fixes</h3></div>\n<pre><code>line 1\n  line 2\n</code></pre>",
+    "assets": [
+      {
+        "id": 101,
+        "name": "splanc-webapp-1.10.0.tar.gz",
+        "content_type": "application/gzip",
+        "browser_download_url": "https://github.com/fughilli/splanc/releases/download/app-v1.10.0/splanc-webapp-1.10.0.tar.gz",
+        "updated_at": "2026-11-12T08:00:00Z"
+      },
+      {
+        "id": 102,
+        "name": "light-show.png",
+        "content_type": "image/png",
+        "browser_download_url": "https://github.com/fughilli/splanc/releases/download/app-v1.10.0/light-show.png",
+        "updated_at": "2026-11-12T08:05:00Z"
+      }
+    ]
+  },
+  {
+    "tag_name": "app-v1.9.2",
+    "name": "app-v1.9.2",
+    "draft": false,
+    "prerelease": true,
+    "published_at": "2026-11-05T08:00:00Z",
+    "html_url": "https://github.com/fughilli/splanc/releases/tag/app-v1.9.2",
+    "body": "Bug fixes.",
+    "body_html": "<p>Bug fixes.</p>",
+    "assets": []
+  },
+  {
+    "tag_name": "app-v1.11.0",
+    "name": "app-v1.11.0",
+    "draft": true,
+    "prerelease": false,
+    "published_at": null,
+    "html_url": "https://github.com/fughilli/splanc/releases/tag/untagged-1",
+    "body": "Draft: not yet.",
+    "body_html": "<p>Draft: not yet.</p>",
+    "assets": []
+  },
+  {
+    "tag_name": "app-v1.9.10",
+    "name": "app-v1.9.10",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-11-08T08:00:00Z",
+    "html_url": "https://github.com/fughilli/splanc/releases/tag/app-v1.9.10",
+    "body": "Plain text only\n\nSecond paragraph",
+    "assets": []
+  },
+  {
+    "tag_name": "pi-bridge-v1.0.0",
+    "name": "Splanc bridge 1.0.0",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-11-01T08:00:00Z",
+    "html_url": "https://github.com/fughilli/splanc/releases/tag/pi-bridge-v1.0.0",
+    "body": "First bridge image.",
+    "body_html": "<p>First bridge image.</p>",
+    "assets": []
+  },
+  {
+    "tag_name": "firmware-v1.8.0",
+    "name": "firmware-v1.8.0",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-10-20T10:00:00Z",
+    "html_url": "https://github.com/fughilli/splanc/releases/tag/firmware-v1.8.0",
+    "body": "Older firmware.\n<img alt=\"Same pic\" src=\"https://github.com/user-attachments/assets/aaaa-1111\" />",
+    "body_html": "<p>Older firmware.</p>\n<p><img alt=\"Same pic\" src=\"https://github.com/user-attachments/assets/aaaa-1111\"></p>",
+    "assets": []
+  },
+  {
+    "tag_name": "pi-bridge-ota-v1.1.0",
+    "name": "pi-bridge-ota-v1.1.0",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-11-02T08:00:00Z",
+    "html_url": "https://github.com/fughilli/splanc/releases/tag/pi-bridge-ota-v1.1.0",
+    "body": "OTA payload, not a product.",
+    "body_html": "<p>OTA payload, not a product.</p>",
+    "assets": []
+  },
+  {
+    "tag_name": "fxbench-data",
+    "name": "fxbench-data",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-11-03T08:00:00Z",
+    "html_url": "https://github.com/fughilli/splanc/releases/tag/fxbench-data",
+    "body": "Benchmark data.",
+    "body_html": "<p>Benchmark data.</p>",
+    "assets": []
+  },
+  {
+    "tag_name": "stage-demo",
+    "name": "stage-demo",
+    "draft": false,
+    "prerelease": false,
+    "published_at": "2026-11-04T08:00:00Z",
+    "html_url": "https://github.com/fughilli/splanc/releases/tag/stage-demo",
+    "body": "Stage tag.",
+    "body_html": "<p>Stage tag.</p>",
+    "assets": []
+  }
+]

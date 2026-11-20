@@ -1,0 +1,26 @@
+"""Release-notes mirror for the in-app "What's new?" card.
+
+whatsnew_mirror.py turns the app's GitHub releases into whatsnew/index.json +
+media/ in the static site (release.yaml, test.yaml build-site, and the splanc.io
+deploy run it as a plain python3 script; see "Release notes and What's new" in web/README.md).
+"""
+
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+
+py_binary(
+    name = "whatsnew_mirror",
+    srcs = ["whatsnew_mirror.py"],
+    visibility = ["//visibility:public"],
+)
+
+# Offline: a fixture releases list and a fake network (no GitHub calls).
+py_test(
+    name = "whatsnew_mirror_test",
+    size = "small",
+    srcs = [
+        "whatsnew_mirror.py",
+        "whatsnew_mirror_test.py",
+    ],
+    data = ["testdata/releases.json"],
+    imports = ["."],
+)

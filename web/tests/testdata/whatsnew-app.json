@@ -1,0 +1,149 @@
+{
+  "schema": 2,
+  "product": "app",
+  "releases": [
+    {
+      "version": "1.10.0",
+      "tag": "app-v1.10.0",
+      "name": "Splanc 1.10.0",
+      "date": "2026-11-12T08:00:00Z",
+      "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.10.0",
+      "prerelease": false,
+      "body": [
+        {
+          "t": "h2",
+          "c": ["Highlights"]
+        },
+        {
+          "t": "p",
+          "c": [
+            {
+              "t": "img",
+              "a": {
+                "alt": "New editor",
+                "src": "media/0068d2a62945f51a2326.png",
+                "width": 640
+              }
+            }
+          ]
+        },
+        {
+          "t": "video",
+          "a": {
+            "src": "media/bd1638d91ffdd84dd9b0.mp4",
+            "controls": true,
+            "muted": true
+          }
+        },
+        {
+          "t": "ul",
+          "c": [
+            {
+              "t": "li",
+              "c": ["☑ Done thing"]
+            },
+            {
+              "t": "li",
+              "c": [
+                "Uses ",
+                {
+                  "t": "code",
+                  "c": ["fixed()"]
+                },
+                " & ",
+                {
+                  "t": "strong",
+                  "c": ["bold"]
+                },
+                " bad link ",
+                {
+                  "t": "a",
+                  "a": {
+                    "href": "https://example.com/x"
+                  },
+                  "c": ["good link"]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "t": "p",
+          "c": [
+            {
+              "t": "a",
+              "a": {
+                "href": "https://camo.githubusercontent.com/broken"
+              },
+              "c": ["Broken pic"]
+            }
+          ]
+        },
+        {
+          "t": "h3",
+          "c": ["Fixes"]
+        },
+        {
+          "t": "pre",
+          "c": [
+            {
+              "t": "code",
+              "c": ["line 1\n  line 2\n"]
+            }
+          ]
+        },
+        {
+          "t": "p",
+          "c": [
+            {
+              "t": "img",
+              "a": {
+                "src": "media/53d9c82b100c9234b40f.png",
+                "alt": "light show"
+              }
+            }
+          ]
+        }
+      ],
+      "media": [
+        "media/0068d2a62945f51a2326.png",
+        "media/53d9c82b100c9234b40f.png",
+        "media/bd1638d91ffdd84dd9b0.mp4"
+      ]
+    },
+    {
+      "version": "1.9.10",
+      "tag": "app-v1.9.10",
+      "name": "app-v1.9.10",
+      "date": "2026-11-08T08:00:00Z",
+      "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.9.10",
+      "prerelease": false,
+      "body": [
+        {
+          "t": "p",
+          "c": ["Plain text only"]
+        },
+        {
+          "t": "p",
+          "c": ["Second paragraph"]
+        }
+      ],
+      "media": []
+    },
+    {
+      "version": "1.9.2",
+      "tag": "app-v1.9.2",
+      "name": "app-v1.9.2",
+      "date": "2026-11-05T08:00:00Z",
+      "url": "https://github.com/fughilli/splanc/releases/tag/app-v1.9.2",
+      "prerelease": true,
+      "body": [
+        {
+          "t": "p",
+          "c": ["Bug fixes."]
+        }
+      ],
+      "media": []
+    }
+  ]
+}
