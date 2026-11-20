@@ -999,9 +999,14 @@ problem (wrong account, unknown pack, wrong environment) is a 200 plus
 <code class="docutils literal notranslate"><span class="pre">ai_purchase_rejected</span></code> (an alert), because a retry can’t fix it.</p></li>
 </ul>
 </li>
-<li><p><strong>Sandbox only.</strong> In <code class="docutils literal notranslate"><span class="pre">AI_BILLING=sandbox</span></code> the relay accepts only an
-<code class="docutils literal notranslate"><span class="pre">sk_test_</span></code> key: a live key turns the whole feature off. The fake web purchase
-route closes once Stripe is configured.</p></li>
+<li><p><strong>Modes.</strong> <code class="docutils literal notranslate"><span class="pre">AI_BILLING=sandbox</span></code> accepts only test keys (<code class="docutils literal notranslate"><span class="pre">sk_test_</span></code> /
+<code class="docutils literal notranslate"><span class="pre">rk_test_</span></code>) and test-mode events; a live key turns the whole feature off. The
+fake web purchase route closes once Stripe is configured.
+<code class="docutils literal notranslate"><span class="pre">AI_BILLING=production</span></code> requires live keys (<code class="docutils literal notranslate"><span class="pre">sk_live_</span></code> / <code class="docutils literal notranslate"><span class="pre">rk_live_</span></code>), the
+webhook secret and <code class="docutils literal notranslate"><span class="pre">BILLING_ADMIN_TOKEN</span></code>, counts only live-mode events, and
+never uses the fake store. Sessions, account tags and the liability counter
+are per mode. The switch is
+<a class="reference internal" href="../ops/billing-go-live.html"><span class="std std-doc">docs/ops/billing-go-live.md</span></a>.</p></li>
 <li><p><strong>Tests</strong> (<code class="docutils literal notranslate"><span class="pre">agent/tests/billing_stripe.test.ts</span></code>) use a fake <code class="docutils literal notranslate"><span class="pre">api.stripe.com</span></code>
 and events signed like Stripe’s: form encoding, session parameters,
 signature checks, 18+, packs, credit-once, partial and full refunds,
@@ -1679,8 +1684,10 @@ from <code class="docutils literal notranslate"><span class="pre">/billing/prici
 </li>
 </ul>
 </li>
-<li><p><strong>Production:</strong> allow <code class="docutils literal notranslate"><span class="pre">AI_BILLING=production</span></code> only once steps 3–5 have
-real verifiers; switch Stripe to live keys, the production App Store
+<li><p><strong>Production:</strong> <code class="docutils literal notranslate"><span class="pre">AI_BILLING=production</span></code> exists for the web channel (Stripe
+live mode; runbook and script: <a class="reference internal" href="../ops/billing-go-live.html"><span class="std std-doc">docs/ops/billing-go-live.md</span></a>,
+<code class="docutils literal notranslate"><span class="pre">agent/relay/billing_go_live.mjs</span></code>). Apple stays off in production until step 5
+has its real verifier. Switch Stripe to live keys, the production App Store
 environment, and the production Anthropic key <strong>[owner]</strong>; Workers Paid
 plan <strong>[owner]</strong>; App Review submission with a demo account and notes;
 privacy notice update (Anthropic as sub-processor; 30-day request logs).</p></li>
