@@ -128,6 +128,7 @@ bool g_up = false;
 // An Improv notification burst is "delivered" once the completed count passes the count
 // at its send (the controller completes a link's packets in order).
 volatile uint32_t g_acl_sent = 0, g_acl_done = 0;
+uint32_t g_acl_flushed = 0;  // sent on links that dropped before acking them (no NOCP)
 
 int on_evt(uint8_t *evt, void *) {
   if (evt[0] == 0x13 && evt[1] >= 1) {  // Number Of Completed Packets
@@ -275,9 +276,13 @@ void improv_ble_poll() {
     g_ntf_mark = g_acl_sent;
     g_ntf_pending = true;
   }
-  if (g_ntf_pending && !improv_ble_central_connected()) {
-    g_ntf_pending = false;  // the link is gone: nothing will be acked
-  } else if (g_ntf_pending && (int32_t)(g_acl_done - g_ntf_mark) >= 0) {
+  if (!improv_ble_central_connected()) {
+    // The link is gone: nothing more will be acked, and the controller flushes the link's
+    // unacked packets WITHOUT a completed-packets event. Count them as done, or every later
+    // mark would sit behind them forever (no ack, no metric, the hold stuck to its cap).
+    g_ntf_pending = false;
+    g_acl_flushed = g_acl_sent - g_acl_done;
+  } else if (g_ntf_pending && (int32_t)(g_acl_done + g_acl_flushed - g_ntf_mark) >= 0) {
     g_ntf_pending = false;
     g_ntf_ack_ms = millis() - g_ntf_t0;
     g_ntf_ack_ready = true;
