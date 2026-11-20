@@ -35,7 +35,15 @@ export class UniformPanel {
   constructor(
     private readonly root: HTMLElement,
     private readonly onChange: (slot: number, value: number[]) => void,
+    /** `label` renames controls for display (the Effects tab's tune sheet shows
+     * "Base color" for `base_color`); the editor shows the raw names. `empty`
+     * replaces the "No uniforms declared." line. */
+    private readonly opts: { label?: (name: string) => string; empty?: string } = {},
   ) {}
+
+  private label(name: string): string {
+    return this.opts.label ? this.opts.label(name) : name;
+  }
 
   /** Current live values, keyed by manifest slot. */
   values(): { slot: number; value: number[] }[] {
@@ -107,7 +115,7 @@ export class UniformPanel {
     if (this.slots.length === 0) {
       const p = document.createElement("p");
       p.className = "muted upanel-empty";
-      p.textContent = "No uniforms declared.";
+      p.textContent = this.opts.empty ?? "No uniforms declared.";
       this.root.appendChild(p);
       return;
     }
@@ -130,7 +138,7 @@ export class UniformPanel {
 
     const name = document.createElement("span");
     name.className = "upanel-name";
-    name.textContent = s.uniform.name;
+    name.textContent = this.label(s.uniform.name);
     name.title = s.uniform.name;
 
     if (s.uniform.ui.kind === "matrix") {
@@ -163,7 +171,7 @@ export class UniformPanel {
       row.className = "upanel-row";
       const name = document.createElement("span");
       name.className = "upanel-name";
-      name.textContent = `${u.name}.${COMPONENT[c] ?? c}`;
+      name.textContent = `${this.label(u.name)}.${COMPONENT[c] ?? c}`;
       name.title = name.textContent;
       const ctrl = document.createElement("span");
       ctrl.className = "upanel-ctrl";

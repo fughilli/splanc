@@ -3,10 +3,13 @@
  * create, edit, and test shader effects. Replaces the old pulse/flood-simulator
  * Effects tab.
  *
- * Mirrors the map browser: a search box, tag chips, a list of saved effects
- * (tap → open the in-shell editor at #/effects/edit/:id), a circular "+" FAB to
- * create a new effect, an EmptyState with a "New effect" action, and a
- * discoverable "AI key" affordance that opens the BYO-key sheet.
+ * This is the app's home (docs/ux/oobe-review.md): a fixture card on top (what
+ * the app is connected to, and the next step), then the library in sections —
+ * Starters, Examples, Your effects. Tapping an effect plays it on the fixture
+ * and opens the tune sheet (effectTune.ts); the code editor is one step in from
+ * there (or the row's ⋯ menu). Search + tag chips (the user's own tags) filter
+ * to a flat list. A circular "+" FAB creates a new effect, and a "?" tip offers
+ * AI setup until a provider is configured.
  */
 
 import { ActionGrid, Button, Chip, EmptyState, HelpTip, IconButton, Sheet, confirmDialog, toast, icon } from "../kit";
@@ -22,13 +25,67 @@ import { openModelSetup } from "./aiTierSheet";
 import { setTabMenuItems } from "../app/tabMenu";
 import { prefs } from "../../store/prefs";
 import { getAppearance } from "../../store/appearance";
+import { effectSections, fixtureCard, isExample, isStarter, starterBlurb, userTags } from "../../effects/quickPlay";
+import { nowPlaying } from "../../store/nowPlaying";
+import { openEffectTune } from "./effectTune";
+import { openDeviceSheet } from "./deviceSheet";
+import { installEffectsHomeStyles } from "./effectsHome.css";
 import type { Router, Screen } from "../app/router";
 
 type Sort = "updated" | "name";
 
 export function EffectsBrowserScreen(router: Router): Screen {
+  installEffectsHomeStyles();
   const el = document.createElement("div");
   el.className = "screen screen--effects-lib";
+
+  // Library names by id, for the fixture card's "Playing …" line.
+  let namesById = new Map<string, string>();
+
+  // -- fixture card: what the app is connected to + the one next step --------
+  const card = document.createElement("section");
+  card.className = "fxhome-card";
+  function renderCard(): void {
+    const devId = deviceStore.activeId();
+    const playingId = appState.client?.isConnected ? nowPlaying.get(devId) : null;
+    const m = fixtureCard({
+      state: appState.status.state,
+      deviceName: appState.client?.welcome?.deviceName || deviceStore.active()?.label || null,
+      playing: playingId ? namesById.get(playingId) ?? null : null,
+    });
+    card.dataset["kind"] = m.kind;
+    const head = document.createElement("div");
+    head.className = "fxhome-card-head";
+    const dot = document.createElement("span");
+    dot.className = "fxhome-card-dot";
+    const title = document.createElement("h2");
+    title.className = "fxhome-card-title";
+    title.textContent = m.title;
+    head.append(dot, title);
+    const body = document.createElement("p");
+    body.className = "fxhome-card-body";
+    body.textContent = m.body;
+    card.replaceChildren(head, body);
+    if (m.action) {
+      card.append(Button({ label: m.action.label, block: true, onClick: () => openDeviceSheet() }));
+    }
+  }
+
+  // Ask the device what it's running (an effect played from another phone, or
+  // before this session) so the card + "Playing" badge are right on arrival.
+  let askedClient: unknown = null;
+  function hydratePlaying(): void {
+    const c = appState.client;
+    if (!c?.isConnected || askedClient === c) return;
+    askedClient = c;
+    const devId = deviceStore.activeId();
+    void c
+      .getEffectUniforms()
+      .then((r) => {
+        if (r.effectId && !nowPlaying.get(devId)) nowPlaying.set(devId, r.effectId);
+      })
+      .catch(() => undefined);
+  }
 
   let search = "";
   let activeTags: string[] = [];
@@ -147,7 +204,7 @@ export function EffectsBrowserScreen(router: Router): Screen {
     router.navigate(`/effects/edit/${id}`);
   }
 
-  el.append(toolbar, tagRow, listEl);
+  el.append(card, toolbar, tagRow, listEl);
 
   // Build the ephemeral "On <device>" section (FUG-110): the effects the app
   // has pushed to the currently-connected device, in most-recently-cued order.
@@ -186,10 +243,12 @@ export function EffectsBrowserScreen(router: Router): Screen {
     deviceName = appState.client?.welcome?.deviceName || deviceStore.active()?.label || "";
 
     const all = await effectStore.list();
-    const tagCounts = new Map<string, number>();
-    for (const e of all) for (const t of e.tags) tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
+    namesById = new Map(all.map((e) => [e.id, e.name]));
+    renderCard();
+    // Chips only for the user's own tags (plus any filter already on): the
+    // seeded #starter/#demo/#test tags are what the sections already say.
     tagRow.replaceChildren();
-    for (const [tag] of [...tagCounts.entries()].sort()) {
+    for (const tag of [...new Set([...userTags(all), ...activeTags])].sort()) {
       tagRow.appendChild(
         Chip({
           label: `#${tag}`,
@@ -225,17 +284,41 @@ export function EffectsBrowserScreen(router: Router): Screen {
     }
     // Ephemeral device section first (only when unfiltered, so the search view
     // stays a flat match list), then the normal folder-grouped library.
-    if (!search && activeTags.length === 0) {
-      const section = deviceSection(all);
-      if (section) listEl.append(section);
+    if (search || activeTags.length > 0) {
+      appendGrouped(listEl, rows, (e) => e.folder, row, { scope: "effects" });
+      return;
     }
-    appendGrouped(listEl, rows, (e) => e.folder, row, { scope: "effects" });
+    const section = deviceSection(all);
+    if (section) listEl.append(section);
+    for (const sec of effectSections(rows)) {
+      const head = document.createElement("h3");
+      head.className = "fxhome-section-head";
+      head.dataset["section"] = sec.id;
+      head.textContent = sec.title;
+      listEl.append(head);
+      if (sec.id === "mine") appendGrouped(listEl, sec.items, (e) => e.folder, row, { scope: "effects" });
+      else for (const e of sec.items) listEl.append(row(e));
+    }
   }
 
   function row(e: StoredEffect): HTMLElement {
     const r = document.createElement("div");
     r.className = "map-row";
-    r.addEventListener("click", () => router.navigate(`/effects/edit/${e.id}`));
+    r.setAttribute("role", "button");
+    r.tabIndex = 0;
+    r.setAttribute("aria-label", `Play ${e.name}`);
+    // Tap = play it on the fixture + tune (the editor is one step in).
+    const open = (): void => openEffectTune(router, e);
+    r.addEventListener("click", open);
+    r.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        open();
+      }
+    });
+    const devId = appState.client?.isConnected ? deviceStore.activeId() : null;
+    const isPlaying = devId !== null && nowPlaying.get(devId) === e.id;
+    if (isPlaying) r.classList.add("fxhome-row--playing");
 
     const thumb = document.createElement("div");
     thumb.className = "map-thumb";
@@ -259,11 +342,26 @@ export function EffectsBrowserScreen(router: Router): Screen {
       badge.setAttribute("aria-label", `On ${deviceName || "device"}`);
       name.append(badge);
     }
-    const meta = document.createElement("div");
-    meta.className = "map-meta metric";
-    meta.textContent = shortDate(e.updatedAt);
-    info.append(name, meta);
-    if (e.tags.length > 0) {
+    // Built-ins: one plain line about the look (their seed date means nothing).
+    const blurb = starterBlurb(e.id);
+    if (blurb) {
+      const b = document.createElement("div");
+      b.className = "fxhome-blurb";
+      b.textContent = blurb;
+      info.append(name, b);
+    } else {
+      const meta = document.createElement("div");
+      meta.className = "map-meta metric";
+      meta.textContent = shortDate(e.updatedAt);
+      info.append(name, meta);
+    }
+    if (isPlaying) {
+      const p = document.createElement("div");
+      p.className = "fxhome-playing";
+      p.textContent = "Playing";
+      info.append(p);
+    }
+    if (e.tags.length > 0 && !isStarter(e) && !isExample(e)) {
       const tags = document.createElement("div");
       tags.className = "map-rowtags";
       tags.textContent = e.tags.map((t) => `#${t}`).join(" ");
@@ -292,7 +390,7 @@ export function EffectsBrowserScreen(router: Router): Screen {
     sheet.body.append(
       ActionGrid([
         {
-          label: builtin ? "Open" : "Edit",
+          label: builtin ? "Open in editor" : "Edit",
           icon: "edit",
           onClick: act(() => router.navigate(`/effects/edit/${e.id}`)),
         },
@@ -373,8 +471,15 @@ export function EffectsBrowserScreen(router: Router): Screen {
     onMount: () => {
       document.body.appendChild(fab);
       setTabMenuItems(tabMenuItems);
-      unsubs.push(appState.subscribe(() => void refresh()));
+      unsubs.push(
+        appState.subscribe(() => {
+          hydratePlaying();
+          void refresh();
+        }),
+      );
       unsubs.push(deviceEffects.subscribe(() => void refresh()));
+      unsubs.push(nowPlaying.subscribe(() => void refresh()));
+      hydratePlaying();
       void refresh();
     },
     onUnmount: () => {
