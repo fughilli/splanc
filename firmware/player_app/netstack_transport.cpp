@@ -2070,14 +2070,15 @@ extern "C" void pm_go_to_sleep();
 //
 // And when WiFi has NOTHING on the air — the join is in AUTH with no AP to authenticate to
 // (the SSID wasn't in the last sweep: an absent network, a 5 GHz-only hotspot) and no sweep
-// is running — BLE gets the whole radio (MAC released), not just the event windows. The
-// windows alone are not enough to hold a link for long: measured on rig-2 with the central
-// idle (the Improv absent window, ~33 s of sweeps 3 s apart waiting for the not-found
-// report), 1-byte probe notifications timed by their LL acks went unacknowledged for 0.5-6 s
-// stretches in ~14% of seconds although the windows stayed phase-locked to the acks (+0.3-1 ms
-// from the predicted anchor), and 1 in 4-6 runs the stretch reached the 6 s supervision
-// timeout — the not-found report then went out to a dead link and the app hung. With the
-// radio handed over between sweeps: no stretch over ~0.6 s, p90 ack latency 500 -> 55 ms.
+// is running — BLE gets the whole radio (MAC released), not just the event windows: Wi-Fi
+// has nothing to send or hear, so there is nothing to trade. Measured on rig-2 with the
+// central idle (the Improv absent wait), 1-byte probe notifications timed by their LL acks:
+// the windows stay phase-locked (acks +0.3-1 ms from the predicted anchor), yet connection
+// events still went unserviced in 0.5-6 s stretches (~5-14% of seconds, p90 ack wait ~450 ms);
+// with the radio handed over between sweeps, p90 55 ms and 1-2% of seconds. It is not the
+// whole story: the stretches start around a sweep's channel switches and can outlast the
+// 6 s supervision timeout even with BLE owning the radio (hence the longer timeout and the
+// spread-out sweeps of the Improv absent wait, netstack_loop).
 // The loop recomputes the flag every pass (g_coex_wifi_idle, below), so a sweep or an
 // auth reclaims the radio at the next tick.
 volatile bool g_coex_wifi_idle = false;
